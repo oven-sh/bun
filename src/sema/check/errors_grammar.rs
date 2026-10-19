@@ -248,19 +248,42 @@ impl Checker<'_, '_> {
             } => true,
             // An element, not a fragment.
             ExprKind::Jsx(j) => hir[j].tag.is_some(),
-            ExprKind::Cond { yes, no, .. } => {
+            ExprKind::Cond { branches, .. } => {
+                let Branches { yes, no } = hir.branches(branches);
                 self.is_side_effect_free(file, yes) && self.is_side_effect_free(file, no)
             }
-            // Iterates over the left spine, so that a long chain does not recurse.
+            // Iterates over the left spine, so that a long chain does not recurse. Each `,` of a chain asks about all that
+            // is on its left, so what is found for a long one is kept for each part of it.
             ExprKind::Binary { .. } => {
-                let mut leftmost = e;
-                while let ExprKind::Binary { left, right, .. } = hir[leftmost].kind {
-                    if !self.is_side_effect_free(file, right) {
-                        return false;
+                const LONG: usize = 32;
+                let mut spine: Vec<ExprId> = Vec::new();
+                let (mut leftmost, mut known) = (e, None);
+                while let ExprKind::Binary { left, .. } = hir[leftmost].kind {
+                    if spine.len() >= LONG {
+                        known = self
+                            .side_effect_free
+                            .borrow()
+                            .get(&(file, leftmost))
+                            .copied();
+                        if known.is_some() {
+                            break;
+                        }
                     }
+                    spine.push(leftmost);
                     leftmost = left;
                 }
-                self.is_side_effect_free(file, leftmost)
+                let mut is_free = known.unwrap_or_else(|| self.is_side_effect_free(file, leftmost));
+                for &part in spine.iter().rev() {
+                    if let ExprKind::Binary { right, .. } = hir[part].kind {
+                        is_free = is_free && self.is_side_effect_free(file, right);
+                    }
+                    if spine.len() > LONG {
+                        self.side_effect_free
+                            .borrow_mut()
+                            .insert((file, part), is_free);
+                    }
+                }
+                is_free
             }
             _ => false,
         }
@@ -370,7 +393,7 @@ impl Checker<'_, '_> {
                 continue;
             };
             // The binder visits every node of the tree, whether or not the checker does.
-            if matches!(bound.expr_parent[id.idx()], Parent::None) {
+            if matches!(bound.parent_of_expr(id), Parent::None) {
                 continue;
             }
             match hir[operand].kind {

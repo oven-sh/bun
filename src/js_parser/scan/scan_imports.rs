@@ -31,10 +31,9 @@ impl<'a> ImportScanner<'a> {
         'p,
         const TYPESCRIPT: bool,
         const SCAN_ONLY: bool,
-        const SEMA: bool,
         const HOT_MODULE_RELOADING_TRANSFORMATIONS: bool,
     >(
-        p: &mut P<'p, TYPESCRIPT, SCAN_ONLY, SEMA>,
+        p: &mut P<'p, TYPESCRIPT, SCAN_ONLY>,
         stmts: &'a mut [Stmt],
         will_transform_to_common_js: bool,
         // Const generics can't gate a param type on a const, so use Option and
@@ -265,10 +264,20 @@ impl<'a> ImportScanner<'a> {
                         // e.g. `import 'fancy-stylesheet-thing/style.css';`
                         // This is a breaking change though. We can make it an option with some guardrail
                         // so maybe if it errors, it shows a suggestion "retry without trimming unused imports"
-                        if (is_typescript_enabled
+                        // Exports deleted on request (`replace_exports`) take the imports that only
+                        // they used with them.
+                        let unused_after_deleted_exports = p.options.features.replace_exports.count()
+                            > 0
                             && found_imports
-                            && is_unused_in_typescript
-                            && !p.options.preserve_unused_imports_ts)
+                            && st.star_name_loc.is_empty()
+                            // SAFETY: arena-owned slice; see above.
+                            && st.items.slice().is_empty()
+                            && st.default_name.is_none();
+                        if unused_after_deleted_exports
+                            || (is_typescript_enabled
+                                && found_imports
+                                && is_unused_in_typescript
+                                && !p.options.preserve_unused_imports_ts)
                             || (!is_typescript_enabled
                                 && p.options.features.trim_unused_imports
                                 && found_imports

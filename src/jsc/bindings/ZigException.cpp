@@ -162,7 +162,7 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
             lineEnd++;
         }
 
-        const unsigned char* bytes = sourceString.span8().data();
+        const unsigned char* bytes = byteCast<uint8_t>(sourceString.span8().data());
 
         // Most of the time, when you look at a stack trace, you want a couple lines above.
 
@@ -823,7 +823,7 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
 
 extern "C" void JSC__Exception__getStackTrace(JSC::Exception* arg0, JSC::JSGlobalObject* global, ZigStackTrace* trace)
 {
-    populateStackTrace(arg0->vm(), arg0->stack(), *trace, PopulateStackTraceFlags::OnlyPosition);
+    populateStackTrace(arg0->vm(), arg0->stackForReporting(arg0->vm()), *trace, PopulateStackTraceFlags::OnlyPosition);
 }
 
 extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)
@@ -872,8 +872,9 @@ extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException
         auto* jscException = uncheckedDowncast<JSC::Exception>(value);
         JSValue unwrapped = jscException->value();
 
-        if (jscException->stack().size() > 0) {
-            populateStackTrace(global->vm(), jscException->stack(), exception->stack, PopulateStackTraceFlags::OnlySourceLines);
+        auto& stack = jscException->stackForReporting(global->vm());
+        if (stack.size() > 0) {
+            populateStackTrace(global->vm(), stack, exception->stack, PopulateStackTraceFlags::OnlySourceLines);
         }
 
         exceptionFromString(*exception, unwrapped, global);

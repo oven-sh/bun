@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::bind::{JsDeclarationKind, assignment_declaration_kind, define_property_call};
+use crate::util::SharedSort;
 
 bun_core::comptime_string_set! {
     /// `textToKeyword`
@@ -50,10 +51,10 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             .chain(by_kind.of(ExprTag::Call));
         let mut declarations: Vec<(ExprId, JsDeclarationKind)> = candidates
             .map(|&e| (e, assignment_declaration_kind(hir, e)))
-            .filter(|&(e, _)| bound.expr_parent[e.idx()] != Parent::None)
+            .filter(|&(e, _)| bound.parent_of_expr(e) != Parent::None)
             .collect();
         // The visitors are pre-order.
-        declarations.sort_by_key(|&(e, _)| hir[e].pos);
+        declarations.shared_sort_by_key(|&(e, _)| hir[e].pos);
         let saved = self.tracker.get_symbol_accessibility_diagnostic;
         for &(e, kind) in &declarations {
             if kind != JsDeclarationKind::ModuleExports {
@@ -62,7 +63,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             let ExprKind::Assign { value, .. } = hir[e].kind else {
                 continue;
             };
-            let input = match bound.expr_parent[e.idx()] {
+            let input = match bound.parent_of_expr(e) {
                 Parent::Stmt(s) => hir.node(s),
                 Parent::Expr(parent) => hir.node(parent),
                 _ => hir.node(e),
@@ -159,8 +160,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             ExprKind::Assign { value, .. } => value,
             _ => ExprId::NONE,
         };
-        let is_top_level_statement = matches!(bound.expr_parent[input.idx()], Parent::Stmt(s)
-            if bound.stmt_parent[s.idx()] == Parent::File);
+        let is_top_level_statement = matches!(bound.parent_of_expr(input), Parent::Stmt(s)
+            if bound.parent_of_stmt(s) == Parent::File);
         // `isCommonJSAliasExport`
         if value.is_some()
             && let ExprKind::Ident(source) = hir[value].kind
@@ -186,7 +187,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             };
             [first, declare].concat()
         };
-        let comments = match bound.expr_parent[input.idx()] {
+        let comments = match bound.parent_of_expr(input) {
             Parent::Stmt(s) => self.leading_comments(hir[s].loc.pos),
             _ => Vec::new(),
         };
@@ -471,9 +472,9 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let by_kind = self.c.exprs_by_kind(file);
         let mut assignments: Vec<ExprId> = (by_kind.of(ExprTag::Assign).iter().copied())
             .filter(|&e| assignment_declaration_kind(hir, e) == JsDeclarationKind::ThisProperty)
-            .filter(|&e| bound.expr_parent[e.idx()] != Parent::None)
+            .filter(|&e| bound.parent_of_expr(e) != Parent::None)
             .collect();
-        assignments.sort_by_key(|&e| hir[e].pos);
+        assignments.shared_sort_by_key(|&e| hir[e].pos);
         let has_base =
             hir[c].extends.is_some() && !matches!(hir[hir[c].extends].kind, ExprKind::Null);
         let mut collected = Vec::new();
@@ -488,7 +489,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 continue;
             };
             // `GetReferencedMemberValueDeclaration`
-            let symbol = bound.expr_symbol[e.idx()];
+            let symbol = bound.symbol_of_expr(e);
             // `HasDynamicName`: an identifier is not `IsSimpleInlineableExpression`, so `this[name] = e` declares nothing here.
             let name = match hir[target].kind {
                 ExprKind::Dot { name, .. } => Some(name),
@@ -525,7 +526,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             let saved = self.tracker.get_symbol_accessibility_diagnostic;
             let ensured = self.ensure_type(hir.node(e), false);
             self.tracker.get_symbol_accessibility_diagnostic = saved;
-            let comments = match bound.expr_parent[e.idx()] {
+            let comments = match bound.parent_of_expr(e) {
                 Parent::Stmt(s) => self.leading_comments(hir[s].loc.pos),
                 _ => Vec::new(),
             };
@@ -588,7 +589,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let (hir, files) = (self.c.hir(file), self.c.files());
         let name = match assignment_declaration_kind(hir, e) {
             JsDeclarationKind::ThisProperty => {
-                let symbol = self.c.bound(file).expr_symbol[e.idx()];
+                let symbol = self.c.bound(file).symbol_of_expr(e);
                 return symbol
                     .is_some()
                     .then(|| self.c.type_of_symbol(files.sym(file, symbol)));

@@ -31,6 +31,7 @@
 use super::*;
 use crate::bind::{Decl, Parent, ScopeId, SymbolId};
 use crate::resolve::{ModuleKind, is_relative, normalize_path};
+use crate::util::SharedSort;
 use bun_collections::ArrayHashMap;
 
 /// State that is constant for a whole file.
@@ -98,7 +99,7 @@ impl Checker<'_, '_> {
         } else {
             let mut uses = hir.specifier_uses.to_vec();
             uses.retain(|u| !u.kind.is_call());
-            uses.sort_unstable_by_key(|u| u.pos);
+            uses.shared_sort_unstable_by_key(|u| u.pos);
             sorted = uses;
             &sorted
         };
@@ -164,9 +165,7 @@ impl Checker<'_, '_> {
     /// the blocks of those that are no expressions in `blocks_too_large_for_flow_analysis`.
     fn check_flow_too_deep(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // The limit is 2000 levels. A walk nests at most once per flow node, and once for the
-        // condition that `checkIfExpressionRefinesParameter` synthesizes.
-        if bound.flow_places < 2000 {
+        if !bound.can_reach_flow_depth_limit() {
             return;
         }
         let mut reported = Node::NONE;
@@ -263,7 +262,7 @@ impl Checker<'_, '_> {
     fn modules_namespace_export_declaration(&mut self, cx: &Cx<'_>, s: StmtId, around: Around) {
         let hir = self.hir(cx.file);
         let node = (cx.file, hir[s].start, self.end_of_stmt(cx.file, s));
-        if !hir[s].modifiers.is_empty() {
+        if !hir.stmt_modifiers(s).is_empty() {
             self.error_at(node, 1184, &[]);
         }
         let code = if around.module.is_some() || !around.is_appropriate_context {
@@ -298,7 +297,7 @@ impl Checker<'_, '_> {
         let hir = self.hir(cx.file);
         around.is_ambient
             || hir
-                .find_modifier(hir[s].modifiers, Flags::AMBIENT)
+                .find_modifier(hir.stmt_modifiers(s), Flags::AMBIENT)
                 .is_some()
     }
 
@@ -306,6 +305,9 @@ impl Checker<'_, '_> {
 
     /// `bindModuleDeclaration`, `checkModuleDeclaration`
     fn modules_declaration(&mut self, cx: &Cx<'_>, s: StmtId, m: ModuleId, around: Around) {
+        if self.is_stack_low() {
+            return;
+        }
         let (hir, files) = (self.hir(cx.file), self.files());
         let module = hir[m];
         let name_pos = module.name_pos;
@@ -336,7 +338,9 @@ impl Checker<'_, '_> {
             // The flag is also set on declarations nested in an exported one, so only the keyword
             // counts.
             if module.flags.contains(Flags::EXPORT)
-                && hir.find_modifier(hir[s].modifiers, Flags::EXPORT).is_some()
+                && hir
+                    .find_modifier(hir.stmt_modifiers(s), Flags::EXPORT)
+                    .is_some()
             {
                 self.error_at((cx.file, start, 0), 2668, &[]);
             }
@@ -384,7 +388,7 @@ impl Checker<'_, '_> {
             if cx.verbatim_commonjs
                 && is_at_top
                 && module.flags.contains(Flags::EXPORT)
-                && let Some(start) = hir.find_modifier(hir[s].modifiers, Flags::EXPORT)
+                && let Some(start) = hir.find_modifier(hir.stmt_modifiers(s), Flags::EXPORT)
             {
                 self.error_at((cx.file, start, 0), 1287, &[]);
             }
@@ -444,7 +448,7 @@ impl Checker<'_, '_> {
         // "do the work only for first declaration"
         if symbol.is_none()
             || !files.merges_module_augmentation(cx.file, symbol)
-            || bound.symbols[symbol.idx()].decls.first() != Some(&Decl::Module(m))
+            || bound.symbol(symbol).decls.first() != Some(&Decl::Module(m))
         {
             return;
         }
@@ -617,7 +621,7 @@ impl Checker<'_, '_> {
         });
         let is_checked = match statement {
             Some(s) => {
-                matches!(bound.stmt_parent[s.idx()], Parent::File)
+                matches!(bound.parent_of_stmt(s), Parent::File)
                     && hir.import_attributes.is_empty()
                     && !has_phase_modifier
             }
@@ -761,7 +765,7 @@ impl Checker<'_, '_> {
         let (hir, bound) = (self.hir(cx.file), self.bound(cx.file));
         let reports_grammar_errors = cx.grammar && !cx.text.is_empty();
         for (i, statement) in hir.stmts.iter().enumerate() {
-            if matches!(bound.stmt_parent[i], Parent::None) {
+            if matches!(bound.parent_of_stmt(StmtId(i as u32)), Parent::None) {
                 continue;
             }
             // `checkClassDeclaration`: only `export default class` may omit the name.
@@ -770,12 +774,15 @@ impl Checker<'_, '_> {
                 && hir[c].name.is_none()
                 && !hir[c].flags.contains(Flags::DEFAULT)
                 // `default` without `export` (1029) is still a modifier.
-                && hir.find_modifier(statement.modifiers, Flags::DEFAULT).is_none()
+                && hir.find_modifier(hir.stmt_modifiers(StmtId(i as u32)), Flags::DEFAULT).is_none()
             {
                 let start = hir[c].start;
                 self.error_at((cx.file, start, 0), 1211, &[]);
             }
-            if matches!(bound.stmt_parent[i], Parent::File | Parent::Module(_)) {
+            if matches!(
+                bound.parent_of_stmt(StmtId(i as u32)),
+                Parent::File | Parent::Module(_)
+            ) {
                 continue;
             }
             if !matches!(
@@ -815,7 +822,7 @@ impl Checker<'_, '_> {
         };
         // `checkGrammarModuleElementContext` stops the check of any other.
         let is_checked = |s: StmtId| is_in_appropriate_context(bound, s);
-        bound.expr_symbol.iter().zip(&bound.expr_parent).zip(hir.exprs.iter()).any(|((&s, parent), e)| s.is_some() && files.sym(cx.file, s) == sym && !matches!(parent, Parent::None) && !self.is_never_checked(e.pos))
+        (0..).map(ExprId).zip(hir.exprs.iter()).any(|(id, e)| bound.symbol_of_expr(id).is_some() && files.sym(cx.file, bound.symbol_of_expr(id)) == sym && !matches!(bound.parent_of_expr(id), Parent::None) && !self.is_never_checked(e.pos))
             || hir.types.iter().enumerate().any(|(t, node)| match node.kind {
                 TypeNodeKind::Ref { name, .. } | TypeNodeKind::Typeof { name, .. } => !name.is_empty() && !self.is_never_checked(node.pos) && means_it(bound.type_scope[t], hir[name.at(0)].text),
                 _ => false,
@@ -1222,7 +1229,8 @@ impl Checker<'_, '_> {
             || bound.alias_idents.iter().any(|&(e, _)| {
                 !bound.is_unchecked(e.idx())
                     && !bound.is_in_type_query(e)
-                    && bound.symbols[bound.expr_symbol[e.idx()].idx()]
+                    && bound
+                        .symbol(bound.symbol_of_expr(e))
                         .decls
                         .contains(&Decl::ImportEquals(i))
             });
@@ -1731,6 +1739,26 @@ impl Checker<'_, '_> {
         }))
     }
 
+    /// After `checkSourceFile`: `checkImportType` only reads `resolution-mode` from the options. It checks none of the values.
+    pub(super) fn never_check_options_of_import_types(&self, file: FileId) {
+        let hir = self.hir(file);
+        if hir.import_attributes.is_empty() {
+            return;
+        }
+        for node in (0..hir.types.len() as u32).map(TypeNodeId) {
+            let options = hir.attributes_of_import_type(node);
+            let Some(ExprKind::Object(options)) = options.map(|it| hir[it].kind) else {
+                continue;
+            };
+            for value in options.iter().map(|it| hir[it].value) {
+                // 1453 is reported at a string.
+                if value.is_some() && self.modules_string_literal_like(file, value).is_none() {
+                    self.never_check(self.start_of(file, value), self.end_of_expr(file, value));
+                }
+            }
+        }
+    }
+
     /// `checkImportType`: `getResolutionModeOverride`
     fn modules_import_calls_and_types(&mut self, cx: &Cx<'_>) {
         let (hir, bound) = (self.hir(cx.file), self.bound(cx.file));
@@ -1741,12 +1769,8 @@ impl Checker<'_, '_> {
             if !matches!(node.kind, TypeNodeKind::Import { .. }) || bound.is_unchecked_type(i) {
                 continue;
             }
-            let within = TextRange {
-                pos: node.pos,
-                end: self.end_of_type_node(cx.file, TypeNodeId(i as u32)),
-            };
-            if let Some((_, object, attributes)) =
-                self.modules_get_import_attributes(cx.file, within)
+            if let Some(object) = hir.attributes_of_import_type(TypeNodeId(i as u32))
+                && let ExprKind::Object(attributes) = hir[object].kind
             {
                 // The `ImportAttributes` node starts at the inner `{`: `with` is a property of the enclosing object literal.
                 let end = self.modules_end_of_import_attributes(cx.file, object);
@@ -1776,8 +1800,7 @@ fn statement_of_alias_declaration(hir: &hir::File, decl: Decl) -> Option<StmtId>
 
 /// `isInAppropriateContext` of `checkGrammarModuleElementContext` for the statement `s`.
 fn is_in_appropriate_context(bound: &Bound, s: StmtId) -> bool {
-    let parent = bound.stmt_parent.get(s.idx());
-    matches!(parent, Some(Parent::File | Parent::Module(_)))
+    matches!(bound.parent_of_stmt(s), Parent::File | Parent::Module(_))
 }
 
 // ───────────────────────────── message arguments ─────────────────────────────

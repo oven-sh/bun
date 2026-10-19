@@ -8,8 +8,8 @@
 
 use crate::atom::Atom;
 pub use crate::node::{Kind, Node, NodeBases, NodeData, Part, Places, ToNode};
-use crate::session::{Arena, ArenaBox, ArenaHashMap, ArenaHashSet, ArenaVec, Session};
-use crate::util::{FxHashMap, FxHashSet};
+use crate::session::{Arena, ArenaBox, ArenaHashMap, ArenaVec, Session};
+use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
@@ -159,6 +159,76 @@ macro_rules! impl_run {
 impl_run!(IdList);
 impl_run!(Span);
 
+/// Index into [`File::ids`] of a `Cond`'s two branches, which are adjacent. Read them with [`FileIn::branches`].
+#[derive(Copy, Clone, Debug)]
+pub struct BranchesAt(u32);
+
+/// The two branches of `test ? yes : no`.
+#[derive(Copy, Clone, Debug)]
+pub struct Branches {
+    pub yes: ExprId,
+    pub no: ExprId,
+}
+
+/// A 4-byte handle to an `IdList`. The list's start and length are stored in [`File::ids`], except for an empty list,
+/// which has a sentinel. Read it with [`FileIn::list_at`].
+pub struct ListAt<T> {
+    at: u32,
+    _of: PhantomData<T>,
+}
+
+macro_rules! impl_place {
+    ($name:ident) => {
+        impl<T> Copy for $name<T> {}
+        impl<T> Clone for $name<T> {
+            #[inline]
+            fn clone(&self) -> Self {
+                *self
+            }
+        }
+        impl<T> std::fmt::Debug for $name<T> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(stringify!($name))
+            }
+        }
+    };
+}
+impl_place!(ListAt);
+
+impl BranchesAt {
+    /// `ids` must be the file's [`File::ids`].
+    #[inline]
+    pub fn of(self, ids: &[u32]) -> Branches {
+        let at = self.0 as usize;
+        Branches {
+            yes: ExprId(ids[at]),
+            no: ExprId(ids[at + 1]),
+        }
+    }
+}
+
+impl<T> ListAt<T> {
+    pub const EMPTY: Self = ListAt {
+        at: u32::MAX,
+        _of: PhantomData,
+    };
+
+    #[inline]
+    pub fn is_empty(self) -> bool {
+        self.at == u32::MAX
+    }
+
+    /// `ids` must be the file's [`File::ids`].
+    #[inline]
+    pub fn of(self, ids: &[u32]) -> IdList<T> {
+        if self.is_empty() {
+            return IdList::EMPTY;
+        }
+        let at = self.at as usize;
+        IdList::new(ids[at], ids[at + 1])
+    }
+}
+
 impl<T: From<u32>> Span<T> {
     #[inline]
     pub fn iter(self) -> impl DoubleEndedIterator<Item = T> + ExactSizeIterator + Clone {
@@ -240,13 +310,52 @@ impl<T: std::fmt::Debug> std::fmt::Debug for ArenaFew<'_, T> {
     }
 }
 
+/// A map for tables that are empty in most files. Entries are sorted by key in an exact-size arena allocation and
+/// found by binary search. It's one word, where a hash map is five.
+pub struct ArenaFewMap<'s, K, V>(ArenaFew<'s, (K, V)>);
+
+impl<'s, K: Ord, V> ArenaFewMap<'s, K, V> {
+    pub fn from_iter_in(entries: impl Iterator<Item = (K, V)>, arena: &'s Arena) -> Self {
+        let mut entries: Vec<(K, V)> = entries.collect();
+        entries.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        ArenaFewMap(ArenaFew::from_iter_in(entries.into_iter(), arena))
+    }
+
+    pub fn get(&self, key: &K) -> Option<&V> {
+        let at = self.0.binary_search_by(|entry| entry.0.cmp(key)).ok()?;
+        Some(&self.0[at].1)
+    }
+
+    pub fn contains_key(&self, key: &K) -> bool {
+        self.get(key).is_some()
+    }
+
+    /// `contains_key`, under the name a set uses.
+    pub fn contains(&self, key: &K) -> bool {
+        self.get(key).is_some()
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (&K, &V)> {
+        self.0.iter().map(|entry| (&entry.0, &entry.1))
+    }
+}
+
 /// Where the lists of a `FileIn` or a `BoundIn` are stored.
 pub trait Storage {
-    type List<T>: DerefMut<Target = [T]>;
+    type List<T: 'static>: DerefMut<Target = [T]>;
+    /// `BoundIn::symbols`
+    type Symbols: crate::bind::SymbolList;
+    /// A list of nodes of a `FileIn`.
+    type Nodes<T: 'static>: DerefMut<Target = [T]>;
+    /// A `BoundIn` list of ids that is only read by index.
+    type Ids<T: Id>: Ids<T> + Default;
     /// A list that is empty in most files.
     type Few<T: 'static>: DerefMut<Target = [T]>;
     type Map<K, V>;
-    type Set<K>;
+    /// A map that is empty in most files.
+    type FewMap<K: 'static, V: 'static>;
+    /// A set that is empty in most files.
+    type FewSet<K: 'static>;
     /// A list whose elements own memory on the regular heap.
     type Kept<T: Clone + 'static>: Deref<Target = [T]>;
     /// `FileIn::text`
@@ -260,23 +369,32 @@ pub trait Storage {
 pub struct Growable;
 
 impl Storage for Growable {
-    type List<T> = Vec<T>;
+    type List<T: 'static> = Vec<T>;
+    type Symbols = Vec<crate::bind::GrowingSymbol>;
+    type Nodes<T: 'static> = Vec<T>;
+    type Ids<T: Id> = Vec<T>;
     type Few<T: 'static> = Vec<T>;
     type Map<K, V> = FxHashMap<K, V>;
-    type Set<K> = FxHashSet<K>;
+    type FewMap<K: 'static, V: 'static> = FxHashMap<K, V>;
+    type FewSet<K: 'static> = FxHashSet<K>;
     type Kept<T: Clone + 'static> = Vec<T>;
     type Text = Cow<'static, [u8]>;
-    type Lazy = ();
+    /// For `FileBuilder::lend`.
+    type Lazy = LazyCells;
 }
 
 /// From then on: at their final size, in the arena of the thread that loaded the file.
 pub struct InArena<'s>(PhantomData<&'s Arena>);
 
 impl<'s> Storage for InArena<'s> {
-    type List<T> = ArenaVec<'s, T>;
+    type List<T: 'static> = Fixed<'s, T>;
+    type Symbols = crate::bind::Symbols<'s>;
+    type Nodes<T: 'static> = Fixed<'s, T>;
+    type Ids<T: Id> = Narrow<'s, T>;
     type Few<T: 'static> = ArenaFew<'s, T>;
     type Map<K, V> = ArenaHashMap<'s, K, V>;
-    type Set<K> = ArenaHashSet<'s, K>;
+    type FewMap<K: 'static, V: 'static> = ArenaFewMap<'s, K, V>;
+    type FewSet<K: 'static> = ArenaFewMap<'s, K, ()>;
     /// Owned until the program is loaded. Nothing drops a file of a program, so `Files::load` hands
     /// the list to `Session::keep` and borrows it from there.
     type Kept<T: Clone + 'static> = Cow<'s, [T]>;
@@ -285,43 +403,206 @@ impl<'s> Storage for InArena<'s> {
     type Lazy = Lazy<'s>;
 }
 
-/// What is computed from a loaded file on demand, by the first thread that needs it, in the arena of
-/// that thread.
-pub struct Lazy<'s> {
-    pub(crate) session: &'s Session,
-    /// `node.Parent`, by `Node`: `File::parent`.
-    pub(crate) parents: OnceLock<crate::node::Parents<'s>>,
-    /// `File::is_in_ambient_or_type_node`
-    pub(crate) ambient_or_type_places: OnceLock<Places<ArenaBox<'s, [TextRange]>>>,
-    /// `File::keyword_identifiers`
-    pub(crate) keyword_identifiers: OnceLock<ArenaBox<'s, [Node]>>,
+/// A list that neither grows nor shrinks. It has a block of an arena, which it frees when it is
+/// dropped, or it is lent by one who still has it (`FileBuilder::lend`), or it is that of a file that several programs
+/// have (`File::share`).
+pub struct Fixed<'s, T>(FixedIn<'s, T>);
+
+enum FixedIn<'s, T> {
+    /// No block if it is empty: a file without nodes is also made by a thread that the arena is
+    /// not of (`File::empty_in`).
+    Arena(ArenaBox<'s, [T]>),
+    Lent(&'s mut [T]),
+    Shared(&'s [T]),
 }
 
-impl<'s> Lazy<'s> {
-    pub(crate) fn new(session: &'s Session) -> Lazy<'s> {
-        Lazy {
-            session,
-            parents: OnceLock::new(),
-            ambient_or_type_places: OnceLock::new(),
-            keyword_identifiers: OnceLock::new(),
+impl<T> Default for Fixed<'_, T> {
+    fn default() -> Self {
+        Fixed(FixedIn::Lent(&mut []))
+    }
+}
+
+impl<'s, T: Copy> Fixed<'s, T> {
+    #[inline(never)]
+    pub(crate) fn copied_in(arena: &'s Arena, list: &[T]) -> Self {
+        Fixed(FixedIn::Arena(ArenaBox::copy_from_slice_in(list, arena)))
+    }
+
+    /// For one who is about to write into it: a list that others have too becomes a copy in `arena`.
+    pub(crate) fn make_own_in(&mut self, arena: &'s Arena) {
+        if let FixedIn::Shared(list) = self.0 {
+            *self = Fixed::copied_in(arena, list);
         }
     }
 }
 
-/// Copies `list` to a block of exactly its size in `arena`, and empties it. It retains its capacity.
-pub(crate) fn copy_to_arena<'s, T: Copy>(list: &mut Vec<T>, arena: &'s Arena) -> ArenaVec<'s, T> {
-    let mut exact = ArenaVec::new_in(arena);
-    exact.reserve_exact(list.len());
-    exact.extend_from_slice(list);
-    list.clear();
-    exact
+impl<'s, T> Fixed<'s, T> {
+    pub(crate) fn shared(list: &'s [T]) -> Self {
+        Fixed(FixedIn::Shared(list))
+    }
 }
 
-/// The same for elements that are not `Copy`.
-pub(crate) fn move_to_arena<'s, T>(list: &mut Vec<T>, arena: &'s Arena) -> ArenaVec<'s, T> {
-    let mut exact = ArenaVec::new_in(arena);
-    exact.reserve_exact(list.len());
-    exact.extend(list.drain(..));
+impl<T> Deref for Fixed<'_, T> {
+    type Target = [T];
+    #[inline(always)]
+    fn deref(&self) -> &[T] {
+        match &self.0 {
+            FixedIn::Arena(list) => list,
+            FixedIn::Lent(list) => list,
+            FixedIn::Shared(list) => list,
+        }
+    }
+}
+
+impl<T> DerefMut for Fixed<'_, T> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut [T] {
+        match &mut self.0 {
+            FixedIn::Arena(list) => list,
+            FixedIn::Lent(list) => list,
+            FixedIn::Shared(_) => {
+                unreachable!("a file is shared when nothing is written into it any more")
+            }
+        }
+    }
+}
+
+impl<'a, T> IntoIterator for &'a Fixed<'_, T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+/// Implemented by every id type that `define_id` declares.
+pub trait Id: Copy + From<u32> + Into<u32> + 'static {}
+
+impl<T: Copy + From<u32> + Into<u32> + 'static> Id for T {}
+
+/// Indexed read access to a list of ids. See [`Storage::Ids`].
+pub trait Ids<T> {
+    /// Returns `None` if `index` is out of range.
+    fn id_at(&self, index: usize) -> Option<T>;
+}
+
+impl<T: Copy> Ids<T> for Vec<T> {
+    #[inline]
+    fn id_at(&self, index: usize) -> Option<T> {
+        self.get(index).copied()
+    }
+}
+
+/// A fixed-size list of ids. Ids are stored as `u16` if all of them fit, which is the case in nearly every file, and as
+/// `u32` otherwise.
+pub struct Narrow<'s, T> {
+    /// Each id plus one, so `NONE` is 0. Empty if some id doesn't fit.
+    short: Fixed<'s, u16>,
+    /// Empty if `short` is used.
+    long: Fixed<'s, T>,
+}
+
+impl<T> Default for Narrow<'_, T> {
+    fn default() -> Self {
+        Narrow {
+            short: Fixed::default(),
+            long: Fixed::default(),
+        }
+    }
+}
+
+impl<T: Id> Ids<T> for Narrow<'_, T> {
+    #[inline]
+    fn id_at(&self, index: usize) -> Option<T> {
+        match self.short.get(index) {
+            Some(&id) => Some(T::from(u32::from(id).wrapping_sub(1))),
+            None => self.long.get(index).copied(),
+        }
+    }
+}
+
+impl<'s, T: Id> Narrow<'s, T> {
+    /// Copies `list` into `arena` and clears it. `list` keeps its capacity.
+    pub(crate) fn moved_in(arena: &'s Arena, list: &mut Vec<T>) -> Self {
+        let fits =
+            |found: bool, &id: &T| found & (id.into().wrapping_add(1) <= u32::from(u16::MAX));
+        if !list.iter().fold(true, fits) {
+            return Narrow {
+                short: Fixed::default(),
+                long: copy_to_arena(list, arena),
+            };
+        }
+        let short = list.iter().map(|&id| id.into().wrapping_add(1) as u16);
+        let short = Fixed(FixedIn::Arena(ArenaBox::from_iter_in(short, arena)));
+        list.clear();
+        Narrow {
+            short,
+            long: Fixed::default(),
+        }
+    }
+
+    pub(crate) fn shared(&'s self) -> Self {
+        Narrow {
+            short: Fixed::shared(&self.short),
+            long: Fixed::shared(&self.long),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.short.len().max(self.long.len())
+    }
+
+    /// Calls `change` on each id and stores the result in `arena`, so a shared list becomes this program's own copy.
+    pub(crate) fn change_each_in(&mut self, arena: &'s Arena, change: impl FnMut(&mut T)) {
+        let mut all: Vec<T> = (0..self.len()).filter_map(|at| self.id_at(at)).collect();
+        all.iter_mut().for_each(change);
+        *self = Narrow::moved_in(arena, &mut all);
+    }
+}
+
+/// `FileIn::lazy` of a loaded file.
+pub struct Lazy<'s> {
+    pub(crate) session: &'s Session,
+    /// `File::arena`
+    pub(crate) arena: &'s Arena,
+    pub(crate) cells: &'s LazyCells,
+}
+
+/// What is computed from a loaded file on demand, by the first thread that needs it.
+///
+/// On the regular heap, and without a lifetime, so that a reference to them can be shortened: what is in a `OnceLock`
+/// cannot. Nothing drops a file of a program, so the session has the cells (`Session::keep`).
+#[derive(Default)]
+pub struct LazyCells {
+    /// `node.Parent`, by `Node`: `File::parent`.
+    pub(crate) parents: OnceLock<crate::node::Parents>,
+    /// `FnId::to_node`, `ClassId::to_node`
+    pub(crate) owners: OnceLock<crate::node::Owners>,
+    /// `File::is_in_ambient_or_type_node`
+    pub(crate) ambient_or_type_places: OnceLock<Places<Box<[TextRange]>>>,
+    /// `File::is_in_type_query`
+    pub(crate) type_query_places: OnceLock<Places<Box<[TextRange]>>>,
+    /// `File::is_in_class_extends`
+    pub(crate) class_extends_places: OnceLock<Places<Box<[TextRange]>>>,
+    /// `File::keyword_identifiers`
+    pub(crate) keyword_identifiers: OnceLock<Box<[Node]>>,
+}
+
+/// Those of every file without nodes: what is computed from one is the same for all.
+static CELLS_OF_NO_NODES: LazyCells = LazyCells {
+    parents: OnceLock::new(),
+    owners: OnceLock::new(),
+    ambient_or_type_places: OnceLock::new(),
+    type_query_places: OnceLock::new(),
+    class_extends_places: OnceLock::new(),
+    keyword_identifiers: OnceLock::new(),
+};
+
+/// Copies `list` to a block of exactly its size in `arena`, and empties it. It retains its capacity.
+pub(crate) fn copy_to_arena<'s, T: Copy>(list: &mut Vec<T>, arena: &'s Arena) -> Fixed<'s, T> {
+    let exact = Fixed::copied_in(arena, list);
+    list.clear();
     exact
 }
 
@@ -472,8 +753,9 @@ pub enum ExprKind {
     Dot {
         obj: ExprId,
         name: Atom,
-        name_pos: u32,
         chain: Chain,
+        /// Distance from the start of the name to the end of the expression, or [`FAR`]. Use [`FileIn::name_pos`].
+        name_before_end: u16,
     },
     Index {
         obj: ExprId,
@@ -497,10 +779,10 @@ pub enum ExprKind {
         target: ExprId,
         value: ExprId,
     },
+    /// `test ? yes : no`
     Cond {
         test: ExprId,
-        yes: ExprId,
-        no: ExprId,
+        branches: BranchesAt,
     },
     Spread(ExprId),
     Await(ExprId),
@@ -521,7 +803,7 @@ pub enum ExprKind {
     /// `f<T>` that is not called.
     Instantiation {
         expr: ExprId,
-        type_args: IdList<TypeNodeId>,
+        type_args: ListAt<TypeNodeId>,
     },
     Jsx(JsxId),
     /// `import(specifier, ..)`. `args` is never empty: the first is the specifier, a missing expression if there is none.
@@ -532,6 +814,45 @@ pub enum ExprKind {
     ImportMeta,
     /// `new.target`, and the name in the source: any word forms a meta property.
     NewTarget(Atom),
+}
+
+/// `name_before_end` of a `Dot` whose name position is in [`FileIn::far_names`] instead.
+pub const FAR: u16 = u16::MAX;
+
+/// [`FileIn::stmt_modifiers`] for callers that only have the file's list.
+pub fn stmt_modifiers_in(
+    modifiers_of_stmts: &[(StmtId, Span<ModifierId>)],
+    s: StmtId,
+) -> Span<ModifierId> {
+    let found = modifiers_of_stmts.binary_search_by_key(&s, |of| of.0);
+    found.map_or(Span::EMPTY, |at| modifiers_of_stmts[at].1)
+}
+
+/// [`FileIn::template_of`] for callers that only have the file's list.
+pub fn template_in(tagged_templates: &[(CallId, ExprId)], call: CallId) -> ExprId {
+    let found = tagged_templates.binary_search_by_key(&call, |it| it.0);
+    found.map_or(ExprId::NONE, |at| tagged_templates[at].1)
+}
+
+/// [`FileIn::name_pos`] for callers that only have the file's lists.
+#[inline]
+pub fn name_pos_in(exprs: &[Expr], far_names: &[(ExprId, u32)], e: ExprId) -> u32 {
+    match exprs.get(e.idx()) {
+        Some(&Expr {
+            kind: ExprKind::Dot {
+                name_before_end, ..
+            },
+            end,
+            ..
+        }) if name_before_end != FAR => end - u32::from(name_before_end),
+        _ => far_name_pos(far_names, e),
+    }
+}
+
+#[cold]
+fn far_name_pos(far_names: &[(ExprId, u32)], e: ExprId) -> u32 {
+    let found = far_names.binary_search_by_key(&e, |it| it.0);
+    found.map_or(0, |at| far_names[at].1)
 }
 
 /// The kind of an expression, without its payload.
@@ -628,6 +949,110 @@ impl ExprKind {
     }
 }
 
+/// Declares `$tag`, the kind of a `$kind` without its payload, in the same order, and `$kind::tag`.
+macro_rules! tags {
+    ($(#[$doc:meta])* $tag:ident of $kind:ident { $($variant:ident $shape:tt,)* }) => {
+        $(#[$doc])*
+        #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+        #[repr(u8)]
+        pub enum $tag { $($variant,)* }
+
+        impl $tag {
+            pub const COUNT: usize = [$($tag::$variant),*].len();
+        }
+
+        impl $kind {
+            #[inline]
+            pub fn tag(&self) -> $tag {
+                match self { $(tags!(@pattern $kind $variant $shape) => $tag::$variant,)* }
+            }
+        }
+    };
+    (@pattern $kind:ident $variant:ident unit) => { $kind::$variant };
+    (@pattern $kind:ident $variant:ident tuple) => { $kind::$variant(..) };
+    (@pattern $kind:ident $variant:ident fields) => { $kind::$variant { .. } };
+}
+
+tags! {
+    /// The kind of a statement, without its payload.
+    StmtTag of StmtKind {
+        Empty unit,
+        Debugger unit,
+        Expr tuple,
+        Var tuple,
+        Fn tuple,
+        Class tuple,
+        Interface tuple,
+        TypeAlias tuple,
+        Enum tuple,
+        Module tuple,
+        Return tuple,
+        If fields,
+        For fields,
+        ForIn fields,
+        ForOf fields,
+        While fields,
+        DoWhile fields,
+        Block tuple,
+        Switch fields,
+        Try fields,
+        Throw tuple,
+        Break tuple,
+        Continue tuple,
+        Labeled fields,
+        Import tuple,
+        ImportEquals tuple,
+        ExportNamed tuple,
+        ExportStar fields,
+        ExportDefault tuple,
+        ExportAssign tuple,
+        ExportAsNamespace tuple,
+    }
+}
+
+tags! {
+    /// The kind of a type, without its payload.
+    TypeTag of TypeNodeKind {
+        Error unit,
+        Heritage fields,
+        Keyword tuple,
+        Ref fields,
+        StringLit tuple,
+        NumberLit tuple,
+        BigIntLit fields,
+        BoolLit tuple,
+        Template fields,
+        Array tuple,
+        Tuple tuple,
+        Union tuple,
+        Intersection tuple,
+        Fn tuple,
+        Object tuple,
+        Cond fields,
+        Infer tuple,
+        Mapped tuple,
+        IndexedAccess fields,
+        Keyof tuple,
+        Readonly tuple,
+        UniqueSymbol unit,
+        Unique tuple,
+        JSDoc fields,
+        Typeof fields,
+        Import fields,
+        Predicate fields,
+    }
+}
+
+tags! {
+    /// The kind of a pattern, without its payload.
+    PatTag of PatKind {
+        Missing unit,
+        Ident tuple,
+        Object tuple,
+        Array tuple,
+    }
+}
+
 /// The expressions of a file, grouped by kind. Within a kind they keep the order of the file's
 /// list.
 pub struct ExprsByKind {
@@ -664,13 +1089,11 @@ impl ExprsByKind {
 pub struct Call {
     pub callee: ExprId,
     pub args: IdList<ExprId>,
-    pub type_args: IdList<TypeNodeId>,
+    pub type_args: ListAt<TypeNodeId>,
     /// Position of the `)`. `u32::MAX` for `new C`. A tagged template has `u32::MAX` or
     /// [`INCOMPLETE_TEMPLATE`].
     pub close_pos: u32,
     pub chain: Chain,
-    /// `TaggedTemplateExpression.Template`. Its substitutions are `args`.
-    pub template: ExprId,
 }
 
 /// [`Call::close_pos`] of a tagged template whose last piece of text is missing or unterminated (`callIsIncomplete`).
@@ -826,6 +1249,68 @@ pub struct VarDecl {
     pub loc: TextRange,
 }
 
+/// [`FileIn::rare_syntax`]
+pub mod rare {
+    /// An `await` or a `yield` is between the parentheses of a parameter list.
+    pub const SUSPENDS_IN_PARAMETERS: u32 = 1 << 0;
+    /// A variable statement, a function or a class is the body of an `if`, a loop, a `with` or a label.
+    pub const DECLARATION_AS_BODY: u32 = 1 << 1;
+    /// A getter has parameters, or a setter has none, several, or a rest parameter.
+    pub const ODD_ACCESSOR: u32 = 1 << 2;
+    /// `{ a = 1 }` where an expression can be.
+    pub const DEFAULT_IN_OBJECT: u32 = 1 << 3;
+    /// A class has a second constructor or an `async` one, a member that is called `prototype` or `#constructor`, one that is
+    /// called `constructor` and is not its constructor, or two with one private name.
+    pub const NOTABLE_CLASS_MEMBER: u32 = 1 << 4;
+    /// There is a private name that no class around it declares, or `super.#a`.
+    pub const ODD_PRIVATE_NAME: u32 = 1 << 5;
+    /// `delete a`, `delete a.#b`
+    pub const DELETES_A_NAME: u32 = 1 << 6;
+    /// The body of a function starts with a string, which may be a directive.
+    pub const DIRECTIVE_IN_FUNCTION: u32 = 1 << 7;
+    /// A type parameter has a modifier: `<const T>`, `<in T>`.
+    pub const TYPE_PARAMETER_MODIFIER: u32 = 1 << 8;
+    /// `T?`, `?T`, `T!` or `!T` is a type, outside a comment.
+    pub const JSDOC_TYPE: u32 = 1 << 9;
+    /// There is a type predicate: `a is T`, `asserts a`.
+    pub const TYPE_PREDICATE: u32 = 1 << 10;
+    /// A declaration in the head of a `for-in` or a `for-of` has an initializer or a type.
+    pub const ODD_LOOP_HEAD: u32 = 1 << 11;
+    /// `export = a`
+    pub const EXPORT_ASSIGNMENT: u32 = 1 << 12;
+    /// An `import` or an `export` of a JavaScript file may be in a block, in a function or the body of a statement. Only set for
+    /// oxc's dialect.
+    pub const NESTED_MODULE_SYNTAX: u32 = 1 << 13;
+    /// Something other than a plain name or member is assigned to, incremented or decremented (`[a] = b`, `a?.b = 1`,
+    /// `a()++`), or the head of a `for-in` / `for-of` is an expression.
+    pub const ODD_TARGET: u32 = 1 << 16;
+    /// A scope may declare a name twice in a way that oxc rejects. Only set for oxc's dialect.
+    pub const MAY_REDECLARE: u32 = 1 << 17;
+    /// A JavaScript file may export a name twice, or have `export { a }` and not declare `a` at its top level. Only set for
+    /// oxc's dialect.
+    pub const ODD_EXPORT: u32 = 1 << 18;
+    /// `new.target`, or `new.` and another name.
+    pub const NEW_TARGET: u32 = 1 << 19;
+    /// `for await`
+    pub const FOR_AWAIT: u32 = 1 << 20;
+    /// A statement has a label, a `break` or a `continue` names one, a `break` is in no loop and no `switch` of its function, or
+    /// a `continue` is in no loop of it.
+    pub const ODD_JUMP: u32 = 1 << 21;
+    /// A statement in the body of a function or of a namespace starts with `declare`.
+    pub const NESTED_DECLARE: u32 = 1 << 22;
+    /// An `await`, a `yield` or an `await using` is in a static block, or in a function in one.
+    pub const SUSPENDS_IN_STATIC_BLOCK: u32 = 1 << 24;
+    /// `await using a = b`
+    pub const AWAIT_USING: u32 = 1 << 25;
+    /// A list of variable declarations is empty or declares with `using`, a `const` or a pattern in it has no initializer and
+    /// isn't ambient, or the head of a `for-in` / `for-of` doesn't declare exactly one variable.
+    pub const ODD_DECLARATION: u32 = 1 << 26;
+    /// The parser treated a top-level `await`, `for await` or `await using` as a keyword.
+    pub const TOP_LEVEL_AWAIT: u32 = 1 << 27;
+    /// `import.meta`
+    pub const IMPORT_META: u32 = 1 << 28;
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ModifierKind {
     /// Exactly one flag (`ModifierToFlag`).
@@ -882,6 +1367,16 @@ pub enum DiagnosticKind {
     Grammar,
     /// `c.error`. Not suppressed by parse diagnostics.
     Checker,
+    /// An error of oxc's parser that TypeScript leaves to its checker. Only `Dialect::oxc` has these, and only `bun lint` reads
+    /// them. `bun_sema_parser`'s `oxc.rs` says what is in the fields.
+    Oxc,
+    /// The same, where oxc's parser gives up.
+    OxcFatal,
+    /// The same from the pass that builds oxc's scopes, which doesn't run on a file that its parser has an error for.
+    OxcSemantic,
+    /// A statement that reads with `await` as a name and not with `await` as the operator, in a file that nothing before it
+    /// makes a module. The tree has the first reading. `related`: the errors of the second.
+    OxcSecondReading,
 }
 
 /// `ast.Diagnostic`
@@ -927,8 +1422,6 @@ pub struct Stmt {
     /// Position of its first token, including decorators and modifiers.
     pub start: u32,
     pub loc: TextRange,
-    /// `node.Modifiers()`
-    pub modifiers: Span<ModifierId>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1744,6 +2237,43 @@ impl Default for JsxPragmas {
     }
 }
 
+/// A `//` or `/* */` comment. Its index in [`File::comments`] is its id.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Comment {
+    pub pos: u32,
+    pub end: u32,
+    /// End of the previous token, or 0 if the comment comes before the first token.
+    pub prev_token_end: u32,
+    /// Start of the next token, or the length of the text if the comment comes after the last token.
+    pub next_token_start: u32,
+    /// `/* */` instead of `//`.
+    pub is_block: bool,
+    /// A block comment that spans more than one line.
+    pub is_multiline: bool,
+    /// There is a line break between the comment and the token or comment before it, or nothing but whitespace before it in
+    /// the file.
+    pub has_newline_before: bool,
+    /// There is a line break between the comment and the token or comment after it. Always true for a `//` comment.
+    pub has_newline_after: bool,
+    /// The smallest node that contains the comment. `None` at the top level of the file. This and the next two fields are
+    /// only filled in if the parser was asked to attach comments.
+    pub enclosing_node: NodeOrName,
+    /// The closest child of `enclosing_node` that ends before the comment.
+    pub preceding_node: NodeOrName,
+    /// The closest child of `enclosing_node` that starts after the comment.
+    pub following_node: NodeOrName,
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum NodeOrName {
+    #[default]
+    None,
+    Node(NodeData),
+    /// An identifier or a literal key, given by its start offset. The HIR stores names as fields of nodes. In ESTree they are
+    /// nodes themselves.
+    Name(u32),
+}
+
 /// A node with `NodeFlagsHasJSDoc`.
 #[derive(Copy, Clone, Debug)]
 pub struct JsDocHost {
@@ -1779,6 +2309,10 @@ pub struct FileIn<S: Storage> {
     /// `.js`, `.jsx`, `.mjs`, `.cjs`. Parsed like `.tsx`: TypeScript-only syntax is accepted, and
     /// reported as an error afterwards.
     pub is_js: bool,
+    /// The file is parsed as Flow (`Dialect::flow`). What Flow has and TypeScript has not is written
+    /// with the nodes of TypeScript: `bun_sema_parser`'s `flow.rs` says how. Only a formatter gets
+    /// such a file.
+    pub is_flow: bool,
     /// `// @ts-check` (true) or `// @ts-nocheck` among the leading comments. The last one wins.
     pub check_directive: Option<bool>,
     /// A module even without module syntax: by its extension, or because the options force every
@@ -1789,14 +2323,20 @@ pub struct FileIn<S: Storage> {
     /// The parser rejected the file: the HIR is partial or empty. Only parse errors are reported
     /// for it.
     pub has_errors: bool,
-    /// The parser, the lowering pass or the binder ran out of stack: the HIR is partial or empty.
+    /// The parser or the binder ran out of stack: the HIR is partial or empty.
     /// The file is reported as not fully checked and the exit code is 1.
     pub ran_out_of_stack: bool,
     /// `@d`: the decorated node, and the expression. In source order.
     pub decorators: S::Few<(DecoratorOwner, ExprId)>,
     /// `experimentalDecorators`
     pub legacy_decorators: bool,
-    /// Diagnostics produced while parsing and lowering the file.
+    /// Two of the parameters of a function or a signature may bind one name. Only `bun_sema_parser` says so, and it may say
+    /// so of what a speculative parse has given up.
+    pub may_bind_a_parameter_twice: bool,
+    /// Bits of [`rare`]: syntax that nearly no file has, which the parser notices on its way. Only `bun_sema_parser` sets
+    /// them, also for what a speculative parse has given up.
+    pub rare_syntax: u32,
+    /// Diagnostics produced while parsing the file.
     pub diagnostics: S::Kept<Diagnostic>,
     /// `hasParseDiagnostics`: the parser or the scanner reported an error. `grammarErrorOnNode` and the binder's checks of
     /// reserved names then report nothing.
@@ -1817,18 +2357,29 @@ pub struct FileIn<S: Storage> {
     pub references: S::Few<(ReferenceKind, Atom, u32, ResolutionMode)>,
     /// `CommentDirectives`, in order.
     pub comment_directives: S::Few<CommentDirective>,
+    /// Every `//` and `/* */` comment, in order. Not a `#!` line. The HTML-like comments of a script (`<!--`, `-->`) are only
+    /// included if the parser was asked to attach comments.
+    pub comments: S::Nodes<Comment>,
+    /// See `may_mention`. `MENTIONED_BITS` bits, or empty if the parser does not record them.
+    pub mentioned: S::Nodes<u64>,
     /// The span of the statement of each `with (e) statement`, from right after the `)` to its end.
     pub with_bodies: S::Few<(u32, u32)>,
+    /// The `;` terminators that do not directly follow the previous token, as in `a() /* comment */ ;`. Each entry is the
+    /// offset of the `;` and the end of the previous token. Sorted. Only with `Options::attach_comments`.
+    pub detached_semicolons: S::Few<(u32, u32)>,
     /// The position of the `{` of each function whose body is a block, except for a static block,
     /// where it is the `anchor`. Sorted.
-    pub body_starts: S::List<(FnId, u32)>,
+    pub body_starts: S::Nodes<(FnId, u32)>,
     /// The start of each token that follows a token the parser skipped in a list (`abortParsingListOrMoveToNextToken`). Sorted.
     pub after_skipped: S::Few<u32>,
     /// `node.Modifiers()` of a parameter, indexed by `ParamId`: see `param_modifiers`. Only as long
     /// as the last parameter with modifiers requires, and empty in most files. Deliberately a
     /// separate column and not a field of `Param`: few parameters have a modifier, and a field
     /// would cost every parameter.
-    pub modifiers_of_params: S::List<Span<ModifierId>>,
+    pub modifiers_of_params: S::Nodes<Span<ModifierId>>,
+    /// `node.Modifiers()` of the statements that have any, sorted by statement. Read it with `stmt_modifiers`. Kept out
+    /// of `Stmt` because only one statement in forty has a modifier.
+    pub modifiers_of_stmts: S::Nodes<(StmtId, Span<ModifierId>)>,
     /// `node.Modifiers()` of the members of object literals that have any: see `prop_modifiers`.
     /// Sorted.
     pub modifiers_of_props: S::Few<(PropId, Span<ModifierId>)>,
@@ -1840,7 +2391,7 @@ pub struct FileIn<S: Storage> {
     /// decorators. The expressions are separate statements.
     pub stray_decorators: S::Few<(u32, u32)>,
     /// The occurrences of module specifiers, except those of `import()`, which are expressions.
-    pub specifier_uses: S::List<SpecifierUse>,
+    pub specifier_uses: S::Nodes<SpecifierUse>,
 
     /// The specifier of each `import.defer(..)`, and the position of the `)` of the call.
     pub deferred_import_calls: S::Few<(ExprId, u32)>,
@@ -1856,15 +2407,19 @@ pub struct FileIn<S: Storage> {
     pub exports_from_expressions: S::Few<(StmtId, ExprId)>,
     /// `ParenthesizedExpression`: the inner expression, the start and the end of the parentheses.
     /// Ordered by expression, and for nested parentheses around one expression innermost first.
-    pub parens: S::List<(ExprId, u32, u32)>,
+    pub parens: S::Nodes<(ExprId, u32, u32)>,
     /// `x!!!` is one `NonNull`, which ends at the last `!`. The parser reads a run of `!` in a loop,
     /// so nothing bounds its length, and `x!!` has the type of `x!`. These are the other
     /// `NonNullExpression`s of the run: the `NonNull`, and where each ends. Ordered by expression, the
     /// innermost first.
     pub non_null_ends: S::Few<(ExprId, u32)>,
+    /// Name positions of the `Dot`s whose name starts more than 65,534 bytes before their end. Sorted by expression.
+    pub far_names: S::Few<(ExprId, u32)>,
+    /// `TaggedTemplateExpression.Template` of each tagged template, sorted by call. The call's `args` are its substitutions.
+    pub tagged_templates: S::Few<(CallId, ExprId)>,
     /// `JsxExpression`: the inner expression, the start and the end of the braces. Ordered by
     /// expression.
-    pub jsx_expressions: S::List<(ExprId, u32, u32)>,
+    pub jsx_expressions: S::Nodes<(ExprId, u32, u32)>,
     /// The JSX pragmas from the leading comments of this file.
     pub jsx_pragmas: JsxPragmas,
     /// The spans of the JSDoc comments of a JavaScript file. Sorted. A node whose position is
@@ -1894,42 +2449,40 @@ pub struct FileIn<S: Storage> {
     /// not name the class of the `extends` clause, and the start of the 8023 in `diagnostics`.
     pub unmatched_augments_tags: S::Few<(ClassId, u32)>,
 
-    pub ids: S::List<u32>,
-    pub numbers: S::List<f64>,
-    pub exprs: S::List<Expr>,
-    pub stmts: S::List<Stmt>,
-    pub types: S::List<TypeNode>,
-    pub pats: S::List<Pat>,
-    pub pat_props: S::List<PatProp>,
-    pub pat_elems: S::List<PatElem>,
-    pub fns: S::List<Func>,
-    pub params: S::List<Param>,
-    pub type_params: S::List<TypeParam>,
-    pub classes: S::List<Class>,
-    pub interfaces: S::List<Interface>,
-    pub aliases: S::List<Alias>,
+    pub ids: S::Nodes<u32>,
+    pub numbers: S::Nodes<f64>,
+    pub exprs: S::Nodes<Expr>,
+    pub stmts: S::Nodes<Stmt>,
+    pub types: S::Nodes<TypeNode>,
+    pub pats: S::Nodes<Pat>,
+    pub pat_props: S::Nodes<PatProp>,
+    pub pat_elems: S::Nodes<PatElem>,
+    pub fns: S::Nodes<Func>,
+    pub params: S::Nodes<Param>,
+    pub type_params: S::Nodes<TypeParam>,
+    pub classes: S::Nodes<Class>,
+    pub interfaces: S::Nodes<Interface>,
+    pub aliases: S::Nodes<Alias>,
     pub enums: S::Few<Enum>,
     pub enum_members: S::Few<EnumMember>,
     pub modules: S::Few<Module>,
-    pub members: S::List<Member>,
-    pub props: S::List<Prop>,
-    pub var_decls: S::List<VarDecl>,
-    pub calls: S::List<Call>,
-    pub cases: S::List<Case>,
+    pub members: S::Nodes<Member>,
+    pub props: S::Nodes<Prop>,
+    pub var_decls: S::Nodes<VarDecl>,
+    pub calls: S::Nodes<Call>,
+    pub cases: S::Nodes<Case>,
     pub jsx: S::Few<Jsx>,
-    pub imports: S::List<Import>,
-    pub import_specs: S::List<ImportSpec>,
+    pub imports: S::Nodes<Import>,
+    pub import_specs: S::Nodes<ImportSpec>,
     pub import_equals: S::Few<ImportEquals>,
-    pub exports: S::List<Export>,
-    pub export_specs: S::List<ExportSpec>,
+    pub exports: S::Nodes<Export>,
+    pub export_specs: S::Nodes<ExportSpec>,
     pub tuple_elems: S::Few<TupleElem>,
     pub mapped: S::Few<Mapped>,
-    pub modifiers: S::List<Modifier>,
-    pub names: S::List<Name>,
+    pub modifiers: S::Nodes<Modifier>,
+    pub names: S::Nodes<Name>,
     /// See node.rs. Set by `finish_nodes`.
     pub bases: NodeBases,
-    pub fn_nodes: S::List<Node>,
-    pub class_nodes: S::List<Node>,
     pub lazy: S::Lazy,
     /// The position of each `Identifier` whose text is one of `Atom::is_keyword_identifier`, or the
     /// start of its parent node.
@@ -2012,6 +2565,34 @@ arenas! {
     names: Name => NameId, add_name, add_names;
 }
 
+/// The number of bits of `FileIn::mentioned`.
+pub const MENTIONED_BITS: usize = 1 << 14;
+
+/// Which bit of `FileIn::mentioned` stands for `text`. It depends on nothing but the text, so for a
+/// text that is known when the program is compiled it is a constant.
+pub const fn mention_bit(text: &[u8]) -> u32 {
+    let mut words = [0u64; 2];
+    let mut at = 0;
+    while at < text.len() && at < 16 {
+        words[at / 8] |= (text[at] as u64) << (at % 8 * 8);
+        at += 1;
+    }
+    mention_bit_of(words, text.len())
+}
+
+/// The bit of `FileIn::mentioned` that is also set if the file mentions `use`, or a text that starts
+/// with `use` and an ASCII capital or digit: what React takes for the name of a hook.
+pub const MENTION_OF_A_HOOK: u32 = mention_bit(b"use\0");
+
+/// `mention_bit` of the text with the length `len` whose first 16 bytes are `words`, little endian
+/// and padded with zeros.
+#[inline(always)]
+pub const fn mention_bit_of(words: [u64; 2], len: usize) -> u32 {
+    let rest = if len < 16 { 0 } else { len as u64 };
+    let mixed = words[0] ^ words[1].rotate_left(29) ^ rest.rotate_left(17);
+    (mixed.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (64 - MENTIONED_BITS.trailing_zeros())) as u32
+}
+
 impl<S: Storage> FileIn<S> {
     /// `node.Modifiers()` of the parameter `p`: keywords and decorators, in source order.
     #[inline]
@@ -2020,6 +2601,10 @@ impl<S: Storage> FileIn<S> {
             .get(p.idx())
             .copied()
             .unwrap_or(Span::EMPTY)
+    }
+    /// Returns `node.Modifiers()` of the statement `s`.
+    pub fn stmt_modifiers(&self, s: StmtId) -> Span<ModifierId> {
+        stmt_modifiers_in(&self.modifiers_of_stmts, s)
     }
     /// `node.Modifiers()` of the member `p` of an object literal.
     pub fn prop_modifiers(&self, p: PropId) -> Span<ModifierId> {
@@ -2186,6 +2771,27 @@ impl<S: Storage> FileIn<S> {
     }
 
     #[inline]
+    pub fn branches(&self, at: BranchesAt) -> Branches {
+        at.of(&self.ids)
+    }
+
+    #[inline]
+    pub fn list_at<T>(&self, list: ListAt<T>) -> IdList<T> {
+        list.of(&self.ids)
+    }
+
+    /// Returns `TaggedTemplateExpression.Template`, or `NONE` if `call` isn't a tagged template.
+    pub fn template_of(&self, call: CallId) -> ExprId {
+        template_in(&self.tagged_templates, call)
+    }
+
+    /// Returns the position of the name in the `Dot` expression `e`.
+    #[inline]
+    pub fn name_pos(&self, e: ExprId) -> u32 {
+        name_pos_in(&self.exprs, &self.far_names, e)
+    }
+
+    #[inline]
     pub fn id_at<T: From<u32>>(&self, list: IdList<T>, i: usize) -> T {
         debug_assert!(i < list.len());
         T::from(self.ids[list.start as usize + i])
@@ -2212,7 +2818,6 @@ impl FileBuilder {
             kind: StmtKind::Empty,
             start: pos,
             loc: TextRange::default(),
-            modifiers: Span::EMPTY,
         });
         self.set_stmt_kind(stmt, kind);
         stmt
@@ -2234,6 +2839,44 @@ impl FileBuilder {
         self.ids.extend(items.iter().map(|&i| i.into()));
         IdList::new(start, items.len() as u32)
     }
+    pub fn place_of_branches(&mut self, branches: Branches) -> BranchesAt {
+        let at = self.ids.len() as u32;
+        self.ids.extend([branches.yes.0, branches.no.0]);
+        BranchesAt(at)
+    }
+    pub fn place_of_list<T>(&mut self, list: IdList<T>) -> ListAt<T> {
+        if list.is_empty() {
+            return ListAt::EMPTY;
+        }
+        let at = self.ids.len() as u32;
+        self.ids.extend([list.start, list.len]);
+        ListAt {
+            at,
+            _of: PhantomData,
+        }
+    }
+    /// Builds the kind for `obj.name`. The caller must add it as the very next expression, ending at `end`.
+    #[inline]
+    pub fn dot(
+        &mut self,
+        (obj, chain): (ExprId, Chain),
+        (name, name_pos): (Atom, u32),
+        end: u32,
+    ) -> ExprKind {
+        let before_end = end.checked_sub(name_pos);
+        let near = before_end.and_then(|it| u16::try_from(it).ok());
+        let name_before_end = near.filter(|&it| it != FAR).unwrap_or_else(|| {
+            let next = ExprId(self.exprs.len() as u32);
+            self.far_names.push((next, name_pos));
+            FAR
+        });
+        ExprKind::Dot {
+            obj,
+            name,
+            chain,
+            name_before_end,
+        }
+    }
     /// `A.B.C`: each name with its position.
     pub fn entity_name(&mut self, names: impl Iterator<Item = (Atom, u32)>) -> Span<NameId> {
         let start = self.names.len();
@@ -2243,26 +2886,6 @@ impl FileBuilder {
             name.place |= Name::QUALIFIED;
         }
         Span::new(start as u32, (self.names.len() - start) as u32)
-    }
-    /// `before.text`, appended as the parser reaches it.
-    pub fn append_to_entity_name(
-        &mut self,
-        before: Span<NameId>,
-        text: Atom,
-        place: u32,
-    ) -> Span<NameId> {
-        let mut start = before.start;
-        // Other names have been added since.
-        if before.range().end != self.names.len() {
-            start = self.names.len() as u32;
-            self.names.extend_from_within(before.range());
-        }
-        let place = match before.is_empty() {
-            true => place,
-            false => place | Name::QUALIFIED,
-        };
-        self.names.push(Name { text, place });
-        Span::new(start, before.len + 1)
     }
 }
 
@@ -2297,8 +2920,134 @@ macro_rules! long_lists {
             jsx_expressions,
             modifiers,
             names,
-            body_starts
+            body_starts,
+            modifiers_of_stmts
         );
+    };
+}
+
+/// A `File` of `$this`, a `FileBuilder` or a `File`. What becomes of a list of nodes (`$long`), of a list that is empty in most
+/// files (`$few`), of one whose elements own memory (`$kept`), of the text (`$taken`).
+macro_rules! file_in_arena {
+    ($this:ident, $arena:ident, $session:ident, $cells:expr, $long:ident, $few:ident, $kept:ident, $taken:ident) => {
+        File {
+            kind: $this.kind,
+            is_js: $this.is_js,
+            is_flow: $this.is_flow,
+            check_directive: $this.check_directive,
+            is_module_by_decree: $this.is_module_by_decree,
+            has_module_syntax: $this.has_module_syntax,
+            has_errors: $this.has_errors,
+            ran_out_of_stack: $this.ran_out_of_stack,
+            decorators: $few!($this.decorators),
+            legacy_decorators: $this.legacy_decorators,
+            may_bind_a_parameter_twice: $this.may_bind_a_parameter_twice,
+            rare_syntax: $this.rare_syntax,
+            diagnostics: $kept!($this.diagnostics),
+            has_parse_diagnostics: $this.has_parse_diagnostics,
+            syntax_errors: $this.syntax_errors,
+            error_pos: $this.error_pos,
+            source_len: $this.source_len,
+            text: $taken!($this.text),
+            body: $this.body,
+            references: $few!($this.references),
+            comment_directives: $few!($this.comment_directives),
+            comments: $long!($this.comments),
+            mentioned: $long!($this.mentioned),
+            with_bodies: $few!($this.with_bodies),
+            detached_semicolons: $few!($this.detached_semicolons),
+            body_starts: $long!($this.body_starts),
+            after_skipped: $few!($this.after_skipped),
+            modifiers_of_params: $long!($this.modifiers_of_params),
+            modifiers_of_stmts: $long!($this.modifiers_of_stmts),
+            modifiers_of_props: $few!($this.modifiers_of_props),
+            unclosed_literals: $few!($this.unclosed_literals),
+            stray_decorators: $few!($this.stray_decorators),
+            specifier_uses: $long!($this.specifier_uses),
+            deferred_import_calls: $few!($this.deferred_import_calls),
+            import_call_type_args: $few!($this.import_call_type_args),
+            import_attributes: $few!($this.import_attributes),
+            specifier_expressions: $few!($this.specifier_expressions),
+            exports_from_expressions: $few!($this.exports_from_expressions),
+            parens: $long!($this.parens),
+            non_null_ends: $few!($this.non_null_ends),
+            far_names: $few!($this.far_names),
+            tagged_templates: $few!($this.tagged_templates),
+            jsx_expressions: $long!($this.jsx_expressions),
+            jsx_pragmas: $this.jsx_pragmas,
+            jsdoc_comments: $few!($this.jsdoc_comments),
+            jsdoc_asterisks: $few!($this.jsdoc_asterisks),
+            jsdoc_hosts: $few!($this.jsdoc_hosts),
+            jsdoc_types: $few!($this.jsdoc_types),
+            jsdoc_modifiers: $few!($this.jsdoc_modifiers),
+            jsdoc_member_comments: $kept!($this.jsdoc_member_comments),
+            jsdoc_param_errors: $kept!($this.jsdoc_param_errors),
+            functions_with_param_tags: $few!($this.functions_with_param_tags),
+            unmatched_augments_tags: $few!($this.unmatched_augments_tags),
+            ids: $long!($this.ids),
+            numbers: $long!($this.numbers),
+            exprs: $long!($this.exprs),
+            stmts: $long!($this.stmts),
+            types: $long!($this.types),
+            pats: $long!($this.pats),
+            pat_props: $long!($this.pat_props),
+            pat_elems: $long!($this.pat_elems),
+            fns: $long!($this.fns),
+            params: $long!($this.params),
+            type_params: $long!($this.type_params),
+            classes: $long!($this.classes),
+            interfaces: $long!($this.interfaces),
+            aliases: $long!($this.aliases),
+            enums: $few!($this.enums),
+            enum_members: $few!($this.enum_members),
+            modules: $few!($this.modules),
+            members: $long!($this.members),
+            props: $long!($this.props),
+            var_decls: $long!($this.var_decls),
+            calls: $long!($this.calls),
+            cases: $long!($this.cases),
+            jsx: $few!($this.jsx),
+            imports: $long!($this.imports),
+            import_specs: $long!($this.import_specs),
+            import_equals: $few!($this.import_equals),
+            exports: $long!($this.exports),
+            export_specs: $long!($this.export_specs),
+            tuple_elems: $few!($this.tuple_elems),
+            mapped: $few!($this.mapped),
+            modifiers: $long!($this.modifiers),
+            names: $long!($this.names),
+            bases: $this.bases,
+            lazy: Lazy {
+                session: $session,
+                arena: $arena,
+                cells: $cells,
+            },
+            keyword_identifier_positions: $few!($this.keyword_identifier_positions),
+        }
+    };
+}
+
+/// `$few`, `$kept` and `$taken` for a `FileBuilder` that gives up what it has.
+macro_rules! moved_lists {
+    ($arena:ident) => {
+        macro_rules! few {
+            ($list:expr) => {
+                match $list.is_empty() {
+                    true => ArenaFew::default(),
+                    false => few_to_arena(std::mem::take(&mut $list), $arena),
+                }
+            };
+        }
+        macro_rules! kept {
+            ($list:expr) => {
+                Cow::Owned(std::mem::take(&mut $list))
+            };
+        }
+        macro_rules! taken {
+            ($it:expr) => {
+                std::mem::take(&mut $it)
+            };
+        }
     };
 }
 
@@ -2311,94 +3060,26 @@ impl FileBuilder {
 
     /// The file with every list at its final size in `arena`, which is one of `session`. Also
     /// returns the long lists, emptied: the next file that the thread parses reuses their capacity.
-    pub fn into_arena<'s>(
+    pub fn into_arena<'s>(self, arena: &'s Arena, session: &'s Session) -> (File<'s>, FileBuilder) {
+        self.into_arena_with(arena, session, session.keep(LazyCells::default()))
+    }
+
+    fn into_arena_with<'s>(
         mut self,
         arena: &'s Arena,
         session: &'s Session,
+        cells: &'s LazyCells,
     ) -> (File<'s>, FileBuilder) {
-        let file = File {
-            kind: self.kind,
-            is_js: self.is_js,
-            check_directive: self.check_directive,
-            is_module_by_decree: self.is_module_by_decree,
-            has_module_syntax: self.has_module_syntax,
-            has_errors: self.has_errors,
-            ran_out_of_stack: self.ran_out_of_stack,
-            decorators: few_to_arena(self.decorators, arena),
-            legacy_decorators: self.legacy_decorators,
-            diagnostics: Cow::Owned(self.diagnostics),
-            has_parse_diagnostics: self.has_parse_diagnostics,
-            syntax_errors: self.syntax_errors,
-            error_pos: self.error_pos,
-            source_len: self.source_len,
-            text: self.text,
-            body: self.body,
-            references: few_to_arena(self.references, arena),
-            comment_directives: few_to_arena(self.comment_directives, arena),
-            with_bodies: few_to_arena(self.with_bodies, arena),
-            body_starts: copy_to_arena(&mut self.body_starts, arena),
-            after_skipped: few_to_arena(self.after_skipped, arena),
-            modifiers_of_params: copy_to_arena(&mut self.modifiers_of_params, arena),
-            modifiers_of_props: few_to_arena(self.modifiers_of_props, arena),
-            unclosed_literals: few_to_arena(self.unclosed_literals, arena),
-            stray_decorators: few_to_arena(self.stray_decorators, arena),
-            specifier_uses: copy_to_arena(&mut self.specifier_uses, arena),
-            deferred_import_calls: few_to_arena(self.deferred_import_calls, arena),
-            import_call_type_args: few_to_arena(self.import_call_type_args, arena),
-            import_attributes: few_to_arena(self.import_attributes, arena),
-            specifier_expressions: few_to_arena(self.specifier_expressions, arena),
-            exports_from_expressions: few_to_arena(self.exports_from_expressions, arena),
-            parens: copy_to_arena(&mut self.parens, arena),
-            non_null_ends: few_to_arena(self.non_null_ends, arena),
-            jsx_expressions: copy_to_arena(&mut self.jsx_expressions, arena),
-            jsx_pragmas: self.jsx_pragmas,
-            jsdoc_comments: few_to_arena(self.jsdoc_comments, arena),
-            jsdoc_asterisks: few_to_arena(self.jsdoc_asterisks, arena),
-            jsdoc_hosts: few_to_arena(self.jsdoc_hosts, arena),
-            jsdoc_types: few_to_arena(self.jsdoc_types, arena),
-            jsdoc_modifiers: few_to_arena(self.jsdoc_modifiers, arena),
-            jsdoc_member_comments: Cow::Owned(self.jsdoc_member_comments),
-            jsdoc_param_errors: Cow::Owned(self.jsdoc_param_errors),
-            functions_with_param_tags: few_to_arena(self.functions_with_param_tags, arena),
-            unmatched_augments_tags: few_to_arena(self.unmatched_augments_tags, arena),
-            ids: copy_to_arena(&mut self.ids, arena),
-            numbers: copy_to_arena(&mut self.numbers, arena),
-            exprs: copy_to_arena(&mut self.exprs, arena),
-            stmts: copy_to_arena(&mut self.stmts, arena),
-            types: copy_to_arena(&mut self.types, arena),
-            pats: copy_to_arena(&mut self.pats, arena),
-            pat_props: copy_to_arena(&mut self.pat_props, arena),
-            pat_elems: copy_to_arena(&mut self.pat_elems, arena),
-            fns: copy_to_arena(&mut self.fns, arena),
-            params: copy_to_arena(&mut self.params, arena),
-            type_params: copy_to_arena(&mut self.type_params, arena),
-            classes: copy_to_arena(&mut self.classes, arena),
-            interfaces: copy_to_arena(&mut self.interfaces, arena),
-            aliases: copy_to_arena(&mut self.aliases, arena),
-            enums: few_to_arena(self.enums, arena),
-            enum_members: few_to_arena(self.enum_members, arena),
-            modules: few_to_arena(self.modules, arena),
-            members: copy_to_arena(&mut self.members, arena),
-            props: copy_to_arena(&mut self.props, arena),
-            var_decls: copy_to_arena(&mut self.var_decls, arena),
-            calls: copy_to_arena(&mut self.calls, arena),
-            cases: copy_to_arena(&mut self.cases, arena),
-            jsx: few_to_arena(self.jsx, arena),
-            imports: copy_to_arena(&mut self.imports, arena),
-            import_specs: copy_to_arena(&mut self.import_specs, arena),
-            import_equals: few_to_arena(self.import_equals, arena),
-            exports: copy_to_arena(&mut self.exports, arena),
-            export_specs: copy_to_arena(&mut self.export_specs, arena),
-            tuple_elems: few_to_arena(self.tuple_elems, arena),
-            mapped: few_to_arena(self.mapped, arena),
-            modifiers: copy_to_arena(&mut self.modifiers, arena),
-            names: copy_to_arena(&mut self.names, arena),
-            bases: self.bases,
-            fn_nodes: copy_to_arena(&mut self.fn_nodes, arena),
-            class_nodes: copy_to_arena(&mut self.class_nodes, arena),
-            lazy: Lazy::new(session),
-            keyword_identifier_positions: few_to_arena(self.keyword_identifier_positions, arena),
-        };
+        // Nothing is asked of the arena for an empty list: see `File::empty_in`.
+        macro_rules! copied {
+            ($list:expr) => {{
+                let exact = Fixed::copied_in(arena, &$list);
+                $list.clear();
+                exact
+            }};
+        }
+        moved_lists!(arena);
+        let file = file_in_arena!(self, arena, session, cells, copied, few, kept, taken);
         let mut emptied = FileBuilder::default();
         macro_rules! each {
             ($($f:ident),*) => { $(emptied.$f = self.$f;)* };
@@ -2406,17 +3087,71 @@ impl FileBuilder {
         long_lists!(each);
         (file, emptied)
     }
+
+    /// The file for as long as `self` is not touched: the long lists stay where they are. What else
+    /// a `File` has is in `arena`, which is one of `session`.
+    pub fn lend<'s>(&'s mut self, arena: &'s Arena, session: &'s Session) -> File<'s> {
+        self.lazy = LazyCells::default();
+        macro_rules! lent {
+            ($list:expr) => {
+                Fixed(FixedIn::Lent(&mut $list[..]))
+            };
+        }
+        moved_lists!(arena);
+        file_in_arena!(self, arena, session, &self.lazy, lent, few, kept, taken)
+    }
+}
+
+impl File<'_> {
+    /// The same file for a program that has it in common with others. The lists of nodes stay where they are, and what is
+    /// computed on demand is computed once for all. What else a `File` has is in `arena`, which is one of `session`.
+    pub fn share<'s>(&'s self, arena: &'s Arena, session: &'s Session) -> File<'s> {
+        macro_rules! shared {
+            ($list:expr) => {
+                Fixed::shared(&$list[..])
+            };
+        }
+        macro_rules! few {
+            ($list:expr) => {
+                ArenaFew::from_iter_in($list.iter().cloned(), arena)
+            };
+        }
+        macro_rules! kept {
+            ($list:expr) => {
+                Cow::Borrowed(&$list[..])
+            };
+        }
+        macro_rules! taken {
+            ($it:expr) => {
+                Cow::Borrowed(&$it[..])
+            };
+        }
+        file_in_arena!(
+            self,
+            arena,
+            session,
+            self.lazy.cells,
+            shared,
+            few,
+            kept,
+            taken
+        )
+    }
 }
 
 impl<'s> File<'s> {
-    /// A file without nodes.
+    /// A file without nodes. It allocates nothing, so any thread can make one for the arena of
+    /// another (`Files::free_tree`): only the thread that owns an arena can allocate in it.
     pub fn empty_in(arena: &'s Arena, session: &'s Session) -> File<'s> {
-        FileBuilder::default().into_arena(arena, session).0
+        let no_nodes = FileBuilder::default();
+        no_nodes
+            .into_arena_with(arena, session, &CELLS_OF_NO_NODES)
+            .0
     }
 
     /// The arena that the lists are in.
     pub fn arena(&self) -> &'s Arena {
-        self.exprs.allocator()
+        self.lazy.arena
     }
 }
 
@@ -2513,8 +3248,8 @@ pub fn is_entity_name_expression(hir: &File, e: ExprId) -> bool {
 
 /// `IsPropertyAccessEntityNameExpression` for `e` itself, ignoring enclosing parentheses.
 pub fn is_property_access_entity_name_expression(hir: &File, e: ExprId) -> bool {
-    matches!(hir[e].kind, ExprKind::Dot { obj, name_pos, .. }
-        if !is_private_name_at(hir, name_pos) && is_entity_name_expression(hir, obj))
+    matches!(hir[e].kind, ExprKind::Dot { obj, .. }
+        if !is_private_name_at(hir, hir.name_pos(e)) && is_entity_name_expression(hir, obj))
 }
 
 /// `ExpressionIsAlias`
@@ -2573,27 +3308,35 @@ pub fn is_dotted_name(hir: &File, e: ExprId) -> bool {
 }
 
 /// `isNarrowableReference`
-pub fn is_narrowable_reference(hir: &File, e: ExprId) -> bool {
+pub fn is_narrowable_reference(hir: &File, mut e: ExprId) -> bool {
+    loop {
+        match narrowable_reference_step(hir, e) {
+            Ok(answer) => return answer,
+            Err(same) => e = same,
+        }
+    }
+}
+
+/// `isNarrowableReference` of `e`, or the expression for which the answer is the same.
+pub(crate) fn narrowable_reference_step(hir: &File, e: ExprId) -> Result<bool, ExprId> {
     match hir[e].kind {
         ExprKind::Ident(_)
         | ExprKind::This
         | ExprKind::Super
         | ExprKind::NewTarget(_)
-        | ExprKind::ImportMeta => true,
-        ExprKind::Dot { obj, .. } => is_narrowable_reference(hir, obj),
-        ExprKind::NonNull(x) => is_narrowable_reference(hir, x),
+        | ExprKind::ImportMeta => Ok(true),
+        ExprKind::Dot { obj, .. } => Err(obj),
+        ExprKind::NonNull(x) => Err(x),
         // With a literal key the object is not checked.
-        ExprKind::Index { obj, index, .. } => {
-            is_string_or_numeric_literal_like(hir, index)
-                || is_entity_name_expression(hir, index) && is_narrowable_reference(hir, obj)
-        }
+        ExprKind::Index { index, .. } if is_string_or_numeric_literal_like(hir, index) => Ok(true),
+        ExprKind::Index { obj, index, .. } if is_entity_name_expression(hir, index) => Err(obj),
         ExprKind::Binary {
             op: BinOp::Comma,
             right,
             ..
-        } => is_narrowable_reference(hir, right),
-        ExprKind::Assign { target, .. } => is_left_hand_side_expression(hir, target),
-        _ => false,
+        } => Err(right),
+        ExprKind::Assign { target, .. } => Ok(is_left_hand_side_expression(hir, target)),
+        _ => Ok(false),
     }
 }
 
@@ -2658,5 +3401,5 @@ pub fn is_nested_namespace(hir: &File, s: StmtId) -> bool {
     matches!(hir[s].kind, StmtKind::Module(m) if hir[s].start == hir[m].name_pos)
 }
 
-const _: () = assert!(std::mem::size_of::<Expr>() <= 24);
+const _: () = assert!(std::mem::size_of::<Expr>() <= 20);
 const _: () = assert!(std::mem::size_of::<TypeNode>() <= 32);

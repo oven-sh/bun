@@ -1,7 +1,7 @@
 //! JavaScript files: which diagnostics apply to them.
 //!
 //! A port of `canIncludeBindAndCheckDiagnostics`, `getBindAndCheckDiagnosticsWithChecker` and `getAdditionalJSSyntacticDiagnostics`
-//! (TypeScript 7.0.2, compiler/program.go). `checkJSSyntax` (parser/parser.go) runs during lowering: `hir::DiagnosticKind::Js`.
+//! (TypeScript 7.0.2, compiler/program.go). `checkJSSyntax` (parser/parser.go) runs in the parser: `hir::DiagnosticKind::Js`.
 
 use super::*;
 
@@ -81,7 +81,10 @@ impl Checker<'_, '_> {
                     | StmtKind::Enum(_)
                     | StmtKind::Module(_)
                     | StmtKind::Var(_)
-            ) && !hir.modifier_list(hir[s].modifiers).iter().any(is_declared)
+            ) && !hir
+                .modifier_list(hir.stmt_modifiers(s))
+                .iter()
+                .any(is_declared)
             {
                 let start = hir[s].start;
                 self.error_at((file, start, 0), 1046, &[]);

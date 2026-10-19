@@ -127,7 +127,7 @@ impl Checker<'_, '_> {
         }
         // `{ a = 1 }` that is not an assignment target (1312): `checkObjectLiteral` checks the
         // initializer and not the name.
-        let parent = bound.expr_parent[assignment.idx()];
+        let parent = bound.parent_of_expr(assignment);
         if matches!(parent, Parent::Prop(p) if hir[p].kind == PropKind::Shorthand) {
             return;
         }
@@ -152,7 +152,7 @@ impl Checker<'_, '_> {
             let object = self.apparent_type(object);
             if let Some((prop, _)) = self.prop_ref(object, name)
                 && let PropSource::Symbol(sym) = prop.source
-                && self.files().decls(sym).len() > 1
+                && self.files().decls_of(sym).len() > 1
             {
                 return;
             }
@@ -181,10 +181,10 @@ impl Checker<'_, '_> {
                 return false;
             }
             let is_pattern = node != e;
-            node = match bound.expr_parent[node.idx()] {
+            node = match bound.parent_of_expr(node) {
                 Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
                     ExprKind::Array(_) => parent,
-                    ExprKind::Spread(_) if is_pattern => match bound.expr_parent[parent.idx()] {
+                    ExprKind::Spread(_) if is_pattern => match bound.parent_of_expr(parent) {
                         Parent::Expr(array)
                             if array.is_some() && matches!(hir[array].kind, ExprKind::Array(_)) =>
                         {
@@ -211,7 +211,7 @@ impl Checker<'_, '_> {
                 }
                 // `checkForOfStatement`
                 Parent::Stmt(head) if is_pattern && head.is_some() => {
-                    return matches!(bound.stmt_parent[head.idx()], Parent::Stmt(owner) if owner.is_some()
+                    return matches!(bound.parent_of_stmt(head), Parent::Stmt(owner) if owner.is_some()
                         && matches!(hir[owner].kind, StmtKind::ForOf { left, .. } if left == head));
                 }
                 _ => return false,
@@ -250,10 +250,18 @@ impl Checker<'_, '_> {
         if decl.init.is_none() || stmt.is_none() {
             return;
         }
+        // `checkDeclarationInitializer`: a name whose initializer `getQuickTypeOfExpression` answers
+        // from a signature may have a type that is not the widened type of the cached initializer.
+        let is_quick_type_of_signature = matches!(hir[decl.pat].kind, PatKind::Ident(_))
+            && matches!(
+                hir[decl.init].kind,
+                ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Await(_)
+            );
         // FOR SPEED: without an annotation the type of the variable is the widened type of the
         // initializer, except in a `for`-`of`, where it is the type of the elements.
         if decl.ty.is_none()
-            && !matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(p) if p.is_some() && matches!(hir[p].kind, StmtKind::ForOf { left, .. } if left == stmt))
+            && !is_quick_type_of_signature
+            && !matches!(bound.parent_of_stmt(stmt), Parent::Stmt(p) if p.is_some() && matches!(hir[p].kind, StmtKind::ForOf { left, .. } if left == stmt))
         {
             return;
         }
@@ -273,7 +281,7 @@ impl Checker<'_, '_> {
             PatKind::Ident(name)
                 if decl.kind == VarKind::Const
                     && matches!(hir[stmt].kind, StmtKind::Var(_))
-                    && !matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(p) if p.is_some() && matches!(hir[p].kind, StmtKind::For { init, .. } if init == stmt))
+                    && !matches!(bound.parent_of_stmt(stmt), Parent::Stmt(p) if p.is_some() && matches!(hir[p].kind, StmtKind::For { init, .. } if init == stmt))
                     && self.is_symbol_or_symbol_for_call(file, decl.init) =>
             {
                 self.unique_symbol_of_variable(file, decl.pat, name)
@@ -603,7 +611,8 @@ impl Checker<'_, '_> {
                     self.check_literals_expected_by_pattern(file, item);
                 }
             }
-            ExprKind::Cond { yes, no, .. } => {
+            ExprKind::Cond { branches, .. } => {
+                let Branches { yes, no } = hir.branches(branches);
                 self.check_literals_expected_by_pattern(file, yes);
                 self.check_literals_expected_by_pattern(file, no);
             }
@@ -1043,18 +1052,19 @@ impl Checker<'_, '_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `GetErrorRangeForNode`: the keyword.
         let node = (file, hir[s].start, hir[s].start + b"return".len() as u32);
-        if e.is_none() && !self.p.files.options.strict_null_checks {
-            let returned = self.return_type_of_fn(file, container);
-            if !returned.is_never() {
-                if hir[container].kind != FnKind::Constructor
-                    && self.p.files.options.no_implicit_returns
-                    && !self
-                        .is_unwrapped_return_type_undefined_void_or_any(file, container, returned)
-                {
-                    self.error_at(node, 7030, &[]);
-                }
-                return;
+        let return_type = self.return_type_of_fn(file, container);
+        if e.is_none() && !self.p.files.options.strict_null_checks && !return_type.is_never() {
+            if hir[container].kind != FnKind::Constructor
+                && self.p.files.options.no_implicit_returns
+                && !self.is_unwrapped_return_type_undefined_void_or_any(
+                    file,
+                    container,
+                    return_type,
+                )
+            {
+                self.error_at(node, 7030, &[]);
             }
+            return;
         }
         match hir[container].kind {
             FnKind::Setter => {
@@ -1085,13 +1095,10 @@ impl Checker<'_, '_> {
                 }
             }
             _ => {
-                let Some(declared) = self.return_type_from_annotation(file, container) else {
-                    return;
-                };
-                // `undefined`, which without strictNullChecks is assignable to everything but
-                // `never`.
-                if e.is_some() || self.p.files.options.strict_null_checks || declared.is_never() {
-                    let expected = self.unwrap_return_type(file, container, declared);
+                // `getReturnTypeFromAnnotation` is only the test: the target is the resolved return
+                // type, which is `any` after a circular annotation.
+                if self.return_type_from_annotation(file, container).is_some() {
+                    let expected = self.unwrap_return_type(file, container, return_type);
                     self.check_return_expression(
                         file,
                         container,
@@ -1201,7 +1208,8 @@ impl Checker<'_, '_> {
             self.check_type_assignable_to(TypeId::UNDEFINED, expected, Some(node), None);
             return;
         }
-        if let ExprKind::Cond { yes, no, .. } = hir[e].kind {
+        if let ExprKind::Cond { branches, .. } = hir[e].kind {
+            let Branches { yes, no } = hir.branches(branches);
             for arm in [yes, no] {
                 self.check_return_expression(
                     file,
@@ -1682,8 +1690,7 @@ impl Checker<'_, '_> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        self.maybe_type_of_kind(source, |_, t| t.is_undefined())
-            && self.contains_missing_type(target)
+        self.maybe_type_of_kind(source, tf::UNDEFINED) && self.contains_missing_type(target)
     }
 
     /// `getExactOptionalUnassignableProperties`, whether there are any.

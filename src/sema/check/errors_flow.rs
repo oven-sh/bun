@@ -38,7 +38,7 @@ impl Checker<'_, '_> {
     /// `isSourceElementUnreachable` for a potentially executable node.
     fn is_source_element_unreachable(&mut self, file: FileId, s: StmtId) -> bool {
         let hir = self.hir(file);
-        let flow = self.bound(file).stmt_flow[s.idx()];
+        let flow = self.bound(file).flow_of_stmt(s);
         // `ShouldPreserveConstEnums`
         let preserves_const_enums =
             self.p.files.options.preserve_const_enums || self.p.files.options.isolated_modules;
@@ -73,7 +73,7 @@ impl Checker<'_, '_> {
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `parent.Statements()`
-        let statements = match bound.stmt_parent[s.idx()] {
+        let statements = match bound.parent_of_stmt(s) {
             Parent::File => Some(hir.body),
             Parent::Module(m) => Some(hir[m].body),
             Parent::FnBody(f) => match hir[f].body {
@@ -110,7 +110,7 @@ impl Checker<'_, '_> {
 
     /// `maybeTypeOfKind(t, TypeFlagsVoid)`
     fn maybe_void(&self, t: TypeId) -> bool {
-        self.maybe_type_of_kind(t, |_, t| t == TypeId::VOID)
+        self.maybe_type_of_kind(t, tf::VOID)
     }
 
     /// `checkFunctionOrMethodDeclaration`, `checkFunctionExpressionOrObjectLiteralMethod`: 8030 for
@@ -168,8 +168,23 @@ impl Checker<'_, '_> {
         } else {
             hir.jsdoc_type(JsDocTypeOwner::Fn(func))
         };
+        // `checkAccessorDeclaration` passes `getTypeOfAccessors(symbol)`, which is `any` after a circularity.
+        let type_of_accessors = match bound.fns[func.idx()].owner {
+            _ if f.kind != FnKind::Getter => None,
+            FnOwner::Member(m) if bound.member_symbol[m.idx()].is_some() => {
+                let symbol = self.symbol_of_member(file, m);
+                Some(self.type_of_symbol(symbol))
+            }
+            FnOwner::Expr(e) => match bound.parent_of_expr(e) {
+                Parent::Prop(p) => Some(self.type_of_literal_prop(file, p)),
+                _ => None,
+            },
+            _ => None,
+        };
         // `getReturnTypeFromAnnotation`
-        let annotated = if f.ret.is_some() {
+        let annotated = if type_of_accessors.is_some() {
+            type_of_accessors
+        } else if f.ret.is_some() {
             Some(self.type_from_node(file, f.ret))
         } else {
             self.return_type_of_full_signature(file, func)
@@ -177,8 +192,8 @@ impl Checker<'_, '_> {
         let declared = if let Some(declared) = annotated {
             Some(self.unwrap_return_type(file, func, declared))
         } else if f.kind == FnKind::Getter {
-            // `checkAccessorDeclaration` passes `getTypeOfAccessors`: the setter's parameter
-            // annotation, or else the type inferred from the body.
+            // A getter without a symbol: the setter's parameter annotation, or else the type
+            // inferred from the body.
             Some(self.return_type_of_fn(file, func))
         } else if self.p.files.options.no_implicit_returns {
             None

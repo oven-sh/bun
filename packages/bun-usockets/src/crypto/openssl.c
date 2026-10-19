@@ -606,6 +606,7 @@ static void ssl_discard_spill(struct loop_ssl_data *loop_ssl_data, struct us_soc
   if (!s->ssl_spilled) return;
   struct us_ssl_rare_t *rare = us_ssl_rare(s_ssl(s));
   loop_ssl_data->ssl_batch_spills -= rare->spill->is_batch;
+  if (rare->spill->offset != rare->spill->length) s->ssl_spill_dropped = 1;
   us_free(rare->spill);
   rare->spill = NULL;
   s->ssl_spilled = 0;
@@ -1787,6 +1788,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl_fatal_error = 0;
   s->ssl_raw_tap = 0;
   s->ssl_spilled = 0;
+  s->ssl_spill_dropped = 0;
   s->ssl_shutdown_after_spill = 0;
   s->ssl_close_after_spill = 0;
   s->ssl_end_delivered = 0;
@@ -2450,7 +2452,10 @@ struct us_socket_t *us_internal_ssl_on_end_after_rejected_send(struct us_socket_
 struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
   /* Past its FIN a socket polls for writable only when ssl_raw_write asked for this event. */
   if (!us_internal_socket_can_raw_write(s)) return ssl_close_after_rejected_send(s, LIBUS_ECONNRESET);
-  return ssl_on_writable(s);
+  s = ssl_on_writable(s);
+  /* Asked for from inside this dispatch, that event never comes: loop.c drops the writable interest of a shut-down socket. */
+  if (s && !ssl_gone(s) && s->ssl_send_rejected) return ssl_close_after_rejected_send(s, LIBUS_ECONNRESET);
+  return s;
 }
 
 static struct us_socket_t *ssl_on_writable(struct us_socket_t *s) {

@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { longLimit, spawn } from "../children";
 
 // `bun check` follows TypeScript 7, which is a native program next to its `lib.*.d.ts`: `typescript7` in
 // test/package.json, beside the `typescript` that has the API in JavaScript. `TSC` is the path of another to compare with.
@@ -28,7 +29,7 @@ export const env = {
 
 /** What `cmd` prints, without the path of `root`. And how it ended, if it crashed: that prints nothing. */
 export async function linesOf(cmd: string[], cwd: string, root: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
+  await using proc = spawn({ timeout: longLimit, cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   // A crash of bun is a signal, and the exit code 3 on Windows. tsc exits with 4 if project references form a cycle.
   const hasCrashed = proc.signalCode !== null || exitCode > (cmd[0] === bunExe() ? 2 : 5);
@@ -76,8 +77,11 @@ export async function inTurns<T>(items: T[], run: (item: T) => Promise<void>) {
   for (let at = 0; at < items.length; at += 6) await Promise.all(items.slice(at, at + 6).map(run));
 }
 
-/** `deep`: nested too deeply for the stack of a build that is not optimised, or too slow in one. */
-type Case = { files: Record<string, string>; build?: true; deep?: true };
+/**
+ * `deep`: nested too deeply for the stack of a build that is not optimised, or too slow in one.
+ * `theirs`: what TypeScript 7.1 reports, where `bun check` follows it and the tsc at hand reports something else.
+ */
+type Case = { files: Record<string, string>; build?: true; deep?: true; theirs?: string[] };
 
 /**
  * Small programs about which `bun check` and tsc once said something else, each named after where it was found.
@@ -122,7 +126,8 @@ export function programsThatOnceDiffered(part: number, parts: number) {
             linesOf([bunExe(), "check", ...build, "--threads=1"], cwd, root),
           ]);
           // After them: `tsc -b` writes files.
-          const theirs = await linesOf([tsc!, ...build, "--pretty", "false", "--singleThreaded"], cwd, root);
+          const theirs =
+            it.theirs ?? (await linesOf([tsc!, ...build, "--pretty", "false", "--singleThreaded"], cwd, root));
           if (!Bun.deepEquals(theirs, ours)) different[name] = { theirs, ours };
           else if (!Bun.deepEquals(theirs, onOneThread)) different[name] = { theirs, onOneThread };
         });

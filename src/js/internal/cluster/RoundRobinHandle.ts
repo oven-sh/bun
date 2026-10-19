@@ -4,7 +4,7 @@ const { kHandle } = require("internal/shared");
 let net;
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
-const uvTranslateSysError = $newRustFunction("node_util_binding.rs", "uvTranslateSysError", 1);
+const uvTranslateSysError = $bindgen("node_util_binding.bind.ts", "uvTranslateSysError");
 const { UV_EINVAL } = process.binding("uv");
 
 const ArrayIsArray = Array.isArray;

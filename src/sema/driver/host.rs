@@ -5,20 +5,24 @@
 //! printed type or a line of output converts it there, with `resolve::displayed_path`.
 
 use bun_ast::e::{JsonValue, ObjectJSON};
-use bun_core::strings::{BOM, contains, is_valid_utf8, without_trailing_slash};
+use bun_core::strings::{
+    BOM, contains, contains_char, is_valid_utf8, rsplit_once_char, split_once_char,
+    without_trailing_slash,
+};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, windows_volume_name_len, z};
 use bun_paths::{basename_posix, path_buffer_pool};
 use bun_sema::atom::Interner;
 use bun_sema::hir;
 use bun_sema::json::Json;
-use bun_sema::portable::SharedFile;
 use bun_sema::resolve::{
-    Host, ModuleDetection, Options, Phase, ScriptKind, Spent, ancestors, inside,
-    is_declaration_file_name, join, root_length, to_file_name_lower_case, to_path, typescript_path,
+    Host, Kept, ModuleDetection, ParseOptions, Paths, Phase, ScriptKind, Spent, ancestors,
+    hash_without_case, inside, is_declaration_file_name, is_same_path, join, root_length,
+    to_file_name_lower_case, to_path, typescript_path,
 };
 use bun_sema::session::Arena;
-use bun_sema::util::{FxHashMap, ShardedMap};
+use bun_sema::util::SharedSort;
+use bun_sema::util::{FxHashMap, FxHashSet, ShardedMap};
 use bun_sys::{EntryKind, ExistsAtType, Fd};
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -52,6 +56,15 @@ pub fn to_native(path: &[u8]) -> &[u8] {
     }
 }
 
+/// `to_native`, for a call of the system. `None`: the system has no name for it, so nothing is there: it is too long,
+/// as an import can name a path of any number of segments; or it has a NUL, as a configuration file can write one,
+/// where the system would take what is before it for the whole.
+fn for_the_system(path: &[u8]) -> Option<&[u8]> {
+    let native = to_native(path);
+    let is_a_name = native.len() < bun_paths::MAX_PATH_BYTES && !contains_char(native, 0);
+    is_a_name.then_some(native)
+}
+
 /// The root of a drive is `/C:`. For the system, to which `C:` is the working directory on that
 /// drive, it is `/C:/`. So it is with every root but `/`.
 fn with_root(path: &[u8]) -> Cow<'_, [u8]> {
@@ -80,16 +93,81 @@ pub fn from_argument(cwd: &[u8], path: &[u8]) -> Vec<u8> {
     }
 }
 
-/// The entries of a directory. The names are sorted.
+#[derive(Copy, Clone)]
+struct Entry {
+    /// Where its name is in `Listing::names`.
+    start: u32,
+    len: u32,
+    /// `hash_without_case` of its name.
+    hash: u32,
+    is_directory: bool,
+    is_link: bool,
+}
+
+impl Entry {
+    fn name_in<'a>(&self, names: &'a [u8]) -> &'a [u8] {
+        &names[self.start as usize..][..self.len as usize]
+    }
+}
+
+/// The entries of a directory.
 #[derive(Default)]
 struct Listing {
-    files: Vec<Vec<u8>>,
-    directories: Vec<Vec<u8>>,
-    /// The entries of either kind that are symlinks.
-    links: Vec<Vec<u8>>,
-    /// All names lowercased, each with its original spelling and whether it is a directory: for a
-    /// case-insensitive file system. Built lazily, the first time an exact-case lookup fails.
-    folded: OnceLock<Vec<(Vec<u8>, Vec<u8>, bool)>>,
+    /// The names, one after the other.
+    names: Box<[u8]>,
+    /// Sorted by `hash`, so names that differ in case alone are next to each other. Then by name.
+    entries: Box<[Entry]>,
+}
+
+/// A [`Listing`] that is being made.
+#[derive(Default)]
+struct Entries {
+    names: Vec<u8>,
+    entries: Vec<Entry>,
+}
+
+/// What a [`Listing`] has under a name.
+enum Found<'a> {
+    Exact(&'a Entry),
+    /// It differs in case.
+    Alike(&'a Entry),
+    Nothing,
+}
+
+impl Entries {
+    fn push(&mut self, name: &[u8], is_directory: bool, is_link: bool) {
+        let (Ok(start), Ok(len)) = (self.names.len().try_into(), name.len().try_into()) else {
+            return;
+        };
+        self.names.extend_from_slice(name);
+        self.entries.push(Entry {
+            start,
+            len,
+            hash: hash_without_case(name) as u32,
+            is_directory,
+            is_link,
+        });
+    }
+
+    fn finish(self) -> Listing {
+        let Entries { names, mut entries } = self;
+        let name = |it: &Entry| it.name_in(&names);
+        entries.shared_sort_unstable_by(|a, b| {
+            (a.hash.cmp(&b.hash))
+                .then_with(|| name(a).cmp(name(b)))
+                .then(a.is_directory.cmp(&b.is_directory))
+        });
+        // What is only in memory can have the name of a link on the disk.
+        entries.dedup_by(|dropped, kept| {
+            let is_same = name(dropped) == name(kept) && dropped.is_directory == kept.is_directory;
+            kept.is_link |= is_same && dropped.is_link;
+            is_same
+        });
+        Listing {
+            names: names.into_boxed_slice(),
+            entries: entries.into_boxed_slice(),
+        }
+    }
 }
 
 enum Directory {
@@ -100,51 +178,55 @@ enum Directory {
 }
 
 impl Listing {
-    fn with(mut self, more: &InMemory) -> Self {
-        for (names, more) in [
-            (&mut self.files, &more.files),
-            (&mut self.directories, &more.directories),
-        ] {
-            names.extend_from_slice(more);
-            names.sort_unstable();
-            names.dedup();
+    fn with(self, more: &InMemory) -> Self {
+        let mut all = Entries {
+            names: self.names.into_vec(),
+            entries: self.entries.into_vec(),
+        };
+        for (names, is_directory) in [(&more.files, false), (&more.directories, true)] {
+            for name in names {
+                all.push(name, is_directory, false);
+            }
         }
-        self
+        all.finish()
+    }
+
+    fn name(&self, entry: &Entry) -> &[u8] {
+        entry.name_in(&self.names)
+    }
+
+    fn look_up(&self, name: &[u8]) -> Found<'_> {
+        let hash = hash_without_case(name) as u32;
+        let from = self.entries.partition_point(|it| it.hash < hash);
+        let with_hash = || self.entries[from..].iter().take_while(|it| it.hash == hash);
+        if let Some(exact) = with_hash().find(|it| self.name(it) == name) {
+            return Found::Exact(exact);
+        }
+        let alike = with_hash().find(|it| is_same_path(self.name(it), name, false));
+        alike.map_or(Found::Nothing, Found::Alike)
     }
 
     /// The name as spelled in the directory, and whether it is a directory.
     fn find(&self, name: &[u8], case_sensitive: bool) -> Option<(&[u8], bool)> {
-        if let Ok(i) = self.files.binary_search_by(|n| n.as_slice().cmp(name)) {
-            return Some((&self.files[i], false));
+        match self.look_up(name) {
+            Found::Exact(entry) => Some((self.name(entry), entry.is_directory)),
+            Found::Alike(entry) if !case_sensitive => Some((self.name(entry), entry.is_directory)),
+            Found::Alike(_) | Found::Nothing => None,
         }
-        if let Ok(i) = self
-            .directories
-            .binary_search_by(|n| n.as_slice().cmp(name))
-        {
-            return Some((&self.directories[i], true));
-        }
-        if case_sensitive {
-            return None;
-        }
-        let folded = self.folded.get_or_init(|| {
-            let mut all: Vec<(Vec<u8>, Vec<u8>, bool)> = self
-                .files
+    }
+
+    /// The files and the directories, each sorted by name.
+    fn sorted(&self) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
+        let of_kind = |is_directory: bool| {
+            let entries = self
+                .entries
                 .iter()
-                .map(|n| (to_file_name_lower_case(n), n.clone(), false))
-                .chain(
-                    self.directories
-                        .iter()
-                        .map(|n| (to_file_name_lower_case(n), n.clone(), true)),
-                )
-                .collect();
-            all.sort_unstable();
-            all
-        });
-        let lower = to_file_name_lower_case(name);
-        let i = folded
-            .binary_search_by(|n| n.0.as_slice().cmp(&lower))
-            .ok()?;
-        Some((&folded[i].1, folded[i].2))
+                .filter(|it| it.is_directory == is_directory);
+            let mut names: Vec<Vec<u8>> = entries.map(|it| self.name(it).to_vec()).collect();
+            names.shared_sort_unstable();
+            names
+        };
+        (of_kind(false), of_kind(true))
     }
 }
 
@@ -153,9 +235,17 @@ impl Listing {
 /// same few directories repeatedly, mostly for entries that do not exist.
 pub struct Disk {
     pub threads: usize,
+    /// `Some` while several programs are read through it at the same time.
+    pub(crate) shares: bun_threading::Guarded<Option<Arc<crate::Shares>>>,
     pub(crate) caches: crate::ThreadCaches,
+    /// A thread of the pool has made it. The other threads of the pool can all be waiting for what it is made for, so
+    /// nothing waits for them: not the threads either that the request starts to coordinate its projects.
+    is_of_a_thread_of_the_pool: bool,
     case_sensitive: bool,
-    directories: ShardedMap<Vec<u8>, Directory>,
+    /// Threads that ask for a directory at the same time wait for the first of them to read it.
+    directories: ShardedMap<Vec<u8>, OnceLock<Directory>>,
+    /// See `started_in`.
+    working_directory: Vec<u8>,
     /// The real path of each directory that was queried.
     real_directories: ShardedMap<Vec<u8>, Vec<u8>>,
     /// On macOS, opening and reading files slows down with the number of concurrent threads by more
@@ -169,11 +259,14 @@ pub struct Disk {
     idle_readers: bun_threading::Guarded<Vec<Reader>>,
     /// See `Host::take_unreadable`.
     unreadable: bun_threading::Guarded<Vec<Vec<u8>>>,
-    shared: bun_threading::Guarded<Sharing>,
-    /// See `AlreadyRead`.
+    /// See `AlreadyRead`. By `tspath.Path`: such a file is found however its name is spelled, like one on the disk.
     already_read: AlreadyRead,
-    /// What `already_read` adds to the listing of a directory, by the path of the directory.
+    /// What `already_read` adds to the listing of a directory, by the `tspath.Path` of the directory.
     in_memory: FxHashMap<Vec<u8>, InMemory>,
+    /// `Provided::keeps_byte_order_marks`
+    pub(crate) keeps_byte_order_marks: bool,
+    /// `Provided::ends_the_process`
+    pub(crate) ends_the_process: bool,
     /// `Host::times`, in nanoseconds.
     times: [AtomicU64; Phase::ALL.len()],
     /// What is in `BUNDLED_LIBS`.
@@ -183,34 +276,15 @@ pub struct Disk {
     /// `Request::script_kinds_by_extension`
     pub(crate) script_kinds_by_extension: Vec<(Vec<u8>, ScriptKind)>,
     pub(crate) before_read: Option<BeforeRead>,
+    /// `Host::extended_config`: the projects of a build often extend one file.
+    extended_configs: bun_threading::Guarded<FxHashMap<Vec<u8>, Kept>>,
+    /// `Host::shared_paths`
+    paths: bun_threading::Guarded<FxHashSet<Arc<Paths>>>,
     pub(crate) scripts_of_page: Option<ScriptsOfPage>,
 }
 
-/// `Host::share_declaration_files`
-#[derive(Default)]
-struct Sharing {
-    files: Option<Arc<Shared>>,
-    variants: u32,
-    /// The programs that are yet to `stay_loaded`.
-    programs: usize,
-}
-
-/// The declaration files that the programs of one check have loaded.
-#[derive(Default)]
-struct Shared {
-    /// What `Host::read` has returned, by path, and returns again. As it was: no library that is
-    /// kept anyway is copied.
-    read: ShardedMap<Vec<u8>, Cow<'static, [u8]>>,
-    /// The first text of a file that is not what was `read`, by path: a project has emitted it.
-    /// A program that is not given the file by that project finds the one on the disk.
-    emitted: ShardedMap<Vec<u8>, Box<[u8]>>,
-    /// `Host::shared_file`, by path, and then the variant and whether the text is `emitted`. Two
-    /// threads that find a file empty both load it, and neither waits.
-    files: ShardedMap<Vec<u8>, Arc<OnceLock<SharedFile>>>,
-}
-
-/// The text of files that the caller of the check has read, by path in the checker's format, as
-/// UTF-8 without a byte order mark. Such a file is not opened. Several programs may read it.
+/// The text of files that the caller of the check has read, by path in the checker's format, as UTF-8, without a byte order
+/// mark unless `Provided::keeps_byte_order_marks`. Such a file is not opened. Several programs may read it.
 /// `bun build --check` passes what the bundler has read.
 pub type AlreadyRead = FxHashMap<Vec<u8>, Vec<u8>>;
 
@@ -228,6 +302,13 @@ pub struct Provided {
     pub already_read: AlreadyRead,
     pub before_read: Option<BeforeRead>,
     pub scripts_of_page: Option<ScriptsOfPage>,
+    /// The text of a script keeps the UTF-8 byte order mark that the file starts with, which TypeScript drops. The parser
+    /// takes it for a blank. `bun lint` has a rule about it, and writes the text back.
+    pub keeps_byte_order_marks: bool,
+    /// The caller ends the process when it has the report, as `bun check` does. Never in a process that goes on, like one
+    /// that calls `Bun.build`, watches files or runs a program or tests after the check: see
+    /// `Session::drop_before_the_process_ends`.
+    pub ends_the_process: bool,
 }
 
 /// The names in one directory of the files of `AlreadyRead` and of the directories that lead to
@@ -240,12 +321,16 @@ struct InMemory {
 }
 
 impl InMemory {
-    fn by_directory(already_read: &AlreadyRead) -> FxHashMap<Vec<u8>, InMemory> {
+    fn by_directory(
+        already_read: &AlreadyRead,
+        is_case_sensitive: bool,
+    ) -> FxHashMap<Vec<u8>, InMemory> {
         let mut by_directory: FxHashMap<Vec<u8>, InMemory> = FxHashMap::default();
         for path in already_read.keys() {
             let Split { mut parent, name } = split(path);
-            let mut is_new = !by_directory.contains_key(parent);
-            let names = by_directory.entry(parent.to_vec()).or_default();
+            let key = to_path(parent, is_case_sensitive).into_owned();
+            let mut is_new = !by_directory.contains_key(&key);
+            let names = by_directory.entry(key).or_default();
             names.files.push(name.to_vec());
             // A directory is entered in its parent when it gets its first entry.
             while is_new {
@@ -253,8 +338,9 @@ impl InMemory {
                 if directory.name.is_empty() {
                     break;
                 }
-                is_new = !by_directory.contains_key(directory.parent);
-                let names = by_directory.entry(directory.parent.to_vec()).or_default();
+                let key = to_path(directory.parent, is_case_sensitive).into_owned();
+                is_new = !by_directory.contains_key(&key);
+                let names = by_directory.entry(key).or_default();
                 names.directories.push(directory.name.to_vec());
                 parent = directory.parent;
             }
@@ -318,13 +404,15 @@ fn read_file(directory: Fd, name: &[u8], buffer: &mut Vec<u8>) -> Option<Vec<u8>
 
 /// `decodeBytes`: the text of a file, decoded according to its byte order mark. `BOM` does not
 /// support big endian, so the byte pairs are swapped first.
-fn decoded(mut bytes: Vec<u8>) -> Cow<'static, [u8]> {
+/// `keeps_mark`: that of UTF-8 stays.
+fn decoded(mut bytes: Vec<u8>, keeps_mark: bool) -> Cow<'static, [u8]> {
     if bytes.starts_with(&[0xFE, 0xFF]) {
         for pair in bytes.as_chunks_mut::<2>().0 {
             pair.swap(0, 1);
         }
     }
     Cow::Owned(match BOM::detect(&bytes) {
+        Some(BOM::Utf8) if keeps_mark => bytes,
         Some(mark) => mark.remove_and_convert_to_utf8_and_free(bytes),
         // `BOM::detect` needs three bytes. A UTF-16 byte order mark alone is an empty file.
         None if bytes == [0xFF, 0xFE] => Vec::new(),
@@ -332,10 +420,16 @@ fn decoded(mut bytes: Vec<u8>) -> Cow<'static, [u8]> {
     })
 }
 
+/// What a [`Disk`] makes of the bytes of the file at `path`, which is how [`AlreadyRead`] has a text.
+pub fn as_read(path: &[u8], bytes: Vec<u8>, keeps_byte_order_marks: bool) -> Vec<u8> {
+    let keeps_mark = keeps_byte_order_marks && ScriptKind::from_file_name(path).is_some();
+    decoded(bytes, keeps_mark).into_owned()
+}
+
 /// `vfs.FS.ReadFile` of the file at `path`, by that path alone.
-pub(crate) fn read_at(path: &[u8]) -> Option<Cow<'static, [u8]>> {
-    let bytes = bun_sys::File::read_from(Fd::cwd(), to_native(path));
-    bytes.ok().map(decoded)
+pub(crate) fn read_at(path: &[u8], keeps_mark: bool) -> Option<Cow<'static, [u8]>> {
+    let bytes = bun_sys::File::read_from(Fd::cwd(), for_the_system(path)?);
+    bytes.ok().map(|bytes| decoded(bytes, keeps_mark))
 }
 
 /// The two parts of a path.
@@ -378,16 +472,39 @@ fn is_directory(directory: Fd, path: &[u8]) -> Option<bool> {
 }
 
 impl Disk {
+    /// The paths of `Provided::already_read`, each a `tspath.Path`.
+    pub fn provided_paths(&self) -> impl Iterator<Item = &Vec<u8>> {
+        self.already_read.keys()
+    }
+
+    /// `cwd`: the working directory, in the checker's path format.
+    pub fn started_in(mut self, cwd: &[u8]) -> Self {
+        self.working_directory = cwd.to_vec();
+        self
+    }
+
     /// `project`: a path in the project, in the checker's path format.
     pub fn with_already_read(threads: usize, already_read: AlreadyRead, project: &[u8]) -> Self {
+        let case_sensitive = is_file_system_case_sensitive(project);
         Disk {
             threads,
-            in_memory: InMemory::by_directory(&already_read),
-            already_read,
-            shared: Default::default(),
+            shares: bun_threading::Guarded::new(None),
+            in_memory: InMemory::by_directory(&already_read, case_sensitive),
+            already_read: match case_sensitive {
+                true => already_read,
+                false => (already_read.into_iter())
+                    .map(|(path, text)| (to_file_name_lower_case(&path), text))
+                    .collect(),
+            },
+            keeps_byte_order_marks: false,
+            ends_the_process: false,
+            extended_configs: Default::default(),
+            paths: Default::default(),
             caches: Default::default(),
-            case_sensitive: is_file_system_case_sensitive(project),
+            is_of_a_thread_of_the_pool: !bun_threading::thread_pool::Thread::current().is_null(),
+            case_sensitive,
             directories: ShardedMap::default(),
+            working_directory: Vec::new(),
             real_directories: ShardedMap::default(),
             reading: cfg!(target_os = "macos").then(|| {
                 let places = bun_threading::Semaphore::default();
@@ -455,37 +572,70 @@ impl Disk {
             true => &path[..without_trailing_slash(path).len().max(root_length(path))],
             false => path,
         };
-        if let Some(known) = self.directories.get_ref(path) {
-            return known;
+        // What is above it is not read for it: a project can be in a directory with any number of other entries.
+        let cell = match self.directories.get_ref(path) {
+            Some(known) => known,
+            None => (self.directories).insert_ref(path.to_vec(), OnceLock::new()),
+        };
+        cell.get_or_init(|| {
+            let known = self.known_directory(split(path).parent);
+            self.read_directory(path, known.unwrap_or(&Directory::Unreadable))
+        })
+    }
+
+    /// The directory at `path` to look an entry up in. `None`: the system has to be asked about the entry. What is above the
+    /// working directory is not read for that. It is asked about a `node_modules`, a `package.json` and little else, and
+    /// to read it takes as long as it has entries: a project can be in a directory with any number of others.
+    fn directory_to_look_in(&self, path: &[u8]) -> Option<&Directory> {
+        let rest = self.working_directory.strip_prefix(path);
+        let is_above =
+            rest.is_some_and(|it| it.starts_with(b"/") || !it.is_empty() && path.ends_with(b"/"));
+        match is_above {
+            true => self.known_directory(path),
+            false => Some(self.directory(path)),
         }
+    }
+
+    /// The directory at `path`, if it has been read.
+    fn known_directory(&self, path: &[u8]) -> Option<&Directory> {
+        self.directories.get_ref(path)?.get()
+    }
+
+    /// The directory at `path`, which is in `parent`.
+    fn read_directory(&self, path: &[u8], parent: &Directory) -> Directory {
         // An entry that its parent does not list does not exist, so no system call is needed.
-        let Split { parent, name } = split(path);
-        if !name.is_empty()
-            && !Self::is_above_listings(parent)
-            && let Directory::Listed(listing) = self.directory(parent)
-            && let Some(found) = self.find_in(listing, name)
+        if let Directory::Listed(listing) = parent
+            && let Some(found) = self.find_in(listing, split(path).name)
             && !matches!(found, Some((_, true)))
         {
-            return self
-                .directories
-                .insert_ref(path.to_vec(), Directory::Missing);
+            return Directory::Missing;
         }
-        let read = match (list(path), self.in_memory.get(path)) {
+        match (list(path), self.added_to(path)) {
             (read, None) | (read @ Directory::Unreadable, _) => read,
             (Directory::Listed(listing), Some(more)) => Directory::Listed(listing.with(more)),
             (Directory::Missing, Some(more)) => Directory::Listed(Listing::default().with(more)),
-        };
-        self.directories.insert_ref(path.to_vec(), read)
+        }
+    }
+
+    /// What `already_read` adds to the directory at `path`.
+    fn added_to(&self, path: &[u8]) -> Option<&InMemory> {
+        match self.in_memory.is_empty() {
+            true => None,
+            false => self.in_memory.get(&*to_path(path, self.case_sensitive)),
+        }
     }
 
     /// Whether `path` is a directory, for a path that `already_read` adds.
     fn find_in_memory(&self, path: &[u8]) -> Option<bool> {
         let Split { parent, name } = split(path);
-        let names = self.in_memory.get(parent)?;
+        let names = self.added_to(parent)?;
         if name.is_empty() {
             return Some(true);
         }
-        let has = |names: &[Vec<u8>]| names.iter().any(|it| it == name);
+        let has = |names: &[Vec<u8>]| {
+            let mut names = names.iter();
+            names.any(|it| is_same_path(it, name, self.case_sensitive))
+        };
         if has(&names.files) {
             return Some(false);
         }
@@ -495,7 +645,7 @@ impl Disk {
     /// Asks the system, which does not know what is only in memory.
     fn ask_whether_directory(&self, path: &[u8]) -> Option<bool> {
         self.find_in_memory(path)
-            .or_else(|| is_directory(Fd::cwd(), to_native(&with_root(path))))
+            .or_else(|| is_directory(Fd::cwd(), for_the_system(&with_root(path))?))
     }
 
     /// `None`: the system has to be queried.
@@ -504,7 +654,7 @@ impl Disk {
         if name.is_empty() || Self::is_above_listings(parent) {
             return None;
         }
-        match self.directory(parent) {
+        match self.directory_to_look_in(parent)? {
             Directory::Missing => Some(None),
             Directory::Unreadable => None,
             Directory::Listed(listing) => self.find_in(listing, name),
@@ -515,35 +665,62 @@ impl Disk {
     /// spelling, and the file system of that directory may take one for the other, whatever that of
     /// the project does: a project can have several. Or it has letters outside ASCII, which a file
     /// system folds and normalizes by rules of its own: for APFS U+017F is `s`, and a composed
-    /// letter is the decomposed one, with or without case.
+    /// letter is the decomposed one, with or without case. Or it can be a short name.
     fn find_in<'a>(&self, listing: &'a Listing, name: &[u8]) -> Option<Option<(&'a [u8], bool)>> {
-        match listing.find(name, self.case_sensitive) {
-            None if !name.is_ascii() => None,
-            None if self.case_sensitive && listing.find(name, false).is_some() => None,
-            found => Some(found),
+        match listing.look_up(name) {
+            Found::Alike(_) if self.case_sensitive => None,
+            Found::Exact(entry) | Found::Alike(entry) => {
+                Some(Some((listing.name(entry), entry.is_directory)))
+            }
+            Found::Nothing if !name.is_ascii() || is_like_a_short_name(name) => None,
+            Found::Nothing => Some(None),
         }
     }
 
     fn ask_for_real_path(path: &[u8]) -> Vec<u8> {
+        let rooted = with_root(path);
+        let Some(native) = for_the_system(&rooted) else {
+            return path.to_vec();
+        };
         let (mut name, mut real) = (path_buffer_pool::get(), path_buffer_pool::get());
-        bun_sys::realpath(z(to_native(&with_root(path)), &mut name), &mut real)
+        bun_sys::realpath(z(native, &mut name), &mut real)
             .map_or_else(|_| path.to_vec(), from_native)
     }
 
     /// `path`, with every name in it spelled as its directory has it. Links are not followed.
     pub fn as_written(&self, path: &[u8]) -> Vec<u8> {
-        let Split { parent, name } = split(path);
-        if self.case_sensitive || name.is_empty() || Self::is_above_listings(parent) {
+        if self.case_sensitive {
             return path.to_vec();
         }
-        let written = match self.directory(parent) {
-            Directory::Listed(listing) => listing.find(name, false).map(|it| it.0),
-            Directory::Missing | Directory::Unreadable => None,
-        };
-        match parent {
-            b"/" => [b"/", written.unwrap_or(name)].concat(),
-            _ => inside(&self.as_written(parent), written.unwrap_or(name)),
+        // The names that a listing can have, the last one first, and what is above them.
+        let mut names = Vec::new();
+        let mut above = path;
+        loop {
+            let Split { parent, name } = split(above);
+            if name.is_empty() || Self::is_above_listings(parent) {
+                break;
+            }
+            names.push((parent, name));
+            above = parent;
         }
+        let mut written = above.to_vec();
+        // Nothing is asked about what is in a directory that does not exist.
+        let mut exists = true;
+        for (parent, name) in names.into_iter().rev() {
+            let found = match exists.then(|| self.directory(parent)) {
+                Some(Directory::Listed(listing)) => listing.find(name, false).map(|it| it.0),
+                Some(Directory::Missing) => {
+                    exists = false;
+                    None
+                }
+                Some(Directory::Unreadable) | None => None,
+            };
+            if !written.ends_with(b"/") {
+                written.push(b'/');
+            }
+            written.extend_from_slice(found.unwrap_or(name));
+        }
+        written
     }
 
     /// `path` is there.
@@ -552,7 +729,7 @@ impl Disk {
         if name.is_empty() || Self::is_above_listings(parent) {
             return Self::ask_for_real_path(path);
         }
-        let Directory::Listed(listing) = self.directory(parent) else {
+        let Some(Directory::Listed(listing)) = self.directory_to_look_in(parent) else {
             return Self::ask_for_real_path(path);
         };
         let Some(found) = self.find_in(listing, name) else {
@@ -561,21 +738,20 @@ impl Disk {
         let Some((written, _)) = found else {
             return path.to_vec();
         };
-        if listing
-            .links
-            .binary_search_by(|n| n.as_slice().cmp(written))
-            .is_ok()
-        {
+        if matches!(listing.look_up(written), Found::Exact(it) if it.is_link) {
             return Self::ask_for_real_path(path);
         }
         let real_parent = match self.real_directories.get_ref(parent) {
             Some(known) => known,
             None => {
+                let above = split(parent).parent;
                 // A root is where it is. See `root_length` for the second one.
                 let real = if matches!(parent, b"/" | b"/\0") {
                     parent.to_vec()
-                } else {
+                } else if self.known_directory(above).is_some() {
                     self.real_path_of(parent)
+                } else {
+                    Self::ask_for_real_path(parent)
                 };
                 self.real_directories.insert_ref(parent.to_vec(), real)
             }
@@ -596,16 +772,34 @@ impl Drop for Disk {
     }
 }
 
+/// Whether `name` has the form of the second name that NTFS and FAT give an entry whose own name is not 8.3: `PROGRA~1` for
+/// `Program Files`, `RUNNER~1` for `runneradmin`. The entry is found by it, and no listing has it.
+fn is_like_a_short_name(name: &[u8]) -> bool {
+    let Some((before, after)) = rsplit_once_char(name, b'~') else {
+        return false;
+    };
+    let (number, extension) = split_once_char(after, b'.').unwrap_or((after, &b""[..]));
+    !before.is_empty()
+        && before.len() + 1 + number.len() <= 8
+        && extension.len() <= 3
+        && !number.is_empty()
+        && number.iter().all(u8::is_ascii_digit)
+}
+
 /// Reads the entries of the directory at `path` from the system.
 fn list(path: &[u8]) -> Directory {
-    let directory = match bun_sys::open_dir_absolute(to_native(&with_root(path))) {
+    let rooted = with_root(path);
+    let Some(native) = for_the_system(&rooted) else {
+        return Directory::Missing;
+    };
+    let directory = match bun_sys::open_dir_absolute(native) {
         Ok(directory) => bun_sys::Dir::from_fd(directory),
         Err(error) if matches!(error.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => {
             return Directory::Missing;
         }
         Err(_) => return Directory::Unreadable,
     };
-    let mut listing = Listing::default();
+    let mut listing = Entries::default();
     let mut entries = bun_sys::iterate_dir(directory.fd());
     while let Ok(Some(entry)) = entries.next() {
         let name = entry.name.slice_u8();
@@ -622,28 +816,21 @@ fn list(path: &[u8]) -> Directory {
         };
         let is_dir = match entry.kind {
             EntryKind::Directory => true,
-            // A symlink has to be followed. It may be dangling.
-            EntryKind::SymLink | EntryKind::Unknown => match is_directory(directory.fd(), name) {
-                Some(is_dir) => is_dir,
-                None => continue,
-            },
+            // A symlink has to be followed, unless the listing says what it stands for. It may be dangling.
+            EntryKind::SymLink | EntryKind::Unknown => {
+                let known = entry.link_is_directory();
+                match known.or_else(|| is_directory(directory.fd(), name)) {
+                    Some(is_dir) => is_dir,
+                    None => continue,
+                }
+            }
             EntryKind::File => false,
             // A FIFO, socket or device.
             _ => continue,
         };
-        if is_link {
-            listing.links.push(name.to_vec());
-        }
-        if is_dir {
-            listing.directories.push(name.to_vec());
-        } else {
-            listing.files.push(name.to_vec());
-        }
+        listing.push(name, is_dir, is_link);
     }
-    listing.files.sort_unstable();
-    listing.directories.sort_unstable();
-    listing.links.sort_unstable();
-    Directory::Listed(listing)
+    Directory::Listed(listing.finish())
 }
 
 /// `isFileSystemCaseSensitive`, for the file system that has `path`: whether something on it is no
@@ -661,14 +848,15 @@ fn is_file_system_case_sensitive(path: &[u8]) -> bool {
         (swapped != name).then_some(swapped)
     };
     // `[eval]` is only in memory: no spelling of its name is found.
-    let Some(path) = ancestors(path).find(|it| bun_sys::exists(to_native(it))) else {
+    let is_there = |it: &&[u8]| for_the_system(it).is_some_and(bun_sys::exists);
+    let Some(path) = ancestors(path).find(is_there) else {
         return true;
     };
     // What is in a directory is on its file system. Its own name is not, if it is where that file
     // system is mounted, like `/app` in a container.
     if let Directory::Listed(listing) = list(path) {
-        let mut names = listing.files.iter().chain(&listing.directories);
-        if let Some(other) = names.find_map(|name| swapped(name)) {
+        let mut names = listing.entries.iter().map(|it| listing.name(it));
+        if let Some(other) = names.find_map(swapped) {
             return !bun_sys::exists(to_native(&inside(path, &other)));
         }
     }
@@ -910,10 +1098,8 @@ impl Expected {
                 None
             }
             JsonValue::Object(object) if is_map => {
-                let mut value = match self.value.take() {
-                    Some(Json::Object(value)) => value,
-                    _ => Vec::new(),
-                };
+                let value = self.value.take().and_then(Json::into_object);
+                let mut value = value.unwrap_or_default();
                 let refused = unmarshal_map(object.get(), has_duplicates, &mut value);
                 self.value = Some(Json::Object(value));
                 refused
@@ -974,6 +1160,8 @@ fn unmarshal_fields(object: &ObjectJSON, has_duplicates: bool) -> Option<Json> {
         let (name, data) = (property.key.slice(), &property.value);
         let is_map = match name {
             b"name" | b"version" | b"type" | b"tsconfig" | b"main" | b"types" | b"typings" => false,
+            // Not in `Fields`: for `Resolver::resolve_as_require`.
+            b"module" | b"jsnext:main" => false,
             b"dependencies"
             | b"devDependencies"
             | b"peerDependencies"
@@ -1038,10 +1226,132 @@ fn parse_package_json(arena: &Arena, text: &[u8]) -> Option<Json> {
     unmarshal_fields(root.get(), log.warnings > 0)
 }
 
-impl Disk {
-    /// `Host::read`
-    fn read_for_one_program(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
-        if let Some(text) = self.already_read.get(path) {
+/// The disk, for a few questions in many directories: each is a call of the system, and no directory is listed for it
+/// or kept. A `Disk` lists the directory of whatever it is asked about, which pays where most of it is asked for.
+#[derive(Copy, Clone)]
+pub(crate) struct Asking<'k> {
+    /// `Host::extended_config`
+    pub(crate) extended: Option<&'k bun_threading::Guarded<FxHashMap<Vec<u8>, Kept>>>,
+    pub(crate) is_case_sensitive: bool,
+    /// Or else every directory is empty: the `include` of a configuration file finds nothing.
+    pub(crate) lists: bool,
+}
+
+impl Asking<'_> {
+    /// `project`: a path in the project, in the checker's path format.
+    pub(crate) fn new(project: &[u8]) -> Asking<'static> {
+        Asking {
+            extended: None,
+            is_case_sensitive: is_file_system_case_sensitive(project),
+            lists: false,
+        }
+    }
+
+    fn is_directory(path: &[u8]) -> Option<bool> {
+        is_directory(Fd::cwd(), for_the_system(&with_root(path))?)
+    }
+}
+
+impl Host for Asking<'_> {
+    fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
+        read_at(path, false)
+    }
+    fn extended_config(&self, path: &[u8]) -> Option<Kept> {
+        self.extended?.lock().get(path).cloned()
+    }
+    fn keep_extended_config(&self, path: &[u8], parsed: &dyn Fn() -> Kept) {
+        if let Some(extended) = self.extended {
+            extended.lock().insert(path.to_vec(), parsed());
+        }
+    }
+    fn is_file(&self, path: &[u8]) -> bool {
+        Self::is_directory(path) == Some(false)
+    }
+    fn is_dir(&self, path: &[u8]) -> bool {
+        Self::is_directory(path) == Some(true)
+    }
+    fn realpath(&self, path: &[u8]) -> Vec<u8> {
+        Disk::ask_for_real_path(path)
+    }
+    fn list_dir(&self, path: &[u8]) -> Vec<Vec<u8>> {
+        match self.lists.then(|| list(path)) {
+            Some(Directory::Listed(listing)) => {
+                let (mut files, directories) = listing.sorted();
+                files.extend(directories);
+                files
+            }
+            _ => Vec::new(),
+        }
+    }
+    fn is_case_sensitive(&self) -> bool {
+        self.is_case_sensitive
+    }
+    fn script_kind(&self, _: &[u8]) -> Option<ScriptKind> {
+        None
+    }
+    fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)] {
+        &[]
+    }
+    fn scripts_of_page(&self, _: &[u8]) -> Vec<Vec<u8>> {
+        Vec::new()
+    }
+    fn parse<'s>(
+        &self,
+        arena: &'s Arena,
+        path: &[u8],
+        text: &[u8],
+        atoms: &Interner<'s>,
+        options: ParseOptions,
+    ) -> hir::File<'s> {
+        bun_sema_parser::summarize(
+            arena,
+            path,
+            None,
+            text,
+            atoms,
+            options.experimental_decorators,
+            options.module_detection == ModuleDetection::Force,
+        )
+    }
+    fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
+        parse_package_json(arena, text)
+    }
+    fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
+        (0..count).for_each(work);
+    }
+}
+
+/// How many consecutive indices a thread of a parallel region takes at a time: adjacent paths are in the same directory.
+fn run_of(count: usize) -> usize {
+    if count > 1024 { 16 } else { 1 }
+}
+
+impl Host for Disk {
+    fn extended_config(&self, path: &[u8]) -> Option<Kept> {
+        self.extended_configs.lock().get(path).cloned()
+    }
+    fn keep_extended_config(&self, path: &[u8], parsed: &dyn Fn() -> Kept) {
+        self.extended_configs.lock().insert(path.to_vec(), parsed());
+    }
+    fn shared_paths(&self, paths: Arc<Paths>) -> Arc<Paths> {
+        let mut kept = self.paths.lock();
+        if let Some(equal) = kept.get(&paths) {
+            return Arc::clone(equal);
+        }
+        kept.insert(Arc::clone(&paths));
+        paths
+    }
+    fn spent(&self, phase: Phase, time: Duration) {
+        self.times[phase as usize].fetch_add(time.as_nanos() as u64, Ordering::Relaxed);
+    }
+    fn times(&self) -> [Duration; Phase::ALL.len()] {
+        Phase::ALL
+            .map(|phase| Duration::from_nanos(self.times[phase as usize].load(Ordering::Relaxed)))
+    }
+    fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
+        if !self.already_read.is_empty()
+            && let Some(text) = (self.already_read).get(&*to_path(path, self.case_sensitive))
+        {
             return Some(Cow::Owned(text.clone()));
         }
         let _reading = Spent::on(self, Phase::Read);
@@ -1052,9 +1362,12 @@ impl Disk {
         if let Some(before_read) = &self.before_read {
             before_read(path);
         }
+        for_the_system(path)?;
         let Split { parent, name } = split(path);
+        // Config files and `package.json` are read as JSON, so they never keep the mark.
+        let keeps_mark = self.keeps_byte_order_marks && ScriptKind::from_file_name(path).is_some();
         if name.is_empty() || Self::is_above_listings(parent) {
-            return read_at(path);
+            return read_at(path, keeps_mark);
         }
         let _turn = self.reading.as_ref().map(Turn::wait_for);
         let mut reader = self.take_reader(parent);
@@ -1082,81 +1395,7 @@ impl Disk {
             read_file(Fd::cwd(), path, &mut reader.buffer)
         });
         self.return_reader(reader);
-        read.map(decoded)
-    }
-}
-
-impl Host for Disk {
-    fn spent(&self, phase: Phase, time: Duration) {
-        self.times[phase as usize].fetch_add(time.as_nanos() as u64, Ordering::Relaxed);
-    }
-    fn times(&self) -> [Duration; Phase::ALL.len()] {
-        Phase::ALL
-            .map(|phase| Duration::from_nanos(self.times[phase as usize].load(Ordering::Relaxed)))
-    }
-    fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
-        let is_shared = is_declaration_file_name(path);
-        let shared = is_shared.then(|| self.shared.lock().files.clone());
-        let Some(shared) = shared.flatten() else {
-            return self.read_for_one_program(path);
-        };
-        if let Some(text) = shared.read.get_ref(path) {
-            return Some(text.clone());
-        }
-        let text = self.read_for_one_program(path)?;
-        shared.read.insert_ref(path.to_vec(), text.clone());
-        Some(text)
-    }
-    fn share_declaration_files(&self, variants: u32, programs: usize) {
-        if variants != 0 {
-            let mut shared = self.shared.lock();
-            shared.files.get_or_insert_default();
-            shared.variants |= variants;
-            shared.programs = shared.programs.saturating_add(programs);
-        }
-    }
-    fn stays_loaded(&self) {
-        let mut shared = self.shared.lock();
-        shared.programs = shared.programs.saturating_sub(1);
-        if shared.programs > 0 {
-            return;
-        }
-        let unused = std::mem::take(&mut *shared);
-        // Freed without the lock.
-        drop(shared);
-        drop(unused);
-    }
-    fn shared_file(
-        &self,
-        path: &[u8],
-        text: &[u8],
-        variant: u8,
-    ) -> Option<Arc<OnceLock<SharedFile>>> {
-        if !is_declaration_file_name(path) || self.script_kind(path).is_some() {
-            return None;
-        }
-        let shared = {
-            let shared = self.shared.lock();
-            let is_of_several = shared.variants & 1 << (variant >> 1) != 0;
-            shared.files.clone().filter(|_| is_of_several)?
-        };
-        // A program can find on the disk what another gets from a project that it references.
-        let read = shared.read.get_ref(path);
-        let is_emitted = read.is_none_or(|read| **read != *text);
-        if is_emitted {
-            let first = match shared.emitted.get_ref(path) {
-                Some(text) => text,
-                None => shared.emitted.insert_ref(path.to_vec(), text.into()),
-            };
-            if **first != *text {
-                return None;
-            }
-        }
-        let key = [path, &[variant << 1 | u8::from(is_emitted)]].concat();
-        Some(Arc::clone(match shared.files.get_ref(&key[..]) {
-            Some(file) => file,
-            None => shared.files.insert_ref(key, Default::default()),
-        }))
+        read.map(|bytes| decoded(bytes, keeps_mark))
     }
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
         self.read(path).unwrap_or_else(|| {
@@ -1202,7 +1441,7 @@ impl Host for Disk {
             return (Vec::new(), Vec::new());
         }
         match self.directory(path) {
-            Directory::Listed(listing) => (listing.files.clone(), listing.directories.clone()),
+            Directory::Listed(listing) => listing.sorted(),
             _ => (Vec::new(), Vec::new()),
         }
     }
@@ -1238,10 +1477,10 @@ impl Host for Disk {
         path: &[u8],
         text: &[u8],
         atoms: &Interner<'s>,
-        options: &Options,
+        options: ParseOptions,
     ) -> hir::File<'s> {
         let began = Instant::now();
-        let (file, parsing) = bun_js_parser::sema::summarize(
+        let file = bun_sema_parser::summarize(
             arena,
             path,
             self.script_kind(path),
@@ -1250,30 +1489,57 @@ impl Host for Disk {
             options.experimental_decorators,
             options.module_detection == ModuleDetection::Force,
         );
-        self.spent(Phase::Parse, parsing);
-        self.spent(Phase::Lower, began.elapsed().saturating_sub(parsing));
+        self.spent(Phase::Parse, began.elapsed());
         file
     }
     fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
         parse_package_json(arena, text)
     }
     fn loaded(&self) {
-        self.caches.drop_those_of_the_parser();
+        // Otherwise the threads go on to parse the files of the next program.
+        if self.shares.lock().is_none() {
+            self.caches.drop_those_of_the_parser();
+        }
     }
     fn threads(&self) -> usize {
         self.threads
     }
+    fn ends_the_process(&self, has_a_run: bool) -> bool {
+        self.ends_the_process && !has_a_run
+    }
     fn io_pool(&self) -> Option<&bun_threading::ThreadPool> {
-        self.io_pool.as_deref()
+        // The threads that only read serve one load at a time.
+        match *self.shares.lock() {
+            Some(_) => None,
+            None => self.io_pool.as_deref(),
+        }
+    }
+    fn with_helpers(&self, helpers: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
+        crate::for_each_with_helpers(&self.caches, helpers, count, run_of(count), work);
     }
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
-        // In runs: adjacent paths are in the same directory.
-        crate::for_each_parallel_in_runs(
-            &self.caches,
-            self.threads,
-            count,
-            if count > 1024 { 16 } else { 1 },
-            work,
-        );
+        if self.is_of_a_thread_of_the_pool {
+            return self.with_helpers(0, count, work);
+        }
+        let run = run_of(count);
+        let shares = self.shares.lock().clone();
+        match shares {
+            Some(shares) => crate::for_each_with_a_share(&self.caches, &shares, count, run, work),
+            None => crate::for_each_parallel_in_runs(&self.caches, self.threads, count, run, work),
+        }
+    }
+    fn parallel_while(
+        &self,
+        count: usize,
+        work: &(dyn Fn(usize) + Sync),
+        meanwhile: &mut dyn FnMut(),
+    ) {
+        // There the calling thread is one of those that work.
+        if self.is_of_a_thread_of_the_pool || self.shares.lock().is_some() {
+            self.parallel(count, work);
+            return meanwhile();
+        }
+        let run = run_of(count);
+        crate::for_each_parallel_while(&self.caches, self.threads, count, run, work, meanwhile);
     }
 }

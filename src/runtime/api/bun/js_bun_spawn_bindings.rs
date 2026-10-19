@@ -834,7 +834,7 @@ fn spawn_maybe_sync(
                         // Create a new terminal from options
                         let term_options =
                             TerminalOptions::parse_from_js(cx.global(), terminal_val)?;
-                        match Terminal::create_from_spawn(cx.global(), &term_options) {
+                        match Terminal::create_from_spawn(cx, &term_options) {
                             Ok(created) => terminal_info.0 = Some(created),
                             Err(err) => {
                                 return Err(match err {

@@ -20,7 +20,8 @@
 
 pub use bun_alloc::{Arena, ArenaBox, ArenaVec, ArenaVecExt, transfer_arena, vec_from_iter_in};
 
-use crate::util::FxBuild;
+use crate::util::{AppendVec, FxBuild};
+use bun_threading::Guarded;
 use std::alloc::{AllocError, Allocator, Layout};
 use std::any::Any;
 use std::ptr::NonNull;
@@ -43,22 +44,15 @@ pub fn set_in<K>(arena: &Arena) -> ArenaHashSet<'_, K> {
 }
 
 /// Owns the arena of every thread that has allocated for one check.
-#[derive(Default)]
 pub struct Session {
     /// A linked list that only grows. A thread appends its own node, so each arena is created by
     /// the thread that allocates in it.
     first: Link,
-    /// What `keep` was given. A linked list that only grows.
-    kept: KeptLink,
+    /// What `keep` was given.
+    kept: AppendVec<Box<dyn Any + Send + Sync>>,
 }
 
 type Link = OnceLock<Box<ThreadArena>>;
-type KeptLink = OnceLock<Box<Kept>>;
-
-struct Kept {
-    value: Box<dyn Any + Send + Sync>,
-    next: KeptLink,
-}
 
 struct ThreadArena {
     thread: ThreadId,
@@ -66,11 +60,17 @@ struct ThreadArena {
     next: Link,
 }
 
+impl Default for Session {
+    fn default() -> Session {
+        Session::new()
+    }
+}
+
 impl Session {
-    pub const fn new() -> Session {
+    pub fn new() -> Session {
         Session {
             first: OnceLock::new(),
-            kept: OnceLock::new(),
+            kept: AppendVec::new(),
         }
     }
 
@@ -95,27 +95,46 @@ impl Session {
         }
     }
 
+    /// The bytes that are in use in the arenas. For a moment at which no thread allocates in them.
+    pub fn allocated_bytes(&self) -> usize {
+        std::iter::successors(self.first.get(), |node| node.next.get())
+            .map(|node| node.arena.allocated_bytes())
+            .sum()
+    }
+
     /// Takes over a value that owns memory on the regular heap, and drops it with the session. For
     /// what the program refers to, since nothing drops the program.
-    ///
-    /// The search is linear in the number of values: for a few per check, not one per file.
     pub fn keep<T: Send + Sync + 'static>(&self, value: T) -> &T {
-        let kept = self.keep_boxed(Box::new(value));
+        let at = self.kept.push(Box::new(value));
+        let kept: &(dyn Any + Send + Sync) = &**self.kept.get(at);
         kept.downcast_ref().expect("it was boxed as a `T`")
     }
 
-    /// Appends `value` to the list of what is kept.
-    fn keep_boxed(&self, value: Box<dyn Any + Send + Sync>) -> &(dyn Any + Send + Sync) {
-        let mut node = Box::new(Kept {
-            value,
-            next: OnceLock::new(),
-        });
-        let mut link = &self.kept;
-        while let Err(refused) = link.set(node) {
-            node = refused;
-            link = &link.get().expect("`set` found a value").next;
+    /// Drops the session right before the process exits. The arenas are destroyed in parallel, each thread preferring its
+    /// own, and their memory is returned to the OS immediately. Without this, a single thread unmaps everything at exit,
+    /// which costs about 70 ms per GB.
+    /// `in_parallel(n, f)` must call `f(i)` for every `i < n`, on any number of threads.
+    pub fn drop_before_the_process_ends(
+        mut self,
+        in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync)),
+    ) {
+        let mut arenas: Vec<Box<ThreadArena>> = Vec::new();
+        let mut next = self.first.take();
+        while let Some(mut node) = next {
+            next = node.next.take();
+            arenas.push(node);
         }
-        &*link.get().expect("set above").value
+        // Make mimalloc return freed pages right away instead of caching them for reuse.
+        bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::purge_delay, 0);
+        let (count, arenas) = (arenas.len(), Guarded::new(arenas));
+        in_parallel(count, &|_| {
+            let thread = std::thread::current().id();
+            let mut left = arenas.lock();
+            let own = left.iter().position(|it| it.thread == thread);
+            let one = left.swap_remove(own.unwrap_or(0));
+            drop(left);
+            drop(one);
+        });
     }
 
     /// The number of threads that have an arena.
@@ -132,10 +151,6 @@ impl Drop for Session {
     /// detaches what a thread holds of the heap under that thread's lock (`_mi_heap_detach_theaps`).
     fn drop(&mut self) {
         let mut next = self.first.take();
-        while let Some(mut node) = next {
-            next = node.next.take();
-        }
-        let mut next = self.kept.take();
         while let Some(mut node) = next {
             next = node.next.take();
         }

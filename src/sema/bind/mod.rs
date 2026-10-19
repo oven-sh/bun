@@ -3,11 +3,15 @@
 //! thread.
 
 mod binder;
+mod lint;
+mod parents;
 
-use crate::atom::{Atom, Interner, known};
+pub use parents::{bind_for_format_in, try_bind_for_format_in};
+
+use crate::atom::{Atom, known};
 use crate::hir::*;
-use crate::session::{Arena, ArenaHashMap, ArenaHashSet, ArenaVec};
-use crate::util::{FxBuild, FxHashMap, FxHashSet};
+use crate::session::{Arena, ArenaHashMap, ArenaVec, transfer_arena, vec_from_iter_in};
+use crate::util::{FxBuild, FxHashMap, SharedSort};
 use smallvec::SmallVec;
 
 define_id!(SymbolId, ScopeId, TableId, FlowId);
@@ -97,7 +101,7 @@ bitflags::bitflags! {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Decl {
     /// An identifier bound by `var`, `let`, `const`, `using`, `catch`, or a loop.
     Var(PatId),
@@ -261,12 +265,10 @@ pub fn assignment_declaration_kind(hir: &File, e: ExprId) -> JsDeclarationKind {
     }
     // `GetElementOrPropertyAccessName`
     let (obj, name) = match hir[target].kind {
-        ExprKind::Dot {
+        ExprKind::Dot { obj, name, .. } => (
             obj,
-            name,
-            name_pos,
-            ..
-        } => (obj, (!is_private_name_at(hir, name_pos)).then_some(name)),
+            (!is_private_name_at(hir, hir.name_pos(target))).then_some(name),
+        ),
         ExprKind::Index { obj, index, .. } => match hir[index].kind {
             ExprKind::Number(_) => (obj, Some(Atom::NONE)),
             _ => (
@@ -293,8 +295,8 @@ fn is_bindable_static_name(hir: &File, e: ExprId) -> bool {
     !is_parenthesized(hir, e)
         && match hir[e].kind {
             ExprKind::Ident(_) => true,
-            ExprKind::Dot { obj, name_pos, .. } => {
-                !is_private_name_at(hir, name_pos) && is_bindable_static_name(hir, obj)
+            ExprKind::Dot { obj, .. } => {
+                !is_private_name_at(hir, hir.name_pos(e)) && is_bindable_static_name(hir, obj)
             }
             ExprKind::Index { obj, index, .. } => {
                 is_string_or_numeric_literal_like(hir, index) && is_bindable_static_name(hir, obj)
@@ -352,11 +354,13 @@ pub fn required_specifier(hir: &File, e: ExprId) -> Option<Atom> {
     Some(require_call_argument(hir, e)?.1)
 }
 
-pub struct SymbolIn<S: Storage> {
+/// Read-only view of one symbol of a file.
+#[derive(Copy, Clone)]
+pub struct Symbol<'a> {
     pub name: Atom,
     pub flags: SymFlags,
     /// `Declarations`, in the order they are bound.
-    pub decls: DeclsIn<S>,
+    pub decls: &'a [Decl],
     /// `ValueDeclaration`: an index into `Declarations`, which for a symbol merged by `mergeSymbol`
     /// are the declarations of all its parts. `u32::MAX`: none.
     pub value_declaration: u32,
@@ -371,17 +375,68 @@ pub struct SymbolIn<S: Storage> {
     pub export_symbol: SymbolId,
 }
 
-/// A symbol of a file that has been loaded.
-pub type Symbol<'s> = SymbolIn<InArena<'s>>;
+/// A symbol while the binder is still adding to it.
+pub struct GrowingSymbol {
+    pub name: Atom,
+    pub flags: SymFlags,
+    pub decls: GrowingDecls,
+    pub value_declaration: u32,
+    pub parent: SymbolId,
+    pub exports: TableId,
+    pub members: TableId,
+    pub export_symbol: SymbolId,
+}
 
-const _: () = assert!(size_of::<Symbol<'static>>() <= 48);
+/// A symbol's declarations. Almost every symbol has exactly one, so that case is stored inline.
+#[derive(Default)]
+pub enum GrowingDecls {
+    #[default]
+    None,
+    One(Decl),
+    Many(Vec<Decl>),
+}
 
-impl SymbolIn<Growable> {
-    fn into_arena(self, arena: &Arena) -> Symbol<'_> {
-        SymbolIn {
+impl GrowingDecls {
+    fn push(&mut self, decl: Decl) {
+        match self {
+            GrowingDecls::None => *self = GrowingDecls::One(decl),
+            GrowingDecls::One(first) => *self = GrowingDecls::Many(vec![*first, decl]),
+            GrowingDecls::Many(all) => all.push(decl),
+        }
+    }
+}
+
+impl std::ops::Deref for GrowingDecls {
+    type Target = [Decl];
+    #[inline]
+    fn deref(&self) -> &[Decl] {
+        match self {
+            GrowingDecls::None => &[],
+            GrowingDecls::One(decl) => std::slice::from_ref(decl),
+            GrowingDecls::Many(decls) => &decls[..],
+        }
+    }
+}
+
+/// Read access to a file's symbols in either storage. See [`Storage::Symbols`].
+pub trait SymbolList {
+    fn get(&self, index: usize) -> Option<Symbol<'_>>;
+}
+
+impl SymbolList for Vec<GrowingSymbol> {
+    #[inline]
+    fn get(&self, index: usize) -> Option<Symbol<'_>> {
+        self[..].get(index).map(GrowingSymbol::get)
+    }
+}
+
+impl GrowingSymbol {
+    #[inline]
+    fn get(&self) -> Symbol<'_> {
+        Symbol {
             name: self.name,
             flags: self.flags,
-            decls: self.decls.into_arena(arena),
+            decls: &self.decls,
             value_declaration: self.value_declaration,
             parent: self.parent,
             exports: self.exports,
@@ -391,53 +446,214 @@ impl SymbolIn<Growable> {
     }
 }
 
-/// The declarations of a symbol. Nearly every symbol has one, which needs no separate allocation.
-#[derive(Default)]
-pub enum DeclsIn<S: Storage> {
-    #[default]
+/// The fields every symbol needs. The rarely set ones are in [`RestOfSymbol`].
+#[derive(Copy, Clone)]
+struct StoredSymbol {
+    name: Atom,
+    flags: SymFlags,
+    decls: StoredDecls,
+    parent: SymbolId,
+    /// Index into `Symbols::rest`, or `FIRST_IS_VALUE` / `NO_VALUE` if the symbol has no entry there.
+    rest: u32,
+}
+
+/// `StoredSymbol::rest` for a symbol with no tables and no `export_symbol` whose `value_declaration` is 0.
+const FIRST_IS_VALUE: u32 = u32::MAX;
+/// Like `FIRST_IS_VALUE`, but the symbol has no `value_declaration`.
+const NO_VALUE: u32 = u32::MAX - 1;
+
+#[derive(Copy, Clone)]
+enum StoredDecls {
     None,
     One(Decl),
-    Many(S::Few<Decl>),
+    /// Index into `Symbols::many`.
+    Many(u32),
 }
 
-/// Those of a symbol of a file that has been loaded.
-pub type Decls<'s> = DeclsIn<InArena<'s>>;
+const _: () = assert!(size_of::<StoredSymbol>() == 24);
 
-impl<S: Storage> DeclsIn<S> {
+/// Fields that most symbols leave at their defaults.
+#[derive(Copy, Clone)]
+struct RestOfSymbol {
+    value_declaration: u32,
+    exports: TableId,
+    members: TableId,
+    export_symbol: SymbolId,
+}
+
+/// A loaded file's symbols, stored compactly. Merging and linking append transient symbols.
+pub struct Symbols<'s> {
+    list: ArenaVec<'s, StoredSymbol>,
+    rest: ArenaVec<'s, RestOfSymbol>,
+    many: ArenaVec<'s, &'s [Decl]>,
+}
+
+impl SymbolList for Symbols<'_> {
     #[inline]
-    pub fn as_slice(&self) -> &[Decl] {
-        match self {
-            DeclsIn::None => &[],
-            DeclsIn::One(decl) => std::slice::from_ref(decl),
-            DeclsIn::Many(decls) => &decls[..],
-        }
+    fn get(&self, index: usize) -> Option<Symbol<'_>> {
+        self.get(index)
     }
 }
 
-impl DeclsIn<Growable> {
-    fn push(&mut self, decl: Decl) {
-        match self {
-            DeclsIn::None => *self = DeclsIn::One(decl),
-            DeclsIn::One(first) => *self = DeclsIn::Many(vec![*first, decl]),
-            DeclsIn::Many(all) => all.push(decl),
+impl<'s> Symbols<'s> {
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.list.len()
+    }
+
+    /// Returns the symbol at `index`. Only the first lookup can fail and nothing here can panic, so once this is inlined
+    /// the compiler drops the work for fields the caller never reads.
+    #[inline]
+    pub fn get(&self, index: usize) -> Option<Symbol<'_>> {
+        Some(self.decode(self.list.get(index)?))
+    }
+
+    #[inline]
+    fn decode<'a>(&'a self, symbol: &'a StoredSymbol) -> Symbol<'a> {
+        // `FIRST_IS_VALUE` and `NO_VALUE` are always out of range, so they fall back to the defaults.
+        let rest = self.rest.get(symbol.rest as usize).copied();
+        let rest = rest.unwrap_or(RestOfSymbol {
+            value_declaration: if symbol.rest == NO_VALUE { u32::MAX } else { 0 },
+            exports: TableId::NONE,
+            members: TableId::NONE,
+            export_symbol: SymbolId::NONE,
+        });
+        Symbol {
+            name: symbol.name,
+            flags: symbol.flags,
+            decls: match &symbol.decls {
+                StoredDecls::None => &[],
+                StoredDecls::One(decl) => std::slice::from_ref(decl),
+                StoredDecls::Many(at) => self.many.get(*at as usize).copied().unwrap_or_default(),
+            },
+            value_declaration: rest.value_declaration,
+            parent: symbol.parent,
+            exports: rest.exports,
+            members: rest.members,
+            export_symbol: rest.export_symbol,
         }
     }
 
-    fn into_arena(self, arena: &Arena) -> Decls<'_> {
-        match self {
-            DeclsIn::None => DeclsIn::None,
-            DeclsIn::One(decl) => DeclsIn::One(decl),
-            DeclsIn::Many(all) => DeclsIn::Many(few_to_arena(all, arena)),
+    /// Converts the binder's symbols. Each list is allocated at its exact final size.
+    fn of(symbols: &[GrowingSymbol], arena: &'s Arena) -> Symbols<'s> {
+        let is_plain = |it: &&GrowingSymbol| {
+            it.exports.is_none()
+                && it.members.is_none()
+                && it.export_symbol.is_none()
+                && matches!(it.value_declaration, 0 | u32::MAX)
+        };
+        let plain = symbols.iter().filter(is_plain).count();
+        let many = symbols.iter().filter(|it| it.decls.len() > 1).count();
+        let mut all = Symbols {
+            list: ArenaVec::new_in(arena),
+            rest: ArenaVec::new_in(arena),
+            many: ArenaVec::new_in(arena),
+        };
+        all.list.reserve_exact(symbols.len());
+        all.rest.reserve_exact(symbols.len() - plain);
+        all.many.reserve_exact(many);
+        for symbol in symbols {
+            all.push(symbol.get(), arena);
+        }
+        all
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = Symbol<'_>> {
+        (0..self.list.len()).map(|at| self.at(at))
+    }
+
+    /// Returns the symbols that have all of `flags`. It tests the stored flags before decoding, so skipping a symbol
+    /// costs three instructions. `iter().filter(..)` decodes every symbol first, which costs about seventeen.
+    pub fn with_flags(&self, flags: SymFlags) -> impl Iterator<Item = Symbol<'_>> {
+        let matching = self.list.iter().filter(move |it| it.flags.contains(flags));
+        matching.map(|it| self.decode(it))
+    }
+
+    #[inline]
+    fn at(&self, index: usize) -> Symbol<'_> {
+        self.get(index).expect("the symbol is of this file")
+    }
+
+    pub fn reserve_exact(&mut self, additional: usize) {
+        self.list.reserve_exact(additional);
+    }
+
+    /// Appends `symbol`. Two or more declarations are copied into `arena`.
+    pub fn push(&mut self, symbol: Symbol<'_>, arena: &'s Arena) {
+        let decls = match *symbol.decls {
+            [] => StoredDecls::None,
+            [decl] => StoredDecls::One(decl),
+            ref all => {
+                self.many.push(arena.alloc_slice_copy(all));
+                StoredDecls::Many(self.many.len() as u32 - 1)
+            }
+        };
+        self.list.push(StoredSymbol {
+            name: symbol.name,
+            flags: symbol.flags,
+            decls,
+            parent: symbol.parent,
+            rest: NO_VALUE,
+        });
+        self.set_rest(
+            self.list.len() - 1,
+            RestOfSymbol {
+                value_declaration: symbol.value_declaration,
+                exports: symbol.exports,
+                members: symbol.members,
+                export_symbol: symbol.export_symbol,
+            },
+        );
+    }
+
+    fn set_rest(&mut self, index: usize, rest: RestOfSymbol) {
+        let place = &mut self.list[index].rest;
+        let is_plain =
+            rest.exports.is_none() && rest.members.is_none() && rest.export_symbol.is_none();
+        match (*place, rest.value_declaration) {
+            (FIRST_IS_VALUE | NO_VALUE, 0) if is_plain => *place = FIRST_IS_VALUE,
+            (FIRST_IS_VALUE | NO_VALUE, u32::MAX) if is_plain => *place = NO_VALUE,
+            (FIRST_IS_VALUE | NO_VALUE, _) => {
+                *place = self.rest.len() as u32;
+                self.rest.push(rest);
+            }
+            (at, _) => self.rest[at as usize] = rest,
         }
     }
-}
 
-impl<'s> Decls<'s> {
-    pub fn clone_in(&self, arena: &'s Arena) -> Decls<'s> {
-        match self {
-            DeclsIn::None => DeclsIn::None,
-            DeclsIn::One(decl) => DeclsIn::One(*decl),
-            DeclsIn::Many(all) => DeclsIn::Many(ArenaFew::from_iter_in(all.iter().copied(), arena)),
+    #[inline]
+    pub fn flags_mut(&mut self, id: SymbolId) -> &mut SymFlags {
+        &mut self.list[id.idx()].flags
+    }
+
+    pub fn set_parent(&mut self, id: SymbolId, parent: SymbolId) {
+        self.list[id.idx()].parent = parent;
+    }
+
+    pub fn set_value_declaration(&mut self, id: SymbolId, value_declaration: u32) {
+        let symbol = self.at(id.idx());
+        let rest = RestOfSymbol {
+            value_declaration,
+            exports: symbol.exports,
+            members: symbol.members,
+            export_symbol: symbol.export_symbol,
+        };
+        self.set_rest(id.idx(), rest);
+    }
+
+    /// Moves the lists to `arena` so that the thread that owns it can append to them.
+    pub fn transfer_to(&mut self, arena: &'s Arena) {
+        transfer_arena(&mut self.list, arena);
+        transfer_arena(&mut self.rest, arena);
+        transfer_arena(&mut self.many, arena);
+    }
+
+    /// Copies the lists into `arena`, for a program that shares the file with other programs.
+    fn copy_in<'a>(&'a self, arena: &'a Arena) -> Symbols<'a> {
+        Symbols {
+            list: vec_from_iter_in(self.list.iter().copied(), arena),
+            rest: vec_from_iter_in(self.rest.iter().copied(), arena),
+            many: vec_from_iter_in(self.many.iter().copied(), arena),
         }
     }
 }
@@ -460,23 +676,6 @@ pub fn takes_over_as_value_declaration(value_declaration: Option<Decl>, node: De
         is_assignment(it) && !is_assignment(node)
             || matches!(it, Decl::Module(_)) && !matches!(node, Decl::Module(_))
     })
-}
-
-impl<S: Storage> std::ops::Deref for DeclsIn<S> {
-    type Target = [Decl];
-    #[inline]
-    fn deref(&self) -> &[Decl] {
-        self.as_slice()
-    }
-}
-
-impl<'a, S: Storage> IntoIterator for &'a DeclsIn<S> {
-    type Item = &'a Decl;
-    type IntoIter = std::slice::Iter<'a, Decl>;
-    #[inline]
-    fn into_iter(self) -> Self::IntoIter {
-        self.as_slice().iter()
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -573,41 +772,126 @@ pub enum AssignmentKind {
     Compound,
 }
 
-/// The direct parent of an expression or a statement.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Parent {
-    None,
-    Expr(ExprId),
-    Stmt(StmtId),
-    VarInit(VarDeclId),
-    ParamDefault(ParamId),
-    PatPropDefault(PatPropId),
-    PatElemDefault(PatElemId),
-    /// The value of a property of an object literal or of a JSX attribute.
-    Prop(PropId),
-    /// The computed name of a property of the object literal that is neither a method nor an
-    /// accessor.
-    PropKey(ExprId, PropId),
-    /// The computed name of a binding element.
-    PatKey(PatPropId),
-    /// The computed name of a member of a class, an interface or a type literal: for control flow,
-    /// it is inside the member.
-    MemberKey(MemberId),
-    /// The computed name of a method or an accessor of an object literal: the same.
-    MethodKey(PropId),
-    /// The initializer of a member. Also the operand of a `typeof` in the type or the initializer of a property of a class, if
-    /// there is no function in between.
-    MemberInit(MemberId),
-    /// The expression body of an arrow function, or a statement of a body.
-    FnBody(FnId),
-    EnumInit(EnumMemberId),
-    Case(CaseId),
-    ClassExtends(ClassId),
-    /// A decorator of the class, of one of its members or of a parameter of a member: evaluated at
-    /// the position of the class.
-    Decorator(ClassId, DecoratorOwner),
-    Module(ModuleId),
-    File,
+/// Declares an enum whose variants carry one id or nothing, plus a 32-bit packed form of it. The first variant packs to 0.
+///
+/// The tag uses 5 bits and the id 27. That's enough because a file has fewer than 2^26 nodes (`File::node_bases`).
+/// `NONE` survives the round trip.
+macro_rules! packed {
+    (
+        $(#[$doc:meta])* $name:ident, $(#[$packed_doc:meta])* $packed:ident {
+            $none:ident,
+            $($(#[$unit_doc:meta])* $unit:ident,)*
+            ;
+            $($(#[$variant_doc:meta])* $variant:ident($id:ident),)*
+        }
+    ) => {
+        $(#[$doc])*
+        #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+        pub enum $name {
+            $none,
+            $($(#[$unit_doc])* $unit,)*
+            $($(#[$variant_doc])* $variant($id),)*
+        }
+
+        $(#[$packed_doc])*
+        #[derive(Copy, Clone, PartialEq, Eq, Default)]
+        pub struct $packed(u32);
+
+        const _: () = {
+            #[repr(u32)]
+            enum Tag { $none, $($unit,)* $($variant,)* }
+            const TAG_BITS: u32 = 5;
+            const _: () = assert!([Tag::$none, $(Tag::$unit,)* $(Tag::$variant,)*].len() <= 1 << TAG_BITS);
+
+            impl From<$name> for $packed {
+                #[inline]
+                fn from(it: $name) -> $packed {
+                    match it {
+                        $name::$none => $packed(Tag::$none as u32),
+                        $($name::$unit => $packed(Tag::$unit as u32),)*
+                        $($name::$variant(id) => $packed(id.0 << TAG_BITS | Tag::$variant as u32),)*
+                    }
+                }
+            }
+
+            impl $packed {
+                #[inline]
+                pub fn get(self) -> $name {
+                    let tag = self.0 & ((1 << TAG_BITS) - 1);
+                    // The arithmetic shift sign-extends, so a packed `NONE` unpacks to `u32::MAX`.
+                    let id = (self.0.cast_signed() >> TAG_BITS).cast_unsigned();
+                    $(if tag == Tag::$variant as u32 {
+                        return $name::$variant($id(id));
+                    })*
+                    $(if tag == Tag::$unit as u32 {
+                        return $name::$unit;
+                    })*
+                    $name::$none
+                }
+            }
+        };
+
+        impl std::fmt::Debug for $packed {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                self.get().fmt(f)
+            }
+        }
+    };
+}
+
+packed! {
+    /// The direct parent of an expression or a statement.
+    Parent,
+    /// A `Parent` packed into 32 bits, which is how the lists store it.
+    PackedParent {
+        None,
+        File,
+        ;
+        Expr(ExprId),
+        Stmt(StmtId),
+        VarInit(VarDeclId),
+        ParamDefault(ParamId),
+        PatPropDefault(PatPropId),
+        PatElemDefault(PatElemId),
+        /// The value of an object literal property or a JSX attribute.
+        Prop(PropId),
+        /// The computed name of an object literal property that isn't a method or an accessor.
+        PropKey(PropId),
+        /// The computed name of a binding element.
+        PatKey(PatPropId),
+        /// The computed name of a class, interface or type literal member. Control flow treats it as
+        /// part of the member.
+        MemberKey(MemberId),
+        /// The computed name of an object literal method or accessor. Control flow treats it as part of
+        /// the method.
+        MethodKey(PropId),
+        /// A member's initializer. Also the operand of a `typeof` in a class property's type or initializer, unless a
+        /// function is in between.
+        MemberInit(MemberId),
+        /// An arrow function's expression body, or a statement in a function body.
+        FnBody(FnId),
+        EnumInit(EnumMemberId),
+        Case(CaseId),
+        ClassExtends(ClassId),
+        /// A class decorator. This and the next two are evaluated at the class's position.
+        ClassDecorator(ClassId),
+        /// A class member's decorator.
+        MemberDecorator(MemberId),
+        /// A decorator on a parameter of a class member.
+        ParamDecorator(ParamId),
+        Module(ModuleId),
+    }
+}
+
+impl From<DecoratorOwner> for Parent {
+    #[inline]
+    fn from(decorated: DecoratorOwner) -> Parent {
+        match decorated {
+            DecoratorOwner::Class(c) => Parent::ClassDecorator(c),
+            DecoratorOwner::Member(m) => Parent::MemberDecorator(m),
+            DecoratorOwner::Param(p) => Parent::ParamDecorator(p),
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -676,6 +960,16 @@ impl PatParent {
             PatParent::Prop(_, prop) => hir[prop].default,
             PatParent::Elem(_, elem) => hir[elem].default,
             PatParent::None => ExprId::NONE,
+        }
+    }
+
+    /// Whether the variable declaration or the parameter has a type annotation.
+    #[inline]
+    pub fn has_type_annotation(self, hir: &File) -> bool {
+        match self {
+            PatParent::Var(d) => hir[d].ty.is_some(),
+            PatParent::Param(p) => hir[p].ty.is_some(),
+            _ => false,
         }
     }
 
@@ -791,6 +1085,275 @@ pub enum Flow {
     },
 }
 
+impl Flow {
+    /// A range of `edges`, which is `BoundIn::flow_edges`, or a single node.
+    pub fn antecedents<'a>(&'a self, edges: &'a [FlowId]) -> &'a [FlowId] {
+        match self {
+            Flow::Unreachable => &[],
+            &Flow::Label { start, len } | &Flow::Loop { start, len } => {
+                &edges[start as usize..(start + len) as usize]
+            }
+            Flow::Start { outer: before, .. }
+            | Flow::StartInvoked { outer: before, .. }
+            | Flow::Reduce { before, .. }
+            | Flow::ArrayMutation { before, .. }
+            | Flow::Cond { before, .. }
+            | Flow::Switch { before, .. }
+            | Flow::Assign { before, .. }
+            | Flow::Call { before, .. } => std::slice::from_ref(before),
+        }
+    }
+}
+
+/// TypeScript's limit on nested `getTypeAtFlowNode` calls. At this depth it gives up and reports TS2563.
+pub const MAX_FLOW_DEPTH: u32 = 2000;
+
+/// One `Flow::Loop` node, as `measure_flow` sees it.
+struct Loop {
+    label: u32,
+    /// The last node of the loop body.
+    end: u32,
+    /// Length of the longest path through the loop body.
+    body: u32,
+    /// The most depth that a loop nested in this one can add.
+    nested: u32,
+}
+
+/// Computes `BoundIn::flow_depth` and `BoundIn::has_loop_types_that_depend_on_order`.
+///
+/// A flow walk goes backward through the graph. At a loop label it also follows the back edge, which walks the loop body
+/// again while the first pass over that body is still on the stack. Nested loops stack up the same way, so a node inside
+/// three loops can be on the stack four times. The bound is the longest path without back edges, plus one body length
+/// for each level of loop nesting.
+fn measure_flow(flow: &[Flow], edges: &[FlowId], shared: &[u64]) -> (u32, bool) {
+    // Longest backward path from each node, ignoring back edges. A back edge points to a higher index, and so does `NONE`.
+    let mut below = vec![0u32; flow.len()];
+    let (mut loops, mut reduced): (Vec<Loop>, Vec<(u32, u32)>) = (Vec::new(), Vec::new());
+    let mut longest = 0;
+    for (i, node) in flow.iter().enumerate() {
+        let before = node.antecedents(edges).iter();
+        let before = before.filter(|it| it.idx() < i);
+        below[i] = 1 + before.map(|it| below[it.idx()]).max().unwrap_or(0);
+        longest = longest.max(below[i]);
+        match *node {
+            Flow::Loop { .. } => loops.push(Loop {
+                label: i as u32,
+                end: i as u32,
+                body: 0,
+                nested: 0,
+            }),
+            Flow::Reduce { label, .. } => reduced.push((label.0, i as u32)),
+            _ => {}
+        }
+    }
+    if loops.is_empty() {
+        return (longest, false);
+    }
+    for it in &mut loops {
+        let back = flow[it.label as usize].antecedents(edges).iter();
+        for back in back.filter(|back| back.is_some() && back.0 > it.label) {
+            it.end = it.end.max(back.0);
+            it.body = (it.body).max(below[back.idx()].saturating_sub(below[it.label as usize]));
+        }
+    }
+    let depends_on_order =
+        has_loop_types_that_depend_on_order(flow, edges, shared, &loops, reduced);
+    // For each loop label, the most depth that following its back edge can add.
+    let mut deeper_from: Vec<(u32, u32)> = Vec::new();
+    let mut open: Vec<Loop> = Vec::new();
+    let mut close = |open: &mut Vec<Loop>| {
+        let Some(it) = open.pop() else { return };
+        // The walk visits the label once more before it notices that the loop is already in progress.
+        let deeper = it.body.saturating_add(it.nested.max(1));
+        deeper_from.push((it.label, deeper));
+        if let Some(outer) = open.last_mut() {
+            outer.nested = outer.nested.max(deeper);
+        }
+    };
+    for it in loops {
+        while open.last().is_some_and(|outer| outer.end < it.label) {
+            close(&mut open);
+        }
+        open.push(it);
+    }
+    while !open.is_empty() {
+        close(&mut open);
+    }
+    let deepest = deeper_from.iter().map(|it| it.1).max().unwrap_or(0);
+    if longest.saturating_add(deepest) < MAX_FLOW_DEPTH {
+        return (longest + deepest, depends_on_order);
+    }
+    // The longest path and the deepest loop may be in different functions, which makes that sum too high. It only matters
+    // near the limit, so only then pair each loop with the longest path that really leads to its label.
+    // `above[i]`: the longest path from any node back to `i`, not counting `i`.
+    let mut above = vec![0u32; flow.len()];
+    for (i, node) in flow.iter().enumerate().rev() {
+        for before in node.antecedents(edges).iter().filter(|it| it.idx() < i) {
+            above[before.idx()] = above[before.idx()].max(above[i] + 1);
+        }
+    }
+    let through_loops = deeper_from
+        .iter()
+        .map(|it| it.1.saturating_add(above[it.0 as usize] + 1));
+    let deepest = longest.max(through_loops.max().unwrap_or(0));
+    (deepest, depends_on_order)
+}
+
+/// One `finally` block that control can fall out of, as `has_loop_types_that_depend_on_order` sees it.
+struct FinallyBlock {
+    /// The label at the start of the block. It counts as part of the block.
+    label: u32,
+    /// The first node after the block.
+    behind: u32,
+    /// Index + 1 of the `finally` block around this one, or 0.
+    parent: u32,
+    /// How many `Flow::Reduce` nodes the block has: one for each of leaving it normally, by `return` and by an exception.
+    reduces: u32,
+    /// The lowest and highest node outside the block that follows a node inside it without going through a `Reduce`.
+    left_for: Option<(u32, u32)>,
+    is_in_loop: bool,
+    /// Some node in the block has several successors, so a walk caches its type.
+    has_shared_node: bool,
+}
+
+/// Computes `BoundIn::has_loop_types_that_depend_on_order`. `loops` is sorted by label. `reduced` holds the label and the
+/// index of each `Flow::Reduce`.
+///
+/// What a walk sees inside a `finally` block depends on how it got there: each `Reduce` node limits the block's
+/// antecedents in its own way, and a jump out of the block does not limit them at all. That view can end up in the type
+/// cached for a loop in three ways:
+/// 1. The loop is inside the block.
+/// 2. The block is inside the loop and something leaves it without a `Reduce`. A walk that came through a `Reduce` follows
+///    the back edge into the block again, and the limit is still on.
+/// 3. The block has two ways out and a node whose type the walk caches. The walk enters the block one way, caches the
+///    type, and reuses it when it enters the other way, on behalf of a loop that comes after the block or is around it.
+fn has_loop_types_that_depend_on_order(
+    flow: &[Flow],
+    edges: &[FlowId],
+    shared: &[u64],
+    loops: &[Loop],
+    mut reduced: Vec<(u32, u32)>,
+) -> bool {
+    if reduced.is_empty() {
+        return false;
+    }
+    reduced.shared_sort_unstable();
+    let mut blocks: Vec<FinallyBlock> = Vec::new();
+    for (label, reduce) in reduced {
+        match blocks.last_mut() {
+            Some(last) if last.label == label => last.reduces += 1,
+            _ => blocks.push(FinallyBlock {
+                label,
+                behind: reduce,
+                parent: 0,
+                reduces: 1,
+                left_for: None,
+                is_in_loop: false,
+                has_shared_node: false,
+            }),
+        }
+    }
+    let mut next = blocks.iter_mut().peekable();
+    let (mut end_of_loops, mut end_of_blocks) = (0, 0);
+    for it in loops {
+        while let Some(block) = next.next_if(|block| block.label < it.label) {
+            block.is_in_loop = block.label <= end_of_loops;
+            end_of_blocks = end_of_blocks.max(block.behind);
+        }
+        if it.label < end_of_blocks {
+            return true;
+        }
+        end_of_loops = end_of_loops.max(it.end);
+    }
+    for block in next {
+        block.is_in_loop = block.label <= end_of_loops;
+    }
+    // `block_of[i]`: index + 1 of the innermost block that contains node `i`, or 0.
+    let mut block_of = vec![0u32; flow.len()];
+    let (mut open, mut next): (Vec<u32>, u32) = (Vec::new(), 0);
+    for (i, block) in (0..).zip(&mut block_of) {
+        while (open.last()).is_some_and(|&it| blocks[it as usize].behind <= i) {
+            open.pop();
+        }
+        if let Some(it) = blocks.get_mut(next as usize)
+            && it.label == i
+        {
+            it.parent = open.last().map_or(0, |it| it + 1);
+            open.push(next);
+            next += 1;
+        }
+        if let Some(&it) = open.last() {
+            *block = it + 1;
+            let word = shared.get(i as usize / 64).copied().unwrap_or(0);
+            blocks[it as usize].has_shared_node |= word >> (i % 64) & 1 != 0;
+        }
+    }
+    // Look at every kind of node, not only labels. The binder drops a label that has a single antecedent, so after
+    // `for (;;) { try {} finally { if (a) break; } }` the next statement follows a node inside the block directly.
+    for (node, i) in flow.iter().zip(0..) {
+        for from in node.antecedents(edges) {
+            let Some(block) = block_of.get(from.idx()).filter(|&&block| block != 0) else {
+                continue;
+            };
+            let block = &mut blocks[*block as usize - 1];
+            if (block.label..block.behind).contains(&i)
+                || matches!(node, Flow::Reduce { label, .. } if label.0 == block.label)
+            {
+                continue;
+            }
+            let (lowest, highest) = block.left_for.unwrap_or((i, i));
+            block.left_for = Some((lowest.min(i), highest.max(i)));
+        }
+    }
+    // Inner blocks come after the blocks around them. What leaves an inner block may leave the outer one too.
+    for i in (0..blocks.len()).rev() {
+        let (parent, left_for, has_shared_node) = (
+            blocks[i].parent,
+            blocks[i].left_for,
+            blocks[i].has_shared_node,
+        );
+        if left_for.is_some() && blocks[i].is_in_loop {
+            return true;
+        }
+        let Some(parent) = blocks.get_mut((parent as usize).wrapping_sub(1)) else {
+            continue;
+        };
+        parent.has_shared_node |= has_shared_node;
+        for to in left_for.into_iter().flat_map(|it| [it.0, it.1]) {
+            if to <= parent.label || parent.behind <= to {
+                let (lowest, highest) = parent.left_for.unwrap_or((to, to));
+                parent.left_for = Some((lowest.min(to), highest.max(to)));
+            }
+        }
+    }
+    // `is_mixed[i]`: a walk can enter block `i`, or a block around it, in two ways and reuse a cached type there.
+    let mut is_mixed = vec![false; blocks.len()];
+    for i in 0..blocks.len() {
+        let it = &blocks[i];
+        let ways_out = it.reduces + u32::from(it.left_for.is_some());
+        is_mixed[i] = ways_out > 1 && it.has_shared_node;
+        if is_mixed[i] && it.is_in_loop {
+            return true;
+        }
+        is_mixed[i] |= it.parent != 0 && is_mixed[it.parent as usize - 1];
+    }
+    let Some(first) = is_mixed.iter().position(|&it| it) else {
+        return false;
+    };
+    // Is there a loop from which a walk gets back to such a block?
+    let first = blocks[first].label as usize;
+    let mut leads_to_block = vec![false; flow.len() - first];
+    for (i, node) in flow.iter().enumerate().skip(first) {
+        let mut before = node.antecedents(edges).iter();
+        leads_to_block[i - first] = (block_of[i] != 0 && is_mixed[block_of[i] as usize - 1])
+            || before.any(|it| (first..i).contains(&it.idx()) && leads_to_block[it.idx() - first]);
+        if leads_to_block[i - first] && matches!(node, Flow::Loop { .. }) {
+            return true;
+        }
+    }
+    false
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct FnInfo {
     pub owner: FnOwner,
@@ -844,7 +1407,7 @@ pub struct Redeclaration {
 pub struct BoundIn<S: Storage> {
     /// The HIR was too deep to bind. No other field is filled in.
     pub ran_out_of_stack: bool,
-    pub symbols: S::List<SymbolIn<S>>,
+    pub symbols: S::Symbols,
     pub scopes: S::List<Scope>,
     /// Each table is a contiguous range of `entries`, in symbol creation order.
     pub tables: S::List<(u32, u32)>,
@@ -894,22 +1457,22 @@ pub struct BoundIn<S: Storage> {
     /// `getResolvedSymbol` of an identifier. `NONE`: nothing in this file declares it.
     /// `node.Symbol` of a `Decl::Expando` and of an object literal, where `NONE` means that it has
     /// not been created: see `symbol_of_expando_initializer`.
-    pub expr_symbol: S::List<SymbolId>,
-    pub expr_parent: S::List<Parent>,
+    pub expr_symbol: S::Ids<SymbolId>,
+    pub expr_parent: S::List<PackedParent>,
     /// The flow node at a name, a `this`, a `super`, and a narrowable `a.b` or `a[b]`
     /// (`isNarrowableReference`).
     /// `UNREACHABLE` for everything else.
-    pub expr_flow: S::List<FlowId>,
-    pub stmt_parent: S::List<Parent>,
+    pub expr_flow: S::Ids<FlowId>,
+    pub stmt_parent: S::List<PackedParent>,
     /// The enclosing scope of a statement.
-    pub stmt_scope: S::List<ScopeId>,
+    pub stmt_scope: S::Ids<ScopeId>,
     /// The enclosing scope of a type.
     pub type_scope: S::List<ScopeId>,
     /// `isResolvedByTypeAlias`: between the type node and a type alias there are only nodes that
     /// resolve their parts eagerly.
     pub type_by_alias: S::List<bool>,
     /// The `this` types inside a type literal, where they are invalid. `getThisType`
-    pub this_in_type_literal: S::Set<TypeNodeId>,
+    pub this_in_type_literal: S::FewSet<TypeNodeId>,
     /// `None`: the binder did not reach the node. The parser can leave unreferenced nodes (a
     /// construct dropped during error recovery, an annotation in a parenthesized list that is not
     /// an arrow function, `<T>(x)` parsed as a cast). They have no symbol, scope or owner, so a
@@ -921,7 +1484,7 @@ pub struct BoundIn<S: Storage> {
     pub member_symbol: S::List<SymbolId>,
     /// `node.Symbol` for a parameter property and for a member of an object literal that has
     /// symbols.
-    pub property_symbol: S::Map<Decl, SymbolId>,
+    pub property_symbol: S::FewMap<Decl, SymbolId>,
     pub member_owner: S::List<MemberOwner>,
     /// The enclosing scope of the type, the function and the initializer of a member.
     pub member_scope: S::List<ScopeId>,
@@ -980,7 +1543,7 @@ pub struct BoundIn<S: Storage> {
     pub computed_symbols: S::Few<(TableId, SymbolId)>,
     pub case_stmt: S::List<StmtId>,
     /// The flow node at the start of each statement.
-    pub stmt_flow: S::List<FlowId>,
+    pub stmt_flow: S::Ids<FlowId>,
     /// The flow node at the end of a `case` that is followed by another, if that end is reachable.
     /// `NONE` otherwise.
     pub case_fallthrough: S::List<FlowId>,
@@ -996,11 +1559,11 @@ pub struct BoundIn<S: Storage> {
     pub import_equals_scope: S::Few<ScopeId>,
     pub export_scope: S::List<ScopeId>,
     /// The enclosing scope of an expression that creates no scope, for the few that need it.
-    pub expr_scope: S::Map<ExprId, ScopeId>,
+    pub expr_scope: S::FewMap<ExprId, ScopeId>,
     /// `a.#x`, and the `#x` of `#x in a` (its left operand): the innermost enclosing class that
     /// declares an `#x`.
     /// `lookupSymbolForPrivateIdentifierDeclaration`. No entry: no enclosing class does.
-    pub private_class: S::Map<ExprId, ClassId>,
+    pub private_class: S::FewMap<ExprId, ClassId>,
     /// The members of interfaces, type literals and object literals that are named `#x`, with
     /// `GetContainingClass`: `getDeclarationName` names them like an `#x` of that class.
     pub private_names_outside_class_bodies: S::Few<(Decl, ClassId)>,
@@ -1033,10 +1596,47 @@ pub struct BoundIn<S: Storage> {
     /// `FlowFlagsShared`, a bit for each node of `flow`: it is the antecedent of more than one
     /// node.
     pub flow_shared: S::List<u64>,
-    /// Number of flow nodes the binder encountered. `flow` omits the labels that nothing follows,
-    /// and has a single start node for all the functions without a body.
-    pub flow_places: u32,
+    /// Upper bound on how deep `getTypeAtFlowNode` calls can nest in a walk of `flow`. See
+    /// [`can_reach_flow_depth_limit`](Self::can_reach_flow_depth_limit).
+    pub flow_depth: u32,
+    /// TypeScript caches the type of a reference at a loop label, from whichever walk gets there first. A walk that starts
+    /// after a `finally` block sees fewer antecedents for that block than other walks do. If such a walk can fill the cache,
+    /// the cached type depends on which reference was checked first. `has_loop_types_that_depend_on_order`, the function,
+    /// lists the ways that can happen.
+    pub has_loop_types_that_depend_on_order: bool,
+    /// From here on: only from [`bind_for_lint_in`], empty otherwise.
+    ///
+    /// For each expression `2 * ExprTag + 1` if it is a `Dot`, an `Index` or a `Call` whose `Chain` is
+    /// not `No`, `2 * ExprTag` if it is anything else. [`NOT_REACHED`] if the binder does not get to
+    /// it, as where `expr_parent` is `Parent::None`, or if it is `ExprKind::Missing`.
+    pub expr_kinds: S::List<u8>,
+    /// How many of `expr_kinds` are 0, 1, 2 and so on, up to `2 * ExprTag::COUNT`.
+    pub expr_kind_counts: S::List<u32>,
+    /// How many statements, types and patterns are of each kind, whether anything gets to them or
+    /// not, and a few other numbers: see [`kind_counts`]. Where it is not empty every statement has
+    /// a `stmt_parent` and every type a `type_scope`.
+    pub kind_counts: S::List<u32>,
 }
+
+/// What is where in [`BoundIn::kind_counts`].
+pub mod kind_counts {
+    use crate::hir::{PatTag, StmtTag, TypeTag};
+
+    /// From here on by `StmtTag`.
+    pub const STMTS: usize = 0;
+    /// From here on by `TypeTag`.
+    pub const TYPES: usize = STMTS + StmtTag::COUNT;
+    /// From here on by `PatTag`.
+    pub const PATS: usize = TYPES + TypeTag::COUNT;
+    /// The `init` of a `For` and the `left` of a `ForIn` or a `ForOf` that are a `StmtKind::Expr`.
+    pub const HEADS_THAT_ARE_EXPRESSIONS: usize = PATS + PatTag::COUNT;
+    /// The patterns whose `pat_parent` is `PatParent::None`.
+    pub const PATS_WITHOUT_PARENT: usize = HEADS_THAT_ARE_EXPRESSIONS + 1;
+    pub const LEN: usize = PATS_WITHOUT_PARENT + 1;
+}
+
+/// See [`BoundIn::expr_kinds`].
+pub const NOT_REACHED: u8 = u8::MAX;
 
 /// The side tables of a file that has been loaded.
 pub type Bound<'s> = BoundIn<InArena<'s>>;
@@ -1090,6 +1690,67 @@ impl<S: Storage> BoundIn<S> {
         }
     }
 
+    #[inline]
+    pub fn symbol(&self, id: SymbolId) -> Symbol<'_> {
+        let symbol = self.symbols.get(id.idx());
+        symbol.expect("the symbol is of this file")
+    }
+
+    /// Returns the parent of `e`, or `Parent::None` if `e` isn't an expression of this file.
+    #[inline]
+    pub fn parent_of_expr(&self, e: ExprId) -> Parent {
+        let parent = self.expr_parent.get(e.idx()).copied();
+        parent.unwrap_or_default().get()
+    }
+
+    /// Returns the parent of `s`, or `Parent::None` if `s` isn't a statement of this file.
+    #[inline]
+    pub fn parent_of_stmt(&self, s: StmtId) -> Parent {
+        let parent = self.stmt_parent.get(s.idx()).copied();
+        parent.unwrap_or_default().get()
+    }
+
+    /// Returns `expr_symbol` for `e`, or `NONE` if `e` isn't an expression of this file.
+    #[inline]
+    pub fn symbol_of_expr(&self, e: ExprId) -> SymbolId {
+        self.expr_symbol.id_at(e.idx()).unwrap_or_default()
+    }
+
+    /// Returns `expr_flow` for `e`, or `UNREACHABLE` if `e` isn't an expression of this file.
+    #[inline]
+    pub fn flow_of_expr(&self, e: ExprId) -> FlowId {
+        self.expr_flow.id_at(e.idx()).unwrap_or(UNREACHABLE)
+    }
+
+    /// Returns `stmt_flow` for `s`, or `UNREACHABLE` if `s` isn't a statement of this file.
+    #[inline]
+    pub fn flow_of_stmt(&self, s: StmtId) -> FlowId {
+        self.stmt_flow.id_at(s.idx()).unwrap_or(UNREACHABLE)
+    }
+
+    /// Returns the scope that encloses `s`, or `NONE` if `s` isn't a statement of this file.
+    #[inline]
+    pub fn scope_of_stmt(&self, s: StmtId) -> ScopeId {
+        self.stmt_scope.id_at(s.idx()).unwrap_or_default()
+    }
+
+    /// Returns the class at whose position a decorator with this `parent` is evaluated.
+    pub fn class_of_decorator(&self, parent: Parent) -> ClassId {
+        let member = match parent {
+            Parent::ClassDecorator(class) => return class,
+            Parent::MemberDecorator(member) => member,
+            Parent::ParamDecorator(p) => match self.fns[self.param_fn[p.idx()].idx()].owner {
+                FnOwner::Member(member) => member,
+                _ => return ClassId::NONE,
+            },
+            _ => return ClassId::NONE,
+        };
+        match self.member_owner[member.idx()] {
+            MemberOwner::Class(class) => class,
+            _ => ClassId::NONE,
+        }
+    }
+
     /// The nearest scope that is more than a block: `container`, where `scope` is `blockScopeContainer`.
     pub fn container_scope(&self, mut scope: ScopeId) -> ScopeId {
         loop {
@@ -1120,7 +1781,7 @@ impl<S: Storage> BoundIn<S> {
     /// Whether the assignment `e` is what `{ name = value }` is stored as: a
     /// `ShorthandPropertyAssignment` with an `ObjectAssignmentInitializer`.
     pub fn is_shorthand_property_assignment(&self, hir: &File, e: ExprId) -> bool {
-        matches!(self.expr_parent[e.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
+        matches!(self.parent_of_expr(e), Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
     }
 
     /// `GetAssignmentTarget` and `accessKind` walk up the parents the same way, except that the
@@ -1132,7 +1793,7 @@ impl<S: Storage> BoundIn<S> {
         sees_through_spread: bool,
     ) -> Option<AssignmentTarget> {
         loop {
-            match self.expr_parent[e.idx()] {
+            match self.parent_of_expr(e) {
                 Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
                     ExprKind::Assign { target, .. } if target != e => return None,
                     // `{ name = value }` is a `ShorthandPropertyAssignment`.
@@ -1167,7 +1828,7 @@ impl<S: Storage> BoundIn<S> {
                     e = owner;
                 }
                 Parent::Stmt(s) if s.is_some() => {
-                    return target_of_for_in_or_of(hir, &self.stmt_parent, s);
+                    return target_of_for_in_or_of(hir, self.parent_of_stmt(s), s);
                 }
                 _ => return None,
             }
@@ -1198,7 +1859,7 @@ impl<S: Storage> BoundIn<S> {
 
     /// `getExportSymbolOfValueSymbolIfExported`, before `getMergedSymbol`.
     pub fn export_symbol_of_value_symbol_if_exported(&self, symbol: SymbolId) -> SymbolId {
-        let local = &self.symbols[symbol.idx()];
+        let local = self.symbol(symbol);
         if local.flags.contains(SymFlags::EXPORT_VALUE) && local.export_symbol.is_some() {
             local.export_symbol
         } else {
@@ -1291,14 +1952,10 @@ impl<S: Storage> BoundIn<S> {
     }
 }
 
-/// The end of `GetAssignmentTarget`: `s`, an expression statement, is what the head of a `for`-`in`
-/// or a `for`-`of` assigns to.
-fn target_of_for_in_or_of(
-    hir: &File,
-    stmt_parent: &[Parent],
-    s: StmtId,
-) -> Option<AssignmentTarget> {
-    matches!(stmt_parent[s.idx()], Parent::Stmt(l) if l.is_some()
+/// The last step of `GetAssignmentTarget`. Returns `ForInOrOf` if `s`, an expression statement whose parent is
+/// `parent`, is the assignment target in the head of a `for`-`in` or `for`-`of`.
+fn target_of_for_in_or_of(hir: &File, parent: Parent, s: StmtId) -> Option<AssignmentTarget> {
+    matches!(parent, Parent::Stmt(l) if l.is_some()
         && matches!(hir[l].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == s))
     .then_some(AssignmentTarget::ForInOrOf)
 }
@@ -1372,7 +2029,7 @@ impl Bound<'_> {
         let Some(symbol) = self.property_symbol.get(&Decl::Property(p)) else {
             return smallvec::smallvec![p];
         };
-        let declarations = self.symbols[symbol.idx()].decls.iter();
+        let declarations = self.symbol(*symbol).decls.iter();
         declarations
             .filter_map(|declaration| match *declaration {
                 Decl::Property(p) => Some(p),
@@ -1386,7 +2043,7 @@ impl Bound<'_> {
         let Some(symbol) = self.symbols.get(self.member_symbol[m.idx()].idx()) else {
             return false;
         };
-        let container = &self.symbols[symbol.parent.idx()];
+        let container = self.symbol(symbol.parent);
         symbol.name != known::computed
             && [container.members, container.exports]
                 .iter()
@@ -1441,7 +2098,7 @@ impl Bound<'_> {
     ) -> Option<CallId> {
         if let FnOwner::Expr(e) = self.fns[f.idx()].owner
             && matches!(hir[f].kind, FnKind::Expr | FnKind::Arrow)
-            && let Parent::Expr(parent) = self.expr_parent[e.idx()]
+            && let Parent::Expr(parent) = self.parent_of_expr(e)
             && parent.is_some()
             && let ExprKind::Call(call) = hir[parent].kind
             && hir[call].callee == e
@@ -1456,7 +2113,7 @@ impl Bound<'_> {
         if is_parenthesized(hir, e) {
             return None;
         }
-        match self.expr_parent[e.idx()] {
+        match self.parent_of_expr(e) {
             // Not the attribute of a JSX element.
             Parent::Prop(p) if hir[p].kind == PropKind::Init => {
                 let owner = self.prop_owner[p.idx()];
@@ -1482,7 +2139,7 @@ impl Bound<'_> {
                 }
                 match hir[left].kind {
                     ExprKind::Ident(_) => Some(hir[left].pos),
-                    ExprKind::Dot { name_pos, .. } => Some(name_pos),
+                    ExprKind::Dot { .. } => Some(hir.name_pos(left)),
                     // `IsStringOrNumericLiteralLike(SkipParentheses(argument))`
                     ExprKind::Index { index, .. } => match hir[index].kind {
                         ExprKind::String(_) | ExprKind::Number(_) => Some(hir[index].pos),
@@ -1501,7 +2158,7 @@ impl Bound<'_> {
     /// Whether `checkSourceFile` never reaches the expression: it is unreferenced, or it is one of
     /// `unchecked_exprs`. A pass over all expressions of a file must skip it.
     pub fn is_unchecked(&self, e: usize) -> bool {
-        matches!(self.expr_parent[e], Parent::None)
+        matches!(self.parent_of_expr(ExprId(e as u32)), Parent::None)
             || self
                 .unchecked_exprs
                 .binary_search(&ExprId(e as u32))
@@ -1524,6 +2181,11 @@ impl Bound<'_> {
             ModuleInstanceState::Instantiated => true,
             ModuleInstanceState::ConstEnumOnly => preserve_const_enums,
         }
+    }
+
+    /// Whether the file has a `typeof x` type.
+    pub(crate) fn has_type_queries(&self) -> bool {
+        !self.type_query_operands.is_empty()
     }
 
     /// `IsInTypeQuery`: the type of `e` is queried, but `e` is not read.
@@ -1567,7 +2229,7 @@ impl Bound<'_> {
             Decl::Module(it) => self.module_symbol[it.idx()],
             Decl::TypeParam(it) => self.type_param_symbol[it.idx()],
             Decl::Expando(it) | Decl::ObjectLiteral(it) | Decl::ThisProperty(it) => {
-                self.expr_symbol[it.idx()]
+                self.symbol_of_expr(it)
             }
             Decl::Member(it) => self.member_symbol[it.idx()],
             Decl::ParameterProperty(_) | Decl::Property(_) => {
@@ -1595,11 +2257,7 @@ impl Bound<'_> {
             let created = self.scopes.get(created.idx());
             created.map_or(ScopeId::NONE, |scope| scope.parent)
         };
-        let of_statement = |it: StmtId| {
-            self.stmt_scope
-                .get(it.idx())
-                .map_or(ScopeId::NONE, |&it| it)
-        };
+        let of_statement = |it: StmtId| self.scope_of_stmt(it);
         match decl {
             Decl::File | Decl::CommonJsVariable => ScopeId(0),
             Decl::Module(it) => self.module_scope[it.idx()],
@@ -1647,7 +2305,7 @@ impl Bound<'_> {
     /// `ExportSymbol` of the local symbol named `name` in `scope`.
     pub fn export_symbol_of_local(&self, scope: ScopeId, name: Atom) -> SymbolId {
         match self.lookup(self.scopes[scope.idx()].locals, name) {
-            Some(local) => self.symbols[local.idx()].export_symbol,
+            Some(local) => self.symbol(local).export_symbol,
             None => SymbolId::NONE,
         }
     }
@@ -1676,6 +2334,17 @@ impl Bound<'_> {
 
     pub fn edges(&self, start: u32, len: u32) -> &[FlowId] {
         &self.flow_edges[start as usize..(start + len) as usize]
+    }
+
+    /// Whether a walk of `flow` can hit `MAX_FLOW_DEPTH`. `>=` leaves room for the one extra condition node that
+    /// `checkIfExpressionRefinesParameter` makes up.
+    pub fn can_reach_flow_depth_limit(&self) -> bool {
+        self.flow_depth >= MAX_FLOW_DEPTH
+    }
+
+    /// Whether the type of a reference can depend on which references were checked before.
+    pub fn has_types_that_depend_on_order(&self) -> bool {
+        self.can_reach_flow_depth_limit() || self.has_loop_types_that_depend_on_order
     }
 
     /// The scope at which `NameResolver.Resolve` can start its lookup of `name` from `scope`. If no
@@ -1733,7 +2402,7 @@ impl Bound<'_> {
         };
         let locals = self.scopes[self.fns[constructor.idx()].scope.idx()].locals;
         let local = self.lookup(locals, name)?;
-        (meaning & self.symbols[local.idx()].flags)
+        (meaning & self.symbol(local).flags)
             .intersects(SymFlags::VALUE)
             .then_some((code, property))
     }
@@ -1763,61 +2432,259 @@ fn map_to_arena<'s, K: Eq + std::hash::Hash, V>(
     exact
 }
 
-fn set_to_arena<'s, K: Eq + std::hash::Hash>(
-    set: FxHashSet<K>,
-    arena: &'s Arena,
-) -> ArenaHashSet<'s, K> {
-    let mut exact = ArenaHashSet::with_capacity_and_hasher_in(set.len(), FxBuild, arena);
-    exact.extend(set);
-    exact
+fn few_map_to_arena<K: Ord, V>(map: FxHashMap<K, V>, arena: &Arena) -> ArenaFewMap<'_, K, V> {
+    ArenaFewMap::from_iter_in(map.into_iter(), arena)
 }
 
 impl BoundBuilder {
     /// The side tables with every list at its final size in `arena`.
     pub fn into_arena<'s>(mut self, arena: &'s Arena) -> Bound<'s> {
+        self.move_to_arena(arena)
+    }
+
+    /// Makes it what `BoundBuilder::default()` is, but for the room that its lists keep.
+    fn clear(&mut self) {
+        // Every field, so that one that is added cannot be left out.
+        let BoundIn {
+            ran_out_of_stack,
+            symbols,
+            scopes,
+            tables,
+            entries,
+            large_tables,
+            nested_names,
+            ids,
+            file_symbol,
+            export_stars,
+            ambient_modules,
+            pattern_ambient_modules,
+            global_augmentations,
+            redeclarations,
+            umd_globals,
+            specifiers,
+            module_augmentations,
+            ambient_specifiers,
+            commonjs_indicator,
+            module_exports_property,
+            expr_symbol,
+            expr_parent,
+            expr_flow,
+            stmt_parent,
+            stmt_scope,
+            type_scope,
+            type_by_alias,
+            this_in_type_literal,
+            pat_parent,
+            pat_symbol,
+            prop_owner,
+            member_symbol,
+            property_symbol,
+            member_owner,
+            member_scope,
+            param_fn,
+            type_param_symbol,
+            type_param_scope,
+            fns,
+            requires_scope_change,
+            fn_symbol,
+            class_symbol,
+            class_owner,
+            class_scope,
+            interface_symbol,
+            interface_scope,
+            interface_contains_this,
+            enum_scope,
+            module_scope,
+            alias_symbol,
+            alias_scope,
+            enum_symbol,
+            enum_member_symbol,
+            enum_member_owner,
+            module_symbol,
+            module_instance_state,
+            var_stmt,
+            assignments,
+            unchecked_assignment_targets,
+            type_query_operands,
+            unchecked_exprs,
+            unchecked_types,
+            infer_positions,
+            expando_declarations,
+            computed_symbols,
+            case_stmt,
+            stmt_flow,
+            case_fallthrough,
+            hoisted_vars,
+            refused_decorators,
+            unused_labels,
+            import_scope,
+            import_equals_scope,
+            export_scope,
+            expr_scope,
+            private_class,
+            private_names_outside_class_bodies,
+            classes_of_private_names,
+            free_idents,
+            alias_idents,
+            arguments_objects,
+            identifiers_in_parameters,
+            jsdoc_param_errors,
+            names_resolved_for_arguments,
+            flow,
+            flow_edges,
+            flow_shared,
+            flow_depth,
+            has_loop_types_that_depend_on_order,
+            expr_kinds,
+            expr_kind_counts,
+            kind_counts,
+        } = self;
+        *ran_out_of_stack = Default::default();
+        symbols.clear();
+        scopes.clear();
+        tables.clear();
+        entries.clear();
+        large_tables.clear();
+        nested_names.clear();
+        ids.clear();
+        *file_symbol = Default::default();
+        export_stars.clear();
+        ambient_modules.clear();
+        pattern_ambient_modules.clear();
+        global_augmentations.clear();
+        redeclarations.clear();
+        umd_globals.clear();
+        specifiers.clear();
+        module_augmentations.clear();
+        ambient_specifiers.clear();
+        *commonjs_indicator = Default::default();
+        *module_exports_property = Default::default();
+        expr_symbol.clear();
+        expr_parent.clear();
+        expr_flow.clear();
+        stmt_parent.clear();
+        stmt_scope.clear();
+        type_scope.clear();
+        type_by_alias.clear();
+        this_in_type_literal.clear();
+        pat_parent.clear();
+        pat_symbol.clear();
+        prop_owner.clear();
+        member_symbol.clear();
+        property_symbol.clear();
+        member_owner.clear();
+        member_scope.clear();
+        param_fn.clear();
+        type_param_symbol.clear();
+        type_param_scope.clear();
+        fns.clear();
+        requires_scope_change.clear();
+        fn_symbol.clear();
+        class_symbol.clear();
+        class_owner.clear();
+        class_scope.clear();
+        interface_symbol.clear();
+        interface_scope.clear();
+        interface_contains_this.clear();
+        enum_scope.clear();
+        module_scope.clear();
+        alias_symbol.clear();
+        alias_scope.clear();
+        enum_symbol.clear();
+        enum_member_symbol.clear();
+        enum_member_owner.clear();
+        module_symbol.clear();
+        module_instance_state.clear();
+        var_stmt.clear();
+        assignments.clear();
+        unchecked_assignment_targets.clear();
+        type_query_operands.clear();
+        unchecked_exprs.clear();
+        unchecked_types.clear();
+        infer_positions.clear();
+        expando_declarations.clear();
+        computed_symbols.clear();
+        case_stmt.clear();
+        stmt_flow.clear();
+        case_fallthrough.clear();
+        hoisted_vars.clear();
+        refused_decorators.clear();
+        unused_labels.clear();
+        import_scope.clear();
+        import_equals_scope.clear();
+        export_scope.clear();
+        expr_scope.clear();
+        private_class.clear();
+        private_names_outside_class_bodies.clear();
+        classes_of_private_names.clear();
+        free_idents.clear();
+        alias_idents.clear();
+        arguments_objects.clear();
+        identifiers_in_parameters.clear();
+        jsdoc_param_errors.clear();
+        names_resolved_for_arguments.clear();
+        flow.clear();
+        flow_edges.clear();
+        flow_shared.clear();
+        *flow_depth = Default::default();
+        *has_loop_types_that_depend_on_order = Default::default();
+        expr_kinds.clear();
+        expr_kind_counts.clear();
+        kind_counts.clear();
+    }
+
+    /// The same. What is left is empty, and the lists that are long in most files keep their room.
+    fn move_to_arena<'s>(&mut self, arena: &'s Arena) -> Bound<'s> {
         Bound {
             ran_out_of_stack: self.ran_out_of_stack,
             symbols: {
-                let mut exact = ArenaVec::new_in(arena);
-                exact.reserve_exact(self.symbols.len());
-                exact.extend(
-                    self.symbols
-                        .drain(..)
-                        .map(|symbol| symbol.into_arena(arena)),
-                );
+                let exact = Symbols::of(&self.symbols, arena);
+                self.symbols.clear();
                 exact
             },
-            scopes: move_to_arena(&mut self.scopes, arena),
+            scopes: copy_to_arena(&mut self.scopes, arena),
             tables: copy_to_arena(&mut self.tables, arena),
             entries: copy_to_arena(&mut self.entries, arena),
-            large_tables: map_to_arena(self.large_tables, arena),
+            large_tables: map_to_arena(std::mem::take(&mut self.large_tables), arena),
             nested_names: copy_to_arena(&mut self.nested_names, arena),
             ids: copy_to_arena(&mut self.ids, arena),
             file_symbol: self.file_symbol,
-            export_stars: few_to_arena(self.export_stars, arena),
-            ambient_modules: few_to_arena(self.ambient_modules, arena),
-            pattern_ambient_modules: few_to_arena(self.pattern_ambient_modules, arena),
-            global_augmentations: few_to_arena(self.global_augmentations, arena),
-            redeclarations: few_to_arena(self.redeclarations, arena),
-            umd_globals: few_to_arena(self.umd_globals, arena),
+            export_stars: few_to_arena(std::mem::take(&mut self.export_stars), arena),
+            ambient_modules: few_to_arena(std::mem::take(&mut self.ambient_modules), arena),
+            pattern_ambient_modules: few_to_arena(
+                std::mem::take(&mut self.pattern_ambient_modules),
+                arena,
+            ),
+            global_augmentations: few_to_arena(
+                std::mem::take(&mut self.global_augmentations),
+                arena,
+            ),
+            redeclarations: few_to_arena(std::mem::take(&mut self.redeclarations), arena),
+            umd_globals: few_to_arena(std::mem::take(&mut self.umd_globals), arena),
             specifiers: copy_to_arena(&mut self.specifiers, arena),
-            module_augmentations: few_to_arena(self.module_augmentations, arena),
-            ambient_specifiers: few_to_arena(self.ambient_specifiers, arena),
+            module_augmentations: few_to_arena(
+                std::mem::take(&mut self.module_augmentations),
+                arena,
+            ),
+            ambient_specifiers: few_to_arena(std::mem::take(&mut self.ambient_specifiers), arena),
             commonjs_indicator: self.commonjs_indicator,
             module_exports_property: self.module_exports_property,
-            expr_symbol: copy_to_arena(&mut self.expr_symbol, arena),
+            expr_symbol: Narrow::moved_in(arena, &mut self.expr_symbol),
             expr_parent: copy_to_arena(&mut self.expr_parent, arena),
-            expr_flow: copy_to_arena(&mut self.expr_flow, arena),
+            expr_flow: Narrow::moved_in(arena, &mut self.expr_flow),
             stmt_parent: copy_to_arena(&mut self.stmt_parent, arena),
-            stmt_scope: copy_to_arena(&mut self.stmt_scope, arena),
+            stmt_scope: Narrow::moved_in(arena, &mut self.stmt_scope),
             type_scope: copy_to_arena(&mut self.type_scope, arena),
             type_by_alias: copy_to_arena(&mut self.type_by_alias, arena),
-            this_in_type_literal: set_to_arena(self.this_in_type_literal, arena),
+            this_in_type_literal: ArenaFewMap::from_iter_in(
+                self.this_in_type_literal.drain().map(|node| (node, ())),
+                arena,
+            ),
             pat_parent: copy_to_arena(&mut self.pat_parent, arena),
             pat_symbol: copy_to_arena(&mut self.pat_symbol, arena),
             prop_owner: copy_to_arena(&mut self.prop_owner, arena),
             member_symbol: copy_to_arena(&mut self.member_symbol, arena),
-            property_symbol: map_to_arena(self.property_symbol, arena),
+            property_symbol: few_map_to_arena(std::mem::take(&mut self.property_symbol), arena),
             member_owner: copy_to_arena(&mut self.member_owner, arena),
             member_scope: copy_to_arena(&mut self.member_scope, arena),
             param_fn: copy_to_arena(&mut self.param_fn, arena),
@@ -1832,52 +2699,245 @@ impl BoundBuilder {
             interface_symbol: copy_to_arena(&mut self.interface_symbol, arena),
             interface_scope: copy_to_arena(&mut self.interface_scope, arena),
             interface_contains_this: copy_to_arena(&mut self.interface_contains_this, arena),
-            enum_scope: few_to_arena(self.enum_scope, arena),
-            module_scope: few_to_arena(self.module_scope, arena),
+            enum_scope: few_to_arena(std::mem::take(&mut self.enum_scope), arena),
+            module_scope: few_to_arena(std::mem::take(&mut self.module_scope), arena),
             alias_symbol: copy_to_arena(&mut self.alias_symbol, arena),
             alias_scope: copy_to_arena(&mut self.alias_scope, arena),
-            enum_symbol: few_to_arena(self.enum_symbol, arena),
-            enum_member_symbol: few_to_arena(self.enum_member_symbol, arena),
-            enum_member_owner: few_to_arena(self.enum_member_owner, arena),
-            module_symbol: few_to_arena(self.module_symbol, arena),
-            module_instance_state: few_to_arena(self.module_instance_state, arena),
-            var_stmt: copy_to_arena(&mut self.var_stmt, arena),
-            assignments: copy_to_arena(&mut self.assignments, arena),
-            unchecked_assignment_targets: few_to_arena(self.unchecked_assignment_targets, arena),
-            type_query_operands: few_to_arena(self.type_query_operands, arena),
-            unchecked_exprs: few_to_arena(self.unchecked_exprs, arena),
-            unchecked_types: few_to_arena(self.unchecked_types, arena),
-            infer_positions: few_to_arena(self.infer_positions, arena),
-            expando_declarations: few_to_arena(self.expando_declarations, arena),
-            computed_symbols: few_to_arena(self.computed_symbols, arena),
-            case_stmt: copy_to_arena(&mut self.case_stmt, arena),
-            stmt_flow: copy_to_arena(&mut self.stmt_flow, arena),
-            case_fallthrough: copy_to_arena(&mut self.case_fallthrough, arena),
-            hoisted_vars: few_to_arena(self.hoisted_vars, arena),
-            refused_decorators: few_to_arena(self.refused_decorators, arena),
-            unused_labels: few_to_arena(self.unused_labels, arena),
-            import_scope: copy_to_arena(&mut self.import_scope, arena),
-            import_equals_scope: few_to_arena(self.import_equals_scope, arena),
-            export_scope: copy_to_arena(&mut self.export_scope, arena),
-            expr_scope: map_to_arena(self.expr_scope, arena),
-            private_class: map_to_arena(self.private_class, arena),
-            private_names_outside_class_bodies: few_to_arena(
-                self.private_names_outside_class_bodies,
+            enum_symbol: few_to_arena(std::mem::take(&mut self.enum_symbol), arena),
+            enum_member_symbol: few_to_arena(std::mem::take(&mut self.enum_member_symbol), arena),
+            enum_member_owner: few_to_arena(std::mem::take(&mut self.enum_member_owner), arena),
+            module_symbol: few_to_arena(std::mem::take(&mut self.module_symbol), arena),
+            module_instance_state: few_to_arena(
+                std::mem::take(&mut self.module_instance_state),
                 arena,
             ),
-            classes_of_private_names: few_to_arena(self.classes_of_private_names, arena),
+            var_stmt: copy_to_arena(&mut self.var_stmt, arena),
+            assignments: copy_to_arena(&mut self.assignments, arena),
+            unchecked_assignment_targets: few_to_arena(
+                std::mem::take(&mut self.unchecked_assignment_targets),
+                arena,
+            ),
+            type_query_operands: few_to_arena(std::mem::take(&mut self.type_query_operands), arena),
+            unchecked_exprs: few_to_arena(std::mem::take(&mut self.unchecked_exprs), arena),
+            unchecked_types: few_to_arena(std::mem::take(&mut self.unchecked_types), arena),
+            infer_positions: few_to_arena(std::mem::take(&mut self.infer_positions), arena),
+            expando_declarations: few_to_arena(
+                std::mem::take(&mut self.expando_declarations),
+                arena,
+            ),
+            computed_symbols: few_to_arena(std::mem::take(&mut self.computed_symbols), arena),
+            case_stmt: copy_to_arena(&mut self.case_stmt, arena),
+            stmt_flow: Narrow::moved_in(arena, &mut self.stmt_flow),
+            case_fallthrough: copy_to_arena(&mut self.case_fallthrough, arena),
+            hoisted_vars: few_to_arena(std::mem::take(&mut self.hoisted_vars), arena),
+            refused_decorators: few_to_arena(std::mem::take(&mut self.refused_decorators), arena),
+            unused_labels: few_to_arena(std::mem::take(&mut self.unused_labels), arena),
+            import_scope: copy_to_arena(&mut self.import_scope, arena),
+            import_equals_scope: few_to_arena(std::mem::take(&mut self.import_equals_scope), arena),
+            export_scope: copy_to_arena(&mut self.export_scope, arena),
+            expr_scope: few_map_to_arena(std::mem::take(&mut self.expr_scope), arena),
+            private_class: few_map_to_arena(std::mem::take(&mut self.private_class), arena),
+            private_names_outside_class_bodies: few_to_arena(
+                std::mem::take(&mut self.private_names_outside_class_bodies),
+                arena,
+            ),
+            classes_of_private_names: few_to_arena(
+                std::mem::take(&mut self.classes_of_private_names),
+                arena,
+            ),
             free_idents: copy_to_arena(&mut self.free_idents, arena),
             alias_idents: copy_to_arena(&mut self.alias_idents, arena),
-            arguments_objects: few_to_arena(self.arguments_objects, arena),
-            identifiers_in_parameters: few_to_arena(self.identifiers_in_parameters, arena),
-            jsdoc_param_errors: few_to_arena(self.jsdoc_param_errors, arena),
-            names_resolved_for_arguments: few_to_arena(self.names_resolved_for_arguments, arena),
+            arguments_objects: few_to_arena(std::mem::take(&mut self.arguments_objects), arena),
+            identifiers_in_parameters: few_to_arena(
+                std::mem::take(&mut self.identifiers_in_parameters),
+                arena,
+            ),
+            jsdoc_param_errors: few_to_arena(std::mem::take(&mut self.jsdoc_param_errors), arena),
+            names_resolved_for_arguments: few_to_arena(
+                std::mem::take(&mut self.names_resolved_for_arguments),
+                arena,
+            ),
             flow: copy_to_arena(&mut self.flow, arena),
             flow_edges: copy_to_arena(&mut self.flow_edges, arena),
             flow_shared: copy_to_arena(&mut self.flow_shared, arena),
-            flow_places: self.flow_places,
+            flow_depth: self.flow_depth,
+            has_loop_types_that_depend_on_order: self.has_loop_types_that_depend_on_order,
+            expr_kinds: copy_to_arena(&mut self.expr_kinds, arena),
+            expr_kind_counts: copy_to_arena(&mut self.expr_kind_counts, arena),
+            kind_counts: copy_to_arena(&mut self.kind_counts, arena),
         }
     }
+}
+
+impl Bound<'_> {
+    /// The same for a program that has the file in common with others. The long lists stay where they are. The program
+    /// writes into the symbols: they are copied, like what else there is, to `arena`.
+    pub fn share<'s>(&'s self, arena: &'s Arena) -> Bound<'s> {
+        Bound {
+            ran_out_of_stack: self.ran_out_of_stack,
+            symbols: self.symbols.copy_in(arena),
+            scopes: Fixed::shared(&self.scopes),
+            tables: Fixed::shared(&self.tables),
+            entries: Fixed::shared(&self.entries),
+            large_tables: copy_of_map(&self.large_tables, arena),
+            nested_names: Fixed::shared(&self.nested_names),
+            ids: Fixed::shared(&self.ids),
+            file_symbol: self.file_symbol,
+            export_stars: ArenaFew::from_iter_in(self.export_stars.iter().cloned(), arena),
+            ambient_modules: ArenaFew::from_iter_in(self.ambient_modules.iter().cloned(), arena),
+            pattern_ambient_modules: ArenaFew::from_iter_in(
+                self.pattern_ambient_modules.iter().cloned(),
+                arena,
+            ),
+            global_augmentations: ArenaFew::from_iter_in(
+                self.global_augmentations.iter().cloned(),
+                arena,
+            ),
+            redeclarations: ArenaFew::from_iter_in(self.redeclarations.iter().cloned(), arena),
+            umd_globals: ArenaFew::from_iter_in(self.umd_globals.iter().cloned(), arena),
+            specifiers: Fixed::shared(&self.specifiers),
+            module_augmentations: ArenaFew::from_iter_in(
+                self.module_augmentations.iter().cloned(),
+                arena,
+            ),
+            ambient_specifiers: ArenaFew::from_iter_in(
+                self.ambient_specifiers.iter().cloned(),
+                arena,
+            ),
+            commonjs_indicator: self.commonjs_indicator,
+            module_exports_property: self.module_exports_property,
+            expr_symbol: self.expr_symbol.shared(),
+            expr_parent: Fixed::shared(&self.expr_parent),
+            expr_flow: self.expr_flow.shared(),
+            stmt_parent: Fixed::shared(&self.stmt_parent),
+            stmt_scope: self.stmt_scope.shared(),
+            type_scope: Fixed::shared(&self.type_scope),
+            type_by_alias: Fixed::shared(&self.type_by_alias),
+            this_in_type_literal: copy_of_few_map(&self.this_in_type_literal, arena),
+            pat_parent: Fixed::shared(&self.pat_parent),
+            pat_symbol: Fixed::shared(&self.pat_symbol),
+            prop_owner: Fixed::shared(&self.prop_owner),
+            member_symbol: Fixed::shared(&self.member_symbol),
+            property_symbol: copy_of_few_map(&self.property_symbol, arena),
+            member_owner: Fixed::shared(&self.member_owner),
+            member_scope: Fixed::shared(&self.member_scope),
+            param_fn: Fixed::shared(&self.param_fn),
+            type_param_symbol: Fixed::shared(&self.type_param_symbol),
+            type_param_scope: Fixed::shared(&self.type_param_scope),
+            fns: Fixed::shared(&self.fns),
+            requires_scope_change: Fixed::shared(&self.requires_scope_change),
+            fn_symbol: Fixed::shared(&self.fn_symbol),
+            class_symbol: Fixed::shared(&self.class_symbol),
+            class_owner: Fixed::shared(&self.class_owner),
+            class_scope: Fixed::shared(&self.class_scope),
+            interface_symbol: Fixed::shared(&self.interface_symbol),
+            interface_scope: Fixed::shared(&self.interface_scope),
+            interface_contains_this: Fixed::shared(&self.interface_contains_this),
+            enum_scope: ArenaFew::from_iter_in(self.enum_scope.iter().cloned(), arena),
+            module_scope: ArenaFew::from_iter_in(self.module_scope.iter().cloned(), arena),
+            alias_symbol: Fixed::shared(&self.alias_symbol),
+            alias_scope: Fixed::shared(&self.alias_scope),
+            enum_symbol: ArenaFew::from_iter_in(self.enum_symbol.iter().cloned(), arena),
+            enum_member_symbol: ArenaFew::from_iter_in(
+                self.enum_member_symbol.iter().cloned(),
+                arena,
+            ),
+            enum_member_owner: ArenaFew::from_iter_in(
+                self.enum_member_owner.iter().cloned(),
+                arena,
+            ),
+            module_symbol: ArenaFew::from_iter_in(self.module_symbol.iter().cloned(), arena),
+            module_instance_state: ArenaFew::from_iter_in(
+                self.module_instance_state.iter().cloned(),
+                arena,
+            ),
+            var_stmt: Fixed::shared(&self.var_stmt),
+            assignments: Fixed::shared(&self.assignments),
+            unchecked_assignment_targets: ArenaFew::from_iter_in(
+                self.unchecked_assignment_targets.iter().cloned(),
+                arena,
+            ),
+            type_query_operands: ArenaFew::from_iter_in(
+                self.type_query_operands.iter().cloned(),
+                arena,
+            ),
+            unchecked_exprs: ArenaFew::from_iter_in(self.unchecked_exprs.iter().cloned(), arena),
+            unchecked_types: ArenaFew::from_iter_in(self.unchecked_types.iter().cloned(), arena),
+            infer_positions: ArenaFew::from_iter_in(self.infer_positions.iter().cloned(), arena),
+            expando_declarations: ArenaFew::from_iter_in(
+                self.expando_declarations.iter().cloned(),
+                arena,
+            ),
+            computed_symbols: ArenaFew::from_iter_in(self.computed_symbols.iter().cloned(), arena),
+            case_stmt: Fixed::shared(&self.case_stmt),
+            stmt_flow: self.stmt_flow.shared(),
+            case_fallthrough: Fixed::shared(&self.case_fallthrough),
+            hoisted_vars: ArenaFew::from_iter_in(self.hoisted_vars.iter().cloned(), arena),
+            refused_decorators: ArenaFew::from_iter_in(
+                self.refused_decorators.iter().cloned(),
+                arena,
+            ),
+            unused_labels: ArenaFew::from_iter_in(self.unused_labels.iter().cloned(), arena),
+            import_scope: Fixed::shared(&self.import_scope),
+            import_equals_scope: ArenaFew::from_iter_in(
+                self.import_equals_scope.iter().cloned(),
+                arena,
+            ),
+            export_scope: Fixed::shared(&self.export_scope),
+            expr_scope: copy_of_few_map(&self.expr_scope, arena),
+            private_class: copy_of_few_map(&self.private_class, arena),
+            private_names_outside_class_bodies: ArenaFew::from_iter_in(
+                self.private_names_outside_class_bodies.iter().cloned(),
+                arena,
+            ),
+            classes_of_private_names: ArenaFew::from_iter_in(
+                self.classes_of_private_names.iter().cloned(),
+                arena,
+            ),
+            free_idents: Fixed::shared(&self.free_idents),
+            alias_idents: Fixed::shared(&self.alias_idents),
+            arguments_objects: ArenaFew::from_iter_in(
+                self.arguments_objects.iter().cloned(),
+                arena,
+            ),
+            identifiers_in_parameters: ArenaFew::from_iter_in(
+                self.identifiers_in_parameters.iter().cloned(),
+                arena,
+            ),
+            jsdoc_param_errors: ArenaFew::from_iter_in(
+                self.jsdoc_param_errors.iter().cloned(),
+                arena,
+            ),
+            names_resolved_for_arguments: ArenaFew::from_iter_in(
+                self.names_resolved_for_arguments.iter().cloned(),
+                arena,
+            ),
+            flow: Fixed::shared(&self.flow),
+            flow_edges: Fixed::shared(&self.flow_edges),
+            flow_shared: Fixed::shared(&self.flow_shared),
+            flow_depth: self.flow_depth,
+            has_loop_types_that_depend_on_order: self.has_loop_types_that_depend_on_order,
+            expr_kinds: Fixed::shared(&self.expr_kinds),
+            expr_kind_counts: Fixed::shared(&self.expr_kind_counts),
+            kind_counts: Fixed::shared(&self.kind_counts),
+        }
+    }
+}
+
+fn copy_of_map<'s, K: Copy + Eq + std::hash::Hash, V: Copy>(
+    map: &ArenaHashMap<'_, K, V>,
+    arena: &'s Arena,
+) -> ArenaHashMap<'s, K, V> {
+    let mut exact = ArenaHashMap::with_capacity_and_hasher_in(map.len(), FxBuild, arena);
+    exact.extend(map.iter().map(|(&key, &value)| (key, value)));
+    exact
+}
+
+fn copy_of_few_map<'s, K: Copy + Ord, V: Copy>(
+    map: &ArenaFewMap<'_, K, V>,
+    arena: &'s Arena,
+) -> ArenaFewMap<'s, K, V> {
+    ArenaFewMap::from_iter_in(map.iter().map(|(&key, &value)| (key, value)), arena)
 }
 
 impl<'s> Bound<'s> {
@@ -1888,7 +2948,7 @@ impl<'s> Bound<'s> {
 }
 
 /// The compiler options `requiresScopeChangeWorker` reads.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, PartialEq, Eq, Hash, Debug)]
 pub struct BindOptions {
     /// `GetEmitStandardClassFields`
     pub emit_standard_class_fields: bool,
@@ -1901,8 +2961,114 @@ pub struct BindOptions {
 pub fn bind<'s>(
     file: &File,
     options: BindOptions,
-    atoms: &Interner,
+    atoms: &dyn crate::atom::Intern,
     arena: &'s Arena,
 ) -> Bound<'s> {
     binder::Binder::run(file, options, atoms).into_arena(arena)
+}
+
+/// The lists of the last file that was bound on this thread, for the next one to use their room. They
+/// go back to the thread when this is dropped.
+pub struct Recycled(Option<Box<binder::Room>>);
+
+impl Recycled {
+    pub fn of_this_thread() -> Recycled {
+        Recycled(Some(binder::take_room()))
+    }
+
+    fn room(&mut self) -> &mut binder::Room {
+        self.0.get_or_insert_default()
+    }
+}
+
+impl Drop for Recycled {
+    fn drop(&mut self) {
+        if let Some(room) = self.0.take() {
+            binder::leave_room(room);
+        }
+    }
+}
+
+/// [`bind`] for a linter that has no checker: what each node is part of and where each function
+/// returns and yields. Nothing is declared and nothing is resolved. The result is in `recycled`, where
+/// it is until the next file is bound there: little is allocated after the first few files.
+///
+/// As in the result of `bind`: what [`bind_for_format`] lists, with the same exception, and of `fns`
+/// also `enclosing`, `returns` and, in another order, `yields`. Only here: `expr_kinds`,
+/// `expr_kind_counts`, `kind_counts`. Of the few files that are left to the binder it is the result of `bind`.
+pub fn bind_for_lint_in<'r>(
+    file: &File,
+    options: BindOptions,
+    atoms: &dyn crate::atom::Intern,
+    recycled: &'r mut Recycled,
+) -> &'r BoundBuilder {
+    match lint::fill_in(file, &mut recycled.room().b) {
+        true => &recycled.room().b,
+        false => leave_to_binder(file, options, atoms, recycled),
+    }
+}
+
+/// The result of [`bind`], in `recycled`.
+fn leave_to_binder<'r>(
+    file: &File,
+    options: BindOptions,
+    atoms: &dyn crate::atom::Intern,
+    recycled: &'r mut Recycled,
+) -> &'r BoundBuilder {
+    let room = recycled.room();
+    room.b = binder::Binder::run(file, options, atoms);
+    &room.b
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::Session;
+
+    #[test]
+    fn with_flags_returns_the_same_symbols_as_filtering_iter() {
+        let symbol =
+            |name: u32, flags: SymFlags, decls: GrowingDecls, exports: TableId| GrowingSymbol {
+                name: Atom(name),
+                flags,
+                decls,
+                value_declaration: 0,
+                parent: SymbolId::NONE,
+                exports,
+                members: TableId::NONE,
+                export_symbol: SymbolId::NONE,
+            };
+        let (alias, exported) = (SymFlags::ALIAS, SymFlags::ALIAS | SymFlags::EXPORT_VALUE);
+        let two = vec![
+            Decl::ImportNamespace(ImportId(1)),
+            Decl::ImportNamespace(ImportId(2)),
+        ];
+        let growing = [
+            symbol(
+                1,
+                SymFlags::FUNCTION,
+                GrowingDecls::One(Decl::File),
+                TableId::NONE,
+            ),
+            symbol(
+                2,
+                alias,
+                GrowingDecls::One(Decl::ImportNamespace(ImportId(0))),
+                TableId::NONE,
+            ),
+            symbol(3, SymFlags::CLASS, GrowingDecls::None, TableId(4)),
+            symbol(4, exported, GrowingDecls::Many(two), TableId(7)),
+            symbol(5, alias, GrowingDecls::None, TableId::NONE),
+        ];
+        let session = Session::new();
+        let symbols = Symbols::of(&growing, session.arena());
+        let fields = |it: Symbol<'_>| (it.name.0, it.flags, it.decls.to_vec(), it.exports);
+        for flags in [alias, exported, SymFlags::CLASS, SymFlags::ENUM_MEMBER] {
+            let expected = symbols.iter().filter(|it| it.flags.contains(flags));
+            let expected: Vec<_> = expected.map(fields).collect();
+            let found: Vec<_> = symbols.with_flags(flags).map(fields).collect();
+            assert_eq!(found, expected);
+        }
+        assert_eq!(symbols.with_flags(alias).count(), 3);
+    }
 }

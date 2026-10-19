@@ -349,19 +349,61 @@ impl<'p, 's> Checker<'p, 's> {
         ty: TypeId,
         index_flags: IndexFlags,
     ) -> TypeId {
-        let Some((file, node, mapper)) = self.mapped_origin(ty) else {
+        let Some((file, node, _)) = self.mapped_origin(ty) else {
             return TypeId::NEVER;
         };
         let (decl, constraint) = (self.mapped_decl(file, node), self.mapped_keys(ty));
+        let constraint_type = links::MappedPart::ConstraintType as usize;
         let no_index_signatures = index_flags.contains(IndexFlags::NO_INDEX_SIGNATURES);
         // "no mapping and no filtering required, just quickly bail to returning the constraint in the common case"
         if decl.name_ty.is_none() && !no_index_signatures {
             return constraint;
         }
+        if decl.name_ty.is_none() || !index_flags.is_empty() {
+            return (self.derive_index_type_for_mapped_type(ty, constraint, index_flags)).0;
+        }
+        // FOR SPEED. `keyof` of an intersection asks again for every instantiation that has the mapped type in it. A
+        // request counts the instantiations of the names, and fails at a limit as they do.
+        if let Some((kept, names)) = self.links.index_type(ty)
+            && self.index_infos_in_instantiation.is_empty()
+            && self.instantiation_depth < 100
+            && self.instantiation_count < 5_000_000
+        {
+            self.instantiation_count += names;
+            return kept;
+        }
+        let ((keys, names, is_idle), stored) = self.derive_settled(
+            |c| c.derive_index_type_for_mapped_type(ty, constraint, index_flags),
+            |c, &(_, _, is_idle)| {
+                is_idle
+                    && c.is_type_node_settled(file, decl.name_ty)
+                    && c.kept_part::<TypeId>(ty, links::Kind::Mapped, constraint_type)
+                        .is_some()
+            },
+        );
+        if let Some(stored) = stored.filter(|_| is_idle) {
+            self.links.keep_index_type(ty, (keys, names), stored);
+        }
+        keys
+    }
+
+    /// `constraint`: `mapped_keys(ty)`. Also returns the number of names that it has instantiated, and whether none of
+    /// their mappers is in use by an instantiation in progress (`is_mapper_idle`).
+    fn derive_index_type_for_mapped_type(
+        &mut self,
+        ty: TypeId,
+        constraint: TypeId,
+        index_flags: IndexFlags,
+    ) -> (TypeId, u32, bool) {
+        let Some((file, node, mapper)) = self.mapped_origin(ty) else {
+            return (TypeId::NEVER, 0, false);
+        };
+        let decl = self.mapped_decl(file, node);
+        let no_index_signatures = index_flags.contains(IndexFlags::NO_INDEX_SIGNATURES);
         let keys = if self.is_generic_index_type(constraint) {
             // "it's not safe to resolve the shape of modifier type"
             if matches!(self.mapped_modifiers_source(file, node), Some((_, true))) {
-                return self.intern(TypeData::Keyof(ty));
+                return (self.intern(TypeData::Keyof(ty)), 0, true);
             }
             List::Kept(self.parts(constraint))
         } else {
@@ -375,11 +417,14 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             None
         };
+        let (mut names, mut is_idle) = (0, true);
         let mut key_types = Vec::with_capacity(keys.len() + 1);
         for key in keys {
             let name = match name_type {
                 Some((param, declared)) => {
                     let with_key = self.mapper_with_pair(mapper, param, key);
+                    names += 1;
+                    is_idle &= self.is_mapper_idle(with_key);
                     self.instantiate(declared, with_key)
                 }
                 None => key,
@@ -400,9 +445,9 @@ impl<'p, 's> Checker<'p, 's> {
             && self.is_union(constraint)
             && self.parts(result) == self.parts(constraint)
         {
-            return constraint;
+            return (constraint, names, is_idle);
         }
-        result
+        (result, names, is_idle)
     }
 
     /// `getLiteralTypeFromProperties`

@@ -425,16 +425,24 @@ private:
 
         /* The return value is entirely up to us to interpret. The HttpParser cares only for whether the returned value is DIFFERENT from passed user */
 
-        /* node:http compat: the trailer capture lives in the IsNodeHttp=true ext
-         * block; the Bun.serve instantiation passes nullptr (and its parser
-         * instantiation contains no use of it). */
+        /* node:http compat: the trailer capture and the parser options live in the
+         * IsNodeHttp=true ext block; the Bun.serve instantiation has neither (and its
+         * parser instantiation contains no use of the trailer capture). */
         std::string *nodeHttpRequestTrailers = nullptr;
+        uint64_t maxHeaderSize = 0;
+        uint32_t maxHeadersCount = 0;
+        bool useInsecureHTTPParser = false;
+        bool useLenientTransferEncoding = false;
         if constexpr (IsNodeHttp) {
             auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
             nodeHttpRequestTrailers = &nodeHttpResponseData->nodeHttpRequestTrailers;
+            maxHeaderSize = nodeHttpResponseData->maxHeaderSize;
+            maxHeadersCount = nodeHttpResponseData->maxHeadersCount;
+            useInsecureHTTPParser = nodeHttpResponseData->useInsecureHTTPParser;
+            useLenientTransferEncoding = nodeHttpResponseData->useLenientTransferEncoding;
         }
 
-        auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpContextData->maxHeadersCount, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.useInsecureHTTPParser, httpContextData->flags.useLenientTransferEncoding, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+        auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(maxHeaderSize, maxHeadersCount, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
 
             HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
 

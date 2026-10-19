@@ -3494,7 +3494,6 @@ fn server_set_app_flags(
     server: JSValue,
     require_host_header: bool,
     use_strict_method_validation: bool,
-    lenient_http_flags: u8,
     http_allow_half_open: bool,
 ) -> JsResult<JSValue> {
     if !server.is_object() {
@@ -3508,7 +3507,6 @@ fn server_set_app_flags(
         unsafe { &mut *this }.set_flags(
             require_host_header,
             use_strict_method_validation,
-            lenient_http_flags,
             http_allow_half_open,
         );
     } else if let Some(this) = server.as_::<HTTPSServer>() {
@@ -3516,7 +3514,6 @@ fn server_set_app_flags(
         unsafe { &mut *this }.set_flags(
             require_host_header,
             use_strict_method_validation,
-            lenient_http_flags,
             http_allow_half_open,
         );
     } else if let Some(this) = server.as_::<DebugHTTPServer>() {
@@ -3524,7 +3521,6 @@ fn server_set_app_flags(
         unsafe { &mut *this }.set_flags(
             require_host_header,
             use_strict_method_validation,
-            lenient_http_flags,
             http_allow_half_open,
         );
     } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
@@ -3532,7 +3528,6 @@ fn server_set_app_flags(
         unsafe { &mut *this }.set_flags(
             require_host_header,
             use_strict_method_validation,
-            lenient_http_flags,
             http_allow_half_open,
         );
     } else {
@@ -3541,62 +3536,6 @@ fn server_set_app_flags(
         )));
     }
     Ok(JSValue::UNDEFINED)
-}
-
-fn server_set_max_http_header_size(
-    global: &JSGlobalObject,
-    server: JSValue,
-    max_header_size: u64,
-) -> JsResult<JSValue> {
-    if !server.is_object() {
-        return Err(global.throw(format_args!(
-            "Failed to set maxHeaderSize: The 'this' value is not a Server."
-        )));
-    }
-
-    if let Some(this) = server.as_::<HTTPServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_max_http_header_size(max_header_size);
-    } else if let Some(this) = server.as_::<HTTPSServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_max_http_header_size(max_header_size);
-    } else if let Some(this) = server.as_::<DebugHTTPServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_max_http_header_size(max_header_size);
-    } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_max_http_header_size(max_header_size);
-    } else {
-        return Err(global.throw(format_args!(
-            "Failed to set maxHeaderSize: The 'this' value is not a Server."
-        )));
-    }
-    Ok(JSValue::UNDEFINED)
-}
-
-fn server_set_max_headers_count(
-    global: &JSGlobalObject,
-    server: JSValue,
-    max_headers_count: u32,
-) -> JsResult<JSValue> {
-    if server.is_object() {
-        macro_rules! handle {
-            ($T:ty) => {
-                if let Some(this) = server.as_::<$T>() {
-                    // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-                    unsafe { &mut *this }.set_max_headers_count(max_headers_count);
-                    return Ok(JSValue::UNDEFINED);
-                }
-            };
-        }
-        handle!(HTTPServer);
-        handle!(HTTPSServer);
-        handle!(DebugHTTPServer);
-        handle!(DebugHTTPSServer);
-    }
-    Err(global.throw(format_args!(
-        "Failed to set maxHeadersCount: The 'this' value is not a Server."
-    )))
 }
 
 // `host_fn.wrap{3,4}` C-ABI shims: each forwards through `to_js_host_call`
@@ -3615,7 +3554,6 @@ extern "C" fn server_set_app_flags_shim(
     server: JSValue,
     require_host_header: bool,
     use_strict_method_validation: bool,
-    lenient_http_flags: u8,
     http_allow_half_open: bool,
 ) -> JSValue {
     host_fn::to_js_host_fn_result(
@@ -3625,7 +3563,6 @@ extern "C" fn server_set_app_flags_shim(
             server,
             require_host_header,
             use_strict_method_validation,
-            lenient_http_flags,
             http_allow_half_open,
         ),
     )
@@ -3647,30 +3584,6 @@ extern "C" fn server_set_on_connection_shim(
     callback: JSValue,
 ) -> JSValue {
     host_fn::to_js_host_fn_result(global, server_set_on_connection(global, server, callback))
-}
-
-#[unsafe(export_name = "Server__setMaxHTTPHeaderSize")]
-extern "C" fn server_set_max_http_header_size_shim(
-    global: &JSGlobalObject,
-    server: JSValue,
-    max_header_size: u64,
-) -> JSValue {
-    host_fn::to_js_host_fn_result(
-        global,
-        server_set_max_http_header_size(global, server, max_header_size),
-    )
-}
-
-#[unsafe(export_name = "Server__setMaxHeadersCount")]
-extern "C" fn server_set_max_headers_count_shim(
-    global: &JSGlobalObject,
-    server: JSValue,
-    max_headers_count: u32,
-) -> JSValue {
-    host_fn::to_js_host_fn_result(
-        global,
-        server_set_max_headers_count(global, server, max_headers_count),
-    )
 }
 
 // ─── Externs ─────────────────────────────────────────────────────────────────

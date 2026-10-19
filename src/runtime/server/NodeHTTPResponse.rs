@@ -135,6 +135,8 @@ bitflags! {
         const TUNNELED                            = 1 << 8;
         /// Its dispatch threw while it was queued (pipelining): advanceResponsePipeline decides at its turn.
         const DISPATCH_THREW_WHILE_QUEUED         = 1 << 9;
+        /// The connection's parser accepted `request_trailers` with lenient header values (llhttp LENIENT_HEADERS).
+        const LENIENT_REQUEST_TRAILERS            = 1 << 10;
     }
 }
 
@@ -194,10 +196,12 @@ unsafe extern "C" {
     // Moves the connection's captured node:http request-trailer section out. `*out` points into
     // a C++ thread-local valid until the next call on this thread; caller copies immediately.
     // Returns 0 when nothing captured or socket closed.
+    // `lenient_headers` is written only when bytes are returned.
     safe fn Bun__NodeHTTP__takeRequestTrailerBytes(
         is_ssl: bool,
         socket: *mut c_void,
         out: *mut *const u8,
+        lenient_headers: &mut bool,
     ) -> usize;
     // Parses a raw trailer section into a flat [name, value, ...] JSArray, or
     // jsUndefined() when it contains no fields.
@@ -482,13 +486,18 @@ impl NodeHTTPResponse {
             return;
         };
         let mut ptr: *const u8 = std::ptr::null();
+        let mut lenient_headers = false;
         let length = Bun__NodeHTTP__takeRequestTrailerBytes(
             any_response_is_ssl(&raw),
             raw.socket().cast(),
             &raw mut ptr,
+            &mut lenient_headers,
         );
         if length == 0 {
             return;
+        }
+        if lenient_headers {
+            self.update_flags(|f| f.insert(Flags::LENIENT_REQUEST_TRAILERS));
         }
         // SAFETY: C++ handed back a (ptr, length) into a thread-local it keeps
         // alive until the next call on this thread; copy it out immediately.
@@ -2475,15 +2484,15 @@ impl NodeHTTPResponse {
     pub(crate) fn take_request_trailers(
         &self,
         global_object: &JSGlobalObject,
-        callframe: &CallFrame,
+        _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let section = self.request_trailers.replace(Vec::new());
         if section.is_empty() {
             return Ok(JSValue::UNDEFINED);
         }
-        // Lenient (insecureHTTPParser) servers accept CTL bytes in trailer values on
-        // the wire; parse them with the same leniency so they surface on req.trailers.
-        let use_insecure_http_parser = callframe.argument(0).to_boolean();
+        // A lenient connection accepts CTL bytes in trailer values on the wire;
+        // parse them with the same leniency so they surface on req.trailers.
+        let use_insecure_http_parser = self.flags.get().contains(Flags::LENIENT_REQUEST_TRAILERS);
         bun_jsc::call_zero_is_throw(global_object, || {
             Bun__NodeHTTP__parseRequestTrailers(
                 global_object,

@@ -298,10 +298,21 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
      * the request reaches EOF (req.trailers/rawTrailers). The parser gets it
      * as a nullable pointer (see HttpParser::consumePostPadded). */
     std::string nodeHttpRequestTrailers;
+    /* The parser options of this connection, set once through JSNodeHTTPServerSocket::setParserOptions().
+     * maxHeaderSize bounds what llhttp counts; maxHeadersCount is a field count, 0 when the server has none. */
+    uint64_t maxHeaderSize = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
+    uint32_t maxHeadersCount = 0;
     bool headersCompleted = false;
     /* Timeout sweep already reported this message; reset when it completes. */
     bool requestTimeoutReported = false;
+    /* llhttp's LENIENT_HEADERS ("relaxed" and "insecure") and LENIENT_TRANSFER_ENCODING ("insecure" only).
+     * TE+CL conflict, chunked-size/CRLF, version and header-token checks stay enforced with both. */
+    bool useInsecureHTTPParser = false;
+    bool useLenientTransferEncoding = false;
 };
+
+static_assert(sizeof(HttpResponseData<false, true>) == sizeof(HttpResponseData<false, false>) + 3 * sizeof(uint64_t) + 2 * sizeof(std::string));
+static_assert(sizeof(HttpResponseData<true, true>) == sizeof(HttpResponseData<true, false>) + 3 * sizeof(uint64_t) + 2 * sizeof(std::string));
 
 /* Readable name for the IsNodeHttp=true specialization (used by the node:http
  * bindings). */

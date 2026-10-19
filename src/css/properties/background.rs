@@ -344,7 +344,7 @@ pub struct BackgroundPosition {
 
 impl BackgroundPosition {
     pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
-        let pos = Position::parse(input)?;
+        let pos = Position::parse_bg_position(input)?;
         Ok(BackgroundPosition::from_position(pos))
     }
 

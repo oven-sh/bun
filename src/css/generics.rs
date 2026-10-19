@@ -730,9 +730,16 @@ mod inherent_bridge {
     // ── properties/transform ──
     use crate::properties::transform::{
         BackfaceVisibility, Perspective, Rotate, Scale, TransformBox, TransformList,
-        TransformStyle, Translate,
+        TransformOrigin, TransformStyle, Translate,
     };
-    bridge_deep_clone!(TransformList, Translate, Rotate, Scale, Perspective);
+    bridge_deep_clone!(
+        TransformList,
+        TransformOrigin,
+        Translate,
+        Rotate,
+        Scale,
+        Perspective
+    );
     // Unit enums via DefineEnumProperty — no inherent eql/deep_clone, route through Copy/PartialEq.
     bridge_clone_partialeq!(TransformStyle, TransformBox, BackfaceVisibility);
 

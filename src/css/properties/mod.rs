@@ -274,6 +274,7 @@ mod generic_registrations {
         transform::Rotate,
         transform::Scale,
         transform::TransformList,
+        transform::TransformOrigin,
         transform::Translate,
         // transition
         transition::Transition,

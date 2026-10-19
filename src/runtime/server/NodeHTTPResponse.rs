@@ -116,8 +116,6 @@ pub(crate) struct NodeHTTPResponse {
     /// buffers the underlying ArrayBuffer is additionally `pin()`ed.
     pending_pinned_write_owner: JsCell<crate::node::StringOrBuffer<'static>>,
 
-    pub(crate) upgrade_context: JsCell<UpgradeCTX>,
-
     pub(crate) auto_flusher: JsCell<AutoFlusher>,
 }
 
@@ -159,64 +157,6 @@ impl Flags {
     #[inline]
     pub(crate) fn is_done(self) -> bool {
         self.is_requested_completed_or_ended() || self.contains(Flags::SOCKET_CLOSED)
-    }
-}
-
-pub(crate) struct UpgradeCTX {
-    pub(crate) context: *mut uws_sys::WebSocketUpgradeContext,
-    // request will be detached when go async
-    pub(crate) request: *mut uws_sys::Request,
-
-    // we need to store this, if we wanna to enable async upgrade
-    pub(crate) sec_websocket_key: Box<[u8]>,
-    pub(crate) sec_websocket_protocol: Box<[u8]>,
-    pub(crate) sec_websocket_extensions: Box<[u8]>,
-}
-
-impl Default for UpgradeCTX {
-    fn default() -> Self {
-        Self {
-            context: ptr::null_mut(),
-            request: ptr::null_mut(),
-            sec_websocket_key: Box::default(),
-            sec_websocket_protocol: Box::default(),
-            sec_websocket_extensions: Box::default(),
-        }
-    }
-}
-
-impl UpgradeCTX {
-    // this can be called multiple times
-    // Mid-lifetime reset, not a destructor.
-    fn reset(&mut self) {
-        // Dropping the taken value frees the old `Box<[u8]>` headers; raw
-        // pointers are nulled. Nothing from the old value is reused.
-        drop(core::mem::take(self));
-    }
-
-    fn preserve_web_socket_headers_if_needed(&mut self) {
-        if !self.request.is_null() {
-            // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref. We
-            // null `self.request` immediately after reading headers so it
-            // cannot be used past its native lifetime.
-            let request = bun_opaque::opaque_deref(self.request.cast_const());
-            self.request = ptr::null_mut();
-
-            let sec_websocket_key = request.header(b"sec-websocket-key").unwrap_or(b"");
-            let sec_websocket_protocol = request.header(b"sec-websocket-protocol").unwrap_or(b"");
-            let sec_websocket_extensions =
-                request.header(b"sec-websocket-extensions").unwrap_or(b"");
-
-            if !sec_websocket_key.is_empty() {
-                self.sec_websocket_key = Box::<[u8]>::from(sec_websocket_key);
-            }
-            if !sec_websocket_protocol.is_empty() {
-                self.sec_websocket_protocol = Box::<[u8]>::from(sec_websocket_protocol);
-            }
-            if !sec_websocket_extensions.is_empty() {
-                self.sec_websocket_extensions = Box::<[u8]>::from(sec_websocket_extensions);
-            }
-        }
     }
 }
 
@@ -616,93 +556,89 @@ impl NodeHTTPResponse {
         );
     }
 
-    /// Empty `sec_websocket_*` slices fall back to the request's headers.
-    pub(crate) fn upgrade(
+    /// Whether this response can still be upgraded. Check before writing anything.
+    ///
+    /// `server` must be read last. JS can hold a response after its server was freed, but the
+    /// server stays alive while the connection is open (`NewServer::is_drained`).
+    pub(crate) fn can_upgrade(&self) -> bool {
+        !self
+            .flags
+            .get()
+            .intersects(Flags::ENDED | Flags::SOCKET_CLOSED)
+            && self.writer().is_some_and(|writer| writer.can_upgrade())
+            && !self.server.terminated()
+            && !self.get_server_socket_value().is_empty()
+    }
+
+    /// Upgrades the connection for the `ws` package, which has already negotiated and built
+    /// `handshake` (the full response head). Returns the `ServerWebSocket`, or `None` if the
+    /// upgrade failed, in which case nothing was written.
+    pub(crate) fn upgrade_for_ws_package(
         &self,
-        data_value: JSValue,
-        sec_websocket_protocol: &[u8],
-        sec_websocket_extensions: &[u8],
-    ) -> bool {
-        let upgrade_ctx = self.upgrade_context.get().context;
-        if upgrade_ctx.is_null() || self.writer().is_none() {
-            return false;
+        global: &JSGlobalObject,
+        websocket: JSValue,
+        handlers: JSValue,
+        handshake: &[u8],
+        max_payload_length: u32,
+        auto_pong: bool,
+        skip_utf8_validation: bool,
+        deflate_params: Option<&uws_sys::response::PerMessageDeflateParams>,
+    ) -> JsResult<Option<JSValue>> {
+        if !self.can_upgrade() {
+            return Ok(None);
         }
-        // `AnyServer` is a `Copy` type-erased pointer; copy it so the
-        // `&mut self`-taking accessor can be called from this `&self` body.
-        // The pointee is the long-lived server, not `*self`.
         let mut server = self.server;
-        let Some(ws_handler) = server.web_socket_handler() else {
-            return false;
-        };
-        // Lifetime-extend the handler past the method calls below.
-        // SAFETY: JS-thread only; the server (and its websocket config) outlives this call.
-        let ws_handler: &mut crate::server::WebSocketServerHandler =
-            unsafe { &mut *std::ptr::from_mut(ws_handler) };
-        let socket_value = self.get_server_socket_value();
-        if socket_value.is_empty() {
-            return false;
-        }
+        server.init_ws_package_handlers(global, handlers)?;
         self.resume_socket();
-
-        data_value.ensure_still_alive();
-
-        let ws = ServerWebSocket::init(ws_handler, data_value, None);
-
-        // R-2: `JsCell::get()` projects `&UpgradeCTX`; the borrow ends before
-        // the `with_mut` below.
-        let upgrade_context: &UpgradeCTX = self.upgrade_context.get();
-
-        let sec_websocket_protocol_value: &[u8] = if !sec_websocket_protocol.is_empty() {
-            sec_websocket_protocol
-        } else if !upgrade_context.request.is_null() {
-            // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
-            let request = bun_opaque::opaque_deref(upgrade_context.request.cast_const());
-            request.header(b"sec-websocket-protocol").unwrap_or(b"")
-        } else {
-            &upgrade_context.sec_websocket_protocol
+        if !self.can_upgrade() {
+            return Ok(None);
+        }
+        let Some(handler) = server.ws_package_handler() else {
+            return Ok(None);
+        };
+        let Some(context) = server.ws_package_context(
+            max_payload_length,
+            auto_pong,
+            skip_utf8_validation,
+            deflate_params.is_some(),
+        ) else {
+            return Ok(None);
         };
 
-        let sec_websocket_extensions_value: &[u8] = if !sec_websocket_extensions.is_empty() {
-            sec_websocket_extensions
-        } else if !upgrade_context.request.is_null() {
-            // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
-            let request = bun_opaque::opaque_deref(upgrade_context.request.cast_const());
-            request.header(b"sec-websocket-extensions").unwrap_or(b"")
-        } else {
-            &upgrade_context.sec_websocket_extensions
-        };
-
-        let websocket_key: &[u8] = if !upgrade_context.request.is_null() {
-            // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
-            let request = bun_opaque::opaque_deref(upgrade_context.request.cast_const());
-            request.header(b"sec-websocket-key").unwrap_or(b"")
-        } else {
-            &upgrade_context.sec_websocket_key
-        };
+        let ws = ServerWebSocket::init_for_ws_package(handler.get(), websocket);
+        // SAFETY: `init` just allocated `ws`, and its JS wrapper owns it.
+        let ws_ref = unsafe { &*ws };
 
         let armed_reader = self.armed_this_value.get();
-        let mut ended_unfinished_body = false;
-        if let Some(raw_response) = self.connection.take_for_upgrade(self.flags.get()) {
-            self.update_flags(|f| f.insert(Flags::UPGRADED));
-            ended_unfinished_body = self.leave_pending(BodyReadState::Upgraded);
-            // Unref the poll_ref since the socket is now upgraded to WebSocket
-            // and will have its own lifecycle management
-            let vm = self.server.global_this().bun_vm().as_mut();
-            self.poll_ref.with_mut(|r| r.unref(vm));
-            // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST — safe deref
-            // (`upgrade_ctx` checked non-null above).
-            let ctx = bun_opaque::opaque_deref_mut(upgrade_ctx);
-            let _ = raw_response.upgrade::<ServerWebSocket>(
+        let Some(raw_response) = self.connection.take_for_upgrade(self.flags.get()) else {
+            ws_ref.discard_unopened();
+            return Ok(None);
+        };
+        self.update_flags(|f| f.insert(Flags::UPGRADED));
+        let ended_unfinished_body = self.leave_pending(BodyReadState::Upgraded);
+        // Unref the poll_ref since the socket is now upgraded to WebSocket
+        // and will have its own lifecycle management
+        let vm = self.server.global_this().bun_vm().as_mut();
+        self.poll_ref.with_mut(|r| r.unref(vm));
+        // During the upgrade the connection counts as neither HTTP nor WebSocket. Hold a pending
+        // request so a stopped server doesn't drain if this is its last connection.
+        server.on_pending_request();
+        let upgraded = !raw_response
+            .upgrade_raw(
                 ws,
-                websocket_key,
-                sec_websocket_protocol_value,
-                sec_websocket_extensions_value,
-                Some(ctx),
-            );
+                handshake,
+                deflate_params,
+                // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST — safe deref. The app owns it.
+                bun_opaque::opaque_deref_mut(context.as_ptr()),
+            )
+            .is_null();
+        server.on_request_complete();
+        if upgraded {
+            self.bytes_written
+                .set(self.bytes_written.get().saturating_add(handshake.len()));
+        } else {
+            ws_ref.discard_unopened();
         }
-
-        // The request's header views end with its dispatch: this context must not read them later.
-        self.upgrade_context.with_mut(|c| c.reset());
 
         // Last step: a reader that waits for the body gets its 'end', like Node 25 and older.
         if ended_unfinished_body && !armed_reader.is_empty() {
@@ -710,12 +646,10 @@ impl NodeHTTPResponse {
             self.on_data_or_aborted(b"", true, AbortEvent::None, armed_reader);
         }
 
-        true
+        Ok(if upgraded { ws_ref.js_value() } else { None })
     }
 
     pub(crate) fn maybe_stop_reading_body(&self, this_value: JSValue) {
-        self.upgrade_context.with_mut(|c| c.reset()); // we can discard the upgrade context now
-
         let flags = self.flags.get();
         // An ended response keeps a body that a reader is armed for: it completes at its last chunk.
         let stopped = if flags.contains(Flags::SOCKET_CLOSED) {
@@ -805,7 +739,7 @@ impl NodeHTTPResponse {
         scoped_log!(NodeHTTPResponse, "markRequestAsDone()");
         self.update_flags(|f| f.remove(Flags::IS_REQUEST_PENDING));
 
-        // The async path (`on_node_http_request_with_upgrade_ctx`) stashes the
+        // The async path (`on_node_http_request`) stashes the
         // handler's pending promise here and registers `then2` reactions that
         // are responsible for releasing the server-handler ref (one of the
         // initial 3). When the request is torn down via abort/socket-close
@@ -825,13 +759,6 @@ impl NodeHTTPResponse {
         let vm = vm_get();
         self.clear_on_data_callback(self.get_this_value(), vm.global());
         self.clear_pending_pinned_write(vm.global(), JSValue::ZERO);
-        // ws may still upgrade an open tunnel: keep a context whose request pointer is detached.
-        let tunneled = self.flags.get().contains(Flags::TUNNELED);
-        self.upgrade_context.with_mut(|c| {
-            if !tunneled || !c.request.is_null() {
-                c.reset();
-            }
-        });
 
         let mut server = self.server;
         self.poll_ref.with_mut(|r| r.unref(vm));
@@ -871,9 +798,6 @@ impl NodeHTTPResponse {
                 raw_response.on_timeout(on_timeout_shim, self.as_ctx_ptr());
             }
         }
-        // detach and
-        self.upgrade_context
-            .with_mut(|c| c.preserve_web_socket_headers_if_needed());
     }
 
     pub(crate) fn get_finished(&self, _global: &JSGlobalObject) -> JSValue {
@@ -2727,7 +2651,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__adoptRawRequestHeaders(
 }
 
 /// # Safety
-/// `has_body`, `request`, `response_ptr`, `upgrade_ctx`, and `node_response_ptr`
+/// `has_body`, `request`, `response_ptr`, and `node_response_ptr`
 /// are provided by C++ NodeHTTPServer and must be valid for the duration of the
 /// call; `has_body` and `node_response_ptr` must be writable.
 #[unsafe(no_mangle)]
@@ -2738,7 +2662,6 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
     request: *mut uws_sys::Request,
     is_ssl: i32,
     response_ptr: *mut c_void,
-    upgrade_ctx: *mut uws_sys::WebSocketUpgradeContext,
     is_current: bool,
     node_response_ptr: *mut *mut NodeHTTPResponse,
 ) -> JSValue {
@@ -2777,13 +2700,6 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         // 1 - the JS object
         // 1 - the Server handler.
         ref_count: bun_ptr::RefCount::init_exact_refs(3),
-        upgrade_context: JsCell::new(UpgradeCTX {
-            context: upgrade_ctx,
-            request,
-            sec_websocket_key: Box::default(),
-            sec_websocket_protocol: Box::default(),
-            sec_websocket_extensions: Box::default(),
-        }),
         server: any_server_from_packed(any_server_tag),
         connection: connection::Connection::new(raw_response),
         body_read_state: Cell::new(if *has_body {

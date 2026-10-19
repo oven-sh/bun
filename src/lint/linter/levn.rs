@@ -273,9 +273,7 @@ fn cast_fields(fields: &[(Vec<u8>, Node)], room: RoomToNest) -> Option<Vec<(Vec<
     Json::object(out).into_object()
 }
 
-/// `levn.parse("Object", text)`, which also reads `--rule` and `--parser-options` on the command line of
-/// ESLint. `None` where levn throws.
-pub fn parse_object(text: &[u8]) -> Option<Vec<(Vec<u8>, Json)>> {
+fn parse_fields(text: &[u8]) -> Option<(Vec<(Vec<u8>, Node)>, RoomToNest)> {
     let mut tokens = Tokens {
         tokens: tokenize(text),
         at: 0,
@@ -286,7 +284,26 @@ pub fn parse_object(text: &[u8]) -> Option<Vec<(Vec<u8>, Json)>> {
         return None;
     };
     // levn reads what has tokens left over as a tuple, which is no object.
-    (tokens.at == tokens.tokens.len())
-        .then(|| cast_fields(&fields, tokens.room))
+    (tokens.at == tokens.tokens.len()).then_some((fields, tokens.room))
+}
+
+/// Port of `levn.parse("Object", text)`, which ESLint also uses for `--parser-options` on the
+/// command line. Returns `None` where levn throws.
+pub fn parse_object(text: &[u8]) -> Option<Vec<(Vec<u8>, Json)>> {
+    let (fields, room) = parse_fields(text)?;
+    cast_fields(&fields, room)
+}
+
+/// Runs [`parse_object`] for `--rule`. levn reads `no-console:` as `no-console: 0`, which turns the
+/// rule off. This returns `None` for that, and for text without any rule.
+pub fn parse_rules(text: &[u8]) -> Option<Vec<(Vec<u8>, Json)>> {
+    let (fields, room) = parse_fields(text)?;
+    let is_missing = |it: &Node| matches!(it, Node::Value(text) if text.is_empty());
+    let lacks_severity = |it: &(Vec<u8>, Node)| match &it.1 {
+        Node::List(items) => items.first().is_some_and(is_missing),
+        setting => is_missing(setting),
+    };
+    (!fields.is_empty() && !fields.iter().any(lacks_severity))
+        .then(|| cast_fields(&fields, room))
         .flatten()
 }

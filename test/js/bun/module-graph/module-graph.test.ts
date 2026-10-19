@@ -8,6 +8,7 @@ import { renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { createRequire } from "node:module";
 import { join } from "path";
+import { Lifetimes } from "./module-graph-lifetimes";
 
 type ModuleGraphOptions = Bun.ModuleGraphOptions;
 type ModuleGraphInstance = Bun.ModuleGraph & { import(specifier: string): Promise<any> };
@@ -2700,12 +2701,14 @@ describe("Bun.ModuleGraph — scale", () => {
     });
     expect(graphs.map(m => m.inc() - 1)).toEqual(graphs.map((_, i) => i + 1));
     expect(new Set(graphs.map(m => m.id)).size).toBe(50);
-    const ok = await collected(register => {
-      register(graphs[25].big);
-      graphs.forEach(m => m.quit());
-      graphs.length = 0;
+    const lifetimes = new Lifetimes();
+    const names = graphs.map((_, i) => `graph ${i}`);
+    graphs.forEach((m, i) => {
+      lifetimes.track(names[i], m.big);
+      m.quit();
     });
-    expect(ok).toBe(true);
+    graphs.length = 0;
+    expect(await lifetimes.stillAlive(...names)).toEqual([]);
     rmSync(dir, { recursive: true, force: true });
   });
   test("deep re-export chain (100 hops) and wide fan-in (1 module imported by 200) resolve per instance", async () => {

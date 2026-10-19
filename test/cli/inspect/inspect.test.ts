@@ -620,11 +620,18 @@ describe.concurrent("event loop keep-alive", () => {
     const decoder = new TextDecoder();
     for await (const chunk of inspectee.stderr) {
       stderr += decoder.decode(chunk);
-      for (const line of stderr.split("\n")) {
+      // Only complete lines: a chunk can end in the middle of the URL.
+      const lines = stderr.split("\n");
+      lines.pop();
+      for (const line of lines) {
+        let candidate: URL | undefined;
         try {
-          url = new URL(line.trim());
+          candidate = new URL(line.trim());
         } catch {}
-        if (url?.protocol === "ws:") break;
+        if (candidate?.protocol === "ws:") {
+          url = candidate;
+          break;
+        }
       }
       if (url) break;
     }

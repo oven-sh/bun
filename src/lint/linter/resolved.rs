@@ -1,6 +1,7 @@
 //! What is configured for one file.
 
 use super::instances::Instance;
+use super::message::RuleId;
 use super::registry::{Deprecated, Registry, formatting_rule, parse_rule_id};
 use crate::ast::File;
 use crate::context::Severity;
@@ -202,8 +203,8 @@ pub(super) struct Prepared {
     pub(super) rules: Arc<dyn std::any::Any + Send + Sync>,
     /// What the first of them that refuses its options throws.
     pub(super) refusal: Option<Arc<[u8]>>,
-    /// Those that need types.
-    pub(super) typed: Box<[&'static Meta]>,
+    /// Those that need types, as they are reported.
+    pub(super) typed: Box<[RuleId]>,
     /// One of them needs the modules, so that a file may be linted again.
     pub(super) needs_modules: bool,
 }

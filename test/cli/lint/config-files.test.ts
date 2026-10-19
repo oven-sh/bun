@@ -343,6 +343,18 @@ describe.concurrent("an eslint.config.js", () => {
       expect(exitCode).toBe(1);
     }, timeout);
 
+    test("without types, a comment that disables a rule that needs them is not unused", async () => {
+      const { problems, exitCode } = await lint(
+        {
+          ...files,
+          "a.ts": "export async function f() { return 1 }\nexport function g() { f(); } // eslint-disable-line ts/no-floating-promises\nexport function h() { f(); }\n",
+        },
+        ["a.ts", "--no-type-aware"],
+      );
+      expect(problems).toEqual([]);
+      expect(exitCode).toBe(0);
+    }, timeout);
+
     test("a comment turns on a rule under the other name", async () => {
       const { problems, exitCode } = await lint(
         {

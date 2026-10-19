@@ -1380,7 +1380,15 @@ impl Config {
             b"@" => registry.get(Plugin::Eslint, name).is_some() || formatting_rule(name).is_some(),
             other => match find_js_rule(&self.js_plugins, &[other, b"/", name].concat()) {
                 Some(found) => found.is_some(),
-                None => Plugin::of_prefix(other).is_some_and(|it| registry.get(it, name).is_some()),
+                None => {
+                    let alias = self
+                        .aliases
+                        .iter()
+                        .find(|it| *it.0 == *other)
+                        .map(|it| it.1);
+                    let plugin = alias.or_else(|| Plugin::of_prefix(other));
+                    plugin.is_some_and(|it| registry.get(it, name).is_some())
+                }
             },
         };
         let mut message = [

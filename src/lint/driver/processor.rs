@@ -8,7 +8,7 @@ use crate::lint::{Context, Fixes};
 use crate::paths;
 use crate::results::FileResult;
 use bun_lint::js_plugin::{self, Block, Processor, Refusal, Route, read_messages, write_messages};
-use bun_lint::linter::{FileConfig, LintResult, ResolvedConfig, RuleId};
+use bun_lint::linter::{FileConfig, LintResult, ResolvedConfig, RuleId, parse_rule_id};
 use std::sync::Arc;
 
 /// Text to lint.
@@ -59,7 +59,11 @@ impl Context<'_, '_> {
     /// The rule that a message about a file with `config` names.
     fn find_rule(&self, config: &ResolvedConfig, id: &[u8]) -> RuleId {
         if let Some(entry) = config.find_rule(self.linter.registry(), id) {
-            return RuleId::Known(entry.meta);
+            // Of a plugin under a name of the configuration, the rule is called what the configuration calls it.
+            return match config.alias_of(parse_rule_id(id).0) {
+                Some(_) => RuleId::Named(entry.meta, id.into()),
+                None => RuleId::Known(entry.meta),
+            };
         }
         match config.find_js_rule(id) {
             Some(Some(rule)) => RuleId::Js(Arc::clone(rule)),

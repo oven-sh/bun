@@ -437,7 +437,10 @@ impl<S: RuleSet> Linter<S> {
             };
             order.push((in_oxlint.number, slot, Arc::clone(instance)));
             if rule.entry.meta.requires_types {
-                typed.push(rule.entry.meta);
+                typed.push(match rule.name() {
+                    Some(name) => RuleId::Named(rule.entry.meta, Arc::clone(name)),
+                    None => RuleId::Known(rule.reported_as()),
+                });
             }
             if refusal.is_none() {
                 refusal = self.refusal(rule).map(Arc::from);
@@ -738,13 +741,13 @@ impl<S: RuleSet> Linter<S> {
         let skips_typed_rules = file.types.is_none() && ignores_skipped_rules;
         if skips_typed_rules && is_plain {
             if has_directives {
-                rules_to_ignore.extend(prepared.typed.iter().copied().map(RuleId::Known));
+                rules_to_ignore.extend(prepared.typed.iter().cloned());
             }
         } else if skips_typed_rules && !options.again.is_some_and(|it| it.had_types) {
             let without_types = running
                 .iter()
                 .filter(|it| it.severity != Severity::Off && it.entry.meta.requires_types);
-            rules_to_ignore.extend(without_types.map(|it| RuleId::Known(it.entry.meta)));
+            rules_to_ignore.extend(without_types.map(|it| it.ran().id()));
         }
         if options.js_plugins.is_none() {
             let skipped = running_js.iter();
@@ -755,7 +758,7 @@ impl<S: RuleSet> Linter<S> {
             running.retain(|it| it.entry.meta.needs_modules);
             let is_of_another_rule = |it: &&LintMessage| {
                 (it.message_id.is_some() || is_thrown_error(it))
-                    && !matches!(&it.rule_id, Some(RuleId::Known(meta)) if meta.needs_modules)
+                    && !matches!(&it.rule_id, Some(RuleId::Known(meta) | RuleId::Named(meta, _)) if meta.needs_modules)
             };
             let previous = (again.previous.messages.iter()).chain(&again.previous.suppressed);
             problems.extend(previous.filter(is_of_another_rule).map(|it| LintMessage {

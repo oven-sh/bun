@@ -87,6 +87,11 @@ impl ReplCommand {
             ..Default::default()
         })?;
 
+        // `Arguments::parse` puts $BUN_INSPECT_PRELOAD behind the flags, and it is not one of them.
+        if !ctx.preloads.is_empty() && bun_core::env_var::BUN_INSPECT_PRELOAD.get().is_some() {
+            ctx.preloads.pop();
+        }
+
         // SAFETY: vm is a freshly heap-allocated VirtualMachine valid for process lifetime.
         let b = unsafe { &mut (*vm).transpiler };
         // SAFETY: vm valid as above; preload/argv are disjoint from `b`'s transpiler borrow.
@@ -221,6 +226,11 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             vm.global_exit();
         }
 
+        if !vm.preload.is_empty() && !Self::run_preloads(vm) {
+            vm.on_exit();
+            vm.global_exit();
+        }
+
         if !this.eval_script.is_empty() || this.eval_and_print {
             // Non-interactive: evaluate the -e/--eval or -p/--print script,
             // drain the event loop, and exit
@@ -245,6 +255,33 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         // Clean up
         vm.on_exit();
         vm.global_exit();
+    }
+
+    /// Runs `vm.preload` as `bun run` does before its entry point. `false`: do not start the REPL.
+    #[cold]
+    fn run_preloads(vm: &mut VirtualMachine) -> bool {
+        let hooks = bun_jsc::virtual_machine::runtime_hooks().expect("RuntimeHooks not installed");
+        // SAFETY: `vm` is the live per-thread VM, which is all that the hook requires.
+        match unsafe { (hooks.load_preloads)(vm) } {
+            Ok(rejected) if rejected.is_null() => {
+                // No entry point's promise takes the place of the last preload's here.
+                vm.set_pending_internal_promise(None);
+                return true;
+            }
+            Ok(rejected) => {
+                let global = vm.global();
+                let reason = jsc::JSInternalPromise::opaque_mut(rejected).result(global.vm());
+                if vm.uncaught_exception(global, reason, true) {
+                    // An `uncaughtException` listener took it: what it left behind still runs.
+                    drain_event_loop(vm);
+                    vm.on_before_exit();
+                    return false;
+                }
+            }
+            Err(_) => ReplCommand::dump_build_error(vm),
+        }
+        vm.exit_handler.exit_code = 1;
+        false
     }
 
     fn setup_repl_environment(&mut self) -> bun_jsc::JsResult<()> {
@@ -274,6 +311,15 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         }
 
         Ok(())
+    }
+}
+
+/// Runs the event loop until nothing keeps it alive.
+fn drain_event_loop(vm: &mut VirtualMachine) {
+    vm.tick();
+    while vm.is_event_loop_alive() {
+        vm.tick();
+        vm.auto_tick_active();
     }
 }
 

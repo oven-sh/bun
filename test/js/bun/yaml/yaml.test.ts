@@ -2315,11 +2315,13 @@ folded: >
                 return `throws: ${(e as Error).message}`;
               }
             };
+            // A debug or ASAN build checks CRLF only. The matrix above has CR and the mixed forms.
+            const variants = isDebug || isASAN ? lineEnds.slice(1, 2) : lineEnds.slice(1);
             const different: string[] = [];
             for (const input of inputs) {
               if (input.includes("\r")) continue;
               const expected = show(input);
-              for (const [name, withLineEnds] of lineEnds.slice(1)) {
+              for (const [name, withLineEnds] of variants) {
                 if (show(withLineEnds(input)) !== expected) different.push(`${name}: ${JSON.stringify(input)}`);
               }
             }

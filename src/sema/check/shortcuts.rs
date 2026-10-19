@@ -109,12 +109,6 @@ pub(super) mod task_fact {
     /// See `union_property`. Set on an intersection that is stored as a `MemberFacts::apparent_type` or a
     /// `MemberFacts::reduced_apparent_type`.
     pub(in super::super) const IS_IN_MEMBER_FACTS: u32 = 1 << 7;
-    /// Set on a mapped type that has an `as` clause and no generic constraint type, once `is_generic_mapped_type` has an
-    /// answer that stays. tsgo instantiates the name on every request.
-    pub(in super::super) const KNOWS_GENERIC_NAME: u32 = 1 << 8;
-    pub(in super::super) const HAS_GENERIC_NAME: u32 = 1 << 9;
-    /// The name has type variables, so a request counts as an instantiation.
-    pub(in super::super) const HAS_OPEN_NAME: u32 = 1 << 10;
 }
 
 /// A set of `task_fact` bits for each type.

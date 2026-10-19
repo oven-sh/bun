@@ -11121,6 +11121,24 @@ export declare const a4: A4; export const n4: never = a4;
       expect(exitCode).toBe(1);
     });
 
+    test("keyof of a mapped type pays for its as clause on every request", async () => {
+      const keys = Array.from({ length: 1000 }, (_, i) => `"k${i}"`).join(" | ");
+      let name = "K";
+      for (let i = 0; i < 50; i++) name = `${i % 2 ? "Lowercase" : "Uppercase"}<${name}>`;
+      using dir = project({
+        "a.ts": `type Keys = ${keys};
+type M = { [K in Keys as ${name}]: 0 };
+type Loop<N extends number, A extends 0[] = [], B = {}, Last = never> = A["length"] extends N ? Last : Loop<N, [...A, 0], M & { x: A }, keyof B>;
+export type R = Loop<600>;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(4,17): error TS2589: Type instantiation is excessively deep and possibly infinite."`,
+      );
+      expect(exitCode).toBe(1);
+    });
+
     test("the value type of a decorated member keeps this", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": false, "noEmit": true, "target": "es2022", "module": "esnext", "moduleResolution": "bundler", "lib": ["es5", "esnext.decorators", "decorators"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,

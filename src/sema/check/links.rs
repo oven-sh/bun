@@ -57,6 +57,8 @@ pub(super) enum MappedPart {
     ApparentType,
     /// 1 + the index in `TypeLinks::index_types`.
     IndexType,
+    /// 1 + the index in `TypeLinks::generic_names`.
+    HasGenericName,
 }
 
 /// Kind of type that a row of `TypeLinks::parts` describes.
@@ -67,7 +69,7 @@ pub(super) enum Kind {
 }
 
 /// Number of cells in a row, one per `MappedPart`.
-const PARTS: usize = 8;
+const PARTS: usize = 9;
 
 /// `restrictiveMapper`, `permissiveMapper` and `uniqueLiteralMapper`, which are the same for every type.
 #[derive(Copy, Clone, Debug)]
@@ -81,6 +83,25 @@ pub(super) enum FixedMapper {
 /// stack, and it's read only where that many bytes are free. So no `is_stack_low` check would have cut the skipped
 /// derivation short.
 const STACK_OF_KEPT_PART: usize = 64 << 10;
+
+/// What a derivation does every time it runs, besides returning its result.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) struct Repeated {
+    /// Amount it adds to `Checker::instantiation_count`.
+    instantiations: u32,
+    /// Amount it adds to `Checker::instantiations_computed`.
+    computed: u32,
+    /// Number of levels it adds to `Checker::instantiation_depth` where it is deepest.
+    levels: u32,
+    /// Bytes of native stack it uses.
+    stack: u32,
+    /// Bits it sets in `Checker::reliability`.
+    reliability: u8,
+}
+
+/// A result that tsgo computes on every request, with what the first derivation did. tsgo has no cache of instantiations,
+/// so there every request does that much. `Checker::repeat` does it in place of the later derivations.
+pub(super) type OnEveryRequest<V> = (V, Repeated);
 
 /// Number of published types per page of `ByType`.
 const PAGE: usize = 128;
@@ -166,9 +187,10 @@ pub(super) struct TypeLinks {
     parts: Vec<[u32; PARTS]>,
     /// See `INFER_TYPE_PARAMETERS`.
     infer_type_parameters: Vec<TypeId>,
-    /// `getIndexTypeForMappedType` of mapped types that have a name type, each with the number of keys whose names it
-    /// instantiates. tsgo computes it on every request.
-    index_types: Vec<(TypeId, u32)>,
+    /// `getIndexTypeForMappedType` of mapped types that have a name type.
+    index_types: Vec<OnEveryRequest<TypeId>>,
+    /// Whether `isGenericMappedType` finds the name type of a mapped type generic.
+    generic_names: Vec<OnEveryRequest<bool>>,
     /// 0 if nothing is cached for the type. Otherwise 1 + the index of its row in `with_fixed_mappers`.
     fixed_mapper_rows: ByType,
     /// `cachedTypes[CachedTypeKindRestrictiveInstantiation]`, `cachedTypes[CachedTypeKindPermissiveInstantiation]` and
@@ -194,6 +216,7 @@ impl TypeLinks {
             parts,
             infer_type_parameters,
             index_types,
+            generic_names,
             fixed_mapper_rows,
             with_fixed_mappers,
             times_forgotten,
@@ -210,6 +233,7 @@ impl TypeLinks {
         parts.clear();
         infer_type_parameters.clear();
         index_types.clear();
+        generic_names.clear();
         fixed_mapper_rows.clear();
         with_fixed_mappers.clear();
         (*times_forgotten, *left_open) = (0, 0);
@@ -278,16 +302,42 @@ impl TypeLinks {
 
     /// Returns the entry of `index_types` for the mapped type `ty`.
     #[inline]
-    pub(super) fn index_type(&self, ty: TypeId) -> Option<(TypeId, u32)> {
+    pub(super) fn index_type(&self, ty: TypeId) -> Option<OnEveryRequest<TypeId>> {
         let at = self.cell(ty, Kind::Mapped, MappedPart::IndexType as usize) as usize;
         Some(self.index_types[at.checked_sub(1)?])
     }
 
-    pub(super) fn keep_index_type(&mut self, ty: TypeId, entry: (TypeId, u32), stored: Stored) {
+    pub(super) fn keep_index_type(
+        &mut self,
+        ty: TypeId,
+        entry: OnEveryRequest<TypeId>,
+        stored: Stored,
+    ) {
         self.index_types.push(entry);
         let (cell, place) = (
             MappedPart::IndexType as usize,
             self.index_types.len() as u32,
+        );
+        self.keep(ty, Kind::Mapped, cell, place, stored);
+    }
+
+    /// Returns the entry of `generic_names` for the mapped type `ty`.
+    #[inline]
+    pub(super) fn has_generic_name(&self, ty: TypeId) -> Option<OnEveryRequest<bool>> {
+        let at = self.cell(ty, Kind::Mapped, MappedPart::HasGenericName as usize) as usize;
+        Some(self.generic_names[at.checked_sub(1)?])
+    }
+
+    pub(super) fn keep_has_generic_name(
+        &mut self,
+        ty: TypeId,
+        entry: OnEveryRequest<bool>,
+        stored: Stored,
+    ) {
+        self.generic_names.push(entry);
+        let (cell, place) = (
+            MappedPart::HasGenericName as usize,
+            self.generic_names.len() as u32,
         );
         self.keep(ty, Kind::Mapped, cell, place, stored);
     }
@@ -464,6 +514,60 @@ impl<'p, 's> Checker<'p, 's> {
         (part, stored)
     }
 
+    /// `derive_settled`, which also measures what `derive` does. `None` in place of that: `instantiation_count` was reset.
+    pub(super) fn derive_measured<V>(
+        &mut self,
+        derive: impl FnOnce(&mut Self) -> V,
+        is_settled: impl FnOnce(&Self, &V) -> bool,
+    ) -> (V, Option<Stored>, Option<Repeated>) {
+        let (count, computed) = (self.instantiation_count, self.instantiations_computed);
+        let depth = self.instantiation_depth;
+        let outer_levels = std::mem::replace(&mut self.deepest_instantiation, depth);
+        let in_use = self.stack_base.saturating_sub(stack_pointer());
+        let outer_deepest = self.deepest_stack.replace(0);
+        let outer_reliability = std::mem::take(&mut self.reliability);
+        let (value, stored) = self.derive_settled(derive, is_settled);
+        let levels = self.deepest_instantiation.saturating_sub(depth);
+        self.deepest_instantiation = self.deepest_instantiation.max(outer_levels);
+        let deepest = self.deepest_stack.get();
+        self.deepest_stack.set(deepest.max(outer_deepest));
+        let reliability = self.reliability;
+        self.reliability |= outer_reliability;
+        let repeated =
+            (self.instantiation_count.checked_sub(count)).map(|instantiations| Repeated {
+                instantiations,
+                computed: (self.instantiations_computed - computed).min(u64::from(u32::MAX)) as u32,
+                levels,
+                stack: u32::try_from(deepest.saturating_sub(in_use)).unwrap_or(u32::MAX),
+                reliability,
+            });
+        (value, stored, repeated)
+    }
+
+    /// Does what a derivation with these effects does. Returns false, and does nothing, if a limit of `instantiate` or an
+    /// `is_stack_low` check could stop it: then it has to run, and report what it reports.
+    pub(super) fn repeat(&mut self, repeated: &Repeated) -> bool {
+        let count = (self.instantiation_count).saturating_add(repeated.instantiations);
+        let levels = self.instantiation_depth + repeated.levels;
+        let in_use = self.stack_base.saturating_sub(stack_pointer());
+        let deepest = in_use.saturating_add(repeated.stack as usize);
+        if !self.index_infos_in_instantiation.is_empty()
+            || count >= 5_000_000
+            || levels >= 100
+            || deepest > self.stack_limit
+        {
+            return false;
+        }
+        self.instantiation_count = count;
+        self.instantiations_computed += u64::from(repeated.computed);
+        self.deepest_instantiation = self.deepest_instantiation.max(levels);
+        self.reliability |= repeated.reliability;
+        if deepest > self.deepest_stack.get() {
+            self.deepest_stack.set(deepest);
+        }
+        true
+    }
+
     /// Calls `derive`, which runs an inference. The returned flag is true if `derive` had no effect that a caller could
     /// notice, apart from the ones that `derive_settled` checks. For that, it must not have marked the variance being
     /// measured (a hit in `Program::relations` does that every time), its result must not depend on the comparisons or
@@ -622,17 +726,17 @@ mod tests {
         let (conditional, mapped) = (TypeId(LOCAL | 3), TypeId(7));
         let mut links = TypeLinks::default();
         links.keep(conditional, Kind::Conditional, 2, 40, Stored::new());
-        let last = MappedPart::IndexType as usize;
+        let last = MappedPart::HasGenericName as usize;
         assert_eq!(last + 1, PARTS);
         links.keep(mapped, Kind::Mapped, last, 50, Stored::new());
         links.keep(conditional, Kind::Conditional, 0, 60, Stored::new());
-        let row = |ty, kind| [0, 1, 2, 3, 4, 5, 6, 7].map(|at| links.cell(ty, kind, at));
+        let row = |ty, kind| [0, 1, 2, 3, 4, 5, 6, 7, 8].map(|at| links.cell(ty, kind, at));
         assert_eq!(
             row(conditional, Kind::Conditional),
-            [60, 0, 40, 0, 0, 0, 0, 0]
+            [60, 0, 40, 0, 0, 0, 0, 0, 0]
         );
         assert_eq!(row(conditional, Kind::Mapped), [0; PARTS]);
-        assert_eq!(row(mapped, Kind::Mapped), [0, 0, 0, 0, 0, 0, 0, 50]);
+        assert_eq!(row(mapped, Kind::Mapped), [0, 0, 0, 0, 0, 0, 0, 0, 50]);
         assert_eq!(row(mapped, Kind::Conditional), [0; PARTS]);
         assert_eq!(row(TypeId(8), Kind::Mapped), [0; PARTS]);
     }

@@ -366,6 +366,7 @@ impl<'p, 's> Checker<'p, 's> {
         let is_active = self.active_mappers.is_active(mapper);
         self.instantiation_count += 1;
         self.instantiation_depth += 1;
+        self.deepest_instantiation = self.deepest_instantiation.max(self.instantiation_depth);
         if !is_active {
             self.active_mappers.push(mapper);
         }
@@ -834,6 +835,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.reset_instantiation_count_if_idle();
         }
         self.instantiation_depth += 1;
+        self.deepest_instantiation = self.deepest_instantiation.max(self.instantiation_depth);
         if serial == 0 {
             self.active_mappers.push(mapper);
         }

@@ -254,17 +254,15 @@ impl<'p, 's> Checker<'p, 's> {
         if mapped.name_ty.is_none() {
             return false;
         }
-        let known = self.task_facts.get(ty);
-        if known & task_fact::KNOWS_GENERIC_NAME != 0
-            && self.index_infos_in_instantiation.is_empty()
-            && self.instantiation_depth < 100
-            && self.instantiation_count < 5_000_000
+        // FOR SPEED. tsgo instantiates the name on every request.
+        let kept = self.links.has_generic_name(ty);
+        if let Some((is_generic, repeated)) = &kept
+            && self.repeat(repeated)
         {
-            self.instantiation_count += u32::from(known & task_fact::HAS_OPEN_NAME != 0);
-            return known & task_fact::HAS_GENERIC_NAME != 0;
+            return *is_generic;
         }
         let constraint_type = links::MappedPart::ConstraintType as usize;
-        let ((facts, _), stored) = self.derive_settled(
+        let ((is_generic, _), stored, repeated) = self.derive_measured(
             |c| c.derive_has_generic_name(ty, (file, node, mapper), constraint),
             |c, &(_, stays)| {
                 stays
@@ -273,21 +271,20 @@ impl<'p, 's> Checker<'p, 's> {
                         .is_some()
             },
         );
-        if stored.is_some() {
-            self.task_facts
-                .add(ty, facts | task_fact::KNOWS_GENERIC_NAME);
+        if let (None, Some(stored), Some(repeated)) = (kept, stored, repeated) {
+            (self.links).keep_has_generic_name(ty, (is_generic, repeated), stored);
         }
-        facts & task_fact::HAS_GENERIC_NAME != 0
+        is_generic
     }
 
-    /// Returns `HAS_GENERIC_NAME` and `HAS_OPEN_NAME` for the mapped type `ty`, and whether nothing in progress has a part
-    /// in the answer. `constraint`: `mapped_keys(ty)`.
+    /// Returns whether the name type of the mapped type `ty` is generic, and whether nothing in progress has a part in the
+    /// answer. `constraint`: `mapped_keys(ty)`.
     fn derive_has_generic_name(
         &mut self,
         ty: TypeId,
         (file, node, mapper): (FileId, TypeNodeId, MapperId),
         constraint: TypeId,
-    ) -> (u32, bool) {
+    ) -> (bool, bool) {
         let declared = self.declared_name_type_of_mapped(file, node);
         let param = self.type_param(file, self.mapped_decl(file, node).param);
         let with_keys = self.mapper_with_pair(mapper, param, constraint);
@@ -299,7 +296,7 @@ impl<'p, 's> Checker<'p, 's> {
         // After that the unions and intersections in the name have
         // `ObjectFlagsIsGenericTypeComputed`.
         if self.generic_mapped_types_cut_short.contains(&ty) {
-            return (0, false);
+            return (false, false);
         }
         // In `{ [K in "a" as Z<T[]>]: 1 }` every level is another type of the one declaration.
         let is_in_progress = (self.generic_mapped_types_in_progress).contains(&(file, node));
@@ -314,15 +311,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let is_generic = self.is_generic_index_type(name);
         self.generic_mapped_types_in_progress.pop();
-        let is_open = self.types().instantiation_class(declared) != InstantiationClass::Unchanged;
-        let facts = match is_generic {
-            true => task_fact::HAS_GENERIC_NAME,
-            false => 0,
-        } | match is_open {
-            true => task_fact::HAS_OPEN_NAME,
-            false => 0,
-        };
-        (facts, stays)
+        (is_generic, stays)
     }
 
     // ───────────────────────────── keyof ─────────────────────────────
@@ -405,48 +394,45 @@ impl<'p, 's> Checker<'p, 's> {
         if decl.name_ty.is_none() || !index_flags.is_empty() {
             return (self.derive_index_type_for_mapped_type(ty, constraint, index_flags)).0;
         }
-        // FOR SPEED. `keyof` of an intersection asks again for every instantiation that has the mapped type in it. A
-        // request counts the instantiations of the names, and fails at a limit as they do.
-        if let Some((kept, names)) = self.links.index_type(ty)
-            && self.index_infos_in_instantiation.is_empty()
-            && self.instantiation_depth < 100
-            && self.instantiation_count < 5_000_000
+        // FOR SPEED. `keyof` of an intersection asks again for every instantiation that has the mapped type in it.
+        let kept = self.links.index_type(ty);
+        if let Some((keys, repeated)) = &kept
+            && self.repeat(repeated)
         {
-            self.instantiation_count += names;
-            return kept;
+            return *keys;
         }
-        let ((keys, names, is_idle), stored) = self.derive_settled(
+        let ((keys, _), stored, repeated) = self.derive_measured(
             |c| c.derive_index_type_for_mapped_type(ty, constraint, index_flags),
-            |c, &(_, _, is_idle)| {
+            |c, &(_, is_idle)| {
                 is_idle
                     && c.is_type_node_settled(file, decl.name_ty)
                     && c.kept_part::<TypeId>(ty, links::Kind::Mapped, constraint_type)
                         .is_some()
             },
         );
-        if let Some(stored) = stored.filter(|_| is_idle) {
-            self.links.keep_index_type(ty, (keys, names), stored);
+        if let (None, Some(stored), Some(repeated)) = (kept, stored, repeated) {
+            self.links.keep_index_type(ty, (keys, repeated), stored);
         }
         keys
     }
 
-    /// `constraint`: `mapped_keys(ty)`. Also returns the number of names that it has instantiated, and whether none of
-    /// their mappers is in use by an instantiation in progress (`is_mapper_idle`).
+    /// `constraint`: `mapped_keys(ty)`. Also returns whether none of the mappers that it instantiates names with is in use
+    /// by an instantiation in progress (`is_mapper_idle`).
     fn derive_index_type_for_mapped_type(
         &mut self,
         ty: TypeId,
         constraint: TypeId,
         index_flags: IndexFlags,
-    ) -> (TypeId, u32, bool) {
+    ) -> (TypeId, bool) {
         let Some((file, node, mapper)) = self.mapped_origin(ty) else {
-            return (TypeId::NEVER, 0, false);
+            return (TypeId::NEVER, false);
         };
         let decl = self.mapped_decl(file, node);
         let no_index_signatures = index_flags.contains(IndexFlags::NO_INDEX_SIGNATURES);
         let keys = if self.is_generic_index_type(constraint) {
             // "it's not safe to resolve the shape of modifier type"
             if matches!(self.mapped_modifiers_source(file, node), Some((_, true))) {
-                return (self.intern(TypeData::Keyof(ty)), 0, true);
+                return (self.intern(TypeData::Keyof(ty)), true);
             }
             List::Kept(self.parts(constraint))
         } else {
@@ -460,13 +446,12 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             None
         };
-        let (mut names, mut is_idle) = (0, true);
+        let mut is_idle = true;
         let mut key_types = Vec::with_capacity(keys.len() + 1);
         for key in keys {
             let name = match name_type {
                 Some((param, declared)) => {
                     let with_key = self.mapper_with_pair(mapper, param, key);
-                    names += 1;
                     is_idle &= self.is_mapper_idle(with_key);
                     self.instantiate(declared, with_key)
                 }
@@ -488,9 +473,9 @@ impl<'p, 's> Checker<'p, 's> {
             && self.is_union(constraint)
             && self.parts(result) == self.parts(constraint)
         {
-            return (constraint, names, is_idle);
+            return (constraint, is_idle);
         }
-        (result, names, is_idle)
+        (result, is_idle)
     }
 
     /// `getLiteralTypeFromProperties`

@@ -589,14 +589,15 @@ declare function $ERR_HTTP2_PING_CANCEL(): Error;
  *
  * This does:
  * - Sets the name of the function to the given name
- * - Sets .prototype to Object.create(base?.prototype, { constructor: { value: fn } })
+ * - Defines .prototype, not enumerable and not configurable: `prototype`, or Object.create(base?.prototype, { constructor: { value: fn } })
  * - Calls Object.setPrototypeOf(fn, base ?? Function.prototype)
  *
  * @param fn - The function to convert to a class
  * @param name - The name of the class
  * @param base - The base class to inherit from
+ * @param prototype - An existing object to use as fn.prototype. It is not written to.
  */
-declare function $toClass(fn: Function, name: string, base?: Function | undefined | null);
+declare function $toClass(fn: Function, name: string, base?: Function | undefined | null, prototype?: object);
 
 declare function $min(a: number, b: number): number;
 
@@ -616,6 +617,9 @@ interface ObjectConstructor {
 
 /** gets a property on an object */
 declare function $getByIdDirect<T, K extends keyof T>(obj: T, key: K): T[K];
+
+/** `Object.getPrototypeOf(value)`, as the `op_get_prototype_of` bytecode */
+declare function $getPrototypeOf(value: unknown): object | null;
 
 /**
  * Gets a private property on an object.

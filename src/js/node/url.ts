@@ -64,7 +64,10 @@ function Url() {
   this.path = null;
   this.href = null;
 }
-Url.prototype = {} as Url;
+declare namespace Url {
+  export let prototype: Url;
+}
+$toClass(Url, "Url");
 
 // Reference: RFC 3986, RFC 1808, RFC 2396
 

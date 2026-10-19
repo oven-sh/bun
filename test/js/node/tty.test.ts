@@ -193,6 +193,30 @@ describe("ReadStream.prototype.setRawMode", () => {
   });
 });
 
+describe("ReadStream", () => {
+  test("a frozen constructor makes streams and stays frozen", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { ReadStream } = require("node:tty");
+          Object.freeze(ReadStream);
+          const input = new ReadStream(0);
+          console.log(input instanceof ReadStream, input.constructor === ReadStream, Object.isFrozen(ReadStream));
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "true true true", stderr: "", exitCode: 0 });
+  });
+});
+
 describe("WriteStream end()", () => {
   // The parent does not read the child's stdout until the child has called
   // end(), so most of the 1 MiB sits in the stream's sink at that point. The

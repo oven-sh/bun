@@ -1003,3 +1003,16 @@ export const internalModuleBytecode: {
   (index: number): { name: string; bytecode: Uint8Array; strings: Uint8Array } | null;
   (source: string, name: string): { name: string; bytecode: Uint8Array; strings: Uint8Array };
 } = $newCppFunction("InternalModuleRegistry.cpp", "jsInternalModuleBytecode", 2);
+
+// What $toClass installs on a new function of a builtin module. `readNameFirst` reifies the lazy `name` before the call.
+export function toClassForTesting(
+  name: string,
+  base?: unknown,
+  prototype?: unknown,
+  readNameFirst?: boolean,
+): Function {
+  function Target() {}
+  if (readNameFirst && Target.name !== "Target") throw new Error("unreachable");
+  $toClass(Target, name, base as Function, prototype as object);
+  return Target;
+}

@@ -187,7 +187,8 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
       await using proc = Bun.spawn({
         // The engine aborts, and CI counts a core file as a failure.
         cmd: isWindows ? cmd : ["sh", "-c", 'ulimit -c 0; exec "$0" "$@"', ...cmd],
-        env: { ...bunEnv, BUN_JSC_immutableGlobals: value },
+        // Nor may it upload a crash report: the runner would pin it on the next test that fails.
+        env: { ...bunEnv, BUN_JSC_immutableGlobals: value, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -931,6 +932,20 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
     const { stdout, exitCode } = await run(undefined, ["index.cjs"], String(dir));
     expect(stdout).toContain("new AssertionError");
     expect(stdout).toContain("writes []\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("inspector.open(0) reports the port it bound in process.debugPort", async () => {
+    const { stdout, exitCode } = await run("*", [
+      "-e",
+      `
+        import inspector from "node:inspector";
+        inspector.open(0);
+        console.log(process.debugPort === Number(new URL(inspector.url()).port));
+        inspector.close();
+      `,
+    ]);
+    expect(stdout).toBe("true\n");
     expect(exitCode).toBe(0);
   });
 

@@ -4656,13 +4656,10 @@ JSC_DEFINE_CUSTOM_GETTER(processDebugPort, (JSC::JSGlobalObject * globalObject, 
     return JSC::JSValue::encode(jsNumber(debugPort));
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName))
+static bool setDebugPort(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (throwIfSetterOwnerIsImmutable(globalObject, scope, getProcessObject(globalObject, JSValue::decode(thisValue))))
-        return false;
-    JSValue value = JSValue::decode(encodedValue);
 
     double port = value.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -4678,6 +4675,22 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort, (JSC::JSGlobalObject * globalObjec
 
     debugPort = floor(port);
     return true;
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (throwIfSetterOwnerIsImmutable(globalObject, scope, getProcessObject(globalObject, JSValue::decode(thisValue))))
+        return false;
+    RELEASE_AND_RETURN(scope, setDebugPort(globalObject, JSValue::decode(encodedValue)));
+}
+
+// For node:inspector, which reports the port it bound even if the process object is immutable.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetDebugPort, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    setDebugPort(globalObject, callFrame->argument(0));
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))

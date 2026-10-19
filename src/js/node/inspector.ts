@@ -36,6 +36,7 @@ const waitForNodeInspectorConnection = $newCppFunction(
 );
 const postNodeInspectorControl = $newCppFunction("BunDebugger.cpp", "jsFunction_postNodeInspectorControl", 1);
 const closeNodeInspector = $newCppFunction("BunDebugger.cpp", "jsFunction_closeNodeInspector", 0);
+const setDebugPort = $newCppFunction("BunProcess.cpp", "jsFunctionSetDebugPort", 1);
 
 let activeInspectorUrl: string | undefined;
 
@@ -98,7 +99,7 @@ function open(port?: number, host?: string, wait?: boolean) {
   // Node writes the resolved port back so process.debugPort reflects it after
   // open(0) picks an ephemeral port.
   try {
-    process.debugPort = Number(new URL(resolvedUrl).port);
+    setDebugPort(Number(new URL(resolvedUrl).port));
   } catch {}
   process.stderr.write(`Debugger listening on ${resolvedUrl}\n`);
 

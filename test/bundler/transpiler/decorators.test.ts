@@ -1,6 +1,13 @@
 // @ts-nocheck
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import DecoratedAfterDefaultClass, {
+  decorated as decoratedAfterDefault,
+  binding as decoratedAfterDefaultBinding,
+} from "./decorator-after-export-default-class-fixture";
+import DecoratedAfterDefaultAnonClass, {
+  decorated as decoratedAfterDefaultAnon,
+} from "./decorator-after-export-default-class-fixture-anon";
 import DecoratedClass from "./decorator-export-default-class-fixture";
 import DecoratedAnonClass from "./decorator-export-default-class-fixture-anon";
 
@@ -1018,6 +1025,17 @@ test("export default class Named works", () => {
 
 test("export default class works (anonymous name)", () => {
   expect(new DecoratedAnonClass()["methoddecorated"]).toBe(true);
+});
+
+test("export default @decorator class Named runs the decorator and binds the name", () => {
+  expect(decoratedAfterDefault).toEqual(["DecoratedClass"]);
+  expect(decoratedAfterDefaultBinding).toBe(DecoratedAfterDefaultClass);
+  expect(new DecoratedAfterDefaultClass()["replaced"]).toBe(true);
+});
+
+test("export default @decorator class runs the decorator (anonymous name)", () => {
+  expect(decoratedAfterDefaultAnon).toEqual([DecoratedAfterDefaultAnonClass]);
+  expect(new DecoratedAfterDefaultAnonClass().method()).toBe(42);
 });
 
 test("field with supra-BMP string-literal key and initializer is assigned under the correct key", () => {

@@ -7253,7 +7253,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // `lower_standard_decorators_stmt` takes an out-param Vec; wrap to
                     // keep this function's slice contract.
                     let mut out = BumpVec::<Stmt>::new_in(self.arena);
-                    self.lower_standard_decorators_stmt(stmt, &mut out);
+                    // `s_export_default` lowers its own class, so a class here has a name.
+                    self.lower_standard_decorators_stmt(stmt, None, &mut out);
                     return out.into_bump_slice_mut();
                 }
 

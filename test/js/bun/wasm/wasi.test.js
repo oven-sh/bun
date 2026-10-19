@@ -47,6 +47,11 @@ it("fd_fdstat_set_rights only narrows the rights of a descriptor", () => {
   expect(wasi.FD_MAP.get(0).rights).toEqual({ base: WASI_RIGHT_FD_READ, inheriting: BigInt(0) });
 });
 
+// Closes the host descriptors that this WASI opened: the preopens, and what path_open added.
+function closeDescriptors(wasi) {
+  for (const fd of wasi.FD_MAP.keys()) if (fd > 2) wasi.wasiImport.fd_close(fd);
+}
+
 it("a hostcall that the rights of the descriptor do not allow returns ENOTCAPABLE", () => {
   using dir = tempDir("wasi-refusal-errno", {
     "file.txt": "file data\n",
@@ -73,23 +78,27 @@ it("a hostcall that the rights of the descriptor do not allow returns ENOTCAPABL
     expect(wasi.wasiImport.path_open(preopenFd, 0, pathPtr, len, 0, rights, BigInt(0), 0, fdPtr)).toBe(WASI_ESUCCESS);
     return view.getUint32(fdPtr, true);
   };
-  const readOnly = open(WASI_RIGHT_FD_READ);
-  const writeOnly = open(WASI_RIGHT_FD_WRITE);
-  view.setUint32(iovsPtr, bufPtr, true);
-  view.setUint32(iovsPtr + 4, 1, true);
+  try {
+    const readOnly = open(WASI_RIGHT_FD_READ);
+    const writeOnly = open(WASI_RIGHT_FD_WRITE);
+    view.setUint32(iovsPtr, bufPtr, true);
+    view.setUint32(iovsPtr + 4, 1, true);
 
-  // wasi-libc turns ENOTCAPABLE into the errno of the call: EBADF for write() and read(), ESPIPE for lseek().
-  expect({
-    "fd_write, opened with FD_READ": wasi.wasiImport.fd_write(readOnly, iovsPtr, 1, countPtr),
-    "fd_read, opened with FD_WRITE": wasi.wasiImport.fd_read(writeOnly, iovsPtr, 1, countPtr),
-    "fd_seek, opened with FD_READ": wasi.wasiImport.fd_seek(readOnly, BigInt(0), WASI_WHENCE_CUR, countPtr),
-    "fd_read, opened with FD_READ": wasi.wasiImport.fd_read(readOnly, iovsPtr, 1, countPtr),
-  }).toEqual({
-    "fd_write, opened with FD_READ": WASI_ENOTCAPABLE,
-    "fd_read, opened with FD_WRITE": WASI_ENOTCAPABLE,
-    "fd_seek, opened with FD_READ": WASI_ENOTCAPABLE,
-    "fd_read, opened with FD_READ": WASI_ESUCCESS,
-  });
+    // wasi-libc turns ENOTCAPABLE into the errno of the call: EBADF for write() and read(), ESPIPE for lseek().
+    expect({
+      "fd_write, opened with FD_READ": wasi.wasiImport.fd_write(readOnly, iovsPtr, 1, countPtr),
+      "fd_read, opened with FD_WRITE": wasi.wasiImport.fd_read(writeOnly, iovsPtr, 1, countPtr),
+      "fd_seek, opened with FD_READ": wasi.wasiImport.fd_seek(readOnly, BigInt(0), WASI_WHENCE_CUR, countPtr),
+      "fd_read, opened with FD_READ": wasi.wasiImport.fd_read(readOnly, iovsPtr, 1, countPtr),
+    }).toEqual({
+      "fd_write, opened with FD_READ": WASI_ENOTCAPABLE,
+      "fd_read, opened with FD_WRITE": WASI_ENOTCAPABLE,
+      "fd_seek, opened with FD_READ": WASI_ENOTCAPABLE,
+      "fd_read, opened with FD_READ": WASI_ESUCCESS,
+    });
+  } finally {
+    closeDescriptors(wasi);
+  }
 });
 
 it("random_get fills only the requested window", () => {

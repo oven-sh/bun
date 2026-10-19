@@ -813,72 +813,76 @@ describe("bundler", async () => {
         console.log(JSON.stringify(results));
       `;
 
-      test.concurrent("is a build error unless a loader copies it as-is", async () => {
-        using dir = tempDir("loader-four-gib-error", {
-          "build-fixture.ts": buildFixture,
-          "entry-txt.js": `import text from "./big.txt"; console.log(text.length);`,
-          "entry-json.js": `import json from "./big.json"; console.log(json);`,
-          "entry-js.js": `import "./big.js";`,
-          "entry-css.js": `import "./big.css";`,
-          "entry-bin.js": `import url from "./big.bin"; console.log(url);`,
-          "entry-db.js": `import db from "./big.db"; import "./missing.js"; console.log(db);`,
-          "index.html": `<!doctype html><img src="./big.bin">`,
-          "big.txt": "",
-          "big.json": "{}",
-          "big.js": "",
-          "big.css": "",
-          "big.bin": "",
-          "big.db": "",
-        });
-        const size = `(${FOUR_GIB} bytes, 4 GiB maximum)`;
-        const refused = (...log: string[]) => ({ success: false, logs: [log] });
-        const notCopied = refused(
-          `File is too large ${size}`,
-          `To copy the file to the output directory as-is, import it with { type: "file" }`,
-        );
-        expect(
-          await build(String(dir), {
-            txt: { entry: "entry-txt.js", symbol: "four_gib" },
-            json: { entry: "entry-json.js", symbol: "four_gib" },
-            js: { entry: "entry-js.js", symbol: "four_gib" },
-            css: { entry: "entry-css.js", symbol: "four_gib" },
-            // One byte less is for the parser to refuse.
-            "js, 4 GiB - 1": { entry: "entry-js.js", symbol: "four_gib_less_one" },
-            // Standalone HTML inlines every file, a standalone executable embeds it.
-            "standalone HTML": {
-              entry: "index.html",
-              symbol: "four_gib",
-              options: { compile: true, target: "browser" },
+      test.concurrent(
+        "is a build error unless a loader copies it as-is",
+        async () => {
+          using dir = tempDir("loader-four-gib-error", {
+            "build-fixture.ts": buildFixture,
+            "entry-txt.js": `import text from "./big.txt"; console.log(text.length);`,
+            "entry-json.js": `import json from "./big.json"; console.log(json);`,
+            "entry-js.js": `import "./big.js";`,
+            "entry-css.js": `import "./big.css";`,
+            "entry-bin.js": `import url from "./big.bin"; console.log(url);`,
+            "entry-db.js": `import db from "./big.db"; import "./missing.js"; console.log(db);`,
+            "index.html": `<!doctype html><img src="./big.bin">`,
+            "big.txt": "",
+            "big.json": "{}",
+            "big.js": "",
+            "big.css": "",
+            "big.bin": "",
+            "big.db": "",
+          });
+          const size = `(${FOUR_GIB} bytes, 4 GiB maximum)`;
+          const refused = (...log: string[]) => ({ success: false, logs: [log] });
+          const notCopied = refused(
+            `File is too large ${size}`,
+            `To copy the file to the output directory as-is, import it with { type: "file" }`,
+          );
+          expect(
+            await build(String(dir), {
+              txt: { entry: "entry-txt.js", symbol: "four_gib" },
+              json: { entry: "entry-json.js", symbol: "four_gib" },
+              js: { entry: "entry-js.js", symbol: "four_gib" },
+              css: { entry: "entry-css.js", symbol: "four_gib" },
+              // One byte less is for the parser to refuse.
+              "js, 4 GiB - 1": { entry: "entry-js.js", symbol: "four_gib_less_one" },
+              // Standalone HTML inlines every file, a standalone executable embeds it.
+              "standalone HTML": {
+                entry: "index.html",
+                symbol: "four_gib",
+                options: { compile: true, target: "browser" },
+              },
+              "executable": { entry: "entry-bin.js", symbol: "four_gib", options: { compile: true } },
+              // The module of a database is its path. The build gets as far as the import that does not resolve.
+              "executable, sqlite": {
+                entry: "entry-db.js",
+                symbol: "four_gib",
+                options: { compile: true, loader: { ".db": "sqlite" } },
+              },
+            }),
+          ).toEqual({
+            stdout: {
+              txt: notCopied,
+              json: notCopied,
+              js: notCopied,
+              css: notCopied,
+              "js, 4 GiB - 1": refused("File is too large to parse (2 GiB maximum)"),
+              "standalone HTML": refused(
+                `File is too large to inline into standalone HTML ${size}`,
+                "Without --compile, Bun copies the file to the output directory as-is",
+              ),
+              "executable": refused(
+                `File is too large to embed in a standalone executable ${size}`,
+                "To keep the file out of the executable, read it from disk at run time, for example with Bun.file()",
+              ),
+              "executable, sqlite": refused(`Could not resolve: "./missing.js"`),
             },
-            "executable": { entry: "entry-bin.js", symbol: "four_gib", options: { compile: true } },
-            // The module of a database is its path. The build gets as far as the import that does not resolve.
-            "executable, sqlite": {
-              entry: "entry-db.js",
-              symbol: "four_gib",
-              options: { compile: true, loader: { ".db": "sqlite" } },
-            },
-          }),
-        ).toEqual({
-          stdout: {
-            txt: notCopied,
-            json: notCopied,
-            js: notCopied,
-            css: notCopied,
-            "js, 4 GiB - 1": refused("File is too large to parse (2 GiB maximum)"),
-            "standalone HTML": refused(
-              `File is too large to inline into standalone HTML ${size}`,
-              "Without --compile, Bun copies the file to the output directory as-is",
-            ),
-            "executable": refused(
-              `File is too large to embed in a standalone executable ${size}`,
-              "To keep the file out of the executable, read it from disk at run time, for example with Bun.file()",
-            ),
-            "executable, sqlite": refused(`Could not resolve: "./missing.js"`),
-          },
-          stderr: "",
-          exitCode: 0,
-        });
-      }, 30_000);
+            stderr: "",
+            exitCode: 0,
+          });
+        },
+        30_000,
+      );
 
       // The output file is a second copy of the bytes, and that one takes memory.
       test.skipIf(totalmem() < 12 * 1024 ** 3)(

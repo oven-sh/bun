@@ -111,8 +111,8 @@ describe("a workspace member keeps the versions its lockfile pins", () => {
       bun,
       bunfig: (overrides: Json) => write(join(cwd, "bunfig.toml"), bunfig(overrides)),
       lock: () => file(join(cwd, "bun.lock")).text(),
-      // `name@version` of every registry package in bun.lock.
-      pins: async () => [...(await project.lock()).matchAll(/"([^"\s]+@\d+\.\d+\.\d+)", "http/g)].map(m => m[1]),
+      // `name@version` of every registry package in bun.lock: its tarball URL is "" when it has an integrity.
+      pins: async () => [...(await project.lock()).matchAll(/"([^"\s]+@\d+\.\d+\.\d+)", "(?:http|")/g)].map(m => m[1]),
       // The version of `name` that `member` runs, under either linker.
       installed: async (member: string, name: string) => {
         for (const from of [join(cwd, "packages", member), cwd]) {

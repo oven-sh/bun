@@ -7,7 +7,7 @@ description: Creates JavaScript classes using Bun's Rust bindings generator (.cl
 
 Bridge JavaScript and Rust through `.classes.ts` definitions and Rust implementations.
 
-`src/codegen/bindgen.ts` (`*.bind.ts`, `docs/project/bindgen.mdx`) is replacing this generator: typed arguments, and the struct stored inside the JS object. Use it for a class whose struct only the JS object owns. It does not do ref-counted or shared structs, `hasPendingActivity`, `estimatedSize` or writing to a cached getter's slot yet.
+`src/codegen/bindgen.ts` (`*.bind.ts`, `docs/project/bindgen.mdx`) is replacing this generator: typed arguments, and the struct stored inside the JS object. Use it for a class whose struct only the JS object owns. It does not do ref-counted or shared structs, `hasPendingActivity` or `estimatedSize` yet.
 
 ## Architecture
 

@@ -487,18 +487,7 @@ bool JSNodeHTTPServerSocket::isAuthorized() const
         return httpResponseData->isAuthorized;
     }
 
-    // The handshake callback hasn't fired yet, but we're in an HTTP handler,
-    // which means we received HTTP data. Check if the TLS handshake has actually
-    // completed using OpenSSL's state (SSL_is_init_finished).
-    //
-    // If the handshake is complete but the callback hasn't fired, we're in a race
-    // condition. The callback will fire shortly and either:
-    // 1. Set isAuthorized = true (success)
-    // 2. Close the socket (if rejectUnauthorized and verification failed)
-    //
-    // Since we're in an HTTP handler and the socket isn't closed, we can safely
-    // assume the handshake will succeed. If it fails, the socket will be closed
-    // and subsequent operations will fail appropriately.
+    // Not fired: the handshake is pending, as at accept. usockets fires the callback before it delivers any data.
     return us_socket_is_ssl_handshake_finished(socket);
 }
 
@@ -1132,6 +1121,16 @@ extern "C" JSC::EncodedJSValue Bun__getOrCreateNodeHTTPServerSocket(bool isSSL, 
     }
 
     return JSValue::encode(JSC::jsNull());
+}
+
+// At the end of a TLS handshake: the socket that the accept attached. Empty when the handshake failed or nothing is attached.
+extern "C" JSC::EncodedJSValue Bun__NodeHTTP__securedServerSocket(us_socket_t* us_socket)
+{
+    auto* serverSocket = getNodeHTTPServerSocket<true>(us_socket);
+    if (!serverSocket || !serverSocket->isAuthorized()) {
+        return {};
+    }
+    return JSValue::encode(serverSocket);
 }
 
 JSC::Structure* createNodeHTTPServerSocketStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)

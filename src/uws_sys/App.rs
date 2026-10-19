@@ -382,8 +382,7 @@ impl<const SSL: bool> App<SSL> {
     }
 
     /// Register a connection filter: `handler` is invoked with the raw
-    /// `us_socket_t*` and `1` when an HTTP connection is opened (for TLS, when
-    /// its handshake completes) and `-1` when it closes.
+    /// `us_socket_t*` and a [`FilterEvent`] as its `i32`.
     pub fn filter(
         &mut self,
         handler: extern "C" fn(*mut us_socket_t, i32, *mut c_void),
@@ -483,6 +482,25 @@ impl<const SSL: bool> ListenSocket<SSL> {
         // (a listen socket IS a us_socket_t).
         crate::socket::NewSocketHandler::<SSL>::from(std::ptr::from_mut::<Self>(self).cast())
     }
+}
+
+/// The `int` that `AsyncSocketData::filtered*` (packages/bun-uws) sends to a connection filter. Decode it with `from_repr`.
+#[repr(i32)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug, strum::FromRepr)]
+pub enum FilterEvent {
+    /// Plain TCP: at accept, behind `Accepted`. TLS: when the handshake ends, also in failure.
+    Opened = 1,
+    Closed = -1,
+    /// TCP accept on both transports, before any TLS handshake.
+    Accepted = 2,
+    /// Sent by `HttpContext::onClose` and by `HttpResponse::upgrade()`.
+    AcceptedClosed = -2,
+    /// A node:http tunnel has bytes to send again.
+    TunnelBusy = 3,
+    /// A node:http tunnel became idle.
+    TunnelIdle = -3,
+    /// An idle tunnel closed. Sent in place of `AcceptedClosed`.
+    IdleTunnelClosed = -4,
 }
 
 #[derive(strum::IntoStaticStr, Debug)]

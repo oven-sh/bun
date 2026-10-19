@@ -245,7 +245,7 @@ Bun.serve({
   system call when possible, enabling zero-copy file transfers in the kernel—the fastest way to send files.
 </Info>
 
-To send part of a file, use the [`slice(start, end)`](https://developer.mozilla.org/en-US/docs/Web/API/Blob/slice) method on the `Bun.file` object. Bun sets the `Content-Range` and `Content-Length` headers on the `Response` object automatically.
+To send part of a file, use the [`slice(start, end)`](https://developer.mozilla.org/en-US/docs/Web/API/Blob/slice) method on the `Bun.file` object. Bun answers `206 Partial Content` and sets the `Content-Range` and `Content-Length` headers automatically. If the `Response` has a status other than `200` or `206`, Bun keeps that status and sets no `Content-Range`.
 
 ```ts
 Bun.serve({

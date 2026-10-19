@@ -33,6 +33,12 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     fn import_records(&self) -> &[js_ast::ImportRecord] {
         self.p.import_records.items()
     }
+    fn namespace_of_import_item(&self, item: js_ast::Ref) -> Option<js_ast::Ref> {
+        let symbol = self.p.symbols.get(item.inner_index() as usize)?;
+        let name = symbol.original_name.slice();
+        let mut all = self.p.import_items_for_namespace.iter();
+        all.find_map(|(namespace, items)| (items.get(name)?.ref_ == item).then_some(*namespace))
+    }
     fn source(&self) -> &[u8] {
         &self.p.source.contents
     }
@@ -108,6 +114,15 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         ref_
     }
 
+    fn new_local(&mut self, name: &[u8]) -> js_ast::Ref {
+        let p = &mut *self.p;
+        let name = p.arena.alloc_slice_copy(name);
+        let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name);
+        // current_scope is the FunctionBody of the function being compiled.
+        VecExt::append(&mut p.current_scope_mut().generated, ref_);
+        ref_
+    }
+
     fn new_import_item(&mut self, name: &[u8]) -> js_ast::Ref {
         let p = &mut *self.p;
         let name = p.arena.alloc_slice_copy(name);
@@ -150,6 +165,30 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
 }
 
 impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
+    /// Drops the replaced body's symbols, or the renamer prints a new local `count` as `count2`.
+    pub(crate) fn drop_symbols_of_replaced_function(&mut self, name: Option<js_ast::Ref>) {
+        let mut body = self.current_scope;
+        debug_assert!(body.kind == js_ast::scope::Kind::FunctionBody);
+        body.members = js_ast::scope::Members::EMPTY;
+        body.children.clear();
+        if let Some(mut args) = body.parent {
+            debug_assert!(args.kind == js_ast::scope::Kind::FunctionArgs);
+            // Still printed: `arguments`, and `name` when a function expression declares it here.
+            let mut kept = js_ast::scope::Members::EMPTY;
+            for (key, member) in args.members.iter() {
+                let kind = self.symbols[member.ref_.inner_index() as usize].kind;
+                if kind == js_ast::symbol::Kind::Arguments || Some(member.ref_) == name {
+                    // SAFETY: `put` stores `key` by reference, so it has to
+                    // outlive `args`. It is already the key of a member of
+                    // `args`, stored under the same contract.
+                    unsafe { kept.put(key, *member) };
+                }
+            }
+            args.members = kept;
+            args.children.retain(|child| *child == body);
+        }
+    }
+
     /// Sets `react_compiler_may_replace_body` for the visit of the pending candidate. Returns the old value.
     pub(crate) fn enter_react_compiler_candidate(
         &mut self,

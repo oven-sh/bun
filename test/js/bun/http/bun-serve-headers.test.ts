@@ -85,8 +85,8 @@ describe("response header values are isomorphic-encoded on the wire", () => {
       },
     });
 
-    expect(headerHex(await rawResponse(server.port, "/8"), "x-t")).toEqual([expectedHex]);
-    expect(headerHex(await rawResponse(server.port, "/16"), "x-t")).toEqual([expectedHex]);
+    expect(headerHex(await rawResponse(server.port!, "/8"), "x-t")).toEqual([expectedHex]);
+    expect(headerHex(await rawResponse(server.port!, "/16"), "x-t")).toEqual([expectedHex]);
 
     // A fetch() client reads the same value back, not mojibake.
     const res = await fetch(`http://127.0.0.1:${server.port}/16`);
@@ -107,8 +107,8 @@ describe("response header values are isomorphic-encoded on the wire", () => {
     });
 
     const expected = ["61 3d " + expectedHex, "62 3d " + expectedHex];
-    expect(headerHex(await rawResponse(server.port, "/8"), "set-cookie")).toEqual(expected);
-    expect(headerHex(await rawResponse(server.port, "/16"), "set-cookie")).toEqual(expected);
+    expect(headerHex(await rawResponse(server.port!, "/8"), "set-cookie")).toEqual(expected);
+    expect(headerHex(await rawResponse(server.port!, "/16"), "set-cookie")).toEqual(expected);
   });
 
   test("long values and values that start with a non-ASCII char", async () => {
@@ -136,8 +136,8 @@ describe("response header values are isomorphic-encoded on the wire", () => {
 
     for (const [name, codeUnits] of Object.entries(values)) {
       const expected = [[...codeUnits].map(c => c.toString(16).padStart(2, "0")).join(" ")];
-      expect(headerHex(await rawResponse(server.port, `/${name}?bits=8`), "x-t")).toEqual(expected);
-      expect(headerHex(await rawResponse(server.port, `/${name}?bits=16`), "x-t")).toEqual(expected);
+      expect(headerHex(await rawResponse(server.port!, `/${name}?bits=8`), "x-t")).toEqual(expected);
+      expect(headerHex(await rawResponse(server.port!, `/${name}?bits=16`), "x-t")).toEqual(expected);
     }
   });
 });
@@ -159,7 +159,7 @@ describe("response Connection: close closes the socket", () => {
       },
     });
 
-    const socket = net.connect(server.port, "127.0.0.1");
+    const socket = net.connect(server.port!, "127.0.0.1");
     try {
       socket.on("error", () => {});
       await once(socket, "connect");
@@ -243,7 +243,7 @@ describe("response Connection: close closes the socket", () => {
       },
     });
 
-    const socket = net.connect(server.port, "127.0.0.1");
+    const socket = net.connect(server.port!, "127.0.0.1");
     try {
       socket.on("error", () => {});
       await once(socket, "connect");

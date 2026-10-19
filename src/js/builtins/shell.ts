@@ -131,7 +131,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
             res(out);
           }
         };
-        // Only for a failure to build the output buffers; exit codes go through `resolve`.
+        // Only for a JS error raised by the interpreter itself; exit codes go through `resolve`.
         reject = error => {
           potentialError = undefined;
           rej(error);
@@ -245,7 +245,10 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       return this;
     }
 
-    then(onfulfilled, onrejected) {
+    then<TResult1 = ShellOutput, TResult2 = never>(
+      onfulfilled?: ((value: ShellOutput) => TResult1 | PromiseLike<TResult1>) | null,
+      onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | null,
+    ): Promise<TResult1 | TResult2> {
       this.#run();
 
       return super.then(onfulfilled, onrejected);

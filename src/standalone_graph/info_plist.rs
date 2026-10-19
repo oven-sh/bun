@@ -1,9 +1,4 @@
-//! The file `--macos-info-plist` / `compile.macos.infoPlist` names: read it and check that macOS can use it.
-//!
-//! The bytes go into the executable as they are (`bun_exe_format::macho::MachoFile::set_info_plist`). What macOS
-//! accepts there is a property list, XML or binary, with a dictionary at its root: `codesign` refuses to sign an
-//! executable whose `__TEXT,__info_plist` is anything else, and CoreFoundation reads it as an empty dictionary. The
-//! keys and the types of their values are not checked.
+//! Reads the file `--macos-info-plist` / `compile.macos.infoPlist` names and checks that it is an Info.plist.
 
 use bun_ast::E;
 use bun_ast::expr::Data;
@@ -12,6 +7,7 @@ use bun_sys::Fd;
 
 use crate::StandaloneModuleGraph::CompileError;
 
+/// `codesign` refuses an executable whose `__TEXT,__info_plist` is not a property list with a dictionary at its root.
 pub fn load(path: &[u8]) -> Result<Box<[u8]>, CompileError> {
     let bytes = match bun_sys::File::read_from(Fd::cwd(), path) {
         Ok(bytes) => bytes,
@@ -91,8 +87,7 @@ fn check_xml(bytes: &[u8]) -> Result<(), Vec<u8>> {
     }
 }
 
-/// The checks CoreFoundation makes before it reads a binary property list (`__CFBinaryPlistGetTopLevelInfo`), and
-/// then that the top object is a dictionary.
+/// The checks of CoreFoundation's `__CFBinaryPlistGetTopLevelInfo`, then that the top object is a dictionary.
 fn check_binary(bytes: &[u8]) -> Result<(), Vec<u8>> {
     const TRAILER: usize = 32;
     const MALFORMED: &[u8] = b"the binary property list is malformed";

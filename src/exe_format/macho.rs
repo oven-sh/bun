@@ -13,11 +13,7 @@ const SECTNAME: [u8; 16] = *b"__bun\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
 
 const SEG_TEXT: &[u8] = b"__TEXT";
 const SECT_INFO_PLIST: &[u8] = b"__info_plist";
-/// The zero-filled `__TEXT` section a darwin bun reserves for an Info.plist (c-bindings.cpp). Its `size` is the
-/// capacity. [`MachoFile::set_info_plist`] renames it to `__info_plist`, because `codesign` refuses an executable
-/// whose `__TEXT,__info_plist` is not a property list, and keeps the capacity in `reserved3`. That field is how a
-/// later compile from the output knows the section is this one and how large it was. The section has to be in the
-/// segment named `__TEXT`: macOS looks for `__info_plist` nowhere else.
+/// Zero-filled `__TEXT` section a darwin bun reserves for an Info.plist (c-bindings.cpp). Its `size` is the capacity.
 const SECT_INFO_PLIST_SLOT: &[u8] = b"__bun_plist";
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
@@ -157,8 +153,7 @@ impl MachoFile {
             }
             if section.sect_name() == SECT_INFO_PLIST {
                 if section.reserved3 == 0 {
-                    // A linker made it. macOS reads the first `__info_plist`, so a second one would not be the
-                    // program's Info.plist.
+                    // Not from `set_info_plist`, which keeps the reserved size here. macOS reads the first one.
                     return Err(MachoError::ForeignInfoPlist);
                 }
                 if filled.is_none() {
@@ -197,12 +192,7 @@ impl MachoFile {
         }))
     }
 
-    /// Make `plist` the embedded Info.plist: the contents of section `__info_plist` in the segment named `__TEXT`,
-    /// which is where CoreFoundation and `codesign` read it in an executable that is not inside a bundle (what
-    /// `ld -sectcreate __TEXT __info_plist` produces).
-    ///
-    /// `__TEXT` cannot grow in a linked image, so nothing moves: the section a darwin bun reserves is renamed and
-    /// resized in place.
+    /// Rename the reserved section to `__info_plist` and fill it: the result of `ld -sectcreate __TEXT __info_plist`.
     pub fn set_info_plist(&mut self, plist: &[u8]) -> Result<(), MachoError> {
         let Some(slot) = self.info_plist_slot()? else {
             return Err(MachoError::MissingInfoPlistSection);
@@ -227,10 +217,9 @@ impl MachoFile {
         Ok(())
     }
 
-    /// Give the reserved section back, zero-filled, when the base is a compiled executable that holds an Info.plist:
-    /// that plist describes the base, not the program compiled from it. A base this cannot be read from is left as it
-    /// is, which is what happened to every base before there was an Info.plist to clear.
+    /// Give the reserved section back: the Info.plist of a compiled executable used as the base is not this program's.
     pub fn clear_info_plist(&mut self) {
+        // A base this fails on compiled before there was an Info.plist to clear, so it is left as it is.
         let Ok(Some(slot)) = self.info_plist_slot() else {
             return;
         };

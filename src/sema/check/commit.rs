@@ -624,8 +624,8 @@ impl<'s> Checker<'_, 's> {
         self.lose_what_has_missed_a_ring();
         // A commit here would store the members of a ring that are in other files, and withhold those in this one.
         if self.is_commit_due() && !self.task.is_lost() && !self.task.has_closed_a_ring() {
-            let (is_between_files, is_read) = (false, true);
-            self.commit(is_between_files, is_read);
+            let is_between_files = false;
+            self.commit(is_between_files);
         } else if let Some(view) = self.task.view() {
             view.forget();
         }
@@ -695,25 +695,26 @@ impl<'s> Checker<'_, 's> {
     }
 
     /// Call after `check_file` and whatever is asked about the file afterwards. `is_last`: the task ends with this file.
-    /// `is_read`: see `commit`.
     ///
     /// Returns true if the file is checked for good. Otherwise the task is discarded and the file has to be rechecked. A
     /// commit follows every file, so a discarded task never takes an earlier file with it. The exception is the last
     /// round's task.
-    pub fn commit_after_file(&mut self, is_last: bool, is_read: bool) -> bool {
+    pub fn commit_after_file(&mut self, is_last: bool) -> bool {
         self.lose_what_has_missed_a_ring();
         // The last round's task commits once, when it ends: see `is_commit_due`. It is never discarded.
         if self.task.is_believed() && !is_last && !self.task.is_lost() {
             return true;
         }
-        self.commit(true, is_read)
+        self.commit(true)
     }
 
     /// See the head of this file. Nothing is in progress in the task.
     /// `is_between_files`: no file is being checked.
-    /// `is_read`: whether anything will look at the tables afterwards. If not, nothing is stored in them.
     /// Returns whether the task goes on: it is not lost.
-    fn commit(&mut self, is_between_files: bool, is_read: bool) -> bool {
+    ///
+    /// Every valid commit stores, also the last one of a thread. A task that begins later counts the walks of this commit as
+    /// seen (`Program::is_invalid`), so it has to find what was evaluated along with them.
+    fn commit(&mut self, is_between_files: bool) -> bool {
         let p = self.p;
         let Some([of_entries_written_at_once, mut reported]) =
             self.take_diagnostics_for_commit(is_between_files)
@@ -772,10 +773,7 @@ impl<'s> Checker<'_, 's> {
             task.view().is_some_and(|view| view.is_own(commit))
         });
         p.publish_reported(task.number(), reported);
-        let stored = match is_read || ring.is_some() {
-            true => (p.commits).store(&tables_of(p), task, &mut log, number, ring),
-            false => 0,
-        };
+        let stored = (p.commits).store(&tables_of(p), task, &mut log, number, ring);
         drop(committing);
         task.count_waits([entered - asked, entered.elapsed(), Duration::ZERO]);
         task.count_committed(log.len() as u64, stored);

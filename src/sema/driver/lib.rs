@@ -4242,6 +4242,10 @@ fn check_named_files(
         files_done: usize,
         /// `Checker::can_recheck_early`
         can_recheck_early: bool,
+        /// The visit was discarded at a cycle that no commit had resolved.
+        was_discarded_at_cycle: bool,
+        /// The file was already rechecked early once after a visit that was discarded for another reason.
+        was_retried_without_cycle: bool,
         /// The file was already rechecked once because all earlier files were done.
         was_retried_as_first: bool,
         /// How many times the file was rechecked before the last round.
@@ -4316,8 +4320,33 @@ fn check_named_files(
             *cost_left = cost_left.saturating_sub(cost_of_run);
             from..to
         };
+        /// What a worker that has run out of files waits for.
+        #[derive(Default)]
+        struct Activity {
+            /// How many workers are looking for a file or running a task.
+            active: usize,
+            /// How many workers are waiting.
+            waiting: usize,
+            /// Counts commits and discards.
+            changes: u64,
+        }
+        let activity = Guarded::new(Activity::default());
+        let activity_has_changed = bun_threading::Condvar::new();
+        // Call after a commit or a discard. `is_busy`: the caller has its next file already. Otherwise it looks for a file to
+        // recheck itself right away.
+        let note_change = |is_busy: bool| {
+            let mut activity = activity.lock();
+            activity.changes += 1;
+            if is_busy && activity.waiting != 0 {
+                activity_has_changed.notify_one();
+            }
+        };
         // Returns the first file in program order that was discarded and is worth rechecking now: its commit was invalid,
         // a commit has resolved the cycle it was discarded for, or all earlier files are done, so its task will be trusted.
+        //
+        // A file that was discarded at a cycle is rechecked every time that cycle has been committed: it gets past it then.
+        // After an invalid commit or a missed cycle nothing says that the next commit won't discard the file again. So it
+        // gets one early recheck, and then waits until it's the first unchecked file. See also `take_first_unchecked_file`.
         //
         // The round ends: a file is rechecked early only if another file was checked for good since its last visit began.
         // That count only grows, and no further than the number of files. So it is greater at the start of each early
@@ -4334,36 +4363,28 @@ fn check_named_files(
                     visit.unresolved_cycle.clear();
                 }
                 visit.can_recheck_early
-                    && (visit.unresolved_cycle.is_empty() && visit.files_done < done
+                    && (visit.unresolved_cycle.is_empty()
+                        && visit.files_done < done
+                        && (visit.was_discarded_at_cycle || !visit.was_retried_without_cycle)
                         || file == next && !visit.was_retried_as_first)
             };
             let candidates = lost.iter().enumerate();
             let candidates = candidates.filter(|&(_, &file)| can_recheck(file));
-            let (at, &file) = candidates.min_by_key(|&(_, &file)| file)?;
+            let candidates: Vec<(usize, usize)> =
+                candidates.map(|(at, &file)| (file, at)).collect();
+            let &(file, at) = candidates.iter().min()?;
             visits[file].was_retried_as_first |= file == next;
+            visits[file].was_retried_without_cycle |= !visits[file].was_discarded_at_cycle;
             visits[file].rechecks += 1;
             lost.swap_remove(at);
+            drop((lost, visits));
+            if candidates.len() > 1 && activity.lock().waiting != 0 {
+                activity_has_changed.notify_one();
+            }
             Some(file)
         };
-        let is_read_afterwards = request.retains_everything
-            || request.after_file.is_some()
-                && !request.plan_options.after_file_is_for_checked_files;
         let sums: Guarded<Sums> = Guarded::new(Sums::default());
         let (started, busy) = (Instant::now(), AtomicU64::new(0));
-        /// What a worker that has run out of files waits for.
-        #[derive(Default)]
-        struct Activity {
-            /// How many workers are looking for a file or running a task.
-            active: usize,
-            /// Counts commits and discards. Each one can make a discarded file recheckable.
-            changes: u64,
-        }
-        let activity = Guarded::new(Activity::default());
-        let activity_has_changed = bun_threading::Condvar::new();
-        let note_change = || {
-            activity.lock().changes += 1;
-            activity_has_changed.notify_all();
-        };
         // One task, which begins with the file `first` and goes on with what `next` returns. Returns the file that the
         // next task of the thread begins with.
         let run_task = |first: usize, next: &mut dyn FnMut() -> Option<usize>| -> Option<usize> {
@@ -4417,9 +4438,7 @@ fn check_named_files(
                 // A task keeps what it evaluated about other files, and a file's own check must not find what a later
                 // file's check evaluated. So a task only moves forward in program order.
                 let is_last = upcoming.is_none_or(|it| it < index) || spent >= task_cost;
-                // Nothing waits for what the tasks that end last have found out.
-                let is_read = upcoming.is_some() || is_read_afterwards || !lost.lock().is_empty();
-                if !checker.commit_after_file(is_last, is_read) {
+                if !checker.commit_after_file(is_last) {
                     if let Some(progress) = request.progress {
                         progress.checked.fetch_sub(1, Ordering::Relaxed);
                         let bytes = bytes_of(index);
@@ -4429,9 +4448,10 @@ fn check_named_files(
                         let visit = &mut visits.lock()[index];
                         visit.can_recheck_early = checker.can_recheck_early();
                         visit.unresolved_cycle = checker.take_unresolved_cycle();
+                        visit.was_discarded_at_cycle = !visit.unresolved_cycle.is_empty();
                     }
                     lost.lock().push(index);
-                    note_change();
+                    note_change(upcoming.is_some());
                     break upcoming;
                 }
                 {
@@ -4449,7 +4469,7 @@ fn check_named_files(
                     checked: vec![(file, checked)],
                     incomplete: incomplete.into_iter().collect(),
                 });
-                note_change();
+                note_change(upcoming.is_some());
                 match upcoming {
                     Some(following) if !is_last => index = following,
                     _ => break upcoming,
@@ -4487,19 +4507,46 @@ fn check_named_files(
         // Returns a closure that runs one task per call on the current thread. It returns false once this thread has nothing
         // left to do in this round.
         //
-        // A worker that finds no file waits as long as a file is discarded and another worker is active: that worker's next
-        // commit can make the file recheckable. Every wait ends. An active worker either finishes a file, which counts as a
-        // change, or finds nothing and stops being active. Both wake every waiting worker, and one that wakes up to no
-        // change and no active worker returns. A waiting worker holds no lock and no file.
+        // A worker that finds no file waits as long as a discarded file can still be rechecked in this round and another
+        // worker is active: that worker's next commit can make the file recheckable. A worker that commits or discards a
+        // file and has its next file already wakes one waiting worker. So does a worker that takes a file to recheck and
+        // leaves another one behind.
+        //
+        // Every wait ends: every active worker finds no file in the end. The last one to do so takes the first unchecked file
+        // if that was discarded, and otherwise wakes all the others. One that wakes up to no change and no active worker
+        // returns. A waiting worker holds no lock and no file.
+        //
+        // `is_called_again`: the caller calls the closure again right away whenever it returns true. Then the worker stays
+        // active in between: it still has files of its own to check. Otherwise nobody may wait for it in the meantime.
+        let is_one_left_to_recheck = || {
+            let (lost, visits) = (lost.lock(), visits.lock());
+            lost.iter().any(|&file| visits[file].can_recheck_early)
+        };
+        // Call while no worker is active. Returns the first unchecked file if it was discarded, however often it was
+        // rechecked before: its task is trusted about cycles, and no other task runs that could commit and discard it. So
+        // the round doesn't end, and leave the rest to one thread, because of what other tasks did to that file.
+        let take_first_unchecked_file = || -> Option<usize> {
+            let next = checked_for_good.lock().1;
+            let (mut lost, mut visits) = (lost.lock(), visits.lock());
+            let at = lost.iter().position(|&file| file == next)?;
+            if !visits[next].can_recheck_early {
+                return None;
+            }
+            visits[next].rechecks += 1;
+            lost.swap_remove(at);
+            Some(next)
+        };
         let shared = (&take_file_to_recheck, &take_run, &run_task, &queue, &lost);
+        let is_one_left_to_recheck = &is_one_left_to_recheck;
+        let take_first_unchecked_file = &take_first_unchecked_file;
         let (activity, activity_has_changed) = (&activity, &activity_has_changed);
-        let worker = || {
+        let worker = |is_called_again: bool| {
             let (take_file_to_recheck, take_run, run_task, queue, lost) = shared;
             let (first_files_worker, id) = (
                 &first_files_worker,
                 workers_started.fetch_add(1, Ordering::Relaxed),
             );
-            let (mut run, mut first) = (0..0, None);
+            let (mut run, mut first, mut is_active) = (0..0, None, false);
             move || {
                 let mut next = || {
                     if let Some(file) = take_file_to_recheck() {
@@ -4523,33 +4570,48 @@ fn check_named_files(
                 };
                 let seen = {
                     let mut activity = activity.lock();
-                    activity.active += 1;
+                    if !std::mem::replace(&mut is_active, true) {
+                        activity.active += 1;
+                    }
                     activity.changes
                 };
                 // A task asks for its next file before it commits the last one, and that commit can make a discarded file
                 // the next.
                 let file = first.take().or_else(&mut next);
                 first = file.and_then(|file| run_task(file, &mut next));
+                if file.is_some() && is_called_again {
+                    return true;
+                }
                 let mut activity = activity.lock();
                 activity.active -= 1;
-                activity_has_changed.notify_all();
-                while file.is_none()
-                    && activity.changes == seen
-                    && activity.active != 0
-                    && !lost.lock().is_empty()
-                {
-                    activity_has_changed.wait_guarded(&mut activity);
+                is_active = false;
+                if file.is_some() {
+                    return true;
                 }
-                file.is_some() || activity.changes != seen
+                if activity.active == 0 {
+                    first = take_first_unchecked_file();
+                    if first.is_some() {
+                        is_active = is_called_again;
+                        activity.active += usize::from(is_active);
+                        return true;
+                    }
+                    activity_has_changed.notify_all();
+                }
+                while activity.changes == seen && activity.active != 0 && is_one_left_to_recheck() {
+                    activity.waiting += 1;
+                    activity_has_changed.wait_guarded(&mut activity);
+                    activity.waiting -= 1;
+                }
+                activity.changes != seen
             }
         };
         let work = || {
-            let mut run_a_task = worker();
+            let mut run_a_task = worker(true);
             while run_a_task() {}
         };
         match host.helpers_now() {
             Some(_) if workers > 1 => {
-                run_with_current_helpers(host, 0, &mut worker(), &work);
+                run_with_current_helpers(host, 0, &mut worker(false), &work);
             }
             _ => host.parallel(workers, &|_| work()),
         }

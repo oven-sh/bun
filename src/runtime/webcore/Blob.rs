@@ -1966,18 +1966,10 @@ impl BlobExt for Blob {
                 if last_modified == jsc::INIT_TIMESTAMP && !self.is_s3() {
                     resolve_file_stat(store);
                 }
-                // Fresh borrow after possible mutation by `resolve_file_stat`.
-                return JSValue::js_number(JSValue::purify_nan(
-                    Store::data_mut(store).as_file().last_modified as f64,
-                ));
             }
         }
 
-        if self.is_jsdom_file.get() {
-            return JSValue::js_number(JSValue::purify_nan(self.last_modified.get()));
-        }
-
-        JSValue::js_number(jsc::INIT_TIMESTAMP as f64)
+        last_modified_if_known(self).unwrap_or(JSValue::js_number(jsc::INIT_TIMESTAMP as f64))
     }
 
     fn get_size_for_bindings(&self) -> u64 {
@@ -5775,6 +5767,49 @@ fn window_size(current: SizeType, available: SizeType) -> SizeType {
     } else {
         current.min(available)
     }
+}
+
+/// What the `size` getter gives, when that needs no `stat` and no request. For `inspect_custom`.
+pub(crate) fn size_if_known(blob: &Blob) -> Option<SizeType> {
+    let size = blob.size.get();
+    let Some(store) = blob.store.get() else {
+        return Some(if size == MAX_SIZE { 0 } else { size });
+    };
+    match Store::data_mut(store).tag() {
+        store::DataTag::Bytes => Some(if size == MAX_SIZE {
+            blob.resolved_size().1
+        } else {
+            size
+        }),
+        store::DataTag::File => {
+            let file = Store::data_mut(store).as_file();
+            if file.seekable.is_none() || file.max_size == MAX_SIZE {
+                return None;
+            }
+            if size == MAX_SIZE {
+                // `seekable` is known, so this does no `stat`.
+                Some(blob.resolved_size().1)
+            } else {
+                (size <= file.max_size).then_some(size)
+            }
+        }
+        store::DataTag::S3 => None,
+    }
+}
+
+/// What the `lastModified` getter gives, when that needs no `stat`. For `inspect_custom`.
+pub(crate) fn last_modified_if_known(blob: &Blob) -> Option<JSValue> {
+    if let Some(store) = blob.store.get() {
+        if matches!(store.data, store::Data::File(_)) {
+            let last_modified = Store::data_mut(store).as_file().last_modified;
+            return (last_modified != jsc::INIT_TIMESTAMP)
+                .then(|| JSValue::js_number(JSValue::purify_nan(last_modified as f64)));
+        }
+    }
+
+    blob.is_jsdom_file
+        .get()
+        .then(|| JSValue::js_number(JSValue::purify_nan(blob.last_modified.get())))
 }
 
 /// resolve file stat like size, last_modified

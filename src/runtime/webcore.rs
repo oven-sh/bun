@@ -218,6 +218,9 @@ pub(crate) use response::Response;
 pub(crate) mod request;
 pub(crate) use request::Request;
 
+#[path = "webcore/node_inspect.rs"]
+pub(crate) mod node_inspect;
+
 #[path = "webcore/ReadableStream.rs"]
 pub(crate) mod readable_stream;
 pub(crate) use readable_stream::ReadableStream;

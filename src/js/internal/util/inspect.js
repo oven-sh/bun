@@ -1506,7 +1506,7 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
         "special",
       );
     }
-    throw new AssertionError("handleMaxCallStackSize assertion failed: " + String(err), true);
+    throw err;
   }
   const circular = ctx.circular;
   if (circular !== undefined) {
@@ -2400,7 +2400,8 @@ function formatProperty(ctx, value, recurseTimes, key, type, desc, original = va
         }
         ctx.indentationLvl -= 2;
       } catch (err) {
-        const message = `<Inspection threw (${err.message})>`;
+        // A nested method can throw null or undefined.
+        const message = `<Inspection threw (${err == null ? err : err.message})>`;
         str = `${s(`[${label}:`, sp)} ${message}${s("]", sp)}`;
       }
     } else {
@@ -2824,4 +2825,6 @@ export default {
   formatWithOptions,
   getStringWidth,
   stripVTControlCharacters,
+  // For internal/util/inspect_hooks. node:util reads the names above only.
+  getCtxStyle,
 };

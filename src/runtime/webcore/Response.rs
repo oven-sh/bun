@@ -576,6 +576,24 @@ impl Response {
         JSValue::js_number(this.init.get().status_code as f64)
     }
 
+    /// What [`Self::get_or_create_headers`] attaches to a Response that has no header list, not attached.
+    pub(crate) fn default_headers(&self, global_this: &JSGlobalObject) -> JsResult<HeadersRef> {
+        let mut headers = HeadersRef::create_empty();
+
+        if let BodyValue::Blob(blob) = self.body.get().value.get() {
+            let content_type = blob.content_type_slice();
+            if !content_type.is_empty() {
+                headers.put(
+                    HTTPHeaderName::ContentType,
+                    &BunString::ascii(content_type),
+                    global_this,
+                )?;
+            }
+        }
+
+        Ok(headers)
+    }
+
     pub(crate) fn get_or_create_headers(
         &self,
         global_this: &JSGlobalObject,
@@ -583,23 +601,12 @@ impl Response {
         // R-2 escape hatch via `init_mut()` — the returned `&mut HeadersRef`
         // borrows `self.init`; callers (`get_headers`, `construct_*`) do not
         // hold the borrow across calls that re-enter Response host-fns.
-        let init = self.init_mut();
-        if init.headers.is_none() {
-            init.headers = Some(HeadersRef::create_empty());
-
-            if let BodyValue::Blob(blob) = self.body.get().value.get() {
-                let content_type = blob.content_type_slice();
-                if !content_type.is_empty() {
-                    init.headers.as_mut().unwrap().put(
-                        HTTPHeaderName::ContentType,
-                        &BunString::ascii(content_type),
-                        global_this,
-                    )?;
-                }
-            }
+        if self.init.get().headers.is_none() {
+            let headers = self.default_headers(global_this)?;
+            self.init_mut().headers = Some(headers);
         }
 
-        Ok(init.headers.as_mut().unwrap())
+        Ok(self.init_mut().headers.as_mut().unwrap())
     }
 
     pub(crate) fn get_headers(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {

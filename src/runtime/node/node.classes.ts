@@ -132,6 +132,7 @@ export default [
     refCounted: true,
     sharedThis: true,
     configurable: false,
+    inspectCustom: true,
     klass: {},
     JSType: "0b11101110",
     proto: {

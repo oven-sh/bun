@@ -55,6 +55,11 @@ function constructorName(typeName) {
   return `JS${typeName}Constructor`;
 }
 
+/** The proto field that `inspectCustom: true` adds: node's `[nodejs.util.inspect.custom]` method. */
+function isInspectCustomHook(obj, name) {
+  return !!obj.inspectCustom && name === "inspectCustom";
+}
+
 function zigExportName(to: Map<string, string>, symbolName: (name: string) => string, prop) {
   var { getter, setter, fn } = prop;
   const exportNames = {
@@ -178,7 +183,7 @@ export function generateHashTable(nameToUse, symbolName, typeName, obj, props = 
 
   for (const name in props) {
     if ("privateSymbol" in props[name] || "internal" in props[name] || "value" in props[name]) continue;
-    if (name.startsWith("@@")) continue;
+    if (name.startsWith("@@") || isInspectCustomHook(obj, name)) continue;
 
     rows.push(propRow(symbolName, typeName, name, props[name], wrapped, defaultPropertyAttributes, !!obj.forBind));
   }
@@ -260,19 +265,11 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
       continue;
     }
 
-    if (protoFields[name].publicSymbol !== undefined) {
-      const publicSymbol = protoFields[name].publicSymbol;
-      const fn = protoFields[name].fn;
-      if (!fn) throw Error(`(field: ${name}) public field needs 'fn' key `);
-      const observable_name = protoFields[name].name ?? fn;
-
+    if (isInspectCustomHook(obj, name)) {
+      // A prototype class that derives from this one (the S3 file) inherits the method.
       specialSymbols += `
-    this->putDirect(vm, WebCore::clientData(vm)->builtinNames().${publicSymbol}PublicName(), JSFunction::create(vm, globalObject, ${
-      protoFields[name].length || 0
-    }, String("${observable_name}"_s), ${protoSymbolName(
-      typeName,
-      fn,
-    )}Callback, ImplementationVisibility::Public), PropertyAttribute::Function | 0);`;
+    if (classInfo() == info())
+        Bun::WebStreams::installInspectCustom(vm, this, ${protoSymbolName(typeName, name)}Callback);`;
       continue;
     }
 
@@ -808,7 +805,24 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
       );
     }
 
-    if ("fn" in proto[name]) {
+    if (isInspectCustomHook(obj, name)) {
+      // The receiver can be a Proxy or inherit from an instance. The JS half answers for one that holds none.
+      rows.push(`
+JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+  auto& vm = JSC::getVM(lexicalGlobalObject);
+  auto scope = DECLARE_THROW_SCOPE(vm);
+
+  ${className(typeName)}* thisObject = Bun::WebStreams::inspectInstance<${className(typeName)}>(Bun::WebStreams::inspectHolder(lexicalGlobalObject, callFrame));
+  if (!thisObject)
+      RELEASE_AND_RETURN(scope, Bun::WebStreams::inspectFields(lexicalGlobalObject, callFrame, "${typeName}"_s, nullptr, nullptr));
+
+  JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+  RELEASE_AND_RETURN(scope, ${symbolName(typeName, proto[name].fn)}(thisObject->wrapped(), lexicalGlobalObject, callFrame, JSValue::encode(thisObject)));
+}
+
+    `);
+    } else if ("fn" in proto[name]) {
       const fn = proto[name].fn;
       const invalidThisBehavior = proto[name].invalidThisBehavior ?? InvalidThisBehavior.Throw;
       rows.push(`
@@ -2154,6 +2168,7 @@ const GENERATED_CLASSES_IMPL_HEADER_PRE = `
 #include "WebCoreJSBuiltins.h"
 #include "ErrorCode+List.h"
 #include "ErrorCode.h"
+#include "streams/WebStreamsInspectCustom.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
 
 #if !OS(WINDOWS)
@@ -2226,6 +2241,23 @@ const GENERATED_CLASSES_IMPL_FOOTER = `
 } // namespace WebCore
 
 `;
+
+/** The table behind `Bun::WebStreams::generatedNodeOnlyInspectHooks` (WebStreamsInspectCustom.h). */
+function nodeOnlyInspectHooksCppImpl(classes: ClassDefinition[]) {
+  const hooks = classes
+    .filter(a => a.inspectCustom)
+    .map(a => `    WebCore::${protoSymbolName(a.name, "inspectCustom")}Callback,`);
+  return `
+namespace Bun {
+namespace WebStreams {
+const JSC::NativeFunction generatedNodeOnlyInspectHooks[] = {
+${hooks.join("\n")}
+};
+const size_t generatedNodeOnlyInspectHookCount = ${hooks.length};
+} // namespace WebStreams
+} // namespace Bun
+`;
+}
 
 function jsInheritsCppImpl() {
   return `
@@ -2489,6 +2521,7 @@ function writeCppSerializers() {
     allImpls.join("\n"),
     writeCppSerializers(classes),
     GENERATED_CLASSES_IMPL_FOOTER,
+    nodeOnlyInspectHooksCppImpl(classes),
     jsInheritsCppImpl(),
     isTransferableCppImpl(),
   ]);
@@ -2541,7 +2574,7 @@ function getPropertySignatureWithComment(
   }
 
   // --- Skip internal/private properties ---
-  if ("internal" in propDef) {
+  if ("internal" in propDef || isInspectCustomHook(classDef, propName)) {
     return null;
   }
 

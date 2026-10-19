@@ -3,7 +3,6 @@
 //! JS getters are named `getFoo`, while native getters are named `foo`.
 //!
 //! TODO: add a inspect method (under `Symbol.for("nodejs.util.inspect.custom")`).
-//! Requires updating bindgen.
 
 use core::ffi::{c_int, c_void};
 use core::mem;

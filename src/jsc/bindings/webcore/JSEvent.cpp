@@ -56,6 +56,7 @@
 #include <wtf/URL.h>
 #include "ErrorCode.h"
 #include "NodeValidator.h"
+#include "streams/WebStreamsInspectCustom.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -67,6 +68,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsEventPrototypeFunction_stopPropagation);
 static JSC_DECLARE_HOST_FUNCTION(jsEventPrototypeFunction_stopImmediatePropagation);
 static JSC_DECLARE_HOST_FUNCTION(jsEventPrototypeFunction_preventDefault);
 static JSC_DECLARE_HOST_FUNCTION(jsEventPrototypeFunction_initEvent);
+JSC_DECLARE_HOST_FUNCTION(jsEventPrototypeFunction_inspectCustom);
 
 // Attributes
 
@@ -229,6 +231,7 @@ void JSEventPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSEvent::info(), JSEventPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsEventPrototypeFunction_inspectCustom);
     Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
@@ -279,6 +282,28 @@ JSC_DEFINE_CUSTOM_GETTER(jsEventConstructor, (JSGlobalObject * lexicalGlobalObje
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSEvent::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
+}
+
+// Native half of node's `[nodejs.util.inspect.custom]` method: the four fields that node prints for any event.
+JSC_DEFINE_HOST_FUNCTION(jsEventPrototypeFunction_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* thisObject = Bun::WebStreams::inspectInstance<JSEvent>(Bun::WebStreams::inspectHolder(lexicalGlobalObject, callFrame));
+    if (!thisObject)
+        RELEASE_AND_RETURN(scope, Bun::WebStreams::inspectFields(lexicalGlobalObject, callFrame, "Event"_s, nullptr, nullptr));
+
+    auto& impl = thisObject->wrapped();
+    auto* context = thisObject->globalObject()->scriptExecutionContext();
+    JSValue type = toJS<IDLDOMString>(*lexicalGlobalObject, scope, impl.type());
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* fields = constructEmptyObject(lexicalGlobalObject);
+    Bun::putDirectNamed(vm, fields, "type"_s, type);
+    Bun::putDirectNamed(vm, fields, "defaultPrevented"_s, jsBoolean(impl.defaultPrevented()));
+    Bun::putDirectNamed(vm, fields, "cancelable"_s, jsBoolean(impl.cancelable()));
+    Bun::putDirectNamed(vm, fields, "timeStamp"_s, context ? toJS<IDLDouble>(*lexicalGlobalObject, scope, impl.timeStampForBindings(*context)) : jsUndefined());
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::inspectFields(lexicalGlobalObject, callFrame, "Event"_s, fields, thisObject));
 }
 
 static inline JSValue jsEvent_typeGetter(JSGlobalObject& lexicalGlobalObject, JSEvent& thisObject)

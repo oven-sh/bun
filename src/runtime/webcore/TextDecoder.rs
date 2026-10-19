@@ -100,6 +100,20 @@ impl TextDecoder {
         self.encoding.to_js(global_this)
     }
 
+    /// Native half of node's `[nodejs.util.inspect.custom]` method: the fields that node prints.
+    pub(crate) fn inspect_custom(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+        this_value: JSValue,
+    ) -> JsResult<JSValue> {
+        let fields = JSValue::create_empty_object(global, 3);
+        fields.put(global, b"encoding", self.encoding.to_js(global));
+        fields.put(global, b"fatal", JSValue::js_boolean(self.fatal));
+        fields.put(global, b"ignoreBOM", JSValue::js_boolean(self.ignore_bom));
+        crate::webcore::node_inspect::print(global, callframe, this_value, fields, c"TextDecoder")
+    }
+
     #[inline(always)]
     fn process_code_unit_utf16(
         &self,

@@ -7,6 +7,7 @@ export default [
     finalize: true,
     JSType: "0b11101110",
     configurable: false,
+    inspectCustom: true,
     klass: {},
     proto: {
       encoding: {

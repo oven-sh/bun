@@ -154,6 +154,7 @@ extern "C" void JSC_JSModuleRecord__addRequestedModuleHostDefined(JSModuleRecord
     moduleRecord->appendRequestedModule(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), std::move(attributes), toModulePhase(phaseDefer));
 }
 
+static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::None) == 0, "ScriptFetchParameters::Type tag drift vs from_script_fetch_parameters_type()");
 static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::JavaScript) == 1, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
 static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::WebAssembly) == 2, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
 static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::JSON) == 3, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");

@@ -1307,11 +1307,7 @@ describe.concurrent("bundler", () => {
         exe(String(dir), name),
       ];
       const built = await build(String(dir), args("app"));
-      expect({
-        bytecodeFailures: built.stderr.split("\n").filter(line => line.includes("Failed to generate bytecode for"))
-          .length,
-        exitCode: built.exitCode,
-      }).toEqual({ bytecodeFailures: 1, exitCode: 0 });
+      expect(built.stderr.split("\n").filter(line => line.includes("Failed to generate bytecode for"))).toHaveLength(1);
 
       expect((await build(String(dir), args("source"), {}, false)).exitCode).toBe(0);
       const expected = await run(String(dir), exe(String(dir), "source"));

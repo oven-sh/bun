@@ -519,13 +519,10 @@ extern "C" fn Bun__AnalyzedModuleRecord__request(
     is_deferred: bool,
 ) -> bool {
     let host_defined_import_type = host_defined_import_type.to_utf8();
-    let r#type = match r#type {
-        0 => RequestType::None,
-        1 => RequestType::JavaScript,
-        2 => RequestType::WebAssembly,
-        3 => RequestType::Json,
-        5 => RequestType::HostDefined(&host_defined_import_type),
-        _ => return false,
+    let Some(r#type) =
+        RequestType::from_script_fetch_parameters_type(r#type, &host_defined_import_type)
+    else {
+        return false;
     };
     let phase = if is_deferred {
         ModulePhase::Defer

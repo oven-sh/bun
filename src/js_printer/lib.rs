@@ -170,7 +170,7 @@ pub mod analyze_transpiled_module {
         /// every other non-json/wasm type. Pinned by the static_asserts in
         /// BunAnalyzeTranspiledModule.cpp.
         #[inline]
-        pub fn to_script_fetch_parameters_type(self) -> u8 {
+        pub const fn to_script_fetch_parameters_type(self) -> u8 {
             match self {
                 Self::None | Self::Javascript => 1,
                 Self::Webassembly => 2,
@@ -873,6 +873,24 @@ pub mod analyze_transpiled_module {
         WebAssembly,
         Json,
         HostDefined(&'a [u8]),
+    }
+
+    impl<'a> RequestType<'a> {
+        /// From a JSC `ScriptFetchParameters::Type` as `to_script_fetch_parameters_type` writes it, or 0: JSC's `None`, a request with no attributes.
+        pub fn from_script_fetch_parameters_type(tag: u8, host_defined: &'a [u8]) -> Option<Self> {
+            const JAVASCRIPT: u8 = FetchParameters::Javascript.to_script_fetch_parameters_type();
+            const WEBASSEMBLY: u8 = FetchParameters::Webassembly.to_script_fetch_parameters_type();
+            const JSON: u8 = FetchParameters::Json.to_script_fetch_parameters_type();
+            const HOST_DEFINED: u8 = FetchParameters(0).to_script_fetch_parameters_type();
+            Some(match tag {
+                0 => Self::None,
+                JAVASCRIPT => Self::JavaScript,
+                WEBASSEMBLY => Self::WebAssembly,
+                JSON => Self::Json,
+                HOST_DEFINED => Self::HostDefined(host_defined),
+                _ => return None,
+            })
+        }
     }
 
     /// A `ModuleInfo` from JavaScriptCore's own record of a text the printer did not print all of.

@@ -64,6 +64,8 @@ bun test --reporter=junit --reporter-outfile=./junit.xml
 
 Console output is unchanged; Bun writes the JUnit XML report to the specified path at the end of the test run, and creates the folder if it doesn't exist.
 
+The report omits characters that XML 1.0 doesn't allow, such as most control characters and U+FFFE.
+
 Every test file that ran has a `<testsuite>`, even if it has no tests. Its `timestamp` is the time the file started, in the format of `Date.prototype.toISOString()`.
 
 An uncaught exception or unhandled rejection while a test is running fails that test, and its `<failure>`, `<flakyFailure>` or `<rerunFailure>` has `uncaught="true"`. Examples are an error thrown by a timer and a rejected promise that the test didn't await. The attribute is absent when the test function itself throws, returns a promise that rejects, or calls `done(error)`.

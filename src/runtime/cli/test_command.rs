@@ -114,6 +114,14 @@ pub(crate) fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> crate:
                 }
                 last = i + 1;
             }
+            0xEF if matches!(str_[i..], [_, 0xBF, 0xBE | 0xBF, ..]) => {
+                // U+FFFE and U+FFFF aren't valid XML 1.0 Chars either.
+                if i > last {
+                    writer.write_all(&str_[last..i])?;
+                }
+                i += 2;
+                last = i + 1;
+            }
             _ => {}
         }
         i += 1;
@@ -338,12 +346,36 @@ impl JunitReporter {
 }
 
 impl TestFailure {
-    pub(crate) fn timed_out() -> TestFailure {
-        TestFailure {
-            name: b"TimeoutError".to_vec(),
-            message: b"test timed out".to_vec(),
+    /// Returns the failure to report for a result that has no thrown error, like a timeout.
+    pub(crate) fn from_result(
+        result: bun_test::Execution::Result,
+        assertions: u32,
+    ) -> Option<TestFailure> {
+        use bun_test::Execution::Result as R;
+        let message: Vec<u8> = match result {
+            _ if result.is_timeout() => b"test timed out".to_vec(),
+            R::FailBecauseFailingTestPassed => {
+                b"test marked with .failing() did not throw".to_vec()
+            }
+            R::FailBecauseFailsTestPassed => b"test marked with .fails() did not fail".to_vec(),
+            R::FailBecauseExpectedAssertionCount => {
+                format!("Expected more assertions, but only received {assertions}").into_bytes()
+            }
+            R::FailBecauseTodoPassed => b"TODO passed".to_vec(),
+            R::FailBecauseExpectedHasAssertions => {
+                b"Expected to have assertions, but none were run".to_vec()
+            }
+            _ => return None,
+        };
+        Some(TestFailure {
+            name: if result.is_timeout() {
+                b"TimeoutError".to_vec()
+            } else {
+                b"AssertionError".to_vec()
+            },
+            message,
             ..Default::default()
-        }
+        })
     }
 
     /// Fold in a `ZigException` that `print_error_instance_body` has already
@@ -747,24 +779,28 @@ impl JunitReporter {
             return self.write_test_case(t, &name, t.file);
         }
 
+        // Only the flat form includes describe blocks with an empty title, like Vitest.
+        let mut scopes = t.scopes.clone();
+        scopes.retain(|(name, _)| !name.is_empty());
+
         // Keep the longest prefix of open describe suites that matches
-        // `t.scopes`; close the rest, then open what is missing.
+        // `scopes`; close the rest, then open what is missing.
         let open = &self.suite_stack[1..];
         let keep = open
             .iter()
-            .zip(&t.scopes)
+            .zip(&scopes)
             .take_while(|(suite, (name, _))| strings::eql(&suite.name, name))
             .count();
         for _ in keep..open.len() {
             self.end_test_suite(None)?;
         }
-        for &(name, line) in &t.scopes[keep..] {
+        for &(name, line) in &scopes[keep..] {
             self.begin_test_suite_with_line(name, line, false)?;
         }
 
         // Innermost scope first, matching what the serial reporter always did.
         let mut class_name: Vec<u8> = Vec::new();
-        for (i, &(name, _)) in t.scopes.iter().rev().enumerate() {
+        for (i, &(name, _)) in scopes.iter().rev().enumerate() {
             if i > 0 {
                 class_name.extend_from_slice(b" > ");
             }
@@ -885,78 +921,17 @@ impl JunitReporter {
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
-            R::Fail => {
+            _ if status.is_fail() => {
                 if !self.suite_stack.is_empty() {
                     let last = self.suite_stack.len() - 1;
                     self.suite_stack[last].metrics.failures += 1;
                 }
                 self.contents.extend_from_slice(b">\n");
-                self.write_failure(indent, b"failure", failure)?;
+                let described = TestFailure::from_result(status, assertions);
+                self.write_failure(indent, b"failure", described.as_ref().or(failure))?;
                 for earlier in &t.earlier_failures {
                     self.write_failure(indent, b"rerunFailure", Some(earlier))?;
                 }
-                self.contents.extend_from_slice(indent);
-                self.contents.extend_from_slice(b"</testcase>\n");
-            }
-            R::FailBecauseFailingTestPassed | R::FailBecauseFailsTestPassed => {
-                if !self.suite_stack.is_empty() {
-                    let last = self.suite_stack.len() - 1;
-                    self.suite_stack[last].metrics.failures += 1;
-                }
-                self.contents.extend_from_slice(b">\n");
-                self.contents.extend_from_slice(indent);
-                let _ = writeln!(
-                    &mut self.contents,
-                    "  <failure message=\"test marked with {}\" type=\"AssertionError\"/>",
-                    if status == R::FailBecauseFailsTestPassed {
-                        ".fails() did not fail"
-                    } else {
-                        ".failing() did not throw"
-                    }
-                );
-                self.contents.extend_from_slice(indent);
-                self.contents.extend_from_slice(b"</testcase>\n");
-            }
-            R::FailBecauseExpectedAssertionCount => {
-                if !self.suite_stack.is_empty() {
-                    let last = self.suite_stack.len() - 1;
-                    self.suite_stack[last].metrics.failures += 1;
-                }
-                self.contents.extend_from_slice(b">\n");
-                self.contents.extend_from_slice(indent);
-                let _ = writeln!(
-                    &mut self.contents,
-                    "  <failure message=\"Expected more assertions, but only received {}\" type=\"AssertionError\"/>",
-                    assertions
-                );
-                self.contents.extend_from_slice(indent);
-                self.contents.extend_from_slice(b"</testcase>\n");
-            }
-            R::FailBecauseTodoPassed => {
-                if !self.suite_stack.is_empty() {
-                    let last = self.suite_stack.len() - 1;
-                    self.suite_stack[last].metrics.failures += 1;
-                }
-                self.contents.extend_from_slice(b">\n");
-                self.contents.extend_from_slice(indent);
-                let _ = writeln!(
-                    &mut self.contents,
-                    "  <failure message=\"TODO passed\" type=\"AssertionError\"/>"
-                );
-                self.contents.extend_from_slice(indent);
-                self.contents.extend_from_slice(b"</testcase>\n");
-            }
-            R::FailBecauseExpectedHasAssertions => {
-                if !self.suite_stack.is_empty() {
-                    let last = self.suite_stack.len() - 1;
-                    self.suite_stack[last].metrics.failures += 1;
-                }
-                self.contents.extend_from_slice(b">\n");
-                self.contents.extend_from_slice(indent);
-                let _ = writeln!(
-                    &mut self.contents,
-                    "  <failure message=\"Expected to have assertions, but none were run\" type=\"AssertionError\"/>"
-                );
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
@@ -983,23 +958,7 @@ impl JunitReporter {
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
-            R::FailBecauseTimeout
-            | R::FailBecauseTimeoutWithDoneCallback
-            | R::FailBecauseHookTimeout
-            | R::FailBecauseHookTimeoutWithDoneCallback => {
-                if !self.suite_stack.is_empty() {
-                    let last = self.suite_stack.len() - 1;
-                    self.suite_stack[last].metrics.failures += 1;
-                }
-                self.contents.extend_from_slice(b">\n");
-                self.write_failure(indent, b"failure", Some(&TestFailure::timed_out()))?;
-                for earlier in &t.earlier_failures {
-                    self.write_failure(indent, b"rerunFailure", Some(earlier))?;
-                }
-                self.contents.extend_from_slice(indent);
-                self.contents.extend_from_slice(b"</testcase>\n");
-            }
-            R::Pending => unreachable!(),
+            _ => unreachable!(),
         }
         Ok(())
     }
@@ -1440,9 +1399,7 @@ impl CommandLineReporter {
             }
             // SAFETY: describe scopes outlive the file's test run.
             let scope: &'a bun_test::DescribeScope = unsafe { &*scope };
-            if let Some(name) = scope.base.name.as_deref()
-                && !name.is_empty()
-            {
+            if let Some(name) = scope.base.name.as_deref() {
                 scopes.push((name, scope.base.line_no));
             }
             parent = scope.base.parent.map(|p| p.cast_const());

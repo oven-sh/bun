@@ -454,6 +454,109 @@ describe("junit reporter", () => {
     expect(proc.exitCode).toBe(1);
   });
 
+  it("reports an attempt that failed without an error like any other failed attempt", async () => {
+    await using tmpDir = tempDir("junit-retry-no-error", {
+      "package.json": "{}",
+      // bun:test doesn't retry these failures.
+      "no-error.test.js": `
+        import { expect, test } from "vitest";
+        const attempts = {};
+        const attempt = name => (attempts[name] = (attempts[name] ?? 0) + 1);
+
+        test("never has enough assertions", { retry: 1 }, () => {
+          expect.assertions(2);
+          expect(1).toBe(1);
+        });
+        test("has enough assertions the second time", { retry: 1 }, () => {
+          expect.assertions(1);
+          if (attempt("a") === 2) expect(1).toBe(1);
+        });
+        test("never has an assertion", { retry: 1 }, () => {
+          expect.hasAssertions();
+        });
+        test("has an assertion the second time", { retry: 1 }, () => {
+          expect.hasAssertions();
+          if (attempt("b") === 2) expect(1).toBe(1);
+        });
+        test.fails("never fails", { retry: 1 }, () => {});
+        test.fails("fails the second time", { retry: 1 }, () => {
+          if (attempt("c") === 2) throw new Error("second attempt");
+        });
+      `,
+    });
+
+    const junitPath = `${tmpDir}/junit.xml`;
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: String(tmpDir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await proc.exited;
+
+    const xmlContent = await file(junitPath).text();
+    const attemptsOf = Object.fromEntries(
+      Array.from(xmlContent.matchAll(/<testcase name="([^"]*)"[^>]*>([\s\S]*?)<\/testcase>/g), ([, name, attempts]) => [
+        name,
+        Array.from(attempts.matchAll(/<(\w+) type="(\w+)" message="([^"]*)"/g), match => match.slice(1)),
+      ]),
+    );
+    const tooFew = count => ["AssertionError", `Expected more assertions, but only received ${count}`];
+    const none = ["AssertionError", "Expected to have assertions, but none were run"];
+    const didNotFail = ["AssertionError", "test marked with .fails() did not fail"];
+    expect(attemptsOf).toEqual({
+      "never has enough assertions": [
+        ["failure", ...tooFew(1)],
+        ["rerunFailure", ...tooFew(1)],
+      ],
+      "has enough assertions the second time": [["flakyFailure", ...tooFew(0)]],
+      "never has an assertion": [
+        ["failure", ...none],
+        ["rerunFailure", ...none],
+      ],
+      "has an assertion the second time": [["flakyFailure", ...none]],
+      "never fails": [
+        ["failure", ...didNotFail],
+        ["rerunFailure", ...didNotFail],
+      ],
+      "fails the second time": [["flakyFailure", ...didNotFail]],
+    });
+    expect(proc.exitCode).toBe(1);
+  });
+
+  it("omits U+FFFE and U+FFFF, which XML 1.0 forbids", async () => {
+    await using tmpDir = tempDir("junit-noncharacters", {
+      "package.json": "{}",
+      "noncharacters.test.js": `
+        import { describe, test } from "bun:test";
+        describe("block [\\uFFFE\\uFFFF]", () => {
+          test("test [\\uFFFE\\uFFFF]", () => {
+            throw new Error("message [\\uFFFE\\uFFFF]");
+          });
+          test("\\uFFFD and \\u{1FFFE} are allowed, \\uFFFF", () => {});
+        });
+      `,
+    });
+
+    const junitPath = join(String(tmpDir), "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: String(tmpDir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await proc.exited;
+
+    const xmlContent = await file(junitPath).text();
+    expect(xmlContent).not.toMatch(/[\uFFFE\uFFFF]/);
+    const result = await xml2js.parseStringPromise(xmlContent, { strict: true });
+    const block = result.testsuites.testsuite[0].testsuite[0];
+    expect(block.$.name).toBe("block []");
+    expect(block.testcase.map(testcase => testcase.$.name)).toEqual(["test []", "\uFFFD and \u{1FFFE} are allowed, "]);
+    expect(block.testcase[0].failure[0].$.message).toBe("message []");
+    expect(proc.exitCode).toBe(1);
+  });
+
   it("produces well-formed XML when test names contain control characters", async () => {
     await using tmpDir = tempDir("junit-ctrl", {
       "package.json": "{}",
@@ -798,12 +901,15 @@ describe.each([1, 2])("each %i", () => {
       "b.test.js": `import { describe, test } from "bun:test";
 describe("only block", () => {
   test("passes", () => {});
+  describe("", () => {
+    test("in a block with an empty title", () => {});
+  });
 });
 `,
     };
 
     const flat = `<?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="bun test" tests="11" assertions="4" failures="2" skipped="2" time="#">
+<testsuites name="bun test" tests="12" assertions="4" failures="2" skipped="2" time="#">
   <testsuite name="a.test.js" file="a.test.js" tests="10" assertions="4" failures="2" skipped="2" time="#">
     <properties>
       <property name="ci" value="https://ci.example.com/123" />
@@ -821,19 +927,20 @@ describe("only block", () => {
       <failure type="AssertionError" message="expect(received).toBe(expected)&#10;&#10;Expected: 2&#10;Received: 1&#10;">AssertionError: expect(received).toBe(expected)&#10;&#10;Expected: 2&#10;Received: 1&#10;&#10;      at a.test.js:14:17&#10;</failure>
     </testcase>
     <testcase name="first block &gt; inner &lt;&amp;&gt; block &gt; failing that passes" classname="a.test.js" time="#" file="a.test.js" line="16" assertions="0">
-      <failure message="test marked with .failing() did not throw" type="AssertionError"/>
+      <failure type="AssertionError" message="test marked with .failing() did not throw" />
     </testcase>
     <testcase name="first block &gt; after inner" classname="a.test.js" time="#" file="a.test.js" line="18" assertions="0" />
     <testcase name="second block &gt; passes" classname="a.test.js" time="#" file="a.test.js" line="21" assertions="0" />
     <testcase name="each 1 &gt; passes" classname="a.test.js" time="#" file="a.test.js" line="24" assertions="0" />
     <testcase name="each 2 &gt; passes" classname="a.test.js" time="#" file="a.test.js" line="24" assertions="0" />
   </testsuite>
-  <testsuite name="b.test.js" file="b.test.js" tests="1" assertions="0" failures="0" skipped="0" time="#">
+  <testsuite name="b.test.js" file="b.test.js" tests="2" assertions="0" failures="0" skipped="0" time="#">
     <properties>
       <property name="ci" value="https://ci.example.com/123" />
       <property name="commit" value="1234567890" />
     </properties>
     <testcase name="only block &gt; passes" classname="b.test.js" time="#" file="b.test.js" line="3" assertions="0" />
+    <testcase name="only block &gt;  &gt; in a block with an empty title" classname="b.test.js" time="#" file="b.test.js" line="5" assertions="0" />
   </testsuite>
 </testsuites>
 `;

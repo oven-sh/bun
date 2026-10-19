@@ -194,8 +194,8 @@ describe("modifiers", () => {
         ["time limit", undefined],
         ["assertions", undefined],
         ["test", undefined],
-        ["nothing fails", `<failure message="test marked with .fails() did not fail" type="AssertionError"/>`],
-        ["nothing throws", `<failure message="test marked with .failing() did not throw" type="AssertionError"/>`],
+        ["nothing fails", `<failure type="AssertionError" message="test marked with .fails() did not fail" />`],
+        ["nothing throws", `<failure type="AssertionError" message="test marked with .failing() did not throw" />`],
       ]);
       expect(stderr).not.toContain("hidden");
       expect(exitCode).toBe(1);

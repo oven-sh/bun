@@ -189,7 +189,8 @@ public:
     const WebCore::ScriptExecutionContextIdentifier graphContext;
     WTF::HashSet<WebCore::JSSQLStatement*> statements;
     // Statements that no JSSQLStatement owns anymore but that aren't finalized yet. The GC moves a statement here when
-    // finalizing it would run JS (Bun::sqliteCommitsWhenFinalized). The next call on the connection finalizes it.
+    // finalizing it would run JS (Bun::sqliteCommitsWhenFinalized). The next call on the connection finalizes it, or
+    // closeIfDrained() does if the connection is closed and its last statement is gone.
     WTF::Vector<sqlite3_stmt*> orphans;
     // db.handle
     const uint64_t handleNumber;
@@ -2616,12 +2617,9 @@ JSSQLStatement::~JSSQLStatement()
     if (this->version_db) {
         this->version_db->statements.remove(this);
         if (this->version_db->hasCallbacks && Bun::sqliteCommitsWhenFinalized(stmt)) {
-            if (!this->version_db->closed) {
-                this->version_db->orphans.append(stmt);
-                return;
-            }
-            // A closed connection may never get another call, so end the write now (see Bun::sqliteFinalize).
-            sqlite3_interrupt(sqlite3_db_handle(stmt));
+            this->version_db->orphans.append(stmt);
+            this->version_db->closeIfDrained();
+            return;
         }
     }
     finalizeStatement();
@@ -2735,5 +2733,8 @@ void VersionSqlite3::closeIfDrained()
         if (statement->stmt)
             return;
     }
+    // The GC can call this, so don't run JS. No statement is left for the interrupt to disturb.
+    while (!orphans.isEmpty())
+        Bun::sqliteFinalize(orphans.takeLast(), false);
     closeHandle();
 }

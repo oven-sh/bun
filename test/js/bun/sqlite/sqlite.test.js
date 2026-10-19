@@ -6350,11 +6350,15 @@ describe("db.onInsert, db.onUpdate and db.onDelete", () => {
       expect(calls).toEqual([]);
     });
 
-    it("releases the file when it's collected after close(), even if the Database isn't", () => {
+    it.each([
+      ["it's", false],
+      ["it and a SELECT that was still iterating are", true],
+    ])("releases the file when %s collected after close(), even if the Database isn't", (_, abandonSelect) => {
       using dir = tempDir("sqlite-abandoned-insert", {});
       const file = path.join(String(dir), "x.sqlite");
       const calls = [];
       using db = open(calls, file);
+      if (abandonSelect) (() => void db.prepare("SELECT 1").iterate().next())();
       abandonInsert(db, calls);
       db.close();
       Bun.gc(true);
@@ -6362,6 +6366,21 @@ describe("db.onInsert, db.onUpdate and db.onDelete", () => {
       using other = new Database(file);
       // Throws "database is locked" while the INSERT is still open.
       other.run("CREATE TABLE t (a)");
+    });
+
+    it("doesn't interrupt a statement that's still iterating when it's collected after close()", () => {
+      const calls = [];
+      using db = open(calls);
+      db.run("CREATE TABLE n (a)");
+      db.run("INSERT INTO n VALUES (1), (2)");
+      const rows = db.prepare("SELECT a FROM n").iterate();
+      expect(rows.next().value).toEqual({ a: 1 });
+      abandonInsert(db, calls);
+      db.close();
+      Bun.gc(true);
+      expect(calls).toEqual([]);
+      expect(rows.next().value).toEqual({ a: 2 });
+      expect(calls).toContain("ft_data");
     });
 
     it("doesn't call the hook when the ModuleGraph that opened its Database is disposed", () => {

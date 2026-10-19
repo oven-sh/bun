@@ -242,9 +242,14 @@ it("does not run a \`ptr\` getter, which could detach the buffer of an earlier a
       return 0;
     },
   };
-  expect(() => library.symbols.echo_first(new Uint8Array(buffer), detaches)).toThrow(TypeError);
-  expect(buffer.detached).toBe(false);
-  library.close();
+  try {
+    expect(() => library.symbols.echo_first(new Uint8Array(buffer), detaches)).toThrow(
+      "bun:ffi cannot convert argument to 'ptr'",
+    );
+    expect(buffer.detached).toBe(false);
+  } finally {
+    library.close();
+  }
 });
 
 it("throws for an empty source array", () => {

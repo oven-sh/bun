@@ -243,18 +243,17 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
   });
 
   // The component, what Bun makes of it, and what the plugin makes of it the first time.
-  test.each([
+  for (const row of [
     ["<p>x</p> y\n", "<p>x</p>\ny\n", "<p>x</p>\n y\n"],
     ["Hello <div>a</div> world\n", "Hello <div>a</div>\nworld\n", "Hello <div>a</div>\n world\n"],
     ["<div><p>x</p> y</div>\n", "<div>\n  <p>x</p>\n  y\n</div>\n", "<div>\n  <p>x</p>\n   y\n</div>\n"],
-  ])("text behind a block element is formatted once and for all: %j", async (before, after, ofPlugin) => {
-    const files = { "a.svelte": before, "b.svelte": after, "c.svelte": ofPlugin };
-    expect(await format(files, Object.keys(files))).toMatchObject({
-      stderr: "",
-      files: [after, after, after],
-      exitCode: 0,
+  ]) {
+    const [before, after] = row;
+    const components = inOneRun.add(row);
+    test(`text behind a block element is formatted once and for all: ${JSON.stringify(before)}`, async () => {
+      expect(await components.under({})).toEqual({ stderr: "", files: [after, after, after] });
     });
-  });
+  }
 
   test("oxfmt formats components only with `svelte` in the configuration", async () => {
     expect(await format({ ".oxfmtrc.json": oxfmtrc, "a.svelte": input }, ["a.svelte"])).toEqual({
@@ -546,7 +545,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       const text = "<p>{a +}</p>\n";
       expect(await format({ "a.svelte": text }, ["a.svelte"], ["--range-start=1"])).toEqual({
         stdout: "",
-        stderr: "1 | <p>{a +}</p>\n           ^\nerror: Unexpected token\n    at a.svelte:1:8\n\n",
+        stderr: problem("error", "Unexpected token", [1, 8, "<p>{a +}</p>"]),
         files: [text],
         exitCode: 2,
       });
@@ -2182,7 +2181,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       const result = await format({ "a.svelte": scripts + before }, ["a.svelte"]);
       expect(result).toEqual({
         stdout: "",
-        stderr: `2 | {(e  as number)}\n         ^\nerror: This is TypeScript, which needs <script lang="ts">\n    at a.svelte:2:6\n\n`,
+        stderr: problem("error", 'This is TypeScript, which needs <script lang="ts">', [2, 6, before.trimEnd()]),
         files: [scripts + before],
         exitCode: 2,
       });

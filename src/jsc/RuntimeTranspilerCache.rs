@@ -74,7 +74,8 @@ bun_core::declare_scope!(cache, visible);
 /// that became an assignment is mapped, what is in the value of a define is not, and `--coverage`
 /// participates in the features hash.
 /// Version 41: `case` and `default` are mapped.
-const EXPECTED_VERSION: u32 = 41;
+/// Version 42: TypeScript `(b as B) : c => d` is not an arrow function with a return type.
+const EXPECTED_VERSION: u32 = 42;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

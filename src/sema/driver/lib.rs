@@ -4271,8 +4271,8 @@ fn check_named_files(
     // Every thread takes files from one queue until none is left. `files`: in program order.
     // `is_last_round`: one thread checks them all in that order, in one task, which is believed.
     //
-    // No thread holds a file that it has not begun but for the rest of its run, so none is left with a long list when
-    // the others are through: how long a file takes is known only afterwards.
+    // How long a file takes is known only afterwards. So a thread reserves only the rest of its run, and a thread that finds
+    // the queue empty takes half of another thread's run (`steal_run`).
     let run_tasks = |round: usize, files: &[usize], expected: Requested, is_last_round: bool| {
         let cost: usize = files.iter().map(|&file| size_of(file)).sum();
         // A checker is replaced by a new one after this much: what it holds for itself grows with every file.
@@ -4513,6 +4513,22 @@ fn check_named_files(
         };
         let first_files_worker = AtomicUsize::new(usize::MAX);
         let workers_started = AtomicUsize::new(0);
+        // For each worker, the part of its run that it hasn't begun. A worker can spend a long time on one file, or wait in the
+        // middle of it for another thread's result. So a worker that finds no file in the queue takes the second half
+        // of the longest of these.
+        let runs: Guarded<Vec<std::ops::Range<usize>>> = Guarded::new(Vec::new());
+        let steal_run = |thief: usize| -> Option<usize> {
+            let mut runs = runs.lock();
+            let victim = (0..runs.len()).max_by_key(|&at| runs[at].len())?;
+            let (from, to) = (runs[victim].start, runs[victim].end);
+            if from == to {
+                return None;
+            }
+            let middle = from + (to - from) / 2;
+            runs[victim] = from..middle;
+            runs[thief] = middle + 1..to;
+            Some(middle)
+        };
         // Returns a closure that runs one task per call on the current thread. It returns false once this thread has nothing
         // left to do in this round.
         //
@@ -4546,6 +4562,7 @@ fn check_named_files(
             Some(next)
         };
         let shared = (&take_file_to_recheck, &take_run, &run_task, &queue, &lost);
+        let (runs, steal_run) = (&runs, &steal_run);
         let is_one_left_to_recheck = &is_one_left_to_recheck;
         let take_first_unchecked_file = &take_first_unchecked_file;
         let (activity, activity_has_changed) = (&activity, &activity_has_changed);
@@ -4555,27 +4572,31 @@ fn check_named_files(
                 &first_files_worker,
                 workers_started.fetch_add(1, Ordering::Relaxed),
             );
-            let (mut run, mut first, mut is_active) = (0..0, None, false);
+            {
+                let mut runs = runs.lock();
+                let workers = runs.len().max(id + 1);
+                runs.resize(workers, 0..0);
+            }
+            let (mut first, mut is_active) = (None, false);
             move || {
                 let mut next = || {
                     if let Some(file) = take_file_to_recheck() {
                         return Some(file);
                     }
-                    if run.is_empty() {
-                        // The first worker that sees a discarded file moves to the first unchecked files, and stays there.
-                        let is_needed = !lost.lock().is_empty();
-                        let is_mine = is_needed
-                            && first_files_worker
-                                .compare_exchange(
-                                    usize::MAX,
-                                    id,
-                                    Ordering::Relaxed,
-                                    Ordering::Relaxed,
-                                )
-                                .is_ok();
-                        run = take_run(is_mine || first_files_worker.load(Ordering::Relaxed) == id);
+                    if let Some(at) = runs.lock()[id].next() {
+                        return Some(queue[at]);
                     }
-                    run.next().map(|at| queue[at])
+                    // The first worker that sees a discarded file moves to the first unchecked files, and stays there.
+                    let is_needed = !lost.lock().is_empty();
+                    let is_mine = is_needed
+                        && first_files_worker
+                            .compare_exchange(usize::MAX, id, Ordering::Relaxed, Ordering::Relaxed)
+                            .is_ok();
+                    let mut run =
+                        take_run(is_mine || first_files_worker.load(Ordering::Relaxed) == id);
+                    let at = run.next();
+                    runs.lock()[id] = run;
+                    at.or_else(|| steal_run(id)).map(|at| queue[at])
                 };
                 let seen = {
                     let mut activity = activity.lock();

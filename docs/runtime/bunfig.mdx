@@ -267,7 +267,10 @@ Exclude files from coverage reports using glob patterns. Accepts a single patter
 [test]
 # Single pattern
 coveragePathIgnorePatterns = "**/*.spec.ts"
+```
 
+```toml title="bunfig.toml" icon="settings"
+[test]
 # Multiple patterns
 coveragePathIgnorePatterns = [
   "**/*.spec.ts",
@@ -1007,9 +1010,9 @@ The default registry is `https://registry.npmjs.org/`. To change it:
 # set default registry as a string
 registry = "https://registry.npmjs.org"
 # set a token
-registry = { url = "https://registry.npmjs.org", token = "123456" }
+# registry = { url = "https://registry.npmjs.org", token = "123456" }
 # set a username/password
-registry = "https://username:password@registry.npmjs.org"
+# registry = "https://username:password@registry.npmjs.org"
 ```
 
 ### `install.linkWorkspacePackages`
@@ -1032,10 +1035,10 @@ myorg = "https://username:password@registry.myorg.com/"
 
 # registry with username/password
 # you can reference environment variables
-myorg = { username = "myusername", password = "$npm_password", url = "https://registry.myorg.com/" }
+# myorg = { username = "myusername", password = "$npm_password", url = "https://registry.myorg.com/" }
 
 # registry with token
-myorg = { token = "$npm_token", url = "https://registry.myorg.com/" }
+# myorg = { token = "$npm_token", url = "https://registry.myorg.com/" }
 ```
 
 ### `install.ca` and `install.cafile`

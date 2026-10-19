@@ -23602,6 +23602,35 @@ export const far: I69 extends J69 ? 1 : 2 = 0;
       }
     });
 
+    // `y = x` takes 1,000 x 2,051 comparisons, more than the 2,000,000 that one comparison may take. tsc reports TS2859
+    // and caches the comparison of `S` and `T`, which was in progress, as failed. `t = s` repeats it to report the
+    // error. Most of its parts are cached by now, so it succeeds, and tsc replaces the cached failure.
+    test.skipIf(isDebug || isASAN)(
+      "a comparison that failed at the complexity limit succeeds when the next statement repeats it",
+      async () => {
+        using dir = project({
+          "index.ts": `type D = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9";
+type Half = "0" | "1" | "2" | "3" | "4";
+type Each<K extends string> = K extends unknown ? { a: K } : never;
+type S = Each<\`s\${D}\${D}\${D}\`>;
+type T = Each<\`t\${D}\${D}\${D}\` | \`u\${D}\${D}\${D}\` | \`v\${Half}\${D}\`> | { a: string };
+declare const s: S, x: { p: S };
+const y: { p: T } = x;
+const t: T = s;
+const related: S extends T ? 1 : 2 = 0;
+`,
+        });
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout).toBe(
+          [
+            "index.ts(7,7): error TS2859: Excessive complexity comparing types '{ p: S; }' and '{ p: T; }'.",
+            "index.ts(9,7): error TS2322: Type '0' is not assignable to type '1'.",
+          ].join("\n"),
+        );
+        expect(exitCode).toBe(1);
+      },
+    );
+
     // A parser as PEG.js generates it, as in the release bundle of Yarn: rules that call each other in a ring and collect
     // what they get in arrays, in loops. It took seven times as long for each alternative of the last rule.
     test("a generated parser with a rule of 16 alternatives", async () => {

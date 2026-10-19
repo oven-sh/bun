@@ -221,7 +221,7 @@ impl SearchEnv {
 
     fn resolve(&self, arg: &[u8]) -> Option<Vec<u8>> {
         let mut path_buf = bun_paths::path_buffer_pool::get();
-        bun_which::which(&mut *path_buf, &self.path_env, &self.cwd, arg)
+        crate::shell::which_command(&mut *path_buf, &self.path_env, &self.cwd, arg)
             .map(|z| z.as_bytes().to_vec())
     }
 }

@@ -20,6 +20,12 @@ pub(crate) mod shell_body;
 // Codegen (`generated_js2native.rs`) addresses this as `crate::shell::shell::*`.
 pub(crate) use shell_body as shell;
 
+/// Where a command word leads: one resolver for the exec state and the `which` builtin.
+#[cfg(windows)]
+pub(crate) use bun_install::windows_shim::which as which_command;
+#[cfg(not(windows))]
+pub(crate) use bun_which::which as which_command;
+
 // ─── submodules ──────────────────────────────────────────────────────────────
 #[path = "EnvMap.rs"]
 pub(crate) mod env_map;

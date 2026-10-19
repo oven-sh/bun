@@ -4227,6 +4227,109 @@ describe("backpressure", () => {
     });
 
     // Replay a failing plan with BUN_HTTP_DRAIN_FUZZ_SEED=<seed of the plan>. Soak with BUN_HTTP_DRAIN_FUZZ_ITERS=<plans in a group>.
+    // An empty chunk asks a socket to call back behind the bytes that it holds. Node.js asks once, at end(). Bun
+    // asks only for a callback or a 'drain' that waits for a socket under its high water mark: over the mark the
+    // socket emits 'drain', an ended response has the callback of its last write, and with nothing that waits there
+    // is nothing to ask.
+    describe("the chunks that a response writes to a socket that holds them", () => {
+      const bun = !!process.versions.bun;
+      type Handler = (res: http.ServerResponse, socket: BudgetSocket, events: string[]) => void | (() => void);
+
+      // `handler` can return what the response does in the next turn. Resolves with the events, and with the
+      // length of each chunk that the socket got behind the head.
+      async function run(handler: Handler) {
+        const events: string[] = [];
+        let later: void | (() => void);
+        const socket = onBudgetSocket((req, res, socket) => void (later = handler(res, socket, events)));
+        try {
+          await turn();
+          if (later) {
+            later();
+            await turn();
+          }
+          socket.release();
+          await turn();
+          return { events, lengths: socket.wire.slice(1).map(chunk => chunk.length) };
+        } finally {
+          socket.destroy();
+        }
+      }
+
+      it("writes that nothing waits for", async () => {
+        const result = await run(res => {
+          res.setHeader("Content-Length", 200);
+          res.write(Buffer.alloc(100, "a"));
+          res.write(Buffer.alloc(100, "a"));
+        });
+        expect(result).toEqual({ events: [], lengths: [100, 100] });
+      });
+
+      it("a write() callback over the high water mark of the socket", async () => {
+        let size = 0;
+        const result = await run((res, socket, events) => {
+          size = socket.writableHighWaterMark + 1;
+          res.setHeader("Content-Length", size);
+          res.on("drain", () => events.push("drain"));
+          res.write(Buffer.alloc(size, "a"), () => events.push("callback"));
+        });
+        expect(result).toEqual({ events: ["drain", "callback"], lengths: [size] });
+      });
+
+      it("an end() with a chunk", async () => {
+        const result = await run((res, socket, events) => {
+          res.on("finish", () => events.push("finish"));
+          res.end(Buffer.alloc(100, "a"));
+        });
+        expect(result).toEqual({ events: ["finish"], lengths: bun ? [100] : [100, 0] });
+      });
+
+      it("a write() callback under the high water mark of the socket", async () => {
+        const result = await run((res, socket, events) => {
+          res.setHeader("Content-Length", 100);
+          res.write(Buffer.alloc(100, "a"), () => events.push("callback"));
+        });
+        expect(result).toEqual({ events: ["callback"], lengths: bun ? [100, 0] : [100] });
+      });
+
+      // In Bun the second chunk comes behind the empty chunk, so the response asks again behind it, once.
+      it("a write() callback in each of two turns", async () => {
+        const result = await run((res, socket, events) => {
+          res.setHeader("Content-Length", 200);
+          res.write(Buffer.alloc(100, "a"), () => events.push("callback 1"));
+          return () => void res.write(Buffer.alloc(100, "a"), () => events.push("callback 2"));
+        });
+        expect(result).toEqual({ events: ["callback 1", "callback 2"], lengths: bun ? [100, 0, 100, 0] : [100, 100] });
+      });
+
+      // The server hears the 'drain' of the socket while the socket holds bytes again, under its high water mark, so
+      // no second 'drain' of the socket comes. Node.js v26.3.0 emits no 'drain' on the response then. Bun asks.
+      it("a 'drain' listener of the socket, ahead of the one of the server, that writes to the socket", async () => {
+        const events: string[] = [];
+        const socket = new BudgetSocket();
+        socket.once("drain", () => socket.write(Buffer.alloc(100, "z")));
+        http
+          .createServer((req, res) => {
+            const size = socket.writableHighWaterMark + 1;
+            res.setHeader("Content-Length", size);
+            res.on("drain", () => events.push(`drain with ${socket.writableLength} bytes in the socket`));
+            events.push(`write() returned ${res.write(Buffer.alloc(size, "a"))}`);
+          })
+          .emit("connection", socket);
+        socket.push(GET);
+        try {
+          await turn();
+          expect(events).toEqual(["write() returned false"]);
+          socket.release();
+          await turn();
+          expect(events).toEqual(
+            bun ? ["write() returned false", "drain with 0 bytes in the socket"] : ["write() returned false"],
+          );
+        } finally {
+          socket.destroy();
+        }
+      });
+    });
+
     describe("seeded plans of write(), res._send(), end() and socket events", () => {
       const seed = Number(process.env.BUN_HTTP_DRAIN_FUZZ_SEED ?? 1000003);
       const iterations = Number(process.env.BUN_HTTP_DRAIN_FUZZ_ITERS ?? 25);

@@ -1947,6 +1947,21 @@ function settingsAcked(
   self.emit("localSettings", settings);
 }
 
+// The end of the 'localSettings' handlers. `callback` is false when the parser calls settingsAcked() next, bound.
+function settingsAckedInHandler(
+  self: Http2Session,
+  settings: Settings,
+  callback: Function | false | undefined,
+  duration: number | undefined,
+) {
+  if (callback === false) return;
+  if (callback === undefined || $getInternalField($asyncContext, 0) === undefined) {
+    return settingsAcked(self, settings, callback, duration);
+  }
+  // The parser bound nothing: nothing tracked async contexts when settings() was called, so its caller had none.
+  runInFrame(undefined, settingsAcked, undefined, self, settings, callback, duration);
+}
+
 // For the parser to read at 'connect' without a throw: it reads decimal ids, validateSettings() accepts what Number() reads.
 function settingsToSendLater(settings: Settings): Settings {
   const copy = { ...settings };
@@ -1960,27 +1975,21 @@ function settingsToSendLater(settings: Settings): Settings {
 }
 
 // node's pingCallback, bound by the parser like settingsAcked. No payload: the session went away before the ACK.
-function pingAcked(_self: Http2Session, payload: Buffer | undefined, callback: Function | undefined, duration: number) {
-  if (callback === undefined) return;
+function pingAcked(_self: Http2Session, payload: Buffer | undefined, callback: Function, duration: number) {
   if (payload === undefined) process.nextTick(callback, $ERR_HTTP2_PING_CANCEL());
   else callback(null, duration, payload);
 }
 
-// How the ACK handlers deliver. `callback` is false when the parser calls `deliver` next, bound to the caller's context.
-function deliverAck(
-  deliver: typeof settingsAcked | typeof pingAcked,
+// The end of the 'ping' handlers. `callback` is a function when the parser bound nothing, as in settingsAckedInHandler.
+function pingAckedInHandler(
   self: Http2Session,
-  value: any,
+  payload: Buffer | undefined,
   callback: Function | false | undefined,
-  duration: number | undefined,
+  duration: number,
 ) {
-  if (callback === false) return;
-  if (callback === undefined || $getInternalField($asyncContext, 0) === undefined) {
-    deliver(self, value, callback, duration as number);
-  } else {
-    // The parser bound nothing: nothing tracked async contexts when the callback was passed, so its caller had none.
-    runInFrame(undefined, deliver, undefined, self, value, callback, duration);
-  }
+  if (typeof callback !== "function") return;
+  if ($getInternalField($asyncContext, 0) === undefined) return pingAcked(self, payload, callback, duration);
+  runInFrame(undefined, pingAcked, undefined, self, payload, callback, duration);
 }
 
 // ERR_HTTP2_STREAM_CANCEL is not in the native error-code registry (the registry is positional
@@ -4258,7 +4267,7 @@ class ServerHttp2Session extends Http2Session {
         captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
         setImmediate(destroyIfNotDestroyedNT, self);
       }
-      deliverAck(settingsAcked, self, settings, callback, duration);
+      settingsAckedInHandler(self, settings, callback, duration);
     },
     remoteSettings(self: ServerHttp2Session, settings: Settings) {
       if (!self) return;
@@ -4295,7 +4304,7 @@ class ServerHttp2Session extends Http2Session {
           }
         }
       }
-      deliverAck(pingAcked, self, payload, callback, duration);
+      pingAckedInHandler(self, payload, callback, duration);
     },
     error(self: ServerHttp2Session, errorCode: number | string, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
@@ -5256,7 +5265,7 @@ class ClientHttp2Session extends Http2Session {
         captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
         setImmediate(destroyIfNotDestroyedNT, self);
       }
-      deliverAck(settingsAcked, self, settings, callback, duration);
+      settingsAckedInHandler(self, settings, callback, duration);
     },
     remoteSettings(self: ClientHttp2Session, settings: Settings) {
       if (!self) return;
@@ -5299,7 +5308,7 @@ class ClientHttp2Session extends Http2Session {
           }
         }
       }
-      deliverAck(pingAcked, self, payload, callback, duration);
+      pingAckedInHandler(self, payload, callback, duration);
     },
     error(self: ClientHttp2Session, errorCode: number | string, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;

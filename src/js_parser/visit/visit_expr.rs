@@ -1381,13 +1381,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
 
-                    // Copy the side effect flags over in case this expression is unused
-                    if define.data.can_be_removed_if_unused() {
+                    // Copy the side effect flags over in case this expression is unused. Not onto
+                    // an optional chain: `Symbol?.for("a")` stays, as it checks that `Symbol` exists.
+                    if define.data.can_be_removed_if_unused() && e_.optional_chain.is_none() {
                         e_.can_be_removed_if_unused = true;
                     }
 
                     if define.data.call_can_be_unwrapped_if_unused() != E::CallUnwrap::Never
                         && !p.options.ignore_dce_annotations
+                        && e_.optional_chain.is_none()
                     {
                         e_.call_can_be_unwrapped_if_unused =
                             define.data.call_can_be_unwrapped_if_unused();

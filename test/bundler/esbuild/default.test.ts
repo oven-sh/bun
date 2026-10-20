@@ -4584,7 +4584,6 @@ describe.concurrent("bundler", () => {
     },
   });
   itBundled("default/DefineOptionalChain", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         log([

@@ -2786,8 +2786,7 @@ impl<'f, 's> Binder<'f, 's> {
                 self.new_flow(Flow::Switch {
                     before: self.pre_switch,
                     stmt: id,
-                    from: start as u16,
-                    to: (i + 1) as u16,
+                    from: start as u32,
                 })
             } else {
                 self.pre_switch
@@ -2813,8 +2812,7 @@ impl<'f, 's> Binder<'f, 's> {
                 self.new_flow(Flow::Switch {
                     before: self.pre_switch,
                     stmt: id,
-                    from: 0,
-                    to: 0,
+                    from: Flow::NO_CLAUSE,
                 })
             } else {
                 UNREACHABLE

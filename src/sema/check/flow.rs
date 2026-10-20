@@ -10,7 +10,7 @@ use super::unions::PartsOf;
 use super::*;
 use crate::bind::{
     Decl, Flow, FlowId, FlowTarget, FnOwner, MAX_FLOW_DEPTH, MemberOwner, Parent, PatParent,
-    SymbolId, UNREACHABLE,
+    SymbolId, UNREACHABLE, entered_clauses,
 };
 use crate::util::{PositionSet, SharedSort};
 use smallvec::{SmallVec, smallvec};
@@ -414,7 +414,7 @@ enum Join<'a> {
 /// The operation a `getTypeAtFlowNode` invocation applies to the type at `flow.Antecedent`.
 enum Pending {
     Cond(ExprId, bool),
-    Switch(StmtId, u16, u16),
+    Switch(StmtId, u32),
     Assert(ExprId),
     /// `a.push(x)`, `a[i] = x`
     Mutation(ExprId),
@@ -4434,8 +4434,7 @@ impl<'p, 's> Checker<'p, 's> {
         reference: &Reference,
         ty: TypeId,
         stmt: StmtId,
-        from: usize,
-        to: usize,
+        from: u32,
     ) -> TypeId {
         let file = reference.file;
         let hir = self.hir(file);
@@ -4446,6 +4445,7 @@ impl<'p, 's> Checker<'p, 's> {
         else {
             return ty;
         };
+        let (from, to) = entered_clauses(hir, cases, from);
         if self.matches(reference, subject) {
             return self.narrow_by_switch_values(file, ty, stmt, from, to);
         }
@@ -5195,7 +5195,7 @@ impl<'p, 's> Checker<'p, 's> {
             longest = longest.max(lengths[i]);
             match node {
                 Flow::Cond { expr, .. } => self.note_test(file, expr, 0, about),
-                Flow::Switch { stmt, from, to, .. } => {
+                Flow::Switch { stmt, from, .. } => {
                     if let StmtKind::Switch { expr, cases } = hir[stmt].kind {
                         // All the nodes of a `switch` have the same subjects, and its first node has
                         // the lowest number.
@@ -5215,8 +5215,10 @@ impl<'p, 's> Checker<'p, 's> {
                             noted_switches.insert(stmt, (about.2, about.3));
                         }
                         // `narrowTypeBySwitchOnTrue` returns the union of its clauses' results.
-                        builds_union = matches!(hir[expr].kind, ExprKind::True)
-                            && (about.3 || to.saturating_sub(from) > 1);
+                        builds_union = matches!(hir[expr].kind, ExprKind::True) && {
+                            let (from, to) = entered_clauses(hir, cases, from);
+                            about.3 || to - from > 1
+                        };
                     }
                 }
                 Flow::Assign { target, .. } => match target {
@@ -5364,10 +5366,7 @@ impl<'p, 's> Checker<'p, 's> {
                     while found == NEVER_RETURNS
                         && let Some(&edge) = antecedents.next()
                     {
-                        if !is_loop
-                            && !has_bypass
-                            && matches!(bound.flow[edge.idx()], Flow::Switch { from, to, .. } if from == to)
-                        {
+                        if !is_loop && !has_bypass && bound.flow[edge.idx()].enters_no_clause() {
                             has_bypass = true;
                             continue;
                         }
@@ -5471,9 +5470,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     let (mut highest, mut is_reached, mut bypass) = (0, false, None);
                     for &edge in bound.edges(start, len) {
-                        if bypass.is_none()
-                            && matches!(bound.flow[edge.idx()], Flow::Switch { from, to, .. } if from == to)
-                        {
+                        if bypass.is_none() && bound.flow[edge.idx()].enters_no_clause() {
                             bypass = Some(edge);
                             continue;
                         }
@@ -6845,13 +6842,8 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     flow = before;
                 }
-                Flow::Switch {
-                    before,
-                    stmt,
-                    from,
-                    to,
-                } => {
-                    let then = Pending::Switch(stmt, from, to);
+                Flow::Switch { before, stmt, from } => {
+                    let then = Pending::Switch(stmt, from);
                     pending.push((then, std::mem::take(&mut shared_flow)));
                     flow = before;
                 }
@@ -6907,8 +6899,11 @@ impl<'p, 's> Checker<'p, 's> {
                     let mut settled = false;
                     for &edge in antecedents {
                         if bypass.is_none()
-                            && let Flow::Switch { stmt, from, to, .. } = bound.flow[edge.idx()]
-                            && from == to
+                            && let Flow::Switch {
+                                stmt,
+                                from: Flow::NO_CLAUSE,
+                                ..
+                            } = bound.flow[edge.idx()]
                         {
                             bypass = Some((edge, stmt));
                             continue;
@@ -7098,9 +7093,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // Only `getTypeAtFlowCondition` returns `never` as is.
                 Pending::Cond(..) if ty.is_never() => seen,
                 Pending::Cond(expr, sense) => self.narrow(reference, seen, expr, sense),
-                Pending::Switch(stmt, from, to) => {
-                    self.narrow_by_switch(reference, seen, stmt, from as usize, to as usize)
-                }
+                Pending::Switch(stmt, from) => self.narrow_by_switch(reference, seen, stmt, from),
                 Pending::Assert(call) => self.narrow_by_assertion(reference, seen, call),
                 Pending::Compound => self.base_of_literal(seen),
                 Pending::Mutation(expr) => {
@@ -8324,13 +8317,8 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     flow = before;
                 }
-                Flow::Switch {
-                    before,
-                    stmt,
-                    from,
-                    to,
-                } => {
-                    if from == to && self.is_exhaustive_switch(file, stmt) {
+                Flow::Switch { before, stmt, from } => {
+                    if from == Flow::NO_CLAUSE && self.is_exhaustive_switch(file, stmt) {
                         break false;
                     }
                     flow = before;

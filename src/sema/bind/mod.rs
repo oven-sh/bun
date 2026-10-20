@@ -1078,12 +1078,11 @@ pub enum Flow {
         expr: ExprId,
         sense: bool,
     },
-    /// The clauses `from..to` of the `switch` were entered.
+    /// The clauses of the `switch` that `entered_clauses` returns for `from` were entered.
     Switch {
         before: FlowId,
         stmt: StmtId,
-        from: u16,
-        to: u16,
+        from: u32,
     },
     /// A call that may assert something or never return.
     Call {
@@ -1105,6 +1104,14 @@ pub enum Flow {
 }
 
 impl Flow {
+    /// `Switch::from` on the path that enters no clause.
+    pub const NO_CLAUSE: u32 = u32::MAX;
+
+    #[inline]
+    pub fn enters_no_clause(self) -> bool {
+        matches!(self, Flow::Switch { from, .. } if from == Flow::NO_CLAUSE)
+    }
+
     /// Returns a range of `edges` (`BoundIn::flow_edges`) or a single node.
     pub fn antecedents<'a>(&'a self, edges: &'a [FlowId]) -> &'a [FlowId] {
         match self {
@@ -1122,6 +1129,19 @@ impl Flow {
             | Flow::Call { before, .. } => std::slice::from_ref(before),
         }
     }
+}
+
+/// `ClauseStart` and `ClauseEnd` of the `Flow::Switch` with `from`. `bindCaseBlock`: clauses without statements share
+/// a node with the first clause after them that has statements.
+pub fn entered_clauses(hir: &File, cases: Span<CaseId>, from: u32) -> (usize, usize) {
+    if from == Flow::NO_CLAUSE {
+        return (0, 0);
+    }
+    let mut last = from as usize;
+    while last + 1 < cases.len() && hir[cases.at(last)].body.is_empty() {
+        last += 1;
+    }
+    (from as usize, last + 1)
 }
 
 /// TypeScript's limit on nested `getTypeAtFlowNode` calls. At this depth it gives up and reports TS2563.

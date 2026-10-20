@@ -1377,6 +1377,18 @@ class C2 extends Base<Cond<C2>> { x = 1 }
     `);
   });
 
+  test("a `switch` with more than 65,536 clauses narrows by the clause that was entered", async () => {
+    const n = 65_540;
+    const narrowing = new Set([0, 65_534, 65_535, 65_536, n - 1]);
+    const body = (i: number) =>
+      narrowing.has(i) ? `{ const t: "k${i === n - 1 ? 0 : i}" = s; return t; }` : `return "";`;
+    const clauses = Array.from({ length: n }, (_, i) => `    case "k${i}": ${body(i)}\n`).join("");
+    using dir = project({ "a.ts": `export function f(s: string) {\n  switch (s) {\n${clauses}  }\n  return s;\n}\n` });
+    const { stdout, exitCode } = await check(dir, ["--threads", "1"]);
+    expect(stdout).toBe(`a.ts(65542,28): error TS2322: Type '"k65539"' is not assignable to type '"k0"'.`);
+    expect(exitCode).toBe(1);
+  });
+
   describe("a file too large for control flow analysis (TS2563) doesn't hide errors in other files", () => {
     const long = (end: string) => "const data = [];\n" + repeat("data[0] = 0;\n", 3000) + end;
     const right = `type S = { k: "a" } | { k: "b" };\ndeclare function assertNever(x: never): never;\nexport function f(s: S) {\n  switch (s.k) {\n    case "a":\n      return 1;\n    case "b":\n      return 2;\n    default:\n      return assertNever(s);\n  }\n}\n`;

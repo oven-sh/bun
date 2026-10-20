@@ -1442,6 +1442,24 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
         // SAFETY: usockets_loop() returns the live process-global loop.
         JSValue::js_number(unsafe { (*event_loop.usockets_loop()).iteration_number() } as f64),
     );
+    result.put(
+        global_object,
+        b"sweepTimerCount",
+        // SAFETY: usockets_loop() returns the live process-global loop.
+        JSValue::js_number(unsafe { (*event_loop.usockets_loop()).sweep_timer_count() } as f64),
+    );
+    result.put(
+        global_object,
+        b"acceptBackoffPending",
+        // SAFETY: usockets_loop() returns the live process-global loop.
+        JSValue::from(unsafe { (*event_loop.usockets_loop()).accept_backoff_pending() }),
+    );
+    result.put(
+        global_object,
+        b"acceptBackoffTurn",
+        // SAFETY: usockets_loop() returns the live process-global loop.
+        JSValue::js_number(unsafe { (*event_loop.usockets_loop()).accept_backoff_turn() } as f64),
+    );
     Ok(result)
 }
 

@@ -360,6 +360,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     ls->socket_ext_size = socket_ext_size;
     ls->deferred_accept = 0;
     ls->accept_paused = (options & LIBUS_SOCKET_OPEN_PAUSED) && !ssl_ctx;
+    ls->accept_backed_off = 0;
 
     /* Link into the group so close_all() / test-isolation can find it. */
     ls->next = group->head_listen_sockets;
@@ -465,6 +466,7 @@ void us_listen_socket_close(struct us_listen_socket_t *ls) {
         struct us_loop_t *loop = s->group->loop;
         us_poll_stop((struct us_poll_t *) s, loop);
         bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
+        us_internal_accept_backoff_on_close(loop);
 
         us_internal_listen_socket_ssl_free(ls);
 

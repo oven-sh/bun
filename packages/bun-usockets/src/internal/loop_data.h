@@ -94,6 +94,13 @@ struct us_internal_loop_data_t {
      * sockets must be deferred to the outermost tick so the outer dispatch
      * doesn't read a freed poll. */
     int tick_depth;
+    /* Position, in the walk over the loop's listeners, of the backed-off
+     * listener that got the last retry a close asked for. */
+    unsigned int accept_backoff_turn;
+    /* -1, or, while a listener is backed off after a failed accept(), the
+     * sweep's own deadline: sweep_next_tick_ns then holds the accept retry.
+     * epoll and kqueue only. */
+    long long accept_backoff_sweep_ns;
 };
 
 #endif // LOOP_DATA_H

@@ -1,8 +1,10 @@
-import { socketFaultInjection as fault } from "bun:internal-for-testing";
+import { socketFaultInjection as fault, getEventLoopStats } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
-import { isWindows } from "harness";
+import { isLinux, isMacOS, isWindows } from "harness";
 import { once } from "node:events";
+import http from "node:http";
 import net from "node:net";
+import os from "node:os";
 
 // Windows uses the libuv eventing backend; bsd_recv/bsd_send are still the
 // chokepoints there but errno semantics differ. Land POSIX coverage first.
@@ -33,6 +35,32 @@ async function connectedPair(onServerSocket?: (s: net.Socket) => void) {
       server.close();
     },
   };
+}
+
+// Event loop iterations for each of 10 timers of 10 ms. An idle loop makes
+// about one. A listener that is backed off adds about two for each retry. A
+// loop that retries a failing accept() with no delay makes hundreds, also when
+// the process gets a small share of a core.
+async function iterationsPerTimer() {
+  const before = getEventLoopStats().iteration;
+  for (let i = 0; i < 10; i++) await new Promise(resolve => setTimeout(resolve, 10));
+  return (getEventLoopStats().iteration - before) / 10;
+}
+const failAccept = (errno: number, repeat: number) => fault.set({ syscall: "accept", action: "errno", errno, repeat });
+const errnoValues = (names: string[]) =>
+  Object.fromEntries(names.map(name => [name, os.constants.errno[name as "EMFILE"]])) as Record<string, number>;
+// XNU takes the connection off the queue before it allocates the descriptor
+// and drops it when that fails, so on macOS these three do not repeat.
+const macOSDropsTheConnection = ["EMFILE", "ENFILE", "ENOMEM"];
+// Not fault.clear(): the other rules of a test stay armed.
+const disarmAccept = () => fault.set({ syscall: "accept", action: "none" });
+// A listener is out of the poll set. A retry puts it back for one iteration,
+// so wait for an iteration that is not that one.
+async function listenerBacksOff() {
+  for (let i = 0; i < 1000 && !getEventLoopStats().acceptBackoffPending; i++) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  return getEventLoopStats().acceptBackoffPending;
 }
 
 describe.skipIf(skip)("node:net under injected syscall faults", () => {
@@ -333,6 +361,124 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
       expect(c2.readyState).toBe("open");
       serverSock.destroy();
       c2.destroy();
+    } finally {
+      server.close();
+    }
+  });
+
+  test("accept → an error that can repeat: net.Server backs off, then accepts the queued client", async () => {
+    const server = net.createServer(socket => socket.destroy());
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const port = (server.address() as net.AddressInfo).port;
+    try {
+      const values = errnoValues(["ENOBUFS", "EPERM", "EACCES", ...(isMacOS ? [] : macOSDropsTheConnection)]);
+      const errnos = Object.keys(values);
+      const idle = await iterationsPerTimer();
+      const failing: Record<string, number> = {};
+      const backedOff: Record<string, boolean> = {};
+      for (const errno of errnos) {
+        const accepted = once(server, "connection");
+        failAccept(values[errno], -1);
+        // The kernel completes the connect and queues the connection: accept() does not take it.
+        const client = net.connect({ port, host: "127.0.0.1" });
+        client.on("error", () => {});
+        await once(client, "connect");
+        failing[errno] = await iterationsPerTimer();
+        backedOff[errno] = await listenerBacksOff();
+        disarmAccept();
+        await accepted;
+        client.destroy();
+      }
+      const every = (value: boolean) => Object.fromEntries(errnos.map(errno => [errno, value]));
+      expect({
+        rates: { idle, ...failing },
+        backedOff,
+        noSpin: Object.fromEntries(errnos.map(errno => [errno, failing[errno] <= idle + 8])),
+      }).toEqual({ rates: expect.anything(), backedOff: every(true), noSpin: every(true) });
+    } finally {
+      server.close();
+    }
+  });
+
+  test("accept → ENOBUFS: http.Server backs off, then answers the queued request", async () => {
+    const server = http.createServer((req, res) => res.end("ok"));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const port = (server.address() as net.AddressInfo).port;
+    try {
+      const idle = await iterationsPerTimer();
+      failAccept(os.constants.errno.ENOBUFS, -1);
+      const client = net.connect({ port, host: "127.0.0.1" });
+      client.on("error", () => {});
+      let text = "";
+      const answered = new Promise<void>((resolve, reject) => {
+        client.on("data", chunk => {
+          text += chunk;
+          if (text.split("\r\n\r\n")[1]?.includes("ok")) resolve();
+        });
+        client.on("close", () => reject(new Error("closed before a response: " + JSON.stringify(text))));
+      });
+      await once(client, "connect");
+      // The request makes the listener readable also where accept() is deferred until data arrives.
+      client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      const failing = await iterationsPerTimer();
+      disarmAccept();
+      await answered;
+      client.destroy();
+      expect({ rates: { idle, failing }, noSpin: failing <= idle + 8 }).toEqual({
+        rates: expect.anything(),
+        noSpin: true,
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  test("accept → an error that took the connection off the queue: the listener does not back off", async () => {
+    const server = net.createServer(socket => socket.destroy());
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const port = (server.address() as net.AddressInfo).port;
+    try {
+      // accept(2): pending network errors of the new socket.
+      const values = {
+        ...errnoValues([
+          "ECONNABORTED",
+          "EPROTO",
+          "ENETDOWN",
+          "ENOPROTOOPT",
+          "EHOSTUNREACH",
+          "EOPNOTSUPP",
+          "ENETUNREACH",
+          ...(isMacOS ? macOSDropsTheConnection : []),
+        ]),
+        // Not in os.constants.errno.
+        EHOSTDOWN: isLinux ? 112 : 64,
+        ...(isLinux ? { ENONET: 64 } : {}),
+      };
+      const errnos = Object.keys(values);
+      const iterations: Record<string, number> = {};
+      for (const errno of errnos) {
+        const accepted = once(server, "connection");
+        // The injector fails 20 calls and leaves the connection queued. A
+        // listener that stays in the poll set takes one failure for each loop
+        // iteration. A listener that backs off needs two iterations for each.
+        failAccept(values[errno as keyof typeof values]!, 20);
+        const before = getEventLoopStats().iteration;
+        const client = net.connect({ port, host: "127.0.0.1" });
+        client.on("error", () => {});
+        await accepted;
+        iterations[errno] = getEventLoopStats().iteration - before;
+        client.destroy();
+      }
+      expect({
+        iterations,
+        staysInPollSet: Object.fromEntries(errnos.map(errno => [errno, iterations[errno] < 32])),
+      }).toEqual({
+        iterations: expect.anything(),
+        staysInPollSet: Object.fromEntries(errnos.map(errno => [errno, true])),
+      });
     } finally {
       server.close();
     }

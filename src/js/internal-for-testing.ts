@@ -832,6 +832,12 @@ export const getEventLoopStats: () => {
   eventLoopAlive: boolean;
   /** usockets/libuv loop iterations so far (us_internal_loop_pre count). */
   iteration: number;
+  /** Holders of the usockets sweep timer: linked sockets, and one while a listener is backed off. */
+  sweepTimerCount: number;
+  /** A listener is out of the poll set after a failed accept(). */
+  acceptBackoffPending: boolean;
+  /** Which backed-off listener got the last retry that a close on the loop asked for. */
+  acceptBackoffTurn: number;
 } = $newRustFunction("event_loop.rs", "getActiveTasks", 0);
 
 export const hostedGitInfo = {

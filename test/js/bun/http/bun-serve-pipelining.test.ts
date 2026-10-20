@@ -106,22 +106,20 @@ class RawClient extends ResponseReader {
   static async connect(target: Target): Promise<RawClient> {
     const client = new RawClient();
     const handshake = Promise.withResolvers<void>();
-    client.#socket = await Bun.connect({
-      ...target,
-      socket: {
-        handshake: (_socket, success, error) => (success ? handshake.resolve() : handshake.reject(error)),
-        data: (_socket, chunk) => {
-          client.push(chunk);
-          client.#settle();
-        },
-        close: () => {
-          client.closed = true;
-          client.#settle();
-        },
-        error: (_socket, error) => client.#fail(error),
-        connectError: (_socket, error) => client.#fail(error),
+    const socket = {
+      handshake: (_socket, success, error) => (success ? handshake.resolve() : handshake.reject(error)),
+      data: (_socket, chunk) => {
+        client.push(chunk);
+        client.#settle();
       },
-    });
+      close: () => {
+        client.closed = true;
+        client.#settle();
+      },
+      error: (_socket, error) => client.#fail(error),
+      connectError: (_socket, error) => client.#fail(error),
+    } satisfies Bun.SocketHandler;
+    client.#socket = await ("unix" in target ? Bun.connect({ ...target, socket }) : Bun.connect({ ...target, socket }));
     if (target.tls) await handshake.promise;
     return client;
   }
@@ -219,7 +217,7 @@ async function connectNodeSocket(
         : netConnect({ port: server.port!, host: "127.0.0.1", ...options });
   const reader = new ResponseReader();
   const seen: { ended: boolean; error?: string } = { ended: false };
-  socket.on("data", chunk => reader.push(chunk));
+  socket.on("data", (chunk: Buffer) => reader.push(chunk));
   // `ended` settles on every terminal event, not on 'end' alone: a connection
   // that is reset never ends, and a test awaiting it would reach its timeout
   // instead of failing on what `seen` recorded.
@@ -970,12 +968,15 @@ it("a close lingers while the client still sends what it queued behind the parke
   const origin = `http://127.0.0.1:${port}`;
   const upload = Buffer.alloc(4 * 1024 * 1024, "a");
 
-  const results = [];
+  const results: {
+    seen: { ended: boolean; error?: string };
+    responses: { statusLine: string; bodyLength: number }[];
+  }[] = [];
   for (let id = 0; id < 3; id++) {
     const socket = netConnect({ port, host: "127.0.0.1" });
     const reader = new ResponseReader();
     const seen: { ended: boolean; error?: string } = { ended: false };
-    socket.on("data", chunk => reader.push(chunk));
+    socket.on("data", (chunk: Buffer) => reader.push(chunk));
     socket.on("end", () => (seen.ended = true));
     socket.on("error", (error: NodeJS.ErrnoException) => (seen.error = error.code));
     const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
@@ -1266,7 +1267,8 @@ describe.each(transports.filter(t => t.name !== "unix"))("WebSocket upgrade over
 
   // A request held behind the handshake is never dispatched as HTTP: the
   // connection has left HTTP by then. As frames the bytes are not valid, so the
-  // WebSocket fails the connection.
+  // WebSocket fails the connection: a Close frame with 1002 (protocol error),
+  // then the close.
   it("performed by an async handler fails the connection when an HTTP request is held behind the handshake", async () => {
     const handler = holdingHandler();
     const { upgradeEntered, releaseUpgrade, ...serving } = serveWithUpgrade(handler, { held: true });
@@ -1280,14 +1282,18 @@ describe.each(transports.filter(t => t.name !== "unix"))("WebSocket upgrade over
 
     releaseUpgrade();
     await client.until(c => c.closed);
+    const frame = client.unparsed;
     expect({
       hits: handler.hits,
       responses: client.responses.map(withAccept),
-      framesAfterThe101: [...client.unparsed],
+      // One unmasked frame with FIN and opcode 8 (Close), and nothing behind it.
+      closeFrame: frame.length >= 4 && frame[0] === 0x88 && frame.length === 2 + frame[1],
+      closeCode: frame.length >= 4 ? frame.readUInt16BE(2) : undefined,
     }).toEqual({
       hits: ["/ws", "/probe"],
       responses: [switching],
-      framesAfterThe101: [],
+      closeFrame: true,
+      closeCode: 1002,
     });
   });
 });

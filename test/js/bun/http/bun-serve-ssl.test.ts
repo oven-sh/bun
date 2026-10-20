@@ -156,6 +156,50 @@ describe("Bun.serve SSL validations", () => {
   }
 });
 
+test("server.reload() updates the routes for connections whose SNI matches a serverName", async () => {
+  const hosts = ["localhost", "sni.example.com", "unmatched.example.com"];
+  const bodies = async (path: string) =>
+    Object.fromEntries(
+      await Promise.all(
+        hosts.map(async serverName => {
+          const response = await fetch(`https://127.0.0.1:${server.port}${path}`, {
+            tls: { rejectUnauthorized: false, serverName },
+            keepalive: false,
+          });
+          return [serverName, await response.text()];
+        }),
+      ),
+    );
+  const all = (body: string) => Object.fromEntries(hosts.map(host => [host, body]));
+
+  using server = Bun.serve({
+    port: 0,
+    tls: [
+      { key: privateKey, cert: publicKey, serverName: "localhost" },
+      { key: privateKey, cert: publicKey, serverName: "sni.example.com" },
+    ],
+    routes: {
+      "/static-old": new Response("static-old"),
+      "/fn-old": () => new Response("fn-old"),
+    },
+    fetch: () => new Response("fetch-old"),
+  });
+  expect(await bodies("/static-old")).toEqual(all("static-old"));
+  expect(await bodies("/fn-old")).toEqual(all("fn-old"));
+
+  server.reload({
+    routes: {
+      "/static-new": new Response("static-new"),
+      "/fn-new": () => new Response("fn-new"),
+    },
+    fetch: () => new Response("fetch-new"),
+  });
+  expect(await bodies("/static-new")).toEqual(all("static-new"));
+  expect(await bodies("/fn-new")).toEqual(all("fn-new"));
+  expect(await bodies("/static-old")).toEqual(all("fetch-new"));
+  expect(await bodies("/fn-old")).toEqual(all("fetch-new"));
+});
+
 describe("Bun.serve per-serverName client certificate policy", () => {
   const tlsFixtures = join(import.meta.dir, "..", "..", "node", "tls", "fixtures");
   const serverKey = readFileSync(join(tlsFixtures, "agent10-key.pem"), "utf8");

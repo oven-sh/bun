@@ -267,6 +267,8 @@ static bool generateCachedByteCodeFromSourceCode(const BunString* sourceProvider
     JSC::UnlinkedCodeBlock* unlinkedCodeBlock = generateUnlinkedCodeForBytecodeCache(vm, sourceProviderURL, inputSourceCode, isModule, depth, optimize, sourceCode, key);
     if (!unlinkedCodeBlock)
         return false;
+    if (!externalStrings && Bun::hasStringTooLongForBytecodeCache(vm, sourceCode))
+        return false;
 
     RefPtr<JSC::CachedBytecode> cachedBytecode = JSC::encodeCodeBlock(vm, key, unlinkedCodeBlock, externalStrings, JSC::BytecodeCacheUpdatable::No);
     if (!cachedBytecode)
@@ -411,6 +413,22 @@ extern "C" BunString ZigSourceProvider__getSourceSlice(SourceProvider* provider)
 }; // namespace Zig
 
 namespace Bun {
+
+bool hasStringTooLongForBytecodeCache(JSC::VM& vm, const JSC::SourceCode& source)
+{
+    constexpr unsigned limit = 1u << 27;
+    if (static_cast<unsigned>(source.length()) < limit)
+        return false;
+    auto& provider = *source.provider();
+    if (provider.sourceURLDirective().length() >= limit || provider.sourceMappingURLDirective().length() >= limit)
+        return true;
+    // Every other string in the unlinked code is a parser identifier, so it's in the atom table.
+    for (auto& atom : vm.atomStringTable()->table()) {
+        if (atom->length() >= limit)
+            return true;
+    }
+    return false;
+}
 
 // bun:internal-for-testing: whether the source of a function knows where its lines start. Before anything asked for a
 // position in it, that means they came with its code: from the parse, or out of the bytecode.

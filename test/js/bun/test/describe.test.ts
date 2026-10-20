@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { describe, expect, jest, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 
 describe("blocks should handle a number, string, anonymous class, named class, or function for the first arg", () => {
   const numberMock = jest.fn();
@@ -222,4 +222,40 @@ describe("passing arrow function as args", () => {
     expect(fullOutput).toInclude("0 pass");
     expect(fullOutput).toInclude("1 fail");
   });
+});
+
+test("deeply nested describe() doesn't overflow the native stack", async () => {
+  // describe() callbacks run from a queue, so the JS stack limit doesn't stop the nesting.
+  using test_dir = tempDir(".", {
+    "describe-deep.test.js": `
+      import { describe, test, expect } from "bun:test";
+
+      let depth = 10000;
+      function nest() {
+        if (depth-- <= 0) {
+          test("leaf", () => {
+            expect(1).toBe(1);
+          });
+          return;
+        }
+        describe("d" + depth, nest);
+      }
+      nest();
+    `,
+  });
+  const cmd = [bunExe(), "test", "./describe-deep.test.js"];
+  await using proc = Bun.spawn({
+    // Linux sizes the main thread's stack from `ulimit -s`.
+    cmd: isLinux ? ["sh", "-c", `ulimit -s 1024 && exec "$@"`, "sh", ...cmd] : cmd,
+    cwd: String(test_dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toInclude(" > d2 > d1 > d0 > leaf");
+  expect(stderr).toInclude("\n 1 pass");
+  expect(stderr).toInclude("\n 0 fail");
+  expect(exitCode).toBe(0);
 });

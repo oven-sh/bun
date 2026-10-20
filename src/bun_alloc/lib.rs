@@ -1205,9 +1205,10 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
     // `MAP_NORESERVE` is Linux-specific (skip swap reservation for overcommit).
     // macOS has no equivalent (always overcommits); FreeBSD removed the flag
     // in 11 (it was always a no-op there). Only set it where it exists.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    // Miri has no `MAP_NORESERVE` and no `madvise`, so the tests run without them.
+    #[cfg(all(any(target_os = "linux", target_os = "android"), not(miri)))]
     const MAP_FLAGS: libc::c_int = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE;
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    #[cfg(not(all(any(target_os = "linux", target_os = "android"), not(miri))))]
     const MAP_FLAGS: libc::c_int = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS;
     // SAFETY: anonymous private mapping — fd/offset ignored, `len` is non-zero
     // (callers pass `size_of` of a non-ZST); failure handled below.
@@ -1228,7 +1229,7 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
     // fault a whole huge page, turning this demand-faulted arena into ~4 MiB of
     // RSS. Per-VMA opt-out (not `PR_SET_THP_DISABLE`, which children inherit).
     // SAFETY: `p..p+len` is the mapping created above.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(all(any(target_os = "linux", target_os = "android"), not(miri)))]
     unsafe {
         libc::madvise(p, len, libc::MADV_NOHUGEPAGE);
     }
@@ -1582,7 +1583,8 @@ const BSS_LIST_CHUNK_SIZE: usize = 256;
 
 /// The per-store overflow-block size is `count / 4`; this shared constant must
 /// be >= the largest store's, i.e. the filename store's `8192 / 4`.
-const BSS_OVERFLOW_BLOCK_SIZE: usize = 2048;
+/// The unit tests use small blocks, so that they cross several.
+const BSS_OVERFLOW_BLOCK_SIZE: usize = if cfg!(test) { 4 } else { 2048 };
 
 /// `#[repr(C)]` with `prev` before `data` so the inline `BSSList::tail` block's
 /// scalar fields cluster at the front of the singleton mapping (see the layout
@@ -2351,3 +2353,7 @@ impl Allocator for DefaultAlloc {}
 // The real impl is `impl GlobalAlloc for Mimalloc` above.
 #[path = "basic.rs"]
 pub mod basic;
+
+#[cfg(test)]
+#[path = "bss_tests.rs"]
+mod bss_tests;

@@ -40,6 +40,7 @@ const MIRI_CRATES = [
   "bun_collections",
   "bun_ast",
   "bun_paths",
+  "bun_alloc",
   "bun_hash",
   "bun_base64",
   "bun_bundler",

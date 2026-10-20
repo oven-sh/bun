@@ -4788,7 +4788,7 @@ impl<'a> LinkerContext<'a> {
         let mut accesses: Vec<PropertyAccess> = Vec::new();
         let mut pattern_parts: Vec<u32> = Vec::new();
         for part_index in 0..parts_len {
-            let part = &self.graph.ast.items_parts()[id].as_slice()[part_index];
+            let mut part = &self.graph.ast.items_parts()[id].as_slice()[part_index];
             // The parser keeps every pattern over a value that is not a literal.
             if !part.can_be_removed_if_unused
                 && matches!(
@@ -4811,15 +4811,15 @@ impl<'a> LinkerContext<'a> {
                 }
                 if part.tag != tag {
                     self.graph.ast.items_parts_mut()[id].as_mut_slice()[part_index].tag = tag;
+                    part = &self.graph.ast.items_parts()[id].as_slice()[part_index];
                 }
             }
-            if !binds {
-                continue;
-            }
-            let part = &self.graph.ast.items_parts()[id].as_slice()[part_index];
             let Some(uses) = part.import_symbol_property_uses.as_ref() else {
                 continue;
             };
+            if !binds {
+                continue;
+            }
             for (base, properties) in uses.keys().iter().zip(uses.values()) {
                 let Some(import_data) = imports_to_bind.get(base) else {
                     continue;

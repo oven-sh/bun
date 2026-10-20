@@ -23,12 +23,11 @@ const {
 const SymbolAsyncIterator = Symbol.asyncIterator;
 const ArrayIsArray = Array.isArray;
 const SymbolDispose = Symbol.dispose;
-// Captured at load: a setImmediate that user code replaces later (fake timers) must not hold back a teardown.
-const setImmediate = globalThis.setImmediate;
 
 let PassThrough;
 let Readable;
 let addAbortListener;
+let setImmediate;
 
 function destroyer(stream, reading, writing) {
   let finished = false;
@@ -234,15 +233,23 @@ function pipelineImpl(streams, callback, opts?, inner?) {
 
   // Bun only, Node has no such hook: compose() calls stop() when its Duplex is destroyed before the pipeline has ended.
   if (inner !== undefined) {
-    inner.stop = (err, always) => {
+    inner.stop = (err, always, quiet) => {
       // stop() records no error: the members report. An error from before keeps its place, unless it is abort-class.
       if (
         (!error || error.name === "AbortError" || error.code === "ERR_STREAM_PREMATURE_CLOSE") &&
-        (always || (err.name !== "AbortError" && err.code !== "ERR_STREAM_PREMATURE_CLOSE"))
+        (always || quiet || (err.name !== "AbortError" && err.code !== "ERR_STREAM_PREMATURE_CLOSE"))
       ) {
         const done = callback;
-        // Until the pipeline has ended, `err` replaces a failure (unless `err` is abort-class), and with `always` any result.
-        callback = (e, val) => done(always || e ? err : e, val);
+        // A quiet stop reports what the pipeline had before it: nothing, or an abort of its own.
+        const result = quiet ? error : err;
+        // Until the pipeline has ended, `result` replaces a failure (with `quiet`, an abort-class one only), and with `always` any result.
+        callback = (e, val) =>
+          done(
+            always || (e && (!quiet || e.name === "AbortError" || e.code === "ERR_STREAM_PREMATURE_CLOSE"))
+              ? result
+              : e,
+            val,
+          );
       }
       while (destroys.length) {
         destroys.shift()?.(err);
@@ -250,6 +257,8 @@ function pipelineImpl(streams, callback, opts?, inner?) {
       // finishImpl runs this entry before its own abort: a signal that is still open then gets `err` as its reason.
       const abort = () => ac.abort(err);
       destroys.push(abort);
+      // The native function: a program can replace the global one (fake timers).
+      setImmediate ??= $newCppFunction("node/NodeTimers.cpp", "functionSetImmediate", 1);
       // Next turn: the 'error' of a destroyed member (nextTick) reaches the pipeline before a stage sees the signal.
       setImmediate(abort);
     };

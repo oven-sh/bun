@@ -22,7 +22,7 @@ const nop = () => {};
 
 // What compose() shares with an inner pipeline that has a pump: the pipeline's stop, and the web sides compose locked.
 interface Inner {
-  stop: ((err: unknown, always: boolean) => void) | undefined;
+  stop: ((err: unknown, always: boolean, quiet: boolean) => void) | undefined;
   writer: WritableStreamDefaultWriter | undefined;
   reader: ReadableStreamDefaultReader | undefined;
   readable: ReadableStream | undefined;
@@ -225,6 +225,7 @@ export default function compose(...streams) {
   }
 
   d._destroy = function (err, callback) {
+    const given = !!err;
     if (!err && onclose !== null) {
       err = $makeAbortError();
     }
@@ -235,11 +236,15 @@ export default function compose(...streams) {
 
     // autoDestroy calls _destroy at a normal completion too: the inner pipeline then succeeds, and nothing is stopped.
     let early = false;
+    let quiet = false;
     if (inner !== undefined) {
+      const nodeTail = isNodeStream(tail);
       // 'finish' proves that the tail is done. 'end' alone does not: the tail, and a writable side, must have got their last input.
-      const inputEnded = (!isNodeStream(tail) || tail.writableEnded) && (!writable || d._writableState.finalCalled);
+      const inputEnded = (!nodeTail || tail.writableEnded) && (!writable || d._writableState.finalCalled);
       const completed = (writable && d.writableFinished) || (readable && d.readableEnded && inputEnded);
       early = !completed;
+      // Node gives the AbortError of a destroy() with no error to a node tail only. Behind another tail it reports none when the inner pipeline ends by itself.
+      quiet = !given && !nodeTail;
     }
 
     if (isNodeStream(tail)) {
@@ -270,8 +275,8 @@ export default function compose(...streams) {
       callback(err);
     } else {
       onclose = callback;
-      // After the cut the rest of the output is lost: a pipeline that has not ended then reports `err` even when it succeeds.
-      if (early) inner!.stop!(err, cut);
+      // After the cut the rest of the output is lost: a pipeline that has not ended then reports no result of its own.
+      if (early) inner!.stop!(err, cut, quiet);
     }
   };
 

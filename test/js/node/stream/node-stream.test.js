@@ -1942,30 +1942,32 @@ describe("compose() with a web stream or a function stage: destroy() ends the in
     //   G  'error' with an AggregateError of the stage's own error and the AbortError, then 'close'
     //   -  'close' and no error                            D  every chunk, 'end', 'finish', 'close', no error
     //   d  as D, with the first chunk only                 (space)  the event does not apply to the shape
+    // A destroy() with no error reads A behind a node tail and - behind any other tail: Node gives its
+    // AbortError to a node tail only.
     // A cell that never closes reads ".". On Node v26.3.0, and without the fix, every row but the last four
     // has such cells. The members: T PassThrough, W TransformStream, WS WritableStream, R Readable, Wn Writable,
     // G function stage, Gsig and Gown function stages that wait on their signal (Gown fails with its own error).
     it.each([
-      ["T,W", "ABAAA-BD"],
+      ["T,W", "-B----BD"],
       ["W,T", "ABAAA--D"],
-      ["W,W", "ABAAA-BD"],
+      ["W,W", "-B----BD"],
       ["T,W,T", "ABAAA--D"],
-      ["W,T,W", "ABAAA-BD"],
+      ["W,T,W", "-B----BD"],
       ["T,W,W,T", "ABAAA--D"],
-      ["T,WS", "ABAAA B "],
-      ["W,WS", "ABAAA B "],
-      ["R,W", "ABAA    "],
+      ["T,WS", "-B--- B "],
+      ["W,WS", "-B--- B "],
+      ["R,W", "-B--    "],
       ["W,Wn", "ABAAA - "],
-      ["R,WS", "ABAA    "],
+      ["R,WS", "-B--    "],
       ["R,G,Wn", "ABAA    "],
-      ["R,T,WS", "ABAA    "],
+      ["R,T,WS", "-B--    "],
       ["T,G,T", "ABAAA--D"],
-      ["W,G,W", "ABAAA-BD"],
+      ["W,G,W", "-B----BD"],
       ["T,Gsig,T", "ABAAA   "],
-      ["T,Gsig,W", "ABAAA   "],
+      ["T,Gsig,W", "-B---   "],
       ["W,Gsig,T", "ABAAA   "],
       ["T,Gown,T", "GBGGG   "],
-      ["W,Gown,W", "ABAAA   "],
+      ["W,Gown,W", "-B---   "],
       ["slowT,W,take1,T", "ABAAA--d"],
       ["T,W,take1", "ABAAAA-d"],
       ["W,take1,T", "ABAAA--d"],
@@ -2064,15 +2066,18 @@ describe("compose() with a web stream or a function stage: destroy() ends the in
   });
 
   // A read of the web tail is pending when destroy() runs. If destroy() ends that read with `done`,
-  // the composed stream pushes null and emits 'end' in front of the error.
-  it("a flowing stream emits no 'end' before the error", async () => {
+  // the composed stream pushes null and emits 'end' in front of 'close'.
+  it.each([
+    ["destroy()", undefined],
+    ["destroy(error)", new Error("boom")],
+  ])("a flowing stream emits no 'end' after %s", async (_, error) => {
     const composed = Stream.compose(new PassThrough(), new TransformStream());
     const events = watch(composed);
     composed.on("data", () => {});
     await turn();
-    composed.destroy();
+    composed.destroy(error);
     await turnsUntil(closed(events));
-    expect(events).toEqual([abortError, "close"]);
+    expect(events).toEqual(error ? [error, "close"] : ["close"]);
   });
 
   // User code can replace cancel() and abort(), for example with a wrapper that returns its own value.
@@ -2239,11 +2244,12 @@ describe("compose() with a web stream or a function stage: destroy() ends the in
   });
 
   // The pump destroys the member that ended early, so the inner pipeline has an AbortError of its own when
-  // destroy() runs. The cancel of the tail then makes its flush() fail. That TypeError is not the result.
+  // destroy() runs. The cancel of the tail then makes its flush() fail. That TypeError is not the result:
+  // destroy(error) reports its error, and destroy() reports the AbortError of the pipeline, as Node does.
   it.each([
     ["destroy()", undefined],
     ["destroy(error)", new Error("boom")],
-  ])("%s while a web tail behind an early end is in its flush() emits the error of the destroy", async (_, error) => {
+  ])("%s while a web tail behind an early end is in its flush() reports no TypeError", async (_, error) => {
     const tail = new TransformStream({
       async flush(controller) {
         await turns(2);
@@ -2406,6 +2412,15 @@ describe("compose() with a web stream or a function stage: destroy() ends the in
         composed.destroy();
         await turnsUntil(closed(events));
         expect(events).toEqual([stageAnd("ABORT_ERR"), "close"]);
+      });
+
+      // The last member has no readable side, so destroy() cuts nothing. Only an abort is left out of the result.
+      it("destroy() with a WritableStream as the last member emits the error of the stage", async () => {
+        const composed = Stream.compose(new PassThrough(), parked(stageError), new WritableStream());
+        const events = watch(composed);
+        composed.destroy();
+        await turnsUntil(closed(events));
+        expect(events).toEqual([expect.objectContaining({ code: "STAGE" }), "close"]);
       });
 
       it("a destination that is destroyed gives the AggregateError that pipeline() reports", async () => {
@@ -2590,8 +2605,8 @@ describe("compose() with a web stream or a function stage: destroy() ends the in
       Stream.finished(composed, resolve);
       composed.destroy();
       await turnsUntil(closed(events));
-      expect(events).toEqual([abortError, "close"]);
-      expect(await promise).toBe(events[0]);
+      expect(events).toEqual(["close"]);
+      expect(await promise).toMatchObject({ code: "ERR_STREAM_PREMATURE_CLOSE" });
     });
 
     it("Readable.toWeb(composed).cancel()", async () => {
@@ -2656,9 +2671,9 @@ describe("compose() with a web stream or a function stage: destroy() ends the in
     });
   });
 
-  // These cases settle on Node v26.3.0 too, with another result: its destroy() stops nothing, so the members
-  // run to their end. Bun reports what a compose() of node streams reports for the same calls on Node.
-  describe("destroy() after the input is complete and before 'end' is an abort", () => {
+  // These cases settle on Node v26.3.0 too: its destroy() stops nothing, so the members run to their end.
+  // Bun stops them. With no error given and a web tail it reports no error, as Node does.
+  describe("destroy() after the input is complete and before 'end' drops the rest of the output", () => {
     // Node: 'end', 'close'.
     it("destroy() inside the 'data' listener of the last chunk", async () => {
       const composed = Stream.compose(new PassThrough(), new TransformStream());
@@ -2670,7 +2685,7 @@ describe("compose() with a web stream or a function stage: destroy() ends the in
       });
       composed.end("x");
       await turnsUntil(closed(events));
-      expect({ chunks, events }).toEqual({ chunks: ["x"], events: [abortError, "close"] });
+      expect({ chunks, events }).toEqual({ chunks: ["x"], events: ["close"] });
     });
 
     // Node: 'end', 'close'.
@@ -2686,7 +2701,7 @@ describe("compose() with a web stream or a function stage: destroy() ends the in
       composed.on("data", () => {});
       composed.end("x");
       await turnsUntil(closed(events));
-      expect(events).toEqual([abortError, "close"]);
+      expect(events).toEqual(["close"]);
     });
 
     // Node: 'close' and no error. The sink gets the chunk and closes.
@@ -2710,8 +2725,8 @@ describe("compose() with a web stream or a function stage: destroy() ends the in
       composed.end("x");
       composed.destroy();
       await turnsUntil(closed(events));
-      expect(events).toEqual([abortError, "close"]);
-      expect(state).toEqual({ written: [], closed: false, aborted: events[0] });
+      expect(events).toEqual(["close"]);
+      expect(state).toEqual({ written: [], closed: false, aborted: abortError });
     });
 
     // The inner pipeline has called back, so destroy() has nothing to stop. As on Node, the output that the
@@ -2770,24 +2785,39 @@ describe("compose() with a web stream or a function stage: destroy() ends the in
     });
   });
 
-  // As a compose() of node streams does on every runtime: 'error' with no listener is an uncaught exception.
-  // Node v26.3.0 prints nothing here and exits 0, because its destroy() never completes.
-  it("destroy() with no 'error' listener throws the AbortError", async () => {
+  // The child has no 'error' listener, and a fake setImmediate is in place before node:stream loads.
+  // Node v26.3.0 prints nothing here: its destroy() never completes.
+  it("destroy() with no error: no uncaught error behind a web tail, and no need for the global setImmediate", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `const { compose, PassThrough } = require("node:stream");
-         compose(new PassThrough(), new TransformStream()).destroy();`,
+        `globalThis.setImmediate = () => {};
+         const { compose, PassThrough } = require("node:stream");
+         compose(new PassThrough(), new TransformStream())
+           .on("close", () => console.log("web tail: close"))
+           .destroy();
+         const staged = compose(
+           new PassThrough(),
+           async function* (source, { signal }) {
+             await new Promise((resolve, reject) => {
+               signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+             });
+             yield* source;
+           },
+           new PassThrough(),
+         );
+         staged.on("error", err => console.log("stage: " + err.name)).on("close", () => console.log("stage: close"));
+         staged.destroy();`,
       ],
       env: bunEnv,
       stderr: "pipe",
       stdout: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe("");
-    expect(stderr).toContain("AbortError");
-    expect(exitCode).toBe(1);
+    expect(stdout.split("\n").filter(Boolean).sort()).toEqual(["stage: AbortError", "stage: close", "web tail: close"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 
   // destroy() also runs at the end of a stream that completed: autoDestroy calls it. Then nothing may be

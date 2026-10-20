@@ -6630,13 +6630,24 @@ impl<'p, 's> Checker<'p, 's> {
         result
     }
 
-    /// True if `a` and `b` are the same member of a class or an interface and `instantiateSymbol` returns that member
-    /// itself. Then the type that declares it and every type that inherits it have the same symbol.
+    /// True if `instantiateSymbol` returns `sym`, the source of `prop`, itself. Then the class or interface that declares
+    /// it and every type that inherits it have the same symbol.
+    pub(super) fn is_uninstantiated_member(&mut self, prop: &Prop, sym: Sym) -> bool {
+        prop.flags.contains(PropFlags::THISLESS) || self.is_thisless_for_this_mapper(sym)
+    }
+
+    /// True if `a` and `b` are the same member of a class or an interface, uninstantiated.
     pub(super) fn is_member_itself_in_both(&mut self, a: &Prop, b: &Prop) -> bool {
         matches!((&a.source, &b.source), (&PropSource::Symbol(sym), &PropSource::Symbol(other))
             if sym == other
-                && ((a.flags | b.flags).contains(PropFlags::THISLESS)
-                    || self.is_thisless_for_this_mapper(sym)))
+                && (b.flags.contains(PropFlags::THISLESS) || self.is_uninstantiated_member(a, sym)))
+    }
+
+    /// `is_member_itself_in_both`, for two properties that may be copies of a member. A spread copies a member's symbol
+    /// under other modifiers, and that's another symbol.
+    pub(super) fn is_same_uninstantiated_member(&mut self, a: &Prop, b: &Prop) -> bool {
+        let differing = (a.flags ^ b.flags).difference(PropFlags::THISLESS);
+        differing.is_empty() && self.is_member_itself_in_both(a, b)
     }
 
     /// `a == b` for two property symbols, each with the mapper of the type that has it.

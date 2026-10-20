@@ -884,6 +884,10 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         let single = &builder.prop_set[0];
+        // `prop == singleProp`
+        if self.is_same_uninstantiated_member(single, &prop) {
+            return;
+        }
         // `prop.Flags&SymbolFlagsAccessor`: a property with only a getter is read-only.
         let accessors = |p: &Prop| match p.flags.contains(PropFlags::ACCESSOR) {
             true => p.flags & (ACCESSOR_KIND | PropFlags::READONLY),

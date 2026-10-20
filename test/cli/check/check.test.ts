@@ -15528,6 +15528,236 @@ export function check(editor: Editor) {
       expect(exitCode).toBe(1);
     });
 
+    // `unknown extends A & B` reduces the intersection, which creates its properties. A member without `this` is the
+    // same symbol in the interface that declares it and in every heir, so tsc doesn't look at its type.
+    test("reduces an intersection without resolving a member that its constituents inherit from one interface", async () => {
+      const lib = (base: string) => `export interface CustomTypes {
+  [key: string]: unknown
+}
+type ExtendedType<K extends string, B> = unknown extends CustomTypes[K] ? B : CustomTypes[K]
+type OmitFirstArg<F> = F extends (x: any, ...args: infer P) => infer R ? (...args: P) => R : never
+type IsInline = OmitFirstArg<typeof Editor.isInline>
+${base}
+export type Editor = ExtendedType<'Editor', BaseEditor>
+export declare const Editor: {
+  isInline: (editor: Editor, value: string) => boolean
+}
+`;
+      const main = (heirs: string, editor: string) => `import type { BaseEditor, Editor } from './lib'
+${heirs}
+declare module './lib' {
+  interface CustomTypes {
+    Editor: ${editor}
+  }
+}
+export function check(editor: Editor) {
+  editor.isInline = value => value === 'link'
+  const wrong: number = editor.isInline
+}
+`;
+      const conditional = "export interface BaseEditor { isInline: OmitFirstArg<typeof Editor.isInline> }";
+      const heir = "interface ExtEditor extends BaseEditor {}";
+      const both = "BaseEditor & ExtEditor";
+      const cases: Record<string, [base: string, heirs: string, editor: string]> = {
+        "only-heir": [conditional, heir, "ExtEditor"],
+        "no-conditional": ["export interface BaseEditor { isInline: typeof Editor.isInline }", heir, both],
+        "two-heirs": [
+          conditional,
+          "interface A extends BaseEditor { a: this }\ninterface B<T> extends BaseEditor { b: T }",
+          "A & B<1> & B<2>",
+        ],
+        "class-alias": ["export declare class BaseEditor { isInline: IsInline }", heir, both],
+        // In these, each constituent has its own instantiation of the member, and tsc compares their types.
+        this: [
+          "export interface BaseEditor { isInline: OmitFirstArg<typeof Editor.isInline>; self: this }",
+          heir,
+          both,
+        ],
+        class: ["export declare class BaseEditor { isInline: OmitFirstArg<typeof Editor.isInline> }", heir, both],
+        generic: [
+          "export interface Base<T> { isInline: OmitFirstArg<typeof Editor.isInline>; t: T }\nexport type BaseEditor = Base<1>",
+          heir,
+          both,
+        ],
+      };
+      using dir = project(
+        Object.fromEntries(
+          Object.entries(cases).flatMap(([name, [base, heirs, editor]]) => [
+            [`${name}/lib.ts`, lib(base)],
+            [`${name}/main.ts`, main(heirs, editor)],
+          ]),
+        ),
+      );
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "class-alias/main.ts(10,9): error TS2322: Type '(value: string) => boolean' is not assignable to type 'number'.
+        class/lib.ts(7,35): error TS2502: 'isInline' is referenced directly or indirectly in its own type annotation.
+        class/lib.ts(8,13): error TS2456: Type alias 'Editor' circularly references itself.
+        class/lib.ts(10,14): error TS2502: 'editor' is referenced directly or indirectly in its own type annotation.
+        class/main.ts(9,21): error TS7006: Parameter 'value' implicitly has an 'any' type.
+        generic/lib.ts(7,28): error TS2502: 'isInline' is referenced directly or indirectly in its own type annotation.
+        generic/lib.ts(9,13): error TS2456: Type alias 'Editor' circularly references itself.
+        generic/lib.ts(11,14): error TS2502: 'editor' is referenced directly or indirectly in its own type annotation.
+        generic/main.ts(9,21): error TS7006: Parameter 'value' implicitly has an 'any' type.
+        no-conditional/main.ts(9,30): error TS2367: This comparison appears to be unintentional because the types 'BaseEditor & ExtEditor' and 'string' have no overlap.
+        no-conditional/main.ts(10,9): error TS2322: Type '(editor: BaseEditor & ExtEditor, value: string) => boolean' is not assignable to type 'number'.
+        only-heir/main.ts(10,9): error TS2322: Type '(value: string) => boolean' is not assignable to type 'number'.
+        this/lib.ts(7,31): error TS2502: 'isInline' is referenced directly or indirectly in its own type annotation.
+        this/lib.ts(8,13): error TS2456: Type alias 'Editor' circularly references itself.
+        this/lib.ts(10,14): error TS2502: 'editor' is referenced directly or indirectly in its own type annotation.
+        this/main.ts(9,21): error TS7006: Parameter 'value' implicitly has an 'any' type.
+        two-heirs/main.ts(10,10): error TS2339: Property 'isInline' does not exist on type 'never'.
+          The intersection 'A & B<1> & B<2>' was reduced to 'never' because property 'b' has conflicting types in some constituents.
+        two-heirs/main.ts(10,21): error TS7006: Parameter 'value' implicitly has an 'any' type.
+        two-heirs/main.ts(11,32): error TS2339: Property 'isInline' does not exist on type 'never'.
+          The intersection 'A & B<1> & B<2>' was reduced to 'never' because property 'b' has conflicting types in some constituents."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("checks an editor type that a module augmentation extends with an intersection of plugins", async () => {
+      using dir = project({
+        "lib.ts": `export interface CustomTypes {
+  [key: string]: unknown
+}
+type ExtendedType<K extends string, B> = unknown extends CustomTypes[K] ? B : CustomTypes[K]
+type OmitFirstArg<F> = F extends (x: any, ...args: infer P) => infer R ? (...args: P) => R : never
+export type Operation = { type: 'insert_text'; text: string } | { type: 'remove_text'; text: string } | { type: 'set_selection' }
+export type Node = Editor | Element | Text
+export type Element = ExtendedType<'Element', BaseElement>
+export type Text = ExtendedType<'Text', BaseText>
+export interface BaseElement { children: Node[] }
+export interface BaseText { text: string }
+export interface BaseEditor {
+  children: Node[]
+  operations: Operation[]
+  isInline: OmitFirstArg<typeof Editor.isInline>
+  isVoid: OmitFirstArg<typeof Editor.isVoid>
+  insertText: OmitFirstArg<typeof Editor.insertText>
+  apply: (operation: Operation) => void
+}
+export type Editor = ExtendedType<'Editor', BaseEditor>
+export interface EditorInterface {
+  isInline: (editor: Editor, value: Element) => boolean
+  isVoid: (editor: Editor, value: Element) => boolean
+  insertText: (editor: Editor, text: string, options?: { voids?: boolean }) => void
+  isEditor: (value: any) => value is Editor
+}
+export declare const Editor: EditorInterface
+export declare function createEditor(): Editor
+`,
+        "react.ts": `import type { BaseEditor } from './lib'
+export interface ReactEditor extends BaseEditor {
+  insertData: (data: string) => void
+  hasRange: (editor: ReactEditor, range: number) => boolean
+}
+export declare function withReact<T extends BaseEditor>(editor: T): T & ReactEditor
+`,
+        "main.ts": `import { createEditor, Editor } from './lib'
+import type { BaseEditor } from './lib'
+import { withReact } from './react'
+import type { ReactEditor } from './react'
+
+type Paragraph = { type: 'paragraph'; children: CustomText[] }
+type CustomText = { text: string; bold?: true }
+
+declare module './lib' {
+  interface CustomTypes {
+    Editor: BaseEditor & ReactEditor & { extra: string }
+    Element: Paragraph
+    Text: CustomText
+  }
+}
+
+export function setUp() {
+  const editor = withReact(createEditor())
+  const { isInline } = editor
+  editor.isInline = element => element.type === 'paragraph' || isInline(element)
+  editor.insertText('a', { voids: true })
+  const changed = editor.operations.some(op => op.type !== 'set_selection')
+  const wrong: number = editor.extra
+  const alsoWrong: string = changed
+  editor.isVoid = element => element.kind
+  return Editor.isEditor(editor) ? editor.children.length : 0
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "main.ts(23,9): error TS2322: Type 'string' is not assignable to type 'number'.
+        main.ts(24,9): error TS2322: Type 'boolean' is not assignable to type 'string'.
+        main.ts(25,38): error TS2339: Property 'kind' does not exist on type 'Paragraph'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("treats a member that the types of a union or an intersection share as one symbol", async () => {
+      using dir = project({
+        "whole.ts": `// An assignment to an intersection also compares the properties of the intersection as a whole.
+type F<T> = T extends (k: infer K, ...rest: any[]) => infer R ? [K, R] : never
+interface Base { p: string; q: F<typeof v.m>[] }
+interface Heir extends Base {}
+type W = Heir & Base
+declare const v: { m: (k: W, n: number) => boolean }
+export const wrong: 0 = null! as Base["q"]
+`,
+        "private.ts": `// A private member makes the reduction look at the intersection's own properties.
+type F<T> = T extends (k: infer K, ...rest: any[]) => infer R ? [K, R] : never
+type Result = F<typeof v.m>
+declare abstract class Base { protected p: 1; private get r(): Array<Result> }
+interface Heir extends Base {}
+declare class Generic<U> extends Base { kind: U }
+type Keys = keyof (Heir & Base & Generic<2>)
+declare const v: { m: (k: Keys, n: number) => boolean }
+export const wrong: 0 = null! as Keys
+`,
+        "never.ts": `type F<T> = T extends (k: infer K, ...rest: any[]) => infer R ? [K, R] : never
+type Result = F<typeof v.m>
+declare abstract class Base { private p: typeof v.m; readonly q: Array<Result> }
+declare class Generic<U> extends Base { u: U }
+type IsNever = Base & Generic<2> extends never ? 1 : 2
+declare const v: { m: (k: IsNever, n: number) => boolean }
+export const wrong: 0 = null! as IsNever
+`,
+        "union.ts": `type F<T> = T extends (k: infer K, ...rest: any[]) => infer R ? [K, R] : never
+type Result = F<typeof v.m>
+declare abstract class Base { private p?: Array<Result>; q?: 1 }
+declare class Heir extends Base { self: this }
+type W = Heir | { p?: unknown } | Base
+type P = W["p"]
+declare const v: { m: (k: P, n: number) => boolean }
+export const wrong: 0 = null! as Base["q"]
+`,
+        "spread.ts": `// The spread drops \`readonly\`, so its \`p\` is another symbol than the one in \`C\` and \`Heir\`.
+declare class C { readonly p: number; q: number }
+interface Heir extends C {}
+declare const c: C
+const spread = { ...c }
+declare const withSpread: C & typeof spread
+withSpread.p = 1
+declare const withHeir: C & Heir
+withHeir.p = 1
+declare const either: Heir | C
+either.p = 1
+export const wrong: 0 = withSpread.p
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "never.ts(7,14): error TS2322: Type '2' is not assignable to type '0'.
+        private.ts(9,14): error TS2322: Type '"kind"' is not assignable to type '0'.
+        spread.ts(7,12): error TS2540: Cannot assign to 'p' because it is a read-only property.
+        spread.ts(9,10): error TS2540: Cannot assign to 'p' because it is a read-only property.
+        spread.ts(11,8): error TS2540: Cannot assign to 'p' because it is a read-only property.
+        spread.ts(12,14): error TS2322: Type 'number' is not assignable to type '0'.
+        union.ts(6,12): error TS2339: Property 'p' does not exist on type 'W'.
+        union.ts(8,14): error TS2322: Type '1 | undefined' is not assignable to type '0'.
+          Type 'undefined' is not assignable to type '0'.
+        whole.ts(7,14): error TS2322: Type '[Heir & Base, boolean][]' is not assignable to type '0'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     const jsdocErrors = {
       "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
       "a.js": `export {};

@@ -5099,7 +5099,16 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Shape<'s> {
         let IntersectionBuilder { mut b, lists, .. } = properties;
         b.shape.properties_of = Some(whole);
-        for (prop, list) in b.shape.props.iter_mut().zip(lists) {
+        let mut members_seen = crate::util::FxHashSet::<(Sym, PropFlags)>::default();
+        for (prop, mut list) in b.shape.props.iter_mut().zip(lists) {
+            // `propSet` has a symbol once. The constituents gave the same member different mappers.
+            members_seen.clear();
+            list.retain(|it| match it.source {
+                PropSource::Symbol(sym) if self.is_uninstantiated_member(it, sym) => {
+                    members_seen.insert((sym, it.flags.difference(PropFlags::THISLESS)))
+                }
+                _ => true,
+            });
             if list.len() > 1 {
                 let every = |flag: PropFlags| list.iter().all(|p| p.flags.contains(flag));
                 // Optional if every property, method or accessor among them is. A variable of a
@@ -8107,12 +8116,7 @@ impl<'p, 's> Checker<'p, 's> {
             if std::ptr::eq(prop, other) && member.mapper == later.mapper {
                 continue;
             }
-            // A spread copies a member's symbol under other modifiers, and that's another symbol.
-            if (prop.flags ^ other.flags)
-                .difference(PropFlags::THISLESS)
-                .is_empty()
-                && self.is_member_itself_in_both(prop, other)
-            {
+            if self.is_same_uninstantiated_member(prop, other) {
                 continue;
             }
             // FOR SPEED, neither is copied for the comparison, because a union's property contains a property of each

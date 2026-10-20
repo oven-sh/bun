@@ -3264,7 +3264,7 @@ mod spawn_process_body {
                 }
             }
 
-            Bun__currentSyncPID.store(0, core::sync::atomic::Ordering::Relaxed);
+            Bun__currentSyncPID.store(0, core::sync::atomic::Ordering::SeqCst);
             let _signals = SignalForwarding::register();
 
             // SAFETY: caller-built argv/envp are null-terminated C-string
@@ -3278,13 +3278,15 @@ mod spawn_process_body {
             // Negative → kill() in the C++ signal forwarder targets the pgroup, so
             // a SIGTERM/SIGINT delivered to `bun run` reaches every descendant
             // that hasn't `setsid()`-escaped.
+            // SeqCst: ordered against the handler's store-then-load, see
+            // `Bun__sendPendingSignalIfNecessary`.
             Bun__currentSyncPID.store(
                 if no_orphans {
                     -i64::from(process.pid)
                 } else {
                     i64::from(process.pid)
                 },
-                core::sync::atomic::Ordering::Relaxed,
+                core::sync::atomic::Ordering::SeqCst,
             );
 
             let mut jc = JobControl {

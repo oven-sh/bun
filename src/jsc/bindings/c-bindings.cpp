@@ -1018,9 +1018,11 @@ extern "C" int ffi_fileno(FILE* file)
 #include <signal.h>
 #include <pthread.h>
 
-// Note: We only ever use bun.spawnSync on the main thread.
-extern "C" int64_t Bun__currentSyncPID = 0;
-static int Bun__pendingSignalToSend = 0;
+// The handler below can run on any thread that does not block the signal,
+// concurrently with the spawning thread's store of the pid.
+extern "C" std::atomic<int64_t> Bun__currentSyncPID { 0 }; // `AtomicI64` on the Rust side.
+static_assert(std::atomic<int64_t>::is_always_lock_free);
+static std::atomic<int> Bun__pendingSignalToSend { 0 };
 static struct sigaction previous_actions[NSIG];
 
 // npm's signal list minus SIGIOT/SIGPOLL (aliases of SIGABRT/SIGIO; listing both would overwrite previous_actions[N]).
@@ -1058,45 +1060,42 @@ static struct sigaction previous_actions[NSIG];
     FOR_EACH_LINUX_ONLY_SIGNAL(M)
 #endif
 
-static void Bun__forwardSignalFromParentToChildAndRestorePreviousAction(pid_t pid, int sig)
+// `pid` is the child or (negative) the group it leads, never bun itself.
+static void Bun__forwardSignalToChild(pid_t pid, int sig)
 {
-    sigset_t restore_mask;
-    sigset_t mask;
-    sigemptyset(&mask);
-    sigaddset(&mask, sig);
-    sigemptyset(&restore_mask);
-    sigaddset(&restore_mask, sig);
-    pthread_sigmask(SIG_BLOCK, &mask, &restore_mask);
     kill(pid, sig);
-    pthread_sigmask(SIG_UNBLOCK, &restore_mask, nullptr);
 }
 
+// Store pid, then exchange the slot; the handler stores the slot, then loads
+// the pid. One side sees the other's store, and the exchange picks the sender.
 extern "C" void Bun__sendPendingSignalIfNecessary()
 {
-    int sig = Bun__pendingSignalToSend;
-    Bun__pendingSignalToSend = 0;
-    int pid = Bun__currentSyncPID;
+    int sig = Bun__pendingSignalToSend.exchange(0);
+    int64_t pid = Bun__currentSyncPID.load();
     if (sig == 0 || pid == 0)
         return;
 
-    Bun__forwardSignalFromParentToChildAndRestorePreviousAction(pid, sig);
+    Bun__forwardSignalToChild(pid, sig);
 }
 
 extern "C" void Bun__registerSignalsForForwarding()
 {
-    Bun__pendingSignalToSend = 0;
+    Bun__pendingSignalToSend.store(0);
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sigemptyset(&sa.sa_mask);
     // Not SA_RESETHAND: a nested runner sees the signal more than once and must not die on a repeat delivery.
     sa.sa_flags = 0;
     sa.sa_handler = [](int sig) {
-        if (Bun__currentSyncPID == 0) {
-            Bun__pendingSignalToSend = sig;
-            return;
+        int64_t pid = Bun__currentSyncPID.load();
+        if (pid == 0) {
+            Bun__pendingSignalToSend.store(sig);
+            pid = Bun__currentSyncPID.load();
+            if (pid == 0 || Bun__pendingSignalToSend.exchange(0) == 0)
+                return;
         }
 
-        Bun__forwardSignalFromParentToChildAndRestorePreviousAction(Bun__currentSyncPID, sig);
+        Bun__forwardSignalToChild(pid, sig);
     };
 
 #define REGISTER_SIGNAL(SIG)                                 \
@@ -1110,7 +1109,7 @@ extern "C" void Bun__registerSignalsForForwarding()
 
 extern "C" void Bun__unregisterSignalsForForwarding()
 {
-    Bun__currentSyncPID = 0;
+    Bun__currentSyncPID.store(0);
 
 #define UNREGISTER_SIGNAL(SIG)                                \
     if (sigaction(SIG, &previous_actions[SIG], NULL) == -1) { \

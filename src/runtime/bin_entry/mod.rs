@@ -175,6 +175,21 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
         libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
     }
 
+    // The blocked-signal mask survives execve, so a launcher that had (say)
+    // SIGTERM blocked starts bun with it blocked, and a blocked signal never
+    // reaches our handlers, JS `process.on(...)` listeners, or its default
+    // action. Clear it like Node's PlatformInit does; threads created from
+    // here on inherit the empty mask.
+    // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node.cc#L549-L555
+    // SAFETY: `set` is a valid out-pointer for `sigemptyset` and fully
+    // initialized before `pthread_sigmask` reads it; a null old-set is allowed.
+    #[cfg(unix)]
+    unsafe {
+        let mut set: libc::sigset_t = bun_core::ffi::zeroed();
+        libc::sigemptyset(&raw mut set);
+        libc::pthread_sigmask(libc::SIG_SETMASK, &raw const set, core::ptr::null_mut());
+    }
+
     // Windows-only startup. Must run before anything reads
     // `Bun.env`/`process.env` (env conversion).
     #[cfg(windows)]

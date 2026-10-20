@@ -230,7 +230,7 @@ extern "C" ssize_t posix_spawn_bun(
     char* const argv[],
     char* const envp[])
 {
-    sigset_t blockall, oldmask;
+    sigset_t blockall, oldmask, childmask;
     int res = 0, cs = 0;
 
 #if OS(DARWIN) || OS(FREEBSD)
@@ -260,6 +260,9 @@ extern "C" ssize_t posix_spawn_bun(
 #endif
 
     sigfillset(&blockall);
+    // The child execs with an empty mask, like libuv's uv__process_child_init:
+    // https://github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L374-L377
+    sigemptyset(&childmask);
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
 #if !OS(ANDROID)
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
@@ -303,8 +306,6 @@ extern "C" ssize_t posix_spawn_bun(
 #endif
 
     const auto startChild = [&]() -> ssize_t {
-        sigset_t childmask = oldmask;
-
         // Reset signals
         struct sigaction sa = { 0 };
         sa.sa_handler = SIG_DFL;

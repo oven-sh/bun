@@ -80,6 +80,7 @@ use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
 use crate::shell::states::r#async::Async as ShellAsync;
 
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
+use crate::webcore::file_sink::DispatchOwnerHookTask as DispatchOwnerHookFileSinkTask;
 use crate::webcore::file_sink::FlushPendingTask as FlushPendingFileSinkTask;
 #[cfg(not(windows))]
 use crate::webcore::file_sink::Poll as FileSinkPoll;
@@ -615,6 +616,12 @@ pub(crate) fn run_task(
         task_tag::FlushPendingFileSinkTask => unsafe {
             FlushPendingFileSinkTask::run_from_js_thread(cast_ptr!(FlushPendingFileSinkTask));
         },
+        // SAFETY: `cast_ptr!` yields the heap-allocated task; sole owner.
+        task_tag::DispatchOwnerHookFileSinkTask => unsafe {
+            DispatchOwnerHookFileSinkTask::run_from_js_thread(cast_ptr!(
+                DispatchOwnerHookFileSinkTask
+            ));
+        },
         // `cast_ptr!` yields the heap-allocated task; sole owner.
         task_tag::StreamPending => {
             StreamPending::run_from_js_thread(cast_ptr!(StreamPending));
@@ -728,7 +735,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 83,
+    task_tag::COUNT == 84,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1456,6 +1463,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             unreachable!("posix-only tag");
         }
         task_tag::FlushPendingFileSinkTask => release!(FlushPendingFileSinkTask),
+        task_tag::DispatchOwnerHookFileSinkTask => release!(DispatchOwnerHookFileSinkTask),
         task_tag::RuntimeTranspilerStore => release!(RuntimeTranspilerStore),
         task_tag::S3HttpDownloadStreamingTask => release!(S3HttpDownloadStreamingTask),
         task_tag::S3HttpSimpleTask => release!(S3HttpSimpleTask),

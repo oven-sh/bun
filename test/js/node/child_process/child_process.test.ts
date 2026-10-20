@@ -15,6 +15,7 @@ import {
   tls as tlsCert,
   tmpdirSync,
 } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   ChildProcess,
   exec,
@@ -797,6 +798,262 @@ describe("spawn()", () => {
       code: "EPIPE",
       syscall: "write",
       errno: -os.constants.errno.EPIPE,
+    });
+  });
+
+  // A chunk smaller than the sink's buffer threshold is not written when
+  // write() returns: the sink sends it later. These tests cover what the stream
+  // reports once that later send fails, or succeeds.
+  describe.skipIf(isWindows)("child.stdin small (buffered) writes", () => {
+    // The child closes its own stdin fd, signals ready on stdout, then stays alive.
+    async function spawnChildWithClosedStdin() {
+      const child = spawn(
+        bunExe(),
+        ["-e", `require("fs").closeSync(0); process.stdout.write("ready\\n"); setInterval(() => {}, 1e5);`],
+        { env: bunEnv, stdio: ["pipe", "pipe", "ignore"] },
+      );
+      await new Promise<void>((resolve, reject) => {
+        child.on("error", reject);
+        child.on("exit", () => reject(new Error("child exited before ready")));
+        child.stdout!.once("data", () => resolve());
+      });
+      child.removeAllListeners("error");
+      child.removeAllListeners("exit");
+      return child;
+    }
+
+    it("write(small, cb) reports EPIPE to the callback, then emits 'error' and destroys", async () => {
+      const child = await spawnChildWithClosedStdin();
+      try {
+        const events: string[] = [];
+        const errEv = Promise.withResolvers<any>();
+        const cb1 = Promise.withResolvers<any>();
+        child.stdin!.on("error", e => {
+          events.push("error");
+          errEv.resolve(e);
+        });
+        const closed = new Promise<void>(resolve => child.stdin!.on("close", resolve));
+        child.stdin!.on("close", () => events.push("close"));
+        child.stdin!.on("finish", () => events.push("finish"));
+        const r1 = child.stdin!.write("hello\n", e => {
+          events.push("callback");
+          cb1.resolve(e);
+        });
+        // Node calls the write callback asynchronously, never inside write().
+        expect(events).toEqual([]);
+
+        const [cb1Err, errEvErr] = await Promise.all([cb1.promise, errEv.promise, closed]);
+
+        expect({
+          r1,
+          cb1: cb1Err?.code,
+          errEv: errEvErr?.code,
+          syscall: errEvErr?.syscall,
+          destroyed: child.stdin!.destroyed,
+          writable: child.stdin!.writable,
+          events,
+        }).toEqual({
+          r1: true,
+          cb1: "EPIPE",
+          errEv: "EPIPE",
+          syscall: "write",
+          destroyed: true,
+          writable: false,
+          events: ["callback", "error", "close"],
+        });
+
+        const cb2 = Promise.withResolvers<any>();
+        const r2 = child.stdin!.write("more-bytes", e => cb2.resolve(e));
+        expect({ r2, cb2: (await cb2.promise)?.code }).toEqual({ r2: false, cb2: "ERR_STREAM_DESTROYED" });
+      } finally {
+        child.kill("SIGKILL");
+      }
+    });
+
+    it("write(small) with no callback still emits 'error'", async () => {
+      const child = await spawnChildWithClosedStdin();
+      try {
+        const errEv = Promise.withResolvers<any>();
+        child.stdin!.on("error", e => errEv.resolve(e));
+        child.stdin!.write("hello\n");
+        const err = await errEv.promise;
+        expect({ code: err.code, destroyed: child.stdin!.destroyed }).toEqual({ code: "EPIPE", destroyed: true });
+      } finally {
+        child.kill("SIGKILL");
+      }
+    });
+
+    it("end(small, cb) reports EPIPE and closes without 'finish'", async () => {
+      const child = await spawnChildWithClosedStdin();
+      try {
+        const events: string[] = [];
+        const errEv = Promise.withResolvers<any>();
+        const cb = Promise.withResolvers<any>();
+        child.stdin!.on("error", e => {
+          events.push("error");
+          errEv.resolve(e);
+        });
+        const closed = new Promise<void>(resolve => child.stdin!.on("close", resolve));
+        child.stdin!.on("finish", () => events.push("finish"));
+        child.stdin!.on("close", () => events.push("close"));
+        child.stdin!.end("hello\n", e => {
+          events.push("callback");
+          cb.resolve(e);
+        });
+        const [cbErr, errEvErr] = await Promise.all([cb.promise, errEv.promise, closed]);
+        expect({ cb: cbErr?.code, errEv: errEvErr?.code, events }).toEqual({
+          cb: "EPIPE",
+          errEv: "EPIPE",
+          events: ["callback", "error", "close"],
+        });
+      } finally {
+        child.kill("SIGKILL");
+      }
+    });
+
+    it("write callbacks run after the chunk is written, in order, in their own async context", async () => {
+      const als = new AsyncLocalStorage<string>();
+      const child = spawn(bunExe(), ["-e", `process.stdin.pipe(process.stdout)`], {
+        env: bunEnv,
+        stdio: ["pipe", "pipe", "ignore"],
+      });
+      try {
+        const order: string[] = [];
+        const done = Promise.withResolvers<void>();
+        for (const name of ["a", "b", "c"]) {
+          als.run(name, () => {
+            child.stdin!.write(name, () => {
+              order.push(`${name}:${als.getStore()}`);
+              if (order.length === 3) done.resolve();
+            });
+          });
+        }
+        // Not yet: the sink has not written anything.
+        expect(order).toEqual([]);
+        await done.promise;
+        expect(order).toEqual(["a:a", "b:b", "c:c"]);
+
+        let echoed = "";
+        for await (const chunk of child.stdout!) {
+          echoed += chunk;
+          if (echoed.length >= 3) break;
+        }
+        expect(echoed).toBe("abc");
+      } finally {
+        child.kill("SIGKILL");
+      }
+    });
+
+    it("a write callback that throws does not stop the callbacks after it", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { spawn } = require("node:child_process");
+            const child = spawn("cat", [], { stdio: ["pipe", "ignore", "ignore"] });
+            const seen = [];
+            process.on("uncaughtException", e => seen.push("uncaught:" + e.message));
+            child.stdin.write("a", () => { throw new Error("boom"); });
+            child.stdin.write("b", () => seen.push("b"));
+            child.stdin.end("c", () => {
+              seen.push("c");
+              console.log(JSON.stringify(seen));
+            });
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify(["uncaught:boom", "b", "c"]),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // Each row is a script that ends with `stdin` closed; the events it logs
+    // must match node's.
+    const catChild = `const child = spawn("cat", [], { stdio: ["pipe", "ignore", "ignore"] }); const stdin = child.stdin;`;
+    const logEvents = `
+      const events = [];
+      const code = e => (e ? e.code ?? e.message : null);
+      stdin.on("error", e => events.push("error:" + code(e)));
+      stdin.on("finish", () => events.push("finish"));
+      stdin.on("close", () => { console.log(JSON.stringify(events)); child.kill("SIGKILL"); });
+    `;
+    it.each([
+      [
+        "a first write of 64 KiB (written inline, not buffered) calls back",
+        `${catChild}${logEvents} stdin.write(Buffer.alloc(65536, 0x61), e => { events.push("cb:" + code(e)); stdin.destroy(); });`,
+        ["cb:null"],
+      ],
+      [
+        "an empty chunk calls back",
+        `${catChild}${logEvents} stdin.write("", e => { events.push("cb:" + code(e)); stdin.destroy(); });`,
+        ["cb:null"],
+      ],
+      [
+        "end(empty chunk, cb) finishes",
+        `${catChild}${logEvents} stdin.end("", e => events.push("cb:" + code(e)));`,
+        ["cb:null", "finish"],
+      ],
+      [
+        "destroy() after a buffered write settles its callback with null",
+        `${catChild}${logEvents} stdin.write("a", e => events.push("a:" + code(e))); stdin.destroy();`,
+        ["a:null"],
+      ],
+      [
+        "destroy(err) after a buffered write: the callback gets null, the stream gets err",
+        `${catChild}${logEvents} stdin.write("a", e => events.push("a:" + code(e))); stdin.destroy(new Error("boom"));`,
+        ["a:null", "error:boom"],
+      ],
+      [
+        "a backpressured write and a buffered write call back in order",
+        `${catChild}${logEvents} stdin.write(Buffer.alloc(1 << 20, 0x61), e => events.push("big:" + code(e))); stdin.write("x", e => { events.push("small:" + code(e)); stdin.destroy(); });`,
+        ["big:null", "small:null"],
+      ],
+      [
+        "a child killed after the flush: the callback gets null and there is no 'error'",
+        `const child = spawn("sleep", ["30"], { stdio: ["pipe", "ignore", "ignore"] }); const stdin = child.stdin; ${logEvents}
+         stdin.write("x", e => events.push("cb:" + code(e))); setImmediate(() => child.kill("SIGKILL"));`,
+        ["cb:null"],
+      ],
+    ])("%s", async (_name, script, expected) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `const { spawn } = require("node:child_process"); ${script}`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify(expected),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("write callbacks keep their async context and 'error' fires under the failing write's", async () => {
+      const als = new AsyncLocalStorage<string>();
+      const child = await spawnChildWithClosedStdin();
+      try {
+        const seen: string[] = [];
+        const done = Promise.withResolvers<void>();
+        child.stdin!.on("error", () => {
+          seen.push("error:" + als.getStore());
+          done.resolve();
+        });
+        for (const name of ["first", "second"]) {
+          als.run(name, () => child.stdin!.write("x", () => seen.push(`cb:${name}:${als.getStore()}`)));
+        }
+        await done.promise;
+        expect(seen).toEqual(["cb:first:first", "cb:second:second", "error:first"]);
+      } finally {
+        child.kill("SIGKILL");
+      }
     });
   });
 });

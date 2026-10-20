@@ -80,7 +80,7 @@ const headObserver = new MutationObserver(list => {
       len = mutation.addedNodes.length;
       while (i < len) {
         const node = mutation.addedNodes[i];
-        if (node instanceof HTMLLinkElement) {
+        if (node instanceof HTMLLinkElement && node.rel === "stylesheet") {
           maybeAddCssLink(node);
         }
         i++;
@@ -107,6 +107,7 @@ const headObserver = new MutationObserver(list => {
 });
 
 function maybeAddCssLink(link: HTMLLinkElement) {
+  if (!link.href) return;
   const pathname = new URL(link.href).pathname;
   if (pathname.startsWith("/_bun/asset/")) {
     const id = pathname.slice("/_bun/asset/".length).slice(0, 16);

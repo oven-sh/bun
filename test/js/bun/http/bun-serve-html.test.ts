@@ -2010,3 +2010,80 @@ describe("production headers and import.meta.env", () => {
     expect(results).toEqual(cases.map(([, , expected]) => expected));
   });
 });
+
+// Not concurrent: six debug+ASAN processes at once take each case close to its time limit.
+describe("bunfig [serve.static] minify, define and sourcemap", () => {
+  // One statement per line, and no quote inside a regex literal (https://github.com/oven-sh/bun/issues/37326):
+  // the stdin entry feeds this to the REPL line by line.
+  const script = (development: string) => `import index from "./index.html";
+const server = Bun.serve({ port: 0, development: ${development}, routes: { "/": index } });
+const html = await (await fetch(server.url)).text();
+const jsPath = html.split('src="')[1].split('"')[0];
+const js = await (await fetch(new URL(jsPath, server.url))).text();
+const mapRes = await fetch(new URL(jsPath + ".map", server.url));
+console.log("RESULT " + JSON.stringify({ js, mapStatus: mapRes.status }));
+await server.stop(true);
+`;
+
+  // `bun repl` boots its own VM. It builds the route from the same table as `bun <file>`.
+  const entries: [name: string, spawn: (script: string) => { cmd: string[]; stdin?: string }][] = [
+    ["bun serve.ts", () => ({ cmd: ["serve.ts"] })],
+    ["bun repl -e", script => ({ cmd: ["repl", "-e", script] })],
+    ["bun repl, typed on stdin", script => ({ cmd: ["repl"], stdin: script + ".exit\n" })],
+  ];
+
+  const minify = (on: boolean) => ({ identifiers: on, whitespace: on, syntax: on });
+  const cases: [development: string, keys: string, expected: object][] = [
+    // Production defaults to a minified chunk and no sourcemap.
+    [
+      "false",
+      `minify = false\nsourcemap = "linked"`,
+      { minify: minify(false), define: true, sourceMappingURL: true, mapStatus: 200 },
+    ],
+    // Development defaults to an unminified chunk and a linked sourcemap.
+    [
+      "{ hmr: false }",
+      `minify = true\nsourcemap = "none"`,
+      { minify: minify(true), define: true, sourceMappingURL: false, mapStatus: 404 },
+    ],
+  ];
+
+  describe.each(cases)("development: %s", (development, keys, expected) => {
+    test.each(entries)("%s", async (_, spawn) => {
+      using dir = tempDir("html-serve-static-table", {
+        "index.html": `<!DOCTYPE html><html><body><script type="module" src="./app.ts"></script></body></html>`,
+        "app.ts": `function describeTheFlag(flag: string) {\n  return flag === undefined ? "none" : "MARKER " + flag;\n}\nconsole.log(describeTheFlag(BUILD_FLAG));\n`,
+        "bunfig.toml": `[serve.static]\n${keys}\n\n[serve.static.define]\nBUILD_FLAG = '"from-bunfig"'\n`,
+        "serve.ts": script(development),
+      });
+      // The REPL keeps .bun_repl_history in $HOME (USERPROFILE on Windows).
+      using home = tempDir("html-serve-static-table-home", {});
+      const { cmd, stdin } = spawn(script(development));
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...cmd],
+        env: { ...bunEnv, TERM: "dumb", NO_COLOR: "1", HOME: String(home), USERPROFILE: String(home) },
+        cwd: String(dir),
+        stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const result = stdout.split(/\r?\n/).find(line => line.startsWith("RESULT "));
+      if (exitCode !== 0 || result === undefined) throw new Error(stdout + "\n" + stderr);
+      const { js, mapStatus } = JSON.parse(result.slice("RESULT ".length)) as { js: string; mapStatus: number };
+
+      // Each minify pass shows in app.ts: identifiers renames the function, whitespace joins the lines, syntax
+      // writes `void 0` for `undefined`.
+      expect({
+        minify: {
+          identifiers: !js.includes("describeTheFlag"),
+          whitespace: !js.includes("\n  return "),
+          syntax: js.includes("void 0"),
+        },
+        define: js.includes(`"from-bunfig"`) && !js.includes("BUILD_FLAG"),
+        sourceMappingURL: js.includes("sourceMappingURL="),
+        mapStatus,
+      }).toEqual(expected);
+    });
+  });
+});

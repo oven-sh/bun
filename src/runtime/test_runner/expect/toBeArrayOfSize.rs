@@ -26,7 +26,7 @@ pub(crate) fn to_be_array_of_size(
     let size = arguments[0];
     size.ensure_still_alive();
 
-    if !size.is_any_int() {
+    if !size.is_integer() {
         return Err(global.throw(format_args!("toBeArrayOfSize() requires the first argument to be a number")));
     }
 

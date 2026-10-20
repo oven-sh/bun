@@ -3037,6 +3037,34 @@ pub(crate) mod mock {
         Ok(value.get(global_this, "value")?.unwrap_or(JSValue::UNDEFINED))
     }
 
+    /// Jest's `ensureExpectedIsNonNegativeInteger` for `toHaveBeenCalledTimes` / `toHaveReturnedTimes`.
+    pub(crate) fn expected_count(
+        global: &JSGlobalObject,
+        arguments: &[JSValue],
+        matcher_name: &'static str,
+    ) -> JsResult<i64> {
+        if let Some(&expected) = arguments.first() {
+            if expected.is_int32() {
+                if expected.as_int32() >= 0 {
+                    return Ok(i64::from(expected.as_int32()));
+                }
+            } else if let Some(count) = expected.get_number() {
+                if count >= 0.0 && count <= bun_jsc::MAX_SAFE_INTEGER as f64 && count.trunc() == count {
+                    return Ok(count as i64);
+                }
+            }
+        }
+        Err(expected_count_error(global, matcher_name))
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn expected_count_error(global: &JSGlobalObject, matcher_name: &'static str) -> JsError {
+        global.throw_invalid_arguments(format_args!(
+            "{matcher_name}() requires 1 non-negative integer argument"
+        ))
+    }
+
     // split lifetimes — `&'a mut Formatter<'a>` is the invariant-borrow trap
     // (forces the &mut to live as long as the Formatter's own param, which outlives the
     // local). `'g` tracks the JSGlobalObject borrow inside Formatter; `'a` is the short

@@ -17,13 +17,7 @@ pub(crate) fn to_have_been_called_times(
         super::mock::MockKind::Calls,
     )?;
 
-    if arguments.len() < 1 || !arguments[0].is_uint32_as_any_int() {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "toHaveBeenCalledTimes() requires 1 non-negative integer argument"
-        )));
-    }
-
-    let times = arguments[0].to_int64();
+    let times = super::mock::expected_count(global, arguments, "toHaveBeenCalledTimes")?;
 
     let mut pass = calls.get_length(global)? as i64 == times;
 

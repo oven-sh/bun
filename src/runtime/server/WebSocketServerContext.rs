@@ -301,7 +301,7 @@ pub(crate) fn on_create(
 
     if let Some(value) = object.get(global_object, "maxPayloadLength")? {
         if !value.is_undefined_or_null() {
-            if !value.is_any_int() {
+            if !value.is_integer() {
                 return Err(global_object.throw_invalid_arguments(format_args!(
                     "websocket expects maxPayloadLength to be an integer"
                 )));
@@ -312,7 +312,7 @@ pub(crate) fn on_create(
 
     if let Some(value) = object.get(global_object, "idleTimeout")? {
         if !value.is_undefined_or_null() {
-            if !value.is_any_int() {
+            if !value.is_integer() {
                 return Err(global_object.throw_invalid_arguments(format_args!(
                     "websocket expects idleTimeout to be an integer"
                 )));
@@ -336,7 +336,7 @@ pub(crate) fn on_create(
     }
     if let Some(value) = object.get(global_object, "backpressureLimit")? {
         if !value.is_undefined_or_null() {
-            if !value.is_any_int() {
+            if !value.is_integer() {
                 return Err(global_object.throw_invalid_arguments(format_args!(
                     "websocket expects backpressureLimit to be an integer"
                 )));

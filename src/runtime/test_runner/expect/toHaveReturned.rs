@@ -39,7 +39,7 @@ fn to_have_returned_times_fn(
     )?;
     let mut returns = returns_arr.array_iterator(global)?;
 
-    let expected_success_count: i32 = if mode == Mode::ToHaveReturned {
+    let expected_success_count: i64 = if mode == Mode::ToHaveReturned {
         if arguments.len() > 0 && !arguments[0].is_undefined() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "{}() must not have an argument",
@@ -48,19 +48,12 @@ fn to_have_returned_times_fn(
         }
         1
     } else {
-        if arguments.len() < 1 || !arguments[0].is_uint32_as_any_int() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "{}() requires 1 non-negative integer argument",
-                mode.tag_name()
-            )));
-        }
-
-        arguments[0].coerce::<i32>(global)?
+        mock::expected_count(global, arguments, mode.tag_name())?
     };
 
     let mut pass;
 
-    let mut actual_success_count: i32 = 0;
+    let mut actual_success_count: i64 = 0;
     let mut total_call_count: i32 = 0;
     while let Some(item) = returns.next()? {
         match mock::jest_mock_return_object_type(global, item)? {

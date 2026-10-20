@@ -430,9 +430,7 @@ impl Checker<'_, '_> {
         } else {
             (2757, 2756, 2755, 2758)
         };
-        // `apparent_type` leaves some intersections unchanged.
-        let printed = self.apparent_type_of_intersection(apparent);
-        let whole = self.type_to_string(printed);
+        let whole = self.type_to_string(apparent);
         if !self.is_union(apparent) {
             return vec![line(none_of_type, whole, 1)];
         }

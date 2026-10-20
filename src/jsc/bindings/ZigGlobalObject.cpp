@@ -69,6 +69,8 @@
 #include "BunClientData.h"
 #include "BunObject.h"
 #include "GeneratedBunObject.h"
+#include "GeneratedCrypto.h"
+#include "GeneratedTextDecoder.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"
 #include "BunSecureContextCache.h"

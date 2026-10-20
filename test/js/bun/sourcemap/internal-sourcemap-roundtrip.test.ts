@@ -269,7 +269,7 @@ describe("InternalSourceMap.toVLQ", () => {
         `const { internalSourceMap } = require("bun:internal-for-testing");
          // Blob layout (see src/sourcemap/InternalSourceMap.rs):
          // [0..8] total_len u64, [8..16] mapping_count u64,
-         // [16..24] input_line_count u64, [24..28] sync_count u32,
+         // [16..24] unused, [24..28] sync_count u32,
          // [28..32] stream_offset u32, [32..56] SyncEntry, [56..88] window
          // header (count=1, no deltas), [88] stream tail pad.
          const blob = new Uint8Array(89);

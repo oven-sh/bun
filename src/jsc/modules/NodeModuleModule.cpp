@@ -618,8 +618,11 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
 
 static JSValue getModuleCacheObject(VM& vm, JSObject* moduleObject)
 {
-    return uncheckedDowncast<Zig::GlobalObject>(moduleObject->globalObject())
-        ->lazyRequireCacheObject();
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(moduleObject->globalObject());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue cache = Bun::requireCacheOf(globalObject, Bun::testFileModuleGraph(globalObject), nullptr);
+    ASSERT_UNUSED(scope, !scope.exception());
+    return cache;
 }
 
 static JSValue getModuleExtensionsObject(VM& vm, JSObject* moduleObject)

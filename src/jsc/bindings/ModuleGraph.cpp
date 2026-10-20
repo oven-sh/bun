@@ -6,6 +6,7 @@
 #include "BunProcess.h"
 #include "ErrorCode.h"
 #include "isBuiltinModule.h"
+#include "JSCommonJSModule.h"
 #include "JSDOMExceptionHandling.h"
 #include "NodeValidator.h"
 #include "PathInlines.h"
@@ -768,6 +769,12 @@ extern "C" uint32_t Bun__TestFile__enterModuleGraph(Zig::GlobalObject* globalObj
     moduleGraphState(globalObject).testFile.set(vm, graph);
     // argv[1] is the test file's path.
     globalObject->processObject()->clearCachedArgv();
+    // node:module is shared by all files, and `Module._cache` is the running file's require.cache.
+    if (globalObject->m_nodeModuleConstructor.isInitialized()) {
+        JSValue cache = requireCacheOf(globalObject, graph, nullptr);
+        scope.assertNoException();
+        globalObject->m_nodeModuleConstructor.get(globalObject)->putDirect(vm, Identifier::fromString(vm, "_cache"_s), cache);
+    }
     return graph->context().identifier();
 }
 

@@ -452,20 +452,22 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
 
 JSC_DEFINE_CUSTOM_GETTER(jsRequireCacheGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     auto* requirer = requirerOf(JSValue::decode(thisValue));
-    JSModuleGraph* graph = requirer ? requirer->moduleGraph() : nullptr;
+    return JSValue::encode(requireCacheOf(uncheckedDowncast<Zig::GlobalObject>(globalObject), requirer ? requirer->moduleGraph() : nullptr, requirer));
+}
+
+JSValue requireCacheOf(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSCommonJSModule* owner)
+{
     if (!graph)
-        return JSValue::encode(thisObject->lazyRequireCacheObject());
-    // A require() that belongs to a Bun.ModuleGraph: a view of that graph's cache.
+        return globalObject->lazyRequireCacheObject();
     if (JSValue existing = graph->requireCache())
-        return JSValue::encode(existing);
+        return existing;
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue cache = createRequireCacheObject(globalObject, graph->requireMap(), requirer);
+    JSValue cache = createRequireCacheObject(globalObject, graph->requireMap(), owner);
     RETURN_IF_EXCEPTION(scope, {});
     graph->setRequireCache(vm, cache);
-    return JSValue::encode(cache);
+    return cache;
 }
 
 JSValue createRequireCacheObject(JSC::JSGlobalObject* globalObject, JSC::JSMap* requireMap, JSCommonJSModule* owner)

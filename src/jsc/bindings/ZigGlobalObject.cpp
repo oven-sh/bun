@@ -877,13 +877,13 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
 }
 
 // The loader whose registry require.cache / require() of `requirer` (a CommonJS module, or
-// undefined) reads: its Bun.ModuleGraph's — null once that is disposed — or the global object's.
+// undefined) reads: its Bun.ModuleGraph's — null once that is disposed — or else the running test file's.
 static JSC::JSModuleLoader* moduleLoaderOfRequirer(JSC::JSGlobalObject* globalObject, JSValue requirer)
 {
     auto* module = dynamicDowncast<Bun::JSCommonJSModule>(requirer);
     if (auto* graph = module ? module->moduleGraph() : nullptr)
         return graph->disposed() ? nullptr : graph->loader();
-    return globalObject->moduleLoader();
+    return Bun::testFileModuleLoader(defaultGlobalObject(globalObject));
 }
 
 // A key that is not an atom already names no module, and does not become one.

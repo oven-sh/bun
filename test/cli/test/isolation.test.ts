@@ -1596,6 +1596,22 @@ describe.concurrent("bun test --isolate=modules", () => {
     expect((await passes(files, 1)).split("\n").filter(line => line.startsWith("["))).toEqual(["[]"]);
   });
 
+  test("Module._cache is the running file's require.cache", async () => {
+    const file = `
+      const Module = require("node:module");
+      test("evicts a module", () => {
+        const path = require.resolve("./counter.cjs");
+        const first = require(path);
+        const isCached = path in Module._cache;
+        delete Module._cache[path];
+        console.log(JSON.stringify([Module._cache === require.cache, isCached, require(path) === first]));
+      });
+    `;
+    const files = { "counter.cjs": `module.exports = {};`, "a.test.js": file, "b.test.js": file };
+    const lines = (await passes(files, 2)).split("\n").filter(line => line.startsWith("["));
+    expect(lines).toEqual(Array(2).fill(JSON.stringify([true, true, false])));
+  });
+
   test("the global object and the builtin modules are the same for every file", async () => {
     const files = {
       "a.test.js": `import fs from "node:fs"; test("a", () => { fs.arrayOfA = Array; });`,

@@ -535,11 +535,20 @@ impl FlexHandler {
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
         macro_rules! maybe_flush {
-            ($prop:ident, $val:expr, $vp:expr) => {{
+            ($prop:ident, $val:expr, $vp:expr) => {
+                maybe_flush!($prop, $val, $vp, context.targets.derives_prefixes())
+            };
+            // `flush` prints a 2009 or 2012 property with the prefixes as written.
+            ($prop:ident, $val:expr, $vp:expr, legacy) => {
+                maybe_flush!($prop, $val, $vp, false)
+            };
+            ($prop:ident, $val:expr, $vp:expr, $flush_derives_prefixes:expr) => {{
                 // If two vendor prefixes for the same property have different
                 // values, we need to flush what we have immediately to preserve order.
                 if let Some(field) = &self.$prop {
-                    if !(field.0 == *$val) && !field.1.contains(*$vp) {
+                    if !(field.0 == *$val)
+                        && field.1.must_flush_before(*$vp, || $flush_derives_prefixes)
+                    {
                         self.flush(dest, context);
                     }
                 }
@@ -547,8 +556,8 @@ impl FlexHandler {
         }
 
         macro_rules! property_helper {
-            ($prop:ident, $val:expr, $vp:expr) => {{
-                maybe_flush!($prop, $val, $vp);
+            ($prop:ident, $val:expr, $vp:expr $(, $legacy:ident)?) => {{
+                maybe_flush!($prop, $val, $vp $(, $legacy)?);
 
                 // Otherwise, update the value and add the prefix
                 // Every payload here is `Clone` (Copy enums / f32 / i32 /
@@ -563,6 +572,22 @@ impl FlexHandler {
             }};
         }
 
+        // `flush` prints the 2012 slots first, so a standard value that prints for `-ms-` goes out before a 2012 declaration with another value is stored.
+        macro_rules! flush_standard_before_2012 {
+            ($standard:ident, $feature:ident, $val:expr) => {{
+                if let Some((value, prefixes)) = &self.$standard {
+                    if value != $val
+                        && context
+                            .targets
+                            .prefixes(*prefixes, PrefixFeature::$feature)
+                            .contains(VendorPrefix::MS)
+                    {
+                        self.flush(dest, context);
+                    }
+                }
+            }};
+        }
+
         match property {
             Property::FlexDirection(val) => {
                 if context.targets.browsers.is_some() {
@@ -571,15 +596,17 @@ impl FlexHandler {
                 }
                 property_helper!(direction, &val.0, &val.1);
             }
-            Property::BoxOrient(val) => property_helper!(box_orient, &val.0, &val.1),
-            Property::BoxDirection(val) => property_helper!(box_direction, &val.0, &val.1),
+            Property::BoxOrient(val) => property_helper!(box_orient, &val.0, &val.1, legacy),
+            Property::BoxDirection(val) => {
+                property_helper!(box_direction, &val.0, &val.1, legacy)
+            }
             Property::FlexWrap(val) => {
                 if context.targets.browsers.is_some() {
                     self.box_lines = None;
                 }
                 property_helper!(wrap, &val.0, &val.1);
             }
-            Property::BoxLines(val) => property_helper!(box_lines, &val.0, &val.1),
+            Property::BoxLines(val) => property_helper!(box_lines, &val.0, &val.1, legacy),
             Property::FlexFlow(val) => {
                 if context.targets.browsers.is_some() {
                     self.box_direction = None;
@@ -595,22 +622,31 @@ impl FlexHandler {
                 }
                 property_helper!(grow, &val.0, &val.1);
             }
-            Property::BoxFlex(val) => property_helper!(box_flex, &val.0, &val.1),
-            Property::FlexPositive(val) => property_helper!(flex_positive, &val.0, &val.1),
+            Property::BoxFlex(val) => property_helper!(box_flex, &val.0, &val.1, legacy),
+            Property::FlexPositive(val) => {
+                flush_standard_before_2012!(grow, FlexGrow, &val.0);
+                property_helper!(flex_positive, &val.0, &val.1, legacy);
+            }
             Property::FlexShrink(val) => {
                 if context.targets.browsers.is_some() {
                     self.flex_negative = None;
                 }
                 property_helper!(shrink, &val.0, &val.1);
             }
-            Property::FlexNegative(val) => property_helper!(flex_negative, &val.0, &val.1),
+            Property::FlexNegative(val) => {
+                flush_standard_before_2012!(shrink, FlexShrink, &val.0);
+                property_helper!(flex_negative, &val.0, &val.1, legacy);
+            }
             Property::FlexBasis(val) => {
                 if context.targets.browsers.is_some() {
                     self.preferred_size = None;
                 }
                 property_helper!(basis, &val.0, &val.1);
             }
-            Property::FlexPreferredSize(val) => property_helper!(preferred_size, &val.0, &val.1),
+            Property::FlexPreferredSize(val) => {
+                flush_standard_before_2012!(basis, FlexBasis, &val.0);
+                property_helper!(preferred_size, &val.0, &val.1, legacy);
+            }
             Property::Flex(val) => {
                 if context.targets.browsers.is_some() {
                     self.box_flex = None;
@@ -632,8 +668,13 @@ impl FlexHandler {
                 }
                 property_helper!(order, &val.0, &val.1);
             }
-            Property::BoxOrdinalGroup(val) => property_helper!(box_ordinal_group, &val.0, &val.1),
-            Property::FlexOrder(val) => property_helper!(flex_order, &val.0, &val.1),
+            Property::BoxOrdinalGroup(val) => {
+                property_helper!(box_ordinal_group, &val.0, &val.1, legacy)
+            }
+            Property::FlexOrder(val) => {
+                flush_standard_before_2012!(order, Order, &val.0);
+                property_helper!(flex_order, &val.0, &val.1, legacy);
+            }
             Property::Unparsed(val) => {
                 if Self::is_flex_property(&val.property_id) {
                     self.flush(dest, context);

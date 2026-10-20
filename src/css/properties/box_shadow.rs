@@ -205,7 +205,11 @@ impl BoxShadowHandler {
                 // update in place (avoids holding &mut self.box_shadows
                 // across self.flush()).
                 let needs_flush = if let Some(bxs) = &self.box_shadows {
-                    !SmallList::eql(&bxs.0, box_shadows) && !bxs.1.contains(prefix)
+                    // Only the first flush of a block derives the prefixes from the targets.
+                    !SmallList::eql(&bxs.0, box_shadows)
+                        && bxs.1.must_flush_before(prefix, || {
+                            !self.flushed && context.targets.derives_prefixes()
+                        })
                 } else {
                     false
                 };

@@ -960,11 +960,19 @@ pub struct AlignHandler {
 // expand at each call site.
 
 macro_rules! handle_property_maybe_flush {
-    ($this:expr, $dest:expr, $context:expr, $field:ident, $val:expr, $vp:expr) => {{
+    // `flush` derives the prefixes of a standard property from the targets, also without targets.
+    ($this:expr, $dest:expr, $context:expr, $field:ident, $val:expr, $vp:expr) => {
+        handle_property_maybe_flush!($this, $dest, $context, $field, $val, $vp, true)
+    };
+    // `flush` prints a 2009 or 2012 property with the prefixes as written.
+    ($this:expr, $dest:expr, $context:expr, $field:ident, $val:expr, $vp:expr, legacy) => {
+        handle_property_maybe_flush!($this, $dest, $context, $field, $val, $vp, false)
+    };
+    ($this:expr, $dest:expr, $context:expr, $field:ident, $val:expr, $vp:expr, $flush_derives_prefixes:literal) => {{
         // If two vendor prefixes for the same property have different
         // values, we need to flush what we have immediately to preserve order.
         if let Some(v) = &$this.$field {
-            if !($val == &v.0) && !v.1.contains($vp) {
+            if !($val == &v.0) && v.1.must_flush_before($vp, || $flush_derives_prefixes) {
                 $this.flush($dest, $context);
             }
         }
@@ -972,8 +980,8 @@ macro_rules! handle_property_maybe_flush {
 }
 
 macro_rules! handle_property_helper {
-    ($this:expr, $dest:expr, $context:expr, $field:ident, $val:expr, $vp:expr) => {{
-        handle_property_maybe_flush!($this, $dest, $context, $field, $val, $vp);
+    ($this:expr, $dest:expr, $context:expr, $field:ident, $val:expr, $vp:expr $(, $legacy:ident)?) => {{
+        handle_property_maybe_flush!($this, $dest, $context, $field, $val, $vp $(, $legacy)?);
         // Otherwise, update the value and add the prefix.
         if let Some(tuple) = &mut $this.$field {
             tuple.0 = ($val).clone();
@@ -1180,7 +1188,7 @@ impl AlignHandler {
                 handle_property_helper!(self, dest, context, align_content, val, *vp);
             }
             Property::FlexLinePack((val, vp)) => {
-                handle_property_helper!(self, dest, context, flex_line_pack, val, *vp);
+                handle_property_helper!(self, dest, context, flex_line_pack, val, *vp, legacy);
             }
             Property::JustifyContent((val, vp)) => {
                 self.box_pack = None;
@@ -1188,10 +1196,10 @@ impl AlignHandler {
                 handle_property_helper!(self, dest, context, justify_content, val, *vp);
             }
             Property::BoxPack((val, vp)) => {
-                handle_property_helper!(self, dest, context, box_pack, val, *vp);
+                handle_property_helper!(self, dest, context, box_pack, val, *vp, legacy);
             }
             Property::FlexPack((val, vp)) => {
-                handle_property_helper!(self, dest, context, flex_pack, val, *vp);
+                handle_property_helper!(self, dest, context, flex_pack, val, *vp, legacy);
             }
             Property::PlaceContent(val) => {
                 self.flex_line_pack = None;
@@ -1235,7 +1243,7 @@ impl AlignHandler {
                 handle_property_helper!(self, dest, context, align_self, val, *vp);
             }
             Property::FlexItemAlign((val, vp)) => {
-                handle_property_helper!(self, dest, context, flex_item_align, val, *vp);
+                handle_property_helper!(self, dest, context, flex_item_align, val, *vp, legacy);
             }
             Property::JustifySelf(val) => {
                 self.justify_self = Some(val.clone());
@@ -1259,10 +1267,10 @@ impl AlignHandler {
                 handle_property_helper!(self, dest, context, align_items, val, *vp);
             }
             Property::BoxAlign((val, vp)) => {
-                handle_property_helper!(self, dest, context, box_align, val, *vp);
+                handle_property_helper!(self, dest, context, box_align, val, *vp, legacy);
             }
             Property::FlexAlign((val, vp)) => {
-                handle_property_helper!(self, dest, context, flex_align, val, *vp);
+                handle_property_helper!(self, dest, context, flex_align, val, *vp, legacy);
             }
             Property::JustifyItems(val) => {
                 self.justify_items = Some(val.clone());

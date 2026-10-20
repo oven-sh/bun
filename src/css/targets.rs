@@ -108,24 +108,25 @@ impl Targets {
         }
     }
 
+    /// Whether [`Self::prefixes`] replaces a set that has the unprefixed name with the prefixes these targets need.
+    pub(crate) fn derives_prefixes(&self) -> bool {
+        !self.exclude.contains(Features::VENDOR_PREFIXES)
+            && (self.include.contains(Features::VENDOR_PREFIXES) || self.browsers.is_some())
+    }
+
     pub(crate) fn prefixes(
         &self,
         prefix: VendorPrefix,
         feature: css::prefixes::Feature,
     ) -> VendorPrefix {
-        if prefix.contains(VendorPrefix::NONE) && !self.exclude.contains(Features::VENDOR_PREFIXES)
-        {
-            if self.include.contains(Features::VENDOR_PREFIXES) {
-                VendorPrefix::all()
-            } else {
-                if let Some(b) = self.browsers {
-                    feature.prefixes_for(&b)
-                } else {
-                    prefix
-                }
+        if !(prefix.contains(VendorPrefix::NONE) && self.derives_prefixes()) {
+            return prefix;
+        }
+        match self.browsers {
+            Some(b) if !self.include.contains(Features::VENDOR_PREFIXES) => {
+                feature.prefixes_for(&b)
             }
-        } else {
-            prefix
+            _ => VendorPrefix::all(),
         }
     }
 

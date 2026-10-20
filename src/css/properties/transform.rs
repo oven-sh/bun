@@ -960,7 +960,10 @@ impl TransformHandler {
                 // Compute the predicate first, then act, so no borrow of
                 // self.transform is held across self.flush().
                 let needs_flush = if let Some(current) = &self.transform {
-                    current.0 != *transform_val && !current.1.contains(vp)
+                    current.0 != *transform_val
+                        && current
+                            .1
+                            .must_flush_before(vp, || context.targets.derives_prefixes())
                 } else {
                     false
                 };

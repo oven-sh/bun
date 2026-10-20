@@ -157,7 +157,9 @@ macro_rules! handler_maybe_flush {
         // If two vendor prefixes for the same property have different
         // values, we need to flush what we have immediately to preserve order.
         if let Some((v, prefixes)) = &$this.$field {
-            if !SmallList::eql($val, v) && !prefixes.contains($vp) {
+            if !SmallList::eql($val, v)
+                && prefixes.must_flush_before($vp, || $context.targets.derives_prefixes())
+            {
                 $this.flush($dest, $context);
             }
         }

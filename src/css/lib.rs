@@ -263,6 +263,18 @@ impl VendorPrefix {
         if self.is_empty() { other } else { self }
     }
 
+    /// A store replaces the value of every prefix in `self`, so a handler flushes first when `incoming` has another value and does not cover what the flush prints.
+    #[inline]
+    pub(crate) fn must_flush_before(
+        self,
+        incoming: VendorPrefix,
+        flush_derives_prefixes: impl FnOnce() -> bool,
+    ) -> bool {
+        !self.contains(incoming)
+            || (self != incoming
+                && !(incoming.contains(VendorPrefix::NONE) && flush_derives_prefixes()))
+    }
+
     pub(crate) fn as_bits(self) -> u8 {
         self.bits()
     }

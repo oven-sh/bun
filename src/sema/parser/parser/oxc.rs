@@ -1180,12 +1180,13 @@ pub(super) fn variable(f: &mut FileBuilder, src: &[u8], it: &VarDecl) {
 #[cold]
 #[inline(never)]
 pub(super) fn declaration(f: &mut FileBuilder, src: &[u8], statement: StmtId, place: Place) {
+    let modifiers = f.stmt_modifiers(statement);
     let Some(&statement) = f.stmts.get(statement.idx()) else {
         return;
     };
-    let is_through = decorators_of_declaration(f, src, &statement, place);
+    let is_through = decorators_of_declaration(f, src, (&statement, modifiers), place);
     let (written, errors) = (&f.modifiers, &mut f.diagnostics);
-    let written = written.get(statement.modifiers.range()).unwrap_or_default();
+    let written = written.get(modifiers.range()).unwrap_or_default();
     let is_decorated = written.iter().any(|it| decorator(it).is_some());
     if is_through {
         return;
@@ -1278,10 +1279,10 @@ fn modifier_in_javascript(src: &[u8], written: &[Modifier], kind: &StmtKind) -> 
 fn decorators_of_declaration(
     f: &mut FileBuilder,
     src: &[u8],
-    statement: &Stmt,
+    (statement, modifiers): (&Stmt, Span<ModifierId>),
     place: Place,
 ) -> bool {
-    let spans = decorators(f, statement.modifiers);
+    let spans = decorators(f, modifiers);
     if spans.is_empty() {
         return false;
     }
@@ -1309,7 +1310,7 @@ fn decorators_of_declaration(
         _ => None,
     };
     let (written, errors) = (&f.modifiers, &mut f.diagnostics);
-    let written = written.get(statement.modifiers.range()).unwrap_or_default();
+    let written = written.get(modifiers.range()).unwrap_or_default();
     let is_class = matches!(statement.kind, StmtKind::Class(_));
     let flag = |index: usize| {
         written
@@ -1402,7 +1403,8 @@ pub(super) fn declaration_as_body(f: &mut FileBuilder, statement: StmtId) {
     let Some(it) = f.stmts.get(statement.idx()) else {
         return;
     };
-    let written = f.modifiers.get(it.modifiers.range()).unwrap_or_default();
+    let written = f.stmt_modifiers(statement);
+    let written = f.modifiers.get(written.range()).unwrap_or_default();
     let is_declared = keywords(written).contains(Flags::AMBIENT);
     let is_var = |list: Span<VarDeclId>| {
         let first = f.var_decls.get(list.start as usize);
@@ -1547,14 +1549,19 @@ pub(super) fn namespace_body(
         ids,
         stmts,
         modifiers,
+        modifiers_of_stmts,
         exports,
         import_equals,
         diagnostics: errors,
         ..
     } = f;
     let list = ids.get(list.range()).unwrap_or_default();
-    for it in list.iter().filter_map(|&it| stmts.get(it as usize)) {
-        let written = modifiers.get(it.modifiers.range()).unwrap_or_default();
+    for (id, it) in list
+        .iter()
+        .filter_map(|&it| Some((it, stmts.get(it as usize)?)))
+    {
+        let written = stmt_modifiers_in(modifiers_of_stmts, StmtId(id));
+        let written = modifiers.get(written.range()).unwrap_or_default();
         let (code, message) = match it.kind {
             StmtKind::ExportDefault(_) => DEFAULT_EXPORT_IN_NAMESPACE,
             StmtKind::Fn(_) | StmtKind::Class(_) | StmtKind::Interface(_)

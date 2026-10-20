@@ -669,44 +669,6 @@ impl JSValue {
         })?;
         Ok(Some(value))
     }
-    /// `JSValue.fromTimevalNoTruncate` — encode a `struct timeval`
-    /// as a BigInt (`sec * 1_000_000 + nsec`) without precision loss. May allocate
-    /// a heap BigInt, so wrapped in `from_js_host_call` for exception checking.
-    pub fn from_timeval_no_truncate(
-        global: &JSGlobalObject,
-        nsec: i64,
-        sec: i64,
-    ) -> JsResult<JSValue> {
-        host_fn::from_js_host_call(global, || {
-            JSC__JSValue__fromTimevalNoTruncate(global, nsec, sec)
-        })
-    }
-    /// `JSValue.bigIntSum` — `a + b` where both are BigInt.
-    pub fn big_int_sum(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JSValue {
-        JSC__JSValue__bigIntSum(global, a, b)
-    }
-    /// `JSValue.fromEntries` — build a plain object from
-    /// parallel `keys`/`values` `EncodedSlice` arrays. When `clone` is true the
-    /// C++ side copies the string bytes (caller may free `keys`/`values`).
-    pub fn from_entries(
-        global: &JSGlobalObject,
-        keys: &mut [bun_core::EncodedSlice],
-        values: &mut [bun_core::EncodedSlice],
-        clone: bool,
-    ) -> JsResult<JSValue> {
-        debug_assert_eq!(keys.len(), values.len());
-        // SAFETY: `global` is live; `keys`/`values` are valid for `keys.len()`
-        // elements; the C++ binding only reads (and optionally clones) them.
-        crate::call_zero_is_throw(global, || unsafe {
-            JSC__JSValue__fromEntries(
-                global,
-                keys.as_mut_ptr(),
-                values.as_mut_ptr(),
-                keys.len(),
-                clone,
-            )
-        })
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2002,19 +1964,6 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         ptr: *const u8,
         len: usize,
-    ) -> JSValue;
-    safe fn JSC__JSValue__fromTimevalNoTruncate(
-        global: &JSGlobalObject,
-        nsec: i64,
-        sec: i64,
-    ) -> JSValue;
-    safe fn JSC__JSValue__bigIntSum(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JSValue;
-    fn JSC__JSValue__fromEntries(
-        global: *const JSGlobalObject,
-        keys: *mut bun_core::EncodedSlice,
-        values: *mut bun_core::EncodedSlice,
-        strings_count: usize,
-        clone: bool,
     ) -> JSValue;
     safe fn JSC__JSValue__toBoolean(this: JSValue) -> bool;
     safe fn JSC__JSValue__toInt32(this: JSValue) -> i32;

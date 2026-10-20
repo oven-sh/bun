@@ -1387,29 +1387,29 @@ const JSC::ClassInfo JSCommonJSModule::s_info = { "Module"_s, &Base::s_info, nul
 const JSC::ClassInfo RequireResolveFunctionPrototype::s_info = { "resolve"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RequireResolveFunctionPrototype) };
 const JSC::ClassInfo RequireFunctionPrototype::s_info = { "require"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RequireFunctionPrototype) };
 
-ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObject, JSCommonJSModule* referrerModule, JSC::ThrowScope& throwScope, JSC::JSValue specifierValue)
+// `key` is the one the caller's lookup used. It is not read from the module, which can assign `module.filename`.
+static NEVER_INLINE void evictFromRequireMapAndRethrow(Zig::GlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSMap* requireMap, JSC::JSValue key)
 {
     auto& vm = JSC::getVM(globalObject);
-    JSC::JSValue exception = throwScope.exception();
+    JSC::Exception* exception = scope.exception();
     ASSERT(exception);
     // tryClearException() cannot clear a termination, and JSMap::remove with
     // it still pending does nothing.
     if (vm.hasPendingTerminationException()) [[unlikely]]
-        RELEASE_AND_RETURN(throwScope, {});
-    (void)throwScope.tryClearException();
+        return;
+    (void)scope.tryClearException();
 
-    // On error, remove the module from the require map
-    // so that it can be re-evaluated on the next require.
     // The entry can already be gone: `delete require.cache[__filename]; throw ...`, or a graph's dispose().
-    requireMapOf(globalObject, referrerModule->moduleGraph())->remove(globalObject, specifierValue);
-    RETURN_IF_EXCEPTION(throwScope, {});
+    requireMap->remove(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, );
 
-    throwScope.throwException(globalObject, exception);
-    RELEASE_AND_RETURN(throwScope, {});
+    scope.throwException(globalObject, exception);
 }
-#define REQUIRE_CJS_RETURN_IF_EXCEPTION      \
-    if (throwScope.exception()) [[unlikely]] \
-    return finishRequireWithError(globalObject, referrerModule, throwScope, specifierValue)
+#define REQUIRE_CJS_RETURN_IF_EXCEPTION                                                                                                     \
+    if (throwScope.exception()) [[unlikely]] {                                                                                              \
+        evictFromRequireMapAndRethrow(globalObject, throwScope, requireMapOf(globalObject, referrerModule->moduleGraph()), specifierValue); \
+        return {};                                                                                                                          \
+    }
 
 // JSCommonJSModule.$require(resolvedId, newModule, userArgumentCount, userOptions)
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
@@ -1699,24 +1699,16 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
 
                 if (entry) {
                     if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
-                        if (!moduleObject->hasEvaluated) {
+                        // No source: the program or a `Module._extensions` handler made this module. It is exported as it is.
+                        if (!moduleObject->hasEvaluated && !moduleObject->sourceCode.isNull()) {
                             evaluateCommonJSModuleOnce(
                                 vm,
                                 globalObject,
                                 moduleObject,
                                 moduleObject->m_dirname.get(),
                                 moduleObject->m_filename.get());
-                            if (auto exception = scope.exception()) {
-                                if (vm.hasPendingTerminationException()) [[unlikely]]
-                                    return;
-                                (void)scope.tryClearException();
-
-                                // On error, remove the module from the require map
-                                // so that it can be re-evaluated on the next require.
-                                requireMap->remove(globalObject, moduleObject->filename());
-                                RETURN_IF_EXCEPTION(scope, void());
-
-                                scope.throwException(globalObject, exception);
+                            if (scope.exception()) [[unlikely]] {
+                                evictFromRequireMapAndRethrow(globalObject, scope, requireMap, keyValue);
                                 return;
                             }
                         }

@@ -336,11 +336,9 @@ If the API lacks something you need (a position, a flag, a helper several rules 
 ## Testing
 
 ```sh
-cargo build --release -p bun_sema_standalone                         # bun-sema
 zstd -dc test/cli/lint/conformance/bundle.zst > /tmp/bundle.txt         # the test cases
 bun bd lint --run-eslint-tests /tmp/bundle.txt --rule=eqeqeq --verbose
 bun bd lint --run-eslint-tests /tmp/bundle.txt --report=/tmp/report
-target/release/bun-sema hir file.ts --print                          # the HIR of a file
 bun bd test test/cli/lint/conformance.test.ts                        # the test cases on `bun lint` itself, those with types too
 ```
 

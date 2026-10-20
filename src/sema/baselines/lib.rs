@@ -37,7 +37,7 @@ pub fn write_line(to: bun_core::Fd, line: std::fmt::Arguments<'_>) {
     let _ = bun_sys::File::from_fd(to).write_all(format!("{line}\n").as_bytes());
 }
 
-pub fn read_file(path: &str) -> Option<Vec<u8>> {
+fn read_file(path: &str) -> Option<Vec<u8>> {
     bun_sys::File::read_from(bun_core::Fd::cwd(), path.as_bytes()).ok()
 }
 
@@ -84,7 +84,7 @@ fn split<'a>(text: &'a str, at: &'a str) -> impl Iterator<Item = &'a str> {
 }
 
 /// `str::lines`
-pub fn lines(text: &str) -> impl Iterator<Item = &str> {
+fn lines(text: &str) -> impl Iterator<Item = &str> {
     let all = (!text.is_empty()).then(|| split(text.strip_suffix('\n').unwrap_or(text), "\n"));
     (all.into_iter().flatten()).map(|line| line.strip_suffix('\r').unwrap_or(line))
 }

@@ -1,23 +1,8 @@
-use bun_sema::atom::Interner;
 use bun_sema::messages::text;
-use bun_sema::resolve::Host;
-use bun_sema_baselines::{error_line, lines, output_line, read_file, write_debug_file};
+use bun_sema_baselines::{error_line, output_line, write_debug_file};
 use bun_threading::Guarded;
 use std::io::Write;
 use std::sync::Arc;
-
-/// Collects every file under `dir` that the front end reads, including those in `node_modules`.
-fn collect_sources(disk: &dyn Host, dir: &str, out: &mut Vec<String>) {
-    const EXTENSIONS: [&[u8]; 8] = [
-        b".ts", b".tsx", b".mts", b".cts", b".js", b".jsx", b".mjs", b".cjs",
-    ];
-    let (files, directories) = disk.entries(dir.as_bytes());
-    let is_source = |name: &&Vec<u8>| EXTENSIONS.iter().any(|it| name.ends_with(it));
-    out.extend((files.iter().filter(is_source)).map(|name| format!("{dir}/{}", text(name))));
-    for name in &directories {
-        collect_sources(disk, &format!("{dir}/{}", text(name)), out);
-    }
-}
 
 fn variable(name: &bun_core::ZStr) -> Option<String> {
     bun_core::getenv_z(name).map(text)
@@ -63,90 +48,6 @@ fn main() {
 
 fn run(args: &[String]) {
     match args.first().map(String::as_str) {
-        // hir <files or directories> --print: prints the HIR the front end produces for each file.
-        // Use it to detect whether a front end change alters any HIR.
-        Some("hir") => {
-            let mut files: Vec<String> = Vec::new();
-            let disk = bun_sema_driver::host::Disk::with_already_read(1, Default::default(), b"/");
-            for arg in args[1..].iter().filter(|a| !a.starts_with("--")) {
-                if disk.is_dir(arg.as_bytes()) {
-                    collect_sources(&disk, arg.trim_end_matches('/'), &mut files)
-                } else {
-                    files.push(arg.clone())
-                }
-            }
-            let flag = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
-            if let Some(list) = flag("--list=") {
-                let list = text(&read_file(list).unwrap());
-                files.extend(lines(&list).map(str::to_owned));
-            }
-            files.sort();
-            let session = bun_sema::session::Session::new();
-            let atoms = Interner::new_in(&session);
-            // --repeat=n [--threads=n]: reads all files first, then parses them n times, to measure
-            // only parsing.
-            if let Some(repeat) = flag("--repeat=").and_then(|n| n.parse::<u64>().ok()) {
-                let threads = flag("--threads=").and_then(|n| n.parse().ok());
-                let read = |file: &String| read_file(file).unwrap_or_default();
-                let texts: Vec<Vec<u8>> = files.iter().map(read).collect();
-                let before = bun_sema_standalone::instructions_and_cycles().0;
-                for _ in 0..repeat {
-                    bun_sema_standalone::for_each_parallel(
-                        threads.unwrap_or(1),
-                        files.len(),
-                        |i| {
-                            let arena = session.arena();
-                            drop(bun_sema_standalone::parse(
-                                arena, &files[i], &texts[i], &atoms, false,
-                            ));
-                        },
-                    );
-                }
-                let after = bun_sema_standalone::instructions_and_cycles().0;
-                let a_pass = (after - before) as f64 / 1e9 / repeat as f64;
-                return error_line!("{} files: {a_pass:.3} G instructions a pass", files.len());
-            }
-            let dumped = Guarded::new(Vec::<String>::new());
-            bun_sema_standalone::for_each_parallel(4, files.len(), |i| {
-                let Some(text) = read_file(&files[i]) else {
-                    return;
-                };
-                let path = &files[i];
-                let file = bun_sema_standalone::parse(session.arena(), path, &text, &atoms, false);
-                // --quiet only parses and lowers, so the cost can be measured with `/usr/bin/time -l`.
-                if args.iter().any(|a| a == "--quiet") {
-                    return;
-                }
-                if args.iter().any(|a| a == "--nodes") {
-                    // The checker's files have their text, and some kinds depend on how a name is spelled.
-                    let mut file = file;
-                    file.text = text.into();
-                    let nodes = bun_sema_standalone::hir_dump::nodes(&file);
-                    let line = format!("=== {path}\n{nodes}");
-                    return dumped.lock().push(line);
-                }
-                let (dump, orphans) =
-                    bun_sema_standalone::hir_dump::dump_and_orphans(&file, &atoms);
-                let line = if args.iter().any(|a| a == "--orphans") {
-                    if orphans.is_empty() {
-                        return;
-                    }
-                    format!("{path}\t{}", orphans.join(" | "))
-                } else {
-                    format!("=== {path}\n{dump}")
-                };
-                dumped.lock().push(line);
-            });
-            let mut dumped = std::mem::take(&mut *dumped.lock());
-            dumped.sort();
-            for line in &dumped {
-                output_line!("{line}");
-            }
-            if args.iter().any(|a| a == "--quiet") {
-                let (instructions, _) = bun_sema_standalone::instructions_and_cycles();
-                error_line!("instructions {:.3} G", instructions as f64 / 1e9);
-            }
-        }
         Some("cli") => {
             // cli [paths..] [@<response file>] [-b] [-p <project>] [--<compiler option> [value]]
             // [--threads=n] [--plain] [--no-color] [--github]: behaves like `bun check`.
@@ -522,6 +423,6 @@ fn run(args: &[String]) {
                 std::process::exit(1);
             }
         }
-        _ => error_line!("usage: bun-sema cli | each | baselines | hir"),
+        _ => error_line!("usage: bun-sema cli | each | baselines"),
     }
 }

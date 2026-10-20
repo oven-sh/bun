@@ -1,59 +1,12 @@
-//! `bun_sema` with Bun's parser as its front end, backed by the file system. `bun_sema`'s tests and
-//! the `bun-sema` command line tool are built on this crate. The bundler doesn't use it.
+//! What `bun_sema`'s tests and the `bun-sema` command line tool need to link and to measure. The product doesn't use
+//! it.
 
 #![feature(linkage)]
 
-pub mod hir_dump;
 pub mod native;
 
-use bun_sema::atom::Interner;
-use bun_sema::hir;
-use bun_sema::session::Arena;
 #[cfg(unix)]
 use core::mem::MaybeUninit;
-
-/// Parses `text` with default options. `path`'s extension determines the file kind.
-pub fn parse<'s>(
-    arena: &'s Arena,
-    path: &str,
-    text: &[u8],
-    atoms: &Interner<'s>,
-    experimental_decorators: bool,
-) -> hir::File<'s> {
-    let path = path.as_bytes();
-    bun_sema_parser::summarize(
-        arena,
-        path,
-        None,
-        text,
-        atoms,
-        experimental_decorators,
-        false,
-    )
-}
-
-/// Runs `work(i)` for every `i` below `count` on `threads` threads with the stack size of `bun check`'s threads.
-pub fn for_each_parallel(threads: usize, count: usize, work: impl Fn(usize) + Sync) {
-    let stack = bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize;
-    let next = std::sync::atomic::AtomicUsize::new(0);
-    std::thread::scope(|scope| {
-        for _ in 0..threads.max(1) {
-            std::thread::Builder::new()
-                .stack_size(stack)
-                .spawn_scoped(scope, || {
-                    native::set_stack_size(stack - (256 << 10));
-                    loop {
-                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        if i >= count {
-                            break;
-                        }
-                        work(i);
-                    }
-                })
-                .unwrap();
-        }
-    });
-}
 
 /// Returns the number of instructions the process has executed and the cycles they took, on all
 /// threads. The instruction count is nearly constant between runs, unlike the elapsed time. Returns

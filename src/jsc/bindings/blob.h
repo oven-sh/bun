@@ -13,8 +13,13 @@ extern "C" bool Blob__sharedView(JSC::EncodedJSValue blob, const uint8_t** ptr, 
 extern "C" void* Blob__fromBytes(JSC::JSGlobalObject* globalThis, const void* ptr, size_t len);
 extern "C" void Blob__ref(void* impl);
 extern "C" void Blob__deref(void* impl);
-// `Blob::contents_differ` (src/jsc/webcore_types.rs). Neither pointer is null.
-extern "C" bool Bun__Blob__contentsDiffer(const void* a, const void* b, bool compareName, bool compareBytes);
+// Whether `Bun__Blob__contentsDiffer` compares the names of the two blobs (`BlobName` in Blob.rs).
+enum class BlobName : uint8_t {
+    Ignore = 0,
+    Compare = 1,
+};
+// `true` when the two blobs are known to differ (src/runtime/webcore/Blob.rs). Neither pointer is null.
+extern "C" bool Bun__Blob__contentsDiffer(const void* a, const void* b, BlobName);
 
 // Opaque type corresponding to `bun.webcore.Blob`.
 class BlobImpl;

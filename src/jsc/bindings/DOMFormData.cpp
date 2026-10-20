@@ -243,7 +243,7 @@ bool DOMFormData::entriesEqual(const DOMFormData& other) const
         const auto& blobA = std::get<RefPtr<Blob>>(a.data);
         const auto& blobB = std::get<RefPtr<Blob>>(b.data);
         // The file name of the entry stands in for the name of its blob.
-        if (!equalIgnoringNullity(blobA->fileName(), blobB->fileName()) || Bun__Blob__contentsDiffer(blobA->impl(), blobB->impl(), false, true))
+        if (!equalIgnoringNullity(blobA->fileName(), blobB->fileName()) || Bun__Blob__contentsDiffer(blobA->impl(), blobB->impl(), BlobName::Ignore))
             return false;
     }
 

@@ -1908,16 +1908,14 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             const JSC::ClassInfo* classInfo = c1->classInfo();
             bool isCookieOrCookieMap = c1Type == JSAsJSONType && (classInfo == JSCookie::info() || classInfo == JSCookieMap::info());
             bool isFormDataOrBlob = c1Type == JSDOMWrapperType && (classInfo == JSDOMFormData::info() || classInfo == JSBlob::info());
-            // node sees no own property on a FormData, so its modes call any two equal.
-            bool comparesNativeState = isCookieOrCookieMap || (isFormDataOrBlob && (!mode.checkPrototypes || classInfo == JSBlob::info()));
+            // node compares a FormData or a Blob as a plain object, so its modes keep the own-property walk.
+            bool comparesNativeState = isCookieOrCookieMap || (isFormDataOrBlob && !mode.checkPrototypes);
             if (comparesNativeState && classInfo == c2->classInfo()) {
                 if (classInfo == JSBlob::info()) {
                     void* blob1 = uncheckedDowncast<JSBlob>(c1)->wrapped();
                     void* blob2 = uncheckedDowncast<JSBlob>(c2)->wrapped();
-                    // node compares the size, the type and the name of two Blobs, and never their bytes.
-                    bool compareBytes = !mode.checkPrototypes;
                     // A detached wrapper has no blob to compare.
-                    if (blob1 && blob2 && Bun__Blob__contentsDiffer(blob1, blob2, true, compareBytes))
+                    if (blob1 && blob2 && Bun__Blob__contentsDiffer(blob1, blob2, BlobName::Compare))
                         return false;
                     // No difference is not an answer: a blob on disk is not read.
                     goto compareAsNormalValue;

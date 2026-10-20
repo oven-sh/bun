@@ -796,6 +796,7 @@ describe("bundler", () => {
         // A clone has no name of its own. Its name is the UTF-8 name of its store.
         const storeName = structuredClone(Bun.file(accented)).name;
         const latin1Name = Buffer.from(storeName, "latin1").toString("latin1");
+        const named = (name: string) => Object.assign(new Blob(["abc"]), { name });
         console.log(JSON.stringify({
           sameFile: Bun.deepEquals(Bun.file(a), Bun.file(a)),
           otherBytes: Bun.deepEquals(Bun.file(a), Bun.file(b)),
@@ -805,10 +806,15 @@ describe("bundler", () => {
           entrySameBytes: Bun.deepEquals(form(Bun.file(a)), form(Bun.file(c))),
           entryOtherBytes: Bun.deepEquals(form(Bun.file(a)), form(Bun.file(b))),
           latin1NameHasTheSameText: latin1Name === storeName,
-          storeNameAgainstLatin1Name: Bun.deepEquals(
+          storeNameAgainstLatin1Name: Bun.deepEquals(structuredClone(Bun.file(accented)), named(latin1Name)),
+          // The UTF-8 bytes of the store name, read as Latin-1, are another text.
+          storeNameAgainstItsBytesAsLatin1: Bun.deepEquals(
             structuredClone(Bun.file(accented)),
-            Object.assign(new Blob(["abc"]), { name: latin1Name }),
+            named(Buffer.from(storeName, "utf8").toString("latin1")),
           ),
+          // A clone reads the bunfs path of its store as its name, so it differs from the file by name.
+          cloneAgainstSource: Bun.deepEquals(structuredClone(Bun.file(a)), Bun.file(a)),
+          cloneAgainstClone: Bun.deepEquals(structuredClone(Bun.file(a)), structuredClone(Bun.file(a))),
         }));
       `,
       "/a.bin": "abc",
@@ -828,6 +834,9 @@ describe("bundler", () => {
           entryOtherBytes: false,
           latin1NameHasTheSameText: true,
           storeNameAgainstLatin1Name: true,
+          storeNameAgainstItsBytesAsLatin1: false,
+          cloneAgainstSource: false,
+          cloneAgainstClone: true,
         });
       },
     },

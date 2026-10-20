@@ -329,47 +329,6 @@ impl Blob {
         &slice[..slice.len().min(self.size.get() as usize)]
     }
 
-    /// `blob.name` as JS reads it: `name` when one is set, else the name of the store.
-    fn name_for_js(&self) -> Option<std::borrow::Cow<'_, bun_core::String>> {
-        let name = self.name.get();
-        if !name.is_dead() {
-            return Some(std::borrow::Cow::Borrowed(name));
-        }
-        // A copy: a borrowed UTF-8 slice does not compare equal to a Latin-1 `name` of the same text.
-        self.store_path()
-            .map(|path| std::borrow::Cow::Owned(bun_core::String::clone_utf8(path)))
-    }
-
-    /// `true` when the two blobs are known to differ. A blob on disk or in S3 is never read.
-    pub fn contents_differ(&self, other: &Blob, compare_name: bool, compare_bytes: bool) -> bool {
-        let in_memory = |blob: &Blob| match blob.store().map(|store| &store.data) {
-            None | Some(store::Data::Bytes(_)) => true,
-            Some(store::Data::File(_) | store::Data::S3(_)) => false,
-        };
-        if !in_memory(self) || !in_memory(other) {
-            return false;
-        }
-        let (a, b) = (self.shared_view(), other.shared_view());
-        if a.len() != b.len() {
-            return true;
-        }
-        // A type that was not set comes from the store's mime, which a body round trip rewrites.
-        if self.content_type_was_set.get()
-            && other.content_type_was_set.get()
-            && self.content_type_slice() != other.content_type_slice()
-        {
-            return true;
-        }
-        if compare_name {
-            if let (Some(name), Some(other_name)) = (self.name_for_js(), other.name_for_js()) {
-                if !name.eql(&other_name) {
-                    return true;
-                }
-            }
-        }
-        compare_bytes && !core::ptr::eq(a.as_ptr(), b.as_ptr()) && a != b
-    }
-
     /// Release the store ref without
     /// dropping `self`.
     #[inline]

@@ -955,7 +955,8 @@ const cases: Case[] = [
   // Web objects that keep their state off the JS object (Node.js v26.3.0). Node sees no own
   // property on a FormData, so any two are equal. It sees the size and the type of a Blob and
   // the name of a File as own symbol properties, which only strict mode compares. It never
-  // compares the bytes. assert.deepEqual is Bun.deepEquals here, and that compares the contents.
+  // compares the bytes. Bun's strict mode compares none of this. assert.deepEqual is
+  // Bun.deepEquals here, and that compares the contents.
   {
     name: "two FormData with the same entries",
     a: () => formData("a", "1"),
@@ -984,6 +985,7 @@ const cases: Case[] = [
     b: () => new Blob(["xyz-and-longer"]),
     strict: false,
     loose: true,
+    strictBug: "reports equal",
     looseBug: "reports not equal",
   },
   {
@@ -1000,6 +1002,7 @@ const cases: Case[] = [
     b: () => new Blob(["abc"], { type: "text/html" }),
     strict: false,
     loose: true,
+    strictBug: "reports equal",
     looseBug: "reports not equal",
   },
   {
@@ -1008,6 +1011,7 @@ const cases: Case[] = [
     b: () => new File(["abc"], "b.txt", { lastModified: 1 }),
     strict: false,
     loose: true,
+    strictBug: "reports equal",
     looseBug: "reports not equal",
   },
   {

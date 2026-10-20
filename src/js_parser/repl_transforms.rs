@@ -306,7 +306,29 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     // `items` is an arena-owned `StoreSlice<ClauseItem>` valid for 'a.
                     let import_items: &[bun_ast::ClauseItem] = import_data.items.slice();
 
-                    if !import_data.star_name_loc.is_empty() {
+                    if let Some(default_name) = import_data.default_name {
+                        debug_assert!(self.repl_persists(default_name.ref_));
+                        hoisted_stmts.push(self.s(
+                            S::Local {
+                                kind: S::Kind::KVar,
+                                decls: repl_one_decl(
+                                    bump,
+                                    Binding::alloc(
+                                        bump,
+                                        B::Identifier {
+                                            r#ref: default_name.ref_,
+                                        },
+                                        default_name.loc,
+                                    ),
+                                ),
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        ));
+                    }
+
+                    // The ref that holds the module, if the statement keeps it
+                    let module_ref = if !import_data.star_name_loc.is_empty() {
                         // import * as X from 'mod' -> var X = await import('mod')
                         debug_assert!(self.repl_persists(import_data.namespace_ref));
                         hoisted_stmts.push(self.s(
@@ -348,119 +370,67 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             },
                             stmt.loc,
                         ));
-                    } else if let Some(default_name) = import_data.default_name {
-                        // import X from 'mod' -> var X = (await import('mod')).default
-                        // import X, { a } from 'mod' -> var __ns = await import('mod'); var X = __ns.default; var a = __ns.a;
-                        let default_ref = default_name.ref_;
-                        debug_assert!(self.repl_persists(default_ref));
-                        hoisted_stmts.push(self.s(
-                            S::Local {
-                                kind: S::Kind::KVar,
-                                decls: repl_one_decl(
-                                    bump,
-                                    Binding::alloc(
-                                        bump,
-                                        B::Identifier { r#ref: default_ref },
-                                        default_name.loc,
-                                    ),
-                                ),
-                                ..Default::default()
-                            },
-                            stmt.loc,
-                        ));
-
-                        if !import_items.is_empty() {
-                            // Share a single await import() between default and named imports.
-                            let namespace_ref = self.repl_convert_named_imports(
-                                import_items,
-                                await_expr,
-                                &mut hoisted_stmts,
-                                &mut inner_stmts,
-                                bump,
-                                stmt.loc,
-                            )?;
-                            let ns_ref_expr = self.new_expr(
-                                E::Identifier {
-                                    ref_: namespace_ref,
-                                    ..Default::default()
-                                },
-                                stmt.loc,
-                            );
-                            let dot_default = self.new_expr(
-                                E::Dot {
-                                    target: ns_ref_expr,
-                                    name: b"default".into(),
-                                    name_loc: stmt.loc,
-                                    ..Default::default()
-                                },
-                                stmt.loc,
-                            );
-                            let left = self.new_expr(
-                                E::Identifier {
-                                    ref_: default_ref,
-                                    ..Default::default()
-                                },
-                                default_name.loc,
-                            );
-                            let assign = self.new_expr(
-                                E::Binary {
-                                    op: js_ast::OpCode::BinAssign,
-                                    left,
-                                    right: dot_default,
-                                },
-                                stmt.loc,
-                            );
-                            inner_stmts.push(self.s(
-                                S::SExpr {
-                                    value: assign,
-                                    ..Default::default()
-                                },
-                                stmt.loc,
-                            ));
-                        } else {
-                            let dot_default = self.new_expr(
-                                E::Dot {
-                                    target: await_expr,
-                                    name: b"default".into(),
-                                    name_loc: stmt.loc,
-                                    ..Default::default()
-                                },
-                                stmt.loc,
-                            );
-                            let left = self.new_expr(
-                                E::Identifier {
-                                    ref_: default_ref,
-                                    ..Default::default()
-                                },
-                                default_name.loc,
-                            );
-                            let assign = self.new_expr(
-                                E::Binary {
-                                    op: js_ast::OpCode::BinAssign,
-                                    left,
-                                    right: dot_default,
-                                },
-                                stmt.loc,
-                            );
-                            inner_stmts.push(self.s(
-                                S::SExpr {
-                                    value: assign,
-                                    ..Default::default()
-                                },
-                                stmt.loc,
-                            ));
-                        }
+                        Some(import_data.namespace_ref)
                     } else if !import_items.is_empty() {
                         // import { a, b } from 'mod' -> destructure from await import('mod')
-                        self.repl_convert_named_imports(
+                        Some(self.repl_convert_named_imports(
                             import_items,
                             await_expr,
                             &mut hoisted_stmts,
                             &mut inner_stmts,
                             bump,
                             stmt.loc,
-                        )?;
+                        )?)
                     } else {
+                        None
+                    };
+
+                    if let Some(default_name) = import_data.default_name {
+                        // import X from 'mod' -> var X = (await import('mod')).default
+                        // import X, { a } from 'mod' -> var __ns = await import('mod'); var X = __ns.default; var a = __ns.a;
+                        // import X, * as Y from 'mod' -> var Y = await import('mod'); var X = Y.default;
+                        let module = match module_ref {
+                            Some(ref_) => self.new_expr(
+                                E::Identifier {
+                                    ref_,
+                                    ..Default::default()
+                                },
+                                stmt.loc,
+                            ),
+                            None => await_expr,
+                        };
+                        let dot_default = self.new_expr(
+                            E::Dot {
+                                target: module,
+                                name: b"default".into(),
+                                name_loc: stmt.loc,
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        );
+                        let left = self.new_expr(
+                            E::Identifier {
+                                ref_: default_name.ref_,
+                                ..Default::default()
+                            },
+                            default_name.loc,
+                        );
+                        let assign = self.new_expr(
+                            E::Binary {
+                                op: js_ast::OpCode::BinAssign,
+                                left,
+                                right: dot_default,
+                            },
+                            stmt.loc,
+                        );
+                        inner_stmts.push(self.s(
+                            S::SExpr {
+                                value: assign,
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        ));
+                    } else if module_ref.is_none() {
                         // import 'mod' (side-effect only) -> await import('mod')
                         inner_stmts.push(self.s(
                             S::SExpr {

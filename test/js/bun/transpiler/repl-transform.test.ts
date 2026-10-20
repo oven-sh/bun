@@ -295,7 +295,8 @@ describe("Bun.Transpiler replMode", () => {
         "class T { @add(1) x = 1; static thrown = (() => { throw new Error('thrown') })() }",
       );
       await expect((async () => await vm.runInContext(code, context, evalOptions))()).rejects.toThrow("thrown");
-      expect(Object.keys(context)).toEqual(["add"]);
+      // `T` is the input's own name. It is declared and never assigned.
+      expect(Object.keys(context).filter(name => name !== "T")).toEqual(["add"]);
     });
 
     test("inputs that overlap dispose their own resources", async () => {
@@ -400,6 +401,7 @@ describe("Bun.Transpiler replMode", () => {
            abstract class Abs { static v = 11 }
            import def, { join, sep as separator } from "node:path";
            import * as ns from "node:path";
+           import both, * as bothNs from "node:path";
            import req = require("node:path");
            enum En { A = 12 }
            const enum ConstEn { A = 13 }
@@ -409,20 +411,20 @@ describe("Bun.Transpiler replMode", () => {
            export const exported = 17;
            export class ExportedCls { static v = 18 }`,
           `[new Lowered().x, v, l, c, a, d, rest, others, fn(), typeof afn, typeof gen, Cls.v, Abs.v,
-            def === ns.default, join === def.join, separator === def.sep, req === def,
+            def === ns.default, join === def.join, separator === def.sep, both === bothNs.default, req === def,
             En.A, En[12], ConstEn.A, Ns.v, i, merged(), exported, ExportedCls.v, twice]`,
         ],
         { globals: { add, require } },
       );
       expect(results[1]).toEqual([
         ...[101, 2, 3, 4, 5, 6, [7], { e: 8 }, 9, "function", "function", 10, 11],
-        ...[true, true, true, true],
+        ...[true, true, true, true, true],
         ...[12, "A", 13, 14, 15, 16, 17, 18, 19],
       ]);
       expect(added.sort()).toEqual(
         [
           ...["Lowered", "v", "l", "c", "a", "d", "rest", "others", "twice", "fn", "afn", "gen", "Cls", "Abs"],
-          ...["def", "join", "separator", "ns", "req"],
+          ...["def", "join", "separator", "ns", "both", "bothNs", "req"],
           ...["En", "ConstEn", "Ns", "i", "merged", "exported", "ExportedCls"],
         ].sort(),
       );

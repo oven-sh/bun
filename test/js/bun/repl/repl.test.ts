@@ -604,6 +604,18 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("binds the default and the namespace of one import statement", async () => {
+      // `path` alone is a global of the REPL.
+      const { outputs, stderr, exitCode } = await runRepl([
+        "import pathDefault, * as pathNamespace from 'path'",
+        "[pathDefault === pathNamespace.default, typeof pathDefault.join, typeof pathNamespace.join]",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([expect.stringContaining("join: [Function: join]"), '[ true, "function", "function" ]']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     test("a named import leaves a variable with the name of its module alone", async () => {
       const { outputs, stderr, exitCode } = await runRepl([
         'var import_path = "./data.json"',

@@ -256,13 +256,32 @@ impl IOReader {
         if let Some(idx) = s.readers.iter().position(|r| *r == reader) {
             // Keeps the order: `deliver` relies on it.
             s.readers.remove(idx);
-            if s.readers.is_empty() {
+            if self.nobody_ready() {
                 self.pause();
             }
         }
     }
 
-    /// Stops the reads while nobody listens, so that unread input stays in the fd for the next reader. Only `start()` resumes.
+    /// No listener takes the next chunk: none is registered, or each one still writes the chunks it got.
+    fn nobody_ready(&self) -> bool {
+        let s = self.state();
+        s.readers.iter().all(|r| awaits_write(*r, s.interp))
+    }
+
+    /// A listener has written the chunks it got. Reads on when the reader had stopped because `nobody_ready()`.
+    pub(crate) fn resume(&self) -> Yield {
+        #[cfg(not(windows))]
+        let paused = bun_io::pipe_reader::PosixFlags::IS_PAUSED;
+        #[cfg(windows)]
+        let paused = bun_io::pipe_reader::WindowsFlags::IS_PAUSED;
+        if !self.reader().flags.contains(paused) {
+            return Yield::suspended();
+        }
+        // `start()` can run listeners, and one of them can drop the caller's ref.
+        self.keepalive().start()
+    }
+
+    /// Stops the reads while `nobody_ready()`, so that unread input stays in the fd for the next reader. Only `start()` resumes.
     fn pause(&self) {
         // A read that is out cannot be taken back: its chunk is parked when it completes.
         #[cfg(windows)]
@@ -289,8 +308,11 @@ impl IOReader {
         let last = self.deliver(chunk);
         self.run_yield(last);
 
-        let should_continue =
-            has_more != bun_io::ReadState::Eof && !self.state().readers.is_empty();
+        if self.nobody_ready() {
+            self.pause();
+            return false;
+        }
+        let should_continue = has_more != bun_io::ReadState::Eof;
         if should_continue {
             self.set_reading(true);
             // No re-arm here: the POSIX read loop re-arms from the `bool` returned below, and on Windows `on_file_read` issues the next read unless the reader is paused (`WindowsBufferedReader::on_read` also clears the chunk buffer).
@@ -495,6 +517,16 @@ fn dispatch_read_chunk(
         ReaderTag::Cat => {
             crate::shell::builtins::cat::Cat::on_io_reader_chunk(interp, child.node, chunk, remove)
         }
+    }
+}
+
+/// The listener still writes chunks it got, and takes the next one when that is done.
+fn awaits_write(child: ChildPtr, interp: Option<bun_ptr::ParentRef<Interpreter>>) -> bool {
+    let Some(interp) = interp else {
+        return false;
+    };
+    match child.tag {
+        ReaderTag::Cat => crate::shell::builtins::cat::Cat::awaits_write(interp.get(), child.node),
     }
 }
 

@@ -241,24 +241,23 @@ export const TestRefCounted = b.class({
   rustPath: "crate::bindgen_test::TestRefCounted",
   refCounted: true,
   finalize: true,
-  fromJS: true,
   construct: { args: { value: b.i32.default(0) } },
   internalFields: ["listener"],
   proto: {
     value: { getter: b.i32, setter: true },
-    listener: { getter: b.any, setter: true, passThis: true, capability: "js" },
+    listener: { getter: b.any, setter: true, passThis: true, passGlobal: true },
     sameListener: { internalField: "listener", setter: true },
     readOnlyListener: { internalField: "listener" },
     /** Calls the listener, which may call back into this object, then returns the value. */
-    notify: { returns: b.i32, passThis: true, capability: "js", throws: true },
+    notify: { returns: b.i32, passThis: true, passGlobal: true, throws: true },
     /** Makes Rust hold a ref until `TestRefCounted.release()`. */
     keep: {},
     "@@dispose": {},
-    "@@toPrimitive": { rustName: "get_value", returns: b.i32, name: "" },
-    valueOrUndefined: { rustName: "get_value", returns: b.i32, invalidThis: "undefined" },
+    "@@toPrimitive": { returns: b.i32, name: "", rustName: "get_value" },
+    valueOrUndefined: { returns: b.i32, invalidThis: "undefined", rustName: "get_value" },
     /** Returns `this`, or nothing if the value is negative. */
     orUndefined: { returns: b.self.optional, passThis: true },
-    orNull: { rustName: "or_undefined", returns: b.self.nullable, passThis: true },
+    orNull: { returns: b.self.nullable, passThis: true, rustName: "or_undefined" },
     isSame: { args: { other: b.self.nullable }, returns: b.bool },
   },
   static: {

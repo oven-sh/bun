@@ -649,6 +649,7 @@ impl bun_event_loop::Taskable for RewriterPipeBackgroundPull {
     }
 }
 
+/// `HTMLRewriterTransform`, declared in `html_rewriter.bind.ts`.
 /// Streaming pipe for one `HTMLRewriter::transform()`: receives input bytes
 /// via [`SinkHandle::HTMLRewriter`], feeds them through lol-html (suspending
 /// when a content handler returns a pending Promise), and emits output either
@@ -664,7 +665,6 @@ impl bun_event_loop::Taskable for RewriterPipeBackgroundPull {
 /// a regular file is never read through inside a single call.
 /// `align(16)`: `NativePromiseContext`'s deferred-deref task packs a 4-bit
 /// type tag into the low bits of a pointer to this.
-/// `HTMLRewriterTransform`, declared in `html_rewriter.bind.ts`.
 #[derive(bun_ptr::CellRefCounted)]
 #[repr(align(16))]
 pub struct RewriterPipe {
@@ -2819,8 +2819,8 @@ impl_wrapper_like!(EndTag, RawEndTag, end_tag, suspended_end_tag);
 
 // ───────────────────────── AttributeIterator ─────────────────────────────
 
-/// The JS `AttributeIterator` heap-boxes one of these over `Element::attributes`
 /// `AttributeIterator`, declared in `html_rewriter.bind.ts`.
+/// The JS `AttributeIterator` heap-boxes one of these over `Element::attributes`
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct AttributeIterator {
     // Intrusive RefCount; the JS wrapper holds one ref.

@@ -1,4 +1,5 @@
 import { bindgen as bindings } from "bun:internal-for-testing";
+import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
 import { describe as describeAlways, expect, it as itAlways } from "bun:test";
 import { runWithError } from "harness";
 import { BlockList, SocketAddress } from "node:net";
@@ -96,8 +97,10 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   const instance = b.classRef("SocketAddress");
   const refCounted = b.class({ rustPath: "T", refCounted: true });
   for (const type of [instance, instance.nullable, b.union({ instance, ignored: b.any }), refCounted]) {
-    expect(() => b.dictionary({ type })).toThrow("b.classRef and a refCounted class are only for an argument");
-    expect(() => b.array(type)).toThrow("b.classRef and a refCounted class are only for an argument");
+    expect(() => b.dictionary({ type })).toThrow(
+      "b.classRef and a refCounted class cannot be in an array or a dictionary",
+    );
+    expect(() => b.array(type)).toThrow("b.classRef and a refCounted class cannot be in an array or a dictionary");
   }
   expect(() => b.union({ instance, again: b.classRef("SocketAddress") })).toThrow("again is never chosen");
   expect(() => b.namespace({})).toThrow("a namespace with no functions");
@@ -277,20 +280,23 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     "x: a refCounted class has no mutates",
   );
   expect(() => b.class({ rustPath: "T", refCounted: true, proto: { x: { args: { bytes: stringOrBuffer } } } })).toThrow(
-    "bytes: b.classRef and a refCounted class can run JavaScript, which can detach a buffer",
+    "bytes: a function given the struct of a b.classRef or a refCounted class can run JavaScript",
   );
   for (const object of [b.class({ rustPath: "T", refCounted: true }), b.classRef("SocketAddress")])
     expect(() => b.fn({ args: { object: object.nullable, bytes: stringOrBuffer } })).toThrow(
-      "bytes: b.classRef and a refCounted class can run JavaScript, which can detach a buffer",
+      "bytes: a function given the struct of a b.classRef or a refCounted class can run JavaScript",
     );
   expect(() => b.class({ rustPath: "T", finalize: true })).toThrow("finalize is only for a refCounted class");
-  expect(() => b.class({ rustPath: "T", fromJS: true })).toThrow("fromJS is only for a refCounted class");
-  expect(() => b.class({ rustPath: "T", refCounted: true, proto: { x: { capability: "heap" } } })).toThrow(
-    'a refCounted class takes capability: "js" or "none"',
+  expect(() => b.class({ rustPath: "T", refCounted: true, proto: { x: { capability: "js" } } })).toThrow(
+    "a refCounted class has passGlobal, not capability",
   );
-  expect(() =>
-    b.class({ rustPath: "T", refCounted: true, proto: { x: { getter: b.i32, capability: "heap" } } }),
-  ).toThrow('x: a refCounted class takes capability: "js" or "none"');
+  expect(() => b.class({ rustPath: "T", refCounted: true, proto: { x: { getter: b.i32, capability: "js" } } })).toThrow(
+    "x: a refCounted class has passGlobal, not capability",
+  );
+  expect(() => b.fn({ passGlobal: true })).toThrow("passGlobal is only for a refCounted class");
+  expect(() => b.class({ rustPath: "T", proto: { x: { getter: b.i32, passGlobal: true } } })).toThrow(
+    "x: passGlobal is only for a refCounted class",
+  );
   expect(() => b.string.allowStringObject.loose).toThrow(".loose already takes a String object");
   expect(() => b.string.loose.allowStringObject).toThrow(".loose already takes a String object");
   // No overload can have the argument left out, so `undefined` goes to the one that reports its own error.
@@ -2104,13 +2110,14 @@ describe("classes", () => {
 
     it("the struct outlives its object while Rust holds a ref, and finalize runs when the object is collected", () => {
       const keepOne = (value: number) => void new TestRefCounted(value).keep();
-      let collected: number[] | undefined;
+      let collected: { kept: number; value: number } | undefined;
       for (let i = 0; i < 100 && !collected; i++) {
         keepOne(i);
         Bun.gc(true);
-        if (TestRefCounted.kept()[1] === 1) collected = [i, ...TestRefCounted.kept()];
+        const [value, finalized] = TestRefCounted.kept();
+        if (finalized === 1) collected = { kept: i, value };
       }
-      expect(collected).toEqual([collected![0], collected![0], 1]);
+      expect(collected).toEqual({ kept: expect.any(Number), value: collected?.kept });
       const before = TestRefCounted.alive();
       TestRefCounted.release();
       expect(TestRefCounted.kept()).toEqual([]);
@@ -2130,11 +2137,14 @@ describe("classes", () => {
     it("does not leak the struct when the script is terminated as the constructor returns", () => {
       const script = new vm.Script("for (;;) new TestRefCounted(1);");
       const context = vm.createContext({ TestRefCounted });
-      Bun.gc(true);
-      const before = TestRefCounted.alive();
+      // Few of the runs end at that point.
       for (let i = 0; i < 200; i++) expect(() => script.runInContext(context, { timeout: 1 })).toThrow("timed out");
       Bun.gc(true);
-      expect(TestRefCounted.alive()).toBeLessThanOrEqual(before);
+      expect(TestRefCounted.alive()).toBe(heapStats().objectTypeCounts.TestRefCounted ?? 0);
+    });
+
+    it("the size of the object includes the struct", () => {
+      expect(estimateShallowMemoryUsageOf(new TestRefCounted(1))).toBe(48 + 12);
     });
   });
 });

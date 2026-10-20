@@ -748,7 +748,7 @@ impl StatWatcher {
         // SAFETY: balance the ref from restat(); raw ptr captured (not `&self`).
         let _guard = unsafe { RefPtr::from_raw(this) };
         // BACKREF — `this` is alive (ref'd in restat()). R-2: `cb.call()`
-        // below re-enters JS, which may call `close()`; aliased `&` is sound, `&mut` is not (and the
+        // below re-enters JS, which may call `close()`; `&` is sound, `&mut` is not (and the
         // work-pool thread may still hold `&*watcher`). `ParentRef` Deref
         // gives that shared `&`.
         let this_ref = ParentRef::from(NonNull::new(this).expect("swap_and_call: watcher"));
@@ -982,7 +982,7 @@ impl bun_event_loop::Taskable for StatWatcher {
 }
 
 pub(crate) struct InitialStatTask {
-    // StatWatcher is intrusively ref-counted. We hold the strong ref via `ref_()`/`deref()` and keep the
+    // StatWatcher is intrusively ref-counted: hold the strong ref via `ref_()`/`deref()`, keep the
     // raw `*mut`.
     watcher: *mut StatWatcher,
     ticket: bun_jsc::Ticket,

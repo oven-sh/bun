@@ -5,6 +5,7 @@ import {
   AnyType,
   asciiLiteral,
   Builtin,
+  type Capability,
   type ClassMember,
   ClassType,
   cppEmplace,
@@ -593,7 +594,7 @@ function cppCallBody(
   // Converting a later argument can run JavaScript that detaches or resizes a buffer.
   const readLast: string[] = [];
   signature.args.forEach(({ name, type, expected }, i) => {
-    // The frame holds the argument. A scope is for what a conversion takes out of it.
+    // b.any is passed on as it is and the call frame holds it. EnsureStillAliveScope is for a pointer a conversion takes out of the value.
     const isAny = type instanceof AnyType;
     const value = isAny ? `argument${i}` : `argument${i}.value()`;
     lines.push(`${isAny ? "JSC::JSValue" : "JSC::EnsureStillAliveScope"} argument${i} = callFrame->argument(${i});`);
@@ -795,6 +796,7 @@ ${
 }
 `;
   if (getter.hasSetter) {
+    // b.any is passed on as it is, so Rust's own frame holds it.
     const isAny = getter.type instanceof AnyType;
     text += `
 extern "C" bool ${setSymbol}(JSC::JSGlobalObject*, JSC::JSCell*, ${externType(getter.type)});
@@ -883,7 +885,7 @@ ${
   type.refCounted
     ? cppCallBody(construct, classSymbolName(type, "construct"), [], call => [
         `void* wrapped = ${call};`,
-        "// Not RETURN_IF_EXCEPTION, which can throw a termination here: nothing would own `wrapped`.",
+        "// RETURN_IF_EXCEPTION also handles traps: a termination thrown there would return without an owner for `wrapped`.",
         "if (!wrapped) [[unlikely]] {",
         "    EXCEPTION_ASSERT(scope.exception());",
         "    return {};",
@@ -941,7 +943,7 @@ ${
 }`
 }
 ${
-  type.fromJS
+  type.refCounted
     ? `
 extern "C" void* ${symbolName(type, "fromJS")}(JSC::EncodedJSValue value)
 {
@@ -1370,11 +1372,10 @@ ${type.members.map(member => `            ${value(member)},`).join("\n")}
 }
 
 function rustForClass(type: ClassType, scope: RustScope): string {
-  const { name, rustPath, payloadType, refCounted } = type;
+  const { name, rustPath, refCounted } = type;
   const trait = `${name}Class`;
   // A refCounted class has no trait: native code calls the same methods.
   const callee = refCounted ? rustPath : `<${rustPath} as ${trait}>`;
-  const wrapperParameter = "this: bindgen::JsWrapper<'a, Self>";
   const wrapperArgument = refCounted ? "JSValue::from_cell(this)" : "this";
   const result = (value: string, throws: boolean) => (throws ? `Result<${value}, Self::Error<'a>>` : value);
   const anyThrows =
@@ -1384,7 +1385,7 @@ function rustForClass(type: ClassType, scope: RustScope): string {
   const receiverParameter = {
     ref: ["&self"],
     mut: ["&mut self"],
-    wrapper: [wrapperParameter],
+    wrapper: ["this: bindgen::JsWrapper<'a, Self>"],
     static: [],
   };
   const receiverArgument = {
@@ -1400,8 +1401,9 @@ function rustForClass(type: ClassType, scope: RustScope): string {
   const takeThis = refCounted
     ? ""
     : `let this = bindgen::JsWrapper::<${rustPath}>::from_extern(core::ptr::NonNull::new_unchecked(this), &cx.heap);\n`;
-  // A member of a refCounted class never holds `&mut`: `capability: "js"` passes the global object, and b.any is a `JSValue`.
-  const memberCapabilityArgument = refCounted ? { ...capabilityArgument, js: ["cx.global()"] } : capabilityArgument;
+  const capability = (member: { capability: Capability; passGlobal: boolean }) =>
+    member.passGlobal ? ["cx.global()"] : capabilityArgument[member.capability];
+  // A member of a refCounted class takes b.any as a `JSValue`.
   const takeArguments = (args: readonly { name: string; type: Type }[]) =>
     rustTakeArguments(refCounted ? args.filter(arg => !(arg.type instanceof AnyType)) : args, scope);
   const declare = (fn: string, parameters: string[], returns: string) => {
@@ -1423,7 +1425,7 @@ function rustForClass(type: ClassType, scope: RustScope): string {
         result("Self", signature.throws),
       ),
     );
-    const call = `${callee}::constructor(${[...memberCapabilityArgument[signature.capability], ...rustArguments(signature)].join(", ")})`;
+    const call = `${callee}::constructor(${[...capability(signature), ...rustArguments(signature)].join(", ")})`;
     thunks += rustThunk(
       classSymbolName(type, "construct"),
       [...(refCounted ? [] : ["structure: *mut core::ffi::c_void"]), ...rustExternParameters(signature, scope)],
@@ -1444,7 +1446,7 @@ ${
         method.rustName,
         [
           ...receiverParameter[method.receiver],
-          ...(method.passThis ? [wrapperParameter] : []),
+          ...(method.passThis ? ["this: bindgen::JsWrapper<'a, Self>"] : []),
           ...capabilityParameter[method.capability],
           ...rustParameters(method, scope),
         ],
@@ -1454,7 +1456,7 @@ ${
     const call = `${callee}::${method.rustName}(${[
       ...receiverArgument[method.receiver],
       ...(method.passThis ? [wrapperArgument] : []),
-      ...memberCapabilityArgument[method.capability],
+      ...capability(method),
       ...rustArguments(method),
     ].join(", ")})`;
     thunks += rustThunk(
@@ -1480,7 +1482,7 @@ bindgen::host_fn_return(cx, result, |heap, value| ${method.returns.rustToJS("val
       getterSymbolName(type, getter),
       getter.isStatic ? [] : ["this: *mut core::ffi::c_void"],
       "JSValue",
-      `${getter.isStatic ? "" : takeThis}let result = ${infallible(`${callee}::${getter.rustName}(${[...receiverArgument[receiver], ...passThisArgument, ...memberCapabilityArgument[getter.capability]].join(", ")})`, getter.throws)};
+      `${getter.isStatic ? "" : takeThis}let result = ${infallible(`${callee}::${getter.rustName}(${[...receiverArgument[receiver], ...passThisArgument, ...capability(getter)].join(", ")})`, getter.throws)};
 bindgen::host_fn_return(cx, result, |heap, value| ${getter.type.rustToJS("value", scope)})`,
     );
     if (!getter.hasSetter) continue;
@@ -1499,13 +1501,13 @@ bindgen::host_fn_return(cx, result, |heap, value| ${getter.type.rustToJS("value"
       setterSymbolName(type, getter),
       ["this: *mut core::ffi::c_void", `value: ${getter.type.rustExternType(scope)}`],
       "bool",
-      `${takeThis}${takeArguments([{ name: "value", type: getter.type }])}let result = ${infallible(`${callee}::${setterName}(${[...receiverArgument[setterReceiver], ...passThisArgument, ...memberCapabilityArgument[getter.capability], "value"].join(", ")})`, getter.throws, unit)};
+      `${takeThis}${takeArguments([{ name: "value", type: getter.type }])}let result = ${infallible(`${callee}::${setterName}(${[...receiverArgument[setterReceiver], ...passThisArgument, ...capability(getter), "value"].join(", ")})`, getter.throws, unit)};
 !bindgen::host_fn_return(cx, result, bindgen::to_js::undefined).is_empty()`,
     );
   }
 
   const finalize = `#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(payload: *mut ${payloadType}) {
+pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(payload: *mut ${refCounted ? `bun_ptr::RefPtr<${rustPath}>` : rustPath}) {
     // SAFETY: the sweeper calls this once, on an initialized payload nothing refers to.
     unsafe {${type.finalize ? `\n        ${callee}::finalize(&*payload);` : ""}
         core::ptr::drop_in_place(payload)
@@ -1582,14 +1584,16 @@ function rustForRefCounted(type: ClassType): string {
     .map((field, index) => {
       const id = snakeCase(field);
       const offset = offsetOfInternalFields + 8 * index;
-      return `    /// \`None\` when never set.
+      return `    /// \`None\` when it is empty.
     #[inline]
     pub fn ${id}_get_cached(this_value: JSValue) -> Option<JSValue> {
+        debug_assert!(from_js(this_value).is_some());
         // SAFETY: internal field ${index} of ${type.internalFields.length}.
         unsafe { bindgen::internal_field_at(this_value, ${offset}) }
     }
     #[inline]
     pub fn ${id}_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+        debug_assert!(from_js(this_value).is_some());
         // SAFETY: internal field ${index} of ${type.internalFields.length}.
         unsafe { bindgen::set_internal_field_at(this_value, global, ${offset}, value) }
     }
@@ -1623,9 +1627,7 @@ impl ${rustPath} {
         js_${name}::to_js(ptr.as_ptr(), global)
     }
 }
-${
-  type.fromJS
-    ? `unsafe extern "C" {
+unsafe extern "C" {
     safe fn ${fromJS}(value: JSValue) -> *mut core::ffi::c_void;
 }
 impl bun_jsc::JsClass for ${rustPath} {
@@ -1642,19 +1644,13 @@ impl bun_jsc::JsClass for ${rustPath} {
         Self::from_js(value)
     }
 }
-`
-    : ""
-}pub mod js_${name} {
+pub mod js_${name} {
     use super::*;
-${
-  type.fromJS
-    ? `    #[inline]
+    #[inline]
     pub fn from_js(value: JSValue) -> Option<core::ptr::NonNull<${rustPath}>> {
         core::ptr::NonNull::new(${fromJS}(value).cast())
     }
-`
-    : ""
-}    /// A new JS object that owns the caller's ref on \`this\`.
+    /// A new JS object that owns the caller's ref on \`this\`.
     #[inline]
     pub fn to_js(this: *mut ${rustPath}, global: &JSGlobalObject) -> JSValue {
         // SAFETY: the ref becomes the object's.

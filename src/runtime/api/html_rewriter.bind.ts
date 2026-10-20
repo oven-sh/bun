@@ -14,12 +14,12 @@ const contentOp = (returns: b.Type) =>
     ...chainable(returns),
     args: { content: text, options: ContentOptions.nullable.default({}) },
     expected: { content: "Expected string" },
-    capability: "js",
+    passGlobal: true,
     throws: true,
   }) as const;
 
 /** `b.any`, not a string: after the handler returns, the setter ignores the value without converting it. */
-const assignable = { getter: b.any, setter: true, capability: "js", throws: true } as const;
+const assignable = { getter: b.any, setter: true, passGlobal: true, throws: true } as const;
 
 export const TextChunk = b.class({
   rustPath: "crate::api::html_rewriter::TextChunk",
@@ -37,7 +37,7 @@ export const TextChunk = b.class({
 });
 
 /** `null` if the doctype has none, `undefined` after the handler returns. */
-const doctypeField = { getter: b.any, cache: true, capability: "js", throws: true } as const;
+const doctypeField = { getter: b.any, cache: true, passGlobal: true, throws: true } as const;
 
 export const DocType = b.class({
   rustPath: "crate::api::html_rewriter::DocType",
@@ -93,7 +93,7 @@ export const AttributeIterator = b.class({
   finalize: true,
   configurable: false,
   proto: {
-    next: { returns: b.any, capability: "js", throws: true },
+    next: { returns: b.any, passGlobal: true, throws: true },
     "@@iterator": { ...chainable(b.self), rustName: "get_this" },
   },
 });
@@ -107,18 +107,18 @@ export const Element = b.class({
   proto: {
     after: contentOp(b.self.optional),
     append: contentOp(b.self.optional),
-    attributes: { getter: AttributeIterator.optional, capability: "js" },
+    attributes: { getter: AttributeIterator.optional, passGlobal: true },
     before: contentOp(b.self.optional),
     canHaveContent: { getter: b.bool.optional },
     getAttribute: { ...named, returns: b.string.utf8.nullable },
-    hasAttribute: { ...named, returns: b.bool, capability: "js", throws: true },
+    hasAttribute: { ...named, returns: b.bool, passGlobal: true, throws: true },
     namespaceURI: { getter: b.string.utf8.optional, cache: true },
     /** `b.any`: after the element handler returns, `handler` is not type-checked. */
-    onEndTag: { ...chainable(b.self.nullable), args: { handler: b.any }, capability: "js", throws: true },
+    onEndTag: { ...chainable(b.self.nullable), args: { handler: b.any }, passGlobal: true, throws: true },
     prepend: contentOp(b.self.optional),
     remove: chainable(b.self.optional),
     removeAndKeepContent: chainable(b.self.optional),
-    removeAttribute: { ...chainable(b.self.optional), ...named, capability: "js", throws: true },
+    removeAttribute: { ...chainable(b.self.optional), ...named, passGlobal: true, throws: true },
     removed: { getter: b.bool.optional },
     replace: contentOp(b.self.optional),
     selfClosing: { getter: b.bool.optional },
@@ -126,7 +126,7 @@ export const Element = b.class({
       ...chainable(b.self.optional),
       args: { name: text, value: text },
       expected: { name: "Expected string", value: "Expected string" },
-      capability: "js",
+      passGlobal: true,
       throws: true,
     },
     setInnerContent: contentOp(b.self.optional),
@@ -139,7 +139,6 @@ export const HTMLRewriterTransform = b.class({
   rustPath: "crate::api::html_rewriter::RewriterPipe",
   refCounted: true,
   finalize: true,
-  fromJS: true,
   internalFields: [
     "response",
     "inputStream",

@@ -4,7 +4,7 @@ export default b.module({ rustPath: "crate::dns_jsc::Resolver" });
 
 export const getRuntimeDefaultResultOrderOption = b.fn({ returns: b.string });
 
-const method = { capability: "js", throws: true } as const;
+const method = { passGlobal: true, throws: true } as const;
 
 const query = { ...method, args: { hostname: b.any }, returns: b.any } as const;
 

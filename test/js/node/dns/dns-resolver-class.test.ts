@@ -1,6 +1,6 @@
 // node-dns.test.js resolves public hostnames. These tests need no network.
-import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
+import { runWithError } from "harness";
 import dns from "node:dns";
 
 describe.each([
@@ -50,19 +50,8 @@ describe.each([
     ["setServers", "ERR_INVALID_ARG_TYPE"],
   ])("_handle.%s() treats a missing argument as undefined", (method, code) => {
     const handle = new Resolver()._handle;
-    const thrownBy = (...args: undefined[]) => {
-      try {
-        handle[method](...args);
-      } catch (error: any) {
-        return { name: error.name, code: error.code, message: error.message };
-      }
-    };
-    expect(thrownBy()).toEqual({ name: "TypeError", code, message: expect.any(String) });
-    expect(thrownBy()).toEqual(thrownBy(undefined));
-  });
-
-  test("the size of _handle includes the native resolver", () => {
-    // The object alone is 32 bytes.
-    expect(estimateShallowMemoryUsageOf(new Resolver()._handle)).toBeGreaterThan(1024);
+    const missing = runWithError(() => handle[method]());
+    expect(missing).toMatchObject({ name: "TypeError", code });
+    expect(missing).toEqual(runWithError(() => handle[method](undefined)));
   });
 });

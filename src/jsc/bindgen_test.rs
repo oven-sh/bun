@@ -499,6 +499,7 @@ thread_local! {
     static KEPT: RefCell<Option<RefPtr<TestRefCounted>>> = const { RefCell::new(None) };
 }
 
+/// `TestRefCounted`, declared in `bindgen_test.bind.ts`.
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct TestRefCounted {
     ref_count: Cell<u32>,

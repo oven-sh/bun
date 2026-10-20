@@ -1857,10 +1857,11 @@ impl NodeHTTPResponse {
             break 'brk JSValue::UNDEFINED;
         };
 
-        let strict_content_length: Option<u64> = if strict_content_length.is_number() {
-            Some(strict_content_length.to_int64().max(0) as u64)
-        } else {
-            None
+        let strict_content_length: Option<u64> = 'brk: {
+            if strict_content_length.is_number() {
+                break 'brk Some(strict_content_length.to_int64().max(0) as u64);
+            }
+            break 'brk None;
         };
 
         // Construct in place — returning

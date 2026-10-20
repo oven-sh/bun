@@ -1282,7 +1282,7 @@ export class ArrayType extends Type {
     assert(!element.passesValue, "b.bytes is only for an argument");
     assert(
       !element.borrowsCell,
-      "b.classRef and a refCounted class are only for an argument: nothing else keeps the instance alive",
+      "b.classRef and a refCounted class cannot be in an array or a dictionary: only an argument's slot in the frame keeps the instance alive",
     );
     assert(
       !element.borrowsHeap,
@@ -1523,7 +1523,7 @@ export class DictionaryType extends NamedType {
     for (const { name, type } of this.members) assert(!type.passesValue, `${name}: b.bytes is only for an argument`);
     assert(
       !this.borrowsCell,
-      "b.classRef and a refCounted class are only for an argument: nothing else keeps the instance alive",
+      "b.classRef and a refCounted class cannot be in an array or a dictionary: only an argument's slot in the frame keeps the instance alive",
     );
     assert(
       !this.nonObjectAsEmpty || this.hasDefault,
@@ -1731,6 +1731,8 @@ export interface SignatureOptions {
   args?: Record<string, Type>;
   returns?: Type;
   capability?: Capability;
+  /** Only in a `refCounted` class, which has no `capability`: also pass `global: &JSGlobalObject`. */
+  passGlobal?: boolean;
   /** The body returns `Result<T, E>` for any `E: bindgen::IntoError`. */
   throws?: boolean;
   /** Path of the Rust function. Defaults to the module's path plus the export's name in snake_case. */
@@ -1741,12 +1743,16 @@ export interface SignatureOptions {
   expected?: Record<string, readonly string[] | string>;
 }
 
-const refCountedCapability = 'a refCounted class takes capability: "js" or "none"';
+function assertPassGlobal(options: { capability?: Capability; passGlobal?: boolean }, refCounted: boolean, at = "") {
+  assert(!refCounted || options.capability === undefined, `${at}a refCounted class has passGlobal, not capability`);
+  assert(refCounted || options.passGlobal === undefined, `${at}passGlobal is only for a refCounted class`);
+}
 
 export class Signature {
   readonly args: readonly { name: string; type: Type; expected?: readonly string[] | string }[];
   readonly returns: Type;
   readonly capability: Capability;
+  readonly passGlobal: boolean;
   readonly throws: boolean;
   readonly rustPath: string | undefined;
   readonly length: number | undefined;
@@ -1760,6 +1766,7 @@ export class Signature {
     }
     this.returns = options.returns ?? new UnitType("undefined");
     this.capability = options.capability ?? "none";
+    this.passGlobal = !!options.passGlobal;
     this.throws = options.throws ?? false;
     this.rustPath = options.rustPath;
     assertDistinct(
@@ -1770,8 +1777,8 @@ export class Signature {
       this.length === undefined || (Number.isInteger(this.length) && this.length >= 0),
       `length: ${this.length} is not a count`,
     );
-    // Their structs can hold the global object, so nothing checks that `capability: "none"` runs no JavaScript.
-    const hasClassRef = refCounted || this.args.some(arg => arg.type.borrowsCell);
+    // The struct of a `.classes.ts` or refCounted class can hold the global object, so `capability: "none"` does not prove the body runs no JavaScript.
+    const capabilityUnchecked = refCounted || this.args.some(arg => arg.type.borrowsCell);
     for (const { name, type } of this.args) {
       refuseResultType(name, type);
       assert(
@@ -1779,8 +1786,8 @@ export class Signature {
         `${name}: JavaScript can detach a buffer; held: "handle" borrows the bytes each time they are read`,
       );
       assert(
-        !type.borrowsBuffer || !hasClassRef,
-        `${name}: b.classRef and a refCounted class can run JavaScript, which can detach a buffer`,
+        !type.borrowsBuffer || !capabilityUnchecked,
+        `${name}: a function given the struct of a b.classRef or a refCounted class can run JavaScript, which can detach a buffer`,
       );
     }
     const pinned = this.args.filter(arg => arg.type.rustFromExternThrows);
@@ -1794,7 +1801,7 @@ export class Signature {
       !this.returns.holdsJSValue || this.capability !== "none" || refCounted,
       'returning a JS value takes capability: "heap" or "js"',
     );
-    assert(!refCounted || this.capability !== "heap", refCountedCapability);
+    assertPassGlobal(options, refCounted);
   }
   /** The arguments up to the last that is not optional: what a caller writes at least. */
   get requiredCount(): number {
@@ -1877,7 +1884,7 @@ export class FunctionDefinition {
 export interface FunctionField extends Omit<SignatureOptions, "rustPath"> {
   /** `&mut self` instead of `&self`. Not with `capability: "js"`, which gets the wrapper. */
   mutates?: boolean;
-  /** Also pass the wrapper, for its `internalFields`. `capability: "js"` always gets it. In a `refCounted` class it is `this_value: JSValue`. */
+  /** Also pass the wrapper, for its `internalFields`. `capability: "js"` always gets it. In a `refCounted` class it is `this_value: JSValue`, which `passGlobal` does not add. */
   passThis?: boolean;
   /** When `this` is not an instance: `"throw"` (the default) throws `ERR_INVALID_THIS`, `"undefined"` returns `undefined`. */
   invalidThis?: "throw" | "undefined";
@@ -1899,6 +1906,8 @@ export interface GetterField {
   throws?: boolean;
   /** As a function's. Only in a `refCounted` class. */
   passThis?: boolean;
+  /** As a function's. */
+  passGlobal?: boolean;
   /** As a function's. In a `refCounted` class the getter is `get_` and this name. */
   rustName?: string;
 }
@@ -1928,15 +1937,13 @@ export interface ClassOptions {
   refCounted?: boolean;
   /** With `refCounted`: call `fn finalize(&self)` when the object is collected, before its ref is dropped. */
   finalize?: boolean;
-  /** With `refCounted`: generate `js_Name::from_js(value)`, the struct if `value` is an instance, and implement `bun_jsc::JsClass`. */
-  fromJS?: boolean;
   /** Absent: JavaScript cannot construct one, and there is no constructor object. */
   construct?: Omit<SignatureOptions, "rustPath" | "returns">;
   /** Properties of the prototype. */
   proto?: Record<string, Field>;
   /** Properties of the constructor. */
   static?: Record<string, StaticField>;
-  /** JS values the object holds, `undefined` at first. The GC visits them; the wrapper gets `x_field` / `set_x_field` for each. In a `refCounted` class they are empty at first, and `js_Name` gets `x_get_cached` / `x_set_cached`. */
+  /** JS values the object holds, `undefined` at first. The GC visits them; the wrapper gets `x_field` / `set_x_field` for each. In a `refCounted` class they are empty at first, and `js_Name` gets `x_get_cached` / `x_set_cached` / `x_take_cached`. */
   internalFields?: readonly string[];
   /** `false`: native properties are non-configurable. */
   configurable?: boolean;
@@ -1997,6 +2004,7 @@ export class Getter {
   readonly receiver: Receiver;
   readonly setterReceiver: Receiver;
   readonly passThis: boolean;
+  readonly passGlobal: boolean;
   constructor(name: string, options: GetterField, isStatic = false, refCounted = false) {
     this.name = name;
     this.isStatic = isStatic;
@@ -2008,6 +2016,7 @@ export class Getter {
     this.receiver = memberReceiver(isStatic, refCounted, this.capability, false);
     this.setterReceiver = memberReceiver(isStatic, refCounted, this.capability, true);
     this.passThis = !!options.passThis;
+    this.passGlobal = !!options.passGlobal;
     assert(!this.passThis || (refCounted && !isStatic), `${name}: only an accessor of a refCounted class has passThis`);
     this.throws = options.throws ?? false;
     this.hasSetter = options.setter ?? false;
@@ -2018,7 +2027,7 @@ export class Getter {
       !this.type.holdsJSValue || this.capability !== "none" || refCounted,
       `${name}: returning a JS value takes capability: "heap" or "js"`,
     );
-    assert(!refCounted || this.capability !== "heap", `${name}: ${refCountedCapability}`);
+    assertPassGlobal(options, refCounted, `${name}: `);
     this.internalField = options.cache === true ? name : options.cache;
     this.declaresInternalField = options.cache === true;
   }
@@ -2072,7 +2081,6 @@ export class ClassType extends NamedType {
   readonly rustPath: string;
   readonly refCounted: boolean;
   readonly finalize: boolean;
-  readonly fromJS: boolean;
   readonly construct: Signature | null;
   /** The native functions of the prototype. The signatures of each are `Method`s. */
   readonly functions: readonly FunctionDefinition[];
@@ -2094,9 +2102,7 @@ export class ClassType extends NamedType {
     this.rustPath = options.rustPath;
     this.refCounted = options.refCounted ?? false;
     this.finalize = options.finalize ?? false;
-    this.fromJS = options.fromJS ?? false;
     assert(this.refCounted || !this.finalize, "finalize is only for a refCounted class: otherwise implement Drop");
-    assert(this.refCounted || !this.fromJS, "fromJS is only for a refCounted class");
     const own = (type: Type): Type => {
       if (type === selfType) return this;
       return type instanceof OptionalType && type.inner === selfType ? new OptionalType(this, type.modifier) : type;
@@ -2221,10 +2227,6 @@ export class ClassType extends NamedType {
   }
   rustExternType(): string {
     return "*mut core::ffi::c_void";
-  }
-  /** The Rust type of the payload: the struct, or a `RefPtr` to it when the class is `refCounted`. */
-  get payloadType(): string {
-    return this.refCounted ? `bun_ptr::RefPtr<${this.rustPath}>` : this.rustPath;
   }
   rustType(): string {
     return this.refCounted ? `&'a ${this.rustPath}` : `bindgen::JsWrapper<'a, ${this.rustPath}>`;

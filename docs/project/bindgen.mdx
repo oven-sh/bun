@@ -426,7 +426,7 @@ here or in S3, throws.
 **Borrowed** bytes are where they are. A string is converted into the frame of the host function,
 unless it is stored as ASCII already. JavaScript can detach, resize or free a buffer, so bytes that
 can come from one are for a function that cannot run it, and not for a member of a
-[`refCounted`](#refcounted) class.
+[`refCounted`](#refcounted) class, or a function that takes one or a `b.classRef`.
 
 **A handle** is for a function that can. `JsBytes::get` borrows the bytes from the `JsHeap`, and the
 compiler refuses whatever takes the `&mut JsScope` until the slice is gone:
@@ -529,14 +529,13 @@ is collected, make the class [`refCounted`](#refcounted).
 | Key              | What it declares                                                                               |
 | ---------------- | ---------------------------------------------------------------------------------------------- |
 | `rustPath`       | the struct                                                                                     |
+| `refCounted`     | the struct is a separate allocation that [can outlive the object](#refcounted)                 |
+| `finalize`       | with `refCounted`: call `fn finalize(&self)` when the object is collected                      |
 | `construct`      | `new Name(..)`. Without it JavaScript cannot make one; Rust can, with `payload.into_js(heap)`. |
 | `proto`          | properties of the prototype                                                                    |
 | `static`         | properties of the constructor: native functions and accessors without `setter` or `cache`      |
 | `internalFields` | JS values the object holds                                                                     |
 | `configurable`   | `false` makes the native properties non-configurable                                           |
-| `refCounted`     | the struct is a separate allocation that [can outlive the object](#refcounted)                 |
-| `finalize`       | with `refCounted`: call `fn finalize(&self)` when the object is collected                      |
-| `fromJS`         | with `refCounted`: generate [`js_Name::from_js(value)`](#refcounted)                           |
 
 Code that has the global object and no capability makes one with
 `payload.into_js_value(global)`, which returns a `JSValue`.
@@ -626,8 +625,7 @@ returns it. While the field holds its initial value the getter calls Rust and st
 
 ### `refCounted`
 
-By default the struct is stored inline in the JS object and dropped with it. With `refCounted: true` it is a
-separate, refcounted heap allocation and the object holds one ref, so it can outlive the object:
+With `refCounted: true` the struct is a separate, refcounted heap allocation and the object holds one ref:
 
 ```ts
 export const CronJob = b.class({
@@ -668,20 +666,19 @@ A member's parameters, in order:
 | ------------------------- | ------------------ |
 | `&self`                   | not in `static`    |
 | `this_value: JSValue`     | `passThis: true`   |
-| `global: &JSGlobalObject` | `capability: "js"` |
+| `global: &JSGlobalObject` | `passGlobal: true` |
 | one for each of `args`    |                    |
 
 `b.any` is a `JSValue`, and so is a result that is an instance of a `refCounted` class (`Option<JSValue>` if it is
 `.optional` or `.nullable`). A `refCounted` class as an argument is `&T`. Every other type is the same as in a function.
 `throws: true` returns a `JsResult`, and `construct` returns a `*mut Self` whose ref the object takes over.
 
-- Getters are `get_x`, setters `set_x`.
-- `capability` is `"js"` or `"none"`, and only says whether the member takes the global object. Nothing checks that a
-  member with `"none"` runs no JavaScript.
-- `{ internalField: "cron" }` is an accessor that returns the field without calling Rust. With `setter: true` it also
-  stores any value assigned to it. For an accessor that does more, use a `getter` with `passThis: true`.
+- The getter of `x` is `get_x`, its setter `set_x`.
+- There is no `capability`: the struct can hold the global object, so nothing checks what a member runs.
+- With `setter: true`, `{ internalField: "cron" }` also stores any value assigned to it. For an accessor that does
+  more, use a `getter` with `passThis: true`.
 - Two keys can have the same `rustName`, as `stop` and `@@dispose` do here.
-- Every member takes `&self`, so mutable state is in `Cell` and `JsCell`. `mutates: true` is an error.
+- Mutable state is in `Cell` and `JsCell`. `mutates: true` is an error.
 - The pointer in the object never changes and is never null. A class with a closed or detached state tracks it in a
   field of its own.
 - `finalize` runs before the object's ref is dropped. `Drop` runs when the last ref is dropped, which can be much later.
@@ -696,10 +693,10 @@ The generated `js_CronJob` module has what the struct's code needs to reach its 
 | `js::callback_get_cached(this_value)`            | an internal field, or `None` if it is empty         |
 | `js::callback_set_cached(this_value, global, v)` | sets it; `JSValue::ZERO` clears it                  |
 | `js::callback_take_cached(this_value, global)`   | reads and clears it                                 |
-| `js::from_js(value)`                             | with `fromJS: true`: the struct, if `value` is one  |
+| `js::from_js(value)`                             | the struct, if `value` is an instance               |
 
 `CronJob::to_js_ptr(ptr, global)` is `js::to_js` as an `unsafe fn`, and `CronJob::to_js_nonnull(ptr, global)` takes a
-`NonNull`. `fromJS: true` also implements `bun_jsc::JsClass`, so `value.as_class_ref::<HTMLBundle>()` works. To get
+`NonNull`. The struct also implements `bun_jsc::JsClass`, so `value.as_class_ref::<CronJob>()` works. To get
 back to its JS object the struct stores a `JsRef`, and calls `finalize()` on it from the class's `finalize`.
 
 ### Staying alive

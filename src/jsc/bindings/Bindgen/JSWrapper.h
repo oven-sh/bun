@@ -102,7 +102,9 @@ public:
     // The payload is uninitialized: the caller writes it before anything else can run.
     static JSWrapper* create(JSC::VM& vm, JSC::Structure* structure)
     {
-        auto* object = new (NotNull, JSC::allocateCell<JSWrapper>(vm, allocationSize())) JSWrapper(vm, structure);
+        JSWrapper* object;
+        // Otherwise LLVM leaves the allocator's fast path out of line for some classes.
+        [[clang::always_inline]] object = new (NotNull, JSC::allocateCell<JSWrapper>(vm, allocationSize())) JSWrapper(vm, structure);
         object->finishCreation(vm);
         return object;
     }

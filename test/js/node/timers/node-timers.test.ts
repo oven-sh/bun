@@ -360,10 +360,10 @@ describe("symbol-keyed methods", () => {
     ["Timeout", Symbol.dispose, timeout],
     ["Timeout", Symbol.toPrimitive, timeout],
     ["Immediate", Symbol.dispose, immediate],
-    // Node has no such property. It is defined like the others.
+    // Not in Node.
     ["Immediate", Symbol.toPrimitive, immediate],
   ] as const)(
-    "%s.prototype[%p] is defined like Node's: no name, no parameters, writable, configurable",
+    "%s.prototype[%p] has no name and no parameters, and is writable, configurable and not enumerable",
     (name, symbol, timer) => {
       const { value, ...attributes } = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(timer), symbol)!;
       expect({ name: value.name, length: value.length, ...attributes }).toEqual({

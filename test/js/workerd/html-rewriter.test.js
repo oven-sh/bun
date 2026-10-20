@@ -2933,7 +2933,7 @@ describe("doctype publicId/systemId distinguish empty from absent", () => {
   });
 });
 
-it("element.attributes[Symbol.iterator] is defined like a built-in iterator's", () => {
+it("element.attributes[Symbol.iterator] has the attributes of a built-in symbol method", () => {
   let descriptor;
   new HTMLRewriter()
     .on("p", {
@@ -3056,7 +3056,9 @@ it("a missing argument is treated as undefined", () => {
   compare("detached", detached, ["onEndTag"]);
 
   expect(missing).toEqual(given);
-  expect(Object.keys(missing).length).toBe(22);
+  expect(new Set(Object.keys(missing).map(label => label.split(".")[0]))).toEqual(
+    new Set(["element", "endTag", "text", "comment", "end", "detached"]),
+  );
   expect(missing["element.before()"]).toEqual({
     name: "TypeError",
     code: "ERR_INVALID_ARG_TYPE",

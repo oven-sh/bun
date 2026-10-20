@@ -4,7 +4,6 @@ export const MySQLConnection = b.class({
   rustPath: "crate::mysql::js_my_sql_connection::JSMySQLConnection",
   refCounted: true,
   finalize: true,
-  fromJS: true,
   configurable: false,
   internalFields: ["onconnect", "onclose", "onretire", "checkServerIdentity", "columnTransform"],
   proto: {

@@ -2352,7 +2352,7 @@ describe("Bun.ModuleGraph — require(): ES modules and CommonJS modules per gra
         moduleExportsInterop: import.meta.require("./me.mjs").who,
         onlyRequiredWho: import.meta.require("./only-required.mjs").who,
         tla: (() => { try { import.meta.require("./tla.mjs"); return "loaded" } catch (err) { return String(err.message).includes("await import") } })(),
-        jsonViaRequireIsThisImport: import.meta.require("./d.json").default === json,
+        jsonViaRequireIsThisImport: import.meta.require("./d.json") === json,
         inRequireCache: require.cache[require.resolve("./c.cjs")]?.exports === c,
       })`,
   });
@@ -2377,7 +2377,7 @@ describe("Bun.ModuleGraph — require(): ES modules and CommonJS modules per gra
         moduleExportsInterop: who,
         onlyRequiredWho: who, // also when nothing imported it before
         tla: true, // a module with top-level await cannot be require()d
-        jsonViaRequireIsThisImport: true, // already an ES module record in this loader: require() answers from it
+        jsonViaRequireIsThisImport: true, // a data file has one value in a loader: require() returns what the import gave
         inRequireCache: true,
       });
       expect({
@@ -2405,6 +2405,31 @@ describe("Bun.ModuleGraph — require(): ES modules and CommonJS modules per gra
     } finally {
       delete (globalThis as any).__cjsEvals;
     }
+  });
+  test("a data file's value is in the require cache of the graph that imports it: require() in the graph returns it, and delete makes that graph read the file again", async () => {
+    const d = fixture({
+      "d.json": `{"n":1}`,
+      "entry.mjs": `import json from "./d.json"; export { json };
+        export const viaRequire = () => import.meta.require("./d.json");
+        export const drop = () => delete require.cache[require.resolve("./d.json")];`,
+    });
+    const a = await new ModuleGraphClass().import(join(d, "entry.mjs"));
+    const b = await new ModuleGraphClass().import(join(d, "entry.mjs"));
+    a.json.written = "by A";
+    expect({
+      // Nothing of a graph's is in the host's cache.
+      inHostCache: join(d, "d.json") in createRequire(join(d, "entry.mjs")).cache,
+      a: [a.viaRequire() === a.json, a.viaRequire().written],
+      b: [b.viaRequire() === b.json, b.viaRequire().written],
+    }).toEqual({ inHostCache: false, a: [true, "by A"], b: [true, undefined] });
+
+    expect(a.drop()).toBe(true);
+    const reread = a.viaRequire();
+    expect({ reread, isOld: reread === a.json, b: b.viaRequire() === b.json }).toEqual({
+      reread: { n: 1 },
+      isOld: false,
+      b: true,
+    });
   });
   test("a CommonJS file as a graph's entry: the namespace wraps the graph's module; after dispose() its require() throws and its import() rejects", async () => {
     (globalThis as any).__cjsEvals = [];

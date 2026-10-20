@@ -3920,6 +3920,10 @@ unsafe fn normalize_specifier_for_loader<'a>(
 /// `options.LoaderResult`.
 struct LoaderResult<'a> {
     loader: Option<Loader>,
+    /// `loader` is what the path alone selects: no `with { type }`, `?raw` or blob type chose another.
+    /// (`json` and `jsonc` count as one: `package.json` takes `jsonc`, and `with { type: "json" }` is how Node.js
+    /// imports it.)
+    is_path_loader: bool,
     virtual_source: Option<&'a bun_ast::Source>,
     path: Fs::Path<'a>,
     is_main: bool,
@@ -3946,8 +3950,9 @@ unsafe fn get_loader_and_virtual_source<'a>(
     let mut path = Fs::Path::init(normalized_file_path_from_specifier);
 
     // SAFETY: per fn contract — `transpiler.options` is a value field of the VM.
-    let mut loader: Option<Loader> =
+    let path_loader: Option<Loader> =
         loader_for_path(&path, unsafe { &(*jsc_vm).transpiler.options.loaders });
+    let mut loader = path_loader;
     let mut virtual_source: Option<&'a bun_ast::Source> = None;
 
     // Synthetic `[eval]`/`[stdin]` source.
@@ -4059,8 +4064,14 @@ unsafe fn get_loader_and_virtual_source<'a>(
         None
     };
 
+    let is_path_loader = match (loader, path_loader) {
+        (Some(Loader::Json | Loader::Jsonc), Some(Loader::Json | Loader::Jsonc)) => true,
+        (used, selected) => used.is_some() && used == selected,
+    };
+
     Ok(LoaderResult {
         loader,
+        is_path_loader,
         virtual_source,
         path,
         is_main,
@@ -4135,6 +4146,30 @@ fn intern_transpile_path(value: &[u8]) -> &'static [u8] {
 
 /// Modules that must always transpile on-thread (see [`Bun__transpileFile`]).
 const ALWAYS_SYNC_MODULES: &[&[u8]] = &[b"reflect-metadata"];
+
+/// C++ entry point: the loader the path of `specifier` alone selects, which is what `require()` and an
+/// `import` with no type attribute load it with. An `api::Loader` value (C++ `BunLoaderType`).
+///
+/// # Safety
+/// `jsc_vm` is the live per-thread VM.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn Bun__loaderForPath(
+    jsc_vm: *mut VirtualMachine,
+    specifier: &bun_core::String,
+) -> bun_options_types::schema::api::Loader {
+    use bun_options_types::schema::api;
+    let specifier = specifier.to_utf8();
+    // SAFETY: per fn contract.
+    let (path, _, query) = unsafe { normalize_specifier_for_loader(jsc_vm, specifier.slice()) };
+    if query == b"?raw" {
+        return api::Loader::text;
+    }
+    // SAFETY: per fn contract — `transpiler.options` is a value field of the VM.
+    loader_for_path(&Fs::Path::init(path), unsafe {
+        &(*jsc_vm).transpiler.options.loaders
+    })
+    .map_or(api::Loader::_none, |loader| loader.to_api())
+}
 
 /// Concurrent-transpiler entry. Returns the in-flight `JSInternalPromise*`
 /// when `allow_promise && async`, else null (result is in `*ret`).
@@ -4234,6 +4269,53 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
                     });
                     return ptr::null_mut();
                 }
+            }
+        }
+    }
+
+    // ── A data file the require cache already holds ─────────────────────────
+    // As in Node.js, an import takes the value `require()` made of the file and does not read
+    // the file again: only an ES module fetch, under the loader the path selects.
+    if matches!(
+        lr.loader,
+        Some(
+            Loader::Json
+                | Loader::Jsonc
+                | Loader::Toml
+                | Loader::Yaml
+                | Loader::Json5
+                | Loader::Xml
+        )
+    ) && lr.is_path_loader
+        && !is_commonjs_require
+        && force_loader_type.is_none()
+        && lr.virtual_source.is_none()
+        // The entry point is always read: reading it is what sets `has_loaded`.
+        && !lr.is_main
+    {
+        let mut exports = JSValue::ZERO;
+        // SAFETY: `specifier` and `exports` are live for the call.
+        match unsafe {
+            bun_jsc::cpp::Bun__requireCacheDataModuleExports(
+                global,
+                module_loader,
+                specifier,
+                &raw mut exports,
+            )
+        } {
+            Ok(true) => {
+                *ret = ErrorableResolvedSource::ok(ResolvedSource {
+                    jsvalue_for_export: exports,
+                    tag: ResolvedSourceTag::ExportsObject,
+                    is_path_loader: true,
+                    ..Default::default()
+                });
+                return ptr::null_mut();
+            }
+            Ok(false) => {}
+            Err(err) => {
+                *ret = ErrorableResolvedSource::err(global.take_error(err));
+                return ptr::null_mut();
             }
         }
     }
@@ -4405,6 +4487,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     });
 
     // ── `ModuleLoader.transpileSourceCode(...)` ─────────────────────────────
+    let is_path_loader = lr.is_path_loader;
     let mut promise: *mut JSInternalPromise = ptr::null_mut();
     let mut extra = TranspileExtra {
         // SAFETY: `TranspileExtra::path` is typed `'static` (cross-crate
@@ -4435,7 +4518,8 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     };
 
     match transpile_source_code_inner(jsc_vm, &args) {
-        Ok(resolved) => {
+        Ok(mut resolved) => {
+            resolved.is_path_loader = is_path_loader;
             *ret = ErrorableResolvedSource::ok(resolved);
             promise.cast::<c_void>()
         }

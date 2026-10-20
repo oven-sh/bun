@@ -496,6 +496,8 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
 struct LoadedModule {
     JSC::JSModuleNamespaceObject* esmNamespace { nullptr };
     Bun::JSCommonJSModule* commonJSModule { nullptr };
+    // The `{ exports, loaded: true }` a data file (JSON, TOML, ...) has in require.cache once it is imported.
+    JSC::JSObject* dataModuleEntry { nullptr };
     // In the registry / require.cache with nothing to patch: removed so the next import loads the mock.
     bool staleESMEntry { false };
     bool staleCommonJSEntry { false };
@@ -538,13 +540,18 @@ static void findLoadedCommonJSModule(Zig::GlobalObject* globalObject, JSC::JSStr
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     loaded.commonJSModule = nullptr;
+    loaded.dataModuleEntry = nullptr;
     loaded.staleCommonJSEntry = false;
 
     JSValue entryValue = globalObject->requireMap()->get(globalObject, specifierString);
     RETURN_IF_EXCEPTION(scope, );
     if (entryValue) {
         loaded.commonJSModule = dynamicDowncast<Bun::JSCommonJSModule>(entryValue);
-        loaded.staleCommonJSEntry = !loaded.commonJSModule;
+        if (!loaded.commonJSModule) {
+            loaded.dataModuleEntry = Bun::loadedRequireCacheObject(globalObject, entryValue);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+        loaded.staleCommonJSEntry = !loaded.commonJSModule && !loaded.dataModuleEntry;
     }
 }
 
@@ -593,6 +600,12 @@ static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, const L
     if (auto* moduleObject = loaded.commonJSModule) {
         moduleObject->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), exports, 0);
         moduleObject->hasEvaluated = true;
+    }
+
+    if (auto* entry = loaded.dataModuleEntry) {
+        JSC::PutPropertySlot slot(entry);
+        entry->methodTable()->put(entry, globalObject, Bun::builtinNames(vm).exportsPublicName(), exports, slot);
+        RETURN_IF_EXCEPTION(scope, );
     }
 }
 
@@ -695,7 +708,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
     RETURN_IF_EXCEPTION(scope, {});
 
     JSC::JSPromise* pendingFactory = nullptr;
-    if (loaded.esmNamespace || loaded.commonJSModule) {
+    if (loaded.esmNamespace || loaded.commonJSModule || loaded.dataModuleEntry) {
         JSValue exportsValue = mock->executeOnce(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 

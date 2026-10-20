@@ -391,6 +391,20 @@ test("a factory that require()s the module it is mocking also patches the requir
   expect(require(path).extra).toBe("extra");
 });
 
+test("mocking a data file that was imported: require() returns what the factory returned", async () => {
+  using dir = tempDir("mock-module-data-file", {
+    "config.json": `{"v":1,"w":5}`,
+  });
+  const path = join(String(dir), "config.json");
+  const ns = await import(path);
+  // Its value is in require.cache from the import on, as a CommonJS file's module is.
+  expect(require(path)).toBe(ns.default);
+
+  mock.module(path, () => ({ default: { v: 2 } }));
+  expect(ns.default).toEqual({ v: 2 });
+  expect(require(path)).toEqual({ default: { v: 2 } });
+});
+
 test.concurrent(
   "tests in a file do not start until a top-level mock.module with a pending factory has patched its static imports",
   async () => {

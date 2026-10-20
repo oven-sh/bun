@@ -822,7 +822,7 @@ static JSC::JSModuleLoader* moduleLoaderOfRequirer(JSC::JSGlobalObject* globalOb
 }
 
 // A key that is not an atom already names no module, and does not become one.
-static JSC::AbstractModuleRecord* evaluatedModuleRecord(JSC::JSGlobalObject* globalObject, JSValue keyValue, JSValue requirer)
+static JSC::ModuleRegistryEntry* evaluatedModuleEntry(JSC::JSGlobalObject* globalObject, JSValue keyValue, JSValue requirer)
 {
     if (!keyValue.isString())
         return nullptr;
@@ -833,18 +833,25 @@ static JSC::AbstractModuleRecord* evaluatedModuleRecord(JSC::JSGlobalObject* glo
     if (!loader)
         return nullptr;
     auto* entry = loader->registryEntry(JSC::Identifier::fromUid(globalObject->vm(), atom.data));
-    return entry && isModuleEvaluated(entry->record()) ? entry->record() : nullptr;
+    return entry && isModuleEvaluated(entry->record()) ? entry : nullptr;
 }
 
+// The exports require.cache shows for an ES module record that has no entry in the require cache: a data, CSS
+// or HTML file's value, else the namespace.
 JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* record = evaluatedModuleRecord(globalObject, callFrame->argument(0), callFrame->argument(1));
+    auto* entry = evaluatedModuleEntry(globalObject, callFrame->argument(0), callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
-    if (!record)
+    if (!entry)
         return JSValue::encode(jsUndefined());
-    auto* ns = record->getModuleNamespace(globalObject, false);
+    auto required = Bun::requiredModuleRecord(uncheckedDowncast<Zig::GlobalObject>(globalObject), entry->loader(), entry->key(), entry);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (required.kind == Bun::RequiredModuleRecord::Kind::Value)
+        return JSValue::encode(required.value);
+    // Every key require.cache lists has an entry: also one that only an import with another `type` loaded.
+    auto* ns = entry->record()->getModuleNamespace(globalObject, false);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(ns);
 }
@@ -853,9 +860,9 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryHasEvaluated, (JSC::JSGlobalObject *
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* record = evaluatedModuleRecord(globalObject, callFrame->argument(0), callFrame->argument(1));
+    auto* entry = evaluatedModuleEntry(globalObject, callFrame->argument(0), callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsBoolean(!!record));
+    return JSValue::encode(jsBoolean(!!entry));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryDelete, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

@@ -189,6 +189,19 @@ inline std::optional<JSC::SourceCode> createCommonJSModule(
     return createCommonJSModule(globalObject, graph, specifierValue, source, false);
 }
 
+// A data file (JSON, TOML, YAML, ...) has one value per loader, as a JSON file has in Node.js: the entry for
+// its key in the require cache of the loader that imports it (`graph`'s, or the global object's) holds the
+// value, and the ES module record exports that same value.
+//
+// Returns the exports of the entry for `key` once it is loaded: a module, or a `{ exports, loaded: true }`
+// object. Otherwise returns `value`, and if the key is free puts `value` in such an object. An empty `value`
+// only looks.
+JSC::JSValue requireCacheDataModuleExports(Zig::GlobalObject*, JSModuleGraph* graph, JSC::JSString* key, JSC::JSValue value);
+
+// `entry` of a require cache if it is such an object: not a module, and `loaded` is set. It is the value of a
+// data file, or what user code put there; Node.js takes the exports of either.
+JSC::JSObject* loadedRequireCacheObject(JSC::JSGlobalObject*, JSC::JSValue entry);
+
 class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;

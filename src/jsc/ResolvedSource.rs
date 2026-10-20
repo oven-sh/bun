@@ -39,6 +39,9 @@ pub struct ResolvedSource {
     /// `JSC::SourceProvenance::Static`: `source_code` comes from where the program is stored or from Bun itself, not from
     /// a JavaScript value. `--disallow-code-generation-from-strings=strict` runs nothing else.
     pub is_static: bool,
+    /// The loader that made this is the one the path alone selects: no `with { type }` and no `?raw` chose another.
+    /// A data file loaded that way has the value `require()` of the same key makes.
+    pub is_path_loader: bool,
 
     pub bytecode_cache: Bytecode,
     /// `Zig::SourceProvider` takes it (nulling the field).
@@ -129,5 +132,5 @@ extern "C" fn ResolvedSource__freeBytecode(bytecode: *mut u8) {
     unsafe { bun_alloc::default_alloc::free(bytecode.cast()) };
 }
 
-bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; is_prelinked_module @ 77, is_static @ 78, bytecode_cache @ 80, module_info @ 104);
+bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; is_prelinked_module @ 77, is_static @ 78, is_path_loader @ 79, bytecode_cache @ 80, module_info @ 104);
 bun_core::assert_ffi_layout!(Bytecode, 24, 8; owned @ 16, persistent @ 17, entry_offset @ 20);

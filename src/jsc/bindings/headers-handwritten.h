@@ -138,6 +138,8 @@ typedef struct ResolvedSource {
     bool is_prelinked_module;
     // JSC::SourceProvenance::Static: source_code comes from where the program is stored or from Bun itself, not from a JavaScript value.
     bool is_static;
+    // The loader that made this is the one the path alone selects: no `with { type }` and no `?raw` chose another.
+    bool is_path_loader;
     // -- Bytecode cache fields --
     // Owned (`ResolvedSource__freeBytecode`) iff `bytecode_cache_owned`; otherwise
     // borrowed from the standalone module graph / compile cache.
@@ -154,7 +156,7 @@ typedef struct ResolvedSource {
     // validated against). If empty, origin is derived from source_url.
     BunString origin_path;
 } ResolvedSource;
-static_assert(sizeof(ResolvedSource) == 136 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, is_static) == 78 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, bytecode_cache_entry_offset) == 100 && offsetof(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
+static_assert(sizeof(ResolvedSource) == 136 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, is_static) == 78 && offsetof(ResolvedSource, is_path_loader) == 79 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, bytecode_cache_entry_offset) == 100 && offsetof(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
@@ -306,7 +308,9 @@ inline constexpr BunLoaderType BunLoaderTypeJSONC = 8;
 inline constexpr BunLoaderType BunLoaderTypeTOML = 9;
 inline constexpr BunLoaderType BunLoaderTypeWASM = 10;
 inline constexpr BunLoaderType BunLoaderTypeNAPI = 11;
+inline constexpr BunLoaderType BunLoaderTypeHTML = 18;
 inline constexpr BunLoaderType BunLoaderTypeYAML = 19;
+inline constexpr BunLoaderType BunLoaderTypeJSON5 = 20;
 inline constexpr BunLoaderType BunLoaderTypeMD = 21;
 inline constexpr BunLoaderType BunLoaderTypeXML = 22;
 

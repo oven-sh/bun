@@ -1,6 +1,7 @@
 //! `postcss-selector-parser` 2.2.3 (`dist/tokenize.js`, `dist/parser.js`), and Prettier's
 //! `parse/parse-selector.js`.
 
+use super::misc::{ends_before_escaped_blank, ends_with_hex_escape};
 use crate::stack::Stack;
 use crate::text::{self, ByteSet};
 
@@ -161,7 +162,7 @@ pub(crate) struct SelectorNode {
     pub(crate) kind: SelectorKind,
     pub(crate) value: Span,
     pub(crate) namespace: Option<Namespace>,
-    parent: SelectorId,
+    pub(crate) parent: SelectorId,
     /// `nodes`: the first, the last, and how many there are.
     pub(crate) first_child: SelectorId,
     last_child: SelectorId,
@@ -363,12 +364,19 @@ impl<'t> Parser<'t> {
             let value = &string[operator_end..];
             if !value.is_empty() {
                 // `parts[2].split(/(\s+i\s*?)$/)`
+                // The parser mistakes the `i` of `x\31 i`, which means `x1i`, and of `x\ i` for the flag.
                 let trimmed = bun_core::strings::trim_js_whitespace_end(value);
                 let before_flag = trimmed.strip_suffix(b"i").filter(|rest| {
-                    bun_core::strings::trim_js_whitespace_end(rest).len() < rest.len()
+                    let unflagged = bun_core::strings::trim_js_whitespace_end(rest);
+                    let is_escape =
+                        ends_before_escaped_blank(unflagged) || ends_with_hex_escape(unflagged);
+                    unflagged.len() + usize::from(is_escape) < rest.len()
                 });
                 let value_len = match before_flag {
-                    Some(rest) => bun_core::strings::trim_js_whitespace_end(rest).len(),
+                    Some(rest) => {
+                        let unflagged = bun_core::strings::trim_js_whitespace_end(rest);
+                        unflagged.len() + usize::from(ends_before_escaped_blank(unflagged))
+                    }
                     None => value.len(),
                 };
                 node.insensitive = before_flag.is_some();

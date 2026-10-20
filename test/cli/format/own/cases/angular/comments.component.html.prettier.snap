@@ -7,9 +7,6 @@
   "
 ></a>
 <a
-  [x]="{ one: 1 }" // comment
-></a>
-<a
   [x]="
     one
     // on a line of its own
@@ -41,9 +38,6 @@
   (x)="
     one( 1 );  two( 2 ); // prettier-ignore
   "
-></a>
-<a
-  [x]="{one:  1}" // prettier-ignore
 ></a>
 <a [x]="// only a comment"></a>
 {{
@@ -62,9 +56,6 @@
   "
 ></a>
 <a
-  [x]="{ one: 1 }" // comment
-></a>
-<a
   [x]="
     one
     // on a line of its own
@@ -96,9 +87,6 @@
   (x)="
     one( 1 );  two( 2 ); // prettier-ignore
   "
-></a>
-<a
-  [x]="{one:  1}" // prettier-ignore
 ></a>
 <a [x]="// only a comment"></a>
 {{
@@ -117,9 +105,6 @@
   "
 ></a>
 <a
-  [x]="{ one: 1 }" // comment
-></a>
-<a
   [x]="
     one
     // on a line of its own
@@ -151,9 +136,6 @@
   (x)="
     one( 1 );  two( 2 ); // prettier-ignore
   "
-></a>
-<a
-  [x]="{one:  1}" // prettier-ignore
 ></a>
 <a [x]="// only a comment"></a>
 {{

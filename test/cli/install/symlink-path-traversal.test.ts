@@ -1205,7 +1205,7 @@ async function linkDir(target: string, path: string) {
   await symlink(resolve(dirname(path), target), path, "junction");
 }
 
-// `<root>/victim` stands for any directory outside the project.
+// `<root>/victim` represents any directory outside the project.
 async function plantVictim(root: string, ...subdirs: string[]) {
   const victim = join(root, "victim");
   await mkdir(join(victim, ...subdirs), { recursive: true });
@@ -1367,7 +1367,7 @@ describe.concurrent("links below node_modules with the hoisted linker", () => {
   });
 
   // `lodash` is found installed through the link before `zod` is written.
-  it.skipIf(isWindows)("keeps what is behind a workspace member's link when one package changes", async () => {
+  it.skipIf(isWindows)("keeps what's behind a workspace's link when one package changes", async () => {
     using root = tempDir("nm-member-change", {});
     const repo = await workspaceWithNestedDep(String(root));
     for (const major of [1, 2, 3]) {
@@ -1439,8 +1439,7 @@ describe.concurrent("links below node_modules with the hoisted linker", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The bin linker writes `node_modules/.bin/<name>` by absolute path, and
-  // deletes what is there in the way of its link.
+  // The bin linker writes `node_modules/.bin/<name>` by absolute path, and deletes whatever is in the way of its link.
   it("does not link bins through node_modules/.bin", async () => {
     using root = tempDir("nm-bin", {});
     // The victim has an entry with the same name as the bin.
@@ -1475,7 +1474,7 @@ describe.concurrent("links below node_modules with the hoisted linker", () => {
 
   // A `bin` key is a free-form file name. Through a link at `.bin`, a regular file of that
   // name was unlinked and replaced by a link that dangles there.
-  it.skipIf(isWindows)("does not replace files in what node_modules/.bin leads to", async () => {
+  it.skipIf(isWindows)("does not replace files in the target of node_modules/.bin", async () => {
     using dir = tempDir("nm-bin-files", {
       "package.json": JSON.stringify({
         name: "bin-dir-symlink-app",
@@ -1511,8 +1510,8 @@ describe.concurrent("links below node_modules with the hoisted linker", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The links are planted after the install, so only `bun remove` itself stands between its
-  // deletes and the victim: of the leftover `@scope/<name>`, and of the dangling links in `.bin`.
+  // The links are planted after the install, so only `bun remove` itself is between its deletes and the victim. It
+  // deletes the leftover `@scope/<name>` and the dangling links in `.bin`.
   it.skipIf(isWindows)("bun remove does not delete through node_modules/@scope or .bin", async () => {
     using dir = tempDir("nm-remove-planted", {
       "package.json": JSON.stringify({
@@ -1548,10 +1547,9 @@ describe.concurrent("links below node_modules with the hoisted linker", () => {
   });
 });
 
-// The isolated linker names everything by path from the project's root: the store
-// `node_modules/.bun`, the fallback directory and the entries in it, the links in the
-// `node_modules` of the project and of its members. Where a link belongs it deletes what is
-// in the way.
+// The isolated linker addresses everything by its path from the project's root: the store `node_modules/.bun`, the
+// fallback directory and its entries, and the links in the `node_modules` of the project and of its workspaces. Where a
+// link belongs, it deletes whatever is in the way.
 describe.concurrent("links below node_modules with the isolated linker", () => {
   const bun = (cwd: string, ...args: string[]) => runBun(cwd, [...args, "--linker", "isolated"]);
   const install = (cwd: string, ...args: string[]) => bun(cwd, "install", "--ignore-scripts", ...args);
@@ -1595,7 +1593,7 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
     expect(exitCode).toBe(0);
   }
 
-  // [where the link is, what the victim has of the name bun wants there]
+  // [where the link is, what the victim has under the name that Bun wants there]
   const places: Record<string, [(repo: string) => string | Promise<string>, string[]]> = {
     "node_modules/.bin": [repo => join(repo, "node_modules", ".bin"), ["greet"]],
     "node_modules/@scope": [repo => join(repo, "node_modules", "@x"), ["dep"]],
@@ -1620,7 +1618,7 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
     "a folder's copy in its store entry": [async repo => join(await entryOf(repo, "top@"), "node_modules", "top"), []],
   };
 
-  // A tree without `node_modules/.bun` is moved aside whole, so the link goes into an installed one.
+  // A tree without `node_modules/.bun` is moved aside as a whole, so the link is planted in an installed tree.
   it.each(Object.keys(places))("does not write or delete through %s", async place => {
     using root = tempDir("nm-isolated", {});
     const [where, taken] = places[place];
@@ -1688,8 +1686,8 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
     await expectInstalled(repo, result);
   });
 
-  // With `hoist = false` the fallback directory an earlier install left is deleted first:
-  // `<what the link leads to>/node_modules`. A repository can commit both the bunfig and the link.
+  // With `hoist = false`, the fallback directory that an earlier install left is deleted first: `<the link's
+  // target>/node_modules`. A repository can commit both the bunfig and the link.
   it.each([true, false])("does not write or delete through node_modules/.bun (hoist = %p)", async hoist => {
     using root = tempDir("nm-store", {});
     const victim = await plantVictim(String(root), "node_modules");
@@ -1733,8 +1731,8 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
     }
   });
 
-  // What is left of an optional dependency that cannot be had is deleted: its copy in the store,
-  // the links to it.
+  // The leftovers of an optional dependency that can't be installed are deleted: its copy in the store, and the links
+  // to it.
   it("does not delete through the links of an optional dependency that is left out", async () => {
     using root = tempDir("nm-left-out", {});
     const victim = await plantVictim(String(root), "@x", "gone");
@@ -1811,7 +1809,7 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
     }
   });
 
-  // Behind a junction Windows counts a relative link from the path that goes through the junction.
+  // Behind a junction, Windows resolves a relative link from the path that goes through the junction.
   it.skipIf(!isWindows).each(["node_modules", "packages/a/node_modules"])(
     "the links behind a junction at %s lead to their packages",
     async folder => {
@@ -1856,8 +1854,8 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
     },
   );
 
-  // With the global store an entry IS a link, to the one path bun computes for it. Nothing is read or
-  // written through what is at its name, which is replaced.
+  // With the global store, an entry IS a link, to the one path that Bun computes for it. Nothing is read or written
+  // through whatever has its name, which is replaced.
   describe.each([
     ["<cache>/links/../..", (cache: string) => `${join(cache, "links")}/../..`],
     ["a sibling of <cache>/links", (cache: string) => join(cache, "links-evil", "x")],
@@ -1879,7 +1877,7 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
       const computed = await readlink(entry);
       expect(dirname(computed)).toBe(join(cache, "links"));
 
-      // What a write to `<entry>/node_modules/@x/dep` would reach.
+      // This is what a write to `<entry>/node_modules/@x/dep` would reach.
       const victim = join(resolve(target(cache)), "node_modules", "@x", "dep");
       await mkdir(victim, { recursive: true });
       await writeFile(join(victim, "keep.txt"), KEEP);
@@ -1930,8 +1928,8 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
     expect(exitCode).toBe(1);
   });
 
-  // The victim has the files a package in place is known by. The package is laid again, except on
-  // Windows, where seeing the link would take a system call for each package: there the link stays.
+  // The victim has the files that identify an installed package. The package is installed again, except on Windows,
+  // where noticing the link would take a system call for each package, so the link stays.
   it("does not write or delete through a link at a package's own directory", async () => {
     using root = tempDir("nm-leaf", {});
     const victim = await plantVictim(String(root));
@@ -1955,7 +1953,7 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
     await expectInstalled(repo, result);
   });
 
-  it("replaces a link where a tarball package should be, without touching what it points at", async () => {
+  it("replaces a link where a tarball package should be, without touching its target", async () => {
     using root = tempDir("nm-leaf-replaced", {});
     const victim = await plantVictim(String(root));
     const manifest = JSON.stringify({ name: "@x/dep", version: "1.0.0" });
@@ -1978,7 +1976,7 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
 
 // A link at the `node_modules` of the project or of a workspace is followed: people keep theirs on a
 // volume or a cache disk. Not all that is behind such a link need be bun's.
-describe.concurrent.skipIf(isWindows)("what is behind a link at node_modules", () => {
+describe.concurrent.skipIf(isWindows)("the target of a link at node_modules", () => {
   const MINE: Record<string, string> = {
     "notes.txt": KEEP,
     ".hidden": KEEP,
@@ -2125,7 +2123,7 @@ describe.concurrent.skipIf(isWindows)("what is behind a link at node_modules", (
     expect(exitCode).toBe(0);
   });
 
-  it("the hoisted linker starts nothing over because of a .bun there", async () => {
+  it("the hoisted linker doesn't reinstall everything because of a .bun there", async () => {
     using root = tempDir("nm-outside-store", {});
     const files = { ...MINE, ".bun/bin/tool": KEEP };
     const outside = await plant(String(root), files);
@@ -2142,7 +2140,7 @@ describe.concurrent.skipIf(isWindows)("what is behind a link at node_modules", (
     }
   });
 
-  it.each(["hoisted", "isolated"])("has a name that left package.json (%s)", async linker => {
+  it.each(["hoisted", "isolated"])("has a name that was removed from package.json (%s)", async linker => {
     using root = tempDir("nm-outside-left", {});
     const outside = await plant(String(root));
     const repo = await projectWith(String(root), "dep", "thesis");
@@ -2192,7 +2190,7 @@ describe.concurrent.skipIf(isWindows)("what is behind a link at node_modules", (
   });
 
   // pnpm writes its commands as files, so a project that it installed has them.
-  it.each(linkersAndFolders)("a file gives way to the link to a command (%s, %s)", async (linker, folder) => {
+  it.each(linkersAndFolders)("a file is replaced by the link to a command (%s, %s)", async (linker, folder) => {
     using root = tempDir("nm-outside-bin-file", {});
     const outside = await plant(String(root), { ...MINE, ".bin/dep": "#!/bin/sh\n", ".bin/other": KEEP });
     const repo = await workspace(String(root));

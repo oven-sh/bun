@@ -261,7 +261,7 @@ pub mod Runtime {
         pub define_hash: Option<u64>,
 
         /// REPL mode: transforms code for interactive evaluation
-        /// - Wraps lone object literals `{...}` in parentheses
+        /// - Reads an input that starts with `{` as an object literal, if it is one expression
         /// - Hoists variable declarations for REPL persistence
         /// - Wraps last expression in { value: expr } for result capture
         /// - Assigns functions to context for persistence

@@ -349,6 +349,43 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    test("an input that starts with { is an object literal or a block", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "{ a: 1, b: 2 }",
+        // The comment is not part of the object literal.
+        "{ a: 1 } // note",
+        // A block evaluates to its completion value.
+        "{ let x = 1; x }",
+        "{ if (1) 5 }",
+        "{ a: 1 }; 3",
+        // A function declared in a block is a global after the block runs.
+        "{ function inBlock() {} }",
+        "typeof inBlock",
+        // One expression that the visit pass rejects (an assignment to a call) is a block too.
+        "{ a: function afterVisit() {} }(x) = 1",
+        "typeof afterVisit",
+        // The ";" at the end makes it statements, which are transformed.
+        "{ a: 1 }; const t: number = 2; t;",
+        "{ a: }",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        "{\n  a: 1,\n  b: 2,\n}",
+        "{\n  a: 1,\n}",
+        "1",
+        "5",
+        "3",
+        "undefined",
+        '"function"',
+        "1",
+        '"function"',
+        "2",
+        "SyntaxError: Unexpected token '}'. Cannot parse statement.",
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("special variables", () => {

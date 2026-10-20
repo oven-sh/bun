@@ -1,12 +1,11 @@
 //! `Bun.Transpiler` — single-file transform/scan over the JS parser.
 
-use bun_alloc::ArenaVecExt as _;
 use bun_options_types::TargetExt as _;
 use std::io::Write as _;
 
 use crate::Error;
 use crate::node::{StringOrBuffer, ThreadIsolated};
-use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
+use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_ast::Expr;
 use bun_ast::Loader;
 use bun_ast::{ImportRecord, ImportRecordFlags};
@@ -1194,26 +1193,7 @@ impl JSTranspiler {
         let config = self.config.get();
         let name = config.default_loader.stdin_name();
 
-        // In REPL mode, wrap potential object literals in parentheses
-        // If code starts with { and doesn't end with ; it might be an object literal
-        // that would otherwise be parsed as a block statement
-        //
-        // Allocated in the
-        // CALLER's arena so the bytes outlive `parse()` and the returned `ParseResult`
-        // (whose AST may hold slices into the source). A stack-local `Vec` would drop at
-        // the end of this fn and leave dangling references.
-        let processed_code: &[u8] = if config.repl_mode && is_likely_object_literal(code) {
-            let mut buf = ArenaVec::<u8>::with_capacity_in(code.len() + 2, arena);
-            buf.push(b'(');
-            buf.extend_from_slice(code);
-            buf.push(b')');
-            buf.into_bump_slice()
-        } else {
-            code
-        };
-
-        let source: &bun_ast::Source =
-            arena.alloc(bun_ast::Source::init_path_string(name, processed_code));
+        let source: &bun_ast::Source = arena.alloc(bun_ast::Source::init_path_string(name, code));
 
         let jsx = match config.tsconfig.as_deref() {
             Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone()),
@@ -1670,6 +1650,7 @@ impl JSTranspiler {
         };
 
         let mut opts = bun_js_parser::ParserOptions::init(jsx, loader);
+        opts.repl_mode = self.config.get().repl_mode;
         // SAFETY: see `transpiler_mut`. The `&mut Transpiler` is reborrowed
         // disjointly for `macro_context` (stored in `opts`) and `options.define`
         // (raw-addr read) below; both end when `opts` is consumed by `scan()`.
@@ -1726,26 +1707,4 @@ impl JSTranspiler {
         self.scan_pass_result.with_mut(|s| s.reset());
         result
     }
-}
-
-/// Heuristic used by the REPL: returns true if `code` starts with `{` (after
-/// whitespace) and doesn't end with `;` — i.e. should be wrapped in `()` to
-/// parse as an object literal rather than a block statement. Mirrors Node.js.
-pub(crate) fn is_likely_object_literal(code: &[u8]) -> bool {
-    // Skip leading whitespace
-    let mut start: usize = 0;
-    while start < code.len() && matches!(code[start], b' ' | b'\t' | b'\n' | b'\r') {
-        start += 1;
-    }
-    // Check if starts with {
-    if start >= code.len() || code[start] != b'{' {
-        return false;
-    }
-    // Skip trailing whitespace
-    let mut end: usize = code.len();
-    while end > 0 && matches!(code[end - 1], b' ' | b'\t' | b'\n' | b'\r') {
-        end -= 1;
-    }
-    // Check if ends with semicolon - if so, it's likely a block statement
-    !(end > 0 && code[end - 1] == b';')
 }

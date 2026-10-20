@@ -1484,6 +1484,7 @@ impl<'a> Transpiler<'a> {
                     lower_import_meta_main_for_node_js: false,
                     framework: None,
                     repl_mode: self.options.repl_mode,
+                    repl_leading_brace: Default::default(),
                     lower_toml_datetimes: false,
                     is_entry_point: false,
                 };

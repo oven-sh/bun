@@ -209,12 +209,12 @@ describe("jest-extended", () => {
     const negativeZero = Math.round(-0.2);
     expect([]).toBeArrayOfSize(negativeZero);
     expect([1]).not.toBeArrayOfSize(negativeZero);
-    expect(() => expect([]).not.toBeArrayOfSize(negativeZero)).toThrow();
+    expect(() => expect([]).not.toBeArrayOfSize(negativeZero)).toThrow("Received:");
     await expect(Promise.resolve([])).resolves.toBeArrayOfSize(negativeZero);
-    // A whole number that no array length equals is a mismatch, not a usage error.
+    // A whole number that no array length equals is a mismatch ("Received:"), not a usage error.
     for (const size of [-1, 2 ** 51, 2 ** 53, 1e300, -1e300]) {
       expect([]).not.toBeArrayOfSize(size);
-      expect(() => expect([]).toBeArrayOfSize(size)).toThrow();
+      expect(() => expect([]).toBeArrayOfSize(size)).toThrow("Received:");
     }
   });
 

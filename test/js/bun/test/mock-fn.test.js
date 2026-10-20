@@ -906,7 +906,7 @@ describe("mock()", () => {
       ...(isBun ? [["toBeCalledTimes", "toHaveBeenCalledTimes"]] : []),
     ]) {
       expect(fn)[matcher](negativeZero);
-      expect(() => expect(fn).not[matcher](negativeZero)).toThrow();
+      expect(() => expect(fn).not[matcher](negativeZero)).toThrow("Expected number of");
       // A count that the mock did not reach is a mismatch that names the count, not a usage error.
       for (const count of [2 ** 32 - 1, 2 ** 32, 2 ** 53 - 1]) {
         expect(fn).not[matcher](count);

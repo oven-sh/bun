@@ -344,7 +344,7 @@ export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");
 // output file, which `Bun.serve()` resolves the manifest's relative paths against.
 export var __jsonParse = /* @__PURE__ */ (a, dir) => {
   a = JSON.parse(a);
-  if (dir !== undefined) Object.defineProperty(a, "dir", { value: dir });
+  if (dir !== undefined) __defProp(a, "dir", { value: dir });
   return a;
 };
 

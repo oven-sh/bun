@@ -719,11 +719,6 @@ impl IntermediateOutput {
                 let use_outdir_relative_path = from_chunk_dir.is_empty()
                     || reference_path_style == ReferencePathStyle::OutdirRelative
                     || !import_prefix.is_empty();
-                let manifest_from_chunk_dir: &[u8] = if use_outdir_relative_path {
-                    b""
-                } else {
-                    from_chunk_dir
-                };
 
                 let urls_for_css: &[&[u8]] = if standalone_chunk_contents.is_some() {
                     graph.ast.items_url_for_css()
@@ -800,7 +795,7 @@ impl IntermediateOutput {
                                             graph,
                                             chunks,
                                             linker_graph,
-                                            manifest_from_chunk_dir,
+                                            from_chunk_dir,
                                         )
                                     ));
                                     continue;
@@ -976,7 +971,7 @@ impl IntermediateOutput {
                                         graph,
                                         linker_graph,
                                         chunks,
-                                        manifest_from_chunk_dir,
+                                        from_chunk_dir,
                                         &mut cursor,
                                     )
                                     .expect("unreachable");

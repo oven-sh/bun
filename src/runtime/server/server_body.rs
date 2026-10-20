@@ -689,7 +689,9 @@ impl AnyRoute {
             return Ok(None);
         };
         // Set by the bundle to its own directory; the paths are relative to it.
-        let bundle_dir = argument.get_optional_slice(init_ctx.global, b"dir")?;
+        let bundle_dir = argument
+            .get_optional_slice(init_ctx.global, b"dir")?
+            .filter(|dir| paths::is_absolute(dir));
         let mut iter = files.array_iterator(init_ctx.global)?;
         let mut html_route: Option<AnyRoute> = None;
         while let Some(file_entry) = iter.next()? {

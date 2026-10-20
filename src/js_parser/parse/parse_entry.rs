@@ -1263,6 +1263,20 @@ impl<'a> Parser<'a> {
         //
         if p.options.bundle || !p.options.features.commonjs_at_runtime {
             if uses_dirname || uses_filename {
+                // In a bundle these become ordinary variables: modules in other
+                // folders each get their own, and none overwrites the `__dirname`
+                // of the CommonJS wrapper.
+                if p.options.bundle {
+                    for (used, ref_) in [
+                        (uses_dirname, p.dirname_ref),
+                        (uses_filename, p.filename_ref),
+                    ] {
+                        if used {
+                            p.symbols.as_mut_slice()[ref_.inner_index() as usize].kind =
+                                js_ast::symbol::Kind::Hoisted;
+                        }
+                    }
+                }
                 let count = (uses_dirname as usize) + (uses_filename as usize);
                 let mut declared_symbols =
                     bun_ast::DeclaredSymbolList::init_capacity(count).expect("unreachable");

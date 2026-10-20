@@ -1428,6 +1428,14 @@ impl<'a> BundleOptions<'a> {
         self.rewrite_jest_for_tests
     }
 
+    /// Whether an HTML import's manifest gets the directory of the output file
+    /// that holds it, which also makes its paths relative to that directory.
+    pub(crate) fn html_manifest_has_module_dir(&self) -> bool {
+        self.target.is_bun()
+            && matches!(self.output_format, Format::Esm | Format::Cjs)
+            && !self.compile_mode.is_executable()
+    }
+
     pub(crate) fn set_production(&mut self, value: bool) {
         if self.force_node_env == ForceNodeEnv::Unspecified {
             self.production = value;

@@ -4,47 +4,140 @@ import { join } from "node:path";
 import { itBundled } from "./expectBundled";
 
 describe.concurrent("bundler", () => {
-  // The server entry lands in dist/src/ when a second entry point widens the root.
-  test.each([
-    { name: "esm", format: "esm", entrypoints: ["src/server.ts"], output: "dist/server.js" },
-    { name: "cjs", format: "cjs", entrypoints: ["src/server.ts"], output: "dist/server.js" },
-    { name: "subdirectory", format: "esm", entrypoints: ["src/server.ts", "other.ts"], output: "dist/src/server.js" },
-  ] as const)("HTMLServerRunFromAnotherDirectory/$name", async ({ format, entrypoints, output }) => {
-    using dir = tempDir("html-server-cwd", {
-      "src/server.ts": `
-        import about from "./pages/about.html";
-        const server = Bun.serve({ port: 0, development: false, routes: { "/about": about } });
-        (async () => {
-          const page = await fetch(new URL("/about", server.url));
-          const html = await page.text();
-          const script = await fetch(new URL(html.match(/src="([^"]+)"/)[1], page.url));
-          const css = await fetch(new URL(html.match(/href="([^"]+)"/)[1], page.url));
-          console.log(page.status, html.includes("<h1>about</h1>"), script.status, (await script.text()).includes("about.ts ran"), css.status);
-          server.stop();
-        })();
-      `,
-      "src/pages/about.html": `<!doctype html><html><head><link rel="stylesheet" href="./about.css"><script type="module" src="./about.ts"></script></head><body><h1>about</h1></body></html>`,
-      "src/pages/about.ts": `console.log("about.ts ran");`,
-      "src/pages/about.css": `h1 { color: red; }`,
-      "other.ts": `console.log("other");`,
-    });
+  const htmlServerFiles = {
+    "src/pages/about.html": `<!doctype html><html><head><link rel="stylesheet" href="./about.css"><script type="module" src="./about.ts"></script></head><body><h1>about</h1></body></html>`,
+    "src/pages/about.ts": `console.log("about.ts ran");`,
+    "src/pages/about.css": `h1 { color: red; }`,
+    "other.ts": `console.log("other");`,
+  };
+  const serveAbout = `
+    const server = Bun.serve({ port: 0, development: false, routes: { "/about": about } });
+    (async () => {
+      const page = await fetch(new URL("/about", server.url));
+      const html = await page.text();
+      const script = await fetch(new URL(html.match(/src="([^"]+)"/)[1], page.url));
+      const css = await fetch(new URL(html.match(/href="([^"]+)"/)[1], page.url));
+      console.log(page.status, html.includes("<h1>about</h1>"), script.status, (await script.text()).includes("about.ts ran"), css.status);
+      server.stop();
+    })();
+  `;
 
+  async function buildAndRun(
+    dir: string,
+    options: { entrypoints: readonly string[]; output: string; cwd?: string } & Partial<Bun.BuildConfig>,
+  ) {
+    const { entrypoints, output, cwd = ".", ...config } = options;
     const build = await Bun.build({
-      entrypoints: entrypoints.map(entry => join(String(dir), entry)),
-      outdir: join(String(dir), "dist"),
+      entrypoints: entrypoints.map(entry => join(dir, entry)),
+      outdir: join(dir, "dist"),
       target: "bun",
-      format,
-    });
+      ...config,
+    } as Bun.BuildConfig);
     expect(build.success).toBe(true);
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), output],
       env: bunEnv,
-      cwd: String(dir),
+      cwd: join(dir, cwd),
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim(), stderr).toBe("200 true 200 true 200");
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  // The server entry lands in dist/src/ when a second entry point widens the root.
+  const inSubfolder = { entrypoints: ["src/server.ts", "other.ts"], output: "dist/src/server.js" };
+
+  test.each([
+    { name: "esm", format: "esm", entrypoints: ["src/server.ts"], output: "dist/server.js" },
+    { name: "cjs", format: "cjs", entrypoints: ["src/server.ts"], output: "dist/server.js" },
+    { name: "subdirectory", format: "esm", ...inSubfolder },
+    { name: "subdirectory-cjs", format: "cjs", ...inSubfolder },
+    { name: "publicPath", format: "esm", publicPath: "/", ...inSubfolder },
+    { name: "publicPath-cjs", format: "cjs", publicPath: "/", ...inSubfolder },
+  ] as const)("HTMLServerRunFromAnotherDirectory/$name", async ({ name, ...options }) => {
+    using dir = tempDir("html-server-cwd", {
+      ...htmlServerFiles,
+      "src/server.ts": `import about from "./pages/about.html";${serveAbout}`,
+    });
+    const { stdout, stderr, exitCode } = await buildAndRun(String(dir), options);
+    expect(stdout, stderr).toBe("200 true 200 true 200");
+    expect(exitCode).toBe(0);
+  });
+
+  // These outputs have no directory of their own to pass, so the paths stay relative to the outdir.
+  test.each([
+    { name: "node-esm", target: "node", format: "esm" },
+    { name: "node-cjs", target: "node", format: "cjs" },
+    { name: "bun-iife", target: "bun", format: "iife" },
+  ] as const)("HTMLServerRunFromOutdir/$name", async ({ name, ...options }) => {
+    using dir = tempDir("html-server-outdir", {
+      ...htmlServerFiles,
+      "src/server.ts": `import about from "./pages/about.html";${serveAbout}`,
+    });
+    const { stdout, stderr, exitCode } = await buildAndRun(String(dir), {
+      ...options,
+      entrypoints: inSubfolder.entrypoints,
+      output: "src/server.js",
+      cwd: "dist",
+    });
+    expect(stdout, stderr).toBe("200 true 200 true 200");
+    expect(exitCode).toBe(0);
+  });
+
+  test("HTMLServerCommonJSUserDirname", async () => {
+    using dir = tempDir("html-server-dirname", {
+      ...htmlServerFiles,
+      "src/uses-dirname.ts": `console.log(__dirname.endsWith("src"));`,
+      "src/server.ts": `import "./uses-dirname.ts"; import about from "./pages/about.html";${serveAbout}`,
+    });
+    const { stdout, stderr, exitCode } = await buildAndRun(String(dir), {
+      format: "cjs",
+      entrypoints: ["src/server.ts"],
+      output: "dist/server.js",
+    });
+    expect(stdout, stderr).toBe("true\n200 true 200 true 200");
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["esm", "cjs"] as const)("each module keeps its own __dirname and __filename/%s", async format => {
+    using dir = tempDir("bundle-dirname", {
+      "entry.ts": `import { a } from "./a/a.ts"; import { b } from "./b/b.ts"; console.log(a(), b());`,
+      "a/a.ts": `export const a = () => [__dirname.endsWith("a"), __filename.endsWith("a.ts")].join();`,
+      "b/b.ts": `export const b = () => [__dirname.endsWith("b"), __filename.endsWith("b.ts")].join();`,
+    });
+    const { stdout, stderr, exitCode } = await buildAndRun(String(dir), {
+      format,
+      entrypoints: ["entry.ts"],
+      output: "dist/entry.js",
+    });
+    expect(stdout, stderr).toBe("true,true true,true");
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["", "relative/dir"])("HTMLServerManifestDirNotAbsolute/%j", async manifestDir => {
+    using dir = tempDir("html-server-dir", {
+      "index.html": `<!doctype html><h1>hand built</h1>`,
+      "server.js": `
+        const server = Bun.serve({
+          port: 0,
+          development: false,
+          routes: {
+            "/": {
+              index: "./index.html",
+              dir: ${JSON.stringify(manifestDir)},
+              files: [{ path: "./index.html", loader: "html", isEntry: true, headers: { "content-type": "text/html" } }],
+            },
+          },
+        });
+        const page = await fetch(server.url);
+        console.log(page.status, await page.text());
+        server.stop();
+      `,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "server.js"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim(), stderr).toBe("200 <!doctype html><h1>hand built</h1>");
     expect(exitCode).toBe(0);
   });
 

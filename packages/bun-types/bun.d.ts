@@ -6750,7 +6750,7 @@ declare module "bun" {
 
     /**
      * The directory of the bundled file that imported the HTML file. `index` and each `files[].path` are relative to it.
-     * This only exists when built ahead of time with `Bun.build` or `bun build` and `target: "bun"`. It is not enumerable.
+     * This only exists when built ahead of time with `Bun.build` or `bun build`, `target: "bun"` and `format: "esm"` or `"cjs"`. It is not enumerable.
      */
     dir?: string;
 
@@ -6758,7 +6758,7 @@ declare module "bun" {
     files?: Array<{
       /** Original source file path. */
       input?: string;
-      /** Generated output file path (with content hash, if included in naming), relative to `dir` */
+      /** Generated output file path (with content hash, if included in naming), relative to `dir` if set, otherwise to the output directory */
       path: string;
       /** The loader used for this file, such as `js`, `css`, or `html` */
       loader: Loader;

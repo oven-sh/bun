@@ -16,16 +16,16 @@
 //! );
 //! ```
 //!
-//! For `--target=bun`, the second argument is the output file's directory
-//! (`__dirname` in CommonJS output); `__jsonParse` stores it as the
-//! non-enumerable `dir` property, and `Bun.serve()` resolves the paths against it.
+//! For `--target=bun` with ESM or CommonJS output, the second argument is the
+//! output file's directory (`__dirname` in CommonJS output); `__jsonParse` stores
+//! it as the non-enumerable `dir` property, and `Bun.serve()` resolves the paths
+//! against it. Without it, the paths are relative to the outdir.
 //!
 //! The manifest JSON structure contains:
 //! - `index`: The original HTML file path
 //! - `files`: Array of all generated files with metadata:
 //!   - `input`: Original source file path
-//!   - `path`: Generated output file path (with content hash), relative to the
-//!     directory of the output file that holds the manifest
+//!   - `path`: Generated output file path (with content hash)
 //!   - `loader`: File type/loader used (js, css, html, file, etc.)
 //!   - `isEntry`: Whether this file is an entry point
 //!   - `headers`: HTTP headers including ETag and Content-Type
@@ -187,7 +187,8 @@ impl<'a> HTMLImportManifest<'a> {
 }
 
 /// `from_chunk_dir` is the outdir-relative directory of the chunk the manifest is
-/// printed into; outside compile mode the paths are relative to it.
+/// printed into. The paths are relative to it when the manifest carries that
+/// directory at runtime, and to the outdir otherwise.
 pub(crate) fn write<W: Write + ?Sized>(
     index: u32,
     graph: &Graph,
@@ -204,6 +205,11 @@ pub(crate) fn write<W: Write + ?Sized>(
         &*bun_core::from_field_ptr!(BundleV2<'static>, graph, std::ptr::from_ref::<Graph>(graph))
     };
     let options = &bv2.transpiler().options;
+    let from_chunk_dir: &[u8] = if options.html_manifest_has_module_dir() {
+        from_chunk_dir
+    } else {
+        b""
+    };
     // Same size as the files' entry bits: the linker's list also holds the dynamic imports.
     let mut entry_point_bits = AutoBitSet::init_empty(linker_graph.entry_points.len())?;
     let mut chunks_to_write = AutoBitSet::init_empty(chunks.len())?;

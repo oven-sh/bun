@@ -7523,10 +7523,8 @@ pub mod bv2_impl {
                 Loader::Html,
             );
             js_parser_options.bundle = true;
-            let output_format = self.transpiler_for_target(target).options.output_format;
-            let pass_module_dir = target.is_bun()
-                && matches!(output_format, options::Format::Esm | options::Format::Cjs);
-            if output_format == options::Format::Cjs {
+            let pass_module_dir = self.transpiler().options.html_manifest_has_module_dir();
+            if pass_module_dir && self.transpiler().options.output_format == options::Format::Cjs {
                 js_parser_options.output_format = bun_js_parser::options::Format::Cjs;
             }
 

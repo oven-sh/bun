@@ -274,6 +274,58 @@ describe.concurrent("bundler hashbang target default", () => {
     return Promise.all(entries.map(entry => Bun.file(join(dir, "out", entry)).text()));
   }
 
+  // A dependency whose exports show what the build's target chose: the
+  // `process.browser` define, the package.json "exports" condition, the
+  // "browser" field and map, and the node:os builtin or its browser polyfill.
+  const targetProbes = {
+    "dep.js": `import road from "road";
+import condition from "condition";
+import field from "field";
+import map from "map";
+import { cpus } from "node:os";
+export const fromDep = { road, condition, field, map, cpus: cpus().length > 0 };
+`,
+    "node_modules/road/package.json": JSON.stringify({ name: "road", main: "index.js" }),
+    "node_modules/road/index.js": `module.exports = process.browser === true ? "browser" : "node";\n`,
+    "node_modules/condition/package.json": JSON.stringify({
+      name: "condition",
+      exports: { browser: "./browser.js", bun: "./bun.js", default: "./default.js" },
+    }),
+    "node_modules/condition/browser.js": `module.exports = "browser";\n`,
+    "node_modules/condition/bun.js": `module.exports = "bun";\n`,
+    "node_modules/condition/default.js": `module.exports = "default";\n`,
+    "node_modules/field/package.json": JSON.stringify({ name: "field", main: "main.js", browser: "browser.js" }),
+    "node_modules/field/main.js": `module.exports = "main";\n`,
+    "node_modules/field/browser.js": `module.exports = "browser";\n`,
+    "node_modules/map/package.json": JSON.stringify({
+      name: "map",
+      main: "index.js",
+      browser: { "./impl.js": "./impl-browser.js" },
+    }),
+    "node_modules/map/index.js": `module.exports = require("./impl.js");\n`,
+    "node_modules/map/impl.js": `module.exports = "impl";\n`,
+    "node_modules/map/impl-browser.js": `module.exports = "impl-browser";\n`,
+  };
+  const targetProbeResults = [
+    {
+      name: "a hashbang entry is defined and resolved for bun",
+      firstLine: `${hashbang}\n`,
+      expected: { browser: false, road: "node", condition: "bun", field: "main", map: "impl", cpus: true },
+    },
+    {
+      name: "an entry without a hashbang is defined and resolved for the browser",
+      firstLine: "",
+      expected: {
+        browser: true,
+        road: "browser",
+        condition: "browser",
+        field: "browser",
+        map: "impl-browser",
+        cpus: false,
+      },
+    },
+  ];
+
   const firstLines = [
     { name: "LF", source: `${hashbang}\n`, bun: true },
     { name: "CRLF", source: `${hashbang}\r\n`, bun: true },
@@ -310,6 +362,15 @@ describe.concurrent("bundler hashbang target default", () => {
       const [output] = await build(backend, String(dir), ["cli.js"]);
       expect(output).toStartWith(`${hashbang}\n// @bun\n`);
       expect(await bunRun(join(String(dir), "out", "cli.js"))).toSpawn("function");
+    });
+
+    test.each(targetProbeResults)(`${backend}: $name`, async ({ firstLine, expected }) => {
+      using dir = tempDir("hashbang-target", {
+        ...targetProbes,
+        "cli.js": `${firstLine}import { fromDep } from "./dep.js";\nconsole.log(JSON.stringify({ browser: process.browser, ...fromDep }));\n`,
+      });
+      await build(backend, String(dir), ["cli.js"]);
+      expect(await bunRun(join(String(dir), "out", "cli.js"))).toSpawn(JSON.stringify(expected));
     });
 
     test(`${backend}: a hashbang on a later entry point applies to the whole build`, async () => {

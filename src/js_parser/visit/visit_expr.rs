@@ -887,6 +887,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // "process.env['A']" has the define of "process.env.A", which comes before one of its target.
+        if in_.assign_target == js_ast::AssignTarget::None {
+            if let Some(mut s) = e_.index.data.e_string() {
+                if s.is_utf8() {
+                    let defines = p.define;
+                    if let Some(parts) = defines.dots_for(s.slice(p.arena)) {
+                        for define in parts.as_slice() {
+                            if !define.data.valueless()
+                                && p.is_dot_define_match(expr, &define.parts)
+                            {
+                                *e = p.value_for_define(
+                                    expr.loc,
+                                    in_.assign_target,
+                                    is_delete_target,
+                                    &define.data,
+                                );
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {

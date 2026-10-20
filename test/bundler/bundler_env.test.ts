@@ -111,14 +111,14 @@ for (let backend of ["api", "cli"] as const) {
         target: "browser",
         files: {
           "/a.js": `
-        globalThis.out.push(process.env.PUBLIC_FOO, process.env.PUBLIC_UNSET, process.env.PRIVATE_SECRET);
+        globalThis.out.push(process.env.PUBLIC_FOO, process.env["PUBLIC_FOO"], process.env.PUBLIC_UNSET, process.env.PRIVATE_SECRET);
       `,
         },
         onAfterBundle(api) {
           const code = api.readFile("/out.js");
           const out: unknown[] = [];
           new Function("process", "globalThis", code)(undefined, { out });
-          expect(out).toEqual(["public_value", undefined, undefined]);
+          expect(out).toEqual(["public_value", "public_value", undefined, undefined]);
         },
       });
 

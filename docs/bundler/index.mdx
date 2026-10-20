@@ -727,10 +727,12 @@ console.log(process.env.BAZ);
 The generated bundle contains the following code:
 
 ```js title="output.js" icon="/icons/javascript.svg"
-console.log(process.env.FOO);
+console.log({}.FOO);
 console.log("https://acme.com");
-console.log(process.env.BAZ);
+console.log({}.BAZ);
 ```
+
+For `target: "browser"`, `process.env` is an empty object, so a variable that is not inlined reads as `undefined`.
 
 #### env: "disable"
 

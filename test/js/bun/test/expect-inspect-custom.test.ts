@@ -9,11 +9,12 @@ import { describe, expect, mock, test } from "bun:test";
 
 const inspectCustom = Symbol.for("nodejs.util.inspect.custom");
 
+// The message carries ANSI colors when stderr is a TTY (CI lanes). Strip them.
 const failureMessage = (fn: () => void): string => {
   try {
     fn();
   } catch (e) {
-    return (e as Error).message;
+    return Bun.stripANSI((e as Error).message);
   }
   throw new Error("expected the matcher to fail");
 };

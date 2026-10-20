@@ -1,6 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::{
-    is_intersection_type, is_object_flag_set, is_object_type, is_type_flag_set,
+    is_intersection_type, is_object_flag_set, is_object_type, is_type_flag_set, union_constituents,
 };
 use bun_lint::types::utils::{get_type_flags, type_is_or_has_base_type};
 use bun_lint::types::{
@@ -452,9 +452,9 @@ enum Annotation<'a> {
     Narrows(Type<'a>),
 }
 
-/// Whether `name`, written as a type where the member is, is `ty`. Only the checker knows: the scopes of the file, which
-/// typescript-eslint asks, have no global and not what an import leads to. tsgolint also says no where the name is
-/// another value, which has no say about a type.
+/// Whether `name`, written as a type where the member is, is `ty`. Only the checker knows: the scopes of the file,
+/// which typescript-eslint asks, have no global and not what an import leads to. tsgolint also says no where the name
+/// is another value, which has no say about a type.
 fn names<'a>(member: Member<'a>, name: &[u8], ty: Type<'a>) -> bool {
     let types = member.file().type_checker();
     let Some(named) = types.resolve_name(member, name, SymbolFlags::TYPE, false) else {
@@ -494,29 +494,53 @@ fn get_type_annotation<'a>(member: Member<'a>, key: Key<'a>) -> Annotation<'a> {
     }
 }
 
-/// Whether the constructor still type checks once the member `name` has the type `narrowed`: all that it writes to the
-/// member is assigned with `=` and has that type.
-fn constructor_writes_fit<'a>(class_scope: &ClassScope<'a>, name: &[u8], narrowed: Type<'a>) -> bool {
+/// Whether the `Assign` is an element of an array or the value of a property. There it can be the default of a pattern,
+/// as in `[this.a = 1] = b`, and what the pattern writes is then not its value.
+fn may_be_default_in_pattern(assign: Expr<'_>) -> bool {
+    match assign.parent() {
+        Node::Prop(_) => true,
+        Node::Expr(parent) => matches!(parent.kind(), ExprKind::Array(_)),
+        _ => false,
+    }
+}
+
+/// Whether the constructor still type checks once `readonly` narrows `member`, whose name is `name`, to `narrowed`: all
+/// that it writes to the member is assigned with `=` and has that type.
+fn constructor_writes_fit<'a>(
+    class_scope: &ClassScope<'a>,
+    member: Member<'a>,
+    name: &[u8],
+    narrowed: Type<'a>,
+) -> bool {
+    // What the constructor writes through an instance is not the static member of that name.
+    if member.is_static() {
+        return true;
+    }
     let (class, Some(class_type)) = (class_scope.class, class_scope.class_type) else {
         return false;
     };
     let is_write = |node: &Expr<'a>| {
         is_modification(*node)
-            && enclosing_class(*node) == Some((class, true))
             && accessed_member(*node).is_some_and(|(object, member_name)| {
-                let object_type = object.ty();
-                *member_name == *name
-                    && !object_type.is_unresolved()
-                    && get_type_to_class_relation(object_type, class_type)
-                        == TypeToClassRelation::Instance
+                *member_name == *name && enclosing_class(*node) == Some((class, true)) && {
+                    let object_type = object.ty();
+                    !object_type.is_unresolved()
+                        && get_type_to_class_relation(object_type, class_type)
+                            == TypeToClassRelation::Instance
+                }
             })
+    };
+    // An optional member still takes `undefined`.
+    let is_optional = member.flags().contains(Flags::OPTIONAL);
+    let takes = |ty: Type<'a>| {
+        ty.is_assignable_to(narrowed) || (is_optional && is_type_flag_set(ty, TypeFlags::UNDEFINED))
     };
     let fits = |node: Expr<'a>| {
         !node.is_parenthesized()
-            && matches!(node.parent(), Node::Expr(parent) if matches!(
-                parent.kind(),
+            && matches!(node.parent(), Node::Expr(assign) if !may_be_default_in_pattern(assign) && matches!(
+                assign.kind(),
                 ExprKind::Assign { op: None, target, value }
-                    if target == node && value.ty().is_assignable_to(narrowed)
+                    if target == node && union_constituents(value.ty()).iter().all(&takes)
             ))
     };
     let file = class.file();
@@ -582,7 +606,7 @@ fn report<'a>(
         .fix_where_safe(
             || match annotation() {
                 Annotation::Narrows(narrowed) => {
-                    constructor_writes_fit(class_scope, violating.name, *narrowed)
+                    constructor_writes_fit(class_scope, member, violating.name, *narrowed)
                 }
                 Annotation::NotNeeded | Annotation::Write(_) => true,
             },

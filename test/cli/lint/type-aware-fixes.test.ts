@@ -137,6 +137,37 @@ const besideAGenericAlias = (declared: string) =>
     "export type Color<T> = shape.Color;",
     holder("shape.Color.Red", "shape.Color.Red", declared),
   ].join("\n");
+// A static member and a member of an instance have one name. The constructor assigns the member of the instance.
+const besideAStaticMember = (ofTheClass: string, ofAnInstance: string) =>
+  [
+    importsUi.trimEnd(),
+    "export class Holder {",
+    `  ${ofTheClass} = Ui.Range.Low;`,
+    `  ${ofAnInstance} = Ui.Range.Low;`,
+    "  constructor(other: boolean) {",
+    "    if (other) this.current = Ui.Range.High;",
+    "  }",
+    "  get value() {",
+    "    return [this.current, Holder.current];",
+    "  }",
+    "}",
+    "",
+  ].join("\n");
+// The constructor assigns through a pattern. What the pattern writes is not the value of the default.
+const defaultInAPattern = (declared: string) =>
+  [
+    importsUi.trimEnd(),
+    "export class Holder {",
+    `  ${declared} = Ui.Range.Low;`,
+    "  constructor(options: { current?: Ui.Range }) {",
+    "    ({ current: this.current = Ui.Range.Low } = options);",
+    "  }",
+    "  get value() {",
+    "    return this.current;",
+    "  }",
+    "}",
+    "",
+  ].join("\n");
 
 /** The file, its text, and what `--fix` makes of it. */
 const written: [file: string, source: string, fixed: string][] = [
@@ -214,6 +245,18 @@ const written: [file: string, source: string, fixed: string][] = [
     importsUi + holder("Ui.Range.Low", "Ui.Range.Low"),
     importsUi + holder("Ui.Range.Low", "Ui.Range.Low", "private readonly current"),
   ],
+  // An optional member takes the `undefined` that the constructor assigns.
+  [
+    "optional-that-is-reset.ts",
+    importsUi + holder("Ui.Range.Low", "undefined", "private current?"),
+    importsUi + holder("Ui.Range.Low", "undefined", "private readonly current?"),
+  ],
+  // No write of the constructor reaches the static member. The member of the instance is held back.
+  [
+    "static-member-of-that-name.ts",
+    besideAStaticMember("private static current", "private current"),
+    besideAStaticMember("private static readonly current", "private current"),
+  ],
 ];
 
 /**
@@ -241,6 +284,11 @@ const heldBack: [file: string, source: string, dangerously: string][] = [
     "held-back-optional.ts",
     holder("Level.Debug", "Level.Info", "private current?"),
     holder("Level.Debug", "Level.Info", "private readonly current?"),
+  ],
+  [
+    "held-back-default-in-a-pattern.ts",
+    defaultInAPattern("private current"),
+    defaultInAPattern("private readonly current"),
   ],
 ];
 

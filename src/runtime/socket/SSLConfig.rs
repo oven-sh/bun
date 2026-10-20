@@ -282,6 +282,7 @@ impl SSLConfigFromJs for SSLConfig {
         {
             apply_default_ca(vm, &mut result);
         }
+        apply_empty_default_ca(vm, &mut result);
         Ok(Some(result))
     }
 }

@@ -101,6 +101,18 @@ test.concurrent("an empty list trusts nothing", async () => {
   });
 });
 
+test.concurrent("an empty default also covers an empty ca beside other options", async () => {
+  const result = await run(
+    `
+    tls.setDefaultCACertificates([]);
+    const opts = { tls: { ca: [], serverName: "localhost" } };
+    console.log(JSON.stringify({ fetch: await viaFetch(opts), ws: await viaWs(opts) }));
+  `,
+    { SSL_CERT_FILE: "good" },
+  );
+  expect(result).toEqual({ fetch: "DEPTH_ZERO_SELF_SIGNED_CERT", ws: "REFUSED" });
+});
+
 test.concurrent("a certificate failure carries its code on cause", async () => {
   const result = await run(`
     const error = await fetch(server.url).catch(e => e);

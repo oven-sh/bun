@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { chmodSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isPhaseGroupHeader } from "../../scripts/ci-log-phase.mjs";
@@ -375,9 +375,7 @@ describe("scripts/ci-slowest-tests.ts findBuild", () => {
 // The script asks `gh` for the merged PRs and `bk` for the builds. Here both
 // are shell scripts on PATH that record their arguments and print canned
 // JSON, and a local server stands in for the Buildkite log URLs. Shell scripts
-// do not resolve as executables on Windows, hence the skip. Each run starts the
-// script in a fresh process, which takes a few seconds in a debug build, hence
-// the timeouts.
+// do not resolve as executables on Windows, hence the skip.
 describe.skipIf(isWindows)("scripts/ci-slowest-tests.ts with a canned `gh` and `bk`", () => {
   const script = join(import.meta.dir, "..", "..", "scripts", "ci-slowest-tests.ts");
   const fakeGh = ["#!/bin/sh", 'echo "gh $*" >> "$FAKE/calls"', 'cat "$FAKE/merged.json"', ""].join("\n");
@@ -469,119 +467,110 @@ describe.skipIf(isWindows)("scripts/ci-slowest-tests.ts with a canned `gh` and `
   const log = (...lines: [ms: number, header: string][]) =>
     [...lines.map(([ms, header]) => bk(ms, `--- ${header}`)), ""].join("\r\r\n");
 
-  test.concurrent(
-    "a build number whose test-bun jobs never started: exit 1 and no log request",
-    async () => {
-      const result = await runSlowest(["127137", "--json"], {
-        views: [finishedBuild(127137, "failed", noJobStarted(127137))],
-      });
-      expect(result).toEqual({
-        stdout: "",
-        stderr: [
-          "build #127137: 0 of 3 test-bun jobs started, on 0 of 2 platforms",
-          "error: build #127137 has no test timings: none of its 3 test-bun jobs started",
-          "note: pass another build number, or none to pick a recent merged-PR build",
-          "",
-        ],
-        exitCode: 1,
-        calls: ["bk build view 127137"],
-        requested: [],
-      });
-    },
-    30_000,
-  );
+  // An ASAN build starts too slowly to run all of these at the same time within the default timeout.
+  const scenario = test.concurrentIf(!isASAN);
 
-  test.concurrent(
-    "a build number whose jobs started and ran no test: exit 1 and no table",
-    async () => {
-      const result = await runSlowest(["7"], {
-        views: [finishedBuild(7, "failed", [started("7-a", DEBIAN, "failed")])],
-        // The shard ended in its setup step.
-        logs: { "7-a": log([0, "[1/50] test/package.json"], [900, "End"]) },
-      });
-      expect(result).toEqual({
-        stdout: "",
-        stderr: [
-          "build #7: 1 of 1 test-bun jobs started, on 1 of 1 platforms",
-          "1 unique entries, 0 test files after filtering",
-          "logs cached at <dir>/tmp/bun-ci-logs-7",
-          "error: build #7 has no test timings: no test file in the logs of its 1 started test-bun jobs",
-          "note: a `failed <job id>` line above is a log that could not be downloaded",
-          "",
-        ],
-        exitCode: 1,
-        calls: ["bk build view 7"],
-        requested: ["7-a"],
-      });
-    },
-    30_000,
-  );
+  scenario("a build number whose test-bun jobs never started: exit 1 and no log request", async () => {
+    const result = await runSlowest(["127137", "--json"], {
+      views: [finishedBuild(127137, "failed", noJobStarted(127137))],
+    });
+    expect(result).toEqual({
+      stdout: "",
+      stderr: [
+        "build #127137: 0 of 3 test-bun jobs started, on 0 of 2 platforms",
+        "error: build #127137 has no test timings: none of its 3 test-bun jobs started",
+        "note: pass another build number, or none to pick a recent merged-PR build",
+        "",
+      ],
+      exitCode: 1,
+      calls: ["bk build view 127137"],
+      requested: [],
+    });
+  });
 
-  test.concurrent(
-    "no build number: takes the first build in which every test-bun job started",
-    async () => {
-      const untested = finishedBuild(127137, "failed", noJobStarted(127137));
-      const complete = finishedBuild(126925, "passed", everyJobStarted(126925));
-      const result = await runSlowest(["--json"], {
-        merged: [
-          { number: 45639, headRefName: "hot-loop-no-inline" },
-          { number: 45620, headRefName: "list-fails" },
-          { number: 45600, headRefName: "merged-earlier" },
-          { number: 45599, headRefName: "never-listed" },
-        ],
-        lists: {
-          "hot-loop-no-inline": [
-            { number: 127153, state: "running", jobs: everyJobStarted(127153) },
-            untested,
-            finishedBuild(127100, "failed", oneShardNeverStarted(127100)),
-          ],
-          "merged-earlier": [complete],
-        },
-        // `bk build view` can answer for both builds. The script must not need it.
-        views: [untested, complete],
-        logs: {
-          "126925-a": log([0, "[1/3] test/a.test.ts"], [3000, "[2/3] test/b.test.ts"], [4000, "End"]),
-          "126925-b": log([0, "[3/3] test/c.test.ts"], [2000, "End"]),
-          "126925-c": log([0, "[1/1] test/a.test.ts"], [5000, "End"]),
-        },
-      });
-      const { build, count, top } = JSON.parse(result.stdout);
-      expect({ ...result, stdout: { build, count, top } }).toEqual({
-        stdout: {
-          build: "126925",
-          count: 3,
-          top: [
-            { file: "test/a.test.ts", maxMs: 5000, maxPlat: "windows 2019 x64" },
-            { file: "test/c.test.ts", maxMs: 2000, maxPlat: "debian 13 x64" },
-            { file: "test/b.test.ts", maxMs: 1000, maxPlat: "debian 13 x64" },
-          ],
-        },
-        stderr: [
-          "no build given, finding a recent merged-PR build...",
-          "  skipped build #127137 (PR #45639, hot-loop-no-inline, state=failed): 0 of 3 test-bun jobs started",
-          "  skipped build #127100 (PR #45639, hot-loop-no-inline, state=failed): 2 of 3 test-bun jobs started",
-          "  failed to list the builds of list-fails (PR #45620): Error: 429 Too Many Requests",
-          "  using build #126925 (PR #45600, merged-earlier, state=passed)",
-          "build #126925: 3 of 3 test-bun jobs started, on 2 of 2 platforms",
-          "3 unique entries, 3 test files after filtering",
-          "logs cached at <dir>/tmp/bun-ci-logs-126925",
-          "",
-        ],
-        exitCode: 0,
-        // The jobs come with the build list, so there is no `bk build view`.
-        calls: [
-          "gh pr list --state merged --limit 10 --json number,headRefName",
-          "bk build list --branch hot-loop-no-inline",
-          "bk build list --branch list-fails",
-          "bk build list --branch merged-earlier",
-        ],
-        requested: ["126925-a", "126925-b", "126925-c"],
-      });
-    },
-    30_000,
-  );
+  scenario("a build number whose jobs started and ran no test: exit 1 and no table", async () => {
+    const result = await runSlowest(["7"], {
+      views: [finishedBuild(7, "failed", [started("7-a", DEBIAN, "failed")])],
+      // The shard ended in its setup step.
+      logs: { "7-a": log([0, "[1/50] test/package.json"], [900, "End"]) },
+    });
+    expect(result).toEqual({
+      stdout: "",
+      stderr: [
+        "build #7: 1 of 1 test-bun jobs started, on 1 of 1 platforms",
+        "1 unique entries, 0 test files after filtering",
+        "logs cached at <dir>/tmp/bun-ci-logs-7",
+        "error: build #7 has no test timings: no test file in the logs of its 1 started test-bun jobs",
+        "note: a `failed <job id>` line above is a log that could not be downloaded",
+        "",
+      ],
+      exitCode: 1,
+      calls: ["bk build view 7"],
+      requested: ["7-a"],
+    });
+  });
 
-  test.concurrent(
+  scenario("no build number: takes the first build in which every test-bun job started", async () => {
+    const untested = finishedBuild(127137, "failed", noJobStarted(127137));
+    const complete = finishedBuild(126925, "passed", everyJobStarted(126925));
+    const result = await runSlowest(["--json"], {
+      merged: [
+        { number: 45639, headRefName: "hot-loop-no-inline" },
+        { number: 45620, headRefName: "list-fails" },
+        { number: 45600, headRefName: "merged-earlier" },
+        { number: 45599, headRefName: "never-listed" },
+      ],
+      lists: {
+        "hot-loop-no-inline": [
+          { number: 127153, state: "running", jobs: everyJobStarted(127153) },
+          untested,
+          finishedBuild(127100, "failed", oneShardNeverStarted(127100)),
+        ],
+        "merged-earlier": [complete],
+      },
+      // `bk build view` can answer for both builds. The script must not need it.
+      views: [untested, complete],
+      logs: {
+        "126925-a": log([0, "[1/3] test/a.test.ts"], [3000, "[2/3] test/b.test.ts"], [4000, "End"]),
+        "126925-b": log([0, "[3/3] test/c.test.ts"], [2000, "End"]),
+        "126925-c": log([0, "[1/1] test/a.test.ts"], [5000, "End"]),
+      },
+    });
+    const { build, count, top } = JSON.parse(result.stdout);
+    expect({ ...result, stdout: { build, count, top } }).toEqual({
+      stdout: {
+        build: "126925",
+        count: 3,
+        top: [
+          { file: "test/a.test.ts", maxMs: 5000, maxPlat: "windows 2019 x64" },
+          { file: "test/c.test.ts", maxMs: 2000, maxPlat: "debian 13 x64" },
+          { file: "test/b.test.ts", maxMs: 1000, maxPlat: "debian 13 x64" },
+        ],
+      },
+      stderr: [
+        "no build given, finding a recent merged-PR build...",
+        "  skipped build #127137 (PR #45639, hot-loop-no-inline, state=failed): 0 of 3 test-bun jobs started",
+        "  skipped build #127100 (PR #45639, hot-loop-no-inline, state=failed): 2 of 3 test-bun jobs started",
+        "  failed to list the builds of list-fails (PR #45620): Error: 429 Too Many Requests",
+        "  using build #126925 (PR #45600, merged-earlier, state=passed)",
+        "build #126925: 3 of 3 test-bun jobs started, on 2 of 2 platforms",
+        "3 unique entries, 3 test files after filtering",
+        "logs cached at <dir>/tmp/bun-ci-logs-126925",
+        "",
+      ],
+      exitCode: 0,
+      // The jobs come with the build list, so there is no `bk build view`.
+      calls: [
+        "gh pr list --state merged --limit 10 --json number,headRefName",
+        "bk build list --branch hot-loop-no-inline",
+        "bk build list --branch list-fails",
+        "bk build list --branch merged-earlier",
+      ],
+      requested: ["126925-a", "126925-b", "126925-c"],
+    });
+  });
+
+  scenario(
     "no build number and no complete build: exit 1, and the note names the build with the most timings",
     async () => {
       const result = await runSlowest(["--json"], {
@@ -626,40 +615,35 @@ describe.skipIf(isWindows)("scripts/ci-slowest-tests.ts with a canned `gh` and `
         requested: [],
       });
     },
-    30_000,
   );
 
-  test.concurrent(
-    "no build number and every `bk build list` fails: exit 1 with the reason of each",
-    async () => {
-      const result = await runSlowest([], {
-        merged: [
-          { number: 2, headRefName: "a" },
-          { number: 1, headRefName: "b" },
-        ],
-      });
-      expect(result).toEqual({
-        stdout: "",
-        stderr: [
-          "no build given, finding a recent merged-PR build...",
-          "  failed to list the builds of a (PR #2): Error: 429 Too Many Requests",
-          "  failed to list the builds of b (PR #1): Error: 429 Too Many Requests",
-          "error: `bk build list` failed for each of the last 2 merged PRs, so no build was examined",
-          "",
-        ],
-        exitCode: 1,
-        calls: [
-          "gh pr list --state merged --limit 10 --json number,headRefName",
-          "bk build list --branch a",
-          "bk build list --branch b",
-        ],
-        requested: [],
-      });
-    },
-    30_000,
-  );
+  scenario("no build number and every `bk build list` fails: exit 1 with the reason of each", async () => {
+    const result = await runSlowest([], {
+      merged: [
+        { number: 2, headRefName: "a" },
+        { number: 1, headRefName: "b" },
+      ],
+    });
+    expect(result).toEqual({
+      stdout: "",
+      stderr: [
+        "no build given, finding a recent merged-PR build...",
+        "  failed to list the builds of a (PR #2): Error: 429 Too Many Requests",
+        "  failed to list the builds of b (PR #1): Error: 429 Too Many Requests",
+        "error: `bk build list` failed for each of the last 2 merged PRs, so no build was examined",
+        "",
+      ],
+      exitCode: 1,
+      calls: [
+        "gh pr list --state merged --limit 10 --json number,headRefName",
+        "bk build list --branch a",
+        "bk build list --branch b",
+      ],
+      requested: [],
+    });
+  });
 
-  test.concurrent(
+  scenario(
     "no build number and no log of the picked build can be downloaded: exit 1, and no other build is tried",
     async () => {
       const result = await runSlowest(["--json"], {
@@ -691,7 +675,6 @@ describe.skipIf(isWindows)("scripts/ci-slowest-tests.ts with a canned `gh` and `
         requested: ["201-a"],
       });
     },
-    30_000,
   );
 
   // Build 127153 in small: one of the two darwin shards expired, and here the
@@ -720,47 +703,39 @@ describe.skipIf(isWindows)("scripts/ci-slowest-tests.ts with a canned `gh` and `
     "",
   ];
 
-  test.concurrent(
-    "a build number with jobs that never started: reports the rest and names the platforms",
-    async () => {
-      expect(await runSlowest(["127153"], partial)).toEqual({
-        stdout: [
-          "rank\tseconds\tfile\tslowest_platform",
-          "1\t3.00\ttest/a.test.ts\tdebian 13 x64",
-          "2\t1.00\ttest/b.test.ts\tdebian 13 x64",
-          "",
-        ].join("\n"),
-        stderr: partialStderr,
-        exitCode: 0,
-        calls: ["bk build view 127153"],
-        requested: ["darwin-1", "debian-1"],
-      });
-    },
-    30_000,
-  );
+  scenario("a build number with jobs that never started: reports the rest and names the platforms", async () => {
+    expect(await runSlowest(["127153"], partial)).toEqual({
+      stdout: [
+        "rank\tseconds\tfile\tslowest_platform",
+        "1\t3.00\ttest/a.test.ts\tdebian 13 x64",
+        "2\t1.00\ttest/b.test.ts\tdebian 13 x64",
+        "",
+      ].join("\n"),
+      stderr: partialStderr,
+      exitCode: 0,
+      calls: ["bk build view 127153"],
+      requested: ["darwin-1", "debian-1"],
+    });
+  });
 
-  test.concurrent(
-    "the same with --json: the warning stays on stderr",
-    async () => {
-      const result = await runSlowest(["127153", "--json"], partial);
-      const { build, count, top } = JSON.parse(result.stdout);
-      expect({ ...result, stdout: { build, count, top } }).toEqual({
-        stdout: {
-          build: "127153",
-          count: 2,
-          top: [
-            { file: "test/a.test.ts", maxMs: 3000, maxPlat: "debian 13 x64" },
-            { file: "test/b.test.ts", maxMs: 1000, maxPlat: "debian 13 x64" },
-          ],
-        },
-        stderr: partialStderr,
-        exitCode: 0,
-        calls: ["bk build view 127153"],
-        requested: ["darwin-1", "debian-1"],
-      });
-    },
-    30_000,
-  );
+  scenario("the same with --json: the warning stays on stderr", async () => {
+    const result = await runSlowest(["127153", "--json"], partial);
+    const { build, count, top } = JSON.parse(result.stdout);
+    expect({ ...result, stdout: { build, count, top } }).toEqual({
+      stdout: {
+        build: "127153",
+        count: 2,
+        top: [
+          { file: "test/a.test.ts", maxMs: 3000, maxPlat: "debian 13 x64" },
+          { file: "test/b.test.ts", maxMs: 1000, maxPlat: "debian 13 x64" },
+        ],
+      },
+      stderr: partialStderr,
+      exitCode: 0,
+      calls: ["bk build view 127153"],
+      requested: ["darwin-1", "debian-1"],
+    });
+  });
 });
 
 describe("phase-header boundary", () => {

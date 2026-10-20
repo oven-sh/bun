@@ -20,7 +20,7 @@ import { once } from "node:events";
 import http2 from "node:http2";
 import net, { type AddressInfo } from "node:net";
 import { Duplex, duplexPair } from "node:stream";
-import { describe, test } from "node:test";
+import { before, describe, test } from "node:test";
 import { promisify } from "node:util";
 
 const als = new AsyncLocalStorage<string>();
@@ -525,8 +525,104 @@ describe("Http2Session.ping()", () => {
   });
 });
 
-// A process that has made no AsyncLocalStorage. One process runs the three scenarios, because a
-// debug build takes more than a second to load node:http2. The tests below read what it prints.
+if (typeof Bun !== "undefined") {
+  describe("a caller inside a Bun.ModuleGraph that is disposed before the acknowledgement", () => {
+    test("is not called back by settings(), and the session still gets 'localSettings'", async () => {
+      const { client, close } = await pair();
+      const graph = new Bun.ModuleGraph();
+      try {
+        let called = false;
+        const delivered: string[] = [];
+        client.on("localSettings", () => delivered.push(`'localSettings' in ${store()}`));
+        graph.run(() => als.run("tenant", () => client.settings({}, () => (called = true))));
+        graph.dispose();
+        await once(client, "localSettings");
+        assert.deepStrictEqual(
+          { called, delivered, pendingSettingsAck: client.pendingSettingsAck },
+          { called: false, delivered: ["'localSettings' in session"], pendingSettingsAck: false },
+        );
+      } finally {
+        graph.dispose();
+        close();
+      }
+    });
+
+    test("is not called back by ping(), and the session closes without it", async () => {
+      const { client, close } = await pair();
+      const graph = new Bun.ModuleGraph();
+      try {
+        let called = false;
+        graph.run(() => client.ping(() => (called = true)));
+        graph.dispose();
+        // The acknowledgement of a ping that follows is after the one of the graph's ping.
+        assert.strictEqual(await pingStore(client), "no store");
+        client.close();
+        await once(client, "close");
+        assert.strictEqual(called, false);
+      } finally {
+        graph.dispose();
+        close();
+      }
+    });
+  });
+
+  describe("a session that is destroyed", () => {
+    test("lets go of the callbacks that got no acknowledgement", async () => {
+      // This peer never answers.
+      const server = net.createServer(socket => socket.on("error", () => {}).resume());
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const N = 20;
+      // What each callback keeps alive, per method.
+      const kept = { settings: [] as WeakRef<object>[], ping: [] as WeakRef<object>[] };
+      const keep = (refs: WeakRef<object>[]) => {
+        const payload = { bytes: new Uint8Array(64 * 1024) };
+        refs.push(new WeakRef(payload));
+        return () => payload;
+      };
+      try {
+        // The sessions stay reachable: what a session still keeps is not let go of.
+        const sessions = await Promise.all(
+          Array.from({ length: N }, async () => {
+            const client = http2.connect(`http://127.0.0.1:${portOf(server)}`);
+            client.on("error", () => {});
+            await once(client, "connect");
+            client.settings({}, keep(kept.settings));
+            client.ping(keep(kept.ping));
+            client.destroy();
+            await once(client, "close");
+            return client;
+          }),
+        );
+        const alive = () =>
+          [kept.settings, kept.ping].map(refs => refs.filter(ref => ref.deref() !== undefined).length);
+        for (let i = 0; i < 20 && Math.max(...alive()) > N / 2; i++) {
+          Bun.gc(true);
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        assert.strictEqual(sessions.length, N);
+        for (const n of alive()) assert.ok(n <= N / 2, `${n} of ${N} payloads are still alive`);
+      } finally {
+        server.close();
+      }
+    });
+
+    test("keeps a ping when destroy() throws", async () => {
+      const { client, close } = await pair();
+      try {
+        const { promise, resolve } = Promise.withResolvers<string>();
+        client.ping((err: NodeJS.ErrnoException | null) => resolve(err?.code ?? "acknowledged"));
+        assert.throws(() => client.destroy(new Error("destroyed"), "not a code" as unknown as number));
+        assert.strictEqual(await promise, "acknowledged");
+      } finally {
+        close();
+      }
+    });
+  });
+}
+
+// A process that has made no AsyncLocalStorage. One process runs the three scenarios, and it starts
+// before the first test: a debug build takes seconds to load node:http2 and to run them. The tests
+// below read what it prints.
 type FreshProcess = {
   tracking?: { before: boolean; after: boolean };
   thrown: { uncaught: string; emitted: boolean; pendingSettingsAck: boolean };
@@ -534,6 +630,7 @@ type FreshProcess = {
 };
 const execFileAsync = promisify(execFile);
 let freshProcess: Promise<FreshProcess> | undefined;
+before(() => void inFreshProcess().catch(() => {}));
 function inFreshProcess() {
   const source = `
     const http2 = require("node:http2");
@@ -613,6 +710,13 @@ function inFreshProcess() {
 }
 
 describe("a process that has made no AsyncLocalStorage", () => {
+  if (typeof Bun !== "undefined") {
+    test("does not start to track async contexts for settings() or ping()", async () => {
+      const { tracking } = await inFreshProcess();
+      assert.deepStrictEqual(tracking, { before: false, after: false });
+    });
+  }
+
   test("ends the delivery when a settings() callback throws: 'localSettings' is not emitted", async () => {
     const { thrown } = await inFreshProcess();
     assert.deepStrictEqual(thrown, { uncaught: "thrown by the callback", emitted: false, pendingSettingsAck: false });
@@ -623,105 +727,3 @@ describe("a process that has made no AsyncLocalStorage", () => {
     assert.deepStrictEqual(stores, { settings: "no store", ping: "no store", localSettings: "no store" });
   });
 });
-
-if (typeof Bun !== "undefined") {
-  describe("a caller inside a Bun.ModuleGraph that is disposed before the acknowledgement", () => {
-    test("is not called back by settings(), and the session still gets 'localSettings'", async () => {
-      const { client, close } = await pair();
-      const graph = new Bun.ModuleGraph();
-      try {
-        let called = false;
-        const delivered: string[] = [];
-        client.on("localSettings", () => delivered.push(`'localSettings' in ${store()}`));
-        graph.run(() => als.run("tenant", () => client.settings({}, () => (called = true))));
-        graph.dispose();
-        await once(client, "localSettings");
-        assert.deepStrictEqual(
-          { called, delivered, pendingSettingsAck: client.pendingSettingsAck },
-          { called: false, delivered: ["'localSettings' in session"], pendingSettingsAck: false },
-        );
-      } finally {
-        graph.dispose();
-        close();
-      }
-    });
-
-    test("is not called back by ping(), and the session closes without it", async () => {
-      const { client, close } = await pair();
-      const graph = new Bun.ModuleGraph();
-      try {
-        let called = false;
-        graph.run(() => client.ping(() => (called = true)));
-        graph.dispose();
-        // The acknowledgement of a ping that follows is after the one of the graph's ping.
-        assert.strictEqual(await pingStore(client), "no store");
-        client.close();
-        await once(client, "close");
-        assert.strictEqual(called, false);
-      } finally {
-        graph.dispose();
-        close();
-      }
-    });
-  });
-
-  describe("a process that has made no AsyncLocalStorage", () => {
-    test("does not start to track async contexts for settings() or ping()", async () => {
-      const { tracking } = await inFreshProcess();
-      assert.deepStrictEqual(tracking, { before: false, after: false });
-    });
-  });
-
-  describe("a session that is destroyed", () => {
-    test("lets go of the callbacks that got no acknowledgement", async () => {
-      // This peer never answers.
-      const server = net.createServer(socket => socket.on("error", () => {}).resume());
-      await once(server.listen(0, "127.0.0.1"), "listening");
-      const N = 20;
-      // What each callback keeps alive, per method.
-      const kept = { settings: [] as WeakRef<object>[], ping: [] as WeakRef<object>[] };
-      const keep = (refs: WeakRef<object>[]) => {
-        const payload = { bytes: new Uint8Array(64 * 1024) };
-        refs.push(new WeakRef(payload));
-        return () => payload;
-      };
-      try {
-        // The sessions stay reachable: what a session still keeps is not let go of.
-        const sessions = await Promise.all(
-          Array.from({ length: N }, async () => {
-            const client = http2.connect(`http://127.0.0.1:${portOf(server)}`);
-            client.on("error", () => {});
-            await once(client, "connect");
-            client.settings({}, keep(kept.settings));
-            client.ping(keep(kept.ping));
-            client.destroy();
-            await once(client, "close");
-            return client;
-          }),
-        );
-        const alive = () =>
-          [kept.settings, kept.ping].map(refs => refs.filter(ref => ref.deref() !== undefined).length);
-        for (let i = 0; i < 20 && Math.max(...alive()) > N / 2; i++) {
-          Bun.gc(true);
-          await new Promise(resolve => setTimeout(resolve, 10));
-        }
-        assert.strictEqual(sessions.length, N);
-        for (const n of alive()) assert.ok(n <= N / 2, `${n} of ${N} payloads are still alive`);
-      } finally {
-        server.close();
-      }
-    });
-
-    test("keeps a ping when destroy() throws", async () => {
-      const { client, close } = await pair();
-      try {
-        const { promise, resolve } = Promise.withResolvers<string>();
-        client.ping((err: NodeJS.ErrnoException | null) => resolve(err?.code ?? "acknowledged"));
-        assert.throws(() => client.destroy(new Error("destroyed"), "not a code" as unknown as number));
-        assert.strictEqual(await promise, "acknowledged");
-      } finally {
-        close();
-      }
-    });
-  });
-}

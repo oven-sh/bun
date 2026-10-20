@@ -321,7 +321,6 @@ bitflags::bitflags! {
         const REST = 1 << 2;
         /// `...T`
         const VARIADIC = 1 << 3;
-        const FIXED = Self::REQUIRED.bits() | Self::OPTIONAL.bits();
         const VARIABLE = Self::REST.bits() | Self::VARIADIC.bits();
     }
 }

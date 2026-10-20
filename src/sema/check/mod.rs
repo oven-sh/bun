@@ -1272,7 +1272,6 @@ bitflags::bitflags! {
         const INFERENTIAL = 1 << 1;
         const SKIP_CONTEXT_SENSITIVE = 1 << 2;
         const SKIP_GENERIC_FUNCTIONS = 1 << 3;
-        const IS_FOR_SIGNATURE_HELP = 1 << 4;
         const REST_BINDING_ELEMENT = 1 << 5;
         const TYPE_ONLY = 1 << 6;
         const FORCE_TUPLE = 1 << 7;
@@ -1285,7 +1284,6 @@ bitflags::bitflags! {
     struct ContextFlags: u8 {
         const SIGNATURE = 1 << 0;
         const NO_CONSTRAINTS = 1 << 1;
-        const IGNORE_NODE_INFERENCES = 1 << 2;
         const SKIP_BINDING_PATTERNS = 1 << 3;
     }
 }

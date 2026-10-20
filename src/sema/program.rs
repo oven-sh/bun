@@ -261,85 +261,6 @@ impl<'s> std::ops::DerefMut for ModuleCell<'s> {
 /// never start. Everything else that runs on the pools finishes without waiting.
 static WAITS_ACROSS_POOLS: Guarded<()> = Guarded::new(());
 
-/// Reads the files at `paths` and passes the contents of each to `work`, on all the host's threads.
-/// If the host has I/O threads (`Host::io_pool`), they do the reading, so the host's threads never
-/// wait for the file system.
-fn read_and_work(
-    host: &dyn Host,
-    paths: &[&[u8]],
-    work: &(dyn Fn(usize, Cow<'static, [u8]>) + Sync),
-) {
-    let threads = host.threads();
-    let Some(io) = host.io_pool().filter(|_| paths.len() >= 4 * threads) else {
-        host.parallel(paths.len(), &|i| {
-            work(i, host.read_source(paths[i]));
-        });
-        return;
-    };
-    /// Adjacent paths are in the same directory.
-    const RUN: usize = 16;
-    /// Contents that have been read occupy memory until they are processed.
-    const AHEAD: usize = 256;
-    struct Shared {
-        ready: Vec<(usize, Cow<'static, [u8]>)>,
-        to_read: usize,
-    }
-    let shared = Guarded::new(Shared {
-        ready: Vec::new(),
-        to_read: paths.len(),
-    });
-    let (is_more, has_room) = (bun_threading::Condvar::new(), bun_threading::Condvar::new());
-    let next = AtomicUsize::new(0);
-    let read = |(): &(), (): (), _: usize| {
-        loop {
-            let from = next.fetch_add(RUN, Ordering::Relaxed);
-            if from >= paths.len() {
-                break;
-            }
-            for i in from..(from + RUN).min(paths.len()) {
-                let text = host.read_source(paths[i]);
-                let mut shared = shared.lock();
-                while shared.ready.len() > AHEAD {
-                    has_room.wait_guarded(&mut shared);
-                }
-                shared.ready.push((i, text));
-                shared.to_read -= 1;
-                let is_last = shared.to_read == 0;
-                drop(shared);
-                if is_last {
-                    is_more.notify_all();
-                } else {
-                    is_more.notify_one();
-                }
-            }
-        }
-    };
-    let process = |_: usize| {
-        loop {
-            let mut shared = shared.lock();
-            let (i, text) = loop {
-                if let Some(ready) = shared.ready.pop() {
-                    break ready;
-                }
-                if shared.to_read == 0 {
-                    return;
-                }
-                is_more.wait_guarded(&mut shared);
-            };
-            let has_room_again = shared.ready.len() == AHEAD;
-            drop(shared);
-            if has_room_again {
-                has_room.notify_all();
-            }
-            work(i, text);
-        }
-    };
-    let _pools_lock = WAITS_ACROSS_POOLS.lock();
-    io.each_while((), read, &mut vec![(); io.max_threads()], || {
-        host.parallel(threads, &process);
-    });
-}
-
 /// Returns the stub that replaces a file's HIR when it's freed. The text is retained for the report.
 fn stub_of<'s>(hir: &mut hir::File<'s>) -> hir::File<'s> {
     hir::File {
@@ -5066,7 +4987,8 @@ impl<'s> Files<'s> {
                                 missing.iter().map(|_| Guarded::new(None)).collect();
                             let paths: Vec<&[u8]> =
                                 missing.iter().map(|it| it.path.pretty).collect();
-                            read_and_work(host, &paths, &|at, text| {
+                            host.parallel(paths.len(), &|at| {
+                                let text = host.read_source(paths[at]);
                                 *results[at].lock() = Some(Box::new(Self::load_one(
                                     session,
                                     session.arena(),
@@ -5916,8 +5838,7 @@ impl<'s> Files<'s> {
     /// Loader threads never wait for `meanwhile`, and each one exits when there's nothing more to
     /// load, so `meanwhile` can't block forever. `meanwhile` calls its argument, any number of
     /// times, after `Prefetch::wait` has returned. After that no task here waits for another, so the
-    /// calling thread releases `WAITS_ACROSS_POOLS`. That lets another load begin, and lets
-    /// `meanwhile` call `read_and_work`.
+    /// calling thread releases `WAITS_ACROSS_POOLS`. That lets another load begin.
     ///
     /// `parseTask.load` parses every copy of a package file, and `collectFiles` drops all but one. Here one copy is
     /// parsed, and a copy with the same text reuses that result to find what it refers to from its own location.

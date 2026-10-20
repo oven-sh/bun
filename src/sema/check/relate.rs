@@ -1615,35 +1615,11 @@ impl<'p, 's> Checker<'p, 's> {
                 self.union(&types)
             };
         }
-        if !self.is_instantiable(index_ty) {
-            // (T | U)[K] is T[K] | U[K] for reading, T[K] & U[K] for writing. (T & U)[K] is T[K] &
-            // U[K].
-            let parts = match self.data(object) {
-                TypeData::Union(parts) => Some((parts, false)),
-                TypeData::Intersection(parts)
-                    if !(parts.iter().any(|&p| self.is_instantiable(p))
-                        && parts
-                            .iter()
-                            .any(|&p| self.is_empty_anonymous_object_type(p))) =>
-                {
-                    Some((parts, true))
-                }
-                _ => None,
-            };
-            if let Some((parts, is_intersection)) = parts {
-                let types: Vec<TypeId> = parts
-                    .iter()
-                    .map(|&p| {
-                        let one = self.indexed_access(p, index_ty);
-                        self.simplified(one, writing)
-                    })
-                    .collect();
-                return if is_intersection || writing {
-                    self.intersection(&types)
-                } else {
-                    self.union(&types)
-                };
-            }
+        if !self.is_instantiable(index_ty)
+            && let Some(distributed) =
+                self.distribute_index_over_object_type(object, index_ty, writing)
+        {
+            return distributed;
         }
         // `getElementTypeOfSliceOfTupleType`. A tuple with a `...T` element, indexed outside its
         // fixed elements, gives the union of all its element types for `number`, and otherwise the

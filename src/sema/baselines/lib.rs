@@ -680,15 +680,6 @@ fn is_default_library(path: &str) -> bool {
     name.starts_with("lib.") && name.ends_with(".d.ts")
 }
 
-fn category_name(category: Category) -> &'static str {
-    match category {
-        Category::Error => "error",
-        Category::Warning => "warning",
-        Category::Suggestion => "suggestion",
-        Category::Message => "message",
-    }
-}
-
 /// `utf8.RuneCountInString`
 fn runes(bytes: &[u8]) -> usize {
     bstr::ByteSlice::chars(bytes).count()
@@ -786,7 +777,7 @@ fn with_color_and_context(diagnostics: &[Diagnostic]) -> String {
         out.push_str(&format!(
             "{}{}{RESET}{GREY} TS{}: {RESET}{}",
             category_color(d.category),
-            category_name(d.category),
+            d.category.name(),
             d.code as i32,
             text(&d.text)
         ));
@@ -877,7 +868,7 @@ fn render(
         }
         line.push_str(&format!(
             "{} TS{}: {}\n",
-            category_name(d.category),
+            d.category.name(),
             d.code as i32,
             text(&d.text)
         ));
@@ -894,12 +885,7 @@ fn render(
         for line in split(&clean(&text(&d.text)), "\n").filter(|l| !l.is_empty()) {
             new_line(out);
             out.extend_from_slice(
-                format!(
-                    "!!! {} TS{}: {line}",
-                    category_name(d.category),
-                    d.code as i32
-                )
-                .as_bytes(),
+                format!("!!! {} TS{}: {line}", d.category.name(), d.code as i32).as_bytes(),
             );
         }
         for related in &d.related {

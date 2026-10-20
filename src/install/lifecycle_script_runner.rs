@@ -944,11 +944,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         exit.code,
                     );
                     self.discard_packages_with_unfinished_scripts();
-                    // De-exit: record the failure before `self` is destroyed so the
-                    // top-level exit-code logic reports it, instead of killing the
-                    // process mid-install. Decrement the pending count so the install
-                    // completion loop (which waits for it to reach zero) does not hang,
-                    // then destroy the subprocess to avoid leaking the allocation.
+                    // Record the failure before `self` is destroyed so the top-level
+                    // exit-code logic reports it, instead of killing the process.
+                    // Decrement the pending count so the install completion loop (which
+                    // waits for it to reach zero) does not hang, then destroy the
+                    // subprocess to avoid leaking the allocation.
                     unsafe { (*self.manager.as_ptr()).any_failed_to_install = true };
                     self.decrement_pending_script_tasks();
                     // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
@@ -1013,10 +1013,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                                 ),
                             );
                             self.discard_packages_with_unfinished_scripts();
-                            // De-exit: record the failure so the top-level reports it,
-                            // instead of killing the process mid-install. Decrement the
-                            // pending count so the install completion loop does not hang,
-                            // then destroy the subprocess to avoid leaking the allocation.
+                            // Record the failure so the top-level reports it, instead of killing
+                            // the process. Decrement the pending count so the install
+                            // completion loop does not hang, then destroy the subprocess
+                            // to avoid leaking the allocation.
                             unsafe { (*self.manager.as_ptr()).any_failed_to_install = true };
                             self.decrement_pending_script_tasks();
                             // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
@@ -1081,11 +1081,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     err,
                 );
                 self.discard_packages_with_unfinished_scripts();
-                // De-exit: record the failure before `self` is destroyed so the
-                // top-level exit-code logic reports it, instead of killing the
-                // process mid-install. Decrement the pending count so the install
-                // completion loop does not hang, then destroy the subprocess to
-                // avoid leaking the allocation.
+                // Record the failure before `self` is destroyed so the top-level
+                // exit-code logic reports it, instead of killing the process.
+                // Decrement the pending count so the install completion loop does not
+                // hang, then destroy the subprocess to avoid leaking the allocation.
                 unsafe { (*self.manager.as_ptr()).any_failed_to_install = true };
                 self.decrement_pending_script_tasks();
                 // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
@@ -1261,8 +1260,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 err.name(),
             );
             lss.discard_packages_with_unfinished_scripts();
-            // De-exit (groundwork for a programmatic install API, see #5414): a
-            // spawn failure must not terminate the process. Record the failure on
+            // A spawn failure must not terminate the process. Record the failure on
             // the manager so the top-level exit-code logic reports it. Decrement the
             // pending count so the install completion loop (which waits for it to
             // reach zero) does not hang, and destroy the subprocess to avoid leaking

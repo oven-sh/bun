@@ -216,6 +216,16 @@ const SLOT_COUNT_DIVERGENCE: Record<string, number[]> = Object.assign(Object.cre
   // splits `getX` and the JSX into two memo blocks: `_c(2)`. Bun keeps the value
   // of the store, so there is no stray read and one block holds both.
   "hoisting-invalid-tdz-let": [1],
+  // A memo block that assigns a variable depends on the value that the variable comes in with, in two more slots:
+  // on a path that does not assign it, a render that hits the cache gets that value back. Upstream does not have
+  // that dependency (facebook/react#37224). In these fixtures the variable is a `let` that one branch assigns, or
+  // the result of a `useMemo` callback with more than one `return`.
+  "mutation-within-jsx": [7],
+  "mutation-within-jsx-and-break": [8],
+  "propagate-scope-deps-hir-fork/useMemo-multiple-if-else": [7],
+  "repro-useMemo-if-else-both-early-return": [9],
+  "todo.memoize-loops-that-produce-memoizeable-values": [8],
+  "useMemo-multiple-if-else": [7],
 });
 
 // `minify: { syntax: true }` runs the parser's visit-phase folding and the

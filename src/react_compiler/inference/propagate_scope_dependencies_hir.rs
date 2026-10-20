@@ -19,7 +19,7 @@ use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::rc::Rc;
 
 use crate::diagnostics::CompilerDiagnostic;
-use crate::hir::environment::Environment;
+use crate::hir::environment::{Environment, OutputMode};
 use crate::hir::visitors::{ScopeBlockInfo, ScopeBlockTraversal};
 use crate::hir::{
     AstAlloc, BasicBlock, BlockId, DeclarationId, DependencyPathEntry, EvaluationOrder, FunctionId,
@@ -1890,7 +1890,7 @@ impl<'a> DependencyCollectionContext<'a> {
         pruned: bool,
         env: &mut Environment,
     ) -> Result<(), CompilerDiagnostic> {
-        let scoped_deps = self.dep_stack.pop().ok_or_else(|| {
+        let mut scoped_deps = self.dep_stack.pop().ok_or_else(|| {
             crate::diagnostics::cold_invariant(
                 "[PropagateScopeDeps]: Unexpected scope mismatch",
                 None,
@@ -1905,6 +1905,26 @@ impl<'a> DependencyCollectionContext<'a> {
             if self.check_valid_dependency(dep, env) {
                 if let Some(top) = self.dep_stack.last_mut() {
                     top.push(dep.clone());
+                }
+            }
+        }
+
+        // Not in upstream (facebook/react#37224). A hit gives back each variable that the scope assigns, also on a
+        // path that did not assign it: the scope depends on the value that the variable comes in with.
+        if !pruned && env.output_mode == OutputMode::Client {
+            for &identifier in env.scopes[scope_id.0 as usize].reassignments.iter() {
+                let declaration = env.identifiers[identifier.0 as usize].declaration_id;
+                let depends_on_it = scoped_deps.iter().any(|dep| {
+                    dep.path.is_empty()
+                        && env.identifiers[dep.identifier.0 as usize].declaration_id == declaration
+                });
+                if !depends_on_it {
+                    scoped_deps.push(ReactiveScopeDependency {
+                        identifier,
+                        reactive: false,
+                        path: hir_vec![],
+                        loc: env.identifiers[identifier.0 as usize].loc,
+                    });
                 }
             }
         }

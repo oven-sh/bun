@@ -13,8 +13,8 @@ use crate::collections::IdBitSet;
 use crate::hir::{
     EvaluationOrder, IdentifierId, InstructionValue, Place, PrunedReactiveScopeBlock,
     ReactiveFunction, ReactiveInstruction, ReactiveScopeBlock, ReactiveValue,
-    environment::Environment, is_primitive_type, is_use_ref_type, object_shape,
-    visitors as hir_visitors,
+    environment::{Environment, OutputMode},
+    is_primitive_type, is_use_ref_type, object_shape, visitors as hir_visitors,
 };
 
 use crate::reactive_scopes::visitors::{self, ReactiveFunctionTransform, ReactiveFunctionVisitor};
@@ -213,12 +213,23 @@ impl<'a> ReactiveFunctionTransform for PruneVisitor<'a> {
         self.traverse_scope(scope, state)?;
 
         let scope_id = scope.scope;
+        let keeps_what_it_assigns = self.env.output_mode == OutputMode::Client;
+        let identifiers = &self.env.identifiers;
         let scope_data = &mut self.env.scopes[scope_id.0 as usize];
 
         // Remove non-reactive dependencies
-        scope_data
-            .dependencies
-            .retain(|dep| state.contains(dep.identifier));
+        // Not in upstream (facebook/react#37273): the value that a variable comes in with stays when the scope assigns
+        // that variable. The dependency names what the scope wrote, which need not be reactive.
+        let reassignments = &scope_data.reassignments;
+        scope_data.dependencies.retain(|dep| {
+            state.contains(dep.identifier)
+                || (keeps_what_it_assigns
+                    && dep.path.is_empty()
+                    && reassignments.iter().any(|id| {
+                        identifiers[id.0 as usize].declaration_id
+                            == identifiers[dep.identifier.0 as usize].declaration_id
+                    }))
+        });
 
         // If any deps remain, mark all declarations and reassignments as reactive
         if !scope_data.dependencies.is_empty() {

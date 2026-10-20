@@ -2951,16 +2951,16 @@ describe("bundler", () => {
   //   behind that block: `ReferenceError: a is not defined`.
   //
   // A store is removed again: those forms have the cache sizes of 1.4.3. An update or a pattern stays, because it
-  // is taken as able to throw, and is now an output of the memo blocks around it. `OnAPathThatReturns` is why the
-  // store is not kept and made an output too: its memo block would then give `label` back on a path that never
-  // assigned it. The two numbers are the cache size without and with `minifySyntax`. With it the parser joins a
-  // store and an expression statement behind it into one sequence, and the compiler keeps that store for its value.
+  // is taken as able to throw, and is now an output of the memo blocks around it. The two numbers are the cache
+  // size without and with `minifySyntax`. With it the parser joins a store and an expression statement behind it
+  // into one sequence, and the compiler keeps that store for its value: the memo block then gives the variable
+  // back, and depends on the value that it comes in with (see the next test).
   const deadStoreInATry: [form: string, rendered: string, cacheSize: number, withMinifySyntax: number][] = [
-    ["AfterTheScope", "parsed | parsed | parsed", 2, 6],
-    ["AfterTheScopeFromProps", "parsed | parsed | parsed", 2, 7],
-    ["AfterTheScopeWithAPattern", "parsed | parsed | parsed", 3, 7],
-    ["DeclaredByAPattern", "made 1 | made 1 | made 1", 4, 3],
-    ["DeclaredByAPatternThenUpdated", "made 1 | made 1 | made 1", 4, 3],
+    ["AfterTheScope", "parsed | parsed | parsed", 2, 10],
+    ["AfterTheScopeFromProps", "parsed | parsed | parsed", 2, 11],
+    ["AfterTheScopeWithAPattern", "parsed | parsed | parsed", 3, 11],
+    ["DeclaredByAPattern", "made 1 | made 1 | made 1", 4, 5],
+    ["DeclaredByAPatternThenUpdated", "made 1 | made 1 | made 1", 4, 5],
     // The last two renders throw in the `try`: in the call, and in what is kept for its throw.
     ["ArrayPattern", "draft | saved | draft | saved SyntaxError | draft", 10, 10],
     ["Compound", "1 | 2 | 1 | 2 SyntaxError | Symbol() TypeError", 5, 5],
@@ -3272,6 +3272,313 @@ describe("bundler", () => {
     });
   }
 
+  // A memo block gives back each variable that it assigns: it saves the variable behind its body, and a render that
+  // hits the cache loads it. On a path that does not assign the variable, what is saved is the value that came in.
+  // So the block depends on that value. Without that dependency a render with another value gets the one of an
+  // earlier render. 1.4.3 has that for a store in a handler, a store as an argument, two blocks that assign one
+  // variable (facebook/react#37224), and with `minifySyntax` for each store that is joined into a sequence. A pattern
+  // or an update that is kept for its throw (the test above) is such a write too.
+  // In the last group the reader is behind the block, so the block has to give the write back.
+  const assignedOnSomePaths: [form: string, rendered: string, cacheSize: number, withMinifySyntax: number][] = [
+    ["LiveStoreOnAPathThatReturns", "draft | saved | draft | form | form | saved", 15, 12],
+    ["ObjectPatternOnAPathThatReturns", "draft | saved | draft | form | form TypeError | saved", 17, 15],
+    ["PatternOnAPathThatReturns", "draft | saved | draft | form | form TypeError | saved", 17, 15],
+    ["PatternReadForItsThrow", "draft | saved | draft | form | form TypeError | saved", 17, 15],
+    ["StoreAsAnArgument", "draft | saved | draft | form | form | saved", 16, 12],
+    ["StoreInAHandler", "draft | saved | draft | form | form | saved", 16, 16],
+    ["StoreOnAPathThatReturns", "draft | saved | draft | form | form | saved", 13, 14],
+    ["StoreReadForItsThrow", "draft | saved | draft | form | form TypeError | saved", 17, 15],
+    ["UpdateOnAPathThatReturns", "1 | 2 | 1 | form | form | 2", 16, 14],
+    ["DeclaredByAnEarlierBlock", "draft | saved | A | A | draft | saved | A | saved", 14, 14],
+    ["DeclaredByTheBlockAround", "draft! | saved! | draft! | saved! | draft! | saved! | B | saved!", 14, 9],
+    ["TwoBlocks", "draft | saved | A | A | B | B | B | saved", 16, 16],
+    ["WriteOfAConstant", "draft | saved | draft | saved | draft | saved | draft | saved", 9, 9],
+    ["ReaderBehindTheBlock", "ok | ok | ok | TypeError | ok", 8, 8],
+    [
+      "ReaderOfAConditionalPatternBehindTheBlock",
+      "made 1/draft | made 1/saved | made 1/draft | caught TypeError/draft | made 1/saved",
+      12,
+      15,
+    ],
+    ["ReaderOfAPatternBehindTheBlock", "ok | ok | ok | TypeError | ok", 10, 8],
+  ];
+  for (const minifySyntax of [false, true]) {
+    itBundled(`react-compiler/MemoBlockDependsOnWhatItAssignsOnSomePaths-syntax=${minifySyntax}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { print } from "react/compiler-runtime";
+          import * as onAPathThatReturns from "./on-a-path-that-returns";
+          import * as twoBlocks from "./two-blocks";
+          import * as behindTheBlock from "./behind-the-block";
+          // One prop changes from a render to the next: the variable first, then the path.
+          const props = { text: "1", later: "saved", next: "next", call: it => it };
+          const draft = { ...props, status: "draft", n: 1 };
+          const saved = { ...props, status: "saved", n: 2 };
+          const editing = { ...draft, later: "editing" };
+          const show = it => {
+            return (it.t === "form" ? "form" : String(it.p.info.was)) + (it.p.info.error ? " " + it.p.info.error : "");
+          };
+          print(onAPathThatReturns, [draft, saved, draft, editing, { ...editing, next: undefined }, saved], show);
+          const renders = ["nn", "nn", "xn", "xn", "nx", "nx", "xx", "nn"].map(([a, b], i) => {
+            return { ...(i % 2 ? saved : draft), a, b };
+          });
+          print(twoBlocks, renders, show);
+          print(behindTheBlock, [draft, saved, editing, { ...editing, next: undefined }, saved], show);
+        `,
+        "/on-a-path-that-returns.jsx": /* jsx */ `
+          // The pattern is kept for its throw, on a path that returns. The other path reads \`label\`.
+          export function PatternOnAPathThatReturns({ status, text, later, next }) {
+            let label = status;
+            const info = {};
+            if (later === "editing") {
+              try {
+                [label] = next;
+                info.draft = JSON.parse(text);
+              } catch (e) {
+                info.error = e.name;
+              }
+              return <form info={info} />;
+            }
+            return <li info={{ was: label }} extra={info} />;
+          }
+          export function ObjectPatternOnAPathThatReturns({ status, text, later, next }) {
+            let label = status;
+            const info = {};
+            if (later === "editing") {
+              try {
+                ({ label } = next);
+                info.draft = JSON.parse(text);
+              } catch (e) {
+                info.error = e.name;
+              }
+              return <form info={info} />;
+            }
+            return <li info={{ was: label }} extra={info} />;
+          }
+          export function UpdateOnAPathThatReturns({ n, text, later }) {
+            let count = n;
+            const info = {};
+            if (later === "editing") {
+              try {
+                count++;
+                info.draft = JSON.parse(text);
+              } catch (e) {
+                info.error = e.name;
+              }
+              return <form info={info} />;
+            }
+            return <li info={{ was: count }} extra={info} />;
+          }
+          // With \`minifySyntax\` the store and the statement behind it are one sequence, and the store stays for its value.
+          export function StoreOnAPathThatReturns({ status, text, later }) {
+            let label = status;
+            const info = {};
+            if (later === "editing") {
+              try {
+                label = "editing";
+                info.draft = JSON.parse(text);
+              } catch (e) {
+                info.error = e.name;
+              }
+              return <form info={info} />;
+            }
+            return <li info={{ was: label }} extra={info} />;
+          }
+          // What reads the write is itself kept only for its throw.
+          export function StoreReadForItsThrow({ status, text, later, next }) {
+            let label = status;
+            const info = {};
+            if (later === "editing") {
+              try {
+                label = next;
+                label.length;
+                info.draft = JSON.parse(text);
+              } catch (e) {
+                info.error = e.name;
+              }
+              return <form info={info} />;
+            }
+            return <li info={{ was: label }} extra={info} />;
+          }
+          export function PatternReadForItsThrow({ status, text, later, next }) {
+            let label = status;
+            const info = {};
+            if (later === "editing") {
+              try {
+                [label] = next;
+                label.length;
+                info.draft = JSON.parse(text);
+              } catch (e) {
+                info.error = e.name;
+              }
+              return <form info={info} />;
+            }
+            return <li info={{ was: label }} extra={info} />;
+          }
+          // No \`try\`: a store that the path that returns reads.
+          export function LiveStoreOnAPathThatReturns({ status, later, next }) {
+            let label = status;
+            const info = {};
+            if (later === "editing") {
+              label = next;
+              info.draft = 1;
+              return <form info={info} label={label} />;
+            }
+            return <li info={{ was: label }} extra={info} />;
+          }
+          // The store is the last instruction of a handler.
+          export function StoreInAHandler({ status, text, later }) {
+            let label = status;
+            const info = {};
+            if (later === "editing") {
+              try {
+                info.draft = JSON.parse(text);
+              } catch (e) {
+                label = "failed";
+              }
+              return <form info={info} />;
+            }
+            return <li info={{ was: label }} extra={info} />;
+          }
+          export function StoreAsAnArgument({ status, later, call }) {
+            let label = status;
+            const info = {};
+            if (later === "editing") {
+              info.draft = call((label = "editing"));
+              return <form info={info} />;
+            }
+            return <li info={{ was: label }} extra={info} />;
+          }
+        `,
+        "/two-blocks.jsx": /* jsx */ `
+          const FLAG = globalThis.SOME_FLAG === true;
+
+          // Two memo blocks that assign one variable, each on one of its paths (facebook/react#37224).
+          export function TwoBlocks({ status, a, b }) {
+            let label = status;
+            const one = {};
+            if (a === "x") {
+              label = "A";
+              one.k = 1;
+            }
+            const two = {};
+            if (b === "x") {
+              label = "B";
+              two.k = 1;
+            }
+            return <li info={{ was: label }} one={one} two={two} />;
+          }
+          // An earlier memo block declares the variable.
+          export function DeclaredByAnEarlierBlock({ status, a }) {
+            const made = [status];
+            let label = made[0];
+            made.push(1);
+            const info = {};
+            if (a === "x") {
+              label = "A";
+              info.k = 1;
+            }
+            return <li info={{ was: label }} extra={info} made={made} />;
+          }
+          // The memo block that assigns is inside the one that declares.
+          export function DeclaredByTheBlockAround({ status, a, b }) {
+            const outer = {};
+            let label = status + "!";
+            outer.first = label;
+            if (a === "x") {
+              const inner = [];
+              if (b === "x") {
+                label = "B";
+              }
+              inner.push(b);
+              outer.inner = inner;
+            }
+            outer.last = label;
+            return <li info={{ was: outer.last }} extra={outer} />;
+          }
+          // What is written is not reactive. What comes in is.
+          export function WriteOfAConstant({ status }) {
+            let label = status;
+            const info = {};
+            if (FLAG) {
+              label = "x";
+              info.a = 1;
+            }
+            return <li info={{ was: label }} extra={info} />;
+          }
+        `,
+        "/behind-the-block.jsx": /* jsx */ `
+          const push = (list, v) => {
+            list.push(v);
+          };
+          const mutate = it => {
+            it.k = 1;
+          };
+
+          // The write is in the memo block of \`made\`. What reads it, for its throw, is behind that block.
+          export function ReaderBehindTheBlock({ status, next, text }) {
+            let label = status;
+            const info = { was: "ok" };
+            try {
+              const made = [];
+              label = next;
+              push(made, text);
+              label.length;
+              info.made = made;
+            } catch (e) {
+              info.was = e.name;
+            }
+            return <li info={info} />;
+          }
+          export function ReaderOfAPatternBehindTheBlock({ status, next, text }) {
+            let label = status;
+            const info = { was: "ok" };
+            try {
+              const made = [];
+              [label] = [next];
+              push(made, text);
+              label.length;
+              info.made = made;
+            } catch (e) {
+              info.was = e.name;
+            }
+            return <li info={info} />;
+          }
+          export function ReaderOfAConditionalPatternBehindTheBlock({ status, later, text, next }) {
+            let label = status;
+            const first = { was: String(label) };
+            let state = "not run";
+            try {
+              const made = {};
+              if (later === "editing") {
+                [label] = [next];
+              }
+              mutate(made);
+              state = "made " + made.k;
+              label.length;
+              JSON.parse(text);
+            } catch (e) {
+              state = "caught " + e.name;
+            }
+            return <li info={{ was: state + "/" + first.was }} />;
+          }
+        `,
+        ...reactWithACachePerComponent,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target: "browser",
+      minifySyntax,
+      run: {
+        stdout: assignedOnSomePaths
+          .map(([form, rendered, cacheSize, withMinifySyntax]) => {
+            return `${form}: ${rendered} _c(${minifySyntax ? withMinifySyntax : cacheSize})`;
+          })
+          .join("\n"),
+      },
+    });
+  }
+
   // With the store removed, nothing in these `try` bodies can throw: PruneMaybeThrows removes the handler, and the
   // block behind the `try` has to be merged into the body. While the store was kept, these forms did not get there.
   // `AssignedInCatch` is left as written: the phi behind the `try` still has the operand of the handler that is gone.
@@ -3451,11 +3758,14 @@ describe("bundler", () => {
       onAfterBundle(api) {
         if (target !== "bun") return;
         const out = api.readFile("/out.js");
-        const body = (name: string) => out.slice(out.indexOf(`function ${name}(`)).split("\n}")[0];
+        const hasATry = (name: string) => {
+          const start = out.indexOf(`function ${name}(`);
+          return start < 0 ? "not in the output" : out.slice(start).split("\n}")[0].includes("try");
+        };
         expect({
-          DeadForTheServer: body("DeadForTheServer").includes("try"),
-          DeadRefForTheServer: body("DeadRefForTheServer").includes("try"),
-          AssignedInCatch: body("AssignedInCatch").includes("try"),
+          DeadForTheServer: hasATry("DeadForTheServer"),
+          DeadRefForTheServer: hasATry("DeadRefForTheServer"),
+          AssignedInCatch: hasATry("AssignedInCatch"),
         }).toEqual({ DeadForTheServer: false, DeadRefForTheServer: false, AssignedInCatch: true });
       },
     });
@@ -3565,6 +3875,70 @@ describe("bundler", () => {
         InASwitch: caught ReferenceError | ok
         InASwitchThatReturns: caught ReferenceError | ok
         InASwitchWithAnInitializer: caught ReferenceError | zero5
+      `,
+    },
+  });
+
+  // The same for a pattern, which is kept for its throw and given back by its memo block: that block saves and
+  // compares the variable outside of the `try`, so the ReferenceError leaves the component. #44805 printed the
+  // pattern where it is, in the `try`, and the handler saw the error. 1.4.3 removed the pattern: no error.
+  itBundled("react-compiler/PatternBeforeItsDeclarationThrows", {
+    todo: true,
+    files: {
+      "/entry.js": /* js */ `
+        import * as forms from "./forms";
+        const renders = [{ k: 1, text: "1", list: [1, 2] }, { k: 0, text: "1", list: [] }, { k: 1, text: "2", list: [3] }];
+        for (const [name, form] of Object.entries(forms)) {
+          globalThis.rendering = form;
+          console.log(name + ": " + renders.map(props => form(props).p.r).join(" | "));
+        }
+      `,
+      "/forms.jsx": /* jsx */ `
+        export function InASwitch(p) {
+          let r = "ok";
+          switch (p.k) {
+            case 0:
+              let x;
+              break;
+            case 1: {
+              const info = {};
+              try {
+                [x] = p.list;
+                info.d = JSON.parse(p.text);
+              } catch (e) {
+                info.e = e.name;
+              }
+              r = info.e ?? "no throw";
+            }
+          }
+          return <div r={r} />;
+        }
+        export function TwiceBeforeTheLet(p) {
+          let r = "ok";
+          try {
+            [x] = p.list;
+          } catch {}
+          const info = {};
+          try {
+            [x] = p.list;
+            info.d = JSON.parse(p.text);
+          } catch (e) {
+            info.e = e.name;
+          }
+          r = info.e ?? "no throw";
+          let x;
+          return <div r={r} />;
+        }
+      `,
+      ...reactWithACachePerComponent,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    target: "browser",
+    run: {
+      stdout: `
+        InASwitch: ReferenceError | ok | ReferenceError
+        TwiceBeforeTheLet: ReferenceError | ReferenceError | ReferenceError
       `,
     },
   });

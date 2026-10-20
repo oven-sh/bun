@@ -436,28 +436,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// `merge_constrained`: true if `T & P1 | T & P2` reduces to `T`. It doesn't for intersections created without
     /// inspecting `T`'s constraint, which lack `ObjectFlagsIsConstrainedTypeVariable`.
     fn union_ex(&mut self, types: &[TypeId], merge_constrained: bool) -> TypeId {
-        self.union_ex_inspecting(types, merge_constrained, None).0
+        self.union_ex_inspecting(types, merge_constrained).0
     }
 
-    /// Same as `union(types)`. `positions`: `positions_in` for `types` and the members of the union `whole`.
-    pub(super) fn union_of_parts(
-        &mut self,
-        whole: TypeId,
-        positions: &PositionSet,
-        types: &[TypeId],
-    ) -> TypeId {
-        let found = Some((whole, positions));
-        self.union_ex_inspecting(types, true, found).0
-    }
-
-    /// `union_ex`, which also returns true if the call is known to be `Inspected::Members`. `found`: see
-    /// `union_of_parts`.
-    fn union_ex_inspecting(
-        &mut self,
-        types: &[TypeId],
-        merge_constrained: bool,
-        found: Option<(TypeId, &PositionSet)>,
-    ) -> (TypeId, bool) {
+    /// `union_ex`, which also returns true if the call is known to be `Inspected::Members`.
+    fn union_ex_inspecting(&mut self, types: &[TypeId], merge_constrained: bool) -> (TypeId, bool) {
         // The union of two types is the same in either order.
         let pair = match *types {
             [] => return (TypeId::NEVER, true),
@@ -491,7 +474,7 @@ impl<'p, 's> Checker<'p, 's> {
             if let Some(known) = self.recent_unions.get(a.0, b.0) {
                 return (TypeId(known), false);
             }
-            let (union, inspected) = self.create_union(types, merge_constrained, found);
+            let (union, inspected) = self.create_union(types, merge_constrained);
             if inspected != Inspected::Constraints {
                 self.recent_unions.put(a.0, b.0, union.0);
             }
@@ -507,7 +490,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.union_calls.get(hash, &call) {
             return (known, true);
         }
-        let (union, inspected) = self.create_union(types, merge_constrained, found);
+        let (union, inspected) = self.create_union(types, merge_constrained);
         if inspected == Inspected::Members {
             self.union_calls.put(hash, &call, union);
         }
@@ -551,7 +534,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn create_unreduced_union(&mut self, types: &[TypeId]) -> TypeId {
         let mut members = Flat::new();
-        let shortcut = self.add_in_order(&mut members, types, None);
+        let shortcut = self.add_in_order(&mut members, types);
         if shortcut.is_none() {
             self.add_in_id_order(&mut members, types);
         }
@@ -601,15 +584,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getUnionTypeWorker` with `UnionReductionLiteral`.
     #[inline(never)]
-    fn create_union(
-        &mut self,
-        actual: &[TypeId],
-        merge_constrained: bool,
-        found: Option<(TypeId, &PositionSet)>,
-    ) -> (TypeId, Inspected) {
+    fn create_union(&mut self, actual: &[TypeId], merge_constrained: bool) -> (TypeId, Inspected) {
         let mut members = Flat::new();
         // With a shortcut, no member is `any` or `unknown`.
-        let mut shortcut = self.add_in_order(&mut members, actual, found);
+        let mut shortcut = self.add_in_order(&mut members, actual);
         if shortcut.is_none() {
             self.add_in_id_order(&mut members, actual);
         }
@@ -1574,8 +1552,7 @@ impl<'p, 's> Checker<'p, 's> {
         alias: Sym,
         merge_constrained: bool,
     ) -> (TypeId, bool) {
-        let (created, inspects_members) =
-            self.union_ex_inspecting(call.types, merge_constrained, None);
+        let (created, inspects_members) = self.union_ex_inspecting(call.types, merge_constrained);
         if !self.is_union(created) {
             return (created, inspects_members);
         }
@@ -2832,14 +2809,7 @@ impl<'p, 's> Checker<'p, 's> {
     ///
     /// Most of the types a union is built from are unions, whose members are sorted. The caller also has to look at
     /// the members if one of them is `any` or `unknown`, which absorb the whole union.
-    ///
-    /// `found`: see `union_of_parts`.
-    fn add_in_order(
-        &self,
-        members: &mut Flat,
-        actual: &[TypeId],
-        found: Option<(TypeId, &PositionSet)>,
-    ) -> Option<Shortcut> {
+    fn add_in_order(&self, members: &mut Flat, actual: &[TypeId]) -> Option<Shortcut> {
         let mut runs = 0;
         for &ty in actual {
             // `any` and `unknown` have the lowest flags, so they come first.
@@ -2849,11 +2819,6 @@ impl<'p, 's> Checker<'p, 's> {
                 return None;
             }
             runs += usize::from(self.is_union(ty));
-        }
-        if let Some((whole, positions)) = found {
-            let all = self.parts(whole);
-            members.extend(positions.iter().map(|at| all[at]));
-            return Some(Shortcut::Joined(whole));
         }
         // Two types that aren't unions take one comparison either way.
         if runs == 0 && actual.len() < 3 {
@@ -2921,7 +2886,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Returns the positions of the members of `actual` in `all`, the members of a union, if `all` has every one of
     /// them. A type that isn't a union counts as its only member.
-    pub(super) fn positions_in(&self, all: &[TypeId], actual: &[TypeId]) -> Option<PositionSet> {
+    fn positions_in(&self, all: &[TypeId], actual: &[TypeId]) -> Option<PositionSet> {
         let mut positions = PositionSet::new(all.len());
         for &ty in actual {
             let mut after = 0;

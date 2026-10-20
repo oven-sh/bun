@@ -11,7 +11,7 @@ use crate::bind::{
     Decl, Flow, FlowId, FlowTarget, FnOwner, MAX_FLOW_DEPTH, MemberOwner, Parent, PatParent,
     SymbolId, UNREACHABLE, entered_clauses,
 };
-use crate::util::{PositionSet, SharedSort};
+use crate::util::SharedSort;
 use smallvec::{SmallVec, smallvec};
 
 /// See `Checker::access_key`.
@@ -378,14 +378,11 @@ impl SharedFlows {
 
 /// The union reduction that `getUnionOrEvolvingArrayType` uses.
 #[derive(Copy, Clone)]
-enum Join<'a> {
+enum Join {
     /// `UnionReductionLiteral`
     Literal,
     /// `UnionReductionSubtype`
     Subtype,
-    /// `UnionReductionLiteral`. Every joined type is made of members of this union, which are at
-    /// these positions in it.
-    Parts(TypeId, &'a PositionSet),
 }
 
 /// The operation a `getTypeAtFlowNode` invocation applies to the type at `flow.Antecedent`.
@@ -6125,21 +6122,19 @@ impl<'p, 's> Checker<'p, 's> {
             return self.union_or_evolving_with(types, Join::Literal);
         }
         let initial = self.initial_of(walk);
-        if !self.is_union(initial) {
-            return match types.iter().all(|&t| t == initial || t.is_never()) {
-                true => self.union_or_evolving_with(types, Join::Literal),
-                false => self.union_or_evolving_with(types, Join::Subtype),
-            };
-        }
-        // FOR SPEED: the subset test against the initial type also finds the members' positions.
-        match &self.positions_in(self.parts(initial), types) {
-            None => self.union_or_evolving_with(types, Join::Subtype),
-            Some(positions) => self.union_or_evolving_with(types, Join::Parts(initial, positions)),
+        let is_subset = |t: TypeId| {
+            t == initial
+                || t.is_never()
+                || self.is_union(initial) && self.is_type_subset_of_union(t, initial)
+        };
+        match types.iter().all(|&t| is_subset(t)) {
+            true => self.union_or_evolving_with(types, Join::Literal),
+            false => self.union_or_evolving_with(types, Join::Subtype),
         }
     }
 
     /// `getUnionOrEvolvingArrayType`
-    fn union_or_evolving_with(&mut self, types: &[TypeId], join: Join<'_>) -> TypeId {
+    fn union_or_evolving_with(&mut self, types: &[TypeId], join: Join) -> TypeId {
         if let [only] = *types
             && !matches!(
                 self.data(only),
@@ -6155,7 +6150,6 @@ impl<'p, 's> Checker<'p, 's> {
             let union = match join {
                 Join::Literal => self.union(types),
                 Join::Subtype => self.union_reduced(types),
-                Join::Parts(whole, positions) => self.union_of_parts(whole, positions, types),
             };
             let union = self.recombine_unknown_type(union);
             // The union of all the members of the declared type is the declared type. A fresh
@@ -6180,10 +6174,6 @@ impl<'p, 's> Checker<'p, 's> {
                         .iter()
                         .map(|&t| self.finalize_evolving_array(t))
                         .collect();
-                    let join = match join {
-                        Join::Parts(..) => Join::Literal,
-                        join => join,
-                    };
                     return self.union_or_evolving_with(&types, join);
                 }
             }

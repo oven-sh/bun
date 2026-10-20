@@ -1,7 +1,7 @@
 //! `rangeStart` and `rangeEnd`: Prettier's `formatRange` and `calculateRange`, for JSON.
 //!
-//! What is formatted is the smallest value that both ends of the range are in. It is formatted as a
-//! document of its own, indented like the line that it starts on.
+//! Formats the smallest value that contains both ends of the range. It's formatted as its own document, indented like
+//! the line it starts on.
 
 use super::parser::{Kind, Node, Tree};
 use super::{Config, Scratch, format_normalized};
@@ -14,7 +14,7 @@ enum End {
     End,
 }
 
-/// A node that an offset is in. A property, which is not a node of the tree, is told by its name.
+/// A node that contains an offset. A property, which isn't a node in the tree, is identified by its name.
 #[derive(Copy, Clone, PartialEq)]
 enum Step {
     Root,
@@ -22,8 +22,8 @@ enum Step {
     Property(u32),
 }
 
-/// Prettier's `findNodeAtOffset`: the document, and then each time what the offset is in, down to
-/// the innermost thing that can be formatted by itself. Empty if there is none.
+/// Prettier's `findNodeAtOffset`: the path from the document through each node that contains the offset, down to the
+/// innermost one that can be formatted by itself. Empty if there is none.
 fn find_node_at_offset(nodes: &[Node], text: &[u8], offset: u32, end: End, path: &mut Vec<Step>) {
     path.clear();
     let contains = |start: u32, node_end: u32| {
@@ -36,7 +36,7 @@ fn find_node_at_offset(nodes: &[Node], text: &[u8], offset: u32, end: End, path:
         return;
     }
     path.push(Step::Root);
-    // The nodes among which the next step is looked for.
+    // The nodes to search for the next step.
     let (mut index, mut limit, mut is_in_object) = (0u32, nodes.len() as u32, false);
     while index < limit {
         let Some(node) = nodes.get(index as usize) else {
@@ -62,8 +62,8 @@ fn find_node_at_offset(nodes: &[Node], text: &[u8], offset: u32, end: End, path:
         path.push(Step::Node(index));
         (index, limit, is_in_object) = (index + 1, node.next, node.kind == Kind::Object);
     }
-    // Neither a property nor an identifier can be formatted by itself. `null`, `true` and `false`
-    // are identifiers where they are names.
+    // Neither a property nor an identifier can be formatted by itself. `null`, `true` and `false` are identifiers when
+    // they're names.
     while let [.., before, last] = path[..] {
         let is_source_element = match last {
             Step::Root => true,
@@ -91,7 +91,7 @@ fn calculate_range(
     mut start: usize,
     mut end: usize,
 ) -> Option<(usize, usize)> {
-    // Without the white space at its ends.
+    // Without the whitespace at its ends.
     let range = text.get(start..end)?;
     let trimmed = bun_core::strings::trim_js_whitespace(range);
     let is_all_whitespace = trimmed.is_empty();
@@ -122,8 +122,7 @@ fn calculate_range(
     }
 }
 
-/// `original`: the text as it was given. `text`: without a byte order mark and with `\n` for every
-/// line break.
+/// `original` is the text as given. `text` has no byte order mark and `\n` for every line break.
 pub(super) fn format(
     original: &[u8],
     text: &[u8],
@@ -133,8 +132,7 @@ pub(super) fn format(
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
     let has_bom = original.starts_with(BOM);
-    // The offsets count UTF-16 code units of the original. One that is not in the text does not
-    // count.
+    // The offsets count UTF-16 code units of the original. An offset outside the text is ignored.
     let original_len = bun_core::strings::wtf8_len_utf16(original);
     let body = original.strip_prefix(BOM).unwrap_or(original);
     let to_byte = |offset: Option<u32>| {
@@ -147,7 +145,7 @@ pub(super) fn format(
         let before = body
             .get(..bun_core::strings::wtf8_offset_of_utf16_index(body, offset))
             .unwrap_or_default();
-        // A `\r\n` is one byte of `text`.
+        // A `\r\n` is one byte in `text`.
         let mut pairs = 0;
         let mut rest = before;
         while let Some(found) = bun_core::strings::index_of(rest, b"\r\n") {
@@ -173,12 +171,13 @@ pub(super) fn format(
 
     super::parser::parse(text, &config, &mut scratch.tree)?;
     let (start, end) = match config.is_stringify() {
-        // What writes `json-stringify` does not say what is in a node, so the document is all there is.
+        // Prettier's `json-stringify` printer doesn't expose a node's children, so the only candidate is the whole
+        // document.
         true => (0, text.len()),
         false => calculate_range(text, &scratch.tree, start, end).unwrap_or((0, 0)),
     };
 
-    // The indentation of the line that it starts on.
+    // The indentation of the line it starts on.
     let line_start =
         bun_core::strings::last_index_of_char(&text[..start], b'\n').map_or(0, |at| at + 1);
     let indentation = &text[line_start..start];

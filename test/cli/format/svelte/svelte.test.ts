@@ -1,6 +1,6 @@
-// Svelte components: a port of prettier-plugin-svelte 4.1.1, which oxfmt calls too, and of the parser of Svelte 5.57.
-// cases.json: inputs with what Prettier 3.9.9 with the plugin, and oxfmt 0.72, print for them. It is made by
-// test/cli/format/oracle/svelte/make-fixtures.ts. A case without an output is one that they refuse.
+// Tests for Svelte components. The formatter is a port of prettier-plugin-svelte 4.1.1, which oxfmt calls too, and of
+// Svelte 5.57's parser. cases.json has inputs with the output of Prettier 3.9.9 with the plugin, and of oxfmt 0.72.
+// test/cli/format/oracle/svelte/make-fixtures.ts generates it. A case without an output is one that they reject.
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -40,9 +40,9 @@ const everyConfig: [config: Record<string, string>][] = [
   [{ ".prettierrc": prettierrc }],
   [{ ".oxfmtrc.json": oxfmtrc }],
 ];
-/** Matches what is said about a file that is left as it is. */
-const refusalOf = (name: string) => new RegExp(`^    at ${name.replaceAll(".", "\\.")}(:\\d+:\\d+)?$`, "m");
-/** `fill`, `count` times. */
+/** Matches the error location printed for a rejected file. */
+const errorAt = (name: string) => new RegExp(`^    at ${name.replaceAll(".", "\\.")}(:\\d+:\\d+)?$`, "m");
+/** Returns `fill` repeated `count` times. */
 const repeated = (fill: string, count: number) => Buffer.alloc(count * Buffer.byteLength(fill), fill).toString();
 /** What is said about a place in a file: its line, a caret under its column, the message, and where it is. */
 function problem(kind: "error" | "warn", message: string, place: [number, number, string], name = "a.svelte") {
@@ -50,7 +50,7 @@ function problem(kind: "error" | "warn", message: string, place: [number, number
   const caret = `${repeated(" ", `${line} | `.length + column - 1)}^`;
   return `${line} | ${text}\n${caret}\n${kind}: ${message}\n${kind === "warn" ? "   " : "    "}at ${name}:${line}:${column}\n\n`;
 }
-/** The plugin, as far as it is looked at. */
+/** The only part of the plugin that gets read. */
 const plugin = (version: string) => ({
   "node_modules/prettier-plugin-svelte/package.json": JSON.stringify({ name: "prettier-plugin-svelte", version }),
 });
@@ -119,22 +119,22 @@ function sharedRun(flags: string[] = []) {
   };
 }
 
-// Where what the plugin prints is another component, Bun prints the right thing. By the name of the case: what is recorded, once, and
-// what Bun prints in its place.
+// Where the plugin's output is a different component, Bun prints the correct one. Keyed by case name: the recorded
+// text, which occurs once, and what Bun prints instead.
 const exceptions: Record<string, [recorded: string, printed: string]> = {
-  // The plugin loses the comment of `bind:value={/** ( */ (() => value, (v) => ..)}`.
+  // The plugin loses the comment in `bind:value={/** ( */ (() => value, (v) => ..)}`.
   "directives": ["() => value,", "/** ( */ () => value,"],
-  // The plugin leaves out a `{:catch}` with nothing in it. Without one, Svelte throws the error again.
+  // The plugin drops an empty `{:catch}`. Without one, Svelte rethrows the error.
   "generated gen2 3842": ["{#await p}{/await}", "{#await p catch}{/await}"],
   "generated gen 5634": ["{/key}\n{/await}", "{/key}\n{:catch}{/await}"],
   "generated gen 5622": ["{/await}", "{:catch e}{/await}"],
-  // The plugin takes a no-break space off the start of a component, where it is text to Svelte.
+  // The plugin strips a no-break space from the start of a component, where Svelte treats it as text.
   "generated gen 3860": ["some and &amp; text", "\u00A0 some and &amp; text"],
   "generated gen 5952": ["there there here", "\u00A0there there here"],
   "generated gen2 738": ["words text", "\u00A0 words text"],
 };
-// `<p>a</p> b`: the plugin puts the text on the next line and keeps the blank in front of it, which goes the next time. Bun
-// prints at once what is printed the next time. The cases with such a text.
+// In `<p>a</p> b`, the plugin puts the text on the next line and keeps the space in front of it, which the next run
+// removes. Bun prints the second run's output right away. These are the cases with such a text.
 const unstable = new Set([
   "white space between inline elements",
   "a text that starts with a blank is filled in another way",
@@ -192,17 +192,17 @@ describe.concurrent("Svelte", () => {
       prettier: { ".prettierrc": JSON.stringify({ plugins, ...JSON.parse(options) }) },
       oxfmt: { ".oxfmtrc.json": JSON.stringify(forOxfmt(JSON.parse(options))) },
     };
-    test.each(["prettier", "oxfmt"] as const)(`as %s: ${options}`, async tool => {
+    test.each(["prettier", "oxfmt"] as const)(`matches %s: ${options}`, async tool => {
       const names = group.map((_, index) => `${index}.svelte`);
       const files = Object.fromEntries(group.map((it, index) => [names[index], it.input]));
-      // What is recorded, to be formatted once more.
+      // The recorded output, to be formatted once more.
       const recorded = group.flatMap((it, index) =>
         unstable.has(it.name) ? [[`${index}.again.svelte`, it[tool]!]] : [],
       );
       const all = [...names, ...recorded.map(([name]) => name)];
       const result = await format({ ...configs[tool], ...files, ...Object.fromEntries(recorded) }, all);
       for (const [index, it] of group.entries()) {
-        // What is refused stays as it is.
+        // A rejected input stays unchanged.
         let output = it[tool] ?? it.input;
         if (unstable.has(it.name)) {
           const again = result.files[all.indexOf(`${index}.again.svelte`)];
@@ -218,9 +218,9 @@ describe.concurrent("Svelte", () => {
           output = output.replace(recorded, printed);
         }
         expect({ name: it.name, output: result.files[index] }).toEqual({ name: it.name, output });
-        expect({ name: it.name, isRefused: refusalOf(names[index]).test(result.stderr) }).toEqual({
+        expect({ name: it.name, isRejected: errorAt(names[index]).test(result.stderr) }).toEqual({
           name: it.name,
-          isRefused: !(tool in it),
+          isRejected: !(tool in it),
         });
       }
       expect({ stdout: result.stdout, exitCode: result.exitCode }).toEqual({
@@ -239,7 +239,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
 `,
   };
 
-  test("without a Prettier or oxfmt config components are formatted", async () => {
+  test("formats components without a Prettier or oxfmt config", async () => {
     expect(await format({ "a.svelte": input }, ["a.svelte"])).toEqual({
       stdout: "",
       stderr: "",
@@ -248,7 +248,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     });
   });
 
-  // The component, what Bun makes of it, and what the plugin makes of it the first time.
+  // Each row is the component, Bun's output and the plugin's first-run output.
   for (const row of [
     ["<p>x</p> y\n", "<p>x</p>\ny\n", "<p>x</p>\n y\n"],
     ["Hello <div>a</div> world\n", "Hello <div>a</div>\nworld\n", "Hello <div>a</div>\n world\n"],
@@ -256,12 +256,12 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
   ]) {
     const [before, after] = row;
     const components = inOneRun.add(row);
-    test(`text behind a block element is formatted once and for all: ${JSON.stringify(before)}`, async () => {
+    test(`text after a block element is stable after one run: ${JSON.stringify(before)}`, async () => {
       expect(await components.under({})).toEqual({ stderr: "", files: [after, after, after] });
     });
   }
 
-  test("oxfmt formats components only with `svelte` in the configuration", async () => {
+  test("like oxfmt, only formats components with `svelte` in the configuration", async () => {
     expect(await format({ ".oxfmtrc.json": oxfmtrc, "a.svelte": input }, ["a.svelte"])).toEqual({
       stdout: "",
       stderr: "",
@@ -279,7 +279,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     }
   });
 
-  // What oxfmt 0.72 names.
+  // These are the files that oxfmt 0.72 lists.
   test.each([
     [
       "only in an override",
@@ -317,7 +317,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       },
       ["App.svelte"],
     ],
-  ])("oxfmt's `svelte` %s", async (_, config, named) => {
+  ])("oxfmt's `svelte` %s", async (_, config, listed) => {
     const block = `# a\n\n\`\`\`svelte\n${input}\`\`\`\n`;
     const files = {
       ".oxfmtrc.json": JSON.stringify(config),
@@ -329,15 +329,15 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     };
     const { stdout, ...rest } = await format(files, [], ["--log-level=log", "--list-different"]);
     // The config is on one line, which is not how it is formatted either.
-    expect({ named: stdout.trimEnd().split("\n").sort(), ...rest }).toEqual({
-      named: [".oxfmtrc.json", ...named],
+    expect({ listed: stdout.trimEnd().split("\n").sort(), ...rest }).toEqual({
+      listed: [".oxfmtrc.json", ...listed],
       stderr: "",
       files: [],
       exitCode: 1,
     });
   });
 
-  // What Prettier 3.9.9 names: the last list of plugins that applies to a file is its list.
+  // These are the files that Prettier 3.9.9 lists. The last `plugins` list that applies to a file wins.
   test.each([
     [
       "only in an override",
@@ -355,16 +355,16 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ["README.md", "legacy/old.md"],
     ],
     [
-      "that an override empties",
+      "removed by an override",
       { plugins, overrides: [{ files: "legacy/**", options: { plugins: [] } }] },
       ["App.svelte", "Doc.mdx", "README.md"],
     ],
     [
-      "by its path",
+      "listed by its path",
       { plugins: ["./node_modules/prettier-plugin-svelte/plugin.js"] },
       ["App.svelte", "Doc.mdx", "README.md", "legacy/Old.svelte", "legacy/old.md"],
     ],
-  ])("Prettier's plugin %s", async (_, config, named) => {
+  ])("Prettier's plugin %s", async (_, config, listed) => {
     const block = `# a\n\n\`\`\`svelte\n${input}\`\`\`\n`;
     const files = {
       ".prettierrc": JSON.stringify(config),
@@ -376,8 +376,8 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     };
     const { stdout, ...rest } = await format(files, [], ["--log-level=log", "--list-different"]);
     // The config is on one line, which is not how it is formatted either.
-    expect({ named: stdout.trimEnd().split("\n").sort(), ...rest }).toEqual({
-      named: [".prettierrc", ...named],
+    expect({ listed: stdout.trimEnd().split("\n").sort(), ...rest }).toEqual({
+      listed: [".prettierrc", ...listed],
       stderr: "",
       files: [],
       exitCode: 1,
@@ -395,7 +395,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     expect(await format(files, ["a.svelte"])).toEqual({ stdout: "", stderr: "", files: [output], exitCode: 0 });
   });
 
-  test("oxfmt gives a component on standard input back if it is not to format it", async () => {
+  test("like oxfmt, echoes a component from stdin if `svelte` isn't enabled", async () => {
     using dir = tempDir("bun-format-svelte", { ".oxfmtrc.json": "{}" });
     await using proc = spawn({
       cmd: [bunExe(), "fmt", "--stdin-filepath", "a.svelte"],
@@ -409,7 +409,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: input, stderr: "", exitCode: 0 });
   });
 
-  test("Prettier formats components only with the plugin", async () => {
+  test("like Prettier, only formats components with the plugin", async () => {
     const formatted = { stdout: "", stderr: "", files: [output], exitCode: 0 };
     expect(await format({ ".prettierrc": prettierrc, "a.svelte": input }, ["a.svelte"])).toEqual(formatted);
     const files = { ".prettierrc": "{}", "a.svelte": input, "b.js": "b  ;\n" };
@@ -419,8 +419,8 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       files: [input, "b;\n"],
       exitCode: 0,
     });
-    const named = { ".prettierrc": '{ "overrides": [{ "files": "*.svelte", "options": { "parser": "svelte" } }] }' };
-    expect(await format({ ...named, "a.svelte": input }, ["a.svelte"])).toEqual({
+    const bare = { ".prettierrc": '{ "overrides": [{ "files": "*.svelte", "options": { "parser": "svelte" } }] }' };
+    expect(await format({ ...bare, "a.svelte": input }, ["a.svelte"])).toEqual({
       stdout: "",
       stderr:
         "error: 1 file was not formatted because bun fmt does not support its language yet: 1 .svelte\n" +
@@ -428,11 +428,11 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       files: [input],
       exitCode: 2,
     });
-    const both = { ".prettierrc": JSON.stringify({ plugins, ...JSON.parse(named[".prettierrc"]) }) };
+    const both = { ".prettierrc": JSON.stringify({ plugins, ...JSON.parse(bare[".prettierrc"]) }) };
     expect(await format({ ...both, "a.svelte": input }, ["a.svelte"])).toEqual(formatted);
   });
 
-  describe("components never go to the project's Prettier", () => {
+  describe("components are never passed to the project's Prettier", () => {
     const files = { ...prettier, ".prettierrc": prettierrc, "a.svelte": input };
 
     test.each([undefined, "4.1.1", "4.1.0", "4.0.0", "3.5.2", "2.10.1", "4.1.2", "5.0.0"])(
@@ -447,7 +447,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       },
     );
 
-    test("from standard input", async () => {
+    test("from stdin", async () => {
       using dir = tempDir("bun-format-svelte", { ...files, ...plugin("3.5.2") });
       for (const flags of [
         ["--stdin-filepath", "b.svelte"],
@@ -587,15 +587,15 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     }
   });
 
-  describe("a value of an option that this version of the plugin does not take", () => {
-    // What 2.x takes.
+  describe("an option value that this version of the plugin doesn't accept", () => {
+    // 2.x accepts this.
     const options = { svelteSortOrder: "scripts-markup-styles" };
     const files = { "a.svelte": input, "b.js": "b  ;\n" };
     // Once for each file: the configuration is one too. None is formatted.
     const error = "error: Invalid svelteSortOrder value: scripts-markup-styles.\n";
     const refused = { stdout: "", stderr: error + error + error, files: Object.values(files), exitCode: 2 };
 
-    test("is an error where components are formatted here", async () => {
+    test("is an error when Bun formats the components", async () => {
       const config = { ".prettierrc": JSON.stringify({ plugins, ...options }) };
       expect(await format({ ...files, ...config }, Object.keys(files))).toEqual(refused);
     });
@@ -618,7 +618,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
   });
 
   // 4.1.1 has svelte5CompilerPath, svelteSortOrder, svelteAllowShorthand and svelteIndentScriptAndStyle.
-  describe("svelteStrictMode, which 4.1.1 does not have", () => {
+  describe("svelteStrictMode, which 4.1.1 doesn't have", () => {
     const files = { ".prettierrc": JSON.stringify({ plugins, svelteStrictMode: true }), "a.svelte": input };
 
     test.each([[{}], [plugin("4.1.1")], [{ ...prettier, ...plugin("3.4.0") }]])(
@@ -633,7 +633,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       },
     );
 
-    test("the options that 4.1.1 has are known", async () => {
+    test("accepts the options that 4.1.1 has", async () => {
       const config = { plugins, svelte5CompilerPath: "", svelteAllowShorthand: true, svelteIndentScriptAndStyle: true };
       expect(await format({ ".prettierrc": JSON.stringify(config), "a.svelte": input }, ["a.svelte"])).toEqual({
         stdout: "",
@@ -644,7 +644,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     });
   });
 
-  test("from standard input", async () => {
+  test("formats stdin", async () => {
     using dir = tempDir("bun-format-svelte", { ".oxfmtrc.json": oxfmtrc });
     await using proc = spawn({
       cmd: [bunExe(), "fmt", "--stdin-filepath=a.svelte"],
@@ -658,7 +658,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: output, stderr: "", exitCode: 0 });
   });
 
-  test("the options of oxfmt's `svelte`", async () => {
+  test("supports the options of oxfmt's `svelte`", async () => {
     const config = {
       svelte: { sortOrder: "markup-scripts-styles-options", indentScriptAndStyle: false, allowShorthand: false },
     };
@@ -674,7 +674,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     const wrong = await format({ ".oxfmtrc.json": '{ "svelte": { "sortOrder": "a-b" } }', "a.svelte": input }, [
       "a.svelte",
     ]);
-    // Once for each file: the configuration is one too.
+    // Printed once per file, and the configuration file is one too.
     const error = "error: Invalid svelte.sortOrder value: a-b.\n";
     expect(wrong).toEqual({
       stdout: "",
@@ -684,7 +684,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     });
   });
 
-  test("pragmas", async () => {
+  test("supports requirePragma and insertPragma", async () => {
     const config = (options: object) => ({ ".prettierrc": JSON.stringify({ plugins, ...options }) });
     const files = { "a.svelte": "<p   >a</p>\n", "b.svelte": "<!-- @format -->\n<p   >a</p>\n" };
     expect(await format({ ...config({ requirePragma: true }), ...files }, ["a.svelte", "b.svelte"])).toEqual({
@@ -693,7 +693,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       files: [files["a.svelte"], "<!-- @format -->\n<p>a</p>\n"],
       exitCode: 0,
     });
-    // Behind the comment the plugin leaves out the empty lines between the parts, and puts them back with the next run.
+    // After the comment, the plugin drops the empty lines between the parts, and the next run puts them back.
     const parts = "<script>\n  let a;\n</script>\n\n<p>a</p>\n\n<style></style>\n";
     const all = { ...files, "c.svelte": parts, "d.svelte": `<!-- @format -->\n${parts}` };
     expect(await format({ ...config({ insertPragma: true }), ...all }, Object.keys(all))).toEqual({
@@ -709,20 +709,21 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     });
   });
 
-  // The text, what Bun makes of it, and what the plugin makes of it, which is another component, or none.
-  const printedRight: [name: string, before: string, after: string, ofPlugin: string][] = [
+  // Each row is a label, the text, Bun's output and the plugin's output, which is a different component or not a valid
+  // one.
+  const printedRight: [name: string, before: string, after: string, byPlugin: string][] = [
     ["a quote in single quotes", `<Child   prop='"' />\n`, `<Child prop='"' />\n`, `<Child prop=""" />\n`],
-    ["an element that is void to Svelte and not to the plugin", "<keygen>\n", "<keygen />\n", "<keygen></keygen>\n"],
-    ["a comment behind an expression", "{a  /* b */}\n", "{a /* b */}\n", "{a}\n"],
+    ["an element that's void in Svelte but not in the plugin", "<keygen>\n", "<keygen />\n", "<keygen></keygen>\n"],
+    ["a comment after an expression", "{a  /* b */}\n", "{a /* b */}\n", "{a}\n"],
     ["a comment before a parenthesis", "{/* b */ (a)}\n", "{/* b */ a}\n", "{a}\n"],
-    ["a comment up to the end of the line", "{a  + b // c\n}\n", "{a + b // c\n}\n", "{a + b}\n"],
+    ["a line comment", "{a  + b // c\n}\n", "{a + b // c\n}\n", "{a + b}\n"],
     [
       "a comment in the value of an attribute",
       "<p a={b  /* c */}></p>\n",
       "<p a={b /* c */}></p>\n",
       "<p a={b}></p>\n",
     ],
-    ["the same where the value is the name", "<p a={a  /* c */}></p>\n", "<p a={a /* c */}></p>\n", "<p {a}></p>\n"],
+    ["a comment where the value is the name", "<p a={a  /* c */}></p>\n", "<p a={a /* c */}></p>\n", "<p {a}></p>\n"],
     [
       "the key of a property with a default",
       "{#each a as { b:  c = 1 }}{c}{/each}\n",
@@ -730,22 +731,22 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "{#each a as { c = 1 }}{c}{/each}\n",
     ],
     [
-      "a computed key that is the name",
+      "a computed key equal to the name",
       "{#each a as { [b]:  b }}{b}{/each}\n",
       "{#each a as { [b]: b }}{b}{/each}\n",
       "{#each a as { b }}{b}{/each}\n",
     ],
     [
-      "a key that is a string, before a pattern",
+      "a string key before a pattern",
       `{#each a as { "b":  { c } }}{c}{/each}\n`,
       `{#each a as { "b": { c } }}{c}{/each}\n`,
       "{#each a as { undefined: { c } }}{c}{/each}\n",
     ],
   ];
-  for (const [name, before, after, ofPlugin] of printedRight) {
+  for (const [name, before, after, byPlugin] of printedRight) {
     const [formatted, checked] = [inOneRun.add([before, after]), inOneCheck.add([before])];
-    test(`what the plugin damages is printed right: ${name}`, async () => {
-      expect(after).not.toBe(ofPlugin);
+    test(`prints correctly what the plugin breaks: ${name}`, async () => {
+      expect(after).not.toBe(byPlugin);
       for (const [config] of everyConfig) {
         expect(await Promise.all([formatted.under(config), checked.under(config)])).toEqual([
           { stderr: "", files: [after, after] },
@@ -755,7 +756,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     });
   }
 
-  // The same for a comment at every place where there is an expression or a pattern.
+  // The same for a comment everywhere an expression or a pattern can appear.
   const comments = [
     ["{#if a  /* b */}c{/if}\n", "{#if a /* b */}c{/if}\n", "{#if a}c{/if}\n"],
     ["{#if a}c{:else if d  /* b */}e{/if}\n", "{#if a}c{:else if d /* b */}e{/if}\n", "{#if a}c{:else if d}e{/if}\n"],
@@ -814,16 +815,17 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "<svelte:component this={A /* b */} />\n",
       "<svelte:component this={A} />\n",
     ],
-    // One without a letter.
+    // A comment without a letter.
     ["{a  /* 1 */}\n", "{a /* 1 */}\n", "{a}\n"],
     ["{#if a  /* 1 */}c{/if}\n", "{#if a /* 1 */}c{/if}\n", "{#if a}c{/if}\n"],
-    // What follows a `//` has to be on the next line. The plugin has some of it before the comment, which is text then.
+    // Whatever follows a `//` has to go on the next line. The plugin moves some of it before the comment, which then
+    // becomes text.
     ["{#if a  // b\n}c{/if}\n", "{#if a // b\n}c{/if}\n", "{#if a}c{/if}\n"],
     ["{#if a // b\n && c}d{/if}\n", "{#if a && // b\n  c}d{/if}\n", "{#if a && c}d{/if} // b\n"],
     ["{#key a(c, // b\n d)}e{/key}\n", "{#key a(\n  c, // b\n  d,\n)}e{/key}\n", "{#key a(c, d)}e{/key} // b\n"],
     ["{#each a  // b\n as c}d{/each}\n", "{#each a // b\n as c}d{/each}\n", "{#each a as c}d{/each}\n"],
     ["{@const a = c // b\n}\n", "{@const a = c // b\n}\n", "{@const a = c} // b\n"],
-    // So has what follows one that is on a line of its own.
+    // So does whatever follows a comment on its own line.
     ["{a // b\n/* c */\n}\n", "{a // b\n/* c */\n}\n", "{a}\n"],
     ["{a\n/* c */\n}\n", "{a\n/* c */\n}\n", "{a}\n"],
     ["{#if a\n/* c */\n}d{/if}\n", "{#if a\n/* c */\n}d{/if}\n", "{#if a}d{/if}\n"],
@@ -832,18 +834,19 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
   // Each text, and what it is formatted to, which stays.
   const withComments = inOneRun.add(comments.flatMap(it => [it[0], it[1]]));
   const withCommentsChecked = inOneCheck.add(comments.map(it => it[0]));
-  test.each(everyConfig)("no comment is lost: %j", async config => {
-    for (const [, after, ofPlugin] of comments) expect(after).not.toBe(ofPlugin);
+  test.each(everyConfig)("doesn't lose any comment: %j", async config => {
+    for (const [, after, byPlugin] of comments) expect(after).not.toBe(byPlugin);
     expect(await Promise.all([withComments.under(config), withCommentsChecked.under(config)])).toEqual([
       { stderr: "", files: comments.flatMap(it => [it[1], it[1]]) },
       { stderr: "", files: comments.map(it => it[0]) },
     ]);
   });
 
-  // By what is wrong with the plugin: the text, what Bun makes of it, and what the plugin makes of it. `null`: it refuses it.
-  // `false`: `--debug-check` has nothing to say about that, which has more white space where there is some, or a parenthesis.
+  // Keyed by the plugin's bug. Each row is the text, Bun's output and the plugin's output, or `null` if the plugin
+  // rejects the text. `false` means `--debug-check` accepts the plugin's output, which only has more whitespace where
+  // there's already some, or a parenthesis.
   const damaged: Record<string, [string, string, string | null, false?][]> = {
-    "scripts and style sheets are where the parser finds them": [
+    "finds scripts and style sheets where the parser does": [
       [
         "<script module>\n  // writes a <style> tag\n</script>\n<script>\n  let  b = 2;\n</script>\n<p>{b}</p>\n<style>\n  p{margin:0}\n</style>\n",
         "<script module>\n  // writes a <style> tag\n</script>\n\n<script>\n  let b = 2;\n</script>\n\n<p>{b}</p>\n\n<style>\n  p {\n    margin: 0;\n  }\n</style>\n",
@@ -909,7 +912,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ],
       ['<style lang= "scss">b{c:d}</style>\n', '<style lang="scss">\n  b {\n    c: d;\n  }\n</style>\n', null],
     ],
-    "a comment next to a script takes nothing with it": [
+    "a comment next to a script doesn't remove its neighbors": [
       [
         "<!-- d --><script>let b</script>\n<div>kept</div>\n",
         "<!-- d -->\n<script>\n  let b;\n</script>\n\n<div>kept</div>\n",
@@ -931,7 +934,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         "<!-- d -->\n<!-- e -->\n<script></script>\n\n<p>first</p>\n",
       ],
     ],
-    "white space that is text stays": [
+    "keeps significant whitespace": [
       ["<div>y</div>\nsome <b>words</b>\n", "<div>y</div>\nsome <b>words</b>\n", "<div>y</div>\nsome<b>words</b>\n"],
       [
         '<div>\n  <p>y</p>\n  See <a href="z">that</a>.\n</div>\n',
@@ -949,13 +952,13 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ["<b>y</b> <script></script>c\n", "<script></script>\n\n<b>y</b> c\n", "<script></script>\n\n<b>y</b>c\n"],
       ["\u00A0b\n", "\u00A0b\n", "b\n"],
       ["\u2028b\n", "\u2028b\n", "b\n"],
-      // At the end of the file it would be nothing to Svelte, which has `trimEnd()`.
+      // At the end of the file, Svelte would drop it with `trimEnd()`.
       ["b\u00A0<script></script>\n", "<script></script>\n\nb&nbsp;\n", "<script></script>\n\nb\u00A0\n"],
       ["b\u2028<script></script>\n", "<script></script>\n\nb&#x2028;\n", "<script></script>\n\nb\u2028\n"],
       ["b\u00A0<style></style>\n", "b\u00A0\n\n<style></style>\n", null],
       // At the start of the file it would be a byte order mark.
       ["\n\uFEFFb\n", "&#xFEFF;b\n", "b\n"],
-      // What goes with a comment that goes with a script.
+      // Whitespace next to a comment that moves with its script.
       [
         "b<!-- d -->\n<script></script>c\n",
         "<!-- d -->\n<script></script>\n\nb c\n",
@@ -995,7 +998,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ["<textarea> </textarea>\n", "<textarea> </textarea>\n", "<textarea></textarea>\n"],
       ["<pre>\n\n</pre>\n", "<pre>\n\n</pre>\n", "<pre></pre>\n"],
     ],
-    "what is ignored is there once, and is the same with every run": [
+    "prettier-ignored content is printed once and is stable across runs": [
       [
         "<!-- prettier-ignore -->\nwords\n<style>b{c:d}</style>\n<p>behind</p>\n",
         "<!-- prettier-ignore -->\nwords\n<p>behind</p>\n\n<style>\n  b {\n    c: d;\n  }\n</style>\n",
@@ -1037,7 +1040,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         false,
       ],
     ],
-    "comments in a start tag": [
+    "keeps comments in a start tag": [
       ["<div /* d */>y</div>\n", "<div /* d */>y</div>\n", "<div>y</div>\n"],
       ["<B\n  // d\n/>\n", "<B\n  // d\n/>\n", "<B />\n"],
       ['<div\n  b="c"\n  // y > z\n>y</div>\n', '<div\n  b="c"\n  // y > z\n>\n  y\n</div>\n', '<div b="c">y</div>\n'],
@@ -1046,7 +1049,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ['<pre b="c" // d\n>y</pre>\n', '<pre\n  b="c" // d\n>y</pre>\n', '<pre\n  b="c">y</pre> // d\n'],
       ["<span // d\n>y</span>\n", "<span\n  // d\n>y</span\n>\n", "<span>y</span>\n"],
     ],
-    "what is written is not left out": [
+    "doesn't drop parts of the source": [
       [
         '<svelte:element this="h{level}">y</svelte:element>\n',
         '<svelte:element this="h{level}">y</svelte:element>\n',
@@ -1062,12 +1065,12 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ["{#await b}c{:catch d} {/await}\n", "{#await b}c{:catch d}{/await}\n", "{#await b}c{/await}\n"],
       ["{#await b catch d}{/await}\n", "{#await b catch d}{/await}\n", "{#await b}{/await}\n"],
     ],
-    "what is printed can be parsed": [
+    "prints output that can be parsed": [
       ["{(/b/).test(c)}\n", "{(/b/.test(c))}\n", "{/b/.test(c)}\n"],
       ["{(/b/g)}\n", "{(/b/g)}\n", "{/b/g}\n"],
-      // One that is printed as it is written, because it has no such flag.
+      // This regex is printed verbatim, because `c` isn't a valid flag.
       ["{(/b/c)}\n", "{(/b/c)}\n", "{/b/c}\n"],
-      // To Svelte this says that the markup is TypeScript, to the plugin it does not.
+      // For Svelte this makes the markup TypeScript. For the plugin it doesn't.
       [
         '<script data-lang="ts"></script>\n\n{f<string>(a)}\n',
         '<script data-lang="ts"></script>\n\n{f<string>(a)}\n',
@@ -1085,7 +1088,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ],
       ["{#each  b=1}y{/each}\n", "{#each b = 1}y{/each}\n", "{#each (b = 1)}y{/each}\n"],
     ],
-    "a default that the plugin throws for": [
+    "formats a default value that makes the plugin throw": [
       ["{#each b as { c = -1 }}{c}{/each}\n", "{#each b as { c = -1 }}{c}{/each}\n", null],
       ["{#each b as { c = d() }}{c}{/each}\n", "{#each b as { c = d() }}{c}{/each}\n", null],
       ["{#each b as [c  =  d.e, f = !g]}{c}{/each}\n", "{#each b as [c = d.e, f = !g]}{c}{/each}\n", null],
@@ -1100,10 +1103,10 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     ],
   };
   const typescript = '<script lang="ts"></script>\n\n';
-  // By what Svelte is strict about: the text, what Bun makes of it, and what must not become of it, which Svelte refuses or
-  // reads as something else. `null`: nothing in particular.
+  // Keyed by the rule that Svelte is strict about. Each row is the text, Bun's output, and an output that must not be
+  // produced because Svelte rejects it or reads it differently, or `null` if there's none in particular.
   const strict: typeof damaged = {
-    "no comment is behind a declaration": [
+    "never puts a comment after a declaration": [
       ["{const sum = (b // c\n)}\n", "{const sum = (b // c\n)}\n", "{const sum =\n  b // c\n}\n"],
       ["{const sum = // c\n  1}\n", "{const sum = // c\n  1}\n", "{const sum = 1 // c\n}\n"],
       ["{let sum = (b /* c */)}\n", "{let sum = (b /* c */)}\n", "{let sum = b /* c */}\n"],
@@ -1114,10 +1117,10 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         `${typescript}{const sum = b as C[/* d */]}\n`,
         `${typescript}{const sum = b as C[] /* d */}\n`,
       ],
-      // This one stays where it is: something follows it that does not close anything.
+      // This comment can stay where it is, because it's followed by something other than a closing bracket.
       ["{const  sum = [1 /* c */,2]}\n", "{const sum = [1 /* c */, 2]}\n", null],
     ],
-    "no comment is behind the expression of an each block without `as`": [
+    "never puts a comment after the expression of an each block without `as`": [
       ["{#each rows[0 // c\n]}y{/each}\n", "{#each rows[0 // c\n]}y{/each}\n", "{#each rows[0] // c\n}y{/each}\n"],
       [
         "{#each rows[0 // c\n], i}y{/each}\n",
@@ -1127,7 +1130,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ["{#each b + (c /* d */)}y{/each}\n", "{#each b + (c /* d */)}y{/each}\n", "{#each b + c /* d */}y{/each}\n"],
       ["{#each  f(b /* c */)}y{/each}\n", "{#each f(b /* c */)}y{/each}\n", null],
     ],
-    "an each block without `as` gets none": [
+    "never adds an `as` to an each block without one": [
       [
         `${typescript}{#each (b: C) => (b as D)}y{/each}\n`,
         `${typescript}{#each (b: C) => (b as D)}y{/each}\n`,
@@ -1138,14 +1141,14 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         `${typescript}{#each b = (c as D), i}y{/each}\n`,
         `${typescript}{#each b = c as D, i}y{/each}\n`,
       ],
-      // With one of its own, the last is that.
+      // If the block has its own `as`, that's the last one.
       [
         `${typescript}{#each (b: C) => (b as D) as e}y{/each}\n`,
         `${typescript}{#each (b: C) => b as D as e}y{/each}\n`,
         null,
       ],
     ],
-    "no comment is behind the name of a snippet": [
+    "never puts a comment after a snippet's name": [
       [
         "{#snippet row(/* c */\n  b)}y{/snippet}\n",
         "{#snippet row(/* c */\n  b)}y{/snippet}\n",
@@ -1156,14 +1159,14 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         `${typescript}{#snippet row</* c */\n  T>(b: T)}y{/snippet}\n`,
         `${typescript}{#snippet row /* c */<T>(b: T)}y{/snippet}\n`,
       ],
-      // The line ends behind another comment.
+      // The line ends after another comment.
       [
         "{#snippet row(/* c */ // d\n  b)}y{/snippet}\n",
         "{#snippet row(/* c */ // d\n  b)}y{/snippet}\n",
         "{#snippet row /* c */( // d\n  b,\n)}y{/snippet}\n",
       ],
       ["{#snippet  row(b   /* c */)}y{/snippet}\n", "{#snippet row(b /* c */)}y{/snippet}\n", null],
-      // On a line of its own it is printed before the parameter.
+      // A comment on its own line is printed before the parameter.
       ["{#snippet row(\n  /* c */\n  b)}y{/snippet}\n", "{#snippet row(\n  /* c */\n  b,\n)}y{/snippet}\n", null],
       [
         "{#snippet row(\n  /** c */\n  b, d)}y{/snippet}\n",
@@ -1176,8 +1179,8 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         null,
       ],
     ],
-    "no comment is behind the parameters of a snippet": [
-      // The only parameter is a pattern, so no line ends before the `)`.
+    "never puts a comment after a snippet's parameters": [
+      // The only parameter is a pattern, so there's no line break before the `)`.
       [
         "{#snippet row({ b } // c\n = {})}y{/snippet}\n",
         "{#snippet row({ b } // c\n = {})}y{/snippet}\n",
@@ -1198,13 +1201,13 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         `${typescript}{#snippet row({ b }: D[E // c\n])}y{/snippet}\n`,
         `${typescript}{#snippet row({\n  b,\n}: D[E]) // c\n}y{/snippet}\n`,
       ],
-      // With a second one there is a line for it.
+      // With a second parameter, there's a line break for the comment.
       [
         "{#snippet row(\n  { b }   = {}, // c\n  d,\n)}y{/snippet}\n",
         "{#snippet row(\n  { b } = {}, // c\n  d,\n)}y{/snippet}\n",
         null,
       ],
-      // So there is behind the parameter, which is not hugged then, and between its brackets and braces.
+      // There's also one after the parameter, which isn't hugged then, and between its brackets or braces.
       ["{#snippet row({ b } // c\n)}y{/snippet}\n", "{#snippet row(\n  { b }, // c\n)}y{/snippet}\n", null],
       [
         "{#snippet row({\n  id,   // the id\n  name,\n})}\n<p>y</p>\n{/snippet}\n",
@@ -1227,7 +1230,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         null,
       ],
     ],
-    "a comment that Prettier moves each time stays where it is in the head of a snippet": [
+    "a comment that Prettier moves on every run stays put in a snippet's head": [
       [
         `${typescript}{#snippet row(b = // c\n(d as E).f)}y{/snippet}\n`,
         `${typescript}{#snippet row(b = // c\n(d as E).f)}y{/snippet}\n`,
@@ -1238,7 +1241,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         `${typescript}{#snippet row({ b = // c\n(d as E)[0] })}y{/snippet}\n`,
         null,
       ],
-      // These it does not move.
+      // Prettier doesn't move these.
       ["{#snippet row(b = // c\n (1))}y{/snippet}\n", "{#snippet row(\n  b = 1, // c\n)}y{/snippet}\n", null],
       [
         "{#snippet row(b = c == // d\n (1))}y{/snippet}\n",
@@ -1246,7 +1249,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         null,
       ],
     ],
-    "a vertical tab next to a comment is white space": [
+    "a vertical tab next to a comment is whitespace": [
       [
         "{#snippet row(b\v/* c */)}y{/snippet}\n",
         "{#snippet row(b /* c */)}y{/snippet}\n",
@@ -1263,8 +1266,8 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         "{#if b}{@const c /* d */ = e}{/if}\n",
       ],
     ],
-    "a `{:then}` with nothing in it stays if there is a comment in its head": [
-      // What the plugin prints is the third.
+    "keeps an empty `{:then}` if there's a comment in its head": [
+      // The third column is the plugin's output.
       [
         "{#await b}wait{:then { c /* d */ }}{/await}\n",
         "{#await b}wait{:then { c /* d */ }}{/await}\n",
@@ -1286,7 +1289,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         `${typescript}{#await b}wait{:then c: E</* d */ F>}{/await}\n`,
         `${typescript}{#await b}wait{/await}\n`,
       ],
-      // Without one it goes as before.
+      // Without a comment it's still removed.
       ["{#await b}wait{:then c}{/await}\n", "{#await b}wait{/await}\n", null],
       ["{#await b}wait{:then { c = 1 / 2 }}{/await}\n", "{#await b}wait{/await}\n", null],
       ["{#await b}wait{:then { c = /d/ }}{/await}\n", "{#await b}wait{/await}\n", null],
@@ -1294,14 +1297,14 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ["{#await b then { c = `// d` }}{/await}\n", "{#await b}{/await}\n", null],
       [`${typescript}{#await b}wait{:then c: "d/e"}{/await}\n`, `${typescript}{#await b}wait{/await}\n`, null],
     ],
-    "the parameters of a snippet end where their parentheses do": [
+    "a snippet's parameters end at their closing parenthesis": [
       [
         "{#snippet row(b /* () */)}y{/snippet}\n",
         "{#snippet row(b /* () */)}y{/snippet}\n",
         "{#snippet row(b /* ()}y{/snippet}\n",
       ],
     ],
-    "a comment before a type": [
+    "keeps a comment before a type": [
       [
         `${typescript}{#each rows as row : /* c */ T}y{/each}\n`,
         `${typescript}{#each rows as row: /* c */ T}y{/each}\n`,
@@ -1315,7 +1318,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       [
         `${typescript}{#each rows as { b } : /* c */ T}y{/each}\n`,
         `${typescript}{#each rows as { b }: /* c */ T}y{/each}\n`,
-        // What the plugin prints.
+        // This is what the plugin prints.
         `${typescript}{#each rows as { b }: T}y{/each}\n`,
       ],
       [
@@ -1329,11 +1332,11 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         `${typescript}{#await b}y{:then row : /* c */: T}z{:catch e : /* d */: U}w{/await}\n`,
       ],
     ],
-    "the string of `this` keeps its quotes": [
+    "a string in `this` keeps its quotes": [
       [
         "<svelte:element this={'b\"c'}>y</svelte:element>\n",
         "<svelte:element this={'b\"c'}>y</svelte:element>\n",
-        // What the plugin prints.
+        // This is what the plugin prints.
         '<svelte:element this={"b"c"}>y</svelte:element>\n',
       ],
       [
@@ -1347,7 +1350,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         '<svelte:element this="b"c">y</svelte:element>\n',
       ],
       ["<svelte:element this={'b'}>y</svelte:element>\n", '<svelte:element this={"b"}>y</svelte:element>\n', null],
-      // Not right behind the `{`, the plugin makes a text of the string.
+      // If the string isn't right after the `{`, the plugin turns it into text.
       ["<svelte:element this={ 'b' }>y</svelte:element>\n", '<svelte:element this="b">y</svelte:element>\n', null],
       [
         "<svelte:element this={ 'b\"c' }>y</svelte:element>\n",
@@ -1364,7 +1367,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         "<svelte:element this={'b\"c'}>y</svelte:element>\n",
         '<svelte:element this=b"c>y</svelte:element>\n',
       ],
-      // One backslash in the string would be two in the text, and an entity in the text is none in the string.
+      // One backslash in the string would be two in the text, and an entity in the text isn't one in the string.
       [
         '<svelte:element this={ "b\\\\c" }>y</svelte:element>\n',
         '<svelte:element this={"b\\\\c"}>y</svelte:element>\n',
@@ -1376,8 +1379,8 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         '<svelte:element this="b&amp;c">y</svelte:element>\n',
       ],
     ],
-    "a value with a comment in it is not left out": [
-      // What the plugin prints is the third.
+    "doesn't use the shorthand for a value with a comment in it": [
+      // The third column is the plugin's output.
       ["<Row item={/* keep */ item} />\n", "<Row item={/* keep */ item} />\n", "<Row {item} />\n"],
       [
         "<Row\n  item={\n    // keep this\n    item\n  }\n/>\n",
@@ -1398,20 +1401,20 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         '<svelte:element this={/* c */ "b"}>y</svelte:element>\n',
         '<svelte:element this="b">y</svelte:element>\n',
       ],
-      // The parentheses go, the comment does not go with them the next time.
+      // The parentheses are removed, and the next run doesn't remove the comment.
       ["<Row item={/* c */ (item)} />\n", "<Row item={/* c */ item} />\n", "<Row {item} />\n"],
-      // Without a comment it is left out as before.
+      // Without a comment, the shorthand is still used.
       ["<Row item={ (item) } />\n", "<Row {item} />\n", null],
     ],
-    "a declaration ends behind its `;`": [
+    "a declaration ends after its `;`": [
       ["{const sum = 1;}\n", "{const sum = 1}\n", null],
       ["{let sum ;}\n", "{let sum}\n", null],
     ],
-    "a script that is not code stays as it is": [
+    "leaves a script that isn't code unchanged": [
       [
         '<script type="text/template"><p   >{{b}}</p></script>\n',
         '<script type="text/template"><p   >{{b}}</p></script>\n',
-        // What the plugin prints: it is JSX.
+        // This is what the plugin prints, because it parses as JSX.
         '<script type="text/template">\n  <p>{{ b }}</p>;\n</script>\n',
         false,
       ],
@@ -1420,7 +1423,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         '<div>\n  <script type="text/x-template">\n  <b   >{{c}}</b>\n</script>\n</div>\n',
         null,
       ],
-      // Whether it can be read as JavaScript or not.
+      // Whether or not it parses as JavaScript.
       [
         '<script type="math/tex">x^2 + y^2</script>\n',
         '<script type="math/tex">x^2 + y^2</script>\n',
@@ -1488,7 +1491,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         `<script type="${type}">\n  let b = 1;\n</script>\n`,
         null,
       ]),
-      // In whatever letters the name of the attribute is written, and as a string between braces.
+      // The attribute name can be in any case, and the value can be a string in braces.
       ...['TYPE="math/tex"', 'type={"math/tex"}'].flatMap((type): [string, string, string, false][] => [
         [
           `<script ${type}>x^2 + y^2</script>\n`,
@@ -1503,13 +1506,13 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
           false,
         ],
       ]),
-      // What another expression gives is not known.
+      // The value of any other expression is unknown.
       ...['TYPE="module"', 'type={"module"}', "type={kind}"].map((type): [string, string, null] => [
         `<p><script ${type}>let  b=1</script></p>\n`,
         `<p>\n  <script ${type}>\n    let b = 1;\n  </script>\n</p>\n`,
         null,
       ]),
-      // A `lang` counts for more.
+      // A `lang` takes precedence.
       [
         '<script type="math/tex" lang="js">let  b=1</script>\n',
         '<script type="math/tex" lang="js">\n  let b = 1;\n</script>\n',
@@ -1521,7 +1524,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         null,
       ],
     ],
-    "a style sheet ends between two rules": [
+    "a `</style>` in a string, a comment or `url()` doesn't end the style sheet": [
       [
         '<style>p::after{content:"</style>"}</style>\n',
         '<style>\n  p::after {\n    content: "</style>";\n  }\n</style>\n',
@@ -1558,11 +1561,11 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     });
 
     const seen = rows.filter(it => it[2] !== null && it[2] !== it[1]);
-    // Each with what Bun prints, then with what the plugin prints.
+    // Each input is paired with Bun's output, then with the other output.
     const verdicts = sameOrDifferent(
       seen.flatMap(it => ([1, 2] as const).map((which): [string, string] => [it[0], it[which]!])),
     );
-    test.skipIf(!hasRunner)("--debug-check would not let the other pass", async () => {
+    test.skipIf(!hasRunner)("--debug-check would reject the other output", async () => {
       expect(await verdicts()).toEqual({
         said: seen.flatMap(it => ["same", it[3] === false ? "same" : "different"]),
         stderr: "",
@@ -1571,11 +1574,11 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     });
   });
 
-  describe("a comment that waits for the end of the line does not get out of its expression", () => {
-    // The text, what becomes of it, what becomes of that, which stays, and what must not become of the text: the comment is
-    // behind the `}` there. Once the parentheses are gone the comment is behind the expression and no longer breaks it, as
-    // in a file of JavaScript. `null`: these were right before. `false`: `--debug-check` has nothing to say about that, where
-    // it is a comment in the tag.
+  describe("a comment deferred to the end of the line stays inside its expression", () => {
+    // Each row is the text, the first run's output, the second run's output, which is stable, and an output that must
+    // not be produced because the comment is after the `}` there. Once the parentheses are gone, the comment is after
+    // the expression and no longer breaks it, as in a JavaScript file. `null` means the case was already correct
+    // before. `false` means `--debug-check` accepts that output, where it's a comment in the tag.
     const rows: [string, string, string, string | null, false?][] = [
       [
         "<button onclick={() => (\n  total += 1 // one more\n)}>+</button>\n",
@@ -1666,7 +1669,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     const verdicts = sameOrDifferent(
       seen.flatMap(it => ([1, 2, 3] as const).map((which): [string, string] => [it[0], it[which]!])),
     );
-    test.skipIf(!hasRunner)("--debug-check would not let it out", async () => {
+    test.skipIf(!hasRunner)("--debug-check would reject a comment outside the expression", async () => {
       expect(await verdicts()).toEqual({
         said: seen.flatMap(it => ["same", "same", it[4] === false ? "same" : "different"]),
         stderr: "",
@@ -1675,8 +1678,8 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     });
   });
 
-  test("a style sheet ends at the first end tag with a `lang`, or if that is not in a string, a comment or `url()`", async () => {
-    const refused: [string, string][] = [
+  test("a style sheet with a `lang` ends at the first end tag, and otherwise at the first one outside a string, a comment or `url()`", async () => {
+    const rejected: [string, string][] = [
       // A preprocessor cuts it out before Svelte reads it.
       [
         '<style lang="scss">b::after{content:"</style>"}</style>\n',
@@ -1687,7 +1690,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         "<style>b{margin:0}</style>\n<i>'</style>'</i>\n",
         "2 | <i>'</style>'</i>\n        ^\nerror: This end tag has no start tag\n    at 1.svelte:2:5\n\n",
       ],
-      // To Svelte this is a comment, to who formats the style sheet it is a selector.
+      // Svelte reads this as a comment, but the CSS formatter reads it as a selector.
       [
         "<style><!-- </style> -->b{margin:0}</style>\n",
         "1 | <style><!-- </style> -->b{margin:0}</style>\n" +
@@ -1697,12 +1700,12 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         "<style>b{c:</style>}</style>\n",
         "1 | <style>b{c:</style>}</style>\n                        ^\nerror: This end tag has no start tag\n    at 3.svelte:1:21\n\n",
       ],
-      // To Svelte `--c:` is a selector that is not finished.
+      // Svelte reads `--c:` as an unfinished selector.
       [
         '<style>b{--c:{d:"</style>"}}</style>\n',
         '1 | <style>b{--c:{d:"</style>"}}</style>\n                                ^\nerror: This end tag has no start tag\n    at 4.svelte:1:29\n\n',
       ],
-      // In a string `url(` starts nothing, and with a quote in it `url(..)` is written anew.
+      // `url(` in a string doesn't start anything, and a `url(..)` with a quote in it isn't kept verbatim.
       [
         '<style>b{content:"url("}c{:</style>)}</style>\n',
         '1 | <style>b{content:"url("}c{:</style>)}</style>\n                                         ^\nerror: This end tag has no start tag\n    at 5.svelte:1:38\n\n',
@@ -1711,7 +1714,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         '<style>b{c:url(d"e"</style>)}</style>\n',
         '1 | <style>b{c:url(d"e"</style>)}</style>\n                                 ^\nerror: This end tag has no start tag\n    at 6.svelte:1:30\n\n',
       ],
-      // Neither is `url(..)`.
+      // Neither of these is `url(..)`.
       [
         "<style>b{@url(</style>)}</style>\n",
         "1 | <style>b{@url(</style>)}</style>\n                            ^\nerror: This end tag has no start tag\n    at 7.svelte:1:25\n\n",
@@ -1721,12 +1724,12 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         "1 | <style>b{curl(</style>)}</style>\n                            ^\nerror: This end tag has no start tag\n    at 8.svelte:1:25\n\n",
       ],
     ];
-    const names = refused.map((_, index) => `${index}.svelte`);
-    const files = Object.fromEntries(refused.map((it, index) => [names[index], it[0]]));
+    const names = rejected.map((_, index) => `${index}.svelte`);
+    const files = Object.fromEntries(rejected.map((it, index) => [names[index], it[0]]));
     expect(await format(files, names, ["--threads=1"])).toEqual({
       stdout: "",
-      stderr: refused.map(it => it[1]).join(""),
-      files: refused.map(it => it[0]),
+      stderr: rejected.map(it => it[1]).join(""),
+      files: rejected.map(it => it[0]),
       exitCode: 2,
     });
 
@@ -1736,7 +1739,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         '<style>b::after{content:"</style>"}</style>\n',
         '<style>\n  b::after {\n    content: "</style>";\n  }\n</style>\n',
       ],
-      // An apostrophe in a comment of SCSS starts nothing.
+      // An apostrophe in an SCSS comment doesn't start a string.
       [
         "<style lang=\"scss\">// don't\nb{margin:0}</style>\n<p>it's</p>\n",
         "<p>it's</p>\n\n<style lang=\"scss\">\n  // don't\n  b {\n    margin: 0;\n  }\n</style>\n",
@@ -1745,13 +1748,14 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         "<style>@media (width<600px){b{margin:0}}</style>\n",
         "<style>\n  @media (width<600px) {\n    b {\n      margin: 0;\n    }\n  }\n</style>\n",
       ],
-      // What cannot be read stays as it is, up to the first end tag.
+      // A style sheet that can't be parsed stays unchanged, up to the first end tag.
       ["<style>b{margin:0</style>\n<p>y</p>\n", "<p>y</p>\n\n<style>\nb{margin:0\n</style>\n"],
       [
         "<style>b</style>\n<p>{c}</p>\n<svelte:head><style>d{margin:0}</style></svelte:head>\n",
         "<p>{c}</p>\n<svelte:head\n  ><style>\n    d {\n      margin: 0;\n    }\n  </style></svelte:head\n>\n\n<style>\nb\n</style>\n",
       ],
-      // What is not closed does not go on in the markup, up to what closes it there and to the end of another style sheet.
+      // An unclosed construct doesn't continue into the markup until something closes it there, up to the end of
+      // another style sheet.
       [
         "<style>\n  b { background: url(it's.png) }\n</style>\n<p>don't</p>\n<svg><style>c:d}</style></svg>\n",
         "<p>don't</p>\n<svg\n  ><style>\nc:d}\n  </style></svg\n>\n\n<style>\n  b {\n    background: url(it's.png);\n  }\n</style>\n",
@@ -1769,7 +1773,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         "<p>y</p>\n<svg\n  ><style>\n    c */d {\n      e: f;\n    }\n  </style></svg\n>\n\n<style>\n  /* b\n</style>\n",
       ],
       ["<style>b{c:url( '</style>' )}</style>\n", '<style>\n  b {\n    c: url("</style>");\n  }\n</style>\n'],
-      // A string goes on in the next line behind a backslash.
+      // A string continues on the next line after a backslash.
       [
         '<style>b{content:"c\\\nd </style>"}</style>\n',
         '<style>\n  b {\n    content: "c\\\nd </style>";\n  }\n</style>\n',
@@ -1793,7 +1797,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     });
   });
 
-  describe("every comment next to a value that is named like its attribute is kept", () => {
+  describe("keeps every comment next to a value with the same name as its attribute", () => {
     const sites = [
       "<Row b={V} />",
       "<a b={V}>y</a>",
@@ -1842,20 +1846,20 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       for (const pass of [1, 2, 3]) {
         const { files, ...result } = await formatIn(String(dir), names);
         expect({ pass, ...result }).toEqual({ pass, stdout: "", stderr: "", exitCode: 0 });
-        // What has lost or doubled one, with what it was.
+        // The files that lost or duplicated a comment, with their previous text.
         const wrong = files.flatMap((text, index) =>
           Bun.deepEquals(text.match(/C\d/g)?.sort(), comments(texts[index])) ? [] : [[pass, before[index], text]],
         );
         expect(wrong).toEqual([]);
         before = files;
       }
-      // It has settled by then.
+      // The output is stable by then.
       expect(await formatIn(String(dir), names)).toEqual({ stdout: "", stderr: "", files: before, exitCode: 0 });
     });
   });
 
   describe("--debug-check", () => {
-    // The text, what becomes of it, and what becomes of that, which stays.
+    // Each row is the text, the first run's output, and the second run's output if it differs, which is stable.
     const right: [string, string, string?][] = [
       ["{#snippet row(b = // c\n  1)}y{/snippet}\n", "{#snippet row(\n  b = 1, // c\n)}y{/snippet}\n"],
       [
@@ -1865,11 +1869,11 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ],
       ["{#each ( /* c */b + c ) * d, i}y{/each}\n", "{#each /* c */ (b + c) * d, i}y{/each}\n"],
       ["{#snippet f(b =\n/* c */\n`${d}`)}y{/snippet}\n", "{#snippet f(\n  /* c */\n  b = `${d}`,\n)}y{/snippet}\n"],
-      // A name without its escape, modifiers in the usual order, a name that is written twice.
+      // An unescaped name, reordered modifiers, and an expanded shorthand.
       [`${typescript}{b\\u{63}}\n`, `${typescript}{bc}\n`],
       [`${typescript}{class{static private b}}\n`, `${typescript}{class {\n  private static b;\n}}\n`],
       ["{#each b as { c = {d,e} }}y{/each}\n", "{#each b as { c = { d: d, e: e } }}y{/each}\n"],
-      // The value of a `style:` directive is broken into lines like text.
+      // The value of a `style:` directive is wrapped like text.
       [
         '<p style:background="linear-gradient(red, orange, yellow, green, blue, indigo, violet, white)">y</p>\n',
         '<p\n  style:background="linear-gradient(red, orange, yellow, green, blue, indigo,\n  violet, white)"\n>\n  y\n</p>\n',
@@ -1877,14 +1881,15 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     ];
     const both = right.flatMap(it => [it[0], it[1]]);
     const [written, checked] = [inOneRun.add(both), inOneCheck.add(both)];
-    test("says nothing about what is right", async () => {
+    test("accepts correct output", async () => {
       expect(await Promise.all([written.under({}), checked.under({})])).toEqual([
         { stderr: "", files: right.flatMap(it => [it[1], it[2] ?? it[1]]) },
         { stderr: "", files: both },
       ]);
     });
 
-    // What a word or a string is does not depend on the `,`, the `;` or the line break next to it, which change.
+    // How a word or a string is classified doesn't depend on the `,`, `;` or line break next to it, which formatting
+    // changes.
     const words = [
       "{x as { b: T, readonly [k: string]: U }}",
       "{x as { b: T\n readonly [k: string]: U }}",
@@ -1909,7 +1914,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       '{class { 1; "2" }}',
     ].map(code => `${typescript}${code}\n`);
     test.each([{}, { semi: false }, { quoteProps: "consistent" }])(
-      "says nothing about words and keys: %j",
+      "accepts contextual keywords and keys: %j",
       async options => {
         const names = words.map((_, index) => `${index}.svelte`);
         const files = {
@@ -1926,18 +1931,18 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     );
 
     const different: [string, string][] = [
-      // Code that has become a comment.
+      // Code that became a comment.
       ["{@html raw + more}\n", "{@html raw // + more\n}\n"],
       ["{@html raw + more}\n", "{@html raw /* + more */}\n"],
       ["{#if q}{@const c = b + 1}{c}{/if}\n", "{#if q}{@const c = b /* + 1 */}{c}{/if}\n"],
-      // A comment that is lost.
+      // A lost comment.
       ["{f(b /* c */)}\n", "{f(b)}\n"],
-      // A string between brackets is a value.
+      // A string in brackets is a value.
       ['{{ ["b"]: 1 }}\n', "{{ [b]: 1 }}\n"],
       ["<Row item={/* c */ item} />\n", "<Row {item} />\n"],
       ["<input bind:value={/* c */ value} />\n", "<input bind:value />\n"],
       ["{#await b}wait{:then { c /* d */ }}{/await}\n", "{#await b}wait{/await}\n"],
-      // A string is no name.
+      // A string isn't a name.
       ['{"name"}\n', "{name}\n"],
       ['{f("x")}\n', "{f(x)}\n"],
       ['{f(b, "x", c)}\n', "{f(b, x, c)}\n"],
@@ -1947,17 +1952,17 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ['<p b={"c"}>y</p>\n', "<p b={c}>y</p>\n"],
       ['<svelte:element this={"b"}>y</svelte:element>\n', "<svelte:element this={b}>y</svelte:element>\n"],
       ['<svelte:element this={ "b\\\\c" }>y</svelte:element>\n', '<svelte:element this="b\\\\c">y</svelte:element>\n'],
-      // A template that is in no other language, whatever is before it.
+      // A template that isn't embedded code, whatever precedes it.
       ["{() => { return `b  c` }}\n", "{() => { return `b c` }}\n"],
       ["{typeof `b  c`}\n", "{typeof `b c`}\n"],
       ["{b in `b  c`}\n", "{b in `b c`}\n"],
       ["{async () => await `b  c`}\n", "{async () => await `b c`}\n"],
       ["{() => { if (b) `b  c` }}\n", "{() => { if (b) `b c` }}\n"],
       ["{f`b  c`}\n", "{f`b c`}\n"],
-      // A name that is spelled like a modifier.
+      // A name that's spelled like a modifier.
       ["{f(public, b)}\n", "{f(b, public)}\n"],
       ["{static + b}\n", "{b + static}\n"],
-      // What is no letter.
+      // Tokens without letters.
       ["{row(1, 2)}\n", "{row(1)}\n"],
       ["{b + 1}\n", "{b}\n"],
       ["{b + 1}\n", "{b - 1}\n"],
@@ -1975,7 +1980,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ["<p on:click={b} on:keyup={c}>y</p>\n", "<p on:click={c} on:keyup={b}>y</p>\n"],
       ['<p title="x y">z</p>\n', '<p title="y x">z</p>\n'],
       ['<p class="b c">y</p>\n', '<p class="c b">y</p>\n'],
-      // White space that is not between two tokens.
+      // Whitespace that isn't between two tokens.
       ['<p title="x  y">z</p>\n', '<p title="x y">z</p>\n'],
       ['{"b  c"}\n', '{"b c"}\n'],
       ["{`b\nc`}\n", "{`b c`}\n"],
@@ -2011,14 +2016,14 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         `${typescript}{#snippet f(b: C | D)}y{/snippet}\n`,
         `${typescript}{#snippet f(\n  b:\n    | C\n    | D,\n)}y{/snippet}\n`,
       ],
-      // It does not tell these apart: a string that is no value could be a key, which can lose its quotes.
+      // It can't distinguish these: a string that isn't a value could be a key, which can lose its quotes.
       [`${typescript}{b as "c"}\n`, `${typescript}{b as c}\n`],
-      // Nor these: it looks at tokens, not at the tree, and at neither parentheses nor commas.
+      // Nor these: it compares tokens, not trees, and ignores parentheses and commas.
       ["{(b + c) * d}\n", "{b + c * d}\n"],
       ["{[b, , c]}\n", "{[b, c]}\n"],
     ];
     const verdicts = sameOrDifferent([...different, ...same]);
-    test.skipIf(!hasRunner)("tells what is something else from what is only written differently", async () => {
+    test.skipIf(!hasRunner)("distinguishes different code from the same code written differently", async () => {
       const rows = [...different, ...same];
       const { said, stderr, exitCode } = await verdicts();
       expect(rows.map((it, index) => [...it, said[index]])).toEqual([
@@ -2037,16 +2042,16 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     "<pre>{#await b catch d} {/await}</pre>\n",
     "<pre><i>{#await b} {:then c} {/await}</i></pre>\n",
   ];
-  // The control: elsewhere it is nothing.
+  // The control: elsewhere such a part is empty.
   const awaits = inOneRun.add([...inPre, "<p>{#await b} {:then c} {:catch d} {/await}</p>\n"]);
-  test("in <pre> a part of an await block that has white space in it has something in it", async () => {
+  test("in <pre>, a part of an await block that only contains whitespace isn't empty", async () => {
     expect(await awaits.under({})).toEqual({
       stderr: "",
       files: [...inPre, "<p>{#await b catch d}{/await}</p>\n"],
     });
   });
 
-  test("a start tag that ends with a comment at the end of a line has its `>` on the next, with bracketSameLine too", async () => {
+  test("a start tag that ends with a comment puts its `>` on the next line, even with bracketSameLine", async () => {
     const config = { ".prettierrc": JSON.stringify({ plugins, bracketSameLine: true }) };
     const rows = [
       ['<div b="c" // d\n>y</div>\n', '<div\n  b="c" // d\n>\n  y\n</div>\n'],
@@ -2070,15 +2075,15 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     });
   });
 
-  test("white space that other options make text stays", async () => {
+  test("keeps whitespace that other options make significant", async () => {
     const rows: [object, string, string][] = [
-      // The plugin has a line in an element with nothing in it, which breaks with the start tag.
+      // The plugin puts a `line` in an empty element, which breaks together with the start tag.
       [
         { bracketSameLine: true },
         "<pre>b<div {@attach () => { c; d }}></div>e</pre>\n",
         "<pre>b<div\n    {@attach () => {\n      c;\n      d;\n    }}></div>e</pre>\n",
       ],
-      // The rows are as they are written: see "rows that are closed by the next".
+      // The rows are printed as written: see "leaves table rows that are closed by the next row as written".
       [{ htmlWhitespaceSensitivity: "strict" }, "<table><tr><td>b<tr>  </table>\n", "<table><tr><td>b<tr> </table>\n"],
     ];
     for (const [options, before, after] of rows) {
@@ -2090,100 +2095,100 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     }
   });
 
-  // `regex_lang_attribute` of Svelte 5.57, which looks at the text before anything is parsed.
-  describe("what says that the markup is TypeScript", () => {
+  // Svelte 5.57's `regex_lang_attribute`, which is matched against the text before anything is parsed.
+  describe("detecting TypeScript markup", () => {
     const [before, after] = ["{(e  as number)}\n", "{e as number}\n"];
-    // What is before the markup, and what it is formatted to.
-    const saying: [name: string, scripts: string, formatted: string][] = [
-      ["lang in double quotes", '<script lang="ts"></script>\n', '<script lang="ts"></script>\n\n'],
+    // Each row is a label, the scripts before the markup, and their formatted text.
+    const withLangTs: [label: string, scripts: string, formatted: string][] = [
+      ["in double quotes", '<script lang="ts"></script>\n', '<script lang="ts"></script>\n\n'],
       ["in single quotes", "<script lang='ts'></script>\n", '<script lang="ts"></script>\n\n'],
       ["without quotes", "<script lang=ts></script>\n", '<script lang="ts"></script>\n\n'],
       [
-        "behind a value in double quotes with a > in it",
+        "after a value in double quotes with a > in it",
         '<script generics="T extends Map<string, unknown>" lang="ts"></script>\n',
         '<script generics="T extends Map<string, unknown>" lang="ts"></script>\n\n',
       ],
       [
-        "before it",
+        "before a value in double quotes with a > in it",
         '<script lang="ts" generics="T extends Map<string, unknown>"></script>\n',
         '<script lang="ts" generics="T extends Map<string, unknown>"></script>\n\n',
       ],
       [
-        "behind a value in single quotes with a > in it",
+        "after a value in single quotes with a > in it",
         "<script generics='T extends Array<string>' lang='ts'></script>\n",
         '<script generics="T extends Array<string>" lang="ts"></script>\n\n',
       ],
       [
-        "behind a > alone",
+        "after a value with a lone >",
         '<script data-b="c>d" lang="ts"></script>\n',
         '<script data-b="c>d" lang="ts"></script>\n\n',
       ],
       [
-        "behind an attribute without a value and one with a >",
+        "after an attribute without a value and one with a >",
         '<script module data-b=">" lang="ts"></script>\n',
         '<script module data-b=">" lang="ts"></script>\n\n',
       ],
       [
-        "on a line of its own",
+        "on its own line",
         '<script\n  generics="T extends A<B>"\n  lang="ts"\n></script>\n',
         '<script generics="T extends A<B>" lang="ts"></script>\n\n',
       ],
       [
-        "on the module",
+        "on the module script",
         '<script module lang="ts"></script>\n<script></script>\n',
         '<script module lang="ts"></script>\n\n<script></script>\n\n',
       ],
       [
-        "on the instance",
+        "on the instance script",
         '<script module></script>\n<script lang="ts"></script>\n',
         '<script module></script>\n\n<script lang="ts"></script>\n\n',
       ],
-      // The first `lang` counts.
+      // The first `lang` wins.
       [
-        "on the first of two scripts that say something else",
+        "on the first of two scripts with different languages",
         '<script lang="ts"></script>\n<script module lang="js"></script>\n',
         '<script module lang="js"></script>\n\n<script lang="ts"></script>\n\n',
       ],
-      // Up to the first `>` Svelte looks for the letters, whatever they are in.
+      // Up to the first `>`, Svelte matches the characters wherever they appear.
       [
         "in the value of another attribute",
         `<script data-b='lang="ts"'></script>\n`,
         `<script data-b='lang="ts"'></script>\n\n`,
       ],
       ["at the end of another name", '<script data-lang="ts"></script>\n', '<script data-lang="ts"></script>\n\n'],
-      // In double quotes it would not say so any more.
-      ["with a quote behind it", "<script lang=ts'></script>\n", "<script lang=ts'></script>\n\n"],
-      // Not so another value.
+      // In double quotes it would no longer match.
+      ["with a quote after it", "<script lang=ts'></script>\n", "<script lang=ts'></script>\n\n"],
+      // That doesn't apply to another attribute's value.
       [
         "next to a value with a quote in it",
         "<script lang=ts b=c'd></script>\n",
         `<script lang="ts" b="c'd"></script>\n\n`,
       ],
     ];
-    for (const [name, scripts, formatted] of saying) {
+    for (const [label, scripts, formatted] of withLangTs) {
       const component = inOneRun.add([scripts + before]);
-      test(name, async () => {
+      test(`lang=ts ${label} makes the markup TypeScript`, async () => {
         expect(await component.under({})).toEqual({ stderr: "", files: [formatted + after] });
       });
     }
 
     const script = '<script generics="T extends A<B>" lang="ts"></script>\n';
-    const behind = inOneRun.add([before + script]);
-    test("a script behind the markup", async () => {
-      expect(await behind.under({})).toEqual({ stderr: "", files: [`${script}\n${after}`] });
+    const scriptLast = inOneRun.add([before + script]);
+    test("a script after the markup makes it TypeScript too", async () => {
+      expect(await scriptLast.under({})).toEqual({ stderr: "", files: [`${script}\n${after}`] });
     });
 
     test.each([
       ["no lang", "<script></script>\n"],
       ["another language", '<script lang="typescript"></script>\n'],
-      ["a blank behind the =", '<script lang= "ts"></script>\n'],
-      ["a comment", '<!-- <script lang="ts"> -->\n'],
+      ["a space after the =", '<script lang= "ts"></script>\n'],
+      ["a script in a comment", '<!-- <script lang="ts"> -->\n'],
       [
-        "the second of two scripts that say something else",
+        "lang=ts on the second of two scripts with different languages",
         '<script module lang="js"></script><script lang="ts"></script>\n',
       ],
-      ["a lang behind a > that is in no quotes", '<script b={c>d} lang="ts"></script>\n'],
-    ])("not %s", async (_, scripts) => {
+      ["a lang after an unquoted >", '<script b={c>d} lang="ts"></script>\n'],
+    ])("the markup isn't TypeScript with %s", async (_, scripts) => {
       const result = await format({ "a.svelte": scripts + before }, ["a.svelte"]);
       expect(result).toEqual({
         stdout: "",
@@ -2193,9 +2198,9 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       });
     });
 
-    const ofItsOwn = inOneRun.add(['<script lang= "ts">let b:  number</script>\n{b}\n']);
-    test("what is in a script is what its own lang says", async () => {
-      expect(await ofItsOwn.under({})).toEqual({
+    const ownLang = inOneRun.add(['<script lang= "ts">let b:  number</script>\n{b}\n']);
+    test("a script's own lang decides the script's language", async () => {
+      expect(await ownLang.under({})).toEqual({
         stderr: "",
         files: ['<script lang="ts">\n  let b: number;\n</script>\n\n{b}\n'],
       });
@@ -2205,7 +2210,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       '<script generics="T extends Map<string, unknown>" lang="ts">\n  let { b }: { b: T } = $props()\n</script>\n' +
         "{#snippet c(d:  T)}{d}{/snippet}\n<p on:click={(e:  Event) => e}>f</p>\n",
     ]);
-    test("types in the markup of a component with generics", async () => {
+    test("formats types in the markup of a component with generics", async () => {
       expect(await withGenerics.under({})).toEqual({
         stderr: "",
         files: [
@@ -2216,8 +2221,9 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     });
   });
 
-  // No expression ends with `as { b = c }`. Svelte hides what is from an `as` on, from the last to the first, until there is one.
-  describe("where the expression of an each block ends", () => {
+  // No expression ends with `as { b = c }`. Svelte cuts the text at each `as`, from the last to the first, until the
+  // rest parses as an expression.
+  describe("finding the end of an each block's expression", () => {
     const rows = [
       ["{#each a  as { b = c }}d{/each}", "{#each a as { b = c }}d{/each}"],
       ["{#each a  as [b = c]}d{/each}", "{#each a as [b = c]}d{/each}"],
@@ -2236,17 +2242,17 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ["{#each f(a as b)  as { c = d }: T}e{/each}", "{#each f(a as b) as { c = d }: T}e{/each}"],
     ];
 
-    for (const [name, script, all] of [
+    for (const [language, script, all] of [
       ["JavaScript", "", rows],
       ["TypeScript", '<script lang="ts"></script>\n\n', [...rows, ...typed]],
     ] as const) {
       const components = inOneRun.add(all.map(it => `${script}${it[0]}\n`));
-      test(name, async () => {
+      test(`in ${language}`, async () => {
         expect(await components.under({})).toEqual({ stderr: "", files: all.map(it => `${script}${it[1]}\n`) });
       });
     }
 
-    test("nowhere, if it is in something that is not closed", async () => {
+    test("fails if the `as` is inside an unclosed bracket", async () => {
       const text = "{#each (a as b as c}d{/each}\n";
       expect(await format({ "a.svelte": text }, ["a.svelte"])).toEqual({
         stdout: "",
@@ -2257,8 +2263,9 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     });
   });
 
-  describe("what only TypeScript has", () => {
-    // The text, the column of what is refused in a component without `lang="ts"`, and what the text is formatted to in one with it.
+  describe("TypeScript-only syntax", () => {
+    // Each row is the text, the column of the error in a component without `lang="ts"`, and the formatted text in one
+    // with it.
     const rows: [string, number, string][] = [
       ["{(a: number)  =>  a}", 6, "{(a: number) => a}"],
       ["{(a?)  => a}", 4, "{(a?) => a}"],
@@ -2272,7 +2279,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ["{(a) => { let b: number; }}", 18, "{(a) => {\n  let b: number;\n}}"],
       ["{() => { type A = 1 }}", 15, "{() => {\n  type A = 1;\n}}"],
       ["{() => { enum A {} }}", 15, "{() => {\n  enum A {}\n}}"],
-      // It is printed as an expression, which a declarator with a type is not: it stays as it is written.
+      // `{@const}` is printed as an expression, which a declarator with a type isn't, so it's printed verbatim.
       ["{@const a: number  =  1}", 10, "{@const a: number  =  1}"],
       ["{let a: number  =  1}", 9, "{let a: number = 1}"],
       ["{#each a  as b: number}c{/each}", 15, "{#each a as b: number}c{/each}"],
@@ -2281,7 +2288,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     ];
     const names = rows.map((_, index) => `${index}.svelte`);
 
-    test("is an error in a component that is JavaScript, which says what it takes", async () => {
+    test("is an error in a JavaScript component, and the message says what's needed", async () => {
       const files = Object.fromEntries(rows.map(([text], index) => [names[index], `${text}\n`]));
       const { stderr, ...result } = await format(files, names);
       const message = 'This is TypeScript, which needs <script lang="ts">';
@@ -2297,7 +2304,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     });
 
     const inTypeScript = inOneRun.add(rows.map(([text]) => `<script lang="ts"></script>\n\n${text}\n`));
-    test("is formatted in one that is TypeScript", async () => {
+    test("is formatted in a TypeScript component", async () => {
       expect(await inTypeScript.under({})).toEqual({
         stderr: "",
         files: rows.map(it => `<script lang="ts"></script>\n\n${it[2]}\n`),
@@ -2310,8 +2317,9 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     });
   });
 
-  test("what is an expression to Svelte is one in a <textarea> and in the value of an attribute", async () => {
-    // The plugin takes what is in a `<style>` out of the text wherever it finds the letters, so it does not see these.
+  test("parses expressions in a <textarea> and in an attribute value, like Svelte", async () => {
+    // The plugin cuts the contents of a `<style>` out of the text wherever it finds those characters, so it never sees
+    // these.
     const files = {
       "a.svelte": "<textarea><style>b{c:d}</style></textarea>\n",
       "b.svelte": '<iframe srcdoc="<style>b{c:d}</style>" title="e"></iframe>\n',
@@ -2329,18 +2337,18 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
   for (const rest of ["{:else}c", "{:else if d}c", "{:else if d}c{:else if e}f{:else}g"]) {
     const head = `<svelte:head\n  >{#if a}b${rest}{/if}</svelte:head\n>\n`;
     const component = inOneRun.add([`${head}<title>  h  i  </title>\n`]);
-    test(`a <title> behind a <svelte:head> is not in it, whatever the head has: {#if a}b${rest}{/if}`, async () => {
+    test(`a <title> after a <svelte:head> isn't inside it, whatever the head contains: {#if a}b${rest}{/if}`, async () => {
       expect(await component.under({})).toEqual({ stderr: "", files: [`${head}<title> h i </title>\n`] });
     });
   }
 
   const endsWithNoBreakSpace = inOneRun.add(["<style></style>\n<p>b</p>\u00A0\n"]);
-  test("a no-break space at the end of a component is nothing to Svelte, and would be text before a <style>", async () => {
+  test("drops a no-break space at the end of a component, which Svelte ignores and which would become text before a <style>", async () => {
     expect(await endsWithNoBreakSpace.under({})).toEqual({ stderr: "", files: ["<p>b</p>\n\n<style></style>\n"] });
   });
 
-  // The plugin writes the error to stderr too, and goes on.
-  describe("what is in a script or a style sheet and cannot be parsed stays as it is, with a warning", () => {
+  // The plugin writes the error to stderr too, and continues.
+  describe("a script or style sheet that can't be parsed is left unchanged, with a warning", () => {
     const warning = (message: string, place: [number, number, string], name?: string) =>
       problem("warn", message, place, name);
 
@@ -2353,7 +2361,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         [["Expression expected.", [2, 11, "  let a = ;"]]],
       ],
       [
-        "a style sheet, behind the markup",
+        "a style sheet after the markup",
         "<p   >a</p>\n\n<style>\n  a { color: }}\n</style>\n",
         "<p>a</p>\n\n<style>\n  a { color: }}\n</style>\n",
         [['Unexpected "}"', [4, 15, "  a { color: }}"]]],
@@ -2374,7 +2382,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         [["Unexpected token", [1, 48, '<div   ><script type="application/json">{ "a": }</script></div>']]],
       ],
       [
-        "a script whose type is another name of JavaScript",
+        "a script whose type is another name for JavaScript",
         '<script type="text/ecmascript">function (</script>\n',
         '<script type="text/ecmascript">\nfunction (\n</script>\n',
         [["Identifier expected.", [1, 41, '<script type="text/ecmascript">function (</script>']]],
@@ -2386,7 +2394,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         [["Expression expected.", [1, 39, '<script type="text/partytown">let a = ;</script>']]],
       ],
       [
-        "behind a byte order mark and letters of two bytes",
+        "after a byte order mark and two-byte letters",
         '\uFEFF<script>let é = "é"; let b = ;</script>\n',
         '\uFEFF<script>\nlet é = "é"; let b = ;\n</script>\n',
         [["Expression expected.", [1, 30, '<script>let é = "é"; let b = ;</script>']]],
@@ -2409,14 +2417,14 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     const said = warning("Expression expected.", [2, 11, "  let a = ;"]);
     const summary = "1 file needs formatting. Run bun fmt to fix it.\n";
 
-    test("--check says it too, about a file that is formatted and about one that is not", async () => {
+    test("--check prints the warning too, for a formatted file and for an unformatted one", async () => {
       const checked = await format({ "a.svelte": after }, ["a.svelte"], ["--check"]);
       expect(checked).toEqual({ stdout: "", stderr: said, files: [after], exitCode: 0 });
       const different = await format({ "a.svelte": before }, ["a.svelte"], ["--check"]);
       expect(different).toEqual({ stdout: "a.svelte\n", stderr: said + summary, files: [before], exitCode: 1 });
     });
 
-    test("a line is shown with the first warning that is about it", async () => {
+    test("a source line is only shown with the first warning about it", async () => {
       const text = "<div><script>let = </script><style>a{</style></div>\n<div><script>let = </script></div>\n";
       expect(await format({ "a.svelte": text }, ["a.svelte"], ["--check"])).toEqual({
         stdout: "a.svelte\n",
@@ -2430,12 +2438,12 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       });
     });
 
-    test("--log-level=error does not", async () => {
+    test("--log-level=error hides the warning", async () => {
       const result = await format({ "a.svelte": before }, ["a.svelte"], ["--log-level=error"]);
       expect(result).toEqual({ stdout: "", stderr: "", files: [after], exitCode: 0 });
     });
 
-    test("from standard input", async () => {
+    test("prints the warning for stdin too", async () => {
       using dir = tempDir("bun-format-svelte", {});
       await using proc = spawn({
         cmd: [bunExe(), "fmt", "--stdin-filepath=b.svelte"],
@@ -2451,12 +2459,12 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     });
   });
 
-  // To Svelte the second row ends the cell and is in the first row. The plugin gives every element its end tag, and
-  // then the second row ends the first, whose end tag is left over.
+  // In Svelte, the second row closes the cell and is nested in the first row. The plugin prints an end tag for every
+  // element, and then the second row closes the first one, whose end tag is left over.
   const rowInRow = "<table><tr><td>a<tr><td>b</table>\n";
-  // Where the next element ends the one before it and nothing else, there is nothing to lose.
+  // If the next element only closes the one before it, nothing can go wrong.
   const closedByTheNext = inOneRun.add([rowInRow, "<ul><li>a<li>b</ul>\n"]);
-  test("rows that are closed by the next stay as they are written", async () => {
+  test("leaves table rows that are closed by the next row as written", async () => {
     expect(await closedByTheNext.under({ ".prettierrc": prettierrc })).toEqual({
       stderr: "",
       files: [rowInRow, "<ul>\n  <li>a</li>\n  <li>b</li>\n</ul>\n"],
@@ -2466,7 +2474,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
   test.each<[string, string, string, [line: number, column: number, text: string]]>([
     ["in the markup", "<div>\n  <p>a</p>\n", "Unclosed element", [1, 1, "<div>"]],
     [
-      "in an expression, behind a script and a style sheet",
+      "in an expression, after a script and a style sheet",
       "<script>\n  let a;\n</script>\n<style>\n  a {\n  }\n</style>\n<p>{a +}</p>\n",
       "Unexpected token",
       [8, 8, "<p>{a +}</p>"],
@@ -2477,14 +2485,14 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "There is no open block to end here",
       [4, 5, "<p>{/if}</p>"],
     ],
-    // To Svelte this is `t`, or all that is up to a quote further down.
+    // Svelte reads this as `t`, or as everything up to a quote further down.
     [
-      "at a quote in a <script> tag that is not closed",
+      "at an unclosed quote in a <script> tag",
       '<script lang="ts>let a</script>\n',
       "Unclosed string",
       [1, 14, '<script lang="ts>let a</script>'],
     ],
-  ])("a syntax error is shown where it is: %s", async (_, text, message, place) => {
+  ])("a syntax error is shown with its location: %s", async (_, text, message, place) => {
     for (const [config] of everyConfig) {
       // oxfmt sums up.
       const summary = ".oxfmtrc.json" in config ? "Error occurred when checking code style in the above files.\n" : "";
@@ -2497,14 +2505,14 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     }
   });
 
-  test("--debug-check names a component that passes, and writes nothing", async () => {
+  test("--debug-check lists a component that passes and writes nothing", async () => {
     const result = await format({ "a.svelte": input }, ["a.svelte"], ["--log-level=log", "--debug-check"]);
     expect(result).toEqual({ stdout: "a.svelte\n", stderr: "", files: [input], exitCode: 0 });
   });
 
   const withKeys = "{#each a as { b: b, c: { d: d } }}e{/each}\n";
   const keysThatCanGo = [inOneCheck.add([withKeys]), inOneRun.add([withKeys])];
-  test("--debug-check knows that a key can go that is the name behind it", async () => {
+  test("--debug-check accepts dropping a key that equals the name after it", async () => {
     expect(await Promise.all(keysThatCanGo.map(it => it.under({})))).toEqual([
       { stderr: "", files: [withKeys] },
       { stderr: "", files: ["{#each a as { b, c: { d } }}e{/each}\n"] },
@@ -2520,7 +2528,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     // In a default.
     [each("{ x = c ? a : a }"), each("{ x = c ? a : 1 }"), "different"],
     [each("{ x = c ? a : a }"), each("{ x = c ? a }"), "different"],
-    // In an object it is one: the second is printed as the first.
+    // In an object literal it counts as one, because the second form is printed as the first.
     [each("{ x = { a: a } }"), each("{ x = { a } }"), "same"],
     [each("{ x = { a: b } }"), each("{ x = { b } }"), "different"],
     [each("{ x = { [a]: a } }"), each("{ x = { a } }"), "different"],
@@ -2528,20 +2536,20 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     [each("{ [a]: a }"), each("{ a }"), "different"],
   ];
   const aboutSuchKeys = sameOrDifferent(suchKeys.map(([before, after]) => [before, after]));
-  test.skipIf(!hasRunner)("--debug-check does not take what looks like such a key for one", async () => {
+  test.skipIf(!hasRunner)("--debug-check doesn't mistake something else for a droppable key", async () => {
     expect(await aboutSuchKeys()).toEqual({ said: suchKeys.map(it => it[2]), stderr: "", exitCode: 0 });
   });
 
   const likeItsName = "<p class:a-b={a-b}>c</p>\n";
   const spelledLikeItsName = [inOneCheck.add([likeItsName]), inOneRun.add([likeItsName])];
-  test("--debug-check does not take an expression that is spelled like the name of its directive for the name", async () => {
+  test("--debug-check doesn't mistake an expression spelled like its directive's name for the name", async () => {
     expect(await Promise.all(spelledLikeItsName.map(it => it.under({})))).toEqual([
       { stderr: "", files: [likeItsName] },
       { stderr: "", files: ["<p class:a-b={a - b}>c</p>\n"] },
     ]);
   });
 
-  test("what is nested too deeply is left as it is, and that is said", async () => {
+  test("reports a file that's nested too deeply and leaves it unchanged", async () => {
     const depth = isDebug || isASAN ? 10_000 : 100_000;
     const files = {
       "elements.svelte": `${Buffer.alloc(3 * depth, "<b>")}x${Buffer.alloc(4 * depth, "</b>")}\n`,
@@ -2558,15 +2566,15 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       nested("blocks.svelte"),
       nested("elements.svelte"),
       nested("expressions.svelte"),
-      expect.stringMatching(refusalOf("patterns.svelte")),
+      expect.stringMatching(errorAt("patterns.svelte")),
     ]);
   });
 
-  // Where something takes time in proportion to the square of this, it takes seconds.
+  // Anything quadratic in this takes seconds.
   const n = isDebug || isASAN ? 400 : 24_000;
 
-  /** Formats `shapes`, of which `refused` are refused, in little time. */
-  async function expectToTakeLittleTime(shapes: Record<string, string>, refused: string[]) {
+  /** Formats `shapes` and expects that only `rejected` are rejected and that it takes little CPU time. */
+  async function expectToBeFast(shapes: Record<string, string>, rejected: string[]) {
     using dir = tempDir("bun-format-svelte", {
       ".oxfmtrc.json": oxfmtrc,
       ...Object.fromEntries(Object.entries(shapes).map(([name, text]) => [`${name}.svelte`, text])),
@@ -2579,12 +2587,12 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
-    expect(Array.from(stderr.matchAll(/^    at ([\w-]+)\.svelte\b/gm), it => it[1]).sort()).toEqual(refused);
+    expect(Array.from(stderr.matchAll(/^    at ([\w-]+)\.svelte\b/gm), it => it[1]).sort()).toEqual(rejected);
     expect(exitCode).toBe(2);
     expect(Number(proc.resourceUsage()!.cpuTime.user) / 1e6).toBeLessThan(3);
   }
 
-  test("texts that are made to take long do not", async () => {
+  test("pathological inputs are fast", async () => {
     const depth = 100;
     const numbered = (text: (index: number) => string) =>
       Array.from({ length: n }, (_, index) => text(index)).join(" ");
@@ -2637,7 +2645,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "style-sheets": repeated("<style></style>", n),
       "scripts-in-an-element": `<div>${repeated("<script>a</script>", n / 10)}</div>`,
     };
-    await expectToTakeLittleTime(shapes, [
+    await expectToBeFast(shapes, [
       "attributes-of-a-script",
       "attributes-of-a-script-next-to-quotes",
       "attributes-of-the-options",
@@ -2660,7 +2668,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     ]);
   });
 
-  test("nothing is looked for, or parsed, again and again", async () => {
+  test("doesn't rescan or reparse the same text repeatedly", async () => {
     const shapes: Record<string, string> = {
       "starts-of-scripts": repeated("<script ", 8 * n),
       "starts-of-scripts-with-an-attribute": repeated("<script a=", 8 * n),
@@ -2671,18 +2679,18 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "ends-of-a-textarea-not-closed": `<textarea>${repeated("</textarea ", 8 * n)}`,
       "titles-in-blocks": repeated("{#if a}", n) + repeated("<title>x</title>", n),
       "slots-in-elements": repeated("<div>", n) + repeated("<slot></slot>", n),
-      // Every `as` is where Svelte tries to end the expression.
+      // Svelte tries to end the expression at every `as`.
       "each-in-a-parenthesis-not-closed": `{#each (a${repeated(" as a", n)}}x{/each}`,
       "each-behind-operators": `{#each x${repeated(" + as", n)} + (}x{/each}`,
       "each-in-parentheses": `{#each f${repeated("(as)", n)}(}x{/each}`,
       "each-with-many-assertions": `<script lang="ts"></script>{#each a${repeated(" as a", n)} as { b = 1 }}x{/each}`,
       "each-with-defaults": repeated("{#each a as { b = 1 }}x{/each}\n", n / 4),
-      // There is a warning about each.
+      // Each one gets a warning.
       "scripts-with-errors": `<div>${repeated("<script>let = </script>\n", n / 4)}</div>`,
       "scripts-with-errors-and-returns": `<div>${repeated("<script>let = </script>\r\n", n / 4)}</div>`,
       "scripts-with-errors-on-one-line": `<div>${repeated("<script>let = </script>", n / 4)}</div>`,
     };
-    await expectToTakeLittleTime(shapes, [
+    await expectToBeFast(shapes, [
       "each-behind-operators",
       "each-in-a-parenthesis-not-closed",
       "each-in-parentheses",
@@ -2698,7 +2706,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     ]);
   });
 
-  test("blocks of Svelte in Markdown are formatted where components are", async () => {
+  test("formats Svelte code blocks in Markdown whenever it formats components", async () => {
     const block = (text: string) => `# a\n\n\`\`\`svelte\n${text}\`\`\`\n`;
     // One that is refused stays as it is, and nothing is said about it.
     const refused = block("<p   >{a +}</p>\n");
@@ -2721,8 +2729,8 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     }
   });
 
-  test("the classes of Tailwind CSS are sorted", async () => {
-    // What oxfmt 0.72 prints with tailwindcss 4.3.3. The package is a stand-in, as in ../tailwind.
+  test("sorts Tailwind CSS classes", async () => {
+    // This is what oxfmt 0.72 prints with tailwindcss 4.3.3. The package is a stub, as in ../tailwind.
     const tailwind = {
       "node_modules/tailwindcss/package.json": '{ "name": "tailwindcss", "version": "4.0.0", "main": "index.js" }',
       "node_modules/tailwindcss/theme.css": "",
@@ -2767,8 +2775,8 @@ exports.__unstable__loadDesignSystem = async () => ({
     expect(await format(files, ["a.svelte"])).toEqual({ stdout: "", stderr: "", files: [after], exitCode: 0 });
   });
 
-  test("the classes in an object are sorted too", async () => {
-    // The plugin visits every string of the expression, whatever the expression is.
+  test("sorts the classes in an object too", async () => {
+    // The plugin visits every string in the expression, whatever the expression is.
     const tailwind = {
       "node_modules/tailwindcss/package.json": '{ "name": "tailwindcss", "version": "4.0.0", "main": "index.js" }',
       "node_modules/tailwindcss/theme.css": "",
@@ -2791,9 +2799,9 @@ exports.__unstable__loadDesignSystem = async () => ({
     });
   });
 
-  test('with svelteSortOrder "none" every part is there once, in its place', async () => {
-    // The plugin puts a script or a style sheet back next to a node of the markup. One that has none is lost: the first of these
-    // comes out empty. Some are there twice.
+  test('with svelteSortOrder "none", prints every part once and in place', async () => {
+    // The plugin puts a script or a style sheet back next to a markup node. One without such a node is lost, so the
+    // first of these comes out empty. Some are printed twice.
     const script = "<script>\n  let a;\n</script>\n";
     const files = {
       "only.svelte": "<script>let  a</script>",
@@ -2822,7 +2830,7 @@ exports.__unstable__loadDesignSystem = async () => ({
   // The plugin prints `<script ✂prettier:content✂="bGV0ICBh">{}</script>`.
   const ignored = "<!-- prettier-ignore -->\n<div   ><script>let  a</script></div>\n";
   const underIgnore = inOneRun.add([ignored]);
-  test("under prettier-ignore a script keeps what is in it", async () => {
+  test("a script under prettier-ignore keeps its contents", async () => {
     expect(await underIgnore.under({ ".prettierrc": prettierrc })).toEqual({ stderr: "", files: [ignored] });
   });
 });

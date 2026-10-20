@@ -10,7 +10,7 @@ pub struct DynamicImportChunkname {
     import_functions: Vec<Box<[u8]>>,
     allow_empty: bool,
     chunk_substr_format: String,
-    /// `None`: it is none, which `validate` has said.
+    /// `None` if the pattern isn't a valid regex, which `validate` has already reported.
     chunk_substr_regex: Option<Regex>,
 }
 
@@ -31,7 +31,7 @@ static COMMENT_STYLE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     )
 });
 static EAGER_MODE_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::literal(r#"/webpackMode: ["']eager["'],? /"#));
-/// A string, or what is before a regular expression that is a value, and that.
+/// Matches a string, or a regex literal in value position (group 2) with the punctuation before it (group 1).
 static STRING_OR_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::literal(
         r#"/"(?:[^"\\\n\r]|\\[^])*"|'(?:[^'\\\n\r]|\\[^])*'|([:,[]\s*)(\/(?:[^/\\[\n\r\u2028\u2029]|\\.|\[(?:[^\]\\\n\r\u2028\u2029]|\\.)*\])+\/[\w$]*)/g"#,
@@ -43,8 +43,8 @@ fn chunk_substr_format(options: &Options) -> String {
     format!("webpackChunkName: [\"']{}[\"'],? ", format.unwrap_or(r"([0-9a-zA-Z-_/.]|\[(request|index)\])+"))
 }
 
-/// Whether `({<value>})` is an object of literals. Upstream evaluates it and asks whether that throws: what is
-/// written otherwise and does not throw, like `a: 1 + 1`, is refused here.
+/// True if `({<value>})` is an object of literals. Upstream evaluates it and checks whether that throws, so anything
+/// else that evaluates without throwing, like `a: 1 + 1`, passes upstream but is rejected here.
 fn evaluates(value: &[u8]) -> bool {
     let mut is_valid = true;
     let without_regexes = STRING_OR_REGEX.replace_with(value, |found, out| match found.get(2) {
@@ -58,7 +58,7 @@ fn evaluates(value: &[u8]) -> bool {
     is_valid && parse_as(Notation::Json5, &[&b"{"[..], &without_regexes[..], b"}"].concat()).is_ok()
 }
 
-/// What both suggestions do: the first comment that has `part` loses it.
+/// Shared by both suggestions: removes `part` from the first comment that contains it.
 #[cold]
 #[inline(never)]
 fn remove_from_comment<'a>(fixer: Fixer<'a>, arg: Expr<'a>, part: &Regex) -> Option<Fix> {
@@ -153,7 +153,7 @@ impl Rule for DynamicImportChunkname {
             }
             _ => return,
         };
-        // Without an argument upstream throws.
+        // Upstream throws if there's no argument.
         if let Some(arg) = args.first() {
             self.run(e, arg, cx);
         }

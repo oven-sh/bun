@@ -36,8 +36,8 @@ const MISSING_RETURN_TYPE: Message =
     Message::new("missingReturnType", "Missing return type on function.");
 
 impl ExplicitModuleBoundaryTypes {
-    /// Upstream's `isAllowedName`, of the function declaration `func` or of the parent of the
-    /// function expression `func`.
+    /// Upstream's `isAllowedName`, applied to the function declaration `func`, or to the parent of the function
+    /// expression `func`.
     fn is_allowed_name(&self, func: Func) -> bool {
         if self.allowed_names.is_empty() {
             return false;
@@ -64,7 +64,8 @@ impl ExplicitModuleBoundaryTypes {
         name.is_some_and(|name| self.allowed_names.iter().any(|allowed| **allowed == *name))
     }
 
-    /// The parameters without a type, or with `any`, each with the message if it has a name and the one if it has none.
+    /// Returns the parameters that have no type or are typed `any`, each with the message for a named parameter and the
+    /// one for an unnamed parameter.
     fn untyped_parameters<'a>(
         &self,
         func: Func<'a>,
@@ -72,7 +73,7 @@ impl ExplicitModuleBoundaryTypes {
     ) -> impl Iterator<Item = (Param<'a>, Message, Message)> {
         let allows_any = self.allow_arguments_explicitly_typed_as_any;
         func.params_with_this().filter_map(move |param| {
-            // It has the type of its default value. oxlint looks at the annotation first, and not at `this`.
+            // It has its default value's type. oxlint checks the annotation first, and ignores `this`.
             if param.default().is_some() && !(is_oxlint && param.ty().is_some())
                 || is_oxlint && func.this_param() == Some(param)
             {
@@ -88,7 +89,7 @@ impl ExplicitModuleBoundaryTypes {
         })
     }
 
-    /// `export`: for oxlint, the export that has led to `func`, which its rule is called with.
+    /// `export` is for oxlint: the export that led to `func`, which is the node oxlint's rule is called with.
     fn check_parameters<'a>(&self, func: Func<'a>, cx: &Cx<'a, Self>, export: Option<Node<'a>>) {
         let is_oxlint = cx.language().is_oxlint;
         let report = |at: Span, message: Message| match export {
@@ -96,7 +97,8 @@ impl ExplicitModuleBoundaryTypes {
             None => cx.report(at, message),
         };
         for (param, named, unnamed) in self.untyped_parameters(func, is_oxlint) {
-            // oxlint points at the parameter with its modifiers, and for a rest parameter at all parameters.
+            // oxlint points at the parameter including its modifiers, and for a rest parameter at the whole parameter
+            // list.
             let at = match (is_oxlint, param.is_rest()) {
                 (false, _) => param.span_without_modifiers(),
                 (true, false) => param.span(),
@@ -123,14 +125,14 @@ struct Checker<'a, 'c> {
     cx: &'c Cx<'a, ExplicitModuleBoundaryTypes>,
     /// Upstream's `alreadyVisited`.
     visited: FxHashSet<Node<'a>>,
-    /// The variables whose declarations and values have been checked, which are all in `visited`.
+    /// The variables whose declarations and values have been checked. Those are all in `visited`.
     followed: IdSet<Symbol<'a>>,
-    /// The expressions that are still to be checked.
+    /// Expressions that still have to be checked.
     pending: Vec<Expr<'a>>,
     /// Upstream's `checkedFunctions`.
     checked: Vec<Func<'a>>,
-    /// Upstream collects the `return` statements while it walks the file, and checks what is
-    /// exported when it leaves the export: a function that starts after this has none yet.
+    /// Upstream collects `return` statements while it walks the file, and checks an export when it leaves it. So a
+    /// function that starts after this offset has no `return`s collected yet.
     returns_known_until: u32,
 }
 
@@ -155,8 +157,8 @@ impl<'a> Checker<'a, '_> {
         self.check_pending();
     }
 
-    /// What upstream does at `Program:exit`. It goes up from every function to one that has been
-    /// checked, this goes down from these.
+    /// Upstream's `Program:exit` handler. Upstream walks up from every function to a checked one. This walks down from
+    /// the checked ones.
     fn check_exported_higher_order_functions(&mut self) {
         let mut next = 0;
         while let Some(&func) = self.checked.get(next) {
@@ -168,7 +170,7 @@ impl<'a> Checker<'a, '_> {
                 self.check_expr(body);
             }
             for statement in func.returns() {
-                // Upstream takes the parent of a `return` for the body of the function.
+                // Upstream assumes a `return`'s parent is the function body.
                 if statement.parent() == Node::Func(func)
                     && let StmtKind::Return(Some(value)) = statement.kind()
                 {
@@ -179,7 +181,7 @@ impl<'a> Checker<'a, '_> {
         }
     }
 
-    /// `at`: the identifier `name`.
+    /// `at` is the identifier `name`.
     fn follow_reference(&mut self, at: Node<'a>, name: Name<'a>) {
         let Some(variable) = at
             .scope()
@@ -211,8 +213,8 @@ impl<'a> Checker<'a, '_> {
         }
     }
 
-    /// Upstream's `checkNode`, for an expression. It is checked by [`Self::check_pending`]: the order makes no difference, as
-    /// nothing is checked twice.
+    /// Upstream's `checkNode`, for an expression. [`Self::check_pending`] does the actual check. The order doesn't
+    /// matter, since nothing is checked twice.
     fn check_expr(&mut self, e: Expr<'a>) {
         self.pending.push(e);
     }
@@ -296,7 +298,7 @@ impl<'a> Checker<'a, '_> {
         self.check_parameters(func);
     }
 
-    /// The options with which the function is looked at as upstream sees it at this point.
+    /// Returns the options that make the function look the way upstream sees it at this point.
     fn options_for(&self, func: Func<'a>) -> ReturnTypeOptions {
         let mut options = self.rule.options;
         if func.span().start >= self.returns_known_until
@@ -355,7 +357,7 @@ impl<'a> Checker<'a, '_> {
         self.check_parameters(func);
     }
 
-    /// There is nothing to say about it, whatever it is part of.
+    /// True if there's nothing to report about it, whatever it's part of.
     fn is_fully_typed(&self, func: Func<'a>) -> bool {
         func.return_type().is_some() && self.rule.untyped_parameters(func, false).next().is_none()
     }
@@ -365,8 +367,8 @@ impl<'a> Checker<'a, '_> {
     }
 }
 
-/// What oxlint points at for a function that has no name, and asks `allowedNames` about: the variable, the class or the
-/// key that it was last under.
+/// The span oxlint points at for a function without a name, and the name it matches `allowedNames` against. Both come
+/// from the last variable, class or key it passed through.
 #[derive(Copy, Clone)]
 struct Target<'a> {
     span: Span,
@@ -382,30 +384,30 @@ enum Step<'a> {
     ForgetTarget,
     InSetter(bool),
     Overloaded(IdSet<Member<'a>>),
-    /// `place`: where it lacks a return type, unless it returns a function.
+    /// `report_span` is where to report a missing return type, unless the function returns a function.
     LeaveFunction {
-        place: Option<Span>,
+        report_span: Option<Span>,
         forgets_target: bool,
     },
     LeaveClass,
 }
 
-/// oxlint's rule, its `ExplicitTypesChecker`. It goes down from what is exported, through every expression but calls and
-/// JSX elements, and judges each function that it comes to. An identifier it follows only where that is the export.
+/// oxlint's rule, its `ExplicitTypesChecker`. It walks down from each export, through every expression except calls and
+/// JSX elements, and checks each function it reaches. It only follows an identifier if that's the export itself.
 struct OxlintChecker<'a, 'c> {
     rule: &'c ExplicitModuleBoundaryTypes,
     cx: &'c Cx<'a, ExplicitModuleBoundaryTypes>,
-    /// The export that is being checked.
+    /// The export being checked.
     export: Node<'a>,
-    /// What is still to be done, the next at the end.
+    /// Remaining work. The next step is at the end.
     steps: Vec<Step<'a>>,
-    /// It is forgotten after what has set it, not set back.
+    /// It's cleared after the node that set it, not restored to the previous value.
     target: Option<Target<'a>>,
-    /// The functions around, and the classes that [`Step::WalkClass`] went into. Whether a `return` of the function
-    /// has a function.
-    around: Vec<bool>,
+    /// One entry per enclosing function, and per class that [`Step::WalkClass`] entered. True if one of the function's
+    /// `return`s returns a function.
+    returns_function_stack: Vec<bool>,
     in_setter: bool,
-    /// With `allowOverloadFunctions`, the methods of the class around that have overload signatures.
+    /// With `allowOverloadFunctions`, the enclosing class's methods that have overload signatures.
     overloaded: IdSet<Member<'a>>,
 }
 
@@ -417,8 +419,8 @@ fn get_typed_inner_expression(mut e: Expr<'_>) -> Expr<'_> {
     e
 }
 
-/// oxlint's `function_has_overload_signatures`: a declaration of the same variable has no body. For a function without
-/// a name, an `export default function ();` of the file.
+/// oxlint's `function_has_overload_signatures`: true if another declaration of the same variable has no body. For a
+/// function without a name, true if the file has an `export default function ();`.
 fn function_has_overload_signatures<'a>(func: Func<'a>) -> bool {
     let is_signature = |other: Func<'a>| other != func && !other.has_body();
     match func.name() {
@@ -497,7 +499,7 @@ impl<'a> OxlintChecker<'a, '_> {
             Step::Visit(Node::Member(member)) => self.visit_class_element(member),
             Step::Visit(_) => {}
             Step::WalkClass(class) => {
-                self.around.push(false);
+                self.returns_function_stack.push(false);
                 self.visit_all(class.decorators());
                 self.visit_all(class.extends());
                 self.visit_all(class.members());
@@ -509,13 +511,13 @@ impl<'a> OxlintChecker<'a, '_> {
             Step::InSetter(was) => self.in_setter = was,
             Step::Overloaded(was) => self.overloaded = was,
             Step::LeaveFunction {
-                place,
+                report_span,
                 forgets_target,
             } => {
-                let returns_function = self.around.pop() == Some(true);
-                if let Some(place) = place.filter(|_| !returns_function) {
+                let returns_function = self.returns_function_stack.pop() == Some(true);
+                if let Some(report_span) = report_span.filter(|_| !returns_function) {
                     self.cx
-                        .report(place, MISSING_RETURN_TYPE)
+                        .report(report_span, MISSING_RETURN_TYPE)
                         .called_with(self.export);
                 }
                 if forgets_target {
@@ -523,7 +525,7 @@ impl<'a> OxlintChecker<'a, '_> {
                 }
             }
             Step::LeaveClass => {
-                self.around.pop();
+                self.returns_function_stack.pop();
             }
         }
     }
@@ -553,7 +555,7 @@ impl<'a> OxlintChecker<'a, '_> {
         }
     }
 
-    /// `is_export`: not an element or a property of what is exported.
+    /// `is_export` means it's the export itself, not an element or property of it.
     fn run_on_exported_expression(&mut self, e: Expr<'a>, is_export: bool) {
         let e = get_typed_inner_expression(e);
         match e.kind() {
@@ -575,7 +577,7 @@ impl<'a> OxlintChecker<'a, '_> {
         }
     }
 
-    /// It goes by the first declaration.
+    /// Only the first declaration counts.
     fn run_on_identifier_reference(&mut self, symbol: Option<Symbol<'a>>) {
         match symbol.and_then(|it| it.declarations().next()) {
             Some(declaration @ Declaration::Var(_)) if !declaration.is_catch_parameter() => {
@@ -598,19 +600,20 @@ impl<'a> OxlintChecker<'a, '_> {
         name.is_some()
     }
 
-    /// Not with a key whose name is nowhere in the file as it is, that of a number or a regular expression.
+    /// Sets the target to a property key. Skips a key whose name doesn't appear verbatim in the file, like a number's
+    /// or a regular expression's.
     fn with_target_property(&mut self, key: Option<Key<'a>>) -> bool {
         let Some(key) = key else {
             return false;
         };
         let span = key.inner_span(self.cx.file());
-        let is_written = match key.kind() {
+        let is_verbatim = match key.kind() {
             KeyKind::Private(_) | KeyKind::ComputedNumber(_) => false,
             KeyKind::Number(_) => self.cx.file().slice(span).ends_with(b"n"),
             KeyKind::Computed(e) => e.tag() != ExprTag::Regex,
             _ => true,
         };
-        let Some(name) = property_key_name(key).filter(|_| is_written) else {
+        let Some(name) = property_key_name(key).filter(|_| is_verbatim) else {
             return false;
         };
         self.target = Some(Target {
@@ -668,7 +671,7 @@ impl<'a> OxlintChecker<'a, '_> {
         }
     }
 
-    /// The properties of a pattern are no properties for oxlint.
+    /// oxlint doesn't treat a pattern's properties as properties.
     fn visit_assignment_target(&mut self, e: Expr<'a>) {
         match e.kind() {
             _ if e.is_parenthesized() => self.visit_expression(e),
@@ -687,7 +690,7 @@ impl<'a> OxlintChecker<'a, '_> {
         }
     }
 
-    /// Of statements it looks at the `return`s, or at the only one.
+    /// In a statement list it only looks at the `return`s, or at the only statement if there's just one.
     fn visit_statements(&mut self, statements: List<'a, Stmt<'a>>) {
         let mut rest = statements.iter().skip_while(|it| it.directive().is_some());
         if let (Some(only), None) = (rest.next(), rest.next())
@@ -698,7 +701,7 @@ impl<'a> OxlintChecker<'a, '_> {
         for value in statements.iter().filter_map(Stmt::as_return).flatten() {
             if value.as_fn().is_some()
                 && !value.is_parenthesized()
-                && let Some(returns_function) = self.around.last_mut()
+                && let Some(returns_function) = self.returns_function_stack.last_mut()
             {
                 *returns_function = true;
             }
@@ -788,16 +791,16 @@ impl<'a> OxlintChecker<'a, '_> {
 
     fn visit_function(&mut self, func: Func<'a>) {
         let forgets_target = self.with_target_binding(func.name());
-        self.around.push(false);
+        self.returns_function_stack.push(false);
         self.rule.check_parameters(func, self.cx, Some(self.export));
-        let place = match func.return_type() {
+        let report_span = match func.return_type() {
             Some(_) => None,
             None if func.is_arrow() => self.check_arrow_without_return(func),
             None if self.in_setter => None,
             None => self.check_function_without_return(func),
         };
         self.steps.push(Step::LeaveFunction {
-            place,
+            report_span,
             forgets_target,
         });
     }
@@ -820,17 +823,18 @@ impl<'a> OxlintChecker<'a, '_> {
     }
 
     fn check_arrow_without_return(&mut self, arrow: Func<'a>) -> Option<Span> {
-        let place = match self.target {
+        let report_span = match self.target {
             Some(Target {
                 span,
                 is_property: true,
                 ..
             }) => Some(span),
-            _ if self.around.len() == 1 => arrow.arrow_span(),
+            _ if self.returns_function_stack.len() == 1 => arrow.arrow_span(),
             Some(target) => Some(target.span),
             None => arrow.params_span().or_else(|| arrow.arrow_span()),
         };
-        let unless_allowed = place.filter(|_| !self.rule.allows(self.target.map(|it| it.name)));
+        let unless_allowed =
+            report_span.filter(|_| !self.rule.allows(self.target.map(|it| it.name)));
         let body = match arrow.body() {
             FnBody::Expr(body) if self.rule.options.allow_higher_order_functions => body,
             FnBody::Block(statements) if self.rule.options.allow_higher_order_functions => {
@@ -857,8 +861,8 @@ impl<'a> OxlintChecker<'a, '_> {
                 self.visit(body);
                 None
             }
-            // `allowedNames` is not asked.
-            _ => place,
+            // `allowedNames` isn't checked here.
+            _ => report_span,
         }
     }
 }
@@ -877,7 +881,7 @@ impl Rule for ExplicitModuleBoundaryTypes {
             StmtTag::ExportNamed,
         ])
         .finish();
-    /// The statements that export something of this file.
+    /// The statements that export something from this file.
     type State<'a> = Vec<Stmt<'a>>;
 
     fn new(options: &Options) -> Self {
@@ -951,7 +955,7 @@ impl Rule for ExplicitModuleBoundaryTypes {
                 export: Node::File(cx.file()),
                 steps: Vec::new(),
                 target: None,
-                around: Vec::new(),
+                returns_function_stack: Vec::new(),
                 in_setter: false,
                 overloaded: IdSet::default(),
             };

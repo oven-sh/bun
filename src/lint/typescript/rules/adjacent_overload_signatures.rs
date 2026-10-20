@@ -16,13 +16,13 @@ const ADJACENT_SIGNATURE: Message = Message::new(
 #[derive(PartialEq, Eq, Hash)]
 struct Method<'a> {
     name: MemberName<'a>,
-    /// `None` for a call or a construct signature, which is never the same as a method.
+    /// `None` for a call or construct signature, which never equals a method.
     is_static: Option<bool>,
     is_call_signature: bool,
 }
 
-/// oxlint's `static_name` and `get_kind_from_key`: a string is like an identifier, a number and a template are of
-/// another kind, and a private name and what else is computed are no names.
+/// oxlint's `static_name` and `get_kind_from_key`: a string is treated like an identifier, a number and a template are
+/// a different kind, and a private name or any other computed key has no name.
 fn oxlint_name_of(member: Member<'_>) -> Option<MemberName<'_>> {
     let Some(key) = member.key() else {
         return Some(get_name_from_member(member));
@@ -48,7 +48,7 @@ fn get_member_method(member: Member<'_>) -> Option<Method<'_>> {
         is_call_signature,
     };
     match member.kind() {
-        // For oxlint an abstract method is a method like another.
+        // oxlint treats an abstract method like any other method.
         MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor
             if is_oxlint || !member.flags().contains(Flags::ABSTRACT) =>
         {
@@ -64,8 +64,8 @@ fn get_member_method(member: Member<'_>) -> Option<Method<'_>> {
     }
 }
 
-/// Calls `report` with each of `members` whose method was seen before, but not just before, and with the last member
-/// with that method that was not reported.
+/// Calls `report` for each of `members` whose method was seen earlier but not immediately before. It also passes the
+/// last unreported member with that method.
 fn check_body_for_overload_methods<'a, T: Handle<'a>, M: Eq + Hash>(
     members: List<'a, T>,
     get_member_method: impl Fn(T) -> Option<M>,
@@ -75,9 +75,9 @@ fn check_body_for_overload_methods<'a, T: Handle<'a>, M: Eq + Hash>(
         return;
     }
     let mut seen_methods: SmallVec<[M; 8]> = SmallVec::new();
-    // The last member with each of them that is where it should be.
+    // For each seen method, the last member that's in the right position.
     let mut last_members: SmallVec<[T; 8]> = SmallVec::new();
-    // Its number in `seen_methods`.
+    // The previous member's index in `seen_methods`.
     let mut last_method = None;
     for member in members {
         let Some(method) = get_member_method(member) else {
@@ -97,8 +97,8 @@ fn check_body_for_overload_methods<'a, T: Handle<'a>, M: Eq + Hash>(
     }
 }
 
-/// oxlint points at the one before, which is the name of a function.
-fn place(member: Span, before: Span, cx: &Cx<'_, AdjacentOverloadSignatures>) -> Span {
+/// oxlint points at the earlier one. For a function that's its name.
+fn report_span(member: Span, before: Span, cx: &Cx<'_, AdjacentOverloadSignatures>) -> Span {
     if cx.language().is_oxlint { before } else { member }
 }
 
@@ -111,14 +111,15 @@ fn check_statements<'a>(statements: List<'a, Stmt<'a>>, cx: &Cx<'a, AdjacentOver
                 StmtKind::Fn(func) => func.name().map_or_else(|| it.span(), |name| name.span()),
                 _ => it.span(),
             };
-            cx.report(place(statement.span(), name_of(before), cx), ADJACENT_SIGNATURE)
+            cx.report(report_span(statement.span(), name_of(before), cx), ADJACENT_SIGNATURE)
                 .data("name", *name)
                 .labels_with(|labels| labels.push(name_of(statement), ""));
         },
     );
 }
 
-/// What oxlint has for a member: its name, in a class from where the member starts; `new`; all of a call signature.
+/// oxlint's span for a member: its name (in a class, starting where the member starts), the `new`, or a whole call
+/// signature.
 fn oxlint_span_of(member: Member, is_in_class: bool) -> Span {
     let span = member.span();
     let name = match (member.kind(), member.key(), member.constructor_keyword()) {
@@ -133,7 +134,7 @@ fn oxlint_span_of(member: Member, is_in_class: bool) -> Span {
 fn check_members<'a>(members: List<'a, Member<'a>>, is_in_class: bool, cx: &Cx<'a, AdjacentOverloadSignatures>) {
     check_body_for_overload_methods(members, get_member_method, |member, method, before| {
         let prefix: &[u8] = if method.is_static == Some(true) { b"static " } else { b"" };
-        cx.report(place(member.span(), oxlint_span_of(before, is_in_class), cx), ADJACENT_SIGNATURE)
+        cx.report(report_span(member.span(), oxlint_span_of(before, is_in_class), cx), ADJACENT_SIGNATURE)
             .data("name", [prefix, &method.name.name[..]].concat())
             .labels_with(|labels| labels.push(oxlint_span_of(member, is_in_class), ""));
     });
@@ -177,7 +178,8 @@ impl Rule for AdjacentOverloadSignatures {
         check_members(class.members(), true, cx);
     }
 
-    /// The statements of the file, of each block, of each function and of each namespace, where two of them are functions.
+    /// Checks the statement lists of the file, blocks, functions and namespaces that have at least two function
+    /// declarations.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let (mut with_one, mut with_two) = (FxHashSet::default(), FxHashSet::default());
         for function in cx.file().stmts_of_kind(StmtTag::Fn) {

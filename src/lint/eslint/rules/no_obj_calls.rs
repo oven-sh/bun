@@ -25,12 +25,11 @@ const TRACE_MAP: TraceMap<'static, ()> = TraceMap::new(&[
     ("Temporal", NOT_CALLABLE),
 ]);
 
-/// The global variables that `ReferenceTracker` starts from: those of `TRACE_MAP`, and the global object.
+/// The global variables `ReferenceTracker` starts from: the `TRACE_MAP` keys and the names of the global object.
 const TRACKED_FROM: [&str; 10] =
     ["Atomics", "JSON", "Math", "Reflect", "Intl", "Temporal", "global", "globalThis", "self", "window"];
 
-/// ESLint's `getReportNodeName`. Where that has no name, the message has JavaScript's `null` or
-/// `undefined`.
+/// ESLint's `getReportNodeName`. Where that returns no name, the message shows JavaScript's `null` or `undefined`.
 fn get_report_node_name(callee: Expr<'_>) -> Cow<'_, [u8]> {
     match callee.kind() {
         ExprKind::Dot { .. } | ExprKind::Index { .. } => {
@@ -41,32 +40,32 @@ fn get_report_node_name(callee: Expr<'_>) -> Cow<'_, [u8]> {
     }
 }
 
-/// The objects that oxlint knows.
+/// The objects oxlint checks.
 const OXLINT_GLOBAL_OBJECTS: [&str; 5] = ["Atomics", "Intl", "JSON", "Math", "Reflect"];
 
-/// What is asked of every call with a configuration of oxlint.
+/// State for checking each call under an oxlint config.
 pub struct Oxlint<'a> {
     /// `OXLINT_GLOBAL_OBJECTS`
     objects: [Name<'a>; 5],
-    /// A bit for the last bits of the number of each of them.
-    numbers: u64,
+    /// A filter over `objects`: bit `atom % 64` is set for each name.
+    name_bits: u64,
     mentions_global_this: bool,
 }
 
 impl<'a> Oxlint<'a> {
-    /// Whether a call of `callee` can be one of an object. Under another name only a variable stands for one of them.
+    /// Fast check: true if `callee` may be one of `objects`. Under another name, only a variable can alias one.
     #[inline]
     fn may_be_object(&self, callee: Expr<'a>) -> bool {
         match callee.as_ident() {
             Some(name) => {
-                self.numbers >> (name.atom().0 % 64) & 1 != 0
+                self.name_bits >> (name.atom().0 % 64) & 1 != 0
                     || callee.symbol().is_some_and(|it| it.declaration_kinds().contains(DeclarationKinds::VARIABLE))
             }
             None => self.mentions_global_this,
         }
     }
 
-    /// oxlint's `global_this_member`: the `a` of `globalThis.a`.
+    /// oxlint's `global_this_member`: returns the `a` of `globalThis.a`.
     fn global_this_member(&self, member: Expr<'a>) -> Option<Name<'a>> {
         if !self.mentions_global_this || !is_specific_id(member.object()?, "globalThis") {
             return None;
@@ -74,11 +73,11 @@ impl<'a> Oxlint<'a> {
         static_property_name(member)
     }
 
-    /// oxlint's `resolve_global_binding`: the name of the global variable that `ident` has the value of, through variables
-    /// that are declared with nothing but a name or `globalThis.a` as their value. What a pattern declares stands for its own
-    /// name. Of the global variables only `objects` are told.
+    /// oxlint's `resolve_global_binding`: returns the name of the global variable that `ident` aliases, following
+    /// variables initialized with just a name or `globalThis.a`. A variable declared by a destructuring pattern
+    /// resolves to its own name. The only globals returned are those in `objects`.
     fn resolve_global_binding(&self, mut ident: Expr<'a>) -> Option<Name<'a>> {
-        // `var a = b, b = a;` has no end.
+        // `var a = b, b = a;` would loop forever.
         let mut seen = rustc_hash::FxHashSet::default();
         loop {
             let name = ident.as_ident()?;
@@ -142,7 +141,7 @@ impl NoObjCalls {
 impl Rule for NoObjCalls {
     const META: Meta = Meta::eslint("no-obj-calls", Kind::Problem).recommended();
     const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]).finish();
-    /// `None` with a configuration of ESLint.
+    /// `None` under an ESLint config.
     type State<'a> = Option<Oxlint<'a>>;
 
     fn new(_: &Options) -> Self {
@@ -161,8 +160,8 @@ impl Rule for NoObjCalls {
             return file.mentions_any(&OXLINT_GLOBAL_OBJECTS).then(|| {
                 Some(Oxlint {
                     objects: OXLINT_GLOBAL_OBJECTS.map(|it| file.name_of(it)),
-                    numbers: (OXLINT_GLOBAL_OBJECTS.iter())
-                        .fold(0, |numbers, it| numbers | 1 << (file.name_of(it).atom().0 % 64)),
+                    name_bits: (OXLINT_GLOBAL_OBJECTS.iter())
+                        .fold(0, |name_bits, it| name_bits | 1 << (file.name_of(it).atom().0 % 64)),
                     mentions_global_this: file.mentions("globalThis"),
                 })
             });

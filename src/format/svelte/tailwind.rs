@@ -1,5 +1,5 @@
-//! `transformSvelte` of `prettier-plugin-tailwindcss`, which oxfmt calls too: the classes in `class` and in the other
-//! attributes for classes are sorted before anything is printed.
+//! `prettier-plugin-tailwindcss`'s `transformSvelte`, which oxfmt also calls. It sorts the classes in `class` and the
+//! other class attributes before anything is printed.
 
 use super::ast::{Id, Kind, Span, Tree};
 use crate::html::js::{EXPRESSION_JSX, EXPRESSION_TS, Parse, sorted_in_svelte};
@@ -7,14 +7,14 @@ use crate::tailwind::{Ends, Tailwind, Tidies};
 use crate::text::starts_with_white_space;
 use std::borrow::Cow;
 
-/// The values of the attributes for classes: the parts of each.
+/// The parts of each class attribute's value.
 fn values(tree: &Tree<'_>, tailwind: &Tailwind) -> Vec<Vec<Id>> {
     let mut values = Vec::new();
     for (id, node) in tree.nodes.iter().enumerate() {
         let Kind::Element(element) = &node.kind else {
             continue;
         };
-        // It is not in the fragment any more.
+        // `<svelte:options>` isn't in the fragment anymore.
         if tree.options == Some(id as Id) {
             continue;
         }
@@ -29,8 +29,8 @@ fn values(tree: &Tree<'_>, tailwind: &Tailwind) -> Vec<Vec<Id>> {
     values
 }
 
-/// Sorts the texts in `tree`. Returns `text` with what is in strings and templates sorted, if that changes it: nothing
-/// moves, because there white space and duplicates stay.
+/// Sorts the text nodes in `tree`. Also returns `text` with the classes in strings and templates sorted, if that
+/// changes anything. Offsets stay valid, because whitespace and duplicates are kept there.
 pub(crate) fn sort(
     tree: &mut Tree<'_>,
     text: &[u8],
@@ -63,7 +63,7 @@ pub(crate) fn sort(
                         true => (expression.span, EXPRESSION_TS),
                         false => (expression.span, EXPRESSION_JSX),
                     };
-                    // In parentheses, so that an object is no block.
+                    // Parenthesized so that an object literal isn't parsed as a block.
                     let wrapped = [b"(", span.of(text), b"\n)"].concat();
                     parse.call(path, &wrapped, false, &mut |file| {
                         for (at, sorted) in sorted_in_svelte(file, tailwind) {
@@ -84,10 +84,10 @@ pub(crate) fn sort(
     }
     let mut sorted = text.to_vec();
     for (at, classes) in &changes {
-        if let Some(place) = sorted.get_mut(at.start as usize..at.end as usize)
-            && place.len() == classes.len()
+        if let Some(slot) = sorted.get_mut(at.start as usize..at.end as usize)
+            && slot.len() == classes.len()
         {
-            place.copy_from_slice(classes);
+            slot.copy_from_slice(classes);
         }
     }
     Some(sorted)

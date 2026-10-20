@@ -28,7 +28,7 @@ const REDECLARATION_OF_READONLY_GLOBAL: Message = Message::new(
     "Unexpected redeclaration of read-only global variable.",
 );
 
-/// The assignment, the `for`-`in` or the `for`-`of` that writes to `reference`.
+/// Returns the assignment, `for`-`in` or `for`-`of` that writes to `reference`.
 fn assignment_of(reference: Reference<'_>) -> Span {
     let mut ancestors = reference.node().ancestors();
     let assignment = ancestors.find_map(|it| match it {
@@ -39,15 +39,16 @@ fn assignment_of(reference: Reference<'_>) -> Span {
     assignment.unwrap_or_else(|| reference.span())
 }
 
-/// What oxlint takes the global variable `name` for: it reads no comments and knows no library of TypeScript.
+/// Returns oxlint's setting for the global variable `name`. oxlint doesn't read comments or know TypeScript's
+/// libraries.
 fn oxlint_global<'a>(file: &'a File<'a>, name: Name<'a>) -> Option<Global> {
     file.global_named(name).filter(|it| !it.is_only_in_lib)?.implicit_setting
 }
 
-/// Which scopes are strict for oxc, in a file that is no module. It is found out when the first is asked about.
+/// Tracks which scopes are strict for oxc, in a file that isn't a module. Computed on the first lookup.
 struct StrictScopes<'a> {
     file: &'a File<'a>,
-    /// In the order of [`File::scopes`], where a scope comes after the one that it is in.
+    /// In the order of [`File::scopes`], where a scope comes after its parent.
     scopes: OnceCell<Vec<bool>>,
 }
 
@@ -66,29 +67,29 @@ impl<'a> StrictScopes<'a> {
     }
 }
 
-/// In sloppy JavaScript a plain function that is declared in a block is a variable of the function or the file around
-/// it as well (Annex B.3.2.1): oxc moves it there, unless something before it has the name there.
+/// In sloppy JavaScript, a plain function declared in a block is also a variable of the enclosing function or file
+/// (Annex B.3.2.1). oxc moves it there, unless something before it already has that name there.
 #[derive(Copy, Clone)]
-struct Moved<'a> {
+struct HoistedFunction<'a> {
     symbol: Symbol<'a>,
-    /// Where its name starts.
+    /// The start of its name.
     start: u32,
-    /// The scope that oxc has it in.
+    /// The scope that oxc puts it in.
     to: Scope<'a>,
-    /// The outermost scope around `to`, or `to`, that oxc has a function of the name in.
-    around: Scope<'a>,
+    /// The outermost scope that is `to` or encloses it, and in which oxc has a function with that name.
+    outermost_scope: Scope<'a>,
 }
 
-impl<'a> Moved<'a> {
-    /// The order of names means nothing. It brings together what has the same.
+impl<'a> HoistedFunction<'a> {
+    /// Only used to group entries with the same name. The order of the names means nothing.
     fn key(&self) -> (u32, u32) {
         (self.symbol.name().atom().0, self.to.span().start)
     }
 
-    /// All of them, by [`Moved::key`].
+    /// Returns all of them, sorted by [`HoistedFunction::key`].
     #[inline(never)]
-    fn all_in(file: &'a File<'a>, strict: &StrictScopes<'a>) -> Vec<Moved<'a>> {
-        let mut moved: Vec<Moved<'a>> = Vec::new();
+    fn all_in(file: &'a File<'a>, strict: &StrictScopes<'a>) -> Vec<HoistedFunction<'a>> {
+        let mut hoisted: Vec<HoistedFunction<'a>> = Vec::new();
         for symbol in file.symbols_declared_as(DeclarationKinds::FUNCTION_NAME) {
             let (scope, Some(Declaration::Fn(func))) = (symbol.scope(), symbol.declarations().next()) else {
                 continue;
@@ -100,12 +101,12 @@ impl<'a> Moved<'a> {
                 && !func.is_async()
                 && !func.is_generator()
             {
-                moved.push(Moved { symbol, start: name.span().start, to, around: to });
+                hoisted.push(HoistedFunction { symbol, start: name.span().start, to, outermost_scope: to });
             }
         }
-        utils::sort::sort_unstable_by_key(&mut moved, |it| (it.key(), it.to.id(), it.start));
-        let mut last: Option<Moved<'a>> = None;
-        moved.retain_mut(|it| {
+        utils::sort::sort_unstable_by_key(&mut hoisted, |it| (it.key(), it.to.id(), it.start));
+        let mut last: Option<HoistedFunction<'a>> = None;
+        hoisted.retain_mut(|it| {
             let (name, start) = (it.symbol.name(), it.start);
             let last_of_name = last.filter(|last| last.symbol.name() == name);
             let is_before = |other: Declaration<'a>| other.name_span().is_some_and(|other| other.start < start);
@@ -115,25 +116,25 @@ impl<'a> Moved<'a> {
             {
                 return false;
             }
-            if let Some(last) = last_of_name.filter(|last| last.around.contains(it.to)) {
-                it.around = last.around;
+            if let Some(last) = last_of_name.filter(|last| last.outermost_scope.contains(it.to)) {
+                it.outermost_scope = last.outermost_scope;
             }
             last = Some(*it);
             true
         });
-        moved
+        hoisted
     }
 
-    /// For oxc `reference`, which refers to nothing, refers to one of `moved`.
-    fn is_meant_by(moved: &[Moved<'a>], reference: Reference<'a>) -> bool {
+    /// True if, for oxc, the unresolved `reference` refers to one of `hoisted`.
+    fn resolves_reference(hoisted: &[HoistedFunction<'a>], reference: Reference<'a>) -> bool {
         let (name, start) = (reference.name(), reference.span().start);
-        let after = moved.partition_point(|it| it.key() <= (name.atom().0, start));
-        let before = after.checked_sub(1).and_then(|it| moved.get(it));
-        before.is_some_and(|it| it.symbol.name() == name && it.around.contains(reference.scope()))
+        let after = hoisted.partition_point(|it| it.key() <= (name.atom().0, start));
+        let before = after.checked_sub(1).and_then(|it| hoisted.get(it));
+        before.is_some_and(|it| it.symbol.name() == name && it.outermost_scope.contains(reference.scope()))
     }
 }
 
-/// What a declaration is called, whether it is lexical, and the whole of it. `None` for one that is not looked at.
+/// Returns a declaration's kind for the message, whether it's lexical, and its whole span. `None` if it isn't checked.
 fn kind_of(declaration: Declaration<'_>, is_oxlint: bool) -> Option<(&'static str, bool, Span)> {
     Some(match declaration {
         Declaration::Fn(func) => ("function", false, func.estree_span()),
@@ -156,7 +157,7 @@ fn kind_of(declaration: Declaration<'_>, is_oxlint: bool) -> Option<(&'static st
 }
 
 impl NoImplicitGlobals {
-    /// The declarations of something global. oxlint reports the names, and `/* exported */` means nothing to it.
+    /// Checks the declarations of a global symbol. oxlint reports at the names, and ignores `/* exported */`.
     #[inline(never)]
     fn check_symbol<'a>(&self, symbol: Symbol<'a>, cx: &Cx<'a, Self>) {
         let (file, name) = (cx.file(), symbol.name());
@@ -177,27 +178,27 @@ impl NoImplicitGlobals {
             let Some((kind, is_lexical, whole)) = kind_of(declaration, is_oxlint) else {
                 continue;
             };
-            let place = if is_oxlint { declaration.name_span() } else { Some(whole) };
-            let Some(place) = place.filter(|_| !is_lexical || self.lexical_bindings) else {
+            let report_span = if is_oxlint { declaration.name_span() } else { Some(whole) };
+            let Some(report_span) = report_span.filter(|_| !is_lexical || self.lexical_bindings) else {
                 continue;
             };
             if is_readonly {
-                cx.report(place, REDECLARATION_OF_READONLY_GLOBAL);
+                cx.report(report_span, REDECLARATION_OF_READONLY_GLOBAL);
                 continue;
             }
             let message = if is_lexical { GLOBAL_LEXICAL_BINDING } else { GLOBAL_NON_LEXICAL_BINDING };
-            cx.report(place, message).data("kind", kind);
+            cx.report(report_span, message).data("kind", kind);
         }
     }
 
-    /// oxlint goes by what it takes the file for: the declarations count in a script, where the scope of a module is
-    /// the one scope that oxc has for a file, and a leak counts also in CommonJS.
+    /// oxlint goes by its own source type for the file. Declarations count in a script, where the module scope here
+    /// corresponds to oxc's single file scope. A leak also counts in CommonJS.
     fn check<'a>(&self, cx: &Cx<'a, Self>) {
         let file = cx.file();
         let for_oxlint = file.language().is_oxlint.then(|| utils::oxlint::source_type(file));
         let strict = StrictScopes { file, scopes: OnceCell::new() };
-        let moved = match for_oxlint {
-            Some(SourceType::Script | SourceType::CommonJs) if file.is_javascript() => Moved::all_in(file, &strict),
+        let hoisted = match for_oxlint {
+            Some(SourceType::Script | SourceType::CommonJs) if file.is_javascript() => HoistedFunction::all_in(file, &strict),
             _ => Vec::new(),
         };
         let global_scope = match for_oxlint {
@@ -208,10 +209,10 @@ impl NoImplicitGlobals {
         for symbol in global_scope.into_iter().flat_map(Scope::symbols) {
             self.check_symbol(symbol, cx);
         }
-        for it in moved.iter().filter(|it| Some(it.to) == global_scope) {
+        for it in hoisted.iter().filter(|it| Some(it.to) == global_scope) {
             self.check_symbol(it.symbol, cx);
         }
-        // Where a target has a default value there are two references, as in ESLint. oxc has one.
+        // A target with a default value has two references, as in ESLint. oxc has one.
         let mut previous = None;
         for reference in file.unresolved_references().filter(|it| it.is_write_only()) {
             let is_leak = match for_oxlint {
@@ -227,7 +228,7 @@ impl NoImplicitGlobals {
                 }
                 Some(source_type) => match oxlint_global(file, reference.name()) {
                     Some(Global::Writable) => continue,
-                    _ if Moved::is_meant_by(&moved, reference) => continue,
+                    _ if HoistedFunction::resolves_reference(&hoisted, reference) => continue,
                     Some(Global::Readonly) => false,
                     _ if source_type == SourceType::Module || strict.has(reference.scope()) => continue,
                     _ => true,

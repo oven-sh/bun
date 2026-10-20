@@ -2,13 +2,14 @@ use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint_react_compiler::{ErrorCategory, Flavor, rule};
 
-/// A rule of the React Compiler, which reports the diagnostics of one category: `react/..` of oxlint for one of [`RULES`], and
-/// `react-hooks/..` of eslint-plugin-react-hooks for the same number after theirs.
+/// A React Compiler rule, which reports the diagnostics of one category. `RULE` below `RULES.len()` is oxlint's
+/// `react/..` rule for that entry of [`RULES`]. From `RULES.len()` on it's eslint-plugin-react-hooks' `react-hooks/..`
+/// rule for the same entries.
 ///
-/// The one option of the plugin's rule, an object that is merged into the options of the compiler, is not looked at.
+/// The plugin's rule has one option, an object that's merged into the compiler's options. It's ignored here.
 pub struct CompilerRule<const RULE: usize = 0>;
 
-/// The name, the category, the kind that it has in oxlint, whether it is in the `recommended` of the plugin.
+/// (name, category, its kind in oxlint, whether it's in the plugin's `recommended` config)
 const RULES: [(&str, ErrorCategory, Kind, bool); 26] = [
     ("capitalized-calls", ErrorCategory::CapitalizedCalls, Kind::Problem, false),
     ("config", ErrorCategory::Config, Kind::Problem, true),
@@ -51,16 +52,16 @@ impl<const RULE: usize> Rule for CompilerRule<RULE> {
             category,
             ErrorCategory::MemoDependencies | ErrorCategory::EffectExhaustiveDependencies | ErrorCategory::Syntax
         );
-        let of_plugin = Meta::plugin(Plugin::ReactHooks, name, Kind::Problem)
+        let plugin_meta = Meta::plugin(Plugin::ReactHooks, name, Kind::Problem)
             .fixable(Fixable::Code)
             .has_suggestions()
             .never_fixes()
             .reports_on_creation();
-        let of_plugin = if suggests { of_plugin } else { of_plugin.never_suggests() };
+        let plugin_meta = if suggests { plugin_meta } else { plugin_meta.never_suggests() };
         match (Self::FLAVOR, is_recommended) {
             (Flavor::Oxlint, _) => Meta::oxlint(Plugin::React, name, kind),
-            (Flavor::Eslint, true) => of_plugin.recommended(),
-            (Flavor::Eslint, false) => of_plugin,
+            (Flavor::Eslint, true) => plugin_meta.recommended(),
+            (Flavor::Eslint, false) => plugin_meta,
         }
     };
     const ON: On = On::new().finish();

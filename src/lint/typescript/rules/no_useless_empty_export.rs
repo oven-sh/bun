@@ -6,7 +6,7 @@ pub struct NoUselessEmptyExport;
 const USELESS_EXPORT: Message =
     Message::new("uselessExport", "Empty export does nothing and can be removed.");
 
-/// `export {}`, with or without `from`. For oxlint without: `export {} from "a"` asks for a module, as an `import` does.
+/// `export {}`, with or without `from`. For oxlint only without: `export {} from "a"` loads a module, like an `import`.
 fn is_empty_export(stmt: Stmt) -> bool {
     matches!(stmt.kind(), StmtKind::ExportNamed(export) if export.items().is_empty())
         && !(stmt.file().language().is_oxlint && stmt.module_specifier_span().is_some())
@@ -28,7 +28,7 @@ impl Rule for NoUselessEmptyExport {
     const META: Meta =
         Meta::typescript("no-useless-empty-export", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().stmts(&[StmtTag::ExportNamed]);
-    /// Whether the file has another export or an import, once that is known.
+    /// Caches whether the file has another export or an import.
     type State<'a> = Option<bool>;
 
     fn new(_: &Options) -> Self {
@@ -36,7 +36,7 @@ impl Rule for NoUselessEmptyExport {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        // There `export {}` keeps what is not exported out of the module.
+        // In a definition file, `export {}` keeps non-exported declarations out of the module's exports.
         if ts_utils::is_definition_file(file.path()) {
             return None;
         }

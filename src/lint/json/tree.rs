@@ -123,7 +123,7 @@ impl<'a> Node<'a> {
     }
 
     /// The source text, without the quotes if it's a string.
-    fn written(self) -> &'a [u8] {
+    fn unquoted_text(self) -> &'a [u8] {
         match (self.kind(), self.text()) {
             (NodeKind::String, [_, inner @ .., _]) => inner,
             (_, text) => text,
@@ -136,7 +136,7 @@ impl<'a> Node<'a> {
         let found = tree.unescaped.binary_search_by_key(&self.index, |it| it.0);
         match found.ok().and_then(|at| tree.unescaped.get(at)) {
             Some((_, span)) => tree.texts.get(span.range()).unwrap_or_default(),
-            None => self.written(),
+            None => self.unquoted_text(),
         }
     }
 
@@ -170,9 +170,9 @@ pub struct Member<'a> {
 }
 
 impl<'a> Member<'a> {
-    /// The key as written in the source, without its quotes.
+    /// The key's source text, without its quotes.
     pub fn raw_key(self) -> &'a [u8] {
-        self.name.written()
+        self.name.unquoted_text()
     }
 
     /// The key with its escape sequences resolved.

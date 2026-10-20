@@ -2441,24 +2441,20 @@ mod posix_impl {
         unlink_without_path(path).map_err(|err| err.with_path(path.as_bytes()))
     }
 
-    // node:fs reports the path its caller passed, not the NUL-terminated copy
-    // given to the syscall. The next four put no path on the error, so that
-    // node:fs boxes a path once.
+    // The next four put no path on the error: node:fs attaches the path that its caller passed.
 
     pub fn unlink_without_path(path: &ZStr) -> Maybe<()> {
         // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
         check!(unsafe { libc::unlink(path.as_ptr()) }, Tag::unlink);
         Ok(())
     }
-    /// `rmdir(2)`, tagged `rmdir`. `bun_sys::rmdir` is `unlinkat(AT_REMOVEDIR)`,
-    /// tagged `unlink`.
+    /// `rmdir(2)`, tagged `rmdir`. `bun_sys::rmdir` is `unlinkat(AT_REMOVEDIR)`, tagged `unlink`.
     pub fn posix_rmdir(path: &ZStr) -> Maybe<()> {
         // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
         check!(unsafe { libc::rmdir(path.as_ptr()) }, Tag::rmdir);
         Ok(())
     }
-    /// `link(2)`. On macOS it follows a symlink at `from`, which
-    /// [`linkat`] does not.
+    /// `link(2)`. On macOS it follows a symlink at `from`, which [`linkat`] does not.
     pub fn link(from: &ZStr, to: &ZStr) -> Maybe<()> {
         // SAFETY: both `ZStr`s are valid NUL-terminated C strings.
         check!(unsafe { libc::link(from.as_ptr(), to.as_ptr()) }, Tag::link);
@@ -2469,9 +2465,7 @@ mod posix_impl {
         check!(unsafe { libc::truncate(path.as_ptr(), len) }, Tag::truncate);
         Ok(())
     }
-    /// `mkdtemp(3)`. `template` is a `...XXXXXX` pattern with its NUL
-    /// terminator. The call replaces the `XXXXXX` with the name it created.
-    /// The error carries no path.
+    /// `mkdtemp(3)` in place: `template` is the `...XXXXXX` pattern with its NUL terminator.
     pub fn mkdtemp(template: &mut [u8]) -> Maybe<()> {
         let [.., 0] = template else {
             return Err(Error::from_code_int(libc::EINVAL, Tag::mkdtemp));
@@ -2487,8 +2481,7 @@ mod posix_impl {
             if e != libc::EINTR {
                 return Err(Error::from_code_int(e, Tag::mkdtemp));
             }
-            // The failed call can leave its candidate name in place of the
-            // `XXXXXX`. libc then rejects the template with EINVAL.
+            // A failed call can leave its candidate in place of the `XXXXXX`, which libc then rejects.
             if let Some(suffix) = len.checked_sub(6) {
                 template[suffix..len].copy_from_slice(b"XXXXXX");
             }
@@ -3475,10 +3468,7 @@ mod posix_impl {
             );
             Ok(())
         }
-        /// `fcopyfile(3)` copies from the file positions and then truncates
-        /// `to` to the bytes of that one call. A second call is the same copy
-        /// only if the first moved neither position, so EINTR is retried only
-        /// while both are at 0.
+        /// EINTR runs again only while both positions are at 0: a call truncates `to` to its own bytes.
         pub fn fcopyfile_(from: Fd, to: Fd, flags: u32) -> Maybe<()> {
             let at_start = |fd: Fd| matches!(lseek(fd, 0, libc::SEEK_CUR), Ok(0));
             loop {
@@ -3658,8 +3648,7 @@ mod posix_impl {
         }
     }
 
-    /// `sendfile(2)` from `src` to `dest`. An `offset` of `None` uses the
-    /// file position of `src` and advances it. Clamps `len` (avoid EINVAL on
+    /// `sendfile(src, dest, offset, len)`. Clamps `len` (avoid EINVAL on
     /// >2GB), EINTR-retries, and attaches the *source* fd to the error.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn sendfile(src: Fd, dest: Fd, mut offset: Option<&mut i64>, len: usize) -> Maybe<usize> {
@@ -3688,8 +3677,7 @@ mod posix_impl {
         }
     }
 
-    /// `copy_file_range(2)`. An offset of `None` uses the file position and
-    /// advances it.
+    /// `copy_file_range(2)`. An offset of `None` uses and advances the file position.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn copy_file_range(
         in_: Fd,

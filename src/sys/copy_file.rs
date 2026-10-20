@@ -389,8 +389,7 @@ pub(crate) fn copy_file_range(
                     copy_file_state.insert(LinuxCopyFileState::HAS_SEEN_EXDEV);
                     copy_file_state.insert(LinuxCopyFileState::HAS_SENDFILE_FAILED);
                 }
-                // they might not support it
-                // On Linux EOPNOTSUPP == ENOTSUP.
+                // they might not support it (on Linux EOPNOTSUPP == ENOTSUP)
                 E::ENOTSUP | E::ENOSYS => {
                     copy_file_state.insert(LinuxCopyFileState::HAS_SENDFILE_FAILED);
                 }

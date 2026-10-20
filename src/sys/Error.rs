@@ -259,8 +259,7 @@ impl Error {
         self.resolve_system_errno().unwrap_or(SystemErrno::EIO)
     }
 
-    /// The errno and its name (e.g. `"ENOENT"`) for printing. A number the
-    /// table does not declare prints as `EUNKNOWN`, as `get_errno` has it.
+    /// The errno and its name for printing. A number outside the table is `EUNKNOWN`, as in `get_errno`.
     pub fn get_error_code_tag_name(&self) -> Option<(&'static str, SystemErrno)> {
         if self.errno == 0 {
             return None;

@@ -3021,11 +3021,17 @@ pub fn to_executable(
         let mut outfile_posix_buf = bun_paths::path_buffer_pool::get();
         let outfile_posix = path::resolve_path::z(outfile_basename, &mut outfile_posix_buf);
 
-        if let Delivery::InPlace(kind) = delivery {
+        if let Delivery::InPlace(planned) = delivery {
             // The write can wait for a reader. A build that is stopped then leaves no staged copy.
             let _ = Syscall::unlink(temp_posix);
-            let written =
-                write_in_place(fd, root_dir, outfile_posix, outfile, kind, wait_for_reader);
+            let written = write_in_place(
+                fd,
+                root_dir,
+                outfile_posix,
+                outfile,
+                planned,
+                wait_for_reader,
+            );
             fd.close();
             return Ok(match written {
                 Ok(()) => CompileResult::Success,
@@ -3060,12 +3066,13 @@ pub fn to_executable(
     }
 }
 
-/// Whether `to_executable` waits for a reader when the outfile is a FIFO that has none.
+/// Whether the open of a FIFO at the outfile waits for a reader.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum WaitForReader {
     /// As every writer of a FIFO does.
     Yes,
-    /// The build fails instead. For a thread that must not wait, such as the JS thread.
+    /// The build fails when the FIFO has no reader. For the JS thread: while it waits, the
+    /// program cannot start one.
     No,
 }
 
@@ -3074,9 +3081,30 @@ pub enum WaitForReader {
 enum Delivery {
     /// The staged copy is renamed over the name.
     Replace,
-    /// The name is a character device or a FIFO. A rename would leave a regular file under that
-    /// name, so the staged copy is written into it.
-    InPlace(bun_sys::FileKind),
+    /// The name is this character device or FIFO. A rename would leave a regular file under
+    /// that name, so the staged copy is written into it.
+    InPlace(Node),
+}
+
+/// The node that the plan found at the outfile.
+#[cfg(not(windows))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Node {
+    dev: libc::dev_t,
+    ino: libc::ino_t,
+    is_fifo: bool,
+}
+
+#[cfg(not(windows))]
+impl Node {
+    fn of(stat: &Stat) -> Node {
+        Node {
+            dev: stat.st_dev,
+            ino: stat.st_ino,
+            is_fifo: bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode)
+                == bun_sys::FileKind::NamedPipe,
+        }
+    }
 }
 
 #[cfg(not(windows))]
@@ -3091,14 +3119,16 @@ impl Delivery {
         let Ok(entry) = bun_sys::lstatat(root_dir, basename) else {
             return Ok(Delivery::Replace);
         };
-        let mut kind = kind_of(&entry);
-        if kind == FileKind::SymLink {
-            // A link to a device is written through, like the device.
+        let is_link = kind_of(&entry) == FileKind::SymLink;
+        let node = if is_link {
             let Ok(target) = bun_sys::fstatat(root_dir, basename) else {
                 return Ok(Delivery::Replace);
             };
-            kind = kind_of(&target);
-        }
+            target
+        } else {
+            entry
+        };
+        let kind = kind_of(&node);
         if !matches!(
             kind,
             FileKind::CharacterDevice
@@ -3125,13 +3155,37 @@ impl Delivery {
             return Err(write_failed(outfile, "it belongs to another user"));
         }
 
+        // A link leads the write to a node that its owner chose. It is followed when the link
+        // and the node are the builder's or root's, or the node is a descriptor that the process
+        // already has, as behind `/dev/stdout`. Any other link is replaced, like a link to a file.
+        let trusted = |stat: &Stat| stat.st_uid == euid || stat.st_uid == 0;
+        if is_link && !(trusted(&entry) && (trusted(&node) || is_own_descriptor(&node, basename))) {
+            return Ok(Delivery::Replace);
+        }
+
         match kind {
-            FileKind::CharacterDevice | FileKind::NamedPipe => Ok(Delivery::InPlace(kind)),
+            FileKind::CharacterDevice | FileKind::NamedPipe => {
+                Ok(Delivery::InPlace(Node::of(&node)))
+            }
             FileKind::UnixDomainSocket => Err(write_failed(outfile, "it is a socket")),
             // A write into it would overwrite the start of a disk.
             _ => Err(write_failed(outfile, "it is a block device")),
         }
     }
+}
+
+/// Whether `node` is what descriptor 1 or 2 is open on, or the descriptor that `name` numbers
+/// (`/proc/self/fd/3`).
+#[cfg(not(windows))]
+fn is_own_descriptor(node: &Stat, name: &ZStr) -> bool {
+    let is_node = |fd: Fd| {
+        bun_sys::fstat(fd)
+            .is_ok_and(|open| open.st_dev == node.st_dev && open.st_ino == node.st_ino)
+    };
+    is_node(Fd::stdout())
+        || is_node(Fd::stderr())
+        || bun_core::fmt::parse_decimal::<u16>(name.as_bytes())
+            .is_some_and(|number| is_node(Fd::from_native(number.into())))
 }
 
 #[cfg(not(windows))]
@@ -3150,10 +3204,10 @@ fn write_in_place(
     root_dir: Fd,
     basename: &ZStr,
     outfile: &[u8],
-    kind: bun_sys::FileKind,
+    planned: Node,
     wait_for_reader: WaitForReader,
 ) -> Result<(), CompileError> {
-    use bun_sys::{FileKind, O};
+    use bun_sys::O;
 
     let failed = |e: bun_sys::Error| write_failed(outfile, bstr::BStr::new(e.name()));
 
@@ -3168,7 +3222,7 @@ fn write_in_place(
         0,
     ) {
         Ok(node) => node,
-        Err(e) if nonblocking != 0 && kind == FileKind::NamedPipe && e.get_errno() == E::ENXIO => {
+        Err(e) if nonblocking != 0 && planned.is_fifo && e.get_errno() == E::ENXIO => {
             return Err(write_failed(
                 outfile,
                 "it is a FIFO that no process is reading",
@@ -3181,16 +3235,9 @@ fn write_in_place(
     let _close = bun_sys::CloseOnDrop::new(node);
     let node = bun_sys::File::borrow(&node);
 
-    // The name can point somewhere else since the plan.
-    let stat = node.stat().map_err(failed)?;
-    if !matches!(
-        bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode),
-        FileKind::CharacterDevice | FileKind::NamedPipe
-    ) {
-        return Err(write_failed(
-            outfile,
-            "it is no longer a character device or a FIFO",
-        ));
+    // The name can lead somewhere else since the plan.
+    if Node::of(&node.stat().map_err(failed)?) != planned {
+        return Err(write_failed(outfile, "it changed during the build"));
     }
     if nonblocking != 0 {
         // Only the open must not wait. A write that cannot wait fails when the FIFO is full.

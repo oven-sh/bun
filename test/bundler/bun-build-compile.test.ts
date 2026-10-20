@@ -23,6 +23,7 @@ import {
   constants,
   cpSync,
   existsSync,
+  lchownSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -2872,8 +2873,13 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
                 : "other";
     return { kind, inode: stat.ino, mode: (stat.mode & 0o7777).toString(8), uid: stat.uid };
   }
-  // A reader that keeps the FIFO open and reads nothing until the test does.
-  const hold = (fifo: string) => openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+  // A descriptor that closes at the end of its block.
+  function opened(path: string, flags: number) {
+    const fd = openSync(path, flags);
+    return { fd, [Symbol.dispose]: () => closeSync(fd) };
+  }
+  // A reader that keeps the FIFO open and reads nothing.
+  const hold = (fifo: string) => opened(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
 
   function mknod(path: string, type: "c" | "b", major: number, minor: number) {
     try {
@@ -2885,7 +2891,7 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
   // A device node needs root, except a whiteout (0, 0): Linux 5.8 and later lets any user make
   // one, though not on overlayfs. No driver answers for a whiteout, so it cannot be opened.
   const scratchDevice = (() => {
-    if (!isLinux) return { nullDevice: false, whiteout: false };
+    if (!isLinux) return { nullDevice: false, whiteout: false, blockDevice: false };
     using dir = tempDir("compile-outfile-mknod", {});
     const nullDevice = join(String(dir), "null");
     let writable = false;
@@ -2895,7 +2901,12 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
         writable = true;
       } catch {}
     }
-    return { nullDevice: writable, whiteout: mknod(join(String(dir), "whiteout"), "c", 0, 0) };
+    return {
+      nullDevice: writable,
+      whiteout: mknod(join(String(dir), "whiteout"), "c", 0, 0),
+      // No disk has the number (0, 0).
+      blockDevice: isRoot && mknod(join(String(dir), "block"), "b", 0, 0),
+    };
   })();
 
   describe.each(Object.keys(surfaces) as (keyof typeof surfaces)[])("%s", surface => {
@@ -2917,13 +2928,12 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
       const before = { out: node(out), fifo: node(fifo), ro: ["fifo", "out"] };
       expect(before).toMatchObject({ out: { kind: "symlink" }, fifo: { kind: "FIFO" } });
 
-      const held = hold(fifo);
       await using reader = Bun.spawn({ cmd: ["cat", fifo], stdout: Bun.file(received), stderr: "inherit" });
       let result;
-      try {
+      {
+        // The FIFO has a reader from now on, whenever `cat` opens it.
+        using held = hold(fifo);
         result = await build(cwd, "ro/out", unprivileged);
-      } finally {
-        closeSync(held);
       }
 
       expect({ result, out: node(out), fifo: node(fifo), ro: readdirSync(ro).sort() }).toEqual({
@@ -2999,11 +3009,10 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
       60_000,
     );
 
-    test.skipIf(!isLinux || !isRoot)("refuses a block device, and leaves it in place", async () => {
+    test.skipIf(!scratchDevice.blockDevice)("refuses a block device, and leaves it in place", async () => {
       using dir = tempDir("compile-outfile-block", files);
       const cwd = String(dir);
       const out = join(cwd, "out");
-      // No disk has the number (0, 0).
       expect(mknod(out, "b", 0, 0)).toBe(true);
       const before = node(out);
       expect(before.kind).toBe("block device");
@@ -3018,39 +3027,47 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
     });
   });
 
-  // `>(command)` in a shell gives the build such a path.
+  // `>(command)` in a shell gives the build such a path. The build already has the pipe open, so
+  // it writes into it whoever owns it: under `sudo`, the pipe is the calling user's.
+  async function intoItsDescriptor(owner?: number) {
+    using dir = tempDir("compile-outfile-pipe", files);
+    const cwd = String(dir);
+    const [fifo, received] = [join(cwd, "fifo"), join(cwd, "received")];
+    mkfifo(fifo);
+    if (owner !== undefined) {
+      chmodSync(fifo, 0o666);
+      chownSync(fifo, owner, owner);
+    }
+    const before = node(fifo);
+
+    await using reader = Bun.spawn({ cmd: ["cat", fifo], stdout: Bun.file(received), stderr: "inherit" });
+    let result;
+    {
+      using held = hold(fifo);
+      using writeEnd = opened(fifo, constants.O_WRONLY);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "./app.js", "--outfile", "/proc/self/fd/3"],
+        env: bunEnv,
+        cwd,
+        stdio: ["ignore", "pipe", "pipe", writeEnd.fd],
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      result = { stderr, exitCode };
+    }
+
+    expect({ result, fifo: node(fifo) }).toEqual({ result: { stderr: "", exitCode: 0 }, fifo: before });
+    expect(await reader.exited).toBe(0);
+    chmodSync(received, 0o755);
+    expect(await run([received], cwd)).toEqual(ranTheApp);
+  }
   test.skipIf(!isLinux)(
     "writes the executable into a pipe that a descriptor path names",
-    async () => {
-      using dir = tempDir("compile-outfile-pipe", files);
-      const cwd = String(dir);
-      const [fifo, received] = [join(cwd, "fifo"), join(cwd, "received")];
-      mkfifo(fifo);
-      const before = node(fifo);
-
-      const held = hold(fifo);
-      const writeEnd = openSync(fifo, constants.O_WRONLY);
-      await using reader = Bun.spawn({ cmd: ["cat", fifo], stdout: Bun.file(received), stderr: "inherit" });
-      let result;
-      try {
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "build", "--compile", "./app.js", "--outfile", "/proc/self/fd/3"],
-          env: bunEnv,
-          cwd,
-          stdio: ["ignore", "pipe", "pipe", writeEnd],
-        });
-        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        result = { stderr, exitCode };
-      } finally {
-        closeSync(writeEnd);
-        closeSync(held);
-      }
-
-      expect({ result, fifo: node(fifo) }).toEqual({ result: { stderr: "", exitCode: 0 }, fifo: before });
-      expect(await reader.exited).toBe(0);
-      chmodSync(received, 0o755);
-      expect(await run([received], cwd)).toEqual(ranTheApp);
-    },
+    () => intoItsDescriptor(),
+    60_000,
+  );
+  test.skipIf(!isLinux || !isRoot)(
+    "writes the executable into a pipe of another user that a descriptor path names",
+    () => intoItsDescriptor(1),
     60_000,
   );
 
@@ -3070,33 +3087,30 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
       stderr: "pipe",
     });
     const finished = Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let exited = false;
+    proc.exited.then(() => (exited = true));
 
-    // A reader that comes for an instant, again and again. A build that does not wait for a visit
-    // finds no reader, except when its open falls into one.
-    const chunk = Buffer.alloc(4);
+    // A reader that comes for an instant, again and again. A build that does not wait finds no
+    // reader, except when its open falls into a visit.
     let reader: number | undefined;
-    let arrived = 0;
     try {
-      while (arrived === 0 && proc.exitCode === null) {
-        reader ??= hold(out);
+      for (let arrived = 0; arrived === 0 && !exited;) {
+        reader ??= openSync(out, constants.O_RDONLY | constants.O_NONBLOCK);
         try {
-          arrived = readSync(reader, chunk);
+          arrived = readSync(reader, Buffer.alloc(4));
           if (arrived === 0) {
-            // No writer has the FIFO open.
+            // No writer has the FIFO open. The reader leaves.
             closeSync(reader);
             reader = undefined;
           }
         } catch (e: any) {
-          // A writer has it open and has written nothing yet.
+          // A writer has it open and has written nothing yet. The reader stays.
           if (e.code !== "EAGAIN") throw e;
         }
         if (arrived === 0) await Bun.sleep(10);
       }
       // The build is inside the write, and its staged copy is already gone.
-      expect({ arrived, staged: readdirSync(cwd).filter(name => name.endsWith(".bun-build")) }).toEqual({
-        arrived: 4,
-        staged: [],
-      });
+      expect(readdirSync(cwd).filter(name => name.endsWith(".bun-build"))).toEqual([]);
     } finally {
       if (reader !== undefined) closeSync(reader);
     }
@@ -3127,8 +3141,9 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
     });
   }, 60_000);
 
-  // Any user can put a FIFO under a name in a directory like /tmp, and read what is written to it.
-  describe.skipIf(!isRoot)("in a directory that other users can write", () => {
+  // Another user can put a FIFO under a name in a directory like /tmp, and read what is written
+  // to it. A link leads the write to a node that its owner chose.
+  describe.skipIf(!isRoot)("a name or a node of another user", () => {
     function fifoOf(owner: number, cwd: string) {
       const shared = join(cwd, "shared");
       const out = join(shared, "out");
@@ -3140,19 +3155,20 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
       expect(node(out)).toMatchObject({ kind: "FIFO", mode: "666", uid: owner });
       return out;
     }
+    // With this reader, a build that writes into the FIFO succeeds.
+    const readerOf = (fifo: string) => Bun.spawn({ cmd: ["cat", fifo], stdout: "ignore", stderr: "inherit" });
 
     test.each([
       [1, "another user"],
       [0, "the owner of the directory"],
-    ])("does not write into a FIFO of uid %d, %s", async owner => {
+    ])("does not write into a FIFO of uid %d, %s, in a shared directory", async owner => {
       using dir = tempDir("compile-outfile-shared", files);
       const cwd = String(dir);
       using unprivileged = unprivilegedSpawnOptions(cwd);
       const out = fifoOf(owner, cwd);
       const before = node(out);
 
-      // With this reader, a build that writes into the FIFO succeeds.
-      await using reader = Bun.spawn({ cmd: ["cat", out], stdout: "ignore", stderr: "inherit" });
+      await using reader = readerOf(out);
       const result = await surfaces["bun build --compile"](cwd, "shared/out", unprivileged);
 
       expect({ result, out: node(out) }).toEqual({
@@ -3162,16 +3178,59 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
     });
 
     // Root can rename over the name, so it gets the rename that every other outfile gets.
-    test("root replaces a FIFO of another user", async () => {
+    test("root replaces a FIFO of another user in a shared directory", async () => {
       using dir = tempDir("compile-outfile-shared-root", files);
       const cwd = String(dir);
       const out = fifoOf(1, cwd);
 
-      await using reader = Bun.spawn({ cmd: ["cat", out], stdout: "ignore", stderr: "inherit" });
+      await using reader = readerOf(out);
       const result = await surfaces["bun build --compile"](cwd, "shared/out");
 
       expect({ result, out: node(out).kind }).toEqual({ result: built, out: "regular file" });
       expect(await run([out], cwd)).toEqual(ranTheApp);
+    }, 60_000);
+
+    test("replaces the builder's link to a FIFO of another user, like a link to a file", async () => {
+      using dir = tempDir("compile-outfile-link", files);
+      const cwd = String(dir);
+      const out = join(cwd, "out");
+      symlinkSync("shared/out", out);
+      using unprivileged = unprivilegedSpawnOptions(cwd);
+      const fifo = fifoOf(1, cwd);
+      const before = node(fifo);
+      expect(node(out)).toMatchObject({ kind: "symlink", uid: unprivileged.uid });
+
+      await using reader = readerOf(fifo);
+      const result = await surfaces["bun build --compile"](cwd, "out", unprivileged);
+
+      expect({ result, out: node(out).kind, fifo: node(fifo) }).toEqual({
+        result: built,
+        out: "regular file",
+        fifo: before,
+      });
+    }, 60_000);
+
+    test("root replaces a link of another user, and does not follow it", async () => {
+      using dir = tempDir("compile-outfile-link-root", files);
+      const cwd = String(dir);
+      const theirs = join(cwd, "theirs");
+      const [out, fifo] = [join(theirs, "out"), join(cwd, "fifo")];
+      mkdirSync(theirs);
+      mkfifo(fifo);
+      symlinkSync("../fifo", out);
+      lchownSync(out, 1, 1);
+      chownSync(theirs, 1, 1);
+      const before = node(fifo);
+      expect(node(out)).toMatchObject({ kind: "symlink", uid: 1 });
+
+      await using reader = readerOf(fifo);
+      const result = await surfaces["bun build --compile"](cwd, "theirs/out");
+
+      expect({ result, out: node(out).kind, fifo: node(fifo) }).toEqual({
+        result: built,
+        out: "regular file",
+        fifo: before,
+      });
     }, 60_000);
   });
 

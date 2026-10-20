@@ -89,23 +89,10 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
         if (length > WTF::String::MaxLength) [[unlikely]] {
             return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
         }
-        // Not WTF::String(span), which crashes on a failed allocation: the caller's data sizes this one.
-        std::span<Latin1Character> characters;
-        auto impl = WTF::StringImpl::tryCreateUninitialized(length, characters);
-        if (!impl) [[unlikely]] {
-            throwOutOfMemoryError(globalObject, scope);
-            return {};
-        }
-        memcpy(characters.data(), ptr, length);
-        return JSValue::encode(jsString(vm, WTF::String(impl.releaseNonNull())));
+        return JSValue::encode(jsString(vm, WTF::String(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(ptr), length))));
     }
 
-    std::span bytes { reinterpret_cast<const unsigned char*>(ptr), length };
-    // convertUTF8ToString crashes on a failed allocation, so only a small or an invalid input takes it.
-    constexpr size_t minFallibleLength = 64 * 1024;
-    auto str = length >= minFallibleLength && simdutf::validate_utf8(ptr, length)
-        ? Zig::tryConvertValidUTF8ToString(bytes)
-        : Zig::convertUTF8ToString(bytes);
+    auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(ptr), length });
     if (str.isNull()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};

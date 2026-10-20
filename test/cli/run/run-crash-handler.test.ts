@@ -1,6 +1,6 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
@@ -128,42 +128,6 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
     expect(exitCode).not.toBe(0);
     void stdout;
   });
-});
-
-// Bun compiles without exceptions and installs no std::new_handler, so a refused
-// throwing `operator new` used to return NULL: the standard forbids that, and callers
-// such as std::string write through it. Only where mimalloc provides `operator new`
-// (Linux, no ASAN); elsewhere it is libc++'s or the CRT's, which still terminates.
-test.if(isLinux && !isASAN)("a refused operator new reports out of memory", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      path.join(import.meta.dir, "fixture-crash.js"),
-      "operatorNew",
-      "--debug-crash-handler-use-trace-string",
-    ],
-    env: noReportEnv,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stderr).toContain("Bun has run out of memory");
-  expect(proc.signalCode).toBe("SIGABRT");
-  expect(exitCode).not.toBe(0);
-});
-
-// `new (std::nothrow)` is for callers that handle the refusal: `std::stable_sort` asks
-// again for half the buffer. That form still returns null.
-test.if(isLinux && !isASAN)("a refused new (std::nothrow) returns null", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `console.log(require("bun:internal-for-testing").crash_handler.operatorNew(true))`],
-    env: noReportEnv,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stdout).toBe("true\n");
-  expect(exitCode).toBe(0);
 });
 
 // The report header names the CPU features the crash handler detected. On

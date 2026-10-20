@@ -2,9 +2,9 @@ use core::cell::Cell;
 use core::mem;
 use core::ptr::NonNull;
 
-use bun_core::Utf8Bytes;
+use bun_core::{String as BunString, Utf8Bytes};
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{ComptimeStringMapExt as _, JsCell};
+use bun_jsc::{ComptimeStringMapExt as _, JsCell, StringJsc};
 use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
 use bun_uws_sys::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
 use bun_uws_sys::{Opcode, SendStatus};
@@ -735,34 +735,14 @@ impl ServerWebSocket {
         let _loop_guard = vm.enter_event_loop_scope();
 
         let data = match opcode {
-            Opcode::Text => bun_string_jsc::create_utf8_for_js(global_object, message),
+            // Not `create_utf8_for_js`, which crashes inside WTF when the allocation fails.
+            Opcode::Text => StringJsc::into_js(BunString::clone_utf8(message), global_object),
             Opcode::Binary => self.binary_to_js(global_object, message),
             _ => unreachable!(),
         };
         let data = match data {
             Ok(data) => data,
-            Err(e) => {
-                // The copy for the handler failed, and a connection cannot skip a message it received.
-                let err_value = global_object.take_error(e);
-                if err_value.is_termination_exception() {
-                    return Err(e);
-                }
-                // Without an `error` handler the 1011 close is the report: an uncaught exception would end the process.
-                let reported = if on_error.is_empty_or_undefined_or_null() {
-                    Ok(())
-                } else {
-                    self.handler().run_error_callback(
-                        on_error,
-                        global_object,
-                        self.js_value().unwrap_or(JSValue::UNDEFINED),
-                        err_value,
-                    )
-                };
-                if !self.is_closed() {
-                    ws.fail_out_of_memory();
-                }
-                return reported;
-            }
+            Err(e) => return fail_refused_copy(global_object, ws, e),
         };
         let arguments = [self.js_value().unwrap_or(JSValue::UNDEFINED), data];
 
@@ -848,7 +828,7 @@ impl ServerWebSocket {
             BinaryType::Blob => {
                 let mut bytes = Vec::new();
                 if bytes.try_reserve_exact(data.len()).is_err() {
-                    return Err(bun_jsc::JsError::OutOfMemory);
+                    return Err(JsError::OutOfMemory);
                 }
                 bytes.extend_from_slice(data);
                 let blob = Blob::new(Blob::init(bytes, global_this));
@@ -1583,14 +1563,7 @@ impl WebSocketHandler for WsPackageSocket {
                 let global = this.0.handler().global_object();
                 let buffer = match ArrayBuffer::create_buffer(global, message) {
                     Ok(buffer) => buffer,
-                    Err(e) => {
-                        // As in `ServerWebSocket::on_message`. `ws.ts` turns the close into the socket's 'error' event.
-                        if global.take_error(e).is_termination_exception() {
-                            return Err(e);
-                        }
-                        ws.fail_out_of_memory();
-                        return Ok(());
-                    }
+                    Err(e) => return fail_refused_copy(global, ws, e),
                 };
                 this.call(this.0.handler().on_message, |_| {
                     Ok([buffer, JSValue::js_boolean(opcode == Opcode::Binary)])
@@ -1634,6 +1607,15 @@ impl WebSocketHandler for WsPackageSocket {
         // SAFETY: per trait contract.
         unsafe { Self::dispatch(this, |this| this.on_close(code, message)) };
     }
+}
+
+/// A received message could not be copied for its handler. A connection cannot skip a message, so it fails with 1011.
+fn fail_refused_copy(global: &JSGlobalObject, ws: AnyWebSocket, e: JsError) -> JsResult<()> {
+    if global.take_error(e).is_termination_exception() {
+        return Err(e);
+    }
+    ws.fail_out_of_memory();
+    Ok(())
 }
 
 /// Calls `callback` inside `ws.cork()`, so everything it sends goes out in one write.

@@ -151,7 +151,6 @@ export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") a
   panic: () => void;
   rootError: () => void;
   outOfMemory: () => void;
-  operatorNew: (nothrow?: boolean) => boolean | undefined;
   abort: () => void;
   fastfail: () => void;
   trap: () => void;

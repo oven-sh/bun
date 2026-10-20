@@ -244,24 +244,29 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: failing the connection", s
   });
 });
 
-// A buffer for a received message is sized by the peer, so it can fail to grow. That
+// Memory for a received message is sized by the peer, so the allocator can refuse it. That
 // fails the one connection with 1011 and leaves the server serving. The messages below
 // are legal: each is under the default 16 MB maxPayloadLength.
 //
-// ASAN's per-allocation cap makes each refusal deterministic. The buffers double from
-// the size of the first read, so which growth is over the cap is arithmetic. The clients
-// run in this process, which is not capped. `Malloc=1` puts WebKit's allocations on the
-// same capped allocator, which is what the text case needs.
+// ASAN's per-allocation cap makes each refusal deterministic: which request is over the
+// cap is arithmetic. The clients run in this process, which is not capped. `Malloc=1`
+// puts WebKit's allocations on the same capped allocator, which is what the text rows need.
 describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () => {
   const MiB = 1024 * 1024;
   const CAP_MB = 4;
   const diagnostic = "Received message that does not fit in memory";
+  const failed = `close 1011 ${JSON.stringify(diagnostic)}`;
   const deflate = { "Sec-WebSocket-Extensions": "permessage-deflate" };
   // What a refused message inflates from. A run of one byte compresses to a few KiB.
   const deflated = (size: number) => deflateRawSync(Buffer.alloc(size, 7));
   const tooBig = Buffer.alloc(CAP_MB * MiB + 2 * MiB);
   // Fills a buffer to exactly the cap, so the next byte it has to hold is a growth over the cap.
   const full = Buffer.alloc(CAP_MB * MiB);
+  // A message that is delivered. The fixture answers with a hash of what its handler got, and
+  // the period is 37 bytes, so a growth that loses or moves bytes does not pass.
+  const patterned = (size: number) => Buffer.alloc(size, "0123456789abcdefghijklmnopqrstuvwxyz+");
+  const got = (message: Buffer) => `text "got ${message.length} ${Bun.hash(message)}"`;
+  const intact = patterned(2 * MiB);
 
   type Mode = "ws" | "wss" | "ws-package";
   let proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
@@ -279,7 +284,7 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
     }
   }
 
-  // The next line the fixture prints: one per close handler, and per 'error' event of `ws`.
+  // The next line the fixture prints. A call of its `error` handler would be one: no row expects it.
   async function nextEvent() {
     const { value, done } = await lines.next();
     if (done) throw new Error(`the server exited:\n${await stderr}`);
@@ -321,9 +326,15 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
   afterAll(() => proc?.kill());
 
   const refusals: [name: string, headers: Record<string, string> | undefined, send: (client: RawClient) => void][] = [
-    // The fragment buffer: the up-front reserve for the length the header declares is
-    // refused, then the buffer doubles with the bytes that arrive until a growth is too.
+    // The fragment buffer: the reservation for the length that the header declares, and the
+    // growth for a later fragment. The reservation is refused at the header, so the
+    // connection does not wait for a payload that it cannot hold.
     ["a message larger than the cap", undefined, client => client.binary(tooBig)],
+    [
+      "the header alone of a message larger than the cap",
+      undefined,
+      client => client.write(client.frame(OP.binary, tooBig).subarray(0, 15)),
+    ],
     [
       "a fragmented message larger than the cap",
       undefined,
@@ -355,22 +366,28 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
       deflate,
       client => client.binary(deflated(full.length + 1024), { rsv1: true }),
     ],
-    // The copy for the message handler: one non-ASCII character makes the string 16-bit,
-    // so its buffer is twice the size of the one the bytes already fit in.
+    // The copy for the message handler. One non-ASCII character makes the string 16-bit, so
+    // its buffer is twice the size of the one the bytes already fit in. An 8-bit string of
+    // exactly the cap is over it by the header of the string.
     [
       "a text message whose UTF-16 copy is over the cap",
       undefined,
       client => client.text("\u00e9" + Buffer.alloc(3 * MiB - 2, "a").toString("latin1")),
+    ],
+    [
+      "a text message whose 8-bit copy is over the cap",
+      undefined,
+      client => client.text(Buffer.alloc(full.length, "a").toString("latin1")),
     ],
   ];
 
   // The server still serves, with the shared inflate buffer still usable.
   async function expectStillServing(scheme: "ws" | "wss") {
     using client = await connect(scheme, deflate);
-    client.binary(Buffer.alloc(2 * MiB));
-    client.binary(deflated(2 * MiB), { rsv1: true });
+    client.binary(intact);
+    client.binary(deflateRawSync(intact), { rsv1: true });
     client.close(1000);
-    expect(await client.remainingFrames()).toEqual([`text "got ${2 * MiB}"`, `text "got ${2 * MiB}"`, "close 1000"]);
+    expect(await client.remainingFrames()).toEqual([got(intact), got(intact), "close 1000"]);
     expect(await nextEvent()).toEqual({ close: 1000, reason: "" });
   }
 
@@ -378,42 +395,126 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
     test.each(refusals)("%s fails that connection with 1011", async (_name, headers, send) => {
       using client = await connect(scheme, headers);
       send(client);
-      expect(await client.remainingFrames()).toEqual([`close 1011 ${JSON.stringify(diagnostic)}`]);
+      expect(await client.remainingFrames()).toEqual([failed]);
       expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
       await expectStillServing(scheme);
     });
   });
 
-  // A growth asks for twice the buffer. When that is refused, it asks for the exact size before
-  // the connection fails: 2.5 MiB then 1 MiB is a refused 5 MiB, and a granted 3.5 MiB.
-  test("a message that fits only at its exact size is delivered", async () => {
+  // The ping waits behind the first fragment until its second half arrives. Then it is cut
+  // off again, and the message continues in the same buffer.
+  test("a ping that arrives in two reads inside a fragmented message leaves the message intact", async () => {
     using client = await connect("ws");
-    client.binary(Buffer.alloc(2.5 * MiB), { fin: false });
-    client.send(OP.continuation, Buffer.alloc(MiB));
+    using other = await connect("ws");
+    const message = patterned(MiB);
+    const ping = client.frame(OP.ping, "0123456789");
+    client.binary(message.subarray(0, MiB / 2), { fin: false });
+    client.write(ping.subarray(0, 10));
+    // Two round trips on another connection: the server has read the first half by now.
+    expect([await other.roundTrip(), await other.roundTrip()]).toEqual([[], []]);
+    client.write(ping.subarray(10));
+    client.send(OP.continuation, message.subarray(MiB / 2));
     client.close(1000);
-    expect(await client.remainingFrames()).toEqual([`text "got ${3.5 * MiB}"`, "close 1000"]);
+    expect(await client.remainingFrames()).toEqual(['pong "0123456789"', got(message), "close 1000"]);
+    expect(await nextEvent()).toEqual({ close: 1000, reason: "" });
+    other.close(1000);
+    expect(await other.remainingFrames()).toEqual(["close 1000"]);
     expect(await nextEvent()).toEqual({ close: 1000, reason: "" });
   });
 
-  // A Close frame would have to wait behind the 3 MiB, in a buffer that has to grow for it.
-  test.skipIf(!fault.available())("with unsent data, the connection closes without a Close frame", async () => {
+  // Nothing is unsent yet, so the Close frame is sent. It waits in the send buffer until the
+  // socket is writable.
+  test.skipIf(!fault.available())("a socket that cannot write yet still gets its Close frame", async () => {
     using client = await connect("ws");
-    client.text("stall");
+    client.text("hold");
     client.binary(tooBig);
-    expect(await client.remainingFrames()).toEqual([]);
+    expect(await client.remainingFrames()).toEqual([failed]);
     expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
     await expectStillServing("ws");
   });
 
+  describe("with unsent data", () => {
+    // The unsent data is freed at once. A Close frame would keep it until the peer reads it,
+    // and would have to be written behind it.
+    test.skipIf(!fault.available())("the connection closes without a Close frame", async () => {
+      using client = await connect("ws");
+      client.text("stall");
+      client.binary(tooBig);
+      expect(await client.remainingFrames()).toEqual([]);
+      expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
+      await expectStillServing("ws");
+    });
+
+    // It is a close, not a reset: what the kernel already took is not thrown away.
+    test("the frames that the kernel already took still arrive", async () => {
+      using client = await connect("ws", deflate);
+      client.socket.pause();
+      client.text("flood");
+      const { flooded } = await nextEvent();
+      expect(flooded).toBeGreaterThan(0);
+      client.binary(deflated(tooBig.length), { rsv1: true });
+      expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
+      client.socket.resume();
+      const frames = await client.remainingFrames();
+      await client.closed;
+      expect({ frames: frames.length, socketEvents: client.socketEvents }).toEqual({
+        frames: flooded,
+        socketEvents: ["end", "close"],
+      });
+      await expectStillServing("ws");
+    });
+  });
+
+  // failOutOfMemory() takes the socket out of its topics without writing what is queued for it.
+  // Every socket of the fixture is subscribed to one topic, and "publish" publishes to it.
+  describe("a socket with a queued publish", () => {
+    // One write, so one read: the publish is still queued when the next frame is refused.
+    const publishThenRefused = (client: RawClient) =>
+      client.write(
+        Buffer.concat([
+          client.frame(OP.text, "publish"),
+          client.frame(OP.binary, deflated(tooBig.length), { rsv1: true }),
+        ]),
+      );
+
+    // The other subscriber got that publish, and the topic still works for the next one.
+    async function expectTopicIntact(bystander: RawClient) {
+      bystander.text("publish");
+      bystander.close(1000);
+      expect(await bystander.remainingFrames()).toEqual(['text "published"', 'text "published"', "close 1000"]);
+      expect(await nextEvent()).toEqual({ close: 1000, reason: "" });
+    }
+
+    test("gets the 1011 and not the publish", async () => {
+      using bystander = await connect("ws");
+      using victim = await connect("ws", deflate);
+      publishThenRefused(victim);
+      expect(await victim.remainingFrames()).toEqual([failed]);
+      expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
+      await expectTopicIntact(bystander);
+    });
+
+    test.skipIf(!fault.available())("leaves its topics when it has unsent data too", async () => {
+      using bystander = await connect("ws");
+      using victim = await connect("ws", deflate);
+      victim.text("stall");
+      publishThenRefused(victim);
+      expect(await victim.remainingFrames()).toEqual([]);
+      expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
+      await expectTopicIntact(bystander);
+    });
+  });
+
   // The `ws` package's server sockets use the same parser. There the failure is an 'error' event.
   describe("the ws package", () => {
-    const error = { error: "RangeError", message: "Out of memory", code: "ERR_MEMORY_ALLOCATION_FAILED" };
+    const error = { error: "RangeError", message: "Failed to allocate memory", code: "ERR_MEMORY_ALLOCATION_FAILED" };
+    const hi = Buffer.from("hi");
 
     async function expectStillServing() {
       using client = await connect("ws-package");
-      client.text("hi");
+      client.text(hi);
       client.close(1000);
-      expect(await client.remainingFrames()).toEqual(['text "got 2"', "close 1000"]);
+      expect(await client.remainingFrames()).toEqual([got(hi), "close 1000"]);
       expect(await nextEvent()).toEqual({ close: 1000 });
     }
 

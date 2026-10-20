@@ -62,14 +62,11 @@ struct ReceiveBuffer {
     }
 
 private:
-    /* Makes room for n more bytes. Doubles, so a message is copied a constant number of times. A refused
-     * double is asked again at the exact size, so a refusal means that the bytes do not fit. */
+    /* Makes room for n more bytes. Doubles, so a message is copied a constant number of times. It asks once:
+     * a buffer that is refused gives its memory back instead of holding it for a smaller request. */
     __attribute__((noinline)) bool tryGrow(size_t n) {
-        if (n > SIZE_MAX - len) return false;
-        size_t exact = len + n;
-        /* If cap * 2 wraps, exact wins the max(). */
-        size_t doubled = std::max(exact, cap * 2);
-        return tryReserve(doubled) || (doubled != exact && tryReserve(exact));
+        /* If cap * 2 wraps, len + n wins the max(). */
+        return n <= SIZE_MAX - len && tryReserve(std::max(len + n, cap * 2));
     }
 
     char *buf = nullptr;

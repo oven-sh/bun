@@ -177,10 +177,11 @@ private:
                     }
                 }
             } else {
-                /* Ask for the whole frame up front first time, but at most 16 MiB. The peer controls that length,
-                 * so it is only a hint: if it is refused, the buffer grows with the bytes that arrive. */
-                if (!webSocketData->fragmentBuffer.length()) {
-                    (void) webSocketData->fragmentBuffer.tryReserve(std::min<size_t>(length + remainingBytes, 16 * 1024 * 1024));
+                /* Ask for the whole frame up front first time, but at most 16 MiB: the peer controls that length.
+                 * A refusal fails the connection here, before it holds memory for a message it cannot finish. */
+                if (!webSocketData->fragmentBuffer.length()
+                    && !webSocketData->fragmentBuffer.tryReserve(std::min<size_t>(length + remainingBytes, 16 * 1024 * 1024))) {
+                    return failOutOfMemory(s);
                 }
                 /* Fragments forming a big message are not caught until appending them */
                 if (refusePayloadLength(length + webSocketData->fragmentBuffer.length(), webSocketState, s)) {

@@ -72,8 +72,6 @@ static void free_global_string(void* str, void* ptr, unsigned len)
     EncodedSlice__freeGlobal(reinterpret_cast<const unsigned char*>(ptr), len);
 }
 
-static WTF::String tryConvertValidUTF8ToString(std::span<const unsigned char> bytes);
-
 static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
 {
     // fromUTF8ReplacingInvalidSequences CRASH()es past a ~2^30-byte input
@@ -84,13 +82,6 @@ static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
     const char* data = reinterpret_cast<const char*>(bytes.data());
     if (!simdutf::validate_utf8(data, bytes.size())) [[unlikely]]
         return {};
-    return tryConvertValidUTF8ToString(bytes);
-}
-
-// `bytes` is valid UTF-8. Null if the allocation fails or the result is longer than a String can be.
-static WTF::String tryConvertValidUTF8ToString(std::span<const unsigned char> bytes)
-{
-    const char* data = reinterpret_cast<const char*>(bytes.data());
     size_t utf16Length = simdutf::utf16_length_from_utf8(data, bytes.size());
     if (utf16Length > WTF::String::MaxLength) [[unlikely]]
         return {};

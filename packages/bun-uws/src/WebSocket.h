@@ -80,13 +80,7 @@ public:
         }
         Super::uncork();
 
-        /* Callers rely on the close event having run on return, which code 0 does not give on TLS (CloseCode, src/uws_sys/us_socket_t.rs). */
-        us_socket_t *s = us_socket_close((us_socket_t *) this, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
-        if (!us_socket_is_closed((us_socket_t *) this)) {
-            /* Parked behind the TLS ciphertext spill, which a peer that stopped reading never drains. */
-            s = us_socket_close((us_socket_t *) this, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
-        }
-        return s;
+        return closeSocket();
     }
 
     enum SendStatus : int {
@@ -326,6 +320,17 @@ private:
         }
     }
 
+    /* Closes the socket and writes nothing more to it. What the kernel already has still reaches the peer.
+     * Callers rely on the close event having run on return, which code 0 does not give on TLS (CloseCode, src/uws_sys/us_socket_t.rs). */
+    us_socket_t *closeSocket() {
+        us_socket_t *s = us_socket_close((us_socket_t *) this, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
+        if (!us_socket_is_closed((us_socket_t *) this)) {
+            /* Parked behind the TLS ciphertext spill, which a peer that stopped reading never drains. */
+            s = us_socket_close((us_socket_t *) this, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
+        }
+        return s;
+    }
+
     /* The close handler gets 1006, or -failure.kind in a wsPackage context. */
     void emitFailure(const WebSocketFailure &failure, unsigned int detail) {
         if (!getContextData()->wsPackage) {
@@ -385,10 +390,11 @@ public:
             return;
         }
 
-        /* A Close frame would have to grow the buffer of unsent data. Report the failure and drop the connection. */
+        /* The unsent data goes back to the allocator now. A Close frame would hold it until the peer reads it,
+         * and may need a growth that ends the process. */
         webSocketData->isShuttingDown = true;
         emitFailure(FAIL_OUT_OF_MEMORY, 0);
-        us_socket_close((us_socket_t *) this, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
+        closeSocket();
     }
 
     /* Corks the response if possible. Leaves already corked socket be. */

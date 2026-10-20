@@ -1,4 +1,7 @@
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
+import { open } from "node:fs/promises";
+import { join } from "node:path";
 
 const { isWindows } = require("../../node/test/common");
 
@@ -144,6 +147,89 @@ describe.each(["stdout", "stderr"] as const)("maxBuffer kills the process after 
     expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
       exitCode: null,
       signalCode: killSignal,
+    });
+  });
+});
+
+// spawnSync reads the child's stdout and stderr once before it starts to watch the child for its exit. A child
+// that wrote before that read has crossed `maxBuffer` by then, and that is where the kill is decided.
+//
+// The order is forced, not raced. The child's stdin and its other output are FIFOs, which the child's side of the
+// spawn opens before it execs, so it blocks there until this test opens both. The caller of spawnSync is parked in
+// vfork() until that exec: a SIGSTOP sent meanwhile stops it the moment vfork() returns, before it can read
+// anything, and it is continued once the child has written. vfork() parks the caller like that on Linux.
+describe.skipIf(!isLinux)("maxBuffer kills a child whose output is in the pipe before spawnSync reads it", () => {
+  const callSpawnSync = /* js */ `
+    const [stdin, other, stream, script] = process.argv.slice(1);
+    const { exitCode, signalCode = null, exitedDueToMaxBuffer } = Bun.spawnSync({
+      cmd: ["sh", "-c", script],
+      stdin: Bun.file(stdin),
+      stdout: stream === "stdout" ? "pipe" : Bun.file(other),
+      stderr: stream === "stderr" ? "pipe" : Bun.file(other),
+      maxBuffer: 256,
+      killSignal: "SIGHUP",
+    });
+    console.log(JSON.stringify({ exitCode, signalCode, exitedDueToMaxBuffer }));
+  `;
+
+  describe.each(["stdout", "stderr"] as const)("on %s", stream => {
+    // The bytes that count go to `stream`, and the line that says they are written goes to the other FIFO.
+    const [toStream, toOther] = stream === "stdout" ? ["", " >&2"] : [" >&2", ""];
+
+    test.concurrent.each([
+      ["a child that keeps writing", `exec yes${toStream}`, {}],
+      [
+        "a child that keeps writing, with the waiter thread",
+        `exec yes${toStream}`,
+        { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+      ],
+      // It ends by itself with code 0 if nothing kills it.
+      ["a child that stays alive in silence", "exec sleep 2", {}],
+    ])("%s", async (_, andThen, env) => {
+      using dir = tempDir("spawn-maxbuf-first-read", {});
+      const stdinFifo = join(String(dir), "stdin");
+      const otherFifo = join(String(dir), "other");
+      mkfifo(stdinFifo);
+      mkfifo(otherFifo);
+
+      await using caller = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          callSpawnSync,
+          stdinFifo,
+          otherFifo,
+          stream,
+          `printf '%0600d' 0${toStream}; echo ready${toOther}; ${andThen}`,
+        ],
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "inherit",
+        // Ends it when it is stopped, too.
+        killSignal: "SIGKILL",
+      });
+      // Nothing opens the other end of a FIFO once the caller is gone.
+      const unlessCallerExits = <T>(step: Promise<T>) =>
+        Promise.race([
+          step,
+          caller.exited.then(code => {
+            throw new Error(`the caller exited with code ${code} before its child wrote`);
+          }),
+        ]);
+
+      // Returns when the child's open() of its stdin does: the caller is in vfork().
+      await using stdin = await unlessCallerExits(open(stdinFifo, "w"));
+      process.kill(caller.pid, "SIGSTOP");
+      // The child's last open() returns, and it execs.
+      await using other = await unlessCallerExits(open(otherFifo, "r"));
+      const { bytesRead, buffer } = await unlessCallerExits(other.read(Buffer.alloc(16)));
+      expect(buffer.toString("utf8", 0, bytesRead)).toBe("ready\n");
+      // The child's 600 bytes are in the pipe, and the caller has yet to read it.
+      process.kill(caller.pid, "SIGCONT");
+
+      const [stdout, exitCode] = await Promise.all([caller.stdout.text(), caller.exited]);
+      expect(JSON.parse(stdout)).toEqual({ exitCode: null, signalCode: "SIGHUP", exitedDueToMaxBuffer: true });
+      expect(exitCode).toBe(0);
     });
   });
 });

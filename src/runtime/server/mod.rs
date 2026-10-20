@@ -4012,6 +4012,16 @@ impl AnyServer {
         any_server_dispatch!(self, |s| &s.config)
     }
 
+    /// Whether a route of the `routes` option, or a static route, has exactly this path.
+    pub(crate) fn has_route(&self, path: &[u8]) -> bool {
+        any_server_dispatch!(self, |s| {
+            s.user_routes
+                .iter()
+                .any(|r| r.route.path.as_bytes() == path)
+                || s.config.static_routes.iter().any(|r| &*r.path == path)
+        })
+    }
+
     #[inline]
     pub(crate) fn terminated(&self) -> bool {
         any_server_dispatch!(self, |s| s.flags.contains(ServerFlags::TERMINATED))

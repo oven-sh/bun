@@ -1,7 +1,7 @@
 ------------------
 { printWidth: 80 }
 ------------------
-**a **b, ** c **, /_ d _/, e**.** f
+e**.** f
 
 import * as g from "h";
 import * as i from "j";
@@ -13,7 +13,7 @@ import * as i from "j";
 -------------------
 { printWidth: 100 }
 -------------------
-**a **b, ** c **, /_ d _/, e**.** f
+e**.** f
 
 import * as g from "h";
 import * as i from "j";

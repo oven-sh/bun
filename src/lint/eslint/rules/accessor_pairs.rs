@@ -32,7 +32,7 @@ const MISSING_GETTER_IN_TYPE: Message =
 const MISSING_SETTER_IN_TYPE: Message =
     Message::new("missingSetterInType", "Setter is not present for type {{ name }}.");
 
-/// A `get` or a `set` of an object literal, a class, an interface or a type literal.
+/// A `get` or `set` accessor in an object literal, class, interface or type literal.
 #[derive(Copy, Clone)]
 pub(super) struct Accessor<'a> {
     pub(super) key: Key<'a>,
@@ -41,7 +41,7 @@ pub(super) struct Accessor<'a> {
 }
 
 impl<'a> Accessor<'a> {
-    pub(super) fn of_prop(prop: Prop<'a>) -> Option<Self> {
+    pub(super) fn from_prop(prop: Prop<'a>) -> Option<Self> {
         let is_getter = match prop.kind() {
             PropKind::Getter => true,
             PropKind::Setter => false,
@@ -54,7 +54,7 @@ impl<'a> Accessor<'a> {
         })
     }
 
-    pub(super) fn of_member(member: Member<'a>) -> Option<Self> {
+    pub(super) fn from_member(member: Member<'a>) -> Option<Self> {
         let is_getter = match member.kind() {
             MemberKind::Getter => true,
             MemberKind::Setter => false,
@@ -68,7 +68,7 @@ impl<'a> Accessor<'a> {
     }
 }
 
-/// The same name, if both are known without evaluating anything. The same tokens, if neither is.
+/// True if both keys have the same static name or, if neither name is static, the same tokens.
 fn are_equal_keys<'a>(file: &'a File<'a>, left: Key<'a>, right: Key<'a>) -> bool {
     if let (KeyKind::Private(left), KeyKind::Private(right)) = (left.kind(), right.kind()) {
         return left == right;
@@ -94,8 +94,8 @@ fn oxlint_static_name(key: Key<'_>) -> Option<&[u8]> {
     utils::oxlint::property_key_name(key).filter(|_| !key.is_private())
 }
 
-/// What oxlint asks of a property descriptor beyond [`ast_utils::is_property_descriptor`]: neither it nor the object that
-/// it is in is in parentheses, and the name of the method is not in brackets.
+/// oxlint's extra conditions on a property descriptor, beyond [`ast_utils::is_property_descriptor`]: neither it nor its
+/// containing object is parenthesized, and the method isn't accessed with brackets.
 fn is_plain_descriptor(e: Expr<'_>) -> bool {
     let argument = match e.parent() {
         Node::Prop(prop) => prop.parent().as_expr(),
@@ -109,7 +109,8 @@ fn is_plain_descriptor(e: Expr<'_>) -> bool {
 }
 
 impl AccessorPairs {
-    /// `func` is one of `accessors`, which are all of an object literal, a class or a type that can be a pair with it.
+    /// `func` is one of `accessors`, which holds every accessor of the object literal, class or type that could pair
+    /// with it.
     fn check<'a>(
         &self,
         func: Func<'a>,
@@ -128,33 +129,33 @@ impl AccessorPairs {
         let is_same = |other: &Accessor<'a>| {
             other.is_getter == accessor.is_getter && are_equal_keys(cx.file(), other.key, accessor.key)
         };
-        // Of several getters, or setters, of a name that is known oxlint keeps the last.
+        // If a static name has several getters or setters, oxlint only looks at the last one.
         let is_oxlint = cx.language().is_oxlint;
-        let keeps_the_last = is_oxlint && accessor.key.name().is_some();
-        if accessors.iter().any(is_paired) || keeps_the_last && accessors.iter().skip(i + 1).any(is_same) {
+        let uses_last_only = is_oxlint && accessor.key.name().is_some();
+        if accessors.iter().any(is_paired) || uses_last_only && accessors.iter().skip(i + 1).any(is_same) {
             return;
         }
         let message = if accessor.is_getter { missing_setter } else { missing_getter };
-        // oxlint points at the key.
-        let place = match is_oxlint {
+        // oxlint reports at the key.
+        let report_span = match is_oxlint {
             true => utils::oxlint::property_key_span(accessor.key, cx.file()),
             false => ast_utils::get_function_head_loc(accessor.func),
         };
-        cx.report(place, message)
+        cx.report(report_span, message)
             .data("name", ast_utils::get_function_name_with_kind(accessor.func));
     }
 
     fn check_type<'a>(&self, func: Func<'a>, members: List<'a, Member<'a>>, cx: &Cx<'a, Self>) {
         self.check(
             func,
-            &mut members.iter().filter_map(Accessor::of_member),
+            &mut members.iter().filter_map(Accessor::from_member),
             MISSING_GETTER_IN_TYPE,
             MISSING_SETTER_IN_TYPE,
             cx,
         );
     }
 
-    /// Whether an object literal of the file can be a property descriptor that is reported.
+    /// True if an object literal in the file could be a property descriptor that gets reported.
     fn may_have_descriptors(&self, file: &File) -> bool {
         (self.set_without_get && file.mentions("set")
             || self.get_without_set && !file.language().is_oxlint && file.mentions("get"))
@@ -199,7 +200,7 @@ impl Rule for AccessorPairs {
         let (mut has_getter, mut has_setter, mut key_of_setter) = (false, false, None);
         let is_oxlint = cx.language().is_oxlint;
         for prop in props {
-            // oxlint goes by the name, however it is written and whatever has it.
+            // oxlint only compares the name, however the key is written and whatever kind of property it is.
             let name = match (prop.key().map(Key::kind), prop.kind()) {
                 _ if is_oxlint => prop.key().and_then(oxlint_static_name),
                 (Some(KeyKind::Ident(name)), PropKind::Init | PropKind::Shorthand | PropKind::Method) => Some(name.bytes()),
@@ -212,17 +213,17 @@ impl Rule for AccessorPairs {
         }
         let message = match (has_getter, has_setter) {
             (false, true) if self.set_without_get => MISSING_GETTER_IN_PROPERTY_DESCRIPTOR,
-            // oxlint does not miss the setter of a descriptor.
+            // oxlint doesn't report a descriptor's missing setter.
             (true, false) if self.get_without_set && !is_oxlint => MISSING_SETTER_IN_PROPERTY_DESCRIPTOR,
             _ => return,
         };
         if ast_utils::is_property_descriptor(e) && (!is_oxlint || is_plain_descriptor(e)) {
-            // oxlint points at the `set`.
-            let place = match key_of_setter.filter(|_| is_oxlint) {
+            // oxlint reports at the `set`.
+            let report_span = match key_of_setter.filter(|_| is_oxlint) {
                 Some(key) => key.inner_span(cx.file()),
                 None => e.span(),
             };
-            cx.report(place, message);
+            cx.report(report_span, message);
         }
     }
 
@@ -250,7 +251,7 @@ impl AccessorPairs {
                 {
                     self.check(
                         func,
-                        &mut props.iter().filter_map(Accessor::of_prop),
+                        &mut props.iter().filter_map(Accessor::from_prop),
                         MISSING_GETTER_IN_OBJECT_LITERAL,
                         MISSING_SETTER_IN_OBJECT_LITERAL,
                         cx,
@@ -260,14 +261,14 @@ impl AccessorPairs {
             Node::Member(member) => match member.parent() {
                 Node::Class(class) if self.enforce_for_class_members => {
                     let is_static = member.is_static();
-                    // An abstract accessor is not a `MethodDefinition`, but for oxlint.
+                    // An abstract accessor isn't a `MethodDefinition`, except in oxlint.
                     let is_oxlint = cx.language().is_oxlint;
                     let methods = class.members().iter().filter(move |member| {
                         member.is_static() == is_static && (is_oxlint || !member.flags().contains(Flags::ABSTRACT))
                     });
                     self.check(
                         func,
-                        &mut methods.filter_map(Accessor::of_member),
+                        &mut methods.filter_map(Accessor::from_member),
                         MISSING_GETTER_IN_CLASS,
                         MISSING_SETTER_IN_CLASS,
                         cx,

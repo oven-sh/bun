@@ -781,6 +781,31 @@ pub(crate) use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_ar
 /// the attached value `e`. Bun's `-p` takes the code, so `-pe X` is `-p X`.
 pub(crate) const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
 
+/// Whether `flag` (`--name`, `--name=value` or `-n`) takes a separate value. `None` when it is not in `AUTO_PARAMS`.
+pub(crate) fn takes_value(flag: &[u8]) -> Option<bool> {
+    let name = strings::split_once_char(flag, b'=').map_or(flag, |(name, _)| name);
+    let alias = NODE_SHORT_ALIASES.iter().find(|(from, _)| *from == name);
+    let name = alias.map_or(name, |(_, to)| *to);
+    let mut known = None;
+    for param in AUTO_PARAMS {
+        let long = name.strip_prefix(b"--".as_slice());
+        let is_long = long.is_some_and(|long| param.names.matches_long(long));
+        let is_short = param.names.short.is_some_and(|short| name == [b'-', short]);
+        if is_long || is_short {
+            // An optional value is only ever written `--name=value`.
+            let separate = !matches!(
+                param.takes_value,
+                clap::Values::None | clap::Values::OneOptional
+            );
+            if separate {
+                return Some(true);
+            }
+            known = Some(false);
+        }
+    }
+    known
+}
+
 /// `--disallow-code-generation-from-strings[=<value>]`. Raises the process's level; never lowers it.
 fn disallow_code_generation_from_strings(value: &[u8]) {
     match bun_core::CodeGenerationFromStrings::from_flag_value(value) {

@@ -252,6 +252,7 @@ describe("parseArgs default args in a Worker", () => {
     [["--eval=1", "-p", ""], slicedAt1],
     // A token after another flag is that flag's value, and the code of an eval flag is not a flag.
     [["-r", "node:path", "-e", "1"], slicedAt1],
+    [["-C", "x", "-e", "1"], slicedAt1],
     [["-e", "", "-e", "1"], slicedAt1],
     [["-e", "1", "-e", ""], slicedAt2],
     [["-e", "\u0000"], slicedAt1],
@@ -260,10 +261,11 @@ describe("parseArgs default args in a Worker", () => {
     [["--no-addons", "x", "-e", "1"], slicedAt2],
     [["--conditions=x", "x", "-e", "1"], slicedAt2],
     [["--", "-e", "1"], slicedAt2],
-    // Node rejects the next three. They are read as bun's CLI reads them.
+    // Node rejects the next four. They are read as bun's CLI reads them.
     [["-e=1"], slicedAt1],
     [["-p=1"], slicedAt1],
     [["-e", "-1"], slicedAt1],
+    [["-p", "-1"], slicedAt1],
   ];
 
   test.each(

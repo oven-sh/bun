@@ -1640,16 +1640,17 @@ fn exec_argv_has_eval_string<'a>(
                 has_eval_string = code.length() != 0;
             }
         } else if matches!(flag, b"-p" | b"--print") {
-            // https://github.com/nodejs/node/blob/v26.3.0/src/node_options.cc#L1171-L1174
+            // In Node a `-p` before another option only prints. Bun's CLI takes any other token as the code.
+            let is_option = |next: &bun_core::WTFStringImplStruct| {
+                let next = next.to_utf8();
+                *next == *b"--" || crate::cli::arguments::takes_value(&next).is_some()
+            };
             has_eval_string |= tokens
-                .next_if(|next| next.length() != 0 && !is_flag(next))
+                .next_if(|next| next.length() != 0 && !(is_flag(next) && is_option(next)))
                 .is_some();
         } else {
-            let takes_no_value = matches!(
-                flag,
-                b"--no-addons" | b"--no-ffi-cc" | b"--disallow-code-generation-from-strings"
-            );
-            value_may_follow = !takes_no_value && !bun_core::strings::contains_char(flag, b'=');
+            let takes_none = crate::cli::arguments::takes_value(flag) == Some(false);
+            value_may_follow = !takes_none && !bun_core::strings::contains_char(flag, b'=');
         }
     }
     has_eval_string

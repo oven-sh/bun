@@ -15,6 +15,7 @@ import {
   tls as tlsCert,
   tmpdirSync,
 } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   ChildProcess,
   exec,
@@ -26,7 +27,6 @@ import {
   spawnSync,
   type StdioOptions,
 } from "node:child_process";
-import { AsyncLocalStorage } from "node:async_hooks";
 import { getEventListeners, once, setMaxListeners } from "node:events";
 import net from "node:net";
 import os from "node:os";

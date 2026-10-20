@@ -608,4 +608,33 @@ console.log("PRELOAD");
       setCwd: true,
     },
   });
+
+  // tsconfig paths come from the cwd, not from the executable's directory,
+  // when the executable lives outside the project tree.
+  itBundled("compile/AutoloadTsconfigPathsFromCwdWithExecutableOutsideProject", {
+    compile: {
+      autoloadTsconfig: true,
+    },
+    backend: "cli",
+    outfile: "/bin/app",
+    files: {
+      "/entry.ts": /* ts */ `
+        import path from "node:path";
+        process.chdir(path.join(path.dirname(process.execPath), "..", "proj"));
+        const modulePath = "@lib/" + "mymodule";
+        const m = await import(modulePath);
+        console.log(m.default);
+      `,
+    },
+    runtimeFiles: {
+      "/proj/tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { "@lib/*": ["./lib/*"] } },
+      }),
+      "/proj/lib/mymodule.ts": `export default "mymodule-from-cwd-tsconfig";`,
+    },
+    run: {
+      stdout: "mymodule-from-cwd-tsconfig",
+      setCwd: true,
+    },
+  });
 });

@@ -93,7 +93,7 @@ impl<const OLD_NAME: bool> Rule for First<OLD_NAME> {
                 last_legal_imp = Some(stmt);
             }
         }
-        let last_sort_nodes_index = OnceCell::new();
+        let sorted = OnceCell::new();
         for (index, info) in error_infos.iter().enumerate() {
             // oxlint has no fix.
             if is_oxlint {
@@ -101,14 +101,69 @@ impl<const OLD_NAME: bool> Rule for First<OLD_NAME> {
                 continue;
             }
             cx.report(info.node.span(), IN_BODY).fix(|fixer| {
-                let last = *last_sort_nodes_index.get_or_init(|| ErrorInfo::last_to_sort(&error_infos));
-                match index.cmp(&last) {
+                let (last, fix) = sorted.get_or_init(|| {
+                    let last = ErrorInfo::last_to_sort(&error_infos);
+                    (last, ErrorInfo::sort(error_infos.get(..=last).unwrap_or_default(), last_legal_imp, fixer))
+                });
+                let fix = fix.as_ref()?;
+                match index.cmp(last) {
                     Ordering::Less => Some(fixer.insert_after(info.node, "")),
-                    Ordering::Equal => Some(ErrorInfo::sort(error_infos.get(..=last)?, last_legal_imp, fixer)),
+                    Ordering::Equal => Some(fix.clone()),
                     Ordering::Greater => None,
                 }
             });
         }
+    }
+}
+
+/// Returns the end of `import` including its trailing comments, and true if nothing may follow on that line, because
+/// the import has no `;` or its last comment is a `//`. A `;` on a later line isn't part of the import. It's there to
+/// keep that line from continuing the previous one, as in `;[a].map(b)`.
+fn end_with_comments<'a>(import: Stmt<'a>, fixer: Fixer<'a>) -> (u32, bool) {
+    let file = fixer.file();
+    let mut tokens = file.tokens_in(import).rev();
+    let (code_end, has_semicolon) = match (tokens.next(), tokens.next()) {
+        (Some(last), Some(before)) if last.is(";") => match ast_utils::is_token_on_same_line(file, before, last) {
+            true => (last.end(), true),
+            false => (before.end(), false),
+        },
+        _ => (import.span().end, false),
+    };
+    let end = fixer.end_with_comments_beside(code_end);
+    (end, !has_semicolon || is_end_of_line_comment(file, end))
+}
+
+fn is_end_of_line_comment<'a>(file: &'a File<'a>, at: u32) -> bool {
+    let comment = at.checked_sub(1).and_then(|it| file.comment_around(it));
+    comment.is_some_and(|it| it.kind() == TokenKind::Line)
+}
+
+/// True if `text` starts with whitespace that contains a line break.
+fn starts_on_a_new_line(text: &[u8]) -> bool {
+    let blank = text.len() - strings::trim_js_whitespace_start(text).len();
+    strings::contains_js_line_break(text.get(..blank).unwrap_or_default())
+}
+
+/// True if deleting `removed`, whose first token is an `import`, would make the next statement continue the statement
+/// before `removed`, or become part of a `//` comment there.
+fn joins_statements<'a>(file: &'a File<'a>, removed: Span) -> bool {
+    let (Some(before), Some(import), Some(after)) =
+        (file.token_before(removed), file.first_token(removed), file.token_after(removed))
+    else {
+        return false;
+    };
+    let follows_on_the_line = ast_utils::is_on_one_line(file, removed.between(after.span()));
+    if follows_on_the_line && is_end_of_line_comment(file, removed.start) {
+        return true;
+    }
+    if before.is(";") {
+        return false;
+    }
+    match follows_on_the_line && ast_utils::is_on_one_line(file, before.span().between(removed)) {
+        // If an import follows `before` on the same line, `before` ends its statement without a `;` or a line break, so
+        // another statement can follow it too.
+        true => !ast_utils::is_token_on_same_line(file, before, import),
+        false => ast_utils::continues_statement(file, before, after),
     }
 }
 
@@ -124,38 +179,72 @@ impl<'a> ErrorInfo<'a> {
         error_infos.iter().take_while(|it| !it.is_used_before()).count().saturating_sub(1)
     }
 
-    /// Moves all of `sort_nodes` behind the last import that is where it belongs, or before the first statement.
+    /// Moves all of `sort_nodes` after the last import that's already in place, or to the start of the file's first
+    /// statement if there is none. Comments above and beside an import move with it. Returns `None` if the move would
+    /// change the program's behavior.
     #[cold]
     #[inline(never)]
-    fn sort(sort_nodes: &[ErrorInfo<'a>], last_legal_imp: Option<Stmt<'a>>, fixer: Fixer<'a>) -> Fix {
+    fn sort(sort_nodes: &[ErrorInfo<'a>], last_legal_imp: Option<Stmt<'a>>, fixer: Fixer<'a>) -> Option<Fix> {
         let file = fixer.file();
+        // The plugin inserts at the end of the import itself, or before the first statement, which can be
+        // `"use client"`.
+        let (insert_at, mut is_open) = match last_legal_imp {
+            Some(import) => end_with_comments(import, fixer),
+            None => (fixer.start_of_first_statement(), false),
+        };
         let mut insert_source_code = Vec::new();
+        let mut removed: SmallVec<[Span; 4]> = SmallVec::new();
         for info in sort_nodes {
-            let node_source_code = file.slice(info.range);
-            if strings::js_whitespace_len(node_source_code) == 0 {
+            let (end, ends_open) = end_with_comments(info.node, fixer);
+            let range = Span::new(fixer.end_with_comments_beside(info.range.start), end);
+            let node_source_code = file.slice(range);
+            let is_blank_first = strings::js_whitespace_len(node_source_code) > 0;
+            match !is_blank_first || is_open && !starts_on_a_new_line(node_source_code) {
+                true => {
+                    insert_source_code.push(b'\n');
+                    insert_source_code.extend_from_slice(strings::trim_js_whitespace_start(node_source_code));
+                }
+                false => insert_source_code.extend_from_slice(node_source_code),
+            }
+            is_open = ends_open;
+            match removed.last_mut() {
+                Some(last) if last.end == range.start => last.end = range.end,
+                _ => removed.push(range),
+            }
+        }
+        let (first, last) = (removed.first()?, removed.last()?);
+        // Modules are evaluated in source order, and `export .. from` loads a module too, so an import can't move past
+        // one.
+        let names_module = |it: Stmt| {
+            matches!(it.tag(), StmtTag::ExportNamed | StmtTag::ExportStar) && it.module_specifier_span().is_some()
+        };
+        let mut passed = file.body().iter().filter(|it| Span::empty(insert_at).between(*last).contains(it.span()));
+        if passed.any(names_module) || removed.iter().any(|it| joins_statements(file, *it)) {
+            return None;
+        }
+        if last_legal_imp.is_none() {
+            let without_start = strings::trim_js_whitespace_start(&insert_source_code);
+            let start_len = insert_source_code.len() - without_start.len();
+            let end_len = without_start.len() - strings::trim_js_whitespace_end(without_start).len();
+            insert_source_code.truncate(insert_source_code.len() - end_len);
+            insert_source_code.rotate_left(start_len);
+            let code_len = insert_source_code.len() - start_len;
+            let (code, blank) = insert_source_code.split_at_checked(code_len)?;
+            if (is_open || strings::contains_js_line_break(code)) && !strings::contains_js_line_break(blank) {
+                insert_source_code.truncate(code_len);
                 insert_source_code.push(b'\n');
             }
-            insert_source_code.extend_from_slice(node_source_code);
+        } else if is_open && !starts_on_a_new_line(file.slice(Span::empty(insert_at).between(*first))) {
+            insert_source_code.push(b'\n');
         }
-        let insert_at = match (last_legal_imp, file.body().first()) {
-            (Some(import), _) => import.span().end,
-            (None, first) => {
-                let without_start = strings::trim_js_whitespace_start(&insert_source_code);
-                let start_len = insert_source_code.len() - without_start.len();
-                let end_len = without_start.len() - strings::trim_js_whitespace_end(without_start).len();
-                insert_source_code.truncate(insert_source_code.len() - end_len);
-                insert_source_code.rotate_left(start_len);
-                first.map_or(0, |it| it.export_span().unwrap_or_else(|| it.span()).start)
-            }
-        };
         let start_of_text = if file.has_bom() { 3 } else { 0 };
         let mut replace_source_code = file.slice(Span::new(start_of_text, insert_at)).to_vec();
         replace_source_code.append(&mut insert_source_code);
         let mut kept_from = insert_at;
-        for info in sort_nodes {
-            replace_source_code.extend_from_slice(file.slice(Span::before(kept_from, info.range)));
-            kept_from = info.range.end;
+        for range in &removed {
+            replace_source_code.extend_from_slice(file.slice(Span::before(kept_from, *range)));
+            kept_from = range.end;
         }
-        fixer.replace(Span::new(start_of_text, kept_from), replace_source_code)
+        Some(fixer.replace(Span::new(start_of_text, kept_from), replace_source_code))
     }
 }

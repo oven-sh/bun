@@ -2,6 +2,7 @@ use bun_lint::prelude::*;
 use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::fix_tracker::FixTracker;
+use bun_lint::utils::visible::is_exported_from_namespace;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -443,7 +444,7 @@ impl PreferConst {
             let place = declared.unwrap_or_else(|| utils::estree_span(node));
             let report = cx.report(place, USE_CONST).data("name", name);
             if should_fix && let Some((statement, _)) = parent {
-                report.fix(|fixer| {
+                report.fix_where_safe(|| !is_exported_from_namespace(statement), |fixer| {
                     let range = statement.span_without_export();
                     let keyword = fixer.file().tokens_in(range).find(|token| token.is("let"))?;
                     // The whole declaration, so that no other fix changes it in the same pass.

@@ -37,7 +37,10 @@ async function format(files: Record<string, string>, names: string[], flags: str
 }
 
 for (const [tool, config] of Object.entries(tools)) {
-  const cases: Case[] = JSON.parse(readFileSync(join(import.meta.dir, `${tool}.json`), "utf8"));
+  const recorded: Case[] = JSON.parse(readFileSync(join(import.meta.dir, `${tool}.json`), "utf8"));
+  // Where @trivago's plugin puts a module that is named by a hexadecimal number depends on where it was, and a second run moves it
+  // again. `bun fmt` gives it one place.
+  const cases = recorded.filter(it => tool !== "trivago" || !/from (["']) *0x[0-9a-f]+ *\1/i.test(it.input));
   // One run for all the cases with the same options.
   const groups = Map.groupBy(cases, it => JSON.stringify(it.options));
 
@@ -91,6 +94,15 @@ describe.concurrent("when imports are sorted", () => {
     expect(result.files).toEqual([
       'import * as w from "w";\n\nimport d from "d";\nimport e from "e";\nimport /* c */ * as ns from "x";\n',
     ]);
+    expect(result.exitCode).toBe(0);
+  });
+
+  // javascript-natural-sort says that each of the two is less than the other, so with the plugin they change places at every run.
+  test("for @trivago's plugin a hexadecimal number has one place, wherever it was", async () => {
+    const [first, second] = ['import b from "0x10B";\n', 'import a from "12a";\n'];
+    const files = { ".prettierrc.json": JSON.stringify(tools.trivago({ importOrder: [] })[1]) };
+    const result = await format({ ...files, "a.js": first + second, "b.js": second + first }, ["a.js", "b.js"]);
+    expect(result.files).toEqual([first + second, first + second]);
     expect(result.exitCode).toBe(0);
   });
 

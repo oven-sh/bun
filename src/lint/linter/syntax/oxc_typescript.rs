@@ -219,9 +219,9 @@ fn error(code: u16, at: Span, message: &str, stage: Stage) -> SyntaxError {
 fn modules<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
     let (hir, bound) = (&file.hir, &file.bound);
     for raw in hir.modules {
-        let parent = match bound.stmt_parent.get(raw.stmt.idx()) {
-            None | Some(Parent::None) => continue,
-            Some(&parent) => parent,
+        let parent = match bound.parent_of_stmt(raw.stmt) {
+            Parent::None => continue,
+            parent => parent,
         };
         let is_ambient = raw.flags.contains(Flags::AMBIENT);
         let whole = || Stmt::new(file, raw.stmt).span_without_export();
@@ -426,7 +426,10 @@ fn loop_heads<'a>(file: &'a File<'a>, has_scopes: bool, all: &mut Vec<SyntaxErro
         let Some(name) = hir.pats.get(only.pat.idx()) else {
             continue;
         };
-        if matches!(file.bound.stmt_parent.get(i), None | Some(Parent::None)) {
+        if matches!(
+            file.bound.parent_of_stmt(hir::StmtId(i as u32)),
+            Parent::None
+        ) {
             continue;
         }
         if only.init.is_some() {
@@ -478,20 +481,25 @@ fn export_assignments_beside_exports<'a>(
 ) {
     let hir = &file.hir;
     let body = hir.ids.get(module.body.range()).unwrap_or_default();
-    let body = || body.iter().filter_map(|&it| hir.stmts.get(it as usize));
-    let exports = |it: &hir::Stmt| match it.kind {
+    let with_ids = || {
+        body.iter()
+            .filter_map(|&it| Some((it, hir.stmts.get(it as usize)?)))
+    };
+    let body = || with_ids().map(|it| it.1);
+    let exports = |(id, it): (u32, &hir::Stmt)| match it.kind {
         StmtKind::ExportAssign(_) | StmtKind::ExportAsNamespace(_) => false,
         StmtKind::ExportNamed(export) => {
             (hir.exports.get(export.idx())).is_some_and(|it| !it.items.is_empty())
         }
         StmtKind::ExportStar { .. } | StmtKind::ExportDefault(_) => true,
         _ => {
-            let written = hir.modifiers.get(it.modifiers.range()).unwrap_or_default();
+            let written = hir.stmt_modifiers(hir::StmtId(id));
+            let written = hir.modifiers.get(written.range()).unwrap_or_default();
             let is_export = |it: &hir::Modifier| it.kind == ModifierKind::Keyword(Flags::EXPORT);
             written.iter().any(is_export)
         }
     };
-    if !body().any(exports) {
+    if !with_ids().any(exports) {
         return;
     }
     for it in body().filter(|it| matches!(it.kind, StmtKind::ExportAssign(_))) {
@@ -512,7 +520,8 @@ fn export_assignments_beside_exports<'a>(
 fn nested_module_syntax<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
     let hir = &file.hir;
     for (i, raw) in hir.stmts.iter().enumerate() {
-        let written = hir.modifiers.get(raw.modifiers.range()).unwrap_or_default();
+        let written = hir.stmt_modifiers(hir::StmtId(i as u32));
+        let written = hir.modifiers.get(written.range()).unwrap_or_default();
         let is_export = |it: &&hir::Modifier| it.kind == ModifierKind::Keyword(Flags::EXPORT);
         let (at, what) = match raw.kind {
             StmtKind::Import(_) => (raw.start, "import"),
@@ -525,8 +534,8 @@ fn nested_module_syntax<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
             },
         };
         if matches!(
-            file.bound.stmt_parent.get(i),
-            None | Some(Parent::None | Parent::File)
+            file.bound.parent_of_stmt(hir::StmtId(i as u32)),
+            Parent::None | Parent::File
         ) {
             continue;
         }

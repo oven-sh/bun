@@ -645,7 +645,8 @@ pub mod store {
         pub len: SizeType,
         pub cap: SizeType,
         pub allocator: bun_alloc::StdAllocator,
-        /// Used by standalone module graph and the `File` constructor.
+        /// The path of a file that `bun build --compile` embedded. A structured
+        /// clone carries it too.
         /// Heap-owned (or empty); freed by `Bytes`'s `Drop`.
         pub stored_name: Box<[u8]>,
     }

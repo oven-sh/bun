@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, isASAN, tempDir } from "harness";
 import type { BlobPropertyBag } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
+import { closeSync, openAsBlob, openSync } from "node:fs";
 import path from "node:path";
 
 test("blob: imports have sourcemapped stacktraces", async () => {
@@ -752,23 +753,30 @@ describe("consuming a slice's stream after the Blobs were collected", () => {
 // Wrapping a Blob whose type is heap-owned (not in the mime table) with a
 // known mime type overwrote content_type with a static pointer without
 // clearing content_type_allocated, so GC sweep freed a static pointer.
-test.skipIf(!isASAN).each(["Blob", "File"] as const)(
-  "new %s([typedBlob], {type}) with a known mime type does not free a static pointer",
-  async Ctor => {
-    const make =
-      Ctor === "Blob" ? `new Blob([inner], { type: "text/plain" })` : `new File([inner], "f", { type: "text/plain" })`;
+// Only a part that is a file still brings its heap-owned type into the constructor.
+test.skipIf(!isASAN).each([
+  ["Blob", `new Blob(["y"], { type: "x/not-in-the-table" })`, ""],
+  ["File", `new Blob(["y"], { type: "x/not-in-the-table" })`, ""],
+  ["Blob", `Bun.file(process.execPath, { type: "x/not-in-the-table" })`, "x/not-in-the-table"],
+  ["File", `Bun.file(process.execPath, { type: "x/not-in-the-table" })`, "x/not-in-the-table"],
+] as const)(
+  "new %s([%s], {type}) with a known mime type does not free a static pointer",
+  async (Ctor, inner, typeWithNoOptions) => {
+    const make = (options: string) =>
+      Ctor === "Blob" ? `new Blob([inner]${options})` : `new File([inner], "f"${options})`;
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-          const inner = new Blob(["y"], { type: "x/not-in-the-table" });
+          const inner = ${inner};
+          console.log(${make("")}.type);
           for (let i = 0; i < 2000; i++) {
-            ${make};
+            ${make(`, { type: "text/plain" }`)};
             if ((i & 127) === 0) Bun.gc(true);
           }
           Bun.gc(true); Bun.gc(true);
-          console.log(${make}.type);
+          console.log(${make(`, { type: "text/plain" }`)}.type);
         `,
       ],
       env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":") },
@@ -776,7 +784,7 @@ test.skipIf(!isASAN).each(["Blob", "File"] as const)(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-      stdout: expect.stringMatching(/^text\/plain(;charset=utf-8)?\n$/),
+      stdout: expect.stringMatching(new RegExp(`^${typeWithNoOptions}\\ntext/plain(;charset=utf-8)?\\n$`)),
       stderr: expect.not.stringContaining("AddressSanitizer"),
       exitCode: 0,
       signalCode: null,
@@ -1024,6 +1032,7 @@ describe("new Blob([blob]) and new File([blob], name) do not take the type of th
       multipart: (await new Response(form).text()).match(/^Content-Type: .*$/m)?.[0],
       structuredClone: structuredClone(wrapper).type,
       slice: wrapper.slice(0, 1).type,
+      blobOfResponse: (await new Response(wrapper).blob()).type,
     }).toEqual({
       response: null,
       request: null,
@@ -1032,6 +1041,8 @@ describe("new Blob([blob]) and new File([blob], name) do not take the type of th
       multipart: "Content-Type: application/octet-stream",
       structuredClone: "",
       slice: "",
+      // A body gives a Blob with no type a type from its bytes. The Blob of a string that never had a type gets the same.
+      blobOfResponse: (await new Response(new Blob(["hi"])).blob()).type,
     });
   });
 
@@ -1095,11 +1106,15 @@ describe("new Blob([blob]) and new File([blob], name) do not take the type of th
     using dir = tempDir("blob-part-file", { "data.txt": "hello world" });
     const dataPath = path.join(String(dir), "data.txt");
     const file = Bun.file(dataPath);
+    const fd = openSync(dataPath, "r");
+    using _ = { [Symbol.dispose]: () => closeSync(fd) };
 
     expect({
       blob: new Blob([file]).type,
       file: new File([file], "n.bin").type,
       typeOfBunFile: new Blob([Bun.file(dataPath, { type: "q/r" })]).type,
+      fileDescriptor: new Blob([Bun.file(fd, { type: "q/r" })]).type,
+      openAsBlob: new Blob([await openAsBlob(dataPath, { type: "q/r" })]).type,
       typeInOptions: new Blob([file], { type: "c/d" }).type,
       typeNotValid: new Blob([file], { type: "x/\u00e9" }).type,
       slice: new Blob([file.slice(0, 5)]).type,
@@ -1117,6 +1132,8 @@ describe("new Blob([blob]) and new File([blob], name) do not take the type of th
       blob: "text/plain;charset=utf-8",
       file: "text/plain;charset=utf-8",
       typeOfBunFile: "q/r",
+      fileDescriptor: "q/r",
+      openAsBlob: "q/r",
       typeInOptions: "c/d",
       typeNotValid: "text/plain;charset=utf-8",
       slice: "text/plain;charset=utf-8",

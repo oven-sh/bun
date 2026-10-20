@@ -3090,11 +3090,16 @@ impl BlobExt for Blob {
                             // https://w3c.github.io/FileAPI/#constructorBlob: a part gives the
                             // new Blob its bytes. `options.type` gives it its type. A part that
                             // is a file keeps the type of that file.
-                            return Ok(if REQUIRE_ARRAY && !blob.store_is_a_file() {
-                                blob.dupe_without_type()
-                            } else {
-                                blob.dupe()
-                            });
+                            return Ok(
+                                if REQUIRE_ARRAY
+                                    && !blob.content_type.get().is_empty()
+                                    && !blob.store_is_a_file()
+                                {
+                                    blob.dupe_without_type()
+                                } else {
+                                    blob.dupe()
+                                },
+                            );
                         } else if let Some(artifact) =
                             top_value.as_class_ref::<crate::api::BuildArtifact>()
                         {

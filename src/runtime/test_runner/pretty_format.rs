@@ -344,8 +344,7 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    /// `Tag::get` plus the `inspect.custom` probe. Probing only the tags whose printer
-    /// walks the value keeps Buffer (whose prototype has a hook) on the per-byte diff.
+    /// `Tag::get` plus the `inspect.custom` probe (Buffer keeps its per-byte diff).
     pub(crate) fn tag_of(&mut self, value: JSValue, global: &JSGlobalObject) -> JsResult<TagResult> {
         let base = Tag::get(value, global)?;
         if !self.inspect_custom {

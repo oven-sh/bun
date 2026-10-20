@@ -58,6 +58,7 @@ impl Framework {
                 style: router::Style::NextjsPages,
                 allow_layouts: true,
                 client_pages: false,
+                server_exports: Vec::new(),
             }],
             built_in_modules,
         }
@@ -129,6 +130,11 @@ impl Framework {
             style: router::Style::NextjsPages,
             allow_layouts: true,
             client_pages: true,
+            server_exports: literals(&[
+                b"getServerSideProps",
+                b"getStaticProps",
+                b"getStaticPaths",
+            ]),
         });
         fw
     }

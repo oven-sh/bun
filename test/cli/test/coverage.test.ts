@@ -1059,3 +1059,135 @@ test("b", () => {
     });
   });
 });
+
+describe("a text with an inline source map", () => {
+  const moved = `export function ran() {
+  return 1;
+}
+export function never() {
+  return 2;
+}
+export function throws() {
+  throw new Error("here");
+}
+`;
+
+  /** Three lines above the text and four spaces before each of its lines, with one mapping for each character. */
+  function rewrite(source: string, mapSource: string, sourcesContent: boolean) {
+    const digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    function vlq(n: number) {
+      let rest = n < 0 ? (-n << 1) | 1 : n << 1;
+      let out = "";
+      do {
+        const digit = rest & 31;
+        rest >>>= 5;
+        out += digits[rest ? digit | 32 : digit];
+      } while (rest);
+      return out;
+    }
+    const lines = source.split("\n");
+    let column = 0;
+    const mappings = lines.map((line, i) =>
+      Array.from(line, (_, j) => {
+        const segment = vlq(j ? 1 : 4) + "A" + vlq(j || !i ? 0 : 1) + vlq(j - column);
+        column = j;
+        return segment;
+      }).join(","),
+    );
+    const map = {
+      version: 3,
+      sources: [mapSource],
+      sourcesContent: sourcesContent ? [source] : undefined,
+      names: [],
+      mappings: ";;;" + mappings.join(";"),
+    };
+    return `// 1\n// 2\n// 3\n${lines.map(line => "    " + line).join("\n")}
+//# sourceMappingURL=data:application/json;base64,${btoa(JSON.stringify(map))}`;
+  }
+
+  /** Without a `mapSource`, the map has the absolute path. */
+  async function report(movedOnDisk: string, rewriteArguments?: [mapSource: string | null, sourcesContent: boolean]) {
+    using dir = tempDir("cov-input-source-map", {
+      "moved.ts": movedOnDisk,
+      "plugin.js": `
+        ${rewrite}
+        Bun.plugin({
+          name: "rewrite",
+          setup(build) {
+            const [mapSource, sourcesContent] = ${JSON.stringify(rewriteArguments ?? [])};
+            build.onLoad({ filter: /moved\\.ts$/ }, async ({ path }) => ({
+              contents: rewrite(await Bun.file(path).text(), mapSource ?? path, sourcesContent),
+              loader: "ts",
+            }));
+          },
+        });
+      `,
+      "moved.test.ts": `
+        import { ran, throws } from "./moved";
+        test("moved", () => {
+          ran();
+          try {
+            throws();
+          } catch (e) {
+            console.log(/moved\\.ts:\\d+:\\d+/.exec(e.stack)[0]);
+          }
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "test",
+        ...(rewriteArguments ? ["--preload", "./plugin.js"] : []),
+        "--coverage",
+        "--coverage-reporter=lcov",
+        "moved.test.ts",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8");
+    return {
+      thrownAt: stdout.split("\n").find(line => line.startsWith("moved.ts")),
+      lines: lcov
+        .slice(lcov.indexOf("SF:moved.ts"))
+        .split("end_of_record")[0]
+        .match(/^DA:.*$/gm),
+      stderr,
+      exitCode,
+    };
+  }
+
+  const inTheFile = {
+    thrownAt: "moved.ts:8:13",
+    lines: ["DA:1,1", "DA:2,1", "DA:4,0", "DA:5,0", "DA:7,1", "DA:8,1"],
+    stderr: expect.any(String),
+    exitCode: 0,
+  };
+  const inTheText = {
+    thrownAt: "moved.ts:11:17",
+    lines: ["DA:4,1", "DA:5,1", "DA:7,0", "DA:8,0", "DA:10,1", "DA:11,1"],
+    stderr: expect.any(String),
+    exitCode: 0,
+  };
+
+  test.concurrent.each([
+    ["moved.ts", true],
+    ["./moved.ts", true],
+    [null, true],
+    ["moved.ts", false],
+  ] as const)("from a plugin, of the file as %s, sourcesContent: %p", async (...rewriteArguments) => {
+    expect(await report(moved, rewriteArguments)).toEqual(inTheFile);
+  });
+
+  test.concurrent("from a plugin, of another file", async () => {
+    expect(await report(moved, ["another.ts", true])).toEqual(inTheText);
+  });
+
+  test.concurrent("from the file, of the file", async () => {
+    expect(await report(rewrite(moved, "moved.ts", true))).toEqual(inTheText);
+  });
+});

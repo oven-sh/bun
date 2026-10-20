@@ -169,3 +169,28 @@ describe.concurrent("sourcemap: negative VLQ delta in mappings is rejected, not 
     expect(exitCode).toBe(0);
   });
 });
+
+describe.concurrent("sourcemap: a map without sourcesContent", () => {
+  // The line of `body` that throws is line 7, column 4 of orig.ts.
+  const map = JSON.stringify({ version: 3, sources: ["orig.ts"], names: [], mappings: ";;AAMG" });
+
+  test.each([
+    ["external .map", { "entry.js": body + `//# sourceMappingURL=entry.js.map\n`, "entry.js.map": map }],
+    ["inline data-URL map", { "entry.js": body + `//# sourceMappingURL=data:application/json;base64,${btoa(map)}\n` }],
+  ])("%s", async (_, files) => {
+    using dir = tempDir("no-sources-content", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, stdout: stdout.trim() }).toEqual({
+      stderr: "",
+      stdout: `at t (${join(String(dir), "orig.ts")}:7:4)`,
+    });
+    expect(exitCode).toBe(0);
+  });
+});

@@ -7661,6 +7661,12 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
             },
             None => LineOffsetTables::None,
         },
+        input_source_map: match tree.source_mapping_url {
+            Some(url) if generate_source_map == GenerateSourceMap::Lazy => {
+                SourceMap::parse_input_source_map(url.slice(), source.path.text)
+            }
+            _ => None,
+        },
         ..Default::default()
     };
     // Pre-size the VLQ mappings buffer. With `--minify` we emit roughly one

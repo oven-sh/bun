@@ -244,6 +244,22 @@ Bun.build({
 
 This plugin transforms all imports of the form `import env from "env"` into a JavaScript module that exports the current environment variables.
 
+#### Source maps
+
+A runtime plugin that rewrites a file can end `contents` with an inline source map of that file. Bun then reports positions in the file instead of positions in `contents`. This applies to stack traces, error previews, and `bun test --coverage`.
+
+```ts
+build.onLoad({ filter: /\.tsx$/ }, async ({ path }) => {
+  const { code, map } = await compile(await Bun.file(path).text(), { filename: path });
+  return {
+    contents: `${code}\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(map)).toString("base64")}`,
+    loader: "js",
+  };
+});
+```
+
+The file must be the only entry in the map's `sources`. Write it as an absolute path or as a path relative to the file's directory. Bun ignores any other map.
+
 #### `.defer()`
 
 The `onLoad` callback receives a `defer` function, which returns a `Promise` that resolves once Bun has loaded all _other_ modules. Await it when a module's contents depend on other modules.

@@ -2,10 +2,12 @@ use bun_ast::{Loc, Source};
 use bun_core::{MutableString, strings};
 use bun_paths::fs::FileSystem;
 use bun_ptr::RawSlice;
+use std::sync::Arc;
 
 use crate::{
-    InternalSourceMap, LineOffsetTable, SourceMapState, append_mapping_to_buffer,
-    internal_source_map, line_offset_table, line_offset_table::LineOffsetTableColumns as _,
+    InternalSourceMap, LineOffsetTable, Ordinal, ParsedSourceMap, SourceMapState,
+    append_mapping_to_buffer, internal_source_map, line_offset_table,
+    line_offset_table::LineOffsetTableColumns as _,
 };
 
 #[derive(Clone)]
@@ -382,6 +384,10 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
 
     /// When generating sourcemappings for bun, we store a count of how many mappings there were
     pub prepend_count: bool,
+
+    /// The map the source came with. Each mapping goes through it, back to the
+    /// text the source was made from.
+    pub input_source_map: Option<Arc<ParsedSourceMap>>,
 }
 
 impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
@@ -401,6 +407,7 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
             line_starts_with_mapping: false,
             cover_lines_without_mappings: false,
             prepend_count: false,
+            input_source_map: None,
         }
     }
 }
@@ -603,7 +610,17 @@ impl NewBuilder<'_, VLQSourceMap> {
     }
 
     #[inline(always)]
-    pub(crate) fn append_mapping(&mut self, current_state: SourceMapState) {
+    pub(crate) fn append_mapping(&mut self, mut current_state: SourceMapState) {
+        if let Some(input) = &self.input_source_map {
+            let Some(mapping) = input.find_mapping(
+                Ordinal::from_zero_based(current_state.original_line),
+                Ordinal::from_zero_based(current_state.original_column),
+            ) else {
+                return;
+            };
+            current_state.original_line = mapping.original.lines.zero_based();
+            current_state.original_column = mapping.original.columns.zero_based();
+        }
         self.append_mapping_without_remapping(current_state);
     }
 

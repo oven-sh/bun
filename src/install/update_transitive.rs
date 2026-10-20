@@ -1338,6 +1338,10 @@ fn plan_edges(
             Some(&mut expired),
             min_age.is_some(),
         ) else {
+            // An earlier plan of this update has warned about the package.
+            if manager.warned_unchecked.contains(&inst.pkg_id) {
+                continue;
+            }
             let entry = (Box::from(name), text(inst.current.fmt(buf)));
             if !unchecked.contains(&entry) {
                 unchecked.push(entry);

@@ -2083,17 +2083,7 @@ impl QuicSession {
         self.bump_stream_stat(if unidirectional { STREAM_ID_UNI_BIT } else { 0 }, true);
         if let Some(buf) = body.as_array_buffer(global) {
             // SAFETY: `qs` was just created.
-            unsafe {
-                (*qs).outbound.with_mut(|o| {
-                    o.started = true;
-                    o.data.extend(buf.byte_slice().iter().copied());
-                    o.end = super::stream::PendingEnd::Fin;
-                });
-                // As attach_source/init_streaming_source/send_headers do: this
-                // is what makes a later setOutbound() throw instead of
-                // appending a second body.
-                (*qs).with_state(|s| s.has_outbound = 1);
-            }
+            unsafe { (*qs).attach_body(buf.byte_slice()) };
         }
         // SAFETY: `conn` is non-null (checked above) and live.
         if let Some(conn) = unsafe { lsquic::Conn::from_raw(self.conn.get()) } {

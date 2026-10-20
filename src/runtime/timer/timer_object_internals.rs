@@ -811,6 +811,8 @@ impl TimerObjectInternals {
             .with_mut(|r| r.set_strong(timer, global_ref));
         self.update_flags(|f| f.set_kind(Kind::SetInterval));
         self.interval.set(new_interval);
+        // SAFETY: `event_loop_timer()` points at this object's own timer; single field write.
+        unsafe { (*self.event_loop_timer()).is_due_when_idle = false };
         self.reschedule(timer, vm, global);
     }
 

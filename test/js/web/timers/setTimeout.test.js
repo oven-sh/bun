@@ -838,6 +838,20 @@ describe("a delay of 0", () => {
     expect(performance.now() - start).toBeGreaterThanOrEqual(19);
   });
 
+  it("waits for the new interval after _repeat turns the timeout into an interval", async () => {
+    const start = performance.now();
+    let ticks = 0;
+    await new Promise(resolve => {
+      const timer = setTimeout(() => {
+        if (++ticks < 4) return;
+        clearInterval(timer);
+        resolve();
+      }, 0);
+      timer._repeat = 10;
+    });
+    expect(performance.now() - start).toBeGreaterThanOrEqual(29);
+  });
+
   it("is 1 ms outside bun test", async () => {
     await using proc = Bun.spawn({
       cmd: [

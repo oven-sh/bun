@@ -236,6 +236,9 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.class({ rustPath: "T", proto: { x: { rustName: "camelCase" } } })).toThrow(
     "camelCase: rustName is written in snake_case",
   );
+  expect(() => b.class({ rustPath: "T", proto: { x: { name: "y" } } })).toThrow(
+    "x: a function keyed by a string is named by it",
+  );
   expect(() => b.string.allowStringObject.loose).toThrow(".loose already takes a String object");
   expect(() => b.string.loose.allowStringObject).toThrow(".loose already takes a String object");
   // No overload can have the argument left out, so `undefined` goes to the one that reports its own error.
@@ -2012,6 +2015,11 @@ describe("classes", () => {
         using _ = shared;
       }
       expect(shared.value).toBe(-1);
+    });
+
+    it("name names a function at @@name", () => {
+      expect(TestShared.prototype[Symbol.toPrimitive].name).toBe("");
+      expect(+new TestShared(7)).toBe(7);
     });
 
     it('invalidThis: "undefined" returns undefined for another receiver', () => {

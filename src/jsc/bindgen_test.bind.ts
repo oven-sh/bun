@@ -254,6 +254,7 @@ export const TestShared = b.class({
     /** Rust holds a ref until `TestShared.release()`. */
     keep: {},
     "@@dispose": {},
+    "@@toPrimitive": { returns: b.i32, name: "" },
     lenient: { returns: b.i32, invalidThis: "undefined" },
     /** The object, unless its value is negative. */
     orUndefined: { returns: b.self.optional, passThis: true, capability: "heap" },

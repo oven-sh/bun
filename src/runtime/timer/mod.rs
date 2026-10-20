@@ -32,37 +32,25 @@ pub(crate) mod timer;
 
 // ─── impl_timer_object! ──────────────────────────────────────────────────────
 // Shared scaffold for `TimeoutObject` / `ImmediateObject`: both are a
-// `#[JsClass]` payload of `{ref_count, event_loop_timer, internals}` whose
+// `{ref_count, event_loop_timer, internals, this_value}` behind a class of `Timer.bind.ts`, whose
 // JS-facing host-fns are pure forwarders to `TimerObjectInternals`. The macro
 // emits the parts shared by both types so each `*.rs` file holds only its
 // type-specific surface (`init`, `do_refresh`, cached-prop accessors,
 // `run_immediate_task`).
 //
-// Emits, at the call-site module path (so `#[JsClass]`/`#[host_fn]` produce the
-// same extern symbol names as before — `Timeout__create`, `TimeoutPrototype__*`,
-// `ImmediateClass__construct`, …):
-//   - `#[bun_jsc::JsClass(name = $js_name)] pub struct $T { … }`
-//   - `bun_event_loop::impl_timer_owner!($T; from_timer_ptr => event_loop_timer)`
-//   - `impl RefCounted for $T` (intrusive `ref_count` field, `deinit` destructor)
-//   - `impl Default for $T` (`EventLoopTimer::init_paused(EventLoopTimerTag::$tag)`)
-//   - `impl $T`: `ref_`/`deref`/`deinit`/`init_with`/`constructor`/`finalize`
-//     and the forwarder host-fns `to_primitive`/`do_ref`/`do_unref`/`has_ref`/
-//     `get_destroyed`/`dispose`.
-//
-// Type-specific items (`init`, `do_refresh`, `close`, cached-prop get/set,
-// `run_immediate_task`) go in a *second* `impl $T` block in the caller's file.
-//
 // Paths in the body are written `super::…` / `::crate_name::…` because the
 // macro is invoked *from the child module* (`super::impl_timer_object!(…)`),
 // so `super` at the expansion site resolves back here to `timer/mod.rs`.
 macro_rules! impl_timer_object {
-    ($T:ident, $tag:ident, $js_name:literal) => {
-        #[::bun_jsc::JsClass(name = $js_name)]
+    // `$members`: what `$Class` has that the other type's trait does not.
+    ($T:ident, $tag:ident, $js_name:literal, $Class:ident, { $($members:tt)* }) => {
         #[derive(::bun_ptr::RefCounted)]
         pub(crate) struct $T {
             pub ref_count: ::bun_ptr::RefCount<Self>,
             pub event_loop_timer: super::EventLoopTimer,
             pub internals: super::TimerObjectInternals,
+            pub this_value:
+                ::bun_jsc::JsCell<::bun_jsc::bindgen::JsWrapperRef<::bun_ptr::RefPtr<Self>>>,
         }
 
         ::bun_event_loop::impl_timer_owner!($T; from_timer_ptr => event_loop_timer);
@@ -71,20 +59,6 @@ macro_rules! impl_timer_object {
             fn drop(&mut self) {
                 // SAFETY: last ref gone; JS thread with RuntimeState installed.
                 unsafe { self.internals.deinit() }
-            }
-        }
-
-        impl ::core::default::Default for $T {
-            fn default() -> Self {
-                Self {
-                    ref_count: ::bun_ptr::RefCount::init(),
-                    // `init_paused`: next=EPOCH, state=PENDING, heap zeroed.
-                    event_loop_timer: super::EventLoopTimer::init_paused(
-                        super::EventLoopTimerTag::$tag,
-                    ),
-                    // Default-constructed here, then overwritten in `init()`.
-                    internals: super::TimerObjectInternals::default(),
-                }
             }
         }
 
@@ -114,7 +88,7 @@ macro_rules! impl_timer_object {
             }
 
             /// Shared body of `TimeoutObject::init` / `ImmediateObject::init`:
-            /// heap-allocate → `to_js_ptr` → `internals.init` →
+            /// heap-allocate → `into_js` → `internals.init` →
             /// inspector `did_schedule_async_call`. The per-type `init` fn
             /// picks `kind`/`interval` and forwards here.
             pub(crate) fn init_with(
@@ -125,29 +99,32 @@ macro_rules! impl_timer_object {
                 callback: ::bun_jsc::JSValue,
                 arguments: ::bun_jsc::JSValue,
             ) -> ::bun_jsc::JSValue {
-                // Heap-allocate; `*mut Self` is the
-                // `m_ctx` payload of the codegen'd JSCell wrapper. Ownership
-                // transfers to the wrapper via `to_js_ptr`; freed by
-                // `deref → deinit → heap::take`.
-                let payload: *mut Self =
-                    ::bun_core::heap::into_raw(::std::boxed::Box::new(Self::default()));
-                // SAFETY: `to_js_ptr` is the `#[JsClass]`-generated `*__create`
-                // shim; `payload` is a fresh heap allocation whose ownership
-                // transfers to the GC wrapper.
-                let js_value = unsafe { Self::to_js_ptr(payload, cx.global()) };
-                // Round-trip ABI check.
-                debug_assert!(
-                    <Self as ::bun_jsc::JsClass>::from_js(js_value) == Some(payload),
-                    concat!($js_name, "__create ABI mismatch"),
-                );
-                let _keep = ::bun_jsc::EnsureStillAlive(js_value);
-                // SAFETY: `payload` was just allocated above and is exclusively
-                // owned here; `internals.init()` writes every field.
-                unsafe {
-                    (*payload).internals.init(
-                        js_value, cx, id, kind, interval, callback, arguments,
-                    );
-                }
+                let timer = ::bun_ptr::RefPtr::new(Self {
+                    ref_count: ::bun_ptr::RefCount::init(),
+                    // `init_paused`: next=EPOCH, state=PENDING, heap zeroed.
+                    event_loop_timer: super::EventLoopTimer::init_paused(
+                        super::EventLoopTimerTag::$tag,
+                    ),
+                    internals: super::TimerObjectInternals::new(cx, id, kind, interval),
+                    this_value: ::bun_jsc::JsCell::new(::bun_jsc::bindgen::JsWrapperRef::empty()),
+                });
+                let this = timer.this_ptr();
+                // SAFETY: `cx` is the JS thread's, and the host function that has it holds no other scope.
+                let js_value = unsafe {
+                    ::bun_jsc::bindgen::JsScope::with(cx.global().as_mut_ptr(), |scope| {
+                        let heap = &scope.heap;
+                        let wrapper = ::bun_jsc::bindgen::JsPayload::into_js(timer, heap);
+                        this.internals.init(
+                            scope,
+                            wrapper.into(),
+                            cx,
+                            ::bun_jsc::bindgen::JsLocal::new(heap, callback),
+                            ::bun_jsc::bindgen::JsLocal::new(heap, arguments),
+                        );
+                        this.this_value.with_mut(|r| r.set_strong(heap, wrapper));
+                        wrapper.as_value().to_js()
+                    })
+                };
                 if cx.vm().as_mut().is_inspector_enabled() {
                     ::bun_jsc::Debugger::did_schedule_async_call(
                         cx.global(),
@@ -159,73 +136,71 @@ macro_rules! impl_timer_object {
                 js_value
             }
 
-            // C-ABI shim (`${name}Class__construct`) is emitted by
-            // `#[bun_jsc::JsClass]` via `host_fn_construct_result`; do not also
-            // annotate with `#[host_fn]` here.
-            pub(crate) fn constructor(
+            /// What `f` makes of the timer, if `value` is an instance of the class.
+            pub(crate) fn with_internals<R>(
                 global: &::bun_jsc::JSGlobalObject,
-                _frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JsResult<*mut Self> {
-                Err(global.throw(format_args!(concat!($js_name, " is not constructible"))))
+                value: ::bun_jsc::JSValue,
+                f: impl FnOnce(&super::TimerObjectInternals) -> R,
+            ) -> Option<R> {
+                // SAFETY: a `&JSGlobalObject` is only had on its JS thread, and `f` is given no scope to borrow through.
+                unsafe {
+                    ::bun_jsc::bindgen::JsScope::with(global.as_mut_ptr(), |cx| {
+                        let timer = Self::from_js(&cx.heap, value)?;
+                        Some(timer.with(&cx.payloads, |timer| f(&timer.internals)))
+                    })
+                }
+            }
+        }
+
+        impl $Class for $T {
+            type Error<'a> = ::bun_jsc::bindgen::Error<'a>;
+
+            fn constructor<'a>(
+                heap: &::bun_jsc::bindgen::JsHeap<'a>,
+            ) -> ::bun_jsc::bindgen::Result<'a, ::bun_ptr::RefPtr<Self>> {
+                Err(heap.error(format_args!(concat!($js_name, " is not constructible"))))
             }
 
-            #[::bun_jsc::host_fn(method)]
-            pub(crate) fn to_primitive(
-                this: &Self,
-                _global: &::bun_jsc::JSGlobalObject,
-                _frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                this.internals.to_primitive()
+            fn to_primitive<'a>(&self) -> ::bun_jsc::bindgen::Result<'a, i32> {
+                Ok(self.internals.to_primitive()?)
             }
 
-            #[::bun_jsc::host_fn(method)]
-            pub(crate) fn do_ref(
-                this: &Self,
-                global: &::bun_jsc::JSGlobalObject,
-                frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                this.internals.do_ref(global, frame.this())
+            fn do_ref<'a>(
+                &self,
+                this: ::bun_jsc::bindgen::JsWrapper<'a, ::bun_ptr::RefPtr<Self>>,
+                _: &::bun_jsc::bindgen::JsHeap<'a>,
+            ) -> ::bun_jsc::bindgen::JsWrapper<'a, ::bun_ptr::RefPtr<Self>> {
+                self.internals.do_ref();
+                this
             }
 
-            #[::bun_jsc::host_fn(method)]
-            pub(crate) fn do_unref(
-                this: &Self,
-                global: &::bun_jsc::JSGlobalObject,
-                frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                this.internals.do_unref(global, frame.this())
+            fn do_unref<'a>(
+                &self,
+                this: ::bun_jsc::bindgen::JsWrapper<'a, ::bun_ptr::RefPtr<Self>>,
+                _: &::bun_jsc::bindgen::JsHeap<'a>,
+            ) -> ::bun_jsc::bindgen::JsWrapper<'a, ::bun_ptr::RefPtr<Self>> {
+                self.internals.do_unref();
+                this
             }
 
-            #[::bun_jsc::host_fn(method)]
-            pub(crate) fn has_ref(
-                this: &Self,
-                _global: &::bun_jsc::JSGlobalObject,
-                _frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                this.internals.has_ref()
+            fn has_ref(&self) -> bool {
+                self.internals.has_ref()
             }
 
-            pub(crate) fn finalize(&self) {
-                self.internals.finalize()
+            fn finalize(&self) {
+                self.this_value.with_mut(|r| r.finalize());
             }
 
-            #[::bun_jsc::host_fn(getter)]
-            pub(crate) fn get_destroyed(
-                this: &Self,
-                _global: &::bun_jsc::JSGlobalObject,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                Ok(::bun_jsc::JSValue::from(this.internals.get_destroyed()))
+            fn get_destroyed(&self) -> bool {
+                self.internals.get_destroyed()
             }
 
-            #[::bun_jsc::host_fn(method)]
-            pub(crate) fn dispose(
-                this: &Self,
-                global: &::bun_jsc::JSGlobalObject,
-                _frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                this.internals.cancel(global.bun_vm_ptr());
-                Ok(::bun_jsc::JSValue::UNDEFINED)
+            fn dispose(&self) {
+                self.internals
+                    .cancel(::bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr());
             }
+
+            $($members)*
         }
     };
 }

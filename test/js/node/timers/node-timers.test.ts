@@ -350,6 +350,27 @@ describe("_idleStart", () => {
   });
 });
 
+describe("functions keyed by a symbol", () => {
+  const timeout = setTimeout(() => {}, 1000);
+  const immediate = setImmediate(() => {});
+  clearTimeout(timeout);
+  clearImmediate(immediate);
+
+  it.each([
+    ["Timeout", Symbol.dispose, timeout],
+    ["Timeout", Symbol.toPrimitive, timeout],
+    ["Immediate", Symbol.dispose, immediate],
+  ] as const)("%s.prototype[%p] has the name, the length and the writability of Node's", (name, symbol, timer) => {
+    const { value, writable, configurable } = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(timer), symbol)!;
+    expect({ name: value.name, length: value.length, writable, configurable }).toEqual({
+      name: "",
+      length: 0,
+      writable: true,
+      configurable: true,
+    });
+  });
+});
+
 describe.each(["with", "without"])("setImmediate %s timers running", mode => {
   // TODO(@190n) #17901 did not fix this for Windows
   it.todoIf(isWindows && mode == "with")(

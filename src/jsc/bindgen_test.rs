@@ -570,6 +570,10 @@ impl TestSharedClass for TestShared {
         self.value.set(-1);
     }
 
+    fn to_primitive(&self) -> i32 {
+        self.value.get()
+    }
+
     fn lenient(&self) -> i32 {
         self.value.get()
     }

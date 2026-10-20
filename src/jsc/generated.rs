@@ -255,8 +255,6 @@ macro_rules! js_class_module {
     };
 }
 
-js_class_module!(JSTimeout   = "Timeout"   { callback, arguments, idleTimeout, repeat, idleStart });
-js_class_module!(JSImmediate = "Immediate" { callback, arguments });
 // Payload `Blob` lives in this crate (`webcore_types`) — pass it so the extern
 // signatures unify with the typed declarations there.
 js_class_module!(JSBlob      = "Blob"      as crate::webcore_types::Blob { name, stream });

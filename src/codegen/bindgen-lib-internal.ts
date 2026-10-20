@@ -1863,6 +1863,8 @@ export interface FunctionField extends Omit<SignatureOptions, "rustPath"> {
   privateSymbol?: string;
   /** The trait's function. Defaults to the property's name in snake_case. */
   rustName?: string;
+  /** The function's `name`, when it is not the key. */
+  name?: string;
 }
 
 export interface GetterField {
@@ -1894,7 +1896,7 @@ export interface BuiltinField {
 /** Several functions are the overloads of one. `rustName` tells their Rust functions apart. A function at `@@name` is keyed by `Symbol.name`. */
 export type Field = FunctionField | readonly FunctionField[] | GetterField | InternalFieldField | BuiltinField;
 export type StaticField =
-  | Omit<FunctionField, "mutates" | "passThis" | "invalidThis" | "privateSymbol">
+  | Omit<FunctionField, "mutates" | "passThis" | "invalidThis" | "privateSymbol" | "name">
   | Omit<GetterField, "setter" | "cache" | "passThis">;
 
 export interface ClassOptions {
@@ -1939,6 +1941,7 @@ export class Method extends Signature {
   readonly passThis: boolean;
   readonly invalidThis: "throws" | "undefined";
   readonly privateSymbol: string | undefined;
+  readonly functionName: string | undefined;
   constructor(name: string, options: FunctionField, isStatic = false, refCounted = false) {
     super(options);
     this.name = name;
@@ -1956,6 +1959,11 @@ export class Method extends Signature {
     this.invalidThis = options.invalidThis ?? "throws";
     this.privateSymbol = options.privateSymbol;
     assert(!(this.privateSymbol && wellKnownSymbol(name)), `${name}: keyed by a symbol already`);
+    this.functionName = options.name;
+    assert(
+      this.functionName === undefined || wellKnownSymbol(name),
+      `${name}: a function keyed by a string is named by it`,
+    );
   }
 }
 

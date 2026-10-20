@@ -561,7 +561,8 @@ overloads of a function, and two members of `proto` and `static` that share a na
 ignores its receiver, so a subclass inherits it.
 
 A function written at `"@@dispose"` is keyed by `Symbol.dispose` and named `[Symbol.dispose]`. It is not enumerable.
-Its Rust function is `dispose`.
+Its Rust function is `dispose`. `name` is the function's `name` when it is not the key: that of Node's
+`Timeout.prototype[Symbol.dispose]` is `""`.
 
 A native function called on anything else than an instance throws `ERR_INVALID_THIS`. With
 `invalidThis: "undefined"` it returns `undefined`, as some of Node's do.

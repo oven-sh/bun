@@ -240,9 +240,9 @@ impl DirInfo {
     /// `unsafe` here. The `.data` map must only be probed/iterated while the
     /// lock is held; use [`get_entry`](Self::get_entry) for one-shot lookups.
     ///
-    /// `Err` when the listing is from an earlier generation and the read that
-    /// refreshes it failed. The cache keeps the earlier listing, and the next
-    /// call reads the directory again.
+    /// `Err` when the listing is from an earlier generation and the directory
+    /// could not be listed again: `Unlisted::Failed`. The cache keeps the
+    /// earlier listing, and the next call tries again.
     #[inline]
     pub fn get_entries_ref_locked(
         &self,
@@ -253,7 +253,7 @@ impl DirInfo {
             .entries_at_locked(self.entries, generation)
         {
             Some(fs::EntriesOption::Entries(entries)) => Ok(Some(entries)),
-            Some(fs::EntriesOption::Err(err)) if err.read_failed => Err(err.original_err),
+            Some(fs::EntriesOption::Err(err)) if err.failed => Err(err.original_err),
             Some(fs::EntriesOption::Err(_)) | None => Ok(None),
         }
     }

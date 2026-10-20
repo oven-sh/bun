@@ -352,10 +352,11 @@ pub mod dir_entry {
     pub struct Err {
         pub original_err: crate::Error,
         pub canonical_error: crate::Error,
-        /// The directory opened and the read of it failed. The cache holds
-        /// nothing for this error, so the next lookup reads the directory
-        /// again.
-        pub read_failed: bool,
+        /// The open or the read failed, and the error does not say that the
+        /// directory is gone or that this process may not list it. The
+        /// cache holds nothing for this error, and the resolution that
+        /// needed the listing reports it.
+        pub failed: bool,
     }
 }
 

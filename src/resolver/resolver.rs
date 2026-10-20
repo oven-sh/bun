@@ -503,10 +503,11 @@ pub struct Resolver<'a> {
     pub caches: CacheSet,
     pub generation: Generation,
 
-    /// A directory read that failed since `resolve_and_auto_install` last
-    /// looked. Nothing is cached for that directory, so the resolution that
-    /// needed its listing has to report the error.
-    pub(crate) dir_read_failure: Option<Box<Fs::DirReadFailure>>,
+    /// A directory that the resolution in progress could not list, for a
+    /// reason that is not cached. `resolve_and_auto_install` reports it. It
+    /// owns nothing: the runtime copies the `Resolver` bytewise to a pool
+    /// thread.
+    pub(crate) dir_read_failure: Option<Fs::DirReadFailure>,
 
     /// Auto-install backend. `bun_install::PackageManager` implements
     /// [`AutoInstaller`]; the resolver only sees the trait object so it stays
@@ -1227,17 +1228,10 @@ impl<'a> Resolver<'a> {
             && !self.matches_user_external_pattern(import_path)
         {
             let mut res = MatchResult::default();
-            let mut status =
-                self.resolve_via_tsconfig_paths(source_dir, import_path, kind, &mut res);
-            if self.dir_read_failure.is_some() {
-                // See `resolve_without_symlinks_after_dir_read_failure`.
-                self.dir_read_failure = None;
-                res = MatchResult::default();
-                status = self.resolve_via_tsconfig_paths(source_dir, import_path, kind, &mut res);
-                if let Some(err) = self.report_dir_read_failure(import_path, kind) {
-                    self.extension_order = original_order;
-                    return ResultUnion::Failure(err);
-                }
+            let status = self.resolve_via_tsconfig_paths(source_dir, import_path, kind, &mut res);
+            if let Some(err) = self.report_dir_read_failure(import_path, kind) {
+                self.extension_order = original_order;
+                return ResultUnion::Failure(err);
             }
             if status.is_success() {
                 if let Some(debug) = self.debug_logs.as_mut() {
@@ -1441,13 +1435,8 @@ impl<'a> Resolver<'a> {
 
         let mut tmp =
             self.resolve_without_symlinks(source_dir_normalized, import_path, kind, global_cache);
-        if self.dir_read_failure.is_some() {
-            tmp = self.resolve_without_symlinks_after_dir_read_failure(
-                source_dir_normalized,
-                import_path,
-                kind,
-                global_cache,
-            );
+        if let Some(err) = self.report_dir_read_failure(import_path, kind) {
+            tmp = ResultUnion::Failure(err);
         }
 
         // Fragments in URLs in CSS imports are technically expected to work
@@ -1474,13 +1463,8 @@ impl<'a> Resolver<'a> {
                     kind,
                     global_cache,
                 );
-                if self.dir_read_failure.is_some() {
-                    result2 = self.resolve_without_symlinks_after_dir_read_failure(
-                        source_dir_normalized,
-                        &import_path[0..suffix],
-                        kind,
-                        global_cache,
-                    );
+                if let Some(err) = self.report_dir_read_failure(&import_path[0..suffix], kind) {
+                    result2 = ResultUnion::Failure(err);
                 }
                 if matches!(result2, ResultUnion::NotFound) {
                     break 'try_without_suffix;
@@ -1551,46 +1535,35 @@ impl<'a> Resolver<'a> {
         ret
     }
 
-    /// A directory read failed, and nothing is cached for that directory, so
-    /// `resolve_without_symlinks` can have answered from a directory that was
-    /// not listed: a lookup that needs the listing takes the error as "not
-    /// there" and tries the next place. The failure can also be one that a
-    /// lookup outside a resolution left behind. Resolve once more. If the
-    /// read fails again, this resolution did cross it, and the error is the
-    /// result.
-    #[cold]
-    #[inline(never)]
-    fn resolve_without_symlinks_after_dir_read_failure(
-        &mut self,
-        source_dir: &[u8],
-        import_path: &'static [u8],
-        kind: ast::ImportKind,
-        global_cache: GlobalCache,
-    ) -> ResultUnion {
-        self.dir_read_failure = None;
-        let result = self.resolve_without_symlinks(source_dir, import_path, kind, global_cache);
-        match self.report_dir_read_failure(import_path, kind) {
-            Some(err) => ResultUnion::Failure(err),
-            None => result,
-        }
-    }
-
-    /// Log the directory read that failed while `import_path` was resolved,
-    /// if one did, and return its error.
-    #[cold]
-    #[inline(never)]
+    /// Take the directory that this resolution could not list, if there is
+    /// one, log it for `import_path`, and return its error. An answer that
+    /// the resolution found after it did not see that directory, so the
+    /// error is the result.
+    #[inline]
     fn report_dir_read_failure(
         &mut self,
         import_path: &[u8],
         kind: ast::ImportKind,
     ) -> Option<crate::Error> {
-        let failure = self.dir_read_failure.take()?;
+        self.dir_read_failure
+            .map(|failure| self.log_dir_read_failure(failure, import_path, kind))
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn log_dir_read_failure(
+        &mut self,
+        failure: Fs::DirReadFailure,
+        import_path: &[u8],
+        kind: ast::ImportKind,
+    ) -> crate::Error {
+        self.dir_read_failure = None;
         self.log_mut().add_resolve_error(
             None,
             bun_ast::Range::NONE,
             format_args!(
                 "Cannot read directory \"{}\": {} while resolving \"{}\"",
-                bstr::BStr::new(&failure.dir),
+                bstr::BStr::new(failure.dir),
                 bstr::BStr::new(failure.err.name()),
                 bstr::BStr::new(import_path)
             ),
@@ -1598,7 +1571,7 @@ impl<'a> Resolver<'a> {
             kind,
             bun_ast::Error::ModuleNotFound,
         );
-        Some(failure.err)
+        failure.err
     }
 
     pub fn resolve(
@@ -1673,8 +1646,8 @@ impl<'a> Resolver<'a> {
         while let Some(path) = iter.next() {
             let name = path.name();
             let primary = core::mem::take(&mut is_primary);
-            let Ok(Some(dir)) = self.read_dir_info(name.dir) else {
-                // `resolve_and_auto_install` reports a directory read that failed.
+            let Ok(Some(dir)) = self.dir_info_cached_maybe_log(false, name.dir) else {
+                // `resolve_and_auto_install` reports a directory that was not listed.
                 if let Some(failure) = &self.dir_read_failure {
                     return Err(failure.err);
                 }
@@ -1737,9 +1710,9 @@ impl<'a> Resolver<'a> {
             // unlock (EntryStore-owned).
             let found = match dir.get_entry(self.generation, name.filename) {
                 Ok(found) => found,
-                // `resolve_and_auto_install` reports a directory read that failed.
+                // `resolve_and_auto_install` reports a directory that was not listed.
                 Err(err) => {
-                    self.dir_read_failure = Some(Fs::DirReadFailure::new(dir.abs_path, err));
+                    self.dir_read_failure = Some(Fs::DirReadFailure::of(&dir, err));
                     return Err(err);
                 }
             };
@@ -2478,7 +2451,9 @@ impl<'a> Resolver<'a> {
                 if res.package_json.is_some() && self.care_about_browser_field {
                     let base_dir_info = match res.dir_info {
                         Some(d) => d,
-                        None => match self.read_dir_info(result.path_pair.primary.name().dir) {
+                        None => match self
+                            .dir_info_cached_maybe_log(false, result.path_pair.primary.name().dir)
+                        {
                             Ok(Some(d)) => d,
                             _ => return ResultUnion::Success(result),
                         },
@@ -2945,6 +2920,15 @@ impl<'a> Resolver<'a> {
                         return MatchStatus::Success;
                     }
                     self.extension_order = prev_extension_order;
+                    // A directory here was not listed, so the package can be
+                    // here. One from a directory above is not the answer.
+                    if let Some(failure) = &self.dir_read_failure {
+                        let err = failure.err;
+                        if let Some(d) = self.debug_logs.as_mut() {
+                            d.decrease_indent();
+                        }
+                        return MatchStatus::Failure(err);
+                    }
                 }
 
                 match dir_info.get_parent() {
@@ -2996,6 +2980,16 @@ impl<'a> Resolver<'a> {
         }
 
         dir_info = source_dir_info;
+
+        // A directory on the way was not listed, so the package can be on
+        // disk. The registry is not asked for it.
+        if let Some(failure) = &self.dir_read_failure {
+            let err = failure.err;
+            if let Some(d) = self.debug_logs.as_mut() {
+                d.decrease_indent();
+            }
+            return MatchStatus::Failure(err);
+        }
 
         // this is the magic!
         if global_cache.can_use(any_node_modules_folder)
@@ -3525,28 +3519,34 @@ impl<'a> Resolver<'a> {
         let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption =
             core::ptr::null_mut();
         let mut needs_iter = true;
-        let mut in_place: Option<*mut Fs::file_system::DirEntry> = None;
-        let mut open_dir = match bun_sys::open_dir_for_iteration(FD::cwd(), dir_path) {
+        let mut in_place: Option<Fs::StaleListing> = None;
+        let open_dir = match bun_sys::open_dir_for_iteration(FD::cwd(), dir_path) {
             Ok(d) => d,
             Err(err) => {
-                // TODO: handle this error better
-                let _ = self.log_mut().add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!("Unable to open directory: {}", bstr::BStr::new(err.name())),
-                );
-                return Err(err.into());
+                let err: crate::Error = err.into();
+                match rfs!().unopened(None, dir_path, false, self.generation, err) {
+                    // `resolve_and_auto_install` reports it.
+                    Fs::Unlisted::Failed(failure) => self.dir_read_failure = Some(failure),
+                    Fs::Unlisted::Gone(_) | Fs::Unlisted::Denied(_) => {
+                        let _ = self.log_mut().add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Unable to open directory: {}",
+                                bstr::BStr::new(err.name())
+                            ),
+                        );
+                    }
+                }
+                return Err(err);
             }
         };
 
         if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
-            if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                if entries.generation >= self.generation {
-                    dir_entries_option = cached_entry;
-                    needs_iter = false;
-                } else {
-                    in_place = Some(std::ptr::from_mut(*entries));
-                }
+            in_place = Fs::StaleListing::in_slot(cached_entry, self.generation);
+            if in_place.is_none() && cached_entry.as_entries().is_some() {
+                dir_entries_option = cached_entry;
+                needs_iter = false;
             }
         }
 
@@ -3561,18 +3561,34 @@ impl<'a> Resolver<'a> {
                     dir_path,
                     dir_needs_sep: false,
                     generation: self.generation,
-                    owns_handle: true,
                     store_fd: self.store_fd,
                     reserve: 64,
                 },
-                &mut open_dir,
+                open_dir,
                 (),
             ) {
                 Ok(listing) => listing,
-                Err(err) => {
+                Err(why) => {
                     open_dir.close();
-                    self.dir_read_failure = Some(Fs::DirReadFailure::new(dir_path, err));
-                    return Err(err);
+                    return Err(match why {
+                        // `resolve_and_auto_install` reports it.
+                        Fs::Unlisted::Failed(failure) => {
+                            self.dir_read_failure = Some(failure);
+                            failure.err
+                        }
+                        Fs::Unlisted::Gone(err) | Fs::Unlisted::Denied(err) => {
+                            let _ = self.log_mut().add_error_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "Cannot read directory \"{}\": {}",
+                                    bstr::BStr::new(dir_path),
+                                    bstr::BStr::new(err.name())
+                                ),
+                            );
+                            err
+                        }
+                    });
                 }
             };
             dir_entries_option =
@@ -4243,12 +4259,16 @@ impl<'a> Resolver<'a> {
     }
 
     pub fn read_dir_info(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
-        self.dir_info_cached_maybe_log(false, path)
+        let result = self.dir_info_cached_maybe_log(false, path);
+        // No resolution is in progress to report a directory that was not
+        // listed, and the caller has the error.
+        self.dir_read_failure = None;
+        result
     }
 
     /// Like `readDirInfo`, but returns `null` instead of throwing an error.
     pub fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef> {
-        self.dir_info_cached_maybe_log(false, path).ok().flatten()
+        self.read_dir_info(path).ok().flatten()
     }
 
     // NOTE: `follow_symlinks` is `true` at every call
@@ -4539,6 +4559,10 @@ impl<'a> Resolver<'a> {
             let queue_top_unsafe_path: &[u8] = qt_unsafe_path.slice();
             let queue_top_safe_path: &[u8] = qt_safe_path.slice();
             queue_slice_len -= 1;
+            // Directories must always end in a trailing slash or else various bugs can occur.
+            let dir_needs_sep = queue_top_unsafe_path
+                .last()
+                .is_some_and(|&last| last != SEP);
 
             let mut open_dir: FD = if queue_top.fd.is_valid() {
                 queue_top.fd
@@ -4590,60 +4614,23 @@ impl<'a> Resolver<'a> {
                     match open_req {
                         Ok(fd) => break 'open_dir fd,
                         Err(err) => {
-                            // Ignore "ENOTDIR" here so that calling "ReadDirectory" on a file behaves
-                            // as if there is nothing there at all instead of causing an error due to
-                            // the directory actually being a file. This is a workaround for situations
-                            // where people try to import from a path containing a file as a parent
-                            // directory. The "pnpm" package manager generates a faulty "NODE_PATH"
-                            // list which contains such paths and treating them as missing means we just
-                            // ignore them during path resolution.
-                            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
-                                || err == crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
-                            {
-                                return Ok(None);
+                            let why = rfs!().unopened(
+                                None,
+                                queue_top_unsafe_path,
+                                dir_needs_sep,
+                                self.generation,
+                                err,
+                            );
+                            match self.unlisted_in_walk(
+                                why,
+                                queue_top_unsafe_path,
+                                queue_slice_len > 0,
+                                queue_top.result,
+                                enable_logging,
+                            ) {
+                                Some(result) => return result,
+                                None => break 'open_dir FD::INVALID,
                             }
-                            // A permission-denied ancestor (sandboxed drive roots, x-only
-                            // shared dirs) is treated as opaque and empty, like the
-                            // ENOTDIR tolerance; the requested directory itself stays fatal.
-                            if queue_slice_len > 0
-                                && matches!(
-                                    err,
-                                    crate::Error::Sys(bun_errno::SystemErrno::EPERM)
-                                        | crate::Error::Sys(bun_errno::SystemErrno::EACCES)
-                                )
-                            {
-                                debuglog!(
-                                    "treating permission-denied ancestor \"{}\" as empty: {}",
-                                    bstr::BStr::new(queue_top_unsafe_path),
-                                    bstr::BStr::new(err.name())
-                                );
-                                break 'open_dir FD::INVALID;
-                            }
-                            // If we don't properly cache not found, then we repeatedly attempt to open the same directories,
-                            // which causes a perf trace that looks like this stupidity;
-                            //
-                            //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|DIRECTORY) = -1 ENOENT (No such file or directory)
-                            //   ...
-                            self.dir_cache_mut().mark_not_found(queue_top.result);
-                            rfs!()
-                                .mark_dir_not_found(queue_top_unsafe_path)
-                                .expect("unreachable");
-                            if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                                if enable_logging {
-                                    let pretty = queue_top_unsafe_path;
-                                    let _ = self.log_mut().add_error_fmt(
-                                        None,
-                                        bun_ast::Loc::default(),
-                                        format_args!(
-                                            "Cannot read directory \"{}\": {}",
-                                            bstr::BStr::new(pretty),
-                                            bstr::BStr::new(err.name())
-                                        ),
-                                    );
-                                }
-                            }
-
-                            return Ok(None);
                         }
                     }
                 }
@@ -4673,89 +4660,53 @@ impl<'a> Resolver<'a> {
             let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption =
                 core::ptr::null_mut();
             let mut needs_iter = true;
-            let mut in_place: Option<*mut Fs::file_system::DirEntry> = None;
+            let mut in_place: Option<Fs::StaleListing> = None;
 
             if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
-                if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                    if entries.generation >= self.generation {
-                        dir_entries_option = cached_entry;
-                        needs_iter = false;
-                    } else {
-                        in_place = Some(std::ptr::from_mut(*entries));
-                    }
+                in_place = Fs::StaleListing::in_slot(cached_entry, self.generation);
+                if in_place.is_none() && cached_entry.as_entries().is_some() {
+                    dir_entries_option = cached_entry;
+                    needs_iter = false;
                 }
             }
 
             if needs_iter {
-                // Directories must always end in a trailing slash or else various bugs can occur.
-                let dir_needs_sep = queue_top_unsafe_path
-                    .last()
-                    .is_some_and(|&last| last != SEP);
                 // A permission-denied ancestor has no fd to enumerate; its
                 // entry set stays empty.
                 let mut listing = None;
                 if open_dir.is_valid() {
-                    let opened_here = !queue_top.fd.is_valid();
                     // Pre-size the listing so the per-entry inserts skip the
                     // 1→2→4→…→N hashbrown rehash cascade from an empty table. 64
                     // covers a typical node_modules package dir; larger dirs
                     // still rehash from there (cheap relative to starting at 0).
-                    let read = rfs!().read_listing(
+                    match rfs!().read_listing(
                         Fs::ListingRead {
                             in_place,
                             dir_path: queue_top_unsafe_path,
                             dir_needs_sep,
                             generation: self.generation,
-                            owns_handle: opened_here,
                             store_fd: self.store_fd,
                             reserve: 64,
                         },
-                        &mut open_dir,
+                        open_dir,
                         (),
-                    );
-                    if opened_here {
-                        // `read_listing` replaces a handle whose read it tried again.
-                        bufs!(open_dirs)[open_dir_count.get() - 1] = open_dir;
-                    }
-                    match read {
+                    ) {
                         Ok(read) => listing = Some(read),
-                        Err(err) => {
+                        Err(why) => {
                             // No listing holds the handle, so it is closed here, also when `store_fd`.
-                            if opened_here {
+                            if !queue_top.fd.is_valid() {
                                 open_dir.close();
                                 open_dir_count.set(open_dir_count.get() - 1);
                             }
                             open_dir = FD::INVALID;
-                            match err {
-                                // The directory went away while it was open: the outcome of a failed open.
-                                crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) => {
-                                    return Ok(None);
-                                }
-                                crate::Error::Sys(bun_errno::SystemErrno::ENOENT) => {
-                                    self.dir_cache_mut().mark_not_found(queue_top.result);
-                                    rfs!()
-                                        .mark_dir_not_found(queue_top_unsafe_path)
-                                        .expect("unreachable");
-                                    return Ok(None);
-                                }
-                                // An ancestor that opens but may not be listed is
-                                // opaque and empty, like one that does not open.
-                                crate::Error::Sys(
-                                    bun_errno::SystemErrno::EPERM | bun_errno::SystemErrno::EACCES,
-                                ) if queue_slice_len > 0 => {
-                                    debuglog!(
-                                        "treating permission-denied ancestor \"{}\" as empty: {}",
-                                        bstr::BStr::new(queue_top_unsafe_path),
-                                        bstr::BStr::new(err.name())
-                                    );
-                                }
-                                // Nothing is cached for this directory or the ones
-                                // below it, so the next lookup reads it again.
-                                _ => {
-                                    self.dir_read_failure =
-                                        Some(Fs::DirReadFailure::new(queue_top_unsafe_path, err));
-                                    return Err(err);
-                                }
+                            if let Some(result) = self.unlisted_in_walk(
+                                why,
+                                queue_top_unsafe_path,
+                                queue_slice_len > 0,
+                                queue_top.result,
+                                enable_logging,
+                            ) {
+                                return result;
                             }
                         }
                     }
@@ -4833,13 +4784,8 @@ impl<'a> Resolver<'a> {
                 Some(parent) if !self.opts.preserve_symlinks => {
                     match parent.get_entries_ref_locked(self.generation) {
                         Ok(parent_entries) => parent_entries,
-                        // An ancestor that may not be listed is opaque and empty, as above.
-                        Err(crate::Error::Sys(
-                            bun_errno::SystemErrno::EPERM | bun_errno::SystemErrno::EACCES,
-                        )) => None,
                         Err(err) => {
-                            self.dir_read_failure =
-                                Some(Fs::DirReadFailure::new(parent.abs_path, err));
+                            self.dir_read_failure = Some(Fs::DirReadFailure::of(&parent, err));
                             return Err(err);
                         }
                     }
@@ -4889,6 +4835,82 @@ impl<'a> Resolver<'a> {
         }
 
         unreachable!()
+    }
+
+    /// The walk could not list `dir`: a directory on the way to the one it
+    /// was asked for (`is_ancestor`), or that one. `None` when the walk goes
+    /// on and `dir` gets an empty listing, otherwise the result of the walk.
+    /// The open and the read of a directory both end here, so that one errno
+    /// means one thing.
+    fn unlisted_in_walk(
+        &mut self,
+        why: Fs::Unlisted,
+        dir: &[u8],
+        is_ancestor: bool,
+        result: allocators::Result,
+        enable_logging: bool,
+    ) -> Option<crate::CrateResult<Option<DirInfoRef>>> {
+        match why {
+            // If we don't properly cache not found, then we repeatedly attempt to open the same directories,
+            // which causes a perf trace that looks like this stupidity;
+            //
+            //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|DIRECTORY) = -1 ENOENT (No such file or directory)
+            //   ...
+            Fs::Unlisted::Gone(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)) => {
+                self.mark_walk_not_found(dir, result);
+                Some(Ok(None))
+            }
+            // Ignore "ENOTDIR" here so that calling "ReadDirectory" on a file behaves
+            // as if there is nothing there at all instead of causing an error due to
+            // the directory actually being a file. This is a workaround for situations
+            // where people try to import from a path containing a file as a parent
+            // directory. The "pnpm" package manager generates a faulty "NODE_PATH"
+            // list which contains such paths and treating them as missing means we just
+            // ignore them during path resolution.
+            Fs::Unlisted::Gone(crate::Error::Sys(
+                bun_errno::SystemErrno::ENOTDIR | bun_errno::SystemErrno::EISDIR,
+            )) => Some(Ok(None)),
+            // A permission-denied ancestor (sandboxed drive roots, x-only
+            // shared dirs) is treated as opaque and empty, like the
+            // ENOTDIR tolerance; the requested directory itself stays fatal.
+            Fs::Unlisted::Denied(err) if is_ancestor => {
+                debuglog!(
+                    "treating permission-denied ancestor \"{}\" as empty: {}",
+                    bstr::BStr::new(dir),
+                    bstr::BStr::new(err.name())
+                );
+                None
+            }
+            Fs::Unlisted::Gone(err) | Fs::Unlisted::Denied(err) => {
+                self.mark_walk_not_found(dir, result);
+                if enable_logging {
+                    let _ = self.log_mut().add_error_fmt(
+                        None,
+                        bun_ast::Loc::default(),
+                        format_args!(
+                            "Cannot read directory \"{}\": {}",
+                            bstr::BStr::new(dir),
+                            bstr::BStr::new(err.name())
+                        ),
+                    );
+                }
+                Some(Ok(None))
+            }
+            // Nothing is cached for this directory or the ones below it, so
+            // the next lookup tries again. `resolve_and_auto_install` reports it.
+            Fs::Unlisted::Failed(failure) => {
+                self.dir_read_failure = Some(failure);
+                Some(Err(failure.err))
+            }
+        }
+    }
+
+    fn mark_walk_not_found(&mut self, dir: &[u8], result: allocators::Result) {
+        self.dir_cache_mut().mark_not_found(result);
+        // SAFETY: `rfs_ptr` points at the process-global RealFS singleton.
+        unsafe { &mut *self.rfs_ptr() }
+            .mark_dir_not_found(dir)
+            .expect("unreachable");
     }
 
     // This closely follows the behavior of "tryLoadModuleUsingPaths()" in the
@@ -5944,14 +5966,18 @@ impl<'a> Resolver<'a> {
             };
 
         if let Fs::file_system::real_fs::EntriesOption::Err(err) = dir_entry.get() {
+            if err.failed {
+                // `resolve_and_auto_install` reports a directory that was not listed.
+                self.dir_read_failure = Some(Fs::DirReadFailure {
+                    // SAFETY: `rfs` points at the process-global RealFS singleton (see note at fn top).
+                    dir: unsafe { &mut *rfs }.failed_dir(dir_path),
+                    err: err.original_err,
+                });
+                dec_ret!(None);
+            }
             match err.original_err {
                 crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
                 | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) => {}
-                // `resolve_and_auto_install` reports a read that failed.
-                _ if err.read_failed => {
-                    self.dir_read_failure =
-                        Some(Fs::DirReadFailure::new(dir_path, err.original_err));
-                }
                 _ => {
                     let _ = self.log_mut().add_error_fmt(
                         None,
@@ -6924,16 +6950,16 @@ fn primary_side_effects(
     }
 }
 
-/// The listing of `dir` is from an earlier generation, and the read that
-/// refreshes it failed with `err`. A lookup in that listing has no answer, so
-/// it finds nothing, and `resolve_and_auto_install` reports `failure`.
+/// The listing of `dir` is from an earlier generation, and it could not be
+/// listed again: `err`. A lookup in that listing has no answer, so it finds
+/// nothing, and `resolve_and_auto_install` reports `failure`.
 #[cold]
 fn refresh_failed<T>(
-    failure: &mut Option<Box<Fs::DirReadFailure>>,
+    failure: &mut Option<Fs::DirReadFailure>,
     dir: &DirInfo::DirInfo,
     err: crate::Error,
 ) -> Option<T> {
-    *failure = Some(Fs::DirReadFailure::new(dir.abs_path, err));
+    *failure = Some(Fs::DirReadFailure::of(dir, err));
     None
 }
 

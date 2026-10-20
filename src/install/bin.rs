@@ -1548,9 +1548,7 @@ impl<'a> Linker<'a> {
     ///      so the redirect still resolves when cross-installing with
     ///      `--os win32`.
     ///
-    /// Falls through to (1) when nothing exists so the existing
-    /// `skipped_due_to_missing_bin` retry-without-redirect path still fires.
-    /// `None`: the path does not fit `buf`; callers treat that as a missing bin.
+    /// `None`: a redirect found none, or `buf` is too small. Callers treat both as a missing bin.
     fn resolve_bin_target<'b>(
         is_native_binlink_redirect: bool,
         package_dir: &[u8],
@@ -1585,10 +1583,7 @@ impl<'a> Linker<'a> {
             }
         }
 
-        // Nothing found; return the primary so `link_bin_or_create_shim` sets
-        // `skipped_due_to_missing_bin` and the caller retries without the
-        // redirect.
-        join_z_checked::<PlatformAuto>(package_dir, buf, &[target])
+        None
     }
 
     /// Length of `<node_modules>/<package>/` in `abs_target_buf`, `None` if a NUL no longer fits.
@@ -1688,6 +1683,7 @@ impl<'a> Linker<'a> {
         let mut resolved_target_pool_buf = path::path_buffer_pool::get();
         let resolved_target_buf = resolved_target_pool_buf.as_mut_slice();
 
+        let mut found = false;
         // Returns false if the name doesn't fit.
         let mut link_named = |this: &mut Self, name: &[u8], target: &[u8]| -> bool {
             if name.is_empty() || target.is_empty() || bin_target_escapes_package_dir(target) {
@@ -1706,6 +1702,7 @@ impl<'a> Linker<'a> {
                 this.skipped_due_to_missing_bin = true;
                 return true;
             };
+            found = true;
             this.link_bin_or_create_shim(
                 abs_target,
                 abs_dest,
@@ -1736,10 +1733,10 @@ impl<'a> Linker<'a> {
                     }
                 }
             }
-            Tag::Dir => {
+            Tag::Dir => 'dir: {
                 let target = bin.dir().slice(string_buf);
                 if target.is_empty() || bin_target_escapes_package_dir(target) {
-                    return;
+                    break 'dir;
                 }
                 let Some(abs_target_dir) = join_z_checked::<PlatformAuto>(
                     &self.abs_target_buf[0..package_dir_len],
@@ -1781,9 +1778,15 @@ impl<'a> Linker<'a> {
                     let Some(abs_dest) = self.append_dest(dest_dir_len, entry_name) else {
                         return;
                     };
+                    found = true;
                     self.link_bin_or_create_shim(abs_target, abs_dest, global, true);
                 }
             }
+        }
+
+        // A redirect into a package that has none of the bins is a miss, like a missing bin.
+        if is_redirect && !found {
+            self.skipped_due_to_missing_bin = true;
         }
     }
 

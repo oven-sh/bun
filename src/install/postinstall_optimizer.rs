@@ -165,48 +165,17 @@ impl List {
             .unwrap_or(false)
     }
 
-    pub(crate) fn should_ignore_lifecycle_scripts(
-        &self,
-        pkg_info: &PkgInfo<'_>,
-        resolutions: &[PackageID],
-        metas: &[Meta],
-        target_cpu: npm::Architecture,
-        target_os: npm::OperatingSystem,
-        target_libc: npm::Libc,
-    ) -> bool {
+    /// `NativeBinlink`: the scripts are skipped only if the bin linker redirects the bins.
+    pub(crate) fn script_mode(&self, pkg_info: &PkgInfo<'_>) -> Option<PostinstallOptimizer> {
         // The feature flag defaults to false; see note on the binlinker flag above.
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS
             .get()
             .unwrap_or(false)
         {
-            return false;
+            return None;
         }
 
-        let Some(mode) = self.get(pkg_info) else {
-            return false;
-        };
-
-        match mode {
-            PostinstallOptimizer::NativeBinlink => {
-                // Not a plain name-hash lookup: package versions without a
-                // platform optionalDependency (e.g. old esbuild) must still run
-                // their postinstall. See test/integration/esbuild/esbuild.test.ts.
-                //
-                // Tree position doesn't matter here; the `.bin` linker redirects
-                // nested copies to the platform package as well (see
-                // `find_native_binlink_target_tree`).
-                PostinstallOptimizer::get_native_binlink_replacement_package_id(
-                    resolutions,
-                    metas,
-                    target_cpu,
-                    target_os,
-                    target_libc,
-                )
-                .is_some()
-            }
-
-            PostinstallOptimizer::Ignore => true,
-        }
+        self.get(pkg_info)
     }
 
     fn from_default(pkg_info: &PkgInfo<'_>) -> Option<PostinstallOptimizer> {

@@ -15,7 +15,9 @@ use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 
-use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess, UnfinishedScripts};
+use crate::lifecycle_script_runner::{
+    HeldScripts, InstallCtx, LifecycleScriptSubprocess, UnfinishedScripts,
+};
 // `Lockfile` here is the in-crate `crate::lockfile::Lockfile` (the
 // struct `PackageManager.lockfile` actually carries). `lockfile_real` is still
 // imported for `tree::Id` / `Tree` / `package::*`, all of
@@ -740,6 +742,7 @@ impl<'a> PackageInstaller<'a> {
                 bstr::BStr::new(err.name()),
             );
             while tree.binaries.remove_or_null().is_some() {}
+            self.enqueue_held_scripts(tree_id, &[]);
             return;
         }
         if pass == BinPass::AfterScripts {
@@ -906,9 +909,26 @@ impl<'a> PackageInstaller<'a> {
                     continue;
                 }
 
-                if !bin_linker.skipped_due_to_missing_bin {
+                let bins_linked = !bin_linker.skipped_due_to_missing_bin;
+                if bins_linked {
                     tree.bins_after_scripts.retain(|&id| id != dep_id);
                 }
+                let mut unfinished = self.unfinished_scripts.borrow_mut();
+                if let Some(held) = unfinished.held_index(tree_id, dep_id) {
+                    if can_retry_without_native_binlink_optimization {
+                        // The redirect stands: the platform package has the bins.
+                        unfinished.held.swap_remove(held);
+                        if PackageManager::verbose_install() {
+                            bun_core::pretty_errorln!(
+                                "<d>[Lifecycle Scripts]<r> ignoring {} lifecycle scripts",
+                                bstr::BStr::new(pkg_names[package_id as usize].slice(string_buf)),
+                            );
+                        }
+                    } else {
+                        unfinished.held[held as usize].bins_linked = bins_linked;
+                    }
+                }
+                drop(unfinished);
                 if let Some(err) = bin_linker.err {
                     if global {
                         // Print the error instead of logging it. A logged error stops the lockfile
@@ -941,13 +961,42 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
-        for dep_id in deferred {
+        for &dep_id in &deferred {
             tree.binaries.add(dep_id).unwrap_or_oom();
+        }
+        self.enqueue_held_scripts(tree_id, &deferred);
+    }
+
+    /// The packages of `tree_id` that are still held have no redirect: their scripts run.
+    fn enqueue_held_scripts(&mut self, tree_id: TreeContextId, deferred: &[DependencyID]) {
+        loop {
+            let Some(held) = (self.unfinished_scripts.borrow_mut()).take_held_in(tree_id, deferred)
+            else {
+                return;
+            };
+            let dependency_id = held.dependency_id;
+            let package_id = self.lockfile().buffers.resolutions.as_slice()[dependency_id as usize];
+            let resolutions = self.resolutions;
+            self.enqueue_trusted_scripts(
+                self.manager().options.log_level,
+                tree_id,
+                dependency_id,
+                package_id,
+                self.names[package_id as usize],
+                &resolutions[package_id as usize],
+                (self.trusted_dependencies_from_update_requests).contains(&package_id),
+            );
+            if held.bins_linked {
+                self.trees[tree_id as usize]
+                    .bins_after_scripts
+                    .retain(|&id| id != dependency_id);
+            }
         }
     }
 
     pub(crate) fn link_remaining_bins(&mut self) {
         self.link_queued_bins(BinPass::Remaining);
+        debug_assert!(self.unfinished_scripts.borrow().held.is_empty());
     }
 
     fn link_queued_bins(&mut self, pass: BinPass) {
@@ -2636,6 +2685,66 @@ impl<'a> PackageInstaller<'a> {
             bun_ptr::RawSlice::new(self.lockfile().buffers.string_bytes.as_slice());
         let string_buf = string_buf_ptr.slice();
 
+        match self
+            .manager()
+            .postinstall_optimizer
+            .script_mode(&postinstall_optimizer::PkgInfo {
+                name_hash: self.pkg_name_hashes[package_id as usize],
+                version: (resolution.tag == resolution::Tag::Npm).then(|| resolution.npm().version),
+                version_buf: string_buf,
+            }) {
+            Some(PostinstallOptimizer::Ignore) => {
+                if PackageManager::verbose_install() {
+                    bun_core::pretty_errorln!(
+                        "<d>[Lifecycle Scripts]<r> ignoring {} lifecycle scripts",
+                        bstr::BStr::new(pkg_name.slice(string_buf)),
+                    );
+                }
+                return;
+            }
+            // `link_tree_bins` decides: the redirect of the bins stands in for the scripts.
+            Some(PostinstallOptimizer::NativeBinlink)
+                if self.bins[package_id as usize].tag != bin::Tag::None =>
+            {
+                (self.unfinished_scripts.borrow_mut().held).append(HeldScripts {
+                    tree_id: self.current_tree_id,
+                    dependency_id,
+                    bins_linked: false,
+                });
+                return;
+            }
+            // Without a bin, no link shows that the platform package is usable.
+            Some(PostinstallOptimizer::NativeBinlink) | None => {}
+        }
+
+        self.enqueue_trusted_scripts(
+            log_level,
+            self.current_tree_id,
+            dependency_id,
+            package_id,
+            pkg_name,
+            resolution,
+            record_trust,
+        );
+    }
+
+    /// `self.node_modules.path` is that of `tree_id`.
+    fn enqueue_trusted_scripts(
+        &mut self,
+        log_level: Options::LogLevel,
+        tree_id: TreeContextId,
+        dependency_id: DependencyID,
+        package_id: PackageID,
+        pkg_name: String,
+        resolution: &Resolution,
+        record_trust: bool,
+    ) {
+        // SAFETY: `buffers.string_bytes` is append-only and never freed
+        // for the lifetime of this `PackageInstaller`.
+        let string_buf_ptr =
+            bun_ptr::RawSlice::new(self.lockfile().buffers.string_bytes.as_slice());
+        let string_buf = string_buf_ptr.slice();
+
         let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
         let (alias, alias_hash) = (dep.name, dep.name_hash);
         let pkg_name_hash = self.pkg_name_hashes[package_id as usize];
@@ -2643,37 +2752,11 @@ impl<'a> PackageInstaller<'a> {
         let mut folder_path = AutoAbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
         folder_path.append(alias.slice(string_buf)).unwrap_or_oom();
 
-        if self
-            .manager()
-            .postinstall_optimizer
-            .should_ignore_lifecycle_scripts(
-                &postinstall_optimizer::PkgInfo {
-                    name_hash: pkg_name_hash,
-                    version: (resolution.tag == resolution::Tag::Npm)
-                        .then(|| resolution.npm().version),
-                    version_buf: string_buf,
-                },
-                self.lockfile().packages.items_resolutions()[package_id as usize]
-                    .get(self.lockfile().buffers.resolutions.as_slice()),
-                self.lockfile().packages.items_meta(),
-                self.manager().options.cpu,
-                self.manager().options.os,
-                self.manager().options.libc,
-            )
-        {
-            if PackageManager::verbose_install() {
-                bun_core::pretty_errorln!(
-                    "<d>[Lifecycle Scripts]<r> ignoring {} lifecycle scripts",
-                    bstr::BStr::new(pkg_name.slice(string_buf)),
-                );
-            }
-            return;
-        }
-
         if self.enqueue_lifecycle_scripts(
             alias.slice(string_buf),
             log_level,
             &mut folder_path,
+            tree_id,
             dependency_id,
             package_id,
             resolution,
@@ -2701,6 +2784,7 @@ impl<'a> PackageInstaller<'a> {
         folder_name: &[u8],
         log_level: Options::LogLevel,
         package_path: &mut bun_paths::AutoAbsPath,
+        tree_id: TreeContextId,
         dependency_id: DependencyID,
         package_id: PackageID,
         resolution: &Resolution,
@@ -2758,16 +2842,15 @@ impl<'a> PackageInstaller<'a> {
             .manager()
             .is_package_required(dependency_id, package_id);
         if self.bins[package_id as usize].tag != bin::Tag::None {
-            self.trees[self.current_tree_id as usize]
+            self.trees[tree_id as usize]
                 .bins_after_scripts
                 .push(dependency_id);
         }
-        self.unfinished_scripts
-            .borrow_mut()
-            .push((self.current_tree_id, scripts_list.package_name.clone()));
+        (self.unfinished_scripts.borrow_mut().scripts)
+            .push((tree_id, scripts_list.package_name.clone()));
         self.pending_lifecycle_scripts.push(PendingLifecycleScript {
             list: scripts_list,
-            tree_id: self.current_tree_id,
+            tree_id,
             optional,
         });
         true

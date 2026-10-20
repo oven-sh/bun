@@ -404,8 +404,46 @@ pub enum InstallCtx<'a> {
 
 /// The packages that the hoisted linker placed and whose scripts haven't all run yet. Main thread
 /// only.
-pub(crate) type UnfinishedScripts =
-    std::rc::Rc<core::cell::RefCell<Vec<(crate::lockfile_real::tree::Id, Box<[u8]>)>>>;
+pub(crate) type UnfinishedScripts = std::rc::Rc<core::cell::RefCell<Unfinished>>;
+
+#[derive(Default)]
+pub struct Unfinished {
+    /// The tree and the folder name of each package whose scripts are queued or running.
+    pub(crate) scripts: Vec<(crate::lockfile_real::tree::Id, Box<[u8]>)>,
+    /// The native binlink packages whose scripts wait for `PackageInstaller::link_tree_bins`.
+    pub(crate) held: bun_collections::SmallList<HeldScripts, 4>,
+}
+
+#[derive(Clone, Copy)]
+pub struct HeldScripts {
+    pub(crate) tree_id: crate::lockfile_real::tree::Id,
+    pub(crate) dependency_id: crate::DependencyID,
+    /// Its own bins are linked and none of their files was missing.
+    pub(crate) bins_linked: bool,
+}
+
+impl Unfinished {
+    pub(crate) fn held_index(
+        &self,
+        tree_id: crate::lockfile_real::tree::Id,
+        dependency_id: crate::DependencyID,
+    ) -> Option<u32> {
+        (self.held.iter())
+            .position(|held| held.tree_id == tree_id && held.dependency_id == dependency_id)
+            .map(|index| index as u32)
+    }
+
+    /// Takes one package that is held in `tree_id` and is not in `except`.
+    pub(crate) fn take_held_in(
+        &mut self,
+        tree_id: crate::lockfile_real::tree::Id,
+        except: &[crate::DependencyID],
+    ) -> Option<HeldScripts> {
+        let index = (self.held.iter())
+            .position(|held| held.tree_id == tree_id && !except.contains(&held.dependency_id))?;
+        Some(self.held.swap_remove(index as u32))
+    }
+}
 
 impl<'a> InstallCtx<'a> {
     /// BACKREF accessor — single `unsafe` deref for the set-once `installer`
@@ -1138,7 +1176,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             unfinished,
         }) = &self.ctx
         {
-            unfinished.borrow_mut().retain(|(tree, folder_name)| {
+            (unfinished.borrow_mut().scripts).retain(|(tree, folder_name)| {
                 tree != tree_id || **folder_name != *self.package_name
             });
         }
@@ -1149,11 +1187,17 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     fn discard_packages_with_unfinished_scripts(&self) {
         Output::flush();
         if let Some(InstallCtx::Hoisted { unfinished, .. }) = &self.ctx {
-            for (tree_id, folder_name) in unfinished.borrow().iter() {
+            let lockfile = &*self.manager().lockfile;
+            let unfinished = unfinished.borrow();
+            for (tree_id, folder_name) in unfinished.scripts.iter() {
+                crate::package_installer::remove_placed_package(lockfile, *tree_id, folder_name);
+            }
+            for held in unfinished.held.iter() {
+                let folder_name = &lockfile.buffers.dependencies[held.dependency_id as usize].name;
                 crate::package_installer::remove_placed_package(
-                    &self.manager().lockfile,
-                    *tree_id,
-                    folder_name,
+                    lockfile,
+                    held.tree_id,
+                    lockfile.str(folder_name),
                 );
             }
         } else if let Some((entry_id, installer)) = self.ctx.as_ref().and_then(InstallCtx::isolated)

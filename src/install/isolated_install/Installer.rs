@@ -651,7 +651,37 @@ impl<'a> Installer<'a> {
                 return Some(dep.entry_id);
             }
         }
-        None
+        // `--omit=optional` leaves the platform package out of `deps`.
+        self.awaited_platform_entry(entry_id).filter(|platform| {
+            entry_steps[platform.get() as usize].load(Ordering::Acquire) != Step::Done as u32
+        })
+    }
+
+    /// The platform package entry that the task of a native binlink entry waits for, if any.
+    fn awaited_platform_entry(&self, entry_id: StoreEntryId) -> Option<StoreEntryId> {
+        let pkg_id = self.store.ids(entry_id).pkg_id;
+        if self.lockfile().packages.items_bin()[pkg_id as usize].tag == bin::Tag::None {
+            return None;
+        }
+        let platform = self.maybe_replace_node_modules_path(pkg_id)?;
+        if platform == entry_id || (self.is_member(platform) && !self.is_member(entry_id)) {
+            return None;
+        }
+        let entry_deps = self.store.entries.items_dependencies();
+        let is_leaf = entry_deps[platform.get() as usize].slice().is_empty();
+        let is_dependency = (entry_deps[entry_id.get() as usize].slice().iter())
+            .any(|dep| dep.entry_id == platform);
+        let waits = if is_dependency {
+            // `is_task_blocked` does not wait for a dependency that is an ancestor.
+            is_leaf || !(self.store).is_cycle(entry_id, platform, &mut ArrayHashMap::default())
+        } else {
+            // Waiting for an entry that waits for nothing cannot deadlock.
+            is_leaf
+                && self
+                    .maybe_replace_node_modules_path(self.store.ids(platform).pkg_id)
+                    .is_none()
+        };
+        waits.then_some(platform)
     }
 
     /// Called from main thread
@@ -952,6 +982,13 @@ fn download_error_reason(e: crate::Error) -> &'static [u8] {
 // Task
 // ──────────────────────────────────────────────────────────────────────────
 
+/// What `Installer::link_bins` links when the bins do not go into a platform package.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Fallback {
+    OwnBins,
+    Nothing,
+}
+
 pub struct Task {
     pub(crate) entry_id: StoreEntryId,
     /// BACKREF: `Installer` owns `tasks[]` and outlives every `Task`. Stored as
@@ -971,6 +1008,8 @@ pub struct Task {
     pub(crate) newly_trusted: bool,
     /// Set by `Step::RunPreinstall` on the task thread, read by `on_task_complete` like `relink`.
     pub(crate) blocked_scripts: u8,
+    /// `Step::RunPreinstall` linked the entry's bins into its platform package.
+    pub(crate) linked_native_bins: bool,
     /// The warnings that `lay_folder_links` returned. `Installer::warn_left_out_links` logs them.
     pub(crate) left_out_links: Vec<Box<[u8]>>,
 }
@@ -1189,13 +1228,15 @@ impl Task {
 
                 Step::Binaries => {
                     // A tarball without a package name has no folder and no bin.
-                    if pkgs.items_bin()[pkg_id as usize].tag != bin::Tag::None
+                    if !self.linked_native_bins
+                        && pkgs.items_bin()[pkg_id as usize].tag != bin::Tag::None
                         && let Some(own_name) = installer
                             .entry_store_node_modules_package_name(entry_id)
                             .filter(|name| !name.is_empty())
                     {
+                        let mut links = installer.bin_links(entry_id);
                         installer
-                            .link_bins(&mut installer.bin_links(entry_id), pkg_id, own_name, false)
+                            .link_bins(&mut links, pkg_id, own_name, false, Fallback::OwnBins)
                             .map_err(TaskError::Binaries)?;
                     }
                     installer
@@ -1249,7 +1290,6 @@ impl Task {
         }
 
         let pkgs = lockfile.packages.slice();
-        let pkg_metas = pkgs.items_meta();
         let mut pkg_scripts: package::scripts::Scripts = pkgs.items_scripts()[pkg_id as usize];
         let dep_name = lockfile.str(&lockfile.buffers.dependencies[dep_id as usize].name);
         let is_trusted = installer.is_trusted(self.entry_id);
@@ -1270,28 +1310,39 @@ impl Task {
             return Ok(false);
         }
 
-        if is_trusted
-            && manager
-                .postinstall_optimizer
-                .should_ignore_lifecycle_scripts(
-                    &postinstall_optimizer::PkgInfo {
-                        name_hash: pkgs.items_name_hash()[pkg_id as usize],
-                        version: if pkg_res.tag == ResolutionTag::Npm {
-                            Some(pkg_res.npm().version)
-                        } else {
-                            None
-                        },
-                        version_buf: lockfile.buffers.string_bytes.as_slice(),
-                    },
-                    pkgs.items_resolutions()[pkg_id as usize]
-                        .get(lockfile.buffers.resolutions.as_slice()),
-                    pkg_metas,
-                    manager.options.cpu,
-                    manager.options.os,
-                    manager.options.libc,
-                )
-        {
-            return Ok(false);
+        let script_mode = if is_trusted {
+            (manager.postinstall_optimizer).script_mode(&postinstall_optimizer::PkgInfo {
+                name_hash: pkgs.items_name_hash()[pkg_id as usize],
+                version: if pkg_res.tag == ResolutionTag::Npm {
+                    Some(pkg_res.npm().version)
+                } else {
+                    None
+                },
+                version_buf: lockfile.buffers.string_bytes.as_slice(),
+            })
+        } else {
+            None
+        };
+        match script_mode {
+            Some(PostinstallOptimizer::Ignore) => return Ok(false),
+            Some(PostinstallOptimizer::NativeBinlink) => {
+                // A redirect into the awaited platform package stands in for the scripts.
+                if installer.awaited_platform_entry(self.entry_id).is_some()
+                    && let Some(own_name) = installer
+                        .entry_store_node_modules_package_name(self.entry_id)
+                        .filter(|name| !name.is_empty())
+                {
+                    let mut links = installer.bin_links(self.entry_id);
+                    // `Step::Binaries` links again after a failure, and reports it.
+                    self.linked_native_bins = installer
+                        .link_bins(&mut links, pkg_id, own_name, false, Fallback::Nothing)
+                        .unwrap_or(false);
+                }
+                if self.linked_native_bins {
+                    return Ok(false);
+                }
+            }
+            None => {}
         }
 
         let mut cwd = AutoAbsPath::init_top_level_dir();
@@ -2295,7 +2346,7 @@ impl<'a> Installer<'a> {
             }
 
             let alias = dependencies[dep.dep_id as usize].name.slice(string_buf);
-            if let Err(err) = self.link_bins(&mut links, pkg_id, alias, global) {
+            if let Err(err) = self.link_bins(&mut links, pkg_id, alias, global, Fallback::OwnBins) {
                 failed.push((dep.entry_id, err));
             }
         }
@@ -2326,13 +2377,15 @@ impl<'a> Installer<'a> {
     }
 
     /// Links the bins of `pkg_id`, which is `package_name` in `links.node_modules_path`.
+    /// `Ok(true)`: they link into its platform package.
     fn link_bins(
         &self,
         links: &mut BinLinks,
         pkg_id: PackageID,
         package_name: &[u8],
         global: bool,
-    ) -> crate::Result<()> {
+        fallback: Fallback,
+    ) -> crate::Result<bool> {
         let lockfile = self.lockfile();
         let package_name = strings::StringOrTinyString::init(package_name);
 
@@ -2349,6 +2402,9 @@ impl<'a> Installer<'a> {
                     strings::StringOrTinyString::init(self.pkg_name(entry_id)),
                 )
             });
+        if replacement.is_none() && fallback == Fallback::Nothing {
+            return Ok(false);
+        }
         // A bin link to a replacement package points outside the workspace's `node_modules`. If
         // that directory is a symlink, the relative target has to start from its real path.
         if replacement.is_some() && links.is_behind_link != Some(false) {
@@ -2382,10 +2438,15 @@ impl<'a> Installer<'a> {
         };
 
         bin_linker.link(global);
+        let redirect_failed = bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some();
+        let redirected = replacement.is_some() && !redirect_failed;
 
-        if replacement.is_some()
-            && (bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some())
-        {
+        if fallback == Fallback::Nothing {
+            links.is_behind_link = bin_linker.is_behind_link;
+            return Ok(redirected);
+        }
+
+        if replacement.is_some() && redirect_failed {
             bin_linker.target_node_modules_path = bin_linker.node_modules_path;
             bin_linker.target_package_name = package_name;
             bin_linker.err = None;
@@ -2403,7 +2464,7 @@ impl<'a> Installer<'a> {
         }
 
         links.is_behind_link = bin_linker.is_behind_link;
-        bin_linker.err.map_or(Ok(()), Err)
+        bin_linker.err.map_or(Ok(redirected), Err)
     }
 
     /// True when this entry should live in the shared global virtual store

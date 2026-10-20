@@ -4639,7 +4639,7 @@ it.concurrent.each<{
     z: ["1.1.0"],
   },
   {
-    shape: "of two versions of one package, only the lowest counts",
+    shape: "of two versions of one package with the peer, the lowest chooses",
     manifests: {
       a: { "1.0.0": { dependencies: { d: "1.0.0" } } },
       b: { "1.0.0": { dependencies: { d: "2.0.0" } } },
@@ -4662,6 +4662,19 @@ it.concurrent.each<{
     },
     root: ["a", "m", "n"],
     swap: ["a", "g"],
+    z: ["1.1.0"],
+  },
+  {
+    shape: "a version that stays next to a lower one counts",
+    manifests: {
+      a: { "1.0.0": { dependencies: { g: "2.0.0" } } },
+      b: { "1.0.0": { dependencies: { g: "1.0.0" }, peerDependencies: { z: "^1.0.0" } } },
+      c: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
+      g: { "1.0.0": {}, "2.0.0": { peerDependencies: { z: "^1.0.0" } } },
+      z: zVersions,
+    },
+    root: ["a", "b", "c"],
+    swap: ["b", "c"],
     z: ["1.1.0"],
   },
   {

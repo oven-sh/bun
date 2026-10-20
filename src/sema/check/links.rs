@@ -55,8 +55,6 @@ pub(super) enum MappedPart {
     NameType,
     ModifiersType,
     ApparentType,
-    /// 1 + the index in `TypeLinks::generic_names`.
-    HasGenericName,
 }
 
 /// Kind of type that a row of `TypeLinks::parts` describes.
@@ -67,7 +65,7 @@ pub(super) enum Kind {
 }
 
 /// Number of cells in a row, one per `MappedPart`.
-const PARTS: usize = 8;
+const PARTS: usize = 7;
 
 /// `restrictiveMapper`, `permissiveMapper` and `uniqueLiteralMapper`, which are the same for every type.
 #[derive(Copy, Clone, Debug)]
@@ -81,41 +79,6 @@ pub(super) enum FixedMapper {
 /// stack, and it's read only where that many bytes are free. So no `is_stack_low` check would have cut the skipped
 /// derivation short.
 const MAX_STACK_OF_CACHED_PART: usize = 64 << 10;
-
-/// Side effects that a derivation repeats every time it runs.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(super) struct SideEffects {
-    /// Amount it adds to `Checker::instantiation_count`.
-    instantiations: u32,
-    /// Amount it adds to `Checker::instantiations_computed`.
-    computed: u32,
-    /// Number of levels it adds to `Checker::instantiation_depth` at its deepest point.
-    levels: u32,
-    /// Bytes of native stack it uses.
-    stack: u32,
-    /// Bits it sets in `Checker::reliability`.
-    reliability: u8,
-}
-
-/// The checker's counters at `Checker::begin_measuring`.
-struct BeforeDerivation {
-    instantiation_count: u32,
-    instantiations_computed: u64,
-    instantiation_depth: u32,
-    /// `Checker::deepest_instantiation`, which starts at the depth during the derivation.
-    deepest_instantiation: u32,
-    /// Bytes of native stack in use.
-    stack_in_use: usize,
-    /// `Checker::deepest_stack`, which is 0 during the derivation.
-    deepest_stack: usize,
-    /// `Checker::reliability`, which is 0 during the derivation.
-    reliability: u8,
-}
-
-/// A result that tsgo recomputes on every request, plus the first derivation's side effects. tsgo doesn't cache
-/// instantiations, so every request there has those effects. `Checker::repeat` applies them instead of running the
-/// later derivations.
-pub(super) type WithSideEffects<V> = (V, SideEffects);
 
 /// Number of published types per page of `ByType`.
 const PAGE: usize = 128;
@@ -201,8 +164,6 @@ pub(super) struct TypeLinks {
     parts: Vec<[u32; PARTS]>,
     /// See `INFER_TYPE_PARAMETERS`.
     infer_type_parameters: Vec<TypeId>,
-    /// True if `isGenericMappedType` considers the mapped type's name type generic.
-    generic_names: Vec<WithSideEffects<bool>>,
     /// 0 if nothing is cached for the type. Otherwise 1 + the index of its row in `with_fixed_mappers`.
     fixed_mapper_rows: ByType,
     /// `cachedTypes[CachedTypeKindRestrictiveInstantiation]`, `cachedTypes[CachedTypeKindPermissiveInstantiation]` and
@@ -227,7 +188,6 @@ impl TypeLinks {
             rows,
             parts,
             infer_type_parameters,
-            generic_names,
             fixed_mapper_rows,
             with_fixed_mappers,
             restrictive_resets,
@@ -243,7 +203,6 @@ impl TypeLinks {
         rows.clear();
         parts.clear();
         infer_type_parameters.clear();
-        generic_names.clear();
         fixed_mapper_rows.clear();
         with_fixed_mappers.clear();
         (*restrictive_resets, *uncached_derivations) = (0, 0);
@@ -309,27 +268,6 @@ impl TypeLinks {
             let cell = INFER_TYPE_PARAMETERS;
             self.set_cell(ty, Kind::Conditional, cell, encoded, Stored::new());
         }
-    }
-
-    /// Returns the entry of `generic_names` for the mapped type `ty`.
-    #[inline]
-    pub(super) fn has_generic_name(&self, ty: TypeId) -> Option<WithSideEffects<bool>> {
-        let at = self.cell(ty, Kind::Mapped, MappedPart::HasGenericName as usize) as usize;
-        Some(self.generic_names[at.checked_sub(1)?])
-    }
-
-    pub(super) fn cache_has_generic_name(
-        &mut self,
-        ty: TypeId,
-        entry: WithSideEffects<bool>,
-        stored: Stored,
-    ) {
-        self.generic_names.push(entry);
-        let (cell, encoded) = (
-            MappedPart::HasGenericName as usize,
-            self.generic_names.len() as u32,
-        );
-        self.set_cell(ty, Kind::Mapped, cell, encoded, stored);
     }
 
     /// Returns 0 if the instantiation isn't cached.
@@ -504,77 +442,6 @@ impl<'p, 's> Checker<'p, 's> {
         (part, stored)
     }
 
-    /// Like `derive_settled`, but also measures `derive`'s side effects. They're `None` if `instantiation_count` was
-    /// reset during the derivation.
-    pub(super) fn derive_measured<V>(
-        &mut self,
-        derive: impl FnOnce(&mut Self) -> V,
-        is_settled: impl FnOnce(&Self, &V) -> bool,
-    ) -> (V, Option<Stored>, Option<SideEffects>) {
-        let before = self.begin_measuring();
-        let (value, stored) = self.derive_settled(derive, is_settled);
-        (value, stored, self.end_measuring(&before))
-    }
-
-    fn begin_measuring(&mut self) -> BeforeDerivation {
-        BeforeDerivation {
-            instantiation_count: self.instantiation_count,
-            instantiations_computed: self.instantiations_computed,
-            instantiation_depth: self.instantiation_depth,
-            deepest_instantiation: std::mem::replace(
-                &mut self.deepest_instantiation,
-                self.instantiation_depth,
-            ),
-            stack_in_use: self.stack_base.saturating_sub(stack_pointer()),
-            deepest_stack: self.deepest_stack.replace(0),
-            reliability: std::mem::take(&mut self.reliability),
-        }
-    }
-
-    /// Returns the side effects since `begin_measuring`. See `derive_measured`.
-    fn end_measuring(&mut self, before: &BeforeDerivation) -> Option<SideEffects> {
-        let levels = (self.deepest_instantiation).saturating_sub(before.instantiation_depth);
-        self.deepest_instantiation = (self.deepest_instantiation).max(before.deepest_instantiation);
-        let deepest = self.deepest_stack.get();
-        self.deepest_stack.set(deepest.max(before.deepest_stack));
-        let reliability = self.reliability;
-        self.reliability |= before.reliability;
-        let computed = self.instantiations_computed - before.instantiations_computed;
-        let instantiations = (self.instantiation_count).checked_sub(before.instantiation_count)?;
-        Some(SideEffects {
-            instantiations,
-            computed: computed.min(u64::from(u32::MAX)) as u32,
-            levels,
-            stack: u32::try_from(deepest.saturating_sub(before.stack_in_use)).unwrap_or(u32::MAX),
-            reliability,
-        })
-    }
-
-    /// Applies a derivation's recorded side effects without running it. Returns false and does nothing if one of
-    /// `instantiate`'s limits or an `is_stack_low` check could stop the derivation. It then has to run so that it
-    /// reports its errors.
-    pub(super) fn repeat(&mut self, repeated: &SideEffects) -> bool {
-        let count = (self.instantiation_count).saturating_add(repeated.instantiations);
-        let levels = self.instantiation_depth + repeated.levels;
-        let in_use = self.stack_base.saturating_sub(stack_pointer());
-        let deepest = in_use.saturating_add(repeated.stack as usize);
-        if !self.index_infos_in_instantiation.is_empty()
-            || count >= 5_000_000
-            || levels >= 100
-            || deepest > self.stack_limit
-        {
-            return false;
-        }
-        self.instantiation_count = count;
-        self.instantiations_computed += u64::from(repeated.computed);
-        self.deepest_instantiation = self.deepest_instantiation.max(levels);
-        self.reliability |= repeated.reliability;
-        if deepest > self.deepest_stack.get() {
-            self.deepest_stack.set(deepest);
-        }
-        true
-    }
-
     /// Calls `derive`, which runs an inference. The returned flag is true if `derive` had no effect that a caller could
     /// notice, apart from the ones that `derive_settled` checks. For that, it must not have marked the variance being
     /// measured (a hit in `Program::relations` does that every time), its result must not depend on the comparisons or
@@ -741,17 +608,14 @@ mod tests {
         let (conditional, mapped) = (TypeId(LOCAL | 3), TypeId(7));
         let mut links = TypeLinks::default();
         links.set_cell(conditional, Kind::Conditional, 2, 40, Stored::new());
-        let last = MappedPart::HasGenericName as usize;
+        let last = MappedPart::ApparentType as usize;
         assert_eq!(last + 1, PARTS);
         links.set_cell(mapped, Kind::Mapped, last, 50, Stored::new());
         links.set_cell(conditional, Kind::Conditional, 0, 60, Stored::new());
-        let row = |ty, kind| [0, 1, 2, 3, 4, 5, 6, 7].map(|at| links.cell(ty, kind, at));
-        assert_eq!(
-            row(conditional, Kind::Conditional),
-            [60, 0, 40, 0, 0, 0, 0, 0]
-        );
+        let row = |ty, kind| [0, 1, 2, 3, 4, 5, 6].map(|at| links.cell(ty, kind, at));
+        assert_eq!(row(conditional, Kind::Conditional), [60, 0, 40, 0, 0, 0, 0]);
         assert_eq!(row(conditional, Kind::Mapped), [0; PARTS]);
-        assert_eq!(row(mapped, Kind::Mapped), [0, 0, 0, 0, 0, 0, 0, 50]);
+        assert_eq!(row(mapped, Kind::Mapped), [0, 0, 0, 0, 0, 0, 50]);
         assert_eq!(row(mapped, Kind::Conditional), [0; PARTS]);
         assert_eq!(row(TypeId(8), Kind::Mapped), [0; PARTS]);
     }

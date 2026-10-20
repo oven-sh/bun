@@ -876,7 +876,6 @@ impl<'s> Program<'s> {
             inference_contexts: Vec::new(),
             inference_memo: Default::default(),
             instantiation_depth: 0,
-            deepest_instantiation: 0,
             outermost_comparison: None,
             instantiation_count: 0,
             instantiations_computed: 0,
@@ -1626,8 +1625,6 @@ pub struct Checker<'p, 's> {
     /// Records what the `inferTypes` walks wrote. See check/infer_memo.rs.
     inference_memo: infer::InferenceMemo,
     instantiation_depth: u32,
-    /// The greatest `instantiation_depth` since `derive_measured` last set it.
-    deepest_instantiation: u32,
     /// The `errorNode` of the comparison that began while no query or instantiation was in progress
     /// and hasn't ended yet. See `begin_comparison`.
     outermost_comparison: Option<Option<(FileId, u32, u32)>>,

@@ -33,7 +33,6 @@ class IDLOperationReturningPromise {
 public:
     using ClassParameter = JSClass*;
     using Operation = JSC::EncodedJSValue(JSC::JSGlobalObject*, JSC::CallFrame*, ClassParameter, Ref<DeferredPromise>&&);
-    using StaticOperation = JSC::EncodedJSValue(JSC::JSGlobalObject*, JSC::CallFrame*, Ref<DeferredPromise>&&);
 
     template<Operation operation, CastedThisErrorBehavior shouldThrow = CastedThisErrorBehavior::RejectPromise>
     static JSC::EncodedJSValue call(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, ASCIILiteral operationName)
@@ -50,15 +49,6 @@ public:
 
             // FIXME: We should refactor the binding generated code to use references for lexicalGlobalObject and thisObject.
             return operation(&lexicalGlobalObject, &callFrame, thisObject, WTF::move(promise));
-        }));
-    }
-
-    template<StaticOperation operation, CastedThisErrorBehavior shouldThrow = CastedThisErrorBehavior::RejectPromise>
-    static JSC::EncodedJSValue callStatic(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, const char*)
-    {
-        return JSC::JSValue::encode(callPromiseFunction(lexicalGlobalObject, callFrame, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, Ref<DeferredPromise>&& promise) {
-            // FIXME: We should refactor the binding generated code to use references for lexicalGlobalObject.
-            return operation(&lexicalGlobalObject, &callFrame, WTF::move(promise));
         }));
     }
 };

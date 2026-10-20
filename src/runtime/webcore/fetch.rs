@@ -82,7 +82,7 @@ use bun_url::URL as ZigURL;
 
 use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
 pub(crate) use self::fetch_tasklet::{
-    FetchTasklet, FetchTaskletDeinitHop, FetchTaskletRequestDrain,
+    FetchTasklet, FetchTaskletDeinitHop, FetchTaskletRequestDrain, FetchTaskletUnreadBody,
 };
 
 // ──────────────────────────────────────────────────────────────────────────

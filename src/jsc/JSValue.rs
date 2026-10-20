@@ -229,6 +229,25 @@ impl JSValue {
         }
         JSC__JSValue__isLiveCell(self)
     }
+    /// This cell came to own `bytes` more of native memory since it was created
+    /// (`Heap::reportExtraMemoryAllocated`). Its `estimated_size` has to count the same bytes
+    /// for as long as it owns them. JS thread only. JSC ignores 256 bytes or less.
+    ///
+    /// A GC safepoint: a collection can start here, or one under way can finish here, and its
+    /// epilogue runs before this returns. The epilogue sweeps the first cells of every class
+    /// and the large ones (every cell under memory pressure, `--smol`, or `sweepSynchronously`),
+    /// so finalizers and destructors run inside this call, for this cell too. Hold no lock and
+    /// no borrow of what a sweep can free.
+    ///
+    /// A report of 64 KiB or more also ends the wait of a collection that JSC put off because
+    /// one larger allocation was most of the cycle.
+    #[inline]
+    pub fn report_extra_memory_allocated(self, bytes: usize) {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__reportExtraMemoryAllocated(this: JSValue, bytes: usize);
+        }
+        JSC__JSValue__reportExtraMemoryAllocated(self, bytes)
+    }
     #[inline]
     pub fn is_int32(self) -> bool {
         const NUMBER_TAG: usize = 0xfffe_0000_0000_0000;

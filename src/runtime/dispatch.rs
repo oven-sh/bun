@@ -334,6 +334,11 @@ pub(crate) fn run_task(
                 crate::webcore::fetch::FetchTaskletRequestDrain
             ));
         }
+        task_tag::FetchTaskletUnreadBody => {
+            crate::webcore::fetch::FetchTaskletUnreadBody::run(cast_ptr!(
+                crate::webcore::fetch::FetchTaskletUnreadBody
+            ));
+        }
         task_tag::HTMLRewriterBackgroundPull => {
             crate::api::html_rewriter::RewriterPipe::run_background_pull(cast_ptr!(
                 crate::api::html_rewriter::RewriterPipe
@@ -752,7 +757,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 86,
+    task_tag::COUNT == 87,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1455,6 +1460,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::BundleV2ParseTaskResult => release!(bun_bundler::parse_task::Result),
         task_tag::FetchTaskletRequestDrain => {
             release!(crate::webcore::fetch::FetchTaskletRequestDrain)
+        }
+        task_tag::FetchTaskletUnreadBody => {
+            release!(crate::webcore::fetch::FetchTaskletUnreadBody)
         }
         task_tag::HTMLRewriterBackgroundPull => {
             release!(crate::api::html_rewriter::RewriterPipeBackgroundPull)

@@ -1472,3 +1472,59 @@ it.skipIf(!isPosix)("a write() that fails while another is pending rejects the p
     if (readFdOpen) fs.closeSync(readFd);
   }
 });
+
+// A chunk below the buffer threshold is reported as written and sent at the end
+// of the tick. When that send fails with nothing pending, the error has no
+// promise to reject: the next call from JS takes it, once.
+describe.skipIf(isWindows)("FileSink reports a write error that arrived while nothing was pending", () => {
+  // The child closes its own stdin, signals ready, then stays alive.
+  async function sinkWithClosedPeer() {
+    const proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `require("fs").closeSync(0); process.stdout.write("ready\\n"); setInterval(() => {}, 1e5);`,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    await proc.stdout.getReader().read();
+    expect(proc.stdin.write("hello\n")).toBe(6);
+    // Let the sink's own end-of-tick flush hit EPIPE.
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    return proc;
+  }
+
+  it.concurrent("flush() throws it, once", async () => {
+    const proc = await sinkWithClosedPeer();
+    try {
+      expect(() => proc.stdin.flush()).toThrow(expect.objectContaining({ code: "EPIPE" }));
+      expect(proc.stdin.flush()).toBeUndefined();
+    } finally {
+      proc.kill("SIGKILL");
+    }
+  });
+
+  it.concurrent("end() throws it", async () => {
+    const proc = await sinkWithClosedPeer();
+    try {
+      expect(() => proc.stdin.end()).toThrow(expect.objectContaining({ code: "EPIPE" }));
+    } finally {
+      proc.kill("SIGKILL");
+    }
+  });
+
+  it.concurrent("write() rejects with it", async () => {
+    const proc = await sinkWithClosedPeer();
+    try {
+      const result = proc.stdin.write("more");
+      expect(result).toBeInstanceOf(Promise);
+      await expect(result).rejects.toMatchObject({ code: "EPIPE" });
+    } finally {
+      proc.kill("SIGKILL");
+    }
+  });
+});

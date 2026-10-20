@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicI32, Ordering};
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{self, WriteResult, WriteStatus};
-use bun_jsc::JsCell;
+use bun_jsc::{JsCell, SysErrorJsc as _};
 use bun_ptr::RefPtr;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
@@ -66,6 +66,20 @@ pub struct FileSink {
     /// `assign_to_js_stream` holds a ref for the pump promise's reactions, which release it.
     pump_promise_ref: Cell<bool>,
 
+    /// A write error that arrived while no `write()`/`flush()`/`end()` promise was pending: a
+    /// buffered chunk was reported as written and its drain failed later. The owner hook takes
+    /// it from `run_pending`; without one, the next call from JS takes it.
+    undelivered_error: JsCell<Option<sys::Error>>,
+    /// An error already reached JS (a promise, a throw, the owner hook). The writer can report
+    /// one failure twice (a `write()` that fails on the spot, then the poll that finds the hangup):
+    /// only the first is latched.
+    error_reported: Cell<bool>,
+    /// `fs.WriteStream`'s fast path (`src/js/internal/fs/streams.ts`). `run_pending` calls it with
+    /// the error, or with `null` once every chunk it was handed has reached the fd. Strong until
+    /// `end`, or until the child it fed exits (`child_process` destroys the stream then): the hook
+    /// closes over the stream, and a stream nobody ends must stay collectable.
+    owner_hook: JsCell<bun_jsc::strong::Optional>,
+
     /// Strong reference to the JS wrapper object to prevent GC from collecting it
     /// while an async operation is pending. This is set when endFromJS returns a
     /// pending Promise and cleared when the operation completes.
@@ -98,6 +112,28 @@ pub(crate) mod testing_apis {
 // `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
 // (acronym splitter treats `AP|Is` as two words); alias so both resolve.
 pub(crate) use testing_apis as testing_ap_is;
+
+/// `$newRustFunction("runtime/webcore/FileSink.rs", "jsSetOwnerHook", 2)`: `fs.WriteStream`'s
+/// fast path hands the sink the function that settles its write callbacks. Returns `false` and
+/// keeps nothing for a sink that writes synchronously (a TTY, `process.stdout`): such a `write()`
+/// reports every outcome itself.
+pub(crate) fn js_set_owner_hook(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [sink_value, hook] = frame.arguments_as_array::<2>();
+    let Some(this_ptr) = JSSink::from_js(sink_value) else {
+        return Err(global.throw_type_error(format_args!("Expected a FileSink")));
+    };
+    if !hook.is_callable() {
+        return Err(global.throw_type_error(format_args!("Expected a function")));
+    }
+    // SAFETY: `from_js` returned a live `*mut JSSink<FileSink>`; `sink` is its first field.
+    let this: &FileSink = unsafe { &(*this_ptr).sink };
+    if this.force_sync.get() {
+        return Ok(JSValue::FALSE);
+    }
+    this.owner_hook
+        .with_mut(|h| h.set(global, hook.with_async_context_if_needed(global)));
+    Ok(JSValue::TRUE)
+}
 
 /// `bun_sys` does not yet export
 /// an isPollable helper, so re-derive it locally from `S_IFMT`. Windows always
@@ -318,6 +354,11 @@ impl FileSink {
                 }
             }
 
+            // Chunks still in the buffer never reach the child: an owner stream reports EPIPE
+            // for them, as node does for a write the child did not take.
+            let dropped_buffered_data =
+                (*this).writer.get().has_pending_data() && (*this).owner_hook.get().has();
+
             // SAFETY(JsCell): `IOWriter::close` does not call into JS directly; the
             // `on_close` re-entry it triggers goes via the stored `*mut FileSink`
             // backref, not through this `JsCell` borrow.
@@ -329,7 +370,14 @@ impl FileSink {
                     sys::Tag::write,
                 ));
             });
+            if dropped_buffered_data {
+                (*this).latch_undelivered_error(sys::Error::from_code(
+                    sys::Errno::EPIPE,
+                    sys::Tag::write,
+                ));
+            }
             FileSink::run_pending(this);
+            (*this).drop_owner_hook();
 
             // `writer.close()` → `onClose` already released this above; kept for
             // paths where `onClose` isn't reached (e.g. writer already closed).
@@ -359,7 +407,80 @@ impl FileSink {
             // This was held to prevent GC from collecting the wrapper while the async
             // operation was in progress.
             (*this).js_sink_ref.with_mut(|r| r.deinit());
+
+            FileSink::dispatch_owner_hook(this);
         }
+    }
+
+    /// Answers the owner's buffered writes: with the latched error, or with `null` once the
+    /// buffer is empty. A non-empty buffer with no error means a drain is still to come, and
+    /// `on_write`/`on_auto_flush` schedule another `run_pending` for it.
+    ///
+    /// # Safety
+    /// `this` must be the canonical live `*mut FileSink`, held by the caller's ref guard: the
+    /// hook runs user JS, which may `end()` the sink.
+    unsafe fn dispatch_owner_hook(this: *mut FileSink) {
+        // SAFETY: caller contract — `this` is live with write+dealloc provenance.
+        unsafe {
+            let Some(hook) = (*this).owner_hook.get().get() else {
+                return;
+            };
+            let err = (*this).undelivered_error.replace(None);
+            if err.is_none() && (*this).writer.get().has_pending_data() {
+                return;
+            }
+            let Some(global) = (*this).js_global() else {
+                return;
+            };
+            bun_core::scoped_log!(FileSink, "dispatchOwnerHook({})", err.is_some());
+            let arg = match err {
+                Some(err) => err.to_js(global),
+                None => JSValue::NULL,
+            };
+            global.bun_vm().event_loop_mut().run_callback(
+                bun_event_loop::ContextId::NONE,
+                hook,
+                global,
+                JSValue::UNDEFINED,
+                &[arg],
+            );
+        }
+    }
+
+    /// Keeps a write error that no promise can carry. A piped stream takes its failure from
+    /// `stream_error` through `settle_stream_done` instead.
+    fn latch_undelivered_error(&self, err: sys::Error) {
+        if self.pipe.get().cell().is_some() || self.error_reported.replace(true) {
+            return;
+        }
+        self.undelivered_error.set(Some(err));
+    }
+
+    /// `write()`/`flush()`/`end()` from JS: the error the last drain left behind, if any.
+    fn take_undelivered_error(&self) -> Option<sys::Error> {
+        self.undelivered_error.replace(None)
+    }
+
+    /// A write after the sink is done (its last drain failed, and the stream did not destroy
+    /// itself) reaches no reader: its owner gets EPIPE on the next `run_pending`, as a drain that
+    /// failed would report it.
+    fn fail_owner_write_after_done(&self) {
+        if !self.owner_hook.get().has() {
+            return;
+        }
+        // A new write, so a new failure: not subject to the once-only latch.
+        if self.undelivered_error.get().is_none() {
+            self.undelivered_error.set(Some(sys::Error::from_code(
+                sys::Errno::EPIPE,
+                sys::Tag::write,
+            )));
+        }
+        self.run_pending_later();
+    }
+
+    /// JS ends or destroys the stream and settles its own write callbacks from here on.
+    fn drop_owner_hook(&self) {
+        self.owner_hook.with_mut(|h| h.deinit());
     }
 
     /// # Safety
@@ -426,6 +547,13 @@ impl FileSink {
                 }
 
                 FileSink::run_pending(this);
+            } else if status != WriteStatus::Pending
+                && !has_pending_data
+                && (*this).owner_hook.get().has()
+            {
+                // An inline write or a poll drain emptied the buffer with no promise to settle:
+                // answer the owner from a task, not from inside the writer's callback.
+                (*this).run_pending_later();
             }
 
             if resumes && (*this).source_pending_pull.replace(false) {
@@ -470,19 +598,27 @@ impl FileSink {
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
             (*this).record_stream_error(streams::StreamError::Error(err.clone()));
-            if (*this).pending.get().state == streams::PendingState::Pending {
-                (*this)
-                    .pending
-                    .with_mut(|p| p.result = streams::Writable::Err(err));
-                if let Some(vm) = (*this).js_vm() {
-                    if vm.is_inside_deferred_task_queue.get() {
-                        (*this).run_pending_later();
-                        return;
-                    }
+            if (*this).pending.get().state != streams::PendingState::Pending {
+                // The failed bytes were reported as written when they were buffered. The
+                // writer closes right after this callback: deliver from a task.
+                (*this).latch_undelivered_error(err);
+                if (*this).owner_hook.get().has() {
+                    (*this).run_pending_later();
                 }
-
-                FileSink::run_pending(this);
+                return;
             }
+            (*this).error_reported.set(true);
+            (*this)
+                .pending
+                .with_mut(|p| p.result = streams::Writable::Err(err));
+            if let Some(vm) = (*this).js_vm() {
+                if vm.is_inside_deferred_task_queue.get() {
+                    (*this).run_pending_later();
+                    return;
+                }
+            }
+
+            FileSink::run_pending(this);
         }
     }
 
@@ -963,9 +1099,12 @@ impl FileSink {
                     (*this).record_stream_error(streams::StreamError::Error(err.clone()));
                     (*this).done.set(true);
                     if (*this).pending.get().state == streams::PendingState::Pending {
+                        (*this).error_reported.set(true);
                         (*this)
                             .pending
                             .with_mut(|p| p.result = streams::Writable::Err(err));
+                    } else {
+                        (*this).latch_undelivered_error(err);
                     }
                     (*this).writer.with_mut(|w| w.end());
                     (*this).run_pending_later();
@@ -1015,6 +1154,10 @@ impl FileSink {
             if let streams::WritableFuture::Promise { strong, .. } = &self.pending.get().future {
                 return sys::Result::Ok(strong.value());
             }
+        }
+
+        if let Some(err) = self.take_undelivered_error() {
+            return sys::Result::Err(err);
         }
 
         if self.done.get() {
@@ -1165,8 +1308,8 @@ impl FileSink {
     }
 
     pub fn write(&self, data: &streams::Result) -> streams::Writable {
-        if self.done.get() {
-            return streams::Writable::Done;
+        if let Some(result) = self.write_gate() {
+            return result;
         }
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write` buffers/writes to fd; does not call JS.
@@ -1174,8 +1317,7 @@ impl FileSink {
         if self.counting_stream_bytes() {
             self.count_stream_bytes(&rc, data.slice().len());
         }
-        let accepted = self.bytes_accepted(buffered_before, &rc);
-        self.to_result(rc, accepted)
+        self.write_result(rc, buffered_before)
     }
 
     fn count_stream_bytes(&self, rc: &WriteResult, encoded_len: usize) {
@@ -1209,8 +1351,8 @@ impl FileSink {
     }
 
     pub(crate) fn write_latin1(&self, data: &streams::Result) -> streams::Writable {
-        if self.done.get() {
-            return streams::Writable::Done;
+        if let Some(result) = self.write_gate() {
+            return result;
         }
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_latin1` buffers/writes; no JS.
@@ -1221,13 +1363,12 @@ impl FileSink {
                 bun_core::strings::element_length_latin1_into_utf8(data.slice()),
             );
         }
-        let accepted = self.bytes_accepted(buffered_before, &rc);
-        self.to_result(rc, accepted)
+        self.write_result(rc, buffered_before)
     }
 
     pub(crate) fn write_utf16(&self, data: &streams::Result) -> streams::Writable {
-        if self.done.get() {
-            return streams::Writable::Done;
+        if let Some(result) = self.write_gate() {
+            return result;
         }
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_utf16` buffers/writes; no JS.
@@ -1238,8 +1379,7 @@ impl FileSink {
                 bun_core::strings::element_length_utf16_into_utf8(data.slice16()),
             );
         }
-        let accepted = self.bytes_accepted(buffered_before, &rc);
-        self.to_result(rc, accepted)
+        self.write_result(rc, buffered_before)
     }
 
     /// The source is done; `err` settles a piped stream. A failed ByteStream closes without a flush.
@@ -1280,6 +1420,12 @@ impl FileSink {
     }
 
     pub(crate) fn end(&self, _err: Option<sys::Error>) -> sys::Result<()> {
+        self.drop_owner_hook();
+        if let Some(err) = self.take_undelivered_error() {
+            // The drain that failed already ended the writer.
+            self.done.set(true);
+            return sys::Result::Err(err);
+        }
         if self.done.get() {
             return sys::Result::Ok(());
         }
@@ -1306,6 +1452,7 @@ impl FileSink {
             WriteResult::Err(e) => {
                 self.record_stream_error(streams::StreamError::Error(e.clone()));
                 self.done.set(true);
+                self.error_reported.set(true);
                 if has_pending {
                     self.pending
                         .with_mut(|p| p.result = streams::Writable::Err(e));
@@ -1348,6 +1495,7 @@ impl FileSink {
     }
 
     pub(crate) fn end_from_js(&self, cx: &bun_jsc::JsThread<'_>) -> sys::Result<JSValue> {
+        self.drop_owner_hook();
         if self.done.get() {
             if self.pending.get().state == streams::PendingState::Pending {
                 if let streams::WritableFuture::Promise { strong, .. } = &self.pending.get().future
@@ -1355,7 +1503,15 @@ impl FileSink {
                     return sys::Result::Ok(strong.value());
                 }
             }
+            if let Some(err) = self.take_undelivered_error() {
+                return sys::Result::Err(err);
+            }
             return sys::Result::Ok(JSValue::js_number(self.written.get() as f64));
+        }
+        if let Some(err) = self.take_undelivered_error() {
+            // The drain that failed already closed the writer.
+            self.done.set(true);
+            return sys::Result::Err(err);
         }
 
         // SAFETY(JsCell): `IOWriter::flush` is pure I/O; no JS while held.
@@ -1386,6 +1542,7 @@ impl FileSink {
                 // `writer.end()` below runs `on_close`, which settles a piped stream with it.
                 self.record_stream_error(streams::StreamError::Error(err.clone()));
                 self.done.set(true);
+                self.error_reported.set(true);
                 if has_pending {
                     // A backpressured write() left its promise outstanding.
                     // Throwing here would report the failure to the caller and
@@ -1551,6 +1708,28 @@ impl FileSink {
         }
     }
 
+    /// Runs before every `write_*`: a write error left behind by the last drain is the answer,
+    /// and a sink that is done tells its owner so. `None` means write.
+    fn write_gate(&self) -> Option<streams::Writable> {
+        if let Some(err) = self.take_undelivered_error() {
+            return Some(streams::Writable::Err(err));
+        }
+        if self.done.get() {
+            self.fail_owner_write_after_done();
+            return Some(streams::Writable::Done);
+        }
+        None
+    }
+
+    /// Runs after every `write_*`: a writer that is closed (`Done`) took nothing.
+    fn write_result(&self, rc: WriteResult, buffered_before: usize) -> streams::Writable {
+        if matches!(rc, WriteResult::Done(_)) {
+            self.fail_owner_write_after_done();
+        }
+        let accepted = self.bytes_accepted(buffered_before, &rc);
+        self.to_result(rc, accepted)
+    }
+
     /// Bytes the writer took off our hands in the `write_*` call that produced
     /// `rc`: what reached the fd plus what it buffered for later. The writer
     /// never takes part of a chunk, so for a `Pending` result this is the
@@ -1581,6 +1760,7 @@ impl FileSink {
                 streams::Writable::Temporary(amt as u64)
             }
             WriteResult::Err(err) => {
+                self.error_reported.set(true);
                 // A backpressured `write()` left its promise outstanding. `Writable::Err` becomes a
                 // second, already rejected promise, and the caller of `write()` is awaiting the first:
                 // the failure would be reported twice, once as an unhandled rejection. As in `end()`,
@@ -1654,6 +1834,9 @@ impl FileSink {
             stream_js_error: Cell::new(false),
             stream_bytes: Cell::new(None),
             pump_promise_ref: Cell::new(false),
+            undelivered_error: JsCell::new(None),
+            error_reported: Cell::new(false),
+            owner_hook: JsCell::new(bun_jsc::strong::Optional::empty()),
             js_sink_ref: JsCell::new(bun_jsc::strong::Optional::empty()),
             abort_handle: bun_jsc::AbortHandle::for_owner::<FileSink>(),
         }

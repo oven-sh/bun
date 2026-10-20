@@ -1019,14 +1019,19 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // due `WTFTimer` heap entries), so it must stay guarded by `is_active()`
     // rather than running unconditionally.
     {
+        // Every turn, before the reads below, so the program's immediates cannot starve these.
+        // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
+        let macro_loop_pending =
+            unsafe { bun_jsc::event_loop::EventLoop::run_macro_loop_leftovers(el, vm) };
         // Read `immediate_tasks` AFTER
         // `tickImmediateTasks` swaps `next_immediate_tasks` in, so this
         // reflects next-tick immediates (queued during the drain above).
         // SAFETY: `el` is the live per-thread event loop.
         // SAFETY: `el` is the live per-thread event loop.
-        let has_pending_immediate = has_yielded_tasks
+        let has_pending_immediate = macro_loop_pending
+            || has_yielded_tasks
             || !unsafe { &*el }.immediate_tasks.is_empty()
-            || unsafe { &*el }.has_pending_tasks();
+            || unsafe { &*el }.has_own_pending_tasks();
         // Fold the QUIC deadline into the poll timeout.
         // SAFETY: `loop_` is the live per-thread uws loop.
         let quic_next_tick_us = unsafe {
@@ -1158,11 +1163,16 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     }
 
     {
+        // On every turn: see the matching call in `auto_tick`.
+        // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
+        let macro_loop_pending =
+            unsafe { bun_jsc::event_loop::EventLoop::run_macro_loop_leftovers(el, vm) };
         // SAFETY: `el` is the live per-thread event loop.
         // SAFETY: `el` is the live per-thread event loop.
-        let has_pending_immediate = has_yielded_tasks
+        let has_pending_immediate = macro_loop_pending
+            || has_yielded_tasks
             || !unsafe { &*el }.immediate_tasks.is_empty()
-            || unsafe { &*el }.has_pending_tasks();
+            || unsafe { &*el }.has_own_pending_tasks();
         // SAFETY: `loop_` is the live per-thread uws loop.
         let quic_next_tick_us = unsafe {
             let ild = &(*loop_).internal_loop_data;

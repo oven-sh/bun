@@ -1336,6 +1336,8 @@ pub struct DeferredErrors {
     /// These are errors for expressions
     pub(crate) invalid_expr_default_value: Option<bun_ast::Range>,
     pub(crate) invalid_expr_after_question: Option<bun_ast::Range>,
+    /// A cast, `!`, type arguments or parentheses where a binding would stand. A parameter of an arrow function has none of these.
+    pub(crate) is_not_binding: bool,
 }
 
 impl DeferredErrors {
@@ -1346,6 +1348,7 @@ impl DeferredErrors {
         to.invalid_expr_after_question = self
             .invalid_expr_after_question
             .or(to.invalid_expr_after_question);
+        to.is_not_binding |= self.is_not_binding;
     }
 }
 

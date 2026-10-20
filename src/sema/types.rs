@@ -1824,8 +1824,9 @@ mod fact {
 /// A type's `TypeRecord::summary` and its `Rank`. Two per cache line.
 ///
 /// The fields are atomic because `set` writes to a `Summary` that `TypeStore::reserve_ids` has already added to the
-/// shared table. `Relaxed` is enough for all of them, because a thread only gets a type's id through something that
-/// orders the creator's earlier writes before the read (see `AppendVec`).
+/// shared table. `Relaxed` is enough for what `set` writes, because a thread only gets a type's id through something
+/// that orders the creator's earlier writes before the read (see `AppendVec`). The rank is written later, by any
+/// thread. See `set_rank`.
 struct Summary {
     flags: AtomicU32,
     /// See `Types::member_flags`. The top three bits aren't type flags (see `HAS_FRESH_LITERAL`).
@@ -1847,8 +1848,10 @@ struct Summary {
 const _: () = assert!(size_of::<Summary>() == 32);
 
 impl Summary {
+    /// The type has no rank yet.
     #[inline]
-    fn new(summary: TypeSummary, rank: Rank) -> Summary {
+    fn new(summary: TypeSummary) -> Summary {
+        let rank = Rank::NONE;
         Summary {
             flags: AtomicU32::new(summary.flags),
             member_flags: AtomicU32::new(summary.member_flags),
@@ -1862,16 +1865,13 @@ impl Summary {
     }
 
     /// Must be called before any other thread can get the type's id.
-    fn set(&self, summary: TypeSummary, rank: Rank) {
+    fn set(&self, summary: TypeSummary) {
         let order = Ordering::Relaxed;
         self.flags.store(summary.flags, order);
         self.member_flags.store(summary.member_flags, order);
         self.object_flags.store(summary.object_flags.bits(), order);
         self.class.store(summary.class as u8, order);
         self.facts.store(summary.facts(), order);
-        self.height.store(rank.height, order);
-        self.last_syntax.store(rank.last_syntax, order);
-        self.content.store(rank.content, order);
     }
 
     /// Returns `None` if the rank hasn't been computed.
@@ -2974,7 +2974,7 @@ impl<'s> TypeStore<'s> {
                 debug_assert!(member.0 < id);
                 (self.summaries.get(member.0).member_flags).load(Ordering::Relaxed)
             });
-            self.summaries.push(Summary::new(summary, Rank::NONE));
+            self.summaries.push(Summary::new(summary));
         }
     }
 
@@ -3038,7 +3038,7 @@ impl<'s> TypeStore<'s> {
             Kind::Sig => self.sigs.reserve(count),
             Kind::Type => {
                 let ids = self.types.reserve(count);
-                let nothing = || Summary::new(TypeSummary::NOTHING, Rank::NONE);
+                let nothing = || Summary::new(TypeSummary::NOTHING);
                 let summaries = self.summaries.add_placeholders(count, nothing);
                 debug_assert_eq!(ids.first(), summaries.first());
                 ids
@@ -3335,14 +3335,14 @@ impl<'p, 's> Types<'p, 's> {
         let is_unresolved_name = matches!(record.created.0, TypeData::UnresolvedName { .. });
         match &home {
             Destination::Own { .. } => {
-                let index = (self.own.summaries).push(Summary::new(summary, Rank::NONE));
+                let index = self.own.summaries.push(Summary::new(summary));
                 debug_assert_eq!(index | LOCAL, own_id);
                 if is_unresolved_name {
                     self.own.has_unresolved_names.set(true);
                 }
             }
             Destination::Published(id) => {
-                (self.published.summaries.get(id.index())).set(summary, Rank::NONE);
+                (self.published.summaries.get(id.index())).set(summary);
                 if is_unresolved_name {
                     cold_path();
                     let has_unresolved_names = &self.published.has_unresolved_names;
@@ -3798,7 +3798,12 @@ impl<'p, 's> Types<'p, 's> {
         let mut last = Rank::NONE;
         while let Some(&next) = unranked.last() {
             let summary = self.own.summaries.get_layered(next.0);
-            if let Some(known) = summary.rank() {
+            // Every type has flags. An id that's reserved and not used yet has none, and no rank.
+            let known = match summary.flags.load(Ordering::Relaxed) {
+                0 => Some(Rank::NONE),
+                _ => summary.rank(),
+            };
+            if let Some(known) = known {
                 last = known;
                 unranked.pop();
                 continue;
@@ -5771,6 +5776,24 @@ mod tests {
                 .collect()
         });
         assert!(all.iter().all(|created| *created == all[0]));
+        // No type has a rank yet. Every thread asks for the rank of the last one, which needs all the others.
+        let rank_of_last = || {
+            let own = own_store(&session, &store, Sharing::Finds);
+            let rank = Types::new(&store, &own).rank(all[0][COUNT]);
+            (rank.height, rank.last_syntax, rank.content)
+        };
+        let ranks: Vec<(u32, u64, u64)> = std::thread::scope(|scope| {
+            #[expect(
+                clippy::needless_collect,
+                reason = "every thread must start before the first join"
+            )]
+            let threads: Vec<_> = (0..8).map(|_| scope.spawn(rank_of_last)).collect();
+            (threads.into_iter())
+                .map(|thread| thread.join().unwrap())
+                .collect()
+        });
+        assert_eq!(ranks[0].0 as usize, COUNT + 1);
+        assert!(ranks.iter().all(|rank| *rank == ranks[0]));
         let own = own_store(&session, &store, Sharing::Finds);
         let types = Types::new(&store, &own);
         for at in 0..COUNT {

@@ -243,7 +243,6 @@ test.concurrent.skipIf(!isPosix)(
       await proc.stdin.end();
 
       const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
-      flood.kill();
       expect(stderr).toContain("$ kill -INT $$");
       expect({ attempt, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
         attempt,

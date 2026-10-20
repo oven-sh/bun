@@ -498,7 +498,7 @@ impl JSValue {
     /// when the consumer round-trips through `f64::to_bits` / `as_number` and
     /// must see the original bit pattern (e.g. [`from_ptr_address`]).
     #[inline]
-    pub(crate) fn js_double_number(n: f64) -> JSValue {
+    pub fn js_double_number(n: f64) -> JSValue {
         const DOUBLE_ENCODE_OFFSET: i64 = 1i64 << 49;
         JSValue::from_raw((n.to_bits() as i64).wrapping_add(DOUBLE_ENCODE_OFFSET))
     }
@@ -668,44 +668,6 @@ impl JSValue {
             unsafe { JSC__JSValue__bigIntFromLatin1(global, digits.as_ptr(), digits.len()) }
         })?;
         Ok(Some(value))
-    }
-    /// `JSValue.fromTimevalNoTruncate` — encode a `struct timeval`
-    /// as a BigInt (`sec * 1_000_000 + nsec`) without precision loss. May allocate
-    /// a heap BigInt, so wrapped in `from_js_host_call` for exception checking.
-    pub fn from_timeval_no_truncate(
-        global: &JSGlobalObject,
-        nsec: i64,
-        sec: i64,
-    ) -> JsResult<JSValue> {
-        host_fn::from_js_host_call(global, || {
-            JSC__JSValue__fromTimevalNoTruncate(global, nsec, sec)
-        })
-    }
-    /// `JSValue.bigIntSum` — `a + b` where both are BigInt.
-    pub fn big_int_sum(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JSValue {
-        JSC__JSValue__bigIntSum(global, a, b)
-    }
-    /// `JSValue.fromEntries` — build a plain object from
-    /// parallel `keys`/`values` `EncodedSlice` arrays. When `clone` is true the
-    /// C++ side copies the string bytes (caller may free `keys`/`values`).
-    pub fn from_entries(
-        global: &JSGlobalObject,
-        keys: &mut [bun_core::EncodedSlice],
-        values: &mut [bun_core::EncodedSlice],
-        clone: bool,
-    ) -> JsResult<JSValue> {
-        debug_assert_eq!(keys.len(), values.len());
-        // SAFETY: `global` is live; `keys`/`values` are valid for `keys.len()`
-        // elements; the C++ binding only reads (and optionally clones) them.
-        crate::call_zero_is_throw(global, || unsafe {
-            JSC__JSValue__fromEntries(
-                global,
-                keys.as_mut_ptr(),
-                values.as_mut_ptr(),
-                keys.len(),
-                clone,
-            )
-        })
     }
 }
 
@@ -1373,19 +1335,6 @@ impl JSValue {
         }
         Ok(Some(prop))
     }
-    /// Own property lookup by key value (index or `toPropertyKey`). `None` when
-    /// absent; the C++ side also returns empty when a getter or `toPropertyKey`
-    /// throws, so the exception state is what tells the two apart.
-    pub fn get_own_by_value(
-        self,
-        global: &JSGlobalObject,
-        property_value: JSValue,
-    ) -> JsResult<Option<JSValue>> {
-        let v = crate::call_check_slow(global, || {
-            JSC__JSValue__getOwnByValue(self, global, property_value)
-        })?;
-        Ok(if v.is_empty() { None } else { Some(v) })
-    }
     /// `Object.hasOwnProperty(key)`. `self` **must** be an object — the C++ side
     /// `uncheckedDowncast`s. `key.toPropertyKey()` and Proxy `ownKeys` traps
     /// can throw, so this is routed through `from_js_host_call_generic`.
@@ -2025,19 +1974,6 @@ unsafe extern "C" {
         ptr: *const u8,
         len: usize,
     ) -> JSValue;
-    safe fn JSC__JSValue__fromTimevalNoTruncate(
-        global: &JSGlobalObject,
-        nsec: i64,
-        sec: i64,
-    ) -> JSValue;
-    safe fn JSC__JSValue__bigIntSum(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JSValue;
-    fn JSC__JSValue__fromEntries(
-        global: *const JSGlobalObject,
-        keys: *mut bun_core::EncodedSlice,
-        values: *mut bun_core::EncodedSlice,
-        strings_count: usize,
-        clone: bool,
-    ) -> JSValue;
     safe fn JSC__JSValue__toBoolean(this: JSValue) -> bool;
     safe fn JSC__JSValue__toInt32(this: JSValue) -> i32;
     safe fn JSC__JSValue__toInt64(this: JSValue) -> i64;
@@ -2073,11 +2009,6 @@ unsafe extern "C" {
         buf: &mut [u8; 64],
     ) -> i32;
     safe fn JSC__JSValue__isPrimitive(this: JSValue) -> bool;
-    safe fn JSC__JSValue__getOwnByValue(
-        this: JSValue,
-        global: &JSGlobalObject,
-        key: JSValue,
-    ) -> JSValue;
     safe fn JSC__JSValue__hasOwnPropertyValue(
         this: JSValue,
         global: &JSGlobalObject,

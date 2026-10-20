@@ -55,7 +55,8 @@ fn position_of(sign: u8, text: &[u8], from: u32) -> u32 {
 /// - `declare module "a"`, `declare global`, `export as namespace a`
 pub fn report_syntax_of_typescript(file: &mut FileBuilder, text: &[u8]) {
     let mut found: Vec<Found> = Vec::new();
-    for stmt in file.stmts.iter() {
+    for (stmt, id) in file.stmts.iter().zip(0..) {
+        let written = file.stmt_modifiers(StmtId(id));
         match stmt.kind {
             StmtKind::Module(module) if !matches!(file[module].name, ModuleName::Ident(_)) => {
                 found.push((stmt.start, 8006, "module"));
@@ -63,9 +64,9 @@ pub fn report_syntax_of_typescript(file: &mut FileBuilder, text: &[u8]) {
             StmtKind::ExportAsNamespace(_) => {
                 found.push((stmt.start, 8006, "export as namespace"));
             }
-            _ if stmt.modifiers.is_empty() => {}
+            _ if written.is_empty() => {}
             _ => {
-                let modifiers = file.modifier_list(stmt.modifiers);
+                let modifiers = file.modifier_list(written);
                 found.extend(misplaced(modifiers, JAVASCRIPT, JAVASCRIPT));
             }
         }

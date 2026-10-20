@@ -73,12 +73,14 @@ fn strip_negations(raw: &[u8]) -> (&[u8], bool) {
     (remain, negated)
 }
 
-/// The `!` entries of a `workspaces` array: one rule for `bun install` and `bun run --filter`.
+/// The `!` entries of a `workspaces` array. `bun install` and `bun run --filter` apply the same
+/// rule.
 #[derive(Default)]
 pub struct NegatedWorkspaces(Vec<Box<[u8]>>);
 
 impl NegatedWorkspaces {
-    /// Whether `entry` is negated: it is kept, in the shape of a matched directory, and not walked.
+    /// Returns true if `entry` is negated. It's then stored in the form of a matched directory, and
+    /// isn't walked.
     pub fn take(&mut self, entry: &[u8]) -> bool {
         let (glob, negated) = strip_negations(entry);
         if negated {
@@ -93,7 +95,8 @@ impl NegatedWorkspaces {
         negated
     }
 
-    /// For a `dir` that a glob entry matched. One listed by its path stays a member: do not ask.
+    /// Only call this for a `dir` that a glob entry matched. A workspace that's listed by its exact
+    /// path is never excluded.
     pub fn excludes(&self, dir: &[u8]) -> bool {
         // `dir/**` also removes `dir` itself, as in npm.
         self.0.iter().any(|glob| {
@@ -419,7 +422,8 @@ impl WorkspaceGraph {
             if order.len() == n {
                 return order;
             }
-            // Stalled on a cycle. Follow unmet edges until one repeats: that candidate is on it.
+            // The sort is stuck on a cycle. Follow unmet dependencies until one repeats, which
+            // means that candidate is on the cycle.
             let mut on_walk = bitset(n);
             let mut cur = (0..n)
                 .find(|&i| !queued.is_set(i))

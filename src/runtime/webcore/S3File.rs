@@ -6,8 +6,9 @@ use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
 use crate::webcore::s3_client::S3CredentialsExt as _;
 use bun_core::strings;
 use bun_http::Method;
+use bun_jsc::bindgen::JsPayload as _;
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_ptr::RefPtr;
 
 // Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
@@ -443,7 +444,7 @@ impl S3BlobStatTask {
                     stat_result.last_modified,
                     global,
                 ) {
-                    Ok(b) => (*b).to_js(global),
+                    Ok(stat) => stat.into_js_value(global),
                     Err(_) => {
                         return this.promise.reject(global, Err(JsError::Thrown));
                     }

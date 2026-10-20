@@ -531,6 +531,38 @@ it("Bun.inspect.custom exists", () => {
   expect(Bun.inspect.custom).toBe(util.inspect.custom);
 });
 
+it("native inspect.custom functions return undefined when called without a receiver", () => {
+  const classes = [
+    ByteLengthQueuingStrategy,
+    CountQueuingStrategy,
+    CryptoKey,
+    PerformanceEntry,
+    ReadableByteStreamController,
+    ReadableStream,
+    ReadableStreamBYOBReader,
+    ReadableStreamBYOBRequest,
+    ReadableStreamDefaultController,
+    ReadableStreamDefaultReader,
+    TransformStream,
+    TransformStreamDefaultController,
+    URL,
+    URLSearchParams,
+    WritableStream,
+    WritableStreamDefaultController,
+    WritableStreamDefaultWriter,
+  ];
+  const results = classes.map(klass => {
+    const inspectCustom = klass.prototype[util.inspect.custom];
+    // When a closed-over binding is called bare, JSC passes the scope object as `this`.
+    const bare = () => inspectCustom(-1, {});
+    // util.inspect falls back to its default formatting when inspect.custom returns its receiver unchanged.
+    const ordinaryReceiver = {};
+    const roundTripped = inspectCustom.call(ordinaryReceiver, -1, {}) === ordinaryReceiver;
+    return [klass.name, typeof inspectCustom, bare(), roundTripped];
+  });
+  expect(results).toEqual(classes.map(klass => [klass.name, "function", undefined, true]));
+});
+
 describe("Functions with names", () => {
   const closures = [
     () => function f() {},
@@ -1080,6 +1112,150 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
   });
 });
 
+describe("quoted strings do not depend on the string's internal representation", () => {
+  // Same characters, but backed by 16-bit storage (what a UTF-16 decoder produces).
+  // A string used as a property key can be swapped for an equal 8-bit atom, for
+  // example one made by a string literal in this file, so each test asserts the
+  // representation it depends on.
+  const to16Bit = s => Buffer.from(s, "utf16le").toString("utf16le");
+
+  it("arrays of 8-bit and 16-bit strings wrap at the same place", () => {
+    const row8 = ["a", "b", "c", "d", "e"].map(c => Buffer.alloc(20, c).toString());
+    const row16 = row8.map(to16Bit);
+    expect(row16).toEqual(row8);
+    for (const s of row8) expect(s).toBeLatin1String();
+    for (const s of row16) expect(s).toBeUTF16String();
+    const expected =
+      '[ "aaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccc", "dddddddddddddddddddd",\n' +
+      '  "eeeeeeeeeeeeeeeeeeee"\n' +
+      "]";
+    expect(Bun.inspect(row8)).toBe(expected);
+    expect(Bun.inspect(row16)).toBe(expected);
+  });
+
+  describe("8-bit and 16-bit strings with the same characters print the same", () => {
+    const s8 = '\x1b[31m \x00\x0b\x0e\x1f "q" \\';
+    const s16 = to16Bit(s8);
+
+    it("as a value", () => {
+      expect(s16).toBe(s8);
+      expect(s8).toBeLatin1String();
+      expect(s16).toBeUTF16String();
+      const expected = '"\\u001B[31m \\u0000\\u000B\\u000E\\u001F \\"q\\" \\\\"';
+      expect(Bun.inspect(s8)).toBe(expected);
+      expect(Bun.inspect(s16)).toBe(expected);
+    });
+
+    // Each row is a place where the printer writes a quoted string that is not a property key.
+    // A new branch on the storage width in one of them fails its row.
+    it.each([
+      ["an array element", s => [s]],
+      ["an array that wraps", s => [s, s, s, s, s]],
+      ["an object value", s => ({ k: s })],
+      ["a nested value", s => ({ a: [{ b: [s] }] })],
+      ["a String object", s => new String(s)],
+      ["a Map key and value", s => new Map([[s, s]])],
+      ["a Set element", s => new Set([s])],
+    ])("as %s", (_, build) => {
+      expect(Bun.inspect(build(s16))).toBe(Bun.inspect(build(s8)));
+      // Nothing above swapped the 16-bit string for the 8-bit one.
+      expect(s8).toBeLatin1String();
+      expect(s16).toBeUTF16String();
+    });
+  });
+
+  it("strings that need 16 bits", () => {
+    expect(Bun.inspect("\x1b é 日本 😎 \u{10334}")).toBe('"\\u001B é 日本 😎 𐌴"');
+    expect(Bun.inspect(new String("\x1b😎"))).toBe('"\\u001B😎"');
+    // Lone surrogates and invisible separators are escaped.
+    expect(Bun.inspect(["\ud800", "\udc00x", "a\u2028b\u2029c\ufeffd"])).toBe(
+      '[ "\\uD800", "\\uDC00x", "a\\u2028b\\u2029c\\uFEFFd" ]',
+    );
+    // A surrogate pair is one character only when a high half is directly followed by a low half.
+    expect(Bun.inspect("\ud83d\ude0e\ude0e\ud83d\ud83d\ude0e")).toBe('"😎\\uDE0E\\uD83D😎"');
+  });
+
+  it("a long run of characters that need no escape prints whole", () => {
+    // The printer collects such a run in a small buffer. Each row makes a run of n code points,
+    // and the lengths put the end of the buffer at each byte of a 1, 2, 3 and 4 byte character.
+    const runs = [
+      n => Buffer.alloc(n, "a").toString("latin1"),
+      n => Buffer.alloc(n, 0xe9).toString("latin1"),
+      n => to16Bit(Buffer.alloc(n, "a").toString("latin1")),
+      n => Buffer.alloc(n * 3, "日").toString(),
+      n => Buffer.alloc(n * 4, "😀").toString(),
+    ];
+    for (const run of runs) {
+      for (let n = 0; n <= 140; n++) {
+        const body = run(n);
+        expect(Bun.inspect("x" + body + "\n" + body)).toBe('"x' + body + "\\n" + body + '"');
+      }
+    }
+  });
+
+  it("console.log of a String object", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log(new String("\\x1b😎!")); console.log(new String("\\x1b!"));`],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: '[String: "\\u001B😎!"]\n[String: "\\u001B!"]\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("a String object's toJSON is not called", () => {
+    const toJSON = jest.fn(() => "from toJSON");
+    class Tagged extends String {
+      toJSON() {
+        return toJSON();
+      }
+    }
+    const own = new String("😎");
+    own.toJSON = toJSON;
+    String.prototype.toJSON = toJSON;
+    try {
+      expect(Bun.inspect([new String("😎"), new String("x"), own, new Tagged("😎"), new Tagged("x")])).toBe(
+        '[ "😎", "x", "😎", "😎", "x" ]',
+      );
+    } finally {
+      delete String.prototype.toJSON;
+    }
+    expect(toJSON).not.toHaveBeenCalled();
+  });
+
+  it("property keys", () => {
+    expect(Bun.inspect({ 'k"\x1b\\': 1, 'k"\x1b\\ 日本 😎': 2 })).toBe(
+      '{\n  "k\\"\\u001B\\\\": 1,\n  "k\\"\\u001B\\\\ 日本 😎": 2,\n}',
+    );
+    // Invisible separators and lone surrogates are escaped, as in a string value.
+    expect(Bun.inspect({ "a\n\u2028\u2029\ufeff": 1, "\ud800b\udc00": 2 })).toBe(
+      '{\n  "a\\n\\u2028\\u2029\\uFEFF": 1,\n  "\\uD800b\\uDC00": 2,\n}',
+    );
+    // URLSearchParams and FormData print their names the same way.
+    expect(Bun.inspect(new URLSearchParams([['k"\x1b\\ 日本 😎', "v"]]))).toBe(
+      'URLSearchParams {\n  "k\\"\\u001B\\\\ 日本 😎": "v",\n}',
+    );
+  });
+
+  it("16-bit property keys that hold only Latin-1 characters", () => {
+    // Built from parts, so no string literal in this file makes an equal 8-bit atom.
+    const key = to16Bit(["dyn", "k", '"', "\x1b", "\\"].join(""));
+    const path = to16Bit(["C:", "Users", "José", "new.js"].join("\\"));
+    expect(key).toBeUTF16String();
+    expect(path).toBeUTF16String();
+    expect(Bun.inspect({ [key]: 1, [path]: path })).toBe(
+      '{\n  "dynk\\"\\u001B\\\\": 1,\n  "C:\\\\Users\\\\José\\\\new.js": "C:\\\\Users\\\\José\\\\new.js",\n}',
+    );
+    // Still 16-bit, so the line above went through the 16-bit branch.
+    expect(key).toBeUTF16String();
+    expect(path).toBeUTF16String();
+  });
+});
+
 describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
   it("Map respects max_depth", () => {
     let m = new Map([["leaf", 1]]);
@@ -1323,146 +1499,140 @@ it("object property enumeration scales linearly with property count", () => {
   });
 });
 
-describe("quoted strings do not depend on the string's internal representation", () => {
-  // Same characters, but backed by 16-bit storage (what a UTF-16 decoder produces).
-  // A string used as a property key can be swapped for an equal 8-bit atom, for
-  // example one made by a string literal in this file, so each test asserts the
-  // representation it depends on.
-  const to16Bit = s => Buffer.from(s, "utf16le").toString("utf16le");
-
-  it("arrays of 8-bit and 16-bit strings wrap at the same place", () => {
-    const row8 = ["a", "b", "c", "d", "e"].map(c => Buffer.alloc(20, c).toString());
-    const row16 = row8.map(to16Bit);
-    expect(row16).toEqual(row8);
-    for (const s of row8) expect(s).toBeLatin1String();
-    for (const s of row16) expect(s).toBeUTF16String();
-    const expected =
-      '[ "aaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccc", "dddddddddddddddddddd",\n' +
-      '  "eeeeeeeeeeeeeeeeeeee"\n' +
-      "]";
-    expect(Bun.inspect(row8)).toBe(expected);
-    expect(Bun.inspect(row16)).toBe(expected);
-  });
-
-  describe("8-bit and 16-bit strings with the same characters print the same", () => {
-    const s8 = '\x1b[31m \x00\x0b\x0e\x1f "q" \\';
-    const s16 = to16Bit(s8);
-
-    it("as a value", () => {
-      expect(s16).toBe(s8);
-      expect(s8).toBeLatin1String();
-      expect(s16).toBeUTF16String();
-      const expected = '"\\u001B[31m \\u0000\\u000B\\u000E\\u001F \\"q\\" \\\\"';
-      expect(Bun.inspect(s8)).toBe(expected);
-      expect(Bun.inspect(s16)).toBe(expected);
-    });
-
-    // Each row is a place where the printer writes a quoted string that is not a property key.
-    // A new branch on the storage width in one of them fails its row.
-    it.each([
-      ["an array element", s => [s]],
-      ["an array that wraps", s => [s, s, s, s, s]],
-      ["an object value", s => ({ k: s })],
-      ["a nested value", s => ({ a: [{ b: [s] }] })],
-      ["a String object", s => new String(s)],
-      ["a Map key and value", s => new Map([[s, s]])],
-      ["a Set element", s => new Set([s])],
-    ])("as %s", (_, build) => {
-      expect(Bun.inspect(build(s16))).toBe(Bun.inspect(build(s8)));
-      // Nothing above swapped the 16-bit string for the 8-bit one.
-      expect(s8).toBeLatin1String();
-      expect(s16).toBeUTF16String();
-    });
-  });
-
-  it("strings that need 16 bits", () => {
-    expect(Bun.inspect("\x1b é 日本 😎 \u{10334}")).toBe('"\\u001B é 日本 😎 𐌴"');
-    expect(Bun.inspect(new String("\x1b😎"))).toBe('"\\u001B😎"');
-    // Lone surrogates and invisible separators are escaped.
-    expect(Bun.inspect(["\ud800", "\udc00x", "a\u2028b\u2029c\ufeffd"])).toBe(
-      '[ "\\uD800", "\\uDC00x", "a\\u2028b\\u2029c\\uFEFFd" ]',
-    );
-    // A surrogate pair is one character only when a high half is directly followed by a low half.
-    expect(Bun.inspect("\ud83d\ude0e\ude0e\ud83d\ud83d\ude0e")).toBe('"😎\\uDE0E\\uD83D😎"');
-  });
-
-  it("a long run of characters that need no escape prints whole", () => {
-    // The printer collects such a run in a small buffer. Each row makes a run of n code points,
-    // and the lengths put the end of the buffer at each byte of a 1, 2, 3 and 4 byte character.
-    const runs = [
-      n => Buffer.alloc(n, "a").toString("latin1"),
-      n => Buffer.alloc(n, 0xe9).toString("latin1"),
-      n => to16Bit(Buffer.alloc(n, "a").toString("latin1")),
-      n => Buffer.alloc(n * 3, "日").toString(),
-      n => Buffer.alloc(n * 4, "😀").toString(),
-    ];
-    for (const run of runs) {
-      for (let n = 0; n <= 140; n++) {
-        const body = run(n);
-        expect(Bun.inspect("x" + body + "\n" + body)).toBe('"x' + body + "\\n" + body + '"');
-      }
-    }
-  });
-
-  it("console.log of a String object", async () => {
+// Each case runs in a fresh child so the formatter hasn't loaded util.inspect before the failing call.
+describe.concurrent("Bun.inspect when loading util.inspect for a custom inspect function throws", () => {
+  async function inspectInChild(code) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `console.log(new String("\\x1b😎!")); console.log(new String("\\x1b!"));`],
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const obj = { [Bun.inspect.custom]() { return "custom"; } };
+          const styled = { [Bun.inspect.custom](depth, options) { return options.stylize("x", "number"); } };
+          ${code}
+        `,
+      ],
       env: bunEnv,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdout: "pipe",
+      stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: '[String: "\\u001B😎!"]\n[String: "\\u001B!"]\n',
+    return { stdout, stderr, exitCode };
+  }
+
+  it("throws while a global the module needs is replaced, and works once it's restored", async () => {
+    const result = await inspectInChild(`
+      const RealSymbol = Symbol;
+      globalThis.Symbol = 0;
+      try {
+        console.log(Bun.inspect(styled, { colors: true }));
+      } catch {
+        console.log("threw");
+      }
+      globalThis.Symbol = RealSymbol;
+      console.log(Bun.inspect(obj));
+      console.log(Bun.inspect(styled, { colors: true }) === "\\u001b[33mx\\u001b[39m");
+      Bun.gc(true);
+      console.log(Bun.inspect(styled, { colors: true }) === "\\u001b[33mx\\u001b[39m");
+    `);
+    expect(result).toEqual({ stdout: "threw\ncustom\ntrue\ntrue\n", stderr: "", exitCode: 0 });
+  });
+
+  it("throws the RangeError at the stack limit, and works afterwards", async () => {
+    const result = await inspectInChild(`
+      let deep;
+      function recurse() {
+        try {
+          recurse();
+        } catch {
+          try {
+            deep = Bun.inspect(obj);
+          } catch (e) {
+            deep = e;
+          }
+        }
+      }
+      recurse();
+      console.log(String(deep));
+      console.log(Bun.inspect(obj));
+    `);
+    expect(result).toEqual({
+      stdout: "RangeError: Maximum call stack size exceeded.\ncustom\n",
       stderr: "",
       exitCode: 0,
     });
   });
 
-  it("a String object's toJSON is not called", () => {
-    const toJSON = jest.fn(() => "from toJSON");
-    class Tagged extends String {
-      toJSON() {
-        return toJSON();
-      }
-    }
-    const own = new String("😎");
-    own.toJSON = toJSON;
-    String.prototype.toJSON = toJSON;
-    try {
-      expect(Bun.inspect([new String("😎"), new String("x"), own, new Tagged("😎"), new Tagged("x")])).toBe(
-        '[ "😎", "x", "😎", "😎", "x" ]',
-      );
-    } finally {
-      delete String.prototype.toJSON;
-    }
-    expect(toJSON).not.toHaveBeenCalled();
+  it("passes the real inspect function while util.inspect is replaced", async () => {
+    const result = await inspectInChild(`
+      const util = require("node:util");
+      const realInspect = util.inspect;
+      util.inspect = 42;
+      const receives = { [Bun.inspect.custom](depth, options, inspect) { return String(inspect === realInspect); } };
+      console.log(Bun.inspect(receives));
+    `);
+    expect(result).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
   });
+});
 
-  it("property keys", () => {
-    expect(Bun.inspect({ 'k"\x1b\\': 1, 'k"\x1b\\ 日本 😎': 2 })).toBe(
-      '{\n  "k\\"\\u001B\\\\": 1,\n  "k\\"\\u001B\\\\ 日本 😎": 2,\n}',
-    );
-    // Invisible separators and lone surrogates are escaped, as in a string value.
-    expect(Bun.inspect({ "a\n\u2028\u2029\ufeff": 1, "\ud800b\udc00": 2 })).toBe(
-      '{\n  "a\\n\\u2028\\u2029\\uFEFF": 1,\n  "\\uD800b\\uDC00": 2,\n}',
-    );
-    // URLSearchParams and FormData print their names the same way.
-    expect(Bun.inspect(new URLSearchParams([['k"\x1b\\ 日本 😎', "v"]]))).toBe(
-      'URLSearchParams {\n  "k\\"\\u001B\\\\ 日本 😎": "v",\n}',
-    );
-  });
+// Runs in a subprocess because a native stack overflow would kill the test runner.
+it.concurrent.each([
+  [
+    "circular jsx",
+    `const children = { $$typeof: Symbol.for("react.element"), type: "div", key: null };
+     children.props = { children };
+     console.log(Bun.inspect(children));
+     const key = { $$typeof: Symbol.for("react.element"), type: "div", props: {} };
+     key.key = key;
+     console.log(Bun.inspect(key));`,
+    "<div>\n  [Circular]\n</div>\n<div key=[Circular] />",
+  ],
+  [
+    "a deep Proxy chain",
+    `let proxy = { ok: 1 };
+     for (let i = 0; i < 100000; i++) proxy = new Proxy(proxy, {});
+     console.log(Bun.inspect(proxy));`,
+    "{\n  ok: 1,\n}",
+  ],
+  [
+    "deep jsx",
+    `let element = { $$typeof: Symbol.for("react.element"), type: "div", props: {}, key: null };
+     for (let i = 0; i < 100000; i++)
+       element = { $$typeof: Symbol.for("react.element"), type: "div", props: { children: element }, key: null };
+     try { Bun.inspect(element); } catch (e) { console.log(e.name); }`,
+    "RangeError",
+  ],
+])("Bun.inspect of %s doesn't overflow the stack", async (_, script, expected) => {
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe(expected);
+  expect(exitCode).toBe(0);
+});
 
-  it("16-bit property keys that hold only Latin-1 characters", () => {
-    // Built from parts, so no string literal in this file makes an equal 8-bit atom.
-    const key = to16Bit(["dyn", "k", '"', "\x1b", "\\"].join(""));
-    const path = to16Bit(["C:", "Users", "José", "new.js"].join("\\"));
-    expect(key).toBeUTF16String();
-    expect(path).toBeUTF16String();
-    expect(Bun.inspect({ [key]: 1, [path]: path })).toBe(
-      '{\n  "dynk\\"\\u001B\\\\": 1,\n  "C:\\\\Users\\\\José\\\\new.js": "C:\\\\Users\\\\José\\\\new.js",\n}',
-    );
-    // Still 16-bit, so the line above went through the 16-bit branch.
-    expect(key).toBeUTF16String();
-    expect(path).toBeUTF16String();
+// A substring rope's characters live in its base string, and only the rope references the base.
+// Malloc=1 makes bmalloc use the system heap so ASAN can catch a read of freed characters.
+it.skipIf(!isASAN)("prints a substring-rope jsx type after a prop's inspect.custom resolves the rope", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const type = Buffer.from("_div-abcdefghijklmnopqrstuvwxyz").toString().slice(1);
+       const custom = {
+         [Bun.inspect.custom]() {
+           // Using the rope as a property key atomizes it, which copies its characters and drops the base.
+           ({})[type];
+           Bun.gc(true);
+           return "x";
+         },
+       };
+       const props = { custom, children: "text" };
+       console.log(Bun.inspect({ $$typeof: Symbol.for("react.element"), type, key: null, props }));`,
+    ],
+    env: { ...bunEnv, Malloc: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
   });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toEndWith("</div-abcdefghijklmnopqrstuvwxyz>\n");
+  expect(exitCode).toBe(0);
 });

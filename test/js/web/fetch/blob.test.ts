@@ -163,6 +163,30 @@ test("blob: can be imported", async () => {
   }).toThrow();
 });
 
+test("blob: the type picks the loader when the name has no known extension", async () => {
+  const json = '{"a":1}';
+  const type = "application/json";
+  const form = new FormData();
+  form.append("entry", new Blob([json], { type }));
+  const blobs = {
+    unnamed: new Blob([json], { type }),
+    named: new File([json], "data", { type }),
+    // FormData names this entry "blob".
+    entry: form.get("entry") as File,
+    extension: new File(["export default 2"], "mod.js", { type }),
+  };
+  const loaded: Record<string, unknown> = {};
+  for (const [key, blob] of Object.entries(blobs)) {
+    const url = URL.createObjectURL(blob);
+    loaded[key] = await import(url).then(
+      module => module.default,
+      error => error.name,
+    );
+    URL.revokeObjectURL(url);
+  }
+  expect(loaded).toEqual({ unnamed: { a: 1 }, named: { a: 1 }, entry: { a: 1 }, extension: 2 });
+});
+
 test("blob: can reliable get type from fetch #10072", async () => {
   using server = Bun.serve({
     fetch() {

@@ -1936,19 +1936,17 @@ impl BlobExt for Blob {
 
     fn get_loader(&self, jsc_vm: &VirtualMachine) -> Option<bun_ast::Loader> {
         use bun_resolver::fs::PathResolverExt as _;
-        if let Some(filename) = self.get_file_name() {
-            let current_path = bun_resolver::fs::Path::init(&filename);
-            return Some(
-                current_path
-                    .loader(&jsc_vm.transpiler.options.loaders)
-                    .unwrap_or(bun_ast::Loader::Tsx),
-            );
-        } else if let Some(mime_type) = self.get_mime_type_or_content_type() {
-            return Some(bun_ast::Loader::from_mime_type(mime_type));
-        } else {
-            // Be maximally permissive.
-            return Some(bun_ast::Loader::Tsx);
+        let from_extension = self.get_file_name().and_then(|filename| {
+            bun_resolver::fs::Path::init(&filename).loader(&jsc_vm.transpiler.options.loaders)
+        });
+        if let Some(loader) = from_extension {
+            return Some(loader);
         }
+        if let Some(mime_type) = self.get_mime_type_or_content_type() {
+            return Some(bun_ast::Loader::from_mime_type(mime_type));
+        }
+        // Be maximally permissive.
+        Some(bun_ast::Loader::Tsx)
     }
 
     // TODO: Move this to a separate `File` object or BunFile
@@ -3980,10 +3978,11 @@ pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob
     )
 }
 
+/// `path_str` is the FormData entry's filename, or Dead for a Blob that is not an entry.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &BunString) {
     this.is_jsdom_file.set(true);
-    if !path_str.is_empty() && this.get_file_name().is_none() {
+    if path_str.tag() != bun_core::Tag::Dead {
         this.name.set(path_str.clone());
     }
 }
@@ -3995,8 +3994,7 @@ pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
-    this.get_name_string()
-        .map_or(BunString::EMPTY, Clone::clone)
+    this.get_name_string().map_or(BunString::DEAD, Clone::clone)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

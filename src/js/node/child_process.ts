@@ -1491,8 +1491,13 @@ class ChildProcess extends EventEmitter {
             signalCode,
             err,
           );
+          // Node destroys stdin in its exit handler. The writes that the exit canceled are reported from a task: the
+          // stream has to be destroyed by then, also when that task runs before the tick above (a nested wait).
+          if (this.#stdin) this.#stdin.destroy();
         },
         lazy: true,
+        // A private name. A write parked on stdin when the child exits is canceled, as node cancels it.
+        $cancelStdinWriteOnExit: true,
         ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
         onDisconnect: has_ipc ? ok => this.#onDisconnect(ok) : undefined,
         serialization,

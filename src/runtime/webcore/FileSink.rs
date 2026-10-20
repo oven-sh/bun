@@ -366,18 +366,54 @@ impl FileSink {
 
     /// The error that the exit of the child puts on the write that waits on its stdin. `None`
     /// leaves that write the result it has.
-    fn errno_at_exit(&self) -> Option<sys::Errno> {
+    ///
+    /// `Bun.spawn` calls the pipe broken: `EPIPE`. `node:child_process` asks for what node does
+    /// (`cancels_parked_write`). Node destroys stdin when the child exits, and libuv then cancels
+    /// the write that is still queued, also when another process holds the pipe:
+    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L277-L279
+    /// https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L454-L464
+    /// A write that the kernel fails keeps the kernel's error, whatever it is. A send of no
+    /// bytes asks the kernel and delivers nothing: it fails once no process holds the read end.
+    fn errno_at_exit(&self, cancels_parked_write: bool) -> Option<sys::Errno> {
+        // Windows is not done: the libuv writer has one write with the kernel and cannot ask.
+        #[cfg(windows)]
+        let _ = cancels_parked_write;
         let pending = self.pending.get();
-        // It has failed already, and a task is on its way to report that error.
-        if pending.state == streams::PendingState::Pending
-            && matches!(pending.result, streams::Writable::Err(_))
-        {
-            return None;
+        if pending.state == streams::PendingState::Pending {
+            // It has failed already, and a task is on its way to report that error.
+            if matches!(pending.result, streams::Writable::Err(_)) {
+                return None;
+            }
+            #[cfg(not(windows))]
+            {
+                if cancels_parked_write {
+                    // The pipe has every byte of it.
+                    if !self.writer.get().has_pending_data() {
+                        return None;
+                    }
+                    return Some(match self.writer.get().socket_write_error() {
+                        Some(err) => err.get_errno(),
+                        None => sys::Errno::ECANCELED,
+                    });
+                }
+            }
         }
         Some(sys::Errno::EPIPE)
     }
 
+    /// Node reports a canceled write after `'exit'`, and so does a write the pipe took whole.
+    /// A write the kernel failed is reported before it, with `'error'`.
+    fn settles_after_exit(&self) -> bool {
+        let pending = self.pending.get();
+        pending.state == streams::PendingState::Pending
+            && match &pending.result {
+                streams::Writable::Err(err) => err.get_errno() == sys::Errno::ECANCELED,
+                _ => true,
+            }
+    }
+
     /// `bun.spawn`'s subprocess exited while this `FileSink` was its stdin.
+    /// `cancels_parked_write`: see [`errno_at_exit`](Self::errno_at_exit).
     ///
     /// Takes the canonical `*mut FileSink` (not `&mut self`): `writer.close()`
     /// re-enters `on_close` via the writer backref and `stream.cancel`/
@@ -391,7 +427,11 @@ impl FileSink {
     /// `this` must be the canonical heap-allocation pointer (the one threaded
     /// through `set_parent` by `init`/`create*`), live, with write+dealloc
     /// provenance over the allocation.
-    pub(crate) unsafe fn on_attached_process_exit(this: *mut FileSink, status: &SpawnStatus) {
+    pub(crate) unsafe fn on_attached_process_exit(
+        this: *mut FileSink,
+        status: &SpawnStatus,
+        cancels_parked_write: bool,
+    ) {
         bun_core::scoped_log!(FileSink, "onAttachedProcessExit()");
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
@@ -417,11 +457,24 @@ impl FileSink {
                 }
             }
 
-            match (*this).errno_at_exit() {
+            let parked = (*this).pending.get().state == streams::PendingState::Pending;
+            match (*this).errno_at_exit(cancels_parked_write) {
                 Some(errno) => FileSink::abort(this, errno),
                 None => (*this).writer.with_mut(|w| w.close()),
             }
-            FileSink::run_pending(this);
+            if cancels_parked_write && (*this).settles_after_exit() {
+                (*this).run_pending_later();
+            } else {
+                FileSink::run_pending(this);
+                // The callbacks of the failed write, and 'error', come before the exit is
+                // reported. `run_pending` reaches them only from the outermost scope of the
+                // event loop, and an exit that a task reports (no pidfd, a nested wait) is not.
+                if cancels_parked_write && parked {
+                    if let Some(global) = (*this).js_global() {
+                        let _ = global.drain_microtasks_and_next_ticks();
+                    }
+                }
+            }
 
             // `writer.close()` → `onClose` already released this above; kept for
             // paths where `onClose` isn't reached (e.g. writer already closed).

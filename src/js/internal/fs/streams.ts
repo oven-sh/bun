@@ -621,8 +621,9 @@ function newCanceledWriteError(): Error {
   return new ErrnoException(ecanceled, "write");
 }
 
-// destroySinkStream has the sink fail the writes it had parked with ECANCELED. As in node, the first is called back
-// with `write ECANCELED` and those queued behind it with the stream's error.
+// The sink fails the writes it had parked with ECANCELED when destroySinkStream aborts it, and when the child exits
+// (child_process.ts asks for that, and destroys the stream in `onExit`, before the sink reports them). As in node, the
+// first is called back with `write ECANCELED` and those queued behind it with the stream's error.
 function canceledWriteError(stream: FSStream, err: any) {
   const canceled = stream[kCanceledWrite];
   if (canceled === undefined || err?.code !== "ECANCELED") return err;

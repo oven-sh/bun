@@ -4718,20 +4718,21 @@ it("writeHead(200) followed by write('') terminates the header section", async (
       let head: string | undefined;
       socket.on("data", chunk => {
         data += chunk;
-        if (head === undefined) {
-          // The first read is everything write("") put on the wire.
-          head = data;
-          headSeen.resolve();
-        }
+        if (head !== undefined) return;
+        // Without the fix the empty line never comes before end(), and this waits until the test times out.
+        const end = data.indexOf("\r\n\r\n");
+        if (end === -1) return;
+        head = data.slice(0, end + 4);
+        headSeen.resolve();
       });
       socket.on("end", () => resolve({ head: head!, tail: data.slice(head!.length) }));
       socket.on("error", reject);
+      socket.on("close", () => reject(new Error("closed before the response ended")));
       socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
     });
 
     expect(head).toStartWith("HTTP/1.1 200 OK\r\n");
     expect(head).toContain("Transfer-Encoding: chunked\r\n");
-    expect(head).toEndWith("\r\n\r\n");
     expect(tail).toBe("b\r\ndata: bye\n\n\r\n0\r\n\r\n");
   } finally {
     server.close();
@@ -5411,7 +5412,7 @@ test("https 'clientError' for a connection whose handshake completes after close
     raw.on("close", () => wire.push(null));
     const c = (client = tlsConnect({ socket: wire, rejectUnauthorized: false }));
     c.on("error", () => {});
-    for (const t = Date.now(); held.length === 0 && Date.now() - t < 10_000;) await Bun.sleep(5);
+    for (const t = Date.now(); held.length === 0 && Date.now() - t < 10_000; ) await Bun.sleep(5);
     expect(held.length).toBeGreaterThan(0);
 
     const closed = new Promise<void>(r => server!.close(() => r()));

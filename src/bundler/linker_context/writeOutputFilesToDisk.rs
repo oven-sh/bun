@@ -10,7 +10,10 @@ use bun_paths as paths;
 use bun_wyhash::hash;
 
 use crate::LinkerContext;
-use crate::chunk::{Content, Flags as ChunkFlags, ReferencePathStyle, SourceMapShiftTracking};
+use crate::chunk::{
+    Content, Flags as ChunkFlags, ReferencePathStyle, SourceMapShiftTracking,
+    with_source_mapping_url_comment,
+};
 use crate::linker_context::output_file_list_builder::OutputFileList;
 use crate::linker_context_mod::debug;
 use crate::options::{self, Loader, OutputFile, SourceMapOption};
@@ -308,19 +311,7 @@ pub(crate) fn write_output_files_to_disk(
                         [b"" as &[u8], paths::basename(&source_map_final_rel_path)]
                     };
 
-                    let source_map_start = b"//# sourceMappingURL=";
-                    let total_len = code_result.buffer.len()
-                        + source_map_start.len()
-                        + a.len()
-                        + b.len()
-                        + b"\n".len();
-                    let mut buf: Vec<u8> = Vec::with_capacity(total_len);
-                    buf.extend_from_slice(&code_result.buffer);
-                    buf.extend_from_slice(source_map_start);
-                    buf.extend_from_slice(a);
-                    buf.extend_from_slice(b);
-                    buf.push(b'\n');
-                    code_result.buffer = buf.into_boxed_slice();
+                    code_result.buffer = with_source_mapping_url_comment(&code_result.buffer, a, b);
                 }
 
                 match bun_sys::File::write_file(

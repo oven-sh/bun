@@ -2263,6 +2263,20 @@ pub fn percent_encode_uri_component(input: &[u8], writer: &mut Vec<u8>) {
     }
 }
 
+/// JavaScript's `encodeURI` on bytes: what `encodeURIComponent` keeps, and `; / ? : @ & = + $ , #` too.
+pub fn percent_encode_uri(input: &[u8], writer: &mut Vec<u8>) {
+    for &byte in input {
+        if matches!(
+            byte,
+            b';' | b'/' | b'?' | b':' | b'@' | b'&' | b'=' | b'+' | b'$' | b',' | b'#'
+        ) {
+            writer.push(byte);
+        } else {
+            percent_encode_uri_component(&[byte], writer);
+        }
+    }
+}
+
 /// Levenshtein's distance: how many elements have to be replaced, added or removed to make `b` of `a`.
 pub fn edit_distance<T: PartialEq>(a: impl Iterator<Item = T>, b: &[T]) -> usize {
     let mut row: Vec<usize> = (0..=b.len()).collect();

@@ -855,7 +855,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.declaration_indent = None;
         let mut text = text.filter(|_| writes && !is_skipped);
-        // `getSourceMappingURL`, without `mapRoot`. Nothing follows it, not a line break either.
+        // `getSourceMappingURL`, without `mapRoot`: `encodeURI` of the name. Nothing follows it, not a line break either.
         if files.options.writes_declaration_maps
             && let Some(text) = &mut text
             && let Some(output) =
@@ -863,7 +863,9 @@ impl<'p, 's> Checker<'p, 's> {
         {
             let name =
                 &output[strings::last_index_of_char(&output, b'/').map_or(0, |slash| slash + 1)..];
-            text.extend_from_slice(&[b"//# sourceMappingURL=", name, b".map"].concat());
+            text.extend_from_slice(b"//# sourceMappingURL=");
+            strings::percent_encode_uri(name, text);
+            text.extend_from_slice(b".map");
         }
         for error in found {
             let Found {

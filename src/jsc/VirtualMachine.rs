@@ -1025,11 +1025,17 @@ impl VirtualMachine {
         VM.get()
     }
 
-    /// The signal handler path (unix only) reaches the main VM through this.
+    /// The signal handler path (unix only) reaches the main VM through this,
+    /// on any thread. Not `event_loop`: that is the macro loop while a macro
+    /// runs, and nothing runs a signal that is queued there.
     #[cfg(unix)]
-    pub(crate) fn get_main_thread_vm() -> Option<*mut VirtualMachine> {
-        let p = MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire);
-        if p.is_null() { None } else { Some(p) }
+    pub(crate) fn main_thread_regular_loop() -> Option<*mut EventLoop> {
+        let vm = MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire);
+        if vm.is_null() {
+            return None;
+        }
+        // SAFETY: the main thread's VM is never freed; this projects to a field of it.
+        Some(unsafe { &raw mut (*vm).regular_event_loop })
     }
 
     #[inline]
@@ -1932,6 +1938,8 @@ impl VirtualMachine {
         self.macro_mode = false;
         self.event_loop = &raw mut self.regular_event_loop;
         self.transpiler_store.enabled = true;
+        #[cfg(unix)]
+        self.regular_event_loop.wake_for_pending_signal();
     }
 
     pub fn enqueue_task(&mut self, task: bun_event_loop::Task) {

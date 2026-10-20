@@ -577,7 +577,7 @@ static JSStringDecoder* createDecoder(JSC::JSGlobalObject* lexicalGlobalObject, 
 
     auto encoding = BufferEncodingType::utf8;
     if (!jsEncoding.isUndefinedOrNull()) {
-        std::optional<BufferEncodingType> opt = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, jsEncoding);
+        std::optional<BufferEncodingType> opt = normalizeEncoding(*lexicalGlobalObject, jsEncoding);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
         if (opt.has_value()) {
             encoding = opt.value();

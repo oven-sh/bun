@@ -25,21 +25,60 @@ enum class TranscodeEncoding : uint8_t {
     Unsupported,
 };
 
-// Mirrors Node's normalizeEncoding() + SupportedEncoding(): every encoding
-// that doesn't resolve to ascii/latin1/ucs2/utf8 (including base64/hex and
-// unknown labels) transcodes as U_ILLEGAL_ARGUMENT_ERROR.
-static TranscodeEncoding parseTranscodeEncoding(const WTF::String& encoding)
+// Node's SupportedEncoding(): https://github.com/nodejs/node/blob/v26.3.0/src/node_i18n.cc#L267-L275
+static TranscodeEncoding toTranscodeEncoding(std::optional<WebCore::BufferEncodingType> encoding)
 {
-    auto lowered = encoding.convertToASCIILowercase();
-    if (lowered == "utf8"_s || lowered == "utf-8"_s)
+    if (!encoding)
+        return TranscodeEncoding::Unsupported;
+    switch (*encoding) {
+    case WebCore::BufferEncodingType::utf8:
         return TranscodeEncoding::Utf8;
-    if (lowered == "ucs2"_s || lowered == "ucs-2"_s || lowered == "utf16le"_s || lowered == "utf-16le"_s)
+    case WebCore::BufferEncodingType::ucs2:
+    case WebCore::BufferEncodingType::utf16le:
         return TranscodeEncoding::Ucs2;
-    if (lowered == "latin1"_s || lowered == "binary"_s)
+    case WebCore::BufferEncodingType::latin1:
         return TranscodeEncoding::Latin1;
-    if (lowered == "ascii"_s)
+    case WebCore::BufferEncodingType::ascii:
         return TranscodeEncoding::Ascii;
+    case WebCore::BufferEncodingType::base64:
+    case WebCore::BufferEncodingType::base64url:
+    case WebCore::BufferEncodingType::hex:
+    case WebCore::BufferEncodingType::buffer:
+        return TranscodeEncoding::Unsupported;
+    }
     return TranscodeEncoding::Unsupported;
+}
+
+// Node's native parser reads a string that is not a name as a C string: https://github.com/nodejs/node/blob/v26.3.0/src/api/encoding.cc#L125-L136
+static NEVER_INLINE TranscodeEncoding parseTranscodeEncodingBeforeNul(StringView name)
+{
+    const size_t nul = name.find('\0');
+    if (nul == notFound)
+        return TranscodeEncoding::Unsupported;
+    return toTranscodeEncoding(WebCore::parseEnumerationFromView<WebCore::BufferEncodingType>(name.left(nul)));
+}
+
+// Node's `normalizeEncoding(enc) || enc`: https://github.com/nodejs/node/blob/v26.3.0/lib/buffer.js#L1364-L1366
+static ALWAYS_INLINE TranscodeEncoding parseTranscodeEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value)
+{
+    const auto encoding = WebCore::normalizeEncoding(*globalObject, value);
+    RETURN_IF_EXCEPTION(scope, TranscodeEncoding::Unsupported);
+    if (!encoding && value.isString()) [[unlikely]] {
+        const auto name = asString(value)->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, TranscodeEncoding::Unsupported);
+        return parseTranscodeEncodingBeforeNul(name);
+    }
+    return toTranscodeEncoding(encoding);
+}
+
+static EncodedJSValue throwTranscodeError(JSGlobalObject* globalObject, ThrowScope& scope, ASCIILiteral errorName, int32_t errorCode)
+{
+    VM& vm = globalObject->vm();
+    auto* error = JSC::createError(globalObject, makeString("Unable to transcode Buffer ["_s, errorName, "]"_s));
+    error->putDirect(vm, JSC::Identifier::fromString(vm, "code"_s), JSC::jsString(vm, String(errorName)), 0);
+    error->putDirect(vm, JSC::Identifier::fromString(vm, "errno"_s), JSC::jsNumber(errorCode), 0);
+    throwException(globalObject, scope, error);
+    return {};
 }
 
 // Decode the source bytes into well-formed UTF-16 for the pivot paths.
@@ -158,45 +197,40 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
     if (view->isDetached() || view->byteLength() == 0)
         RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createEmptyBuffer(globalObject)));
 
-    // Coerce the encodings (which can run user toString) BEFORE snapshotting
-    // the view's pointer/length — the coercion may detach or resize it.
-    // Node's normalizeEncoding maps undefined/null/"" to utf8.
-    auto parseEncodingArgument = [&](JSValue value) -> TranscodeEncoding {
-        if (value.isUndefinedOrNull())
-            return TranscodeEncoding::Utf8;
-        auto string = value.toWTFString(globalObject);
-        if (string.isEmpty())
-            return TranscodeEncoding::Utf8;
-        return parseTranscodeEncoding(string);
-    };
-    const auto fromEncoding = parseEncodingArgument(callFrame->argument(1));
-    RETURN_IF_EXCEPTION(scope, {});
-    const auto toEncoding = parseEncodingArgument(callFrame->argument(2));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (view->isDetached()) [[unlikely]]
-        RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createEmptyBuffer(globalObject)));
-
-    const size_t length = view->byteLength();
-    if (length == 0)
-        RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createEmptyBuffer(globalObject)));
-
-    const std::span<const uint8_t> input { view->typedVector(), length };
-    const auto* data = reinterpret_cast<const char*>(input.data());
-
     // Only these two ICU statuses are producible here.
     constexpr int32_t U_ILLEGAL_ARGUMENT_ERRNO = 1;
     constexpr int32_t U_INVALID_CHAR_FOUND_ERRNO = 10;
+
+    // User code of an encoding (a `length` getter, toString()) can detach or resize the source, so read its pointer and length after both.
+    const auto fromEncoding = parseTranscodeEncoding(globalObject, scope, callFrame->argument(1));
+    RETURN_IF_EXCEPTION(scope, {});
+    const auto toEncoding = parseTranscodeEncoding(globalObject, scope, callFrame->argument(2));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Node rejects the encodings before it looks at the source: https://github.com/nodejs/node/blob/v26.3.0/src/node_i18n.cc#L283-L319
+    if (fromEncoding == TranscodeEncoding::Unsupported || toEncoding == TranscodeEncoding::Unsupported)
+        return throwTranscodeError(globalObject, scope, "U_ILLEGAL_ARGUMENT_ERROR"_s, U_ILLEGAL_ARGUMENT_ERRNO);
+
+    const size_t length = view->isDetached() ? 0 : view->byteLength();
+    if (length == 0) [[unlikely]] {
+        // Only that user code can empty the source. Node's simdutf paths then fail, and its ICU path aborts the process: https://github.com/nodejs/node/blob/v26.3.0/src/node_i18n.cc#L143-L255
+        const bool nodeUsesSimdutf = toEncoding == TranscodeEncoding::Ucs2
+            ? fromEncoding != TranscodeEncoding::Ucs2
+            : fromEncoding == TranscodeEncoding::Ucs2 && toEncoding == TranscodeEncoding::Utf8;
+        if (nodeUsesSimdutf)
+            return throwTranscodeError(globalObject, scope, "U_INVALID_CHAR_FOUND"_s, U_INVALID_CHAR_FOUND_ERRNO);
+        RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createEmptyBuffer(globalObject)));
+    }
+
+    const std::span<const uint8_t> input { view->typedVector(), length };
+    const auto* data = reinterpret_cast<const char*>(input.data());
 
     int32_t errorCode = 0;
     ASCIILiteral errorName;
     // An allocation that fails throws RangeError: Out of memory. Node's ICU paths have an INT32_MAX limit and report U_ILLEGAL_ARGUMENT_ERROR: https://github.com/nodejs/node/blob/v26.3.0/src/node_i18n.cc#L158-L163
     JSC::JSUint8Array* result = nullptr;
 
-    if (fromEncoding == TranscodeEncoding::Unsupported || toEncoding == TranscodeEncoding::Unsupported) {
-        errorCode = U_ILLEGAL_ARGUMENT_ERRNO;
-        errorName = "U_ILLEGAL_ARGUMENT_ERROR"_s;
-    } else if ((fromEncoding == TranscodeEncoding::Ascii || fromEncoding == TranscodeEncoding::Latin1)
+    if ((fromEncoding == TranscodeEncoding::Ascii || fromEncoding == TranscodeEncoding::Latin1)
         && toEncoding == TranscodeEncoding::Ucs2) {
         // Node's TranscodeLatin1ToUcs2: widen each byte to a UTF-16LE unit
         // (an ASCII source is treated as latin1 here, matching Node).
@@ -270,13 +304,8 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
         }
     }
 
-    if (errorCode != 0) {
-        auto* error = JSC::createError(globalObject, makeString("Unable to transcode Buffer ["_s, errorName, "]"_s));
-        error->putDirect(vm, JSC::Identifier::fromString(vm, "code"_s), JSC::jsString(vm, String(errorName)), 0);
-        error->putDirect(vm, JSC::Identifier::fromString(vm, "errno"_s), JSC::jsNumber(errorCode), 0);
-        throwException(globalObject, scope, error);
-        return {};
-    }
+    if (errorCode != 0)
+        return throwTranscodeError(globalObject, scope, errorName, errorCode);
 
     return JSValue::encode(result);
 }

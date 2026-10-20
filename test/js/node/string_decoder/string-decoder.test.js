@@ -244,6 +244,58 @@ for (const StringDecoder of [FakeStringDecoderCall, RealStringDecoder, SubString
   });
 }
 
+// Node's normalizeEncoding() converts a value that is not a string only when its `length` is the
+// length of an encoding name, and then takes only a name of that length. The expected values are
+// the ones that Node v26.3.0 gives. test/js/node/normalize-encoding-fixture.js has more values.
+it("takes an encoding that is not a string as Node's normalizeEncoding() does", () => {
+  const calls = [];
+  const recorder = (length, string) => ({
+    get length() {
+      calls.push("length");
+      return length;
+    },
+    toString() {
+      calls.push("toString");
+      return string;
+    },
+  });
+  function encodingOf(value) {
+    calls.length = 0;
+    try {
+      return { encoding: new RealStringDecoder(value).encoding, calls: [...calls] };
+    } catch (error) {
+      return { code: error.code, calls: [...calls] };
+    }
+  }
+  const unknown = { code: "ERR_UNKNOWN_ENCODING", calls: [] };
+  expect({
+    "an empty string": encodingOf(""),
+    "a String object": encodingOf(new String("latin1")),
+    "an upper-case String object": encodingOf(new String("UCS-2")),
+    "a Buffer that holds a name": encodingOf(Buffer.from("hex")),
+    "the length and the name of Base64": encodingOf(recorder(6, "Base64")),
+    "the length 4 and the name latin1": encodingOf(recorder(4, "latin1")),
+    "the length 1 and the name latin1": encodingOf(recorder(1, "latin1")),
+    "an empty String object": encodingOf(new String("")),
+    "an array of one name": encodingOf(["latin1"]),
+    "a number": encodingOf(6),
+    "latin1 before a NUL": encodingOf("latin1\0"),
+  }).toEqual({
+    "an empty string": { encoding: "utf8", calls: [] },
+    "a String object": { encoding: "latin1", calls: [] },
+    "an upper-case String object": { encoding: "utf16le", calls: [] },
+    "a Buffer that holds a name": { encoding: "hex", calls: [] },
+    "the length and the name of Base64": { encoding: "base64", calls: ["length", "toString"] },
+    // The message of the error takes the string of the value once more.
+    "the length 4 and the name latin1": { code: "ERR_UNKNOWN_ENCODING", calls: ["length", "toString", "toString"] },
+    "the length 1 and the name latin1": { code: "ERR_UNKNOWN_ENCODING", calls: ["length", "toString"] },
+    "an empty String object": unknown,
+    "an array of one name": unknown,
+    "a number": unknown,
+    "latin1 before a NUL": unknown,
+  });
+});
+
 // Node's normalizeEncoding() maps every UTF-16LE alias (including the legacy
 // ucs2/ucs-2 spellings) to the canonical name "utf16le", and
 // StringDecoder#encoding exposes the normalized name.

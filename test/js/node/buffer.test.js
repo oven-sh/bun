@@ -5424,6 +5424,285 @@ describe("transcode allocation limits", () => {
   });
 });
 
+// The fixture prints what transcode() and StringDecoder do with each value of a list that is passed
+// as an encoding.
+it.skipIf(!nodeExe())("transcode() and StringDecoder take each encoding value as Node.js does", async () => {
+  const fixture = join(import.meta.dir, "normalize-encoding-fixture.js");
+  async function run(exe) {
+    await using proc = Bun.spawn({ cmd: [exe, fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const [bunRun, nodeRun] = await Promise.all([run(bunExe()), run(nodeExe())]);
+  expect(nodeRun.stdout).toContain('["latin1"] | fromEnc: throws U_ILLEGAL_ARGUMENT_ERROR');
+  expect(bunRun).toEqual({ stdout: nodeRun.stdout, stderr: "", exitCode: 0 });
+});
+
+// transcode() takes its two encodings as Node does: `normalizeEncoding(enc) || enc` in lib/buffer.js,
+// then a native parser that takes a string only and reads it as a C string. normalizeEncoding()
+// converts a value that is not a string only when its `length` is the length of an encoding name.
+// Every expected value in this block is the one that Node v26.3.0 gives, except where a comment says
+// that Node aborts.
+describe("transcode encoding arguments", () => {
+  const { transcode } = BufferModule;
+
+  // "é" gives different bytes for each of the four encodings, as the source encoding and as the
+  // target encoding. So the result names the encoding that transcode() used.
+  const source = Buffer.from("é");
+  const positions = {
+    fromEnc: {
+      run: encoding => transcode(source, encoding, "utf8"),
+      used: { c3a9: "utf8", c383c2a9: "latin1", efbfbdefbfbd: "ascii", eaa783: "ucs2" },
+    },
+    toEnc: {
+      run: encoding => transcode(source, "utf8", encoding),
+      used: { c3a9: "utf8", e9: "latin1", "3f": "ascii", e900: "ucs2" },
+    },
+  };
+
+  const illegalArgument = {
+    constructor: Error,
+    message: "Unable to transcode Buffer [U_ILLEGAL_ARGUMENT_ERROR]",
+    code: "U_ILLEGAL_ARGUMENT_ERROR",
+    errno: 1,
+  };
+  const invalidCharFound = {
+    constructor: Error,
+    message: "Unable to transcode Buffer [U_INVALID_CHAR_FOUND]",
+    code: "U_INVALID_CHAR_FOUND",
+    errno: 10,
+  };
+  const fromUserCode = { constructor: RangeError, message: "from user code", code: undefined, errno: undefined };
+
+  function errorOf(fn) {
+    try {
+      fn();
+    } catch (error) {
+      return { constructor: error.constructor, message: error.message, code: error.code, errno: error.errno };
+    }
+  }
+
+  // Passes `make(calls)` as fromEnc, and then as toEnc. For each position this gives the encoding that
+  // transcode() used or the error that it threw, and the user code that ran.
+  function inEachPosition(make) {
+    const outcomes = {};
+    for (const [position, { run, used }] of Object.entries(positions)) {
+      const calls = [];
+      const encoding = make(calls);
+      let result;
+      const threw = errorOf(() => (result = run(encoding)));
+      outcomes[position] = threw ? { threw, calls } : { used: used[result.toString("hex")], calls };
+    }
+    return outcomes;
+  }
+
+  // Each row is [label, make, outcome]. The outcome is the same in the two positions.
+  function expectOutcomes(rows) {
+    const actual = {};
+    const expected = {};
+    for (const [label, make, outcome] of rows) {
+      actual[label] = inEachPosition(make);
+      expected[label] = { fromEnc: outcome, toEnc: outcome };
+    }
+    expect(actual).toEqual(expected);
+  }
+
+  // An encoding object that records the user code that transcode() runs on it.
+  function recorder(calls, length, string, name = "") {
+    return {
+      get length() {
+        calls.push(name + "length");
+        if (length instanceof Error) throw length;
+        return length;
+      },
+      toString() {
+        calls.push(name + "toString");
+        if (string instanceof Error) throw string;
+        return string;
+      },
+    };
+  }
+  const sixteenBit = string => Buffer.from(string, "utf16le").toString("utf16le");
+
+  // The next two tests hold a short set of the fixture's rows with the whole error. They also run
+  // where there is no Node.js.
+  it("converts a value that is not a string only when its length is the length of a name", () => {
+    const withToString = calls => ({
+      toString() {
+        calls.push("toString");
+        return "latin1";
+      },
+    });
+    const rejected = { threw: illegalArgument, calls: [] };
+    const notConverted = { threw: illegalArgument, calls: ["length"] };
+    const convertedTo = used => ({ used, calls: ["length", "toString"] });
+    const convertedAndThrew = threw => ({ threw, calls: ["length", "toString"] });
+    const typeError = { constructor: TypeError, message: expect.any(String), code: undefined, errno: undefined };
+    const throws = new RangeError("from user code");
+    expectOutcomes([
+      ["an object with a toString()", withToString, rejected],
+      ["an array of one name", () => ["latin1"], rejected],
+      ["an empty array", () => [], rejected],
+      ["an empty String object", () => new String(""), rejected],
+      ["a number", () => 6, rejected],
+      ["a symbol", () => Symbol("latin1"), rejected],
+      ["an object with no prototype", () => Object.create(null), rejected],
+      ["the length 2", calls => recorder(calls, 2, "latin1"), notConverted],
+      ["the length 10", calls => recorder(calls, 10, "latin1"), notConverted],
+      ["the length 6.5", calls => recorder(calls, 6.5, "latin1"), notConverted],
+      ['the length "6"', calls => recorder(calls, "6", "latin1"), notConverted],
+      [
+        "a length getter that throws",
+        calls => recorder(calls, throws, "latin1"),
+        { threw: fromUserCode, calls: ["length"] },
+      ],
+      ["a String object", () => new String("latin1"), { used: "latin1", calls: [] }],
+      ["a Buffer that holds a name", () => Buffer.from("utf16le"), { used: "ucs2", calls: [] }],
+      ["the length and the name of LaTiN1", calls => recorder(calls, 6, "LaTiN1"), convertedTo("latin1")],
+      ["the length 6 as a double", calls => recorder(calls, Math.sqrt(36), "latin1"), convertedTo("latin1")],
+      [
+        "the length 5 and a 16-bit string of ascii",
+        calls => recorder(calls, 5, sixteenBit("ascii")),
+        convertedTo("ascii"),
+      ],
+      ["the length and the name of hex", calls => recorder(calls, 3, "hex"), convertedAndThrew(illegalArgument)],
+      ["the length 4 and the name latin1", calls => recorder(calls, 4, "latin1"), convertedAndThrew(illegalArgument)],
+      // The string of a converted value does not end at a NUL.
+      [
+        "the length 7 and latin1 before a NUL",
+        calls => recorder(calls, 7, "latin1\0"),
+        convertedAndThrew(illegalArgument),
+      ],
+      ["a toString() that throws", calls => recorder(calls, 6, throws), convertedAndThrew(fromUserCode)],
+      ["a toString() that gives a symbol", calls => recorder(calls, 6, Symbol("latin1")), convertedAndThrew(typeError)],
+    ]);
+  });
+
+  it("takes a string as a name, or as a C string that ends at its first NUL", () => {
+    const used = name => ({ used: name, calls: [] });
+    const rejected = { threw: illegalArgument, calls: [] };
+    expectOutcomes([
+      ["undefined", () => undefined, used("utf8")],
+      ["null", () => null, used("utf8")],
+      ["an empty string", () => "", used("utf8")],
+      ["UTF-16LE", () => "UTF-16LE", used("ucs2")],
+      ["Binary", () => "Binary", used("latin1")],
+      ["a 16-bit string of ascii", () => sixteenBit("ascii"), used("ascii")],
+      ["hex", () => "hex", rejected],
+      ["buffer", () => "buffer", rejected],
+      ["latin1 after a space", () => " latin1", rejected],
+      ["latin1 with a dotless i", () => "lat\u0131n1", rejected],
+      ["latin1 before a NUL", () => "latin1\0", used("latin1")],
+      ["UTF8 before a NUL and more", () => "UTF8\0xyz", used("utf8")],
+      ["latin1 before a NUL in a 16-bit string", () => "latin1\0\u0131", used("latin1")],
+      ["a NUL", () => "\0", rejected],
+      ["latin1 after a NUL", () => "\0latin1", rejected],
+      ["hex before a NUL", () => "hex\0", rejected],
+    ]);
+  });
+
+  it("reads fromEnc and then toEnc, and stops at an error from user code", () => {
+    const calls = [];
+    const fromEnc = (length, string) => recorder(calls, length, string, "fromEnc.");
+    const toEnc = (length, string) => recorder(calls, length, string, "toEnc.");
+
+    expect(transcode(source, fromEnc(6, "latin1"), toEnc(4, "ucs2")).toString("hex")).toBe("c300a900");
+    expect(calls.splice(0)).toEqual(["fromEnc.length", "fromEnc.toString", "toEnc.length", "toEnc.toString"]);
+
+    // toEnc is read also when fromEnc is already rejected.
+    expect(errorOf(() => transcode(source, fromEnc(1, "latin1"), toEnc(4, "ucs2")))).toEqual(illegalArgument);
+    expect(calls.splice(0)).toEqual(["fromEnc.length", "toEnc.length", "toEnc.toString"]);
+    expect(errorOf(() => transcode(source, "hex", toEnc(4, "ucs2")))).toEqual(illegalArgument);
+    expect(calls.splice(0)).toEqual(["toEnc.length", "toEnc.toString"]);
+
+    const throws = fromEnc(new RangeError("from user code"), "latin1");
+    expect(errorOf(() => transcode(source, throws, toEnc(4, "ucs2")))).toEqual(fromUserCode);
+    expect(calls.splice(0)).toEqual(["fromEnc.length"]);
+
+    // A fourth argument is not read.
+    expect(transcode(source, "utf8", "latin1", recorder(calls, 6, "latin1")).toString("hex")).toBe("e9");
+    expect(calls).toEqual([]);
+  });
+
+  it("looks at the source before the encodings", () => {
+    const calls = [];
+    const encoding = recorder(calls, 6, "latin1");
+    expect(errorOf(() => transcode("é", encoding, encoding))).toEqual({
+      constructor: TypeError,
+      message: `The "source" argument must be an instance of Buffer or Uint8Array. Received type string ('é')`,
+      code: "ERR_INVALID_ARG_TYPE",
+      errno: undefined,
+    });
+    expect(transcode(new Uint8Array(0), encoding, encoding)).toEqual(Buffer.alloc(0));
+    expect(calls).toEqual([]);
+  });
+
+  describe("when user code of an encoding changes the source", () => {
+    const names = ["utf8", "latin1", "ascii", "ucs2"];
+    const hooks = ["fromEnc.length", "fromEnc.toString", "toEnc.length", "toEnc.toString"];
+
+    // Transcodes 4 bytes of "a". `change` runs from the one piece of user code that `hook` names.
+    function transcodeAndChange(from, to, hook, change) {
+      const buffer = new ArrayBuffer(4, { maxByteLength: 8 });
+      const view = new Uint8Array(buffer).fill(0x61);
+      const [position, property] = hook.split(".");
+      const object = name => ({
+        get length() {
+          if (property === "length") change(buffer);
+          return name.length;
+        },
+        toString() {
+          if (property === "toString") change(buffer);
+          return name;
+        },
+      });
+      return transcode(view, position === "fromEnc" ? object(from) : from, position === "toEnc" ? object(to) : to);
+    }
+
+    // With a source that has no code units, Node's simdutf paths fail. Those are each encoding but
+    // ucs2 to ucs2, and ucs2 to utf8. ucs2 to latin1 and ucs2 to ascii give an empty Buffer in Node
+    // too. For the other pairs Node aborts the process.
+    it.each([
+      ["detaches it", buffer => buffer.transfer()],
+      ["resizes it to 0", buffer => buffer.resize(0)],
+    ])("and %s", (_, change) => {
+      const actual = {};
+      const expected = {};
+      for (const hook of hooks) {
+        for (const from of [...names, "hex"]) {
+          for (const to of [...names, "base64"]) {
+            const key = `${from} to ${to}, from ${hook}`;
+            let result;
+            const threw = errorOf(() => (result = transcodeAndChange(from, to, hook, change)));
+            actual[key] = threw ?? [...result];
+            if (from === "hex" || to === "base64") expected[key] = illegalArgument;
+            else if (to === "ucs2" ? from !== "ucs2" : from === "ucs2" && to === "utf8")
+              expected[key] = invalidCharFound;
+            else expected[key] = [];
+          }
+        }
+      }
+      expect(actual).toEqual(expected);
+    });
+
+    it("and resizes it to another length", () => {
+      const grow = buffer => {
+        buffer.resize(6);
+        new Uint8Array(buffer).fill(0x62, 4);
+      };
+      const actual = {};
+      for (const hook of hooks) {
+        actual[hook] = {
+          shrink: [...transcodeAndChange("latin1", "ucs2", hook, buffer => buffer.resize(2))],
+          grow: [...transcodeAndChange("utf8", "latin1", hook, grow)],
+        };
+      }
+      const resized = { shrink: [0x61, 0, 0x61, 0], grow: [0x61, 0x61, 0x61, 0x61, 0x62, 0x62] };
+      expect(actual).toEqual(Object.fromEntries(hooks.map(hook => [hook, resized])));
+    });
+  });
+});
+
 // The fixed-width read* / write* accessors are C++ host functions that JSC's DFG/FTL compile into
 // bounds-checked loads / stores (JSBuffer.cpp + JavaScriptCore's BufferAccessorRegistry). They must
 // keep agreeing with a DataView reference after tier-up, and everything the JIT does not speculate

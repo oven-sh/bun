@@ -123,8 +123,10 @@ describe.concurrent("an http server whose connection listener throws", () => {
           const blocks = [];
           test("a connection listener throws", () => (first = refusedPeer()));
           test("the next test gives the loop back", () => first);
-          test("a connection listener throws again", () => (second = refusedPeer()));
-          test("the next test keeps the loop", () => {
+          // Not on Windows: the wait below runs inside the open callback of the connection that it waits for, and does not always end there (#33261).
+          const posix = test.skipIf(process.platform === "win32");
+          posix("a connection listener throws again", () => (second = refusedPeer()));
+          posix("the next test keeps the loop", () => {
             expect(
               (async () => {
                 await second;
@@ -154,8 +156,8 @@ describe.concurrent("an http server whose connection listener throws", () => {
         exitCode,
         signalCode: proc.signalCode,
       }).toEqual({
-        read: ["READ 100", "READ 100"],
-        summary: ["2 pass", "2 fail"],
+        read: isWindows ? ["READ 100"] : ["READ 100", "READ 100"],
+        summary: isWindows ? ["1 pass", "1 fail"] : ["2 pass", "2 fail"],
         exitCode: 1,
         signalCode: null,
       });

@@ -500,7 +500,9 @@ impl<'a> Transpiler<'a> {
             self.options.env.prefix = Box::from(b"BUN_".as_slice());
         }
 
-        self.run_env_loader(self.options.env.disable_default_env_files)?;
+        self.run_env_loader(
+            self.options.env.disable_default_env_files || self.options.env.loaded_by_parent,
+        )?;
 
         let env_loader = self.env_mut();
         let mut is_production = env_loader.is_production();
@@ -641,6 +643,11 @@ impl<'a> Transpiler<'a> {
         // Derived once up front; no other live `&mut` to this `Loader` exists
         // for the duration of this call.
         let env: &mut dot_env::Loader = self.env_mut();
+
+        // A `Bun.build`, a macro VM and the dev server run this with default options: the options of the process decide.
+        if !self.options.env.loads_default_files() {
+            dot_env::exclude_default_files();
+        }
 
         match self.options.env.behavior {
             DotEnvBehavior::prefix

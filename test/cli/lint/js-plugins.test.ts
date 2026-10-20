@@ -81,6 +81,36 @@ test.concurrent(
   timeout,
 );
 
+test.concurrent(
+  "the .env of the project is not in a Worker or a build that a plugin starts",
+  async () => {
+    const files = {
+      ".env": "FROM_FILE=1\n",
+      "client.js": "console.log(process.env.FROM_FILE);\n",
+      "worker.mjs": "postMessage(String(process.env.FROM_FILE));\n",
+      "plugin.mjs": `const worker = new Worker(new URL("./worker.mjs", import.meta.url).href);
+        const fromWorker = await new Promise((resolve, reject) => {
+          worker.onmessage = event => resolve(event.data);
+          worker.onerror = event => reject(new Error(event.message));
+        });
+        await worker.terminate();
+        const build = await Bun.build({ entrypoints: [import.meta.dir + "/client.js"], env: "inline" });
+        const inlined = /console\\.log\\((.*)\\);/.exec(await build.outputs[0].text())[1];
+        const message = () => [fromWorker, inlined, process.env.FROM_FILE, process.env.INHERITED].map(String).join(" ");
+        export default { rules: { show: { create: context => ({ Program: node => context.report({ node, message: message() }) }) } } };`,
+      "eslint.config.mjs": `import demo from "./plugin.mjs";
+        export default [{ plugins: { demo }, rules: { "demo/show": "error" } }];`,
+      "a.js": "a;\n",
+    };
+    const { raw, exitCode } = await lint(files, ["-f", "json", "a.js"], [], { INHERITED: "1" });
+    expect(JSON.parse(raw)[0].messages.map((it: { message: string }) => it.message)).toEqual([
+      "undefined process.env.FROM_FILE undefined 1",
+    ]);
+    expect(exitCode).toBe(1);
+  },
+  timeout,
+);
+
 // Reports every identifier called `foo`, with what the API has to say about it.
 const noFoo = `
 export default {

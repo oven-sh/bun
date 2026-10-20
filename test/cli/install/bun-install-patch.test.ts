@@ -1,10 +1,11 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstat, readdir, rm } from "fs/promises";
+import { chmod, link, lstat, readdir, rm, stat, symlink, unlink } from "fs/promises";
 import {
   bunEnv,
   bunExe,
   DirectoryTree,
+  githubTarball,
   isRoot,
   isWindows,
   normalizeBunSnapshot as normalizeBunSnapshot_,
@@ -47,6 +48,17 @@ type Env = Record<string, string | undefined>;
 function projectEnv(dir: string): Env {
   return { ...bunEnv, NPM_CONFIG_REGISTRY: registry.registryUrl(), BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") };
 }
+
+/** For `git` in a test, and for a `bun install` that runs it. */
+const gitVars = {
+  // Set on the asan lanes, where it makes `bun install` kill its own git clones (#33982).
+  BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_AUTHOR_NAME: "Test",
+  GIT_AUTHOR_EMAIL: "test@example.com",
+  GIT_COMMITTER_NAME: "Test",
+  GIT_COMMITTER_EMAIL: "test@example.com",
+};
 
 /** A temp dir with `files`, plus the env that points bun processes in it at the registry. */
 function createProject(prefix: string, files: DirectoryTree) {
@@ -1012,6 +1024,638 @@ index 0000000000000000000000000000000000000000..2f9a147b6e5d17254f1bfce0d4e109a2
   });
 });
 
+// A checkout can take package.json and bun.lock back to a commit without the patch in one step (a
+// branch switch, a pulled revert, `git stash`), and a frozen install applies a patch that bun.lock
+// never gets. Neither file names the patch then, so the installed copy has to.
+// https://github.com/oven-sh/bun/issues/25932
+describe.concurrent("a patch that package.json and bun.lock lose in one step", () => {
+  const commands = ["install", "install --frozen-lockfile", "ci"];
+
+  const patchPath = "patches/no-deps@1.0.0.patch";
+  // index.js of no-deps@1.0.0 exports the package's package.json. The patch adds `patched` to the
+  // exports, and a file to the package.
+  const noDepsPatch = /* patch */ `diff --git a/index.js b/index.js
+--- a/index.js
++++ b/index.js
+@@ -5,3 +5,4 @@
+     module.exports[key][dep] = require(dep);
+   }
+ }
++module.exports.patched = true;
+diff --git a/patched.txt b/patched.txt
+new file mode 100644
+--- /dev/null
++++ b/patched.txt
+@@ -0,0 +1 @@
++hello world
+`;
+
+  /** package.json of the commit with the patch, or of the one without it. */
+  const manifest = (patched: boolean) =>
+    JSON.stringify({
+      name: "app",
+      dependencies: { "no-deps": "1.0.0" },
+      patchedDependencies: patched ? { "no-deps@1.0.0": patchPath } : undefined,
+    });
+
+  /** A project at the commit without the patch, with nothing installed. */
+  const unpatchedProject = (prefix: string) =>
+    createProject(prefix, {
+      "package.json": manifest(false),
+      "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+    });
+
+  /** What a checkout does to package.json and to the patch file. bun.lock is left to the caller. */
+  async function checkout(dir: string, patched: boolean) {
+    await Bun.write(join(dir, "package.json"), manifest(patched));
+    if (patched) await Bun.write(join(dir, patchPath), noDepsPatch);
+    else await rm(join(dir, "patches"), { recursive: true, force: true });
+  }
+
+  /**
+   * What the project has of no-deps: the files of the copy that `require("no-deps")` loads, and
+   * what that copy exports when the project runs it.
+   */
+  async function installed(dir: string, env: Env) {
+    return {
+      files: (await readdir(join(dir, "node_modules", "no-deps"))).sort(),
+      exports: JSON.parse(await bunOk(dir, env, "-e", `console.log(JSON.stringify(require("no-deps")))`)),
+    };
+  }
+  const asPublished = {
+    files: ["index.js", "package.json"],
+    exports: { name: "no-deps", version: "1.0.0" },
+  };
+  // A patched copy also has the marker of its patch, `.bun-tag-<hash of the patch file>`.
+  const asPatched = {
+    files: [expect.stringMatching(/^\.bun-tag-[0-9a-f]{1,16}$/), "index.js", "package.json", "patched.txt"],
+    exports: expect.objectContaining({ name: "no-deps", version: "1.0.0", patched: true }),
+  };
+
+  /** Runs `command` once more: the install has nothing left to do. */
+  async function expectNoChanges(dir: string, env: Env, command: string) {
+    const { stdout, stderr, exitCode } = await runBun(dir, env, ...command.split(" "));
+    expect(stdout).toContain("(no changes)");
+    expect(stderr.replace(installProgress, "")).toBe("");
+    expect(exitCode).toBe(0);
+  }
+
+  describe("hoisted linker", () => {
+    test.each(commands)("bun %s installs the package as published after a checkout of both files", async command => {
+      await using project = unpatchedProject("patch-lost-checkout");
+      const { dir, env } = project;
+      // bun.lock of the commit without the patch. The first install is at the commit with the patch.
+      await bunOk(dir, env, "install", "--lockfile-only");
+      const unpatchedLock = await file(dir, "bun.lock").text();
+
+      await checkout(dir, true);
+      await bunOk(dir, env, "install");
+      await expectPatchedDependencies(dir, { "no-deps@1.0.0": patchPath });
+      expect(await installed(dir, env)).toEqual(asPatched);
+
+      // package.json and bun.lock lose the patch in one step.
+      await checkout(dir, false);
+      await Bun.write(join(dir, "bun.lock"), unpatchedLock);
+      await bunOk(dir, env, ...command.split(" "));
+      expect(await installed(dir, env)).toEqual(asPublished);
+      expect(await file(dir, "bun.lock").text()).toBe(unpatchedLock);
+      await expectNoChanges(dir, env, command);
+    });
+
+    test.each(commands)(
+      "bun %s installs the package as published after a frozen install applied a patch that bun.lock never got",
+      async command => {
+        await using project = unpatchedProject("patch-lost-frozen");
+        const { dir, env } = project;
+        await bunOk(dir, env, "install");
+        const unpatchedLock = await file(dir, "bun.lock").text();
+        expect(await installed(dir, env)).toEqual(asPublished);
+
+        // package.json gets the patch, and the frozen form of the command applies it without writing bun.lock.
+        await checkout(dir, true);
+        await bunOk(dir, env, ...(command === "ci" ? ["ci"] : ["install", "--frozen-lockfile"]));
+        expect(await installed(dir, env)).toEqual(asPatched);
+        expect(await file(dir, "bun.lock").text()).toBe(unpatchedLock);
+
+        // package.json loses the patch again.
+        await checkout(dir, false);
+        await bunOk(dir, env, ...command.split(" "));
+        expect(await installed(dir, env)).toEqual(asPublished);
+        expect(await file(dir, "bun.lock").text()).toBe(unpatchedLock);
+        await expectNoChanges(dir, env, command);
+      },
+    );
+  });
+
+  // Someone can publish a package from a patched copy. Its own package.json then starts with the key that names the
+  // patch of a hoisted copy, and so does the one in the unpatched folder of the cache. That is how bun tells the
+  // package from a copy that holds a patch.
+  test("a package that is published with the patch hash key is installed once, its patched copy again", async () => {
+    const published = `{"_bunPatchHash":"0123456789abcdef","name":"ships-key","version":"1.0.0"}`;
+    const tarball = await new Bun.Archive(
+      { "package/package.json": published, "package/index.js": "module.exports = 1;\n" },
+      { compress: "gzip" },
+    ).bytes();
+    let tarballRequests = 0;
+    // A registry that has only ships-key@1.0.0.
+    using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        if (request.url.endsWith(".tgz")) {
+          tarballRequests++;
+          return new Response(tarball);
+        }
+        const dist = { tarball: `${server.url}ships-key/-/ships-key-1.0.0.tgz` };
+        return Response.json({
+          name: "ships-key",
+          "dist-tags": { latest: "1.0.0" },
+          versions: { "1.0.0": { name: "ships-key", version: "1.0.0", dist } },
+        });
+      },
+    });
+    await using project = createProject("patch-published-with-key", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { "ships-key": "1.0.0" } }),
+      "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+    });
+    const { dir } = project;
+    const env = { ...project.env, NPM_CONFIG_REGISTRY: server.url.href };
+    const folder = join(dir, "node_modules", "ships-key");
+    const cache = join(dir, ".bun-cache");
+    /** The copy in node_modules, package.json in each folder the cache has of the package, and the tarball requests. */
+    const state = async () => ({
+      packageJson: await file(folder, "package.json").text(),
+      files: (await readdir(folder)).sort(),
+      cached: await Promise.all(
+        (await readdir(cache))
+          .filter(name => name.startsWith("ships-key@1.0.0@@"))
+          .map(name => file(cache, name, "package.json").text()),
+      ),
+      tarballRequests,
+    });
+    const asShipped = {
+      packageJson: published,
+      files: ["index.js", "package.json"],
+      cached: [published],
+      tarballRequests: 1,
+    };
+
+    await bunOk(dir, env, "install");
+    expect(await state()).toEqual(asShipped);
+
+    // No patch is wanted and the copy has the key. The cache has the package with the same key, so the copy is the
+    // package, and bun does not ask the registry for it again.
+    await expectNoChanges(dir, env, "install");
+    expect(await state()).toEqual(asShipped);
+
+    // A patched copy has the hash of its patch in front of the key of the package. The file is a new one: the
+    // installed file can be a hard link to the file of the cache, which keeps the key of the package.
+    const patchedPackageJson = `{"_bunPatchHash":"fedcba9876543210",${published.slice(1)}`;
+    await rm(join(folder, "package.json"));
+    await Bun.write(join(folder, "package.json"), patchedPackageJson);
+    await Bun.write(join(folder, "patched.txt"), "hello world\n");
+    expect(await state()).toEqual({
+      ...asShipped,
+      packageJson: patchedPackageJson,
+      files: ["index.js", "package.json", "patched.txt"],
+    });
+
+    // No folder of the cache has the package with that key, so the copy is installed again.
+    expect(normalizeBunSnapshot(await bunOk(dir, env, "install"))).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
+
+      + ships-key@1.0.0
+
+      1 package installed"
+    `);
+    expect(await state()).toEqual(asShipped);
+    await expectNoChanges(dir, env, "install");
+  });
+});
+
+// The checkout that takes the patch out of package.json and bun.lock, for a git, github or tarball package.
+// The hoisted linker takes such a package for installed by its `.bun-tag`, not by its package.json: line 1 is
+// the commit or the integrity that bun.lock has, and a patched copy names its patch on line 2.
+// https://github.com/oven-sh/bun/issues/25932
+describe.concurrent("a patch of a git, github or tarball package that package.json and bun.lock lose", () => {
+  const original = `module.exports = "original";\n`;
+  const patched = `module.exports = "patched";\n`;
+  const dep = { "package.json": JSON.stringify({ name: "dep", version: "1.0.0" }), "index.js": original };
+  const patch = /* patch */ `diff --git a/index.js b/index.js
+--- a/index.js
++++ b/index.js
+@@ -1 +1 @@
+-module.exports = "original";
++module.exports = "patched";
+`;
+  // The digits in the name of the marker and of the patched cache folder: the first 8 bytes of the SHA-1 of the
+  // patch file as a little-endian integer.
+  const patchHash = new Bun.CryptoHasher("sha1").update(patch).digest().readBigUInt64LE(0).toString(16);
+  const marker = `.bun-tag-${patchHash}`;
+
+  // The host of the remote tarball, which is the GitHub API too. That one names the root folder of its tarball
+  // `<owner>-<repo>-<commit>`, and bun.lock and `.bun-tag` have that name for the commit.
+  let tarball: Uint8Array;
+  let server: ReturnType<typeof Bun.serve>;
+
+  beforeAll(async () => {
+    tarball = await githubTarball("package", dep);
+    const repository = await githubTarball("testowner-testrepo-aaaaaaa", dep);
+    server = Bun.serve({
+      port: 0,
+      fetch: req => new Response(new URL(req.url).pathname === "/dep-1.0.0.tgz" ? tarball : repository),
+    });
+  });
+
+  afterAll(() => server?.stop(true));
+
+  // What package.json says `dep` is.
+  const specs = {
+    "git": (dir: string) => `git+${pathToFileURL(join(dir, "repo"))}`,
+    "github": () => "github:testowner/testrepo#aaaaaaa",
+    "local tarball": () => "./dep-1.0.0.tgz",
+    "remote tarball": () => `${server.url}dep-1.0.0.tgz`,
+  };
+  type Kind = keyof typeof specs;
+
+  /** A project at the commit without the patch, with `dep` installed. */
+  async function project(kind: Kind) {
+    const created = createProject("patch-lost-bun-tag", {
+      "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+      "gitconfig": "[core]\n\tautocrlf = false\n",
+      "dep-1.0.0.tgz": Buffer.from(tarball),
+      repo: dep,
+    });
+    const { dir } = created;
+    const env = {
+      ...created.env,
+      ...gitVars,
+      // Not the config of the machine: its `core.autocrlf` changes the line endings of a checkout on Windows.
+      GIT_CONFIG_GLOBAL: join(dir, "gitconfig"),
+      GITHUB_API_URL: server.url.origin,
+    };
+    if (kind === "git") {
+      await $`git init -q && git add -A && git commit -q -m init --no-gpg-sign`.cwd(join(dir, "repo")).env(env).quiet();
+    }
+    const manifest = (patchedDependencies?: Record<string, string>) =>
+      JSON.stringify({ name: "app", dependencies: { dep: specs[kind](dir) }, patchedDependencies });
+    await Bun.write(join(dir, "package.json"), manifest());
+    await bunOk(dir, env, "install");
+    const lockfile = await file(dir, "bun.lock").text();
+    // `["dep@<resolution>", {}, "<the commit, or the integrity of the tarball>", ...]`
+    const [key, , pinned]: string[] = (Bun.JSONC.parse(lockfile) as any).packages.dep;
+    return {
+      ...created,
+      env,
+      /** What bun.lock pins `dep` to, and line 1 of `.bun-tag`: the commit, or the integrity of the tarball. */
+      pinned,
+      /** What a checkout of the commit with the patch does, but for bun.lock: the next install writes it. */
+      async addPatch() {
+        await Bun.write(join(dir, "patches", "dep.patch"), patch);
+        await Bun.write(join(dir, "package.json"), manifest({ [key]: "patches/dep.patch" }));
+      },
+      /** What a checkout of the commit without the patch does. */
+      async checkout() {
+        await Bun.write(join(dir, "package.json"), manifest());
+        await Bun.write(join(dir, "bun.lock"), lockfile);
+        await rm(join(dir, "patches"), { recursive: true });
+      },
+    };
+  }
+
+  /** What `require("dep")` loads, and what says which package that is. */
+  async function installed(dir: string) {
+    const folder = join(dir, "node_modules", "dep");
+    return {
+      index: await file(folder, "index.js").text(),
+      markers: (await readdir(folder)).filter(name => name.startsWith(".bun-tag-")),
+      bunTag: await file(folder, ".bun-tag").text(),
+    };
+  }
+
+  describe("hoisted linker", () => {
+    describe.each(Object.keys(specs) as Kind[])("%s", kind => {
+      test("the installed copy names the patch, and is not installed again", async () => {
+        await using app = await project(kind);
+        const { dir, env, pinned } = app;
+        expect(await installed(dir)).toEqual({ index: original, markers: [], bunTag: pinned });
+
+        await app.addPatch();
+        await bunOk(dir, env, "install");
+        const named = await installed(dir);
+        // Line 1 is what it was: the copy is still the package that bun.lock has.
+        expect(named).toEqual({ index: patched, markers: [marker], bunTag: `${pinned}\n${patchHash}` });
+
+        expect(await bunOk(dir, env, "install")).toContain("(no changes)");
+        expect(await installed(dir)).toEqual(named);
+      });
+
+      test.each(["install", "install --frozen-lockfile", "ci"])(
+        "bun %s installs the package as bun.lock has it after a checkout of both files",
+        async command => {
+          await using app = await project(kind);
+          const { dir, env } = app;
+          const unpatched = await installed(dir);
+
+          await app.addPatch();
+          await bunOk(dir, env, "install");
+          expect(await installed(dir)).toMatchObject({ index: patched, markers: [marker] });
+
+          await app.checkout();
+          await bunOk(dir, env, ...command.split(" "));
+          expect(await installed(dir)).toEqual(unpatched);
+
+          // The patched copy is gone, so the command has nothing left to do.
+          expect(await bunOk(dir, env, ...command.split(" "))).toContain("(no changes)");
+          expect(await installed(dir)).toEqual(unpatched);
+        },
+      );
+    });
+
+    // `--no-verify` does not check a download against the integrity in bun.lock, so `.bun-tag` claims none.
+    test("line 1 of .bun-tag stays empty for a remote tarball that --no-verify did not check", async () => {
+      await using app = await project("remote tarball");
+      const { dir, env } = app;
+      // Without the cache, the patched package is made from a download.
+      await rm(join(dir, ".bun-cache"), { recursive: true });
+
+      await app.addPatch();
+      await bunOk(dir, env, "install", "--no-verify");
+      const named = { index: patched, markers: [marker], bunTag: `\n${patchHash}` };
+      expect(await installed(dir)).toEqual(named);
+      expect(await bunOk(dir, env, "install", "--no-verify")).toContain("(no changes)");
+      expect(await installed(dir)).toEqual(named);
+
+      await app.checkout();
+      await bunOk(dir, env, "install", "--no-verify");
+      const unpatched = { index: original, markers: [], bunTag: "" };
+      expect(await installed(dir)).toEqual(unpatched);
+      expect(await bunOk(dir, env, "install", "--no-verify")).toContain("(no changes)");
+      expect(await installed(dir)).toEqual(unpatched);
+    });
+
+    // `bun prune` compares `.bun-tag` of a git package with the commit in bun.lock, and looks into the package
+    // only when they agree.
+    test("bun prune takes a git copy that names its patch for the package that bun.lock has", async () => {
+      await using app = await project("git");
+      const { dir, env, pinned } = app;
+      await app.addPatch();
+      await bunOk(dir, env, "install");
+      expect((await installed(dir)).bunTag).toBe(`${pinned}\n${patchHash}`);
+
+      const dryRun = async () => {
+        const { stdout, stderr, exitCode } = await runBun(dir, env, "prune", "--dry-run");
+        return { stdout: stdout.replaceAll("\\", "/"), stderr, exitCode };
+      };
+      expect(await dryRun()).toEqual({
+        stdout: expect.stringContaining("(nothing to prune)"),
+        stderr: "",
+        exitCode: 0,
+      });
+
+      // A package that nothing depends on, inside the patched one.
+      const junk = join(dir, "node_modules", "dep", "node_modules", "junk", "package.json");
+      await Bun.write(junk, JSON.stringify({ name: "junk", version: "1.0.0" }));
+      expect(await dryRun()).toEqual({
+        stdout: expect.stringContaining("- junk@1.0.0 (node_modules/dep/node_modules)\n1 package can be removed"),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+});
+
+// What a version of bun that does not name the patch in an installed copy leaves of a patched
+// package: the patched files, and the empty marker `.bun-tag-<patch hash>` next to them. Its hoisted
+// linker keeps package.json and `.bun-tag` as published. While the patch is wanted, an install keeps
+// such a copy and names the patch in it: nothing is fetched, and the package is not installed again.
+describe.concurrent("a patched package that an earlier version of bun installed", () => {
+  type Files = Record<string, string>;
+
+  // index.js of is-odd@0.1.2 in the registry.
+  const isOddIndex = `'use strict';
+
+module.exports = function isOdd(i) {
+  if (typeof i !== 'number') {
+    throw new TypeError('is-odd expects a number.');
+  }
+  return !!(~~i & 1);
+};
+`;
+  const isOddPatch = (message: string) => /* patch */ `diff --git a/index.js b/index.js
+--- a/index.js
++++ b/index.js
+@@ -3,3 +3,4 @@
+ module.exports = function isOdd(i) {
++  console.log("${message}");
+   if (typeof i !== 'number') {
+     throw new TypeError('is-odd expects a number.');
+`;
+  /** What `isOddPatch(message)` makes of index.js. */
+  const patchedIndex = (message: string) =>
+    isOddIndex.replace("function isOdd(i) {\n", `function isOdd(i) {\n  console.log("${message}");\n`);
+
+  // The hash of a patch is the first 8 bytes of the SHA-1 of the patch file, as a little-endian
+  // number. The marker and the patched cache folder (`_patch_hash=`) have it in their names, in hex.
+  const patchHash = (patch: string) =>
+    new Bun.CryptoHasher("sha1").update(patch).digest().readBigUInt64LE(0).toString(16);
+
+  // The patch that the project asks for, and what is-odd logs with it.
+  const logged = "is-odd patched";
+  const patchFile = "patches/is-odd.patch";
+  const patch = isOddPatch(logged);
+  const hash = patchHash(patch);
+
+  type Source = {
+    dependencies(dir: string, registryUrl: string): Record<string, string> | Promise<Record<string, string>>;
+    /** Calls is-odd from every package that depends on it, and prints "done". */
+    indexTs: string;
+    /** What index.ts prints while is-odd is patched. */
+    patched: string;
+    env?: Env;
+  };
+  const callsIsOdd = `import isOdd from "is-odd";\nisOdd(1);\nconsole.log("done");\n`;
+  // Where is-odd comes from. The hoisted linker names the patch of a registry package in its
+  // package.json, and the patch of a git or tarball package in its `.bun-tag`.
+  const sources = {
+    // is-even depends on is-odd@^0.1.2: the one copy of is-odd@0.1.2 is for is-even and for the
+    // project, and index.ts calls it from both.
+    registry: {
+      dependencies: () => ({ "is-even": "1.0.0", "is-odd": "0.1.2" }),
+      indexTs: `import isEven from "is-even";\nisEven(2);\n${callsIsOdd}`,
+      patched: `${logged}\n${logged}\ndone\n`,
+    },
+    git: {
+      async dependencies(dir) {
+        const repo = join(dir, "repo");
+        await Bun.write(
+          join(repo, "package.json"),
+          JSON.stringify({ name: "is-odd", version: "0.1.2", main: "index.js" }),
+        );
+        await Bun.write(join(repo, "index.js"), isOddIndex);
+        // The checkout has the line ends of the commit, whatever git is configured to do.
+        await Bun.write(join(repo, ".gitattributes"), "* -text\n");
+        await $`git init -q && git add -A && git commit -q -m init --no-gpg-sign`
+          .cwd(repo)
+          .env({ ...bunEnv, ...gitVars })
+          .quiet();
+        return { "is-odd": `git+${pathToFileURL(repo)}` };
+      },
+      indexTs: callsIsOdd,
+      patched: `${logged}\ndone\n`,
+      env: gitVars,
+    },
+    tarball: {
+      dependencies: (_dir, registryUrl) => ({ "is-odd": `${registryUrl}is-odd/-/is-odd-0.1.2.tgz` }),
+      indexTs: callsIsOdd,
+      patched: `${logged}\ndone\n`,
+    },
+  } satisfies Record<string, Source>;
+
+  /** The files in `dir` and their text. */
+  async function files(dir: string): Promise<Files> {
+    const names = (await readdir(dir)).sort();
+    return Object.fromEntries(
+      await Promise.all(names.map(async name => [name, await Bun.file(join(dir, name)).text()] as const)),
+    );
+  }
+
+  /** A project at the commit without the patch, with is-odd installed as published. */
+  async function project(source: Source, registryUrl: string) {
+    const created = createProject("patch-left", {
+      "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+      "index.ts": source.indexTs,
+    });
+    const { dir } = created;
+    const cache = join(dir, ".bun-cache");
+    const env: Env = {
+      ...created.env,
+      ...source.env,
+      NPM_CONFIG_REGISTRY: registryUrl,
+      BUN_INSTALL_CACHE_DIR: cache,
+    };
+    const manifest = { name: "app", dependencies: await source.dependencies(dir, registryUrl) };
+    await Bun.write(join(dir, "package.json"), JSON.stringify(manifest));
+    await bunOk(dir, env, "install");
+
+    const lockfile = await file(dir, "bun.lock").text();
+    // A package is patched under the id of its row in bun.lock.
+    const key = /^    "is-odd": \["([^"]+)"/m.exec(lockfile)![1];
+    /** What `require("is-odd")` loads in the project. */
+    const copy = join(dir, "node_modules", "is-odd");
+    const published = await files(copy);
+    expect(published["index.js"]).toBe(isOddIndex);
+    return {
+      dir,
+      env,
+      cache,
+      source,
+      copy,
+      /** The files of is-odd as published. */
+      published,
+      /** The commit with the patch. */
+      async addPatch() {
+        await Bun.write(join(dir, patchFile), patch);
+        await Bun.write(
+          join(dir, "package.json"),
+          JSON.stringify({ ...manifest, patchedDependencies: { [key]: patchFile } }),
+        );
+      },
+      /** What `git checkout` does to the tracked files on the way back to the commit without the patch. */
+      async checkoutMain() {
+        await Bun.write(join(dir, "package.json"), JSON.stringify(manifest));
+        await Bun.write(join(dir, "bun.lock"), lockfile);
+        await rm(join(dir, "patches"), { recursive: true, force: true });
+      },
+      [Symbol.asyncDispose]: created[Symbol.asyncDispose],
+    };
+  }
+  type Project = Awaited<ReturnType<typeof project>>;
+
+  /**
+   * Makes of a copy of the published is-odd what an earlier version left after it installed with
+   * `isOddPatch(message)`: the patched index.js, and the marker of that patch. index.js is a new
+   * file, because the installed one can be the file in the cache.
+   */
+  async function patchAsEarlierVersion(copy: string, message: string) {
+    await rm(join(copy, "index.js"));
+    await Bun.write(join(copy, "index.js"), patchedIndex(message));
+    await Bun.write(join(copy, `.bun-tag-${patchHash(isOddPatch(message))}`), "");
+  }
+
+  /**
+   * Turns the project into what an earlier version left after `bun install` at the commit with the
+   * patch: package.json and bun.lock ask for the patch, and the copy of is-odd is the patched one.
+   * The cache is gone, so a package that is installed again has to be fetched again. Returns the
+   * files of the copy.
+   */
+  async function leftByEarlierVersion(p: Project) {
+    await p.addPatch();
+    // Writes the patch into bun.lock, and nothing into node_modules.
+    await bunOk(p.dir, p.env, "install", "--lockfile-only");
+    expect(await file(p.dir, "bun.lock").text()).toContain(patchFile);
+    await patchAsEarlierVersion(p.copy, logged);
+    // Only this copy has the file: a package that is installed again loses it.
+    await Bun.write(join(p.copy, "only-in-this-copy.txt"), "");
+    await rm(p.cache, { recursive: true, force: true });
+    return files(p.copy);
+  }
+
+  /** A registry of its own for a test that counts requests: the other tests send theirs to `registry`. */
+  const countingRegistry = () => new TestRegistry({ recordRequests: true }).start();
+  const requests = (counting: TestRegistry) => counting.requests.map(request => `${request.method} ${request.path}`);
+
+  /**
+   * The copy that an install kept runs the patched code, and the next install keeps it too. After a
+   * checkout of the commit without the patch, the package is installed as published.
+   */
+  async function keptUntilThePatchIsGone(p: Project, counting: TestRegistry) {
+    expect(await bunOk(p.dir, p.env, "run", "index.ts")).toBe(p.source.patched);
+    expect(await bunOk(p.dir, p.env, "install")).toContain("(no changes)");
+    expect(requests(counting)).toEqual([]);
+
+    await p.checkoutMain();
+    await bunOk(p.dir, p.env, "install");
+    expect(await files(p.copy)).toEqual(p.published);
+    expect(await bunOk(p.dir, p.env, "run", "index.ts")).toBe("done\n");
+  }
+
+  test("hoisted linker: a registry package gets the patch hash as the first key of its package.json", async () => {
+    using counting = countingRegistry();
+    await using p = await project(sources.registry, counting.registryUrl());
+    const left = await leftByEarlierVersion(p);
+    counting.requests.length = 0;
+
+    await bunOk(p.dir, p.env, "install");
+    expect(requests(counting)).toEqual([]);
+    const copy = await files(p.copy);
+    expect(Object.entries(JSON.parse(copy["package.json"]))).toEqual([
+      ["_bunPatchHash", hash],
+      ...Object.entries(JSON.parse(left["package.json"])),
+    ]);
+    // Every other file is the one that was there: the package was not installed again.
+    expect<Files>({ ...copy, "package.json": left["package.json"] }).toEqual(left);
+
+    await keptUntilThePatchIsGone(p, counting);
+  });
+
+  test.each(["git", "tarball"] as const)(
+    "hoisted linker: a %s package gets the patch hash as line 2 of its .bun-tag",
+    async name => {
+      using counting = countingRegistry();
+      await using p = await project(sources[name], counting.registryUrl());
+      const left = await leftByEarlierVersion(p);
+      counting.requests.length = 0;
+
+      await bunOk(p.dir, p.env, "install");
+      expect(requests(counting)).toEqual([]);
+      // Line 1 is what it was: the commit, or the integrity of the tarball.
+      expect(await files(p.copy)).toEqual({ ...left, ".bun-tag": `${left[".bun-tag"]}\n${hash}` });
+
+      await keptUntilThePatchIsGone(p, counting);
+    },
+  );
+});
+
 describe.concurrent("patchedDependencies contents_hash", () => {
   // A patch that creates node_modules/is-odd/m.js; `hunk` is the @@ line.
   const patchHeader = (hunk: string) =>
@@ -1102,6 +1746,275 @@ describe.concurrent("patchedDependencies contents_hash", () => {
     // Compare just the tail so a failure doesn't dump the 80 KiB padding.
     expect({ hasB: mB.includes("TAIL_BBBB"), hasA: mB.includes("TAIL_AAAA") }).toEqual({ hasB: true, hasA: false });
   });
+
+  // Changes index.js and adds m.js. The hash has 15 hex digits, so the names show it is not padded.
+  const pinnedPatch =
+    "diff --git a/index.js b/index.js\n" +
+    "--- a/index.js\n" +
+    "+++ b/index.js\n" +
+    "@@ -8,2 +8,3 @@\n" +
+    "   return (n % 2) === 1;\n" +
+    " };\n" +
+    "+module.exports.patched = true;\n" +
+    "diff --git a/m.js b/m.js\n" +
+    "new file mode 100644\n" +
+    "--- /dev/null\n" +
+    "+++ b/m.js\n" +
+    "@@ -0,0 +1 @@\n" +
+    "+module.exports = 3;\n";
+  const pinnedHash = "3759d8a451c30fd";
+
+  /** Every file of `folder` by name. latin1 is one character per byte, so equal strings are equal bytes. */
+  const filesOf = async (folder: string) =>
+    Object.fromEntries(
+      await Promise.all(
+        (await readdir(folder)).map(
+          async name => [name, Buffer.from(await file(folder, name).bytes()).toString("latin1")] as const,
+        ),
+      ),
+    );
+
+  // Pins what the released versions do, so it passes with them on purpose. The cache is shared
+  // with the other versions of bun on a machine: under another name each version would build its
+  // own copy of a patched package, and changed bytes would be linked by the other versions too.
+  test.each(["hoisted", "isolated"] as const)(
+    "the cache folder is named by the patch hash and holds the package, the patch and an empty marker (%s linker)",
+    async linker => {
+      const sha1 = new Bun.CryptoHasher("sha1").update(pinnedPatch).digest();
+      expect(sha1.readBigUInt64LE(0).toString(16)).toBe(pinnedHash);
+
+      using project = mkProject(`pinned-${linker}`, pinnedPatch);
+      const dir = String(project);
+      const cache = join(dir, ".bun-cache");
+      await bunOk(dir, projectEnv(dir), "install", `--linker=${linker}`);
+
+      // The name of the unpatched folder depends on the registry. The patched one adds the hash to it.
+      const entries = await readdir(cache);
+      const [unpatched] = entries.filter(name => name.startsWith("is-odd@3.0.1@@") && !name.includes("_patch_hash="));
+      const patched = `${unpatched}_patch_hash=${pinnedHash}`;
+      expect(entries.filter(name => name.includes("_patch_hash="))).toEqual([patched]);
+
+      const marker = `.bun-tag-${pinnedHash}`;
+      const published = await filesOf(join(cache, unpatched));
+      expect(Object.keys(published).sort()).toEqual(["index.js", "package.json"]);
+      const cached = await filesOf(join(cache, patched));
+      expect(cached).toEqual({
+        ...published,
+        "index.js": published["index.js"] + "module.exports.patched = true;\n",
+        "m.js": "module.exports = 3;\n",
+        [marker]: "",
+      });
+      // `_bunPatchHash` names the patch in the package.json of an installed copy, never in the cached one.
+      expect(cached["package.json"]).not.toContain("_bunPatchHash");
+      expect(await readdir(join(dir, "node_modules", "is-odd"))).toContain(marker);
+    },
+  );
+});
+
+// The hoisted linker names the patch of a copy in one file of the copy: the first key of package.json, or line 2 of
+// `.bun-tag` for a git or tarball package. With the hardlink and symlink backends that file is the one in the cache
+// folder, which other projects and other versions of bun link from too. So the linker puts a new file in its place,
+// and the cache folder stays what it was made from: the published package, the patch and the marker.
+describe.concurrent("a hoisted copy names its patch in a file of its own", () => {
+  // Adds a file, so it applies to any package, and the cache folder has every other file as published.
+  const newFilePatch = `diff --git a/patched.txt b/patched.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e728b8dad
+--- /dev/null
++++ b/patched.txt
+@@ -0,0 +1 @@
++hello world
+`;
+
+  type Source = {
+    /** The file of the package in which a copy names its patch. */
+    file: "package.json" | ".bun-tag";
+    /** What package.json says `no-deps` is. The package is patched as `no-deps@<that>`. */
+    spec(dir: string): string | Promise<string>;
+    env?: Env;
+  };
+  const sources: Record<string, Source> = {
+    npm: { file: "package.json", spec: () => "1.0.0" },
+    tarball: { file: ".bun-tag", spec: () => `${registry.registryUrl()}no-deps/-/no-deps-1.0.0.tgz` },
+    git: {
+      file: ".bun-tag",
+      env: gitVars,
+      async spec(dir) {
+        const repo = join(dir, "repo");
+        await Bun.write(join(repo, "package.json"), JSON.stringify({ name: "no-deps", version: "1.0.0" }));
+        await Bun.write(join(repo, "index.js"), "module.exports = 1;\n");
+        const env = { ...bunEnv, ...gitVars };
+        await $`git init -q && git add -A && git commit -q -m init --no-gpg-sign`.cwd(repo).env(env).quiet();
+        const commit = (await $`git rev-parse HEAD`.cwd(repo).env(env).text()).trim();
+        // With the commit, what package.json says is also what bun.lock resolves it to.
+        return `git+${pathToFileURL(repo)}#${commit}`;
+      },
+    },
+  };
+
+  /**
+   * Every file of `folder` by name: which file it is, its permission bits and its text. A symlink counts as the
+   * file it leads to.
+   */
+  async function filesOf(folder: string) {
+    const names = (await readdir(folder)).sort();
+    return Object.fromEntries(
+      await Promise.all(
+        names.map(async name => {
+          // bigint: the id of a file on NTFS does not fit a double.
+          const { ino, mode } = await stat(join(folder, name), { bigint: true });
+          return [name, { ino, mode: Number(mode & 0o777n), text: await file(folder, name).text() }] as const;
+        }),
+      ),
+    );
+  }
+
+  async function namesPatchInOwnFile(kind: string, backend: "hardlink" | "symlink", trusted = false) {
+    const source = sources[kind];
+    await using project = createProject("patch-own-file", {
+      "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+      patches: { "no-deps.patch": newFilePatch },
+    });
+    const { dir } = project;
+    const env = { ...project.env, ...source.env };
+    const spec = await source.spec(dir);
+    await Bun.write(
+      join(dir, "package.json"),
+      JSON.stringify({
+        name: "app",
+        // Two packages that only lack their files are linked by the threads of a pool, but not on Windows.
+        dependencies: { "no-deps": spec, "is-odd": "3.0.1" },
+        trustedDependencies: trusted ? ["no-deps"] : undefined,
+        patchedDependencies: { [`no-deps@${spec}`]: "patches/no-deps.patch" },
+      }),
+    );
+    const cache = join(dir, ".bun-cache");
+    const copy = join(dir, "node_modules", "no-deps");
+    const install = () => bunOk(dir, env, "install", `--backend=${backend}`);
+
+    // The first install makes the patched folder of the cache, and links the copy from it.
+    await install();
+    const patched = (await readdir(cache)).filter(name => name.includes("_patch_hash="));
+    expect(patched).toEqual([expect.stringMatching(/_patch_hash=[0-9a-f]{1,16}$/)]);
+    const [unpatched, hash] = patched[0].split("_patch_hash=");
+    const folder = join(cache, patched[0]);
+    let cached = await filesOf(folder);
+    // The cache folder does not name the patch: the file in it is as the unpatched folder has it.
+    expect(cached[source.file].text).toBe(await file(cache, unpatched, source.file).text());
+
+    /** The copy: the file that names the patch, and which of its files are the ones in the cache folder. */
+    const installed = async () => {
+      const files = await filesOf(copy);
+      const others = Object.keys(files).filter(name => name !== source.file);
+      return {
+        files: Object.keys(files),
+        text: files[source.file].text,
+        mode: files[source.file].mode,
+        isSymlink: (await lstat(join(copy, source.file))).isSymbolicLink(),
+        isFileOfCache: files[source.file].ino === cached[source.file].ino,
+        othersAreFilesOfCache: others.every(name => files[name].ino === cached[name]?.ino),
+      };
+    };
+    /** A copy that names the patch in a file of its own. Every other file is the one in the cache folder. */
+    const named = () => ({
+      files: Object.keys(cached),
+      text:
+        source.file === "package.json"
+          ? cached[source.file].text.replace("{", `{"_bunPatchHash":"${hash}",`)
+          : `${cached[source.file].text}\n${hash}`,
+      mode: cached[source.file].mode,
+      isSymlink: false,
+      isFileOfCache: false,
+      othersAreFilesOfCache: true,
+    });
+    expect(await installed()).toEqual(named());
+
+    // The new file gets the permission bits of the file it replaces. 0o775 shows that: a new file is not
+    // executable, and under the usual umask the group cannot write it. On Windows a file has no such bits.
+    if (!isWindows) {
+      await chmod(join(folder, source.file), 0o775);
+      cached = await filesOf(folder);
+    }
+
+    // The second install links from the cache folder that is there.
+    await rm(join(dir, "node_modules"), { recursive: true, force: true });
+    await install();
+    expect(await installed()).toEqual(named());
+    // No file of the cache folder was written or replaced.
+    expect(await filesOf(folder)).toEqual(cached);
+
+    // What an earlier version of bun left: the file of the copy is the one in the cache folder, and only the
+    // marker shows the patch. An install names the patch in such a copy too, in a new file again.
+    await rm(join(copy, source.file));
+    await (backend === "symlink" ? symlink : link)(join(folder, source.file), join(copy, source.file));
+    await install();
+    expect(await installed()).toEqual(named());
+    expect(await filesOf(folder)).toEqual(cached);
+  }
+
+  // bun has no symlink backend on Windows.
+  const backends: ("hardlink" | "symlink")[] = isWindows ? ["hardlink"] : ["hardlink", "symlink"];
+  describe.each(backends)("%s backend", backend => {
+    test.each(Object.keys(sources))("%s package", kind => namesPatchInOwnFile(kind, backend));
+  });
+
+  // The main thread links a trusted package itself. The threads of the pool get the patch hash another way.
+  test("hardlink backend, trusted npm package", () => namesPatchInOwnFile("npm", "hardlink", true));
+
+  /** A project whose no-deps@1.0.0 is patched, for the hoisted linker. Not installed yet. */
+  const patchedNoDeps = (prefix: string) =>
+    createProject(prefix, {
+      "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+      patches: { "no-deps.patch": newFilePatch },
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: { "no-deps": "1.0.0" },
+        patchedDependencies: { "no-deps@1.0.0": "patches/no-deps.patch" },
+      }),
+    });
+
+  // The marker does not say that a copy is patched, the file that names the patch does: `bun patch --commit` moves
+  // the marker out of the copy while git runs, and a commit that is killed there does not put it back.
+  test("a copy that names its patch and has no marker is not installed again", async () => {
+    await using project = patchedNoDeps("patch-own-file-no-marker");
+    const { dir, env } = project;
+    const copy = join(dir, "node_modules", "no-deps");
+    await bunOk(dir, env, "install");
+    const markers = (await readdir(copy)).filter(name => name.startsWith(".bun-tag-"));
+    expect(markers).toEqual([expect.stringMatching(/^\.bun-tag-[0-9a-f]{1,16}$/)]);
+    const named = await file(copy, "package.json").text();
+    expect(named).toStartWith(`{"_bunPatchHash":"${markers[0].slice(".bun-tag-".length)}",`);
+
+    await unlink(join(copy, markers[0]));
+    const files = (await readdir(copy)).sort();
+    expect(await bunOk(dir, env, "install")).toContain("(no changes)");
+    expect((await readdir(copy)).sort()).toEqual(files);
+    expect(await file(copy, "patched.txt").text()).toBe("hello world\n");
+  });
+
+  // With the symlink backend the file that names the patch is the only file of the copy itself. Every other one, the
+  // marker too, is a link into the cache folder, so a copy whose cache folder is gone has the name of its patch and
+  // nothing else.
+  test.skipIf(isWindows)("symlink backend: a copy whose cache folder is gone is installed again", async () => {
+    await using project = patchedNoDeps("patch-own-file-cache-gone");
+    const { dir, env } = project;
+    const copy = join(dir, "node_modules", "no-deps");
+    const install = () => bunOk(dir, env, "install", "--backend=symlink");
+    await install();
+    const named = await file(copy, "package.json").text();
+    expect(named).toStartWith(`{"_bunPatchHash":"`);
+    expect((await lstat(join(copy, "package.json"))).isSymbolicLink()).toBe(false);
+    expect((await lstat(join(copy, "patched.txt"))).isSymbolicLink()).toBe(true);
+    expect(await install()).toContain("(no changes)");
+
+    await rm(join(dir, ".bun-cache"), { recursive: true });
+    expect(await file(copy, "patched.txt").exists()).toBe(false);
+    expect(await file(copy, "package.json").text()).toBe(named);
+    expect(await install()).toContain("1 package installed");
+    expect(await file(copy, "patched.txt").text()).toBe("hello world\n");
+    expect(await file(copy, "package.json").text()).toBe(named);
+    expect(await install()).toContain("(no changes)");
+  });
 });
 
 // `patchedDependencies` is only read from the root package.json. The entries a
@@ -1153,16 +2066,7 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
   const consumerPackageJson = (dependencies: Record<string, string>, rest: Record<string, unknown> = {}) =>
     JSON.stringify({ name: "consumer", dependencies: { "no-deps": "1.0.0", ...dependencies }, ...rest });
 
-  const gitEnv = {
-    ...bunEnv,
-    // Set on the asan lanes, where it makes `bun install` kill its own git clones (#33982).
-    BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_AUTHOR_NAME: "Test",
-    GIT_AUTHOR_EMAIL: "test@example.com",
-    GIT_COMMITTER_NAME: "Test",
-    GIT_COMMITTER_EMAIL: "test@example.com",
-  };
+  const gitEnv = { ...bunEnv, ...gitVars };
 
   // CI exports BUN_INSTALL_CACHE_DIR, which overrides the per-directory cache
   // in bunfig.toml. The tests below run concurrently, and two cold installs of

@@ -2320,6 +2320,7 @@ impl<'a> PackageInstaller<'a> {
                             skip_delete,
                             random: bun_core::fast_random(),
                             resolution_tag: resolution.tag,
+                            patch_hash: patch_contents_hash,
                             result: Default::default(),
                         });
                     }

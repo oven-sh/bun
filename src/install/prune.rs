@@ -1151,8 +1151,10 @@ impl<'a> HoistedTree<'a> {
                     && without_build(&version) == without_build(expected.as_bytes())
             }
             ResolutionTag::Git | ResolutionTag::Github => {
-                sys::File::read_from(package.fd(), b".bun-tag")
-                    .is_ok_and(|tag| tag.as_slice() == res.repository().resolved.slice(buf))
+                sys::File::read_from(package.fd(), b".bun-tag").is_ok_and(|tag| {
+                    crate::patch_install::PatchStamp::bun_tag_resolved(&tag)
+                        == res.repository().resolved.slice(buf)
+                })
             }
             ResolutionTag::Folder | ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                 installed_package_json(&package).is_some_and(|(name, _)| name == expected_name)

@@ -694,22 +694,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(tag) = e_.tag {
             if Self::ALLOW_MACROS {
                 let ref_ = match &e_.tag.unwrap().data {
-                    Data::EImportIdentifier(ident) => Some(ident.ref_),
+                    Data::EImportIdentifier(ident) => Some((ident.ref_, tag.loc)),
                     Data::EDot(dot) => match &dot.target.data {
-                        Data::EIdentifier(id) => Some(id.ref_),
+                        Data::EIdentifier(id) => Some((id.ref_, dot.target.loc)),
                         _ => None,
                     },
                     _ => None,
                 };
 
-                if let Some(ref_) = ref_
+                if let Some((ref_, ref_loc)) = ref_
                     && !p.options.features.is_macro_runtime
                 {
                     // After a stack overflow, part of the template wasn't visited, so don't run the macro.
                     if let Some(macro_ref_data) = p.macro_.refs.get(&ref_).copied()
                         && !p.reported_stack_overflow.get()
                     {
-                        p.ignore_usage(ref_);
+                        p.ignore_usage_of_macro_call_target(ref_, ref_loc);
                         if p.is_control_flow_dead {
                             *e = p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
                             return;
@@ -2306,20 +2306,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && !p.options.features.is_macro_runtime
                 && !p.reported_stack_overflow.get()
             {
-                let ref_ = match &e_.target.data {
-                    Data::EImportIdentifier(ident) => ident.ref_,
-                    Data::EDot(dot) => {
+                let (ref_, ref_loc) = match &e_.target.data {
+                    Data::EImportIdentifier(ident) => (ident.ref_, e_.target.loc),
+                    Data::EDot(dot) => (
                         dot.target
                             .data
                             .e_identifier()
                             .expect("infallible: variant checked")
-                            .ref_
-                    }
+                            .ref_,
+                        dot.target.loc,
+                    ),
                     _ => unreachable!(),
                 };
 
                 let macro_ref_data = *p.macro_.refs.get(&ref_).unwrap();
-                p.ignore_usage(ref_);
+                p.ignore_usage_of_macro_call_target(ref_, ref_loc);
                 if p.is_control_flow_dead {
                     *e = p.new_expr(E::Undefined {}, e_.target.loc);
                     return;

@@ -561,6 +561,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// We must be careful to avoid revisiting nodes that have scopes.
     /// A revisited node can be part of a `define` value, which is shared with other parses.
     pub(crate) is_revisit_for_substitution: bool,
+    /// Where the name that the last substitution moved was written, in a file with a macro import. Read in its revisit.
+    pub(crate) substituted_loc: bun_ast::Loc,
 
     pub(crate) method_call_must_be_replaced_with_undefined: bool,
 
@@ -2740,6 +2742,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ) {
                     let prev_substituting = self.is_revisit_for_substitution;
                     self.is_revisit_for_substitution = true;
+                    // A call that was moved was visited as a call before. A name that was moved was not.
+                    if Self::ALLOW_MACROS && !self.macro_.refs.is_empty() {
+                        self.substituted_loc = match replacement.data {
+                            js_ast::ExprData::EIdentifier(_)
+                            | js_ast::ExprData::EImportIdentifier(_) => replacement.loc,
+                            _ => bun_ast::Loc::EMPTY,
+                        };
+                    }
                     // O(n^2) and we will need to think more carefully about
                     // this once we implement syntax compression
                     *expr = result;
@@ -4468,6 +4478,159 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.import_items_for_namespace
             .insert(stmt.namespace_ref, item_refs);
         Ok(self.s(stmt, loc))
+    }
+
+    /// A replaced macro call un-counts its target, so a use that `ast` still counts is an error. `_parse` halts on it.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn reject_macro_value_uses(&mut self, ast: &js_ast::Ast<'a>) {
+        let has_use =
+            |r#ref: Ref| ast.symbols[r#ref.inner_index() as usize].use_count_estimate != 0;
+        if !self.macro_.refs.keys().iter().any(|r#ref| has_use(*r#ref)) {
+            return;
+        }
+        // `bun repl` runs its input at once, and for an input that does not transpile it prints the engine's error, not this one.
+        if self.options.repl_mode {
+            return;
+        }
+        if self.options.features.is_macro_runtime {
+            // No call is replaced inside a macro, so this output must not answer a load outside of one.
+            #[cfg(not(target_arch = "wasm32"))]
+            if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
+                if let Some(cache) = self.options.features.runtime_transpiler_cache_mut() {
+                    cache.input_hash = None;
+                }
+            }
+            return;
+        }
+        let located = crate::scan::scan_macro_refs::locate_macro_refs(
+            ast.parts.as_slice(),
+            &self.macro_.refs,
+        );
+        for (i, found) in located.iter().enumerate() {
+            let mut earlier = located[..i].iter().filter(|it| it.r#ref.eql(found.r#ref));
+            // The visit pass copies the computed key of a decorated member, so the walk finds that identifier twice.
+            let is_repeat = earlier.clone().any(|it| it.loc.start == found.loc.start);
+            if has_use(found.r#ref) && !is_repeat {
+                self.report_macro_value_use(
+                    ast,
+                    found.r#ref,
+                    Some(found),
+                    earlier.next().is_none(),
+                );
+            }
+        }
+        // The visit pass can count a use and then fold its node away.
+        for i in 0..self.macro_.refs.count() {
+            let r#ref = self.macro_.refs.keys()[i];
+            if has_use(r#ref) && !located.iter().any(|it| it.r#ref.eql(r#ref)) {
+                self.report_macro_value_use(ast, r#ref, None, true);
+            }
+        }
+    }
+
+    /// `with_advice` is for the first error of a binding: what to write in place of the reference.
+    #[cold]
+    fn report_macro_value_use(
+        &mut self,
+        ast: &js_ast::Ast<'a>,
+        r#ref: Ref,
+        found: Option<&crate::scan::scan_macro_refs::MacroRefUse>,
+        with_advice: bool,
+    ) {
+        let data = *self.macro_.refs.get(&r#ref).expect("a key of macro_.refs");
+        let symbol = &ast.symbols[r#ref.inner_index() as usize];
+        let name: &'a [u8] = symbol.original_name.slice();
+        // Only a binding that a macro remap replaces is declared as an import.
+        let is_remapped = symbol.kind == js_ast::symbol::Kind::Import;
+        let import_range = match ast.module_scope.members.get(name) {
+            Some(member) if member.ref_.eql(r#ref) => {
+                js_lexer::range_of_identifier(self.source, member.loc)
+            }
+            _ => bun_ast::Range::NONE,
+        };
+        let path = ast.import_records.as_slice()[data.import_record_id as usize]
+            .path
+            .text;
+        let export = bstr::BStr::new(data.name.unwrap_or(name));
+        let (name, path) = (bstr::BStr::new(name), bstr::BStr::new(path));
+
+        let mut notes = Vec::<bun_ast::Data>::with_capacity(2);
+        if found.is_some() {
+            let mut removed = Vec::<u8>::new();
+            let _ = if is_remapped {
+                write!(
+                    &mut removed,
+                    "Bun removes this import of \"{name}\" because a macro remap replaces it with \"{path}\""
+                )
+            } else {
+                write!(
+                    &mut removed,
+                    "Bun removes this macro import of \"{name}\" from \"{path}\""
+                )
+            };
+            notes.push(bun_ast::range_data(
+                Some(self.source),
+                import_range,
+                removed,
+            ));
+        }
+        if with_advice {
+            let mut advice = Vec::<u8>::new();
+            let _ = if found.is_some_and(|it| it.is_typeof_operand) {
+                write!(
+                    &mut advice,
+                    "\"typeof {name}\" is always \"undefined\" at runtime. Remove the test: Bun replaces each direct call of \"{name}\" with its result."
+                )
+            } else if is_remapped {
+                write!(
+                    &mut advice,
+                    "Bun replaces each direct call of a macro with its result. To use \"{export}\" of the package at runtime, read it from a namespace import of the package, or remove the macro remap."
+                )
+            } else {
+                write!(
+                    &mut advice,
+                    "Bun replaces each direct call of a macro with its result. To inline a value, call a macro that returns it. To use \"{name}\" at runtime, add a regular import of it under another name."
+                )
+            };
+            notes.push(bun_ast::range_data(None, bun_ast::Range::NONE, advice));
+        }
+
+        match found {
+            Some(found) => self.log().add_range_error_fmt_with_notes(
+                Some(self.source),
+                js_lexer::range_of_identifier(self.source, found.loc),
+                notes.into_boxed_slice(),
+                format_args!("\"{name}\" is a macro import and is not defined at runtime"),
+            ),
+            None => self.log().add_range_error_fmt_with_notes(
+                Some(self.source),
+                import_range,
+                notes.into_boxed_slice(),
+                format_args!(
+                    "\"{name}\" is a macro import and is not defined at runtime, but this file uses it outside of a call"
+                ),
+            ),
+        }
+    }
+
+    /// The parse pass counts a decorator-metadata type name as a use. Only uses that the visit pass counts are errors.
+    #[cold]
+    pub(crate) fn reset_macro_use_counts(&mut self) {
+        for i in 0..self.macro_.refs.count() {
+            let r#ref = self.macro_.refs.keys()[i];
+            self.symbols[r#ref.inner_index() as usize].use_count_estimate = 0;
+        }
+    }
+
+    /// A type that is named before the import statement is an unbound symbol linked to the binding.
+    #[inline]
+    fn is_macro_ref(&self, r#ref: Ref) -> bool {
+        !self.macro_.refs.is_empty()
+            && self
+                .macro_
+                .refs
+                .contains_key(&js_ast::symbol::follow_symbols(&self.symbols, r#ref))
     }
 
     #[cold]
@@ -6594,6 +6757,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // the value is ignored because that's what the TypeScript compiler does.
     }
 
+    /// Un-counts the identifier at `loc`, the target of a macro call that is replaced.
+    pub(crate) fn ignore_usage_of_macro_call_target(&mut self, r#ref: Ref, loc: bun_ast::Loc) {
+        // A revisit counts nothing. The identifier that the substitution moved here still has its count.
+        let was_revisit = self.is_revisit_for_substitution;
+        self.is_revisit_for_substitution = was_revisit && loc.start != self.substituted_loc.start;
+        self.ignore_usage(r#ref);
+        self.is_revisit_for_substitution = was_revisit;
+    }
+
     pub(crate) fn ignore_usage_of_identifier_in_dot_chain(&mut self, expr: Expr) {
         let mut current = expr;
         loop {
@@ -7815,6 +7987,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.maybe_defined_helper(e)?
             }
             M::MPromise => ident!(b"Promise"),
+            // A macro import is not defined at runtime.
+            M::MIdentifier(ref_) if self.is_macro_ref(ref_) => ident!(b"Object"),
+            M::MDot(ref refs) if self.is_macro_ref(refs[0]) => ident!(b"Object"),
             M::MIdentifier(ref_) => {
                 self.record_usage(ref_);
                 let e = if self.is_import_item.contains_key(&ref_) {
@@ -9775,6 +9950,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             span_uses: Vec::new(),
             is_inside_single_stmt_body: false,
             is_revisit_for_substitution: false,
+            substituted_loc: bun_ast::Loc::EMPTY,
             method_call_must_be_replaced_with_undefined: false,
             has_non_local_export_declare_inside_namespace: false,
             await_target: None,

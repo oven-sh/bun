@@ -3490,6 +3490,20 @@ ServerResponse.prototype.writeContinue = function (cb) {
   cb?.();
 };
 
+// A WebSocket adopted the connection of the response with these flags, and that socket is open.
+function isAdoptedAndOpen(flags) {
+  return (
+    (flags & (NodeHTTPResponseFlags.upgraded | NodeHTTPResponseFlags.socket_closed)) === NodeHTTPResponseFlags.upgraded
+  );
+}
+
+// In the place of emitResponseFinish for such a response: that one would close the socket of the WebSocket or arm the
+// keep-alive timeout of the server on it, as Node does.
+function detachAdoptedSocket(this: any) {
+  const socket = this.req?.socket ?? this.socket;
+  if (socket != null) this.detachSocket(socket);
+}
+
 // The trailer section of a chunked body, as Node's end() writes it (lib/_http_outgoing.js, v26.3.0 line 1127).
 // A handle sends it only when the body that it writes is chunked.
 function trailerSectionOf(res, trailer) {
@@ -3559,11 +3573,18 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   const flags = handle.flags;
   if (!!(flags & (NodeHTTPResponseFlags.closed_or_completed | NodeHTTPResponseFlags.upgraded))) {
     // Socket already gone: like Node, 'prefinish' fires but 'finish' never does, and the close of the socket aborts the request.
-    // The same after a WebSocket adopted the connection. Node's end() returns there too, but writes into the WebSocket stream.
+    // An open WebSocket has the connection: Node writes the response into it and finishes. This writes nothing and finishes.
+    const adopted = isAdoptedAndOpen(flags);
+    if (adopted) this[headerStateSymbol] = NodeHTTPHeaderState.sent;
     this._header = " ";
     this.finished = true;
     process.nextTick(markResponseEndedNT, this);
     this.emit("prefinish");
+    if (adopted) {
+      this.removeListener("finish", emitResponseFinish);
+      this.prependOnceListener("finish", detachAdoptedSocket);
+      queueResponseFinished(this, callback);
+    }
     return this;
   }
   const sentState = NodeHTTPHeaderState.sent;
@@ -3777,8 +3798,12 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
 
   const flags = handle.flags;
   if (!!(flags & (NodeHTTPResponseFlags.closed_or_completed | NodeHTTPResponseFlags.upgraded))) {
-    // Socket already gone, or a WebSocket adopted the connection: like Node's _writeRaw(), report false and drop the callback.
-    return false;
+    // Socket already gone: like Node's _writeRaw(), report false and drop the callback.
+    if (!isAdoptedAndOpen(flags)) return false;
+    // An open WebSocket has the connection: Node writes the chunk into it. This writes nothing, and the write completes.
+    this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+    if (callback) process.nextTick(callback);
+    return true;
   }
 
   const strict = strictContentLength(this, headerState, false);
@@ -3943,10 +3968,12 @@ Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
 Object.defineProperty(ServerResponse.prototype, "writableFinished", {
   get() {
     const handle = this[kHandle];
-    // Like Node, nothing is left to write once the socket is gone.
+    // Like Node, nothing is left to write once the socket is gone. Nothing is written once a WebSocket has it.
     return !!(
       this.finished &&
-      (!handle || handle.finished || handle.flags & NodeHTTPResponseFlags.closed_or_completed)
+      (!handle ||
+        handle.finished ||
+        handle.flags & (NodeHTTPResponseFlags.closed_or_completed | NodeHTTPResponseFlags.upgraded))
     );
   },
 });

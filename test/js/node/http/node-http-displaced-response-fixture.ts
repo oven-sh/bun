@@ -350,8 +350,10 @@ async function adopted(use: string) {
 // 'upgrade' listener, which builds the response itself. @fastify/websocket and ws with { server } do
 // that. The 'request' listener never sees the Upgrade request then.
 //
-// Node's end() returns on a response that a WebSocket adopted, and writes the response into the
-// WebSocket stream. end() here returns too, and writes nothing: the socket belongs to the WebSocket.
+// Node v26.3.0 finishes such a response while the WebSocket is open: write() returns true, the
+// callbacks run, and 'finish' and 'close' follow 'prefinish'. It writes the response into the
+// WebSocket stream, and the keep-alive timeout of the server then closes that socket. The response
+// finishes in the same way here. Nothing is written and the socket stays with the WebSocket.
 async function upgraded(use: string) {
   const wss = new WebSocketServer({ noServer: true });
   const ended = Promise.withResolvers<{ ws: import("ws").WebSocket; result: string }>();
@@ -359,22 +361,27 @@ async function upgraded(use: string) {
   const order = viaUpgradeListener ? use.slice("'upgrade' listener: ".length) : use;
   const afterFrame = order === "after a frame";
   const afterClose = order === "after the WebSocket closed";
+  // The events of the response and its callbacks, in the order in which they come.
+  const events: string[] = [];
+  let adopted: net.Socket | undefined;
   const adopt = (req: http.IncomingMessage, socket: net.Socket, head: Buffer, res: http.ServerResponse) => {
+    adopted = socket;
+    for (const name of ["prefinish", "finish", "close"]) res.on(name, () => events.push(name));
     wss.handleUpgrade(req, socket, head, ws => {
       ws.on("error", () => {});
       const endWithTrailers = () =>
         attempt(() => {
           if (order === "flushHeaders+addTrailers+end") res.flushHeaders();
+          if (order === "write+addTrailers+end") {
+            events.push(`write() ${res.write("chunk", () => events.push("write callback"))}`);
+          }
           if (order !== "end") res.addTrailers({ "x-second": Buffer.alloc(100, "b").toString() });
-          res.end("late");
+          res.end("late", () => events.push("end callback"));
         });
       if (afterFrame) {
-        // A frame on each side of the end(): a byte of the response would sit between them.
         ws.on("message", () => {
           ws.send("hello");
-          const result = endWithTrailers();
-          ws.send("done");
-          ended.resolve({ ws, result });
+          ended.resolve({ ws, result: endWithTrailers() });
         });
       } else if (afterClose) {
         ws.on("message", () => ws.send("hello"));
@@ -430,18 +437,24 @@ async function upgraded(use: string) {
   await switched.promise;
   // One masked text frame ("ping"), as a browser sends it.
   if (afterFrame || afterClose) client.write(Buffer.from([0x81, 0x84, 0, 0, 0, 0, 0x70, 0x69, 0x6e, 0x67]));
-  if (afterFrame) {
-    await finished.promise;
-  } else if (afterClose) {
+  if (afterClose) {
     await greeted.promise;
     // A masked Close frame. The server answers with its own Close frame and closes the connection.
     client.write(Buffer.from([0x88, 0x80, 0, 0, 0, 0]));
     await closed;
   }
   const { ws, result } = await ended.promise;
-  if (!afterFrame && !afterClose) {
-    ws.send("hello");
-    await greeted.promise;
+  // 'finish', the callbacks and 'close' of the response come in the ticks behind end(). The close of the
+  // connection at the end of this scenario is not a part of them.
+  await turn();
+  await turn();
+  const settled = events.slice();
+  // The keep-alive timeout of the server is for its HTTP connections: the WebSocket has this socket.
+  const timeout = adopted!.timeout;
+  if (!afterClose) {
+    // A frame behind the finished response: the WebSocket still has the connection, and no byte of the response is in front.
+    ws.send(afterFrame ? "done" : "hello");
+    await (afterFrame ? finished.promise : greeted.promise);
   }
 
   client.destroy();
@@ -452,7 +465,7 @@ async function upgraded(use: string) {
   server.closeAllConnections();
   // The frames of the WebSocket are all that follows the 101: nothing of the response that ended.
   const afterSwitch = received.slice(received.indexOf("HTTP/1.1 101 ")).split("\r\n\r\n")[1];
-  return { use, result, afterSwitch: Buffer.from(afterSwitch, "latin1").toString("hex") };
+  return { use, result, events: settled, timeout, afterSwitch: Buffer.from(afterSwitch, "latin1").toString("hex") };
 }
 
 // Response 2 waits in the queue behind response 1. Its native handle is called directly: the
@@ -603,6 +616,7 @@ if (suite === "displaced") {
     "end",
     "addTrailers+end",
     "flushHeaders+addTrailers+end",
+    "write+addTrailers+end",
     "after a frame",
     "after the WebSocket closed",
     "'upgrade' listener: addTrailers+end",

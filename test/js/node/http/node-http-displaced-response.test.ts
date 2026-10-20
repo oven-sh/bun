@@ -201,11 +201,15 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
   );
 
   // The frames of the WebSocket are all that follows the 101, and end() does the same with trailers
-  // as without. Node's end() returns here too, and writes the response into the WebSocket stream.
-  // The orders are those of a wrapper that adds a trailer in its finally: its handler returns right
-  // after handleUpgrade(), waits for the first message ("after a frame": the WebSocket is open and
-  // has written), or waits for the 'close' of the WebSocket. The last two cases use an 'upgrade'
-  // listener, which builds the response itself, as @fastify/websocket does.
+  // as without. The orders are those of a wrapper that adds a trailer in its finally: its handler
+  // returns right after handleUpgrade(), waits for the first message ("after a frame": the WebSocket
+  // is open and has written), or waits for the 'close' of the WebSocket. The last two cases use an
+  // 'upgrade' listener, which builds the response itself, as @fastify/websocket does.
+  //
+  // The events are those of node v26.3.0: the response finishes while the WebSocket is open, and it
+  // does not finish once the socket has closed. Node writes the response into the WebSocket stream
+  // and arms the keep-alive timeout of the server on that socket (`timeout` 6000). Here nothing is
+  // written, the socket has no timeout, and the frame that follows the finished response arrives.
   test(
     "the response of the request that a WebSocket adopted can end with trailers",
     async () => {
@@ -214,15 +218,30 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
       const helloAndDone = Buffer.from("\x81\x05hello\x81\x04done", "latin1").toString("hex");
       // The echo frame, then the Close frame of the server.
       const helloAndClose = Buffer.from("\x81\x05hello\x88\x00", "latin1").toString("hex");
+      const finished = { result: "returned", events: ["prefinish", "finish", "end callback", "close"], timeout: 0 };
       expect(await run("upgraded", transport)).toEqual({
         results: [
-          { use: "end", result: "returned", afterSwitch: hello },
-          { use: "addTrailers+end", result: "returned", afterSwitch: hello },
-          { use: "flushHeaders+addTrailers+end", result: "returned", afterSwitch: hello },
-          { use: "after a frame", result: "returned", afterSwitch: helloAndDone },
-          { use: "after the WebSocket closed", result: "returned", afterSwitch: helloAndClose },
-          { use: "'upgrade' listener: addTrailers+end", result: "returned", afterSwitch: hello },
-          { use: "'upgrade' listener: after a frame", result: "returned", afterSwitch: helloAndDone },
+          { use: "end", ...finished, afterSwitch: hello },
+          { use: "addTrailers+end", ...finished, afterSwitch: hello },
+          { use: "flushHeaders+addTrailers+end", ...finished, afterSwitch: hello },
+          {
+            use: "write+addTrailers+end",
+            result: "returned",
+            events: ["write() true", "prefinish", "write callback", "finish", "end callback", "close"],
+            timeout: 0,
+            afterSwitch: hello,
+          },
+          { use: "after a frame", ...finished, afterSwitch: helloAndDone },
+          {
+            use: "after the WebSocket closed",
+            result: "returned",
+            // The close of the socket closed the response before its end(), and nothing finishes it.
+            events: ["close", "prefinish"],
+            timeout: 0,
+            afterSwitch: helloAndClose,
+          },
+          { use: "'upgrade' listener: addTrailers+end", ...finished, afterSwitch: hello },
+          { use: "'upgrade' listener: after a frame", ...finished, afterSwitch: helloAndDone },
         ],
         stderr: "",
         exitCode: 0,

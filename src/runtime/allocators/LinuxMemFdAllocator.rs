@@ -10,10 +10,6 @@
 //!
 //! Then, to clone the data later, we can just call `mmap` again.
 //!
-//! The store's view is the only `MAP_SHARED` mapping of the file. Every copy
-//! is `MAP_PRIVATE` and holds a reference on the store, so the view itself
-//! reaches JS only when nothing else maps the file (`Store::has_one_ref`).
-//!
 //! The big catch is that mmap(), memfd_create(), write() all have overhead. And
 //! often we will re-use virtual memory within the process. This does not reuse
 //! the virtual memory. So we should only really use this for large blobs of
@@ -140,9 +136,7 @@ impl LinuxMemFdAllocator {
         }
     }
 
-    /// A copy-on-write mapping of the memfd behind `store`, as a JS buffer of
-    /// `byte_length` bytes at `byte_offset`. The buffer holds a reference on
-    /// `store` until JS frees it. `None` when `store` is not in a memfd.
+    /// The buffer holds a `store` ref until JS frees it, so `has_one_ref()` counts every copy.
     pub(crate) fn copy_on_write_js(
         store: &bun_ptr::RefPtr<Store>,
         global: &JSGlobalObject,

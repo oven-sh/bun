@@ -65,8 +65,7 @@ unsafe extern "C" {
     // (`to_js_buffer_from_memfd`) maps `addr` itself via `bun_sys::mmap`, so
     // the validity proof is discharged at that single call site.
     safe fn JSBuffer__fromMmap(global: &JSGlobalObject, addr: *mut c_void, len: usize) -> JSValue;
-    // C++ calls `dealloc(_, ctx)` exactly once: when the buffer it made is
-    // freed, or before it returns when it made none.
+    // C++ runs `dealloc(_, ctx)` exactly once, also when it makes no buffer.
     fn ArrayBuffer__fromSharedMemfd(
         fd: i64,
         global: &JSGlobalObject,
@@ -259,17 +258,11 @@ impl ArrayBuffer {
         Ok(buffer_value)
     }
 
-    /// A copy-on-write mapping of `fd` as a JS buffer. `dealloc(_, ctx)` runs
-    /// exactly once: when JS frees that buffer, or before this returns when no
-    /// buffer was made.
-    ///
     /// `Ok(JSValue::ZERO)` means the C++ side declined (length above the
     /// ArrayBuffer limit, `mmap` failed, or Windows) and the caller falls back
     /// to copying; the typed-array allocation can also throw, so empty alone
     /// does not mean "declined".
-    ///
-    /// # Safety
-    /// `dealloc(_, ctx)` must be sound to call once, on any thread.
+    /// `dealloc(_, ctx)` runs exactly once, on any thread, also when no buffer is made.
     #[inline]
     pub unsafe fn to_array_buffer_from_shared_memfd(
         fd: i64,

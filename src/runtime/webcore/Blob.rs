@@ -2886,12 +2886,7 @@ impl BlobExt for Blob {
             };
         }
 
-        // `shared_view_raw` yields a `*mut [u8]` with mutable provenance (via
-        // `RefPtr<Store>::as_ptr`). The `Clone` and `Share` arms only read
-        // (`&*buf`); `Transfer` hands the ptr to JSC as an external ArrayBuffer
-        // backing via FFI and materializes `&mut *buf` to record ptr+len, which
-        // is sound now that the provenance is writable. The `Temporary` arm
-        // (`heap::take`) is statically unreachable below.
+        // `view_ptr` has mutable provenance: `Transfer` hands it to JSC as a writable backing.
         let view_ptr = self.shared_view_raw();
         if view_ptr.len() == 0 {
             return jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(cx.global(), b"");

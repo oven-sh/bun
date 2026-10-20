@@ -1563,8 +1563,7 @@ JSC_DEFINE_HOST_FUNCTION(functionReportError,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-// `deallocator` runs exactly once with `deallocatorContext`: when the buffer made here
-// is freed, or before this returns when it makes no buffer.
+// `deallocator(_, deallocatorContext)` runs exactly once, also when no buffer is made.
 extern "C" JSC::EncodedJSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSGlobalObject* globalObject, size_t byteOffset, size_t byteLength, size_t totalLength, JSC::JSType type, JSTypedArrayBytesDeallocator deallocator, void* deallocatorContext)
 {
 

@@ -1023,7 +1023,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if e_.optional_chain.is_none() {
                             let opts = IdentifierOpts::default()
                                 .with_is_call_target(is_call_target)
-                                .with_is_template_tag(is_template_tag)
+                                .with_passes_this(is_template_tag)
                                 .with_is_delete_target(is_delete_target)
                                 .with_assign_target(in_.assign_target)
                                 .with_is_property_access_target(in_.is_property_access_target);
@@ -1450,7 +1450,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if e_.optional_chain.is_none() {
             let opts = IdentifierOpts::default()
                 .with_is_call_target(is_call_target)
-                .with_is_template_tag(is_template_tag)
+                .with_passes_this(is_template_tag)
                 .with_assign_target(in_.assign_target)
                 .with_is_delete_target(is_delete_target)
                 .with_is_property_access_target(in_.is_property_access_target);

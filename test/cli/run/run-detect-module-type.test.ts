@@ -77,6 +77,19 @@ describe("an ES module file never binds module or exports", () => {
     "typemod/import-typeof.js": `import { sep } from "node:path";\nconsole.log(typeof module, typeof sep);`,
     "typemod/assign-module.js": `module.exports = 1;`,
     "typemod/cjs.cjs": `module.exports = { fromCjs: true };`,
+    // `.jsx`/`.tsx` let their contents decide on every runtime path. This one
+    // uses require() and no import, so it is CommonJS from the entry point
+    // and from a static import alike.
+    "typemod/req.tsx": `const p = require("node:path"); console.log(typeof module, typeof p.sep);`,
+    // A dependency with no package.json of its own does not take the "type"
+    // of the project above it: Node's package scope lookup stops at
+    // node_modules.
+    "typemod/node_modules/bare/index.js": `module.exports = { bare: typeof module };`,
+    "typemod/use-bare.js": `
+      import bare from "bare";
+      import { createRequire } from "node:module";
+      console.log(bare.bare, createRequire(import.meta.url)("bare").bare);
+    `,
     // A dual package: the named package.json says "module", the CommonJS
     // build carries a nameless package.json that says "commonjs". Node reads
     // the nearest one, named or not. The nameless file sits in an ancestor
@@ -122,6 +135,7 @@ describe("an ES module file never binds module or exports", () => {
     `,
     "dynamic.mjs": `
       await import("./typeof.mjs");
+      await import("./typemod/req.tsx");
       console.log(JSON.stringify(await import("./typemod/cjs.cjs").then(m => m.default)));
       console.log((await import("./dual/dist/cjs/lib.js")).default.dual);
       try { await import("./assign-module.mjs"); } catch (e) { console.log(e.name, e.message); }
@@ -141,6 +155,8 @@ describe("an ES module file never binds module or exports", () => {
     ["typemod/typeof.js", "undefined undefined function string"],
     ["typemod/typeof.ts", "undefined undefined function string"],
     ["typemod/import-typeof.js", "undefined string"],
+    ["typemod/req.tsx", "object string"],
+    ["typemod/use-bare.js", "object object"],
     [
       "entry.mjs",
       [
@@ -157,6 +173,7 @@ describe("an ES module file never binds module or exports", () => {
       "dynamic.mjs",
       [
         "undefined undefined function string",
+        "object string",
         '{"fromCjs":true}',
         "object",
         "ReferenceError module is not defined",

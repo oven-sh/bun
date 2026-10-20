@@ -145,10 +145,14 @@ describe("transpiler cache", () => {
     expect(await bunRun(join(temp_dir, "a.cjs"), env)).toSpawn("object");
     expect(newCacheCount()).toBe(1);
 
+    // The entry's file name is the content hash alone, so the `.mjs` run
+    // rewrites the `.cjs` entry in place instead of adding a second one.
     writeFileSync(join(temp_dir, "a.mjs"), source);
     expect(await bunRun(join(temp_dir, "a.mjs"), env)).toSpawn("undefined");
+    expect(newCacheCount()).toBe(0);
     expect(await bunRun(join(temp_dir, "a.cjs"), env)).toSpawn("object");
     expect(await bunRun(join(temp_dir, "a.mjs"), env)).toSpawn("undefined");
+    expect(newCacheCount()).toBe(0);
   });
   test("doing 50 buns at once does not crash", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
@@ -258,10 +262,7 @@ describe("transpiler cache", () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "fifo", "intact"));
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("intact");
     expect(newCacheCount()).toBe(1);
-    const entry = join(
-      cache_dir,
-      readdirSync(cache_dir).find(f => f.endsWith(".pile"))!,
-    );
+    const entry = join(cache_dir, readdirSync(cache_dir).find(f => f.endsWith(".pile"))!);
     const good = readFileSync(entry);
     unlinkSync(entry);
     mkfifo(entry);

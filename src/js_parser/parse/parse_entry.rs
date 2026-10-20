@@ -317,13 +317,12 @@ impl<'a> Options<'a> {
         }
 
         // The hint decides the output of the same source (`exports`/`module`
-        // bindings, strict mode). `Unknown` adds nothing, so cache entries
-        // written before the hint was hashed stay valid.
-        match self.module_type {
-            options::ModuleType::Unknown => {}
-            options::ModuleType::Cjs => hasher.update(b"mt=cjs"),
-            options::ModuleType::Esm => hasher.update(b"mt=esm"),
-        }
+        // bindings, strict mode).
+        hasher.update(match self.module_type {
+            options::ModuleType::Unknown => b"mt=?",
+            options::ModuleType::Cjs => b"mt=c",
+            options::ModuleType::Esm => b"mt=e",
+        });
 
         self.features.hash_for_runtime_transpiler(hasher);
     }

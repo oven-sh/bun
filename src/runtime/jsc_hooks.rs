@@ -3916,19 +3916,20 @@ unsafe fn normalize_specifier_for_loader<'a>(
     (slice, specifier, query)
 }
 
-/// Result of [`get_loader_and_virtual_source`] — mirrors
-/// `options.LoaderResult`.
 /// The ESM-or-CommonJS hint the parser gets for a file: the extension when it
 /// is `.mjs`/`.mts`/`.cjs`/`.cts`, else the `"type"` of the nearest package.json
-/// for `.js`/`.ts`. Every other extension lets the file contents decide.
+/// for a `.js`/`.ts` file in `dir`. Every other extension lets the file contents
+/// decide.
 fn module_type_hint(
     ext: &[u8],
+    dir: &[u8],
     package_json_for_module_type: Option<&bun_resolver::package_json::PackageJSON>,
 ) -> ModuleType {
     if let Some(from_ext) = bun_resolver::module_type_from_ext(ext) {
         from_ext
     } else if ext == b".js" || ext == b".ts" {
         package_json_for_module_type
+            .filter(|pkg| package_scope_reaches(pkg, dir))
             .map(|pkg| pkg.module_type)
             .unwrap_or(ModuleType::Unknown)
     } else {
@@ -3936,6 +3937,22 @@ fn module_type_hint(
     }
 }
 
+/// Node's package scope lookup stops at a `node_modules` directory: a package
+/// with no package.json of its own does not take the `"type"` of the project
+/// above it. `DirInfo::package_json_for_module_type` walks past that directory
+/// (the bundler follows esbuild there), so the runtime checks the path between
+/// the package.json and the file for a `node_modules` component.
+fn package_scope_reaches(pkg: &bun_resolver::package_json::PackageJSON, dir: &[u8]) -> bool {
+    let pkg_dir = pkg.source.path.name().dir;
+    let Some(below) = dir.get(pkg_dir.len()..) else {
+        return true;
+    };
+    !bun_core::strings::contains(below, b"node_modules")
+        || !bun_core::strings::split_any(below, b"/\\").any(|part| part == b"node_modules")
+}
+
+/// Result of [`get_loader_and_virtual_source`] — mirrors
+/// `options.LoaderResult`.
 struct LoaderResult<'a> {
     loader: Option<Loader>,
     virtual_source: Option<&'a bun_ast::Source>,
@@ -4266,7 +4283,11 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     }
 
     // Shared by the synchronous and the concurrent transpiler below.
-    let module_type = module_type_hint(lr.path.name().ext, lr.package_json_for_module_type);
+    let module_type = module_type_hint(
+        lr.path.name().ext,
+        lr.path.name().dir,
+        lr.package_json_for_module_type,
+    );
     let pkg_name: Option<&[u8]> = lr
         .package_json
         .and_then(|pkg| (!pkg.name.is_empty()).then_some(&*pkg.name));
@@ -4573,7 +4594,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
         } else {
             None
         };
-        module_type_hint(ext, package_json)
+        module_type_hint(ext, dir, package_json)
     };
 
     // ── `ModuleLoader.transpileSourceCode(...)` ─────────────────────────────

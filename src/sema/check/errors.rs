@@ -165,7 +165,6 @@ impl Checker<'_, '_> {
         }
         let leaves = std::mem::take(&mut self.checked_leaves.files);
         let is_kept = |file: FileId| !leaves.contains(file.idx());
-        self.literals_checked_under.retain(|key, _| is_kept(key.0));
         self.discriminated.retain(|key, _| is_kept(key.0));
         self.conditional_roots.retain(|key, _| is_kept(key.0));
         self.non_existent_properties.retain(|key, _| is_kept(key.0));
@@ -188,8 +187,7 @@ impl Checker<'_, '_> {
 
     /// Total number of entries in the memos that `forget_nodes_of_leaf` sweeps.
     fn entries_by_node(&self) -> usize {
-        self.literals_checked_under.len()
-            + self.discriminated.len()
+        self.discriminated.len()
             + self.conditional_roots.len()
             + self.non_existent_properties.len()
             + self.rechecked_exprs.len()

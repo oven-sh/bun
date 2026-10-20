@@ -2454,43 +2454,6 @@ impl<'p, 's> Checker<'p, 's> {
         ty
     }
 
-    /// `checkExpressionWithContextualType(arg, paramType, nil, checkMode)`, as
-    /// `isSignatureApplicable` calls it for every candidate, pass and relation. tsgo rechecks every
-    /// time. The result depends only on the argument, `param` and the mode, so a literal is checked
-    /// once per combination. That doesn't apply to a literal that's already being checked, because
-    /// `findContextualNode` finds what was pushed for it then, not `param`.
-    pub(super) fn arg_type_under(
-        &mut self,
-        file: FileId,
-        arg: Arg,
-        param: TypeId,
-        check_mode: CheckMode,
-    ) -> TypeId {
-        let Arg::Expr(e) = arg else {
-            return self.check_argument(file, arg, param, None, check_mode);
-        };
-        let param = self.without_no_infer(param);
-        if !matches!(
-            self.hir(file)[e].kind,
-            ExprKind::Object(_) | ExprKind::Array(_)
-        ) || self.find_contextual_node(file, e, true).is_some()
-        {
-            return self.check_expression_with_contextual_type(file, e, param, None, check_mode);
-        }
-        let key = (file, e, param, check_mode.bits());
-        if let Some(&known) = self.literals_checked_under.get(&key) {
-            return known;
-        }
-        let cycles = self.cycles;
-        let ty = self.check_expression_with_contextual_type(file, e, param, None, check_mode);
-        // A result that depends on a circular query is only provisional. So is what the check
-        // leaves behind after one (`context_checked_under`). The next check has to leave it again.
-        if self.cycles == cycles && !self.is_innermost_tainted() {
-            self.literals_checked_under.insert(key, ty);
-        }
-        ty
-    }
-
     /// `getMutableArrayOrTupleType`
     pub(super) fn mutable_array_or_tuple(&mut self, t: TypeId) -> TypeId {
         if self.is_union(t) {

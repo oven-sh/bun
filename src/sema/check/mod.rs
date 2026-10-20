@@ -844,7 +844,6 @@ impl<'s> Program<'s> {
             rechecked_exprs: Default::default(),
             rechecked_members: Default::default(),
             spare_rechecked: Vec::new(),
-            literals_checked_under: Default::default(),
             inference_contexts: Vec::new(),
             inference_memo: Default::default(),
             instantiation_depth: 0,
@@ -1569,8 +1568,6 @@ pub struct Checker<'p, 's> {
     rechecked_members: FxHashMap<(FileId, PropId), TypeId>,
     /// Empty maps that `set_rechecked_aside` reuses.
     spare_rechecked: Vec<Rechecked>,
-    /// `arg_type_under`: the type of a literal argument under a parameter type.
-    literals_checked_under: FxHashMap<(FileId, ExprId, TypeId, u8), TypeId>,
     /// `inferenceContextInfos`
     inference_contexts: Vec<InferenceContextInfo>,
     /// Records what the `inferTypes` walks wrote. See check/infer_memo.rs.

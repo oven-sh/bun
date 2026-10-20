@@ -35,8 +35,13 @@ async function ticks(recursive: boolean) {
     await turnOfTheEventLoop();
     ac.abort();
     result["abort(), then the first next()"] = await settlement(() => iterator.next());
+    result["abort(), then the second next()"] = await settlement(() => iterator.next());
   }
-  result["watch() with an aborted signal"] = await settlement(() => iterate(AbortSignal.abort(), recursive).next());
+  {
+    const iterator = iterate(AbortSignal.abort(), recursive);
+    result["watch() with an aborted signal"] = await settlement(() => iterator.next());
+    result["watch() with an aborted signal, the second next()"] = await settlement(() => iterator.next());
+  }
   {
     const ac = new AbortController();
     ac.signal.addEventListener("abort", event => event.stopImmediatePropagation());
@@ -53,7 +58,12 @@ async function ticks(recursive: boolean) {
     await turnOfTheEventLoop();
     ac.abort();
     // No async function waits for this next(), so only the frames of the call itself can name this file.
-    const stack = await new Promise<string>(resolve => iterator.next().catch(error => resolve(String(error.stack))));
+    const stack = await new Promise<string>(resolve =>
+      iterator.next().then(
+        () => resolve("next() fulfilled"),
+        error => resolve(String(error.stack)),
+      ),
+    );
     result["the stack of the AbortError names the file that called next()"] = String(
       stack.includes(basename(import.meta.filename)),
     );

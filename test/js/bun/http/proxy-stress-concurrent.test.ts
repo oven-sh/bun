@@ -11,7 +11,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, isMacOS, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isMacOS, isWindows } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import { join } from "node:path";
@@ -45,7 +45,7 @@ describe("parallel requests, single origin", () => {
     originTls: [false, true] as const,
     keepalive: [false, true] as const,
   })) {
-    const N = isDebug ? 16 : 32;
+    const N = 32;
     test.concurrent(
       `${N}× parallel ${proxyTls ? "https" : "http"}-proxy → ${originTls ? "https" : "http"}-origin keepalive=${keepalive}`,
       async () => {

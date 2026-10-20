@@ -37,10 +37,7 @@ function problemAt(node: ts.Node, sourceFile: ts.SourceFile): string | undefined
   }
 }
 
-/**
- * Throws if the preprocessor rewrote text inside a literal of `text`, or left code that it rewrites as written.
- * A line of `text` is a line of the source file, from `firstLine` on. A column is not: a rewrite moves what follows it.
- */
+/** Throws if the preprocessor rewrote text inside a literal of `text`, or left code that it rewrites as written. */
 export function checkPreprocessedSource(fileName: string, text: string, firstLine = 1) {
   const kind = fileName.endsWith(".js") ? ts.ScriptKind.JS : ts.ScriptKind.TS;
   const sourceFile = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, false, kind);
@@ -53,6 +50,7 @@ export function checkPreprocessedSource(fileName: string, text: string, firstLin
       const offset = literal_kinds.has(node.kind) ? nodeText.indexOf("__intrinsic__") : 0;
       const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile) + offset);
       const [shown] = nodeText.slice(nodeText.lastIndexOf("\n", offset) + 1).split("\n", 1);
+      // A line of `text` is a line of the source. A column is not: a rewrite moves what follows it on the line.
       problems.push(`${fileName}:${line + firstLine}: the preprocessor ${problem}: ${shown.trim()}`);
     }
     ts.forEachChild(node, visit);

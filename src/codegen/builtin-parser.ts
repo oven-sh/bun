@@ -50,9 +50,7 @@ export function sliceSourceCode(
     bracketCount += [...code.matchAll(/[({]/g)].length;
     const chunk = replace ? applyReplacements(contents, i) : [code, contents.slice(i)];
     if (chunk[2]) {
-      // A macro expansion can drop lines of its call. Put the line breaks back before its last character, which is
-      // a `)` or the `0` of `void 0`. Then a line of the output is a line of the source, and
-      // builtin-output-check.ts reports lines of the output.
+      // Output lines stay source lines: line breaks that the expansion drops go back before its last character.
       const [expansion, rest] = chunk as [string, string];
       const call = contents.slice(0, contents.length - rest.length);
       const lost = call.split("\n").length - expansion.split("\n").length;

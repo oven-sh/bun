@@ -426,6 +426,16 @@ Bun.unsafe.setJITPolicy(1); // back to the normal JIT policy
 console.log(process.execArgv); // ["--smol", "--user-agent=MyBot"]
 ```
 
+### Deprecation warnings
+
+A standalone executable does not print the `url.parse()` deprecation warning (`DEP0169`). The warning is for the author of the call, and the person who runs the executable cannot act on it. `bun run` still prints the warning for the first `url.parse()` call in your own code.
+
+Bun prints every other deprecation warning as it does under `bun run`. The command-line arguments of a standalone executable go to your program, so embed `--no-deprecation` to hide those warnings:
+
+```bash terminal icon="terminal"
+bun build --compile --compile-exec-argv="--no-deprecation" ./app.ts --outfile myapp
+```
+
 ### Runtime arguments via `BUN_OPTIONS`
 
 Standalone executables read the `BUN_OPTIONS` environment variable, so you can pass runtime flags without recompiling:

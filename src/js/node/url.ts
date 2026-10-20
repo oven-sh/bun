@@ -122,16 +122,19 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
 
 const { isInsideNodeModules } = require("internal/shared");
 
-let urlParseWarned = false;
+// Node also warns for the call of a bundled dependency. A standalone executable never warns:
+// the warning is for the author of the call, and the user of the executable cannot act on it.
+// https://github.com/oven-sh/bun/issues/16639
+let urlParseWarned = Bun.isStandaloneExecutable;
 
 function urlParse(
   url: string | URL | Url, // really has unknown type but intellisense is nice
   parseQueryString?: boolean,
   slashesDenoteHost?: boolean,
 ) {
-  // Once-per-process and never from library code, matching node v26.3.0
-  // lib/url.js urlParse. The latch stays unset on suppressed calls so a
-  // later first-party caller still gets the warning, like node.
+  // Outside a standalone executable: once per realm and never from library
+  // code, matching node v26.3.0 lib/url.js urlParse. The latch stays unset on
+  // suppressed calls so a later first-party caller still gets the warning.
   if (!urlParseWarned && !isInsideNodeModules(4)) {
     urlParseWarned = true;
     process.emitWarning(

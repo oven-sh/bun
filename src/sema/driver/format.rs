@@ -12,7 +12,6 @@ use bun_core::fmt::escape_control_chars;
 use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
-use bun_sema::check::explain::to_valid_utf8;
 use bun_sema::messages;
 use bun_sema::resolve::get_relative_path_from_directory;
 use bun_sema::util::FxHashMap;
@@ -109,7 +108,7 @@ fn relative_path(path: &[u8], from: &[u8], style: &Style) -> BString {
     get_relative_path_from_directory(from, path, style.is_case_sensitive).into()
 }
 
-/// `d.text` where the layout is Bun's own: [`escaped`], with each argument on one line, so that only the elaboration starts a line.
+/// `d.text` where the layout is Bun's own: [`escaped`], with each argument on one line. Only the elaboration starts a line, so no argument reads as another diagnostic.
 pub fn write_message(out: &mut Vec<u8>, d: &Diagnostic) {
     if !may_have_control_characters(&d.text) {
         out.extend_from_slice(&d.text);
@@ -123,55 +122,34 @@ pub fn write_message(out: &mut Vec<u8>, d: &Diagnostic) {
     if !has_line_break(&d.args, &d.message_chain) {
         return write_escaped_lines(out, &d.text);
     }
-    // What `new_compiler_diagnostic`, `of_config_error` and `Explained::new` make a text of.
-    fn composed(code: u32, args: &[Box<[u8]>], chain: &[MessageChain]) -> Vec<u8> {
-        let template = messages::message(code).map_or("Unknown error.", |it| it.1);
-        let mut text = Vec::new();
-        messages::format(&mut text, template, args);
-        for it in chain {
-            it.flatten(&mut text, 1);
-        }
-        text
-    }
-    fn escaped_args(code: u32, args: &[Box<[u8]>]) -> Box<[Box<[u8]>]> {
+    // The template in Bun's terms, as `d.text` has it: the finished text in those terms would change an argument too.
+    fn write_composed(out: &mut Vec<u8>, template: &str, code: u32, args: &[Box<[u8]>]) {
+        let in_terms_of_bun = crate::in_terms_of_bun(template.into());
+        let template = std::str::from_utf8(&in_terms_of_bun).unwrap_or(template);
         let on_one_line = |arg: &[u8]| Vec::from(escaped(arg));
-        match (code, args) {
+        let args: Vec<Vec<u8>> = match (code, args) {
             // The paths of the cycle follow the argument that has them all, a line each: `open_build_task`.
             (6202, [_, paths @ ..]) if !paths.is_empty() => {
                 let paths: Vec<Vec<u8>> = paths.iter().map(|path| on_one_line(path)).collect();
-                Box::new([paths.join(&b'\n').into()])
+                vec![paths.join(&b'\n')]
             }
-            _ => args.iter().map(|arg| on_one_line(arg).into()).collect(),
+            _ => args.iter().map(|arg| on_one_line(arg)).collect(),
+        };
+        messages::format(out, template, &args);
+    }
+    // `MessageChain::flatten`
+    fn write_chain(out: &mut Vec<u8>, chain: &[MessageChain], level: usize) {
+        for it in chain {
+            out.push(b'\n');
+            out.extend(std::iter::repeat_n(b' ', 2 * level));
+            let template = messages::message(it.code).map_or("", |m| m.1);
+            write_composed(out, template, it.code, &it.args);
+            write_chain(out, &it.message_chain, level + 1);
         }
     }
-    fn escaped_chain(chain: &[MessageChain]) -> Vec<MessageChain> {
-        let chain = chain.iter().map(|it| MessageChain {
-            code: it.code,
-            args: escaped_args(it.code, &it.args),
-            message_chain: escaped_chain(&it.message_chain),
-        });
-        chain.collect()
-    }
-    // `d.text` starts as one of these: what is composed, what `Explained::new` has of it, and what that is in terms of Bun.
-    let flat = composed(d.code, &d.args, &d.message_chain);
-    let valid = to_valid_utf8(flat.clone());
-    let reworded = crate::in_terms_of_bun(valid.clone());
-    let forms = [(&reworded, true), (&valid, false), (&flat, false)];
-    let Some((form, is_reworded)) = forms.into_iter().find(|it| d.text.starts_with(it.0)) else {
-        // Which line breaks are of an argument is not known: none is kept.
-        return write_escaped(out, &d.text);
-    };
-    let (args, chain) = (
-        escaped_args(d.code, &d.args),
-        escaped_chain(&d.message_chain),
-    );
-    let again = composed(d.code, &args, &chain);
-    out.extend_from_slice(&match is_reworded {
-        true => crate::in_terms_of_bun(again),
-        false => again,
-    });
-    // What was added to it since.
-    write_escaped_lines(out, &d.text[form.len()..]);
+    let template = messages::message(d.code).map_or("Unknown error.", |m| m.1);
+    write_composed(out, template, d.code, &d.args);
+    write_chain(out, &d.message_chain, 1);
 }
 
 /// `1234` as `1,234`.
@@ -202,23 +180,6 @@ fn columns(text: &[u8]) -> usize {
 fn fitting(text: &[u8], width: usize) -> &[u8] {
     let end = strings::visible::width::exclude_ansi_colors::utf8_index_at_width(text, width);
     &text[..end]
-}
-
-/// [`fitting`] for text that is [`escaped`]: without the start of an escape sequence, which reads as another character.
-fn fitting_escaped(text: &[u8], width: usize) -> &[u8] {
-    let cut = fitting(text, width);
-    let Some(at) = strings::last_index_of_char(cut, b'\\') else {
-        return cut;
-    };
-    let sequence = match text.get(at + 1) {
-        Some(b'x') => r"\x1b".len(),
-        Some(b'u') => r"\u2028".len(),
-        _ => r"\n".len(),
-    };
-    match cut.len() < text.len().min(at + sequence) {
-        true => &cut[..at],
-        false => cut,
-    }
 }
 
 /// `d` as input for `bun_ast::Msg::write_format`: the message, its location, and the last `shown`
@@ -742,7 +703,7 @@ fn write_grouped(out: &mut Vec<u8>, report: &Report, style: &Style) {
                 0 => usize::MAX,
                 columns => columns.saturating_sub(width + 12),
             };
-            let cut = fitting_escaped(reported, room);
+            let cut = fitting(reported, room);
             out.extend_from_slice(cut);
             if cut.len() < reported.len() {
                 pretty!(out, style.color, "<d>\u{2026}<r>");

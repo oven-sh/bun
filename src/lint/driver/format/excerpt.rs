@@ -43,34 +43,40 @@ impl Problem<'_> {
         self.message.is_fatal || self.message.severity == Severity::Error
     }
 
+    /// [`escaped`]: the formats that print it are Bun's own.
     fn rule(&self) -> Vec<u8> {
-        self.message
-            .rule_id
-            .as_ref()
-            .map(|id| id.to_vec())
-            .unwrap_or_default()
+        let id = self.message.rule_id.as_ref();
+        id.map(|id| escaped(id.to_vec()).into()).unwrap_or_default()
     }
 }
 
 /// Relative to the working directory, or absolute when that would need two or more `../`.
-/// [`escaped`]: the formats that print it are Bun's own.
+/// [`paths::shown`]: the formats that print it are Bun's own.
 fn display_path(path: &[u8], cwd: &[u8]) -> Vec<u8> {
     let path = paths::from_native(path);
     if !paths::is_absolute(&path) {
-        return escaped(path).into();
+        return paths::shown(&path);
     }
     let relative = paths::relative(cwd, &path);
     if relative.starts_with(b"../../") {
-        escaped(path).into()
+        paths::shown(&path)
     } else {
-        escaped(relative).into()
+        paths::shown(&relative)
     }
 }
 
-/// What a rule says where it has line breaks of its own: each line as [`escaped`].
+/// What a rule says where it has line breaks of its own: each line as [`escaped`], with a space for each tab, as in the excerpt.
+fn write_lines(out: &mut Vec<u8>, text: &[u8]) {
+    match strings::contains_char(text, b'\t') {
+        true => write_escaped_lines(out, &strings::replace_owned(text, b"\t", b" ")),
+        false => write_escaped_lines(out, text),
+    }
+}
+
+/// What [`write_lines`] writes.
 fn escaped_lines(text: &[u8]) -> Vec<u8> {
     let mut lines = Vec::with_capacity(text.len());
-    write_escaped_lines(&mut lines, text);
+    write_lines(&mut lines, text);
     lines
 }
 
@@ -410,9 +416,9 @@ fn write_pretty_problem<'r>(
 ) -> bool {
     let helped = with_help(problem, meta, place);
     let (result, message) = (problem.result, helped.as_ref().unwrap_or(problem.message));
-    let rule: Vec<u8> = escaped(problem.rule()).into();
+    let rule = problem.rule();
     let mut text = Vec::with_capacity(message.message.len() + rule.len() + 16);
-    write_escaped_lines(&mut text, &message.message);
+    write_lines(&mut text, &message.message);
     if !rule.is_empty() {
         text.extend_from_slice(match meta.color {
             true => bun_core::pretty_fmt!("<r>  <d>", true).as_bytes(),
@@ -579,14 +585,13 @@ fn write_pretty_problems(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta)
     for group in &groups[shown..shown + compact] {
         let message = escaped_lines(&group[0].message.message);
         let first_line = strings::split(&message, b"\n").next().unwrap_or_default();
-        let rule: Vec<u8> = escaped(group[0].rule()).into();
         pretty!(
             out,
             meta.color,
             "  {:>4}  {}  <d>{}<r>\n",
             group.len(),
             BStr::new(first_line),
-            BStr::new(&linked(&rule, group[0].message, meta))
+            BStr::new(&linked(&group[0].rule(), group[0].message, meta))
         );
     }
     let rest: usize = groups[shown + compact..].iter().map(Vec::len).sum();
@@ -642,7 +647,7 @@ fn write_agent_problem<'r>(
         "<{tag} file=\"{}\" line=\"{line}\" column=\"{column}\"",
         BStr::new(&attribute(&display_path(&result.path, meta.cwd))),
     );
-    let rule = escaped(problem.rule());
+    let rule = problem.rule();
     if !rule.is_empty() {
         let _ = write!(out, " rule=\"{}\"", BStr::new(&attribute(&rule)));
     }
@@ -653,7 +658,7 @@ fn write_agent_problem<'r>(
         let _ = write!(out, " times=\"{}\"", group.len());
     }
     out.extend_from_slice(b">\n");
-    write_escaped_lines(out, &message.message);
+    write_lines(out, &message.message);
     out.push(b'\n');
     if let (Some(_), line @ 1..) = (&result.text, line) {
         let first = line.saturating_sub(2).max(1);
@@ -689,7 +694,7 @@ fn write_agent_problem<'r>(
     for (tag, text) in [("help", message.help()), ("note", message.note())] {
         if !text.is_empty() {
             let _ = write!(out, "<{tag}>");
-            write_escaped_lines(out, text.as_bytes());
+            write_lines(out, text.as_bytes());
             let _ = writeln!(out, "</{tag}>");
         }
     }

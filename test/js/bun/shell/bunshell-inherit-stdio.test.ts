@@ -161,13 +161,41 @@ describe("inheritStdio", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("`2>&1` and `1>&2` put both streams of a command on one of bun's own", async () => {
+    const { stdout, stderr, files, exitCode } = await runWithFileStdio(
+      `
+        const results = await Promise.all([
+          $\`\${probe} @err-to-out 2>&1\`.inheritStdio(),
+          $\`\${probe} @out-to-err 1>&2\`.inheritStdio(),
+        ]);
+        await Bun.write("result.json", JSON.stringify(results.map(result => result.exitCode)));
+      `,
+      ["result.json"],
+    );
+    expect({ stdout, stderr, files }).toEqual({
+      stdout: ["@err-to-out err file file", "@err-to-out out file file"],
+      stderr: ["@out-to-err err file file", "@out-to-err out file file"],
+      files: { "result.json": "[0,0]" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
   // One script for `bun exec` and for inheritStdio(): both take the path where nothing is buffered,
   // so both must write the same bytes in the same order.
-  describe("a script with builtins, `2>&1` and `1>&2` on piped stdout and stderr", () => {
+  describe("a script with builtins, a pipeline, `2>&1` and `1>&2` on piped stdout and stderr", () => {
     const sayBoth = external("say-both");
-    const script = `echo first; ${sayBoth} a 2>&1; echo second 1>&2; ${sayBoth} b 1>&2; nonexistent-cmd-xyz; echo third; exit 7`;
+    const script = [
+      "echo first",
+      `${sayBoth} a 2>&1`,
+      "echo second 1>&2",
+      `${sayBoth} b 1>&2`,
+      `${sayBoth} c 2>&1 | cat`,
+      "nonexistent-cmd-xyz",
+      "echo third",
+      "exit 7",
+    ].join("; ");
     const expected = {
-      stdout: "first\na out\na err\nthird\n",
+      stdout: "first\na out\na err\nc out\nc err\nthird\n",
       stderr: "second\nb out\nb err\nbun: command not found: nonexistent-cmd-xyz\n",
       exitCode: 7,
     };

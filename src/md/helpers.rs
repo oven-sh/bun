@@ -540,7 +540,7 @@ fn unique_heading_id<'a>(
 }
 
 /// Shared heading-ID state used by all renderers (HTML, React AST, JS callbacks).
-/// Tracks whether we're inside a heading, accumulates text for slug generation,
+/// Tracks whether we're inside a heading, builds the slug of its text as the text arrives,
 /// and deduplicates slugs via a count map.
 #[derive(Default)]
 pub struct HeadingIdTracker {
@@ -569,7 +569,7 @@ impl HeadingIdTracker {
         }
     }
 
-    /// Call from text callback to accumulate text for slug.
+    /// Call from text callback to add its text to the slug.
     /// No-op if not inside a heading or disabled.
     pub fn track_text(&mut self, text_type: TextType, content: &[u8]) {
         if !self.in_heading {
@@ -603,7 +603,7 @@ impl HeadingIdTracker {
         Some(unique_heading_id(&mut self.slug, &mut self.slug_counts))
     }
 
-    /// Call after using the slug to reset text buffer.
+    /// Call after using the slug to reset it.
     pub fn clear_after_heading(&mut self) {
         self.slug.clear();
     }

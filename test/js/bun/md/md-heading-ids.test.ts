@@ -143,6 +143,8 @@ describe("headingIds option", () => {
       "\u2139\uFE0F Info": "info",
       "\u845B\u{E0100}\u57CE": "\u845B\u57CE",
       "x\u{E01EF}y": "xy",
+      // Enclosing marks go, as the keycap of `1\uFE0F\u20E3` does.
+      "a\u20DD b\u0488": "a-b",
     });
   });
 

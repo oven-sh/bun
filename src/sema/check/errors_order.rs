@@ -56,9 +56,19 @@ impl Checker<'_, '_> {
                 .filter(is_property_or_static_block)
                 .map(|m| m.loc),
         );
+        // Elsewhere only a class declared in this file is reported. A namespace or a module has it under its own name or
+        // `default`. Under a name that `export { C as D }` gives it, the property has no value declaration.
+        let names_of_classes: crate::util::FxHashSet<Atom> = (hir.classes.iter().map(|it| it.name))
+            .chain([known::default])
+            .collect();
         for &e in index.of(ExprTag::Dot) {
+            let may_be_in_initializer = initializer_ranges.contain(hir[e].pos);
+            if !may_be_in_initializer
+                && !matches!(hir[e].kind, ExprKind::Dot { name, .. } if names_of_classes.contains(&name))
+            {
+                continue;
+            }
             if !bound.is_unchecked(e.idx()) && !self.is_never_checked(hir[e].pos) {
-                let may_be_in_initializer = initializer_ranges.contain(hir[e].pos);
                 self.check_property_not_used_before_declaration(file, e, may_be_in_initializer);
             }
         }

@@ -13845,6 +13845,91 @@ export class D8 { x = { a: g(null! as D8) }; y = 1; }
       expect(exitCode).toBe(1);
     });
 
+    test("reports TS2449 for a class read through its namespace or module under its own name or `default`, not under an alias", async () => {
+      using dir = project({
+        "a.ts": `
+import * as self from "./a";
+namespace N {
+  export const own = N.C;
+  export const renamed = N.D;
+  export const imported = N.E;
+  export class C {}
+  export { C as D };
+  export import E = N.C;
+}
+const viaModule = self.Late;
+const viaAlias = self.Alias;
+const viaDefault = self.default;
+const other = self.early;
+export const early = 1;
+export class Late {}
+export { Late as Alias };
+export default class Last {}
+class Fields {
+  a = this.b;
+  b = 1;
+  static s = Fields.t;
+  static t = 2;
+}
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,24): error TS2449: Class 'C' used before its declaration.
+        a.ts(8,3): error TS1194: Export declarations are not permitted in a namespace.
+        a.ts(11,24): error TS2449: Class 'Late' used before its declaration.
+        a.ts(13,25): error TS2449: Class 'default' used before its declaration.
+        a.ts(20,12): error TS2729: Property 'b' is used before its initialization.
+        a.ts(22,21): error TS2729: Property 't' is used before its initialization."
+      `);
+    });
+
+    test("counts a read of a private member for the class that declares it, not for another class's member of that name", async () => {
+      using dir = project({
+        "a.ts": `
+export class First {
+  private used = 1;
+  private unused = 2;
+  private written = 3;
+  private twice = 4;
+  private both = 5;
+  private calledByItself(): void { this.calledByItself(); }
+  constructor(private parameter: number, private unusedParameter: number) { this.written = 6; }
+  sum(second: Second, either: First | Second, anything: any) {
+    const { both } = this;
+    return this.used + this.twice + this.twice + this.parameter + second.twice + either.shared + anything.hidden + both;
+  }
+  private shared = 7;
+  private hidden = 8;
+}
+export class Second {
+  private twice = 1;
+  private unread = 2;
+  private shared = 3;
+  private both = 4;
+  #fresh = 5;
+  #stale = 6;
+  get fresh() { return this.#fresh; }
+}
+`,
+      });
+      const { stdout } = await check(dir, ["--noUnusedLocals"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,11): error TS6133: 'unused' is declared but its value is never read.
+        a.ts(5,11): error TS6133: 'written' is declared but its value is never read.
+        a.ts(8,11): error TS6133: 'calledByItself' is declared but its value is never read.
+        a.ts(9,50): error TS6138: Property 'unusedParameter' is declared but its value is never read.
+        a.ts(12,74): error TS2341: Property 'twice' is private and only accessible within class 'Second'.
+        a.ts(12,89): error TS2339: Property 'shared' does not exist on type 'First | Second'.
+        a.ts(14,11): error TS6133: 'shared' is declared but its value is never read.
+        a.ts(15,11): error TS6133: 'hidden' is declared but its value is never read.
+        a.ts(19,11): error TS6133: 'unread' is declared but its value is never read.
+        a.ts(20,11): error TS6133: 'shared' is declared but its value is never read.
+        a.ts(21,11): error TS6133: 'both' is declared but its value is never read.
+        a.ts(23,3): error TS6133: '#stale' is declared but its value is never read."
+      `);
+    });
+
     test("reports TS7022 and TS7023 for functions that return a class member whose initializer calls them", async () => {
       using dir = project({
         "a.ts": `export function r1() { class K { static p = [g(), h()]; } function g() { return K.p; } function h() { return K.p; } return K; }

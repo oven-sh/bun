@@ -755,17 +755,48 @@ impl Checker<'_, '_> {
             return;
         }
         let is_private = |name: Atom| may_be_any || names.contains(&name);
-        for i in 0..hir.exprs.len() {
-            let e = ExprId(i as u32);
-            if !matches!(
-                hir.exprs[i].kind,
-                ExprKind::Dot { .. }
-                    | ExprKind::Index { .. }
-                    | ExprKind::Assign { op: None, .. }
-                    | ExprKind::PrivateIdentifier(_)
-            ) || bound.is_unchecked(i)
-                || u.is_unchecked(e)
+        // What an access to one of `names` can mark: the same symbols as `note_members_named`. Once all of them are
+        // marked, another access with that name adds nothing. An access with any other name never does.
+        let mut marked_by_name: FxHashMap<Atom, smallvec::SmallVec<[SymbolId; 2]>> =
+            FxHashMap::default();
+        for (m, member) in hir.members.iter().enumerate() {
+            if let Some(name) = member.key.name().filter(|name| names.contains(name)) {
+                marked_by_name
+                    .entry(name)
+                    .or_default()
+                    .push(bound.member_symbol[m]);
+            }
+        }
+        for p in (0..hir.params.len() as u32).map(ParamId) {
+            if hir[p].flags.contains(Flags::PRIVATE)
+                && let PatKind::Ident(name) = hir[hir[p].pat].kind
             {
+                let symbol = bound.symbol_of_declaration(Decl::ParameterProperty(p));
+                marked_by_name.entry(name).or_default().push(symbol);
+            }
+        }
+        let adds_nothing = |u: &Unused, name: Atom| {
+            !may_be_any
+                && marked_by_name.get(&name).is_none_or(|symbols| {
+                    let mut symbols = symbols.iter().filter(|symbol| symbol.is_some());
+                    symbols.all(|symbol| u.referenced[symbol.idx()] & ALL == ALL)
+                })
+        };
+        let index = self.exprs_by_kind(file);
+        let kinds = [
+            ExprTag::Dot,
+            ExprTag::Index,
+            ExprTag::Assign,
+            ExprTag::PrivateIdentifier,
+        ];
+        for &e in kinds.iter().flat_map(|&kind| index.of(kind)) {
+            let i = e.idx();
+            let is_skipped = match hir.exprs[i].kind {
+                ExprKind::Dot { name, .. } => adds_nothing(u, name),
+                ExprKind::Assign { op, .. } => op.is_some(),
+                _ => false,
+            };
+            if is_skipped || bound.is_unchecked(i) || u.is_unchecked(e) {
                 continue;
             }
             match hir.exprs[i].kind {

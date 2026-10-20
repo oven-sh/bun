@@ -155,15 +155,18 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
     `,
     );
 
+    fs.writeFileSync(join(tempdir, "settings.json"), `{"port":0}`);
+
     fs.writeFileSync(
       join(tempdir, "server.ts"),
       /* js */ `
       import { serve } from "bun";
       import homepage from "./index.html";
       import second from './second.html';
+      import settings from "./settings.json";
 
       const server = serve({
-        port: 0, // Use a random available port
+        port: settings.port, // Use a random available port
         routes: {
           "/": homepage,
           "/second": second,
@@ -370,6 +373,7 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
           "<cwd>/index.html",
           "<cwd>/second.html",
           "<cwd>/server.ts",
+          "<cwd>/settings.json",
           "bun:main",
         ],
         "main": "<cwd>/server.ts",

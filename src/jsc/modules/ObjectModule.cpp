@@ -47,8 +47,8 @@ generateObjectModuleSourceCodeForJSON(JSC::JSGlobalObject* globalObject,
         PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings,
             PrivateSymbolMode::Exclude);
         object->getPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);
-        gcUnprotectNullTolerant(object);
         RETURN_IF_EXCEPTION(scope, void());
+        gcUnprotectNullTolerant(object);
 
         exportNames.append(vm.propertyNames->defaultKeyword);
         exportValues.append(object);

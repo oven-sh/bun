@@ -134,8 +134,8 @@ describe("require(specifier)", () => {
   });
 });
 
-// As in Node.js, a data file has one value in a loader: what an import of it gives as the default export is what
-// require() of it returns, whichever comes first.
+// A data file has one value in a loader, as a JSON file has in Node.js (https://nodejs.org/api/esm.html#json-modules):
+// what an import of it gives as the default export is what require() of it returns, whichever comes first.
 describe.concurrent("a data file that is imported and required", () => {
   const data = {
     "obj.json": `{"a":1,"b":{"c":[1,2]}}`,
@@ -143,30 +143,45 @@ describe.concurrent("a data file that is imported and required", () => {
     "null.json": `null`,
     "str.json": `"str"`,
     "default-key.json": `{"default":"d","x":1}`,
+    "données.json": `{"a":1}`,
     "obj.jsonc": `{\n  // a comment\n  "a": 1,\n}\n`,
     "obj.toml": `a = 1\n[b]\nc = [1, 2]\n`,
     "obj.yaml": `a: 1\nb:\n  c: [1, 2]\n`,
+    "obj.yml": `a: 1\n`,
     "obj.json5": `{a: 1, b: {c: [1, 2]},}\n`,
     "obj.xml": `<a><b>1</b></a>\n`,
+    // An extension that bunfig.toml gives a data loader.
+    "obj.conf": `a = 1\n`,
+    "bunfig.toml": `[loader]\n".conf" = "toml"\n`,
   };
-  const names = Object.keys(data);
   const parsed: Record<string, unknown> = {
     "obj.json": { a: 1, b: { c: [1, 2] } },
     "arr.json": [1, 2, 3],
     "null.json": null,
     "str.json": "str",
     "default-key.json": { default: "d", x: 1 },
+    "données.json": { a: 1 },
     "obj.jsonc": { a: 1 },
     "obj.toml": { a: 1, b: { c: [1, 2] } },
     "obj.yaml": { a: 1, b: { c: [1, 2] } },
+    "obj.yml": { a: 1 },
     "obj.json5": { a: 1, b: { c: [1, 2] } },
     "obj.xml": { a: { b: "1" } },
+    "obj.conf": { a: 1 },
   };
+  const names = Object.keys(parsed);
 
   /** Runs `entry` in a directory of `files`. The script prints one JSON value. */
-  async function run(files: Record<string, string>, entry: string) {
+  async function run(files: Record<string, string>, entry: string, args: string[] = []) {
     using dir = tempDir("bun-test-require-data", files);
-    const { stdout, stderr, exitCode } = await bunRun(path.join(String(dir), entry));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args, entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     let printed: unknown = stdout;
     try {
       printed = JSON.parse(stdout);
@@ -191,8 +206,9 @@ describe.concurrent("a data file that is imported and required", () => {
             const required = [created("./" + name), import.meta.require("./" + name), require("./" + name), sib(name)];
             out[name] = [required.every(r => r === value), required[0]];
           }
-          const entry = require.cache[created.resolve("./obj.json")];
-          out.entry = [Object.keys(entry).sort(), entry.exports === imported["obj.json"], entry.loaded];
+          const key = created.resolve("./obj.json");
+          const entry = require.cache[key];
+          out.entry = [entry.exports === imported["obj.json"], entry.loaded, entry.id === key, entry.children];
           out.namespace = Object.keys(namespace).sort();
           console.log(JSON.stringify(out));
         `,
@@ -202,9 +218,8 @@ describe.concurrent("a data file that is imported and required", () => {
     expect(result).toEqual({
       printed: {
         ...Object.fromEntries(names.map(name => [name, [true, parsed[name]]])),
-        // The entry in require.cache is what Node.js puts there.
-        entry: [["exports", "loaded"], true, true],
-        // The import's own exports are as before.
+        // The entry in require.cache is a module, like every other entry.
+        entry: [true, true, true, []],
         namespace: ["a", "b", "default"],
       },
       stderr: "",
@@ -219,12 +234,9 @@ describe.concurrent("a data file that is imported and required", () => {
         "index.cjs": `
           const names = ${JSON.stringify(names)};
           const required = names.map(name => require("./" + name));
-          required[0].mutated = true;
           (async () => {
             const out = {};
             for (const [i, name] of names.entries()) out[name] = (await import("./" + name)).default === required[i];
-            out.typed = (await import("./obj.json", { with: { type: "json" } })).default === required[0];
-            out.mutated = (await import("./obj.json")).default.mutated;
             console.log(JSON.stringify(out));
           })();
         `,
@@ -232,83 +244,31 @@ describe.concurrent("a data file that is imported and required", () => {
       "index.cjs",
     );
     expect(result).toEqual({
-      printed: { ...Object.fromEntries(names.map(name => [name, true])), typed: true, mutated: true },
+      printed: Object.fromEntries(names.map(name => [name, true])),
       stderr: "",
       exitCode: 0,
     });
   });
 
-  it("a type attribute that names the path's own loader shares the value; another type does not", async () => {
-    const files = {
-      "obj.json": data["obj.json"],
-      "obj.toml": data["obj.toml"],
-      "package.json": `{"name":"pkg","version":"1.0.0"}`,
-      "raw.json": `{"r":1}`,
-      "data.txt": `{"t":2}`,
-      "import-first.mjs": `
-        import { createRequire } from "node:module";
-        import obj from "./obj.json";
-        import objTyped from "./obj.json" with { type: "json" };
-        import toml from "./obj.toml" with { type: "toml" };
-        import pkg from "./package.json" with { type: "json" };
-        import rawText from "./raw.json" with { type: "text" };
-        import txtAsJson from "./data.txt" with { type: "json" };
-        const require = createRequire(import.meta.url);
-        console.log(JSON.stringify({
-          plainIsTyped: obj === objTyped,
-          json: require("./obj.json") === objTyped,
-          toml: require("./obj.toml") === toml,
-          packageJson: require("./package.json") === pkg,
-          // Imported as text only: require() loads the file as JSON, which is what its path says.
-          rawText,
-          requireAfterText: require("./raw.json"),
-          txtAsJson,
-        }));
-      `,
-      // A text file that was required is still parsed when it is imported as JSON.
-      "require-first.cjs": `
-        const text = require("./data.txt").default;
-        import("./data.txt", { with: { type: "json" } }).then(ns => console.log(JSON.stringify([text, ns.default])));
-      `,
-    };
-    expect([await run(files, "import-first.mjs"), await run(files, "require-first.cjs")]).toEqual([
-      {
-        printed: {
-          plainIsTyped: true,
-          json: true,
-          toml: true,
-          packageJson: true,
-          rawText: `{"r":1}`,
-          requireAfterText: { r: 1 },
-          txtAsJson: { t: 2 },
-        },
-        stderr: "",
-        exitCode: 0,
-      },
-      { printed: [`{"t":2}`, { t: 2 }], stderr: "", exitCode: 0 },
-    ]);
-  });
-
-  it("an entry user code put in require.cache, or a require.extensions handler filled, is the import's value once it is loaded", async () => {
+  it("an import that takes a required value exports that value's keys; a value that lost a key of the file is not taken", async () => {
     const result = await run(
       {
         "obj.json": data["obj.json"],
-        "arr.json": data["arr.json"],
         "obj.toml": data["obj.toml"],
+        "named.mjs": `export { b } from "./obj.toml";`,
         "index.cjs": `
-          const key = name => require.resolve("./" + name);
-          require.cache[key("obj.json")] = { exports: { stub: "not loaded" } };
-          require.cache[key("arr.json")] = { exports: { stub: "loaded" }, loaded: true };
-          require.extensions[".toml"] = (module, filename) => { module.exports = { handler: filename.endsWith("obj.toml") }; };
-          const toml = require("./obj.toml");
+          const changed = require("./obj.json");
+          changed.a = 2;
+          changed.added = true;
+          const lost = require("./obj.toml");
+          delete lost.b;
           (async () => {
-            const obj = (await import("./obj.json")).default;
-            const arr = (await import("./arr.json")).default;
-            const tomlImported = (await import("./obj.toml")).default;
+            const json = await import("./obj.json");
+            const toml = await import("./obj.toml");
             console.log(JSON.stringify({
-              notLoaded: [obj, require("./obj.json")],
-              loaded: [arr, arr === require("./arr.json")],
-              handler: [toml, tomlImported === toml, require.cache[key("obj.toml")].loaded],
+              changed: [json.default === changed, Object.keys(json).sort(), json.a],
+              // So that an import of the key by name still links.
+              lost: [toml.default === lost, Object.keys(toml).sort(), (await import("./named.mjs")).b],
             }));
           })();
         `,
@@ -317,10 +277,98 @@ describe.concurrent("a data file that is imported and required", () => {
     );
     expect(result).toEqual({
       printed: {
-        // Not loaded: the import reads the file, and the entry stays what require() returns.
-        notLoaded: [parsed["obj.json"], { stub: "not loaded" }],
-        loaded: [{ stub: "loaded" }, true],
-        handler: [{ handler: true }, true, true],
+        changed: [true, ["a", "added", "b", "default"], 2],
+        lost: [false, ["a", "b", "default"], { c: [1, 2] }],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("a type attribute, a ?query: the path's own type shares the value, another type and another key do not", async () => {
+    const files = {
+      "obj.json": data["obj.json"],
+      "obj.toml": data["obj.toml"],
+      "package.json": `{"name":"pkg","version":"1.0.0"}`,
+      "data.txt": `{"t":2}`,
+      "index.mjs": `
+        import { createRequire } from "node:module";
+        import obj from "./obj.json";
+        import objTyped from "./obj.json" with { type: "json" };
+        import * as plain from "./obj.json";
+        import * as typed from "./obj.json" with { type: "json" };
+        import toml from "./obj.toml" with { type: "toml" };
+        import pkg from "./package.json" with { type: "json" };
+        import txtAsJson from "./data.txt" with { type: "json" };
+        import query from "./obj.json?v=1";
+        const require = createRequire(import.meta.url);
+        console.log(JSON.stringify({
+          plainIsTyped: obj === objTyped,
+          sameKeys: Object.keys(plain).join() === Object.keys(typed).join(),
+          json: require("./obj.json") === objTyped,
+          toml: require("./obj.toml") === toml,
+          packageJson: require("./package.json") === pkg,
+          txtAsJson,
+          query: [query === obj, require("./obj.json?v=1") === query, query],
+        }));
+      `,
+    };
+    expect(await run(files, "index.mjs")).toEqual({
+      printed: {
+        plainIsTyped: true,
+        sameKeys: true,
+        json: true,
+        toml: true,
+        packageJson: true,
+        txtAsJson: { t: 2 },
+        query: [false, true, parsed["obj.json"]],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Each of these is as it is without this rule: the import reads the file itself.
+  it("what a load under another type, user code or a require.extensions handler put in require.cache is not the import's value", async () => {
+    const result = await run(
+      {
+        "obj.json": data["obj.json"],
+        "arr.json": data["arr.json"],
+        "str.json": data["str.json"],
+        "obj.toml": data["obj.toml"],
+        "data.txt": `{"t":2}`,
+        "tsconfig.json": `{\n  // a comment\n  "a": 1\n}\n`,
+        "index.cjs": `
+          const key = name => require.resolve("./" + name);
+          const text = require("./data.txt").default;
+          const asFile = require("./str.json", { type: "file" });
+          const tsconfig = require("./tsconfig.json");
+          require.cache[key("obj.json")] = { exports: { planted: "not loaded" } };
+          require.cache[key("arr.json")] = { exports: { planted: "loaded" }, loaded: true };
+          require.extensions[".toml"] = (module, filename) => { module.exports = { handler: true }; };
+          const toml = require("./obj.toml");
+          (async () => {
+            const value = async (name, type) => (await import("./" + name, type && { with: { type } })).default;
+            console.log(JSON.stringify({
+              text: [text, await value("data.txt", "json")],
+              typedRequire: [asFile.endsWith("str.json"), await value("str.json"), await value("str.json", "json")],
+              // A tsconfig.json may have comments, but not when it is imported as JSON.
+              strict: [tsconfig, await value("tsconfig.json", "json").catch(error => error.name)],
+              planted: [await value("obj.json"), require("./obj.json"), await value("arr.json"), require("./arr.json")],
+              handler: [toml, await value("obj.toml"), require("./obj.toml") === toml],
+            }));
+          })();
+        `,
+      },
+      "index.cjs",
+    );
+    expect(result).toEqual({
+      printed: {
+        text: [`{"t":2}`, { t: 2 }],
+        typedRequire: [true, "str", "str"],
+        strict: [{ a: 1 }, "SyntaxError"],
+        planted: [parsed["obj.json"], { planted: "not loaded" }, parsed["arr.json"], { planted: "loaded" }],
+        handler: [{ handler: true }, parsed["obj.toml"], true],
       },
       stderr: "",
       exitCode: 0,
@@ -356,6 +404,71 @@ describe.concurrent("a data file that is imported and required", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  it("a file that does not parse is an error for both, in both orders, and leaves no entry", async () => {
+    const result = await run(
+      {
+        "bad.json": `{bad`,
+        "bad.toml": `a = = 1\n`,
+        "index.mjs": `
+          import { createRequire } from "node:module";
+          const require = createRequire(import.meta.url);
+          const failed = async load => { try { await load(); return false; } catch { return true; } };
+          const inCache = name => Object.keys(require.cache).some(key => key.endsWith(name));
+          const out = {};
+          for (const [name, first, second] of [
+            ["bad.json", () => import("./bad.json"), () => require("./bad.json")],
+            ["bad.toml", () => require("./bad.toml"), () => import("./bad.toml")],
+          ]) {
+            out[name] = [await failed(first), inCache(name), await failed(second), inCache(name)];
+          }
+          console.log(JSON.stringify(out));
+        `,
+      },
+      "index.mjs",
+    );
+    expect(result).toEqual({
+      printed: { "bad.json": [true, false, true, false], "bad.toml": [true, false, true, false] },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("--hot: after an edit, import and require() both give the file's new value", async () => {
+    using dir = tempDir("bun-test-require-data-hot", {
+      "config.json": `{"v":1}`,
+      "main.mjs": `
+        import { createRequire } from "node:module";
+        import config from "./config.json";
+        const required = createRequire(import.meta.url)("./config.json");
+        console.log("loaded " + JSON.stringify([config, required === config]));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "ignore",
+      stdin: "ignore",
+    });
+    const reader = proc.stdout.getReader();
+    let stdout = "";
+    const line = async (n: number) => {
+      for (;;) {
+        const lines = stdout.split("\n").slice(0, -1);
+        if (lines.length >= n) return lines[n - 1];
+        const { value, done } = await reader.read();
+        if (done) return stdout;
+        stdout += Buffer.from(value).toString();
+      }
+    };
+    expect(await line(1)).toBe(`loaded [{"v":1},true]`);
+    // rename() into place, so that the reload never reads a file that is half written.
+    fs.writeFileSync(path.join(String(dir), "next.json"), `{"v":2}`);
+    fs.renameSync(path.join(String(dir), "next.json"), path.join(String(dir), "config.json"));
+    expect(await line(2)).toBe(`loaded [{"v":2},true]`);
   });
 
   // A setup file that imports the project's configuration does not change what require() of that file returns.
@@ -413,56 +526,29 @@ describe.concurrent("a data file that is imported and required", () => {
     });
 
     it("the entry point gets the imported value, and is still module '.'", async () => {
-      using dir = tempDir("bun-test-require-data-preload", {
-        "config.json": `{"v":1}`,
-        "setup.mjs": `import config from "./config.json"; globalThis.__config = config;`,
-        "main.cjs": `
-          const config = require("./config.json");
-          console.log(JSON.stringify({
-            config,
-            same: config === globalThis.__config,
-            id: module.id,
-            parent: module.parent,
-            isMain: require.main === module,
-          }));
-        `,
-      });
-      const main = path.join(String(dir), "main.cjs");
-      expect(await bunRun(["--preload", path.join(String(dir), "setup.mjs"), main])).toEqual({
-        stdout: JSON.stringify({ config: { v: 1 }, same: true, id: ".", parent: null, isMain: true }),
+      const result = await run(
+        {
+          "config.json": `{"v":1}`,
+          "setup.mjs": `import config from "./config.json"; globalThis.__config = config;`,
+          "main.cjs": `
+            const config = require("./config.json");
+            console.log(JSON.stringify({
+              config,
+              same: config === globalThis.__config,
+              id: module.id,
+              parent: module.parent,
+              isMain: require.main === module,
+            }));
+          `,
+        },
+        "main.cjs",
+        ["--preload", "./setup.mjs"],
+      );
+      expect(result).toEqual({
+        printed: { config: { v: 1 }, same: true, id: ".", parent: null, isMain: true },
         stderr: "",
         exitCode: 0,
-        signalCode: null,
       });
     });
-  });
-
-  it("a CSS or HTML file: require() and require.cache give the default export of the import", async () => {
-    const files = {
-      "page.html": `<!doctype html><title>t</title>`,
-      "style.css": `body { color: red }`,
-      "index.mjs": `
-        import { createRequire } from "node:module";
-        import page from "./page.html";
-        import style from "./style.css";
-        const require = createRequire(import.meta.url);
-        const first = process.argv[2];
-        const viaCache = () => require.cache[require.resolve("./page.html")].exports === page;
-        const viaRequire = () => require("./page.html") === page;
-        const html = first === "cache" ? [viaCache(), viaRequire()] : [viaRequire(), viaCache()];
-        console.log(JSON.stringify({ html, css: require("./style.css") === style }));
-      `,
-    };
-    using dir = tempDir("bun-test-require-data", files);
-    const index = path.join(String(dir), "index.mjs");
-    const results = [await bunRun([index, "cache"]), await bunRun([index, "require"])];
-    expect(results).toEqual(
-      [0, 1].map(() => ({
-        stdout: JSON.stringify({ html: [true, true], css: true }),
-        stderr: "",
-        exitCode: 0,
-        signalCode: null,
-      })),
-    );
   });
 });

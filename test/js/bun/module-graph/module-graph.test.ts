@@ -2406,23 +2406,34 @@ describe("Bun.ModuleGraph — require(): ES modules and CommonJS modules per gra
       delete (globalThis as any).__cjsEvals;
     }
   });
-  test("a data file's value is in the require cache of the graph that imports it: require() in the graph returns it, and delete makes that graph read the file again", async () => {
+  test("a data file has one value in each graph: import and require() of it agree in either order, and nothing is the host's or another graph's", async () => {
     const d = fixture({
       "d.json": `{"n":1}`,
+      "late.toml": `n = 1\n`,
       "entry.mjs": `import json from "./d.json"; export { json };
         export const viaRequire = () => import.meta.require("./d.json");
-        export const drop = () => delete require.cache[require.resolve("./d.json")];`,
+        export const drop = () => delete require.cache[require.resolve("./d.json")];
+        export const requireThenImport = async () => { const required = require("./late.toml"); return [required, (await import("./late.toml")).default]; };`,
     });
     const a = await new ModuleGraphClass().import(join(d, "entry.mjs"));
     const b = await new ModuleGraphClass().import(join(d, "entry.mjs"));
     a.json.written = "by A";
+    const [aRequired, aImported] = await a.requireThenImport();
+    const [bRequired, bImported] = await b.requireThenImport();
+    const hostRequire = createRequire(join(d, "entry.mjs"));
     expect({
-      // Nothing of a graph's is in the host's cache.
-      inHostCache: join(d, "d.json") in createRequire(join(d, "entry.mjs")).cache,
-      a: [a.viaRequire() === a.json, a.viaRequire().written],
-      b: [b.viaRequire() === b.json, b.viaRequire().written],
-    }).toEqual({ inHostCache: false, a: [true, "by A"], b: [true, undefined] });
+      inHostCache: [join(d, "d.json") in hostRequire.cache, join(d, "late.toml") in hostRequire.cache],
+      a: [a.viaRequire() === a.json, a.viaRequire().written, aImported === aRequired],
+      b: [b.viaRequire() === b.json, b.viaRequire().written, bImported === bRequired],
+      shared: [aRequired === bRequired, hostRequire("./late.toml") === aRequired],
+    }).toEqual({
+      inHostCache: [false, false],
+      a: [true, "by A", true],
+      b: [true, undefined, true],
+      shared: [false, false],
+    });
 
+    // delete makes that graph, and only that graph, read the file again.
     expect(a.drop()).toBe(true);
     const reread = a.viaRequire();
     expect({ reread, isOld: reread === a.json, b: b.viaRequire() === b.json }).toEqual({

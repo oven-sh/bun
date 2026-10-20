@@ -391,18 +391,18 @@ test("a factory that require()s the module it is mocking also patches the requir
   expect(require(path).extra).toBe("extra");
 });
 
-test("mocking a data file that was imported: require() returns what the factory returned", async () => {
+test("mocking a data file that was imported: require() asks the mock, as it does when nothing required the file", async () => {
   using dir = tempDir("mock-module-data-file", {
     "config.json": `{"v":1,"w":5}`,
   });
   const path = join(String(dir), "config.json");
   const ns = await import(path);
-  // Its value is in require.cache from the import on, as a CommonJS file's module is.
+  // The import put its value in require.cache.
   expect(require(path)).toBe(ns.default);
 
-  mock.module(path, () => ({ default: { v: 2 } }));
+  mock.module(path, () => ({ __esModule: true, default: { v: 2 } }));
   expect(ns.default).toEqual({ v: 2 });
-  expect(require(path)).toEqual({ default: { v: 2 } });
+  expect(require(path)).toEqual({ v: 2 });
 });
 
 test.concurrent(

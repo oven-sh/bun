@@ -33,7 +33,6 @@
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSMapInlines.h>
-#include <JavaScriptCore/SyntheticModuleRecord.h>
 
 #include "../modules/ObjectModule.h"
 #include "JSCommonJSModule.h"
@@ -51,7 +50,6 @@ using namespace Zig;
 using namespace WebCore;
 
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier);
-extern "C" BunLoaderType Bun__loaderForPath(void* bunVM, const BunString* specifier);
 
 static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
@@ -644,69 +642,6 @@ void evaluateCommonJSCustomExtension(
     RETURN_IF_EXCEPTION(scope, );
 }
 
-RequiredModuleRecord requiredModuleRecord(Zig::GlobalObject* globalObject, JSC::JSModuleLoader* loader, const JSC::Identifier& key, JSC::ModuleRegistryEntry* entry)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    using Kind = RequiredModuleRecord::Kind;
-    using Type = JSC::ScriptFetchParameters::Type;
-    const auto isSynthetic = [](JSC::ModuleRegistryEntry* entry) {
-        auto* record = entry->record();
-        return record && record->inherits<JSC::SyntheticModuleRecord>();
-    };
-
-    // An ES module imported with no type attribute: what nearly every require() of a registered key finds.
-    if (entry->moduleType() == Type::JavaScript && !isSynthetic(entry))
-        return {};
-
-    // The record an import under the path's own loader makes has the JavaScript type (no type attribute), or
-    // for JSON the JSON type (`with { type: "json" }`).
-    BunString specifier = Bun::toString(key.string());
-    switch (Bun__loaderForPath(globalObject->bunVM(), &specifier)) {
-    case BunLoaderTypeJSON:
-    case BunLoaderTypeJSONC:
-        if (entry->moduleType() != Type::JavaScript)
-            entry = loader->getRegisteredMayBeNull(key, Type::JSON);
-        break;
-    case BunLoaderTypeTOML:
-    case BunLoaderTypeYAML:
-    case BunLoaderTypeJSON5:
-    case BunLoaderTypeXML:
-    case BunLoaderTypeCSS:
-    case BunLoaderTypeHTML:
-        if (entry->moduleType() != Type::JavaScript)
-            entry = nullptr;
-        break;
-    default:
-        return {};
-    }
-    if (!entry)
-        return { Kind::None };
-    if (entry->status() != JSC::ModuleRegistryEntry::Status::Fetched || !isSynthetic(entry))
-        return {};
-
-    auto* record = entry->record();
-    if (!record->moduleEnvironmentMayBeNull()) {
-        // Fetched by an import whose graph has not linked yet. A value record has no dependencies to wait for.
-        if (entry->moduleType() != Type::JavaScript)
-            return {};
-        JSC::JSPromise* promise = loader->loadModuleSync(globalObject, key, nullptr, nullptr);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (promise->status() != JSC::JSPromise::Status::Fulfilled) {
-            promise->markAsHandled();
-            return {};
-        }
-    }
-
-    auto* moduleNamespace = record->getModuleNamespace(globalObject, false);
-    RETURN_IF_EXCEPTION(scope, {});
-    JSValue value = moduleNamespace->getIfPropertyExists(globalObject, vm.propertyNames->defaultKeyword);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (!value)
-        return {};
-    return { Kind::Value, value };
-}
-
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* target,
@@ -842,21 +777,13 @@ JSValue fetchCommonJSModule(
         }
     }
 
-    // Already loaded as an ES module: it is not transpiled twice.
-    auto moduleKey = JSC::Identifier::fromString(vm, specifierWtfString);
-    if (auto* entry = loader->registryEntry(moduleKey); entry && entry->status() >= JSC::ModuleRegistryEntry::Status::Fetched) {
-        auto required = requiredModuleRecord(globalObject, loader, moduleKey, entry);
-        RETURN_IF_EXCEPTION(scope, {});
-        switch (required.kind) {
-        case RequiredModuleRecord::Kind::Namespace:
-            RELEASE_AND_RETURN(scope, jsNumber(-1));
-        case RequiredModuleRecord::Kind::Value:
-            target->setExportsObject(required.value);
-            target->hasEvaluated = true;
-            RELEASE_AND_RETURN(scope, target);
-        case RequiredModuleRecord::Kind::None:
-            break;
-        }
+    bool hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice = [&]() -> bool {
+        auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, specifierWtfString));
+        return entry && entry->status() >= JSC::ModuleRegistryEntry::Status::Fetched;
+    }();
+
+    if (hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice) {
+        RELEASE_AND_RETURN(scope, jsNumber(-1));
     }
 
     if (Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute)) {
@@ -936,6 +863,8 @@ JSValue fetchCommonJSModuleNonBuiltin(
 
         target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
         target->hasEvaluated = true;
+        if (res->result.value.is_path_loader)
+            target->dataFile = JSCommonJSModule::DataFile::Required;
         RELEASE_AND_RETURN(scope, target);
 
     }
@@ -949,6 +878,8 @@ JSValue fetchCommonJSModuleNonBuiltin(
 
         target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
         target->hasEvaluated = true;
+        if (res->result.value.tag == SyntheticModuleType::ExportsObject && res->result.value.is_path_loader)
+            target->dataFile = JSCommonJSModule::DataFile::Required;
         RELEASE_AND_RETURN(scope, target);
     } else if (res->result.value.tag == SyntheticModuleType::CommonJSCustomExtension) {
         if constexpr (isExtension) {
@@ -958,8 +889,6 @@ JSValue fetchCommonJSModuleNonBuiltin(
         }
         evaluateCommonJSCustomExtension(globalObject, target, specifierWtfString, specifierValue, JSC::JSValue::decode(res->result.value.cjsCustomExtension));
         RETURN_IF_EXCEPTION(scope, {});
-        // The handler has filled the module: it is loaded, as in Node.js.
-        target->hasEvaluated = true;
         RELEASE_AND_RETURN(scope, target);
     }
 
@@ -1211,7 +1140,7 @@ static JSValue fetchESMSourceCode(
             return pendingCtx;
         }
     } else {
-        Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, false, BunLoaderTypeNone, graph ? JSValue::encode(graph->loader()) : JSC::EncodedJSValue {});
+        Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, false, BunLoaderTypeNone);
     }
 
     if (res->success && res->result.value.isCommonJSModule) {
@@ -1238,11 +1167,46 @@ static JSValue fetchESMSourceCode(
         RELEASE_AND_RETURN(scope, reject(exception));
     }
 
-    // A data file (JSON, TOML, YAML, ...). Under the loader its path selects it has one value per loader, the
-    // one require() of it makes: the require cache of the loader that fetches holds it.
-    const auto dataModule = [&](JSC::JSValue value) -> JSValue {
+    // The JSONForObjectLoader tag is source code returned from Bun that needs
+    // to go through the JSON parser in JSC.
+    //
+    // We don't use JSON.parse directly in JS because we want the top-level keys of the JSON
+    // object to be accessible as named imports.
+    //
+    // We don't use Bun's JSON parser because JSON.parse is faster and
+    // handles stack overflow better.
+    //
+    // When parsing tsconfig.*.json or jsconfig.*.json, we go through Bun's JSON
+    // parser instead to support comments and trailing commas.
+    if (res->result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
+        WTF::String jsonSource = res->result.value.source_code.toWTFString(BunString::NonNull);
+        JSC::JSValue value = JSC::JSONParseWithException(globalObject, jsonSource);
+        if (!scope.exception() && res->result.value.is_path_loader)
+            value = Bun::requireCacheDataFileExports(globalObject, graph, specifierJS, value);
+        if (scope.exception()) [[unlikely]] {
+            auto* exception = scope.exception();
+            (void)scope.tryClearException();
+            RELEASE_AND_RETURN(scope, reject(exception));
+        }
+
+        // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
+        auto function = generateJSValueModuleSourceCode(
+            globalObject,
+            value);
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(WTF::move(function),
+                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
+        JSC::ensureStillAliveHere(value);
+        RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
+    }
+    // TOML and JSONC may go through here
+    else if (res->result.value.tag == SyntheticModuleType::ExportsObject) {
+        JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
+        if (!value) {
+            RELEASE_AND_RETURN(scope, reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
+        }
         if (res->result.value.is_path_loader) {
-            value = Bun::requireCacheDataModuleExports(globalObject, graph, specifierJS, value);
+            value = Bun::requireCacheDataFileExports(globalObject, graph, specifierJS, value);
             if (scope.exception()) [[unlikely]] {
                 auto* exception = scope.exception();
                 (void)scope.tryClearException();
@@ -1259,38 +1223,6 @@ static JSValue fetchESMSourceCode(
                 JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
         JSC::ensureStillAliveHere(value);
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
-    };
-
-    // The JSONForObjectLoader tag is source code returned from Bun that needs
-    // to go through the JSON parser in JSC.
-    //
-    // We don't use JSON.parse directly in JS because we want the top-level keys of the JSON
-    // object to be accessible as named imports.
-    //
-    // We don't use Bun's JSON parser because JSON.parse is faster and
-    // handles stack overflow better.
-    //
-    // When parsing tsconfig.*.json or jsconfig.*.json, we go through Bun's JSON
-    // parser instead to support comments and trailing commas.
-    if (res->result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
-        WTF::String jsonSource = res->result.value.source_code.toWTFString(BunString::NonNull);
-        JSC::JSValue value = JSC::JSONParseWithException(globalObject, jsonSource);
-        if (scope.exception()) [[unlikely]] {
-            auto* exception = scope.exception();
-            (void)scope.tryClearException();
-            RELEASE_AND_RETURN(scope, reject(exception));
-        }
-
-        RELEASE_AND_RETURN(scope, dataModule(value));
-    }
-    // TOML and JSONC may go through here
-    else if (res->result.value.tag == SyntheticModuleType::ExportsObject) {
-        JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
-        if (!value) {
-            RELEASE_AND_RETURN(scope, reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
-        }
-
-        RELEASE_AND_RETURN(scope, dataModule(value));
     } else if (res->result.value.tag == SyntheticModuleType::ExportDefaultObject) {
         JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
         if (!value) {

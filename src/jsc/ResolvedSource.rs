@@ -39,8 +39,8 @@ pub struct ResolvedSource {
     /// `JSC::SourceProvenance::Static`: `source_code` comes from where the program is stored or from Bun itself, not from
     /// a JavaScript value. `--disallow-code-generation-from-strings=strict` runs nothing else.
     pub is_static: bool,
-    /// The loader that made this is the one the path alone selects: no `with { type }` and no `?raw` chose another.
-    /// A data file loaded that way has the value `require()` of the same key makes.
+    /// The loader that made this is the one the path alone selects: no type attribute, `?raw` or
+    /// `require.extensions` entry chose another. `import` and `require()` share the value of a data file loaded so.
     pub is_path_loader: bool,
 
     pub bytecode_cache: Bytecode,

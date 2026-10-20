@@ -16,8 +16,6 @@ class GlobalObject;
 
 namespace JSC {
 class JSPromise;
-class JSModuleLoader;
-class ModuleRegistryEntry;
 }
 
 namespace Bun {
@@ -122,24 +120,6 @@ JSValue fetchCommonJSModuleNonBuiltin(
     String specifierWtfString,
     BunLoaderType forceLoaderType,
     JSC::ThrowScope& scope);
-
-// What require() and require.cache take from the ES module records a loader has for a key, when the require
-// cache has no entry for it. `entry`: the loader's registryEntry(key), fetched.
-struct RequiredModuleRecord {
-    enum class Kind : uint8_t {
-        /// An ES module: its namespace.
-        Namespace,
-        /// A data, CSS or HTML file that an import under the path's own loader loaded: `value`, its default
-        /// export, which is what require() of the file makes when nothing has imported it.
-        Value,
-        /// A data, CSS or HTML file that only imports with another `type` attribute loaded: nothing.
-        /// require() loads the file.
-        None,
-    };
-    Kind kind { Kind::Namespace };
-    JSValue value {};
-};
-RequiredModuleRecord requiredModuleRecord(Zig::GlobalObject*, JSC::JSModuleLoader*, const JSC::Identifier& key, JSC::ModuleRegistryEntry* entry);
 
 JSValue resolveAndFetchBuiltinModule(
     Zig::GlobalObject* globalObject,

@@ -138,7 +138,7 @@ typedef struct ResolvedSource {
     bool is_prelinked_module;
     // JSC::SourceProvenance::Static: source_code comes from where the program is stored or from Bun itself, not from a JavaScript value.
     bool is_static;
-    // The loader that made this is the one the path alone selects: no `with { type }` and no `?raw` chose another.
+    // The loader that made this is the one the path alone selects: no type attribute, `?raw` or require.extensions entry chose another.
     bool is_path_loader;
     // -- Bytecode cache fields --
     // Owned (`ResolvedSource__freeBytecode`) iff `bytecode_cache_owned`; otherwise
@@ -308,9 +308,7 @@ inline constexpr BunLoaderType BunLoaderTypeJSONC = 8;
 inline constexpr BunLoaderType BunLoaderTypeTOML = 9;
 inline constexpr BunLoaderType BunLoaderTypeWASM = 10;
 inline constexpr BunLoaderType BunLoaderTypeNAPI = 11;
-inline constexpr BunLoaderType BunLoaderTypeHTML = 18;
 inline constexpr BunLoaderType BunLoaderTypeYAML = 19;
-inline constexpr BunLoaderType BunLoaderTypeJSON5 = 20;
 inline constexpr BunLoaderType BunLoaderTypeMD = 21;
 inline constexpr BunLoaderType BunLoaderTypeXML = 22;
 

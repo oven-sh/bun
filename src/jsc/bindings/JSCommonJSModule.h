@@ -81,6 +81,15 @@ public:
     JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
 
     bool ignoreESModuleAnnotation { false };
+    // `exports` is the value of a data file (JSON, TOML, YAML, ...) under the loader its path selects.
+    // An import of the file exports that value too (requireCacheDataFileExports).
+    enum class DataFile : uint8_t {
+        No,
+        Required,
+        // An import put the module in the require cache, not require().
+        Imported,
+    };
+    DataFile dataFile { DataFile::No };
     JSC::SourceCode sourceCode = JSC::SourceCode();
 
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
@@ -189,18 +198,10 @@ inline std::optional<JSC::SourceCode> createCommonJSModule(
     return createCommonJSModule(globalObject, graph, specifierValue, source, false);
 }
 
-// A data file (JSON, TOML, YAML, ...) has one value per loader, as a JSON file has in Node.js: the entry for
-// its key in the require cache of the loader that imports it (`graph`'s, or the global object's) holds the
-// value, and the ES module record exports that same value.
-//
-// Returns the exports of the entry for `key` once it is loaded: a module, or a `{ exports, loaded: true }`
-// object. Otherwise returns `value`, and if the key is free puts `value` in such an object. An empty `value`
-// only looks.
-JSC::JSValue requireCacheDataModuleExports(Zig::GlobalObject*, JSModuleGraph* graph, JSC::JSString* key, JSC::JSValue value);
-
-// `entry` of a require cache if it is such an object: not a module, and `loaded` is set. It is the value of a
-// data file, or what user code put there; Node.js takes the exports of either.
-JSC::JSObject* loadedRequireCacheObject(JSC::JSGlobalObject*, JSC::JSValue entry);
+// A data file has one value in a loader, as a JSON file has in Node.js (https://nodejs.org/api/esm.html#json-modules).
+// Returns what an import that parsed `value` exports: the exports of the file's module in the require cache of
+// `graph` (null: the global object's), which this makes if the key is free, or `value` if the key is taken.
+JSC::JSValue requireCacheDataFileExports(Zig::GlobalObject*, JSModuleGraph* graph, JSC::JSString* key, JSC::JSValue value);
 
 class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {
 public:

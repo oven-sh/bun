@@ -1599,24 +1599,18 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
 
 static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph*);
 
-// The process's entry point is module ".": the CommonJS module the global object's loader imports while its
-// require cache is empty. The `{ exports, loaded }` entries of imported data files do not count: whether the
-// cache holds no module.
-static bool isEntryPointModule(Zig::GlobalObject* globalObject, JSMap* requireMap)
+// Whether nothing is in the require cache but what imports of data files put there.
+static bool isRequireCacheEmpty(JSC::VM& vm, JSMap* requireMap)
 {
-    size_t size = requireMap->size();
-    if (!size)
+    if (!requireMap->size())
         return true;
-    if (size > globalObject->requireCacheDataModuleEntries)
-        return false;
-    // Not more entries than imports of data files put there. Some of those may be gone, so look.
-    auto& vm = JSC::getVM(globalObject);
     JSMap::Storage* storage = &requireMap->storageRef();
     for (JSMap::Helper::Entry entry = 0;; ++entry) {
         auto next = JSMap::Helper::transitAndNext(vm, *storage, entry);
         if (!next.storage)
             return true;
-        if (next.value.inherits<JSCommonJSModule>())
+        auto* module = dynamicDowncast<JSCommonJSModule>(next.value);
+        if (!module || module->dataFile != JSCommonJSModule::DataFile::Imported)
             return false;
         storage = next.storage;
         entry = next.entry;
@@ -1656,7 +1650,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             dirname = jsEmptyString(vm);
         }
         // The process's entry point is module "."; a graph has no such module.
-        if (!graph && isEntryPointModule(globalObject, requireMap)) {
+        if (!graph && isRequireCacheEmpty(vm, requireMap)) {
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));
         }
 
@@ -1788,7 +1782,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             dirname = jsEmptyString(vm);
         }
         // The process's entry point is module "."; a graph has no such module.
-        if (!graph && isEntryPointModule(globalObject, requireMap)) {
+        if (!graph && isRequireCacheEmpty(vm, requireMap)) {
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));
         }
 
@@ -1810,19 +1804,30 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
 }
 
-JSObject* loadedRequireCacheObject(JSGlobalObject* globalObject, JSValue entry)
+// `import { name }` links against the keys of the value. CommonJS code can have deleted one that the file has.
+static bool hasEveryKeyOf(JSGlobalObject* globalObject, JSValue exports, JSValue file)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* object = entry.getObject();
-    if (!object || object->inherits<JSCommonJSModule>())
-        return nullptr;
-    JSValue loaded = object->get(globalObject, Identifier::fromString(vm, "loaded"_s));
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    return loaded.toBoolean(globalObject) ? object : nullptr;
+    JSObject* fileObject = file.getObject();
+    if (!fileObject || isJSArray(fileObject))
+        return true;
+    JSObject* object = exports.getObject();
+    if (!object)
+        return false;
+    JSC::PropertyNameArrayBuilder names(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+    fileObject->methodTable()->getOwnPropertyNames(fileObject, globalObject, names, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, false);
+    for (auto& name : names) {
+        bool has = object->hasProperty(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!has)
+            return false;
+    }
+    return true;
 }
 
-JSValue requireCacheDataModuleExports(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSString* key, JSValue value)
+JSValue requireCacheDataFileExports(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSString* key, JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1831,30 +1836,24 @@ JSValue requireCacheDataModuleExports(Zig::GlobalObject* globalObject, JSModuleG
     RETURN_IF_EXCEPTION(scope, {});
 
     if (auto* module = dynamicDowncast<JSCommonJSModule>(entry)) {
-        // Not loaded yet: a require() of the file is still running.
-        if (!module->hasEvaluated)
+        if (module->dataFile == JSCommonJSModule::DataFile::No)
             return value;
         JSValue exports = module->exportsObject();
         RETURN_IF_EXCEPTION(scope, {});
-        // A namespace: require() or require.cache took an ES module record for this key, not the file's value.
-        return exports.inherits<JSC::JSModuleNamespaceObject>() ? value : exports;
+        bool shares = hasEveryKeyOf(globalObject, exports, value);
+        RETURN_IF_EXCEPTION(scope, {});
+        return shares ? exports : value;
     }
-
-    JSObject* loaded = loadedRequireCacheObject(globalObject, entry);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (loaded)
-        RELEASE_AND_RETURN(scope, loaded->get(globalObject, WebCore::clientData(vm)->builtinNames().exportsPublicName()));
-
-    if (!value || !entry.isUndefined())
+    // What user code put in require.cache stays there.
+    if (!entry.isUndefined())
         return value;
 
-    JSObject* owner = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
-    owner->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
-    owner->putDirect(vm, Identifier::fromString(vm, "loaded"_s), jsBoolean(true), 0);
-    requireMap->set(globalObject, key, owner);
+    auto* module = JSCommonJSModule::create(globalObject, key, value, true, {});
     RETURN_IF_EXCEPTION(scope, {});
-    if (!graph)
-        globalObject->requireCacheDataModuleEntries++;
+    module->setModuleGraph(vm, graph);
+    module->dataFile = JSCommonJSModule::DataFile::Imported;
+    requireMap->set(globalObject, key, module);
+    RETURN_IF_EXCEPTION(scope, {});
     return value;
 }
 
@@ -1905,21 +1904,3 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
 }
 
 } // namespace Bun
-
-// For Bun__transpileFile, before it reads a data file: whether the file already has a value in the require cache
-// of the loader that is fetching (`moduleLoader`: a Bun.ModuleGraph's, or empty for the global object's).
-extern "C" [[ZIG_EXPORT(check_slow)]] bool Bun__requireCacheDataModuleExports(Zig::GlobalObject* globalObject, JSC::EncodedJSValue moduleLoader, const BunString* specifier, JSC::EncodedJSValue* exports)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSValue loader = JSC::JSValue::decode(moduleLoader);
-    Bun::JSModuleGraph* graph = loader ? Bun::moduleGraphOfLoader(globalObject, uncheckedDowncast<JSC::JSModuleLoader>(loader)) : nullptr;
-    JSC::JSString* key = Bun::toJS(globalObject, *specifier);
-    RETURN_IF_EXCEPTION(scope, false);
-    JSC::JSValue value = Bun::requireCacheDataModuleExports(globalObject, graph, key, {});
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!value)
-        return false;
-    *exports = JSC::JSValue::encode(value);
-    return true;
-}

@@ -5121,8 +5121,12 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(b"Keep-Alive") => {
+                    // The shortest of several field lines is the one the
+                    // origin enforces.
                     if let Some(seconds) = parse_keepalive_timeout(header.value()) {
-                        self.state.keepalive_timeout_seconds = Some(seconds);
+                        let prev = self.state.keepalive_timeout_seconds;
+                        self.state.keepalive_timeout_seconds =
+                            Some(prev.map_or(seconds, |p| p.min(seconds)));
                     }
                 }
                 h if h == hash_header_const(b"Last-Modified") => {

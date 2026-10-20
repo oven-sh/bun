@@ -266,7 +266,20 @@ fn split_boxes(pixels: &[[u8; 4]], want: usize) -> Result<Vec<u8>, AllocError> {
     }
     let mut boxes: Vec<ColorBox> = Vec::with_capacity(want);
     boxes.push(ColorBox::new(0, pixels.len(), &all));
+    // The box with the fully transparent pixels: box 0, until the last split gives them their own.
+    let mut owner: usize = 0;
     while boxes.len() < want {
+        if want >= CLEAR_ENTRY_FROM && boxes.len() + 1 == want && clear != 0 {
+            let b = boxes[0];
+            // When they are over half of box 0 its entry is theirs already.
+            if clear * 2 <= b.moments.n {
+                let alone = Moments::of(CLEAR, clear);
+                boxes[0] = ColorBox::new(b.lo, b.hi, &b.moments.minus(&alone));
+                owner = boxes.len();
+                boxes.push(ColorBox::new(b.hi, b.hi, &alone));
+                break;
+            }
+        }
         // The box with the most squared error: its index, `error_times_n` and `n`.
         let mut pick: Option<(usize, u128, u64)> = None;
         for (i, b) in boxes.iter().enumerate() {
@@ -326,12 +339,17 @@ fn split_boxes(pixels: &[[u8; 4]], want: usize) -> Result<Vec<u8>, AllocError> {
     }
     let mut palette: Vec<u8> = Vec::with_capacity(boxes.len() * 4);
     for (i, b) in boxes.iter().enumerate() {
-        let clear_here = if i == 0 { clear } else { 0 };
+        let clear_here = if i == owner { clear } else { 0 };
         let entry = majority(&pixels[b.lo..b.hi], clear_here).unwrap_or_else(|| b.moments.mean());
         palette.extend_from_slice(&entry);
     }
+    // The fully transparent entry goes first, where box 0 has it: index 0 packs best in the file.
+    palette[..(owner + 1) * 4].rotate_right(4);
     Ok(palette)
 }
+
+/// From this palette size the fully transparent pixels have their own entry. A smaller palette cannot spare one.
+const CLEAR_ENTRY_FROM: usize = 16;
 
 /// The colour on over half of a box (`pixels` and `clear` fully transparent ones): a flat background stays exact.
 fn majority(pixels: &[[u8; 4]], clear: u64) -> Option<[u8; 4]> {

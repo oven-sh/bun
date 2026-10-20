@@ -608,6 +608,49 @@ describe("png({palette:true}) keeps the colours that fit and splits the rest by 
     });
   });
 
+  // From 16 colours the last split takes the fully transparent pixels out of
+  // their box, and their entry is the first one in the file.
+  describe("fully transparent pixels from 16 colours", () => {
+    // A black shadow: alpha 0 to 31 down, two rows of 64 pixels per level. The
+    // fully transparent pixels share a box with the faintest ones.
+    const shadow = makePng(64, 64, (_x, y) => [0, 0, 0, y >> 1]);
+    // The first entry of the file, and the alpha of rows 0 and 1 (alpha 0) and
+    // of row 2 (alpha 1).
+    const firstRows = async (colors: number) => {
+      const out = await new Bun.Image(shadow).png({ palette: true, colors }).bytes();
+      const back = (await decode(out)).data;
+      return { entry: pngPlte(out).entries[0], alpha: [0, 1, 2].map(y => rgbaAt(back, 64, 63, y)[3]) };
+    };
+
+    test("they have an entry, the first one of the file", async () => {
+      expect(await firstRows(16)).toEqual({ entry: [0, 0, 0, 0], alpha: [0, 0, 1] });
+      expect(await firstRows(24)).toEqual({ entry: [0, 0, 0, 0], alpha: [0, 0, 1] });
+    });
+
+    test("below 16 colours they share the entry of their box", async () => {
+      // One entry for alpha 0 and the faintest pixels: their mean.
+      expect(await firstRows(15)).toEqual({ entry: [0, 0, 0, 1], alpha: [1, 1, 1] });
+    });
+
+    test("one fully transparent pixel takes an entry too", async () => {
+      // 16 flat opaque bands of 4 rows, and pixel (0,0) fully transparent. At
+      // 16 colours the pixel keeps alpha 0 and the first two bands share an
+      // entry: the colour of the second, which has more than half of their
+      // box. The rule has no floor on how many pixels it is for.
+      const band = (y: number): Rgba => {
+        const v = 8 + 16 * (y >> 2);
+        return [v, 255 - v, (v * 3) % 256, 255];
+      };
+      const src = makePng(64, 64, (x, y) => (x === 0 && y === 0 ? [0, 0, 0, 0] : band(y)));
+      const out = await new Bun.Image(src).png({ palette: true, colors: 16 }).bytes();
+      const entries = pngPlte(out).entries;
+      expect(entries[0]).toEqual([0, 0, 0, 0]);
+      expect(new Set(entries.map(String)).size).toBe(16);
+      const back = (await decode(out)).data;
+      expect([0, 1].map(x => rgbaAt(back, 64, x, 0))).toEqual([[0, 0, 0, 0], band(4)]);
+    });
+  });
+
   test("the next box to split is the one with the most squared error, not the widest", async () => {
     // Three greys share almost every pixel. Four single pixels are
     // saturated colours: the widest box is always one that holds them.

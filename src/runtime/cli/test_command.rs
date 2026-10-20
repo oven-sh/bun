@@ -2218,8 +2218,8 @@ impl TestCommand {
                 .global()
                 .set_time_zone(&EncodedSlice::from_bytes(tz_name));
         }
+        vm.test_isolation_state.time_zone = Some(Box::from(tz_name));
         if vm.test_isolation_enabled {
-            vm.test_isolation_state.time_zone = Some(Box::from(tz_name));
             vm.test_isolation_state.proxy_env = Some(
                 bun_jsc::rare_data::ProxyEnvSnapshot::capture(&vm.env_loader().map),
             );

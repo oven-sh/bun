@@ -688,10 +688,15 @@ static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
     if (value.length() < 32 && WTF::setTimeZoneOverride(value))
         resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
 }
-// `bun test` defaults to UTC, so deleting TZ goes back to that.
+extern "C" void Bun__VM__restoreTestTimeZone(void* bunVM);
+
+// `bun test` goes back to the zone it started with: $TZ, or UTC if that isn't set.
 static void applyTZDeleted(JSGlobalObject* globalObject)
 {
-    applyTZFromString(globalObject, isBunTest ? String("Etc/UTC"_s) : String());
+    if (!isBunTest)
+        applyTZFromString(globalObject, String());
+    else if (shouldApplyTZSideEffect(globalObject))
+        Bun__VM__restoreTestTimeZone(bunVM(globalObject));
 }
 static void applyTLSRejectFromString(JSGlobalObject*, const String& value)
 {

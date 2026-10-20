@@ -1894,6 +1894,35 @@ function runTest({
   }
 }
 
+test.concurrent.each([
+  ["America/New_York", "America/New_York"],
+  [undefined, "UTC"],
+])("delete process.env.TZ goes back to the time zone the run started with: TZ=%s", async (TZ, expected) => {
+  using dir = tempDir("bun-test-delete-tz", {
+    "tz.test.js": `
+      test("time zones", () => {
+        const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const zones = [zone()];
+        process.env.TZ = "Asia/Tokyo";
+        zones.push(zone());
+        delete process.env.TZ;
+        zones.push(zone());
+        console.log(JSON.stringify(zones));
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test"],
+    env: { ...bunEnv, TZ },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toContain(JSON.stringify([expected, "Asia/Tokyo", expected]));
+  expect(exitCode).toBe(0);
+});
+
 // A test's console in Jest and Vitest is a `new Console()`, which has none. React's development build logs each render
 // where it finds one, and reads into the props for that: a getter that throws there breaks every later render.
 describe.concurrent("--react-compiler", () => {

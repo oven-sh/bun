@@ -19334,6 +19334,28 @@ export function f23(v: null) { return { a: [...v] }; }
       expect(exitCode).toBe(1);
     });
 
+    // a.ts is checked first and gets to `this.#x` through `get()`. `tsc --singleThreaded` reports that place, 4:34. `tsc`
+    // reports the first place that the check of b.ts itself gets to.
+    test("reports TS2354 where the file's own check first needs the helper, not where an earlier file's check gets to", async () => {
+      using dir = project({
+        "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "es2015", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "importHelpers": true}, "files": ["b.ts", "a.ts"]}`,
+        "a.ts": `import { get } from "./b";
+export const x = get();
+`,
+        "b.ts": `import "./a";
+export async function next() {}
+export function get() { return new C().get(); }
+class C { #x = 1; get() { return this.#x; } }
+`,
+      });
+      for (const { stdout, exitCode } of await Promise.all([1, 2, 8].map(n => check(dir, ["--threads", String(n)])))) {
+        expect(stdout).toBe(
+          "b.ts(2,23): error TS2354: This syntax requires an imported helper but module 'tslib' cannot be found.",
+        );
+        expect(exitCode).toBe(1);
+      }
+    });
+
     test("reports TS2354 where an emit helper is needed in a computed name, an enum initializer or an interface", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "es2015", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "importHelpers": true, "experimentalDecorators": true, "skipLibCheck": true}}`,

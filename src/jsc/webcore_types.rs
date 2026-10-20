@@ -354,13 +354,28 @@ impl Blob {
     /// borrow path was removed because it dropped user-supplied parameters
     /// like multipart boundaries on a static-mime miss).
     pub fn dupe_with_content_type(&self, _include_content_type: bool) -> Blob {
+        self.dupe_with(
+            self.content_type.get().clone(),
+            self.content_type_was_set.get(),
+        )
+    }
+
+    /// New view onto the same store, +1 ref, with no type. A part gives
+    /// `new Blob(parts)` its bytes, and `options.type` gives the type.
+    #[inline]
+    pub fn dupe_without_type(&self) -> Blob {
+        self.dupe_with(BlobContentType::default(), false)
+    }
+
+    #[inline]
+    fn dupe_with(&self, content_type: BlobContentType, content_type_was_set: bool) -> Blob {
         Blob {
             reported_estimated_size: Cell::new(self.reported_estimated_size.get()),
             size: Cell::new(self.size.get()),
             offset: Cell::new(self.offset.get()),
             store: JsCell::new(self.store.get().clone()),
-            content_type: JsCell::new(self.content_type.get().clone()),
-            content_type_was_set: Cell::new(self.content_type_was_set.get()),
+            content_type: JsCell::new(content_type),
+            content_type_was_set: Cell::new(content_type_was_set),
             charset: Cell::new(self.charset.get()),
             is_jsdom_file: Cell::new(self.is_jsdom_file.get()),
             ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
@@ -400,6 +415,20 @@ impl Blob {
             store::Data::File(file) => Some(&file.mime_type.value),
             store::Data::S3(s3) => Some(&s3.mime_type.value),
             store::Data::Bytes(_) => None,
+        }
+    }
+
+    /// True when the bytes are a file: a `Bun.file()` path or descriptor, an
+    /// S3 key, or a file embedded by `bun build --compile`. The type and the
+    /// name of such a Blob come from that file, not from its constructor.
+    #[inline]
+    pub fn store_is_a_file(&self) -> bool {
+        match self.store.get().as_deref().map(|store| &store.data) {
+            Some(store::Data::File(_) | store::Data::S3(_)) => true,
+            Some(store::Data::Bytes(bytes)) => {
+                bun_options_types::standalone_path::is_bun_standalone_file_path(&bytes.stored_name)
+            }
+            None => false,
         }
     }
 
@@ -616,7 +645,8 @@ pub mod store {
         pub len: SizeType,
         pub cap: SizeType,
         pub allocator: bun_alloc::StdAllocator,
-        /// Used by standalone module graph and the `File` constructor.
+        /// The path of a file that `bun build --compile` embedded. A structured
+        /// clone carries it too.
         /// Heap-owned (or empty); freed by `Bytes`'s `Drop`.
         pub stored_name: Box<[u8]>,
     }

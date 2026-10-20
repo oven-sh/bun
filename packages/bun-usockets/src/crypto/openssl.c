@@ -27,6 +27,7 @@
 
 #ifdef LIBUS_USE_OPENSSL
 #include <openssl/bio.h>
+#include <openssl/bytestring.h>
 #include <openssl/dh.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
@@ -143,6 +144,7 @@ long us_ssl_ctx_live_count(void) {
  *   - us_sni_ex_idx (SSL_CTX): per-domain userdata (uWS HttpRouter*).
  *   - us_ssl_rare_ex_idx (SSL): us_ssl_rare_t.
  *   - us_ssl_wrapper_ex_idx (SSL): the owner of an SSL that no us_socket_t drives.
+ *   - us_ssl_alpn_offer_ex_idx (SSL): us_alpn_offer_t.
  *
  * SSL_CTX creation runs from both the JS thread (SecureContext, Bun.connect/
  * listen) and the HTTP-client thread (HTTPContext.initWithOpts). A racy `<0`
@@ -160,6 +162,8 @@ static int us_ctx_user_ca_ex_idx = -1;
 static int us_ssl_rare_ex_idx = -1;
 /* (SSL) The SSLWrapper (src/uws/lib.rs) that owns this SSL. Not set on the SSL of a us_socket_t. */
 static int us_ssl_wrapper_ex_idx = -1;
+/* (SSL) The ALPN protocols of the ClientHello, from us_select_cert_cb until us_ssl_alpn_offer_cert_cb. */
+static int us_ssl_alpn_offer_ex_idx = -1;
 /* BIO type of the loop's shared BIO: tells a us_socket_t's SSL from an SSLWrapper's. */
 static int us_ssl_bio_type = 0;
 /* (SSL_CTX) packed client-certificate policy of a Bun.serve per-serverName
@@ -216,6 +220,8 @@ struct us_ssl_rare_t {
   void (*session_sink_free)(void *sink);
   uint64_t reneg_window_start_ms;
   uint32_t reneg_count;
+  /* us_ssl_on_alpn_offer. */
+  unsigned char alpn_offer_wanted;
 };
 
 static void us_ctx_ex_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
@@ -238,6 +244,18 @@ static void us_ssl_rare_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
   if (rare->session_sink_free) rare->session_sink_free(rare->session_sink);
   if (rare->server_names) us_server_names_unref(rare->server_names);
   us_free(rare);
+}
+
+struct us_alpn_offer_t {
+  unsigned int length;
+  /* Entries of (u8 length, bytes). */
+  unsigned char protocols[];
+};
+
+static void us_ssl_alpn_offer_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                                   int index, long argl, void *argp) {
+  (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
+  us_free(ptr);
 }
 
 /* Upper bounds for parked payloads: a serialized SSL_SESSION (i2d) and a
@@ -379,6 +397,7 @@ static void us_ex_idx_init(void) {
   us_ctx_sni_policy_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_rare_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_rare_free);
   us_ssl_wrapper_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ssl_alpn_offer_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_alpn_offer_free);
   us_ssl_bio_type = BIO_get_new_index() | BIO_TYPE_SOURCE_SINK;
 }
 
@@ -417,6 +436,10 @@ static inline void us_reneg_policy(SSL *ssl, uint32_t *limit, uint32_t *window) 
 
 static inline struct us_ssl_rare_t *us_ssl_rare(const SSL *ssl) {
   return us_ssl_rare_ex_idx >= 0 ? SSL_get_ex_data(ssl, us_ssl_rare_ex_idx) : NULL;
+}
+
+static inline struct us_alpn_offer_t *us_ssl_alpn_offer(const SSL *ssl) {
+  return us_ssl_alpn_offer_ex_idx >= 0 ? SSL_get_ex_data(ssl, us_ssl_alpn_offer_ex_idx) : NULL;
 }
 
 static struct us_ssl_rare_t *us_ssl_rare_ensure(SSL *ssl) {
@@ -3185,7 +3208,22 @@ void us_ssl_ctx_set_sni_policy(SSL_CTX *ctx, int request_cert, int reject_unauth
   SSL_CTX_set_session_id_context(ctx, (const uint8_t *)&sid, sizeof(sid));
 }
 
-/* Every SNI context switch goes through here: SSL_set_SSL_CTX alone leaves
+/* BoringSSL's certificate callback runs once the version is negotiated and SNI is resolved, before
+ * BoringSSL picks the cipher, the certificate and the session. Its ALPN selection callback runs after
+ * the first two, and on TLS 1.2 after all three: too late for the owner to replace the SSL_CTX
+ * (node:tls setKeyCert()). */
+static int us_ssl_alpn_offer_cert_cb(SSL *ssl, void *arg) {
+  (void)arg;
+  struct us_alpn_offer_t *offer = us_ssl_alpn_offer(ssl);
+  if (!offer) return 1;
+  /* Taken first: the owner runs JS, which can close the connection. */
+  SSL_set_ex_data(ssl, us_ssl_alpn_offer_ex_idx, NULL);
+  us_dispatch_alpn_offer(ssl, offer->protocols, offer->length);
+  us_free(offer);
+  return 1;
+}
+
+/* Every context switch of a server-side SSL goes through here: SSL_set_SSL_CTX alone leaves
  * verify_mode as inherited from the default context at accept, so a
  * per-serverName entry's requestCert/rejectUnauthorized are added on top of
  * it (the connection's inherited requirement is kept). A context without a
@@ -3198,15 +3236,25 @@ void us_ssl_ctx_set_sni_policy(SSL_CTX *ctx, int request_cert, int reject_unauth
  * a session issued under other options is not resumed and the client is
  * authenticated again, against this context's CA. That refusal is deliberate
  * (RFC 6066 section 3; openssl/ssl.h: "partition session caches between SNI
- * hosts") and must not be relaxed for parity with another runtime. */
-static void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
+ * hosts") and must not be relaxed for parity with another runtime.
+ *
+ * Returns 0 and switches nothing once BoringSSL has begun to pick the cipher, the certificate and
+ * the session (ssl.h: SSL_set_SSL_CTX "may be used during the callbacks registered by
+ * SSL_CTX_set_select_certificate_cb, SSL_CTX_set_tlsext_servername_callback, and SSL_CTX_set_cert_cb").
+ * A later switch would verify the client against `ctx` and leave a session that resumes under the
+ * context it replaced. */
+static int us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
+  if (!SSL_in_init(ssl) || SSL_get_pending_cipher(ssl)) return 0;
   SSL_set_SSL_CTX(ssl, ctx);
-  if (us_ctx_sni_policy_ex_idx < 0) return;
+  /* The certificate callback lives in the state that SSL_set_SSL_CTX replaces. */
+  if (us_ssl_alpn_offer(ssl)) SSL_set_cert_cb(ssl, us_ssl_alpn_offer_cert_cb, NULL);
+  if (us_ctx_sni_policy_ex_idx < 0) return 1;
   uintptr_t policy = (uintptr_t)SSL_CTX_get_ex_data(ctx, us_ctx_sni_policy_ex_idx);
-  if (!(policy & US_SNI_POLICY_REQUEST_CERT)) return;
+  if (!(policy & US_SNI_POLICY_REQUEST_CERT)) return 1;
   int mode = SSL_get_verify_mode(ssl) | SSL_VERIFY_PEER;
   if (policy & US_SNI_POLICY_REJECT_UNAUTHORIZED) mode |= SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
   SSL_set_verify(ssl, mode, us_verify_callback);
+  return 1;
 }
 
 /* Whether the SNI-selected context of this connection demands closing on a
@@ -3258,15 +3306,14 @@ static size_t us_client_hello_servername(const SSL_CLIENT_HELLO *hello, char *ou
   return 0;
 }
 
-/* The async-capable certificate selector. Registered (instead of relying on
+/* The SNI stage of us_select_cert_cb.
+ * The async-capable certificate selector. Registered (instead of relying on
  * sni_cb alone) on listener contexts that have a dynamic JS resolver, so an
  * SNICallback that cannot answer synchronously suspends the handshake
  * (ssl_select_cert_retry -> SSL_ERROR_PENDING_CERTIFICATE) instead of falling
  * through to the default context. us_socket_sni_resolve() resumes it. */
-static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *hello) {
+static enum ssl_select_cert_result_t us_select_cert_sni(const SSL_CLIENT_HELLO *hello, struct us_socket_t *s) {
   SSL *ssl = hello->ssl;
-  struct us_socket_t *s = ssl ? us_ssl_socket(ssl) : NULL;
-  if (!s) return ssl_select_cert_success;
   struct us_ssl_rare_t *rare = us_ssl_rare(ssl);
   struct us_server_names_t *names = rare ? rare->server_names : NULL;
 
@@ -3362,6 +3409,45 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
     us_ssl_apply_selected_ctx(ssl, node->ctx);
   }
   return ssl_select_cert_success;
+}
+
+/* The ALPN stage of us_select_cert_cb: only here is the ClientHello at hand, so keep what it
+ * offers for the certificate callback. */
+static void us_select_cert_alpn(const SSL_CLIENT_HELLO *hello) {
+  SSL *ssl = hello->ssl;
+  struct us_ssl_rare_t *rare = us_ssl_rare(ssl);
+  if (!rare || !rare->alpn_offer_wanted) return;
+  const uint8_t *extension;
+  size_t extension_length;
+  if (!SSL_early_callback_ctx_extension_get(
+          hello, TLSEXT_TYPE_application_layer_protocol_negotiation, &extension, &extension_length)) {
+    return;
+  }
+  /* The checks of ssl_negotiate_alpn (vendor/boringssl/ssl/extensions.cc), which runs after the
+   * certificate callback and fails the handshake on any other list. Such a list is not dispatched. */
+  CBS contents, list, names, name;
+  CBS_init(&contents, extension, extension_length);
+  if (!CBS_get_u16_length_prefixed(&contents, &list) || CBS_len(&contents) != 0 || CBS_len(&list) == 0) return;
+  names = list;
+  while (CBS_len(&names) > 0) {
+    if (!CBS_get_u8_length_prefixed(&names, &name) || CBS_len(&name) == 0) return;
+  }
+  struct us_alpn_offer_t *offer = us_malloc(sizeof(*offer) + CBS_len(&list));
+  if (!offer) Bun__outOfMemory();
+  offer->length = (unsigned int)CBS_len(&list);
+  memcpy(offer->protocols, CBS_data(&list), CBS_len(&list));
+  us_free(us_ssl_alpn_offer(ssl));
+  if (!SSL_set_ex_data(ssl, us_ssl_alpn_offer_ex_idx, offer)) Bun__outOfMemory();
+  SSL_set_cert_cb(ssl, us_ssl_alpn_offer_cert_cb, NULL);
+}
+
+static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *hello) {
+  SSL *ssl = hello->ssl;
+  if (!ssl) return ssl_select_cert_success;
+  struct us_socket_t *s = us_ssl_socket(ssl);
+  enum ssl_select_cert_result_t result = s ? us_select_cert_sni(hello, s) : ssl_select_cert_success;
+  if (result == ssl_select_cert_success) us_select_cert_alpn(hello);
+  return result;
 }
 
 static int sni_cb(SSL *ssl, int *al, void *arg) {
@@ -3479,6 +3565,24 @@ void us_socket_on_server_name(struct us_socket_t *s) {
    * stay a no-op on any SSL carrying neither resolver. */
   SSL_CTX *ctx = SSL_get_SSL_CTX(ssl);
   if (ctx) SSL_CTX_set_select_certificate_cb(ctx, us_select_cert_cb);
+}
+
+/* For a server-side SSL, before its handshake is driven. Takes the SSL, not the socket: an
+ * SSLWrapper's has no us_socket_t. */
+void us_ssl_on_alpn_offer(SSL *ssl) {
+  us_ssl_rare_ensure(ssl)->alpn_offer_wanted = 1;
+  /* Permanent on a possibly shared SSL_CTX, like us_socket_on_server_name. */
+  SSL_CTX_set_select_certificate_cb(SSL_get_SSL_CTX(ssl), us_select_cert_cb);
+}
+
+/* node:tls setKeyCert() on a server: us_ssl_apply_selected_ctx for the one context switch that can
+ * come before the ClientHello. BoringSSL reads the select-certificate callback off the SSL_CTX that is
+ * current then, so `ctx` gets it too. It does nothing for a connection with no SNI resolver and no
+ * us_ssl_on_alpn_offer. */
+int us_ssl_set_server_ctx(SSL *ssl, SSL_CTX *ctx) {
+  if (!us_ssl_apply_selected_ctx(ssl, ctx)) return 0;
+  SSL_CTX_set_select_certificate_cb(ctx, us_select_cert_cb);
+  return 1;
 }
 
 void *us_socket_server_name_userdata(struct us_socket_t *s) {

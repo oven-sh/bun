@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import http2 from "node:http2";
 import net, { AddressInfo } from "node:net";
 import { join } from "node:path";
-import { Duplex } from "node:stream";
+import { Duplex, duplexPair } from "node:stream";
 import tls from "node:tls";
 
 function loadPEM(filename: string) {
@@ -750,6 +750,25 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("ALPN after SNI selected a Secure
       return listening(server, stack);
     };
   const addContext = (server: tls.Server) => server.addContext("alpn.sni.test", selected);
+  // A server-side TLSSocket over an accepted net.Socket. Its TLS engine starts on the tick after
+  // its constructor: `prepare` runs then, before the ClientHello arrives.
+  const wrapped =
+    (options: object, prepare?: (socket: tls.TLSSocket) => void): Start =>
+    (alpn, onSecure, stack) =>
+      listening(
+        net.createServer(raw => {
+          const socket = new tls.TLSSocket(raw, {
+            isServer: true,
+            secureContext: tls.createSecureContext(defaults),
+            ...options,
+            ...alpn,
+          });
+          socket.on("error", () => {});
+          socket.on("secure", () => onSecure(socket));
+          if (prepare) setImmediate(prepare, socket);
+        }),
+        stack,
+      );
   const paths: [string, Start][] = [
     ["a synchronous SNICallback", accepted({ SNICallback: sync })],
     ["an asynchronous SNICallback", accepted({ SNICallback: deferred })],
@@ -771,22 +790,30 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("ALPN after SNI selected a Secure
         );
       },
     ],
+    ["the SNICallback of a server-side TLSSocket", wrapped({ SNICallback: sync })],
+    // setKeyCert() replaces the SSL_CTX, and BoringSSL reads the callbacks of the rest of the
+    // handshake off the new one.
     [
-      "the SNICallback of a server-side TLSSocket",
-      (alpn, onSecure, stack) =>
-        listening(
-          net.createServer(raw => {
-            const socket = new tls.TLSSocket(raw, {
-              isServer: true,
-              secureContext: tls.createSecureContext(defaults),
-              SNICallback: sync,
-              ...alpn,
-            });
-            socket.on("error", () => {});
-            socket.on("secure", () => onSecure(socket));
-          }),
-          stack,
-        ),
+      "setKeyCert() in the SNICallback of a server-side TLSSocket",
+      wrapped({
+        SNICallback(this: tls.TLSSocket, _: string, cb: SNICb) {
+          this.setKeyCert(tls.createSecureContext(selected));
+          cb(null);
+        },
+      }),
+    ],
+    [
+      "setKeyCert() in an asynchronous SNICallback of a server-side TLSSocket",
+      wrapped({
+        SNICallback(this: tls.TLSSocket, _: string, cb: SNICb) {
+          this.setKeyCert(tls.createSecureContext(selected));
+          setImmediate(cb, null);
+        },
+      }),
+    ],
+    [
+      "setKeyCert() on a server-side TLSSocket before the handshake",
+      wrapped({}, socket => socket.setKeyCert(tls.createSecureContext(selected))),
     ],
   ];
 
@@ -1284,6 +1311,711 @@ describe("server certificate chain built from `ca`", () => {
       expect(presentedSerials).toContain(ca3Serial);
     } finally {
       socket.destroy();
+    }
+  });
+});
+
+// BoringSSL runs its ALPN selection callback after it picked the certificate,
+// and on TLS 1.2 after it picked the session too. ALPNCallback has to run
+// before both, or the context it selects with setKeyCert() serves neither its
+// certificate nor its own client-certificate verdict: a resumed handshake
+// skips client authentication and reports the verdict saved in the session.
+describe.each([
+  ["TLSv1.2", "TLSv1.2"],
+  ["TLSv1.3 by default", undefined],
+] as const)("ALPNCallback selecting a context (%s)", (_label, maxVersion) => {
+  const version = maxVersion ?? "TLSv1.3";
+  // ca1 issued agent1 and ca2 issued agent3. agent2 is self-signed.
+  const clients = {
+    agent1: { key: agent1Key, cert: agent1Cert },
+    agent3: { key: agent3Key, cert: agent3Cert },
+  };
+  const trustedBy = { agent1: "a", agent3: "b" } as const;
+  const servedFor = { a: "agent2", b: "agent3" } as const;
+
+  type Seen = {
+    version: string | null;
+    alpn: string | false;
+    authorized: boolean;
+    error: string | null;
+    peer: string | null;
+    resumed: boolean;
+  };
+
+  // The default context trusts ca1. ALPN protocol "b" selects one that trusts ca2.
+  function createAlpnServer(options: tls.TlsOptions = {}, calls: string[] = []) {
+    const contextB = tls.createSecureContext({ key: agent3Key, cert: agent3Cert, ca: [ca2] });
+    return tls.createServer({
+      key: agent2Key,
+      cert: agent2Cert,
+      ca: [ca1],
+      requestCert: true,
+      maxVersion,
+      ALPNCallback(this: tls.TLSSocket, { servername, protocols }: { servername: string; protocols: string[] }) {
+        calls.push(`alpn:${servername}:${protocols}:${this.getProtocol()}`);
+        if (protocols[0] === "b") this.setKeyCert(contextB);
+        return protocols[0];
+      },
+      ...options,
+    });
+  }
+
+  function report(socket: tls.TLSSocket) {
+    const seen: Seen = {
+      version: socket.getProtocol(),
+      alpn: socket.alpnProtocol as string | false,
+      authorized: socket.authorized,
+      error: (socket.authorizationError as unknown as string | undefined) ?? null,
+      peer: socket.getPeerCertificate()?.subject?.CN ?? null,
+      resumed: socket.isSessionReused(),
+    };
+    socket.on("error", () => {});
+    socket.end(JSON.stringify(seen));
+  }
+
+  // How a client reaches `server`. "listener" and "adopted" run the TLS engine
+  // in usockets, "duplex" in the SSLWrapper.
+  type Transport = Disposable & { open(options: tls.ConnectionOptions): tls.TLSSocket };
+  const transports = {
+    async listener(server: tls.Server): Promise<Transport> {
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as AddressInfo;
+      return { open: options => tls.connect({ host: "127.0.0.1", port, ...options }), [Symbol.dispose]() {} };
+    },
+    async adopted(server: tls.Server): Promise<Transport> {
+      const raw = net.createServer(socket => server.emit("connection", socket));
+      await once(raw.listen(0, "127.0.0.1"), "listening");
+      const { port } = raw.address() as AddressInfo;
+      return {
+        open: options => tls.connect({ host: "127.0.0.1", port, ...options }),
+        [Symbol.dispose]: () => void raw.close(),
+      };
+    },
+    async duplex(server: tls.Server): Promise<Transport> {
+      return {
+        open: options => {
+          const [clientSide, serverSide] = duplexPair();
+          server.emit("connection", serverSide);
+          return tls.connect({ socket: clientSide, ...options });
+        },
+        [Symbol.dispose]() {},
+      };
+    },
+  };
+
+  // Resolves to the certificate the server presented, to what the server
+  // reported, and to the session for a later connection.
+  function exchange(socket: tls.TLSSocket) {
+    const { promise, resolve, reject } = Promise.withResolvers<{
+      served: string | null;
+      seen: Seen;
+      session: Buffer | undefined;
+    }>();
+    let served: string | null = null;
+    let body = "";
+    let session: Buffer | undefined;
+    socket.on("secureConnect", () => (served = socket.getPeerCertificate()?.subject?.CN ?? null));
+    socket.on("session", s => (session = s));
+    socket.on("data", chunk => (body += chunk));
+    socket.on("error", reject);
+    socket.on("close", () => reject(new Error("closed before the server ended the stream")));
+    socket.on("end", () => {
+      socket.destroy();
+      try {
+        resolve({ served, seen: JSON.parse(body), session });
+      } catch (e) {
+        reject(e);
+      }
+    });
+    return promise;
+  }
+
+  // A full handshake with each protocol, then each of the two sessions offered
+  // with each protocol.
+  async function connections(transport: Transport, name: keyof typeof clients) {
+    const offer = (alpn: string, session?: Buffer) =>
+      exchange(transport.open({ ...clients[name], rejectUnauthorized: false, ALPNProtocols: [alpn], session }));
+    const fullA = await offer("a");
+    const fullB = await offer("b");
+    const offers: { served: string | null; seen: Seen }[] = [];
+    for (const session of [fullA.session, fullB.session]) {
+      for (const alpn of ["a", "b"]) {
+        const { served, seen } = await offer(alpn, session);
+        offers.push({ served, seen });
+      }
+    }
+    return {
+      full: [fullA, fullB].map(({ served, seen }) => ({ served, seen })),
+      gotSessions: [Buffer.isBuffer(fullA.session), Buffer.isBuffer(fullB.session)],
+      offers,
+    };
+  }
+
+  // The selected context serves its certificate and judges the client. A
+  // session resumes only under the context that created it.
+  function expectedConnections(name: keyof typeof clients) {
+    const connection = (alpn: "a" | "b", resumed: boolean) => ({
+      served: servedFor[alpn],
+      seen:
+        trustedBy[name] === alpn
+          ? { version, alpn, authorized: true, error: null, peer: name, resumed }
+          : { version, alpn, authorized: false, error: "UNABLE_TO_VERIFY_LEAF_SIGNATURE", peer: name, resumed },
+    });
+    return {
+      full: [connection("a", false), connection("b", false)],
+      gotSessions: [true, true],
+      offers: [connection("a", true), connection("b", false), connection("a", false), connection("b", true)],
+    };
+  }
+
+  describe.each(["listener", "adopted", "duplex"] as const)("%s transport", kind => {
+    it.each(["agent1", "agent3"] as const)("serves and verifies %s under the selected context", async name => {
+      const server = createAlpnServer({ rejectUnauthorized: false });
+      server.on("secureConnection", report);
+      try {
+        using transport = await transports[kind](server);
+        expect(await connections(transport, name)).toEqual(expectedConnections(name));
+      } finally {
+        server.close();
+      }
+    });
+  });
+
+  describe.each(["listener", "duplex"] as const)("%s transport", kind => {
+    // The default `rejectUnauthorized` is how an mTLS server is configured:
+    // the client the selected context refuses must not reach the handler.
+    it("keeps a refused client out of the handler with the default rejectUnauthorized", async () => {
+      const server = createAlpnServer();
+      const handled: string[] = [];
+      const refused: (string | undefined)[] = [];
+      let settle = () => {};
+      server.on("secureConnection", socket => {
+        handled.push(`${socket.alpnProtocol}:${socket.authorized}:${socket.isSessionReused()}`);
+        report(socket);
+        settle();
+      });
+      server.on("tlsClientError", (err: Error & { code?: string }) => {
+        refused.push(err.code);
+        settle();
+      });
+      try {
+        using transport = await transports[kind](server);
+        const first = await exchange(
+          transport.open({ ...clients.agent1, rejectUnauthorized: false, ALPNProtocols: ["a"] }),
+        );
+        expect(Buffer.isBuffer(first.session)).toBe(true);
+
+        const settled = Promise.withResolvers<void>();
+        settle = settled.resolve;
+        const second = transport.open({
+          ...clients.agent1,
+          rejectUnauthorized: false,
+          ALPNProtocols: ["b"],
+          session: first.session,
+        });
+        second.on("error", () => {});
+        await settled.promise;
+        second.destroy();
+
+        expect({ handled, refused }).toEqual({
+          handled: ["a:true:false"],
+          refused: ["UNABLE_TO_VERIFY_LEAF_SIGNATURE"],
+        });
+      } finally {
+        server.close();
+      }
+    });
+
+    // BoringSSL reads its ALPN selection callback, which sends the refusal's
+    // alert, off the SSL_CTX that setKeyCert() installed.
+    it("refuses the connection when ALPNCallback throws after setKeyCert()", async () => {
+      const contextB = tls.createSecureContext({ key: agent3Key, cert: agent3Cert, ca: [ca2] });
+      const server = tls.createServer({
+        key: agent2Key,
+        cert: agent2Cert,
+        maxVersion,
+        ALPNCallback(this: tls.TLSSocket) {
+          this.setKeyCert(contextB);
+          throw new Error("refused after setKeyCert()");
+        },
+      });
+      const events: string[] = [];
+      const settled = Promise.withResolvers<void>();
+      server.on("secureConnection", () => {
+        events.push("secureConnection");
+        settled.resolve();
+      });
+      server.on("tlsClientError", err => {
+        events.push(`tlsClientError: ${err.message}`);
+        settled.resolve();
+      });
+      try {
+        using transport = await transports[kind](server);
+        const client = transport.open({ rejectUnauthorized: false, ALPNProtocols: ["a"] });
+        // The alert, or a disconnect: either way the handshake failed.
+        client.on("error", () => {});
+        await settled.promise;
+        client.destroy();
+        expect(events).toEqual(["tlsClientError: refused after setKeyCert()"]);
+      } finally {
+        server.close();
+      }
+    });
+  });
+
+  // BoringSSL verifies the client against the SSL_CTX that is current when the client's
+  // certificate arrives, and a session keeps the id of the context that was current when the
+  // handshake began. A switch between the two would leave a session that resumes under the
+  // default context with the verdict of another one.
+  describe.each(["listener", "adopted"] as const)("%s transport", kind => {
+    it("ignores a setKeyCert() that comes after the certificate is picked", async () => {
+      const contextB = tls.createSecureContext({ key: agent3Key, cert: agent3Cert, ca: [ca2] });
+      const server = createAlpnServer({
+        rejectUnauthorized: false,
+        ALPNCallback(this: tls.TLSSocket, { protocols }: { protocols: string[] }) {
+          // One macrotask later the server's first flight is out and the client's certificate is not in.
+          if (protocols[0] === "b") setImmediate(() => this.setKeyCert(contextB));
+          return protocols[0];
+        },
+      });
+      server.on("secureConnection", report);
+      try {
+        using transport = await transports[kind](server);
+        const offer = async (alpn: string, session?: Buffer) => {
+          const {
+            served,
+            seen,
+            session: issued,
+          } = await exchange(
+            transport.open({ ...clients.agent3, rejectUnauthorized: false, ALPNProtocols: [alpn], session }),
+          );
+          return { served, seen, issued };
+        };
+        const late = await offer("b");
+        const again = await offer("a", late.issued);
+        // The default context serves agent2 and refuses agent3, on both connections.
+        const underDefault = (alpn: string, resumed: boolean) => ({
+          served: "agent2",
+          seen: { version, alpn, authorized: false, error: "UNABLE_TO_VERIFY_LEAF_SIGNATURE", peer: "agent3", resumed },
+        });
+        expect({
+          late: { served: late.served, seen: late.seen },
+          again: { served: again.served, seen: again.seen },
+        }).toEqual({ late: underDefault("b", false), again: underDefault("a", true) });
+      } finally {
+        server.close();
+      }
+    });
+  });
+
+  // A context switch is SSL_set_SSL_CTX, and ALPNCallback runs before BoringSSL picks the cipher
+  // and the signature algorithm. So the `ciphers` and `sigalgs` of the selected context apply, as
+  // they do for a context from SNICallback or addContext(). Node keeps the server's: there the
+  // three connections fail alike. A context that repeats the setting of the server keeps it.
+  // `ciphers` restricts TLS 1.2 only, and a TLS 1.2 handshake with no common signature algorithm
+  // moves to a cipher that needs no signature.
+  it.each([
+    maxVersion
+      ? (["ciphers", "ECDHE-RSA-AES256-GCM-SHA384", "ECDHE-RSA-AES128-GCM-SHA256", "ERR_SSL_NO_SHARED_CIPHER"] as const)
+      : (["sigalgs", "rsa_pss_rsae_sha512", "rsa_pss_rsae_sha256", "ERR_SSL_NO_COMMON_SIGNATURE_ALGORITHMS"] as const),
+  ])(
+    "setKeyCert() in ALPNCallback applies the %s of the selected context",
+    async (setting, ofServer, ofClient, code) => {
+      const contexts: Record<string, tls.SecureContext> = {
+        b: tls.createSecureContext({ key: agent3Key, cert: agent3Cert }),
+        c: tls.createSecureContext({ key: agent3Key, cert: agent3Cert, [setting]: ofServer }),
+      };
+      const events: string[] = [];
+      let settle = () => {};
+      const server = tls.createServer({
+        key: agent2Key,
+        cert: agent2Cert,
+        maxVersion,
+        [setting]: ofServer,
+        ALPNCallback(this: tls.TLSSocket, { protocols }: { protocols: string[] }) {
+          events.push(`ALPNCallback ${protocols[0]}`);
+          if (protocols[0] in contexts) this.setKeyCert(contexts[protocols[0]]);
+          return protocols[0];
+        },
+      });
+      server.on("secureConnection", socket => {
+        events.push(`served ${(socket.getCertificate() as tls.PeerCertificate).subject.CN}`);
+        socket.on("error", () => {});
+        socket.end();
+        settle();
+      });
+      server.on("tlsClientError", (err: Error & { code?: string }) => {
+        events.push(`${err.code}`);
+        settle();
+      });
+      try {
+        using transport = await transports.listener(server);
+        for (const alpn of ["a", "b", "c"]) {
+          const settled = Promise.withResolvers<void>();
+          settle = settled.resolve;
+          const client = transport.open({ rejectUnauthorized: false, ALPNProtocols: [alpn], [setting]: ofClient });
+          client.on("error", () => {});
+          await settled.promise;
+          client.destroy();
+        }
+        expect(events).toEqual(["ALPNCallback a", code, "ALPNCallback b", "served agent3", "ALPNCallback c", code]);
+      } finally {
+        server.close();
+      }
+    },
+  );
+
+  // ALPNCallback runs before BoringSSL picks the cipher and the session, so that the context it
+  // selects decides both. It sees neither, also on a handshake that then resumes. Node runs it
+  // after both on such a handshake.
+  it("sees no cipher, session or peer certificate yet", async () => {
+    const inside: unknown[] = [];
+    const server = createAlpnServer({
+      rejectUnauthorized: false,
+      ALPNCallback(this: tls.TLSSocket, { protocols }: { protocols: string[] }) {
+        inside.push({
+          version: this.getProtocol(),
+          cipher: this.getCipher().name,
+          resumed: this.isSessionReused(),
+          session: this.getSession() ?? null,
+          peer: this.getPeerCertificate()?.subject?.CN ?? null,
+        });
+        return protocols[0];
+      },
+    });
+    server.on("secureConnection", report);
+    try {
+      using transport = await transports.listener(server);
+      const offer = (session?: Buffer) =>
+        exchange(transport.open({ ...clients.agent1, rejectUnauthorized: false, ALPNProtocols: ["a"], session }));
+      const first = await offer();
+      const second = await offer(first.session);
+      const nothingYet = { version, cipher: null, resumed: false, session: null, peer: null };
+      expect({ inside, resumed: [first.seen.resumed, second.seen.resumed] }).toEqual({
+        inside: [nothingYet, nothingYet],
+        resumed: [false, true],
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  // What the agent1 client sees and is told for each protocol at `servername`.
+  async function bothProtocols(server: tls.Server, servername?: string) {
+    using transport = await transports.listener(server);
+    const results: { served: string | null; alpn: string | false; authorized: boolean }[] = [];
+    for (const alpn of ["a", "b"]) {
+      const { served, seen } = await exchange(
+        transport.open({ ...clients.agent1, rejectUnauthorized: false, ALPNProtocols: [alpn], servername }),
+      );
+      results.push({ served, alpn: seen.alpn, authorized: seen.authorized });
+    }
+    return results;
+  }
+  // agent1 is the certificate of the context the server name selects.
+  const afterServerName = [
+    { served: "agent1", alpn: "a", authorized: true },
+    { served: "agent3", alpn: "b", authorized: false },
+  ];
+
+  it.each(["a synchronous", "an asynchronous"] as const)("runs after %s SNICallback", async kind => {
+    const calls: string[] = [];
+    const sniContext = tls.createSecureContext({ key: agent1Key, cert: agent1Cert, ca: [ca1] });
+    const server = createAlpnServer(
+      {
+        rejectUnauthorized: false,
+        SNICallback(servername, callback) {
+          calls.push(`sni:${servername}`);
+          if (kind === "a synchronous") callback(null, sniContext);
+          else setImmediate(callback, null, sniContext);
+        },
+      },
+      calls,
+    );
+    server.on("secureConnection", report);
+    try {
+      // SNICallback runs first on both versions, so the context that ALPNCallback selects is the
+      // one that serves. Node runs ALPNCallback first on TLS 1.3, where OpenSSL negotiates ALPN
+      // before its certificate callback, and then serves the context of the SNICallback.
+      expect(await bothProtocols(server, "sni.test")).toEqual(afterServerName);
+      // The callback already sees the negotiated version, as in Node.
+      expect(calls).toEqual([
+        "sni:sni.test",
+        `alpn:sni.test:a:${version}`,
+        "sni:sni.test",
+        `alpn:sni.test:b:${version}`,
+      ]);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("runs after an addContext() entry matched", async () => {
+    const server = createAlpnServer({ rejectUnauthorized: false });
+    server.addContext("tree.test", { key: agent1Key, cert: agent1Cert, ca: [ca1] });
+    server.on("secureConnection", report);
+    try {
+      expect(await bothProtocols(server, "tree.test")).toEqual(afterServerName);
+    } finally {
+      server.close();
+    }
+  });
+
+  // BoringSSL reads the callbacks of a handshake off the SSL_CTX that is current when the
+  // ClientHello arrives, and setKeyCert() replaces that.
+  describe("after setKeyCert() before the handshake", () => {
+    const contextB = tls.createSecureContext({ key: agent3Key, cert: agent3Cert, ca: [ca2] });
+
+    // Bun hands the TLSSocket to 'connection', before the ClientHello arrives.
+    it("still runs, after the SNICallback", async () => {
+      const calls: string[] = [];
+      const server = createAlpnServer(
+        {
+          rejectUnauthorized: false,
+          SNICallback(servername, callback) {
+            calls.push(`sni:${servername}`);
+            callback(null);
+          },
+        },
+        calls,
+      );
+      server.on("connection", socket => (socket as tls.TLSSocket).setKeyCert(contextB));
+      server.on("secureConnection", report);
+      try {
+        expect(await bothProtocols(server, "sni.test")).toEqual([
+          { served: "agent3", alpn: "a", authorized: false },
+          { served: "agent3", alpn: "b", authorized: false },
+        ]);
+        expect(calls).toEqual([
+          "sni:sni.test",
+          `alpn:sni.test:a:${version}`,
+          "sni:sni.test",
+          `alpn:sni.test:b:${version}`,
+        ]);
+      } finally {
+        server.close();
+      }
+    });
+
+    it("negotiates from ALPNProtocols", async () => {
+      const server = tls.createServer(
+        { key: agent2Key, cert: agent2Cert, maxVersion, ALPNProtocols: ["b", "a"] },
+        report,
+      );
+      server.on("connection", socket => (socket as tls.TLSSocket).setKeyCert(contextB));
+      try {
+        using transport = await transports.listener(server);
+        const { served, seen } = await exchange(transport.open({ rejectUnauthorized: false, ALPNProtocols: ["a"] }));
+        expect({ served, alpn: seen.alpn }).toEqual({ served: "agent3", alpn: "a" });
+      } finally {
+        server.close();
+      }
+    });
+
+    it.each(["ALPNCallback", "ALPNProtocols"] as const)(
+      "negotiates from the %s of a server-side TLSSocket over a Duplex",
+      async option => {
+        const [clientSide, serverSide] = duplexPair();
+        const wrapped = new tls.TLSSocket(serverSide, {
+          isServer: true,
+          key: agent2Key,
+          cert: agent2Cert,
+          maxVersion,
+          ...(option === "ALPNCallback"
+            ? { ALPNCallback: ({ protocols }: { protocols: string[] }) => protocols[0] }
+            : { ALPNProtocols: ["b", "a"] }),
+        });
+        wrapped.on("secure", () => report(wrapped));
+        // The TLS engine of a wrapped socket starts on the tick after its constructor.
+        await new Promise<void>(resolve => setImmediate(resolve));
+        wrapped.setKeyCert(contextB);
+        const { served, seen } = await exchange(
+          tls.connect({ socket: clientSide, rejectUnauthorized: false, ALPNProtocols: ["a"] }),
+        );
+        expect({ served, alpn: seen.alpn }).toEqual({ served: "agent3", alpn: "a" });
+      },
+    );
+
+    it.each([
+      ["nothing", "agent3"],
+      ["a context", "agent1"],
+    ] as const)("asks the SNICallback of a server-side TLSSocket, which selects %s", async (answer, served) => {
+      using stack = new DisposableStack();
+      const asked: string[] = [];
+      const selected = tls.createSecureContext({ key: agent1Key, cert: agent1Cert });
+      const ready = Promise.withResolvers<void>();
+      const raw = net.createServer(socket => {
+        const wrapped = new tls.TLSSocket(socket, {
+          isServer: true,
+          key: agent2Key,
+          cert: agent2Cert,
+          maxVersion,
+          SNICallback(servername, callback) {
+            asked.push(servername);
+            callback(null, answer === "a context" ? selected : undefined);
+          },
+        });
+        wrapped.on("error", () => {});
+        wrapped.on("secure", () => wrapped.end());
+        // The TLS engine of a wrapped socket starts on the tick after its constructor.
+        setImmediate(() => {
+          wrapped.setKeyCert(contextB);
+          ready.resolve();
+        });
+      });
+      stack.defer(() => void raw.close());
+      await once(raw.listen(0, "127.0.0.1"), "listening");
+      const plain = net.connect((raw.address() as AddressInfo).port, "127.0.0.1");
+      stack.defer(() => void plain.destroy());
+      await Promise.all([once(plain, "connect"), ready.promise]);
+      const client = tls.connect({ socket: plain, servername: "sni.test", rejectUnauthorized: false });
+      stack.defer(() => void client.destroy());
+      await once(client, "secureConnect");
+      expect({ asked, served: client.getPeerCertificate().subject.CN }).toEqual({ asked: ["sni.test"], served });
+    });
+  });
+
+  it("does not run when the client and the server share no protocol version", async () => {
+    const calls: string[] = [];
+    const server = createAlpnServer(maxVersion ? {} : { minVersion: "TLSv1.3" }, calls);
+    const events: string[] = [];
+    const settled = Promise.withResolvers<void>();
+    server.on("secureConnection", () => {
+      events.push("secureConnection");
+      settled.resolve();
+    });
+    server.on("tlsClientError", (err: Error & { code?: string }) => {
+      events.push(`tlsClientError: ${err.code}`);
+      settled.resolve();
+    });
+    try {
+      using transport = await transports.listener(server);
+      const client = transport.open({
+        rejectUnauthorized: false,
+        ALPNProtocols: ["a"],
+        ...(maxVersion ? { minVersion: "TLSv1.3" } : { maxVersion: "TLSv1.2" }),
+      });
+      client.on("error", () => {});
+      await settled.promise;
+      client.destroy();
+      expect({ calls, events }).toEqual({ calls: [], events: ["tlsClientError: ERR_SSL_UNSUPPORTED_PROTOCOL"] });
+    } finally {
+      server.close();
+    }
+  });
+});
+
+describe("ALPNCallback", () => {
+  // Replays a ClientHello of a real client with the body of its ALPN
+  // extension replaced, and every enclosing length corrected.
+  async function clientHelloWithAlpn(body: Buffer) {
+    const captured = Promise.withResolvers<Buffer>();
+    const sink = net.createServer(socket => {
+      let received = Buffer.alloc(0);
+      socket.on("error", captured.reject);
+      socket.on("data", chunk => {
+        received = Buffer.concat([received, chunk]);
+        if (received.length >= 5 && received.length >= 5 + received.readUInt16BE(3)) {
+          captured.resolve(received.subarray(0, 5 + received.readUInt16BE(3)));
+        }
+      });
+    });
+    await once(sink.listen(0, "127.0.0.1"), "listening");
+    const client = tls.connect({
+      host: "127.0.0.1",
+      port: (sink.address() as AddressInfo).port,
+      rejectUnauthorized: false,
+      ALPNProtocols: ["ab"],
+    });
+    client.on("error", () => {});
+    let hello: Buffer;
+    try {
+      hello = await captured.promise;
+    } finally {
+      client.destroy();
+      sink.close();
+    }
+
+    let at = 5 + 4 + 2 + 32; // record header, handshake header, version, random
+    at += 1 + hello[at]; // session id
+    at += 2 + hello.readUInt16BE(at); // cipher suites
+    at += 1 + hello[at]; // compression methods
+    const extensionsAt = at;
+    const extensions: Buffer[] = [];
+    let replaced = false;
+    for (at += 2; at < hello.length;) {
+      const type = hello.readUInt16BE(at);
+      const data = hello.subarray(at + 4, at + 4 + hello.readUInt16BE(at + 2));
+      at += 4 + data.length;
+      const isAlpn = type === 16;
+      replaced ||= isAlpn;
+      const header = Buffer.alloc(4);
+      header.writeUInt16BE(type, 0);
+      header.writeUInt16BE((isAlpn ? body : data).length, 2);
+      extensions.push(header, isAlpn ? body : data);
+    }
+    if (!replaced) throw new Error("the captured ClientHello has no ALPN extension");
+    const encoded = Buffer.concat(extensions);
+    const out = Buffer.concat([hello.subarray(0, extensionsAt + 2), encoded]);
+    out.writeUInt16BE(encoded.length, extensionsAt);
+    out.writeUInt16BE(out.length - 5, 3); // record length
+    out.writeUIntBE(out.length - 9, 6, 3); // handshake length
+    return out;
+  }
+
+  // `record` is the type of the first record the server answers with: 22 is a handshake record
+  // (the ServerHello: the handshake went on with the answer of the callback), 21 is an alert.
+  const refused = { calls: [], record: 21, error: "ERR_SSL_PARSE_TLSEXT" };
+  // The longest protocol name the length byte allows.
+  const longest = Buffer.alloc(255, "n");
+  it.each([
+    ["runs for the list a real client sends", [0, 3, 2, 0x61, 0x62], { calls: [["ab"]], record: 22, error: null }],
+    [
+      "runs for a protocol name of 255 bytes",
+      [1, 0, 255, ...longest],
+      { calls: [[`${longest}`]], record: 22, error: null },
+    ],
+    [
+      "runs for a protocol name of 255 bytes before another one",
+      [1, 2, 255, ...longest, 1, 0x61],
+      { calls: [[`${longest}`, "a"]], record: 22, error: null },
+    ],
+    ["does not run for an empty list", [0, 0], refused],
+    ["does not run for an empty protocol name", [0, 3, 0, 1, 0x62], refused],
+    ["does not run for an empty protocol name at the end", [0, 3, 1, 0x61, 0], refused],
+    ["does not run for a protocol name longer than the list", [0, 3, 3, 0x61, 0x62], refused],
+    ["does not run for a last protocol name longer than the list", [0, 4, 1, 0x61, 2, 0x62], refused],
+    ["does not run for a byte after the list", [0, 3, 2, 0x61, 0x62, 0], refused],
+    ["does not run for a protocol name after the list", [0, 3, 2, 0x61, 0x62, 1, 0x63], refused],
+    ["does not run for a list longer than the extension", [0, 9, 2, 0x61, 0x62], refused],
+  ] as const)("%s", async (_name, body, expected) => {
+    const calls: string[][] = [];
+    const refusal = Promise.withResolvers<string>();
+    const server = tls.createServer({
+      key: agent2Key,
+      cert: agent2Cert,
+      ALPNCallback({ protocols }) {
+        calls.push(protocols);
+        return protocols[0];
+      },
+    });
+    server.on("tlsClientError", (err: Error & { code?: string }) => refusal.resolve(err.code ?? err.message));
+    const hello = await clientHelloWithAlpn(Buffer.from(body));
+    try {
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const raw = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+      raw.on("error", () => {});
+      const answered = Promise.race([
+        once(raw, "data").then(([chunk]) => chunk[0]),
+        once(raw, "close").then(() => "closed with no answer"),
+      ]);
+      raw.write(hello);
+      const record = await answered;
+      const error = record === 21 ? await refusal.promise : null;
+      raw.destroy();
+      expect({ calls, record, error }).toEqual(expected);
+    } finally {
+      server.close();
     }
   });
 });

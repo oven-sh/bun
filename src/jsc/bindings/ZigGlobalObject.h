@@ -394,8 +394,6 @@ public:
         Bun__HTMLRewriter__onHandlerReject,
         Bun__onResolveEntryPointResult,
         Bun__onRejectEntryPointResult,
-        Bun__NodeHTTPRequest__onResolve,
-        Bun__NodeHTTPRequest__onReject,
         Bun__FileSink__onResolveStream,
         Bun__FileSink__onRejectStream,
         Bun__CronJob__onPromiseResolve,

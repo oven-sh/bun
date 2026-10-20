@@ -52,7 +52,6 @@ const kHasQueuedReads = Symbol("kHasQueuedReads");
 // Property of a server socket: whether the connection closed before the kernel had taken everything that was written.
 // undefined until it has closed.
 const kClosedWithUnsentData = Symbol("kClosedWithUnsentData");
-const kCloseCallback = Symbol("closeCallback");
 
 // node:_http_server registers its pipelined-response machinery here at module
 // initialization, letting internal/http1_server_fallback drive the same
@@ -117,17 +116,10 @@ function emitErrorNextTickIfErrorListener(self, err, cb) {
   }
 }
 
-function callCloseCallback(self) {
-  if (self[kCloseCallback]) {
-    self[kCloseCallback]();
-    self[kCloseCallback] = undefined;
-  }
-}
 function emitCloseNT(self) {
   if (!self._closed) {
     self.destroyed = true;
     self._closed = true;
-    callCloseCallback(self);
     self.emit("close");
   }
 }
@@ -535,7 +527,6 @@ export {
   METHODS,
   STATUS_CODES,
   abortedSymbol,
-  callCloseCallback,
   checkShouldUseProxy,
   drainMicrotasks,
   emitCloseNT,
@@ -549,7 +540,6 @@ export {
   http1ServerPipeline,
   isTlsSymbol,
   kAbortController,
-  kCloseCallback,
   kClosedWithUnsentData,
   kHandle,
   kHandoffResponse,

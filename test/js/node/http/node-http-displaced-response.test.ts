@@ -3,8 +3,8 @@ import { bunEnv, bunExe, isASAN, isCI, isDebug } from "harness";
 import { join } from "path";
 
 // A connection has one current response. The server socket gives the connection to the next
-// response when JS says that the current one is done (res.detachSocket(), a 'close' or 'finish'
-// event, socket._httpMessage = null), or when the next request of a keep-alive connection
+// response when JS says that the current one is done (res.detachSocket(), a 'finish' event,
+// socket._httpMessage = null), or when the next request of a keep-alive connection
 // arrives. A WebSocket can also adopt the socket while responses are queued. A response that
 // lost the connection no longer hears about a close, so it must not keep a pointer to the
 // socket. It used to: the next call on it read the freed socket.
@@ -46,7 +46,7 @@ const uses = [
   "emit-close",
   "nothing",
 ];
-const triggers = ["detachSocket", "emit-close", "emit-finish", "clear-httpMessage"];
+const triggers = ["detachSocket", "emit-finish", "clear-httpMessage"];
 
 describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to the next response (%s)", transport => {
   test.each(triggers)(
@@ -112,19 +112,6 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
           bodies: ["second-body", "third-body"],
           errors: [],
         })),
-        stderr: "",
-        exitCode: 0,
-        signalCode: null,
-      });
-    },
-    timeout,
-  );
-
-  test(
-    "a response that native code completed does not keep the process alive after it is replaced",
-    async () => {
-      expect(await run("completed-but-pending", transport)).toEqual({
-        results: [{ completed: true, secondBody: true, pending: false }],
         stderr: "",
         exitCode: 0,
         signalCode: null,

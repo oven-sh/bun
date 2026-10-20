@@ -25,12 +25,23 @@ test("accepts preprocessed code", () => {
 });
 
 test.each([
-  ["a regex literal", "if (x) /[__intrinsic__a]/.test(y);", "1:8", "/[__intrinsic__a]/"],
-  ["a string", "x = '__intrinsic__a';", "1:5", "'__intrinsic__a'"],
-  ["template text", "x = `${y} __intrinsic__a`;", "1:9", "} __intrinsic__a`"],
-])("reports a rewrite inside %s", (_, text, position, shown) => {
+  ["a regex literal", "if (x) /[__intrinsic__a]/.test(y);", "/[__intrinsic__a]/"],
+  ["a string", "x = '__intrinsic__a';", "'__intrinsic__a'"],
+  ["a template literal", "x = `a __intrinsic__b`;", "`a __intrinsic__b`"],
+  ["a template head", "x = `a __intrinsic__b ${y} c`;", "`a __intrinsic__b ${"],
+  ["a template middle", "x = `${y} __intrinsic__a ${z}`;", "} __intrinsic__a ${"],
+  ["a template tail", "x = `${y} __intrinsic__a`;", "} __intrinsic__a`"],
+])("reports a rewrite inside %s", (_, text, shown) => {
+  expect(check(text)).toThrow(`src/js/example.ts:1: the preprocessor rewrote text inside this literal: ${shown}\n`);
+});
+
+// What the tokenizer made of the help text in src/js/internal/bake.ts when `\`` ended a template: the source says
+// `export default`. The report names the line of the rewrite, not the line where the literal starts.
+test("reports the line of a rewrite inside a template literal of many lines", () => {
+  const text =
+    "const help = `\nBun v${version} (bake)\n\n  as for \\`__intrinsic__exports =\\` in \\`bun app.ts\\`\n`;";
   expect(check(text)).toThrow(
-    `src/js/example.ts:${position}: the preprocessor rewrote a \`$name\` inside this literal: ${shown}`,
+    "src/js/example.ts:4: the preprocessor rewrote text inside this literal: as for \\`__intrinsic__exports =\\` in \\`bun app.ts\\`\n",
   );
 });
 
@@ -42,9 +53,18 @@ test.each([
   ["new TypeError(y);", "did not rewrite this `new TypeError`: new TypeError(y)"],
   ["throw new RangeError(y);", "did not rewrite this `throw new RangeError`: throw new RangeError(y);"],
 ])("reports code left as written: %s", (text, problem) => {
-  expect(check(text)).toThrow(`src/js/example.ts:1:1: the preprocessor ${problem}`);
+  expect(check(text)).toThrow(`src/js/example.ts:1: the preprocessor ${problem}`);
+});
+
+test("reports code left as written at its first line, and shows that line", () => {
+  expect(check("x = 1;\nexport default {\n  a: __intrinsic__b,\n};")).toThrow(
+    "src/js/example.ts:2: the preprocessor did not rewrite this `export default`: export default {\nbuiltin-parser.ts",
+  );
 });
 
 test("reports the line in the source file", () => {
-  expect(check("__intrinsic__b();\n$b();", 10)).toThrow("src/js/example.ts:11:1: the preprocessor did not");
+  expect(check("__intrinsic__b();\n$b();", 10)).toThrow("src/js/example.ts:11: the preprocessor did not");
+  expect(check("function f() {\n  x = `a\n  __intrinsic__b c\nd`;\n}", 10)).toThrow(
+    "src/js/example.ts:12: the preprocessor rewrote text inside this literal: __intrinsic__b c\n",
+  );
 });

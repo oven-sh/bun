@@ -204,7 +204,7 @@ export function applyReplacements(src: string, length: number) {
       let rest2 = checkSlice.rest;
       let extraArgs = "";
       if (checkSlice.result.at(-1) === ",") {
-        const sliced = sliceSourceCode("(" + rest2.slice(1), true, undefined, false);
+        const sliced = sliceSourceCode("(" + rest2, true, undefined, false);
         extraArgs = ", " + sliced.result.slice(1, -1);
         rest2 = sliced.rest;
       }

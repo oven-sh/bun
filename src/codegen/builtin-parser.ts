@@ -49,12 +49,20 @@ export function sliceSourceCode(
     const code = contents.slice(0, i);
     bracketCount += [...code.matchAll(/[({]/g)].length;
     const chunk = replace ? applyReplacements(contents, i) : [code, contents.slice(i)];
-    result += chunk[0];
-    contents = chunk[1] as string;
     if (chunk[2]) {
+      // A macro expansion can drop lines of its call. Put the line breaks back before its last character, which is
+      // a `)` or the `0` of `void 0`. Then a line of the output is a line of the source, and
+      // builtin-output-check.ts reports lines of the output.
+      const [expansion, rest] = chunk as [string, string];
+      const call = contents.slice(0, contents.length - rest.length);
+      const lost = call.split("\n").length - expansion.split("\n").length;
+      result += lost > 0 ? expansion.slice(0, -1) + "\n".repeat(lost) + expansion.slice(-1) : expansion;
+      contents = rest;
       before = ")";
       continue;
     }
+    result += chunk[0];
+    contents = chunk[1] as string;
     if (!contents.length) break;
     if (contents.startsWith("/")) {
       // A comment keeps `before` and a lone `/` reads it. Every other stop replaces it.

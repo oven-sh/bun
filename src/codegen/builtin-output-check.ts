@@ -20,7 +20,7 @@ const isDefault = (modifier: ts.Modifier) => modifier.kind === ts.SyntaxKind.Def
 /** What the preprocessor did wrong at `node`: a rewrite inside a literal, or code it left as written. */
 function problemAt(node: ts.Node, sourceFile: ts.SourceFile): string | undefined {
   if (literal_kinds.has(node.kind)) {
-    return node.getText(sourceFile).includes("__intrinsic__") ? "rewrote a `$name` inside this literal" : undefined;
+    return node.getText(sourceFile).includes("__intrinsic__") ? "rewrote text inside this literal" : undefined;
   }
   if (ts.isIdentifier(node)) {
     return /^\$\w/.test(node.text) && !kept_names.has(node.text) ? "did not rewrite this `$name`" : undefined;
@@ -37,7 +37,10 @@ function problemAt(node: ts.Node, sourceFile: ts.SourceFile): string | undefined
   }
 }
 
-/** Throws if the preprocessor rewrote a `$name` inside a literal of `text`, or left code that it rewrites as written. */
+/**
+ * Throws if the preprocessor rewrote text inside a literal of `text`, or left code that it rewrites as written.
+ * A line of `text` is a line of the source file, from `firstLine` on. A column is not: a rewrite moves what follows it.
+ */
 export function checkPreprocessedSource(fileName: string, text: string, firstLine = 1) {
   const kind = fileName.endsWith(".js") ? ts.ScriptKind.JS : ts.ScriptKind.TS;
   const sourceFile = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, false, kind);
@@ -45,9 +48,12 @@ export function checkPreprocessedSource(fileName: string, text: string, firstLin
   const visit = (node: ts.Node) => {
     const problem = problemAt(node, sourceFile);
     if (problem) {
-      const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
-      const [shown] = node.getText(sourceFile).split("\n", 1);
-      problems.push(`${fileName}:${line + firstLine}:${character + 1}: the preprocessor ${problem}: ${shown}`);
+      const nodeText = node.getText(sourceFile);
+      // A template literal can span many lines. Report the line of the rewrite in it, and show that line.
+      const offset = literal_kinds.has(node.kind) ? nodeText.indexOf("__intrinsic__") : 0;
+      const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile) + offset);
+      const [shown] = nodeText.slice(nodeText.lastIndexOf("\n", offset) + 1).split("\n", 1);
+      problems.push(`${fileName}:${line + firstLine}: the preprocessor ${problem}: ${shown.trim()}`);
     }
     ts.forEachChild(node, visit);
   };
@@ -55,8 +61,8 @@ export function checkPreprocessedSource(fileName: string, text: string, firstLin
   if (problems.length) {
     throw new Error(
       problems.join("\n") +
-        "\nbuiltin-parser.ts is not a parser. It misread a `/` at or before each place: src/js/README.md lists what it misreads." +
-        "\nMove a regex literal to its own statement, `const re = /.../;`. Put the left side of a division in parentheses.",
+        "\nbuiltin-parser.ts is not a parser. It misread the source at or before each place. src/js/README.md lists what it misreads." +
+        "\nIf that is a `/`: move the regex literal to its own statement, `const re = /.../;`, or put the left side of the division in parentheses.",
     );
   }
 }

@@ -113,6 +113,26 @@ describe("builtin preprocessor", () => {
     });
   });
 
+  // builtin-output-check.ts reports a line of the output as a line of the source.
+  test.each([
+    ["a native function", `x = $newCppFunction(\n  "NodeTLS.cpp",\n  "Bun__canonicalizeIP",\n  1,\n);`],
+    ["$assert with a message", `$assert(\n  x,\n  "m",\n  y,\n);`],
+    ["$assert with one argument", `$assert(\n  x,\n);`],
+  ])("the expansion of %s has as many lines as the call", (_, call) => {
+    const { result, rest } = preprocess(call + "\n$b;");
+    expect({ lines: result.split("\n").length, rest }).toEqual({ lines: call.split("\n").length + 1, rest: "" });
+  });
+
+  test("$assert keeps an argument that follows the comma with no space", () => {
+    expect(preprocess("$assert(x,y);").result).toBe(`{!(IS_BUN_DEVELOPMENT?$assert(x,"x", y):void 0);}`);
+  });
+
+  // A line break before `as` would end the expression.
+  test("the line breaks that an expansion drops go before its last `)`", () => {
+    const call = `x = $newCppFunction(\n  "NodeTLS.cpp",\n  "Bun__canonicalizeIP",\n  1,\n) as T;`;
+    expect(preprocess(call).result).toMatch(/^\{x = __intrinsic__lazy\(\d+\n{4}\) as T;\}$/);
+  });
+
   test("a character class ends at its unescaped `]`", () => {
     const body = String.raw`x = /[$a/\\]/; y = /[$a\]/]|[$a.*+?^{}()|[\]\\]/g; $b;`;
     expect(preprocess(body)).toEqual(expected(body));

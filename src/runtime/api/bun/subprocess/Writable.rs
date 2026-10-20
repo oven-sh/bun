@@ -369,6 +369,10 @@ impl<'a> Writable<'a> {
                         FileSink::on_attached_process_exit(
                             pipe_ref.as_ptr(),
                             &subprocess.process().status,
+                            subprocess
+                                .flags
+                                .get()
+                                .contains(Flags::CANCEL_STDIN_WRITE_ON_EXIT),
                         )
                     };
                     // The wrapper takes its own ref; `pipe_ref` drops after.

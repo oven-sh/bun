@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isPosix, nodeExeAtLeast, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExeAtLeast, tempDir } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { join } from "node:path";
@@ -532,9 +532,167 @@ describe("child.stdin", () => {
       expect(stderr).toBe("");
       expect({ childRan: pid > 0, exitCode }).toEqual({ childRan: true, exitCode: 0 });
     });
+  });
 
-    // The child exits while another process holds the pipe. Node: the callback gets `write ECANCELED`, no 'error'.
-    it.todo("a write parked when the child exits is canceled, not failed with EPIPE");
+  // The child exits while a write to its stdin is parked. Node destroys stdin in its exit handler, libuv cancels the
+  // write that is still queued, and the callback gets `write ECANCELED`: after 'exit', and with no 'error'.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L270-L294
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L81-L93
+  // In most cases here a process that the child started (the holder) still has the pipe, so the pipe is not broken. A
+  // killed shell leaves that: dash forks every command of `sh -c`, and bash every command but the last.
+  describe("a write parked when the child exits", () => {
+    const fixture = join(import.meta.dir, "fixtures", "stdin-held-exit-fixture.js");
+    const canceled = "write ECANCELED";
+    const canceledWrite = `exit 0, callback ${canceled}, close, errored ${canceled}`;
+    const throws = "end(callback) in 'exit' that throws";
+    const noShell = "no 'error' listener, a child with no shell";
+
+    // One line per case: the events in the order node v26 emits them.
+    const sameAsNode = {
+      "write(chunk, callback)": canceledWrite,
+      "no 'error' listener": canceledWrite,
+      "two writes": `exit 0, first ${canceled}, second the same error, close, errored ${canceled}`,
+      "end(chunk, callback)": `exit 0, end callback ${canceled}, close, errored ${canceled}`,
+      "end(chunk), no 'error' listener": `exit 0, close, errored ${canceled}`,
+      "end(chunk, callback) behind a write": `exit 0, callback ${canceled}, end callback ${canceled}, close, errored ${canceled}`,
+      "end(callback) behind a write": `exit 0, callback ${canceled}, end callback ${canceled}, close, errored ${canceled}`,
+      "end(callback) behind a write with no callback": `exit 0, end callback ${canceled}, close, errored ${canceled}`,
+      "end(callback) behind two writes": `exit 0, first ${canceled}, second ${canceled}, end callback ${canceled}, close, errored ${canceled}`,
+      "end(callback) in 'exit'": `exit 0, callback ${canceled}, end callback ${canceled}, close, errored ${canceled}`,
+      [throws]: `exit 0, callback ${canceled}, end callback ${canceled}, close, errored ${canceled}`,
+      "finished(stdin)": `${canceledWrite}, finished ${canceled}`,
+      "kill()": `exit SIGTERM, callback ${canceled}, close, errored ${canceled}`,
+      "pipeline(source, stdin)": `exit SIGTERM, close, errored ${canceled}, pipeline ${canceled}`,
+      "once(stdin, 'drain')": `${canceledWrite}, the waiter is pending`,
+      "once(stdin, 'finish')": `exit 0, close, errored ${canceled}, the waiter is pending`,
+      // The case reads /proc.
+      ...(isLinux && { "destroy() in the turn of the exit": canceledWrite }),
+    };
+    const bun = {
+      ...sameAsNode,
+      // Only bun sends what a parked sink holds at a microtask checkpoint. The case reads /proc.
+      ...(isLinux && {
+        "the pipe takes the rest of the write in the turn of the exit": "exit 0, callback ok, close, errored ok",
+      }),
+    };
+    // With no holder the kill breaks the pipe. Node is not run on these: it reports the broken pipe too, but it
+    // cancels the write in the runs where it sees the exit first.
+    const broken =
+      "callback EPIPE: broken pipe, write, error EPIPE: broken pipe, write, close, errored EPIPE: broken pipe, write, exit SIGTERM";
+    const brokenPipe = {
+      "a broken pipe, kill() from a listener": broken,
+      "a broken pipe, kill() from a timer": broken,
+    };
+
+    // `title x3` is that case three times.
+    const linesOf = (expected, cases) =>
+      cases.flatMap(arg => {
+        const [, title, times = "1"] = /^(.*?)(?: x(\d+))?$/.exec(arg);
+        return Array(Number(times)).fill(`${title}: ${expected[title]}`);
+      });
+
+    async function expectEvents(exe, expected, cases, env = bunEnv) {
+      await using proc = Bun.spawn({ cmd: [exe, fixture, ...cases], env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim().split("\n")).toEqual([
+        ...linesOf(expected, cases),
+        `uncaught: ${cases.includes(throws) ? "EBOOM" : "none"}`,
+        "unhandled rejections: none",
+        "holders gone early: none",
+      ]);
+      expect(exitCode).toBe(0);
+    }
+
+    // Node passes the error to a canceled write since v22.9.0: https://github.com/nodejs/node/pull/54032
+    const node = nodeExeAtLeast("22.9.0");
+
+    // The children of the fixture are sh scripts.
+    describe.skipIf(!isPosix)("and a process of its own holds the pipe", () => {
+      // A few cases per process, and one process at a time: a debug build needs about 200 ms for each case, and twice
+      // that when these run together.
+      const titles = Object.keys(bun);
+      const parts = [titles.slice(0, 5), titles.slice(5, 10), titles.slice(10, 14), titles.slice(14)];
+      it.each([0, 1, 2, 3])("the events are node's, part %d", async part => {
+        await expectEvents(bunExe(), bun, parts[part]);
+      });
+
+      it("a broken pipe is still EPIPE and 'error', whether the exit or the failed write comes first", async () => {
+        await expectEvents(
+          bunExe(),
+          brokenPipe,
+          Object.keys(brokenPipe).map(title => `${title} x3`),
+        );
+      });
+
+      // Without a pidfd the exit comes from a thread: a task reports it, and not the poll of the event loop.
+      it.skipIf(!isLinux)("the same when the waiter thread reports the exit", async () => {
+        const cases = ["write(chunk, callback)", "end(callback) in 'exit'", "kill()"];
+        await expectEvents(
+          bunExe(),
+          { ...bun, ...brokenPipe },
+          [...cases, ...Object.keys(brokenPipe).map(title => `${title} x2`)],
+          { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+        );
+      });
+
+      it.skipIf(!node)("node emits these events", async () => {
+        await expectEvents(node, sameAsNode, Object.keys(sameAsNode));
+      });
+
+      it("the callback gets the same error when a nested wait of the event loop sees the exit", async () => {
+        const child = spawn("sh", ["-c", "exec 3<&0; sleep 30 <&3 3<&- >/dev/null 2>&1 & echo $!"], {
+          stdio: ["pipe", "pipe", "inherit"],
+        });
+        const seen = [];
+        let holder = "";
+        child.stdout.setEncoding("utf8").on("data", chunk => (holder += chunk));
+        child.on("exit", code => seen.push(`exit ${code}`));
+        child.stdin.write(Buffer.alloc(1 << 20, 97), err => seen.push(`callback ${err?.message}`));
+        const closed = new Promise(resolve => child.stdin.on("close", () => resolve(seen)));
+        // `resolves` waits for the promise in a loop of its own.
+        await expect(closed).resolves.toEqual(["exit 0", `callback ${canceled}`]);
+
+        expect(holder).toMatch(/^[1-9]\d*\n$/);
+        process.kill(Number(holder), "SIGKILL");
+      });
+
+      it("Bun.spawn's own stdin still fails the write with EPIPE, before `exited`", async () => {
+        // The child gives its stdin to `sleep`, prints the pid of that process, and exits.
+        await using proc = Bun.spawn({
+          cmd: ["sh", "-c", "exec 3<&0; sleep 30 <&3 3<&- >/dev/null 2>&1 & echo $!"],
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const seen = [];
+        const write = proc.stdin.write(Buffer.alloc(1 << 20, 97));
+        expect(write).toBeInstanceOf(Promise);
+        const settled = write.then(
+          () => seen.push("written"),
+          err => seen.push({ code: err.code, syscall: err.syscall }),
+        );
+        const exited = proc.exited.then(code => seen.push(`exited ${code}`));
+        const holder = await proc.stdout.text();
+        await Promise.all([settled, exited]);
+
+        // The kill throws when the holder is gone: the pipe was then broken, which is another case.
+        expect(holder).toMatch(/^[1-9]\d*\n$/);
+        process.kill(Number(holder), "SIGKILL");
+        expect(seen).toEqual([{ code: "EPIPE", syscall: "write" }, "exited 0"]);
+      });
+    });
+
+    // The same held pipe with no shell, so that it runs on Windows. There the exit still fails the write with EPIPE
+    // (FileSink::errno_at_exit), and with no 'error' listener that is an uncaught exception.
+    it.failingIf(isWindows)("the events are node's when the child is no shell", async () => {
+      await expectEvents(bunExe(), { [noShell]: canceledWrite }, [noShell]);
+    });
+
+    // Windows: not measured under node.
+    it.skipIf(!isPosix || !node)("node emits these events when the child is no shell", async () => {
+      await expectEvents(node, { [noShell]: canceledWrite }, [noShell]);
+    });
   });
 });
 

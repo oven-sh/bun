@@ -621,7 +621,7 @@ function newCanceledWriteError(): Error {
   return new ErrnoException(ecanceled, "write");
 }
 
-// As in node: the first write destroy() canceled gets `write ECANCELED`, those queued behind it the stream's error.
+// As in node: the first write that destroy() or the child's exit canceled gets `write ECANCELED`, the rest `errored`.
 function canceledWriteError(stream: FSStream, err: any) {
   const canceled = stream[kCanceledWrite];
   if (canceled === undefined || err?.code !== "ECANCELED") return err;

@@ -91,6 +91,7 @@ impl ErrorCode {
     pub const CANCEL: Self = Self(0x8);
     pub const COMPRESSION_ERROR: Self = Self(0x9);
     pub const ENHANCE_YOUR_CALM: Self = Self(0xb);
+    pub const HTTP_1_1_REQUIRED: Self = Self(0xd);
 }
 
 #[repr(transparent)]

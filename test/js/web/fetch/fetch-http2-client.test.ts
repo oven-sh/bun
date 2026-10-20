@@ -81,10 +81,14 @@ type RawConn = {
 type RawState = {
   connections: number;
   rst: Array<{ id: number; code: number }>;
+  /** "<request line> <body>" of each HTTP/1.1 request. Only a server with the `http1` option gets any. */
+  http1: string[];
   /** Called for each PING from the client. The helper never ACKs a PING; a test does it. */
   onPing?: (conn: RawConn, payload: Buffer) => void;
   /** Called for each request, before `onStream`. */
   onRequest?: () => void;
+  /** Called for each DATA frame from the client. */
+  onData?: (conn: RawConn, streamId: number, endStream: boolean) => void;
   /** Resolves once every accepted socket has emitted `close` — i.e. all
    *  in-flight client frames have been delivered to the `data` handler.
    *  Tests asserting on server-side capture (`state.rst`) should await this
@@ -92,17 +96,40 @@ type RawState = {
   allClosed: () => Promise<void>;
 };
 
+// Records each HTTP/1.1 request on `socket` in `seen` and answers it with `respond(path)`.
+function serveHttp1(socket: nodetls.TLSSocket, seen: string[], respond: (path: string) => string) {
+  let buf = "";
+  socket.setEncoding("latin1");
+  socket.on("error", () => {});
+  socket.on("data", (chunk: string) => {
+    buf += chunk;
+    const head = buf.indexOf("\r\n\r\n");
+    if (head === -1) return;
+    const length = Number(/^content-length: (\d+)/im.exec(buf.slice(0, head))?.[1] ?? 0);
+    if (buf.length < head + 4 + length) return;
+    const requestLine = buf.slice(0, buf.indexOf("\r\n"));
+    seen.push(`${requestLine} ${buf.slice(head + 4, head + 4 + length)}`.trim());
+    buf = buf.slice(head + 4 + length);
+    socket.write(respond(requestLine.split(" ")[1]));
+  });
+}
+
 async function withRawH2Server(
   onStream: (conn: RawConn, streamId: number, connIndex: number) => void,
   fn: (url: string, state: RawState) => Promise<void>,
+  // `http1`: the server also offers "http/1.1" and answers each such request with `http1(path)`.
+  // `settings: false`: the server sends no SETTINGS frame by itself, neither its own nor the ACK.
+  { http1, settings = true }: { http1?: (path: string) => string; settings?: boolean } = {},
 ) {
   const closed: Promise<unknown>[] = [];
   const state: RawState = {
     connections: 0,
     rst: [],
+    http1: [],
     allClosed: () => Promise.all(closed).then(() => {}),
   };
-  const server = nodetls.createServer({ ...tls, ALPNProtocols: ["h2"] }, socket => {
+  const server = nodetls.createServer({ ...tls, ALPNProtocols: http1 ? ["h2", "http/1.1"] : ["h2"] }, socket => {
+    if (http1 && socket.alpnProtocol !== "h2") return serveHttp1(socket, state.http1, http1);
     const connIndex = state.connections++;
     // Track teardown with a promise that resolves on "close" even when the
     // client tears the connection down abortively (RST → ECONNRESET emits an
@@ -127,7 +154,7 @@ async function withRawH2Server(
         if (buf.length < 24) return;
         buf = buf.subarray(24);
         prefaceSeen = true;
-        conn.settings();
+        if (settings) conn.settings();
       }
       while (buf.length >= 9) {
         const len = buf.readUIntBE(0, 3);
@@ -137,9 +164,10 @@ async function withRawH2Server(
           id = buf.readUInt32BE(5) & 0x7fffffff;
         const payload = buf.subarray(9, 9 + len);
         buf = buf.subarray(9 + len);
-        if (type === 4 && !(flags & 1)) socket.write(frame(4, 1, 0)); // ack their SETTINGS
+        if (settings && type === 4 && !(flags & 1)) socket.write(frame(4, 1, 0)); // ack their SETTINGS
         if (type === 1) state.onRequest?.();
         if (type === 1) onStream(conn, id, connIndex); // HEADERS opens a stream
+        if (type === 0) state.onData?.(conn, id, (flags & 1) !== 0);
         if (type === 3) state.rst.push({ id, code: payload.readUInt32BE(0) });
         if (type === 6 && !(flags & 1)) state.onPing?.(conn, payload);
       }
@@ -2741,6 +2769,286 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     }
     expect(out).toBe("status 200");
   });
+});
+
+// RFC 9113 section 7: "The endpoint requires that HTTP/1.1 be used instead
+// of HTTP/2." These servers offer both protocols, so a request that did
+// not name one has HTTP/1.1 to go to.
+// Serial: a test in the describe.concurrent block above waits for a
+// subprocess slot while its timeout runs. Under ASAN that block is full.
+describe("HTTP_1_1_REQUIRED", () => {
+  const HTTP_1_1_REQUIRED = http2.constants.NGHTTP2_HTTP_1_1_REQUIRED;
+  const overH1 = "HTTP/1.1 200 OK\r\ncontent-length: 7\r\n\r\nover h1";
+  const rstFrame = (id: number, code: number) => frame(3, 0, id, u32be(code));
+  const goawayFrame = (lastId: number, code: number) => frame(7, 0, 0, Buffer.concat([u32be(lastId), u32be(code)]));
+  const reset = (conn: RawConn, id: number) => conn.rst(id, HTTP_1_1_REQUIRED);
+  const answer = (conn: RawConn, id: number) => {
+    conn.headers(id, hpackStatus(200));
+    conn.data(id, "over h2", true);
+  };
+
+  /** Runs `script` against a server that answers each h2 request with `refuse` and each HTTP/1.1 request with `respond`. */
+  async function run(
+    refuse: (conn: RawConn, id: number, connIndex: number) => void,
+    script: (url: string) => string,
+    {
+      respond = (_path: string) => overH1,
+      settings = true,
+      onData,
+    }: { respond?: (path: string) => string; settings?: boolean; onData?: RawState["onData"] } = {},
+  ) {
+    const streams: number[] = [];
+    let result!: { out: unknown; streams: number[]; http1: string[]; h2Connections: number; exitCode: number };
+    await withRawH2Server(
+      (conn, id, connIndex) => {
+        streams.push(id);
+        refuse(conn, id, connIndex);
+      },
+      async (url, state) => {
+        state.onData = onData;
+        await using proc = await spawnFetch(`
+          const init = { tls: { rejectUnauthorized: false } };
+          const settle = p => p.then(async r => r.status + " " + (await r.text()), e => e.code);
+          ${script(url)}
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const out = stdout ? JSON.parse(stdout) : stderr;
+        result = { out, streams, http1: state.http1, h2Connections: state.connections, exitCode };
+      },
+      { http1: respond, settings },
+    );
+    return result;
+  }
+  // One request, with `extra` added to its options.
+  const one =
+    (extra = "", path = "/a") =>
+    (url: string) =>
+      `console.log(JSON.stringify(await settle(fetch("${url}${path}", { ...init, ${extra} }))));`;
+  // One request to each path, one after the other.
+  const inTurn =
+    (...paths: string[]) =>
+    (url: string) => `
+      const out = [];
+      for (const path of ${JSON.stringify(paths)}) out.push(await settle(fetch("${url}" + path, init)));
+      console.log(JSON.stringify(out));
+    `;
+  // One attempt over h2, then one over HTTP/1.1. The h2 connection stays open.
+  const sentAgain = (requestLine = "GET /a HTTP/1.1") => ({
+    out: "200 over h1",
+    streams: [1],
+    http1: [requestLine],
+    h2Connections: 1,
+    exitCode: 0,
+  });
+  const rejected = (code: string) => ({ out: code, streams: [1], http1: [], h2Connections: 1, exitCode: 0 });
+
+  test.each([
+    ["RST_STREAM", reset],
+    // A 1xx is not the response.
+    [
+      "RST_STREAM after a 100",
+      (conn: RawConn, id: number) =>
+        conn.socket.write(Buffer.concat([frame(1, 4, id, hpackStatus(100)), rstFrame(id, HTTP_1_1_REQUIRED)])),
+    ],
+    ["GOAWAY below the stream", (conn: RawConn) => conn.goaway(0, HTTP_1_1_REQUIRED)],
+    // Alone, the graceful GOAWAY means "not processed, send it again over h2".
+    [
+      "RST_STREAM and a graceful GOAWAY in one read",
+      (conn: RawConn, id: number) =>
+        conn.socket.write(Buffer.concat([rstFrame(id, HTTP_1_1_REQUIRED), goawayFrame(0, 0)])),
+    ],
+  ])("%s: the request is sent again over HTTP/1.1", async (_name, refuse) => {
+    expect(await run(refuse, one())).toEqual(sentAgain());
+  });
+
+  test("a string body is sent again", async () => {
+    expect(await run(reset, one(`method: "POST", body: "payload"`))).toEqual(sentAgain("POST /a HTTP/1.1 payload"));
+  });
+
+  test("Expect: 100-continue, reset after the whole body: the body is sent again", async () => {
+    const result = await run(
+      (conn, id) => conn.headers(id, hpackStatus(100)),
+      one(`method: "POST", headers: { Expect: "100-continue" }, body: "payload"`),
+      {
+        onData: (conn, id, endStream) => {
+          if (endStream) conn.rst(id, HTTP_1_1_REQUIRED);
+        },
+      },
+    );
+    expect(result).toEqual(sentAgain("POST /a HTTP/1.1 payload"));
+  });
+
+  test("a redirect of the request stays on HTTP/1.1", async () => {
+    const respond = (path: string) =>
+      path === "/redirect" ? "HTTP/1.1 302 Found\r\nlocation: /landed\r\ncontent-length: 0\r\n\r\n" : overH1;
+    expect(await run(reset, one("", "/redirect"), { respond })).toEqual({
+      ...sentAgain(),
+      http1: ["GET /redirect HTTP/1.1", "GET /landed HTTP/1.1"],
+    });
+  });
+
+  // A request that names HTTP/2 has no HTTP/1.1 to go to, and a stream
+  // body may be consumed already: both keep rejecting, after one attempt.
+  test.each([
+    ["protocol: 'http2'", `protocol: "http2"`],
+    [
+      "a ReadableStream body",
+      `method: "POST", duplex: "half", body: new ReadableStream({ start(c) { c.enqueue(new Uint8Array(3)); c.close(); } })`,
+    ],
+  ])("%s: the request rejects", async (_name, extra) => {
+    expect(await run(reset, one(extra))).toEqual(rejected("HTTP2StreamReset"));
+  });
+
+  // The graceful GOAWAY says "not processed": a request that stays on h2 goes to the next h2 connection.
+  test("protocol: 'http2', RST_STREAM and a graceful GOAWAY in one read: the request is sent again over h2", async () => {
+    const result = await run(
+      (conn, id, connIndex) =>
+        connIndex === 0
+          ? conn.socket.write(Buffer.concat([rstFrame(id, HTTP_1_1_REQUIRED), goawayFrame(0, 0)]))
+          : answer(conn, id),
+      one(`protocol: "http2"`),
+    );
+    expect(result).toEqual({ out: "200 over h2", streams: [1, 1], http1: [], h2Connections: 2, exitCode: 0 });
+  });
+
+  // RFC 9113 section 6.8: the peer may have processed a stream at or below the GOAWAY's id.
+  test("GOAWAY that names the stream: the request rejects", async () => {
+    expect(await run((conn, id) => conn.goaway(id, HTTP_1_1_REQUIRED), one())).toEqual(rejected("HTTP2GoAway"));
+  });
+
+  test("after the response headers, the request is not sent again", async () => {
+    const result = await run(
+      (conn, id) => {
+        conn.headers(id, hpackStatus(200));
+        conn.rst(id, HTTP_1_1_REQUIRED);
+      },
+      // The reset can arrive with the headers or after them: the fetch or the body read rejects.
+      url => `
+        const r = await fetch("${url}", init).catch(e => e);
+        console.log(JSON.stringify(r instanceof Response ? await r.text().then(() => "body", e => e.code) : r.code));
+      `,
+    );
+    expect(result).toEqual(rejected("HTTP2StreamReset"));
+  });
+
+  test("a sibling stream on the connection completes over h2", async () => {
+    const result = await run(
+      (conn, id) => {
+        // Both streams are open: reset the first, answer the second.
+        if (id === 1) return;
+        conn.rst(1, HTTP_1_1_REQUIRED);
+        answer(conn, id);
+      },
+      url => `
+        const both = [settle(fetch("${url}/first", init)), settle(fetch("${url}/second", init))];
+        console.log(JSON.stringify(await Promise.all(both)));
+      `,
+    );
+    expect(result).toEqual({
+      out: ["200 over h1", "200 over h2"],
+      streams: [1, 3],
+      http1: ["GET /first HTTP/1.1"],
+      h2Connections: 1,
+      exitCode: 0,
+    });
+  });
+
+  // What the next request of the origin does. The idle connections are in the
+  // keep-alive pool, and a request takes the first one that can carry it.
+  test("after RST_STREAM, the next request tries h2 first", async () => {
+    expect(await run(reset, inTurn("/a", "/b"))).toEqual({
+      out: ["200 over h1", "200 over h1"],
+      streams: [1, 3],
+      http1: ["GET /a HTTP/1.1", "GET /b HTTP/1.1"],
+      h2Connections: 1,
+      exitCode: 0,
+    });
+  });
+
+  test("after GOAWAY, the next request takes the idle HTTP/1.1 connection", async () => {
+    expect(await run(conn => conn.goaway(0, HTTP_1_1_REQUIRED), inTurn("/a", "/b"))).toEqual({
+      out: ["200 over h1", "200 over h1"],
+      streams: [1],
+      http1: ["GET /a HTTP/1.1", "GET /b HTTP/1.1"],
+      h2Connections: 1,
+      exitCode: 0,
+    });
+  });
+
+  test("an HTTP/1.1 connection that became idle before the h2 connection carries the next request", async () => {
+    let answerHeld!: () => void;
+    const result = await run(
+      (conn, id) => {
+        // The first stream is open until "/release", so the h2 connection becomes idle last.
+        if (id === 1) answerHeld = () => answer(conn, id);
+        else conn.rst(id, HTTP_1_1_REQUIRED);
+      },
+      // "/release" leaves the pool as it is: it takes no idle connection and adds none.
+      url => `
+        const held = settle(fetch("${url}/held", init));
+        const refused = await settle(fetch("${url}/refused", init));
+        await settle(fetch("${url}/release", { ...init, protocol: "http1.1", keepalive: false }));
+        console.log(JSON.stringify([refused, await held, await settle(fetch("${url}/next", init))]));
+      `,
+      {
+        respond: path => {
+          if (path === "/release") answerHeld();
+          return overH1;
+        },
+      },
+    );
+    expect(result).toEqual({
+      out: ["200 over h1", "200 over h2", "200 over h1"],
+      streams: [1, 3],
+      http1: ["GET /refused HTTP/1.1", "GET /release HTTP/1.1", "GET /next HTTP/1.1"],
+      h2Connections: 1,
+      exitCode: 0,
+    });
+  });
+
+  // Four cold requests: the first opens the h2 connection, the other three wait for its SETTINGS.
+  // The HTTP thread starts requests in the order of the fetch() calls. So when the server has
+  // "/gate", which takes its own HTTP/1.1 connection, the four are started.
+  test.each([
+    ["below every stream", 0, "200 over h1", ["GET /a HTTP/1.1"]],
+    // `session.goaway(code)` of node:http2 sends this id: the stream that the server got.
+    ["that names the first stream", 1, "HTTP2GoAway", []],
+  ])(
+    "GOAWAY %s: the requests that wait for SETTINGS go to HTTP/1.1",
+    async (_name, lastStreamId, first, firstOverH1) => {
+      const leader = Promise.withResolvers<RawConn>();
+      const gate = Promise.withResolvers<void>();
+      const refuse = (conn: RawConn) =>
+        conn.socket.write(Buffer.concat([frame(4, 0, 0), goawayFrame(lastStreamId, HTTP_1_1_REQUIRED)]));
+      void Promise.all([leader.promise, gate.promise]).then(([conn]) => refuse(conn));
+      let h2Requests = 0;
+      const result = await run(
+        // A second h2 request is a failure. Refuse it at once, so that the result shows it.
+        conn => (h2Requests++ === 0 ? leader.resolve(conn) : refuse(conn)),
+        url => `
+          const all = ["/a", "/b", "/c", "/d"].map(path => settle(fetch("${url}" + path, init)));
+          all.push(settle(fetch("${url}/gate", { ...init, protocol: "http1.1" })));
+          console.log(JSON.stringify(await Promise.all(all)));
+        `,
+        {
+          settings: false,
+          respond: path => {
+            if (path !== "/gate") return overH1;
+            gate.resolve();
+            // Not kept alive: a waiting request that still offers h2 must not find this connection idle.
+            return "HTTP/1.1 200 OK\r\nconnection: close\r\ncontent-length: 7\r\n\r\nover h1";
+          },
+        },
+      );
+      expect({ ...result, http1: result.http1.toSorted() }).toEqual({
+        out: [first, "200 over h1", "200 over h1", "200 over h1", "200 over h1"],
+        streams: [1],
+        http1: [...firstOverH1, "GET /b HTTP/1.1", "GET /c HTTP/1.1", "GET /d HTTP/1.1", "GET /gate HTTP/1.1"],
+        h2Connections: 1,
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 // Serial: this test reads the subprocess's stderr stream mid-flight to gate

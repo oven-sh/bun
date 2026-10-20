@@ -2095,6 +2095,11 @@ interface BunFetchRequestInit extends RequestInit {
    * default (h2 is offered iff the flag is on). `"h2"`, `"h3"` and `"h1"`
    * are aliases.
    *
+   * Without this option, when the server refuses a request over HTTP/2 with
+   * `HTTP_1_1_REQUIRED` before it sends a response, Bun sends the request
+   * again over HTTP/1.1. A request whose body is a stream rejects. With
+   * `"http2"` the request stays on HTTP/2.
+   *
    * Requires `https`. Not part of the Fetch API specification.
    * @experimental
    */

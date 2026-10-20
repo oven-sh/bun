@@ -333,7 +333,7 @@ fn find_files(
             (!exhaustive).then_some(is_node_modules as fn(&[u8]) -> bool),
         )
         .and_then(|walker| match walker {
-            Ok(mut walker) => Ok(walker.walk()?.map(|()| walker)),
+            Ok(mut walker) => Ok(bun_glob::walk_file_system(&mut walker)?.map(|()| walker)),
             Err(err) => Ok(Err(err)),
         });
         match walked {

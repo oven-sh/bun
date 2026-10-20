@@ -1107,16 +1107,14 @@ describe.concurrent("a bun.lockb that Bun 1.4 wrote", () => {
     return stdout + stderr;
   }
 
-  async function project(server: { url: URL }) {
+  function project(server: { url: URL }) {
     const bunfig = toml({ install: { registry: server.url.href, linker: "hoisted" } });
-    const dir = tempDir("lockb-from-bun-1.4", {
+    return tempDir("lockb-from-bun-1.4", {
       "bun.lockb": lockb,
       "package.json": app({ od: "1.0.0", pf: "1.0.0", "zz-10": ">=0.0.2", "zz-11": "^3.1.0" }),
       "bunfig.toml": bunfig,
       fill: { "package.json": app(everyVersion), "bunfig.toml": bunfig },
     });
-    await bun(join(String(dir), "fill"), ["install"], String(dir));
-    return dir;
   }
 
   // What the file stores for each range, as `bun bun.lockb` prints it.
@@ -1131,16 +1129,25 @@ describe.concurrent("a bun.lockb that Bun 1.4 wrote", () => {
   // to. It then saved the lockfile with the change, and with the package that only the peer held still in it.
   it("bun pm trust saves every dependency on the package that the file stores for it", async () => {
     using server = await serve();
-    using dir = await project(server);
+    using dir = project(server);
     const cwd = String(dir);
 
+    await bun(join(cwd, "fill"), ["install"], cwd);
     await bun(cwd, ["install", "--frozen-lockfile"]);
-    const before = await stored(cwd);
-    expect(before).toMatchObject({ "zz-9@~1.0.1": "1.0.1", "zz-9@^1.0.2": "1.0.2", "nd@^1.0.0": "1.1.0" });
-
     expect(await bun(cwd, ["pm", "trust", "zz-11"])).toContain("1 script ran across 1 package");
     expect(await file(join(cwd, "bun.lockb")).bytes()).not.toEqual(lockb);
-    expect(await stored(cwd)).toEqual(before);
+    // As in the fixture.
+    expect(await stored(cwd)).toEqual({
+      "nd@1.0.1": "1.0.1",
+      "nd@^1.0.0": "1.1.0",
+      "od@1.0.0": "1.0.0",
+      "pf@1.0.0": "1.0.0",
+      "zz-10@>=0.0.2": "2.1.0",
+      "zz-11@^3.1.0": "3.1.0",
+      "zz-3@^1.5.0": "1.5.0",
+      "zz-9@^1.0.2": "1.0.2",
+      "zz-9@~1.0.1": "1.0.1",
+    });
 
     await rm(join(cwd, "node_modules"), { recursive: true, force: true });
     await bun(cwd, ["install", "--frozen-lockfile"]);

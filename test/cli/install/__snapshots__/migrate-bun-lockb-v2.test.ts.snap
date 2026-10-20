@@ -484,7 +484,7 @@ exports[`migrate migrate-bun-lockb-v2-most-features 1`] = `
       "name": "js-tokens",
       "npm": {
         "name": "js-tokens",
-        "version": ">=3.0.0 <4.0.0-0 || >=4.0.0 <5.0.0-0 && >=4.0.0 <5.0.0-0",
+        "version": ">=3.0.0 <4.0.0-0 || >=4.0.0 <5.0.0-0",
       },
       "package_id": 9,
     },

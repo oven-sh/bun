@@ -1,15 +1,29 @@
 #include "ObjectModule.h"
+#include <JavaScriptCore/JSSourceCode.h>
+#include <JavaScriptCore/JSWeakMapInlines.h>
 
 namespace Zig {
-JSC::SyntheticSourceProvider::SyntheticSourceGenerator
-generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
-    JSC::JSObject* object)
+using SyntheticSourceGenerator = JSC::SyntheticSourceProvider::SyntheticSourceGenerator;
+
+// `generator` points at `value`, where the collector cannot see it. A root would never go: the
+// value reaches its own source through the module registry of its global object.
+static JSC::JSSourceCode* createSourceCodeOfValue(GlobalObject* globalObject, JSC::JSValue value, SyntheticSourceGenerator&& generator, WTF::String&& sourceURL)
 {
-    gcProtectNullTolerant(object);
-    return [object](JSC::JSGlobalObject* lexicalGlobalObject,
-               JSC::Identifier moduleKey,
-               Vector<JSC::Identifier, 4>& exportNames,
-               JSC::MarkedArgumentBuffer& exportValues) -> void {
+    auto& vm = JSC::getVM(globalObject);
+    JSC::EnsureStillAliveScope stillAlive(value);
+    auto* sourceCode = JSC::JSSourceCode::create(vm,
+        JSC::SourceCode(JSC::SyntheticSourceProvider::create(WTF::move(generator), JSC::SourceOrigin(), WTF::move(sourceURL))));
+    if (value.isCell())
+        globalObject->objectModuleValues()->set(vm, sourceCode, value);
+    return sourceCode;
+}
+
+JSC::JSSourceCode* createObjectModuleSourceCode(GlobalObject* globalObject, JSC::JSObject* object, WTF::String&& sourceURL)
+{
+    SyntheticSourceGenerator generator = [object](JSC::JSGlobalObject* lexicalGlobalObject,
+                                             JSC::Identifier moduleKey,
+                                             Vector<JSC::Identifier, 4>& exportNames,
+                                             JSC::MarkedArgumentBuffer& exportValues) -> void {
         auto& vm = JSC::getVM(lexicalGlobalObject);
         auto throwScope = DECLARE_THROW_SCOPE(vm);
         GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -19,7 +33,6 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
             PrivateSymbolMode::Exclude);
         object->methodTable()->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(throwScope, void());
-        gcUnprotectNullTolerant(object);
 
         for (auto& entry : properties.releaseData()->propertyNameVector()) {
             JSValue value = object->get(globalObject, entry);
@@ -28,17 +41,15 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
             exportValues.append(value);
         }
     };
+    return createSourceCodeOfValue(globalObject, object, WTF::move(generator), WTF::move(sourceURL));
 }
 
-JSC::SyntheticSourceProvider::SyntheticSourceGenerator
-generateObjectModuleSourceCodeForJSON(JSC::JSGlobalObject* globalObject,
-    JSC::JSObject* object)
+static JSC::JSSourceCode* createObjectModuleSourceCodeForJSON(GlobalObject* globalObject, JSC::JSObject* object, WTF::String&& sourceURL)
 {
-    gcProtectNullTolerant(object);
-    return [object](JSC::JSGlobalObject* lexicalGlobalObject,
-               JSC::Identifier moduleKey,
-               Vector<JSC::Identifier, 4>& exportNames,
-               JSC::MarkedArgumentBuffer& exportValues) -> void {
+    SyntheticSourceGenerator generator = [object](JSC::JSGlobalObject* lexicalGlobalObject,
+                                             JSC::Identifier moduleKey,
+                                             Vector<JSC::Identifier, 4>& exportNames,
+                                             JSC::MarkedArgumentBuffer& exportValues) -> void {
         auto& vm = JSC::getVM(lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
@@ -48,7 +59,6 @@ generateObjectModuleSourceCodeForJSON(JSC::JSGlobalObject* globalObject,
             PrivateSymbolMode::Exclude);
         object->getPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, void());
-        gcUnprotectNullTolerant(object);
 
         exportNames.append(vm.propertyNames->defaultKeyword);
         exportValues.append(object);
@@ -65,40 +75,30 @@ generateObjectModuleSourceCodeForJSON(JSC::JSGlobalObject* globalObject,
             exportValues.append(value);
         }
     };
+    return createSourceCodeOfValue(globalObject, object, WTF::move(generator), WTF::move(sourceURL));
 }
 
-JSC::SyntheticSourceProvider::SyntheticSourceGenerator
-generateJSValueModuleSourceCode(JSC::JSGlobalObject* globalObject,
-    JSC::JSValue value)
+JSC::JSSourceCode* createJSValueModuleSourceCode(GlobalObject* globalObject, JSC::JSValue value, WTF::String&& sourceURL)
 {
+    if (value.isObject() && !JSC::isJSArray(value))
+        return createObjectModuleSourceCodeForJSON(globalObject, value.getObject(), WTF::move(sourceURL));
 
-    if (value.isObject() && !JSC::isJSArray(value)) {
-        return generateObjectModuleSourceCodeForJSON(globalObject,
-            value.getObject());
-    }
-
-    return generateJSValueExportDefaultObjectSourceCode(globalObject, value);
+    return createJSValueExportDefaultObjectSourceCode(globalObject, value, WTF::move(sourceURL));
 }
 
-JSC::SyntheticSourceProvider::SyntheticSourceGenerator
-generateJSValueExportDefaultObjectSourceCode(JSC::JSGlobalObject* globalObject,
-    JSC::JSValue value)
+JSC::JSSourceCode* createJSValueExportDefaultObjectSourceCode(GlobalObject* globalObject, JSC::JSValue value, WTF::String&& sourceURL)
 {
-    if (value.isCell())
-        gcProtectNullTolerant(value.asCell());
-    return [value](JSC::JSGlobalObject* lexicalGlobalObject,
-               JSC::Identifier moduleKey,
-               Vector<JSC::Identifier, 4>& exportNames,
-               JSC::MarkedArgumentBuffer& exportValues) -> void {
+    SyntheticSourceGenerator generator = [value](JSC::JSGlobalObject* lexicalGlobalObject,
+                                             JSC::Identifier moduleKey,
+                                             Vector<JSC::Identifier, 4>& exportNames,
+                                             JSC::MarkedArgumentBuffer& exportValues) -> void {
         auto& vm = JSC::getVM(lexicalGlobalObject);
         exportNames.append(vm.propertyNames->defaultKeyword);
         exportValues.append(value);
         const Identifier& esModuleMarker = vm.propertyNames->__esModule;
         exportNames.append(esModuleMarker);
         exportValues.append(jsBoolean(true));
-
-        if (value.isCell())
-            gcUnprotectNullTolerant(value.asCell());
     };
+    return createSourceCodeOfValue(globalObject, value, WTF::move(generator), WTF::move(sourceURL));
 }
 } // namespace Zig

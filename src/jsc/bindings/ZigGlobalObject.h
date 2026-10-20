@@ -304,6 +304,8 @@ public:
     Structure* AsyncContextFrameStructure() const { return m_asyncBoundFunctionStructure.getInitializedOnMainThread(this); }
 
     JSWeakMap* vmModuleContextMap() const { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
+    // JSSourceCode -> the value its module exports (ObjectModule.cpp).
+    JSWeakMap* objectModuleValues() const { return m_objectModuleValues.getInitializedOnMainThread(this); }
 
     // Made with the first Bun.ModuleGraph (ModuleGraph.cpp).
     bool hasModuleGraphs() const { return !!m_moduleGraphs; }
@@ -641,6 +643,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSBufferSubclassStructure)                           \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSResizableOrGrowableSharedBufferSubclassStructure)  \
     V(private, LazyPropertyOfGlobalObject<JSWeakMap>, m_vmModuleContextMap)                                  \
+    V(private, LazyPropertyOfGlobalObject<JSWeakMap>, m_objectModuleValues)                                  \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_lazyRequireCacheObject)                                \
     V(public, LazyPropertyOfGlobalObject<Bun::JSCommonJSExtensions>, m_lazyRequireExtensionsObject)          \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_lazyTestModuleObject)                                 \

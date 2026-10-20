@@ -424,15 +424,7 @@ static JSValue handleVirtualModuleResult(
             }
         }
 
-        JSC::ensureStillAliveHere(object);
-        auto function = generateObjectModuleSourceCode(
-            globalObject,
-            object);
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(WTF::move(function),
-                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
-        JSC::ensureStillAliveHere(object);
-        RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(createObjectModuleSourceCode(globalObject, object, specifier->toWTFString(BunString::ZeroCopy))));
     }
 
     case OnLoadResultTypePromise: {
@@ -1070,12 +1062,7 @@ static JSValue fetchESMSourceCode(
             if (!value) {
                 RELEASE_AND_RETURN(scope, reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
             }
-            auto function = generateJSValueExportDefaultObjectSourceCode(globalObject, value);
-            auto source = JSC::SourceCode(
-                JSC::SyntheticSourceProvider::create(WTF::move(function),
-                    JSC::SourceOrigin(), WTF::move(moduleKey)));
-            JSC::ensureStillAliveHere(value);
-            RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(source))));
+            RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueExportDefaultObjectSourceCode(globalObject, value, WTF::move(moduleKey))));
         }
 
         // CommonJS modules from src/js/*
@@ -1184,14 +1171,7 @@ static JSValue fetchESMSourceCode(
         }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
-        auto function = generateJSValueModuleSourceCode(
-            globalObject,
-            value);
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(WTF::move(function),
-                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
-        JSC::ensureStillAliveHere(value);
-        RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueModuleSourceCode(globalObject, value, specifier->toWTFString(BunString::ZeroCopy))));
     }
     // TOML and JSONC may go through here
     else if (res->result.value.tag == SyntheticModuleType::ExportsObject) {
@@ -1201,14 +1181,7 @@ static JSValue fetchESMSourceCode(
         }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
-        auto function = generateJSValueModuleSourceCode(
-            globalObject,
-            value);
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(WTF::move(function),
-                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
-        JSC::ensureStillAliveHere(value);
-        RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueModuleSourceCode(globalObject, value, specifier->toWTFString(BunString::ZeroCopy))));
     } else if (res->result.value.tag == SyntheticModuleType::ExportDefaultObject) {
         JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
         if (!value) {
@@ -1216,14 +1189,7 @@ static JSValue fetchESMSourceCode(
         }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
-        auto function = generateJSValueExportDefaultObjectSourceCode(
-            globalObject,
-            value);
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(WTF::move(function),
-                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
-        JSC::ensureStillAliveHere(value);
-        RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueExportDefaultObjectSourceCode(globalObject, value, specifier->toWTFString(BunString::ZeroCopy))));
     }
 
     auto provider = Zig::SourceProvider::create(globalObject, res->result.value);

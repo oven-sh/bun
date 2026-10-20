@@ -2140,6 +2140,34 @@ describe("Bun.ModuleGraph — concurrency", () => {
     A.dispose();
     expect((await pb).who).toBe("B");
   });
+
+  test("a graph disposed in the turn it imports a JSON file again: the import() gets the file's value", async () => {
+    const d = fixture({
+      "data.json": `{ "a": 1, "b": { "c": [1, 2, 3] } }`,
+      "tenant.mjs": `export const load = () => import("./data.json");`,
+      "host.mjs": `
+        const graph = new Bun.ModuleGraph({});
+        const { load } = await graph.import(import.meta.dir + "/tenant.mjs");
+        await (async () => { await graph.run(load); })();
+        await new Promise(resolve => setImmediate(resolve));
+
+        const again = graph.run(load);
+        graph.dispose();
+
+        // Nothing else holds the parsed object now. What is allocated next takes its place if it died.
+        Bun.gc(true);
+        const others = [];
+        for (let i = 0; i < 100_000; i++) others.push({ x: i, y: i });
+
+        console.log(JSON.stringify((await again).default));
+      `,
+    });
+    expect(await runBun([join(d, "host.mjs")])).toEqual({
+      stdout: `{"a":1,"b":{"c":[1,2,3]}}`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 describe("Bun.ModuleGraph — nested graphs, stack traces, misc host integration", () => {

@@ -1154,6 +1154,40 @@ it.concurrent(
   },
 );
 
+it.concurrent.each([
+  ["delete require.cache", `delete require.cache["virtual-object"];`],
+  ["build.module() again", `define();`],
+])(
+  "object loader: import() of a module that %s removes while the import() is queued gets its exports",
+  async (_, remove) => {
+    const script = `
+    const define = () =>
+      Bun.plugin({
+        name: "object",
+        setup(build) {
+          build.module("virtual-object", () => ({ loader: "object", exports: { a: 1, b: { c: [1, 2, 3] } } }));
+        },
+      });
+    define();
+    await (async () => { await import("virtual-object"); })();
+    await new Promise(resolve => setImmediate(resolve));
+
+    const again = import("virtual-object");
+    ${remove}
+
+    // Nothing else holds the exports object now. What is allocated next takes its place if it died.
+    Bun.gc(true);
+    const others = [];
+    for (let i = 0; i < 100_000; i++) others.push({ x: i, y: i });
+
+    console.log(JSON.stringify(await again));
+  `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: `{"a":1,"b":{"c":[1,2,3]}}\n`, stderr: "", exitCode: 0 });
+  },
+);
+
 // As in the example of onResolve in the documentation, which answers "./public/images/...".
 describe.concurrent("what onResolve answers without a namespace", () => {
   const files = {

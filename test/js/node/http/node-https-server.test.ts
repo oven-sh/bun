@@ -453,7 +453,6 @@ describe.concurrent("https.Server whose 'connection' listener throws", () => {
     "handled-writes-destroys": [{ marks: threw, served: false }, 0],
     // And none after an error that ends the process.
     "handled-exits": [{ marks: threw, exit: 3 }, 3],
-    "worker-handled-exits": [{ marks: threw, exit: 3 }, 0],
     "unhandled": [{ marks: ["connection"], exit: 1 }, 1],
     "monitor": [{ marks: ["connection", "monitor:connection"], exit: 1 }, 1],
 

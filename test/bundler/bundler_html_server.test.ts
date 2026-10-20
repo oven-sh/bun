@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -204,6 +204,77 @@ describe.concurrent("bundler", () => {
     expect(stdout.trim(), stderr).toBe("200 <!doctype html><h1>hand built</h1>");
     expect(exitCode).toBe(0);
   });
+
+  test.each([
+    { name: "dir", dirLength: 200_000, pathLength: 1 },
+    { name: "dir-and-path", dirLength: 800, pathLength: 800 },
+    { name: "long-dir-and-path", dirLength: 3000, pathLength: 3000 },
+  ])("HTMLServerManifestPathTooLong/$name", async ({ dirLength, pathLength }) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const path = "./" + "b".repeat(${pathLength});
+        try {
+          Bun.serve({
+            port: 0,
+            routes: {
+              "/": {
+                index: path,
+                dir: "/" + "a".repeat(${dirLength}),
+                files: [{ path, loader: "html", isEntry: true, headers: { "content-type": "text/html" } }],
+              },
+            },
+          });
+        } catch (error) {
+          console.log(error instanceof Error);
+        }
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim(), stderr).toBe("true");
+    expect(exitCode).toBe(0);
+  });
+
+  // The executable embeds only the server bundle, so the other outputs stay on disk.
+  test("HTMLServerCompiledBundleRunFromOutdir", async () => {
+    using dir = tempDir("html-server-compiled", {
+      ...htmlServerFiles,
+      "src/server.ts": `import about from "./pages/about.html";${serveAbout}`,
+    });
+    const build = await Bun.build({
+      entrypoints: [join(String(dir), "src/server.ts")],
+      outdir: join(String(dir), "dist"),
+      target: "bun",
+      format: "esm",
+    });
+    expect(build.success).toBe(true);
+
+    const dist = join(String(dir), "dist");
+    await using compile = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "server.js", "--outfile=app"],
+      env: bunEnv,
+      cwd: dist,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [compileStderr, compileExitCode] = await Promise.all([compile.stderr.text(), compile.exited]);
+    expect(compileExitCode, compileStderr).toBe(0);
+
+    await using proc = Bun.spawn({
+      cmd: [join(dist, isWindows ? "app.exe" : "app")],
+      env: bunEnv,
+      cwd: dist,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim(), stderr).toBe("200 true 200 true 200");
+    expect(exitCode).toBe(0);
+  }, 60_000);
 
   for (const backend of ["api", "cli"] as const) {
     itBundled(`compile/${backend}/HTMLServerBasic`, {

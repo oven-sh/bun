@@ -615,8 +615,17 @@ impl AnyRoute {
             base_dir
         };
 
-        let abs_path =
-            paths::resolve_path::join_abs_string::<paths::platform::Loose>(base_dir, &[path_slice]);
+        let Some(abs_path) =
+            paths::resolve_path::join_abs_string_checked::<paths::platform::Loose>(
+                base_dir,
+                &[path_slice],
+            )
+            .filter(|abs_path| abs_path.len() < paths::MAX_PATH_BYTES)
+        else {
+            return Err(init_ctx
+                .global
+                .throw_invalid_arguments(format_args!("Bundled file path is too long")));
+        };
         if bundle_dir.is_some() && !paths::is_absolute(path_slice) {
             path = Node::PathOrFileDescriptor::Path(Node::PathLike::owned(abs_path.to_vec()));
         }
@@ -688,15 +697,26 @@ impl AnyRoute {
         let Some(files) = argument.get_array(init_ctx.global, b"files")? else {
             return Ok(None);
         };
-        // Set by the bundle to the output directory; the paths are relative to it.
-        let bundle_dir = argument
+        // Set by the bundle to the output directory; the paths are relative to it. In a
+        // compiled bundle it is the virtual root, which does not hold the bundle's other outputs.
+        let dir = argument
             .get_optional_slice(init_ctx.global, b"dir")?
-            .filter(|dir| paths::is_absolute(dir))
-            .map(|dir| {
-                Box::<[u8]>::from(
-                    paths::resolve_path::join_abs_string::<paths::platform::Loose>(&dir, &[b"."]),
-                )
+            .filter(|dir| {
+                paths::is_absolute(dir) && !StandaloneModuleGraph::is_bun_standalone_file_path(dir)
             });
+        if dir
+            .as_ref()
+            .is_some_and(|dir| dir.len() >= paths::MAX_PATH_BYTES)
+        {
+            return Err(init_ctx
+                .global
+                .throw_invalid_arguments(format_args!("Bundled file path is too long")));
+        }
+        let bundle_dir = dir.map(|dir| {
+            Box::<[u8]>::from(
+                paths::resolve_path::join_abs_string::<paths::platform::Loose>(&dir, &[b"."]),
+            )
+        });
         let mut iter = files.array_iterator(init_ctx.global)?;
         let mut html_route: Option<AnyRoute> = None;
         while let Some(file_entry) = iter.next()? {

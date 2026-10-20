@@ -7216,14 +7216,16 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
   });
 
   it("keeps a non-throwing callback in the same place in the event loop", async () => {
+    // The callback queues the immediate. An immediate that the main script queues races the stat
+    // on the thread pool: it runs before or after the callback, in node too.
     const { stdout, exitCode } = await runScript(`
       const fs = require("fs");
       const log = [];
       fs.stat(${file}, (err, st) => {
         log.push("fs-cb:" + (err === null) + ":" + st.isFile());
+        setImmediate(() => log.push("setImmediate"));
         process.nextTick(() => log.push("tick-from-fs-cb"));
       });
-      setImmediate(() => log.push("setImmediate"));
       process.on("exit", () => console.log(log.join(",")));
     `);
     expect(stdout).toBe("fs-cb:true:true,tick-from-fs-cb,setImmediate");

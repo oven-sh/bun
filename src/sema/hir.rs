@@ -1120,7 +1120,7 @@ pub struct Call {
 /// [`Call::close_pos`] of a tagged template whose last piece of text is missing or unterminated (`callIsIncomplete`).
 pub const INCOMPLETE_TEMPLATE: u32 = u32::MAX - 1;
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PropKey {
     None,
     /// An identifier, a string, or a number formatted like `String(n)`. Also `["a"]` and `[0]`.

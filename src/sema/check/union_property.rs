@@ -191,8 +191,6 @@ struct UnionPropertyBuilder<'p, 's> {
     /// `indexTypes`. Each type is paired with the position of the first member that contributes it.
     /// `finish_union_property` sorts them by that position.
     index_types: SmallVec<[(usize, TypeId); 4]>,
-    /// The types in `index_types`, in the same order.
-    distinct_index_types: OrderedSet<TypeId>,
     merged_instantiations: bool,
     flags: PropFlags,
     is_public: bool,
@@ -210,7 +208,6 @@ impl<'p, 's> UnionPropertyBuilder<'p, 's> {
             symbols: SmallVec::new(),
             more_symbols: FxHashSet::default(),
             index_types: SmallVec::new(),
-            distinct_index_types: OrderedSet::default(),
             merged_instantiations: false,
             flags: PropFlags::empty(),
             is_public: false,
@@ -273,9 +270,9 @@ impl<'p, 's> UnionPropertyBuilder<'p, 's> {
     /// `indexTypes` is only passed to `getUnionType`, so duplicates are dropped. Properties are compared by value, so
     /// the order must not depend on how many members were visited.
     fn add_index_type(&mut self, at: usize, ty: TypeId) {
-        match self.distinct_index_types.insert_full(ty) {
-            (_, true) => self.index_types.push((at, ty)),
-            (same, false) => self.index_types[same].0 = self.index_types[same].0.min(at),
+        match self.index_types.iter_mut().find(|it| it.1 == ty) {
+            Some(same) => same.0 = same.0.min(at),
+            None => self.index_types.push((at, ty)),
         }
     }
 }

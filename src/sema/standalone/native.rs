@@ -2,7 +2,7 @@
 //! parser: this crate's command line tool and `bun_sema`'s tests. They use plain loops instead of SIMD and a bump
 //! allocator instead of mimalloc. Never part of the real build.
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_int, c_void};
 
 // ───────────────────────────── mimalloc ─────────────────────────────
 
@@ -263,89 +263,9 @@ mod fake_mimalloc {
         }
     }
     #[unsafe(no_mangle)]
-    extern "C" fn mi_malloc(size: usize) -> *mut c_void {
-        global_alloc(size, 16, false)
-    }
-    #[unsafe(no_mangle)]
-    extern "C" fn mi_zalloc(size: usize) -> *mut c_void {
-        global_alloc(size, 16, true)
-    }
-    #[unsafe(no_mangle)]
-    extern "C" fn mi_malloc_aligned(size: usize, align: usize) -> *mut c_void {
-        global_alloc(size, align, false)
-    }
-    #[unsafe(no_mangle)]
-    extern "C" fn mi_zalloc_aligned(size: usize, align: usize) -> *mut c_void {
-        global_alloc(size, align, true)
-    }
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn mi_realloc(p: *mut c_void, size: usize) -> *mut c_void {
-        // SAFETY: `p` is null or a block that one of these functions returned, as mimalloc requires.
-        unsafe { mi_heap_realloc_aligned(main_heap().cast(), p, size, 16) }
-    }
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn mi_realloc_aligned(
-        p: *mut c_void,
-        size: usize,
-        align: usize,
-    ) -> *mut c_void {
-        // SAFETY: `p` is null or a block that one of these functions returned, as mimalloc requires.
-        unsafe { mi_heap_realloc_aligned(main_heap().cast(), p, size, align) }
-    }
-    #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_free(p: *mut c_void) {
         // SAFETY: `p` is null or a block that one of these functions returned, as mimalloc requires.
         unsafe { release(p) }
-    }
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn mi_free_size(p: *mut c_void, _size: usize) {
-        // SAFETY: `p` is null or a block that one of these functions returned, as mimalloc requires.
-        unsafe { release(p) }
-    }
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn mi_free_size_aligned(p: *mut c_void, _size: usize, _align: usize) {
-        // SAFETY: `p` is null or a block that one of these functions returned, as mimalloc requires.
-        unsafe { release(p) }
-    }
-    #[unsafe(no_mangle)]
-    extern "C" fn mi_expand(_p: *mut c_void, _size: usize) -> *mut c_void {
-        core::ptr::null_mut()
-    }
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn mi_malloc_usable_size(p: *const c_void) -> usize {
-        if p.is_null() {
-            0
-        } else {
-            // SAFETY: `p` is a block that one of these functions returned. See `header`.
-            unsafe { (*header(p)).size }
-        }
-    }
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn mi_usable_size(p: *const c_void) -> usize {
-        // SAFETY: `p` is null or a block that one of these functions returned, as mimalloc requires.
-        unsafe { mi_malloc_usable_size(p) }
-    }
-    #[unsafe(no_mangle)]
-    extern "C" fn mi_is_in_heap_region(_p: *const c_void) -> bool {
-        true
-    }
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn mi_process_info(
-        a: *mut usize,
-        b: *mut usize,
-        c: *mut usize,
-        d: *mut usize,
-        e: *mut usize,
-        f: *mut usize,
-        g: *mut usize,
-        h: *mut usize,
-    ) {
-        for p in [a, b, c, d, e, f, g, h] {
-            if !p.is_null() {
-                // SAFETY: it isn't null, so the caller passed a valid pointer to write a number to.
-                unsafe { *p = 0 };
-            }
-        }
     }
 }
 
@@ -401,34 +321,6 @@ unsafe extern "C" fn highway_count_char(p: *const u8, len: usize, needle: u8) ->
     text.chunks(192)
         .map(|chunk| usize::from(chunk.iter().map(|&c| u8::from(c == needle)).sum::<u8>()))
         .sum()
-}
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-unsafe extern "C" fn highway_line_starts(p: *const u8, len: usize, out: *mut u32) -> usize {
-    // SAFETY: the caller passes a slice, as a pointer and a length.
-    let text = unsafe { bytes(p, len) };
-    let mut written = 0;
-    for (i, _) in text.iter().enumerate().filter(|it| *it.1 == b'\n') {
-        // SAFETY: `out` has room for one number per line feed in the text.
-        unsafe { out.add(written).write(i as u32 + 1) };
-        written += 1;
-    }
-    written
-}
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-unsafe extern "C" fn highway_odd_blocks(p: *const u8, len: usize, out: *mut u64) {
-    // SAFETY: the caller passes a slice, as a pointer and a length.
-    let text = unsafe { bytes(p, len) };
-    for (word, blocks) in text.chunks(64 * 64).enumerate() {
-        let is_odd = |c: &u8| !matches!(c, 0x20..=0x5B | 0x5D..=0x7E | b'\t' | b'\n' | b'\r');
-        let marks = blocks.chunks(64).enumerate();
-        let marks = marks.fold(0u64, |marks, (i, block)| {
-            marks | u64::from(block.iter().any(is_odd)) << i
-        });
-        // SAFETY: `out` has one word per 64 blocks of 64 bytes, counting partial ones.
-        unsafe { out.add(word).write(marks) };
-    }
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
@@ -592,86 +484,6 @@ unsafe extern "C" fn highway_memrmem(
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn highway_memrmem16(
-    h: *const u16,
-    h_len: usize,
-    n: *const u16,
-    n_len: usize,
-) -> usize {
-    if n_len == 0 {
-        return h_len;
-    }
-    if h_len < n_len {
-        return usize::MAX;
-    }
-    // SAFETY: the caller passes two slices, each as a pointer and a length.
-    let (hay, needle) = unsafe {
-        (
-            core::slice::from_raw_parts(h, h_len),
-            core::slice::from_raw_parts(n, n_len),
-        )
-    };
-    (0..=hay.len() - needle.len())
-        .rev()
-        .find(|&i| hay[i..i + needle.len()] == *needle)
-        .unwrap_or(usize::MAX)
-}
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-unsafe extern "C" fn highway_index_of_interesting_character_in_string_literal(
-    p: *const u8,
-    len: usize,
-    quote: u8,
-) -> usize {
-    // SAFETY: the caller passes a slice, as a pointer and a length.
-    first(unsafe { bytes(p, len) }, |c| {
-        c == quote || c == b'\\' || !(0x20..=0x7E).contains(&c)
-    })
-}
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-unsafe extern "C" fn highway_index_of_interesting_character_in_multiline_comment(
-    p: *const u8,
-    len: usize,
-) -> usize {
-    // SAFETY: the caller passes a slice, as a pointer and a length.
-    first(unsafe { bytes(p, len) }, |c| {
-        c == b'*' || c == b'\r' || c == b'\n' || c > 127
-    })
-}
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-unsafe extern "C" fn highway_index_of_newline_or_non_ascii_or_hash_or_at(
-    p: *const u8,
-    len: usize,
-) -> usize {
-    // SAFETY: the caller passes a slice, as a pointer and a length.
-    first(unsafe { bytes(p, len) }, |c| {
-        c == b'#' || c == b'@' || !(0x20..=0x7E).contains(&c)
-    })
-}
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-unsafe extern "C" fn highway_index_of_space_or_newline_or_non_ascii(
-    p: *const u8,
-    len: usize,
-) -> usize {
-    // SAFETY: the caller passes a slice, as a pointer and a length.
-    first(unsafe { bytes(p, len) }, |c| c <= b' ' || c > 127)
-}
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-unsafe extern "C" fn highway_contains_newline_or_non_ascii_or_quote(
-    p: *const u8,
-    len: usize,
-) -> bool {
-    // SAFETY: the caller passes a slice, as a pointer and a length.
-    unsafe { bytes(p, len) }
-        .iter()
-        .any(|&c| !(0x20..=127).contains(&c) || c == b'"')
-}
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
 unsafe extern "C" fn highway_index_of_needs_escape_for_javascript_string(
     p: *const u8,
     len: usize,
@@ -711,50 +523,6 @@ struct SimdutfResult {
 unsafe extern "C" fn simdutf__validate_utf8(p: *const u8, len: usize) -> bool {
     // SAFETY: the caller passes a slice, as a pointer and a length.
     core::str::from_utf8(unsafe { bytes(p, len) }).is_ok()
-}
-#[unsafe(no_mangle)]
-unsafe extern "C" fn simdutf__validate_utf8_with_errors(p: *const u8, len: usize) -> SimdutfResult {
-    // SAFETY: the caller passes a slice, as a pointer and a length.
-    match core::str::from_utf8(unsafe { bytes(p, len) }) {
-        Ok(_) => SimdutfResult {
-            status: 0,
-            count: len,
-        },
-        // simdutf's HEADER_BITS
-        Err(error) => SimdutfResult {
-            status: 1,
-            count: error.valid_up_to(),
-        },
-    }
-}
-#[unsafe(no_mangle)]
-unsafe extern "C" fn simdutf__convert_utf8_to_utf16le_with_errors(
-    p: *const u8,
-    len: usize,
-    out: *mut u16,
-) -> SimdutfResult {
-    // SAFETY: the caller passes a slice, as a pointer and a length.
-    let text = match core::str::from_utf8(unsafe { bytes(p, len) }) {
-        Ok(text) => text,
-        // simdutf's HEADER_BITS
-        Err(error) => {
-            return SimdutfResult {
-                status: 1,
-                count: error.valid_up_to(),
-            };
-        }
-    };
-    let mut written = 0;
-    for unit in text.encode_utf16() {
-        // SAFETY: the caller has reserved room for the longest possible result, as simdutf
-        // requires.
-        unsafe { out.add(written).write(unit) };
-        written += 1;
-    }
-    SimdutfResult {
-        status: 0,
-        count: written,
-    }
 }
 #[unsafe(no_mangle)]
 unsafe extern "C" fn simdutf__validate_ascii(p: *const u8, len: usize) -> bool {
@@ -847,15 +615,6 @@ unsafe extern "C" fn simdutf__convert_utf16le_to_utf8_with_errors(
         count: written,
     }
 }
-#[unsafe(no_mangle)]
-unsafe extern "C" fn simdutf__base64_encode(
-    _p: *const u8,
-    _len: usize,
-    _out: *mut u8,
-    _url: c_int,
-) -> usize {
-    unreachable!("the parser never encodes base64")
-}
 
 // ───────────────────────────── widths ─────────────────────────────
 
@@ -946,8 +705,8 @@ pub fn set_stack_size(remaining: usize) {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn bun_cpu_features() -> u8 {
-    0
+extern "Rust" fn __bun_crash_handler_out_of_memory() -> ! {
+    panic!("out of memory");
 }
 #[unsafe(no_mangle)]
 extern "C" fn bun_restore_stdio() {}
@@ -962,27 +721,6 @@ extern "C" fn getRSS(rss: &mut usize) -> c_int {
 extern "C" fn getPeakRSS(peak: &mut usize) -> c_int {
     *peak = 0;
     -1
-}
-#[unsafe(no_mangle)]
-extern "C" fn is_executable_file(_path: *const c_char) -> bool {
-    false
-}
-#[unsafe(no_mangle)]
-extern "C" fn compress2(
-    _d: *mut u8,
-    _dl: *mut usize,
-    _s: *const u8,
-    _sl: usize,
-    _level: c_int,
-) -> c_int {
-    -2
-}
-#[unsafe(no_mangle)]
-fn __bun_macro_context_get_remap(
-    _data: *mut c_void,
-    _path: &[u8],
-) -> Option<&'static bun_js_parser::Macro::MacroRemapEntry> {
-    None
 }
 
 /// Returns the mantissa digits of `text`, starting at the first nonzero digit.

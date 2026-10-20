@@ -969,9 +969,11 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
           const worker = cluster.fork();
           worker.on("online", () => worker.disconnect());
           worker.on("exit", code => console.log(code));
+        } else {
+          process.on("disconnect", () => console.log(process.channel));
         }
       `,
-      "0\n",
+      "null\n0\n",
     ],
   ])("what Bun itself writes on a built-in is written: %s", async (written, source, expected) => {
     using dir = tempDir("immutable-globals-own-writes", { "index.cjs": source });

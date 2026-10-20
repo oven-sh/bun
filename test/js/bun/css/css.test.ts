@@ -9180,6 +9180,46 @@ describe("css tests", () => {
       expect(wrong).toEqual([]);
       expect(prefix_test_output(output, "", defaults)).toBe(output);
     });
+
+    // A review of the handler found these. Each one needs a repair or a decision before the handler can ship.
+    describe("open defects", () => {
+      test.todo(
+        "`.a{-webkit-mask-image:X!important;mask-image:X!important} .q{top:0} .a{mask-image:Z}` keeps the first rule: `is_duplicate` has to compare each importance list in full (#33684)",
+      );
+      test.todo(
+        "`.a{mask-source-type:alpha} .b{mask-size:cover;mask-size:cover}` prints one pair in `.b`: `floor` is set in a handler that is not open, and `finalize` does not reset it",
+      );
+      test.todo(
+        "`mask-image:url(a.png);-webkit-mask-image:url(a.png)` stays two lines: the handler looks only back for a written prefix, and two `url()` values are never equal (iconoir.css grows 49%)",
+      );
+      test.todo(
+        "`-webkit-mask-image:none;mask-position:0 0;mask:none` prints the same text on a second pass: the typed `-webkit-mask-position` copy does not merge with a written one, which is text",
+      );
+      test.todo(
+        "`mask-border:url(b.png) 25 fill;mask:url(a.png)!important` resets the `-webkit-mask-box-image` copy or does not write it: `copied` is not shared between the two importance lists",
+      );
+      test.todo(
+        "`mask:url(#m)` gets no `-webkit-mask` copy: Chromium 119 loads the copy as an image and does not paint the element",
+      );
+      test.todo(
+        "`mask-border:none` gets no `-webkit-mask-box-image-slice: 0` line beside the empty `-webkit-mask-box-image:` that main prints (#45143)",
+      );
+      test.todo(
+        "`mask-composite:var(--c)` gets no raw copy: a standard keyword in the variable is not valid for `-webkit-mask-composite`",
+      );
+      test.todo(
+        "`.a{mask-composite:exclude} .a.b{mask:url(x.png)}` states the composite in the second rule: the old `-webkit-mask` does not reset the `xor` of the first rule",
+      );
+      test.todo(
+        "`.a{mask-border:url(b.png) 25} .a.b{mask:none}` resets the `-webkit-mask-box-image` copy of the first rule",
+      );
+      test.todo(
+        "`-webkit-mask-position-x:5px;mask-position:10px 0` counts `-webkit-mask-position-x` as a written prefix",
+      );
+      test.todo(
+        "the browser model: Safari 15.4 to 15.6 apply `-webkit-mask-composite` after `mask-composite`, and no Chromium reads `mask-border`",
+      );
+    });
   });
 
   describe("font-palette-values", () => {

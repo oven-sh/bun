@@ -4034,6 +4034,8 @@ pub struct ResolveFunctionResult {
     // which outlives every `ResolveFunctionResult`.
     pub path: &'static [u8],
     pub(crate) query_string: &'static [u8],
+    /// `path` names a module that `bun build --compile` embedded.
+    pub(crate) is_standalone_module: bool,
 }
 
 /// Per-thread `BufferPrinter` used when printing transpiled module source.
@@ -5227,13 +5229,15 @@ impl VirtualMachine {
         let top_level_dir = self.top_level_dir();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
+                // `source` is the referrer's module key, which may be `<path>?query`.
+                let source_path = crate::resolver_jsc::module_key_without_query(source);
                 // SAFETY: PORT — `dir_with_trailing_slash()` returns a
                 // re-slice of `source`, which the caller guarantees outlives
                 // the resolve call (and the resolver only borrows it for the
                 // synchronous `resolve_and_auto_install`).
                 unsafe {
                     bun_ptr::detach_lifetime(
-                        bun_resolver::fs::PathName::init(source).dir_with_trailing_slash(),
+                        bun_resolver::fs::PathName::init(source_path).dir_with_trailing_slash(),
                     )
                 }
             } else {
@@ -5333,6 +5337,9 @@ impl VirtualMachine {
         // outlives `ResolveFunctionResult` (see the struct's lifetime-erasure
         // note).
         ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
+        ret.is_standalone_module = result
+            .flags
+            .contains(bun_resolver::ResultFlags::IS_STANDALONE_MODULE);
 
         Ok(())
     }
@@ -5601,7 +5608,12 @@ impl VirtualMachine {
         }
 
         if let Some(query) = query_string {
-            *query = bun_core::String::clone_utf8(result.query_string);
+            // `bun build --compile` finds an embedded module by its exact key, so that key gets no suffix.
+            *query = if result.is_standalone_module {
+                bun_core::String::EMPTY
+            } else {
+                bun_core::String::clone_utf8(result.query_string)
+            };
         }
 
         Ok(Ok(bun_core::String::clone_utf8(result.path)))

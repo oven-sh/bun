@@ -37,6 +37,7 @@ const script = `
 
   const n = 2000;
   const repeat = rule => Buffer.alloc(n * rule.length, rule).toString();
+  const apart = Array.from({ length: 8 * n }, (_, i) => \`.a{--x\${i}:1}.b\${i}{color:red}\`).join("");
   const floods = {
     "color-scheme-dark": [repeat(".a{color-scheme:dark}"), { chrome: 80 << 16 }],
     "color-scheme-light-dark": [repeat(".a{color-scheme:light dark}"), undefined],
@@ -53,16 +54,24 @@ const script = `
       Array.from({ length: n }, (_, i) => \`.a\${i}{color:red}\`).join(""),
       { chrome: 80 << 16 },
     ],
-    "text-decoration": [repeat(".a{text-decoration:underline dotted}.a{text-decoration:underline}"), { safari: 14 << 16 }],
-    // No rule here is a duplicate of another one: each has its own custom property name, and its own bucket in the duplicate-rule table.
-    "distinct-custom-props-apart": [
-      Array.from({ length: 8 * n }, (_, i) => \`.a{--x\${i}:1}.b\${i}{color:red}\`).join(""),
-      undefined,
+    // The second pass over the merged rule gives each line alone its prefix, and adds nothing else.
+    "text-decoration": [
+      repeat(".a{text-decoration:underline dotted}.a{text-decoration:underline}"),
+      { safari: 14 << 16 },
+      ".a {\\n" +
+        repeat(
+          "  -webkit-text-decoration: underline dotted;\\n  text-decoration: underline dotted;\\n" +
+            "  -webkit-text-decoration: underline;\\n  text-decoration: underline;\\n",
+        ) +
+        "}\\n",
     ],
+    // No rule here is a duplicate of another one: each has its own custom property name, and its own bucket in the duplicate-rule table.
+    "distinct-custom-props-apart": [apart, undefined, apart],
   };
-  for (const [name, [src, targets]] of Object.entries(floods)) {
+  for (const [name, [src, targets, expected]] of Object.entries(floods)) {
     const out = targets === undefined ? c.minifyTest(src, "") : c._test(src, "", targets);
     if (typeof out !== "string" || out.length === 0) throw new Error(name + " produced no output");
+    if (expected !== undefined && out !== expected) throw new Error(name + " produced another sheet");
     console.log("OK:" + name);
   }
 `;

@@ -821,7 +821,7 @@ impl<'s> Checker<'_, 's> {
 
 impl<'p, 's> Checker<'p, 's> {
     /// Drops the checker after `end_task_after_commits`. Returns what `Program::checker_reusing` can reuse.
-    pub fn into_spare(self: Box<Self>) -> Box<Spare<'p, 's>> {
+    pub fn into_spare(self: Box<Self>) -> Box<Spare<'s>> {
         let mut spare = Box::new(Spare {
             task: self.task,
             task_facts: self.task_facts,

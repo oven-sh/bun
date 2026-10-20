@@ -511,13 +511,13 @@ impl crate::types::Follow for decl::Predicate {
 
 /// A finished checker's task and largest caches, all empty. The next checker on the thread reuses their memory. It's
 /// about 20 KB, so it's boxed to keep stack frames small.
-pub struct Spare<'p, 's> {
+pub struct Spare<'s> {
     task: Task<'s>,
     task_facts: shortcuts::TaskFacts,
     simplified: [shortcuts::TypeMap<TypeId>; 2],
     reduced_unions: shortcuts::TypeMap<TypeId>,
     links: links::TypeLinks,
-    signature_links: signature_links::SignatureLinks<'p>,
+    signature_links: signature_links::SignatureLinks,
     widened_types: shortcuts::TypeMap<TypeId>,
     apparent_types_of_intersections: shortcuts::TypeMap<TypeId>,
 }
@@ -738,7 +738,7 @@ impl<'s> Program<'s> {
     }
 
     /// Returns a new task and empty caches, for a thread's first checker.
-    fn empty_spare<'p>(&'p self) -> Box<Spare<'p, 's>> {
+    fn empty_spare(&self) -> Box<Spare<'s>> {
         Box::new(Spare {
             task: Task::new_in(self.session.arena(), &self.types),
             task_facts: Default::default(),
@@ -753,7 +753,7 @@ impl<'s> Program<'s> {
 
     /// Returns a new checker. `spare` is what `Checker::into_spare` returned on this thread, and
     /// the new checker reuses its memory.
-    pub fn checker_reusing<'p>(&'p self, spare: Option<Box<Spare<'p, 's>>>) -> Checker<'p, 's> {
+    pub fn checker_reusing<'p>(&'p self, spare: Option<Box<Spare<'s>>>) -> Checker<'p, 's> {
         let arena = self.session.arena();
         let spare = spare.unwrap_or_else(|| self.empty_spare());
 
@@ -1839,7 +1839,7 @@ pub struct Checker<'p, 's> {
     /// The derived parts of conditional and mapped types, and the aliases of types.
     links: links::TypeLinks,
     /// The derived parts of signatures.
-    signature_links: signature_links::SignatureLinks<'p>,
+    signature_links: signature_links::SignatureLinks,
     /// `reparseTopLevelAwait`: the statements of that file that end up in an await context. Sorted.
     /// Computed on first use.
     reparsed_for_await: Option<Vec<StmtId>>,

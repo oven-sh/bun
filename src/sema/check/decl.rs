@@ -4335,7 +4335,7 @@ impl<'p, 's> Checker<'p, 's> {
         if recent.0 == sig {
             return List::Permanent(recent.1);
         }
-        let params = self.sig_type_params_not_recent(sig);
+        let params = self.look_up_sig_type_params(sig);
         // A list that's stored somewhere is final.
         if let List::Permanent(cached) = params {
             self.recent_sig_type_params[sig.0 as usize % RECENT_SIGS] = (sig, cached);
@@ -4344,63 +4344,32 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `sig_type_params` for a signature that wasn't queried recently.
-    fn sig_type_params_not_recent(&mut self, sig: SigId) -> List<'p, TypeId> {
-        if (self.signature_links).has(sig, signature_links::fact::HAS_NO_TYPE_PARAMETERS) {
-            return List::default();
-        }
-        if let Some(cached) = self.signature_links.type_parameters(sig) {
-            return List::Permanent(cached);
-        }
-        self.look_up_sig_type_params(sig)
-    }
-
-    /// Caches `stored_params`, the stored result of `sig_type_params(sig)`, in `signature_links` and returns it.
-    fn cached_sig_type_params(
-        &mut self,
-        sig: SigId,
-        stored_params: &'p [TypeId],
-    ) -> List<'p, TypeId> {
-        self.signature_links
-            .cache_type_parameters(sig, stored_params);
-
-        List::Permanent(stored_params)
-    }
-
     fn look_up_sig_type_params(&mut self, sig: SigId) -> List<'p, TypeId> {
         match self.types().sig(sig) {
             SigData::Synth { type_params, .. } => return List::Permanent(type_params),
             SigData::WithReturn { sig: inner, .. } => return self.sig_type_params(*inner),
             // Most functions have none.
             SigData::Decl { file, func, .. } if self.hir(*file)[*func].type_params.is_empty() => {
-                let times_cut_short = self.times_cut_short.get();
                 // `assignContextualParameterTypes`: `sig.typeParameters = context.typeParameters`
                 // It isn't final until the function is checked, so it isn't cached.
                 return match self.takes_context(*file, *func) {
                     Some(owner) if self.is_context_sensitive(*file, owner) => {
                         List::Own(self.adopted_type_params(sig))
                     }
-                    _ => {
-                        // If the stack ran low, the result of `is_context_sensitive` depends on the caller's stack
-                        // depth, so the fact isn't cached.
-                        if self.times_cut_short.get() == times_cut_short {
-                            let fact = signature_links::fact::HAS_NO_TYPE_PARAMETERS;
-                            self.signature_links.add_fact(sig, fact);
-                        }
-                        List::default()
-                    }
+                    _ => List::default(),
                 };
             }
             _ => {}
         }
         if let Some(cached) = self.p.sig_type_params.get_ref(&self.task, &sig) {
-            return self.cached_sig_type_params(sig, cached);
+            return List::Permanent(cached);
         }
         let scope = self.begin_scope();
         let params = self.sig_type_params_of_declaration(sig);
         if let Ok(stored) = self.end_scope_by_counters(scope) {
             let params = self.list(&params);
             let cached = (self.p.sig_type_params).insert_ref(&self.task, sig, params, stored);
-            return self.cached_sig_type_params(sig, cached.1);
+            return List::Permanent(cached.1);
         }
         List::Own(params)
     }
@@ -4536,7 +4505,7 @@ impl<'p, 's> Checker<'p, 's> {
         if recent.0 == sig {
             return List::Permanent(recent.1);
         }
-        self.sig_params_not_recent(sig, count)
+        self.look_up_sig_params(sig, count)
     }
 
     /// `param_type_at`, where `params` is such a list for `sig`. A type that the list lacks is
@@ -4738,20 +4707,10 @@ impl<'p, 's> Checker<'p, 's> {
         stored_params: &'p [SigParam],
     ) -> List<'p, SigParam> {
         self.recent_sig_params[sig.0 as usize % RECENT_SIGS] = (sig, stored_params);
-        self.signature_links.cache_parameters(sig, stored_params);
-
         List::Permanent(stored_params)
     }
 
     /// `sig_params_with_first` for a signature that wasn't queried recently.
-    fn sig_params_not_recent(&mut self, sig: SigId, count: usize) -> List<'p, SigParam> {
-        if let Some(cached) = self.signature_links.parameters(sig) {
-            self.recent_sig_params[sig.0 as usize % RECENT_SIGS] = (sig, cached);
-            return List::Permanent(cached);
-        }
-        self.look_up_sig_params(sig, count)
-    }
-
     fn look_up_sig_params(&mut self, sig: SigId, count: usize) -> List<'p, SigParam> {
         let (file, func, mapper) = match self.types().sig(sig) {
             SigData::WithReturn { sig: inner, .. } => {
@@ -5299,13 +5258,6 @@ impl<'p, 's> Checker<'p, 's> {
     /// function without a `this` parameter takes its contextual signature's
     /// (`assignContextualParameterTypes`: `createSymbolWithType(context.thisParameter, nil)`).
     pub(super) fn sig_this_parameter(&mut self, sig: SigId) -> Option<(TypeId, SigId)> {
-        if (self.signature_links).has(sig, signature_links::fact::HAS_NO_THIS_PARAMETER) {
-            return None;
-        }
-        self.look_up_sig_this_parameter(sig)
-    }
-
-    fn look_up_sig_this_parameter(&mut self, sig: SigId) -> Option<(TypeId, SigId)> {
         let (file, func, mapper) = match *self.types().sig(sig) {
             SigData::WithReturn { sig: inner, .. } => return self.sig_this_parameter(inner),
             SigData::Synth { this, .. } => return Some((this?, sig)),
@@ -5341,18 +5293,11 @@ impl<'p, 's> Checker<'p, 's> {
             let declared_by = self.sig_of_fn(of, other);
             return Some((self.instantiate(declared, mapper), declared_by));
         }
-        // The fact isn't cached for an accessor, where it depends on the sibling accessor. It isn't cached either if
-        // the stack ran low, because the result of `is_context_sensitive` then depends on the caller's stack depth.
-        let times_cut_short = self.times_cut_short.get();
         let takes_one_from_context = match self.bound(file).fns[func.idx()].owner {
             crate::bind::FnOwner::Expr(owner) => self.is_context_sensitive(file, owner),
             _ => false,
         };
         if !takes_one_from_context {
-            if other_kind.is_none() && self.times_cut_short.get() == times_cut_short {
-                let fact = signature_links::fact::HAS_NO_THIS_PARAMETER;
-                self.signature_links.add_fact(sig, fact);
-            }
             return None;
         }
         let contextual = self.assigned_contextual_signature(file, func)?;

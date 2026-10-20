@@ -111,9 +111,19 @@ describe("url.parse() from a package in node_modules", () => {
   // package is its caller: only engine frames and frames of built-in modules are between the two.
   const library = String.raw`
     const { AsyncResource } = require("node:async_hooks");
+    const vm = require("node:vm");
     const resource = new AsyncResource("lib");
 
     exports.direct = (check, limit) => check(limit);
+    exports.evalCode = check => eval("check()");
+    exports.hot = (check, calls) => {
+      let inside = 0;
+      for (let i = 0; i < calls; i++) if ([1].some(check)) inside++;
+      return inside;
+    };
+    // A script that a program names "node:".
+    const namedLikeNode = new vm.Script("(check, limit) => check(limit)", { filename: "node:fake" }).runInThisContext();
+    exports.nodeName = (check, limit) => namedLikeNode(check, limit);
     exports.some = (check, limit) => [limit].some(check);
     exports.map = (check, limit) => [limit].map(check)[0];
     exports.filter = (check, limit) => [limit].filter(check).length === 1;
@@ -153,13 +163,13 @@ describe("url.parse() from a package in node_modules", () => {
   // Not a tail call: JavaScriptCore drops the frame of a strict function that makes one.
   const strictSome = `(check, limit) => ([limit].some(check) ? "inside" : "outside")`;
 
-  // This fixture gives the same results with "node --expose-internals" (v26.3.0), except for bun:sqlite.
+  // This fixture gives the same results with "node --expose-internals" (v26.3.0), except for bun:sqlite and bun:jsc.
   test.concurrent("isInsideNodeModules() does not list engine frames", async () => {
     using dir = tempDir("url-inside-node-modules", {
       "node_modules/lib/index.js": library,
       "node_modules/strictlib/index.js": `"use strict";\nexports.some = ${strictSome};`,
       "node_modules/esmlib/package.json": JSON.stringify({ name: "esmlib", type: "module", exports: "./index.js" }),
-      "node_modules/esmlib/index.js": `export const some = ${strictSome};`,
+      "node_modules/esmlib/index.js": `export const some = ${strictSome};\nexport const topLevel = globalThis.check(1);`,
       "main.js": String.raw`
         const { isInsideNodeModules: check } = require("internal/test/binding").internalBinding("util");
         const vm = require("node:vm");
@@ -173,6 +183,7 @@ describe("url.parse() from a package in node_modules", () => {
         }
 
         async function main() {
+          globalThis.check = check;
           const esmlib = await import("esmlib");
           const results = {};
           for (const shape of ["direct", "some", "map", "filter", "reduce", "arrayFrom", "typedArrayMap", "wasm"]) {
@@ -180,9 +191,17 @@ describe("url.parse() from a package in node_modules", () => {
           }
           results.stacked = [2, 3, 4, 8].map(depth => frames(limit => lib.stacked(check, limit, depth)));
           results.asyncHooks = [1, 2, 3].map(depth => frames(limit => lib.asyncHooks(check, depth, limit)));
-          if (process.versions.bun) results.sqliteTransaction = frames(limit => lib.sqliteTransaction(check, limit));
+          results.nodeName = frames(limit => lib.nodeName(check, limit));
+          if (process.versions.bun) {
+            results.sqliteTransaction = frames(limit => lib.sqliteTransaction(check, limit));
+            results.hot = [lib.hot(check, 10000), require("bun:jsc").numberOfDFGCompiles(lib.hot) > 0];
+          }
           results.strict = strictlib.some(check, 1);
           results.esm = esmlib.some(check, 1);
+          results.esmTopLevel = esmlib.topLevel;
+          results.evalCode = lib.evalCode(check);
+          results.globalCode = new vm.Script("check(1)", { filename: "/app/node_modules/pkg/index.js" }).runInThisContext();
+          results.doubleLimit = lib.direct(check, new Float64Array([0])[0]);
           lib.Field.prototype.check = check;
           results.fieldInitializer = new lib.Field().inside;
           results.replace = lib.replace(check);
@@ -218,7 +237,8 @@ describe("url.parse() from a package in node_modules", () => {
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--expose-internals", "main.js"],
-      env: bunEnv,
+      // Without the concurrent JIT, the DFG has compiled `hot` before its loop ends.
+      env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "inherit",
@@ -240,11 +260,18 @@ describe("url.parse() from a package in node_modules", () => {
       fieldInitializer: true,
       replace: true,
       jsonParse: true,
-      // A frame of a built-in module takes one of the limit and does not decide.
+      // The same in code that the DFG compiled, and for a frame of each other kind of code.
+      hot: [10000, true],
+      esmTopLevel: true,
+      evalCode: true,
+      globalCode: true,
+      // A frame of a built-in module, or of a script named "node:", takes one of the limit and does not decide.
       asyncHooks: [2, 3, 4],
       sqliteTransaction: 2,
-      // No argument means 10 frames.
+      nodeName: 2,
+      // No argument means 10 frames. A limit can be a double.
       defaultLimit: [true, false],
+      doubleLimit: false,
       // A WebAssembly frame decides. A promise reaction has no caller.
       wasm: null,
       then: false,
@@ -278,10 +305,17 @@ describe("url.parse() from a package in node_modules", () => {
       "reduce(url.resolve)": () => [from, "/c"].reduce(url.resolve),
       "reduce(url.resolveObject)": () => [from, "/c"].reduce(url.resolveObject),
       "map(Url.prototype.resolve)": () => ["/c"].map(url.Url.prototype.resolve, url.parse(from)),
+      "headers.forEach(url.parse)": () => new Headers({ location: from }).forEach(url.parse),
+      "new ReadableStream({ start: url.parse })": () => {
+        try {
+          new ReadableStream({ start: url.parse });
+        } catch {}
+      },
     };
   `;
 
-  // This fixture gives the same results with node v26.3.0.
+  // This fixture gives the same results with node v26.3.0, except for the ReadableStream:
+  // Node.js implements it in JavaScript, lists those frames, and warns.
   test.concurrent("does not emit DEP0169 when the deprecated function is a callback", async () => {
     using dir = tempDir("url-dep0169-callback", {
       "node_modules/lib/index.js": parseLibrary,
@@ -327,14 +361,16 @@ describe("url.parse() from a package in node_modules", () => {
       "reduce(url.resolve)": [],
       "reduce(url.resolveObject)": [],
       "map(Url.prototype.resolve)": [],
+      "headers.forEach(url.parse)": [],
+      "new ReadableStream({ start: url.parse })": [],
       application: ["DEP0169"],
       afterTheWarning: [],
     });
     expect(exitCode).toBe(0);
   });
 
-  // The file that runs is the bundle, and it is not in node_modules. Its source map does not change that.
-  test.concurrent("emits DEP0169 for a package inlined into a bundle with a source map", async () => {
+  // A bundle is one file outside node_modules. Its source map names the files it was built from.
+  test.concurrent("finds a package that a bundle inlines through the source map of the bundle", async () => {
     using dir = tempDir("url-dep0169-bundle", {
       "node_modules/lib/index.js": parseLibrary,
       "app.js": `
@@ -360,7 +396,7 @@ describe("url.parse() from a package in node_modules", () => {
     });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toBe("example.com\nDEP0169\n");
+    expect(stdout).toBe("example.com\n");
     expect(exitCode).toBe(0);
   });
 });

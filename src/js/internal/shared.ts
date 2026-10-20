@@ -179,8 +179,7 @@ function guardCallback(callback) {
   };
 }
 
-// Port of node's IsInsideNodeModules: is the first frame that is not a built-in module in node_modules?
-// https://github.com/nodejs/node/blob/v26.3.0/src/node_util.cc#L328
+// Port of node's IsInsideNodeModules: https://github.com/nodejs/node/blob/v26.3.0/src/node_util.cc#L328
 const isInsideNodeModules = $newCppFunction("FormatStackTraceForJS.cpp", "jsFunctionIsInsideNodeModules", 1) as (
   frameLimit?: number,
 ) => boolean;

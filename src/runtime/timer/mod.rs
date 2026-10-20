@@ -32,7 +32,7 @@ pub(crate) mod timer;
 
 // ─── impl_timer_object! ──────────────────────────────────────────────────────
 // Shared scaffold for `TimeoutObject` / `ImmediateObject`: both are a
-// `{ref_count, event_loop_timer, internals, this_value}` behind a class of `Timer.bind.ts`, whose
+// `{ref_count, event_loop_timer, internals, this_value}` exposed to JS by a class in `Timer.bind.ts`, whose
 // JS-facing host-fns are pure forwarders to `TimerObjectInternals`. The macro
 // emits the parts shared by both types so each `*.rs` file holds only its
 // type-specific surface (`init`, `do_refresh`, cached-prop accessors,
@@ -42,7 +42,7 @@ pub(crate) mod timer;
 // macro is invoked *from the child module* (`super::impl_timer_object!(…)`),
 // so `super` at the expansion site resolves back here to `timer/mod.rs`.
 macro_rules! impl_timer_object {
-    // `$members`: what `$Class` has that the other type's trait does not.
+    // `$members`: the methods of `$Class` that only this type has.
     ($T:ident, $tag:ident, $js_name:literal, $Class:ident, { $($members:tt)* }) => {
         #[derive(::bun_ptr::RefCounted)]
         pub(crate) struct $T {
@@ -109,14 +109,14 @@ macro_rules! impl_timer_object {
                     this_value: ::bun_jsc::JsCell::new(::bun_jsc::bindgen::JsWrapperRef::empty()),
                 });
                 let this = timer.this_ptr();
-                // SAFETY: `cx` is the JS thread's, and the host function that has it holds no other scope.
+                // SAFETY: a host function on the JS thread, and nothing borrowed through another `JsScope` is still in use.
                 let js_value = unsafe {
                     ::bun_jsc::bindgen::JsScope::with(cx.global().as_mut_ptr(), |scope| {
                         let heap = &scope.heap;
                         let wrapper = ::bun_jsc::bindgen::JsPayload::into_js(timer, heap);
                         this.internals.init(
-                            scope,
                             wrapper.into(),
+                            scope,
                             cx,
                             ::bun_jsc::bindgen::JsLocal::new(heap, callback),
                             ::bun_jsc::bindgen::JsLocal::new(heap, arguments),
@@ -136,17 +136,17 @@ macro_rules! impl_timer_object {
                 js_value
             }
 
-            /// What `f` makes of the timer, if `value` is an instance of the class.
+            /// Calls `f` with the timer's internals if `value` is an instance of the class, and returns `None` otherwise.
             pub(crate) fn with_internals<R>(
                 global: &::bun_jsc::JSGlobalObject,
                 value: ::bun_jsc::JSValue,
                 f: impl FnOnce(&super::TimerObjectInternals) -> R,
             ) -> Option<R> {
-                // SAFETY: a `&JSGlobalObject` is only had on its JS thread, and `f` is given no scope to borrow through.
+                // SAFETY: a `&JSGlobalObject` only exists on its JS thread, nothing borrowed through another `JsScope` is still in use, and `f` is given no scope to borrow through.
                 unsafe {
                     ::bun_jsc::bindgen::JsScope::with(global.as_mut_ptr(), |cx| {
-                        let timer = Self::from_js(&cx.heap, value)?;
-                        Some(timer.with(&cx.payloads, |timer| f(&timer.internals)))
+                        let wrapper = Self::from_js(&cx.heap, value)?;
+                        Some(wrapper.with(&cx.payloads, |timer| f(&timer.internals)))
                     })
                 }
             }
@@ -191,7 +191,7 @@ macro_rules! impl_timer_object {
                 self.this_value.with_mut(|r| r.finalize());
             }
 
-            fn get_destroyed(&self) -> bool {
+            fn destroyed(&self) -> bool {
                 self.internals.get_destroyed()
             }
 

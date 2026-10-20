@@ -3,9 +3,9 @@ import * as b from "../../codegen/bindgen-lib.ts";
 const callback = { getter: b.any, setter: true, passThis: true, capability: "heap" } as const;
 const head = { statusCode: b.any, statusMessage: b.any, headers: b.any };
 const autoHeaders = { autoHeaderBits: b.any, keepAliveTimeoutSecs: b.any };
-const writes = { returns: b.any, passThis: true, capability: "js", throws: true } as const;
+const write = { returns: b.any, passThis: true, capability: "js", throws: true } as const;
 
-/** The native side of a `ServerResponse` of `node:http` and of its `IncomingMessage`: `kHandle` in `src/js/internal/http.ts`. */
+/** The native handle shared by a `node:http` `ServerResponse` and its `IncomingMessage`: `kHandle` in `src/js/internal/http.ts`. */
 export const NodeHTTPResponse = b.class({
   rustPath: "crate::server::NodeHTTPResponse",
   refCounted: true,
@@ -15,19 +15,19 @@ export const NodeHTTPResponse = b.class({
   internalFields: ["onAborted", "onWritable", "onData", "pendingWriteBuffer"],
   proto: {
     abort: { capability: "js" },
-    aborted: { getter: b.bool, rustName: "get_aborted" },
-    bufferedAmount: { getter: b.u64, rustName: "get_buffered_amount" },
+    aborted: { getter: b.bool },
+    bufferedAmount: { getter: b.u64 },
     cork: { args: { callback: b.any }, returns: b.any, capability: "js", throws: true, length: 1 },
     end: {
-      ...writes,
+      ...write,
       args: { chunk: b.any, encoding: b.any, callback: b.any, strictContentLength: b.any },
       length: 2,
     },
-    finished: { getter: b.bool, rustName: "get_finished" },
-    flags: { getter: b.i32, rustName: "get_flags" },
+    finished: { getter: b.bool },
+    flags: { getter: b.i32 },
     flushHeaders: {},
     getBytesWritten: { returns: b.usize },
-    hasBody: { getter: b.i32, rustName: "get_has_body" },
+    hasBody: { getter: b.i32 },
     headersObject: { returns: b.any, capability: "heap" },
     notifyWhenReadParsed: { returns: b.bool },
     onabort: callback,
@@ -35,7 +35,7 @@ export const NodeHTTPResponse = b.class({
     onwritable: callback,
     pause: { returns: b.bool, rustName: "do_pause" },
     pauseReads: { rustName: "pause_socket_reads" },
-    ref: { rustName: "js_ref" },
+    ref: { rustName: "do_ref" },
     resume: { returns: b.bool, capability: "js", rustName: "do_resume" },
     takeRawHeaders: { args: { headers: b.any }, returns: b.any, capability: "heap", throws: true, length: 1 },
     takeRequestTrailers: {
@@ -45,17 +45,17 @@ export const NodeHTTPResponse = b.class({
       throws: true,
       length: 0,
     },
-    unref: { rustName: "js_unref" },
-    upgraded: { getter: b.bool, rustName: "get_upgraded" },
+    unref: { rustName: "do_unref" },
+    upgraded: { getter: b.bool },
     write: {
-      ...writes,
+      ...write,
       args: { chunk: b.any, encoding: b.any, callback: b.any, strictContentLength: b.any },
       length: 3,
     },
     writeContinue: { capability: "heap", throws: true },
     writeHead: { args: { ...head, ...autoHeaders }, capability: "js", throws: true, length: 3 },
     writeHeadAndEnd: {
-      ...writes,
+      ...write,
       args: { ...head, chunk: b.any, encoding: b.any, strictContentLength: b.any, ...autoHeaders },
       length: 8,
     },

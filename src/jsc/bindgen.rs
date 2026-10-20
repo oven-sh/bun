@@ -588,8 +588,7 @@ impl core::ops::Deref for PinnedBytes {
 
 // ───────────────────────────── classes ─────────────────────────────
 
-/// What the JS wrapper of a generated class stores, and the sweeper drops: the Rust struct that is freed with it, or a
-/// [`RefPtr`] to the one that is not.
+/// The value stored inline in a generated class's JS wrapper and dropped by the sweeper: the Rust struct, or a [`RefPtr`] to it for a `refCounted` class.
 ///
 /// # Safety
 /// Implemented by generated code only: the offsets describe the generated C++ cell.
@@ -619,26 +618,26 @@ pub unsafe trait JsPayload: Sized + 'static {
     }
 }
 
-/// A payload [`JsWrapper::with_mut`] lends. A [`RefPtr`] is not one: replacing it frees what a `&self` refers to.
+/// A payload [`JsWrapper::with_mut`] may lend as `&mut`. Not implemented for [`RefPtr`]: overwriting it could free the struct while a `&self` to it is live.
 pub trait JsMutablePayload: JsPayload {}
 
 /// The Rust struct of a `refCounted` class. Its wrapper stores a [`RefPtr`] to it.
 ///
 /// # Safety
-/// As [`JsPayload`].
-pub unsafe trait JsRefCountedPayload: AnyRefCounted + 'static {
+/// Same as [`JsPayload`].
+pub unsafe trait JsRefCounted: AnyRefCounted + 'static {
     #[doc(hidden)]
     const PAYLOAD_OFFSET: usize;
     #[doc(hidden)]
     const INTERNAL_FIELDS_OFFSET: usize;
     /// # Safety
-    /// As [`JsPayload::create_cell`].
+    /// Same as [`JsPayload::create_cell`].
     #[doc(hidden)]
     unsafe fn create_cell(global: *mut JSGlobalObject, structure: *mut c_void) -> NonNull<c_void>;
 }
 
 // SAFETY: forwarded.
-unsafe impl<T: JsRefCountedPayload> JsPayload for RefPtr<T> {
+unsafe impl<T: JsRefCounted> JsPayload for RefPtr<T> {
     const PAYLOAD_OFFSET: usize = T::PAYLOAD_OFFSET;
     const INTERNAL_FIELDS_OFFSET: usize = T::INTERNAL_FIELDS_OFFSET;
     #[inline(always)]
@@ -798,7 +797,7 @@ impl<T: JsPayload> JsWrapperStrong<T> {
     }
 }
 
-/// A [`JsRef`] on a wrapper: how what a `refCounted` class wraps reaches its own object. Its `finalize` calls [`finalize`](Self::finalize).
+/// A typed [`JsRef`]. The struct of a `refCounted` class stores one to get back to its JS object, and calls [`finalize`](Self::finalize) on it from the class's `finalize`.
 pub struct JsWrapperRef<T: JsPayload>(JsRef, PhantomData<*const T>);
 impl<T: JsPayload> JsWrapperRef<T> {
     #[inline]
@@ -809,15 +808,15 @@ impl<T: JsPayload> JsWrapperRef<T> {
     pub fn init_weak(wrapper: JsWrapper<'_, T>) -> Self {
         JsWrapperRef(JsRef::init_weak(wrapper.as_value().0), PhantomData)
     }
-    /// As [`get`](Self::get), for what takes a [`JSValue`].
+    /// Like [`try_get`](Self::try_get), but returns the raw [`JSValue`].
     #[inline]
-    pub fn try_get(&self) -> Option<JSValue> {
+    pub fn try_get_value(&self) -> Option<JSValue> {
         self.0.try_get()
     }
-    /// `None`: never set, or collected.
+    /// Returns `None` if it was never set or the object has been collected.
     #[inline]
-    pub fn get<'a>(&self, heap: &JsHeap<'a>) -> Option<JsWrapper<'a, T>> {
-        let value = self.try_get()?;
+    pub fn try_get<'a>(&self, heap: &JsHeap<'a>) -> Option<JsWrapper<'a, T>> {
+        let value = self.try_get_value()?;
         // SAFETY: set from a `JsWrapper<T>`; a cell value is its pointer.
         Some(unsafe {
             JsWrapper::from_extern(NonNull::new_unchecked(value.encoded() as *mut c_void), heap)

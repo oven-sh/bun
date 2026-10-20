@@ -101,7 +101,7 @@ impl JSMySQLQuery {
                 "run must be called with 2 arguments connection and target"
             )));
         }
-        // SAFETY: a host function on the JS thread, which holds no other scope.
+        // SAFETY: a host function on the JS thread, and nothing borrowed through another `JsScope` is still in use.
         let connection = unsafe {
             JsScope::with(global_object.as_mut_ptr(), |cx| {
                 let connection = MySQLConnection::from_js(&cx.heap, arguments[0])?;

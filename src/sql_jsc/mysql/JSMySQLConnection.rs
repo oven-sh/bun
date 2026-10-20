@@ -126,9 +126,9 @@ impl TimedConnection for JSMySQLConnection {
     }
 
     fn notify_retiring(&self) {
-        let on_retire = self.with_js_value(|heap, js_value| {
-            let on_retire = field_value(js_value.onretire_field(heap))?;
-            js_value.set_onretire_field(heap, JsLocal::UNDEFINED);
+        let on_retire = self.with_js_value(|wrapper, heap| {
+            let on_retire = field_value(wrapper.onretire_field(heap))?;
+            wrapper.set_onretire_field(heap, JsLocal::UNDEFINED);
             Some(on_retire)
         });
         if let Some(on_retire) = on_retire {
@@ -181,7 +181,7 @@ impl MySQLConnectionClass for JSMySQLConnection {
         self.reset_connection_timeout();
     }
 
-    fn get_in_transaction(&self) -> bool {
+    fn in_transaction(&self) -> bool {
         self.connection.get().is_in_transaction()
     }
 
@@ -192,7 +192,7 @@ impl MySQLConnectionClass for JSMySQLConnection {
     }
 }
 
-/// `None`: the internal field is not set.
+/// Returns `None` if the internal field is not set.
 fn field_value(field: JsLocal<'_>) -> Option<JSValue> {
     (!field.is_undefined()).then(|| field.to_js())
 }
@@ -253,25 +253,21 @@ impl JSMySQLConnection {
         self.on_queue_changed();
     }
 
-    /// `None` without calling `f`: the object is collected.
+    /// Calls `f` with the JS object, or returns `None` without calling it if the object has been collected.
     fn with_js_value<R>(
         &self,
-        f: impl for<'a> FnOnce(&JsHeap<'a>, JsWrapper<'a, RefPtr<Self>>) -> Option<R>,
+        f: impl for<'a> FnOnce(JsWrapper<'a, RefPtr<Self>>, &JsHeap<'a>) -> Option<R>,
     ) -> Option<R> {
-        // SAFETY: JavaScript or the event loop entered every caller, on the JS thread, and none borrows from a scope.
+        // SAFETY: every caller is a host function or an event-loop callback on the JS thread, and nothing borrowed through another `JsScope` is still in use.
         unsafe {
             JsScope::with(self.global_object.as_mut_ptr(), |cx| {
-                f(&cx.heap, self.js_value.get().get(&cx.heap)?)
+                f(self.js_value.get().try_get(&cx.heap)?, &cx.heap)
             })
         }
     }
 
-    fn try_get_js_value(&self) -> Option<JSValue> {
-        self.with_js_value(|_, js_value| Some(js_value.as_value().to_js()))
-    }
-
     fn ensure_js_value_is_alive(&self) {
-        if let Some(value) = self.try_get_js_value() {
+        if let Some(value) = self.js_value.get().try_get_value() {
             value.ensure_still_alive();
         }
     }
@@ -281,7 +277,7 @@ impl JSMySQLConnection {
             bun_core::scoped_log!(MySQLConnection, "connection is active");
             if self.js_value.get().is_not_empty() && !self.js_value.get().is_strong() {
                 bun_core::scoped_log!(MySQLConnection, "strong ref until connection is closed");
-                // SAFETY: as in `with_js_value`.
+                // SAFETY: same as in `with_js_value`.
                 unsafe {
                     JsScope::with(self.global_object.as_mut_ptr(), |cx| {
                         self.js_value.with_mut(|r| r.upgrade(&cx.heap));
@@ -422,27 +418,27 @@ impl JSMySQLConnection {
         this.reset_connection_timeout();
         this.poll_ref.with_mut(|p| p.r#ref(vm.vm_ctx()));
         let column_transform = callframe.argument(19);
-        // SAFETY: a host function on the JS thread, which holds no other scope.
+        // SAFETY: a host function on the JS thread, and nothing borrowed through another `JsScope` is still in use.
         let js_value = unsafe {
             JsScope::with(global_object.as_mut_ptr(), |cx| {
                 let heap = &cx.heap;
-                let js_value = connection.into_js(heap);
-                this.js_value.with_mut(|r| r.set_strong(heap, js_value));
-                js_value.set_onconnect_field(heap, JsLocal::new(heap, on_connect));
+                let wrapper = connection.into_js(heap);
+                this.js_value.with_mut(|r| r.set_strong(heap, wrapper));
+                wrapper.set_onconnect_field(heap, JsLocal::new(heap, on_connect));
                 if column_transform.is_callable() {
-                    js_value.set_column_transform_field(heap, JsLocal::new(heap, column_transform));
+                    wrapper.set_column_transform_field(heap, JsLocal::new(heap, column_transform));
                 }
-                js_value.set_onclose_field(heap, JsLocal::new(heap, on_close));
+                wrapper.set_onclose_field(heap, JsLocal::new(heap, on_close));
                 if on_retire.is_callable() {
-                    js_value.set_onretire_field(heap, JsLocal::new(heap, on_retire));
+                    wrapper.set_onretire_field(heap, JsLocal::new(heap, on_retire));
                 }
                 // Next to `rejectUnauthorized: false` it is not asked, as in Node.
                 if let Some(callback) =
                     check_server_identity.filter(|_| this.connection.get().verifies_certificate())
                 {
-                    js_value.set_check_server_identity_field(heap, JsLocal::new(heap, callback));
+                    wrapper.set_check_server_identity_field(heap, JsLocal::new(heap, callback));
                 }
-                js_value.as_value().to_js()
+                wrapper.as_value().to_js()
             })
         };
 
@@ -450,21 +446,21 @@ impl JSMySQLConnection {
     }
 
     pub(crate) fn check_server_identity_callback(&self) -> Option<JSValue> {
-        self.with_js_value(|heap, js_value| field_value(js_value.check_server_identity_field(heap)))
+        self.with_js_value(|wrapper, heap| field_value(wrapper.check_server_identity_field(heap)))
     }
 
     fn consume_on_connect_callback(&self) -> Option<JSValue> {
-        self.with_js_value(|heap, js_value| {
-            let on_connect = field_value(js_value.onconnect_field(heap))?;
-            js_value.set_onconnect_field(heap, JsLocal::UNDEFINED);
+        self.with_js_value(|wrapper, heap| {
+            let on_connect = field_value(wrapper.onconnect_field(heap))?;
+            wrapper.set_onconnect_field(heap, JsLocal::UNDEFINED);
             Some(on_connect)
         })
     }
 
     fn consume_on_close_callback(&self) -> Option<JSValue> {
-        self.with_js_value(|heap, js_value| {
-            let on_close = field_value(js_value.onclose_field(heap))?;
-            js_value.set_onclose_field(heap, JsLocal::UNDEFINED);
+        self.with_js_value(|wrapper, heap| {
+            let on_close = field_value(wrapper.onclose_field(heap))?;
+            wrapper.set_onclose_field(heap, JsLocal::UNDEFINED);
             Some(on_close)
         })
     }
@@ -561,7 +557,11 @@ impl JSMySQLConnection {
             return;
         };
         on_connect.ensure_still_alive();
-        let js_value = self.try_get_js_value().unwrap_or(JSValue::UNDEFINED);
+        let js_value = self
+            .js_value
+            .get()
+            .try_get_value()
+            .unwrap_or(JSValue::UNDEFINED);
         js_value.ensure_still_alive();
         run_callback(&self.global_object, on_connect, &[JSValue::NULL, js_value]);
     }
@@ -590,7 +590,7 @@ impl JSMySQLConnection {
         index: usize,
     ) -> Result<(), AnyMySQLErrorT> {
         let Some(transform) =
-            self.with_js_value(|heap, js_value| field_value(js_value.column_transform_field(heap)))
+            self.with_js_value(|wrapper, heap| field_value(wrapper.column_transform_field(heap)))
         else {
             return Ok(());
         };
@@ -644,7 +644,7 @@ impl JSMySQLConnection {
             ResultMode::Objects => {
                 // Build unconditionally (matches postgres) so toJS always has
                 // either a Structure or a names array.
-                let owner = self.try_get_js_value().unwrap_or_default();
+                let owner = self.js_value.get().try_get_value().unwrap_or_default();
                 let cs = statement.structure(owner, &self.global_object);
                 structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
                 Some(ParentRef::new(cs))

@@ -35,7 +35,7 @@ describe("Bun.cron (in-process)", () => {
     expect(() => j.stop()).not.toThrow();
   });
 
-  test("[Symbol.dispose] is defined as the built-in ones are", () => {
+  test("[Symbol.dispose] has the attributes of a built-in symbol method", () => {
     using job = Bun.cron("* * * * *", () => {});
     const { value, ...attributes } = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(job), Symbol.dispose)!;
     expect({ name: value.name, length: value.length, ...attributes }).toEqual({

@@ -11,8 +11,8 @@ use crate::bindgen::{
 use crate::generated_bindgen::bindgen_test::{
     TestAnything, TestBare, TestChoice, TestColor, TestColorOrRest, TestCounterClass,
     TestCounterInternalFields as _, TestFailure, TestFlag, TestHolderClass, TestNames, TestOptions,
-    TestOptionsEcho, TestOuter, TestSharedClass, TestSharedInternalFields as _, TestTextOrBytes,
-    TestTokenClass, TestValue,
+    TestOptionsEcho, TestOuter, TestRefCountedClass, TestRefCountedInternalFields as _,
+    TestTextOrBytes, TestTokenClass, TestValue,
 };
 
 // This example should be kept in sync with bindgen's documentation
@@ -494,25 +494,25 @@ impl TestHolderClass for TestHolder {
     }
 }
 
-static SHARED_ALIVE: AtomicUsize = AtomicUsize::new(0);
+static REF_COUNTED_ALIVE: AtomicUsize = AtomicUsize::new(0);
 thread_local! {
-    static KEPT: RefCell<Option<RefPtr<TestShared>>> = const { RefCell::new(None) };
+    static KEPT: RefCell<Option<RefPtr<TestRefCounted>>> = const { RefCell::new(None) };
 }
 
 #[derive(bun_ptr::CellRefCounted)]
-pub(crate) struct TestShared {
+pub(crate) struct TestRefCounted {
     ref_count: Cell<u32>,
     value: Cell<i32>,
     finalized: Cell<bool>,
 }
 
-impl Drop for TestShared {
+impl Drop for TestRefCounted {
     fn drop(&mut self) {
-        SHARED_ALIVE.fetch_sub(1, Ordering::SeqCst);
+        REF_COUNTED_ALIVE.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
-impl TestSharedClass for TestShared {
+impl TestRefCountedClass for TestRefCounted {
     type Error<'a> = bindgen::Error<'a>;
 
     fn finalize(&self) {
@@ -520,8 +520,8 @@ impl TestSharedClass for TestShared {
     }
 
     fn constructor(value: i32) -> RefPtr<Self> {
-        SHARED_ALIVE.fetch_add(1, Ordering::SeqCst);
-        RefPtr::new(TestShared {
+        REF_COUNTED_ALIVE.fetch_add(1, Ordering::SeqCst);
+        RefPtr::new(TestRefCounted {
             ref_count: Cell::new(1),
             value: Cell::new(value),
             finalized: Cell::new(false),
@@ -561,7 +561,7 @@ impl TestSharedClass for TestShared {
     }
 
     fn keep(&self) {
-        // SAFETY: `self` is a live `TestShared` made by `RefPtr::new`.
+        // SAFETY: `self` is a live `TestRefCounted` made by `RefPtr::new`.
         let kept = unsafe { RefPtr::init_ref(core::ptr::from_ref(self).cast_mut()) };
         KEPT.set(Some(kept));
     }
@@ -574,7 +574,7 @@ impl TestSharedClass for TestShared {
         self.value.get()
     }
 
-    fn lenient(&self) -> i32 {
+    fn value_or_undefined(&self) -> i32 {
         self.value.get()
     }
 
@@ -594,7 +594,7 @@ impl TestSharedClass for TestShared {
         self.or_undefined(this, heap)
     }
 
-    fn is<'a>(
+    fn is_same<'a>(
         &self,
         this: JsWrapper<'a, RefPtr<Self>>,
         _: &JsHeap<'a>,
@@ -615,12 +615,12 @@ impl TestSharedClass for TestShared {
     }
 
     fn alive() -> usize {
-        SHARED_ALIVE.load(Ordering::SeqCst)
+        REF_COUNTED_ALIVE.load(Ordering::SeqCst)
     }
 
-    fn peek<'a>(cx: &mut JsScope<'a>, shared: JsLocal<'a>) -> Option<i32> {
-        let shared = Self::from_js(&cx.heap, shared.to_js())?;
-        Some(shared.with(&cx.payloads, |shared| shared.value.get()))
+    fn value_from_js<'a>(cx: &mut JsScope<'a>, object: JsLocal<'a>) -> Option<i32> {
+        let wrapper = Self::from_js(&cx.heap, object.to_js())?;
+        Some(wrapper.with(&cx.payloads, |payload| payload.value.get()))
     }
 }
 

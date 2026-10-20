@@ -1331,7 +1331,7 @@ ${type.members.map(member => `            ${value(member)},`).join("\n")}
 }
 
 function rustForClass(type: ClassType, scope: RustScope): string {
-  const { name, rustPath, payloadPath } = type;
+  const { name, rustPath, payloadType } = type;
   const trait = `${name}Class`;
   const selfPayload = type.refCounted ? "bindgen::RefPtr<Self>" : "Self";
   const wrapperParameter = `this: bindgen::JsWrapper<'a, ${selfPayload}>`;
@@ -1347,7 +1347,7 @@ function rustForClass(type: ClassType, scope: RustScope): string {
     static: [],
   };
   const receiverArgument = { ref: ["this.payload_ref()"], mut: ["this.payload_mut()"], wrapper: ["this"], static: [] };
-  const takeThis = `let this = bindgen::JsWrapper::<${payloadPath}>::from_extern(core::ptr::NonNull::new_unchecked(this), &cx.heap);`;
+  const takeThis = `let this = bindgen::JsWrapper::<${payloadType}>::from_extern(core::ptr::NonNull::new_unchecked(this), &cx.heap);`;
   const declare = (fn: string, parameters: string[], returns: string) => {
     const signature = `(${parameters.join(", ")}) -> ${returns};`;
     return `fn ${fn}${signature.includes("'a") ? "<'a>" : ""}${signature}`;
@@ -1358,7 +1358,7 @@ function rustForClass(type: ClassType, scope: RustScope): string {
     declarations.push("/// What the members declared `throws` fail with.\n    type Error<'a>: bindgen::IntoError<'a>;");
   if (type.finalize)
     declarations.push(
-      "/// The object is being collected, and its ref is dropped next. The JS heap is out of reach.\n    fn finalize(&self);",
+      "/// Called from the GC finalizer, just before the object's ref is dropped. It must not touch the JS heap.\n    fn finalize(&self);",
     );
   let thunks = "";
 
@@ -1476,7 +1476,7 @@ ${rustTakeArguments([{ name: "value", type: getter.type }], scope)}let result = 
 
   return `
 /// What \`${rustPath}\` implements to be the JS class \`${name}\`.
-pub trait ${trait}: bindgen::${type.refCounted ? "JsRefCountedPayload" : "JsPayload"} {
+pub trait ${trait}: bindgen::${type.refCounted ? "JsRefCounted" : "JsPayload"} {
 ${declarations.map(declaration => `    ${declaration}`).join("\n")}
 }
 
@@ -1484,7 +1484,7 @@ unsafe extern "C" {
     fn ${symbolName(type, "create")}(global: *mut JSGlobalObject, structure: *mut core::ffi::c_void) -> core::ptr::NonNull<core::ffi::c_void>;
 }
 // SAFETY: the offsets are \`static_assert\`ed against the C++ cell.
-unsafe impl bindgen::${type.refCounted ? "JsRefCountedPayload" : "JsPayload"} for ${rustPath} {
+unsafe impl bindgen::${type.refCounted ? "JsRefCounted" : "JsPayload"} for ${rustPath} {
     const INTERNAL_FIELDS_OFFSET: usize = ${offsetOfInternalFields};
     const PAYLOAD_OFFSET: usize = ${offsetOfPayload(type)};
     #[inline(always)]
@@ -1494,11 +1494,11 @@ unsafe impl bindgen::${type.refCounted ? "JsRefCountedPayload" : "JsPayload"} fo
     }
 }
 ${type.refCounted ? "" : `impl bindgen::JsMutablePayload for ${rustPath} {}\n`}// A cell is at a multiple of 8, and so is the payload in it.
-const _: () = assert!(align_of::<${payloadPath}>() <= 8);
+const _: () = assert!(align_of::<${payloadType}>() <= 8);
 #[unsafe(no_mangle)]
-pub static ${symbolName(type, "payloadSize")}: usize = size_of::<${payloadPath}>();
+pub static ${symbolName(type, "payloadSize")}: usize = size_of::<${payloadType}>();
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(payload: *mut ${payloadPath}) {
+pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(payload: *mut ${payloadType}) {
     // SAFETY: the sweeper calls this once, on an initialized payload nothing refers to.
     unsafe {${type.finalize ? `\n        <${rustPath} as ${trait}>::finalize(&*payload);` : ""}
         core::ptr::drop_in_place(payload)
@@ -1510,9 +1510,9 @@ ${
     safe fn ${symbolName(type, "fromJS")}(value: JSValue) -> *mut core::ffi::c_void;
 }
 impl ${rustPath} {
-    /// The wrapper, if \`value\` is an instance of the class.
+    /// Downcasts \`value\`. Returns \`None\` if it is not an instance of the class.
     #[inline]
-    pub fn from_js<'a>(heap: &bindgen::JsHeap<'a>, value: JSValue) -> Option<bindgen::JsWrapper<'a, ${payloadPath}>> {
+    pub fn from_js<'a>(heap: &bindgen::JsHeap<'a>, value: JSValue) -> Option<bindgen::JsWrapper<'a, ${payloadType}>> {
         let cell = core::ptr::NonNull::new(${symbolName(type, "fromJS")}(value))?;
         // SAFETY: C++ checked the class, and the caller's frame holds \`value\`.
         Some(unsafe { bindgen::JsWrapper::from_extern(cell, heap) })
@@ -1526,7 +1526,7 @@ impl ${rustPath} {
 pub trait ${name}InternalFields<'a>: Copy {
 ${fieldDeclarations}
 }
-impl<'a> ${name}InternalFields<'a> for bindgen::JsWrapper<'a, ${payloadPath}> {
+impl<'a> ${name}InternalFields<'a> for bindgen::JsWrapper<'a, ${payloadType}> {
 ${fieldDefinitions}
 }
 `

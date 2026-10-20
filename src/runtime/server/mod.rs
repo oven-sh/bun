@@ -1260,11 +1260,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// # Safety
     /// `this` must point to a live heap-allocated `NewServer` (the userdata
     /// registered with uWS).
-    fn on_node_http_request_in_scope(
+    fn on_node_http_request_with_scope(
         this: *mut Self,
+        cx: &mut JsScope<'_>,
         req: &mut uws_sys::Request,
         resp: &mut uws_sys::NewAppResponse<SSL>,
-        cx: &mut JsScope<'_>,
     ) {
         use bun_http_jsc::method_jsc::MethodJsc as _;
         use node_http_response::Flags as NhrFlags;
@@ -1521,7 +1521,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // If we ended the response without attaching an ondata handler, we discard the body read stream
                     else if !matches!(http_result, HttpResult::Pending) {
                         let this_value = nhr.get_this_value(&cx.heap);
-                        nhr.maybe_stop_reading_body(cx, this_value);
+                        nhr.maybe_stop_reading_body(this_value, cx);
                     }
                 }
                 if nhr_flags.contains(NhrFlags::TUNNELED) {
@@ -1563,10 +1563,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     ) {
         // SAFETY: `this` is the live server backref registered as the uws userdata.
         let global = unsafe { &*this }.global_this().as_mut_ptr();
-        // SAFETY: uws dispatches on the JS thread, with nothing lent by another scope in use.
+        // SAFETY: a uws callback on the JS thread, and nothing borrowed through another `JsScope` is still in use.
         unsafe {
             JsScope::with(global, |cx| {
-                Self::on_node_http_request_in_scope(this, req, resp, cx)
+                Self::on_node_http_request_with_scope(this, cx, req, resp)
             })
         }
     }

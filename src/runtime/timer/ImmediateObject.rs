@@ -4,10 +4,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use super::{Kind, TimerObjectInternals};
 use crate::generated_bindgen::timer::ImmediateClass;
 
-// Struct + `RefCounted` impl + the
-// forwarder host-fns (`to_primitive`/`do_ref`/`do_unref`/`has_ref`/
-// `get_destroyed`/`dispose`/`constructor`/`finalize`/`ref_`/`deref`/`deinit`/
-// `init_with`) — see `impl_timer_object!` in `super` (timer/mod.rs).
+// The struct, its `RefCounted` impl and the methods shared with `TimeoutObject` come from `impl_timer_object!` (timer/mod.rs).
 super::impl_timer_object!(
     ImmediateObject,
     ImmediateObject,

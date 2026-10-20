@@ -5075,7 +5075,7 @@ console.log(foo, array);
     new Bun.Transpiler().scanImports("");
   });
 
-  it("transformSync takes undefined as no context", () => {
+  it("transformSync treats an undefined context as omitted", () => {
     const transpiler = new Bun.Transpiler();
     expect(transpiler.transformSync("let a: number = 1;", "ts", undefined)).toBe("let a = 1;\n");
     expect(() => transpiler.transformSync("let a: number = 1;", "ts", null)).toThrow(
@@ -5083,7 +5083,7 @@ console.log(foo, array);
     );
   });
 
-  it("a buffer that converting the loader detaches is empty", () => {
+  it("a buffer detached by the loader's toString() reads as empty", () => {
     const transpiler = new Bun.Transpiler();
     const transferred = [];
     const call = method => {

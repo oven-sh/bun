@@ -7,17 +7,17 @@ export const ContentOptions = b.dictionary(
   { allowArray: true, nonObjectAsEmpty: true },
 );
 
-/** `detached` is the object, or what its class gives once the handler has returned: `undefined` or `null`. */
-const chained = (detached: b.Type) => ({ returns: detached, passThis: true, capability: "heap" }) as const;
-const inserts = (detached: b.Type) =>
+/** `returns` is `b.self.optional` or `b.self.nullable`: after the handler returns, the method returns `undefined` or `null` (it varies by class) instead of `this`. */
+const chainable = (returns: b.Type) => ({ returns, passThis: true, capability: "heap" }) as const;
+const contentOp = (returns: b.Type) =>
   ({
-    ...chained(detached),
+    ...chainable(returns),
     args: { content: string, options: ContentOptions.nullable.default({}) },
     expected: { content: "Expected string" },
     throws: true,
   }) as const;
 
-/** What is assigned is not converted once the handler has returned. */
+/** `b.any`, not a string: after the handler returns, the setter ignores the value without converting it. */
 const assignable = { getter: b.any, setter: true, capability: "js", throws: true } as const;
 
 export const TextChunk = b.class({
@@ -25,17 +25,17 @@ export const TextChunk = b.class({
   refCounted: true,
   configurable: false,
   proto: {
-    after: inserts(b.self.optional),
-    before: inserts(b.self.optional),
+    after: contentOp(b.self.optional),
+    before: contentOp(b.self.optional),
     lastInTextNode: { getter: b.bool.optional, cache: true },
-    remove: chained(b.self.optional),
+    remove: chainable(b.self.optional),
     removed: { getter: b.bool.optional },
-    replace: inserts(b.self.optional),
-    text: { getter: b.string.utf8.optional, rustName: "get_text" },
+    replace: contentOp(b.self.optional),
+    text: { getter: b.string.utf8.optional },
   },
 });
 
-/** `null` where the doctype has none, `undefined` once the handler has returned. */
+/** `null` if the doctype has none, `undefined` after the handler returns. */
 const identifier = { getter: b.any, cache: true, capability: "heap", throws: true } as const;
 
 export const DocType = b.class({
@@ -45,7 +45,7 @@ export const DocType = b.class({
   proto: {
     name: identifier,
     publicId: identifier,
-    remove: chained(b.self.optional),
+    remove: chainable(b.self.optional),
     removed: { getter: b.bool.optional },
     systemId: identifier,
   },
@@ -56,7 +56,7 @@ export const DocEnd = b.class({
   refCounted: true,
   configurable: false,
   proto: {
-    append: inserts(b.self.nullable),
+    append: contentOp(b.self.nullable),
   },
 });
 
@@ -65,11 +65,11 @@ export const Comment = b.class({
   refCounted: true,
   configurable: false,
   proto: {
-    after: inserts(b.self.nullable),
-    before: inserts(b.self.nullable),
-    remove: chained(b.self.nullable),
+    after: contentOp(b.self.nullable),
+    before: contentOp(b.self.nullable),
+    remove: chainable(b.self.nullable),
     removed: { getter: b.bool.optional },
-    replace: inserts(b.self.nullable),
+    replace: contentOp(b.self.nullable),
     text: assignable,
   },
 });
@@ -79,14 +79,14 @@ export const EndTag = b.class({
   refCounted: true,
   configurable: false,
   proto: {
-    after: inserts(b.self.nullable),
-    before: inserts(b.self.nullable),
+    after: contentOp(b.self.nullable),
+    before: contentOp(b.self.nullable),
     name: assignable,
-    remove: chained(b.self.optional),
+    remove: chainable(b.self.optional),
   },
 });
 
-/** `value` is there when `done` too. */
+/** `value` is an own property even when `done` is true. */
 export const AttributeIteratorResult = b.dictionary({ value: b.any, done: b.bool });
 
 export const AttributeIterator = b.class({
@@ -96,7 +96,7 @@ export const AttributeIterator = b.class({
   configurable: false,
   proto: {
     next: { returns: AttributeIteratorResult, capability: "heap", throws: true },
-    "@@iterator": { ...chained(b.self), rustName: "get_this" },
+    "@@iterator": { ...chainable(b.self), rustName: "get_this" },
   },
 });
 
@@ -107,35 +107,35 @@ export const Element = b.class({
   refCounted: true,
   configurable: false,
   proto: {
-    after: inserts(b.self.optional),
-    append: inserts(b.self.optional),
-    attributes: { getter: AttributeIterator.optional, capability: "heap", rustName: "get_attributes" },
-    before: inserts(b.self.optional),
-    canHaveContent: { getter: b.bool.optional, rustName: "get_can_have_content" },
+    after: contentOp(b.self.optional),
+    append: contentOp(b.self.optional),
+    attributes: { getter: AttributeIterator.optional, capability: "heap" },
+    before: contentOp(b.self.optional),
+    canHaveContent: { getter: b.bool.optional },
     getAttribute: { ...named, returns: b.string.utf8.nullable },
     hasAttribute: { ...named, returns: b.bool, capability: "heap", throws: true },
-    namespaceURI: { getter: b.string.utf8.optional, cache: true, rustName: "get_namespace_uri" },
-    /** Whether `handler` is a function is not looked at once the handler of the element has returned. */
-    onEndTag: { ...chained(b.self.nullable), args: { handler: b.any }, throws: true },
-    prepend: inserts(b.self.optional),
-    remove: chained(b.self.optional),
-    removeAndKeepContent: chained(b.self.optional),
-    removeAttribute: { ...chained(b.self.optional), ...named, throws: true },
-    removed: { getter: b.bool.optional, rustName: "get_removed" },
-    replace: inserts(b.self.optional),
-    selfClosing: { getter: b.bool.optional, rustName: "get_self_closing" },
+    namespaceURI: { getter: b.string.utf8.optional, cache: true },
+    /** `b.any`: after the element handler returns, `handler` is not type-checked. */
+    onEndTag: { ...chainable(b.self.nullable), args: { handler: b.any }, throws: true },
+    prepend: contentOp(b.self.optional),
+    remove: chainable(b.self.optional),
+    removeAndKeepContent: chainable(b.self.optional),
+    removeAttribute: { ...chainable(b.self.optional), ...named, throws: true },
+    removed: { getter: b.bool.optional },
+    replace: contentOp(b.self.optional),
+    selfClosing: { getter: b.bool.optional },
     setAttribute: {
-      ...chained(b.self.optional),
+      ...chainable(b.self.optional),
       args: { name: string, value: string },
       expected: { name: "Expected string", value: "Expected string" },
       throws: true,
     },
-    setInnerContent: inserts(b.self.optional),
+    setInnerContent: contentOp(b.self.optional),
     tagName: assignable,
   },
 });
 
-/** One per `transform()`. JavaScript never sees it: the output `Response` holds it, and it holds what the rewrite needs. */
+/** One per `transform()`, never exposed to JavaScript: the output `Response` keeps it alive, and its internal fields keep alive the values the rewrite uses. */
 export const HTMLRewriterTransform = b.class({
   rustPath: "crate::api::html_rewriter::RewriterPipe",
   refCounted: true,

@@ -1435,7 +1435,7 @@ impl CronJob {
             && self.tick_cell.get().is_empty()
             && !self.this_value.get().is_finalized()
         {
-            self.this_value.with_mut(|v| v.downgrade());
+            self.this_value.with_mut(|r| r.downgrade());
         }
     }
 
@@ -1443,7 +1443,7 @@ impl CronJob {
     /// callback and what it closes over are not kept for a tick whose promise may never settle.
     fn let_go_of_wrapper(&self) {
         if !self.this_value.get().is_finalized() {
-            self.this_value.with_mut(|v| v.downgrade());
+            self.this_value.with_mut(|r| r.downgrade());
         }
     }
 
@@ -1631,11 +1631,15 @@ impl CronJob {
     /// The tick's callback runs here as a top-level call (what it throws
     /// synchronously is reported), and the job is rescheduled either way.
     pub(crate) fn on_timer_fire(this: ThisPtr<Self>, vm: &VirtualMachine) {
-        // SAFETY: the event loop runs a timer on the JS thread, with no other scope in use.
-        unsafe { JsScope::with(this.global.as_mut_ptr(), |cx| Self::fire(this, vm, cx)) }
+        // SAFETY: a timer callback on the JS thread, and nothing borrowed through another `JsScope` is still in use.
+        unsafe {
+            JsScope::with(this.global.as_mut_ptr(), |cx| {
+                Self::on_timer_fire_with_scope(this, cx, vm)
+            })
+        }
     }
 
-    fn fire(this: ThisPtr<Self>, vm: &VirtualMachine, cx: &mut JsScope<'_>) {
+    fn on_timer_fire_with_scope(this: ThisPtr<Self>, cx: &mut JsScope<'_>, vm: &VirtualMachine) {
         let heap = &cx.heap;
         // scheduleNext → finishDeferredStop downgrades this_value and derefs the
         // list entry; bracket-ref so that path can't drop the last ref mid-function.
@@ -1656,11 +1660,11 @@ impl CronJob {
             return;
         }
 
-        let Some(js_this) = this.this_value.get().get(heap) else {
+        let Some(wrapper) = this.this_value.get().try_get(heap) else {
             Self::self_stop(this, vm);
             return;
         };
-        let cb = js_this.callback_field(heap);
+        let cb = wrapper.callback_field(heap);
         if cb.is_undefined() {
             Self::self_stop(this, vm);
             return;
@@ -1682,7 +1686,7 @@ impl CronJob {
             this.context,
             cb.to_js(),
             &this.global,
-            js_this.as_value().to_js(),
+            wrapper.as_value().to_js(),
             &[],
         );
         this.in_fire.set(false);
@@ -1701,7 +1705,7 @@ impl CronJob {
         if let Some(promise) = result.as_any_promise() {
             match promise.status() {
                 jsc::js_promise::Status::Pending => {
-                    js_this.set_pending_promise_field(heap, JsLocal::new(heap, result));
+                    wrapper.set_pending_promise_field(heap, JsLocal::new(heap, result));
                     // The reactions own the job's ref through their cell, not a raw pointer: a
                     // promise that settles after the job stopped finds the job, and one that
                     // never settles releases it when it is collected.
@@ -1714,7 +1718,7 @@ impl CronJob {
                     // `then_with_value()` returns `()`, so re-check the VM status and recover on
                     // termination: the reactions will not run.
                     if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
-                        js_this.set_pending_promise_field(heap, JsLocal::UNDEFINED);
+                        wrapper.set_pending_promise_field(heap, JsLocal::UNDEFINED);
                         Self::reclaim_tick_claim(this);
                         Self::schedule_next(this, vm);
                     } else if this.abort_handle.context_stopped() {
@@ -1749,16 +1753,16 @@ impl CronJob {
         Self::schedule_next(this, vm);
     }
 
-    /// The promise of the pending tick, which the wrapper holds no longer.
+    /// Takes the pending tick's promise out of the wrapper's `pendingPromise` field.
     fn take_pending_promise(&self) -> JSValue {
-        // SAFETY: a reaction of that promise runs on the JS thread, with no other scope in use.
+        // SAFETY: a promise reaction on the JS thread, and nothing borrowed through another `JsScope` is still in use.
         unsafe {
             JsScope::with(self.global.as_mut_ptr(), |cx| {
-                let Some(js_this) = self.this_value.get().get(&cx.heap) else {
+                let Some(wrapper) = self.this_value.get().try_get(&cx.heap) else {
                     return JSValue::UNDEFINED;
                 };
-                let promise = js_this.pending_promise_field(&cx.heap).to_js();
-                js_this.set_pending_promise_field(&cx.heap, JsLocal::UNDEFINED);
+                let promise = wrapper.pending_promise_field(&cx.heap).to_js();
+                wrapper.set_pending_promise_field(&cx.heap, JsLocal::UNDEFINED);
                 promise
             })
         }
@@ -1828,12 +1832,12 @@ impl CronJob {
 
         let callback = callback_arg.with_async_context_if_needed(global);
         let this = job.this_ptr();
-        // SAFETY: `cx` is the JS thread's, and the host function that has it holds no other scope.
+        // SAFETY: a host function on the JS thread, and nothing borrowed through another `JsScope` is still in use.
         let js_value = unsafe {
             JsScope::with(global.as_mut_ptr(), |cx| {
                 let heap = &cx.heap;
                 let wrapper = job.into_js(heap);
-                this.this_value.with_mut(|v| v.set_strong(heap, wrapper));
+                this.this_value.with_mut(|r| r.set_strong(heap, wrapper));
                 wrapper.set_cron_field(heap, JsLocal::new(heap, schedule_arg));
                 wrapper.set_callback_field(heap, JsLocal::new(heap, callback));
                 wrapper.as_value().to_js()
@@ -1857,7 +1861,7 @@ impl CronJob {
 
 impl CronJobClass for CronJob {
     fn finalize(&self) {
-        self.this_value.with_mut(|v| v.finalize());
+        self.this_value.with_mut(|r| r.finalize());
     }
 
     fn stop<'a>(

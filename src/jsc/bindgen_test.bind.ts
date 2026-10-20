@@ -236,9 +236,9 @@ export const TestHolder = b.class({
   },
 });
 
-/** Is not freed with its object: Rust can hold a ref too. */
-export const TestShared = b.class({
-  rustPath: "crate::bindgen_test::TestShared",
+/** A `refCounted` class: Rust can keep a ref after the object is collected. */
+export const TestRefCounted = b.class({
+  rustPath: "crate::bindgen_test::TestRefCounted",
   refCounted: true,
   finalize: true,
   fromJS: true,
@@ -251,23 +251,23 @@ export const TestShared = b.class({
     readOnlyListener: { internalField: "listener" },
     /** Calls the listener, which may call back into this object, then returns the value. */
     notify: { returns: b.i32, capability: "js", passThis: true, throws: true },
-    /** Rust holds a ref until `TestShared.release()`. */
+    /** Makes Rust hold a ref until `TestRefCounted.release()`. */
     keep: {},
     "@@dispose": {},
     "@@toPrimitive": { returns: b.i32, name: "" },
-    lenient: { returns: b.i32, invalidThis: "undefined" },
-    /** The object, unless its value is negative. */
+    valueOrUndefined: { returns: b.i32, invalidThis: "undefined" },
+    /** Returns `this`, or nothing if the value is negative. */
     orUndefined: { returns: b.self.optional, passThis: true, capability: "heap" },
     orNull: { returns: b.self.nullable, passThis: true, capability: "heap" },
-    is: { args: { other: b.self.nullable }, returns: b.bool, passThis: true, capability: "heap" },
+    isSame: { args: { other: b.self.nullable }, returns: b.bool, passThis: true, capability: "heap" },
   },
   static: {
-    /** The one Rust holds: its value, and whether its object was collected. */
+    /** The instance kept by `keep()`, as `[value, finalized]`. */
     kept: { returns: b.array(b.i32) },
     release: {},
     alive: { returns: b.usize },
-    /** The value of `shared` if it is an instance, found by Rust. */
-    peek: { args: { shared: b.any }, returns: b.i32.nullable, capability: "js" },
+    /** `object.value` read through `from_js`, or `null` if `object` is not an instance. */
+    valueFromJS: { args: { object: b.any }, returns: b.i32.nullable, capability: "js" },
   },
 });
 

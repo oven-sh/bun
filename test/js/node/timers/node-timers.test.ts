@@ -350,7 +350,7 @@ describe("_idleStart", () => {
   });
 });
 
-describe("functions keyed by a symbol", () => {
+describe("symbol-keyed methods", () => {
   const timeout = setTimeout(() => {}, 1000);
   const immediate = setImmediate(() => {});
   clearTimeout(timeout);
@@ -360,7 +360,7 @@ describe("functions keyed by a symbol", () => {
     ["Timeout", Symbol.dispose, timeout],
     ["Timeout", Symbol.toPrimitive, timeout],
     ["Immediate", Symbol.dispose, immediate],
-  ] as const)("%s.prototype[%p] has the name, the length and the writability of Node's", (name, symbol, timer) => {
+  ] as const)("%s.prototype[%p] matches Node's name, length and writable", (name, symbol, timer) => {
     const { value, writable, configurable } = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(timer), symbol)!;
     expect({ name: value.name, length: value.length, writable, configurable }).toEqual({
       name: "",

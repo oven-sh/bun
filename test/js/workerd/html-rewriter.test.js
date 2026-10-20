@@ -3001,7 +3001,7 @@ describe("invalid arguments throw instead of returning an error value", () => {
     expect(err.message).toBe("Expected a function");
   });
 
-  it("a missing argument is undefined", () => {
+  it("a missing argument is treated as undefined", () => {
     const outcome = fn => {
       try {
         return { returned: fn() };

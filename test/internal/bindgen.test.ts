@@ -236,9 +236,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.class({ rustPath: "T", proto: { x: { rustName: "camelCase" } } })).toThrow(
     "camelCase: rustName is written in snake_case",
   );
-  expect(() => b.class({ rustPath: "T", proto: { x: { name: "y" } } })).toThrow(
-    "x: a function keyed by a string is named by it",
-  );
+  expect(() => b.class({ rustPath: "T", proto: { x: { name: "y" } } })).toThrow("x: name is only allowed on an @@ key");
   expect(() => b.string.allowStringObject.loose).toThrow(".loose already takes a String object");
   expect(() => b.string.loose.allowStringObject).toThrow(".loose already takes a String object");
   // No overload can have the argument left out, so `undefined` goes to the one that reports its own error.
@@ -1946,133 +1944,133 @@ describe("classes", () => {
   });
 
   describe("refCounted", () => {
-    const { TestShared } = bindgen as any;
+    const { TestRefCounted } = bindgen as any;
 
-    it("reads and writes what it wraps", () => {
-      const shared = new TestShared(3);
-      expect(shared).toBeInstanceOf(TestShared);
-      expect(shared.value).toBe(3);
-      shared.value = 4;
-      expect(shared.value).toBe(4);
-      expect(new TestShared().value).toBe(0);
+    it("a getter and a setter read and write the struct", () => {
+      const object = new TestRefCounted(3);
+      expect(object).toBeInstanceOf(TestRefCounted);
+      expect(object.value).toBe(3);
+      object.value = 4;
+      expect(object.value).toBe(4);
+      expect(new TestRefCounted().value).toBe(0);
     });
 
     it("an accessor with passThis reaches the internal fields", () => {
-      const shared = new TestShared();
-      expect(shared.listener).toBeUndefined();
+      const object = new TestRefCounted();
+      expect(object.listener).toBeUndefined();
       const listener = () => {};
-      shared.listener = listener;
+      object.listener = listener;
       Bun.gc(true);
-      expect(shared.listener).toBe(listener);
+      expect(object.listener).toBe(listener);
     });
 
-    it("an accessor can be an internal field", () => {
-      const shared = new TestShared();
-      expect(shared.sameListener).toBeUndefined();
+    it("an internalField accessor reads and writes the field", () => {
+      const object = new TestRefCounted();
+      expect(object.sameListener).toBeUndefined();
       const value = { any: "value" };
-      shared.sameListener = value;
+      object.sameListener = value;
       Bun.gc(true);
-      expect([shared.sameListener, shared.readOnlyListener, shared.listener]).toEqual([value, value, value]);
-      expect(shared.sameListener).toBe(value);
+      expect([object.sameListener, object.readOnlyListener, object.listener]).toEqual([value, value, value]);
+      expect(object.sameListener).toBe(value);
       expect(() => {
         "use strict";
-        shared.readOnlyListener = 1;
+        object.readOnlyListener = 1;
       }).toThrow(TypeError);
-      const { get, set } = Object.getOwnPropertyDescriptor(TestShared.prototype, "sameListener")!;
+      const { get, set } = Object.getOwnPropertyDescriptor(TestRefCounted.prototype, "sameListener")!;
       expect(() => get!.call({})).toThrow(TypeError);
       expect(() => set!.call({}, 1)).toThrow(TypeError);
-      expect(Object.getOwnPropertyDescriptor(TestShared.prototype, "readOnlyListener")!.set).toBeUndefined();
+      expect(Object.getOwnPropertyDescriptor(TestRefCounted.prototype, "readOnlyListener")!.set).toBeUndefined();
     });
 
-    it("lets JavaScript re-enter a method that runs it", () => {
-      const shared = new TestShared(1);
+    it("a method that calls into JavaScript can be re-entered", () => {
+      const object = new TestRefCounted(1);
       const receivers: unknown[] = [];
-      shared.listener = function (this: unknown) {
+      object.listener = function (this: unknown) {
         receivers.push(this);
-        shared.value += 10;
-        if (receivers.length < 3) shared.notify();
+        object.value += 10;
+        if (receivers.length < 3) object.notify();
       };
-      expect(shared.notify()).toBe(31);
-      expect(receivers).toEqual([shared, shared, shared]);
-      shared.listener = () => {
+      expect(object.notify()).toBe(31);
+      expect(receivers).toEqual([object, object, object]);
+      object.listener = () => {
         throw new RangeError("from the listener");
       };
-      expect(() => shared.notify()).toThrow(new RangeError("from the listener"));
+      expect(() => object.notify()).toThrow(new RangeError("from the listener"));
     });
 
-    it("a function at @@name is keyed by the symbol", () => {
-      const shared = new TestShared(5);
-      expect(Object.getOwnPropertyDescriptor(TestShared.prototype, Symbol.dispose)).toEqual({
+    it('"@@dispose" defines prototype[Symbol.dispose]', () => {
+      const object = new TestRefCounted(5);
+      expect(Object.getOwnPropertyDescriptor(TestRefCounted.prototype, Symbol.dispose)).toEqual({
         value: expect.any(Function),
         writable: true,
         enumerable: false,
         configurable: true,
       });
-      expect(TestShared.prototype[Symbol.dispose].name).toBe("[Symbol.dispose]");
-      expect(TestShared.prototype[Symbol.dispose].length).toBe(0);
-      expect(Object.getOwnPropertyNames(TestShared.prototype)).not.toContain("dispose");
+      expect(TestRefCounted.prototype[Symbol.dispose].name).toBe("[Symbol.dispose]");
+      expect(TestRefCounted.prototype[Symbol.dispose].length).toBe(0);
+      expect(Object.getOwnPropertyNames(TestRefCounted.prototype)).not.toContain("dispose");
       {
-        using _ = shared;
+        using _ = object;
       }
-      expect(shared.value).toBe(-1);
+      expect(object.value).toBe(-1);
     });
 
-    it("name names a function at @@name", () => {
-      expect(TestShared.prototype[Symbol.toPrimitive].name).toBe("");
-      expect(+new TestShared(7)).toBe(7);
+    it("name overrides the name of an @@ function", () => {
+      expect(TestRefCounted.prototype[Symbol.toPrimitive].name).toBe("");
+      expect(+new TestRefCounted(7)).toBe(7);
     });
 
-    it('invalidThis: "undefined" returns undefined for another receiver', () => {
-      const { lenient, keep } = TestShared.prototype;
-      expect(lenient.call(new TestShared(6))).toBe(6);
-      for (const receiver of [undefined, null, 1, {}, Object.create(TestShared.prototype)])
-        expect(lenient.call(receiver)).toBeUndefined();
+    it('invalidThis: "undefined" returns undefined for an invalid this', () => {
+      const { valueOrUndefined, keep } = TestRefCounted.prototype;
+      expect(valueOrUndefined.call(new TestRefCounted(6))).toBe(6);
+      for (const receiver of [undefined, null, 1, {}, Object.create(TestRefCounted.prototype)])
+        expect(valueOrUndefined.call(receiver)).toBeUndefined();
       expect(() => keep.call({})).toThrow(TypeError);
     });
 
-    it("b.self can be absent, as a result and as an argument", () => {
-      const [shared, negative] = [new TestShared(1), new TestShared(-1)];
-      expect(shared.orUndefined()).toBe(shared);
-      expect(shared.orNull()).toBe(shared);
+    it("b.self.optional and b.self.nullable work as return and argument types", () => {
+      const [object, negative] = [new TestRefCounted(1), new TestRefCounted(-1)];
+      expect(object.orUndefined()).toBe(object);
+      expect(object.orNull()).toBe(object);
       expect(negative.orUndefined()).toBeUndefined();
       expect(negative.orNull()).toBeNull();
-      expect(shared.is(shared)).toBe(true);
-      for (const other of [negative, null, undefined]) expect(shared.is(other)).toBe(false);
-      expect(shared.is.length).toBe(0);
-      expect(() => shared.is({})).toThrow(TypeError);
+      expect(object.isSame(object)).toBe(true);
+      for (const other of [negative, null, undefined]) expect(object.isSame(other)).toBe(false);
+      expect(object.isSame.length).toBe(0);
+      expect(() => object.isSame({})).toThrow(TypeError);
     });
 
-    it("fromJS: Rust finds out whether a value is an instance", () => {
-      expect(TestShared.peek(new TestShared(9))).toBe(9);
-      class Derived extends TestShared {}
-      expect(TestShared.peek(new Derived(10))).toBe(10);
-      for (const other of [undefined, null, 1, "9", {}, Object.create(TestShared.prototype), new TestCounter(9)])
-        expect(TestShared.peek(other)).toBeNull();
+    it("from_js returns the wrapper only for instances", () => {
+      expect(TestRefCounted.valueFromJS(new TestRefCounted(9))).toBe(9);
+      class Derived extends TestRefCounted {}
+      expect(TestRefCounted.valueFromJS(new Derived(10))).toBe(10);
+      for (const other of [undefined, null, 1, "9", {}, Object.create(TestRefCounted.prototype), new TestCounter(9)])
+        expect(TestRefCounted.valueFromJS(other)).toBeNull();
     });
 
-    it("what Rust holds outlives the object, and is told when the object is collected", () => {
-      const keepOne = (value: number) => void new TestShared(value).keep();
+    it("a struct Rust still holds a ref to outlives its object, and finalize runs when the object is collected", () => {
+      const keepOne = (value: number) => void new TestRefCounted(value).keep();
       let collected: number[] | undefined;
       for (let i = 0; i < 100 && !collected; i++) {
         keepOne(i);
         Bun.gc(true);
-        if (TestShared.kept()[1] === 1) collected = [i, ...TestShared.kept()];
+        if (TestRefCounted.kept()[1] === 1) collected = [i, ...TestRefCounted.kept()];
       }
       expect(collected).toEqual([collected![0], collected![0], 1]);
-      const before = TestShared.alive();
-      TestShared.release();
-      expect(TestShared.kept()).toEqual([]);
-      expect(TestShared.alive()).toBe(before - 1);
+      const before = TestRefCounted.alive();
+      TestRefCounted.release();
+      expect(TestRefCounted.kept()).toEqual([]);
+      expect(TestRefCounted.alive()).toBe(before - 1);
     });
 
-    it("frees what nothing else holds when the object is collected", () => {
+    it("drops the struct when the object is collected and nothing else holds a ref", () => {
       const count = 1000;
-      let all: unknown[] | null = Array.from({ length: count }, (_, i) => new TestShared(i));
+      let all: unknown[] | null = Array.from({ length: count }, (_, i) => new TestRefCounted(i));
       Bun.gc(true);
-      expect(TestShared.alive()).toBeGreaterThanOrEqual(all.length);
+      expect(TestRefCounted.alive()).toBeGreaterThanOrEqual(all.length);
       all = null;
       Bun.gc(true);
-      expect(TestShared.alive()).toBeLessThan(count);
+      expect(TestRefCounted.alive()).toBeLessThan(count);
     });
   });
 });

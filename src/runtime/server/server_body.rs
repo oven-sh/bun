@@ -756,7 +756,7 @@ impl AnyRoute {
         init_ctx: &mut ServerInitContext,
     ) -> JsResult<Option<AnyRoute>> {
         use bun_collections::zig_hash_map::MapEntry as StdEntry;
-        // SAFETY: the host function that parses a server's options is on the JS thread and holds no other scope.
+        // SAFETY: a host function on the JS thread, and nothing borrowed through another `JsScope` is still in use.
         let html_bundle = unsafe {
             JsScope::with(init_ctx.global.as_mut_ptr(), |cx| {
                 let wrapper = HTMLBundle::from_js(&cx.heap, argument)?;
@@ -1661,7 +1661,7 @@ where
             let _ = unsafe { (*request).request_context.set_timeout(value) };
             return Ok(JSValue::UNDEFINED);
         }
-        // SAFETY: a host function runs on the JS thread, with nothing lent by another scope in use.
+        // SAFETY: a host function on the JS thread, and nothing borrowed through another `JsScope` is still in use.
         let is_response = unsafe {
             JsScope::with(global.as_mut_ptr(), |cx| {
                 let Some(response) = NodeHTTPResponse::from_js(&cx.heap, arguments[0]) else {

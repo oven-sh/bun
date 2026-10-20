@@ -6,7 +6,7 @@ use core::ptr::NonNull;
 use std::rc::Rc;
 
 use bun_jsc::bindgen::{
-    self, Callable, JsHeap, JsLocal, JsPayload as _, JsRefCountedPayload, JsScope, JsWrapper,
+    self, Callable, JsHeap, JsLocal, JsPayload as _, JsRefCounted, JsScope, JsWrapper,
     JsWrapperRef, to_js,
 };
 use bun_jsc::{
@@ -107,10 +107,7 @@ fn content_type(options: &ContentOptions) -> lol_html::html_content::ContentType
     }
 }
 
-/// The JS object of a `T`.
-type Wrapper<'a, T> = JsWrapper<'a, RefPtr<T>>;
-
-/// One trait method per lol-html content op `$Raw::$name`, on the unit in the `DetachablePtr<$Raw>` at `self.$field`.
+/// Generates one trait method per lol-html content op. Each calls `$Raw::$name` on `self.$field`, a `DetachablePtr<$Raw>`.
 macro_rules! lol_content_ops {
     (
         $Raw:ident, $field:ident;
@@ -120,11 +117,11 @@ macro_rules! lol_content_ops {
             $(#[$attr])*
             fn $name<'a>(
                 &self,
-                this: Wrapper<'a, Self>,
+                this: JsWrapper<'a, RefPtr<Self>>,
                 heap: &JsHeap<'a>,
                 content: &'a [u8],
                 options: &ContentOptions,
-            ) -> bindgen::Result<'a, Option<Wrapper<'a, Self>>> {
+            ) -> bindgen::Result<'a, Option<JsWrapper<'a, RefPtr<Self>>>> {
                 let Some(raw) = self.$field.get_mut() else {
                     return Ok(None);
                 };
@@ -636,7 +633,7 @@ impl bun_event_loop::Taskable for RewriterPipeBackgroundPull {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: the task's ref keeps the allocation live until the `deref_nn` below.
         let pipe = BackRef::from(unsafe { NonNull::new_unchecked(this.cast::<RewriterPipe>()) });
-        if let Some(cell) = pipe.cell.get().try_get() {
+        if let Some(cell) = pipe.cell.get().try_get_value() {
             cell.unprotect();
         }
         RewriterPipe::deref_nn(pipe.into());
@@ -759,15 +756,15 @@ impl RewriterPipe {
     /// `fetch()` lets a request-body stream run ahead of the socket.
     const HIGH_WATER_MARK: BlobSizeType = 16384;
 
-    /// Lends the Transform cell, for its internal fields. `None` once it is collected.
+    /// Calls `f` with the Transform cell, to reach its internal fields. Returns `None` if the cell has been collected.
     fn with_cell<R>(
         &self,
-        f: impl for<'a> FnOnce(Wrapper<'a, Self>, &JsHeap<'a>) -> R,
+        f: impl for<'a> FnOnce(JsWrapper<'a, RefPtr<Self>>, &JsHeap<'a>) -> R,
     ) -> Option<R> {
-        // SAFETY: the pipe is driven on the JS thread, outside a collection, and `f` gets no `JsScope` to run JavaScript with.
+        // SAFETY: the pipe is driven on the JS thread, outside a collection, nothing borrowed through another `JsScope` is still in use, and `f` gets no `JsScope` to run JavaScript with.
         unsafe {
             JsScope::with(self.global.as_mut_ptr(), |cx| {
-                let cell = self.cell.get().get(&cx.heap)?;
+                let cell = self.cell.get().try_get(&cx.heap)?;
                 Some(f(cell, &cx.heap))
             })
         }
@@ -828,7 +825,7 @@ impl RewriterPipe {
         let cell = if vm_stopped {
             None
         } else {
-            this.cell.get().try_get().map(jsc::EnsureStillAlive)
+            this.cell.get().try_get_value().map(jsc::EnsureStillAlive)
         };
         if cell.is_none() {
             this.input_source.set(SourceHandle::None);
@@ -904,7 +901,7 @@ impl RewriterPipe {
     /// upstream pipe delivering `Done`) and while this cell may be reachable
     /// only through that source.
     fn release_input_roots(&self, src: SourceHandle) {
-        // No cell: it was collected together with everything these edges pointed at.
+        // If the cell has been collected, so has everything these edges pointed at.
         self.with_cell(|cell, heap| {
             match src {
                 SourceHandle::ByteStream(bs) => {
@@ -1093,7 +1090,7 @@ impl RewriterPipe {
         // The cell's internal fields root the Response and (later) the
         // input/output streams; the Response's `transform` slot roots the cell
         // so it survives as long as user code can reach the output.
-        // SAFETY: `cx` is the JS thread's, and the host function that has it holds no other scope.
+        // SAFETY: a host function on the JS thread, and nothing borrowed through another `JsScope` is still in use.
         unsafe {
             JsScope::with(cx.global().as_mut_ptr(), |scope| {
                 let heap = &scope.heap;
@@ -1128,7 +1125,7 @@ impl RewriterPipe {
 
     fn wire_input<'a>(
         pipe: bun_ptr::BackRef<Self>,
-        cell: Wrapper<'a, Self>,
+        cell: JsWrapper<'a, RefPtr<Self>>,
         scope: &mut JsScope<'a>,
         cx: &bun_jsc::JsThread<'_>,
         value: &mut webcore::body::Value,
@@ -1302,7 +1299,7 @@ impl RewriterPipe {
             self.background_pull_queued.set(false);
             return;
         }
-        if let Some(cell) = self.cell.get().try_get() {
+        if let Some(cell) = self.cell.get().try_get_value() {
             cell.protect();
         }
         self.ref_();
@@ -1317,7 +1314,7 @@ impl RewriterPipe {
         // SAFETY: the task's ref (taken in `schedule_background_pull`) keeps
         // the allocation live until the `deref_nn` below.
         let this = BackRef::from(unsafe { NonNull::new_unchecked(pipe) });
-        let cell = this.cell.get().try_get();
+        let cell = this.cell.get().try_get_value();
         this.background_pull_queued.set(false);
         if this.background_pull_armed.replace(false)
             && !this.done.get()
@@ -1523,7 +1520,11 @@ impl RewriterPipe {
             return None;
         }
         // A handler can cut every other path to the cell while lol-html has handlers left to run.
-        let cell = self.cell.get().try_get().unwrap_or(JSValue::UNDEFINED);
+        let cell = self
+            .cell
+            .get()
+            .try_get_value()
+            .unwrap_or(JSValue::UNDEFINED);
         let _active = ActiveSinkGuard::enter(self);
         self.driving.set(true);
         let res = self.rewriter.with_mut(|r| r.as_deref_mut().map(f));
@@ -1570,10 +1571,10 @@ impl RewriterPipe {
         if self.phase.get() == RewritePhase::Done && !self.driving.get() {
             return Ok(None);
         }
-        let Some(cell) = self.cell.get().get(heap) else {
+        let Some(cell) = self.cell.get().try_get(heap) else {
             return Ok(None);
         };
-        // SAFETY: the array is the pipe's own: its length is a field, and its elements are defined and not set.
+        // SAFETY: the array is the pipe's own: reading its length and defining its elements (not `[[Set]]`) run no JavaScript.
         let global = unsafe { heap.global() };
         let mut list = cell.end_tag_handlers_field(heap).to_js();
         if !list.is_cell() {
@@ -1874,7 +1875,7 @@ impl RewriterPipe {
 }
 
 impl HTMLRewriterTransformClass for RewriterPipe {
-    /// In a GC sweep: it touches no other cell, and the other ref holders may still dispatch into the pipe afterwards.
+    /// Runs during a GC sweep, so it touches no other cell. The other ref holders may still dispatch into the pipe afterwards.
     fn finalize(&self) {
         self.cell.with_mut(JsWrapperRef::finalize);
     }
@@ -2194,7 +2195,7 @@ impl HandlerLike for EndTagHandler {
 
 /// Trait abstracting the wrapper-type bits [`handler_callback`] and the
 /// suspension plumbing need.
-trait WrapperLike: JsRefCountedPayload {
+trait WrapperLike: JsRefCounted {
     type Raw;
     /// `pipe` is the one whose lol-html call lends `value`.
     fn init(value: *mut Self::Raw, pipe: BackRef<RewriterPipe>) -> RefPtr<Self>;
@@ -2510,7 +2511,7 @@ fn create_lolhtml_error(global: &JSGlobalObject, message: &dyn core::fmt::Displa
 }
 
 fn lolhtml_error<'a>(heap: &JsHeap<'a>, message: &dyn core::fmt::Display) -> bindgen::Error<'a> {
-    // SAFETY: making the error runs no JavaScript: its `name` is defined and not set.
+    // SAFETY: making the error runs no JavaScript: its `name` is defined, not `[[Set]]`.
     let error = create_lolhtml_error(unsafe { heap.global() }, message);
     bindgen::Error::from_value(JsLocal::new(heap, error))
 }
@@ -2527,7 +2528,7 @@ fn utf8_or_throw<'a>(global: &JSGlobalObject, bytes: &'a [u8]) -> JsResult<&'a s
     core::str::from_utf8(bytes).map_err(|e| global.throw_value(create_lolhtml_error(global, &e)))
 }
 
-/// As [`utf8_or_throw`], for the body to return.
+/// Like [`utf8_or_throw`], but returns the error instead of throwing it.
 fn utf8_or_error<'a, 'b>(heap: &JsHeap<'a>, bytes: &'b [u8]) -> bindgen::Result<'a, &'b str> {
     core::str::from_utf8(bytes).map_err(|e| lolhtml_error(heap, &e))
 }
@@ -2584,12 +2585,16 @@ impl TextChunkClass for TextChunk {
         replace,
     }
 
-    fn remove<'a>(&self, this: Wrapper<'a, Self>, _: &JsHeap<'a>) -> Option<Wrapper<'a, Self>> {
+    fn remove<'a>(
+        &self,
+        this: JsWrapper<'a, RefPtr<Self>>,
+        _: &JsHeap<'a>,
+    ) -> Option<JsWrapper<'a, RefPtr<Self>>> {
         self.text_chunk.get_mut()?.remove();
         Some(this)
     }
 
-    fn get_text(&self) -> Option<impl AsRef<[u8]>> {
+    fn text(&self) -> Option<impl AsRef<[u8]>> {
         Some(self.text_chunk.get_mut()?.as_str())
     }
 
@@ -2650,7 +2655,11 @@ impl DocTypeClass for DocType {
         opt_string_to_js_or_null(dt.public_id(), heap)
     }
 
-    fn remove<'a>(&self, this: Wrapper<'a, Self>, _: &JsHeap<'a>) -> Option<Wrapper<'a, Self>> {
+    fn remove<'a>(
+        &self,
+        this: JsWrapper<'a, RefPtr<Self>>,
+        _: &JsHeap<'a>,
+    ) -> Option<JsWrapper<'a, RefPtr<Self>>> {
         self.doctype.get_mut()?.remove();
         Some(this)
     }
@@ -2723,7 +2732,11 @@ impl CommentClass for Comment {
         replace,
     }
 
-    fn remove<'a>(&self, this: Wrapper<'a, Self>, _: &JsHeap<'a>) -> Option<Wrapper<'a, Self>> {
+    fn remove<'a>(
+        &self,
+        this: JsWrapper<'a, RefPtr<Self>>,
+        _: &JsHeap<'a>,
+    ) -> Option<JsWrapper<'a, RefPtr<Self>>> {
         self.comment.get_mut()?.remove();
         Some(this)
     }
@@ -2798,7 +2811,11 @@ impl EndTagClass for EndTag {
         after,
     }
 
-    fn remove<'a>(&self, this: Wrapper<'a, Self>, _: &JsHeap<'a>) -> Option<Wrapper<'a, Self>> {
+    fn remove<'a>(
+        &self,
+        this: JsWrapper<'a, RefPtr<Self>>,
+        _: &JsHeap<'a>,
+    ) -> Option<JsWrapper<'a, RefPtr<Self>>> {
         self.end_tag.get_mut()?.remove();
         Some(this)
     }
@@ -2882,7 +2899,11 @@ impl AttributeIteratorClass for AttributeIterator {
         })
     }
 
-    fn get_this<'a>(&self, this: Wrapper<'a, Self>, _: &JsHeap<'a>) -> Wrapper<'a, Self> {
+    fn get_this<'a>(
+        &self,
+        this: JsWrapper<'a, RefPtr<Self>>,
+        _: &JsHeap<'a>,
+    ) -> JsWrapper<'a, RefPtr<Self>> {
         this
     }
 }
@@ -2899,7 +2920,7 @@ pub(crate) struct Element {
     /// a non-owning backref to this `Element` plus a `+1` we own; `invalidate()`
     /// nulls those backrefs when the handler returns, so none can outlive us.
     /// R-2: `JsCell` (non-Copy `Vec`) — pushed/drained from `&self` host-fns
-    /// (`get_attributes`, `set_attribute`, `remove_attribute`). The `with_mut`
+    /// (`attributes`, `set_attribute`, `remove_attribute`). The `with_mut`
     /// closures do not call into JS, so the short `&mut Vec` borrow cannot
     /// overlap a re-entrant access.
     pub(crate) attribute_iterators: JsCell<Vec<RefPtr<AttributeIterator>>>,
@@ -2954,10 +2975,10 @@ impl ElementClass for Element {
 
     fn on_end_tag<'a>(
         &self,
-        this: Wrapper<'a, Self>,
+        this: JsWrapper<'a, RefPtr<Self>>,
         heap: &JsHeap<'a>,
         handler: JsLocal<'a>,
-    ) -> bindgen::Result<'a, Option<Wrapper<'a, Self>>> {
+    ) -> bindgen::Result<'a, Option<JsWrapper<'a, RefPtr<Self>>>> {
         let Some(el) = self.element.get_mut() else {
             return Ok(None);
         };
@@ -2983,7 +3004,7 @@ impl ElementClass for Element {
         };
 
         let mut end_tag_handler = EndTagHandler {
-            // SAFETY: kept for the run of the handler, and passed to nothing here.
+            // SAFETY: only stored here, for the end-tag handler to use when it runs.
             global: GlobalRef::from(unsafe { heap.global() }),
             slot,
         };
@@ -3023,11 +3044,11 @@ impl ElementClass for Element {
     /// Sets an attribute to a provided value, creating the attribute if it does not exist.
     fn set_attribute<'a>(
         &self,
-        this: Wrapper<'a, Self>,
+        this: JsWrapper<'a, RefPtr<Self>>,
         heap: &JsHeap<'a>,
         name: &'a [u8],
         value: &'a [u8],
-    ) -> bindgen::Result<'a, Option<Wrapper<'a, Self>>> {
+    ) -> bindgen::Result<'a, Option<JsWrapper<'a, RefPtr<Self>>>> {
         let Some(el) = self.element.get_mut() else {
             return Ok(None);
         };
@@ -3046,10 +3067,10 @@ impl ElementClass for Element {
     /// Removes the attribute.
     fn remove_attribute<'a>(
         &self,
-        this: Wrapper<'a, Self>,
+        this: JsWrapper<'a, RefPtr<Self>>,
         heap: &JsHeap<'a>,
         name: &'a [u8],
-    ) -> bindgen::Result<'a, Option<Wrapper<'a, Self>>> {
+    ) -> bindgen::Result<'a, Option<JsWrapper<'a, RefPtr<Self>>>> {
         let Some(el) = self.element.get_mut() else {
             return Ok(None);
         };
@@ -3078,7 +3099,11 @@ impl ElementClass for Element {
     }
 
     /// Removes the element with all its content.
-    fn remove<'a>(&self, this: Wrapper<'a, Self>, _: &JsHeap<'a>) -> Option<Wrapper<'a, Self>> {
+    fn remove<'a>(
+        &self,
+        this: JsWrapper<'a, RefPtr<Self>>,
+        _: &JsHeap<'a>,
+    ) -> Option<JsWrapper<'a, RefPtr<Self>>> {
         self.element.get_mut()?.remove();
         Some(this)
     }
@@ -3086,9 +3111,9 @@ impl ElementClass for Element {
     /// Removes the start tag and end tag of the element but keeps its inner content intact.
     fn remove_and_keep_content<'a>(
         &self,
-        this: Wrapper<'a, Self>,
+        this: JsWrapper<'a, RefPtr<Self>>,
         _: &JsHeap<'a>,
-    ) -> Option<Wrapper<'a, Self>> {
+    ) -> Option<JsWrapper<'a, RefPtr<Self>>> {
         self.element.get_mut()?.remove_and_keep_content();
         Some(this)
     }
@@ -3116,23 +3141,26 @@ impl ElementClass for Element {
             .map_err(|e| lolhtml_error(&cx.heap, &e))
     }
 
-    fn get_removed(&self) -> Option<bool> {
+    fn removed(&self) -> Option<bool> {
         Some(self.element.get_mut()?.removed())
     }
 
-    fn get_self_closing(&self) -> Option<bool> {
+    fn self_closing(&self) -> Option<bool> {
         Some(self.element.get_mut()?.is_self_closing())
     }
 
-    fn get_can_have_content(&self) -> Option<bool> {
+    fn can_have_content(&self) -> Option<bool> {
         Some(self.element.get_mut()?.can_have_content())
     }
 
-    fn get_namespace_uri(&self) -> Option<impl AsRef<[u8]>> {
+    fn namespace_uri(&self) -> Option<impl AsRef<[u8]>> {
         Some(self.element.get_mut()?.namespace_uri())
     }
 
-    fn get_attributes<'a>(&self, heap: &JsHeap<'a>) -> Option<Wrapper<'a, AttributeIterator>> {
+    fn attributes<'a>(
+        &self,
+        heap: &JsHeap<'a>,
+    ) -> Option<JsWrapper<'a, RefPtr<AttributeIterator>>> {
         if self.element.is_detached() {
             return None;
         }
@@ -3195,9 +3223,9 @@ impl WrapperLike for Element {
 // `RewriterPipe::wire_input`'s `.then_with_value()`; the cell (and thus the
 // pipe) stays alive as long as the pump promise's reaction is rooted.
 
-/// The pipe of the cell that is a reaction's last argument, which the frame holds.
+/// Gets the pipe from the Transform cell passed as the reaction's last argument, which the call frame keeps alive.
 fn pipe_of_reaction(global: &JSGlobalObject, args: &[JSValue]) -> Option<BackRef<RewriterPipe>> {
-    // SAFETY: a promise reaction runs on the JS thread, with no other scope in use.
+    // SAFETY: a promise reaction on the JS thread, and nothing borrowed through another `JsScope` is still in use.
     unsafe {
         JsScope::with(global.as_mut_ptr(), |cx| {
             let cell = RewriterPipe::from_js(&cx.heap, args[args.len() - 1])?;

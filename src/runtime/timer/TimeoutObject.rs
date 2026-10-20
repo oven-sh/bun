@@ -6,17 +6,14 @@ use bun_ptr::RefPtr;
 use super::{Kind, TimerObjectInternals};
 use crate::generated_bindgen::timer::{TimeoutClass, TimeoutInternalFields as _};
 
-// Struct + `RefCounted` impl + the forwarders
-// (`to_primitive`/`do_ref`/`do_unref`/`has_ref`/`get_destroyed`/`dispose`/
-// `constructor`/`finalize`/`ref_`/`deref`/`deinit`/`init_with`) — see
-// `impl_timer_object!` in `super` (timer/mod.rs).
+// The struct, its `RefCounted` impl and the methods shared with `ImmediateObject` come from `impl_timer_object!` (timer/mod.rs).
 super::impl_timer_object!(TimeoutObject, TimeoutObject, "Timeout", TimeoutClass, {
     fn do_refresh<'a>(
         &self,
         this: JsWrapper<'a, RefPtr<Self>>,
         heap: &JsHeap<'a>,
     ) -> JsWrapper<'a, RefPtr<Self>> {
-        TimerObjectInternals::do_refresh(self, heap, this);
+        TimerObjectInternals::do_refresh(self, this, heap);
         this
     }
 

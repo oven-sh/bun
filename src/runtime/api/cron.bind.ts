@@ -1,6 +1,6 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
-const chained = { returns: b.self, passThis: true, capability: "heap" } as const;
+const chainable = { returns: b.self, passThis: true, capability: "heap" } as const;
 
 export const CronJob = b.class({
   rustPath: "crate::api::cron::CronJob",
@@ -10,9 +10,9 @@ export const CronJob = b.class({
   internalFields: ["callback", "pendingPromise", "cron"],
   proto: {
     cron: { internalField: "cron" },
-    ref: { ...chained, rustName: "do_ref" },
-    stop: chained,
-    unref: { ...chained, rustName: "do_unref" },
-    "@@dispose": chained,
+    ref: { ...chainable, rustName: "do_ref" },
+    stop: chainable,
+    unref: { ...chainable, rustName: "do_unref" },
+    "@@dispose": chainable,
   },
 });

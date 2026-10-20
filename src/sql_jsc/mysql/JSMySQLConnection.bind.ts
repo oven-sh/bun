@@ -11,7 +11,7 @@ export const MySQLConnection = b.class({
     close: { rustName: "do_close", capability: "js" },
     flush: { rustName: "do_flush" },
     hold: { rustName: "do_hold" },
-    inTransaction: { getter: b.bool, rustName: "get_in_transaction" },
+    inTransaction: { getter: b.bool },
     unhold: { rustName: "do_unhold", capability: "js" },
   },
 });

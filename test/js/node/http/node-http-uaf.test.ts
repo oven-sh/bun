@@ -146,7 +146,7 @@ test.concurrent.each([
   expect(JSON.parse(stdout).received).toBeGreaterThan(8 * 1024 * 1024);
 });
 
-test("cork() of the native response takes a missing callback as undefined", async () => {
+test("the native response's cork() treats a missing callback as undefined", async () => {
   const { promise, resolve } = Promise.withResolvers<unknown>();
   const server = http.createServer((req, res) => {
     const handle = res[Object.getOwnPropertySymbols(res).find(s => s.description === "handle")!];

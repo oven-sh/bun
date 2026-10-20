@@ -550,7 +550,7 @@ impl StatWatcher {
     pub(crate) unsafe fn run_hop(this: *mut StatWatcher) -> bun_event_loop::JsResult<()> {
         // SAFETY: fn contract.
         let (hop, global) = unsafe { ((*this).pending_hop.get(), (*this).global_this) };
-        // SAFETY: the event loop runs a task on the JS thread, with no other scope in use.
+        // SAFETY: an event-loop task on the JS thread, and nothing borrowed through another `JsScope` is still in use.
         unsafe {
             JsScope::with(global.as_mut_ptr(), |cx| match hop {
                 x if x == StatWatcherHop::InitialStatSuccess as u8 => {
@@ -619,14 +619,14 @@ impl StatWatcher {
             return Ok(());
         }
 
-        let Some(js_this) = this_ref.this_value.get().get(&cx.heap) else {
+        let Some(wrapper) = this_ref.this_value.get().try_get(&cx.heap) else {
             return Ok(());
         };
 
         // Propagated to the task fold: reporting here would leave a
         // termination pending for the next queued task's JS entry.
         let jsvalue = stat_to_js_stats(cx.global(), &this_ref.get_last_stat(), this_ref.bigint)?;
-        js_this.set_prev_stat_field(&cx.heap, JsLocal::new(&cx.heap, jsvalue));
+        wrapper.set_prev_stat_field(&cx.heap, JsLocal::new(&cx.heap, jsvalue));
 
         // SAFETY: scheduler is live (`RefPtr`); `this` is live (ref'd, guard above).
         StatWatcherScheduler::append(this_ref.scheduler.as_ptr(), this);
@@ -649,13 +649,13 @@ impl StatWatcher {
             return Ok(());
         }
 
-        let Some(js_this) = this_ref.this_value.get().get(&cx.heap) else {
+        let Some(wrapper) = this_ref.this_value.get().try_get(&cx.heap) else {
             return Ok(());
         };
         let jsvalue = stat_to_js_stats(cx.global(), &this_ref.get_last_stat(), this_ref.bigint)?;
-        js_this.set_prev_stat_field(&cx.heap, JsLocal::new(&cx.heap, jsvalue));
+        wrapper.set_prev_stat_field(&cx.heap, JsLocal::new(&cx.heap, jsvalue));
 
-        let result = js_this.listener_field(&cx.heap).to_js().call(
+        let result = wrapper.listener_field(&cx.heap).to_js().call(
             cx.global(),
             JSValue::UNDEFINED,
             &[jsvalue, jsvalue],
@@ -735,20 +735,20 @@ impl StatWatcher {
         if this_ref.closed.load(Ordering::Relaxed) {
             return Ok(());
         }
-        let Some(js_this) = this_ref.this_value.get().get(&cx.heap) else {
+        let Some(wrapper) = this_ref.this_value.get().try_get(&cx.heap) else {
             return Ok(());
         };
-        let prev_jsvalue = js_this.prev_stat_field(&cx.heap).to_js();
+        let prev_jsvalue = wrapper.prev_stat_field(&cx.heap).to_js();
         let current_jsvalue =
             stat_to_js_stats(cx.global(), &this_ref.get_last_stat(), this_ref.bigint)?;
-        js_this.set_prev_stat_field(&cx.heap, JsLocal::new(&cx.heap, current_jsvalue));
+        wrapper.set_prev_stat_field(&cx.heap, JsLocal::new(&cx.heap, current_jsvalue));
 
         // Propagate to the dispatcher: `report_error_or_terminate` reports a
         // regular throw as uncaught and stops the tick loop on termination.
         // Swallowing the error here leaves a termination exception on the VM
         // and the next queued task re-enters JS under a
         // `scope.assertNoException()` RELEASE_ASSERT.
-        js_this
+        wrapper
             .listener_field(&cx.heap)
             .to_js()
             .call(
@@ -813,14 +813,14 @@ impl StatWatcher {
             this.poll_ref.with_mut(|p| p.ref_(el_ctx));
         }
 
-        // SAFETY: `fs.watchFile` is a host function on the JS thread, which holds no other scope.
-        let js_this = unsafe {
+        // SAFETY: a host function on the JS thread, and nothing borrowed through another `JsScope` is still in use.
+        let js_value = unsafe {
             JsScope::with(args.global_this.as_mut_ptr(), |cx| {
                 let heap = &cx.heap;
-                let js_this = watcher.into_js(heap);
-                this.this_value.with_mut(|r| r.set_strong(heap, js_this));
-                js_this.set_listener_field(heap, JsLocal::new(heap, args.listener));
-                js_this.as_value().to_js()
+                let wrapper = watcher.into_js(heap);
+                this.this_value.with_mut(|r| r.set_strong(heap, wrapper));
+                wrapper.set_listener_field(heap, JsLocal::new(heap, args.listener));
+                wrapper.as_value().to_js()
             })
         };
         // SAFETY: `this` is heap-allocated; `close()` disarms it before any drop.
@@ -829,7 +829,7 @@ impl StatWatcher {
         };
         InitialStatTask::create_and_schedule(this.as_ptr());
 
-        js_this
+        js_value
     }
 }
 

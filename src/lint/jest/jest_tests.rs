@@ -618,9 +618,7 @@ pub(crate) mod consistent_test_it {
                                 Some(b'x') => "x",
                                 _ => "",
                             };
-                            if ctx.runner == Runner::Bun
-                                && !ctx.can_write([prefix, preferred].concat().as_bytes())
-                            {
+                            if !ctx.can_write([prefix, preferred].concat().as_bytes(), ident) {
                                 continue;
                             }
                             report.fix(|fixer| {
@@ -970,7 +968,7 @@ pub(crate) mod no_test_prefixes {
         let report = ctx
             .report(span, NO_TEST_PREFIXES)
             .data("preferred_node_name", preferred_node_name.clone());
-        if ctx.can_write(name.get(1..).unwrap_or_default()) {
+        if ctx.can_write(name.get(1..).unwrap_or_default(), callee) {
             report.fix(|fixer| fixer.replace(span, preferred_node_name));
         }
     }
@@ -1357,15 +1355,19 @@ pub(crate) mod prefer_todo {
                     fixer.replace(name.span(), "todo")
                 }
                 ExprKind::Index { index, .. } => fixer.replace(index.outer_span(), "'todo'"),
-                _ => return vec![fixer.remove(node)],
+                _ => fixer.remove(node),
             };
-            match arguments.len() {
-                1 => vec![fix],
-                _ => vec![
+            let fixes = match is_renamed && arguments.len() != 1 {
+                true => vec![
                     fix,
                     fixer.remove(Span::after(title.span(), node.span().end.saturating_sub(1))),
                 ],
-            }
+                false => vec![fix],
+            };
+            // An empty callback often contains the real test, commented out. oxlint deletes it.
+            let has_comment = |it: &Fix| fixer.file().comments_in(it.span).next().is_some();
+            let loses_comment = fixes.iter().any(has_comment);
+            (!loses_comment).then_some(fixes)
         });
     }
 }

@@ -12,9 +12,9 @@ const { resistStopPropagation, ErrnoException } = require("internal/shared");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
 const { deprecate } = require("internal/util/deprecate");
 
-const internalErrorName = $newRustFunction("node_util_binding.rs", "internalErrorName", 1);
-const internalErrorEntries = $newRustFunction("node_util_binding.rs", "internalErrorEntries", 0);
-const parseEnv = $newRustFunction("node_util_binding.rs", "parseEnv", 1);
+const internalErrorName = $bindgen("node_util_binding.bind.ts", "internalErrorName");
+const internalErrorEntries = $bindgen("node_util_binding.bind.ts", "internalErrorEntries");
+const parseEnv = $bindgen("node_util_binding.bind.ts", "parseEnv");
 
 const NumberIsSafeInteger = Number.isSafeInteger;
 const ObjectKeys = Object.keys;
@@ -506,10 +506,9 @@ let uvErrmap: Map<number, [string, string]> | undefined;
 function getUvErrmap() {
   if (uvErrmap === undefined) {
     uvErrmap = new Map();
-    const flat = internalErrorEntries();
-    for (let i = 0; i < flat.length; i += 2) {
-      const code = flat[i];
-      const name = flat[i + 1];
+    const entries = internalErrorEntries();
+    for (let i = 0; i < entries.length; i++) {
+      const { code, name } = entries[i];
       if (!uvErrmap.has(code)) uvErrmap.set(code, [name, uvErrorMessages[name] ?? name]);
     }
   }
@@ -552,9 +551,8 @@ function prepareCallSites(_err, callSites) {
   const result: CallSiteObject[] = [];
   for (let i = 0; i < callSites.length; i++) {
     const callSite = callSites[i];
-    // CallSite#getColumnNumber() is 0-based here but 1-based in V8, and node
-    // exposes the column under both names.
-    const columnNumber = (callSite.getColumnNumber() ?? 0) + 1;
+    // node exposes the column under both names.
+    const columnNumber = callSite.getColumnNumber() ?? 0;
     result.push({
       functionName: callSite.getFunctionName() ?? "",
       scriptId: `${callSite.getScriptId()}`,

@@ -1062,8 +1062,8 @@ impl<'p, 's> Checker<'p, 's> {
         self.files().flags(self.target_of_module_clone(symbol))
     }
 
-    fn decls_of(&self, symbol: Sym) -> Vec<(FileId, Decl)> {
-        self.files().decls(self.target_of_module_clone(symbol))
+    fn decls_of(&self, symbol: Sym) -> crate::util::List<'p, (FileId, Decl)> {
+        self.files().decls_of(self.target_of_module_clone(symbol))
     }
 
     fn name_of(&self, symbol: Sym) -> Atom {
@@ -1325,7 +1325,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     // `GetDeclarationContainer`: the declarations in a loop header belong to the
                     // container of the loop.
-                    let container = match bound.stmt_parent[statement.idx()] {
+                    let container = match bound.parent_of_stmt(statement) {
                         Parent::Stmt(around)
                             if matches!(
                                 hir[around].kind,
@@ -1334,7 +1334,7 @@ impl<'p, 's> Checker<'p, 's> {
                                     | StmtKind::ForOf { .. }
                             ) =>
                         {
-                            bound.stmt_parent[around.idx()]
+                            bound.parent_of_stmt(around)
                         }
                         container => container,
                     };
@@ -1361,7 +1361,7 @@ impl<'p, 's> Checker<'p, 's> {
                     Decl::ImportEquals(i) => hir[i].flags,
                     _ => Flags::empty(),
                 };
-                (flags, bound.stmt_parent[statement.idx()])
+                (flags, bound.parent_of_stmt(statement))
             }
             Decl::ExportSpec(_) => {
                 let Some(statement) = self.statement_of(file, decl) else {
@@ -1371,7 +1371,7 @@ impl<'p, 's> Checker<'p, 's> {
                     return false;
                 };
                 return !hir[export].has_module_specifier
-                    && self.is_container_visible(file, bound.stmt_parent[statement.idx()]);
+                    && self.is_container_visible(file, bound.parent_of_stmt(statement));
             }
             _ => return false,
         };
@@ -1492,7 +1492,7 @@ impl<'p, 's> Checker<'p, 's> {
                     // `ast.IsVariableStatement`: not a loop header, and not a catch variable.
                     if statement.is_none()
                         || !matches!(hir[statement].kind, StmtKind::Var(_))
-                        || matches!(bound.stmt_parent[statement.idx()], Parent::Stmt(around)
+                        || matches!(bound.parent_of_stmt(statement), Parent::Stmt(around)
                         if matches!(
                             hir[around].kind,
                             StmtKind::For { .. } | StmtKind::ForIn { .. } | StmtKind::ForOf { .. }
@@ -1510,7 +1510,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 _ => return None,
             };
-            if !self.is_container_visible(file, bound.stmt_parent[statement.idx()]) {
+            if !self.is_container_visible(file, bound.parent_of_stmt(statement)) {
                 return None;
             }
             if paints {
@@ -1580,7 +1580,7 @@ impl<'p, 's> Checker<'p, 's> {
         // the table of a merged module, which holds the merged symbols themselves.
         let bound = self.bound(file);
         bound
-            .table(bound.symbols[bound.file_symbol.idx()].exports)
+            .table(bound.symbol(bound.file_symbol).exports)
             .iter()
             .any(|&(_, id)| {
                 let merged = files.sym(file, id);
@@ -1629,7 +1629,7 @@ impl<'p, 's> Checker<'p, 's> {
             // `bindFunctionExpression`: the name of a function expression is in no table. Here it
             // is alone in a scope around that of the function.
             let only = match bound.table(s.locals) {
-                &[(_, only)] => bound.symbols[only.idx()].decls.first(),
+                &[(_, only)] => bound.symbol(only).decls.first(),
                 _ => None,
             };
             let holds_function_name =
@@ -1815,11 +1815,6 @@ impl<'p, 's> Checker<'p, 's> {
         lookup: TableLookup,
         visited: &mut Vec<(Sym, Table)>,
     ) -> Vec<Sym> {
-        // `symbolTableIDFromMembers` and the like, then `symId`.
-        if let Table::TypeMembers(of) | Table::Exports(of) | Table::ResolvedExports(of) = table {
-            self.get_symbol_id(of);
-        }
-        self.get_symbol_id(symbol);
         if visited.contains(&(symbol, table)) {
             return Vec::new();
         }
@@ -2293,7 +2288,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `module.exports = ..` and `exports.b = ..`, otherwise what `a` resolves to.
     fn container_of_assigned_class_expression(&mut self, file: FileId, e: ExprId) -> Option<Sym> {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
-        let Parent::Expr(assignment) = bound.expr_parent[e.idx()] else {
+        let Parent::Expr(assignment) = bound.parent_of_expr(e) else {
             return None;
         };
         if assignment.is_none() {
@@ -2370,7 +2365,7 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             };
             let bound = self.bound(file);
-            let candidate = match bound.stmt_parent[statement.idx()] {
+            let candidate = match bound.parent_of_stmt(statement) {
                 // A direct child of a module.
                 Parent::File if files.module(file).is_module() => files.file_symbol(file),
                 Parent::Module(m) => {
@@ -2844,7 +2839,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             && let Some(equals) = files.export(files.file_symbol(file), known::export_equals)
             && files.decls_of(equals).len() > 1
         {
-            for (of, declaration) in files.decls(equals) {
+            for (of, declaration) in files.decls_of(equals) {
                 if let Some(range) = self.c.error_range_of_declaration(of, declaration) {
                     self.tracker.add_diagnostic(range, 6424, Vec::new());
                 }
@@ -3380,7 +3375,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     self.tracker.get_symbol_accessibility_diagnostic =
                         Context::ForNode(hir.node(d));
                     let outer = self.indent;
-                    self.set_indent(self.indent_of_statements(bound.stmt_parent[statement.idx()]));
+                    self.set_indent(self.indent_of_statements(bound.parent_of_stmt(statement)));
                     let signature = self.transform_signature(function);
                     self.set_indent(outer);
                     self.tracker.get_symbol_accessibility_diagnostic = saved;
@@ -3423,7 +3418,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 if let Some(ty) = self.c.type_of_property(holder, property) {
                     self.tracker.error_name_node = Node::NONE;
                     // It is emitted in the namespace of its host.
-                    let around = root.map_or(Parent::None, |root| bound.stmt_parent[root.idx()]);
+                    let around = root.map_or(Parent::None, |root| bound.parent_of_stmt(root));
                     let outer = self.indent;
                     self.set_indent(self.indent_of_statements(around) + 1);
                     let ty = self.create_type_of_declaration(
@@ -3480,7 +3475,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
         let any = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE | SymFlags::ALIAS;
         for (i, statement) in hir.stmts.iter().enumerate() {
-            if bound.stmt_parent[i] == Parent::None {
+            if bound.parent_of_stmt(StmtId(i as u32)) == Parent::None {
                 continue;
             }
             match statement.kind {
@@ -3502,7 +3497,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 // `isCommonJSModuleExports`
                 StmtKind::Expr(e)
                     if bound.commonjs_indicator.is_some()
-                        && bound.stmt_parent[i] == Parent::File
+                        && bound.parent_of_stmt(StmtId(i as u32)) == Parent::File
                         && matches!(
                             crate::bind::assignment_declaration_kind(hir, e),
                             crate::bind::JsDeclarationKind::ModuleExports
@@ -3534,7 +3529,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             }
             visited.push(symbol);
             at = None;
-            for (file, decl) in files.decls(symbol) {
+            for (file, decl) in files.decls_of(symbol) {
                 self.c.emit_resolver_links.paint_visible(file, decl);
                 // `import a = b.c` makes `b` visible.
                 if let Decl::ImportEquals(i) = decl
@@ -3556,7 +3551,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         if self.c.should_strip_internal(self.file(), statement.loc.pos) {
             return Visited::Statements(Vec::new());
         }
-        let parent_is_file = bound.stmt_parent[s.idx()] == Parent::File;
+        let parent_is_file = bound.parent_of_stmt(s) == Parent::File;
         match statement.kind {
             StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } => {
                 self.result_has_external_module_indicator |= parent_is_file;
@@ -3608,7 +3603,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         while let Parent::Module(module) = container {
             indent += nested_module_declaration(hir, module).is_none() as usize;
             container = match hir[module].stmt.some() {
-                Some(s) => bound.stmt_parent[s.idx()],
+                Some(s) => bound.parent_of_stmt(s),
                 None => Parent::None,
             };
         }
@@ -3623,7 +3618,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
     ) -> Vec<Statement> {
         while !self.tracker.late_marked_statements.is_empty() {
             let next = self.tracker.late_marked_statements.remove(0);
-            let parent = self.c.bound(self.file()).stmt_parent[next.idx()];
+            let parent = self.c.bound(self.file()).parent_of_stmt(next);
             let saved = std::mem::replace(&mut self.needs_declare, parent == Parent::File);
             // It is emitted among the statements of its own container.
             let outer = self.indent;
@@ -3764,7 +3759,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
     /// of the statement `s`.
     fn update_import(&self, kind: StatementKind, s: StmtId, text: Vec<u8>) -> Statement {
         let hir = self.c.hir(self.file());
-        let modifiers = (hir[s].modifiers.iter()).filter_map(|m| match hir[m].kind {
+        let modifiers = (hir.stmt_modifiers(s).iter()).filter_map(|m| match hir[m].kind {
             ModifierKind::Keyword(modifier) => Some(modifier),
             ModifierKind::Decorator(_) => None,
         });
@@ -3904,7 +3899,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             self.tracker.error_name_node,
             self.needs_declare,
         );
-        let modified = ModifiedNode::new(bound.stmt_parent[s.idx()] == Parent::File);
+        let modified = ModifiedNode::new(bound.parent_of_stmt(s) == Parent::File);
         let other = |modifiers: Vec<Flags>, text: Vec<u8>| {
             Some(vec![Statement {
                 kind: StatementKind::Other,
@@ -3918,8 +3913,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 self.enter(bound.alias_scope[a.idx()]);
                 self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(s));
                 self.needs_declare = false;
-                let container = bound.stmt_parent[s.idx()];
-                let written = hir[s].modifiers;
+                let container = bound.parent_of_stmt(s);
+                let written = hir.stmt_modifiers(s);
                 let modifiers =
                     self.ensure_modifiers_of_statement(written, hir[a].flags, container, modified);
                 let type_parameters = self.visit_type_parameters(hir[a].type_params);
@@ -3944,7 +3939,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     },
                     ModifiedNode::Nested => ModifiedNode::Nested,
                 };
-                let modifiers = self.ensure_modifiers(hir[s].modifiers, modified);
+                let modifiers = self.ensure_modifiers(hir.stmt_modifiers(s), modified);
                 let type_parameters = self.visit_type_parameters(hir[i].type_params);
                 let mut extends = Vec::new();
                 for node in hir.ids(hir[i].extends) {
@@ -3982,7 +3977,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     Some(self.expando_host(s, hir[f].name, &signature))
                 } else {
                     // A function is not `IsImplicitlyExportedJSDocDeclaration`.
-                    let (written, declared) = (hir[s].modifiers, hir[f].flags);
+                    let (written, declared) = (hir.stmt_modifiers(s), hir[f].flags);
                     let modifiers = self.ensure_modifiers_of_statement(
                         written,
                         declared,
@@ -4000,7 +3995,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 if let Some(isolated_declarations) = &mut self.tracker.isolated_declarations {
                     self.c.iso_transform_enum(isolated_declarations, e);
                 }
-                let modifiers = self.ensure_modifiers(hir[s].modifiers, modified);
+                let modifiers = self.ensure_modifiers(hir.stmt_modifiers(s), modified);
                 let text = self.transform_enum_declaration(e);
                 other(modifiers, text)
             }
@@ -4032,10 +4027,10 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
     /// statement `s`.
     fn expando_host(&mut self, s: StmtId, name: Atom, signature: &[u8]) -> Vec<Statement> {
         let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
-        let parent_is_file = bound.stmt_parent[s.idx()] == Parent::File;
+        let parent_is_file = bound.parent_of_stmt(s) == Parent::File;
         let modified = ModifiedNode::new(parent_is_file);
         let saved = std::mem::replace(&mut self.needs_declare, true);
-        let mut modifiers = self.ensure_modifiers(hir[s].modifiers, modified);
+        let mut modifiers = self.ensure_modifiers(hir.stmt_modifiers(s), modified);
         self.needs_declare = saved;
         let is_default_export = modifiers.contains(&Flags::DEFAULT);
         if is_default_export {
@@ -4146,9 +4141,9 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
         let module = &hir[m];
         self.enter(bound.module_scope[m.idx()]);
-        let container = bound.stmt_parent[s.idx()];
+        let container = bound.parent_of_stmt(s);
         let modified = ModifiedNode::new(container == Parent::File);
-        let written = hir[s].modifiers;
+        let written = hir.stmt_modifiers(s);
         let modifiers =
             self.ensure_modifiers_of_statement(written, module.flags, container, modified);
         self.needs_declare = false;
@@ -4318,7 +4313,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         }
         let mut declarations: Vec<Element> = Vec::new();
         let mut extra_imports: Vec<Statement> = Vec::new();
-        let scope = match bound.stmt_parent[s.idx()] {
+        let scope = match bound.parent_of_stmt(s) {
             Parent::File => ScopeId(0),
             Parent::Module(m) => bound.module_scope[m.idx()],
             _ => self.enclosing.scope,
@@ -4376,7 +4371,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         if declarations.is_empty() {
             return (!extra_imports.is_empty()).then_some(extra_imports);
         }
-        let modified = ModifiedNode::new(bound.stmt_parent[s.idx()] == Parent::File);
+        let modified = ModifiedNode::new(bound.parent_of_stmt(s) == Parent::File);
         let keyword: &[u8] = match decls.iter().next().map(|d| hir[d].kind) {
             Some(VarKind::Var) | None => b"var ",
             Some(VarKind::Let) => b"let ",
@@ -4394,7 +4389,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         extra_imports.push(Statement {
             kind: StatementKind::Other,
             comments: Vec::new(),
-            modifiers: self.ensure_modifiers(hir[s].modifiers, modified),
+            modifiers: self.ensure_modifiers(hir.stmt_modifiers(s), modified),
             text: [&list[..], b";"].concat(),
         });
         Some(extra_imports)
@@ -4436,8 +4431,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         self.enter(bound.class_scope[c.idx()]);
         self.tracker.error_name_node = hir.name(hir.node(s));
         self.tracker.fallback_stack.push(hir.node(s));
-        let modified = ModifiedNode::new(bound.stmt_parent[s.idx()] == Parent::File);
-        let modifiers = self.ensure_modifiers(hir[s].modifiers, modified);
+        let modified = ModifiedNode::new(bound.parent_of_stmt(s) == Parent::File);
+        let modifiers = self.ensure_modifiers(hir.stmt_modifiers(s), modified);
         let type_parameters = self.visit_type_parameters(class.type_params);
         let members = self.build_class_members(c);
         let (base, heritage) = self.visit_class_heritage(c);
@@ -4761,7 +4756,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
         // `input.Parent`, `input.Pos()`
         let (parent, pos) = match hir.data(input) {
-            NodeData::Stmt(s) => (bound.stmt_parent[s.idx()], Some(hir[s].loc.pos)),
+            NodeData::Stmt(s) => (bound.parent_of_stmt(s), Some(hir[s].loc.pos)),
             _ => (Parent::None, None),
         };
         let comments = |emit: &mut Self| pos.map_or(Vec::new(), |pos| emit.leading_comments(pos));
@@ -5545,7 +5540,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
     fn type_of_export_assignment(&mut self, s: StmtId, e: ExprId) -> TypeId {
         let files = self.c.files();
         let (hir, bound) = (self.c.hir(self.file()), self.c.bound(self.file()));
-        let container = match bound.stmt_parent[s.idx()] {
+        let container = match bound.parent_of_stmt(s) {
             Parent::Module(m) => files.sym(self.file(), bound.module_symbol[m.idx()]),
             _ => files.file_symbol(self.file()),
         };

@@ -48,12 +48,13 @@ pub use config::{
     oxlint_category,
 };
 pub use fixer::{
-    FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, is_parse_error, is_redeclaration,
-    verify_and_fix,
+    FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, breaks_syntax, is_parse_error,
+    is_redeclaration, verify_and_fix,
 };
 pub use globals::{CommentGlobal, GlobalVariable};
 pub use json_v8::parse as json_parse;
 pub use levn::parse_object as parse_levn_object;
+pub use levn::parse_rules as parse_levn_rules;
 pub(crate) use message::write_json_with;
 pub use message::{
     Data, Details, LintMessage, NotNumbers, RuleId, Suggestion, Suppression, SuppressionKind,
@@ -73,7 +74,7 @@ use resolved::{Prepared, Skipped, Slot};
 pub use schema::{OptionMistake, Step, mistake_in_options, schema_and_defaults};
 pub use syntax::{
     Refusal, TypesInJavaScript, goes_to_flow, may_be_misread, parse_error, parse_errors,
-    refusal_of_oxfmt, refusal_of_prettier, refused_by_prettier_with,
+    redeclarations, refusal_of_oxfmt, refusal_of_prettier, refused_by_prettier_with,
 };
 
 use crate::ast::File;
@@ -188,6 +189,9 @@ pub struct LintResult {
     /// With a configuration of oxlint that has a rule for which the file may be linted again: where in the run of oxlint each of
     /// the messages of the rules is, by [`LintMessage::reported`], from 1.
     pub run_keys: Vec<(u64, u128)>,
+    /// Number of syntax errors in the file that didn't prevent linting. [`verify_and_fix`] reverts fixes that add one.
+    /// The code that applies fixes adds the [`redeclarations`] to it.
+    pub tolerated_errors: usize,
 }
 
 /// `S`: the rules that it has.
@@ -485,7 +489,10 @@ impl<S: RuleSet> Linter<S> {
             problems.append(&mut fatal);
         }
         let is_refused = !problems.is_empty();
-        let mut result = LintResult::default();
+        let mut result = LintResult {
+            tolerated_errors: syntax::tolerated_errors(file),
+            ..LintResult::default()
+        };
         let enabled_js =
             (config.js_rules.iter()).filter(|it| it.severity != Severity::Off && !is_refused);
         let mut running_js: Vec<RunningJs> = enabled_js
@@ -738,9 +745,11 @@ impl<S: RuleSet> Linter<S> {
         let before_js = problems.len();
         let wants_fixes = options.wants_fixes && !options.disables_fixes;
         // First, for the variables that they mark as used.
-        if let (Some(host), Some(settings), None) =
-            (options.js_plugins, &config.js_settings, options.again)
-            && !running_js.is_empty()
+        if let (Some(host), Some(settings), None) = (
+            options.js_plugins,
+            config.js_settings_of(file),
+            options.again,
+        ) && !running_js.is_empty()
         {
             // What a rule that does not run would have reported cannot be told.
             running_js.retain(|it| {
@@ -1031,7 +1040,7 @@ impl<S: RuleSet> Linter<S> {
                 .collect();
             let enabled: Vec<&js_plugin::Configured> =
                 back.iter().map(|it| &**it.0.configured).collect();
-            let reports = match (options.js_plugins, &config.js_settings) {
+            let reports = match (options.js_plugins, config.js_settings_of(file)) {
                 (Some(host), Some(settings)) if !enabled.is_empty() => {
                     if file.text().len() < js_plugin::HEAVY {
                         host.comes(file.text().len() as u64);
@@ -1409,7 +1418,14 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             return Some(Named::Instance(rule, name));
         }
         let js = config.find_js_rule(id);
-        let native = || (config.find_rule(&self.linter.registry, id)).map(Named::Native);
+        // ESLint only accepts a rule's own name. `eslint/no-var` is oxlint's name for `no-var`.
+        let is_of_eslint = !config.has_every_rule && !config.prefers_typescript_rules;
+        let prefix = registry::parse_rule_id(id).0;
+        let native = || {
+            (config.find_rule(&self.linter.registry, id))
+                .filter(|it| !is_of_eslint || it.meta.plugin.prefix().as_bytes() == prefix)
+                .map(Named::Native)
+        };
         let lacks_it = config.lacks_rule(id);
         let is_about_layout =
             !lacks_it && (config.formatting_rule(&self.linter.registry, id)).is_some();

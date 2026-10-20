@@ -951,6 +951,22 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
       expect(await conn.remainingFrames()).toEqual([]);
     });
 
+    test.each(["send", "ping", "pong"] as const)(
+      "still OPEN after `_socket.destroy()`: %s() calls back with an Error and sends nothing",
+      async method => {
+        await using client = await openClient(implementation, { perMessageDeflate: false });
+        const { ws, conn } = client;
+        const events: unknown[] = [];
+        ws.on("close", code => events.push(code));
+        ws._socket!.destroy();
+        ws[method]("abcd", (error?: NodeJS.ErrnoException | null) => events.push(error?.code));
+        expect(ws.readyState).toBe(WebSocket.OPEN);
+        await client.closed;
+        expect(events).toEqual(["ERR_STREAM_DESTROYED", 1006]);
+        expect(await conn.remainingFrames()).toEqual([]);
+      },
+    );
+
     test("after a failed connection", async () => {
       const ws = new WebSocket("ws://127.0.0.1:" + (await closedPort()));
       ws.on("error", () => {});

@@ -43,11 +43,26 @@ namespace Bun::Bindgen {
 // Reports each field that holds a cell to a heap snapshot, as a property of that name.
 void analyzeInternalFields(JSC::JSCell*, JSC::HeapAnalyzer&, std::span<const JSC::WriteBarrier<JSC::Unknown>>, std::span<const WTF::ASCIILiteral> names);
 
+// The base of a refCounted class's wrapper: its size includes the struct's.
+template<typename Traits>
+class JSRefCountedWrapperBase : public JSC::JSDestructibleObject {
+public:
+    static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
+    {
+        return JSC::JSDestructibleObject::estimatedSize(cell, vm) + Traits::wrappedSize();
+    }
+
+protected:
+    using JSC::JSDestructibleObject::JSDestructibleObject;
+};
+
 // JSDestructibleObject | WriteBarrier internalFields[numberOfInternalFields] | the Rust payload
 template<typename Traits>
-class JSWrapper final : public JSC::JSDestructibleObject {
+class JSWrapper final : public std::conditional_t<Traits::refCounted, JSRefCountedWrapperBase<Traits>, JSC::JSDestructibleObject> {
 public:
-    using Base = JSC::JSDestructibleObject;
+    using Base = std::conditional_t<Traits::refCounted, JSRefCountedWrapperBase<Traits>, JSC::JSDestructibleObject>;
+    // DECLARE_DEFAULT_FINISH_CREATION names it unqualified, which does not look in a base that depends on Traits.
+    using Base::inheritsSlow;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr unsigned numberOfInternalFields = Traits::internalFieldNames.size();
 
@@ -58,14 +73,6 @@ public:
     {
         Base::analyzeHeap(cell, analyzer);
         analyzeInternalFields(cell, analyzer, uncheckedDowncast<JSWrapper>(cell)->internalFields(), Traits::internalFieldNames);
-    }
-
-    static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
-    {
-        if constexpr (Traits::refCounted)
-            return Base::estimatedSize(cell, vm) + Traits::wrappedSize();
-        else
-            return Base::estimatedSize(cell, vm);
     }
 
     template<typename, JSC::SubspaceAccess mode>
@@ -79,7 +86,7 @@ public:
         RELEASE_ASSERT(allocationSize() <= JSC::MarkedSpace::largeCutoff);
         return WebCore::subspaceForImplSlow(
             vm,
-            WebCore::SubspaceForInit { static_cast<unsigned>(allocationSize()), numberOfLowerTierPreciseCells, WebCore::SubspaceForInit::CellType::Destructible, false },
+            WebCore::SubspaceForInit { static_cast<unsigned>(allocationSize()), Base::numberOfLowerTierPreciseCells, WebCore::SubspaceForInit::CellType::Destructible, false },
             BUN_SUBSPACE_SLOTS(m_clientSubspaceForBindgenClass[Traits::classIndex], m_subspaceForBindgenClass[Traits::classIndex]),
             nullptr);
     }
@@ -94,6 +101,15 @@ public:
     {
         auto* object = new (NotNull, JSC::allocateCell<JSWrapper>(vm, allocationSize())) JSWrapper(vm, structure);
         object->finishCreation(vm);
+        return object;
+    }
+
+    // Takes the caller's ref on `wrapped`.
+    static JSWrapper* create(JSC::VM& vm, JSC::Structure* structure, void* wrapped)
+        requires Traits::refCounted
+    {
+        auto* object = create(vm, structure);
+        *static_cast<void**>(object->payload()) = wrapped;
         return object;
     }
 

@@ -32,14 +32,13 @@ pub(crate) mod timer;
 
 // ─── impl_timer_object! ──────────────────────────────────────────────────────
 // Shared scaffold for `TimeoutObject` / `ImmediateObject`: both are a
-// class of `Timer.bind.ts` over `{ref_count, event_loop_timer, internals}` whose
+// `Timer.bind.ts` class over `{ref_count, event_loop_timer, internals}` whose
 // JS-facing host-fns are pure forwarders to `TimerObjectInternals`. The macro
 // emits the parts shared by both types so each `*.rs` file holds only its
-// type-specific surface (`init`, `do_refresh`, cached-prop accessors,
+// type-specific surface (`init`, `do_refresh`, the `_idleStart` accessors,
 // `run_immediate_task`).
 //
-// Emits, at the call-site module path:
-//   - `pub struct $T { … }`
+// Emits, at the call-site module path, `pub struct $T { … }` and:
 //   - `bun_event_loop::impl_timer_owner!($T; from_timer_ptr => event_loop_timer)`
 //   - `impl RefCounted for $T` (intrusive `ref_count` field, `deinit` destructor)
 //   - `impl Default for $T` (`EventLoopTimer::init_paused(EventLoopTimerTag::$tag)`)
@@ -47,7 +46,7 @@ pub(crate) mod timer;
 //     and the forwarder host-fns `to_primitive`/`do_ref`/`do_unref`/`has_ref`/
 //     `get_destroyed`/`dispose`.
 //
-// Type-specific items (`init`, `do_refresh`, `close`, cached-prop get/set,
+// Type-specific items (`init`, `do_refresh`, `close`, `_idleStart` get/set,
 // `run_immediate_task`) go in a *second* `impl $T` block in the caller's file.
 //
 // Paths in the body are written `super::…` / `::crate_name::…` because the
@@ -123,7 +122,7 @@ macro_rules! impl_timer_object {
                 arguments: ::bun_jsc::JSValue,
             ) -> ::bun_jsc::JSValue {
                 // Heap-allocate; `*mut Self` is the
-                // `m_ctx` payload of the codegen'd JSCell wrapper. Ownership
+                // pointer the JS wrapper holds. Ownership
                 // transfers to the wrapper via `to_js_ptr`; freed by
                 // `deref → deinit → heap::take`.
                 let payload: *mut Self =
@@ -131,11 +130,6 @@ macro_rules! impl_timer_object {
                 // SAFETY: `payload` is a fresh heap allocation whose ownership
                 // transfers to the GC wrapper.
                 let js_value = unsafe { Self::to_js_ptr(payload, cx.global()) };
-                // Round-trip ABI check.
-                debug_assert!(
-                    <Self as ::bun_jsc::JsClass>::from_js(js_value) == Some(payload),
-                    concat!($js_name, "__create ABI mismatch"),
-                );
                 let _keep = ::bun_jsc::EnsureStillAlive(js_value);
                 // SAFETY: `payload` was just allocated above and is exclusively
                 // owned here; `internals.init()` writes every field.

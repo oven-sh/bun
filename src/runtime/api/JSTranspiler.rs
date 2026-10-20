@@ -35,6 +35,7 @@ use bun_ptr::RefPtr;
 // Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `JsCell` (= `UnsafeCell` projector). `JsCell` is
 // `#[repr(transparent)]`, so field offsets are unchanged.
+// `Transpiler` in `Transpiler.bind.ts`.
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct JSTranspiler {
     pub(crate) transpiler: JsCell<Transpiler::Transpiler<'static>>,
@@ -1267,7 +1268,12 @@ impl JSTranspiler {
         };
         let code = code_holder.slice();
 
-        let loader: Option<Loader> = loader_from_js(global, loader_arg)?;
+        let loader: Option<Loader> = 'brk: {
+            if !loader_arg.is_undefined() {
+                break 'brk loader_from_js(global, loader_arg)?;
+            }
+            break 'brk None;
+        };
 
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
@@ -1347,7 +1353,12 @@ impl JSTranspiler {
             ));
         };
 
-        let loader: Option<Loader> = loader_from_js(global, loader_arg)?;
+        let loader: Option<Loader> = 'brk: {
+            if !loader_arg.is_undefined() {
+                break 'brk loader_from_js(global, loader_arg)?;
+            }
+            break 'brk None;
+        };
 
         let default_loader = self.config.get().default_loader;
         Ok(TransformTask::schedule(
@@ -1382,12 +1393,15 @@ impl JSTranspiler {
 
         let mut js_ctx_value: JSValue = JSValue::ZERO;
         let loader: Option<Loader> = 'brk: {
-            if loader_or_context.is_number() || loader_or_context.is_string() {
-                break 'brk loader_from_js(global, loader_or_context)?;
-            }
+            if !loader_or_context.is_undefined() {
+                if loader_or_context.is_number() || loader_or_context.is_string() {
+                    break 'brk loader_from_js(global, loader_or_context)?;
+                }
 
-            if loader_or_context.is_object() {
-                js_ctx_value = loader_or_context;
+                if loader_or_context.is_object() {
+                    js_ctx_value = loader_or_context;
+                    break 'brk None;
+                }
             }
             break 'brk None;
         };
@@ -1565,8 +1579,10 @@ impl JSTranspiler {
         let code = code_holder.slice();
 
         let mut loader: Loader = self.config.get().default_loader;
-        if let Some(l) = loader_from_js(global, loader_arg)? {
-            loader = l;
+        if !loader_arg.is_undefined() {
+            if let Some(l) = loader_from_js(global, loader_arg)? {
+                loader = l;
+            }
         }
 
         if !loader.is_java_script_like() {

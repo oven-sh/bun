@@ -3,7 +3,6 @@
 use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::JSString;
 use crate::bindgen::{
     self, BufferSource, IntoError as _, JsBytes, JsHeap, JsLocal, JsPayload as _, JsScope,
     JsWrapper, JsWrapperStrong, PinnedBytes, RefPtr, StringOrJsBytes,
@@ -13,7 +12,7 @@ use crate::generated_bindgen::bindgen_test::{
     TestCounterInternalFields as _, TestFailure, TestFlag, TestHolderClass, TestNames, TestOptions,
     TestOptionsEcho, TestOuter, TestTextOrBytes, TestTokenClass, TestValue, js_TestRefCounted,
 };
-use crate::{JSGlobalObject, JSValue, JsResult};
+use crate::{JSGlobalObject, JSString, JSValue, JsResult};
 use bun_ptr::AsCtxPtr as _;
 
 // This example should be kept in sync with bindgen's documentation

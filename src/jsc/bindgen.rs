@@ -6,7 +6,6 @@ use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
 use bun_core::EncodedSlice;
-use bun_ptr::AnyRefCounted;
 pub use bun_ptr::RefPtr;
 
 use crate::{
@@ -446,10 +445,7 @@ impl<'a> JsLocal<'a, BufferSource> {
 /// `wrapped` is the `T` that a cell wraps, and something holds that cell for the call `heap` belongs to.
 #[doc(hidden)]
 #[inline(always)]
-pub unsafe fn class_ref_from_extern<'a, T: crate::JsClass>(
-    wrapped: *mut c_void,
-    _: &JsHeap<'a>,
-) -> &'a T {
+pub unsafe fn class_ref_from_extern<'a, T>(wrapped: *mut c_void, _: &JsHeap<'a>) -> &'a T {
     // SAFETY: forwarded.
     unsafe { &*wrapped.cast::<T>() }
 }
@@ -617,70 +613,28 @@ pub unsafe trait JsPayload: Sized + 'static {
     }
 }
 
-/// The Rust struct of a `refCounted` class. Its JS object holds a [`RefPtr`] to it.
-///
-/// # Safety
-/// Same as [`JsPayload`].
-pub unsafe trait JsRefCounted: AnyRefCounted + 'static {
-    #[doc(hidden)]
-    const PAYLOAD_OFFSET: usize;
-    /// # Safety
-    /// Same as [`JsPayload::create_cell`].
-    #[doc(hidden)]
-    unsafe fn create_cell(global: *mut JSGlobalObject, structure: *mut c_void) -> NonNull<c_void>;
-}
-
-/// # Safety
-/// `cell` is the JS object of a `T`, and something holds it for `'a`.
-#[doc(hidden)]
-#[inline(always)]
-pub unsafe fn wrapped<'a, T: JsRefCounted>(cell: *mut c_void, _: &JsHeap<'a>) -> &'a T {
-    // SAFETY: generated offset inside the cell, where the pointer to the struct is.
-    unsafe { &**cell.byte_add(T::PAYLOAD_OFFSET).cast::<*const T>() }
-}
-
-/// # Safety
-/// `structure` is null or a Structure of `T`'s cell class.
-#[doc(hidden)]
-#[inline]
-pub unsafe fn wrap<T: JsRefCounted>(
-    global: *mut JSGlobalObject,
-    structure: *mut c_void,
-    this: RefPtr<T>,
-) -> JSValue {
-    // SAFETY: nothing runs between the allocation and the write, which cannot panic.
-    unsafe {
-        let cell = T::create_cell(global, structure).as_ptr();
-        cell.byte_add(T::PAYLOAD_OFFSET)
-            .cast::<RefPtr<T>>()
-            .write(this);
-        JSValue::from_cell(cell)
-    }
-}
-
 /// # Safety
 /// `this_value` is the JS object of a generated class that has an internal field at `offset`.
 #[doc(hidden)]
 #[inline(always)]
-pub unsafe fn get_cached(this_value: JSValue, offset: usize) -> Option<JSValue> {
+pub unsafe fn internal_field_at(this_value: JSValue, offset: usize) -> Option<JSValue> {
     // SAFETY: a cell value is its pointer, and the offset is inside the cell.
     let value = unsafe {
-        (this_value.encoded() as *const u8)
+        (this_value.encoded() as *const JSValue)
             .byte_add(offset)
-            .cast::<JSValue>()
             .read()
     };
     if value.is_empty() { None } else { Some(value) }
 }
 
 /// # Safety
-/// Same as [`get_cached`].
+/// As [`internal_field_at`].
 #[doc(hidden)]
 #[inline(always)]
-pub unsafe fn set_cached(
+pub unsafe fn set_internal_field_at(
     this_value: JSValue,
     global: &JSGlobalObject,
-    offset: u32,
+    offset: usize,
     value: JSValue,
 ) {
     // SAFETY: as above; C++ stores through the `WriteBarrier`.
@@ -688,7 +642,7 @@ pub unsafe fn set_cached(
         extern_types::Bun__Bindgen__setInternalField(
             global.as_mut_ptr(),
             this_value.encoded() as *mut c_void,
-            offset,
+            offset as u32,
             value,
         )
     }

@@ -1,6 +1,6 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
-const method = { returns: b.any, capability: "js", throws: true, length: 2 } as const;
+const method = { returns: b.any, capability: "js", throws: true } as const;
 
 export const Transpiler = b.class({
   rustPath: "crate::api::js_transpiler::JSTranspiler",
@@ -16,6 +16,6 @@ export const Transpiler = b.class({
     scan: { ...method, args: { code: b.any, loader: b.any } },
     scanImports: { ...method, args: { code: b.any, loader: b.any } },
     transform: { ...method, args: { code: b.any, loader: b.any }, passThis: true },
-    transformSync: { ...method, args: { code: b.any, loaderOrContext: b.any, context: b.any } },
+    transformSync: { ...method, args: { code: b.any, loaderOrContext: b.any, context: b.any }, length: 2 },
   },
 });

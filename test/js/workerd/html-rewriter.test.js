@@ -2933,6 +2933,25 @@ describe("doctype publicId/systemId distinguish empty from absent", () => {
   });
 });
 
+it("element.attributes[Symbol.iterator] is defined like a built-in iterator's", () => {
+  let descriptor;
+  new HTMLRewriter()
+    .on("p", {
+      element(el) {
+        descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el.attributes), Symbol.iterator);
+      },
+    })
+    .transform("<p a=b></p>");
+  const { value, ...attributes } = descriptor;
+  expect({ name: value.name, length: value.length, ...attributes }).toEqual({
+    name: "[Symbol.iterator]",
+    length: 0,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+});
+
 describe("invalid arguments throw instead of returning an error value", () => {
   it("setAttribute with a forbidden character in the name rejects the body", async () => {
     const res = new HTMLRewriter()
@@ -2999,25 +3018,6 @@ describe("invalid arguments throw instead of returning an error value", () => {
     );
     expect(err).toBeInstanceOf(TypeError);
     expect(err.message).toBe("Expected a function");
-  });
-
-  it("element.attributes[Symbol.iterator] is defined like a built-in iterator's", () => {
-    let descriptor;
-    new HTMLRewriter()
-      .on("p", {
-        element(el) {
-          descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el.attributes), Symbol.iterator);
-        },
-      })
-      .transform("<p a=b></p>");
-    const { value, ...attributes } = descriptor;
-    expect({ name: value.name, length: value.length, ...attributes }).toEqual({
-      name: "[Symbol.iterator]",
-      length: 0,
-      writable: true,
-      enumerable: false,
-      configurable: true,
-    });
   });
 
   it("a missing argument is treated as undefined", () => {

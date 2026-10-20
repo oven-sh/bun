@@ -213,7 +213,7 @@ export abstract class Type {
   get holdsJSValue(): boolean {
     return this.dependencies.some(type => type.holdsJSValue);
   }
-  /** Read once every argument is converted: only for an argument. */
+  /** Points at what a JS value owns, so it is read once every argument is converted: only for an argument. */
   get borrowsHeap(): boolean {
     return this.dependencies.some(type => type.borrowsHeap);
   }
@@ -1280,7 +1280,7 @@ export class ArrayType extends Type {
     assert(!(element instanceof DefaultType), "an element of an array is never absent, so it has no default");
     assert(!(element instanceof RangeType), "a range reports the name of its argument, which an element does not have");
     assert(!element.passesValue, "b.bytes is only for an argument");
-    assert(!element.borrowsCell, "b.classRef is only for an argument: nothing else keeps the instance alive");
+    assert(!element.borrowsCell, "a &T of a class is only for an argument: nothing else keeps the instance alive");
     assert(
       !element.borrowsHeap,
       "the bytes of a buffer are only for an argument: they are read after everything else is converted",
@@ -1518,7 +1518,7 @@ export class DictionaryType extends NamedType {
       "fields",
     );
     for (const { name, type } of this.members) assert(!type.passesValue, `${name}: b.bytes is only for an argument`);
-    assert(!this.borrowsCell, "b.classRef is only for an argument: nothing else keeps the instance alive");
+    assert(!this.borrowsCell, "a &T of a class is only for an argument: nothing else keeps the instance alive");
     assert(
       !this.nonObjectAsEmpty || this.hasDefault,
       "nonObjectAsEmpty: every member must be optional or have a default",
@@ -1735,7 +1735,7 @@ export interface SignatureOptions {
   expected?: Record<string, readonly string[] | string>;
 }
 
-const refCountedCapability = 'capability: in a refCounted class it is "js", which passes the global object, or "none"';
+const refCountedCapability = 'a refCounted class takes capability: "js" or "none"';
 
 export class Signature {
   readonly args: readonly { name: string; type: Type; expected?: readonly string[] | string }[];
@@ -1766,8 +1766,9 @@ export class Signature {
     );
     for (const { name, type } of this.args) {
       refuseResultType(name, type);
+      // A member of a refCounted class reaches the VM through the struct, whatever its capability.
       assert(
-        !type.borrowsBuffer || this.capability !== "js",
+        !type.borrowsBuffer || (this.capability !== "js" && !refCounted),
         `${name}: JavaScript can detach a buffer; held: "handle" borrows the bytes each time they are read`,
       );
     }
@@ -1865,13 +1866,13 @@ export class FunctionDefinition {
 export interface FunctionField extends Omit<SignatureOptions, "rustPath"> {
   /** `&mut self` instead of `&self`. Not with `capability: "js"`, which gets the wrapper. */
   mutates?: boolean;
-  /** Also pass the wrapper, for its `internalFields`. `capability: "js"` always gets it. In a `refCounted` class: pass `this_value: JSValue`. */
+  /** Also pass the wrapper, for its `internalFields`. `capability: "js"` always gets it. In a `refCounted` class it is `this_value: JSValue`. */
   passThis?: boolean;
   /** When `this` is not an instance: `"throw"` (the default) throws `ERR_INVALID_THIS`, `"undefined"` returns `undefined`. */
   invalidThis?: "throw" | "undefined";
   /** Key the function by this private builtin name (`$name` in src/js) instead of a string. */
   privateSymbol?: string;
-  /** The trait's function. Defaults to the property's name in snake_case. */
+  /** The Rust function. Defaults to the property's name in snake_case. */
   rustName?: string;
   /** Overrides the function's `name`. Only for an `@@` key, where it defaults to `[Symbol.x]`. */
   name?: string;
@@ -1885,13 +1886,13 @@ export interface GetterField {
   cache?: true | string;
   capability?: Capability;
   throws?: boolean;
-  /** Same as a function's. */
+  /** As a function's. Only in a `refCounted` class. */
   passThis?: boolean;
-  /** As a function's. */
+  /** As a function's. In a `refCounted` class the getter is `get_` and this name. */
   rustName?: string;
 }
 
-/** An accessor that reads an internal field in C++, without calling Rust. With `setter: true` it also stores any value assigned to it. */
+/** In a `refCounted` class: an accessor that reads an internal field in C++, without calling Rust. With `setter: true` it also stores any value assigned to it. */
 export interface InternalFieldField {
   internalField: string;
   setter?: true;
@@ -1910,7 +1911,7 @@ export type StaticField =
   | Omit<GetterField, "setter" | "cache" | "passThis">;
 
 export interface ClassOptions {
-  /** Path of the Rust struct. It implements the generated `${name}Class` trait. */
+  /** Path of the Rust struct. It implements the generated `${name}Class` trait, unless the class is `refCounted`. */
   rustPath: string;
   /** The struct is intrusively refcounted and the JS object holds one ref (a `RefPtr`), so it can outlive the object. The members are the struct's own methods, and each takes `&self`. */
   refCounted?: boolean;
@@ -1924,7 +1925,7 @@ export interface ClassOptions {
   proto?: Record<string, Field>;
   /** Properties of the constructor. */
   static?: Record<string, StaticField>;
-  /** JS values the object holds, `undefined` at first. The GC visits them; the wrapper gets `x_field` / `set_x_field` for each. */
+  /** JS values the object holds, `undefined` at first. The GC visits them; the wrapper gets `x_field` / `set_x_field` for each. In a `refCounted` class they are empty at first, and `js_Name` gets `x_get_cached` / `x_set_cached`. */
   internalFields?: readonly string[];
   /** `false`: native properties are non-configurable. */
   configurable?: boolean;
@@ -1935,7 +1936,7 @@ export const memberIdentifier = (name: string) => name.replace(/^(_+|@@)/, "");
 /** `iterator` for the key `@@iterator`, `undefined` for a key that is not a well-known symbol. */
 export const wellKnownSymbol = (name: string) => (name.startsWith("@@") ? name.slice(2) : undefined);
 
-export type Receiver = "ref" | "mut" | "wrapper" | "static";
+type Receiver = "ref" | "mut" | "wrapper" | "static";
 const memberReceiver = (isStatic: boolean, refCounted: boolean, capability: Capability, mutates: boolean): Receiver =>
   isStatic ? "static" : refCounted ? "ref" : capability === "js" ? "wrapper" : mutates ? "mut" : "ref";
 
@@ -1960,17 +1961,14 @@ export class Method extends Signature {
       !(options.mutates && this.capability === "js"),
       `${name}: a method that can run JavaScript gets the wrapper, not &mut self`,
     );
-    assert(
-      !(options.mutates && refCounted),
-      `${name}: mutates is not allowed in a refCounted class, where every member takes &self`,
-    );
+    assert(!(options.mutates && refCounted), `${name}: a refCounted class has no mutates: every member takes &self`);
     this.receiver = memberReceiver(isStatic, refCounted, this.capability, !!options.mutates);
     this.passThis = this.receiver !== "static" && this.receiver !== "wrapper" && !!options.passThis;
     this.invalidThis = options.invalidThis ?? "throw";
     this.privateSymbol = options.privateSymbol;
-    assert(!(this.privateSymbol && wellKnownSymbol(name)), `${name}: privateSymbol cannot be used with an @@ key`);
+    assert(!(this.privateSymbol && wellKnownSymbol(name)), `${name}: an @@ key has no privateSymbol`);
     this.functionName = options.name;
-    assert(this.functionName === undefined || wellKnownSymbol(name), `${name}: name is only allowed on an @@ key`);
+    assert(this.functionName === undefined || wellKnownSymbol(name), `${name}: only an @@ key has a name`);
   }
 }
 
@@ -1998,7 +1996,8 @@ export class Getter {
     this.capability = options.capability ?? "none";
     this.receiver = memberReceiver(isStatic, refCounted, this.capability, false);
     this.setterReceiver = memberReceiver(isStatic, refCounted, this.capability, true);
-    this.passThis = this.receiver === "ref" && !!options.passThis;
+    this.passThis = !!options.passThis;
+    assert(!this.passThis || (refCounted && !isStatic), `${name}: only an accessor of a refCounted class has passThis`);
     this.throws = options.throws ?? false;
     this.hasSetter = options.setter ?? false;
     assert(!(options.cache && options.setter), `${name}: a cached getter has no setter`);
@@ -2057,7 +2056,7 @@ class SelfType extends Type {
 }
 export const selfType = new SelfType();
 
-/** As an argument or a result: the wrapper, `JsWrapper<'a, T>`. Of a `refCounted` class: `&'a T` as an argument, the JS object as a result. */
+/** As an argument or a result: the wrapper, `JsWrapper<'a, T>`. Of a `refCounted` class: `&'a T` as an argument, a `JSValue` as a result. */
 export class ClassType extends NamedType {
   readonly rustPath: string;
   readonly refCounted: boolean;
@@ -2101,14 +2100,17 @@ export class ClassType extends NamedType {
       Object.entries(fields).map(([name, field]): ClassMember => {
         assert(
           !wellKnownSymbol(name) || !("builtin" in field || "internalField" in field || "getter" in field),
-          `${name}: an @@ key is only allowed on a function`,
+          `${name}: only a function has an @@ key`,
         );
         if ("builtin" in field) {
           assert(!isStatic, `${name}: a builtin is a property of the prototype`);
           return new Builtin(name, field.length);
         }
         if ("internalField" in field) {
-          assert(!isStatic, `${name}: internalField is not allowed in static`);
+          assert(
+            !isStatic && this.refCounted,
+            `${name}: an internalField accessor is a property of a refCounted class's prototype`,
+          );
           return new InternalFieldAccessor(name, field);
         }
         if ("getter" in field) {
@@ -2121,7 +2123,7 @@ export class ClassType extends NamedType {
             overloads.every(overload => overload[key] === overloads[0]?.[key]),
             `${name}: its overloads have one ${key}`,
           );
-        assert(!(isStatic && wellKnownSymbol(name)), `${name}: an @@ key is only allowed in proto`);
+        assert(!(isStatic && wellKnownSymbol(name)), `${name}: an @@ key is a property of the prototype`);
         const fn = new FunctionDefinition(
           overloads.map(overload => new Method(name, resolve(overload), isStatic, this.refCounted)),
         );
@@ -2179,13 +2181,18 @@ export class ClassType extends NamedType {
     return `Bun::Bindgen::Generated::JS${this.name}`;
   }
   get idlType(): string {
-    return `Bun::Bindgen::IDLRawInterface<${this.cpp}>`;
+    return this.refCounted
+      ? `Bun::Bindgen::IDLWrappedInterface<${this.cpp}, std::to_array("${this.name}")>`
+      : `Bun::Bindgen::IDLRawInterface<${this.cpp}>`;
   }
   get valueKinds(): ValueKinds {
     return [this];
   }
   get holdsJSValue(): boolean {
     return true;
+  }
+  get borrowsCell(): boolean {
+    return this.refCounted;
   }
   get nullRepresentation() {
     return "pointer" as const;
@@ -2213,11 +2220,11 @@ export class ClassType extends NamedType {
   }
   rustFromExtern(expr: string): string {
     return this.refCounted
-      ? `bindgen::wrapped::<${this.rustPath}>(${expr}, heap)`
+      ? `bindgen::class_ref_from_extern::<${this.rustPath}>(${expr}, heap)`
       : `bindgen::JsWrapper::<${this.rustPath}>::from_extern(core::ptr::NonNull::new_unchecked(${expr}), heap)`;
   }
   rustToJS(value: string): string {
-    return `bindgen::to_js::any(heap, ${value}.as_value())`;
+    return `bindgen::to_js::any(heap, ${this.refCounted ? value : `${value}.as_value()`})`;
   }
 }
 

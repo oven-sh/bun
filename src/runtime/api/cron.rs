@@ -38,6 +38,7 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
     self as spawn, Process, ProcessHandle, Rusage, SpawnOptions, Status,
 };
+use crate::generated_bindgen::cron::js_CronJob as js;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_core::ZStr;
 use bun_core::strings;
@@ -1367,6 +1368,7 @@ impl Drop for CronRemoveJob {
 // re-entry is Stacked-Borrows UB and an LLVM-level miscompile hazard. `&self`
 // + `UnsafeCell`-backed fields suppresses `noalias` on the receiver.
 // (Aligned for `NativePromiseContext`, which packs its tag into the pointer's low bits.)
+// `CronJob` in `cron.bind.ts`.
 #[derive(bun_ptr::CellRefCounted)]
 #[repr(align(16))]
 pub(crate) struct CronJob {
@@ -1417,8 +1419,6 @@ bun_jsc::impl_abort_handle_owner!(CronJob, abort_handle, |this, cause| {
         vm_is_going,
     )
 });
-
-use crate::generated_bindgen::cron::js_CronJob as js;
 
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
 pub(crate) enum ClearMode {

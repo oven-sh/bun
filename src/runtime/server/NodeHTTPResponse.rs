@@ -13,6 +13,7 @@ use bun_ptr::AsCtxPtr;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
+use crate::generated_bindgen::node_http_response::js_NodeHTTPResponse as js;
 use crate::server::jsc::{
     self, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine,
 };
@@ -68,7 +69,7 @@ mod connection {
     }
 }
 
-/// The `refCounted` class of `NodeHTTPResponse.bind.ts`.
+// `NodeHTTPResponse` in `NodeHTTPResponse.bind.ts`.
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
 #[derive(bun_ptr::RefCounted)]
@@ -356,8 +357,6 @@ fn any_server_from_packed(packed: u64) -> AnyServer {
         ptr: repr.get::<()>(),
     }
 }
-
-use crate::generated_bindgen::node_http_response::js_NodeHTTPResponse as js;
 
 /// A large `res.write()` whose unwritten tail is held by reference instead of
 /// being copied into the uWS backpressure std::string. The bytes are kept
@@ -867,7 +866,7 @@ fn handle_ended_if_necessary(state: uws::State, global_object: &JSGlobalObject) 
 }
 
 impl NodeHTTPResponse {
-    /// `writeHead` (also the write-head phase of
+    /// Shared body of `writeHead` (also the write-head phase of
     /// `writeHeadAndEnd`): args are (statusCode, statusMessage, headersArray),
     /// plus the auto-header bits + keep-alive timeout the C++ side renders
     /// natively (kAutoHeader* in NodeHTTP.cpp).
@@ -875,8 +874,8 @@ impl NodeHTTPResponse {
         &self,
         global_object: &JSGlobalObject,
         status_code_value: JSValue,
-        status_message: JSValue,
-        headers: JSValue,
+        status_message_value: JSValue,
+        headers_object_value: JSValue,
         auto_header_bits: JSValue,
         keep_alive_timeout_secs: JSValue,
     ) -> JsResult<()> {
@@ -891,13 +890,13 @@ impl NodeHTTPResponse {
             0
         };
         // Arguments are converted first: ToString on statusMessage can run JS that ends or destroys the response.
-        let status_message_value: JSValue = if status_message != JSValue::NULL {
-            status_message
+        let status_message_value: JSValue = if status_message_value != JSValue::NULL {
+            status_message_value
         } else {
             JSValue::UNDEFINED
         };
-        let headers_object_value: JSValue = if headers != JSValue::NULL {
-            headers
+        let headers_object_value: JSValue = if headers_object_value != JSValue::NULL {
+            headers_object_value
         } else {
             JSValue::UNDEFINED
         };
@@ -1089,8 +1088,8 @@ impl NodeHTTPResponse {
                 )?;
                 this.resume_socket();
                 this.write_or_end::<true>(
-                    global_object,
                     this_value,
+                    global_object,
                     chunk,
                     encoding,
                     JSValue::UNDEFINED,
@@ -1829,8 +1828,8 @@ impl NodeHTTPResponse {
 
     fn write_or_end<const IS_END: bool>(
         &self,
-        global_object: &JSGlobalObject,
         this_value: JSValue,
+        global_object: &JSGlobalObject,
         input_value: JSValue,
         mut encoding_value: JSValue,
         callback: JSValue,
@@ -1839,7 +1838,9 @@ impl NodeHTTPResponse {
         // Arguments are converted first: the conversion can run JS that ends or destroys the response.
         let callback_value: JSValue = 'brk: {
             if !encoding_value.is_undefined_or_null() && encoding_value.is_callable() {
-                break 'brk core::mem::replace(&mut encoding_value, JSValue::UNDEFINED);
+                let function = encoding_value;
+                encoding_value = JSValue::UNDEFINED;
+                break 'brk function;
             }
 
             if !callback.is_undefined() {
@@ -2272,8 +2273,8 @@ impl NodeHTTPResponse {
         strict_content_length: JSValue,
     ) -> JsResult<JSValue> {
         self.write_or_end::<false>(
-            global_object,
             JSValue::ZERO,
+            global_object,
             chunk,
             encoding,
             callback,
@@ -2352,8 +2353,8 @@ impl NodeHTTPResponse {
         // We dont wanna a paused socket when we call end, so is important to resume the socket
         self.resume_socket();
         self.write_or_end::<true>(
-            global_object,
             this_value,
+            global_object,
             chunk,
             encoding,
             callback,
@@ -2400,7 +2401,7 @@ impl NodeHTTPResponse {
     pub(crate) fn take_request_trailers(
         &self,
         global_object: &JSGlobalObject,
-        use_insecure_http_parser: bool,
+        use_insecure_http_parser: JSValue,
     ) -> JsResult<JSValue> {
         let section = self.request_trailers.replace(Vec::new());
         if section.is_empty() {
@@ -2408,6 +2409,7 @@ impl NodeHTTPResponse {
         }
         // Lenient (insecureHTTPParser) servers accept CTL bytes in trailer values on
         // the wire; parse them with the same leniency so they surface on req.trailers.
+        let use_insecure_http_parser = use_insecure_http_parser.to_boolean();
         bun_jsc::call_zero_is_throw(global_object, || {
             Bun__NodeHTTP__parseRequestTrailers(
                 global_object,
@@ -2474,7 +2476,7 @@ impl NodeHTTPResponse {
         // that forced `self` to memory and blocked inlining/regalloc of the
         // cork prologue.
         let this = bun_ptr::BackRef::from(ptr::NonNull::from(self));
-        // Keeps the live `m_ctx` heap payload alive across re-entry.
+        // Keeps `self` alive across re-entry.
         let _guard = self.ref_guard();
 
         // Snapshot before re-entry; the handle is `Copy`.

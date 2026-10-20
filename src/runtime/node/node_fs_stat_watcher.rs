@@ -420,6 +420,7 @@ impl StatWatcherScheduler {
 // the JS thread, read by the work-pool callback). `last_check` is `Cell`
 // (worker-thread-only after init); `persistent`/`poll_ref`/`this_value` are
 // JS-thread-only. Read-only-after-construction fields stay bare.
+// `StatWatcher` in `node_fs_stat_watcher.bind.ts`.
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub(crate) struct StatWatcher {
     pub(crate) next: bun_threading::Link<StatWatcher>, // INTRUSIVE link for UnboundedQueue
@@ -662,8 +663,7 @@ impl StatWatcher {
         let _guard = unsafe { RefPtr::from_raw(this) };
         // BACKREF — `this` is alive (ref'd in
         // InitialStatTask::create_and_schedule). R-2: `cb.call()` below
-        // re-enters JS, which may call `close()` → fresh `&Self` from
-        // m_ctx; aliased `&` is sound, aliased `&mut` is not. `ParentRef`
+        // re-enters JS, which may call `close()`; aliased `&` is sound, `&mut` is not. `ParentRef`
         // Deref gives that shared `&`.
         let this_ref = ParentRef::from(NonNull::new(this).expect("initial_stat_error: watcher"));
         if this_ref.closed.load(Ordering::Relaxed) {
@@ -748,8 +748,7 @@ impl StatWatcher {
         // SAFETY: balance the ref from restat(); raw ptr captured (not `&self`).
         let _guard = unsafe { RefPtr::from_raw(this) };
         // BACKREF — `this` is alive (ref'd in restat()). R-2: `cb.call()`
-        // below re-enters JS, which may call `close()` → fresh `&Self` from
-        // m_ctx; aliased `&` is sound, aliased `&mut` is not (and the
+        // below re-enters JS, which may call `close()`; aliased `&` is sound, `&mut` is not (and the
         // work-pool thread may still hold `&*watcher`). `ParentRef` Deref
         // gives that shared `&`.
         let this_ref = ParentRef::from(NonNull::new(this).expect("swap_and_call: watcher"));
@@ -844,7 +843,7 @@ impl StatWatcher {
         }
 
         // SAFETY: `this_ptr` ownership transfers to the C++ wrapper (freed via
-        // `StatWatcherClass__finalize`). `args.global_this` is a `BackRef`
+        // its finalizer). `args.global_this` is a `BackRef`
         // (JSC_BORROW) — safe Deref to `&JSGlobalObject`.
         let js_this = unsafe { StatWatcher::to_js_ptr(this_ptr, &args.global_this) };
         this_ref
@@ -983,7 +982,7 @@ impl bun_event_loop::Taskable for StatWatcher {
 }
 
 pub(crate) struct InitialStatTask {
-    // StatWatcher is intrusively ref-counted (ThreadSafeRefCount m_ctx
+    // StatWatcher is intrusively ref-counted (ThreadSafeRefCount wrapper
     // payload). We hold the strong ref via `ref_()`/`deref()` and keep the
     // raw `*mut`.
     watcher: *mut StatWatcher,
@@ -1003,7 +1002,7 @@ impl InitialStatTask {
         StatWatcher::ref_(watcher);
         WorkPool::schedule_new(InitialStatTask {
             watcher,
-            // The watcher is a JS-owned m_ctx; its VM waits for this ticket.
+            // The watcher is JS-owned; its VM waits for this ticket.
             // SAFETY: per fn contract; JS thread.
             ticket: unsafe { (*watcher).ctx.get() }.ticket(),
             task: WorkPoolTask::default(),

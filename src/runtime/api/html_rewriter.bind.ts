@@ -1,18 +1,18 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
-const string = b.bytes({ from: ["string"], otherwise: "toString", refuse: ["undefined", "null"] });
+const text = b.bytes({ from: ["string"], otherwise: "toString", refuse: ["undefined", "null"] });
 
 export const ContentOptions = b.dictionary(
   { html: b.bool.loose.default(false) },
   { allowArray: true, nonObjectAsEmpty: true },
 );
 
-/** `returns` is `b.self.optional` or `b.self.nullable`: after the handler returns, the method returns `undefined` or `null` (it varies by class) instead of `this`. */
+/** Returns `this`. With `b.self.optional` or `b.self.nullable`, `undefined` or `null` after the handler returns: which one varies by class. */
 const chainable = (returns: b.Type) => ({ returns, passThis: true }) as const;
 const contentOp = (returns: b.Type) =>
   ({
     ...chainable(returns),
-    args: { content: string, options: ContentOptions.nullable.default({}) },
+    args: { content: text, options: ContentOptions.nullable.default({}) },
     expected: { content: "Expected string" },
     capability: "js",
     throws: true,
@@ -37,18 +37,18 @@ export const TextChunk = b.class({
 });
 
 /** `null` if the doctype has none, `undefined` after the handler returns. */
-const identifier = { getter: b.any, cache: true, capability: "js", throws: true } as const;
+const doctypeField = { getter: b.any, cache: true, capability: "js", throws: true } as const;
 
 export const DocType = b.class({
   rustPath: "crate::api::html_rewriter::DocType",
   refCounted: true,
   configurable: false,
   proto: {
-    name: identifier,
-    publicId: identifier,
+    name: doctypeField,
+    publicId: doctypeField,
     remove: chainable(b.self.optional),
     removed: { getter: b.bool.optional },
-    systemId: identifier,
+    systemId: doctypeField,
   },
 });
 
@@ -98,7 +98,7 @@ export const AttributeIterator = b.class({
   },
 });
 
-const named = { args: { name: string }, expected: { name: "Expected string" } } as const;
+const named = { args: { name: text }, expected: { name: "Expected string" } } as const;
 
 export const Element = b.class({
   rustPath: "crate::api::html_rewriter::Element",
@@ -124,7 +124,7 @@ export const Element = b.class({
     selfClosing: { getter: b.bool.optional },
     setAttribute: {
       ...chainable(b.self.optional),
-      args: { name: string, value: string },
+      args: { name: text, value: text },
       expected: { name: "Expected string", value: "Expected string" },
       capability: "js",
       throws: true,

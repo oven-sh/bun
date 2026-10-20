@@ -36,6 +36,7 @@ use debug_scope::HTMLBundle as debug;
 
 // HTMLBundle can be owned by JavaScript as well as any number of Server instances,
 // hence the ref count alongside the JS wrapper.
+// `HTMLBundle` in `HTMLBundle.bind.ts`.
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(debug_name = "HTMLBundle")]
 pub(crate) struct HTMLBundle {

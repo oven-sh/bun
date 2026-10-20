@@ -93,9 +93,10 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(b.u16.allowBigInt.loose.idlType).toBe(b.u16.loose.allowBigInt.idlType);
   expect(() => b.string.utf8.owned.default("x")).toThrow("cannot have a default");
   const instance = b.classRef("SocketAddress");
-  for (const type of [instance, instance.nullable, b.union({ instance, ignored: b.any })]) {
-    expect(() => b.dictionary({ type })).toThrow("b.classRef is only for an argument");
-    expect(() => b.array(type)).toThrow("b.classRef is only for an argument");
+  const refCounted = b.class({ rustPath: "T", refCounted: true });
+  for (const type of [instance, instance.nullable, b.union({ instance, ignored: b.any }), refCounted]) {
+    expect(() => b.dictionary({ type })).toThrow("a &T of a class is only for an argument");
+    expect(() => b.array(type)).toThrow("a &T of a class is only for an argument");
   }
   expect(() => b.union({ instance, again: b.classRef("SocketAddress") })).toThrow("again is never chosen");
   expect(() => b.namespace({})).toThrow("a namespace with no functions");
@@ -236,7 +237,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.class({ rustPath: "T", proto: { x: { rustName: "camelCase" } } })).toThrow(
     "camelCase: rustName is written in snake_case",
   );
-  expect(() => b.class({ rustPath: "T", proto: { x: { name: "y" } } })).toThrow("x: name is only allowed on an @@ key");
+  expect(() => b.class({ rustPath: "T", proto: { x: { name: "y" } } })).toThrow("x: only an @@ key has a name");
   expect(() =>
     b.class({
       rustPath: "T",
@@ -249,28 +250,40 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     }),
   ).toThrow("x: its overloads have one invalidThis");
   expect(() => b.class({ rustPath: "T", proto: { "@@x": { getter: b.i32 } } })).toThrow(
-    "@@x: an @@ key is only allowed on a function",
+    "@@x: only a function has an @@ key",
   );
   expect(() => b.class({ rustPath: "T", proto: { "@@x": { privateSymbol: "x" } } })).toThrow(
-    "@@x: privateSymbol cannot be used with an @@ key",
+    "@@x: an @@ key has no privateSymbol",
   );
   expect(() => b.class({ rustPath: "T", construct: {}, static: { "@@x": {} } })).toThrow(
-    "@@x: an @@ key is only allowed in proto",
+    "@@x: an @@ key is a property of the prototype",
   );
-  expect(() => b.class({ rustPath: "T", construct: {}, static: { x: { internalField: "x" } } })).toThrow(
-    "x: internalField is not allowed in static",
+  for (const inline of [
+    { construct: {}, static: { x: { internalField: "x" } } },
+    { proto: { x: { internalField: "x" } } },
+  ]) {
+    // @ts-expect-error
+    expect(() => b.class({ rustPath: "T", internalFields: ["x"], ...inline })).toThrow(
+      "x: an internalField accessor is a property of a refCounted class's prototype",
+    );
+  }
+  expect(() => b.class({ rustPath: "T", proto: { x: { getter: b.i32, passThis: true } } })).toThrow(
+    "x: only an accessor of a refCounted class has passThis",
   );
   expect(() => b.class({ rustPath: "T", refCounted: true, proto: { x: { mutates: true } } })).toThrow(
-    "x: mutates is not allowed in a refCounted class",
+    "x: a refCounted class has no mutates",
+  );
+  expect(() => b.class({ rustPath: "T", refCounted: true, proto: { x: { args: { bytes: stringOrBuffer } } } })).toThrow(
+    "bytes: JavaScript can detach a buffer",
   );
   expect(() => b.class({ rustPath: "T", finalize: true })).toThrow("finalize requires refCounted");
   expect(() => b.class({ rustPath: "T", fromJS: true })).toThrow("fromJS requires refCounted");
   expect(() => b.class({ rustPath: "T", refCounted: true, proto: { x: { capability: "heap" } } })).toThrow(
-    'capability: in a refCounted class it is "js", which passes the global object, or "none"',
+    'a refCounted class takes capability: "js" or "none"',
   );
   expect(() =>
     b.class({ rustPath: "T", refCounted: true, proto: { x: { getter: b.i32, capability: "heap" } } }),
-  ).toThrow('x: capability: in a refCounted class it is "js", which passes the global object, or "none"');
+  ).toThrow('x: a refCounted class takes capability: "js" or "none"');
   expect(() => b.string.allowStringObject.loose).toThrow(".loose already takes a String object");
   expect(() => b.string.loose.allowStringObject).toThrow(".loose already takes a String object");
   // No overload can have the argument left out, so `undefined` goes to the one that reports its own error.
@@ -2062,7 +2075,7 @@ describe("classes", () => {
       expect(() => keep.call({})).toThrow(TypeError);
     });
 
-    it("b.self.optional and b.self.nullable work as return and argument types", () => {
+    it("takes and returns b.self.optional and b.self.nullable", () => {
       const [object, negative] = [new TestRefCounted(1), new TestRefCounted(-1)];
       expect(object.orUndefined()).toBe(object);
       expect(object.orNull()).toBe(object);
@@ -2082,7 +2095,7 @@ describe("classes", () => {
         expect(TestRefCounted.valueFromJS(other)).toBeNull();
     });
 
-    it("a struct Rust still holds a ref to outlives its object, and finalize runs when the object is collected", () => {
+    it("the struct outlives its object while Rust holds a ref, and finalize runs when the object is collected", () => {
       const keepOne = (value: number) => void new TestRefCounted(value).keep();
       let collected: number[] | undefined;
       for (let i = 0; i < 100 && !collected; i++) {

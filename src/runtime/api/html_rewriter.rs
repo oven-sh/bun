@@ -35,7 +35,7 @@ use bun_jsc::call_frame::ArgumentsSlice;
 use lol_html::html_content::UserData as _;
 
 // lol-html rewritable units, lifetime-erased to `'static` so a `*mut RawX`
-// can be parked in a JsClass `DetachablePtr` for the duration of the
+// can be parked in a wrapper's `DetachablePtr` for the duration of the
 // synchronous handler call (the slot is nulled again before the handler
 // returns). The `DetachablePtr` type invariant is discharged by
 // `handler_callback`: it parks the `&mut X` lol-html lends the closure
@@ -109,6 +109,7 @@ fn content_type(opts: &ContentOptions) -> lol_html::html_content::ContentType {
 ///                 which holds for all 16 ops).
 /// - `$field`    — the `DetachablePtr<$Raw>` field on `self`.
 /// - Each op arm accepts leading attrs (doc comments, `#[allow(dead_code)]`).
+/// - `None` is `null` or `undefined`: the `returns` of `html_rewriter.bind.ts` says which.
 ///
 /// Expands inside an `impl $Wrapper { ... }` block to associated items.
 macro_rules! lol_content_ops {
@@ -663,11 +664,12 @@ impl bun_event_loop::Taskable for RewriterPipeBackgroundPull {
 /// a regular file is never read through inside a single call.
 /// `align(16)`: `NativePromiseContext`'s deferred-deref task packs a 4-bit
 /// type tag into the low bits of a pointer to this.
+// `HTMLRewriterTransform` in `html_rewriter.bind.ts`.
 #[derive(bun_ptr::CellRefCounted)]
 #[repr(align(16))]
 pub struct RewriterPipe {
     pub(crate) global: GlobalRef,
-    /// The owning `JSHTMLRewriterTransform` wrapper cell (whose `m_ctx` is this
+    /// The owning `JSHTMLRewriterTransform` wrapper cell (which holds a ref on this
     /// pipe). Its WriteBarrier slots root the response, input/output streams,
     /// pending promise, and handler error. Weak: the pipe's other owners outlive the cell.
     cell: JsCell<JsRef>,
@@ -2200,9 +2202,7 @@ trait WrapperLike: bun_ptr::AnyRefCounted + Sized {
     type Raw;
     /// `pipe` is the one whose lol-html call lends `value`.
     fn init(value: *mut Self::Raw, pipe: BackRef<RewriterPipe>) -> NonNull<Self>;
-    /// `jsc.Codegen.JS${T}.toJS` — wraps the *existing* heap allocation `this`
-    /// in a JS wrapper. Takes `NonNull<Self>` (not
-    /// `&self`) because the C++ side stores the raw heap pointer in `m_ctx`;
+    /// Wraps the *existing* heap allocation `this` in a JS wrapper. `NonNull<Self>`, not `&self`:
     /// deriving it from a `&self` would launder shared-borrow provenance into
     /// the GC's exclusive-owner pointer.
     fn to_js(this: NonNull<Self>, global: &JSGlobalObject) -> JSValue;
@@ -2562,6 +2562,7 @@ fn opt_string_to_js_or_null(s: Option<String>, global: &JSGlobalObject) -> JsRes
 
 // ─────────────────────────── TextChunk ───────────────────────────────────
 
+// `TextChunk` in `html_rewriter.bind.ts`.
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct TextChunk {
     // Intrusive RefCount; the JS wrapper holds one ref.
@@ -2608,6 +2609,7 @@ impl_wrapper_like!(TextChunk, RawTextChunk, text_chunk, suspended_text_chunk);
 
 // ──────────────────────────── DocType ────────────────────────────────────
 
+// `DocType` in `html_rewriter.bind.ts`.
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct DocType {
     // Intrusive RefCount; the JS wrapper holds one ref.
@@ -2662,6 +2664,7 @@ impl_wrapper_like!(DocType, RawDoctype, doctype, suspended_doctype);
 
 // ──────────────────────────── DocEnd ─────────────────────────────────────
 
+// `DocEnd` in `html_rewriter.bind.ts`.
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct DocEnd {
     // Intrusive RefCount; the JS wrapper holds one ref.
@@ -2689,6 +2692,7 @@ impl_wrapper_like!(DocEnd, RawDocumentEnd, doc_end, suspended_document_end);
 
 // ──────────────────────────── Comment ────────────────────────────────────
 
+// `Comment` in `html_rewriter.bind.ts`.
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct Comment {
     // Intrusive RefCount; the JS wrapper holds one ref.
@@ -2748,6 +2752,7 @@ impl_wrapper_like!(Comment, RawComment, comment, suspended_comment);
 
 // ──────────────────────────── EndTag ─────────────────────────────────────
 
+// `EndTag` in `html_rewriter.bind.ts`.
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct EndTag {
     // Intrusive RefCount; the JS wrapper holds one ref.
@@ -2814,6 +2819,7 @@ impl_wrapper_like!(EndTag, RawEndTag, end_tag, suspended_end_tag);
 
 // ───────────────────────── AttributeIterator ─────────────────────────────
 
+// `AttributeIterator` in `html_rewriter.bind.ts`.
 /// The JS `AttributeIterator` heap-boxes one of these over `Element::attributes`
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct AttributeIterator {
@@ -2889,6 +2895,7 @@ impl AttributeIterator {
 
 // ──────────────────────────── Element ────────────────────────────────────
 
+// `Element` in `html_rewriter.bind.ts`.
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct Element {
     // Intrusive RefCount; the JS wrapper holds one ref.
@@ -2986,7 +2993,7 @@ impl Element {
         handlers.push(Box::new(move |end_tag| {
             // SAFETY: lifetime erasure. `end_tag` only lives for this
             // synchronous call; `handler_callback`'s guard detaches the
-            // `EndTag` JsClass slot before this closure returns (or, on a
+            // `EndTag` wrapper's slot before this closure returns (or, on a
             // suspension, re-points it at the heap copy lol-html parks), so
             // JS can never reach a dangling pointer.
             let raw: *mut RawEndTag = core::ptr::from_mut(end_tag).cast();

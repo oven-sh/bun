@@ -1051,7 +1051,6 @@ impl TimerObjectInternals {
         }
     }
 
-    /// `.classes.ts` finalizer hook.
     /// Runs on the mutator thread during lazy sweep; do not touch any
     /// `JSValue`/`Strong` content here.
     pub(crate) fn finalize(&self) {

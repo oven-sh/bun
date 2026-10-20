@@ -78,7 +78,6 @@ leak:sys_jsc.error_jsc.errorToShellSystemError
 leak:lazyLoadSQLite
 leak:JSC::intlAvailableLocales
 leak:getaddrinfo
-leak:runtime.api.filesystem_router.FileSystemRouter.constructor
 leak:JSC::intlSegmenterAvailableLocales
 leak:URL__getHref
 leak:runtime.dns_jsc.dns.Resolver.globalLookupService

@@ -21,6 +21,37 @@ pub type Map =
 #[derive(Debug)]
 pub struct StringTooLong;
 
+/// A VM's interned [`RefString`]s. Its `Drop` releases the ref that each entry holds on its own impl.
+#[derive(Default)]
+pub(crate) struct Table(Map);
+
+impl core::ops::Deref for Table {
+    type Target = Map;
+    fn deref(&self) -> &Map {
+        &self.0
+    }
+}
+
+impl core::ops::DerefMut for Table {
+    fn deref_mut(&mut self) -> &mut Map {
+        &mut self.0
+    }
+}
+
+impl Drop for Table {
+    fn drop(&mut self) {
+        for &entry in self.0.values() {
+            // SAFETY: the entry's own ref, released below, keeps it live.
+            let impl_ = unsafe {
+                // The finalizer would look for the entry in this table.
+                (*entry.as_ptr()).on_before_deinit = None;
+                (*entry.as_ptr()).impl_
+            };
+            drop(bun_core::String::adopt_wtf_impl(impl_));
+        }
+    }
+}
+
 pub type Callback = unsafe fn(ctx: *mut c_void, str: *mut RefString);
 
 pub struct RefString {

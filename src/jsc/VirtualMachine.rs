@@ -283,9 +283,8 @@ pub struct VirtualMachine {
     pub(crate) had_errors: bool,
 
     pub macros: MacroMap,
-    // LAYERING: values are `MacroEntryPoint` from `bun_bundler::entry_points`
-    // (forward dep); stored type-erased and cast back by the consumers.
-    pub macro_entry_points: bun_collections::ArrayHashMap<i32, *mut c_void>,
+    pub macro_entry_points:
+        bun_collections::ArrayHashMap<i32, Box<bun_bundler::entry_points::MacroEntryPoint>>,
     pub macro_mode: bool,
     /// Depth of live [`MacroModeGuard`]s on this thread. Nonzero exactly while
     /// macro JS may be executing — both `MacroContext::call` and `Macro::init`
@@ -327,7 +326,7 @@ pub struct VirtualMachine {
     pub regular_event_loop: EventLoop,
     pub event_loop: *mut EventLoop, // BORROW_FIELD — points at sibling regular_event_loop/macro_event_loop
 
-    pub(crate) ref_strings: crate::ref_string::Map,
+    pub(crate) ref_strings: crate::ref_string::Table,
     pub(crate) ref_strings_mutex: bun_threading::Mutex,
 
     pub(crate) active_tasks: usize,
@@ -2077,8 +2076,9 @@ impl VirtualMachine {
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         use bun_bundler::entry_points::{Fs, MacroEntryPoint};
         use bun_collections::hash_map::Entry;
-        let entry_point: *mut MacroEntryPoint = match self.macro_entry_points.entry(hash) {
-            Entry::Occupied(e) => (*e.get()).cast(),
+        // `path` points into the entry's own buffer, which its box keeps in place.
+        let path: &[u8] = match self.macro_entry_points.entry(hash) {
+            Entry::Occupied(e) => e.get().source.path.text,
             Entry::Vacant(v) => {
                 let mut ep = Box::new(MacroEntryPoint::default());
                 // SAFETY: PathName stores slices with an artificial 'static
@@ -2095,15 +2095,10 @@ impl VirtualMachine {
                     hash,
                     specifier,
                 )?;
-                let raw = bun_core::heap::into_raw(ep);
-                v.insert(raw.cast());
-                raw
+                v.insert(ep).source.path.text
             }
         };
 
-        // SAFETY: `entry_point` was just inserted (heap-allocated) or fetched
-        // from the cache; it lives for the VM lifetime.
-        let path: &[u8] = unsafe { &*entry_point }.source.path.text;
         let promise = self.run_with_api_lock(|| {
             // SAFETY: per-thread VM; the API lock guarantees JSC is held.
             VirtualMachine::get().as_mut()._load_macro_entry_point(path)
@@ -2419,11 +2414,11 @@ impl VirtualMachine {
     }
 
     /// Ends this thread's VM, which is not the main thread's: its exit handlers,
-    /// [`teardown`](Self::teardown), and the storage `init` put on the global heap.
+    /// [`teardown`](Self::teardown), its field destructors, and the storage `init` put on the global heap.
     /// Returns its exit code.
     ///
     /// # Safety
-    /// `this` is this thread's VM, made without a caller's `log`; this thread holds
+    /// `this` is this thread's VM as `init` returned it, made without a caller's `log`; this thread holds
     /// its API lock and abandons it; nothing else can reach the VM.
     pub unsafe fn exit_and_free(this: *mut Self) -> u8 {
         // SAFETY: fn contract (statement-scoped exclusive access: the handlers run script).
@@ -2434,19 +2429,22 @@ impl VirtualMachine {
         };
         // SAFETY: fn contract.
         unsafe { Self::teardown(this, Teardown::Worker) };
+        // SAFETY: sole owner. Both are raw pointers, which no field destructor frees.
+        let (console, log) = unsafe { ((*this).console, (*this).log) };
+        // SAFETY: sole owner. `teardown` left every field valid to drop, and no field destructor
+        // reads what is gone by now: the JSC VM, the loop, the runtime state. A `Strong` asks the
+        // thread's VM whether it is shutting down, so `set_vm(None)` comes after.
+        unsafe { core::ptr::drop_in_place(this) };
         // SAFETY: sole owner; nothing past this point dereferences the VM.
         unsafe {
-            let console = core::mem::replace(&mut (*this).console, core::ptr::null_mut());
             if !console.is_null() {
                 bun_core::heap::destroy(console);
             }
-            if let Some(log) = (*this).log.take() {
+            if let Some(log) = log {
                 bun_core::heap::destroy(log.as_ptr());
             }
             VMHolder::set_vm(None);
-            // The VM was `alloc_zeroed(Layout::<VirtualMachine>())` in
-            // `init`, NOT `Box::new` — dealloc the raw storage directly so
-            // field `Drop`s do not re-run on already-`deinit`'d state.
+            // `init` made the storage with `alloc_zeroed`, not `Box::new`.
             std::alloc::dealloc(this.cast::<u8>(), core::alloc::Layout::new::<Self>());
         }
         exit_code
@@ -2633,6 +2631,8 @@ impl VirtualMachine {
             if let Some(rare) = unsafe { (*this).rare_data.as_deref_mut() } {
                 rare.detach_socket_groups_from_loop();
             }
+            // The dead context is dropped with the VM's storage, after the loop.
+            vm.dead_context.detach_socket_groups_from_loop();
             // SAFETY: this thread's loop; nothing ticks it any more.
             unsafe { (*vm.uws_loop()).internal_loop_data.jsc_vm = core::ptr::null_mut() };
             bun_uws::free_thread_loop();
@@ -2644,7 +2644,7 @@ impl VirtualMachine {
 
         // ---- E. free owners --------------------------------------------------
         // SAFETY: fn contract; last use of `this`.
-        unsafe { (*this).destroy() };
+        unsafe { (*this).destroy_fields(matches!(kind, Teardown::Worker)) };
     }
 }
 
@@ -3255,7 +3255,7 @@ impl VirtualMachine {
         // SAFETY: VM is large + self-referential; allocate zeroed and fill in
         // place. The
         // allocation lives for the thread lifetime (never freed on the main
-        // thread; worker `destroy()` frees it explicitly).
+        // thread; `exit_and_free` frees a worker's).
         //
         // Note (validity): the zeroed bytes are NOT a valid
         // `VirtualMachine` — `origin_timer: Instant`, `on_unhandled_rejection:
@@ -5693,8 +5693,13 @@ impl VirtualMachine {
 
         Ok(Ok(bun_core::String::clone_utf8(result.path)))
     }
-    /// Worker-thread teardown.
+    /// Teardown phase E for a VM whose storage stays allocated (bake's build VM).
     pub fn destroy(&mut self) {
+        self.destroy_fields(false);
+    }
+
+    /// `drop_follows`: the field destructors run next (`exit_and_free`).
+    fn destroy_fields(&mut self, drop_follows: bool) {
         self.regular_event_loop.deinit();
         self.macro_event_loop.deinit();
         // The VM's own clone of its handle; the shared inner is freed when the
@@ -5734,21 +5739,26 @@ impl VirtualMachine {
         // proxy strings; `ProxyEnvStorage: Default` so take()+drop suffices.
         drop(core::mem::take(&mut self.proxy_env_storage));
 
-        // The VM box is `dealloc`'d raw by the worker (see `web_worker.rs`
-        // section 5) so field `Drop`s never run; reclaim the boxed
-        // `ModuleLoader` payloads explicitly. `eval_source.contents` may be
+        // `eval_source.contents` may be
         // mmap-backed (`MAPPED_CONTENTS_CACHE`) — `Source`'s `Drop` is a
         // no-op, so dropping the box just frees its own allocation.
         drop(core::mem::take(&mut self.module_loader));
 
-        // Same raw-dealloc story: `preload` is cloned into the VM at spin()
+        // `preload` is cloned into the VM at spin()
         // time and `load_preloads` clears the boxes but keeps the Vec buffer,
-        // so reclaim it here or every Worker leaks it.
+        // so reclaim it here.
         drop(core::mem::take(&mut self.preload));
 
-        // SAFETY: this VM is raw-`dealloc`'d (no field `Drop` runs), so
-        // `transpiler` is never auto-dropped after `deinit` clears its fields.
-        unsafe { self.transpiler.deinit() };
+        if drop_follows {
+            // The field destructors drop the transpiler. Its macro context has no destructor.
+            if let Some(ctx) = self.transpiler.macro_context.take() {
+                ctx.deinit();
+            }
+        } else {
+            // SAFETY: the storage of this VM is never freed, so nothing drops
+            // `transpiler` after `deinit` clears its fields.
+            unsafe { self.transpiler.deinit() };
+        }
 
         drop(core::mem::take(&mut self.resolved_path_dups));
         drop(core::mem::take(&mut self.main_resolved_path));

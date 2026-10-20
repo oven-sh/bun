@@ -83,7 +83,7 @@ impl<'a> Transpiler<'a> {
         // resolver/lib.rs `// arena: dropped`), so nothing left to thread.
     }
 
-    /// VM-teardown: the owning `VirtualMachine` is raw-allocated and never `Drop`'d,
+    /// VM-teardown: the owning `VirtualMachine` is one that nothing drops (its storage stays),
     /// so free `BundleOptions` here. `log`/`fs`/`env` are aliased/singletons; left alone.
     /// `resolver` is a value field whose caches alias process-global BSSMaps, so the
     /// resolver itself stays put — only its owned `opts` projection (cloned in
@@ -93,7 +93,7 @@ impl<'a> Transpiler<'a> {
     /// Calls `drop_in_place` on `options` / `result` / `resolver.opts` /
     /// `resolve_results`, leaving them logically uninitialized. After this
     /// returns, `self` must never be dropped (or `deinit`'d again) — every
-    /// caller holds a `Transpiler` that bypasses `Drop`: a raw-`dealloc`'d
+    /// caller holds a `Transpiler` that bypasses `Drop`: a never-freed
     /// `VirtualMachine` field, a `MaybeUninit` stack slot, or an arena-backed
     /// `&'static mut`. Owned `Transpiler`s from [`Self::for_worker`] must use
     /// normal `Drop` instead.

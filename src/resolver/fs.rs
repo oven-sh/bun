@@ -237,6 +237,12 @@ impl Entry {
         self.cache().kind
     }
 
+    /// The real path the resolver cached for this entry: where a symlink leads. Empty: none is known.
+    #[inline]
+    pub fn symlink_target(&self) -> &'static [u8] {
+        self.cache().symlink.as_bytes()
+    }
+
     ///
     /// # Safety
     /// `fs` must point to a live `EntryKindResolver` (the process-global

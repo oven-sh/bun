@@ -4,7 +4,7 @@ use std::rc::Rc;
 use bun_alloc::AllocError;
 use bun_bundler::Transpiler;
 use bun_bundler::options::BundleOptions;
-use bun_collections::index_sort;
+use bun_collections::{StringHashMap, index_sort};
 use bun_core::{StringOrTinyString, strings};
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
@@ -34,6 +34,12 @@ pub(crate) struct Scanner<'a> {
     pub(crate) search_count: usize,
     /// The directory being iterated; its fd closes once every child `ScanEntry` has been opened.
     current_dir: Option<Rc<Dir>>,
+    /// The root of this scan as the resolver names it.
+    root_dir: &'static [u8],
+    /// Real path of `root_dir`, resolved when the scan meets its first directory link. Empty: unknown.
+    root_real: Option<Box<[u8]>>,
+    /// Real path of each directory this scan entered through a link, by the path it is queued under.
+    links: StringHashMap<Box<[u8]>>,
 }
 
 // FIFO queue of scan entries (pop_front / push_back).
@@ -47,6 +53,8 @@ pub(crate) struct ScanEntry {
     pub(crate) dir_path: &'static [u8],
     pub name: StringOrTinyString,
 }
+
+const _: () = assert!(core::mem::size_of::<ScanEntry>() == 56);
 
 #[derive(thiserror::Error, Debug)]
 pub(crate) enum ScanError {
@@ -89,6 +97,9 @@ impl<'a> Scanner<'a> {
             has_iterated: false,
             search_count: 0,
             current_dir: None,
+            root_dir: b"",
+            root_real: None,
+            links: StringHashMap::default(),
         })
     }
 
@@ -133,9 +144,15 @@ impl<'a> Scanner<'a> {
             return Err(ScanError::DoesNotExist);
         };
 
+        self.root_dir = b"";
+        self.root_real = None;
+        self.links.clear();
         let root = self
             .read_dir_with_name(path, None)
             .map_err(|_| ScanError::OutOfMemory)?;
+        if let EntriesOption::Entries(entries) = &*root {
+            self.root_dir = entries.dir;
+        }
 
         if let EntriesOption::Err(root_err) = root {
             let e = root_err.original_err;
@@ -368,6 +385,13 @@ impl<'a> Scanner<'a> {
                     }
                 }
 
+                let link_real = entry.symlink_target();
+                if (!link_real.is_empty() || !self.links.is_empty())
+                    && self.leads_back(entry, link_real)
+                {
+                    return;
+                }
+
                 self.search_count += 1;
 
                 self.dirs_to_scan.push_back(ScanEntry {
@@ -421,6 +445,140 @@ impl<'a> Scanner<'a> {
             }
             fs::EntryKind::Dangling => {}
         }
+    }
+
+    /// `true`: `entry` leads to the directory being listed or to one above it, up to the scan root.
+    #[cold]
+    #[inline(never)]
+    fn leads_back(&mut self, entry: &fs::Entry, link_real: &'static [u8]) -> bool {
+        if self.root_dir.is_empty() {
+            // The root is being read: its entries arrive before any other.
+            self.root_dir = entry.dir;
+        }
+        let top_level_dir = self.top_level_dir();
+        let dir = trim_sep(entry.dir);
+
+        let mut real_buf = bun_paths::path_buffer_pool::get();
+        let real: &[u8] = if link_real.is_empty() {
+            // A plain child leads back only through a link that the walk followed above it.
+            let Some((_, above_real, below)) = self.link_above(dir) else {
+                return false;
+            };
+            let parts: [&[u8]; 3] = [above_real, below, entry.base()];
+            let Some(real) = Self::abs_buf_projected(top_level_dir, &parts, &mut real_buf) else {
+                return false;
+            };
+            real
+        } else {
+            let Some(real) = Self::abs_buf_projected(top_level_dir, &[link_real], &mut real_buf)
+            else {
+                return false;
+            };
+            real
+        };
+
+        // The way to `dir`: below each followed link down to the next one, then below the root.
+        let mut bottom = dir;
+        while let Some((link, above_real, below)) = self.link_above(bottom) {
+            if is_on_way(real, above_real, below) {
+                return true;
+            }
+            bottom = parent_dir(link);
+        }
+        let Some(below) = path_below(bottom, self.root_dir) else {
+            return false;
+        };
+        let root_real = self.root_real();
+        if !root_real.is_empty() && is_on_way(real, root_real, below) {
+            return true;
+        }
+
+        if !link_real.is_empty() {
+            let mut lexical_buf = bun_paths::path_buffer_pool::get();
+            let parts: [&[u8]; 2] = [entry.dir, entry.base()];
+            if let Some(lexical) = Self::abs_buf_projected(top_level_dir, &parts, &mut lexical_buf)
+            {
+                bun_core::handle_oom(self.links.put(lexical, Box::from(real)));
+            }
+        }
+        false
+    }
+
+    /// The followed link that `dir` is or lies below: its path, its real path, the rest of `dir`.
+    fn link_above<'d>(&self, dir: &'d [u8]) -> Option<(&'d [u8], &[u8], &'d [u8])> {
+        let root_len = trim_sep(self.root_dir).len();
+        let mut link = dir;
+        while link.len() > root_len {
+            if let Some(real) = self.links.get(link) {
+                return Some((link, real, path_below(dir, link).unwrap_or(b"")));
+            }
+            let parent = parent_dir(link);
+            if parent.len() == link.len() {
+                break;
+            }
+            link = parent;
+        }
+        None
+    }
+
+    fn root_real(&mut self) -> &[u8] {
+        if self.root_real.is_none() {
+            self.root_real = Some(self.real_path_of(self.root_dir).unwrap_or_default());
+        }
+        self.root_real.as_deref().unwrap_or(b"")
+    }
+
+    /// Where `path` leads, from the same call `RealFS::kind` names a link target with.
+    fn real_path_of(&self, path: &[u8]) -> Option<Box<[u8]>> {
+        #[cfg(not(windows))]
+        let fd = bun_sys::open_dir_at(Fd::cwd(), path).ok()?;
+        #[cfg(windows)]
+        let fd = bun_sys::open_dir_no_renaming_or_deleting_windows(Fd::cwd(), path).ok()?;
+        let dir = Dir::from_fd(fd);
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let real = bun_sys::get_fd_path(dir.fd, &mut buf).ok()?;
+        let mut spelled = bun_paths::path_buffer_pool::get();
+        let real = Self::abs_buf_projected(self.top_level_dir(), &[&*real], &mut spelled)?;
+        Some(Box::from(real))
+    }
+}
+
+/// `path` without its trailing separators.
+fn trim_sep(path: &[u8]) -> &[u8] {
+    let mut end = path.len();
+    while end > 1 && bun_paths::is_sep_native(path[end - 1]) {
+        end -= 1;
+    }
+    &path[..end]
+}
+
+/// `path` without its last name.
+fn parent_dir(path: &[u8]) -> &[u8] {
+    let mut end = path.len();
+    while end > 0 && !bun_paths::is_sep_native(path[end - 1]) {
+        end -= 1;
+    }
+    trim_sep(&path[..end])
+}
+
+/// The part of `path` below `root`, with no leading separator. Empty: the same place.
+fn path_below<'p>(path: &'p [u8], root: &[u8]) -> Option<&'p [u8]> {
+    let root = trim_sep(root);
+    let rest = path.strip_prefix(root)?;
+    match rest {
+        [] => Some(rest),
+        [first, below @ ..] if bun_paths::is_sep_native(*first) => Some(below),
+        // A filesystem root keeps its separator.
+        _ if root.last().is_some_and(|c| bun_paths::is_sep_native(*c)) => Some(rest),
+        _ => None,
+    }
+}
+
+/// `real` is `top`, or a directory between `top` and the directory that `below` names under it.
+fn is_on_way(real: &[u8], top: &[u8], below: &[u8]) -> bool {
+    match path_below(real, top) {
+        Some(rest) => rest.is_empty() || path_below(below, rest).is_some(),
+        None => false,
     }
 }
 

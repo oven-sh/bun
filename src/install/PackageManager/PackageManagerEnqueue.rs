@@ -1100,6 +1100,7 @@ fn prefetch_manifest(
     let cached: Option<Npm::PackageManifest> = match cached {
         Some(_) if !expired => return ManifestState::Ready,
         // `bind_row` takes an exact version from an expired manifest without asking the registry.
+        // For the peers where it does ask, it sends the request itself.
         Some(manifest) => {
             if exact().is_some_and(|exact| manifest.find_by_version(exact).is_some()) {
                 return ManifestState::Unavailable;
@@ -4411,12 +4412,9 @@ fn range_most_peers_accept(
     let versions = &manifest.string_buf;
     let names = lockfile.packages.items_name_hash();
     let resolutions = lockfile.packages.items_resolution();
-    let mut askers: Vec<_> = (peer_askers(this, peer.name_hash).iter())
+    let askers: Vec<_> = (peer_askers(this, peer.name_hash).iter())
         .filter_map(|&(_, id, owner, has_no_provider)| {
-            if !has_no_provider || lower_version_replaces(lockfile, owner) {
-                return None;
-            }
-            let range = asker_range(lockfile, id)?;
+            let range = asker_range(lockfile, id).filter(|_| has_no_provider)?;
             let found = manifest.find_for_dependency(
                 &range,
                 buf,
@@ -4429,13 +4427,17 @@ fn range_most_peers_accept(
             (provider.is_none()).then_some((owner as usize, range, newest))
         })
         .collect();
-    // Of the versions of one package, the lowest chooses, because it's resolved first.
-    askers.sort_by(|a, b| {
-        (names[a.0].cmp(&names[b.0]))
-            .then_with(|| resolutions[a.0].order(&resolutions[b.0], buf, buf))
-    });
-    askers.dedup_by_key(|asker| names[asker.0]);
     (askers.iter())
+        // Of the versions of one package, only the lowest proposes its range. Deduplication can
+        // still drop a higher one.
+        .filter(|&&(owner, ..)| {
+            !(askers.iter()).any(|&(other, ..)| {
+                names[other] == names[owner]
+                    && resolutions[other]
+                        .order(&resolutions[owner], buf, buf)
+                        .is_lt()
+            })
+        })
         .map(|(_, range, newest)| {
             let accepting = (askers.iter())
                 .filter(|other| other.1.npm().version.satisfies(*newest, buf, versions))
@@ -4451,28 +4453,7 @@ fn range_most_peers_accept(
         .map(|(.., range)| range.clone())
 }
 
-/// Returns true if a lower version of `package` is installed that satisfies every dependency on
-/// `package`. Deduplication, which runs after the peers are resolved, then drops `package`.
-fn lower_version_replaces(lockfile: &Lockfile::Lockfile, package: PackageID) -> bool {
-    let buf = lockfile.buffers.string_bytes.as_slice();
-    let deps = lockfile.buffers.dependencies.as_slice();
-    let resolutions = lockfile.packages.items_resolution();
-    let named = lockfile.packages_named(lockfile.packages.items_name_hash()[package as usize]);
-    let lower = (named.iter()).skip_while(|&&id| id != package).skip(1);
-    lower
-        .filter(|&&id| resolutions[id as usize].tag == ResolutionTag::Npm)
-        .any(|&id| {
-            let version = resolutions[id as usize].npm().version;
-            (lockfile.buffers.resolutions.iter().enumerate())
-                .filter(|&(_, &resolved)| resolved == package)
-                .all(|(row, _)| {
-                    crate::dedupe::effective_npm_range(lockfile, row as DependencyID, &deps[row])
-                        .is_some_and(|range| range.npm().version.satisfies(version, buf, buf))
-                })
-        })
-}
-
-/// The range of a peer dependency, unless it's on the versions of another package.
+/// The range of a peer dependency, unless it's an `npm:` alias.
 fn asker_range(lockfile: &Lockfile::Lockfile, id: DependencyID) -> Option<dependency::Version> {
     let dep = &lockfile.buffers.dependencies[id as usize];
     crate::dedupe::effective_npm_range(lockfile, id, dep).filter(|range| !range.npm().is_alias)

@@ -4639,7 +4639,7 @@ it.concurrent.each<{
     z: ["1.1.0"],
   },
   {
-    shape: "of two versions of one package with the peer, the lowest chooses",
+    shape: "of two versions of one package, only the lowest proposes its range",
     manifests: {
       a: { "1.0.0": { dependencies: { d: "1.0.0" } } },
       b: { "1.0.0": { dependencies: { d: "2.0.0" } } },
@@ -4651,21 +4651,33 @@ it.concurrent.each<{
     z: ["1.1.0"],
   },
   {
-    // m gets g@2.0.0 first, and g@1.0.0 replaces it once n has brought that in.
-    shape: "a version that deduplication replaces doesn't count",
+    // a gets g@2.0.0 first. Deduplication replaces it with g@1.2.0, so only that one is left with the peer.
+    shape: "deduplication drops the higher of two versions of one package",
     manifests: {
-      a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
-      m: { "1.0.0": { dependencies: { g: "*" } } },
-      n: { "1.0.0": { dependencies: { g: "1.0.0" } } },
-      g: { "1.0.0": {}, "2.0.0": { peerDependencies: { z: "^2.0.0" } } },
+      a: { "1.0.0": { dependencies: { g: ">=1.0.0" } } },
+      b: { "1.0.0": { dependencies: { g: "^1.0.0" } } },
+      g: { "1.2.0": { peerDependencies: { z: "^1.0.0" } }, "2.0.0": { peerDependencies: { z: "^2.0.0" } } },
       z: zVersions,
     },
-    root: ["a", "m", "n"],
-    swap: ["a", "g"],
+    root: ["a", "b"],
+    swap: ["a", "b"],
     z: ["1.1.0"],
   },
   {
-    shape: "a version that stays next to a lower one counts",
+    shape: "the higher of two versions of one package counts for the range of another package",
+    manifests: {
+      a: { "1.0.0": { dependencies: { g: "1.0.0" } } },
+      b: { "1.0.0": { dependencies: { g: "2.0.0" } } },
+      c: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
+      g: { "1.0.0": { peerDependencies: { z: "^2.0.0" } }, "2.0.0": { peerDependencies: { z: "^1.0.0" } } },
+      z: zVersions,
+    },
+    root: ["a", "b", "c"],
+    swap: ["c", "g"],
+    z: ["1.1.0"],
+  },
+  {
+    shape: "a version counts next to a lower one without the peer",
     manifests: {
       a: { "1.0.0": { dependencies: { g: "2.0.0" } } },
       b: { "1.0.0": { dependencies: { g: "1.0.0" }, peerDependencies: { z: "^1.0.0" } } },

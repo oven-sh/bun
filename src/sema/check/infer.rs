@@ -717,15 +717,14 @@ impl<'p, 's> Checker<'p, 's> {
         self.infer_from_type_arguments_in_long_walk(n, source, target, of, walk)
     }
 
-    #[inline(never)]
-    fn infer_from_type_arguments_in_long_walk(
+    /// Returns the walk's key. Returns `None` if an identical walk changed nothing: its priority has been applied then.
+    fn begin_argument_walk(
         &mut self,
         n: &mut Inference,
         source: TypeId,
         target: TypeId,
         of: ArgumentsOf,
-        walk: impl FnOnce(&mut Self, &mut Inference),
-    ) {
+    ) -> Option<ArgumentWalk> {
         let flags = u8::from(n.contra) | u8::from(n.bivariant) << 1 | (of as u8) << 2;
         let key = (source, target, n.priority, n.depth, n.propagated, flags);
         let disturbances = self.inference_disturbances();
@@ -737,9 +736,24 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(&priority) = repeated.priorities.get(&key) {
             n.inference_priority = n.inference_priority.min(priority);
             self.inference_memo.count(memo::Count::ArgumentWalksSkipped);
-            return;
+            return None;
         }
         self.inference_memo.count(memo::Count::ArgumentWalksRun);
+        Some(key)
+    }
+
+    #[inline(never)]
+    fn infer_from_type_arguments_in_long_walk(
+        &mut self,
+        n: &mut Inference,
+        source: TypeId,
+        target: TypeId,
+        of: ArgumentsOf,
+        walk: impl FnOnce(&mut Self, &mut Inference),
+    ) {
+        let Some(key) = self.begin_argument_walk(n, source, target, of) else {
+            return;
+        };
         let before = self.marks_of_argument_walk(n);
         let outer = std::mem::replace(&mut n.inference_priority, PRIORITY_MAX);
         walk(self, n);

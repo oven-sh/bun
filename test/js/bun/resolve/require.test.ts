@@ -1,4 +1,4 @@
-import { bunRun, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 const fixture = (...segs: string[]): string => path.join(import.meta.dirname, "fixtures", "require", ...segs);
@@ -355,6 +355,85 @@ describe.concurrent("a data file that is imported and required", () => {
       printed: { sameTick: true, after: [{ a: 2 }, false, true] },
       stderr: "",
       exitCode: 0,
+    });
+  });
+
+  // A setup file that imports the project's configuration does not change what require() of that file returns.
+  describe("in a preload", () => {
+    const suite = {
+      "config.json": `{"v":1}`,
+      "config.toml": `v = 1\n`,
+      "setup.ts": `
+        import json from "./config.json";
+        import toml from "./config.toml";
+        (globalThis as any).__config = { json, toml };
+      `,
+      "at-load.test.cjs": `
+        const { test, expect } = require("bun:test");
+        const json = require("./config.json");
+        test("a CommonJS test file that requires the file when it loads", () => {
+          expect(json).toEqual({ v: 1 });
+        });
+      `,
+      "in-test.test.js": `
+        import { test, expect } from "bun:test";
+        test("a test that requires the file", () => {
+          expect([require("./config.json"), require("./config.toml")]).toEqual([{ v: 1 }, { v: 1 }]);
+          expect(require("./config.json")).toBe(globalThis.__config.json);
+        });
+      `,
+      "src/legacy.cjs": `module.exports = require("../config.json");`,
+      "code-under-test.test.js": `
+        import { test, expect } from "bun:test";
+        import legacy from "./src/legacy.cjs";
+        test("code under test that requires the file", () => {
+          expect(legacy).toEqual({ v: 1 });
+        });
+      `,
+    };
+
+    it.each([
+      ["--preload", ["--preload", "./setup.ts"], {}],
+      ["--preload --isolate", ["--preload", "./setup.ts", "--isolate"], {}],
+      ["--preload --parallel", ["--preload", "./setup.ts", "--parallel"], {}],
+      ["a bunfig.toml preload", [], { "bunfig.toml": `[test]\npreload = ["./setup.ts"]\n` }],
+    ])("bun test with %s: require() of the file returns its data", async (_, args, bunfig) => {
+      using dir = tempDir("bun-test-require-data-preload", { ...suite, ...bunfig });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(" 3 pass");
+      expect(stderr).toContain(" 0 fail");
+      expect(exitCode).toBe(0);
+    });
+
+    it("the entry point gets the imported value, and is still module '.'", async () => {
+      using dir = tempDir("bun-test-require-data-preload", {
+        "config.json": `{"v":1}`,
+        "setup.mjs": `import config from "./config.json"; globalThis.__config = config;`,
+        "main.cjs": `
+          const config = require("./config.json");
+          console.log(JSON.stringify({
+            config,
+            same: config === globalThis.__config,
+            id: module.id,
+            parent: module.parent,
+            isMain: require.main === module,
+          }));
+        `,
+      });
+      const main = path.join(String(dir), "main.cjs");
+      expect(await bunRun(["--preload", path.join(String(dir), "setup.mjs"), main])).toEqual({
+        stdout: JSON.stringify({ config: { v: 1 }, same: true, id: ".", parent: null, isMain: true }),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
     });
   });
 

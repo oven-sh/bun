@@ -752,6 +752,9 @@ public:
     // The key is a pointer to the source code
     WTF::UncheckedKeyHashMap<uintptr_t, Ref<JSC::SourceProvider>> sourceProviderMap;
     size_t reloadCount = 0;
+    // How many `{ exports, loaded }` entries imports of data files have put in requireMap()
+    // (Bun::requireCacheDataModuleExports). More entries than that: one of them is a module, or user code's.
+    size_t requireCacheDataModuleEntries = 0;
 
     void reload();
     void clearModuleRegistry();

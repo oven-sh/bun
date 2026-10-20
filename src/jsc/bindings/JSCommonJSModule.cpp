@@ -1599,20 +1599,25 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
 
 static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph*);
 
-// The process's entry point is module ".": the first CommonJS module in the global object's require cache.
-// An entry that is not a module (the `{ exports, loaded }` of an imported data file, or one user code wrote)
-// does not count.
-static bool hasCommonJSModule(JSC::VM& vm, JSMap* requireMap)
+// The process's entry point is module ".": the CommonJS module the global object's loader imports while its
+// require cache is empty. The `{ exports, loaded }` entries of imported data files do not count: whether the
+// cache holds no module.
+static bool isEntryPointModule(Zig::GlobalObject* globalObject, JSMap* requireMap)
 {
-    if (!requireMap->size())
+    size_t size = requireMap->size();
+    if (!size)
+        return true;
+    if (size > globalObject->requireCacheDataModuleEntries)
         return false;
+    // Not more entries than imports of data files put there. Some of those may be gone, so look.
+    auto& vm = JSC::getVM(globalObject);
     JSMap::Storage* storage = &requireMap->storageRef();
     for (JSMap::Helper::Entry entry = 0;; ++entry) {
         auto next = JSMap::Helper::transitAndNext(vm, *storage, entry);
         if (!next.storage)
-            return false;
-        if (next.value.inherits<JSCommonJSModule>())
             return true;
+        if (next.value.inherits<JSCommonJSModule>())
+            return false;
         storage = next.storage;
         entry = next.entry;
     }
@@ -1651,7 +1656,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             dirname = jsEmptyString(vm);
         }
         // The process's entry point is module "."; a graph has no such module.
-        if (!graph && !hasCommonJSModule(vm, requireMap)) {
+        if (!graph && isEntryPointModule(globalObject, requireMap)) {
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));
         }
 
@@ -1783,7 +1788,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             dirname = jsEmptyString(vm);
         }
         // The process's entry point is module "."; a graph has no such module.
-        if (!graph && !hasCommonJSModule(vm, requireMap)) {
+        if (!graph && isEntryPointModule(globalObject, requireMap)) {
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));
         }
 
@@ -1848,6 +1853,8 @@ JSValue requireCacheDataModuleExports(Zig::GlobalObject* globalObject, JSModuleG
     owner->putDirect(vm, Identifier::fromString(vm, "loaded"_s), jsBoolean(true), 0);
     requireMap->set(globalObject, key, owner);
     RETURN_IF_EXCEPTION(scope, {});
+    if (!graph)
+        globalObject->requireCacheDataModuleEntries++;
     return value;
 }
 

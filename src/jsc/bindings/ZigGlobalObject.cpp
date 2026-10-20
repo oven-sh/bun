@@ -3500,6 +3500,7 @@ void GlobalObject::clearModuleRegistry()
 {
     this->moduleLoader()->clearAll(); // takes the loader's cellLock itself (visitChildren iterates the maps under it)
     this->requireMap()->clear(this);
+    this->requireCacheDataModuleEntries = 0;
 }
 
 void GlobalObject::reload()

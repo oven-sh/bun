@@ -40,6 +40,8 @@ webWorker.onmessage = event => {
 
 // On the worker thread, `postMessage` is automatically "routed" to the parent thread.
 postMessage({ hello: "world" });
+// On the worker thread, `close()` stops the worker after the current script.
+close();
 
 // On the main thread
 nodeWorker.postMessage({ hello: "world" });

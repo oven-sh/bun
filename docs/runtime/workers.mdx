@@ -227,6 +227,19 @@ Calling `worker.terminate()` makes the worker exit as soon as possible.
 
 A worker can terminate itself with `process.exit()`. This does not terminate the main process. Like in Node.js, `process.on('beforeExit', callback)` and `process.on('exit', callback)` are emitted on the worker thread, not on the main thread. Bun passes the exit code to the `"close"` event.
 
+### `self.close()`
+
+A worker can also stop itself with [`self.close()`](https://developer.mozilla.org/en-US/docs/Web/API/WorkerGlobalScope/close), as in browsers. `self.close()` exists only in workers created with `new Worker()`, not in `node:worker_threads` workers.
+
+```ts worker.ts icon="/icons/typescript.svg"
+postMessage("done");
+self.close();
+```
+
+The worker stops when the current task ends. The script that calls `close()` runs to its end, then its microtasks and `process.nextTick()` callbacks run, so a `postMessage()` after `close()` still reaches the main thread. Pending timers and messages are discarded. The `process` `"exit"` listeners run, and the `"close"` event gets `process.exitCode`, which is 0 by default. An error that the task throws after `close()`, or a promise that it rejects, is reported like any other uncaught error.
+
+Callbacks that Bun delivers in one batch with the callback that called `close()` can still run before the worker stops. Examples are the other `"line"` events of a `readline` chunk, the callbacks of `dns.lookup()` calls that resolve together, and WebSocket messages that arrive together with the handshake response. A `Response` that a `Bun.serve()` handler returns after it called `close()` is not sent, as after `process.exit()`. Use `process.exit()` to stop the worker at once.
+
 ### `"close"`
 
 Bun emits the `"close"` event when a worker has been marked as terminated. The worker itself can take some time to fully exit. The `CloseEvent` contains the exit code passed to `process.exit()`, or 0 if it closed for another reason.

@@ -58,55 +58,53 @@ describe.concurrent("bundler", () => {
     // That path is a file name: a leading ":" or "*" does not make it a route
     // parameter or a wildcard, so the file answers only its own path. Windows
     // cannot have the source files of this fixture on disk.
-    if (!isWindows) {
-      itBundled(`compile/${backend}/HTMLServerAssetNamesThatReadAsRoutePatterns`, {
-        compile: true,
-        backend: backend,
-        files: {
-          "/entry.ts": /* js */ `
-          import index from "./index.html";
+    (isWindows ? itBundled.skip : itBundled)(`compile/${backend}/HTMLServerAssetNamesThatReadAsRoutePatterns`, {
+      compile: true,
+      backend: backend,
+      files: {
+        "/entry.ts": /* js */ `
+        import index from "./index.html";
 
-          using server = Bun.serve({
-            port: 0,
-            routes: {
-              "/": index,
-            },
-            fetch: () => new Response("no route", { status: 404 }),
-          });
+        using server = Bun.serve({
+          port: 0,
+          routes: {
+            "/": index,
+          },
+          fetch: () => new Response("no route", { status: 404 }),
+        });
 
-          const html = await (await fetch(server.url)).text();
-          const paths = [...html.matchAll(/<img src="([^"]+)"/g)].map(match => match[1]);
-          for (const path of [...paths, "/about", "/favicon.ico", "/a/b"]) {
-            const res = await fetch(new URL(path, server.url));
-            console.log(path.replace(/-[a-z0-9]+\\.png$/, ".png"), res.status, await res.text());
-          }
-        `,
-          "/index.html": /* html */ `
-          <!DOCTYPE html>
-          <html>
-            <body>
-              <img src="./:smile:.png">
-              <img src="./*.png">
-              <img src="./plain.png">
-            </body>
-          </html>
-        `,
-          "/:smile:.png": "colon",
-          "/*.png": "star",
-          "/plain.png": "plain",
-        },
-        run: {
-          stdout: [
-            "/:smile:.png 200 colon",
-            "/*.png 200 star",
-            "/plain.png 200 plain",
-            "/about 404 no route",
-            "/favicon.ico 404 no route",
-            "/a/b 404 no route",
-          ].join("\n"),
-        },
-      });
-    }
+        const html = await (await fetch(server.url)).text();
+        const paths = [...html.matchAll(/<img src="([^"]+)"/g)].map(match => match[1]);
+        for (const path of [...paths, "/about", "/favicon.ico", "/a/b"]) {
+          const res = await fetch(new URL(path, server.url));
+          console.log(path.replace(/-[a-z0-9]+\\.png$/, ".png"), res.status, await res.text());
+        }
+      `,
+        "/index.html": /* html */ `
+        <!DOCTYPE html>
+        <html>
+          <body>
+            <img src="./:smile:.png">
+            <img src="./*.png">
+            <img src="./plain.png">
+          </body>
+        </html>
+      `,
+        "/:smile:.png": "colon",
+        "/*.png": "star",
+        "/plain.png": "plain",
+      },
+      run: {
+        stdout: [
+          "/:smile:.png 200 colon",
+          "/*.png 200 star",
+          "/plain.png 200 plain",
+          "/about 404 no route",
+          "/favicon.ico 404 no route",
+          "/a/b 404 no route",
+        ].join("\n"),
+      },
+    });
 
     itBundled(`compile/${backend}/HTMLServerMultipleRoutes`, {
       compile: true,

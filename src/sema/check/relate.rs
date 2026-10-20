@@ -2581,6 +2581,10 @@ impl<'p, 's> Checker<'p, 's> {
         self.variances_in_progress.contains(&sym)
             || self.suspended_variances.contains(&sym)
             || self.p.variances.get(&self.task, &sym).is_some()
+            || self.variance_keys(sym).is_some_and(|keys| {
+                let mut keys = keys.iter();
+                keys.any(|key| self.p.variances.get(&self.task, key).is_some())
+            })
     }
 
     /// True if `checkTypeParameterDeferred` has reached a declaration of the type parameter `param`
@@ -2727,8 +2731,89 @@ impl<'p, 's> Checker<'p, 's> {
         self.task.stop_writing_immediately();
     }
 
+    /// Returns the symbols of the type parameters of `sym` if their variances are measured one at a time, each when
+    /// it's first read. The variance of each is stored, claimed and shared under the type parameter's symbol, as a list
+    /// of one.
+    ///
+    /// Comparing two instantiations only reads the variances of the type parameters whose arguments differ
+    /// (`relate_by_variances_read`). `getVariancesWorker` measures them all the first time, and for each one compares
+    /// two instantiations of the whole type, which reads the variances of the types its members mention in turn. Most of
+    /// that is never read.
+    ///
+    /// An outer type parameter belongs to several symbols, so a symbol that has one is measured as a whole.
+    fn variance_keys(&mut self, sym: Sym) -> Option<&'s [Sym]> {
+        if let Some(&keys) = self.variance_keys.get(&sym) {
+            return keys;
+        }
+        let keys = self.variance_keys_uncached(sym);
+        for &key in keys.unwrap_or_default() {
+            self.owners_of_variance_keys.insert(key, sym);
+        }
+        self.variance_keys.insert(sym, keys);
+        keys
+    }
+
+    fn variance_keys_uncached(&mut self, sym: Sym) -> Option<&'s [Sym]> {
+        let flags = self.files().flags(sym);
+        let own = self.local_type_params_of_symbol(sym);
+        if own.len() < 2 {
+            return None;
+        }
+        if flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE)
+            && self.all_type_params_of_symbol(sym)[..] != own[..]
+        {
+            return None;
+        }
+        let mut keys = Vec::with_capacity(own.len());
+        for &param in &own {
+            let TypeData::TypeParam(file, id, _) = *self.data(param) else {
+                return None;
+            };
+            let id = self.bound(file).type_param_symbol[id.idx()].some()?;
+            let key = Sym { file, id };
+            if keys.contains(&key) {
+                return None;
+            }
+            keys.push(key);
+        }
+        Some(self.arena.alloc_slice_copy(&keys))
+    }
+
+    /// The variance of the type parameter of `sym` at `index`, whose symbol is `key`, as a list of one. Empty while the
+    /// variances of `sym` are being measured.
+    fn variance_of_parameter(&mut self, sym: Sym, key: Sym, index: usize) -> &'s [u8] {
+        match self.p.variances.get(&self.task, &key) {
+            Some(known) => known,
+            None => self.measure_variances(sym, key, Some(index)),
+        }
+    }
+
     /// `getVariancesWorker`. The caller's cache lookup of `sym` missed.
     fn variances_worker(&mut self, sym: Sym) -> &'s [u8] {
+        // While one variance of `sym` is being measured, they all read as empty, also those that are known.
+        let is_being_measured =
+            self.variances_in_progress.contains(&sym) || self.variances_marked_empty.contains(&sym);
+        let Some(keys) = self.variance_keys(sym).filter(|_| !is_being_measured) else {
+            return self.measure_variances(sym, sym, None);
+        };
+        let mut variances = Vec::with_capacity(keys.len());
+        for (index, &key) in keys.iter().enumerate() {
+            let Some(&variance) = self.variance_of_parameter(sym, key, index).first() else {
+                return &[];
+            };
+            variances.push(variance);
+        }
+        let variances: &'s [u8] = self.arena.alloc_slice_copy(&variances);
+        let mut keys = keys.iter();
+        match keys.all(|key| self.p.variances.get(&self.task, key).is_some()) {
+            true => self.take_shared_variances(sym, variances),
+            false => variances,
+        }
+    }
+
+    /// Measures the variances of `sym`, or only that of its type parameter at `only`. The result is stored under `key`,
+    /// where the caller's cache lookup missed.
+    fn measure_variances(&mut self, sym: Sym, key: Sym, only: Option<usize>) -> &'s [u8] {
         if Some(sym) == self.global_type_of_arity(known::Array, 1)
             || Some(sym) == self.global_type_of_arity(known::ReadonlyArray, 1)
         {
@@ -2770,7 +2855,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.resolution_start = resolution_start;
                 self.variances_in_progress = in_progress;
             }
-            let known = self.p.variances.get(&self.task, &sym);
+            let known = self.p.variances.get(&self.task, &key);
             // `links.variances = []VarianceFlags{}`: `sym` reads as empty until its in-progress measurement finishes.
             return known.unwrap_or_else(|| {
                 self.variances_marked_empty.push(sym);
@@ -2779,16 +2864,16 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // This has the value from the first valid commit, and what finished measurements have
         // shared. See `commit::Claims`.
-        let serial = self.p.serial_variances.lock().get(&sym).copied();
+        let serial = self.p.serial_variances.lock().get(&key).copied();
         if let Some(variances) = serial {
-            return self.take_shared_variances(sym, variances);
+            return self.take_shared_variances(key, variances);
         }
         let (cuts, outermost) = (
             self.cuts(),
             self.frames.first().map_or(0, |frame| frame.serial),
         );
         if cuts != 0
-            && let Some((under, known)) = self.variances_cut_short.get(&sym)
+            && let Some((under, known)) = self.variances_cut_short.get(&key)
             && *under == outermost
         {
             let known = *known;
@@ -2799,12 +2884,12 @@ impl<'p, 's> Checker<'p, 's> {
         let mut has_claim = false;
         if self.task.commits() && !self.in_variance_computation {
             let wait_start = std::time::Instant::now();
-            let claim = self.p.claim_variances(sym, cuts == 0);
+            let claim = self.p.claim_variances(key, cuts == 0);
             let none = std::time::Duration::ZERO;
             self.task.count_waits([none, none, wait_start.elapsed()]);
             match claim {
                 VarianceClaim::Known(variances) => {
-                    return self.take_shared_variances(sym, variances);
+                    return self.take_shared_variances(key, variances);
                 }
                 VarianceClaim::Mine => has_claim = true,
                 VarianceClaim::Unclaimed => {}
@@ -2836,6 +2921,9 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let mut variances = Vec::with_capacity(params.len());
         for (i, &param) in params.iter().enumerate() {
+            if only.is_some_and(|only| only != i) {
+                continue;
+            }
             let modifiers = self.type_param_modifiers(sym, param);
             let variance = if modifiers.contains(Flags::OUT) {
                 if modifiers.contains(Flags::IN) {
@@ -2873,8 +2961,8 @@ impl<'p, 's> Checker<'p, 's> {
                 self.reliability = saved;
                 variance
             };
-            // A restart already measured `sym`.
-            if self.p.variances.get(&self.task, &sym).is_some() {
+            // A restart already measured it.
+            if self.p.variances.get(&self.task, &key).is_some() {
                 break;
             }
             variances.push(variance);
@@ -2886,13 +2974,13 @@ impl<'p, 's> Checker<'p, 's> {
         // It stays allocated until the check ends, published or not. It's only a few bytes.
         let variances: &'s [u8] = self.arena.alloc_slice_copy(&variances);
         let mut is_open = false;
-        // If a restart already measured `sym`, the loop above stopped early and `variances` is incomplete.
-        let known = self.p.variances.get(&self.task, &sym);
+        // If a restart already measured it, the loop above stopped early and `variances` is incomplete.
+        let known = self.p.variances.get(&self.task, &key);
         let variances = match (self.end_scope(scope), known) {
             (Ok(_), Some(known)) => known,
             (Ok(stored), None) => {
-                self.variances_measured.push((sym, variances));
-                self.p.variances.insert(&self.task, sym, variances, stored)
+                self.variances_measured.push((key, variances));
+                self.p.variances.insert(&self.task, key, variances, stored)
             }
             (Err(_), Some(known)) => {
                 is_open = true;
@@ -2901,14 +2989,14 @@ impl<'p, 's> Checker<'p, 's> {
             (Err(_), None) => {
                 is_open = true;
                 if self.cuts() != cuts {
-                    self.variances_cut_short.insert(sym, (outermost, variances));
+                    self.variances_cut_short.insert(key, (outermost, variances));
                 }
                 variances
             }
         };
-        debug_assert_eq!(variances.len(), params.len());
+        debug_assert_eq!(variances.len(), only.map_or(params.len(), |_| 1));
         if !was_computing && self.task.commits() {
-            self.share_measured_variances((sym, has_claim), before, is_open);
+            self.share_measured_variances((key, has_claim), before, is_open);
         }
         variances
     }
@@ -2986,6 +3074,10 @@ impl<'p, 's> Checker<'p, 's> {
             let at = self.task.order_dependent_variances.len() as u32;
             self.order_dependent.insert(sym, at);
             self.order_dependent_filter |= Self::order_dependent_bit(sym);
+            if let Some(&owner) = self.owners_of_variance_keys.get(&sym) {
+                self.order_dependent_owners.push(owner);
+                self.order_dependent_filter |= Self::order_dependent_bit(owner);
+            }
             self.task.order_dependent_variances.push(OrderDependent {
                 sym,
                 variances,
@@ -3012,9 +3104,11 @@ impl<'p, 's> Checker<'p, 's> {
         targets: &[TypeId],
         holds: bool,
     ) {
-        if self.order_dependent_filter & Self::order_dependent_bit(sym) != 0
-            && let Some(&at) = self.order_dependent.get(&sym)
-        {
+        if self.order_dependent_filter & Self::order_dependent_bit(sym) == 0 {
+            return;
+        }
+        self.note_read_list_of_order_dependent_variances(sym);
+        if let Some(&at) = self.order_dependent.get(&sym) {
             self.order_dependent_uses += 1;
             self.task.hold_back();
             self.task.stop_writing_immediately();
@@ -3046,9 +3140,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// Call when `infer_from_type_arguments` has read the variances of the first `count` type parameters of `sym`.
     #[inline]
     pub(super) fn note_inferred_by_variances(&mut self, sym: Sym, count: usize) {
-        if self.order_dependent_filter & Self::order_dependent_bit(sym) != 0
-            && let Some(&at) = self.order_dependent.get(&sym)
-        {
+        if self.order_dependent_filter & Self::order_dependent_bit(sym) == 0 {
+            return;
+        }
+        self.note_read_list_of_order_dependent_variances(sym);
+        if let Some(&at) = self.order_dependent.get(&sym) {
             self.order_dependent_uses += 1;
             self.task.hold_back();
             self.task.stop_writing_immediately();
@@ -3057,19 +3153,94 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// Call when the variances of `sym` were read as a list. If they were measured one at a time, the order-dependent
+    /// ones are noted under their own symbols, as if they had been used (`share_measured_variances`).
+    #[cold]
+    fn note_read_list_of_order_dependent_variances(&mut self, sym: Sym) {
+        if self.order_dependent_owners.contains(&sym) {
+            self.order_dependent_uses += 1;
+            self.task.hold_back();
+            self.task.stop_writing_immediately();
+        }
+    }
+
+    /// Call before `relate_variances` on the type arguments of two instantiations of `sym`. If the variances of `sym`
+    /// are measured one at a time (`variance_keys`) and aren't all known, this does the same without reporting errors,
+    /// and only reads the variances that the result depends on:
+    /// - Equal type arguments are related under every variance. During a measurement, an unreliable variance also
+    ///   marks an argument that contains a marker.
+    /// - The comparison ends at the first pair that isn't related.
+    /// - After that, one variance that allows the structural fallback is enough to take it.
+    fn relate_by_variances_read<const REPORT: bool>(
+        &mut self,
+        r: &mut Relater,
+        sym: Sym,
+        sources: &[TypeId],
+        targets: &[TypeId],
+        state: u8,
+    ) -> VariancesRead<'p> {
+        if let Some(known) = self.p.variances.get_ref(&self.task, &sym) {
+            return VariancesRead::All(List::Permanent(known));
+        }
+        let keys = match REPORT {
+            true => None,
+            false => self.keys_of_variances_to_read(sym, [sources.len(), targets.len()]),
+        };
+        let Some(keys) = keys else {
+            return VariancesRead::All(List::Permanent(self.variances_worker(sym)));
+        };
+        let mut result = Ternary::TRUE;
+        for (index, &key) in keys.iter().enumerate() {
+            let (Some(&s), Some(&t)) = (sources.get(index), targets.get(index)) else {
+                break;
+            };
+            let has_marker = |c: &Self| c.types().object_flags(s).contains(ObjectFlags::HAS_MARKER);
+            if s == t && !(self.in_variance_computation && has_marker(self)) {
+                continue;
+            }
+            let variance = self.variance_of_parameter(sym, key, index);
+            if variance.is_empty() {
+                return VariancesRead::All(List::Permanent(&[]));
+            }
+            let related = self.type_arguments_related_to::<false>(r, &[s], &[t], variance, state);
+            self.note_compared_by_variances::<false>(key, &[s], &[t], related.holds());
+            if !related.holds() {
+                let mut keys = keys.iter();
+                let falls_back = keys.any(|key| {
+                    let known = self.p.variances.get(&self.task, key);
+                    known.is_some_and(|it| it.iter().any(|v| v & ALLOWS_STRUCTURAL_FALLBACK != 0))
+                });
+                if self.order_dependent_filter & Self::order_dependent_bit(sym) != 0 {
+                    self.note_read_list_of_order_dependent_variances(sym);
+                }
+                return match falls_back {
+                    true => VariancesRead::FallsBack,
+                    false => VariancesRead::All(List::Permanent(self.variances_worker(sym))),
+                };
+            }
+            result &= related;
+        }
+        VariancesRead::Related(result)
+    }
+
+    /// Returns `variance_keys` if a comparison of two instantiations of `sym` with `count` type arguments only has to
+    /// read some of them.
+    fn keys_of_variances_to_read(&mut self, sym: Sym, count: [usize; 2]) -> Option<&'s [Sym]> {
+        if self.variances_in_progress.contains(&sym)
+            || self.variances_marked_empty.contains(&sym)
+            || self.cuts() != 0
+        {
+            return None;
+        }
+        let keys = self.variance_keys(sym)?;
+        (count == [keys.len(); 2]).then_some(keys)
+    }
+
     fn is_marker_assignable(&mut self, source: TypeId, target: TypeId) -> bool {
         self.is_marker_comparison = true;
         let result = self.is_assignable(source, target);
         self.is_marker_comparison = false;
         result
-    }
-
-    /// `variances_of`, as a list.
-    fn variances_list(&mut self, sym: Sym) -> List<'p, u8> {
-        match self.p.variances.get_ref(&self.task, &sym) {
-            Some(known) => List::Permanent(known),
-            None => List::Permanent(self.variances_worker(sym)),
-        }
     }
 
     /// `hasCovariantVoidArgument`
@@ -5243,23 +5414,34 @@ impl<'p, 's> Checker<'p, 's> {
                     && !self.are_marker_arguments(alias, &params, &target_args)
             }
         {
-            let variances = self.variances_list(alias);
-            // The variances are being measured.
-            if variances.is_empty() {
-                return Ternary::UNKNOWN;
-            }
-            let result = self.relate_variances::<REPORT>(
+            let read = self.relate_by_variances_read::<REPORT>(
                 r,
+                alias,
                 &source_args,
                 &target_args,
-                &variances,
                 state,
-                &mut shared,
             );
-            let holds = result.is_some_and(Ternary::holds);
-            self.note_compared_by_variances::<REPORT>(alias, &source_args, &target_args, holds);
-            if let Some(result) = result {
+            if let VariancesRead::Related(result) = read {
                 return result;
+            }
+            if let VariancesRead::All(variances) = read {
+                // The variances are being measured.
+                if variances.is_empty() {
+                    return Ternary::UNKNOWN;
+                }
+                let result = self.relate_variances::<REPORT>(
+                    r,
+                    &source_args,
+                    &target_args,
+                    &variances,
+                    state,
+                    &mut shared,
+                );
+                let holds = result.is_some_and(Ternary::holds);
+                self.note_compared_by_variances::<REPORT>(alias, &source_args, &target_args, holds);
+                if let Some(result) = result {
+                    return result;
+                }
             }
         }
         // `[...U]` is related to `T` if `U` is; `U` is related to `readonly [...T]`, and to
@@ -5855,18 +6037,24 @@ impl<'p, 's> Checker<'p, 's> {
                     return Ternary::TRUE;
                 }
                 // For two instantiations of the same generic type, relate the type arguments by variance.
-                let variances = self.variances_list(*st);
-                // The variance computation is in progress. So only occurrences that aren't inside
-                // instantiations of the type itself count.
-                if variances.is_empty() {
-                    return Ternary::UNKNOWN;
-                }
                 let (sa, ta) = (self.type_arguments(source), self.type_arguments(target));
-                let result = self.relate_variances::<REPORT>(r, sa, ta, &variances, state, shared);
-                let holds = result.is_some_and(Ternary::holds);
-                self.note_compared_by_variances::<REPORT>(*st, sa, ta, holds);
-                if let Some(result) = result {
+                let read = self.relate_by_variances_read::<REPORT>(r, *st, sa, ta, state);
+                if let VariancesRead::Related(result) = read {
                     return result;
+                }
+                if let VariancesRead::All(variances) = read {
+                    // The variance computation is in progress. So only occurrences that aren't inside
+                    // instantiations of the type itself count.
+                    if variances.is_empty() {
+                        return Ternary::UNKNOWN;
+                    }
+                    let result =
+                        self.relate_variances::<REPORT>(r, sa, ta, &variances, state, shared);
+                    let holds = result.is_some_and(Ternary::holds);
+                    self.note_compared_by_variances::<REPORT>(*st, sa, ta, holds);
+                    if let Some(result) = result {
+                        return result;
+                    }
                 }
             }
             (_, TypeData::Ref { .. })
@@ -8500,4 +8688,14 @@ fn is_valid_bigint_string(s: &[u8]) -> bool {
         }
         digits => digits.iter().all(u8::is_ascii_digit),
     }
+}
+
+/// The result of `Checker::relate_by_variances_read`.
+enum VariancesRead<'p> {
+    /// The type arguments are related.
+    Related(Ternary),
+    /// They aren't, and the types are compared structurally.
+    FallsBack,
+    /// Nothing is decided. These are all the variances, for `relate_variances`.
+    All(List<'p, u8>),
 }

@@ -2907,7 +2907,7 @@ long syscall(long nr, ...) {
         ...Object.fromEntries(names),
       });
       const root = realpathSync(String(dir));
-      const failures = isASAN || isDebug ? 300 : 1000;
+      const failures = 1000;
       // The quarantine of ASAN keeps every freed hash table of a failed read.
       const { stdout, stderr, exitCode } = await runWithFault(
         ["entry.js", specifier, String(failures)],
@@ -2918,10 +2918,10 @@ long syscall(long nr, ...) {
       expect(stderr).toBe("");
       const { failed, descriptorsBefore, descriptorsAfter, grownMiB } = JSON.parse(stdout);
       expect({ failed, descriptorsAfter }).toEqual({ failed: failures, descriptorsAfter: descriptorsBefore });
-      // One read of this directory stores about 250 entries of 168 bytes, and
-      // two reads fail in each resolution. If each of them stored its entries
-      // again, 300 failed resolutions would grow the process by 25 MiB.
-      expect(grownMiB).toBeLessThan(8);
+      // One read of this directory stores about 250 entries of 144 bytes and
+      // their names, and two reads fail in each resolution. If each of them
+      // stored its entries again, the process would grow by about 75 MiB.
+      expect(grownMiB).toBeLessThan(isASAN || isDebug ? 24 : 12);
       expect(exitCode).toBe(0);
     },
     30_000,

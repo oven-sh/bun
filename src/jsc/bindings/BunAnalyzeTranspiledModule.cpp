@@ -26,6 +26,11 @@
 #include "JavaScriptCore/ModuleAnalyzer.h"
 #include "JavaScriptCore/ErrorType.h"
 
+namespace Zig {
+JSC::VM& vmForBytecodeCache();
+JSC::JSGlobalObject* globalObjectForBytecodeCache(JSC::VM&);
+}
+
 namespace JSC {
 
 String dumpRecordInfo(JSModuleRecord* moduleRecord);
@@ -149,6 +154,7 @@ extern "C" void JSC_JSModuleRecord__addRequestedModuleHostDefined(JSModuleRecord
     moduleRecord->appendRequestedModule(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), std::move(attributes), toModulePhase(phaseDefer));
 }
 
+static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::None) == 0, "ScriptFetchParameters::Type tag drift vs from_script_fetch_parameters_type()");
 static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::JavaScript) == 1, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
 static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::WebAssembly) == 2, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
 static_assert(static_cast<uint8_t>(JSC::ScriptFetchParameters::Type::JSON) == 3, "ScriptFetchParameters::Type tag drift vs to_script_fetch_parameters_type()");
@@ -386,6 +392,100 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord)
     stream.print("  -> done\n");
 
     return stream.toString();
+}
+
+// bun_jsc::cached_bytecode: the bundler's record of one chunk. A null name stands for the entry's private one.
+extern "C" bool Bun__AnalyzedModuleRecord__request(void* record, const BunString* specifier, uint8_t type, const BunString* hostDefinedImportType, bool isDeferred);
+extern "C" bool Bun__AnalyzedModuleRecord__import(void* record, uint32_t request, const BunString* importName, const BunString* localName, bool isReExported);
+extern "C" void Bun__AnalyzedModuleRecord__exportLocal(void* record, const BunString* exportName, const BunString* localName);
+extern "C" bool Bun__AnalyzedModuleRecord__exportIndirect(void* record, uint32_t request, const BunString* exportName, const BunString* importName);
+extern "C" bool Bun__AnalyzedModuleRecord__exportNamespace(void* record, uint32_t request, const BunString* exportName);
+extern "C" bool Bun__AnalyzedModuleRecord__exportStar(void* record, uint32_t request);
+
+// What fallbackParse makes of a module at load, made while the bundler builds: the record of a chunk's final text.
+extern "C" bool Bun__analyzeModuleSourceForBytecodeCache(const BunString* sourceProviderURL, const BunString* inputSourceCode, void* record, bool* containsImportMeta, bool* hasTLA)
+{
+    VM& vm = Zig::vmForBytecodeCache();
+    JSLockHolder locker(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    String url = sourceProviderURL->toWTFString();
+    SourceCode sourceCode = makeSource(inputSourceCode->toWTFString(), Zig::toSourceOrigin(url, false), SourceTaintedOrigin::Untainted);
+    ParserError error;
+    std::unique_ptr<ModuleProgramNode> moduleProgramNode = parseRootNode<ModuleProgramNode>(
+        vm, sourceCode, ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
+        StrictModeLexicallyScopedFeature, JSParserScriptMode::Module, SourceParseMode::ModuleAnalyzeMode, error);
+    // The parser's cache would keep the text until a collection prunes it, and nothing parses this SourceCode again.
+    vm.sourceProviderCacheMap.remove(sourceCode.provider());
+    if (error.isValid() || !moduleProgramNode)
+        return false;
+
+    JSGlobalObject* globalObject = Zig::globalObjectForBytecodeCache(vm);
+    // No source for the record: it is read below and is garbage after, and would keep the text until it is swept.
+    ModuleAnalyzer moduleAnalyzer(globalObject, globalObject->moduleLoader(), Identifier::fromString(vm, url), SourceCode(), moduleProgramNode->features());
+    auto result = moduleAnalyzer.analyze(*moduleProgramNode);
+    // Nothing here runs code: a record is a cell, and what the text gets wrong comes back in `result`.
+    scope.assertNoException();
+    if (!result)
+        return false;
+    JSModuleRecord* moduleRecord = result.value();
+
+    using ModulePhase = AbstractModuleRecord::ModulePhase;
+    const auto& requests = moduleRecord->requestedModules();
+    for (const auto& request : requests) {
+        BunString specifier = Bun::toString(request.m_specifier.impl());
+        BunString hostDefinedImportType = Bun::toString(request.m_attributes ? request.m_attributes->hostDefinedImportType() : nullString());
+        auto type = request.m_attributes ? request.m_attributes->type() : ScriptFetchParameters::Type::None;
+        if (!Bun__AnalyzedModuleRecord__request(record, &specifier, type, &hostDefinedImportType, request.m_phase == ModulePhase::Defer))
+            return false;
+    }
+    // ModuleAnalyzer::appendRequestedModule keeps one request per specifier, type and phase.
+    auto requestOf = [&](UniquedStringImpl* specifier, ScriptFetchParameters::Type type, ModulePhase phase = ModulePhase::Evaluation) -> uint32_t {
+        for (uint32_t i = 0; i < requests.size(); ++i) {
+            if (requests[i].m_specifier.impl() == specifier && requests[i].type() == type && requests[i].m_phase == phase)
+                return i;
+        }
+        return std::numeric_limits<uint32_t>::max();
+    };
+
+    const auto& exportedBindings = moduleProgramNode->moduleScopeData().exportedBindings();
+    for (const auto& [key, entry] : moduleRecord->importEntries()) {
+        BunString importName = Bun::toString(entry.importName.impl());
+        BunString localName = Bun::toString(entry.localName.impl());
+        bool isNamespace = entry.type == AbstractModuleRecord::ImportEntryType::Namespace;
+        if (!Bun__AnalyzedModuleRecord__import(record, requestOf(entry.moduleRequest.impl(), entry.moduleRequestType, entry.phase), isNamespace ? nullptr : &importName, &localName, exportedBindings.contains(entry.localName.impl())))
+            return false;
+    }
+
+    for (const auto& [key, entry] : moduleRecord->exportEntries()) {
+        BunString exportName = Bun::toString(entry.exportName.impl());
+        switch (entry.type) {
+        case AbstractModuleRecord::ExportEntry::Type::Local: {
+            BunString localName = Bun::toString(entry.localName.impl());
+            Bun__AnalyzedModuleRecord__exportLocal(record, &exportName, entry.localName == vm.propertyNames->starDefaultPrivateName ? nullptr : &localName);
+            break;
+        }
+        case AbstractModuleRecord::ExportEntry::Type::Indirect: {
+            BunString importName = Bun::toString(entry.importName.impl());
+            if (!Bun__AnalyzedModuleRecord__exportIndirect(record, requestOf(entry.moduleName.impl(), entry.moduleRequestType), &exportName, &importName))
+                return false;
+            break;
+        }
+        case AbstractModuleRecord::ExportEntry::Type::Namespace:
+            if (!Bun__AnalyzedModuleRecord__exportNamespace(record, requestOf(entry.moduleName.impl(), entry.moduleRequestType), &exportName))
+                return false;
+            break;
+        }
+    }
+
+    for (const auto& [specifier, type] : moduleRecord->starExportEntries()) {
+        if (!Bun__AnalyzedModuleRecord__exportStar(record, requestOf(specifier.get(), type)))
+            return false;
+    }
+
+    *containsImportMeta = moduleProgramNode->features() & ImportMetaFeature;
+    *hasTLA = moduleProgramNode->usesAwait();
+    return true;
 }
 
 }

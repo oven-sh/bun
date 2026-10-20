@@ -1,5 +1,8 @@
 use core::ptr::NonNull;
 
+use bun_bundler::analyze_transpiled_module::{
+    AnalyzedRecord, ModuleInfo, ModulePhase, RequestType,
+};
 use bun_bundler::bytecode_order::CodeNamesRef;
 use bun_core::String as BunString;
 use bun_options_types::Format;
@@ -193,6 +196,23 @@ unsafe extern "C" {
 
     /// InternalModuleRegistry.cpp: this executable's builtins section (`bun_exe_format::builtins` layout).
     fn Bun__builtinsSection(length: *mut usize) -> *const u8;
+
+    /// BunAnalyzeTranspiledModule.cpp: tells `record` what JavaScriptCore's loader would make of the module; false if it does not parse.
+    fn Bun__analyzeModuleSourceForBytecodeCache(
+        source_provider_url: &BunString,
+        input_code: &BunString,
+        record: *mut core::ffi::c_void,
+        contains_import_meta: *mut bool,
+        has_tla: *mut bool,
+    ) -> bool;
+}
+
+/// A chunk's text as an executable stores it and JSC is given it: Latin-1, or UTF-16 when it is not ASCII.
+fn embedded_source(input: &[u8]) -> BunString {
+    match bun_core::strings::first_non_ascii(input) {
+        Some(first_non_ascii) => utf16_source(input, first_non_ascii as usize),
+        None => BunString::clone_latin1(input),
+    }
 }
 
 /// `input` (WTF-8, non-ASCII from `first_non_ascii`) as a UTF-16 string JSC owns, written in place.
@@ -359,10 +379,7 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_add_module(
         Format::Cjs => false,
         _ => return false,
     };
-    let source = match bun_core::strings::first_non_ascii(source) {
-        Some(first_non_ascii) => utf16_source(source, first_non_ascii as usize),
-        None => BunString::clone_latin1(source),
-    };
+    let source = embedded_source(source);
     // SAFETY: `encoder` is live; the strings and the names are live for the call, and C++ reads the names during it only.
     unsafe {
         Bun__BytecodeLinkEncoder__addModule(
@@ -466,6 +483,114 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_finish(
         placed_hot_functions,
         functions_without_name,
     })
+}
+
+/// JavaScriptCore's own module record of a chunk's final text, on the calling thread's bytecode VM; `None` if it does not parse.
+#[unsafe(no_mangle)]
+pub(crate) fn __bun_jsc_analyze_module_source(
+    source: &[u8],
+    source_provider_url: &BunString,
+    is_typescript: bool,
+) -> Option<Box<ModuleInfo>> {
+    crate::initialize(crate::InitializeOptions::default());
+    let source = embedded_source(source);
+    let mut record = AnalyzedRecord::new(is_typescript);
+    let (mut contains_import_meta, mut has_tla) = (false, false);
+    // SAFETY: the strings and out-params are live for the call; C++ hands `record` to the callbacks below during it only.
+    let ok = unsafe {
+        Bun__analyzeModuleSourceForBytecodeCache(
+            source_provider_url,
+            &source,
+            (&raw mut record).cast(),
+            &raw mut contains_import_meta,
+            &raw mut has_tla,
+        )
+    };
+    ok.then(|| record.finish(contains_import_meta, has_tla))
+}
+
+/// `type`: the `JSC::ScriptFetchParameters::Type` of the request's attributes, 0 when it has none.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__AnalyzedModuleRecord__request(
+    record: &mut AnalyzedRecord,
+    specifier: &BunString,
+    r#type: u8,
+    host_defined_import_type: &BunString,
+    is_deferred: bool,
+) -> bool {
+    let host_defined_import_type = host_defined_import_type.to_utf8();
+    let Some(r#type) =
+        RequestType::from_script_fetch_parameters_type(r#type, &host_defined_import_type)
+    else {
+        return false;
+    };
+    let phase = if is_deferred {
+        ModulePhase::Defer
+    } else {
+        ModulePhase::Evaluation
+    };
+    record.request(&specifier.to_utf8(), r#type, phase);
+    true
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__AnalyzedModuleRecord__import(
+    record: &mut AnalyzedRecord,
+    request: u32,
+    import_name: Option<&BunString>,
+    local_name: &BunString,
+    is_re_exported: bool,
+) -> bool {
+    let import_name = import_name.map(BunString::to_utf8);
+    record
+        .import(
+            request,
+            import_name.as_deref(),
+            &local_name.to_utf8(),
+            is_re_exported,
+        )
+        .is_some()
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__AnalyzedModuleRecord__exportLocal(
+    record: &mut AnalyzedRecord,
+    export_name: &BunString,
+    local_name: Option<&BunString>,
+) {
+    let local_name = local_name.map(BunString::to_utf8);
+    record.export_local(&export_name.to_utf8(), local_name.as_deref());
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__AnalyzedModuleRecord__exportIndirect(
+    record: &mut AnalyzedRecord,
+    request: u32,
+    export_name: &BunString,
+    import_name: &BunString,
+) -> bool {
+    record
+        .export_indirect(request, &export_name.to_utf8(), &import_name.to_utf8())
+        .is_some()
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__AnalyzedModuleRecord__exportNamespace(
+    record: &mut AnalyzedRecord,
+    request: u32,
+    export_name: &BunString,
+) -> bool {
+    record
+        .export_namespace(request, &export_name.to_utf8())
+        .is_some()
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__AnalyzedModuleRecord__exportStar(
+    record: &mut AnalyzedRecord,
+    request: u32,
+) -> bool {
+    record.export_star(request).is_some()
 }
 
 /// Frees the calling thread's bytecode-generation VM, if it made one.

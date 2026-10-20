@@ -38,6 +38,51 @@ const BYTECODE_EXTENSION: &str = ".jsc";
 // below move the boxed buffer directly — no lifetime promotion needed.
 use crate::linker_context_mod::debug;
 
+/// What `IntermediateOutput::code` writes a chunk's paths against: a browser chunk of a server build has its own.
+fn public_path_of<'b>(
+    bundler: &'b mut BundleV2<'_>,
+    chunk: &Chunk,
+    public_path: &'b [u8],
+) -> &'b [u8] {
+    if chunk
+        .flags
+        .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
+    {
+        &bundler
+            .transpiler_for_target(options::Target::Browser)
+            .options
+            .public_path
+    } else {
+        public_path
+    }
+}
+
+/// A chunk's final text and its display size. Once per chunk: one that names no other output is a joiner, drained here.
+fn chunk_code(
+    c: &LinkerContext,
+    chunks: &mut [Chunk],
+    chunk_index: usize,
+    public_path: &[u8],
+) -> crate::Result<(crate::chunk::CodeResult, usize)> {
+    let mut display_size: usize = 0;
+    // By value, so that the `&mut self` of `code()` is disjoint from its `&chunks[i]` / `&[Chunk]` reads.
+    let mut intermediate_output = core::mem::take(&mut chunks[chunk_index].intermediate_output);
+    let chunk = &chunks[chunk_index];
+    let code_result = intermediate_output.code(
+        None,
+        c.parse_graph(),
+        &c.graph,
+        public_path,
+        chunk,
+        chunks,
+        &mut display_size,
+        ReferencePathStyle::for_chunk(chunk, c.resolver().opts.compile),
+        SourceMapShiftTracking::for_source_map(chunk.content.sourcemap(c.options.source_maps)),
+    )?;
+    chunks[chunk_index].intermediate_output = intermediate_output;
+    Ok((code_result, display_size))
+}
+
 // Const generics cannot vary the return type, so we always return
 // `Vec<OutputFile>` and the IS_DEV_SERVER path returns an empty Vec.
 pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
@@ -547,6 +592,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     let mut module_info_strings = analyze_transpiled_module::ModuleInfoSlotTableBuilder::default();
     // (`prelinked_module_graph` blob, chunk index of each graph module), when one was built.
     let mut prelinked_graph: Option<(Vec<u8>, Vec<u32>)> = None;
+    // The final text of each chunk whose record JavaScriptCore made from it, for the output loop below.
+    let mut analyzed_code: Vec<Option<(crate::chunk::CodeResult, usize)>> = Vec::new();
     if c.options.generates_module_info() {
         let external_string_table = external_string_table
             .as_ref()
@@ -561,21 +608,56 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 // Use the per-chunk public_path to match what IntermediateOutput.code()
                 // uses during emission (browser chunks from server builds use the
                 // browser transpiler's public_path).
-                let public_path: &[u8] = if ch
-                    .flags
-                    .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
-                {
-                    &b.transpiler_for_target(options::Target::Browser)
-                        .options
-                        .public_path
-                } else {
-                    c.options.public_path
-                };
+                let public_path = public_path_of(b, ch, c.options.public_path);
                 let normalizer = cheap_prefix_normalizer(public_path, &ch.final_rel_path);
                 let mut resolved: Vec<u8> = Vec::new();
                 resolved.extend_from_slice(normalizer[0]);
                 resolved.extend_from_slice(normalizer[1]);
                 let _ = unique_key_to_path.put(ch.unique_key, resolved.into_boxed_slice()); // OOM-only Result
+            }
+        }
+
+        // The printer's record covers the text it printed; `--banner` and `--footer` are in every chunk besides.
+        match c.options.raw_text_module_syntax() {
+            Some(syntax) if syntax.import_meta || syntax.top_level_await => {
+                for chunk in chunks.iter_mut() {
+                    if let crate::chunk::Content::Javascript(js) = &mut chunk.content
+                        && let Some(mi) = js.module_info.as_mut()
+                    {
+                        mi.flags.contains_import_meta |= syntax.import_meta;
+                        mi.flags.has_tla |= syntax.top_level_await;
+                    }
+                }
+            }
+            Some(_) => {}
+            // Entries, or a piece that is only JavaScript in the chunk: JavaScriptCore's own record of the final text.
+            None => {
+                analyzed_code.resize_with(chunks.len(), || None);
+                for chunk_index in 0..chunks.len() {
+                    let chunk = &chunks[chunk_index];
+                    // A client chunk of a server build is served as a file, never loaded as a module.
+                    if !chunk.content.is_javascript()
+                        || c.chunk_side(chunk) != options::Side::Server
+                    {
+                        continue;
+                    }
+                    let is_typescript = c.parse_graph().input_files.items_loader()
+                        [chunk.entry_point.source_index() as usize]
+                        .is_type_script();
+                    let public_path = public_path_of(b, chunk, c.options.public_path);
+                    let (code, display_size) = chunk_code(c, chunks, chunk_index, public_path)?;
+                    let chunk = &mut chunks[chunk_index];
+                    let url = cheap_prefix_normalizer(public_path, &chunk.final_rel_path).concat();
+                    if let crate::chunk::Content::Javascript(js) = &mut chunk.content {
+                        js.module_info =
+                            crate::bundle_v2::dispatch::__bun_jsc_analyze_module_source(
+                                &code.buffer,
+                                &BunString::clone_utf8(&url),
+                                is_typescript,
+                            );
+                    }
+                    analyzed_code[chunk_index] = Some((code, display_size));
+                }
             }
         }
 
@@ -946,30 +1028,22 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 continue;
             }
 
-            let mut display_size: usize = 0;
+            let public_path = public_path_of(
+                bundler,
+                &chunks[chunk_index_in_chunks_list],
+                c.options.public_path,
+            );
 
-            let public_path: &[u8] = if chunks[chunk_index_in_chunks_list]
-                .flags
-                .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
-            {
-                &bundler
-                    .transpiler_for_target(options::Target::Browser)
-                    .options
-                    .public_path
-            } else {
-                c.options.public_path
-            };
-
-            // Take `intermediate_output` by value so the `&mut self` it provides
-            // to `code()` is disjoint from the `&chunks[i]` / `&[Chunk]` reads.
-            let mut intermediate_output =
-                core::mem::take(&mut chunks[chunk_index_in_chunks_list].intermediate_output);
-            let _code_result = if is_standalone
+            let (mut code_result, display_size) = if is_standalone
                 && matches!(
                     chunks[chunk_index_in_chunks_list].content,
                     crate::chunk::Content::Html
                 ) {
-                intermediate_output.code_standalone(
+                let mut display_size: usize = 0;
+                // By value, as in `chunk_code`.
+                let mut intermediate_output =
+                    core::mem::take(&mut chunks[chunk_index_in_chunks_list].intermediate_output);
+                let code_result = intermediate_output.code_standalone(
                     None,
                     c.parse_graph(),
                     &c.graph,
@@ -980,28 +1054,20 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     ReferencePathStyle::ImporterRelative,
                     SourceMapShiftTracking::Disabled,
                     standalone_chunk_contents.as_deref().unwrap(),
-                )?
+                )?;
+                chunks[chunk_index_in_chunks_list].intermediate_output = intermediate_output;
+                (code_result, display_size)
+            } else if let Some(analyzed) = analyzed_code
+                .get_mut(chunk_index_in_chunks_list)
+                .and_then(Option::take)
+            {
+                analyzed
             } else {
-                let chunk = &chunks[chunk_index_in_chunks_list];
-                intermediate_output.code(
-                    None,
-                    c.parse_graph(),
-                    &c.graph,
-                    public_path,
-                    chunk,
-                    chunks,
-                    &mut display_size,
-                    ReferencePathStyle::for_chunk(chunk, c.resolver().opts.compile),
-                    SourceMapShiftTracking::for_source_map(
-                        chunk.content.sourcemap(c.options.source_maps),
-                    ),
-                )?
+                chunk_code(c, chunks, chunk_index_in_chunks_list, public_path)?
             };
             // Tail of the loop body needs `&mut chunk` (`output_source_map.finalize()`);
             // no `&[Chunk]` is needed past this point so an exclusive reborrow is fine.
             let chunk: &mut Chunk = &mut chunks[chunk_index_in_chunks_list];
-            chunk.intermediate_output = intermediate_output;
-            let mut code_result = _code_result;
 
             let mut sourcemap_output_file: Option<options::OutputFile> = None;
             let input_path: Box<[u8]> = Box::from(if chunk.entry_point.is_entry_point() {
@@ -1392,17 +1458,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         let mut chunk_paths: Vec<Vec<u8>> = chunks
             .iter()
             .map(|chunk| {
-                let public_path: &[u8] = if chunk
-                    .flags
-                    .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
-                {
-                    &bundler
-                        .transpiler_for_target(options::Target::Browser)
-                        .options
-                        .public_path
-                } else {
-                    c.options.public_path
-                };
+                let public_path = public_path_of(bundler, chunk, c.options.public_path);
                 cheap_prefix_normalizer(public_path, &chunk.final_rel_path).concat()
             })
             .collect();

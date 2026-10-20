@@ -547,31 +547,75 @@ testKill.each([
 });
 
 // `resolves` waits in place: the event loop turns under the test callback, and the
-// runner cannot step until the callback returns. Only the kill at the deadline ends
-// the wait for the child. In the second case the timer first fires for the test before.
+// runner cannot run anything else until the callback returns. Only the end of the
+// child ends the wait, so this timeout kills every process, also one of beforeAll.
+// In the second case the timer first fires for the test before.
 testKill.each([
-  ["", ""],
-  [" after the timer of an earlier test fired", `test("finishes and leaves its timer armed", () => {}, 100);`],
-])("a test that waits for its child in expect() is ended by its timeout%s", async (_, earlierTest) => {
+  ["its own child", "", false],
+  [
+    "its own child after the timer of an earlier test fired",
+    `test("finishes and leaves its timer armed", () => {}, 100);`,
+    false,
+  ],
+  ["a child of beforeAll", "", true],
+])("a test that waits in expect() for %s is ended by its timeout", async (_, earlierTest, inBeforeAll) => {
   const { combined, exitCode } = await runTestFile(/* ts */ `
-    import { expect, test } from "bun:test";
+    import { beforeAll, expect, test } from "bun:test";
+
+    const spawnSleeper = () =>
+      Bun.spawn({ cmd: [process.execPath, "-e", "await Bun.sleep(5000)"], stdout: "ignore", stderr: "ignore" });
+
+    let fromBeforeAll: ReturnType<typeof spawnSleeper> | undefined;
+    beforeAll(() => {
+      if (${inBeforeAll}) fromBeforeAll = spawnSleeper();
+    });
 
     ${earlierTest}
 
-    test("waits for its child", async () => {
-      const child = Bun.spawn({
-        cmd: [process.execPath, "-e", "await Bun.sleep(5000)"],
-        stdout: "ignore",
-        stderr: "ignore",
-      });
+    test("waits for a child", async () => {
+      const child = fromBeforeAll ?? spawnSleeper();
       await expect(child.exited).resolves.toBeNumber();
     }, 300);
   `);
 
   expect(combined.match(/killed \d+ dangling process(?:es)?/g)).toEqual(["killed 1 dangling process"]);
-  expect(combined).toContain("(fail) waits for its child");
+  expect(combined).toContain("(fail) waits for a child");
   expect(exitCode).toBe(1);
 });
+
+// Here the wait in place is in a continuation of the test, so the runner goes on: the
+// timeout only kills what the test started, and the child of beforeAll serves the next
+// test. The file cannot end while that wait lasts, so its end kills what is left.
+testKill(
+  "a test that waits in expect() after an await leaves the child of beforeAll to the end of the file",
+  async () => {
+    const { combined, exitCode } = await runTestFile(/* ts */ `
+    import { beforeAll, expect, test } from "bun:test";
+
+    let fromBeforeAll: ReturnType<typeof spawnEcho>;
+    beforeAll(() => {
+      fromBeforeAll = spawnEcho();
+    });
+
+    test("waits for the child of beforeAll", async () => {
+      await new Promise(resolve => setImmediate(resolve));
+      await expect(fromBeforeAll.exited).resolves.toBeNumber();
+    }, 300);
+
+    test("the child of beforeAll is still running", async () => {
+      expect(await echo(fromBeforeAll, "still here")).toBe("still here");
+    });
+  `);
+
+    expect(combined.match(/killed \d+ dangling process(?:es)?/g)).toEqual(["killed 1 dangling process"]);
+    expect(combined).toContain("(fail) waits for the child of beforeAll");
+    expect(combined).toContain("(pass) the child of beforeAll is still running");
+    expect(combined.indexOf("killed 1 dangling process")).toBeGreaterThan(
+      combined.indexOf("(pass) the child of beforeAll"),
+    );
+    expect(exitCode).toBe(1);
+  },
+);
 
 // The timer fires after the callback returned and before the runner steps past the entry.
 // The callback was not interrupted, so the entry passes and nothing is killed.

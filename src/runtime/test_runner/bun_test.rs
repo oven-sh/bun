@@ -853,6 +853,15 @@ impl BunTest {
         _ts: &Timespec,
         vm: &VirtualMachine,
     ) {
+        Self::on_timeout(this_strong, vm, true);
+    }
+
+    /// `spawnSync` reports a deadline that passed in its own loop, which already killed what the callback started.
+    pub(crate) fn bun_test_timeout_in_spawn_sync(this_strong: &BunTestPtr, vm: &VirtualMachine) {
+        Self::on_timeout(this_strong, vm, false);
+    }
+
+    fn on_timeout(this_strong: &BunTestPtr, vm: &VirtualMachine, timer_fired: bool) {
         let _g = group_begin!();
         // Raw `*mut` (via `UnsafeCell`) because `Self::run` below re-enters and
         // calls `.get()` on the same `Rc` — holding a long-lived `&mut` across
@@ -868,7 +877,7 @@ impl BunTest {
             match (*this).phase {
                 Phase::Collection => {}
                 Phase::Execution => {
-                    if let Err(e) = (*this).execution.handle_timeout(global) {
+                    if let Err(e) = (*this).execution.handle_timeout(global, timer_fired) {
                         (*this).on_uncaught_exception(global, Some(global.take_exception(e)), false, &RefDataValue::Done);
                     }
                 }
@@ -992,7 +1001,7 @@ impl BunTest {
         }
     }
 
-    fn advance(&mut self, _global_this: &JSGlobalObject) -> JsResult<Advance> {
+    fn advance(&mut self, global_this: &JSGlobalObject) -> JsResult<Advance> {
         let _g = group_begin!();
         bun_core::scoped_log!(bun_test_group, "advance from {}", <&'static str>::from(self.phase));
         // capture `self.phase` by raw ptr so the deferred log doesn't
@@ -1086,6 +1095,12 @@ impl BunTest {
             Phase::Execution => {
                 self.in_run_loop = false;
                 self.phase = Phase::Done;
+                // A script frame below this one waits in place (`expect().resolves`) and turns the event loop itself. The file ends when that frame returns, and only the end of what it waits for lets it return.
+                if global_this.vm().is_entered() {
+                    // SAFETY: bun_vm() returns the live per-thread VM.
+                    let killed = global_this.bun_vm().as_mut().auto_killer.kill();
+                    Execution::report_killed_processes(killed.processes);
+                }
                 Ok(Advance::Exit)
             }
             Phase::Done => Ok(Advance::Exit),

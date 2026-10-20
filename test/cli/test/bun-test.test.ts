@@ -386,25 +386,29 @@ describe("bun test", () => {
     });
 
     // --bail exits before afterAll runs, so the runner stops what the hooks and tests started.
+    // The test that times out loses its own child at the timeout, and the rest at the exit.
     test.each([
-      ["an assertion fails", `test("fails", () => { expect(1).toBe(2); });`],
-      ["a test times out", `test("fails", async () => { await new Promise(() => {}); }, 100);`],
-    ])("kills the child processes of beforeAll when %s", (_, failingTest) => {
+      ["an assertion fails", `test("fails", () => { expect(1).toBe(2); });`, 1],
+      ["a test times out", `test("fails", async () => { spawnChild(); await new Promise(() => {}); }, 100);`, 2],
+    ])("kills the child processes of beforeAll when %s", (_, failingTest, kills) => {
       const stderr = runTest({
         args: ["--bail"],
         input: `
           import { afterAll, beforeAll, expect, test } from "bun:test";
 
-          let fromBeforeAll;
-          afterAll(() => fromBeforeAll.kill());
-
-          beforeAll(() => {
-            fromBeforeAll = Bun.spawn({
+          const spawnChild = () =>
+            Bun.spawn({
               cmd: [process.execPath, "-e", "await Bun.stdin.text()"],
               stdin: "pipe",
               stdout: "ignore",
               stderr: "ignore",
             });
+
+          let fromBeforeAll;
+          afterAll(() => fromBeforeAll.kill());
+
+          beforeAll(() => {
+            fromBeforeAll = spawnChild();
           });
 
           ${failingTest}
@@ -413,7 +417,9 @@ describe("bun test", () => {
         `,
         expectExitCode: 1,
       });
-      expect(stderr.match(/killed \d+ dangling process(?:es)?/g)).toEqual(["killed 1 dangling process"]);
+      expect(stderr.match(/killed \d+ dangling process(?:es)?/g)).toEqual(
+        Array(kills).fill("killed 1 dangling process"),
+      );
       expect(stderr).toContain("Bailed out after 1 failure");
       expect(stderr).not.toContain("never runs");
     });

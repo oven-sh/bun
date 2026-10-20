@@ -315,12 +315,12 @@ impl Execution {
         self.sequences = core::mem::take(&mut order.sequences).into_boxed_slice();
     }
 
-    /// Wakes the runner. `step_sequence_one` decides that an entry timed out, and kills its processes on that decision.
-    pub(crate) fn handle_timeout(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
+    /// Wakes the runner. `step_sequence_one` decides that an entry timed out, and kills its processes on that decision. `timer_fired` is false when `spawnSync` reports a deadline that passed in its own loop.
+    pub(crate) fn handle_timeout(&mut self, global_this: &JSGlobalObject, timer_fired: bool) -> JsResult<()> {
         let _g = group_begin!();
         let buntest = self.bun_test();
         // SAFETY: `in_run_loop` is a sibling field of `self` in `BunTest`, read without forming a `&BunTest`.
-        if unsafe { (*buntest).in_run_loop } {
+        if timer_fired && unsafe { (*buntest).in_run_loop } {
             self.handle_timeout_under_callback(global_this);
         }
         // SAFETY: deref parent at point-of-use; `self` is not accessed while this `&mut BunTest` is live.
@@ -328,7 +328,7 @@ impl Execution {
         Ok(())
     }
 
-    /// A callback on the stack of `run` is turning the event loop (`expect().resolves`), so the runner does not step until it returns. Its wait can be for a child, so the kill at its deadline happens here. A timer that fired for an earlier entry is armed again, because `run` does that only after the callback returns.
+    /// The file timer fired while a callback on the stack of `run` turns the event loop (`expect().resolves`). The runner cannot step until that callback returns, and it returns only when what it waits for ends. Past its deadline nothing narrower than every tracked process is sure to end that wait. A timer that fired for an earlier entry is armed again, because `run` does that only after the callback returns.
     fn handle_timeout_under_callback(&mut self, global_this: &JSGlobalObject) {
         let Some(entry) = self.on_stack_entry.get() else {
             return;
@@ -338,11 +338,15 @@ impl Execution {
         if deadline.eql(&Timespec::EPOCH) {
             return;
         }
-        if deadline.order(&Timespec::now_force_real_time()) == core::cmp::Ordering::Less {
-            self.kill_dangling_processes_on_timeout(global_this);
-        } else {
+        if deadline.order(&Timespec::now_force_real_time()) != core::cmp::Ordering::Less {
             // SAFETY: deref parent at point-of-use; `update_min_timeout` touches the timer of `BunTest`, not `self`.
             unsafe { (*self.bun_test()).update_min_timeout(global_this, &deadline) };
+            return;
+        }
+        // As at any timeout, a group of concurrent sequences gets no kill.
+        if self.active_group_ref().is_some_and(|group| group.sequence_end - group.sequence_start == 1) {
+            // SAFETY: bun_vm() returns the live per-thread VM.
+            report_killed_processes(global_this.bun_vm().as_mut().auto_killer.kill().processes);
         }
     }
 

@@ -618,7 +618,7 @@ impl TestSharedClass for TestShared {
         SHARED_ALIVE.load(Ordering::SeqCst)
     }
 
-    fn value_of<'a>(cx: &mut JsScope<'a>, shared: JsLocal<'a>) -> Option<i32> {
+    fn peek<'a>(cx: &mut JsScope<'a>, shared: JsLocal<'a>) -> Option<i32> {
         let shared = Self::from_js(&cx.heap, shared.to_js())?;
         Some(shared.with(&cx.payloads, |shared| shared.value.get()))
     }

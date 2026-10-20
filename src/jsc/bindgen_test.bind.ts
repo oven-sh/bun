@@ -267,7 +267,7 @@ export const TestShared = b.class({
     release: {},
     alive: { returns: b.usize },
     /** The value of `shared` if it is an instance, found by Rust. */
-    valueOf: { args: { shared: b.any }, returns: b.i32.nullable, capability: "js" },
+    peek: { args: { shared: b.any }, returns: b.i32.nullable, capability: "js" },
   },
 });
 

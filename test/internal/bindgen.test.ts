@@ -2043,11 +2043,11 @@ describe("classes", () => {
     });
 
     it("fromJS: Rust finds out whether a value is an instance", () => {
-      expect(TestShared.valueOf(new TestShared(9))).toBe(9);
+      expect(TestShared.peek(new TestShared(9))).toBe(9);
       class Derived extends TestShared {}
-      expect(TestShared.valueOf(new Derived(10))).toBe(10);
+      expect(TestShared.peek(new Derived(10))).toBe(10);
       for (const other of [undefined, null, 1, "9", {}, Object.create(TestShared.prototype), new TestCounter(9)])
-        expect(TestShared.valueOf(other)).toBeNull();
+        expect(TestShared.peek(other)).toBeNull();
     });
 
     it("what Rust holds outlives the object, and is told when the object is collected", () => {

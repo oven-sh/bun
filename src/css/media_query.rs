@@ -697,7 +697,7 @@ impl MediaList {
     ) {
         let mut i = 0;
         while i < self.media_queries.len() {
-            if self.media_queries[i].has_resolution_range() {
+            if self.media_queries[i].has_resolution() {
                 for prefix in [css::VendorPrefix::WEBKIT, css::VendorPrefix::MOZ] {
                     if !prefixes.contains(prefix) {
                         continue;
@@ -730,10 +730,10 @@ impl MediaQuery {
             && self.condition.is_none()
     }
 
-    fn has_resolution_range(&self) -> bool {
+    fn has_resolution(&self) -> bool {
         self.condition
             .as_ref()
-            .is_some_and(MediaCondition::has_resolution_range)
+            .is_some_and(MediaCondition::has_resolution)
     }
 
     fn transform_resolution(&mut self, prefix: css::VendorPrefix) {
@@ -908,52 +908,75 @@ impl QueryCondition for MediaCondition {
 }
 
 impl MediaCondition {
-    fn has_resolution_range(&self) -> bool {
+    fn has_resolution(&self) -> bool {
         match self {
-            MediaCondition::Feature(feature) => matches!(
-                **feature,
-                QueryFeature::Range {
-                    name: MediaFeatureName::Standard(MediaFeatureId::Resolution),
-                    value: MediaFeatureValue::Resolution(_),
-                    ..
-                }
-            ),
-            MediaCondition::Not(condition) => condition.has_resolution_range(),
+            MediaCondition::Feature(feature) => feature.is_resolution(),
+            MediaCondition::Not(condition) => condition.has_resolution(),
             MediaCondition::Operation { conditions, .. } => {
-                conditions.iter().any(MediaCondition::has_resolution_range)
+                conditions.iter().any(MediaCondition::has_resolution)
             }
         }
     }
 
-    /// `prefix` is `WEBKIT` or `MOZ`.
     fn transform_resolution(&mut self, prefix: css::VendorPrefix) {
         match self {
-            MediaCondition::Feature(feature) => {
-                if let QueryFeature::Range {
-                    name: name @ MediaFeatureName::Standard(MediaFeatureId::Resolution),
-                    value,
-                    ..
-                } = &mut **feature
-                    && let MediaFeatureValue::Resolution(resolution) = *value
-                {
-                    *name = MediaFeatureName::Standard(if prefix == css::VendorPrefix::WEBKIT {
-                        MediaFeatureId::WebkitDevicePixelRatio
-                    } else {
-                        MediaFeatureId::MozDevicePixelRatio
-                    });
-                    *value = MediaFeatureValue::Number(match resolution {
-                        Resolution::Dpi(dpi) => dpi / 96.0,
-                        Resolution::Dpcm(dpcm) => dpcm * 2.54 / 96.0,
-                        Resolution::Dppx(dppx) => dppx,
-                    });
-                }
-            }
+            MediaCondition::Feature(feature) => feature.transform_resolution(prefix),
             MediaCondition::Not(condition) => condition.transform_resolution(prefix),
             MediaCondition::Operation { conditions, .. } => {
                 for condition in conditions.iter_mut() {
                     condition.transform_resolution(prefix);
                 }
             }
+        }
+    }
+}
+
+impl MediaFeature {
+    /// Whether this is a `resolution` feature whose values are all `<resolution>`.
+    fn is_resolution(&self) -> bool {
+        use MediaFeatureName::Standard;
+        use MediaFeatureValue as V;
+        matches!(
+            self,
+            QueryFeature::Plain {
+                name: Standard(MediaFeatureId::Resolution),
+                value: V::Resolution(_),
+            } | QueryFeature::Range {
+                name: Standard(MediaFeatureId::Resolution),
+                value: V::Resolution(_),
+                ..
+            } | QueryFeature::Interval {
+                name: Standard(MediaFeatureId::Resolution),
+                start: V::Resolution(_),
+                end: V::Resolution(_),
+                ..
+            }
+        )
+    }
+
+    /// `prefix` is `WEBKIT` or `MOZ`.
+    fn transform_resolution(&mut self, prefix: css::VendorPrefix) {
+        if !self.is_resolution() {
+            return;
+        }
+        let ratio = MediaFeatureName::Standard(if prefix == css::VendorPrefix::WEBKIT {
+            MediaFeatureId::WebkitDevicePixelRatio
+        } else {
+            MediaFeatureId::MozDevicePixelRatio
+        });
+        match self {
+            QueryFeature::Plain { name, value } | QueryFeature::Range { name, value, .. } => {
+                *name = ratio;
+                value.resolution_to_dppx();
+            }
+            QueryFeature::Interval {
+                name, start, end, ..
+            } => {
+                *name = ratio;
+                start.resolution_to_dppx();
+                end.resolution_to_dppx();
+            }
+            QueryFeature::Boolean { .. } => {}
         }
     }
 }
@@ -1169,6 +1192,12 @@ impl MediaFeatureValue {
             MediaFeatureValue::Ratio(ratio) => ratio.to_css(dest),
             MediaFeatureValue::Ident(id) => id.to_css(dest),
             MediaFeatureValue::Env(env) => env.to_css(dest, false),
+        }
+    }
+
+    fn resolution_to_dppx(&mut self) {
+        if let MediaFeatureValue::Resolution(resolution) = *self {
+            *self = MediaFeatureValue::Number(resolution.to_dppx());
         }
     }
 

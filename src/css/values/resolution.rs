@@ -1,5 +1,6 @@
 use crate::css_parser as css;
 use crate::css_parser::{CssResult as Result, Maybe, Parser, PrintErr, Printer, Token};
+use crate::values::length::{CM_PER_IN, PX_PER_IN};
 use crate::values::number::CSSNumber;
 
 /// A CSS `<resolution>` value.
@@ -77,6 +78,15 @@ impl Resolution {
         };
 
         css::serializer::serialize_dimension(value, unit, dest)
+    }
+
+    /// The value in dppx. 1dppx is 96dpi, because 1in is 96px.
+    pub(crate) fn to_dppx(self) -> CSSNumber {
+        match self {
+            Resolution::Dpi(dpi) => dpi / PX_PER_IN,
+            Resolution::Dpcm(dpcm) => dpcm * CM_PER_IN / PX_PER_IN,
+            Resolution::Dppx(dppx) => dppx,
+        }
     }
 
     pub(crate) fn add_f32(self, other: f32) -> Resolution {

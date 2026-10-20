@@ -6762,7 +6762,8 @@ describe("css tests", () => {
       "@media (min-resolution: 2dppx) { .no-targets { color: yellow } }",
       "@media (resolution>=2x){.no-targets{color:#ff0}}",
     );
-    // As in lightningcss, only a feature with one bound gets a prefixed copy.
+    // The exact form and the two-bound form get a copy too. lightningcss 1.32.0
+    // and autoprefixer give these two forms no copy.
     prefix_test(
       `
       @media (resolution: 2dppx), (1dppx <= resolution <= 2dppx) {
@@ -6770,7 +6771,78 @@ describe("css tests", () => {
       }
       `,
       `
-        @media (resolution: 2dppx), (min-resolution: 1dppx) and (max-resolution: 2dppx) {
+        @media (-webkit-device-pixel-ratio: 2), (resolution: 2dppx), (-webkit-min-device-pixel-ratio: 1) and (-webkit-max-device-pixel-ratio: 2), (min-resolution: 1dppx) and (max-resolution: 2dppx) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        safari: 15 << 16,
+      },
+    );
+    prefix_test(
+      `
+      @media (resolution: 96dpi), (1dppx < resolution < 2dppx) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media (-moz-device-pixel-ratio: 1), (resolution: 96dpi), (min--moz-device-pixel-ratio: 1.001) and (max--moz-device-pixel-ratio: 1.999), (min-resolution: 1.001dppx) and (max-resolution: 1.999dppx) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        firefox: 10 << 16,
+      },
+    );
+    prefix_test(
+      `
+      @media (-webkit-device-pixel-ratio: 2), (resolution: 2dppx) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media (-webkit-device-pixel-ratio: 2), (resolution: 2dppx) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        safari: 15 << 16,
+      },
+    );
+    // No copy for a value that is not a resolution, or for the boolean form.
+    prefix_test(
+      `
+      @media (resolution: env(--foo)), (1dppx <= resolution <= env(--foo)), (resolution) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media (resolution: env(--foo)), (min-resolution: 1dppx) and (max-resolution: env(--foo)), (resolution) {
+          .foo {
+            color: #ff0;
+          }
+        }
+      `,
+      {
+        safari: 15 << 16,
+      },
+    );
+    // The copy of the two-bound form is one feature. A min and max pair that
+    // the author wrote is two features, so it is not seen as the copy.
+    prefix_test(
+      `
+      @media (-webkit-min-device-pixel-ratio: 1) and (-webkit-max-device-pixel-ratio: 2), (1dppx <= resolution <= 2dppx) {
+        .foo { color: yellow; }
+      }
+      `,
+      `
+        @media (-webkit-min-device-pixel-ratio: 1) and (-webkit-max-device-pixel-ratio: 2), (-webkit-min-device-pixel-ratio: 1) and (-webkit-max-device-pixel-ratio: 2), (min-resolution: 1dppx) and (max-resolution: 2dppx) {
           .foo {
             color: #ff0;
           }

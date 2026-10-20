@@ -2037,14 +2037,8 @@ impl<'p, 's> Checker<'p, 's> {
                 .is_some_and(|base| self.maybe_type_of_kind(base, kind))
     }
 
-    /// `getFreshTypeOfLiteralType(getBigIntLiteralType(..))`. The regular type is created first
-    /// because `CompareTypes` orders bigint literal types by creation order.
+    /// `getFreshTypeOfLiteralType(getBigIntLiteralType(..))`
     fn fresh_bigint_literal(&mut self, text: Atom, negative: bool) -> TypeId {
-        self.intern(TypeData::BigIntLit {
-            text,
-            negative,
-            fresh: false,
-        });
         self.intern(TypeData::BigIntLit {
             text,
             negative,

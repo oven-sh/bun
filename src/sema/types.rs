@@ -3881,11 +3881,6 @@ impl<'p, 's> Types<'p, 's> {
         if !ranking.unranked.is_empty() {
             return Err(ranking.unranked);
         }
-        // `getFreshTypeOfLiteralType` creates the fresh type from the regular one, but the fresh type's key doesn't
-        // mention it.
-        if let TypeData::BigIntLit { fresh: true, .. } = created.0 {
-            ranking.height = ranking.height.max(1);
-        }
         Ok(Rank {
             height: ranking.height + 1,
             last_syntax: ranking.last_syntax,
@@ -3943,21 +3938,6 @@ impl<'p, 's> Types<'p, 's> {
             // Another task may have just inserted it (see below). The fence makes that task's earlier writes visible.
             std::sync::atomic::fence(Ordering::Acquire);
             return id;
-        }
-        // `getFreshTypeOfLiteralType` creates the fresh type from the regular one, and bigint
-        // literal types are ordered by creation.
-        if let TypeData::BigIntLit {
-            text,
-            negative,
-            fresh: true,
-        } = data
-        {
-            let regular = TypeData::BigIntLit {
-                text,
-                negative,
-                fresh: false,
-            };
-            self.intern_new((regular, None));
         }
         let id = self.intern_new((data, None));
         if let Some((value, known)) = literal

@@ -178,23 +178,30 @@ describe("css", () => {
     // A quoted name prints as a hashed ident.
     ['animation: "reveal" var(--d)', "animation: reveal_# var(--d)"],
     ['animation: var(--d) "reveal"', "animation: var(--d) reveal_#"],
+    ['animation: env(--x) "reveal"', "animation: env(--x) reveal_#"],
+    ['animation: var(--d) steps(4) "reveal"', "animation: var(--d) steps(4) reveal_#"],
+    ['animation: "reveal", var(--other)', "animation: reveal_#, var(--other)"],
     // With no space beside it, the ident would join the next token, so the
     // quoted name stays as written.
     ['animation: "reveal"var(--d)', 'animation: "reveal"var(--d)'],
     ['animation: 1s"reveal" var(--d)', 'animation: 1s"reveal" var(--d)'],
 
-    // A dashed name. After the name, a dashed ident is a timeline.
-    ["animation: --reveal var(--d)", "animation: --reveal_# var(--d)"],
+    // A dashed ident stays as written. It can be the name or a timeline, and
+    // no typed form is there to tell.
+    ["animation: --reveal var(--d)", "animation: --reveal var(--d)"],
     ["animation: reveal var(--d) --timeline", "animation: reveal_# var(--d) --timeline"],
+    ["animation: var(--name) 1s --timeline", "animation: var(--name) 1s --timeline"],
 
     // The `animation-name` longhand. There, only `none` is a keyword.
     ["animation-name: reveal, var(--x)", "animation-name: reveal_#, var(--x)"],
     ['animation-name: var(--x), "reveal"', "animation-name: var(--x), reveal_#"],
-    ["animation-name: --reveal, var(--x)", "animation-name: --reveal_#, var(--x)"],
+    ["animation-name: --reveal, var(--x)", "animation-name: --reveal, var(--x)"],
     ["animation-name: linear, none, var(--x)", "animation-name: linear_#, none, var(--x)"],
     ["-webkit-animation-name: var(--x), reveal", "-webkit-animation-name: var(--x), reveal_#"],
-    // A name in the fallback of a `var()` is not in these tokens.
+    // A name in the fallback of a `var()` stays as written, like the value of
+    // the custom property that replaces it.
     ["animation-name: var(--n, reveal)", "animation-name: var(--n, reveal)"],
+    ["animation: var(--n, reveal) 1s", "animation: var(--n, reveal) 1s"],
 
     // The order of the declarations in a block stays as written.
     ["animation: 1s reveal; animation: reveal var(--d)", "animation: 1s reveal_#; animation: reveal_# var(--d)"],
@@ -273,7 +280,7 @@ describe("css", () => {
       "/styles.module.css": `
         .a { animation: 1s reveal var(--d) }
         .b { animation: infinite "reveal" var(--d) }
-        .c { animation: --reveal var(--d) }
+        .c { -webkit-animation: reveal var(--d) }
         @keyframes reveal { to { opacity: 1 } }
       `,
     },
@@ -289,7 +296,7 @@ describe("css", () => {
         [
           `.a_${hash}{animation:1s reveal_${hash} var(--d)}`,
           `.b_${hash}{animation:infinite reveal_${hash} var(--d)}`,
-          `.c_${hash}{animation:--reveal_${hash} var(--d)}`,
+          `.c_${hash}{-webkit-animation:reveal_${hash} var(--d)}`,
           `@keyframes reveal_${hash}{to{opacity:1}}`,
         ].join(""),
       );

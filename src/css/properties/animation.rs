@@ -413,14 +413,8 @@ fn is_separator(token: &TokenOrValue) -> bool {
 /// Tags each keyframes name in the tokens of an `animation` (`shorthand`) or `animation-name` value.
 fn tag_unparsed_names(list: &mut TokenList, shorthand: bool) {
     let tokens = &mut list.v;
-    // Whether the single animation at hand has its name: a dashed ident after the name is a timeline.
-    let mut named = false;
     for i in 0..tokens.len() {
         let name = match &tokens[i] {
-            TokenOrValue::Token(Token::Comma) => {
-                named = false;
-                continue;
-            }
             TokenOrValue::Token(Token::Ident(ident)) => {
                 let keyword = if shorthand {
                     is_single_animation_keyword(ident)
@@ -434,9 +428,6 @@ fn tag_unparsed_names(list: &mut TokenList, shorthand: bool) {
                 AnimationName::Ident(CustomIdent {
                     v: std::ptr::from_ref::<[u8]>(ident),
                 })
-            }
-            TokenOrValue::DashedIdent(ident) if !named => {
-                AnimationName::Ident(CustomIdent { v: ident.v })
             }
             TokenOrValue::Token(Token::QuotedString(string)) => {
                 // The name prints as an ident, which joins any token that touches it except a `)` before it.
@@ -453,7 +444,6 @@ fn tag_unparsed_names(list: &mut TokenList, shorthand: bool) {
             }
             _ => continue,
         };
-        named = true;
         tokens[i] = TokenOrValue::AnimationName(name);
     }
 }

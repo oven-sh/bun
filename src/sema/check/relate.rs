@@ -844,32 +844,19 @@ impl<'p, 's> Checker<'p, 's> {
         self.members(ty).is_some_and(|m| m.has_signatures())
     }
 
-    /// `getNonMissingTypeOfSymbol`: the type of a property as used in comparisons. It includes
-    /// `undefined` when the property is optional, unless exactOptionalPropertyTypes distinguishes
-    /// the two.
+    /// `getNonMissingTypeOfSymbol`: the type of a property as used in comparisons. The type of a
+    /// property is complete: `type_of_prop` has added `undefined` where the declaration is
+    /// optional, and a copy of a property has the type of the property it copies. Here only the
+    /// missing type that exactOptionalPropertyTypes distinguishes is taken away.
     pub(super) fn type_of_prop_as_read(&mut self, prop: &Prop, mapper: MapperId) -> TypeId {
         let ty = self.type_of_prop(prop, mapper);
-        if !prop.flags.contains(PropFlags::OPTIONAL) {
-            ty
-        } else if self.p.files.options.exact_optional_property_types {
-            self.remove_missing_type(ty, true)
-        } else if prop.flags.contains(PropFlags::WITHOUT_OPTIONALITY) {
-            ty
-        } else {
-            self.cached_optional_property(ty)
-        }
+        self.remove_missing_type(ty, prop.flags.contains(PropFlags::OPTIONAL))
     }
 
     /// `getTypeOfSymbol` of a property: with the missing type, the placeholder for an omitted
     /// property.
     pub(super) fn type_of_prop_with_missing(&mut self, prop: &Prop, mapper: MapperId) -> TypeId {
-        let ty = self.type_of_prop(prop, mapper);
-        let optionality = PropFlags::OPTIONAL | PropFlags::WITHOUT_OPTIONALITY;
-        if prop.flags & optionality == PropFlags::OPTIONAL {
-            self.optional_property(ty)
-        } else {
-            ty
-        }
+        self.type_of_prop(prop, mapper)
     }
 
     /// `property_in_type`, for looking up several names in sequence. `inherited`: `inherited_of`

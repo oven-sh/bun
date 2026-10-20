@@ -5047,16 +5047,12 @@ impl<'p, 's> Checker<'p, 's> {
             if list.len() > 1 {
                 let every = |flag: PropFlags| list.iter().all(|p| p.flags.contains(flag));
                 // Optional if every property, method or accessor among them is: a variable of a
-                // module or of `globalThis` is not considered.
+                // module or of `globalThis` is not considered. The type is the intersection of
+                // theirs, in which that of such a variable has no `undefined`.
                 let is_member = |p: &&Prop| !matches!(p.source, PropSource::Symbol(sym) if !self.is_member_symbol(sym));
                 let optional =
                     (list.iter().filter(is_member)).all(|p| p.flags.contains(PropFlags::OPTIONAL));
                 prop.flags.set(PropFlags::OPTIONAL, optional);
-                // The type is the intersection of theirs, in which that of such a variable has no
-                // `undefined`.
-                let has_variable = !list.iter().all(|p| is_member(&p));
-                prop.flags
-                    .set(PropFlags::WITHOUT_OPTIONALITY, optional && has_variable);
                 prop.flags
                     .set(PropFlags::READONLY, every(PropFlags::READONLY));
                 prop.flags.set(PropFlags::METHOD, every(PropFlags::METHOD));

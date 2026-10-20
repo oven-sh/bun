@@ -1005,6 +1005,14 @@ impl<'a> Parser<'a> {
             // The bundler requires a part for generated module wrappers. This
             // part must be at the start as it is referred to by index.
             before.push(js_ast::Part::default());
+
+            if p.has_import_meta && !p.is_source_runtime() {
+                p.is_written_by_bun = matches!(
+                    Self::has_bun_pragma(&source.contents, !hashbang.is_empty()),
+                    Some(crate::AlreadyBundled::Bun | crate::AlreadyBundled::Bytecode)
+                );
+                p.read_require_aliases(stmts);
+            }
         }
 
         // --inspect-brk
@@ -2544,7 +2552,7 @@ impl<'a> Parser<'a> {
     // because `_parse` consumes `self` by value and destructures it before this
     // call site; the source contents are passed explicitly.
     // called from gated `_parse` body above
-    fn has_bun_pragma(contents: &[u8], has_hashbang: bool) -> Option<crate::AlreadyBundled> {
+    pub fn has_bun_pragma(contents: &[u8], has_hashbang: bool) -> Option<crate::AlreadyBundled> {
         const BUN_PRAGMA: &[u8] = b"// @bun";
         let end = contents.len();
 

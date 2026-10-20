@@ -149,6 +149,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             source_index: Default::default(),
             original_path: b"",
             flags: Default::default(),
+            require_alias: bun_ast::import_record::RequireAliasOptional::NONE,
         });
         Ok(u32::try_from(index).expect("int cast"))
     }

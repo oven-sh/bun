@@ -333,7 +333,8 @@ pub(crate) fn lower_expression(
         Data::ESpecial(special) => match special {
             E::Special::ModuleExports
             | E::Special::ResolvedSpecifierString(_)
-            | E::Special::ImportMetaRequire(_) => Ok(InstructionValue::LoadGlobal {
+            | E::Special::ImportMetaRequire(_)
+            | E::Special::RequireAlias(_) => Ok(InstructionValue::LoadGlobal {
                 binding: NonLocalBinding {
                     ref_: Ref::NONE,
                     kind: NonLocalKind::BunOpaque(*expr),

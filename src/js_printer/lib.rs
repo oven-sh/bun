@@ -1325,6 +1325,8 @@ pub struct Options<'a> {
     pub require_ref: Option<Ref>,
     /// The chunk is an ES module that Bun runs: `E::Special::ImportMetaRequire` prints as `import.meta.require`.
     pub keep_import_meta_require: bool,
+    /// The file being printed: an import record's `require_alias` is a symbol of it.
+    pub source_index: u32,
     pub import_meta_ref: Ref,
     pub hmr_ref: Ref,
     pub indent: Indentation,
@@ -1411,6 +1413,7 @@ impl<'a> Default for Options<'a> {
             module_preload_ref: Ref::NONE,
             require_ref: None,
             keep_import_meta_require: false,
+            source_index: 0,
             import_meta_ref: Ref::NONE,
             hmr_ref: Ref::NONE,
             indent: Indentation::default(),
@@ -2940,10 +2943,10 @@ pub(crate) mod __gated_printer {
                     self.print(b"(");
                 }
 
-                if record
-                    .flags
-                    .contains(ImportRecordFlags::CROSS_CHUNK_REQUIRE)
-                {
+                // An `IMPORT_META_REQUIRE` record is a call that Bun wrote this way: its base is this chunk as well.
+                if record.flags.intersects(
+                    ImportRecordFlags::CROSS_CHUNK_REQUIRE | ImportRecordFlags::IMPORT_META_REQUIRE,
+                ) {
                     // A split `require()`: the path is a sibling chunk, resolved
                     // relative to this chunk — not through the runtime's
                     // `__require`, which would resolve it relative to the
@@ -2952,6 +2955,13 @@ pub(crate) mod __gated_printer {
                         mi.flags.contains_import_meta = true;
                     }
                     self.print(b"import.meta.require");
+                } else if let Some(alias) = record.require_alias.get() {
+                    // A call that Bun wrote through a variable of this file is a call of that variable.
+                    self.print_symbol(Ref::new(
+                        alias.get(),
+                        self.options.source_index,
+                        bun_ast::RefTag::Symbol,
+                    ));
                 } else if let Some(ref_) = self.options.require_ref {
                     self.print_symbol(ref_);
                 } else {
@@ -3445,6 +3455,7 @@ pub(crate) mod __gated_printer {
                             );
                         }
                     }
+                    E::Special::RequireAlias(_) => unreachable!("`e_call` replaces its marker"),
                 },
                 ExprData::ECommonjsExportIdentifier(id) => {
                     self.print_commonjs_export_identifier(*id, expr.loc, false);

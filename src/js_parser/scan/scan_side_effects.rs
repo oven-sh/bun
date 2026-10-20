@@ -994,6 +994,7 @@ impl SideEffects {
                 E::Special::ModuleExports
                 | E::Special::ResolvedSpecifierString(_)
                 | E::Special::ImportMetaRequire(_)
+                | E::Special::RequireAlias(_)
                 | E::Special::HotData => None,
                 E::Special::HotAccept | E::Special::HotAcceptVisited | E::Special::HotEnabled => {
                     Some(Known {

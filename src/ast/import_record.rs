@@ -31,7 +31,15 @@ pub struct ImportRecord {
     /// Pack all boolean flags into 4 bytes to reduce padding overhead.
     /// Previously 15 separate bool fields caused ~14-16 bytes of padding waste.
     pub flags: Flags,
+
+    /// The top-level `var` of this file that a `require("x")` is written as a call of. A call that stays for run time prints as a call of it.
+    pub require_alias: RequireAliasOptional,
 }
+
+pub enum RequireAliasMarker {}
+/// The inner index of the `Ref` of a symbol of the file that holds the import record.
+pub type RequireAlias = bun_core::GenericIndex<u32, RequireAliasMarker>;
+pub type RequireAliasOptional = bun_core::GenericIndexOptional<u32, RequireAliasMarker>;
 
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
@@ -107,6 +115,12 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// A `require("x")` that Bun wrote as `import.meta.require("x")`, in output that can evaluate that: a call that stays for run time prints as written.
+        const IMPORT_META_REQUIRE = 1 << 19;
+
+        /// A `require("x")` that Bun wrote through `import.meta.require`: when `x` does not resolve at build time, the call stays for run time. Set with `HANDLES_IMPORT_ERRORS`.
+        const RUNTIME_IF_UNRESOLVED = 1 << 20;
     }
 }
 

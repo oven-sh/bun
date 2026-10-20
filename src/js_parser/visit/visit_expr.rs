@@ -300,6 +300,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Substitute uncalled "require" for the require target
             if p.require_ref.eql(e_.ref_) && !p.is_source_runtime() {
+                if !p.require_aliases.is_empty()
+                    && Self::use_of_require_alias(
+                        p,
+                        e,
+                        result.declare_loc,
+                        in_.assign_target,
+                        in_.is_property_access_target,
+                    )
+                {
+                    return;
+                }
+
                 // mark a reference to __require only if this is not about to be used for a call target
                 if !(matches!(p.call_target.tag(), Tag::EIdentifier)
                     && expr.data.e_identifier().unwrap().ref_.eql(
@@ -337,6 +349,47 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_was_originally_identifier(true)
                 .with_is_property_access_target(in_.is_property_access_target),
         );
+    }
+
+    /// A use of a name that `read_require_aliases` read. A call target waits for `e_call`. Any other use is a use of the declared symbol.
+    #[cold]
+    #[inline(never)]
+    fn use_of_require_alias(
+        p: &mut Self,
+        e: &mut Expr,
+        declare_loc: Option<bun_ast::Loc>,
+        assign_target: js_ast::AssignTarget,
+        is_property_access_target: bool,
+    ) -> bool {
+        let Some((index, declared)) = declare_loc.and_then(|loc| p.require_alias_at(loc)) else {
+            return false;
+        };
+        // `find_symbol` counted a use of `require`, which makes a file with no import or export CommonJS.
+        p.ignore_usage(p.require_ref);
+
+        let written = e.data.e_identifier().expect("infallible: variant checked");
+        if matches!(p.call_target, Data::EIdentifier(target) if target.ref_.eql(written.ref_)) {
+            e.data = Data::ESpecial(E::Special::RequireAlias(index));
+            return true;
+        }
+
+        p.record_usage(declared);
+        if assign_target != js_ast::AssignTarget::None {
+            p.record_assignment(declared);
+        }
+        *e = p.handle_identifier(
+            e.loc,
+            E::Identifier {
+                ref_: declared,
+                ..Default::default()
+            },
+            None,
+            IdentifierOpts::default()
+                .with_assign_target(assign_target)
+                .with_was_originally_identifier(true)
+                .with_is_property_access_target(is_property_access_target),
+        );
+        true
     }
     // PERF(port:frame): keep these large, infrequently-taken arms out of the
     // `visit_expr_in_out` dispatcher frame. Without `inline(never)` LLVM folds the
@@ -2269,6 +2322,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return;
                     }
                 }
+                E::Special::ImportMetaRequire(name_loc) if p.is_written_by_bun => {
+                    if Self::import_meta_require_call(p, e, name_loc) {
+                        return;
+                    }
+                }
+                E::Special::RequireAlias(index) => {
+                    if Self::require_alias_call(p, e, index) {
+                        return;
+                    }
+                }
                 _ => {}
             }
         }
@@ -2458,6 +2521,128 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
             }
+        }
+    }
+
+    /// `import.meta.require(...)` in a file that Bun wrote. One string is a `require("x")`.
+    #[cold]
+    #[inline(never)] // PERF(port:frame): an `Expr` result or an `ExprIn` parameter costs every `e_call`.
+    fn import_meta_require_call(p: &mut Self, e: &mut Expr, name_loc: bun_ast::Loc) -> bool {
+        if Self::read_as_require_call(p, e, None) {
+            return true;
+        }
+
+        if p.options.lower_import_meta_require {
+            // The node stays the target. `maybe_rewrite_property_access` left its use of the runtime's `__require` to this function.
+            if p.options.features.allow_runtime {
+                p.record_usage_of_runtime_require();
+            }
+        } else {
+            let mut call = e.data.e_call().expect("infallible: variant checked");
+            let import_meta = Expr {
+                data: Data::EImportMeta(E::ImportMeta {}),
+                loc: call.target.loc,
+            };
+            call.target = p.import_meta_require_dot(import_meta, name_loc);
+        }
+        false
+    }
+
+    /// A call through a name that `read_require_aliases` read. One string is a `require("x")`. Any other call is a call of the declared symbol.
+    #[cold]
+    #[inline(never)]
+    fn require_alias_call(p: &mut Self, e: &mut Expr, index: u32) -> bool {
+        let declared = p.require_aliases[index as usize].1;
+        if Self::read_as_require_call(p, e, Some(declared)) {
+            return true;
+        }
+
+        let mut call = e.data.e_call().expect("infallible: variant checked");
+        p.record_usage(declared);
+        call.target = p.handle_identifier(
+            call.target.loc,
+            E::Identifier {
+                ref_: declared,
+                ..Default::default()
+            },
+            None,
+            IdentifierOpts::default()
+                .with_is_call_target(true)
+                .with_was_originally_identifier(true),
+        );
+        false
+    }
+
+    /// Makes the call `e`, which Bun wrote through `import.meta.require`, a `require("x")` when it has one string argument. `alias` is the variable that the call names.
+    fn read_as_require_call(p: &mut Self, e: &mut Expr, alias: Option<Ref>) -> bool {
+        let mut call = e.data.e_call().expect("infallible: variant checked");
+        if call.optional_chain.is_some()
+            || call.args.len_u32() != 1
+            || !p.options.features.allow_runtime
+        {
+            return false;
+        }
+        let first = Self::fold_specifier(p, call.args.slice()[0]);
+        call.args.slice_mut()[0] = first;
+        if !matches!(first.data, Data::EString(..)) {
+            return false;
+        }
+
+        let first_record = p.import_records.len();
+        // The call is lazy where Bun wrote it. An `import` statement in its place is not.
+        let unwrap = core::mem::take(&mut p.options.features.unwrap_commonjs_to_esm);
+        let state = TransposeState {
+            loc: e.loc,
+            ..Default::default()
+        };
+        *e = p.transpose_require(first, &state);
+        p.options.features.unwrap_commonjs_to_esm = unwrap;
+
+        // Where the output can evaluate `import.meta.require`, a call that stays for run time prints as Bun wrote it.
+        let as_written = !p.options.lower_import_meta_require;
+        for record in &mut p.import_records.items_mut()[first_record..] {
+            record.flags.insert(
+                bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS
+                    | bun_ast::ImportRecordFlags::RUNTIME_IF_UNRESOLVED,
+            );
+            match alias {
+                Some(alias) if as_written => {
+                    record.require_alias =
+                        bun_ast::import_record::RequireAlias::init(alias.inner_index())
+                            .to_optional();
+                }
+                None if as_written => {
+                    record
+                        .flags
+                        .insert(bun_ast::ImportRecordFlags::IMPORT_META_REQUIRE);
+                }
+                _ => {}
+            }
+        }
+        true
+    }
+
+    /// The fold that `e_call` forces on the argument of `require()`, for an argument that is already visited. The fold can change a node in place, so each result goes back into its parent.
+    fn fold_specifier(p: &Self, expr: Expr) -> Expr {
+        use bun_ast::fold_string_addition::{FoldStringAdditionKind, fold_string_addition};
+        if !p.stack_check.is_safe_to_recurse() {
+            return expr;
+        }
+        match expr.data {
+            Data::EBinary(mut binary) if binary.op == Op::BinAdd => {
+                binary.left = Self::fold_specifier(p, binary.left);
+                binary.right = Self::fold_specifier(p, binary.right);
+                let (left, right) = (binary.left, binary.right);
+                fold_string_addition(left, right, p.arena, FoldStringAdditionKind::Normal)
+                    .unwrap_or(expr)
+            }
+            Data::ETemplate(mut template) if template.tag.is_none() => {
+                for part in template.parts_mut() {
+                    part.value = Self::fold_specifier(p, part.value);
+                }
+                template.fold(p.arena, expr.loc)
+            }
+            _ => expr,
         }
     }
 

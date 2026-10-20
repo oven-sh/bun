@@ -614,20 +614,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // The printer spells this node as the `require` of the output. `--drop` of it needs the `E::Dot`.
                     if name == b"require"
-                        && p.options.lower_import_meta_require
                         && !p.method_call_must_be_replaced_with_undefined
                         && identifier_opts.assign_target() == js_ast::AssignTarget::None
                         && !identifier_opts.is_delete_target()
                     {
-                        if p.options.features.allow_runtime {
-                            p.record_usage_of_runtime_require();
+                        // In a file that Bun wrote, `e_call` reads the call when it has the arguments.
+                        let call_to_read = p.is_written_by_bun && identifier_opts.is_call_target();
+                        if p.options.lower_import_meta_require || call_to_read {
+                            if !call_to_read && p.options.features.allow_runtime {
+                                p.record_usage_of_runtime_require();
+                            }
+                            return Some(Expr {
+                                data: js_ast::ExprData::ESpecial(E::Special::ImportMetaRequire(
+                                    name_loc,
+                                )),
+                                loc: target.loc,
+                            });
                         }
-                        return Some(Expr {
-                            data: js_ast::ExprData::ESpecial(E::Special::ImportMetaRequire(
-                                name_loc,
-                            )),
-                            loc: target.loc,
-                        });
                     }
 
                     // Inline import.meta properties for Bake

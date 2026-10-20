@@ -1138,11 +1138,29 @@ pub(crate) fn scan_imports_and_exports(
                             // generating a CommonJS output file, since it won't exist otherwise.
                             // An `import()` is printed as-is and never becomes `__require()`,
                             // nor does a split `require()` (`import.meta.require`).
-                            if kind != ImportKind::Dynamic
-                                && !is_external_dyn
-                                && should_call_runtime_require(output_format)
-                            {
-                                runtime_require_uses += 1;
+                            if kind != ImportKind::Dynamic && !is_external_dyn {
+                                let require_alias = col_ref!(import_records_list)[id].as_slice()
+                                    [import_record_index as usize]
+                                    .require_alias;
+                                if let Some(alias) = require_alias.get() {
+                                    // The call stays for run time as a call of the variable that it names.
+                                    this.graph.generate_symbol_import_and_use(
+                                        source_index,
+                                        part_index as u32,
+                                        Ref::new(
+                                            alias.get(),
+                                            source_index,
+                                            bun_ast::RefTag::Symbol,
+                                        ),
+                                        1,
+                                        Index::source(source_index),
+                                    )?;
+                                } else if !rec_flags
+                                    .contains(ImportRecordFlags::IMPORT_META_REQUIRE)
+                                    && should_call_runtime_require(output_format)
+                                {
+                                    runtime_require_uses += 1;
+                                }
                             }
 
                             // A split `require()` whose target is CommonJS at link

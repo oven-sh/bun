@@ -869,7 +869,13 @@ pub fn parse_input_source_map(source: &bun_ast::Source) -> Option<std::sync::Arc
     let map = parse_url(&arena, url.slice(), ParseUrlResultHint::MappingsOnly)
         .ok()?
         .map?;
-    map.only_source_is(source.path.text).then_some(map)
+    if !map.only_source_is(source.path.text) {
+        return None;
+    }
+    // A map that the file ends with too says how the file was made, and the plugin passed it on.
+    let is_from_the_file = bun_sys::File::read_from(bun_sys::Fd::cwd(), source.path.text)
+        .is_ok_and(|file| find_source_mapping_url_u8(&file).is_some_and(|own| *own == *url));
+    (!is_from_the_file).then_some(map)
 }
 
 /// Parses a JSON source-map
@@ -915,8 +921,8 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
 
     let sources_content = match json.get(b"sourcesContent").map(|contents| contents.data) {
         Some(bun_ast::ExprData::EArrayJSON(arr)) => Some(arr),
+        Some(bun_ast::ExprData::ENull(_)) | None => None,
         Some(_) => return Err(crate::Error::InvalidSourceMap),
-        None => None,
     };
     let sources_content = sources_content.as_ref().map(|arr| arr.get().items());
 

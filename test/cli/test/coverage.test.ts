@@ -1080,7 +1080,7 @@ export function throws() {
     source: string | null;
     /** `sources[1]`. */
     secondSource?: string;
-    sourcesContent?: boolean;
+    sourcesContent?: boolean | null;
     mediaType?: string;
     /** Lines above the text, which the map does not cover. */
     above?: string;
@@ -1117,7 +1117,7 @@ export function throws() {
     const map = {
       version: 3,
       sources,
-      sourcesContent: sourcesContent ? sources.map(() => text) : undefined,
+      sourcesContent: sourcesContent === null ? null : sourcesContent ? sources.map(() => text) : undefined,
       names: [],
       mappings:
         ";".repeat(above.split("\n").length - 1) +
@@ -1136,7 +1136,7 @@ export function throws() {
   }
 
   /** `plugin` is what a plugin does to `moved.ts`. */
-  function files(movedOnDisk: string, plugin?: Rewrite) {
+  function files(movedOnDisk: string, plugin?: Rewrite | "nothing") {
     return tempDir("cov-input-source-map", {
       "moved.ts": movedOnDisk,
       "plugin.js": `
@@ -1145,10 +1145,13 @@ export function throws() {
           name: "rewrite",
           setup(build) {
             const options = ${JSON.stringify(plugin)};
-            build.onLoad({ filter: /moved\\.ts$/ }, async ({ path }) => ({
-              contents: rewrite(await Bun.file(path).text(), { ...options, source: options.source ?? path }),
-              loader: "ts",
-            }));
+            build.onLoad({ filter: /moved\\.ts$/ }, async ({ path }) => {
+              const text = await Bun.file(path).text();
+              return {
+                contents: options === "nothing" ? text : rewrite(text, { ...options, source: options.source ?? path }),
+                loader: "ts",
+              };
+            });
           },
         });
       `,
@@ -1170,7 +1173,7 @@ export function throws() {
   }
 
   /** Without `plugin` there is no plugin. */
-  async function report(movedOnDisk: string, plugin?: Rewrite) {
+  async function report(movedOnDisk: string, plugin?: Rewrite | "nothing") {
     using dir = files(movedOnDisk, plugin);
     await using proc = Bun.spawn({
       cmd: [
@@ -1222,6 +1225,7 @@ export function throws() {
     ["the name of the file after ./", { source: "./moved.ts" }],
     ["the absolute path of the file", { source: null }],
     ["no sourcesContent", { source: "moved.ts", sourcesContent: false }],
+    ["sourcesContent: null", { source: "moved.ts", sourcesContent: null }],
     ["charset=utf-8", { source: "moved.ts", mediaType: ";charset=utf-8" }],
     ["one mapping for each line", { source: "moved.ts", mappings: "line" }],
   ])("from a plugin, of the file: %s", async (_, plugin) => {
@@ -1287,6 +1291,10 @@ export function throws() {
     ["the file and another file", { source: "moved.ts", secondSource: "another.ts" }],
   ])("from a plugin, of %s", async (_, plugin) => {
     expect(await report(moved, plugin)).toEqual(inTheText);
+  });
+
+  test.concurrent("from a plugin, which the file ends with too", async () => {
+    expect(await report(rewrite(moved, { source: "moved.ts" }), "nothing")).toEqual(inTheText);
   });
 
   test.concurrent("from a plugin, of a module that is not a file", async () => {

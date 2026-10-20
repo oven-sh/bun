@@ -1363,7 +1363,10 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
     if (scope.exception()) [[unlikely]] {
         *result = toNapi(JSValue(scope.exception()->value()), globalObject);
     } else if (std::optional<JSValue> pending = env->pendingException()) {
-        *result = toNapi(pending.value(), globalObject);
+        JSValue value = pending.value();
+        if (auto* latched = dynamicDowncast<JSC::Exception>(value)) [[unlikely]]
+            value = latched->vm().isTerminationException(latched) ? JSC::jsNull() : latched->value();
+        *result = toNapi(value, globalObject);
         env->clearPendingException();
     } else {
         *result = toNapi(JSC::jsUndefined(), globalObject);
@@ -3059,7 +3062,7 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
     JSValue value = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis(), returnedException);
 
     if (returnedException) {
-        env->scheduleException(returnedException->value());
+        env->scheduleException(returnedException.get());
         return napi_set_last_error(env, napi_generic_failure);
     }
 

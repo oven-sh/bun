@@ -5,8 +5,8 @@
 // walker fails to create has to fail the install instead of being skipped while
 // the install reports success, and a file that cannot be installed has to fail
 // the package (as it does with the hardlink backend) rather than exit bun.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isRoot, isWindows, readdirSorted, tempDir } from "harness";
+import { beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, isMacOS, isRoot, isWindows, readdirSorted, refusedSyscalls, tempDir } from "harness";
 import {
   chmodSync,
   closeSync,
@@ -695,113 +695,24 @@ describe("file: folder dependencies with the hoisted linker", () => {
 });
 
 // macOS reports an operation that the file system does not have as ENOTSUP (45). EOPNOTSUPP (102) is another errno
-// there, unlike on Linux. APFS has every operation, so these refuse one for the installing process with a dyld
-// interposer, the way a volume such as HFS+ or exFAT does.
-const cc = Bun.which("cc") || Bun.which("clang");
-describe.skipIf(!isMacOS || !cc)("a file system that refuses an operation with ENOTSUP", () => {
-  const refuseC = /* c */ `
-    #include <errno.h>
-    #include <fcntl.h>
-    #include <limits.h>
-    #include <stdint.h>
-    #include <stdio.h>
-    #include <stdlib.h>
-    #include <string.h>
-    #include <sys/clonefile.h>
-    #include <sys/stat.h>
-    #include <unistd.h>
-
-    static int refuses(const char *call) {
-      const char *calls = getenv("REFUSE_WITH_ENOTSUP");
-      return calls && strstr(calls, call);
-    }
-
-    // The kernel looks the new name up before it asks the file system, so EEXIST and ENOENT come first.
-    static int refuse(const char *call, int dirfd, const char *path) {
-      struct stat st;
-      char parent[PATH_MAX];
-      const char *slash = strrchr(path, '/');
-      if (fstatat(dirfd, path, &st, AT_SYMLINK_NOFOLLOW) == 0) {
-        errno = EEXIST;
-        return -1;
-      }
-      if (slash && slash != path && (size_t)(slash - path) < sizeof(parent)) {
-        memcpy(parent, path, slash - path);
-        parent[slash - path] = 0;
-        if (fstatat(dirfd, parent, &st, 0) != 0) return -1;
-      }
-      const char *log = getenv("REFUSED_LOG");
-      int fd = log ? open(log, O_WRONLY | O_CREAT | O_APPEND, 0644) : -1;
-      if (fd >= 0) {
-        dprintf(fd, "%s\\n", call);
-        close(fd);
-      }
-      errno = ENOTSUP;
-      return -1;
-    }
-
-    static int refused_clonefileat(int src_dirfd, const char *src, int dst_dirfd, const char *dst, uint32_t flags) {
-      struct stat st;
-      if (!refuses("clonefileat")) return clonefileat(src_dirfd, src, dst_dirfd, dst, flags);
-      if (fstatat(src_dirfd, src, &st, AT_SYMLINK_NOFOLLOW) != 0) return -1;
-      return refuse("clonefileat", dst_dirfd, dst);
-    }
-
-    // Only the links in a .bin directory: the isolated linker cannot work without symlinks at all.
-    static int refused_symlink(const char *target, const char *path) {
-      if (!refuses("symlink") || !strstr(path, "/.bin/")) return symlink(target, path);
-      return refuse("symlink", AT_FDCWD, path);
-    }
-
-    __attribute__((used, section("__DATA,__interpose"))) static const struct {
-      const void *replacement, *original;
-    } interpose[] = {
-      {(const void *)refused_clonefileat, (const void *)clonefileat},
-      {(const void *)refused_symlink, (const void *)symlink},
-    };
-  `;
-
-  let shim: ReturnType<typeof tempDir>;
-
+// there, unlike on Linux. HFS+ and exFAT answer clonefileat that way. APFS has every operation, so `refusedSyscalls`
+// refuses one for the installing process.
+describe.skipIf(!refusedSyscalls.available)("a call that fails with ENOTSUP on macOS", () => {
   beforeAll(async () => {
-    shim = tempDir("refuse-enotsup", { "refuse.c": refuseC });
-    await using proc = Bun.spawn({
-      // The same architecture as the bun that loads it.
-      cmd: [
-        cc!,
-        "-arch",
-        process.arch === "arm64" ? "arm64" : "x86_64",
-        "-dynamiclib",
-        "-o",
-        "refuse.dylib",
-        "refuse.c",
-      ],
-      cwd: String(shim),
-      env: bunEnv,
-      stdout: "inherit",
-      stderr: "pipe",
-    });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    if (exitCode !== 0) throw new Error(`could not compile refuse.c: ${stderr}`);
+    await refusedSyscalls.compile();
   });
 
-  afterAll(() => shim?.[Symbol.dispose]());
-
-  /** `bun install` with `call` refused. `refused` lists the calls that were, one entry for each. */
-  async function installRefusing(call: "clonefileat" | "symlink", projectDir: string, args: string[]) {
+  /** `bun install` with the calls in `refuse` refused. `refused` has the name of the call of each refusal. */
+  async function installRefusing(
+    refuse: Parameters<typeof refusedSyscalls.env>[0],
+    projectDir: string,
+    args: readonly string[],
+  ) {
     const log = join(projectDir, "refused.log");
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install", ...args],
       cwd: projectDir,
-      env: {
-        ...bunEnv,
-        BUN_INSTALL_CACHE_DIR: join(projectDir, ".cache"),
-        DYLD_INSERT_LIBRARIES: [join(String(shim), "refuse.dylib"), bunEnv.DYLD_INSERT_LIBRARIES]
-          .filter(Boolean)
-          .join(":"),
-        REFUSE_WITH_ENOTSUP: call,
-        REFUSED_LOG: log,
-      },
+      env: { ...(await refusedSyscalls.env(refuse, log)), BUN_INSTALL_CACHE_DIR: join(projectDir, ".cache") },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -819,34 +730,60 @@ describe.skipIf(!isMacOS || !cc)("a file system that refuses an operation with E
     return dir;
   }
 
-  // The documented fallback of the clonefile backend is a copy. A hard link would let an edit in node_modules reach
-  // the cache, which a clone does not.
-  for (const [name, args] of [
-    ["hoisted linker, clonefile backend", ["--linker=hoisted"]],
-    ["hoisted linker, clonefile_each_dir backend", ["--linker=hoisted", "--backend=clonefile_each_dir"]],
-    ["isolated linker, clonefile backend", ["--linker=isolated"]],
+  // The hoisted linker copies a package that cannot be cloned. The isolated linker tries a hard link first.
+  for (const [name, refuse, args, nlink] of [
+    ["hoisted linker copies the package when clonefileat fails", { clonefileat: "ENOTSUP" }, ["--linker=hoisted"], 1],
+    [
+      "clonefile_each_dir backend copies the package when clonefileat fails",
+      { clonefileat: "ENOTSUP" },
+      ["--linker=hoisted", "--backend=clonefile_each_dir"],
+      1,
+    ],
+    [
+      "isolated linker hard-links the package when clonefileat fails",
+      { clonefileat: "ENOTSUP" },
+      ["--linker=isolated"],
+      2,
+    ],
+    [
+      "isolated linker copies the package when the hard link is refused too",
+      { clonefileat: "ENOTSUP", linkat: "EXDEV" },
+      ["--linker=isolated"],
+      1,
+    ],
+    // libcopyfile answers ENOTSUP for a source that is not a regular file.
+    [
+      "copyfile backend reads and writes the file when fcopyfile fails",
+      { fcopyfile: "ENOTSUP" },
+      ["--linker=hoisted", "--backend=copyfile"],
+      1,
+    ],
   ] as const) {
-    test.concurrent(`${name}: the package is copied when clonefileat fails with ENOTSUP`, async () => {
-      using dir = projectWithTarball("clonefile-enotsup", "bar", "bar-0.0.2.tgz");
+    test.concurrent(name, async () => {
+      using dir = projectWithTarball("refused-enotsup", "bar", "bar-0.0.2.tgz");
 
-      const { stdout, stderr, exitCode, refused } = await installRefusing("clonefileat", String(dir), [...args]);
+      const { stdout, stderr, exitCode, refused } = await installRefusing(refuse, String(dir), args);
       expect(stderr).not.toContain("error");
       expect(stdout).toContain("1 package installed");
-      // Nothing was cloned, so the package below is what the fallback installed.
-      expect(refused).toContain("clonefileat");
+      // Every call in `refuse` was made and refused, so the package below is what the fallback installed.
+      expect([...new Set(refused)].sort()).toEqual(Object.keys(refuse).sort());
       const installed = join(String(dir), "node_modules", "bar", "package.json");
       expect(JSON.parse(readFileSync(installed, "utf8"))).toEqual({ name: "bar", version: "0.0.2" });
-      expect(statSync(installed).nlink).toBe(1);
+      // 1 is a copy. 2 is a hard link to the file in the cache.
+      expect(statSync(installed).nlink).toBe(nlink);
       expect(exitCode).toBe(0);
     });
   }
 
-  test.concurrent("bin links are skipped with one warning when symlink fails with ENOTSUP", async () => {
+  // HFS+ and exFAT have symlinks. This is the answer of a file system without them.
+  test.concurrent("bin links are skipped with one warning when symlink fails", async () => {
     using dir = projectWithTarball("symlink-enotsup", "baz", "baz-0.0.3.tgz");
     const binDir = join(String(dir), "node_modules", ".bin");
     const warning = `warn: ENOTSUP: cannot create symlinks in ${binDir}, skipping bin links\n`;
 
-    const { stdout, stderr, exitCode, refused } = await installRefusing("symlink", String(dir), ["--linker=hoisted"]);
+    const { stdout, stderr, exitCode, refused } = await installRefusing({ symlink: "ENOTSUP" }, String(dir), [
+      "--linker=hoisted",
+    ]);
     expect({ warnings: stderr.split(warning).length - 1, stderr }).toEqual({ warnings: 1, stderr });
     expect(stdout).toContain("1 package installed");
     expect(refused).toContain("symlink");

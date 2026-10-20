@@ -84,8 +84,8 @@ impl Checker<'_, '_> {
         // If the only declaration has no annotations, there are none.
         if symbol.is_none()
             || !params.iter().any(is_annotated)
-                && bound.symbols[symbol.idx()].decls.len() == 1
-                && !bound.symbols[symbol.idx()].flags.contains(SymFlags::MERGED)
+                && bound.symbol(symbol).decls.len() == 1
+                && !bound.symbol(symbol).flags.contains(SymFlags::MERGED)
         {
             return;
         }

@@ -68,10 +68,10 @@ impl<'p> Checker<'p, '_> {
             {
                 let found = bound
                     .lookup(bound.scopes[scope.idx()].locals, name)
-                    .filter(|&s| bound.symbols[s.idx()].flags.intersects(SymFlags::VARIABLE));
+                    .filter(|&s| bound.symbol(s).flags.intersects(SymFlags::VARIABLE));
                 if let Some(found) = found {
                     let is_lexical = found != own
-                        && bound.symbols[found.idx()].decls.iter().any(|&d| {
+                        && bound.symbol(found).decls.iter().any(|&d| {
                             let Decl::Var(mut root) = d else { return false };
                             loop {
                                 match bound.pat_parent[root.idx()] {
@@ -134,7 +134,7 @@ impl<'p> Checker<'p, '_> {
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
         // Walks up out of the chain it is part of.
-        let mut parent = bound.expr_parent[e.idx()];
+        let mut parent = bound.parent_of_expr(e);
         while let Parent::Expr(p) = parent
             && matches!(
                 hir[p].kind,
@@ -144,7 +144,7 @@ impl<'p> Checker<'p, '_> {
                 }
             )
         {
-            parent = bound.expr_parent[p.idx()];
+            parent = bound.parent_of_expr(p);
         }
         let body = match parent {
             Parent::Stmt(s) if s.is_some() => match hir[s].kind {
@@ -292,7 +292,7 @@ impl<'p> Checker<'p, '_> {
                 // `expr_symbol` has its `ExportSymbol`. A name found among the exports of an enclosing
                 // namespace, declared in another block of it, resolves to that symbol itself.
                 let bound = self.bound(file);
-                let recorded = bound.expr_symbol[e.idx()];
+                let recorded = bound.symbol_of_expr(e);
                 if recorded.is_some() {
                     let mut scope = self.enclosing_scope_of_expr(file, e);
                     while scope.is_some() {
@@ -764,7 +764,7 @@ impl<'p> Checker<'p, '_> {
         }
         let files = self.files();
         let enum_symbol = files.sym(file, symbol);
-        let declarations = files.decls(enum_symbol);
+        let declarations = files.decls_of(enum_symbol);
         let enums = declarations.into_iter().filter_map(|(f, d)| match d {
             Decl::Enum(e) => Some((f, e)),
             _ => None,

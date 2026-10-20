@@ -68,7 +68,7 @@ impl Checker<'_, '_> {
             return;
         }
         // `checkVariableLikeDeclaration` returns after `checkAliasSymbol` for `const x = require("m")`, so it never checks the call.
-        if let Parent::VarInit(d) = bound.expr_parent[i]
+        if let Parent::VarInit(d) = bound.parent_of_expr(ExprId(i as u32))
             && matches!(hir[hir[d].pat].kind, PatKind::Ident(_))
             && self.external_module_require_argument(file, d).is_some()
         {
@@ -195,7 +195,7 @@ impl Checker<'_, '_> {
                 // access.
                 let is_bare = !is_parenthesized(hir, data.callee);
                 let start = match hir[data.callee].kind {
-                    ExprKind::Dot { name_pos, .. } if is_bare => name_pos,
+                    ExprKind::Dot { .. } if is_bare => hir.name_pos(data.callee),
                     _ => self.start_of(file, data.callee),
                 };
                 let code = if data.args.is_empty()
@@ -207,8 +207,8 @@ impl Checker<'_, '_> {
                     2349
                 };
                 let end = match hir[data.callee].kind {
-                    ExprKind::Dot { name_pos, .. } if is_bare => {
-                        self.end_of_name_at(file, name_pos)
+                    ExprKind::Dot { .. } if is_bare => {
+                        self.end_of_name_at(file, hir.name_pos(data.callee))
                     }
                     _ => self.error_end_of(file, data.callee),
                 };
@@ -472,7 +472,7 @@ impl Checker<'_, '_> {
         let data = hir[c];
         let Some(sig) = sig else { return };
         if data.chain == Chain::Start
-            || !matches!(self.bound(file).expr_parent[e.idx()], Parent::Stmt(s) if s.is_some() && matches!(hir[s].kind, StmtKind::Expr(_)))
+            || !matches!(self.bound(file).parent_of_expr(e), Parent::Stmt(s) if s.is_some() && matches!(hir[s].kind, StmtKind::Expr(_)))
             || is_parenthesized(hir, e)
         {
             return;
@@ -560,7 +560,7 @@ impl Checker<'_, '_> {
         if call_sigs.is_empty() {
             // If it is parenthesized, the parenthesized expression is the array element.
             let is_element = !is_parenthesized(hir, e)
-                && matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Array(_)));
+                && matches!(self.bound(file).parent_of_expr(e), Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Array(_)));
             let at = self.span_of_callee(file, data.callee);
             if is_element {
                 self.error_at(at, 2796, &[]);
@@ -798,7 +798,7 @@ impl Checker<'_, '_> {
         let (file, node, type_args) = (s.file, s.node, s.type_args);
         let hir = self.hir(file);
         let type_argument_list = match node {
-            CallLike::Call(c) => Some(hir[c].type_args),
+            CallLike::Call(c) => Some(hir.list_at(hir[c].type_args)),
             CallLike::Jsx(j) if hir[j].tag.is_some() => Some(hir[j].type_args),
             _ => None,
         };
@@ -1140,9 +1140,10 @@ impl Checker<'_, '_> {
             (CallLike::Call(c), ExprKind::Call(_)) => {
                 let callee = hir[c].callee;
                 match hir[callee].kind {
-                    ExprKind::Dot { name_pos, .. } if !is_parenthesized(hir, callee) => {
-                        (name_pos, self.end_of_name_at(file, name_pos))
-                    }
+                    ExprKind::Dot { .. } if !is_parenthesized(hir, callee) => (
+                        hir.name_pos(callee),
+                        self.end_of_name_at(file, hir.name_pos(callee)),
+                    ),
                     _ => (
                         self.error_start_of(file, callee),
                         self.error_end_of(file, callee),
@@ -1325,7 +1326,7 @@ impl Checker<'_, '_> {
         let FnOwner::Expr(function) = bound.fns[bound.param_fn[p.idx()].idx()].owner else {
             return false;
         };
-        let Parent::Expr(parent) = bound.expr_parent[function.idx()] else {
+        let Parent::Expr(parent) = bound.parent_of_expr(function) else {
             return false;
         };
         let ExprKind::New(outer) = hir[parent].kind else {

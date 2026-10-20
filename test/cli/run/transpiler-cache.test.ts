@@ -140,7 +140,8 @@ describe("transpiler cache", () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     writeFileSync(join(temp_dir, "b.js"), dummyFile(50 * 1024, "2", "b"));
 
-    const remover = Bun.spawn({
+    // Its working directory is temp_dir, which Windows does not let the next test remove while it is alive.
+    await using remover = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "transpiler-cache-aggressive-remover.js"), cache_dir],
       env,
       cwd: temp_dir,
@@ -158,7 +159,6 @@ describe("transpiler cache", () => {
             if (exitCode != 0 && !killing) {
               killing = true;
               processes.forEach(x => x.kill(9));
-              remover.kill(9);
             }
           },
         }),
@@ -168,8 +168,6 @@ describe("transpiler cache", () => {
     await Promise.all(processes.map(x => x.exited));
 
     expect(!killing).toBeTrue();
-
-    remover.kill(9);
 
     for (const proc of processes) {
       expect(proc.exitCode).toBe(0);
@@ -629,7 +627,7 @@ test("rejects a cached entry whose sourcemap section header is corrupt", () => {
   //   then twelve u64 fields; sourcemap_byte_offset @ 54,
   //   sourcemap_byte_length @ 62, sourcemap_hash @ 70.
   // InternalSourceMap header (src/sourcemap/InternalSourceMap.rs):
-  //   0: total_len u64, 8: mapping_count u64, 16: input_line_count u64,
+  //   0: total_len u64, 8: mapping_count u64, 16: unused,
   //   24: sync_count u32, 28: stream_offset u32.
   const SOURCEMAP_BYTE_OFFSET_AT = 54;
   const SOURCEMAP_BYTE_LENGTH_AT = 62;

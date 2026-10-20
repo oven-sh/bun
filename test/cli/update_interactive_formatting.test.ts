@@ -1198,7 +1198,7 @@ describe.concurrent("bun update --interactive", () => {
     expect(otherJson.dependencies).toEqual({ "no-deps": "catalog:pinned" });
   });
 
-  it("should leave the catalog whose row was not selected alone", async () => {
+  it("should not change the catalog whose row wasn't selected", async () => {
     await using dir = tempDir("update-interactive-one-of-two-catalogs", {
       "bunfig.toml": bunfig(),
       "package.json": JSON.stringify({
@@ -1334,7 +1334,7 @@ describe.concurrent("bun update --interactive", () => {
         "either": "^1.0.0 || ^2.0.0",
       };
       expect(await updateEveryRange(list, ranges, ["--latest"])).toEqual({
-        // What `bun update --latest` writes.
+        // This is what `bun update --latest` writes.
         declared: {
           "below": "^2.0.0",
           "between": "^2.0.0",

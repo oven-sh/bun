@@ -1,6 +1,8 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
+import { bunEnv, isASAN } from "harness";
 import assert from "node:assert";
+import { join } from "node:path";
 import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
@@ -161,6 +163,84 @@ devTest("css import another css file", {
     // Check that the styles still work after a reload
     await c.hardReload();
     await c.style("h1").color.expect.toBe("green");
+    await c.style("body").color.expect.toBe("red");
+  },
+});
+// An `@import` condition can own heap memory: an env() fallback, a calc()
+// tree, a layer name with more than one segment. Every rebuild links the
+// import chain again. On an ASAN build the dev server runs with leak checking
+// on, so a leaked condition makes it exit with a LeakSanitizer report.
+devTest("nested conditional css imports across hot reloads", {
+  env: isASAN
+    ? {
+        // Without this the VM is not torn down at exit, and the report lists objects that the VM still owns.
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../leaksan.supp")}`,
+      }
+    : undefined,
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+    }),
+    "styles.css": `
+      @import "./mid.css" layer(a.b) (min-width: env(foo, 1px));
+      body {
+        color: red;
+      }
+    `,
+    "mid.css": `
+      @import "./leaf.css" (max-width: calc(100px + 1em));
+      h2 {
+        color: blue;
+      }
+    `,
+    "leaf.css": `
+      h1 {
+        color: blue;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    const served = async () => {
+      const href = (await (await dev.fetch("/")).text()).match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)![1];
+      return await (await dev.fetch(href)).text();
+    };
+    const expected = (fallback: string, leafColor: string) => `/* leaf.css */
+@media (width >= env(foo, ${fallback})) {
+  @layer a.b {
+    @media (width <= calc(100px + 1em)) {
+      h1 {
+        color: ${leafColor};
+      }
+    }
+  }
+}
+
+/* mid.css */
+@media (width >= env(foo, ${fallback})) {
+  @layer a.b {
+    h2 {
+      color: #00f;
+    }
+  }
+}
+
+/* styles.css */
+body {
+  color: red;
+}
+`;
+    expect(await served()).toBe(expected("1px", "#00f"));
+
+    // Edit the condition of the file that imports the chain.
+    await dev.patch("styles.css", { find: "1px", replace: "2px" });
+    expect(await served()).toBe(expected("2px", "#00f"));
+
+    // Edit the leaf, which both conditions wrap.
+    await dev.patch("leaf.css", { find: "blue", replace: "green" });
+    expect(await served()).toBe(expected("2px", "green"));
     await c.style("body").color.expect.toBe("red");
   },
 });

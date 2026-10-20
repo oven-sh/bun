@@ -356,6 +356,10 @@ impl S3Credentials {
 
         let path = normalize_name(path);
         let bucket = normalize_name(bucket);
+        // In path style the bucket is a path segment. In virtual-hosted style the host names it.
+        if !self.virtual_hosted_style && bucket.is_empty() {
+            return Err(SignError::InvalidPath);
+        }
 
         // if we allow path.len == 0 it will list the bucket for now we disallow
         if !ALLOW_EMPTY_PATH && path.is_empty() {

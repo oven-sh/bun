@@ -218,6 +218,50 @@ describe("process.env.NODE_ENV in a build", () => {
     expect(texts.client).toContain(`"react/jsx-dev-runtime"`);
   });
 
+  test.concurrent.each(["NODE_ENV", "BUN_ENV"])("a define of %s reaches the browser chunks", async name => {
+    using dir = tempDir("bundler-node-env-fullstack-define", {
+      "server.js": `import page from "./index.html"; console.log(page);`,
+      "index.html": `<!doctype html><html><body><script src="./client.js"></script></body></html>`,
+      "client.js": `console.log(process.env.${name});`,
+    });
+    await run(
+      [bunExe(), "build", "server.js", "--target=bun", "--outdir=dist", `--define=process.env.${name}="staging"`],
+      String(dir),
+      unset,
+    );
+    const glob = new Bun.Glob("*.js").scanSync(join(String(dir), "dist"));
+    const client = [...glob].find(file => !file.startsWith("server"));
+    expect(await Bun.file(join(String(dir), "dist", client!)).text()).toContain(`console.log("staging")`);
+  });
+
+  describe("the development export condition", () => {
+    const files = {
+      "entry.js": `import value from "pkg"; console.log(value);`,
+      "build.js": `
+        const { outputs } = await Bun.build({ entrypoints: ["./entry.js"], target: "bun" });
+        process.stdout.write(await outputs[0].text());
+      `,
+      "node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        exports: { development: "./dev.js", default: "./default.js" },
+      }),
+      "node_modules/pkg/dev.js": `export default "from dev.js";`,
+      "node_modules/pkg/default.js": `export default "from default.js";`,
+    };
+    const cli = [bunExe(), "build", "entry.js", "--target=bun"];
+
+    test.concurrent("is off when NODE_ENV is read at runtime", async () => {
+      using dir = tempDir("bundler-node-env-condition", files);
+      expect(await run(cli, String(dir), unset)).toContain("from default.js");
+      expect(await run([bunExe(), "build.js"], String(dir), unset)).toContain("from default.js");
+    });
+
+    test.concurrent("is on with NODE_ENV=development at build time", async () => {
+      using dir = tempDir("bundler-node-env-condition", files);
+      expect(await run(cli, String(dir), { ...unset, NODE_ENV: "development" })).toContain("from dev.js");
+    });
+  });
+
   describe("with JSX", () => {
     const files = {
       "app.jsx": `console.log(process.env.NODE_ENV, <div />.type);`,
@@ -263,6 +307,45 @@ describe("process.env.NODE_ENV in a build", () => {
     test.concurrent("tsconfig react-jsxdev keeps jsxDEV", async () => {
       const tsconfig = JSON.stringify({ compilerOptions: { jsx: "react-jsxdev" } });
       expect(await jsxImport([], { "tsconfig.json": tsconfig })).toBe(`"react/jsx-dev-runtime"`);
+    });
+
+    test.concurrent("tsconfig react-jsx uses the production transform", async () => {
+      const tsconfig = JSON.stringify({ compilerOptions: { jsx: "react-jsx" } });
+      expect(await jsxImport([], { "tsconfig.json": tsconfig })).toBe(`"react/jsx-runtime"`);
+    });
+
+    test.concurrent.each([
+      ["react-jsx", `"react/jsx-runtime"`],
+      ["react-jsxDEV", `"react/jsx-dev-runtime"`],
+    ])("bunfig jsx = %s imports %s", async (jsx, expected) => {
+      expect(await jsxImport([], { "bunfig.toml": `jsx = "${jsx}"\n` })).toBe(expected);
+    });
+
+    test.concurrent("a bunfig that does not set jsx uses the production transform", async () => {
+      expect(await jsxImport([], { "bunfig.toml": `logLevel = "error"\n` })).toBe(`"react/jsx-runtime"`);
+    });
+
+    test.concurrent.each([
+      ["react-jsx", `"react/jsx-runtime"`],
+      ["react-jsxdev", `"react/jsx-dev-runtime"`],
+    ])("Bun.build with tsconfig %s imports %s", async (jsx, expected) => {
+      const tsconfig = JSON.stringify({ compilerOptions: { jsx } });
+      using dir = tempDir("bundler-node-env-jsx-tsconfig", { ...files, "tsconfig.json": tsconfig });
+      const stdout = await run([bunExe(), "build.js", "{}"], String(dir), unset);
+      expect(stdout.match(/"react\/[a-z-]+"/)?.[0]).toBe(expected);
+    });
+
+    test.concurrent("a Bun.build React app with tsconfig react-jsx runs with NODE_ENV=production", async () => {
+      using dir = tempDir("bundler-node-env-react-tsconfig", {
+        "app.jsx": files["app.jsx"],
+        "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx" } }),
+        "build.js": `await Bun.build({ entrypoints: ["./app.jsx"], target: "bun", outdir: "dist" });`,
+      });
+      symlinkSync(join(import.meta.dir, "../node_modules"), join(String(dir), "node_modules"), "junction");
+      await run([bunExe(), "build.js"], String(dir), unset);
+      expect(await run([bunExe(), "dist/app.js"], String(dir), { ...unset, NODE_ENV: "production" })).toBe(
+        "production div\n",
+      );
     });
 
     test.concurrent("NODE_ENV=development at build time keeps jsxDEV", async () => {

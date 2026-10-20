@@ -589,6 +589,19 @@ pub mod defines {
             crate::defines_table::lookup_pure_global_identifier(name).map(|v| v.value())
         }
 
+        pub fn has_dotted(&self, key: &[u8]) -> bool {
+            let tail = key.rsplit(|&c| c == b'.').next().unwrap_or(key);
+            self.dots.get(tail).is_some_and(|defines| {
+                defines.iter().any(|define| {
+                    define
+                        .parts
+                        .iter()
+                        .map(|part| &**part)
+                        .eq(key.split(|&c| c == b'.'))
+                })
+            })
+        }
+
         pub fn insert_from_iterator<'a, I>(&mut self, iter: I) -> Result<(), bun_alloc::AllocError>
         where
             I: Iterator<Item = (&'a [u8], &'a DefineData)>,

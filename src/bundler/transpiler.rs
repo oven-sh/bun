@@ -535,10 +535,16 @@ impl<'a> Transpiler<'a> {
         self.options.load_defines(self.arena, Some(env_loader))?;
 
         if self.options.node_env_at_runtime {
+            self.options.jsx_development_explicit = self
+                .options
+                .transform_options
+                .jsx
+                .as_ref()
+                .is_some_and(|jsx| jsx.development_explicit);
             let top_level_dir = self.fs().top_level_dir;
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
                 if let Some(tsconfig) = self.resolver.tsconfig_json(&root_dir) {
-                    self.options.jsx_development_explicit |= tsconfig.sets_jsx_development();
+                    self.options.jsx_development_explicit |= tsconfig.selects_jsx_development();
                 }
             }
         }

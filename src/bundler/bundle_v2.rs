@@ -2004,10 +2004,12 @@ pub mod bv2_impl {
                 static DEVELOPMENT: bun_ast::E::EString =
                     bun_ast::E::EString::from_static(b"development");
                 for key in [b"process.env.NODE_ENV".as_slice(), b"process.env.BUN_ENV"] {
-                    ct.options.define.insert(
-                        key,
-                        crate::defines::DefineData::init_static_string(&DEVELOPMENT),
-                    )?;
+                    if !ct.options.define.has_dotted(key) {
+                        ct.options.define.insert(
+                            key,
+                            crate::defines::DefineData::init_static_string(&DEVELOPMENT),
+                        )?;
+                    }
                 }
             }
             // Don't inherit SSR mode from the server target: the SSR pass

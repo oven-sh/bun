@@ -650,7 +650,7 @@ The runtime and the bundler share Bun's plugin system. See [plugins](/bundler/pl
 
 Controls how environment variables are handled during bundling. Internally, this option uses `define` to inject environment variables into the bundle; `env` is a shorthand for specifying which ones.
 
-`process.env.NODE_ENV` is separate from this option. A build replaces it with the `BUN_ENV` set when it runs, else the `NODE_ENV` set when it runs, or `"production"` with `--production`. With none of these, `target: "browser"` uses `"development"`, and `target: "bun"` and `target: "node"` leave it to be read when the server runs. JSX then uses `react/jsx-runtime`, unless your `tsconfig.json` or the `jsx` option selects the development transform. Client scripts from an imported `.html` file use `"development"`.
+`process.env.NODE_ENV` is separate from this option. A build replaces it with the `BUN_ENV` set when it runs, else the `NODE_ENV` set when it runs, or `"production"` with `--production`. With none of these, `target: "browser"` uses `"development"`, and `target: "bun"` and `target: "node"` leave it to be read when the server runs. JSX then uses `react/jsx-runtime`, unless your `tsconfig.json`, `bunfig.toml` or the `jsx` option selects the development transform, and packages resolve without the `development` export condition. Client scripts from an imported `.html` file use `"development"`.
 
 #### env: "inline"
 

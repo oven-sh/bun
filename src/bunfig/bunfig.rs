@@ -1006,6 +1006,7 @@ impl<'a> Parser<'a, '_> {
         let mut jsx_import_source: Box<[u8]> = Box::default();
         let mut jsx_runtime = api::JsxRuntime::Automatic;
         let mut jsx_dev = true;
+        let mut jsx_dev_explicit = false;
 
         if let Some(expr) = json.get(b"jsx") {
             if let Some(value) = expr.as_string(self.bump) {
@@ -1017,6 +1018,7 @@ impl<'a> Parser<'a, '_> {
                 } else if value == b"react-jsxDEV" {
                     jsx_runtime = api::JsxRuntime::Automatic;
                     jsx_dev = true;
+                    jsx_dev_explicit = true;
                 } else {
                     self.add_error(
                         expr.loc,
@@ -1053,6 +1055,7 @@ impl<'a> Parser<'a, '_> {
                 }
                 jsx.runtime = jsx_runtime;
                 jsx.development = jsx_dev;
+                jsx.development_explicit = jsx_dev_explicit;
             } else {
                 self.ctx.args.jsx = Some(api::Jsx {
                     factory: jsx_factory,
@@ -1060,6 +1063,7 @@ impl<'a> Parser<'a, '_> {
                     import_source: jsx_import_source,
                     runtime: jsx_runtime,
                     development: jsx_dev,
+                    development_explicit: jsx_dev_explicit,
                     ..Default::default()
                 });
             }

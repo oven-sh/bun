@@ -443,6 +443,8 @@ pub mod api {
         pub runtime: JsxRuntime,
         pub fragment: Box<[u8]>,
         pub development: bool,
+        /// `development` was asked for, not left at a default.
+        pub development_explicit: bool,
         pub import_source: Box<[u8]>,
         pub side_effects: bool,
     }

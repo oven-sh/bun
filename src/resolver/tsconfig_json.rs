@@ -252,8 +252,8 @@ impl TSConfigJSON {
         out
     }
 
-    pub fn sets_jsx_development(&self) -> bool {
-        self.jsx_flags.contains(JsxField::Development)
+    pub fn selects_jsx_development(&self) -> bool {
+        self.jsx_flags.contains(JsxField::Development) && self.jsx.development
     }
 
     /// Support ${configDir}, but avoid allocating when possible.

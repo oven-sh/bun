@@ -1607,6 +1607,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                     api::JsxRuntime::Automatic
                 },
                 development: false,
+                development_explicit: false,
                 side_effects: jsx_side_effects,
             });
         } else {
@@ -1623,6 +1624,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                     prev.runtime
                 },
                 development: false,
+                development_explicit: false,
                 side_effects: jsx_side_effects,
             });
         }

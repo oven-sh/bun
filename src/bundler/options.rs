@@ -1401,7 +1401,7 @@ pub struct BundleOptions<'a> {
     pub force_node_env: ForceNodeEnv,
     /// A server build with no `NODE_ENV` of its own: set by `load_defines`.
     pub node_env_at_runtime: bool,
-    /// `jsx.development` came from the user, not from the default.
+    /// `jsx.development` came from the user or a tsconfig, not from the default.
     pub jsx_development_explicit: bool,
 
     pub ignore_module_resolution_errors: bool,

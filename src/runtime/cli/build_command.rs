@@ -512,7 +512,7 @@ impl BuildCommand {
             options::CompileTargetBuiltins::Host
         };
 
-        if !this_transpiler.options.production {
+        if !this_transpiler.options.production && !this_transpiler.options.node_env_at_runtime {
             this_transpiler
                 .options
                 .conditions

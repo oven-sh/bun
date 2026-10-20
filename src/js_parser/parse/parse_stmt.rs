@@ -1833,6 +1833,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !p.lexer.has_newline_before
                     && (p.lexer.token == T::TClass || opts.ts_decorators.is_some())
                 {
+                    // `t_class` refuses a class as the whole body of `if`, `else`, a
+                    // loop, `with` or a label. This form is accepted, as in esbuild,
+                    // and prints as `{ class K {} }`.
+                    if opts.lexical_decl != LexicalDecl::AllowAll {
+                        p.stop_tracking_scope_uses();
+                    }
                     return Ok(Some(p.parse_class_stmt(p.lexer.loc(), opts)?));
                 }
                 if opts.ts_decorators.is_some() {

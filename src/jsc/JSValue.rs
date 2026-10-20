@@ -1156,9 +1156,19 @@ impl JSValue {
         global: &JSGlobalObject,
         property: impl AsRef<[u8]>,
     ) -> JsResult<Option<bun_core::String>> {
+        Ok(self
+            .get_stringish_allow_empty(global, property)?
+            .filter(|s| !s.is_empty()))
+    }
+    /// `get_stringish`, for a property that "" is a value of.
+    pub fn get_stringish_allow_empty(
+        self,
+        global: &JSGlobalObject,
+        property: impl AsRef<[u8]>,
+    ) -> JsResult<Option<bun_core::String>> {
         let property = property.as_ref();
         // `get(prop)`, filter null/false → None,
-        // reject symbols, otherwise coerce via `toBunString` and filter "" → None.
+        // reject symbols, otherwise coerce via `toBunString`.
         let Some(prop) = self.get(global, property)? else {
             return Ok(None);
         };
@@ -1175,8 +1185,7 @@ impl JSValue {
                 bstr::BStr::new(property),
             )));
         }
-        let s = prop.to_bun_string(global)?;
-        if s.is_empty() { Ok(None) } else { Ok(Some(s)) }
+        Ok(Some(prop.to_bun_string(global)?))
     }
     /// Own/prototype lookup,
     /// `null`/`undefined` → `None`, non-string → `ERR_INVALID_ARG_TYPE`,

@@ -260,6 +260,150 @@ test.concurrent("responds to a framework route waiting on a plugin load that rej
   expect(exitCode).toBe(0);
 });
 
+test.concurrent(
+  "responds to a framework route waiting on a plugin load that rejects, and to its next request",
+  async () => {
+    using dir = tempDir("serve-plugins-devserver-reject-framework-live", {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "plugin.ts": parkedPlugin,
+      "render.ts": `export function render() { return new Response("rendered"); }`,
+      "routes/index.ts": `export default {};`,
+      "server.ts": `
+      const entered = Promise.withResolvers();
+      const release = Promise.withResolvers();
+      globalThis.__setup = { entered: entered.resolve, release: release.promise, finished() {} };
+
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./render.ts" };
+      const server = Bun.serve({ port: 0, development: true, app: { framework: { fileSystemRouterTypes: [fsr] } } });
+      const waiting = fetch(server.url).then(async res => res.status + " " + (await res.text()));
+      await entered.promise;
+      release.resolve("reject");
+      console.log(await waiting);
+      console.log(await fetch(server.url).then(res => res.text()));
+      console.log(server.pendingRequests);
+      await server.stop(true);
+    `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("plugin setup failed after stop");
+    expect(stdout).toBe("500 \nPlugin Error\n0\n");
+    expect(exitCode).toBe(0);
+  },
+);
+
+// The server answers 413 and closes the connection while the request still waits, so the
+// response that the request was saved with is gone when the load rejects.
+test.concurrent(
+  "does not answer a framework request again that got a 413 while it waited for a plugin load",
+  async () => {
+    using dir = tempDir("serve-plugins-devserver-reject-framework-413", {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "plugin.ts": parkedPlugin,
+      "render.ts": `export function render() { return new Response("rendered"); }`,
+      "routes/index.ts": `export default {};`,
+      "server.ts": `
+      import { getDevServerDeinitCount } from "bun:internal-for-testing";
+      import { connect } from "node:net";
+      const entered = Promise.withResolvers();
+      const release = Promise.withResolvers();
+      globalThis.__setup = { entered: entered.resolve, release: release.promise, finished() {} };
+
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./render.ts" };
+      const server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        development: true,
+        maxRequestBodySize: 16,
+        app: { framework: { fileSystemRouterTypes: [fsr] } },
+      });
+
+      // A chunked body has no Content-Length, so the server finds that it is too large only when a chunk arrives.
+      let response = "";
+      const closed = Promise.withResolvers();
+      const socket = connect(server.port, "127.0.0.1");
+      socket.setEncoding("latin1");
+      socket.on("data", data => (response += data));
+      socket.on("close", closed.resolve);
+      socket.on("error", closed.reject);
+      socket.write("POST / HTTP/1.1\\r\\nHost: localhost\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n");
+      await entered.promise;
+      socket.write("40\\r\\n" + Buffer.alloc(64, "a").toString() + "\\r\\n");
+      await closed.promise;
+      release.resolve("reject");
+      console.log(response.split("\\r\\n")[0]);
+      console.log(await fetch(server.url).then(res => res.text()));
+      await server.stop();
+      console.log(server.pendingRequests, getDevServerDeinitCount());
+    `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("plugin setup failed after stop");
+    expect(stdout).toBe("HTTP/1.1 413 Payload Too Large\nPlugin Error\n0 1\n");
+    expect(exitCode).toBe(0);
+  },
+);
+
+// `bun ./index.html` and `bun bake` load the plugins when the first request arrives, so that
+// request waits for them. The later ones must not wait for a bundle that never starts.
+test.each([
+  { name: "bun ./index.html", args: ["index.html", "--port=0"], page: "index.html" },
+  { name: "bun bake", args: ["bake", "--port=0"], page: "app/pages/index.html" },
+])("$name answers every request when a [serve.static] plugin throws as it loads", async ({ args, page }) => {
+  using dir = tempDir("serve-plugins-devserver-cli", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "plugin.ts": `throw new Error("plugin failed on purpose");`,
+    [page]: `<!DOCTYPE html><html><body></body></html>`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1" },
+    cwd: String(dir),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const decoder = new TextDecoder();
+  let stdout = "";
+  let url: string | undefined;
+  for await (const chunk of proc.stdout) {
+    stdout += decoder.decode(chunk, { stream: true });
+    url = stdout.match(/url: (http:\/\/\S+)\s/)?.[1];
+    if (url) break;
+  }
+  expect(url, stdout).toBeDefined();
+
+  const waiting = await fetch(url!);
+  expect({ status: waiting.status, body: await waiting.text() }).toEqual({ status: 500, body: "" });
+  for (let i = 0; i < 2; i++) {
+    expect(await fetch(url!).then(res => res.text())).toBe("Plugin Error");
+  }
+  expect(proc.exitCode).toBeNull();
+
+  proc.kill("SIGKILL");
+  const stderr = await proc.stderr.text();
+  expect(stderr.match(/^error: plugin failed on purpose$/gm), stderr).toHaveLength(1);
+});
+
 test.concurrent("releases a framework request that the client aborts while it waits for a plugin load", async () => {
   using dir = tempDir("serve-plugins-devserver-abort-framework", {
     "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,

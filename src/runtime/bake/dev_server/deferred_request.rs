@@ -64,11 +64,9 @@ impl DeferredRequest {
     /// Ends the response before the deref because until then uWS has an abort callback that points to this node.
     pub(super) fn abort_and_deref(&mut self) {
         if let Handler::ServerHandler(saved) = &self.handler {
-            saved.response.write_status(b"500 Internal Server Error");
-            saved.response.write_header_int(b"Content-Length", 0);
             // Releases `prepare_and_save_js_request_context`'s ref. `deref_` releases
             // `defer_request`'s.
-            saved.ctx.end_without_body(true);
+            saved.ctx.end_with_internal_server_error();
         } else {
             self.abort();
         }

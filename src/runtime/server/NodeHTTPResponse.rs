@@ -1613,7 +1613,8 @@ impl NodeHTTPResponse {
         global_object: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        if self.is_done() {
+        // A 'connect' or 'upgrade' handoff has no response: ending one would write it into the tunnel.
+        if self.is_done() || self.flags.get().contains(Flags::TUNNELED) {
             return Ok(JSValue::UNDEFINED);
         }
 

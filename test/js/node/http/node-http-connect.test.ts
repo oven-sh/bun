@@ -2095,6 +2095,95 @@ describe("a tunnel behind a request head that took more than one read", () => {
   });
 });
 
+// An accepted CONNECT or Upgrade request has no response. Node.js destroys the socket and writes nothing.
+describe.each([
+  [
+    "'connect' request",
+    "connect",
+    "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
+    "HTTP/1.1 200 Connection Established\r\n\r\n",
+  ],
+  [
+    "'upgrade' request",
+    "upgrade",
+    "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n",
+    "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n",
+  ],
+  [
+    // The parser still reads HTTP here: 2 of the 5 body bytes came.
+    "'upgrade' request whose body still arrives",
+    "upgrade",
+    "POST / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: raw\r\nContent-Length: 5\r\n\r\nhe",
+    "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n",
+  ],
+] as const)("req.destroy() of a %s", (_, event, request, accepted) => {
+  describe.each([
+    ["behind the reply of the listener", accepted],
+    // A listener that refuses the tunnel. The client must not get a 200.
+    ["in place of a reply", ""],
+  ])("%s", (_, reply) => {
+    test.each(["in the listener", "in a later task"])("%s sends nothing", async when => {
+      const server = http.createServer();
+      server.on(event, (req: http.IncomingMessage, socket: Duplex) => {
+        socket.on("error", () => {});
+        if (reply) socket.write(reply);
+        if (when === "in the listener") req.destroy();
+        else setImmediate(() => req.destroy());
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+      try {
+        let received = "";
+        client.on("data", chunk => (received += chunk));
+        client.on("error", () => {});
+        client.write(request);
+        await once(client, "close");
+        expect(received).toBe(reply);
+        // The destroyed request holds nothing of the server: close() completes.
+        await new Promise(resolve => server.close(resolve));
+      } finally {
+        client.destroy();
+        server.closeAllConnections();
+        server.close();
+      }
+    });
+  });
+});
+
+// Bun constructs the ServerResponse before it knows that the request is handed off. Node.js constructs none.
+test("destroy() of the unused response of an 'upgrade' request writes nothing into the tunnel", async () => {
+  let response: http.ServerResponse | undefined;
+  class Response extends http.ServerResponse {
+    constructor(...args: ConstructorParameters<typeof http.ServerResponse>) {
+      super(...args);
+      response = this;
+    }
+  }
+  const reply = "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n";
+  const server = http.createServer({ ServerResponse: Response });
+  server.on("upgrade", (req, socket) => {
+    socket.on("error", () => {});
+    socket.write(reply);
+    response?.destroy();
+    socket.end();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+  try {
+    let received = "";
+    client.on("data", chunk => (received += chunk));
+    client.on("error", () => {});
+    client.write("GET / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n");
+    await once(client, "close");
+    expect(response).toBeInstanceOf(Response);
+    expect(received).toBe(reply);
+  } finally {
+    client.destroy();
+    server.closeAllConnections();
+    server.close();
+  }
+});
+
 test("a tunnel write that waits for a drain settles its callbacks when the client goes away", async () => {
   const events: string[] = [];
   const wrote = Promise.withResolvers<void>();

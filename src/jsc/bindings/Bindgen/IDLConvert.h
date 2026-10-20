@@ -42,8 +42,12 @@ template<> struct IDLHumanReadableName<Bindgen::IDLStrictUTF8String> : BaseIDLHu
     static constexpr auto humanReadableName = std::to_array("string");
 };
 template<> struct IDLHumanReadableName<Bindgen::IDLLooseUTF8String> : IDLHumanReadableName<Bindgen::IDLStrictUTF8String> {};
-template<> struct IDLHumanReadableName<Bindgen::IDLRawBufferSource> : BaseIDLHumanReadableName {
+template<bool allowShared> struct IDLHumanReadableName<Bindgen::IDLRawBufferSource<allowShared>> : BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = std::to_array("ArrayBuffer or ArrayBufferView");
+};
+
+template<typename JSClass, auto name> struct IDLHumanReadableName<Bindgen::IDLWrappedInterface<JSClass, name>> : BaseIDLHumanReadableName {
+    static constexpr auto humanReadableName = name;
 };
 
 namespace Bindgen {
@@ -51,6 +55,20 @@ namespace Bindgen {
 // Specialized by generated code. `result` was just default-constructed.
 template<typename T>
 void convertDictionaryInto(JSC::JSGlobalObject&, JSC::JSValue, T& result);
+
+template<typename T, IDLConversionContext Ctx>
+void convertDictionaryInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, T& result, Ctx& ctx)
+{
+    // The dictionary names itself. `expected` names the argument.
+    if constexpr (std::is_same_v<Ctx, NodeArgumentContext> || std::is_same_v<Ctx, ArgumentMessageContext>) {
+        if (!value.isObject()) [[unlikely]] {
+            auto scope = DECLARE_THROW_SCOPE(JSC::getVM(&globalObject));
+            ctx.throwNotObject(globalObject, scope);
+            return;
+        }
+    }
+    convertDictionaryInto(globalObject, value, result);
+}
 
 template<IDLConversionContext Ctx>
 void throwNotUnsharedBufferSource(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
@@ -79,22 +97,46 @@ template<typename IDL, BytesOptions options>
 struct BytesConverter : DefaultContextConverter<IDL> {
     using Result = typename IDL::ImplementationType;
 
-    // `expected` is what `options` takes without `ToString`, for the message.
+    // `expected` is what `options` takes without `ToString`, for the message. Whether it ran what can throw.
     template<IDLConversionContext Ctx>
-    ALWAYS_INLINE static void convertInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx, Result& result, WTF::ASCIILiteral expected)
+    ALWAYS_INLINE static bool convertInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx, Result& result, WTF::ASCIILiteral expected)
     {
         if constexpr (options.fromString) {
-            if (value.isString())
-                return result.initialize(globalObject, JSC::asString(value));
+            if (value.isString()) {
+                result.initialize(globalObject, JSC::asString(value));
+                return true;
+            }
         }
         if constexpr (options.fromBuffer) {
-            if (value.inherits<JSC::JSArrayBufferView>() || value.inherits<JSC::JSArrayBuffer>())
-                return result.initializeAsBlobOrBuffer();
+            if (value.inherits<JSC::JSArrayBufferView>() || value.inherits<JSC::JSArrayBuffer>()) {
+                result.initializeAsBlobOrBuffer();
+                return false;
+            }
         }
-        convertIntoSlow(globalObject, value, ctx, result, expected);
+        if constexpr (options.fromString || options.toStringOtherwise)
+            convertIntoSlow(globalObject, value, ctx, result, expected);
+        else if (isBlobOrThrow(globalObject, value, ctx, expected))
+            result.initializeAsBlobOrBuffer();
+        return true;
     }
 
 private:
+    // Does not take `result`, which can then live in registers.
+    template<IDLConversionContext Ctx>
+    NEVER_INLINE static bool isBlobOrThrow(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx, WTF::ASCIILiteral expected)
+    {
+        auto& vm = JSC::getVM(&globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        if constexpr (options.fromBlob) {
+            bool isBlob = checkInMemoryBlob(globalObject, value);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (isBlob)
+                return true;
+        }
+        ctx.throwTypeMustBe(globalObject, scope, expected);
+        return false;
+    }
+
     template<IDLConversionContext Ctx>
     NEVER_INLINE static void convertIntoSlow(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx, Result& result, WTF::ASCIILiteral expected)
     {
@@ -110,7 +152,7 @@ private:
         if constexpr (options.toStringOtherwise)
             isRefused = (options.refuseUndefined && value.isUndefined()) || (options.refuseNull && value.isNull());
         else
-            isRefused = !options.fromString || !value.inherits<JSC::StringObject>();
+            isRefused = options.refuseStringObject || !value.inherits<JSC::StringObject>();
         if (isRefused) {
             ctx.throwTypeMustBe(globalObject, scope, expected);
             return;
@@ -146,11 +188,15 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLStrictStringOrStringObject
     }
 };
 
-template<> struct WebCore::Converter<Bun::Bindgen::IDLRawBufferSource> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawBufferSource> {
+template<bool allowShared>
+struct WebCore::Converter<Bun::Bindgen::IDLRawBufferSource<allowShared>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawBufferSource<allowShared>> {
     template<Bun::IDLConversionContext Ctx>
     static std::optional<JSC::JSValue> tryConvert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx&)
     {
-        if (!Bun::Bindgen::unsharedBufferSourceSpan(JSC::getVM(&globalObject), value))
+        if constexpr (allowShared) {
+            if (!value.inherits<JSC::JSArrayBufferView>() && !value.inherits<JSC::JSArrayBuffer>())
+                return std::nullopt;
+        } else if (!Bun::Bindgen::unsharedBufferSourceSpan(JSC::getVM(&globalObject), value))
             return std::nullopt;
         return value;
     }
@@ -158,7 +204,10 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLRawBufferSource> : Bun::De
     template<Bun::IDLConversionContext Ctx>
     static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
     {
-        Bun::Bindgen::throwNotUnsharedBufferSource(globalObject, scope, ctx);
+        if constexpr (allowShared)
+            ctx.throwTypeMustBe(globalObject, scope, "an ArrayBuffer or ArrayBufferView"_s);
+        else
+            Bun::Bindgen::throwNotUnsharedBufferSource(globalObject, scope, ctx);
     }
 };
 
@@ -176,6 +225,25 @@ struct WebCore::Converter<Bun::Bindgen::IDLRawInterface<JSClass>> : Bun::Default
     static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
     {
         ctx.throwTypeMustBe(globalObject, scope, WTF::makeString("an instance of "_s, JSClass::info()->className));
+    }
+};
+
+template<typename JSClass, auto name>
+struct WebCore::Converter<Bun::Bindgen::IDLWrappedInterface<JSClass, name>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLWrappedInterface<JSClass, name>> {
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<void*> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
+    {
+        if (auto* object = dynamicDowncast<JSClass>(value)) {
+            if (void* wrapped = object->wrapped())
+                return wrapped;
+        }
+        return std::nullopt;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwTypeMustBe(globalObject, scope, WTF::makeString("an instance of "_s, Bun::idlHumanReadableName<Bun::Bindgen::IDLWrappedInterface<JSClass, name>>()));
     }
 };
 

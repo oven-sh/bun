@@ -2,7 +2,7 @@
 
 const BufferModule = require("node:buffer");
 
-const crc32 = $newRustFunction("node_zlib_binding.rs", "crc32", 1);
+const crc32 = $bindgen("node_zlib_binding.bind.ts", "crc32");
 const NativeZlib = $rust("node_zlib_binding.rs", "NativeZlib");
 const NativeBrotli = $rust("node_zlib_binding.rs", "NativeBrotli");
 const NativeZstd = $rust("node_zlib_binding.rs", "NativeZstd");

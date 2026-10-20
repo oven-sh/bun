@@ -22,7 +22,9 @@ impl Rule for Unambiguous {
         let is_unambiguous = match file.language().is_oxlint {
             // oxlint asks about a script too. For its parser `import.meta` and `await` make a module as well.
             true => has_module_syntax(file),
-            false => !file.is_module_program() || is_module(file),
+            // Don't use `File::language` here. A file that's CommonJS only because it has no `import` is exactly what
+            // this rule reports.
+            false => file.configured_language().scope_source_type() != SourceType::Module || is_module(file),
         };
         (!is_unambiguous).then_some(())
     }

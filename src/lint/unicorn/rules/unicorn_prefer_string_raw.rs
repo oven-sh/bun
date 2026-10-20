@@ -71,16 +71,20 @@ impl Rule for PreferStringRaw {
         cx.report(string_literal, PREFER_STRING_RAW)
             .called_with_the_name()
             .fix(|fixer| {
+                // Bun's runtime passes `\u00E9` to a tag as the raw text of `é`, so the string's value would change.
+                if !unescaped.is_ascii() {
+                    return None;
+                }
                 let before = fixer
                     .file()
                     .text()
                     .get(..string_literal.span().start as usize)
                     .unwrap_or_default();
                 let space: &[u8] = if ends_with_keyword(before) { b" " } else { b"" };
-                fixer.replace(
+                Some(fixer.replace(
                     string_literal,
                     [space, b"String.raw`", &unescaped, b"`"].concat(),
-                )
+                ))
             });
     }
 }

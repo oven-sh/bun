@@ -150,6 +150,7 @@ const catalogNote = (...names: string[]) =>
   `note: skipped ${names.length} catalog ${names.length === 1 ? "entry" : "entries"} not in bun.lock (unused by the workspaces on disk): ${quoted(names)}`;
 const changedSectionNote = (section: "overrides" | "the catalog" | "dependencies") =>
   `note: ${section} in package.json changed since bun.lock was saved`;
+const dependencyNote = (change: string) => `${changedSectionNote("dependencies")}: ${change}`;
 const savedLockfile = "Saved lockfile";
 const frozenError = "error: lockfile had changes, but lockfile is frozen";
 const frozenHint = "note: try re-running without --frozen-lockfile and commit the updated lockfile";
@@ -374,7 +375,8 @@ async function installedPackages(dir: string, linker: Linker): Promise<string[]>
 
 const byLinker = <T>(linker: Linker, hoisted: T, isolated: T) => (linker === "hoisted" ? hoisted : isolated);
 
-// What the two surviving workspaces install: app's a-dep, the workspace links, and no-deps held only by shared's optional peer slot.
+// What the two remaining workspaces install: app's a-dep, the workspace links, and the no-deps that's only there for
+// shared's optional peer.
 const survivorsInstalled = (linker: Linker) =>
   byLinker(linker, ["a-dep", "app", "no-deps", "shared"], ["a-dep@1.0.1", "no-deps@1.0.0"]);
 
@@ -458,7 +460,7 @@ describe.each(linkers)("linker: %s", linker => {
     const { packageDir, pruned } = await prunedTree(linker);
     await editApp(packageDir, app => (app.dependencies["no-deps"] = "2.0.0"));
 
-    await frozenFails(packageDir, linker, frozenFailure());
+    await frozenFails(packageDir, linker, frozenFailure(dependencyNote("no-deps was added in packages/app")));
 
     expect(await lockText(packageDir)).toBe(pruned);
     expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
@@ -513,7 +515,8 @@ describe.each(linkers)("linker: %s", linker => {
 
     await editApp(packageDir, app => (app.dependencies["is-number"] = "2.0.0"));
 
-    await frozenFails(packageDir, linker, [skippedNote("other", "other2"), ...frozenFailure()]);
+    const note = dependencyNote("is-number was added in packages/app");
+    await frozenFails(packageDir, linker, [skippedNote("other", "other2"), ...frozenFailure(note)]);
 
     expect(await lockText(packageDir)).toBe(full);
   });
@@ -750,12 +753,12 @@ describe.each(linkers)("linker: %s", linker => {
     test.concurrent.each([
       { list: [], nodeModules: "absent", diff: "none", complete: [false, false], pruned: [false, false] },
       { list: [], nodeModules: "intact", diff: "none", complete: [false, false], pruned: [false, false] },
-      // The hook is a diff of its own, so that install takes the other path through the differ's result.
+      // The hook is a separate diff, so that install takes the other path through the differ's result.
       { list: [], nodeModules: "absent", diff: "a hook", complete: [false, false], pruned: [false, false] },
       { list: [], nodeModules: "intact", diff: "a hook", complete: [false, false], pruned: [false, false] },
       // Recorded and on the default list.
       { list: ["electron"], nodeModules: "absent", diff: "none", complete: [true, false], pruned: [true, false] },
-      // No package.json on disk vouches for the recorded name, and the default list stays off.
+      // No package.json on disk confirms the recorded name, and the default list stays off.
       { list: ["uses-what-bin"], nodeModules: "absent", diff: "none", complete: [false, true], pruned: [false, false] },
       { list: ["uses-what-bin"], nodeModules: "intact", diff: "none", complete: [false, true], pruned: [false, true] },
     ])("$list, node_modules $nodeModules, other diff: $diff", async ({ list, nodeModules, diff, complete, pruned }) => {
@@ -780,7 +783,7 @@ describe.each(linkers)("linker: %s", linker => {
     });
 
     // The missing workspace never declared the list that the lockfile still records.
-    test.concurrent("a list deleted from the root's package.json trusts nothing it named", async () => {
+    test.concurrent("a list that's deleted from the root's package.json no longer trusts anything", async () => {
       const project = await installThenPrune({ trustedDependencies: ["uses-what-bin"] }, {});
       expect(project.complete.ran).toEqual({ electron: false, "uses-what-bin": true });
       await write(
@@ -796,8 +799,8 @@ describe.each(linkers)("linker: %s", linker => {
     });
   });
 
-  // A frozen install never asks the registry for the name of a workspace that bun.lock lists: whoever publishes that
-  // name would be installed in its place.
+  // A frozen install never asks the registry for the name of a workspace that's in bun.lock. Otherwise, whoever
+  // publishes that name would be installed in its place.
   describe("a range that bun.lock links to a pruned workspace", () => {
     const rootError =
       'error: the root package depends on workspace "no-deps" (packages/no-deps), which is listed in bun.lock but not on disk';
@@ -944,8 +947,8 @@ describe.each(linkers)("linker: %s", linker => {
     expect(await installedPackages(packageDir, linker)).toEqual(byLinker(linker, ["a-dep", "app"], ["a-dep@1.0.1"]));
   });
 
-  // The skipped workspace stays in bun.lock, but neither it nor its exclusive
-  // dependency is on disk, and `bun pm ls` lists what is on disk.
+  // The skipped workspace stays in bun.lock, but neither it nor its exclusive dependency is on disk, and `bun pm ls`
+  // lists what's on disk.
   test.concurrent("bun pm ls lists neither the skipped workspace nor its exclusive dependency", async () => {
     const { packageDir, full } = await verbatimTree(linker);
     await frozen(packageDir, linker, [prunedNote]);
@@ -1441,7 +1444,8 @@ describe("hoisted", () => {
 
     await editApp(packageDir, app => (app.dependencies["is-number"] = "1.0.0"));
 
-    await fails(packageDir, linker, [...frozenInstall, "--dry-run"], [prunedNote, ...frozenFailure()]);
+    const note = dependencyNote("is-number was added in packages/app");
+    await fails(packageDir, linker, [...frozenInstall, "--dry-run"], [prunedNote, ...frozenFailure(note)]);
 
     expect(await lockText(packageDir)).toBe(full);
     expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
@@ -1467,19 +1471,17 @@ describe("hoisted", () => {
     expect(await installedPackages(productionDir, linker)).toEqual(survivorsOnDisk);
   });
 
-  // pnpm#5794: a pruned bun.lock whose dependency rows a plain install would rewrite also fails frozen. The locked a-dep
-  // is what package.json asks for, so no package moves.
+  // package.json asks for the a-dep version that's already locked, so no package changes.
   test.concurrent(
-    "a hand-edited specifier in the pruned bun.lock fails frozen and is rewritten by a plain install",
+    "a hand-edited specifier in the pruned bun.lock passes --frozen-lockfile and is fixed by a regular install",
     async () => {
       const { packageDir, pruned, full } = await prunedTree(linker);
       const edited = pruned.replace('"a-dep": "1.0.1"', '"a-dep": "1.0.0"');
       expect(edited).not.toBe(pruned);
       await write(join(packageDir, "bun.lock"), edited);
 
-      await frozenFails(packageDir, linker, frozenFailure(changedSectionNote("dependencies")));
+      await frozen(packageDir, linker, []);
       expect(await lockText(packageDir)).toBe(edited);
-      expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
 
       await install(packageDir, linker);
 
@@ -1623,7 +1625,7 @@ describe("hoisted", () => {
       JSON.stringify({ ...rootPackageJson, dependencies: { "is-number": "1.0.0" } }),
     );
 
-    await frozenFails(packageDir, linker, [prunedNote, ...frozenFailure()]);
+    await frozenFails(packageDir, linker, [prunedNote, ...frozenFailure(dependencyNote("is-number was added"))]);
 
     expect(await lockText(packageDir)).toBe(full);
     expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
@@ -1980,7 +1982,8 @@ describe("hoisted", () => {
     const { packageDir, full } = await verbatimScenario(linker, hookTree, survivors);
     await editApp(packageDir, app => (app.dependencies["no-deps"] = "2.0.0"));
 
-    await frozenFails(packageDir, linker, [prunedNote, ...frozenFailure()]);
+    const note = dependencyNote("no-deps was added in packages/app");
+    await frozenFails(packageDir, linker, [prunedNote, ...frozenFailure(note)]);
 
     expect(await lockText(packageDir)).toBe(full);
     expect(await exists(join(packageDir, "node_modules"))).toBeFalse();

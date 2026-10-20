@@ -4,12 +4,15 @@
 //! `backticks` at the head of a function are the names used there. `REPORT` is `reportErrors`. Code
 //! that only serves error elaboration is in `explain_relation.rs`.
 
+use super::commit::{NotShared, VarianceClaim};
 use super::explain_relation::{
     Chain, ErrorState, chain_depth, is_same_chain, visibility_to_string,
 };
 use super::infer::{Inference, PRIORITY_ALWAYS_STRICT, PRIORITY_NO_CONSTRAINTS};
+use super::links::MappedPart;
 use super::related::Place;
 use super::shape::{IgnoreReturnTypes, IgnoreThisTypes, PartialMatch};
+use super::shortcuts::task_fact;
 use super::*;
 use crate::util::SharedSort;
 use crate::util::{FxHashSet, FxHasher};
@@ -130,8 +133,8 @@ pub(super) struct Key(TypeId, TypeId, u8);
 const GENERIC_KEY: u8 = 0x80;
 
 impl Key {
-    /// After the merge at the barrier the same two references hash differently, so the entry is
-    /// useless to other tasks.
+    /// True if the hash includes a task-local id. Another task hashes the same two references differently, so the entry
+    /// is useless to it.
     #[inline]
     fn is_hash_of_own_ids(self) -> bool {
         self.2 & GENERIC_KEY != 0 && self.0.is_local()
@@ -156,13 +159,6 @@ impl Follow for Key {
             visitor.plain(&(source.0, target.0));
         }
         visitor.plain(&flags);
-    }
-
-    fn follow(&mut self, link: &Link) {
-        if self.2 & GENERIC_KEY == 0 {
-            self.0.follow(link);
-            self.1.follow(link);
-        }
     }
 
     fn is_bound(&self, own: &OwnStore) -> bool {
@@ -217,11 +213,13 @@ pub(super) struct Relater {
     top_source: TypeId,
     top_target: TypeId,
     /// The comparisons in progress and those that succeeded assuming the ones in progress succeed.
-    pub(super) maybe_keys: Vec<Key>,
-    /// `maybeKeysSet`: the keys in `maybe_keys`.
-    pub(super) maybe_keys_set: FxHashSet<Key>,
-    pub(super) source_stack: Vec<TypeId>,
-    pub(super) target_stack: Vec<TypeId>,
+    maybe_keys: Vec<Key>,
+    /// `maybeKeysSet`: the keys in `maybe_keys`, from when there are many of them until there is none. Empty otherwise:
+    /// most comparisons are a few levels deep, and to search the list takes less than to add a key here and remove it.
+    maybe_keys_set: FxHashSet<Key>,
+    /// Each type with its push number. See `is_created_no_earlier`.
+    pub(super) source_stack: Vec<(TypeId, u32)>,
+    pub(super) target_stack: Vec<(TypeId, u32)>,
     /// See `is_last_deeply_nested`.
     source_identities: Vec<(TypeId, RecursionId)>,
     target_identities: Vec<(TypeId, RecursionId)>,
@@ -289,6 +287,34 @@ impl Relater {
             related_info: Vec::new(),
         }
     }
+
+    #[inline]
+    fn has_maybe_key(&self, key: Key) -> bool {
+        if self.maybe_keys_set.is_empty() {
+            return self.maybe_keys.contains(&key);
+        }
+
+        self.maybe_keys_set.contains(&key)
+    }
+
+    #[inline]
+    fn push_maybe_key(&mut self, key: Key) {
+        self.maybe_keys.push(key);
+        if !self.maybe_keys_set.is_empty() {
+            self.maybe_keys_set.insert(key);
+        } else if self.maybe_keys.len() > shortcuts::MAYBE_KEYS_SEARCHED_AS_A_LIST {
+            self.maybe_keys_set.extend(self.maybe_keys.iter().copied());
+        }
+    }
+
+    #[inline]
+    fn pop_maybe_key(&mut self) -> Option<Key> {
+        let key = self.maybe_keys.pop()?;
+        if !self.maybe_keys_set.is_empty() {
+            self.maybe_keys_set.remove(&key);
+        }
+        Some(key)
+    }
 }
 
 /// Where `getPropertyOfType` falls back for properties a type does not have itself: the global
@@ -307,6 +333,18 @@ pub(super) type RecursionId = (u8, u32, u32);
 /// Sentinel `RecursionId`: deciding whether the type has a given identity takes more than an
 /// equality test.
 const NOT_PLAIN: RecursionId = (u8::MAX, 0, 0);
+
+/// What `reset_maybe_stack` does with the keys it pops.
+#[derive(Copy, Clone)]
+enum MaybeKeys {
+    /// They get no entry.
+    Forgotten,
+    /// They succeeded. A key that has an entry already keeps it.
+    Succeeded,
+    /// They succeeded, and the result replaces the entry that a key may have already. A comparison that elaborates begins
+    /// at a key whose entry is a failure, which an overflow may have cut off. See also `recursive_type_related_to`.
+    SucceededReplacing,
+}
 
 /// What `Checker::recursive_relation_key` returns.
 struct RecursiveRelationKey {
@@ -415,6 +453,21 @@ fn is_primitive_kind(data: &TypeData) -> bool {
     }
 }
 
+/// Two string literal types, two number literal types, two bigint literal types, or two boolean literal types. A member
+/// of an enum is none of them. If the two are regular and differ, no rule of `isSimpleTypeRelatedTo` relates them, in
+/// either direction and under any relation: each rule takes a flag that neither has. Nothing else relates them either,
+/// because neither is structured or instantiable.
+#[inline]
+fn are_literals_of_one_kind(source: &TypeData, target: &TypeData) -> bool {
+    matches!(
+        (source, target),
+        (TypeData::StringLit { .. }, TypeData::StringLit { .. })
+            | (TypeData::NumberLit { .. }, TypeData::NumberLit { .. })
+            | (TypeData::BigIntLit { .. }, TypeData::BigIntLit { .. })
+            | (TypeData::BoolLit { .. }, TypeData::BoolLit { .. })
+    )
+}
+
 /// `Checker::is_fresh_literal`
 #[inline]
 pub(super) fn is_fresh_literal_kind(data: &TypeData) -> bool {
@@ -489,6 +542,13 @@ fn is_normalized_kind(data: &TypeData) -> bool {
     }
 }
 
+/// See `Checker::derived_sig`. Never 0.
+#[derive(Copy, Clone)]
+pub(super) enum DerivedSig {
+    Erased = 1,
+    Base = 2,
+}
+
 impl<'p, 's> Checker<'p, 's> {
     pub fn is_assignable(&mut self, source: TypeId, target: TypeId) -> bool {
         self.related(source, target, Relation::Assignable)
@@ -519,29 +579,23 @@ impl<'p, 's> Checker<'p, 's> {
 
     #[inline]
     pub(super) fn is_type_param(&self, ty: TypeId) -> bool {
-        matches!(
-            self.data(ty),
-            TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_)
-        )
+        self.is_kind(ty, tf::TYPE_PARAMETER)
     }
 
     #[inline]
     pub(super) fn is_intersection(&self, ty: TypeId) -> bool {
-        matches!(self.data(ty), TypeData::Intersection(_))
+        self.is_kind(ty, tf::INTERSECTION)
     }
 
     #[inline]
     pub(super) fn is_union_or_intersection(&self, ty: TypeId) -> bool {
-        matches!(
-            self.data(ty),
-            TypeData::Union(_) | TypeData::Intersection(_)
-        )
+        self.is_kind(ty, tf::UNION_OR_INTERSECTION)
     }
 
     /// `TypeFlagsInstantiable`
     #[inline]
     pub(super) fn is_instantiable(&self, ty: TypeId) -> bool {
-        is_instantiable_kind(self.data(ty))
+        self.is_kind(ty, tf::INSTANTIABLE)
     }
 
     /// `TypeFlagsPrimitive`, which `boolean` and an enum have though they are unions.
@@ -662,6 +716,21 @@ impl<'p, 's> Checker<'p, 's> {
             && shape.index.is_empty()
     }
 
+    /// `is_any_function_shape` of the shape that `listed` is made of.
+    fn is_any_function_listed(listed: &Listed) -> bool {
+        listed.literal == Literalness::Partial
+            && !listed.has_symbol_declared_at
+            && Self::lists_nothing(listed)
+    }
+
+    /// `has_no_members`, likewise.
+    fn lists_nothing(listed: &Listed) -> bool {
+        listed.props.is_empty()
+            && listed.call.is_empty()
+            && listed.construct.is_empty()
+            && listed.index.is_empty()
+    }
+
     /// `t.symbol != nil` for a synthesized object type. Not exact for the type of a signature, see
     /// `Shape::has_no_instantiable_symbol`.
     pub(super) fn shape_has_symbol(shape: &Shape) -> bool {
@@ -679,7 +748,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isEmptyResolvedType` of the resolved members of `ty`.
     fn is_empty_resolved_type(&mut self, ty: TypeId) -> bool {
         !self.is_any_function_type(ty)
-            && (self.members(ty)).is_some_and(|m| Self::has_no_members(m.whole_shape()))
+            && (self.members(ty)).is_some_and(|m| Self::lists_nothing(m.whole_shape()))
     }
 
     /// `isEmptyObjectType`
@@ -730,7 +799,7 @@ impl<'p, 's> Checker<'p, 's> {
             return self.is_empty_resolved_type(ty);
         }
         match self.resolved_members(ty) {
-            Some(members) => Self::has_no_members(members.whole_shape()),
+            Some(members) => Self::lists_nothing(members.whole_shape()),
             None => self.has_no_members_in_place(ty),
         }
     }
@@ -752,15 +821,21 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `ObjectFlagsIsUnknownLikeUnionComputed`: the first answer stays, whatever is resolved
         // later.
-        if let Some(&known) = self.unknown_like_unions.get(&ty) {
-            return known;
+        let known = self.task_facts.get(ty);
+        if known & task_fact::KNOWS_UNKNOWN_LIKE_UNION != 0 {
+            return known & task_fact::IS_UNKNOWN_LIKE_UNION != 0;
         }
         let before = self.non_cacheable_mark();
         let is_unknown_like = parts
             .iter()
             .any(|&p| self.is_empty_anonymous_object_type(p));
         if before == self.non_cacheable_mark() {
-            self.unknown_like_unions.insert(ty, is_unknown_like);
+            let all = task_fact::KNOWS_UNKNOWN_LIKE_UNION | task_fact::IS_UNKNOWN_LIKE_UNION;
+            let facts = match is_unknown_like {
+                true => all,
+                false => task_fact::KNOWS_UNKNOWN_LIKE_UNION,
+            };
+            self.task_facts.replace(ty, all, facts);
         }
         is_unknown_like
     }
@@ -814,10 +889,25 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    pub(super) fn inherited_of(&self, shape: &Shape) -> Inherited<'p> {
+    /// `getPropertyOfType(source, name)` in `propertiesRelatedTo`. `of_source`: the union that is asked by name, or else the
+    /// type and the members that `property_among` takes.
+    #[inline]
+    fn property_of_source(
+        &mut self,
+        of_source: (Option<TypeId>, TypeId, Members<'p>),
+        inherited: &mut Inherited<'p>,
+        name: Atom,
+    ) -> Option<(&'p Prop<'p>, MapperId)> {
+        match of_source {
+            (Some(union), ..) => self.get_property_of_type(union, name),
+            (None, ty, members) => self.property_among(ty, &members, inherited, name),
+        }
+    }
+
+    pub(super) fn inherited_of(&self, shape: &Listed) -> Inherited<'p> {
         let mut globals = [known::Object; 3];
         let mut count = 0;
-        if Self::is_any_function_shape(shape) {
+        if Self::is_any_function_listed(shape) {
             // `anyFunctionType` has the properties of `Function`.
             globals[0] = known::Function;
             count = 1;
@@ -876,11 +966,16 @@ impl<'p, 's> Checker<'p, 's> {
         // global types in which they find `name` has.
         let mut globals: SmallVec<[TypeId; 4]> = SmallVec::new();
         for &part in parts.iter() {
-            let part = self.reduced_apparent_type_as_object(part);
-            let Some(members) = self.members(part) else {
-                continue;
+            let part = self.reduced_apparent_type(part);
+            // A union has properties and no signature.
+            let of_part = if self.is_union(part) {
+                self.inherited_of(&Shape::new_in(self.arena).into())
+            } else {
+                let Some(members) = self.members(part) else {
+                    continue;
+                };
+                self.inherited_of(members.shape())
             };
-            let of_part = self.inherited_of(members.shape());
             for &global in &of_part.globals[..of_part.count] {
                 let global = self.plain_global_ref(global);
                 let has_name = |it: Members<'p>| it.resolved.prop(name).is_some();
@@ -914,11 +1009,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `Checker::inherited_names`. Left unchanged if one of the four does not exist, or not yet.
+    /// `Checker::inherited_names` and `Checker::inherited_name_set`. Left unchanged if one of the four does not exist, or
+    /// not yet.
     #[cold]
     fn note_inherited_names(&mut self) {
         let before = self.non_cacheable_mark();
         let mut names = [0; 4];
+        let mut name_set = FxHashSet::default();
+        let mut are_members_stored = true;
         for global in [
             known::Object,
             known::Function,
@@ -929,13 +1027,25 @@ impl<'p, 's> Checker<'p, 's> {
             let Some(members) = self.members(global) else {
                 return;
             };
+            are_members_stored &= self.resolved_members(global).is_some();
             for prop in &members.shape().props {
                 names[prop.name.0 as usize / 64 % 4] |= 1 << (prop.name.0 % 64);
+                name_set.insert(prop.name);
             }
         }
         if self.non_cacheable_mark() == before {
             self.inherited_names = names;
+            self.inherited_name_set = are_members_stored.then_some(name_set);
         }
+    }
+
+    /// Whether `inherited_property` finds no `name`, whatever the type, and resolves nothing on the way.
+    pub(super) fn is_never_inherited(&self, name: Atom) -> bool {
+        let n = name.0 as usize;
+        let name_set = self.inherited_name_set.as_ref();
+        self.inherited_names != [0; 4]
+            && (self.inherited_names[n / 64 % 4] & 1 << (n % 64) == 0
+                || name_set.is_some_and(|names| !names.contains(&name)))
     }
 
     fn inherited_property(
@@ -987,6 +1097,9 @@ impl<'p, 's> Checker<'p, 's> {
         if source == target {
             return true;
         }
+        if are_literals_of_one_kind(sd, td) {
+            return false;
+        }
         if relation != Relation::Identity {
             if relation == Relation::Comparable
                 && !target.is_never()
@@ -1017,7 +1130,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut missed = None;
         if is_object_kind(sd) && is_object_kind(td) {
             let key = self.relation_key_as(source, sd, target, td, relation, STATE_NONE);
-            if let Some(entry) = self.p.relations.get(&self.task, &key.0) {
+            if let Some(entry) = self.known_relation(&key.0) {
                 // The cache is shared between threads, so another thread measuring the same symbol may have stored this
                 // comparison already. Without its flags the variances would lack `UNMEASURABLE` or `UNRELIABLE`.
                 if is_marker_comparison {
@@ -1067,7 +1180,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut r = self
             .free_relaters
             .pop()
-            .unwrap_or_else(|| Relater::new(relation, self.cycles));
+            .unwrap_or_else(|| Box::new(Relater::new(relation, self.cycles)));
         r.relation = relation;
         r.top_source = source;
         r.top_target = target;
@@ -1277,9 +1390,6 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return false;
         }
-        // `EnumRelationKey`
-        self.get_symbol_id(source);
-        self.get_symbol_id(target);
         if let Some(&is_related) = self.enum_relation.get(&(source, target))
             && (is_related || error_reporter.is_none())
         {
@@ -1393,11 +1503,20 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if let TypeData::Intersection(parts) = self.data(t) {
             // `Partial<T>[K] & {}` is `T[K] & {}`.
-            let has_instantiable = parts.iter().any(|&p| self.is_instantiable(p));
-            let has_nullable_or_empty = parts.iter().any(|&p| {
-                p.is_null() || p.is_undefined() || self.is_empty_anonymous_object_type(p)
+            if !self.maybe_type_of_kind(t, tf::INSTANTIABLE) {
+                return t;
+            }
+            // `shouldNormalizeIntersection`
+            let (mut has_instantiable, mut has_nullable_or_empty) = (false, false);
+            let should_normalize = parts.iter().any(|&p| {
+                has_instantiable = has_instantiable || self.is_instantiable(p);
+                has_nullable_or_empty = has_nullable_or_empty
+                    || p.is_null()
+                    || p.is_undefined()
+                    || self.is_empty_anonymous_object_type(p);
+                has_instantiable && has_nullable_or_empty
             });
-            if has_instantiable && has_nullable_or_empty {
+            if should_normalize {
                 let normalized: Vec<TypeId> =
                     parts.iter().map(|&p| self.normalized(p, writing)).collect();
                 if normalized[..] != parts[..] {
@@ -1419,20 +1538,20 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getSimplifiedIndexedAccessType`
     fn simplified_indexed_access(&mut self, t: TypeId, writing: bool) -> TypeId {
-        if let Some(&known) = self.simplified.get(&(t, writing)) {
+        if let Some(known) = self.simplified[usize::from(writing)].get(t) {
             return known;
         }
         let cycles_before = self.cycles;
-        self.simplified.insert((t, writing), t);
+        self.simplified[usize::from(writing)].insert(t, t);
         let mut result = self.simplified_indexed_access_worker(t, writing);
         if result != t {
             result = self.filter(result, |_, m| m != t);
         }
         // A result computed while a resolution cycle was hit is not cacheable.
         if self.cycles != cycles_before {
-            self.simplified.remove(&(t, writing));
+            self.simplified[usize::from(writing)].remove(t);
         } else if result != t {
-            self.simplified.insert((t, writing), result);
+            self.simplified[usize::from(writing)].insert(t, result);
         }
         result
     }
@@ -1600,14 +1719,14 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getSimplifiedConditionalType`: `T extends U ? T : never` and `T extends U ? never : T`.
     fn simplified_conditional(&mut self, t: TypeId, writing: bool) -> TypeId {
-        if let Some(&known) = self.simplified.get(&(t, writing)) {
+        if let Some(known) = self.simplified[usize::from(writing)].get(t) {
             return known;
         }
         let cycles_before = self.cycles;
         let result = self.simplified_conditional_worker(t, writing);
         // A result computed while a resolution cycle was hit is not cacheable.
         if self.cycles == cycles_before {
-            self.simplified.insert((t, writing), result);
+            self.simplified[usize::from(writing)].insert(t, result);
         }
         result
     }
@@ -1710,7 +1829,7 @@ impl<'p, 's> Checker<'p, 's> {
         // value afterwards. The read always hits: every caller passes a type of a kind that has an
         // entry.
         !self.constraints_marked_circular.contains(&t)
-            && !(self.p.constraints.get(&self.task, &t)).is_some_and(|(_, is_circular)| is_circular)
+            && !(self.known_constraint(t)).is_some_and(|(_, is_circular)| is_circular)
     }
 
     /// `getBaseConstraintOfType`. `None`: there is none.
@@ -1800,7 +1919,25 @@ impl<'p, 's> Checker<'p, 's> {
         (file, node, mapper, [check, extends, yes, no])
     }
 
+    /// `checkType`, `extendsType`, `resolvedTrueType` or `resolvedFalseType` of the conditional type `t`.
     pub(super) fn cond_piece(&mut self, t: TypeId, which: usize) -> TypeId {
+        if let Some(kept) = self.kept_part(t, links::Kind::Conditional, which) {
+            return kept;
+        }
+        self.derive_and_keep_cond_piece(t, which)
+    }
+
+    #[inline(never)]
+    fn derive_and_keep_cond_piece(&mut self, t: TypeId, which: usize) -> TypeId {
+        let (file, _, mapper, nodes) = self.cond_origin(t);
+        self.derive_part(
+            (t, links::Kind::Conditional, which),
+            |c| c.derive_cond_piece(t, which),
+            |c| c.is_mapper_idle(mapper) && c.is_type_node_settled(file, nodes[which]),
+        )
+    }
+
+    fn derive_cond_piece(&mut self, t: TypeId, which: usize) -> TypeId {
         let (file, _, mapper, nodes) = self.cond_origin(t);
         let declared = self.type_from_node(file, nodes[which]);
         self.instantiate(declared, mapper)
@@ -1824,7 +1961,17 @@ impl<'p, 's> Checker<'p, 's> {
         self.cond_piece(t, 3)
     }
 
-    pub(super) fn cond_infer_params(&mut self, t: TypeId) -> Vec<TypeId> {
+    /// `root.inferTypeParameters`
+    pub(super) fn cond_infer_params(&mut self, t: TypeId) -> SmallVec<[TypeId; 4]> {
+        if let Some(kept) = self.links.infer_type_parameters(t) {
+            return kept;
+        }
+        let params = self.derive_cond_infer_params(t);
+        self.links.keep_infer_type_parameters(t, &params);
+        params
+    }
+
+    fn derive_cond_infer_params(&mut self, t: TypeId) -> SmallVec<[TypeId; 4]> {
         let (file, _, _, nodes) = self.cond_origin(t);
         let mut params = Vec::new();
         self.collect_infer_params(file, nodes[1], &mut params);
@@ -1868,20 +2015,59 @@ impl<'p, 's> Checker<'p, 's> {
             let priority = PRIORITY_NO_CONSTRAINTS | PRIORITY_ALWAYS_STRICT;
             self.infer(&mut context, check, extends, priority);
         }
-        let mut pairs = self.types().mapping(mapper).to_vec();
+        let mut pairs: SmallVec<[(TypeId, TypeId); 8]> =
+            SmallVec::from_slice(self.types().mapping(mapper));
         for (i, &param) in params.iter().enumerate() {
             // `combineTypeMappers(context.mapper, mapper)`: an inferred type is instantiated
             // with `mapper`.
             let inferred = self.get_inferred_type(&context, i, false);
             pairs.push((param, self.instantiate(inferred, mapper)));
         }
-        let combined = self.types().mapper(pairs);
+        let combined = self.types().mapper_of(&pairs);
         let declared = self.type_from_node(file, nodes[2]);
         self.instantiate(declared, combined)
     }
 
     /// `getDefaultConstraintOfConditionalType`
     pub(super) fn default_constraint_of_conditional(&mut self, t: TypeId) -> TypeId {
+        // The flag: `t` has `infer` type parameters. Then the derivation that is left out makes an inference, which gives
+        // the same where nothing in progress can change it.
+        let cell = (links::Kind::Conditional, links::DEFAULT_CONSTRAINT);
+        if let Some((kept, infers)) = self.kept_part::<(TypeId, bool)>(t, cell.0, cell.1)
+            && (!infers
+                || self.has_stack_for_kept_part() && self.obstacle_to_leaving_out().is_none())
+        {
+            return kept;
+        }
+        self.derive_and_keep_default_constraint_of_conditional(t)
+    }
+
+    /// Nothing but this asks for `resolvedInferredTrueType`, so that has no cell of its own.
+    #[inline(never)]
+    fn derive_and_keep_default_constraint_of_conditional(&mut self, t: TypeId) -> TypeId {
+        let (file, _, _, nodes) = self.cond_origin(t);
+        // Without `infer` it is the union of two parts.
+        let infers = !self.cond_infer_params(t).is_empty();
+        let is_at_rest =
+            !infers || self.obstacle_to_leaving_out().is_none() && self.is_settled_for_inference();
+        let ((constraint, _), stored) = self.derive_settled(
+            |c| c.derive_with_inference(|c| c.derive_default_constraint_of_conditional(t)),
+            |c, &(_, leaves_nothing)| {
+                is_at_rest
+                    && leaves_nothing
+                    && (!infers
+                        || c.is_type_node_settled(file, nodes[0])
+                            && c.is_type_node_settled(file, nodes[2]))
+            },
+        );
+        if let Some(stored) = stored {
+            let cell = (t, links::Kind::Conditional, links::DEFAULT_CONSTRAINT);
+            self.keep_part(cell, (constraint, infers), stored);
+        }
+        constraint
+    }
+
+    fn derive_default_constraint_of_conditional(&mut self, t: TypeId) -> TypeId {
         let (yes, no) = (self.cond_inferred_true(t), self.cond_false(t));
         // A branch that is `any` would make the whole assignable to anything.
         if self.is_any(yes) {
@@ -1966,9 +2152,31 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// Whether `mapped_mapper(t)` is kept and `is_mapper_idle`.
+    fn is_mapped_mapper_idle(&self, t: TypeId) -> bool {
+        self.kept_part::<MapperId>(t, links::Kind::Mapped, MappedPart::Mapper as usize)
+            .is_some_and(|mapper| self.is_mapper_idle(mapper))
+    }
+
     /// `getTemplateTypeFromMappedType`: with the missing type added when the mapped type makes
     /// properties optional.
     pub(super) fn mapped_template(&mut self, t: TypeId) -> TypeId {
+        let part = MappedPart::TemplateType;
+        if let Some(kept) = self.kept_part(t, links::Kind::Mapped, part as usize) {
+            return kept;
+        }
+        let Some((file, node, _)) = self.mapped_origin(t) else {
+            return TypeId::UNRESOLVED;
+        };
+        let declared = self.mapped_decl(file, node).ty;
+        self.derive_part(
+            (t, links::Kind::Mapped, part as usize),
+            |c| c.derive_mapped_template(t),
+            |c| c.is_mapped_mapper_idle(t) && c.is_type_node_settled(file, declared),
+        )
+    }
+
+    fn derive_mapped_template(&mut self, t: TypeId) -> TypeId {
         let Some((file, node, _)) = self.mapped_origin(t) else {
             return TypeId::UNRESOLVED;
         };
@@ -1989,6 +2197,18 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getTypeParameterFromMappedType`. An instantiated mapped type has a fresh type parameter,
     /// which ranges over the instantiated keys (`instantiateAnonymousType`).
     pub(super) fn mapped_type_param(&mut self, t: TypeId) -> TypeId {
+        let part = MappedPart::TypeParameter;
+        if let Some(kept) = self.kept_part(t, links::Kind::Mapped, part as usize) {
+            return kept;
+        }
+        let param = self.derive_mapped_type_param(t);
+        if self.mapped_origin(t).is_some() {
+            self.keep_interned_part(t, links::Kind::Mapped, part as usize, param);
+        }
+        param
+    }
+
+    fn derive_mapped_type_param(&mut self, t: TypeId) -> TypeId {
         let Some((file, node, mapper)) = self.mapped_origin(t) else {
             return TypeId::UNRESOLVED;
         };
@@ -1999,6 +2219,18 @@ impl<'p, 's> Checker<'p, 's> {
     /// `MappedType.mapper`: maps the outer type parameters of the mapped type `t`, and the declared
     /// type parameter to the one of `t`.
     fn mapped_mapper(&mut self, t: TypeId) -> MapperId {
+        let part = MappedPart::Mapper;
+        if let Some(kept) = self.kept_part(t, links::Kind::Mapped, part as usize) {
+            return kept;
+        }
+        let mapper = self.derive_mapped_mapper(t);
+        if self.mapped_origin(t).is_some() {
+            self.keep_interned_part(t, links::Kind::Mapped, part as usize, mapper);
+        }
+        mapper
+    }
+
+    fn derive_mapped_mapper(&mut self, t: TypeId) -> MapperId {
         let Some((file, node, mapper)) = self.mapped_origin(t) else {
             return MapperId::IDENTITY;
         };
@@ -2013,7 +2245,33 @@ impl<'p, 's> Checker<'p, 's> {
         self.types().mapper(pairs)
     }
 
+    /// `getConstraintTypeFromMappedType`
     pub(super) fn mapped_keys(&mut self, t: TypeId) -> TypeId {
+        // `mapped_constraint` answers with the error type for a key that is in progress, and from then on. A cycle can
+        // still be found after the part is kept, where `instantiate` reads no older result. It is an error, and rare:
+        // from the first one that the task finds, nothing is kept or read.
+        if !self.mapped_constraints_in_progress.is_empty()
+            || self.links.has_found_circular_mapped_constraint()
+        {
+            self.links.note_left_open();
+            return self.derive_mapped_keys(t);
+        }
+        let part = MappedPart::ConstraintType;
+        if let Some(kept) = self.kept_part(t, links::Kind::Mapped, part as usize) {
+            return kept;
+        }
+        let Some((_, _, mapper)) = self.mapped_origin(t) else {
+            return TypeId::UNRESOLVED;
+        };
+        // What it instantiates is in `Program::mapped_param_constraints`, which stores by the same counters and never again.
+        self.derive_part(
+            (t, links::Kind::Mapped, part as usize),
+            |c| c.derive_mapped_keys(t),
+            |c| c.is_mapper_idle(mapper) && !c.links.has_found_circular_mapped_constraint(),
+        )
+    }
+
+    fn derive_mapped_keys(&mut self, t: TypeId) -> TypeId {
         let Some((file, node, mapper)) = self.mapped_origin(t) else {
             return TypeId::UNRESOLVED;
         };
@@ -2022,6 +2280,24 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getNameTypeFromMappedType`
     pub(super) fn mapped_name_type(&mut self, t: TypeId) -> Option<TypeId> {
+        let part = MappedPart::NameType;
+        if let Some(kept) = self.kept_part(t, links::Kind::Mapped, part as usize) {
+            return kept;
+        }
+        let (file, node, _) = self.mapped_origin(t)?;
+        let declared = self.mapped_decl(file, node).name_ty;
+        if declared.is_none() {
+            self.keep_interned_part(t, links::Kind::Mapped, part as usize, None::<TypeId>);
+            return None;
+        }
+        self.derive_part(
+            (t, links::Kind::Mapped, part as usize),
+            |c| c.derive_mapped_name_type(t),
+            |c| c.is_mapped_mapper_idle(t) && c.is_type_node_settled(file, declared),
+        )
+    }
+
+    fn derive_mapped_name_type(&mut self, t: TypeId) -> Option<TypeId> {
         let (file, node, _) = self.mapped_origin(t)?;
         if self.mapped_decl(file, node).name_ty.is_none() {
             return None;
@@ -2040,9 +2316,56 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getModifiersTypeFromMappedType`. `None`: `unknown`.
     pub(super) fn mapped_modifiers_type(&mut self, t: TypeId) -> Option<TypeId> {
+        let part = MappedPart::ModifiersType;
+        if let Some(kept) = self.kept_part(t, links::Kind::Mapped, part as usize) {
+            return kept;
+        }
+        let (file, node, mapper) = self.mapped_origin(t)?;
+        self.derive_part(
+            (t, links::Kind::Mapped, part as usize),
+            |c| c.derive_mapped_modifiers_type(t),
+            |c| c.is_mapper_idle(mapper) && c.is_mapped_modifiers_source_settled(file, node),
+        )
+    }
+
+    fn derive_mapped_modifiers_type(&mut self, t: TypeId) -> Option<TypeId> {
         let (file, node, mapper) = self.mapped_origin(t)?;
         let (declared, _) = self.mapped_modifiers_source(file, node)?;
         Some(self.instantiate(declared, mapper))
+    }
+
+    /// `getApparentTypeOfMappedType`
+    pub(super) fn apparent_type_of_mapped(&mut self, t: TypeId) -> TypeId {
+        // It begins with the constraint type of the mapped type as it is declared: as in `mapped_keys`.
+        if !self.mapped_constraints_in_progress.is_empty()
+            || self.links.has_found_circular_mapped_constraint()
+        {
+            self.links.note_left_open();
+            return self.derive_apparent_type_of_mapped(t).0;
+        }
+        let part = MappedPart::ApparentType;
+        if let Some(kept) = self.kept_part(t, links::Kind::Mapped, part as usize) {
+            return kept;
+        }
+        let Some((file, node, mapper)) = self.mapped_origin(t) else {
+            return t;
+        };
+        // The base constraint of the modifiers type is in `Program::constraints`, by the counters. An array or a tuple is
+        // made again each time, from instantiations with other mappers: they all stay where none is in progress.
+        let ((apparent, _), stored) = self.derive_settled(
+            |c| c.derive_apparent_type_of_mapped(t),
+            |c, &(apparent, has_modifiers_type)| {
+                !c.links.has_found_circular_mapped_constraint()
+                    && (!has_modifiers_type
+                        || c.is_mapper_idle(mapper)
+                            && c.is_mapped_modifiers_source_settled(file, node)
+                            && (apparent == t || c.instantiation_depth == 0))
+            },
+        );
+        if let Some(stored) = stored {
+            self.keep_part((t, links::Kind::Mapped, part as usize), apparent, stored);
+        }
+        apparent
     }
 
     /// `getApparentMappedTypeKeys` for `{ [P in keyof X as N]: .. }`: `N` (`name`) applied to the
@@ -2210,19 +2533,18 @@ impl<'p, 's> Checker<'p, 's> {
             if modifiers != Flags::IN && modifiers != Flags::OUT {
                 return false;
             }
-            let is_created = self.has_type_parameter_deferred_check_started(sym, param);
-            if !is_created {
-                // The answer changes later, so a comparison that depends on it is not stored. tsgo
-                // repeats a failed one, since this check compares with `reportErrors`.
-                self.mark_tainted_by_pattern_from(self.frames.len());
-            }
-            return is_created;
+            // The answer depends on the current node, which isn't part of a relation's cache key. Don't cache a comparison
+            // that depends on it: a task checking an earlier file could hit the entry. tsgo repeats a failed one anyway,
+            // since this check compares with `reportErrors`.
+            self.mark_tainted_by_pattern_from(self.frames.len());
+            return self.has_type_parameter_deferred_check_started(sym, param);
         }
         // `getVariancesWorker` takes the variance of a parameter declared `in` or `out` from the modifiers and creates no marker type.
         if !modifiers.is_empty() {
             return false;
         }
         self.variances_in_progress.contains(&sym)
+            || self.suspended_variances.contains(&sym)
             || self.p.variances.get(&self.task, &sym).is_some()
     }
 
@@ -2248,13 +2570,9 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return false;
         }
-        // Each checker of `checkerPool` has its own `markerTypes`.
-        let (files, checker_count) = (self.files(), self.task.checker_count);
-        let checker_of = |f: FileId| files.rank_of_file(f).checked_rem(checker_count);
         let now = self.place_in_deferred_nodes(current_file, current);
         lists.iter().any(|&(file, params)| {
             self.reports_semantic_errors(file)
-                && checker_of(file) == checker_of(current_file)
                 && params.iter().any(|tp| {
                     self.hir(file)[tp].name == name && self.place_in_deferred_nodes(file, tp) <= now
                 })
@@ -2293,7 +2611,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The type parameter list of each declaration of the class, interface or type alias `sym`.
     fn type_parameter_lists(&self, sym: Sym) -> Vec<(FileId, Span<TypeParamId>)> {
-        let declarations = self.files().decls(sym).into_iter();
+        let declarations = self.files().decls_of(sym).into_iter();
         declarations
             .filter_map(|(file, decl)| match decl {
                 crate::bind::Decl::Class(c) => Some((file, self.hir(file)[c].type_params)),
@@ -2364,6 +2682,16 @@ impl<'p, 's> Checker<'p, 's> {
         self.variances_worker(sym)
     }
 
+    /// Called when a symbol's variances are requested while they are being measured.
+    ///
+    /// A restart can store "succeeded" for a comparison that a suspended measurement is still working on and then fails.
+    /// typescript-go overwrites the entry. A published entry can't be replaced, so until the next commit the task keeps
+    /// what it stores in its own buffer.
+    fn note_variance_cycle(&mut self) {
+        self.in_progress_variance_reads += 1;
+        self.task.stop_writing_at_once();
+    }
+
     /// `getVariancesWorker`. The caller's cache lookup of `sym` missed.
     fn variances_worker(&mut self, sym: Sym) -> &'s [u8] {
         if Some(sym) == self.global_type_of_arity(known::Array, 1)
@@ -2376,18 +2704,48 @@ impl<'p, 's> Checker<'p, 's> {
                 Err(_) => variances,
             };
         }
-        if self.variances_in_progress.contains(&sym) {
-            self.variance_cycles += 1;
+        if self.variances_marked_empty.contains(&sym) {
+            self.note_variance_cycle();
             return &[];
         }
-        // The value of the first task in serial order, for a task that is retried (`Program::validate`).
+        // TypeScript 7.1: variances measured inside a cycle of generic types depend on which type was measured first.
+        // On re-entry, restart from the cycle's first-declared type with an empty stack and keep those results. For a
+        // type in two cycles the result can still depend on which type is compared first, as in 7.1.
+        if let Some(at) = (self.variances_in_progress.iter()).position(|&it| it == sym) {
+            self.note_variance_cycle();
+            let mut first = sym;
+            for &other in &self.variances_in_progress[at + 1..] {
+                if self.compare_symbols(other, first).is_lt() {
+                    first = other;
+                }
+            }
+            if first != sym && self.is_half_of_stack_in_use() {
+                // Not enough native stack to nest a restart (typescript-go's stack grows). Fall back to 7.0's
+                // order-dependent result.
+                let cycle = std::iter::once(crate::util::fx_hash(&first));
+                self.task.close_ring(|| false, cycle);
+            } else if first != sym {
+                let in_progress = std::mem::take(&mut self.variances_in_progress);
+                let resolution_start =
+                    std::mem::replace(&mut self.resolution_start, self.stack.len());
+                let suspended = self.suspended_variances.len();
+                self.suspended_variances.extend_from_slice(&in_progress);
+                self.variances_of(first);
+                self.suspended_variances.truncate(suspended);
+                self.resolution_start = resolution_start;
+                self.variances_in_progress = in_progress;
+            }
+            let known = self.p.variances.get(&self.task, &sym);
+            // `links.variances = []VarianceFlags{}`: `sym` reads as empty until its in-progress measurement finishes.
+            return known.unwrap_or_else(|| {
+                self.variances_marked_empty.push(sym);
+                &[]
+            });
+        }
+        // The value of the first valid commit, and what a measurement that has ended has shared: `commit::Claims`.
         let serial = self.p.serial_variances.lock().get(&sym).copied();
         if let Some(variances) = serial {
-            let scope = self.begin_scope();
-            return match self.end_scope_as(scope, false) {
-                Ok(stored) => self.p.variances.insert(&self.task, sym, variances, stored),
-                Err(_) => variances,
-            };
+            return self.take_shared_variances(sym, variances);
         }
         let (cuts, outermost) = (
             self.cuts(),
@@ -2401,9 +2759,24 @@ impl<'p, 's> Checker<'p, 's> {
             self.cut_short_again();
             return known;
         }
+        // Only a thread that is not measuring claims or waits: see `commit::Claims` for why.
+        let mut has_claim = false;
+        if self.task.commits() && !self.in_variance_computation {
+            let asked = std::time::Instant::now();
+            let claim = self.p.claim_variances(sym, cuts == 0);
+            let none = std::time::Duration::ZERO;
+            self.task.count_waits([none, none, asked.elapsed()]);
+            match claim {
+                VarianceClaim::Known(variances) => {
+                    return self.take_shared_variances(sym, variances);
+                }
+                VarianceClaim::Mine => has_claim = true,
+                VarianceClaim::Unclaimed => {}
+            }
+        }
+        let before = self.what_forbids_sharing();
         self.variances_in_progress.push(sym);
         let was_computing = std::mem::replace(&mut self.in_variance_computation, true);
-        let variance_cycles = self.variance_cycles;
         if !was_computing {
             self.variances_measured.clear();
         }
@@ -2464,41 +2837,125 @@ impl<'p, 's> Checker<'p, 's> {
                 self.reliability = saved;
                 variance
             };
+            // A restart already measured `sym`.
+            if self.p.variances.get(&self.task, &sym).is_some() {
+                break;
+            }
             variances.push(variance);
         }
         self.in_variance_computation = was_computing;
         self.resolution_start = resolution_start;
         self.variances_in_progress.pop();
+        self.variances_marked_empty.retain(|&it| it != sym);
         // Kept until the check ends, published or not: a few bytes.
         let variances: &'s [u8] = self.arena.alloc_slice_copy(&variances);
-        let variances = match self.end_scope(scope) {
-            Ok(stored) => {
+        let mut is_open = false;
+        // If a restart already measured `sym`, the loop above stopped early and `variances` is incomplete.
+        let known = self.p.variances.get(&self.task, &sym);
+        let variances = match (self.end_scope(scope), known) {
+            (Ok(_), Some(known)) => known,
+            (Ok(stored), None) => {
                 self.variances_measured.push((sym, variances));
                 self.p.variances.insert(&self.task, sym, variances, stored)
             }
-            Err(_) => {
+            (Err(_), Some(known)) => {
+                is_open = true;
+                known
+            }
+            (Err(_), None) => {
+                is_open = true;
                 if self.cuts() != cuts {
                     self.variances_cut_short.insert(sym, (outermost, variances));
                 }
                 variances
             }
         };
-        if !was_computing && self.variance_cycles != variance_cycles {
-            for (sym, variances) in self.variances_measured.drain(..) {
-                let at = self.task.order_dependent_variances.len() as u32;
-                self.order_dependent.insert(sym, at);
-                self.order_dependent_filter |= Self::order_dependent_bit(sym);
-                self.task.order_dependent_variances.push(OrderDependent {
-                    sym,
-                    variances,
-                    compared: 0,
-                    failed: 0,
-                    void_targets: 0,
-                    inferred: 0,
-                });
-            }
+        debug_assert_eq!(variances.len(), params.len());
+        if !was_computing && self.task.commits() {
+            self.share_what_was_measured((sym, has_claim), before, is_open);
         }
         variances
+    }
+
+    /// The variances of `sym` are `variances`, which `Program::serial_variances` has. They are stored like a result of this
+    /// task's own, so from now on `are_marker_arguments` knows the marker types of `sym`, as after a measurement.
+    fn take_shared_variances(&mut self, sym: Sym, variances: &'s [u8]) -> &'s [u8] {
+        let scope = self.begin_scope();
+        match self.end_scope_as(scope, false) {
+            Ok(stored) => self.p.variances.insert(&self.task, sym, variances, stored),
+            Err(_) => variances,
+        }
+    }
+
+    /// What has to be the same before and after a measurement that is shared at once: the diagnostics reported, those
+    /// settled, and the uses of variances that depend on the order.
+    fn what_forbids_sharing(&self) -> (usize, usize, u64) {
+        (
+            self.reported.len(),
+            self.task.diagnostics.len(),
+            self.order_dependent_uses,
+        )
+    }
+
+    /// In a task that commits: an outermost measurement has ended, of `sym`. `has_claim`: this thread has the claim of `sym`.
+    /// `before`: `what_forbids_sharing` when the measurement began. `is_open`: its result was not stored.
+    ///
+    /// `variances_measured` has what was stored since it began: the variances of `sym`, and of the symbols that were
+    /// measured inside. Each is valid for every caller in this task (`end_scope`), which is what lets the task commit
+    /// it. It is shared now, with tasks that are running, only if besides
+    /// - nothing was reported: a thread that takes the result does not evaluate what has reported it;
+    /// - nothing was used for which the next commit can find this task invalid, and the task is not lost. What such a task
+    ///   has computed is dropped, and what is shared can't be taken back. What happens to the task later does not
+    ///   matter: the measurement is over.
+    ///
+    /// A value that isn't shared is noted (`OrderDependent`) as if every variance in it had been used. The next commit
+    /// compares it with what `serial_variances` has by then, and registers it if there is nothing. Otherwise a task that
+    /// enters the same cycle elsewhere and commits first could register another value, and nobody would notice that
+    /// this task used its own.
+    ///
+    /// What a thread that takes the flags goes without, compared to one that measures:
+    /// - The entries of `relations` for the marker types, and for what was compared inside. They are results: a thread
+    ///   that needs one computes it. Each has its own `REPORTS_UNMEASURABLE` and `REPORTS_UNRELIABLE`, every hit adds them
+    ///   to `reliability`, and what sets them asks the type (`HAS_MARKER`), not whether a measurement is going on. So a
+    ///   later measurement gets the same marks from an entry as from the comparison. The one test of
+    ///   `in_variance_computation`, in `type_arguments_related_to`, is about a type with a marker. Those of a measurement
+    ///   are only compared during one, and `checkTypeParameterDeferred` has markers of its own.
+    /// - `instantiation_count` and `relation_sizes`, which are lower. They matter at a limit (2589, 2859), where the task
+    ///   is lost.
+    fn share_what_was_measured(
+        &mut self,
+        (sym, has_claim): (Sym, bool),
+        before: (usize, usize, u64),
+        is_open: bool,
+    ) {
+        let now = self.what_forbids_sharing();
+        let reason = match () {
+            _ if (now.0, now.1) != (before.0, before.1) => Some(NotShared::Diagnostic),
+            _ if now.2 != before.2 || self.task.may_be_thrown_away() => Some(NotShared::Notes),
+            _ => None,
+        };
+        let measured = &self.variances_measured[..];
+        let may_share = reason.is_none();
+        // What was measured inside can be whole where the outermost result is not.
+        let reason = reason.or_else(|| is_open.then_some(NotShared::Open));
+        let claimed = has_claim.then_some((sym, reason));
+        let not_registered = self.p.share_variances(measured, may_share, claimed);
+        for (sym, variances) in not_registered {
+            if self.order_dependent.contains_key(&sym) {
+                continue;
+            }
+            let at = self.task.order_dependent_variances.len() as u32;
+            self.order_dependent.insert(sym, at);
+            self.order_dependent_filter |= Self::order_dependent_bit(sym);
+            self.task.order_dependent_variances.push(OrderDependent {
+                sym,
+                variances,
+                compared: u32::MAX,
+                failed: 0,
+                void_targets: 0,
+                inferred: 0,
+            });
+        }
     }
 
     #[inline]
@@ -2518,6 +2975,9 @@ impl<'p, 's> Checker<'p, 's> {
         if self.order_dependent_filter & Self::order_dependent_bit(sym) != 0
             && let Some(&at) = self.order_dependent.get(&sym)
         {
+            self.order_dependent_uses += 1;
+            self.task.hold_back();
+            self.task.stop_writing_at_once();
             // How many pairs were compared.
             let count = match holds {
                 true => sources.len().min(targets.len()),
@@ -2549,6 +3009,9 @@ impl<'p, 's> Checker<'p, 's> {
         if self.order_dependent_filter & Self::order_dependent_bit(sym) != 0
             && let Some(&at) = self.order_dependent.get(&sym)
         {
+            self.order_dependent_uses += 1;
+            self.task.hold_back();
+            self.task.stop_writing_at_once();
             let all = u32::MAX.checked_shr(32 - count.min(32) as u32).unwrap_or(0);
             self.task.order_dependent_variances[at as usize].inferred |= all;
         }
@@ -2700,8 +3163,10 @@ impl<'p, 's> Checker<'p, 's> {
                 td = self.data(target);
             }
         }
+        let are_distinct_literals = are_literals_of_one_kind(sd, td);
         let error_reporter = REPORT.then_some(&mut *r);
         if !(is_from_related && source == original_source && target == original_target)
+            && !are_distinct_literals
             && (relation == Relation::Comparable
                 && !target.is_never()
                 && self.is_simple_type_related_to(target, td, source, sd, relation, None)
@@ -3088,16 +3553,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isWeakType`: properties, all of them optional, and nothing else.
     pub(super) fn is_weak_type(&mut self, t: TypeId) -> bool {
         match self.data(t) {
-            data if is_object_kind(data) => self.members(t).is_some_and(|m| {
-                let s = m.whole_shape();
-                !s.props.is_empty()
-                    && s.call.is_empty()
-                    && s.construct.is_empty()
-                    && s.index.is_empty()
-                    && s.props
-                        .iter()
-                        .all(|p| p.flags.contains(PropFlags::OPTIONAL))
-            }),
+            data if is_object_kind(data) => self.members(t).is_some_and(|m| m.resolved.is_weak()),
             TypeData::Substitution { base, .. } => self.is_weak_type(*base),
             TypeData::Intersection(parts) => parts.iter().all(|&p| self.is_weak_type(p)),
             _ => false,
@@ -3120,7 +3576,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `filterPrimitivesIfContainsNonPrimitive`
     pub(super) fn filter_primitives_if_contains_non_primitive(&mut self, union: TypeId) -> TypeId {
-        if self.maybe_type_of_kind(union, |_, m| m == TypeId::OBJECT) {
+        if self.maybe_type_of_kind(union, tf::NON_PRIMITIVE) {
             let result = self.filter(union, |c, m| !c.has_primitive_flag(m));
             if !result.is_never() {
                 return result;
@@ -3428,7 +3884,7 @@ impl<'p, 's> Checker<'p, 's> {
             };
             if r.relation != Relation::Comparable
                 && is_such_a_literal
-                && types.iter().all(|&t| is_primitive_kind(self.data(t)))
+                && self.is_union_of_primitives(target)
             {
                 let alternate = self.with_freshness(source, !is_fresh_literal_kind(sd));
                 let primitive = match sd {
@@ -3438,12 +3894,7 @@ impl<'p, 's> Checker<'p, 's> {
                     _ => None,
                 };
                 // Pattern literal types are primitives too, and need a full comparison.
-                if !types.iter().any(|&t| {
-                    matches!(
-                        self.data(t),
-                        TypeData::Template { .. } | TypeData::StringMapping { .. }
-                    )
-                }) {
+                if !self.maybe_type_of_kind(target, tf::TEMPLATE_LITERAL | tf::STRING_MAPPING) {
                     return Ternary::of(
                         primitive.is_some_and(|p| self.contains_type(types, p))
                             || self.contains_type(types, alternate),
@@ -3474,6 +3925,13 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         Ternary::FALSE
+    }
+
+    /// Whether each of `types`, the members of `union`, is primitive.
+    fn is_union_of_primitives(&self, union: TypeId) -> bool {
+        // An intersection is not primitive, whatever it consists of.
+
+        self.types().member_flags(union) & !tf::PRIMITIVE == 0 && !self.may_be_reduced(union)
     }
 
     /// `typeRelatedToEachType`
@@ -3524,6 +3982,16 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn has_generic_arguments(&self, t: TypeId) -> bool {
+        if let Some(known) = self.types().has_generic_arguments(t) {
+            return known;
+        }
+        // The worker reads the type and its type arguments.
+        let has_generic_arguments = self.has_generic_arguments_worker(t);
+        (self.types()).set_has_generic_arguments(t, has_generic_arguments);
+        has_generic_arguments
+    }
+
+    fn has_generic_arguments_worker(&self, t: TypeId) -> bool {
         // `isNonDeferredTypeReference`
         let (TypeData::Ref {
             args: TypeArguments::Given(args),
@@ -3617,7 +4085,7 @@ impl<'p, 's> Checker<'p, 's> {
         let flags = relation as u8 | state << 4;
         // tsgo orders the pair by id. The order decides how `generic_relation_key` numbers the type parameters.
         let is_swapped =
-            relation == Relation::Identity && self.creation_order(source, target).is_gt();
+            relation == Relation::Identity && self.content_order(source, target).is_gt();
         let (source, target) = if is_swapped {
             (target, source)
         } else {
@@ -3650,7 +4118,7 @@ impl<'p, 's> Checker<'p, 's> {
             return self.relation_key(source, target, relation, state, false);
         }
         let flags = relation as u8 | state << 4;
-        if relation == Relation::Identity && self.creation_order(source, target).is_gt() {
+        if relation == Relation::Identity && self.content_order(source, target).is_gt() {
             (Key(target, source, flags), false)
         } else {
             (Key(source, target, flags), false)
@@ -3746,7 +4214,7 @@ impl<'p, 's> Checker<'p, 's> {
         } = self.recursive_relation_key(r, source, sd, target, td, state);
         let cached = match missed {
             true => None,
-            false => self.p.relations.get(&self.task, &key),
+            false => self.known_relation(&key),
         };
         if let Some(entry) = cached
             // A cached failure is recomputed to produce its error elaboration.
@@ -3771,47 +4239,59 @@ impl<'p, 's> Checker<'p, 's> {
             return Ternary::FALSE;
         }
         if r.relation_count <= 0 {
+            self.note_gave_up("the budget of a comparison");
             r.overflow = true;
             return Ternary::FALSE;
         }
-        // The key is inserted into the set here, and removed on every path that does not start the
-        // comparison after all.
-        if !r.maybe_keys_set.insert(key) {
+        if r.has_maybe_key(key) {
             return Ternary::MAYBE;
         }
         // `broadestEquivalentId`: the key the comparison would have if no type parameter had a constraint.
         if constrained {
             let (broadest, _) = self.relation_key(source, target, r.relation, state, true);
-            if broadest != key && r.maybe_keys_set.contains(&broadest) {
-                r.maybe_keys_set.remove(&key);
+            if broadest != key && r.has_maybe_key(broadest) {
                 return Ternary::MAYBE;
             }
         }
         let is_too_deep = r.source_stack.len() == 100 || r.target_stack.len() == 100;
         if is_too_deep || self.is_stack_low() {
+            self.note_gave_up("the depth of a comparison");
             r.is_too_deep |= is_too_deep;
-            r.maybe_keys_set.remove(&key);
             r.overflow = true;
             return Ternary::FALSE;
         }
         let maybe_start = r.maybe_keys.len();
+        let variance_reads = self.in_progress_variance_reads;
         let scope = self.begin_scope();
-        r.maybe_keys.push(key);
+        let cuts = self.comparisons_of_deeply_nested_types;
+        r.push_maybe_key(key);
         let save_expanding = r.expanding;
+        // A member of a union or a constraint is pushed on one stack only, so an index doesn't give the push order.
+        let push = 2 * (r.source_stack.len() + r.target_stack.len()) as u32;
         if recursion & REC_SOURCE != 0 {
-            r.source_stack.push(source);
+            r.source_stack.push((source, push + 1));
             if r.expanding & REC_SOURCE == 0
                 && r.source_stack.len() >= 3
-                && self.is_last_deeply_nested(&r.source_stack, &mut r.source_identities, 3)
+                && self.is_last_deeply_nested(
+                    [&r.source_stack, &r.target_stack],
+                    true,
+                    &mut r.source_identities,
+                    3,
+                )
             {
                 r.expanding |= REC_SOURCE;
             }
         }
         if recursion & REC_TARGET != 0 {
-            r.target_stack.push(target);
+            r.target_stack.push((target, push));
             if r.expanding & REC_TARGET == 0
                 && r.target_stack.len() >= 3
-                && self.is_last_deeply_nested(&r.target_stack, &mut r.target_identities, 3)
+                && self.is_last_deeply_nested(
+                    [&r.source_stack, &r.target_stack],
+                    false,
+                    &mut r.target_identities,
+                    3,
+                )
             {
                 r.expanding |= REC_TARGET;
             }
@@ -3819,11 +4299,13 @@ impl<'p, 's> Checker<'p, 's> {
         let save_reliability = std::mem::replace(&mut self.reliability, 0);
         let result = if r.expanding == REC_BOTH {
             self.comparisons_of_deeply_nested_types += 1;
+            self.task.hold_back();
             Ternary::MAYBE
         } else {
             self.structured_type_related_to::<REPORT>(r, source, sd, target, td, state)
         };
         let stored = self.end_scope(scope).ok();
+        let replaces = self.in_progress_variance_reads != variance_reads;
         let propagating = self.reliability;
         self.reliability |= save_reliability;
         if recursion & REC_SOURCE != 0 {
@@ -3837,14 +4319,19 @@ impl<'p, 's> Checker<'p, 's> {
             if result == Ternary::TRUE || r.source_stack.is_empty() && r.target_stack.is_empty() {
                 // Results that were true under assumptions are definite now that no assumption is
                 // left. Unknown results stay unknown.
-                self.reset_maybe_stack(
-                    r,
-                    maybe_start,
-                    propagating,
-                    result == Ternary::TRUE || result == Ternary::MAYBE,
-                    stored,
-                    REPORT,
+                // Where two types count as deeply nested depends on the comparisons around this one.
+                let is_cut = self.comparisons_of_deeply_nested_types != cuts;
+                let around = std::mem::replace(
+                    &mut self.keeps_relations_for_this_task,
+                    is_cut && self.task.commits(),
                 );
+                let keys = match result == Ternary::TRUE || result == Ternary::MAYBE {
+                    true if REPORT || replaces => MaybeKeys::SucceededReplacing,
+                    true => MaybeKeys::Succeeded,
+                    false => MaybeKeys::Forgotten,
+                };
+                self.reset_maybe_stack(r, maybe_start, propagating, keys, stored);
+                self.keeps_relations_for_this_task = around;
             }
         } else {
             // A result that is false under assumptions is false without them, and so is one that
@@ -3859,10 +4346,17 @@ impl<'p, 's> Checker<'p, 's> {
                 && !is_cut_short
                 && cached.is_none()
             {
-                self.insert_relation(key, FAILED | propagating, stored);
+                // A variance measurement that restarted during this comparison may have compared the same generic key and
+                // stored its own result. As in typescript-go, this one replaces it: see `note_variance_cycle`. Otherwise
+                // the first result stays. That matches typescript-go's output where a comparison re-enters itself through
+                // the type of a variable whose initializer is being checked.
+                match replaces {
+                    true => self.set_relation(key, FAILED | propagating, stored),
+                    false => self.insert_relation(key, FAILED | propagating, stored),
+                }
             }
             r.relation_count -= 1;
-            self.reset_maybe_stack(r, maybe_start, propagating, false, stored, REPORT);
+            self.reset_maybe_stack(r, maybe_start, propagating, MaybeKeys::Forgotten, stored);
         }
         result
     }
@@ -3895,6 +4389,7 @@ impl<'p, 's> Checker<'p, 's> {
         relation: Relation,
         kind: u8,
     ) {
+        self.note_gave_up("a comparison that overflowed");
         let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
         let scope = self.begin_scope();
         if let Ok(stored) = self.end_scope_as(scope, false) {
@@ -3904,7 +4399,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `relation.set(key, entry)`
     fn set_relation(&mut self, key: Key, entry: u8, stored: Stored) {
-        if self.p.relations.get(&self.task, &key).is_none() {
+        if self.keeps_relations_for_this_task || self.p.relations.get(&self.task, &key).is_none() {
             self.insert_relation(key, entry, stored);
         } else {
             (self.p.relations).rewrite(&self.task, key, entry, stored);
@@ -3913,9 +4408,26 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `relation.set(key, entry)` for a key that has no entry.
     fn insert_relation(&mut self, key: Key, entry: u8, stored: Stored) {
-        self.generic_relation_entries_not_published += u64::from(key.is_hash_of_own_ids());
         self.relation_sizes[usize::from(key.2 & 0xf)] += 1;
+        if self.keeps_relations_for_this_task {
+            self.relations_of_this_task.entry(key).or_insert(entry);
+            return;
+        }
         self.p.relations.insert(&self.task, key, entry, stored);
+    }
+
+    /// The entry of `Program::relations`, or else of `relations_of_this_task`. What is computed from the latter is for this
+    /// task too.
+    #[inline]
+    fn known_relation(&mut self, key: &Key) -> Option<u8> {
+        let known = self.p.relations.get(&self.task, key);
+        if known.is_some() || self.relations_of_this_task.is_empty() {
+            return known;
+        }
+        let kept = self.relations_of_this_task.get(key).copied()?;
+        self.comparisons_of_deeply_nested_types += 1;
+        self.task.hold_back();
+        Some(kept)
     }
 
     /// `(16_000_000 - relation.size()) / 8`, see `Checker::relation_sizes`.
@@ -3923,44 +4435,45 @@ impl<'p, 's> Checker<'p, 's> {
         (16_000_000 - self.relation_sizes[relation as usize]) / 8
     }
 
-    /// `resetMaybeStack`. `report_errors`: a comparison that elaborates begins at a key whose entry
-    /// is a failure, which an overflow may have cut off.
+    /// `resetMaybeStack`
     fn reset_maybe_stack(
         &mut self,
         r: &mut Relater,
         maybe_start: usize,
         propagating: u8,
-        mark_all_as_succeeded: bool,
+        keys: MaybeKeys,
         stored: Option<Stored>,
-        report_errors: bool,
     ) {
         while r.maybe_keys.len() > maybe_start {
-            let Some(key) = r.maybe_keys.pop() else {
+            let Some(key) = r.pop_maybe_key() else {
                 break;
             };
-            r.maybe_keys_set.remove(&key);
-            if mark_all_as_succeeded {
-                match stored {
-                    Some(stored) if report_errors => {
-                        self.set_relation(key, SUCCEEDED | propagating, stored);
-                    }
-                    Some(stored) => self.insert_relation(key, SUCCEEDED | propagating, stored),
-                    None => {}
+            match (keys, stored) {
+                (MaybeKeys::Forgotten, _) => continue,
+                (MaybeKeys::Succeeded, Some(stored)) => {
+                    self.insert_relation(key, SUCCEEDED | propagating, stored);
                 }
-                r.relation_count -= 1;
+                (MaybeKeys::SucceededReplacing, Some(stored)) => {
+                    self.set_relation(key, SUCCEEDED | propagating, stored);
+                }
+                (_, None) => {}
             }
+            r.relation_count -= 1;
         }
     }
 
     /// `isDeeplyNestedType`: `stack` contains `max_depth` instantiations of the declaration that
     /// `t` is an instantiation of, each created later than the previous one. A homomorphic mapped
-    /// type is as deeply nested as the type it is applied to.
+    /// type is as deeply nested as the type it is applied to. `stacks`: the source stack and the
+    /// target stack. `stack` is the source stack if `is_source`.
     pub(super) fn is_deeply_nested_type(
         &mut self,
         t: TypeId,
-        stack: &[TypeId],
+        stacks: [&[(TypeId, u32)]; 2],
+        is_source: bool,
         max_depth: usize,
     ) -> bool {
+        let stack = stacks[usize::from(!is_source)];
         if stack.len() < max_depth {
             return false;
         }
@@ -3968,17 +4481,16 @@ impl<'p, 's> Checker<'p, 's> {
         if let TypeData::Intersection(parts) = data
             && parts
                 .iter()
-                .any(|&p| self.is_deeply_nested_type(p, stack, max_depth))
+                .any(|&p| self.is_deeply_nested_type(p, stacks, is_source, max_depth))
         {
             return true;
         }
         let identity = self.recursion_identity_as(t, data);
         let mut count = 0;
         let mut last = None;
-        for &on_stack in stack {
+        for &(on_stack, _) in stack {
             if self.has_matching_recursion_identity(on_stack, identity) {
-                // `t.id >= lastTypeId`
-                if last.is_none_or(|last| self.creation_order(on_stack, last).is_ge()) {
+                if last.is_none_or(|last| self.is_created_no_earlier(on_stack, last, stacks)) {
                     count += 1;
                     if count >= max_depth {
                         return true;
@@ -3990,18 +4502,42 @@ impl<'p, 's> Checker<'p, 's> {
         false
     }
 
+    /// True if `t.id >= last.id` in tsgo, for `isDeeplyNestedType`. Height doesn't order two instantiations with the
+    /// same height. Counting each as newer than the other would cut off a comparison that only swaps the same two
+    /// types between the source stack and the target stack. tsgo creates an instantiation when a comparison first
+    /// reaches it, and the target's before the source's, so the type that was pushed first is the older one. Push
+    /// numbers grow with every level, and a level's target has a lower one than its source. No two entries share one,
+    /// so this is a total order: of two different types, exactly one is newer.
+    fn is_created_no_earlier(
+        &self,
+        t: TypeId,
+        last: TypeId,
+        stacks: [&[(TypeId, u32)]; 2],
+    ) -> bool {
+        let pushed = |t: TypeId| {
+            let first = |stack: &[(TypeId, u32)]| Some(stack.iter().find(|it| it.0 == t)?.1);
+            stacks.into_iter().filter_map(first).min()
+        };
+        t == last
+            || (self.types().nesting_order(t, last))
+                .then_with(|| pushed(t).cmp(&pushed(last)))
+                .is_ge()
+    }
+
     /// `is_deeply_nested_type` of the last entry of `stack`. `identities`: for a prefix of the
     /// stack as of the previous call, the type and its `plain_recursion_identity`.
     fn is_last_deeply_nested(
         &mut self,
-        stack: &[TypeId],
+        stacks: [&[(TypeId, u32)]; 2],
+        is_source: bool,
         identities: &mut Vec<(TypeId, RecursionId)>,
         max_depth: usize,
     ) -> bool {
+        let stack = stacks[usize::from(!is_source)];
         if stack.len() < max_depth {
             return false;
         }
-        for (i, &on_stack) in stack.iter().enumerate() {
+        for (i, &(on_stack, _)) in stack.iter().enumerate() {
             if identities.get(i).is_none_or(|known| known.0 != on_stack) {
                 identities.truncate(i);
                 identities.push((on_stack, self.plain_recursion_identity(on_stack)));
@@ -4012,7 +4548,7 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         };
         if kept == NOT_PLAIN {
-            return self.is_deeply_nested_type(t, stack, max_depth);
+            return self.is_deeply_nested_type(t, stacks, is_source, max_depth);
         }
         let identity = self.recursion_identity_by_now(t, kept);
         let mut count = 0;
@@ -4025,8 +4561,7 @@ impl<'p, 's> Checker<'p, 's> {
                     && self.recursion_identity_by_now(on_stack, kept) == identity
             };
             if matches {
-                // `t.id >= lastTypeId`
-                if last.is_none_or(|last| self.creation_order(on_stack, last).is_ge()) {
+                if last.is_none_or(|last| self.is_created_no_earlier(on_stack, last, stacks)) {
                     count += 1;
                     if count >= max_depth {
                         return true;
@@ -4351,30 +4886,14 @@ impl<'p, 's> Checker<'p, 's> {
                 &mut None,
             );
         }
-        // `getPropertiesOfUnionOrIntersectionType`: "The properties of a union type are those that are present in all constituent
-        // types, so we only need to check the properties of the first type without index signature".
-        let mut props: ArenaVec<Prop> = ArenaVec::new_in(self.arena);
-        for &current in &members {
-            let Some(of_current) = self.members(current) else {
-                continue;
-            };
-            for prop in &of_current.shape().props {
-                if props.iter().all(|it| it.name != prop.name)
-                    && let Some((combined, mapper)) = self.get_property_of_type(apparent, prop.name)
-                {
-                    let mut combined = combined.clone_in(self.arena);
-                    self.instantiate_prop(&mut combined, mapper);
-                    props.push(combined);
-                }
-            }
-            if self.structured(of_current).index_infos().is_empty() {
-                break;
-            }
-        }
-        let properties = self.synth(Shape {
-            props,
-            ..Shape::new_in(self.arena)
-        });
+        // Only for the type of an object literal does `propertiesRelatedTo` list the properties of the source. The others
+        // it asks for by the names of those of the target, and a property of a union is created when it is asked for,
+        // with the types of what it combines. If every member has an index signature, the list is made of the names
+        // of all of them: of 150 props types of 300 properties each, where the target has `theme` and `ownerState`.
+        let properties = match is_object_literal_kind(self.data(target)) {
+            true => self.object_of_apparent_union(apparent, &members),
+            false => apparent,
+        };
         self.properties_related_to_noting::<REPORT>(
             r,
             source,
@@ -4385,6 +4904,38 @@ impl<'p, 's> Checker<'p, 's> {
             state,
             &mut None,
         )
+    }
+
+    /// An object type with the properties of the union `apparent`. `members`: the apparent types of its members.
+    fn object_of_apparent_union(&mut self, apparent: TypeId, members: &[TypeId]) -> TypeId {
+        // `getPropertiesOfUnionOrIntersectionType`: "The properties of a union type are those that are present in all constituent
+        // types, so we only need to check the properties of the first type without index signature".
+        let mut props: ArenaVec<Prop> = ArenaVec::new_in(self.arena);
+        let mut names_of_props = FxHashSet::<Atom>::default();
+        let was_listing = self.union_members.set_listing(true);
+        for &current in members {
+            let Some(of_current) = self.members(current) else {
+                continue;
+            };
+            for prop in &of_current.shape().props {
+                if !names_of_props.contains(&prop.name)
+                    && let Some((combined, mapper)) = self.get_property_of_type(apparent, prop.name)
+                {
+                    let mut combined = combined.clone_in(self.arena);
+                    self.instantiate_prop(&mut combined, mapper);
+                    names_of_props.insert(combined.name);
+                    props.push(combined);
+                }
+            }
+            if self.structured(of_current).index_infos().is_empty() {
+                break;
+            }
+        }
+        self.union_members.set_listing(was_listing);
+        self.synth(Shape {
+            props,
+            ..Shape::new_in(self.arena)
+        })
     }
 
     /// `isSourceIntersectionNeedingExtraCheck`
@@ -4682,7 +5233,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if relation == Relation::Comparable && self.is_type_param(source) {
                     // Two type parameters are comparable only if one is constrained to the other.
                     if let Some(constraint) = self.constraint_of_type_param(source)
-                        && self.some_type(constraint, |c, m| c.is_type_param(m))
+                        && self.is_some_type_of_kind(constraint, tf::TYPE_PARAMETER)
                     {
                         return self.is_related_to(r, constraint, target, REC_SOURCE);
                     }
@@ -4803,7 +5354,8 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             TypeData::Cond { file, node, .. } => {
-                if self.is_deeply_nested_type(target, &r.target_stack, 10) {
+                if self.is_deeply_nested_type(target, [&r.source_stack, &r.target_stack], false, 10)
+                {
                     return Ternary::MAYBE;
                 }
                 // Only without `infer`, when the result does not depend on distribution, and when
@@ -5023,7 +5575,8 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             TypeData::Cond { .. } => {
-                if self.is_deeply_nested_type(source, &r.source_stack, 10) {
+                if self.is_deeply_nested_type(source, [&r.source_stack, &r.target_stack], true, 10)
+                {
                     return Ternary::MAYBE;
                 }
                 if matches!(self.data(target), TypeData::Cond { .. }) {
@@ -5037,15 +5590,18 @@ impl<'p, 's> Checker<'p, 's> {
                     // Also when both sides have the same extends type: the inference asks for the
                     // variances of the generic types in it, and in a cycle of variance
                     // computations what they are depends on who asks first.
-                    // FOR SPEED: once. Instantiated from one declaration, both sides have the same
-                    // `infer` type parameters, and each that occurs in the extends type maps to
-                    // itself: after the first time the inference changes nothing.
-                    let is_repeated = !source_params.is_empty()
+                    // FOR SPEED: skip the inference once it has run with all of those variances
+                    // measured. Both sides come from one declaration, so they have the same `infer`
+                    // type parameters and each one in the extends type maps to itself: repeating
+                    // the inference changes nothing.
+                    let maps_to_itself = !source_params.is_empty()
                         && source_extends == target_extends
                         && !(self.params_mentioned_in(source_extends, &source_params))
-                            .contains(&false)
-                        && !self.inferred_between_same_extends.insert(source_extends);
+                            .contains(&false);
+                    let fact = task_fact::HAS_INFERRED_BETWEEN_SAME_EXTENDS;
+                    let is_repeated = maps_to_itself && self.task_facts.has(target_extends, fact);
                     if !source_params.is_empty() && !is_repeated {
+                        let reads = self.in_progress_variance_reads;
                         let around = self.cond_origin(source).2;
                         let inferred = self.infer_from_types_comparing(
                             &source_params,
@@ -5056,6 +5612,9 @@ impl<'p, 's> Checker<'p, 's> {
                         );
                         mapper = self.mapper_from(&source_params, &inferred);
                         source_extends = self.instantiate(source_extends, mapper);
+                        if maps_to_itself && self.in_progress_variance_reads == reads {
+                            self.task_facts.add(target_extends, fact);
+                        }
                     }
                     if self.is_identical(source_extends, target_extends) {
                         let (sc, tc) = (self.cond_check(source), self.cond_check(target));
@@ -5389,26 +5948,6 @@ impl<'p, 's> Checker<'p, 's> {
         result
     }
 
-    /// `members`, for `getPropertiesOfType(ty)`: an intersection has the list of properties that
-    /// `getPropertiesOfUnionOrIntersectionType` assigned, which can lack some that
-    /// `getPropertyOfType` finds by name (`listed_properties`).
-    /// Whether the list of properties that the intersection `ty` keeps lacks the members of a
-    /// constituent (`listed_members`).
-    pub(super) fn has_partial_list(&self, ty: TypeId) -> bool {
-        matches!(self.data(ty), TypeData::Intersection(_))
-            && (self.p.listed_properties.get(&self.task, &ty)).is_some_and(|listed| listed != ty)
-    }
-
-    pub(super) fn listed_members(&mut self, ty: TypeId) -> Option<Members<'p>> {
-        if matches!(self.data(ty), TypeData::Intersection(_))
-            && let Some(listed) = self.p.listed_properties.get(&self.task, &ty)
-            && listed != ty
-        {
-            return self.members(listed);
-        }
-        self.members(ty)
-    }
-
     /// The type that `getPropertiesOfType`, `getPropertyOfType` and `getIndexInfosOfType` use:
     /// `getReducedApparentType(ty)`, and for a union the properties common to all its members
     /// (`getPropertiesOfUnionOrIntersectionType`).
@@ -5693,7 +6232,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `properties`: an object type with the properties `getPropertiesOfType(source)` returns,
-    /// where `members(source)` lacks them.
+    /// where `members(source)` lacks them. Or a union, which is asked for each by name.
     /// `both`: set to the `members` of `source` and of `target`, if they were requested and are
     /// final.
     fn properties_related_to_noting<const REPORT: bool>(
@@ -5882,16 +6421,18 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let provisional = self.provisional_shapes.len();
-        let has_properties = properties.unwrap_or(source);
-        let (Some(sm), Some(tm)) = (self.members(has_properties), self.listed_members(target))
-        else {
+        let by_name = properties.filter(|&it| self.is_union(it));
+        let has_properties = match by_name {
+            Some(_) => self.synth(Shape::new_in(self.arena)),
+            None => properties.unwrap_or(source),
+        };
+        let (Some(sm), Some(tm)) = (self.members(has_properties), self.members(target)) else {
             return Ternary::FALSE;
         };
         // A cached shape does not change. An intersection has its signatures elsewhere.
-        let is_intersection = |c: &Self, ty| matches!(c.data(ty), TypeData::Intersection(_));
         if self.provisional_shapes.len() == provisional
-            && !is_intersection(self, has_properties)
-            && !is_intersection(self, target)
+            && !self.is_intersection(has_properties)
+            && !self.is_intersection(target)
         {
             *both = Some((sm, tm));
         }
@@ -5905,10 +6446,11 @@ impl<'p, 's> Checker<'p, 's> {
             && !self.is_empty_array_literal_type(source)
             && !self.is_tuple(source);
         let mut inherited = self.inherited_of(sm.shape());
+        let of_source = (by_name, has_properties, sm);
         // `getUnmatchedProperty`
         for tp in &tm.shape().props {
             if !(require_optional_properties || !tp.flags.contains(PropFlags::OPTIONAL))
-                || (self.property_among(has_properties, &sm, &mut inherited, tp.name)).is_some()
+                || (self.property_of_source(of_source, &mut inherited, tp.name)).is_some()
                 // `isStaticPrivateIdentifierProperty`
                 || self.is_static_private_name(tp)
             {
@@ -5929,8 +6471,7 @@ impl<'p, 's> Checker<'p, 's> {
                 for tp in &tm.shape().props {
                     if !self.is_static_private_name(tp)
                         && (require_optional_properties || !tp.flags.contains(PropFlags::OPTIONAL))
-                        && (self.property_among(has_properties, &sm, &mut inherited, tp.name))
-                            .is_none()
+                        && (self.property_of_source(of_source, &mut inherited, tp.name)).is_none()
                     {
                         unmatched.push(tp);
                     }
@@ -5983,7 +6524,7 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             let Some((sp, source_mapper)) =
-                self.property_among(has_properties, &sm, &mut inherited, tp.name)
+                self.property_of_source(of_source, &mut inherited, tp.name)
             else {
                 continue;
             };
@@ -6014,7 +6555,9 @@ impl<'p, 's> Checker<'p, 's> {
         if a.0.source != b.0.source {
             return false;
         }
-        if (a.0.mapper, a.1) == (b.0.mapper, b.1) {
+        if (a.0.mapper, a.1) == (b.0.mapper, b.1)
+            && self.types().key_apart(a.0) == self.types().key_apart(b.0)
+        {
             return true;
         }
         // `instantiateSymbol` returns it itself, in every type that inherits it.
@@ -6024,7 +6567,8 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return true;
         }
-        let (a, b) = (self.compose(a.0.mapper, a.1), self.compose(b.0.mapper, b.1));
+        let (own_a, own_b) = (self.mapper_of_prop(a.0), self.mapper_of_prop(b.0));
+        let (a, b) = (self.compose(own_a, a.1), self.compose(own_b, b.1));
         // A mapper stores `H.this -> H.this`, which maps nothing.
         let types = &self.types();
         let moved = |m| types.mapping(m).iter().filter(|pair| pair.0 != pair.1);
@@ -6246,7 +6790,7 @@ impl<'p, 's> Checker<'p, 's> {
             // declarations with one name the first is used.
             SigData::Construct { class, .. } | SigData::DefaultConstruct { class, .. } => self
                 .files()
-                .decls(class)
+                .decls_of(class)
                 .iter()
                 .find_map(|&(file, decl)| match decl {
                     crate::bind::Decl::Class(c) => {
@@ -6513,12 +7057,32 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// With every type parameter of its own replaced by `any`. `getErasedSignature`
     pub fn erased_sig(&mut self, sig: SigId) -> SigId {
-        let params = self.sig_type_params(sig);
-        if params.is_empty() {
-            return sig;
+        self.derived_sig(sig, DerivedSig::Erased, |c| {
+            let params = c.sig_type_params(sig);
+            if params.is_empty() {
+                return sig;
+            }
+            let anys: SmallVec<[TypeId; 8]> = SmallVec::from_elem(TypeId::ANY, params.len());
+            c.with_own_type_params(sig, &params, &anys)
+        })
+    }
+
+    /// `erasedSignatureCache`, `baseSignatureCache`: what `derive` makes of `sig`.
+    pub(super) fn derived_sig(
+        &mut self,
+        sig: SigId,
+        which: DerivedSig,
+        derive: impl FnOnce(&mut Self) -> SigId,
+    ) -> SigId {
+        if let Some(kept) = self.recent_derived_sigs.get(sig.0, which as u32) {
+            return SigId(kept);
         }
-        let anys: SmallVec<[TypeId; 8]> = SmallVec::from_elem(TypeId::ANY, params.len());
-        self.with_own_type_params(sig, &params, &anys)
+        let mark = self.non_cacheable_mark();
+        let derived = derive(self);
+        if derived != sig && self.non_cacheable_mark() == mark {
+            (self.recent_derived_sigs).put(sig.0, which as u32, derived.0);
+        }
+        derived
     }
 
     /// `sig` with its own type parameters `params` replaced by `values`, and nothing else: the type
@@ -6531,7 +7095,8 @@ impl<'p, 's> Checker<'p, 's> {
         values: &[TypeId],
     ) -> SigId {
         let extended = |c: &mut Self, own: MapperId| {
-            let mut pairs = c.types().mapping(own).to_vec();
+            let mut pairs: SmallVec<[(TypeId, TypeId); 8]> =
+                SmallVec::from_slice(c.types().mapping(own));
             for (&param, &value) in params.iter().zip(values) {
                 // In an instantiation it is a clone, represented by the declared one
                 // (`cloneTypeParameter`). A mapper has one pair for a parameter, so the order of
@@ -6548,7 +7113,7 @@ impl<'p, 's> Checker<'p, 's> {
                     None => pairs.push((param, value)),
                 }
             }
-            c.types().mapper(pairs)
+            c.types().mapper_of(&pairs)
         };
         let data = match *self.types().sig(sig) {
             SigData::Decl { file, func, mapper } => SigData::Decl {
@@ -6799,7 +7364,7 @@ impl<'p, 's> Checker<'p, 's> {
                 None => self.param_type_at(params, count - 1),
             };
             let ty = ty.unwrap_or(TypeId::ANY);
-            if !self.some_type(ty, |_, m| m == TypeId::VOID) {
+            if !self.is_some_type_of_kind(ty, tf::VOID) {
                 break;
             }
             count -= 1;
@@ -7012,8 +7577,8 @@ impl<'p, 's> Checker<'p, 's> {
             // `GetNonNullableType` removes.
             let nullish = |c: &Self, ty: TypeId| {
                 (
-                    c.some_type(ty, |_, m| m.is_undefined()),
-                    c.some_type(ty, |_, m| m.is_null()),
+                    c.is_some_type_of_kind(ty, tf::UNDEFINED),
+                    c.is_some_type_of_kind(ty, tf::NULL),
                 )
             };
             let callbacks = source_sig
@@ -7350,7 +7915,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Whether `apparent_type_of_intersection` replaces the member `p` by another type.
-    fn intersection_member_has_other_apparent_type(&self, p: TypeId) -> bool {
+    pub(super) fn intersection_member_has_other_apparent_type(&self, p: TypeId) -> bool {
         p == TypeId::OBJECT || self.is_deferred(p) || self.has_primitive_flag(p)
     }
 
@@ -7550,7 +8115,7 @@ impl<'p, 's> Checker<'p, 's> {
                     pieces.push(
                         if self.is_assignable(sb, tb)
                             || self.is_any(s)
-                            || self.every_type(s, Self::is_string_like)
+                            || self.is_every_type_of_kind(s, tf::STRING_LIKE)
                         {
                             s
                         } else {

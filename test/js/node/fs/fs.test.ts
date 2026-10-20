@@ -7398,20 +7398,29 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
   // In a subprocess: the replacement must not reach the other tests, and a held
   // callback ends the process with no output instead of a hang.
   it("while user code has replaced process.nextTick", async () => {
-    using dir = tempDir("fs-callback-order", { "file.txt": "hello" });
+    using dir = tempDir("fs-callback-order", { "file.txt": "hello", "rm.txt": "x", "tree/a/b.txt": "x" });
     const script = `
       const fs = require("fs");
+      const path = require("path");
+      const dir = ${JSON.stringify(String(dir))};
       const realNextTick = process.nextTick;
       const order = [];
       process.on("exit", () => console.log(order.join(" ")));
-      // The tick queue exists before the operation starts.
-      realNextTick(() => {
+      const operations = [
+        cb => fs.stat(path.join(dir, "file.txt"), cb),
+        cb => fs.rm(path.join(dir, "rm.txt"), cb),
+        cb => fs.rmdir(path.join(dir, "tree"), { recursive: true }, cb),
+      ];
+      // The tick queue exists before the first operation starts.
+      realNextTick(function next() {
         // What a fake-timer library does: hold the job until the fake clock runs.
         process.nextTick = () => {};
-        fs.stat(${JSON.stringify(join(String(dir), "file.txt"))}, () => {
+        const operation = operations.shift();
+        if (!operation) return;
+        operation(() => {
           order.push("callback");
           realNextTick(() => order.push("nextTick"));
-          queueMicrotask(() => order.push("microtask"));
+          queueMicrotask(() => (order.push("microtask"), next()));
         });
       });
     `;
@@ -7419,7 +7428,7 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("callback nextTick microtask");
+    expect(stdout.trim()).toBe(Array(3).fill("callback nextTick microtask").join(" "));
     expect(exitCode).toBe(0);
   });
 
@@ -7427,8 +7436,6 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
   it("while user code has replaced process.nextTick, for the APIs that are promise chains", async () => {
     using dir = tempDir("fs-callback-order", {
       "file.txt": "hello",
-      "rm.txt": "x",
-      "tree/a/b.txt": "x",
       "list/f0": "",
       "list/f1": "",
     });
@@ -7444,8 +7451,6 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
       // What a fake-timer library does: hold the job until the fake clock runs.
       process.nextTick = () => {};
       fs.cp(path.join(dir, "file.txt"), path.join(dir, "cp.txt"), () => ran.push("cp"));
-      fs.rm(path.join(dir, "rm.txt"), () => ran.push("rm"));
-      fs.rmdir(path.join(dir, "tree"), { recursive: true }, () => ran.push("rmdir"));
       fs.opendir(list, (err, handle) => (handle.closeSync(), ran.push("opendir")));
       const first = fs.opendirSync(list);
       first.read(() => (first.closeSync(), ran.push("Dir.read")));
@@ -7457,7 +7462,7 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("Dir.close Dir.read Dir.read(buffered) cp glob opendir rm rmdir");
+    expect(stdout.trim()).toBe("Dir.close Dir.read Dir.read(buffered) cp glob opendir");
     expect(exitCode).toBe(0);
   });
 });

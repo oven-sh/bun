@@ -57,6 +57,11 @@ function settleCallbackWithNull(promise, callback) {
   );
 }
 
+// Node reads rm's options from `{ ...defaults, ...options }`: own enumerable keys, also one that holds `undefined`.
+function ownRmOptions(options) {
+  return typeof options === "object" && options !== null ? { ...options } : options;
+}
+
 function openAsBlob(path, options) {
   return Promise.$resolve(Bun.file(path, options));
 }
@@ -103,8 +108,7 @@ var access = function access(path, mode, callback?) {
     }
 
     callback = ensureCallback(callback);
-    // route through promises.rm for the JS-side ERR_FS_EISDIR validation
-    settleCallback(require("node:fs/promises").rm(path, options), callback);
+    fs.rmCb(callback, path, ownRmOptions(options));
   },
   rmdir = function rmdir(path, options, callback?) {
     if ($isCallable(options)) {
@@ -114,7 +118,7 @@ var access = function access(path, mode, callback?) {
     callback = ensureCallback(callback);
 
     // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
-    if (options?.recursive) settleCallback(require("node:fs/promises").rm(path, options), callback);
+    if (options?.recursive) fs.rmCb(callback, path, ownRmOptions(options));
     else fs.rmdirCb(callback, path, options);
   },
   copyFile = function copyFile(src, dest, mode, callback?) {
@@ -549,31 +553,7 @@ var access = function access(path, mode, callback?) {
   utimesSync = fs.utimesSync.bind(fs),
   lutimesSync = fs.lutimesSync.bind(fs),
   rmSync = function rmSync(path, options) {
-    if (typeof options === "object" && options !== null) {
-      // Node merges the caller's options over the defaults with a spread, which
-      // copies own enumerable keys only -- including ones holding `undefined`.
-      // Normalize here so the native parser sees exactly that set.
-      options = { ...options };
-    }
-    if (!options?.recursive) {
-      // node validates in JS and reports ERR_FS_EISDIR for directories
-      let stats;
-      try {
-        stats = fs.lstatSync(path);
-      } catch {
-        // let the native call produce the error (respects force/ENOENT)
-      }
-      if (stats?.isDirectory()) {
-        throw require("internal/fs/cp-sync").fsEisdirError({
-          code: "EISDIR",
-          message: "is a directory",
-          path,
-          syscall: "rm",
-          errno: $processBindingConstants.os.errno.EISDIR,
-        });
-      }
-    }
-    return fs.rmSync(path, options);
+    return fs.rmSync(path, ownRmOptions(options));
   },
   rmdirSync = function rmdirSync(path, options) {
     // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
@@ -1144,12 +1124,16 @@ class Dir {
   }
 
   read(cb?: (err: Error | null, entry: DirentType) => void): any {
-    if (!$isUndefinedOrNull(cb)) {
-      validateFunction(cb, "callback");
-      cb = guardCallback(cb);
-      // node's callback overload returns undefined (like close(cb) above)
-      settleCallback(this.read(), cb);
-      return;
+    // As in Node, any argument makes a closed Dir throw from the call. Only `read()` rejects.
+    if (arguments.length !== 0) {
+      if (this.#handle < 0) throw $ERR_DIR_CLOSED();
+      if (cb !== undefined) {
+        validateFunction(cb, "callback");
+        cb = guardCallback(cb);
+        // node's callback overload returns undefined (like close(cb) above)
+        settleCallback(this.read(), cb);
+        return;
+      }
     }
 
     return this.#enqueue(this.#readOp.bind(this));

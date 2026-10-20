@@ -341,25 +341,6 @@ const exports = {
       // Normalize here so the native parser sees exactly that set.
       options = { ...options };
     }
-    if (!options?.recursive) {
-      // node validates in JS and reports ERR_FS_EISDIR for directories
-      // (same check as rmSync)
-      let stats;
-      try {
-        stats = await fs.lstat(path);
-      } catch {
-        // let the native call produce the error (respects force/ENOENT)
-      }
-      if (stats?.isDirectory()) {
-        throw require("internal/fs/cp-sync").fsEisdirError({
-          code: "EISDIR",
-          message: "is a directory",
-          path,
-          syscall: "rm",
-          errno: $processBindingConstants.os.errno.EISDIR,
-        });
-      }
-    }
     return fs.rm(path, options);
   },
   rmdir: async function rmdir(path, options) {

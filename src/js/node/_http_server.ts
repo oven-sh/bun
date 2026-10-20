@@ -35,7 +35,6 @@ const {
   kInternalSocketData,
   serverSymbol,
   kHandle,
-  kOnReadParsed,
   kHandoffResponse,
   kHasQueuedReads,
   kRealListen,
@@ -51,6 +50,8 @@ const {
   NodeHTTPResponseFlags,
   callCloseCallback,
   emitCloseNT,
+  emitEOFIncomingMessageOuter,
+  eofInProgress,
   NodeHTTPResponseAbortEvent,
   STATUS_CODES,
   isTlsSymbol,
@@ -1047,7 +1048,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // switches into CONNECT-style tunnel mode immediately. With a body
           // (Node 26 semantics) the body keeps being parsed and delivered
           // through req; the connection only switches to tunnel mode once the
-          // message completes, so the upgradeHead is empty and everything after
+          // message completes; until then the upgradeHead is empty and everything after
           // the end of the message reaches the socket as raw data.
           socketHandle.upgradeToTunnel(hasBody, handle);
           socket[kHandoffResponse] = handle;
@@ -1056,12 +1057,14 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // Node frees the parser before emitting 'upgrade' (socket.parser === null there).
           releaseServerParserShim(socket, http_req);
           if (hasBody) {
+            if ((dispatchBits & DISPATCH_READ_HAS_MORE) !== 0)
+              return parkUpgrade(server, socket, socketHandle, http_req, handle);
             socket[kUpgradeIncoming] = http_req;
             http_req.once("end", clearUpgradeIncoming.bind(undefined, socket));
           } else {
             http_req.complete = true;
           }
-          const upgradeHead = !hasBody && connectHead ? connectHead : kEmptyBuffer;
+          const upgradeHead = connectHead ? connectHead : kEmptyBuffer;
           socket.bytesRead += upgradeHead.length;
           let upgradeHandled;
           try {
@@ -1466,18 +1469,6 @@ function clearUpgradeIncoming(socket) {
   socket[kUpgradeIncoming] = undefined;
 }
 
-// Node's UpgradeStream._read: resume the request only while its body is incomplete.
-function resumePausedUpgradeIncoming(socket) {
-  const req = socket[kUpgradeIncoming];
-  if (req === undefined) return;
-  const response = socket[kHandle]?.response;
-  if (response && (response.hasBody & NodeHTTPBodyReadState.done) !== 0) {
-    socket[kUpgradeIncoming] = undefined;
-  } else {
-    req.resume();
-  }
-}
-
 // Node.js hands the connection over to 'connect'/'upgrade' listeners with the
 // connection-listener set removed (onParserExecuteCommon removes its data/end/
 // close/drain/error/timeout listeners) and only net.Socket's own 'end' listener
@@ -1492,6 +1483,41 @@ function detachSocketListenersForHandoff(socket) {
 }
 function resolveHandoffPromise(promise) {
   $resolvePromise(promise, undefined);
+}
+
+// Node emits 'upgrade' once its parser has consumed the read, not at the end of the headers: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L1098-L1160
+function parkUpgrade(server, socket, socketHandle, req, handle) {
+  const promise = $newPromise();
+  handle.ondata = onDataParkedUpgrade.bind(req);
+  const handOff = handOffParkedUpgrade.bind(undefined, server, socket, req, handle, promise);
+  // Not armed: the socket closed in this dispatch, and no read of it is parsed on.
+  if (!socketHandle.notifyWhenReadParsed(handOff)) process.nextTick(handOff);
+  return promise;
+}
+
+// No EOF tick for the last chunk, or for a read() inside its 'data' (it would end a flowing request before the listener): handOffParkedUpgrade() completes the request.
+function onDataParkedUpgrade(this: import("node:http").IncomingMessage, chunk, isLast, aborted) {
+  if (isLast && aborted === NodeHTTPResponseAbortEvent.none) this[eofInProgress] = true;
+  onDataIncomingMessage.$call(this, chunk, false, aborted);
+}
+
+// head: what follows the body in the read. complete: the body ended in it.
+function handOffParkedUpgrade(server, socket, req, handle, promise, head: Buffer = kEmptyBuffer, complete = false) {
+  if (complete || req[eofInProgress]) {
+    emitEOFIncomingMessageOuter(req);
+  } else {
+    // The body is still arriving: a read of the socket also drives the request, like Node's UpgradeStream.
+    handle.ondata = onDataIncomingMessage.bind(req);
+    socket[kUpgradeIncoming] = req;
+    req.once("end", clearUpgradeIncoming.bind(undefined, socket));
+  }
+  socket.bytesRead += head.length;
+  try {
+    // No dispatch is on the stack: a listener that throws is an uncaught exception at once, as in Node.js.
+    if (!server.emit("upgrade", req, socket, head)) socket.destroy();
+  } finally {
+    socket.once("close", resolveHandoffPromise.bind(undefined, promise));
+  }
 }
 const kSocketTimeoutTimer = Symbol("socketTimeoutTimer");
 const kStreamingEnabled = Symbol("kStreamingEnabled");
@@ -1667,7 +1693,6 @@ function getNodeHTTPServerSocket() {
     [kClosedWithUnsentData] = undefined;
     [kHandle];
     [kUpgradeIncoming]: import("node:http").IncomingMessage | undefined = undefined;
-    [kOnReadParsed] = undefined;
     [kHandoffResponse] = undefined;
     [kDestroySoon] = false;
     [kHandedOff] = false;
@@ -2069,9 +2094,9 @@ function getNodeHTTPServerSocket() {
         response?.resume();
         // Not paused: req.complete is false in the listener, so it can wait for 'end' with no reader.
         if (upgradeIncoming.readableFlowing !== false) upgradeIncoming.resume();
-        // The 'upgrade' listener runs before the rest of its read is parsed; that rest can complete the body.
-        else if (response?.notifyWhenReadParsed()) this[kOnReadParsed] = resumePausedUpgradeIncoming;
-        else resumePausedUpgradeIncoming(this);
+        // Paused: Node's UpgradeStream._read resumes the request only while its body is incomplete.
+        else if (response && (response.hasBody & NodeHTTPBodyReadState.done) !== 0) this[kUpgradeIncoming] = undefined;
+        else upgradeIncoming.resume();
         return;
       }
       response?.resume();
@@ -3169,6 +3194,7 @@ const DISPATCH_HAS_EXPECT = 1 << 4;
 const DISPATCH_EXPECT_CONTINUE = 1 << 5;
 const DISPATCH_HAS_CONTENT_LENGTH = 1 << 6;
 const DISPATCH_HAS_TRANSFER_ENCODING = 1 << 7;
+const DISPATCH_READ_HAS_MORE = 1 << 8;
 
 // Whether the response should advertise a persistent connection.
 // `connection` is the request's Connection header value (or undefined).

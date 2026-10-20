@@ -37,7 +37,7 @@
 
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
-extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, struct us_socket_t *s);
+extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, struct us_socket_t *s, const char *head, unsigned int length, bool complete);
 
 namespace uWS {
 
@@ -336,7 +336,7 @@ private:
 
         /* Do not accept any data while in shutdown state. A node:http tunnel is half-open: it still reads after socket.end(). */
         bool isHalfOpenTunnel = false;
-        if constexpr (IsNodeHttp) isHalfOpenTunnel = httpResponseData->isConnectRequest;
+        if constexpr (IsNodeHttp) isHalfOpenTunnel = httpResponseData->isConnectRequest || (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY);
         if (us_socket_is_shut_down((us_socket_t *) s) && !isHalfOpenTunnel) {
             /* Balance the us_socket_ref above — every other return path
              * reaches the unref via returnedData. */
@@ -598,8 +598,8 @@ private:
                 return nullptr;
             }
 
-            /* We absolutely have to terminate parsing if shutdown */
-            if (us_socket_is_shut_down((us_socket_t *) s)) {
+            /* We absolutely have to terminate parsing if shutdown. A node:http Upgrade request reads on: its body, then its tunnel. */
+            if (us_socket_is_shut_down((us_socket_t *) s) && !(IsNodeHttp && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY))) {
                 return nullptr;
             }
 
@@ -690,8 +690,10 @@ private:
                     return nullptr;
                 }
 
-                /* We absolutely have to terminate parsing if shutdown */
-                if (us_socket_is_shut_down((us_socket_t *) user)) {
+                /* We absolutely have to terminate parsing if shutdown. A node:http Upgrade request reads on: its body, then its tunnel. */
+                bool upgradeReadsOn = false;
+                if constexpr (IsNodeHttp) upgradeReadsOn = switchToTunnelAfterThisChunk || (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY);
+                if (us_socket_is_shut_down((us_socket_t *) user) && !upgradeReadsOn) {
                     /* node:http: this socket can be a tunnel that still reads. Its bytes are not for a body that ended. */
                     if constexpr (IsNodeHttp) {
                         if (fin) {
@@ -714,6 +716,10 @@ private:
                     if (us_socket_is_closed((struct us_socket_t *) user)) {
                         return nullptr;
                     }
+                    /* An 'upgrade' event waits for the end of this read: what follows the body is its head, not data of the tunnel. */
+                    if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED) {
+                        return nullptr;
+                    }
                 }
             }
             /* JavaScript destroyed this socket earlier in this read: its message is delivered, so close before the next request is parsed. */
@@ -726,6 +732,25 @@ private:
             }
             return user;
         });
+
+        /* node:http: the parked 'upgrade' (notifyWhenReadParsed) runs here, still in the parse window like a request handler. */
+        if constexpr (IsNodeHttp) {
+            if (httpContextData->upgradedWebSocket != s && !us_socket_is_closed(s)
+                && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED)) [[unlikely]] {
+                httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED;
+                /* The data handler stopped the parse behind a body that ended in this read: the rest is the head. */
+                const bool complete = httpResponseData->isConnectRequest;
+                const unsigned int headStart = complete ? std::min(result.consumedBytes(), (unsigned int) length) : (unsigned int) length;
+                Bun__NodeHTTP__onReadParsed(SSL, s, data + headStart, (unsigned int) length - headStart, complete);
+                if (httpContextData->upgradedWebSocket || us_socket_is_closed(s)) {
+                    /* No HttpResponseData is left. A new WebSocket gets the head below. */
+                    result = HttpParserResult::success(headStart);
+                } else if (complete) {
+                    /* Balance the ref of onData, like a read that is parsed to its end. */
+                    us_socket_unref(s);
+                }
+            }
+        }
 
         auto httpErrorStatusCode = result.httpErrorStatusCode();
 
@@ -790,18 +815,6 @@ private:
         if (returnedData != nullptr) {
             /* We don't want open sockets to keep the event loop alive between HTTP requests */
             us_socket_unref((us_socket_t *) returnedData);
-
-            if constexpr (IsNodeHttp) {
-                if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED) {
-                    httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED;
-                    Bun__NodeHTTP__onReadParsed(SSL, (us_socket_t *) returnedData);
-                    /* That ran JavaScript: a closed or upgraded socket no longer has an HttpResponseData. */
-                    if (us_socket_is_closed((us_socket_t *) returnedData) || us_socket_kind((us_socket_t *) returnedData) != socketKind()) {
-                        ((AsyncSocket<SSL> *) returnedData)->uncork();
-                        return (us_socket_t *) returnedData;
-                    }
-                }
-            }
 
             /* node:http compat: a partial request head was left in the fallback
              * buffer by this read (either fresh bytes on an idle connection or a

@@ -1,7 +1,7 @@
 // A server accepts one Upgrade request that has a 100-byte body. The JSON in argv[2] says what the client sends and
 // what the 'upgrade' listener does when it has read the last chunk. Prints `events` (what the request and the upgrade
-// socket emitted, in order) and `eofs` (how many times the request got its EOF). Also runs in Node.js. There `eofs`
-// misses an EOF that the parser pushed before the listener ran.
+// socket emitted, in order) and `eofs` (how many times the request got its EOF). Also runs in Node.js. `eofs` misses
+// the EOF of a body that came whole with the head: the parser pushed it before the listener ran.
 const http = require("node:http");
 const https = require("node:https");
 const net = require("node:net");

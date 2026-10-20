@@ -7,11 +7,16 @@
  * https://github.com/nodejs/node/blob/v26.3.0/lib/_http_common.js#L143-L163
  */
 import assert from "node:assert";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import http from "node:http";
+import https from "node:https";
 import type { AddressInfo, Socket } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
+import { dirname, join } from "node:path";
 import { describe, test } from "node:test";
+import { connect as tlsConnect } from "node:tls";
 import { fileURLToPath } from "node:url";
 
 type Seen = Record<string, boolean>;
@@ -396,6 +401,475 @@ for (const expectation of ["100-continue", "something-else"]) {
     });
   });
 }
+
+// Node.js emits 'upgrade' when its parser has consumed the read that carried the head of the request
+// (onParserExecuteCommon). A request whose body is complete by then gets the raw socket, and the rest of
+// the read as the head. Node.js parses the body of an Upgrade request since v26.
+describe("an Upgrade request with a body", { skip: Number(process.versions.node.split(".")[0]) < 26 }, () => {
+  const isBun = typeof Bun !== "undefined";
+  const keys = join(dirname(fileURLToPath(import.meta.url)), "..", "test", "fixtures", "keys");
+  const tlsOptions = {
+    key: readFileSync(join(keys, "agent1-key.pem")),
+    cert: readFileSync(join(keys, "agent1-cert.pem")),
+  };
+  const reply = "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n";
+  const requestHead = (framing: string) =>
+    `POST / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: raw\r\n${framing}\r\n\r\n`;
+  // The body of each request is "hello".
+  const requests: Record<string, { head: string; body: string; trailers: object }> = {
+    "Content-Length": { head: requestHead("Content-Length: 5"), body: "hello", trailers: {} },
+    "chunked": { head: requestHead("Transfer-Encoding: chunked"), body: "5\r\nhello\r\n0\r\n\r\n", trailers: {} },
+    "chunked with a trailer": {
+      head: requestHead("Transfer-Encoding: chunked"),
+      body: "5\r\nhello\r\n0\r\nX-Trailer: yes\r\n\r\n",
+      trailers: { "x-trailer": "yes" },
+    },
+  };
+  const fixedLength = requests["Content-Length"];
+  type Proto = "http" | "https";
+  type Listening = { server: http.Server; dial: () => Socket; connect: () => Promise<Socket> };
+
+  async function listening(proto: Proto, options: http.ServerOptions, run: (t: Listening) => Promise<void>) {
+    // The barrier of writeInTwoReads() is a plain request.
+    const onRequest = (req: http.IncomingMessage, res: http.ServerResponse) => void res.end("ok");
+    const server =
+      proto === "https"
+        ? https.createServer({ ...tlsOptions, ...options }, onRequest)
+        : http.createServer(options, onRequest);
+    // A handed-off socket is no connection of the server any more: closeAllConnections() leaves it open.
+    const sockets: Socket[] = [];
+    server.on("connection", socket => sockets.push(socket));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const to = { port: (server.address() as AddressInfo).port, host: "127.0.0.1", allowHalfOpen: true };
+    const dial = () => {
+      const socket = proto === "https" ? tlsConnect({ ...to, rejectUnauthorized: false }) : connect(to);
+      socket.on("error", () => {});
+      sockets.push(socket);
+      return socket;
+    };
+    const connected = async () => {
+      const socket = dial();
+      await once(socket, proto === "https" ? "secureConnect" : "connect");
+      return socket;
+    };
+    try {
+      await run({ server, dial, connect: connected });
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  }
+
+  // Settles like `promise`, or rejects when the client closes first.
+  function unlessClosed<T>(client: Socket, promise: Promise<T>) {
+    const { promise: closed, reject } = Promise.withResolvers<never>();
+    const onClose = () => reject(new Error("the client closed first"));
+    client.once("close", onClose);
+    return Promise.race([promise, closed]).finally(() => client.off("close", onClose));
+  }
+
+  // A partial head emits nothing on the server, so a whole request on a second connection is the barrier:
+  // the server has read `first` by the time it has answered and closed that connection.
+  async function writeInTwoReads(client: Socket, first: string, second: string, dial: () => Socket) {
+    client.write(first);
+    const barrier = dial();
+    barrier.resume();
+    barrier.end("GET /barrier HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n");
+    await once(barrier, "close");
+    client.write(second);
+  }
+
+  for (const proto of ["http", "https"] as const) {
+    for (const [framing, { head, body, trailers }] of Object.entries(requests)) {
+      for (const [reads, rest] of [
+        ["one read", "AFTER"],
+        ["two reads", "AFTER"],
+        ["two reads", ""],
+      ]) {
+        test(`${proto}, ${framing}, head in ${reads}, ${JSON.stringify(rest)} behind the body: the listener gets the complete request, and the rest of the read as the head`, async () => {
+          await listening(proto, {}, async t => {
+            const seen = Promise.withResolvers<object>();
+            t.server.on("upgrade", (req, socket, upgradeHead) => {
+              const atUpgrade = {
+                complete: req.complete,
+                buffered: req.readableLength,
+                trailers: { ...req.trailers },
+                head: upgradeHead.toString("latin1"),
+                // The socket has read what it hands over as the head.
+                headCounted: (socket as Socket).bytesRead >= upgradeHead.length,
+                parserFreed: (socket as any).parser === null,
+                flowing: socket.readableFlowing,
+                // close, data, drain, end, error, timeout. A TLSSocket of Node.js has listeners of its own.
+                listeners:
+                  proto === "https"
+                    ? undefined
+                    : ["close", "data", "drain", "end", "error", "timeout"].map(name => socket.listenerCount(name)),
+              };
+              let received = "";
+              req.on("data", chunk => (received += chunk));
+              req.on("end", () => seen.resolve({ ...atUpgrade, body: received }));
+              req.on("error", seen.reject);
+              socket.on("error", seen.reject);
+            });
+            const client = await t.connect();
+            if (reads === "one read") client.write(head + body + rest);
+            else await writeInTwoReads(client, head.slice(0, 30), head.slice(30) + body + rest, t.dial);
+            assert.deepStrictEqual(await unlessClosed(client, seen.promise), {
+              complete: true,
+              buffered: 5,
+              trailers,
+              head: rest,
+              headCounted: true,
+              parserFreed: true,
+              flowing: null,
+              listeners: proto === "https" ? undefined : [0, 0, 0, 1, 0, 0],
+              body: "hello",
+            });
+          });
+        });
+      }
+    }
+
+    // The listener has nothing to send and ends its side at once. The socket still reads: it has allowHalfOpen.
+    for (const [framing, head, body] of [
+      ["Content-Length", fixedLength.head, fixedLength.body],
+      ["chunked", requests.chunked.head, requests.chunked.body],
+      ["Content-Length of 200 KB", requestHead("Content-Length: 200000"), Buffer.alloc(200000, "b").toString()],
+    ]) {
+      for (const [arrival, withHead] of [
+        ["with the head", body.length],
+        ["partly with the head", 2],
+        ["in a later read", 0],
+      ] as const) {
+        test(`${proto}, ${framing}, body ${arrival}: socket.end() in the listener loses nothing`, async () => {
+          await listening(proto, {}, async t => {
+            const result = Promise.withResolvers<object>();
+            t.server.on("upgrade", (req, socket) => {
+              const events: string[] = [];
+              let requestBody = 0;
+              let received = 0;
+              req.on("data", chunk => (requestBody += chunk.length));
+              socket.on("data", chunk => (received += chunk.length));
+              socket.on("finish", () => events.push("finish"));
+              socket.on("end", () => events.push("end"));
+              socket.on("close", () => result.resolve({ body: requestBody, received, events }));
+              socket.on("error", result.reject);
+              socket.write(reply);
+              socket.end();
+            });
+            const client = await t.connect();
+            client.write(head + body.slice(0, withHead));
+            // The 101: the listener has run.
+            await unlessClosed(client, once(client, "data"));
+            client.end(body.slice(withHead) + Buffer.alloc(2000, "a").toString());
+            assert.deepStrictEqual(await result.promise, {
+              body: framing === "Content-Length of 200 KB" ? 200000 : 5,
+              received: 2000,
+              events: ["finish", "end"],
+            });
+          });
+        });
+      }
+    }
+  }
+
+  test("a body that continues in a later read: the listener gets the part that came with the head", async () => {
+    await listening("http", {}, async t => {
+      const upgraded = Promise.withResolvers<object>();
+      const finished = Promise.withResolvers<object>();
+      t.server.on("upgrade", (req, socket, head) => {
+        upgraded.resolve({ complete: req.complete, buffered: req.readableLength, head: head.toString("latin1") });
+        let body = "";
+        let tunnel = "";
+        req.on("data", chunk => (body += chunk));
+        socket.on("data", chunk => {
+          tunnel += chunk;
+          if (tunnel.length >= "AFTER".length) finished.resolve({ complete: req.complete, body, tunnel });
+        });
+        socket.on("error", finished.reject);
+        socket.write(reply);
+      });
+      const client = await t.connect();
+      client.write(fixedLength.head + "he");
+      // The 101: the listener has run.
+      await unlessClosed(client, once(client, "data"));
+      assert.deepStrictEqual(await upgraded.promise, { complete: false, buffered: 2, head: "" });
+      client.write("lloAFTER");
+      assert.deepStrictEqual(await unlessClosed(client, finished.promise), {
+        complete: true,
+        body: "hello",
+        tunnel: "AFTER",
+      });
+    });
+  });
+
+  test("a body that fails in the read of its head: the listener gets the part that was parsed", async () => {
+    await listening("http", {}, async t => {
+      const events: string[] = [];
+      const upgraded = Promise.withResolvers<object>();
+      t.server.on("clientError", (err, socket) => {
+        events.push("clientError");
+        socket.destroy();
+      });
+      t.server.on("upgrade", (req, socket, head) => {
+        socket.on("error", () => {});
+        events.push("upgrade");
+        upgraded.resolve({ complete: req.complete, buffered: req.readableLength, head: head.toString("latin1") });
+        socket.destroy();
+      });
+      const client = await t.connect();
+      client.on("end", () => client.end());
+      const closed = once(client, "close");
+      client.write(requests.chunked.head + "5\r\nhello\r\nZZ\r\n\r\n");
+      assert.deepStrictEqual(await upgraded.promise, { complete: false, buffered: 5, head: "" });
+      await closed;
+      // Node.js reports no parse error for a request that is an upgrade. The listener always comes first.
+      assert.strictEqual(events[0], "upgrade");
+    });
+  });
+
+  // Node.js runs the nextTick queue behind each chunk of the body, and not between the end of the message
+  // and 'upgrade'. A request that already flows ends behind the listener.
+  const ticksFirst = ["shouldUpgradeCallback", "tick of shouldUpgradeCallback"];
+  const listenerFirst = ["shouldUpgradeCallback", "upgrade, complete: false", "tick of shouldUpgradeCallback"];
+  for (const [name, request, expected, readInData] of [
+    [
+      "a body with the head",
+      fixedLength.head + fixedLength.body,
+      [...ticksFirst, "data hello", "upgrade, complete: true", "end", "tick of upgrade"],
+    ],
+    // The read() finds the body complete. The request still ends behind the listener.
+    [
+      "a body with the head and a read() inside its 'data'",
+      fixedLength.head + fixedLength.body,
+      [...ticksFirst, "data hello", "upgrade, complete: true", "end", "tick of upgrade"],
+      true,
+    ],
+    ["a Content-Length head alone", fixedLength.head, [...listenerFirst, "tick of upgrade"]],
+    ["a chunked head alone", requests.chunked.head, [...listenerFirst, "tick of upgrade"]],
+    // No chunk of the body came, so Node.js has run no tick. Bun runs the ticks when its dispatch returns.
+    [
+      "a chunked head and the size line of a chunk",
+      requests.chunked.head + "5\r\n",
+      isBun ? [...ticksFirst, "upgrade, complete: false", "tick of upgrade"] : [...listenerFirst, "tick of upgrade"],
+    ],
+  ] as const) {
+    test(`the order of the listener and the ticks of shouldUpgradeCallback, for ${name}`, async () => {
+      const order: string[] = [];
+      const done = Promise.withResolvers<void>();
+      await listening(
+        "http",
+        {
+          shouldUpgradeCallback(req: http.IncomingMessage) {
+            order.push("shouldUpgradeCallback");
+            process.nextTick(() => order.push("tick of shouldUpgradeCallback"));
+            req.on("data", chunk => {
+              order.push(`data ${chunk}`);
+              if (readInData) req.read();
+            });
+            req.on("end", () => order.push("end"));
+            return true;
+          },
+        } as http.ServerOptions,
+        async t => {
+          t.server.on("upgrade", (req, socket) => {
+            socket.on("error", () => {});
+            order.push(`upgrade, complete: ${req.complete}`);
+            process.nextTick(() => {
+              order.push("tick of upgrade");
+              done.resolve();
+            });
+          });
+          const client = await t.connect();
+          client.write(request);
+          await unlessClosed(client, done.promise);
+          assert.deepStrictEqual(order, expected);
+        },
+      );
+    });
+  }
+
+  test("the listener runs in the async context of listen()", async () => {
+    const storage = new AsyncLocalStorage<string>();
+    const server = http.createServer();
+    const seen = Promise.withResolvers<object>();
+    server.on("upgrade", (req, socket) => {
+      const inListener = storage.getStore();
+      req.on("end", () => seen.resolve({ inListener, atRequestEnd: storage.getStore() }));
+      req.resume();
+      socket.on("error", seen.reject);
+    });
+    const sockets: Socket[] = [];
+    server.on("connection", socket => sockets.push(socket));
+    storage.run("the store of listen()", () => server.listen(0, "127.0.0.1"));
+    await once(server, "listening");
+    try {
+      const client = send((server.address() as AddressInfo).port, fixedLength.head + fixedLength.body, seen.reject);
+      sockets.push(client);
+      assert.deepStrictEqual(await unlessClosed(client, seen.promise), {
+        inListener: "the store of listen()",
+        atRequestEnd: "the store of listen()",
+      });
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      server.close();
+    }
+  });
+
+  test("a complete request waits for a reader: 'end' does not come while nothing reads it", async () => {
+    await listening("http", {}, async t => {
+      const seen = Promise.withResolvers<object>();
+      t.server.on("upgrade", (req, socket) => {
+        socket.on("error", seen.reject);
+        const events: string[] = [];
+        req.once("end", () => events.push("end"));
+        setImmediate(() => {
+          const unread = { complete: req.complete, buffered: req.readableLength, events: [...events] };
+          req.once("end", () => seen.resolve({ unread, events }));
+          req.resume();
+        });
+      });
+      const client = await t.connect();
+      client.write(fixedLength.head + fixedLength.body);
+      assert.deepStrictEqual(await unlessClosed(client, seen.promise), {
+        unread: { complete: true, buffered: 5, events: [] },
+        events: ["end"],
+      });
+    });
+  });
+
+  test("req.destroy() in the listener sends nothing behind the 101", async () => {
+    await listening("http", {}, async t => {
+      t.server.on("upgrade", (req, socket) => {
+        socket.on("error", () => {});
+        socket.write(reply);
+        req.destroy();
+      });
+      const client = await t.connect();
+      let received = "";
+      client.on("data", chunk => (received += chunk));
+      client.on("end", () => client.end());
+      client.write(fixedLength.head + fixedLength.body);
+      await once(client, "close");
+      assert.strictEqual(received, reply);
+    });
+  });
+
+  test("the socket is destroyed when the request has no listener", async () => {
+    await listening("http", { shouldUpgradeCallback: () => true } as http.ServerOptions, async t => {
+      const client = await t.connect();
+      let received = "";
+      client.on("data", chunk => (received += chunk));
+      client.on("end", () => client.end());
+      client.write(fixedLength.head + fixedLength.body);
+      await once(client, "close");
+      assert.strictEqual(received, "");
+    });
+  });
+
+  // shouldUpgradeCallback, or a listener that it adds, lets go of the connection before the read is parsed.
+  // The listener still runs. `bun` is what Bun gives where it differs from Node.js.
+  type AtUpgrade = { complete: boolean; buffered: number; head: string; requestDestroyed: boolean };
+  const whole = { complete: true, buffered: 5, head: "", requestDestroyed: false };
+  const part = { complete: false, buffered: 2, head: "", requestDestroyed: false };
+  // Bun does not parse on in a socket that is closed.
+  const unparsed = { complete: false, buffered: 0, head: "", requestDestroyed: false };
+  const exits: [
+    name: string,
+    act: (req: http.IncomingMessage) => void,
+    rows: [sent: string, node: AtUpgrade, bun?: AtUpgrade][],
+  ][] = [
+    [
+      "shouldUpgradeCallback ends the socket",
+      req => void req.socket.end(),
+      [
+        ["hello", whole],
+        ["he", part],
+        ["helloAFTER", { ...whole, head: "AFTER" }],
+      ],
+    ],
+    [
+      "shouldUpgradeCallback destroys the socket",
+      req => void req.socket.destroy(),
+      [
+        ["hello", whole],
+        ["he", part],
+        ["helloAFTER", { ...whole, head: "AFTER" }],
+      ],
+    ],
+    [
+      "shouldUpgradeCallback resets the socket",
+      req => void req.socket.resetAndDestroy(),
+      [
+        ["hello", whole, unparsed],
+        ["he", part, unparsed],
+        ["helloAFTER", { ...whole, head: "AFTER" }, unparsed],
+      ],
+    ],
+    [
+      "shouldUpgradeCallback destroys the request",
+      req => void req.destroy(),
+      [
+        ["hello", { ...whole, buffered: 0, requestDestroyed: true }],
+        ["he", { ...part, buffered: 0, requestDestroyed: true }],
+        ["helloAFTER", { ...whole, buffered: 0, head: "AFTER", requestDestroyed: true }],
+      ],
+    ],
+    [
+      "a 'data' listener of the request destroys the socket",
+      req => void req.on("data", () => req.socket.destroy()),
+      [
+        ["hello", { ...whole, buffered: 0 }],
+        ["he", { ...part, buffered: 0 }],
+        // In Bun the socket closes inside the last chunk, and the rest of the read goes with it.
+        ["helloAFTER", { ...whole, buffered: 0, head: "AFTER" }, { ...whole, buffered: 0 }],
+      ],
+    ],
+    [
+      "a 'data' listener of the request resets the socket",
+      req => void req.on("data", () => req.socket.resetAndDestroy()),
+      [
+        ["hello", { ...whole, buffered: 0 }],
+        // Bun ends the body of an Upgrade request when its socket closes.
+        ["he", { ...part, buffered: 0 }, { ...whole, buffered: 0 }],
+        ["helloAFTER", { ...whole, buffered: 0, head: "AFTER" }, { ...whole, buffered: 0 }],
+      ],
+    ],
+  ];
+  for (const [name, act, rows] of exits) {
+    for (const [sent, node, bun = node] of rows) {
+      test(`${name}, with ${JSON.stringify(sent)} behind the head`, async () => {
+        const upgraded = Promise.withResolvers<AtUpgrade>();
+        await listening(
+          "http",
+          {
+            shouldUpgradeCallback(req: http.IncomingMessage) {
+              act(req);
+              return true;
+            },
+          } as http.ServerOptions,
+          async t => {
+            t.server.on("upgrade", (req, socket, head) => {
+              socket.on("error", () => {});
+              upgraded.resolve({
+                complete: req.complete,
+                buffered: req.readableLength,
+                head: head.toString("latin1"),
+                requestDestroyed: req.destroyed,
+              });
+              socket.destroy();
+            });
+            const client = await t.connect();
+            client.write(fixedLength.head + sent);
+            assert.deepStrictEqual(await upgraded.promise, isBun ? bun : node);
+          },
+        );
+      });
+    }
+  }
+});
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (typeof Bun !== "undefined") {

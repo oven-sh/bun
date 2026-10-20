@@ -3,8 +3,10 @@
 // depend on how fast a debug build starts its workers.
 
 import { expect, test } from "bun:test";
-import { readFileSync } from "fs";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { closeSync, constants, openSync, readFileSync } from "fs";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
+import { join } from "path";
 
 // With every worker in the middle of a file, nothing arrives on the coordinator's loop, and the
 // poll it waits in is not ended by a signal: it retries on EINTR. A handler that only records
@@ -84,3 +86,168 @@ test.skipIf(!isLinux).concurrent.each([
   expect(reactedAfterMs).toBeLessThan(500);
   expect(await proc.exited).toBe(code);
 });
+
+// A test spawns this. It is in the worker's process group, which the coordinator signals, and it
+// logs its own SIGTERM: orphaned by then, a zombie would still answer kill(pid, 0).
+const spawnedByTest = `trap 'echo terminated >> "$LOG"; exit 0' TERM; echo spawned >> "$LOG"; while :; do sleep 60; done`;
+const slowTestThatSpawns = `
+  import { test } from "bun:test";
+  import { appendFileSync } from "fs";
+  test("slow", async () => {
+    appendFileSync(process.env.LOG, "worker=" + process.pid + "\\n");
+    Bun.spawn({
+      cmd: ["sh", "-c", ${JSON.stringify(spawnedByTest)}],
+      env: process.env,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    await Bun.sleep(60000);
+  });
+`;
+
+function linesOf(log: string, prefix: string) {
+  try {
+    return readFileSync(log, "utf8")
+      .split("\n")
+      .filter(line => line.startsWith(prefix));
+  } catch {
+    return [];
+  }
+}
+
+// Both workers are in their test, or the coordinator is gone.
+async function bothSpawned(log: string, proc: Bun.Subprocess) {
+  while (linesOf(log, "spawned").length < 2 && proc.exitCode === null && proc.signalCode === null) await Bun.sleep(10);
+  return linesOf(log, "spawned").length === 2;
+}
+
+// What the tests spawned has logged the coordinator's SIGTERM. That takes milliseconds: the
+// bound only ends a run in which the SIGTERM was never sent.
+async function bothTerminated(log: string) {
+  for (let i = 0; i < 200 && linesOf(log, "terminated").length < 2; i++) await Bun.sleep(25);
+  return linesOf(log, "terminated").length === 2;
+}
+
+// A run that fails leaves the workers' process groups behind.
+function killWorkerGroups(log: string) {
+  for (const line of linesOf(log, "worker=")) {
+    try {
+      process.kill(-Number(line.slice("worker=".length)), "SIGKILL");
+    } catch {}
+  }
+}
+
+// The ASAN lanes run every test with no-orphans on. That makes the kernel SIGKILL what a test
+// spawned when its worker dies, before it can log the coordinator's SIGTERM.
+const coordinatorEnv = (log: string) => ({ ...bunEnv, LOG: log, BUN_FEATURE_FLAG_NO_ORPHANS: undefined });
+
+// A write of the coordinator can block. So the worker groups get their SIGTERM before it writes
+// anything: here stderr is a FIFO that nothing reads, and the list of the files that had not
+// started does not fit in it.
+//
+// Not concurrent: a serial test runs alone, after the cases above, which measure a time.
+test.skipIf(isWindows)(
+  "--parallel: the worker groups are signalled before a write that blocks",
+  async () => {
+    // Two files run. The names of the other 400 are about 100 KB of "had not started" lines.
+    const files: Record<string, string> = {};
+    const longName = Buffer.alloc(240, "x").toString();
+    for (let i = 0; i < 402; i++) files[`${longName}-${i}.test.ts`] = slowTestThatSpawns;
+    using dir = tempDir("parallel-signal-stall", files);
+    const log = join(String(dir), "log.txt");
+    const fifo = join(String(dir), "stderr.fifo");
+    mkfifo(fifo);
+    // "r+" does not wait for a reader. With that writer there, "r" does not wait either.
+    const writeEnd = openSync(fifo, "r+");
+    const readEnd = openSync(fifo, "r");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=0"],
+      env: coordinatorEnv(log),
+      cwd: String(dir),
+      // The coordinator catches SIGTERM, so the cleanup of `await using` would wait for an exit that never comes.
+      killSignal: "SIGKILL",
+      stdout: "ignore",
+      stderr: writeEnd,
+    });
+    closeSync(writeEnd);
+    try {
+      expect(await bothSpawned(log, proc)).toBe(true);
+
+      proc.kill("SIGINT");
+      expect(await bothTerminated(log)).toBe(true);
+
+      // The coordinator is blocked in its write, and a repeat of the signal does not cut that
+      // write short. It goes on when the test reads.
+      proc.kill("SIGTERM");
+      const stderr = await Bun.file(readEnd).text();
+      await proc.exited;
+      expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 130, signalCode: null });
+      expect(stderr).toContain("400 file(s) had not started:");
+      expect(stderr.split("\n").filter(line => line.includes(longName)).length).toBe(402);
+    } finally {
+      closeSync(readEnd);
+      killWorkerGroups(log);
+    }
+  },
+  // Above the bound of bothTerminated, so that its assertion is what a failing run reports.
+  30_000,
+);
+
+// A parent that forwards signals (`bun run`, a task runner) delivers one Ctrl-C twice: the
+// terminal signals the foreground process group, and the parent signals its child again. The
+// second one arrives while the coordinator tears down. The JUnit outfile is a FIFO with no
+// reader, so the coordinator cannot end that teardown before the test opens the read end.
+test.skipIf(isWindows).concurrent.each([
+  ["SIGTERM", 143],
+  ["SIGINT", 130],
+] as const)(
+  "--parallel: a repeat of %s during the teardown does not end the coordinator early",
+  async (signal, code) => {
+    using dir = tempDir("parallel-signal-repeat", { "a.test.ts": slowTestThatSpawns, "b.test.ts": slowTestThatSpawns });
+    const log = join(String(dir), "log.txt");
+    const report = join(String(dir), "junit.fifo");
+    mkfifo(report);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=0", "--reporter=junit", `--reporter-outfile=${report}`],
+      env: coordinatorEnv(log),
+      cwd: String(dir),
+      // The coordinator catches SIGTERM, so the cleanup of `await using` would wait for an exit that never comes.
+      killSignal: "SIGKILL",
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    try {
+      expect(await bothSpawned(log, proc)).toBe(true);
+
+      const stderr = proc.stderr.getReader();
+      const decoder = new TextDecoder();
+      let seen = "";
+      proc.kill(signal);
+      while (!seen.includes("Interrupted")) {
+        const { value, done } = await stderr.read();
+        if (done) break;
+        seen += decoder.decode(value, { stream: true });
+      }
+      expect(seen).toContain("Interrupted");
+
+      // The coordinator is in its teardown now, and cannot leave it.
+      proc.kill(signal);
+
+      // O_NONBLOCK: this open does not wait for the writer. What the coordinator writes stays in
+      // the FIFO after it has exited.
+      const fd = openSync(report, constants.O_RDONLY | constants.O_NONBLOCK);
+      try {
+        await proc.exited;
+        expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: code, signalCode: null });
+        expect(readFileSync(fd, "utf8")).toContain("</testsuites>");
+      } finally {
+        closeSync(fd);
+      }
+      expect(await bothTerminated(log)).toBe(true);
+    } finally {
+      killWorkerGroups(log);
+    }
+  },
+  30_000,
+);

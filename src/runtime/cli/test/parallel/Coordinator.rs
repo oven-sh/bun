@@ -182,8 +182,20 @@ impl<'a> Coordinator<'a> {
     /// kill-on-close Job Object on Windows. macOS has neither; the process
     /// group kill here plus stdin EOF in the worker loop is the best effort.
     /// Exits with 128 + `signal`, the status a shell reports for a signal death.
+    /// The handler stays installed until then: a parent that forwards signals sends one Ctrl-C twice.
     fn abort_all(&mut self, signal: i32) {
-        abort_handler::uninstall();
+        // Before any write: a write can block, and what the tests spawned must have its SIGTERM by then.
+        for w in self.workers[..self.spawned_count as usize].iter_mut() {
+            if let Some(p) = &w.process {
+                #[cfg(unix)]
+                terminate_process_group(p.pid);
+                #[cfg(not(unix))]
+                {
+                    // SIGKILL → TerminateProcess; libuv-win takes only SIGQUIT/SIGTERM/SIGKILL/SIGINT.
+                    let _ = p.kill(9);
+                }
+            }
+        }
         let now = bun_core::time::milli_timestamp();
         let workers = &self.workers[..self.spawned_count as usize];
         let running: Vec<(u32, i64)> = workers
@@ -215,18 +227,6 @@ impl<'a> Coordinator<'a> {
                 }
             }
             Output::flush();
-        }
-        for w in self.workers[..self.spawned_count as usize].iter_mut() {
-            if let Some(p) = &w.process {
-                #[cfg(unix)]
-                terminate_process_group(p.pid);
-                #[cfg(not(unix))]
-                {
-                    // SIGKILL → TerminateProcess; libuv-win ENOSYSes signals
-                    // other than SIGQUIT/SIGTERM/SIGKILL/SIGINT.
-                    let _ = p.kill(9);
-                }
-            }
         }
         self.aborted = Some(u32::from(bun_sys::SignalCode(signal as u8).to_exit_code()));
     }
@@ -1133,7 +1133,8 @@ pub(crate) mod abort_handler {
         Guard(())
     }
 
-    pub(crate) fn uninstall() {
+    /// Called by `Guard` alone: the abort path exits with the handler still installed.
+    fn uninstall() {
         #[cfg(unix)]
         {
             // SAFETY: PREV_* were initialized by install().

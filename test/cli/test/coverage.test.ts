@@ -1307,39 +1307,44 @@ export function throws() {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("from bun build, of several files", async () => {
-    using dir = tempDir("cov-bundle-source-map", {
-      "a.ts": "export function a1() {\n  return 1;\n}\nexport function a2() {\n  return 2;\n}\n",
-      "b.ts": "export function b1() {\n  return 1;\n}\nexport function b2() {\n  return 2;\n}\n",
-      "index.ts": `export * from "./a";\nexport * from "./b";\n`,
-      "bundle.test.ts": `
-        import { a1, b1 } from "./dist/index.js";
-        test("bundle", () => {
-          a1();
-          b1();
-        });
-      `,
-    });
-    for (const args of [
-      ["build", "index.ts", "--outdir", "dist", "--target=bun", "--sourcemap=inline"],
-      ["test", "--coverage", "--coverage-reporter=lcov", "bundle.test.ts"],
-    ]) {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), ...args],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "ignore",
-        stderr: "inherit",
+  test.concurrent("from bun build: the lines are those of the bundle", async () => {
+    async function records(sourcemap: "none" | "inline") {
+      using dir = tempDir("cov-bundle-source-map", {
+        "a.ts": "export function a1() {\n  return 1;\n}\nexport function a2() {\n  return 2;\n}\n",
+        "b.ts": "export function b1() {\n  return 1;\n}\nexport function b2() {\n  return 2;\n}\n",
+        "index.ts": `export * from "./a";\nexport * from "./b";\n`,
+        "bundle.test.ts": `
+          import { a1, b1 } from "./dist/index.js";
+          test("bundle", () => {
+            a1();
+            b1();
+          });
+        `,
       });
-      expect(await proc.exited).toBe(0);
-    }
-    const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8");
-    expect(
-      lcov
+      for (const args of [
+        ["build", "index.ts", "--outdir", "dist", "--target=bun", "--sourcemap=" + sourcemap],
+        ["test", "--coverage", "--coverage-reporter=lcov", "bundle.test.ts"],
+      ]) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...args],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "ignore",
+          stderr: "inherit",
+        });
+        expect(await proc.exited).toBe(0);
+      }
+      const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8");
+      return lcov
         .slice(lcov.indexOf("SF:dist"))
         .split("end_of_record")[0]
-        .match(/^(FNF|FNH):.*$/gm),
-    ).toEqual(["FNF:4", "FNH:2"]);
+        .match(/^(DA|FNF|FNH):.*$/gm);
+    }
+    const [none, inline] = await Promise.all([records("none"), records("inline")]);
+    expect(none).toContain("FNF:4");
+    expect(none).toContain("FNH:2");
+    // The bundle with a source map has two more lines at the end, which are comments.
+    expect(inline!.slice(0, none!.length)).toEqual(none);
   });
 
   test.concurrent("from the file itself", async () => {

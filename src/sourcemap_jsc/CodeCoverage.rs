@@ -688,6 +688,8 @@ impl ByteRangeMapping {
                 .as_mut()
                 .source_mappings()
                 .get(source_url)
+                // The lines in the map of a file that was built earlier are lines of other files.
+                .filter(|source_map| !source_map.is_external())
         };
 
         let mut blocks: Vec<CountedRange> =
@@ -719,7 +721,7 @@ impl ByteRangeMapping {
         if let Some(source_map) = source_map.as_deref() {
             let mut previous_original = None;
             source_map.for_each_mapping(|mapping| {
-                if is_added_to_the_file(source_map, &mapping) {
+                if is_added_to_the_file(&mapping) {
                     return;
                 }
                 // The printer repeats a mapping at column 0 of a line that starts without one.
@@ -758,7 +760,7 @@ impl ByteRangeMapping {
                 let (line, column) = self.line_and_column_of(function.range.start);
                 source_map
                     .find_mapping(line, column)
-                    .is_some_and(|mapping| !is_added_to_the_file(source_map, &mapping))
+                    .is_some_and(|mapping| !is_added_to_the_file(&mapping))
             });
         }
 
@@ -834,8 +836,8 @@ impl ByteRangeMapping {
 }
 
 /// Code that a plugin added to the file it rewrote: it has no line in the file.
-fn is_added_to_the_file(source_map: &ParsedSourceMap, mapping: &Mapping) -> bool {
-    !source_map.is_external() && mapping.source_index == NOT_IN_INPUT_SOURCE_MAP
+fn is_added_to_the_file(mapping: &Mapping) -> bool {
+    mapping.source_index == NOT_IN_INPUT_SOURCE_MAP
 }
 
 /// `ByteRangeMapping::line_starts` and `executable_units`. Lines end where

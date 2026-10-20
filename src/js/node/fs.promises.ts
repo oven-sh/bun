@@ -646,6 +646,9 @@ function asyncWrap(fn: any, name: string) {
 
         if (offset == null) {
           offset = 0;
+        } else if (typeof offset !== "number") {
+          // Type half of Node's validateInteger(). Awaited to reject on the turn of the native integer and range check.
+          return await Promise.$reject($ERR_INVALID_ARG_TYPE("offset", "number", offset));
         }
         if (typeof length !== "number") length = buffer.byteLength - offset;
         if (typeof position !== "number") position = null;

@@ -1,8 +1,8 @@
 use core::sync::atomic::Ordering;
 
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
+use bun_core::Output;
 use bun_core::fmt::PathSep;
-use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::resolve_path::{dirname, join_abs_string_buf_z_checked, join_z_buf};
 use bun_paths::{AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform};
@@ -15,7 +15,9 @@ use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 
-use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess, UnfinishedScripts};
+use crate::lifecycle_script_runner::{
+    Ending, Exit, InstallCtx, LifecycleScriptSubprocess, Unfinished, UnfinishedScripts,
+};
 // `Lockfile` here is the in-crate `crate::lockfile::Lockfile` (the
 // struct `PackageManager.lockfile` actually carries). `lockfile_real` is still
 // imported for `tree::Id` / `Tree` / `package::*`, all of
@@ -548,6 +550,21 @@ pub(crate) fn remove_placed_package(
     crate::prune::prune_bins(&node_modules);
 }
 
+/// A package that stays in place counts as installed, and the scripts of these have not finished.
+pub(crate) fn discard_unfinished(
+    lockfile: &Lockfile,
+    unfinished: &UnfinishedScripts,
+    ending: Ending,
+) {
+    // Last first: the link of a workspace is listed before the packages in its `node_modules`,
+    // and their path goes through that link.
+    for it in unfinished.take().into_iter().rev() {
+        if ending == Ending::FailedScript || it.changed {
+            remove_placed_package(lockfile, it.tree_id, &it.folder_name);
+        }
+    }
+}
+
 /// Only checks the path rules. Used for the name of the project itself, of a workspace, or of a
 /// folder.
 pub(crate) fn name_is_single_path_entry(name: &[u8]) -> bool {
@@ -606,6 +623,21 @@ impl<'a> PackageInstaller<'a> {
         // SAFETY: BACKREF — never null; disjoint from `*self`; install pass
         // is single-threaded so no concurrent `&mut PackageManager` exists.
         unsafe { &mut *self.manager }
+    }
+
+    /// Ends the install with exit code 1. Every exit that this file makes goes through here.
+    #[cold]
+    pub(crate) fn abort(&mut self) -> ! {
+        Output::flush();
+        discard_unfinished(self.lockfile(), &self.unfinished_scripts, Ending::OwnExit);
+        Exit::Code(1).run()
+    }
+
+    /// Ends the install, because a directory that the pass needs cannot be used.
+    #[cold]
+    fn abort_without(&mut self, directory: &package_manager::directories::DirectoryError) -> ! {
+        Output::err_generic("{}", (directory,));
+        self.abort()
     }
 
     #[inline]
@@ -933,7 +965,8 @@ impl<'a> PackageInstaller<'a> {
                     }
 
                     if manager.options.enable.fail_early() {
-                        manager.crash();
+                        manager.print_log();
+                        self.abort();
                     }
                 }
 
@@ -1079,7 +1112,7 @@ impl<'a> PackageInstaller<'a> {
         }
 
         if self.manager().options.enable.fail_early() {
-            Global::exit(1);
+            self.abort();
         }
 
         Output::flush();
@@ -1678,7 +1711,7 @@ impl<'a> PackageInstaller<'a> {
                     }
 
                     if self.manager().options.enable.fail_early() {
-                        Global::crash();
+                        self.abort();
                     }
 
                     return 0;
@@ -1869,7 +1902,12 @@ impl<'a> PackageInstaller<'a> {
             | resolution::Tag::RemoteTarball => {
                 installer.cache_dir_subpath =
                     self.cache_entry_name(package_id, pkg_name, resolution, patch_contents_hash);
-                installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());
+                let opened =
+                    package_manager::directories::try_get_cache_directory(self.manager_mut());
+                installer.cache_dir = match opened {
+                    Ok(directory) => directory,
+                    Err(why) => self.abort_without(&why),
+                };
             }
             resolution::Tag::Folder | resolution::Tag::Workspace => {
                 let is_workspace = resolution.tag == resolution::Tag::Workspace;
@@ -1941,8 +1979,14 @@ impl<'a> PackageInstaller<'a> {
                     let (directory, global_link_dir): (Fd, &[u8]) = if is_path {
                         (Fd::cwd(), b"".as_slice())
                     } else {
+                        let opened =
+                            package_manager::directories::try_global_link_dir(self.manager_mut());
+                        let directory = match opened {
+                            Ok(directory) => directory,
+                            Err(why) => self.abort_without(&why),
+                        };
                         (
-                            package_manager::global_link_dir(self.manager_mut()),
+                            directory,
                             package_manager::global_link_dir_path(self.manager_mut()),
                         )
                     };
@@ -2055,17 +2099,14 @@ impl<'a> PackageInstaller<'a> {
                             context,
                         )
                     }
-                    resolution::Tag::LocalTarball => {
-                        package_manager::enqueue_tarball_for_reading(
-                            self.manager_mut(),
-                            dependency_id,
-                            package_id,
-                            alias.slice(string_buf!()),
-                            resolution,
-                            context,
-                        );
-                        Ok(())
-                    }
+                    resolution::Tag::LocalTarball => package_manager::enqueue_tarball_for_reading(
+                        self.manager_mut(),
+                        dependency_id,
+                        package_id,
+                        alias.slice(string_buf!()),
+                        resolution,
+                        context,
+                    ),
                     resolution::Tag::RemoteTarball => {
                         package_manager::enqueue_tarball_for_download(
                             self.manager_mut(),
@@ -2095,6 +2136,7 @@ impl<'a> PackageInstaller<'a> {
                 match queued {
                     Ok(()) => {}
                     Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
+                    Err(ForTarballError::NoTemporaryDirectory(why)) => self.abort_without(&why),
                     Err(ForTarballError::InvalidURL) => {
                         self.fail(is_pending_package_install, log_level)
                     }
@@ -2399,6 +2441,7 @@ impl<'a> PackageInstaller<'a> {
                     });
 
             if resolution.tag != resolution::Tag::Root && is_trusted {
+                let changed = false;
                 self.enqueue_lifecycle_scripts_for_trusted(
                     log_level,
                     dependency_id,
@@ -2406,6 +2449,7 @@ impl<'a> PackageInstaller<'a> {
                     pkg_name,
                     resolution,
                     is_trusted_through_update_request,
+                    changed,
                 );
             }
 
@@ -2467,6 +2511,7 @@ impl<'a> PackageInstaller<'a> {
                 if resolution.tag != resolution::Tag::Root
                     && (resolution.tag == resolution::Tag::Workspace || is_trusted)
                 {
+                    let changed = true;
                     self.enqueue_lifecycle_scripts_for_trusted(
                         log_level,
                         dependency_id,
@@ -2474,6 +2519,7 @@ impl<'a> PackageInstaller<'a> {
                         pkg_name,
                         resolution,
                         is_trusted_through_update_request,
+                        changed,
                     );
                 }
 
@@ -2568,7 +2614,7 @@ impl<'a> PackageInstaller<'a> {
                                         "Permission denied while installing <b>{}<r>",
                                         (name,),
                                     );
-                                    Global::exit(1);
+                                    self.abort();
                                 }
                             };
 
@@ -2589,7 +2635,7 @@ impl<'a> PackageInstaller<'a> {
                                         "Permission denied while writing packages into node_modules."
                                     ),
                                 );
-                                Global::exit(1);
+                                self.abort();
                             }
                         }
                         NODE_MODULES_IS_OK.store(true, Ordering::Relaxed);
@@ -2616,7 +2662,7 @@ impl<'a> PackageInstaller<'a> {
     }
 
     /// `record_trust` means `--trust` named the package, so its name is added to package.json and
-    /// the lockfile.
+    /// the lockfile. `changed` is false if the package was in place before this install.
     fn enqueue_lifecycle_scripts_for_trusted(
         &mut self,
         log_level: Options::LogLevel,
@@ -2625,6 +2671,7 @@ impl<'a> PackageInstaller<'a> {
         pkg_name: String,
         resolution: &Resolution,
         record_trust: bool,
+        changed: bool,
     ) {
         if self.lockfile().is_folder_inside_declarer(dependency_id) {
             return;
@@ -2677,6 +2724,7 @@ impl<'a> PackageInstaller<'a> {
             dependency_id,
             package_id,
             resolution,
+            changed,
         ) && record_trust
         {
             let (trusted_name, trusted_name_hash) = resolution.trusted_name(
@@ -2704,6 +2752,7 @@ impl<'a> PackageInstaller<'a> {
         dependency_id: DependencyID,
         package_id: PackageID,
         resolution: &Resolution,
+        changed: bool,
     ) -> bool {
         let mut scripts: PackageScripts =
             self.lockfile().packages.items_scripts()[package_id as usize];
@@ -2724,6 +2773,14 @@ impl<'a> PackageInstaller<'a> {
             Ok(Some(list)) => list,
             Ok(None) => return false,
             Err(err) => {
+                // It is in place, and its scripts do not run.
+                if (self.manager().options.do_).contains(Options::Do::RUN_SCRIPTS) {
+                    self.unfinished_scripts.borrow_mut().push(Unfinished {
+                        tree_id: self.current_tree_id,
+                        folder_name: Box::from(folder_name),
+                        changed,
+                    });
+                }
                 self.on_scripts_error(log_level, "enqueue lifecycle", folder_name, err);
                 return false;
             }
@@ -2762,9 +2819,11 @@ impl<'a> PackageInstaller<'a> {
                 .bins_after_scripts
                 .push(dependency_id);
         }
-        self.unfinished_scripts
-            .borrow_mut()
-            .push((self.current_tree_id, scripts_list.package_name.clone()));
+        self.unfinished_scripts.borrow_mut().push(Unfinished {
+            tree_id: self.current_tree_id,
+            folder_name: scripts_list.package_name.clone(),
+            changed,
+        });
         self.pending_lifecycle_scripts.push(PendingLifecycleScript {
             list: scripts_list,
             tree_id: self.current_tree_id,

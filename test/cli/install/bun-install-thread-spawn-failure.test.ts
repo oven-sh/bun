@@ -187,3 +187,46 @@ test.skipIf(!isLinux || isMusl || isASAN || !cc)(
     }
   },
 );
+
+// The task of `a`, a trusted folder, waits on the pool for a worker that does not come. `b` has
+// no folder, so bun ends the install, and looks at what it has placed first.
+test.skipIf(!isLinux || isMusl || isASAN || !cc)(
+  "the isolated linker ends a --production install when no worker of the thread pool can be started",
+  async () => {
+    const folder = (name: string) => JSON.stringify({ name, version: "1.0.0", scripts: { postinstall: "echo ran" } });
+    using dir = tempDir("install-end-no-pool-worker", {
+      "shim.c": onlyTheFirstThreadC,
+      "package.json": JSON.stringify({
+        name: "no-pool-worker",
+        dependencies: { a: "link:./a", b: "link:./b" },
+        trustedDependencies: ["a"],
+      }),
+      "bunfig.toml": `[install]\nlinker = "isolated"\n`,
+      "a/package.json": folder("a"),
+      "b/package.json": folder("b"),
+    });
+    const shim = compileFixture(join(String(dir), "shim.c"), { flags: ["-ldl"] });
+
+    async function install(args: string[], env: Record<string, string> = {}) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", ...args],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"), ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      return { stderr, exitCode };
+    }
+
+    expect(await install(["--lockfile-only"])).toEqual({ stderr: expect.not.stringContaining("error:"), exitCode: 0 });
+    await rm(join(String(dir), "b"), { recursive: true });
+
+    const { stderr, exitCode } = await install(["--production"], {
+      LD_PRELOAD: [shim, bunEnv.LD_PRELOAD].filter(Boolean).join(":"),
+    });
+    expect(stderr).toContain("refused a thread");
+    expect(stderr).toContain("failed to link package: b@link:./b");
+    expect(exitCode).toBe(1);
+  },
+);

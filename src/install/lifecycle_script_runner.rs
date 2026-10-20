@@ -402,12 +402,91 @@ pub enum InstallCtx<'a> {
     },
 }
 
-/// The packages that the hoisted linker placed and whose scripts haven't all run yet. Main thread
-/// only.
-pub(crate) type UnfinishedScripts =
-    std::rc::Rc<core::cell::RefCell<Vec<(crate::lockfile_real::tree::Id, Box<[u8]>)>>>;
+/// A package that the hoisted linker has at `node_modules/<folder_name>` of a tree, and whose
+/// scripts haven't all run yet.
+pub struct Unfinished {
+    pub(crate) tree_id: crate::lockfile_real::tree::Id,
+    pub(crate) folder_name: Box<[u8]>,
+    /// True if this install placed the package, or has started one of its scripts. False for a
+    /// newly trusted package that is as the install found it.
+    pub(crate) changed: bool,
+}
+
+/// In the order in which the linker came to the packages. Main thread only.
+pub(crate) type UnfinishedScripts = std::rc::Rc<core::cell::RefCell<Vec<Unfinished>>>;
+
+/// Why bun removes the trusted packages whose scripts have not finished. Both linkers treat a
+/// package that's at its final path as installed, so one that stays never has its scripts run.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Ending {
+    /// A lifecycle script failed, or could not be read or started. Every such package goes.
+    FailedScript,
+    /// bun ends the install for another reason, and saves nothing. A newly trusted package that
+    /// is as the install found it stays: an install that trusts it again runs its scripts.
+    OwnExit,
+}
+
+/// How the process ends.
+#[derive(Clone, Copy)]
+pub(crate) enum Exit {
+    Code(u32),
+    Signal(core::ffi::c_int),
+}
+
+impl Exit {
+    pub(crate) fn run(self) -> ! {
+        match self {
+            Exit::Code(code) => Global::exit(code),
+            Exit::Signal(signal) => Global::raise_ignoring_panic_handler_raw(signal),
+        }
+    }
+}
 
 impl<'a> InstallCtx<'a> {
+    /// Ends the process from inside a linker pass that is not in hand. Without a `ctx`, the
+    /// scripts are not those of a linker pass.
+    pub(crate) fn end_install(
+        ctx: Option<&Self>,
+        lockfile: &crate::lockfile::Lockfile,
+        ending: Ending,
+        exit: Exit,
+    ) -> ! {
+        Output::flush();
+        match ctx {
+            Some(Self::Hoisted { unfinished, .. }) => {
+                crate::package_installer::discard_unfinished(lockfile, unfinished, ending);
+            }
+            Some(ctx) => {
+                if let Some((_, installer)) = ctx.isolated() {
+                    installer.end(ending, exit);
+                }
+            }
+            None => {}
+        }
+        exit.run()
+    }
+
+    /// Called right before the first script of the package starts.
+    fn scripts_start(&self, package_name: &[u8]) {
+        match self {
+            Self::Hoisted {
+                tree_id,
+                unfinished,
+            } => {
+                for it in unfinished.borrow_mut().iter_mut() {
+                    if it.tree_id == *tree_id && *it.folder_name == *package_name {
+                        it.changed = true;
+                    }
+                }
+            }
+            Self::Isolated { .. } => {
+                if let Some((entry_id, installer)) = self.isolated() {
+                    installer.tasks[entry_id.get() as usize].scripts_started = true;
+                }
+            }
+        }
+    }
+
     /// BACKREF accessor — single `unsafe` deref for the set-once `installer`
     /// pointer so call sites in `on_process_exit` are safe.
     ///
@@ -956,11 +1035,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                             "devDependencies of a git dependency are not installed before its prepare scripts"
                         );
                     }
-                    self.discard_packages_with_unfinished_scripts();
-                    // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
-                    unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
-                    Output::flush();
-                    Global::exit(exit.code as u32);
+                    self.end_install(Exit::Code(exit.code as u32));
                 }
 
                 if !self.foreground
@@ -1018,8 +1093,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                                     err.name(),
                                 ),
                             );
-                            self.discard_packages_with_unfinished_scripts();
-                            Global::exit(1);
+                            self.end_install(Exit::Code(1));
                         }
                         return;
                     }
@@ -1063,9 +1137,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     bstr::BStr::new(&self.package_name),
                     signal_code.fmt(Output::enable_ansi_colors_stderr()),
                 );
-                self.discard_packages_with_unfinished_scripts();
-
-                Global::raise_ignoring_panic_handler_raw(core::ffi::c_int::from(signal));
+                self.end_install(Exit::Signal(core::ffi::c_int::from(signal)));
             }
             Status::Err(err) => {
                 if self.optional {
@@ -1079,11 +1151,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     bstr::BStr::new(&self.package_name),
                     err,
                 );
-                self.discard_packages_with_unfinished_scripts();
-                // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
-                unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
-                Output::flush();
-                Global::exit(1);
+                self.end_install(Exit::Code(1));
             }
             _ => {
                 Output::panic(format_args!(
@@ -1138,28 +1206,16 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             unfinished,
         }) = &self.ctx
         {
-            unfinished.borrow_mut().retain(|(tree, folder_name)| {
-                tree != tree_id || **folder_name != *self.package_name
-            });
+            unfinished
+                .borrow_mut()
+                .retain(|it| it.tree_id != *tree_id || *it.folder_name != *self.package_name);
         }
     }
 
-    /// Both linkers treat a package that's at its final path as installed. Removing these packages
-    /// makes the next install run their scripts.
-    fn discard_packages_with_unfinished_scripts(&self) {
-        Output::flush();
-        if let Some(InstallCtx::Hoisted { unfinished, .. }) = &self.ctx {
-            for (tree_id, folder_name) in unfinished.borrow().iter() {
-                crate::package_installer::remove_placed_package(
-                    &self.manager().lockfile,
-                    *tree_id,
-                    folder_name,
-                );
-            }
-        } else if let Some((entry_id, installer)) = self.ctx.as_ref().and_then(InstallCtx::isolated)
-        {
-            installer.discard_entries_with_unfinished_scripts(entry_id);
-        }
+    /// Called when a script of the package failed, or could not be started.
+    fn end_install(&self, exit: Exit) -> ! {
+        let lockfile = &self.manager().lockfile;
+        InstallCtx::end_install(self.ctx.as_ref(), lockfile, Ending::FailedScript, exit)
     }
 
     /// Frees `self`.
@@ -1204,6 +1260,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         ctx: Option<InstallCtx<'a>>,
     ) -> Result<(), crate::Error> {
         let package_name = list.package_name.clone();
+        if let Some(ctx) = &ctx {
+            ctx.scripts_start(&package_name);
+        }
         let lifecycle_subprocess = Self::new(LifecycleScriptSubprocess {
             manager: bun_ptr::BackRef::new_mut(manager),
             envp,
@@ -1253,8 +1312,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 bstr::BStr::new(LockfileScripts::NAMES[first_index as usize]),
                 err.name(),
             );
-            lss.discard_packages_with_unfinished_scripts();
-            Global::exit(1);
+            lss.end_install(Exit::Code(1));
         }
 
         Ok(())

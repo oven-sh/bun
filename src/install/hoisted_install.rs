@@ -13,6 +13,7 @@ use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 
+use crate::lifecycle_script_runner::{Ending, UnfinishedScripts};
 use crate::lockfile::tree;
 use crate::{DependencyID, ExtractData, PackageID};
 // Bring the `items_<field>{,_mut}()` column accessors for
@@ -20,7 +21,9 @@ use crate::{DependencyID, ExtractData, PackageID};
 use crate::PackageManager;
 use crate::bin_real as bin;
 use crate::package_install;
-use crate::package_installer::{DeferredLinks, NodeModulesFolder, PackageInstaller, TreeContext};
+use crate::package_installer::{
+    DeferredLinks, NodeModulesFolder, PackageInstaller, TreeContext, discard_unfinished,
+};
 use crate::package_manager::{self, WorkspaceFilter};
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_real::run_tasks;
@@ -49,12 +52,14 @@ impl<'a> run_tasks::RunTasksCallbacks for HoistedRunTasksCallbacks<'a> {
 }
 
 /// Restores the trees that `Lockfile::filter` replaced for the install pass, and ends the progress
-/// bar.
+/// bar. Before that, on an early return of the pass, it discards the packages that the pass placed
+/// and whose scripts did not finish.
 struct RestoreManager {
     manager: *mut PackageManager,
     trees: Vec<tree::Tree>,
     hoisted_dependencies: Vec<DependencyID>,
     log_level: package_manager::Options::LogLevel,
+    unfinished_scripts: UnfinishedScripts,
 }
 
 impl Drop for RestoreManager {
@@ -70,6 +75,11 @@ impl Drop for RestoreManager {
         // The progress-node pointers target stack locals of `install_hoisted_packages`.
         this.scripts_node = None;
         this.downloads_node = None;
+        if !self.unfinished_scripts.borrow().is_empty() {
+            Output::flush();
+            // Before the trees are restored: the list holds ids of the filtered trees.
+            discard_unfinished(&this.lockfile, &self.unfinished_scripts, Ending::OwnExit);
+        }
         this.lockfile.buffers.trees = core::mem::take(&mut self.trees);
         this.lockfile.buffers.hoisted_dependencies =
             core::mem::take(&mut self.hoisted_dependencies);
@@ -176,6 +186,18 @@ fn link_deferred(
     Ok(())
 }
 
+/// `tree::Iterator` ends the process at a tree whose path is too long, or has an unsafe folder
+/// name. This finds such a tree before the pass places a package.
+fn check_tree_paths(lockfile: &crate::lockfile::Lockfile) {
+    let mut trees = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::from_slices(
+        lockfile.buffers.trees.as_slice(),
+        lockfile.buffers.hoisted_dependencies.as_slice(),
+        lockfile.buffers.dependencies.as_slice(),
+        lockfile.buffers.string_bytes.as_slice(),
+    );
+    while trees.next(None).is_some() {}
+}
+
 pub(crate) fn install_hoisted_packages(
     this: &mut PackageManager,
     ctx: Command::Context,
@@ -224,6 +246,7 @@ pub(crate) fn install_hoisted_packages(
     // fn param; the first reborrow's tag was popped by `&mut *mgr_ptr` in the
     // block above, so no other borrow of `*mgr_ptr` is live here.
     let this = unsafe { &mut *mgr_ptr };
+    check_tree_paths(&this.lockfile);
 
     let mut download_node: ProgressNode;
     let mut install_node: ProgressNode = ProgressNode::default();
@@ -243,12 +266,14 @@ pub(crate) fn install_hoisted_packages(
         this.scripts_node = NonNull::new(&raw mut scripts_node);
     }
 
+    let unfinished_scripts = UnfinishedScripts::default();
     // Declared after the nodes, so that it ends the progress bar while they're still alive.
     let _restore_manager = RestoreManager {
         manager: mgr_ptr,
         trees: original_trees,
         hoisted_dependencies: original_tree_dep_ids,
         log_level,
+        unfinished_scripts: std::rc::Rc::clone(&unfinished_scripts),
     };
 
     // A partial install (for the security scanner) runs before the real one, so it leaves the
@@ -458,7 +483,7 @@ pub(crate) fn install_hoisted_packages(
                 folder_path_buf: bun_paths::PathBuffer::ZEROED,
                 current_tree_id: tree::INVALID_ID,
                 pending_lifecycle_scripts: Vec::new(),
-                unfinished_scripts: Default::default(),
+                unfinished_scripts,
                 copy_trees: {
                     let self_contained = this.lockfile.self_contained_workspace_ids();
                     let mut set = Bitset::init_empty(trees_count)?;
@@ -591,6 +616,13 @@ pub(crate) fn install_hoisted_packages(
             this.sleep();
         }
         installer.link_bins_after_scripts();
+        // The scripts of what is left could not be read or started. Like a package whose script
+        // failed, each is removed, also one that was in place.
+        discard_unfinished(
+            &this.lockfile,
+            &installer.unfinished_scripts,
+            Ending::FailedScript,
+        );
         // Bin linking reads `successfully_installed`, so move it into the summary only afterwards.
         installer.summary.successfully_installed =
             Some(core::mem::take(&mut installer.successfully_installed));

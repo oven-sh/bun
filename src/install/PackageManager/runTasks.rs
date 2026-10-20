@@ -558,7 +558,7 @@ fn run_tasks_erased(
                     else {
                         unreachable!()
                     };
-                    installer.on_task_fail(task.entry_id, &err);
+                    installer.on_task_run_fail(task.entry_id, &err);
                 }
                 store_installer::Result::Blocked => {
                     installer.on_task_blocked(task.entry_id);

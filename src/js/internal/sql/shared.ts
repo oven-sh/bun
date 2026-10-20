@@ -619,6 +619,8 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> exte
   attachConnectionCloseHandler(connection: Connection, handler: (err: Error) => void): void;
   detachConnectionCloseHandler(connection: Connection, handler: (err: Error) => void): void;
   isInTransaction?(connection: Connection): boolean;
+  /** `error` is the answer to BEFORE_COMMIT_OR_ROLLBACK. `true`: the server rolled the transaction back, and ROLLBACK still has to end it. */
+  isRollbackOwed?(error: unknown): boolean;
   copyStream?(query: QueryType<any, any>, writable: boolean): ReadableStream<Uint8Array> | WritableStream<unknown>;
 
   array(values: any[], typeNameOrID?: number | string): SQLArrayParameter;

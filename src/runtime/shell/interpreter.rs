@@ -1188,9 +1188,7 @@ impl Interpreter {
     /// wrap each in an `IOWriter`, and install them as `root_io.stdout/stderr`
     /// so command output reaches the terminal. On the JS event loop the
     /// `captured` slot is also wired to `_buffered_stdout/err` so
-    /// `Bun.$` callers can read it back, unless the script runs with
-    /// `inheritStdio()`. A captured stream reaches a subprocess as a pipe that
-    /// the shell relays; an uncaptured one reaches it as the dup itself.
+    /// `Bun.$` callers can read it back (not under `inheritStdio()`).
     fn setup_io_before_run(&self) -> bun_sys::Result<()> {
         if self.flags.get().quiet() {
             return Ok(());
@@ -1244,8 +1242,7 @@ impl Interpreter {
 
         // On the JS event loop, hook captured buffers so the JS
         // `Bun.$` API can read stdout/stderr after completion. The mini path
-        // and `inheritStdio()` do not capture (they write straight to the
-        // dup'd fd).
+        // does not capture (it writes straight to the dup'd fd).
         let (cap_out, cap_err) = if matches!(event_loop, EventLoopHandle::Js { .. })
             && !self.flags.get().inherit_stdio()
         {

@@ -17,18 +17,16 @@ use super::{EnvStr, Interpreter};
 // `toJS`/`fromJS`/`fromJSDirect` re-exports are provided by the
 // `#[bun_jsc::JsClass]` derive in Rust — do not hand-port them.
 
-/// Where the output of a script's commands goes. `OutputMode` in
-/// `src/js/builtins/shell.ts` mirrors the discriminants.
+/// `OutputMode` in `src/js/builtins/shell.ts` mirrors the discriminants.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum OutputMode {
     /// Printed to bun's stdout/stderr and buffered for the result.
     #[default]
     Tee = 0,
-    /// Buffered for the result only: `.quiet()` and the output methods.
+    /// `.quiet()` and the output methods: buffered for the result only.
     Capture = 1,
-    /// Commands write to bun's own stdout/stderr; nothing is buffered:
-    /// `.inheritStdio()`.
+    /// `.inheritStdio()`: commands write to bun's own stdout/stderr, nothing is buffered.
     Inherit = 2,
 }
 
@@ -126,9 +124,6 @@ impl ParsedShellScript {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// `setOutputMode(mode, on)`. `.quiet(on)` and the output methods pass
-    /// `Capture`, `.inheritStdio(on)` passes `Inherit`. `on == false` leaves
-    /// `mode` only if the command is in it.
     #[bun_jsc::host_fn(method)]
     pub(crate) fn set_output_mode(
         &self,

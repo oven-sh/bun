@@ -127,8 +127,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     }
   }
 
-  // The output of a script that ran with `inheritStdio()`. Nothing was buffered, so `stdout`
-  // and `stderr` throw, and so does each reader it gets from `ShellOutput.prototype`.
+  // Named and chained like `ShellOutput`: it prints as one, and its readers reach the getters that throw.
   const InheritedShellOutput = class ShellOutput {
     exitCode: number;
 

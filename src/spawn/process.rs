@@ -2066,8 +2066,7 @@ mod spawn_process_body {
         let mut dup_fds: [uv::uv_file; 2] = [-1, -1];
         let mut dup_src: Option<u32> = None;
         let mut dup_tgt: Option<u32> = None;
-        // A dup onto a stream the child takes as an fd needs no pipe: both
-        // slots take that fd, and there is nothing for the caller to read.
+        // A dup onto a stream the child takes as an fd: both slots take that fd, no pipe.
         let dup_onto_fd: Option<uv::uv_file> = match (stdio_options[1], stdio_options[2]) {
             (WindowsStdio::Inherit, WindowsStdio::Dup2(_)) => Some(1),
             (WindowsStdio::Dup2(_), WindowsStdio::Inherit) => Some(2),

@@ -326,10 +326,11 @@ describe("inheritStdio", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The holder has these pipes too. Read them after the holder is gone, or the read waits for it.
+    const exitCode = await proc.exited;
     if (exitCode !== 0) {
-      // The fixture did not reach its own kill. Reap the holder so nothing outlives the test.
-      // Guard the pid: kill(0) would signal this whole process group.
+      // The fixture did not reach its own kill. Guard the pid: kill(0) would signal this whole
+      // process group.
       const pid = Number(
         await Bun.file(join(String(dir), "holder.pid"))
           .text()
@@ -341,6 +342,7 @@ describe("inheritStdio", () => {
         } catch {}
       }
     }
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
     expect({ stdout, stderr }).toEqual({ stdout: "settled while the holder was alive\n", stderr: "" });
     expect(exitCode).toBe(0);
   });

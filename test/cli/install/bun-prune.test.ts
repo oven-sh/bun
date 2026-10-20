@@ -5110,7 +5110,8 @@ test.concurrent(
 
     const { stderr, exitCode } = await bun(dir, "update", "--filter", "b");
     expect(stderr).not.toContain("warn:");
-    expect(readdirSync(storage).filter(name => !name.startsWith("."))).toEqual(["a-dep", "no-deps"]);
+    const entries = readdirSync(storage).filter(name => !name.startsWith("."));
+    expect(entries.toSorted()).toEqual(["a-dep", "no-deps"]);
     expect(exitCode).toBe(0);
   },
 );

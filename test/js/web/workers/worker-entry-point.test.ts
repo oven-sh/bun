@@ -66,3 +66,34 @@ describe.concurrent("package.json imports alias as the entry point", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe.concurrent("a bare worker specifier", () => {
+  // `new Worker("worker.js")` resolved the specifier as a package path first, so
+  // it walked node_modules from the project root up to the root of the
+  // filesystem. A planted `<ancestor>/node_modules/worker.js` replaced the
+  // project's own file. The project lives one directory below the planted
+  // node_modules here.
+  test("runs the project file, not a package of the same name", async () => {
+    using dir = tempDir("worker-entry-point-bare", {
+      "node_modules/worker.js": `postMessage("from node_modules");`,
+      "proj/package.json": JSON.stringify({ name: "app", version: "1.0.0" }),
+      "proj/worker.js": `postMessage("from the project");`,
+      "proj/main.js": `
+        const worker = new Worker("worker.js");
+        worker.addEventListener("error", event => console.log("error:", event.message));
+        worker.addEventListener("message", event => { console.log("message:", event.data); worker.terminate(); });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      cwd: path.join(String(dir), "proj"),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("message: from the project\n");
+    expect(exitCode).toBe(0);
+  });
+});

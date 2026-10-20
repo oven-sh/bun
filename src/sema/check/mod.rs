@@ -964,12 +964,6 @@ impl<'s> Program<'s> {
             inline_level: 0,
             walk_declared: TypeId::NEVER,
             constants_in_evaluation: Vec::new(),
-            recent_identity_mappers: Box::new(
-                [(
-                    (FileId(u32::MAX), crate::bind::ScopeId::NONE),
-                    MapperId::IDENTITY,
-                ); decl::RECENT_SCOPES],
-            ),
             recent_sig_params: Box::new([(SigId(u32::MAX), &[] as &[SigParam]); RECENT_SIGS]),
             recent_sig_type_params: Box::new([(SigId(u32::MAX), &[] as &[TypeId]); RECENT_SIGS]),
             recent_type_params: Box::new(std::array::from_fn(|_| {
@@ -1867,8 +1861,6 @@ pub struct Checker<'p, 's> {
     walk_declared: TypeId,
     /// The constants whose initializers `evaluateEntity` is evaluating.
     constants_in_evaluation: Vec<(FileId, VarDeclId)>,
-    /// See `identity_mapper_with_adopted`.
-    recent_identity_mappers: Box<[((FileId, crate::bind::ScopeId), MapperId); decl::RECENT_SCOPES]>,
     /// The most recent final results of `sig_params` and `sig_type_params`, indexed by the low bits
     /// of the signature id.
     recent_sig_params: Box<[(SigId, &'p [SigParam]); RECENT_SIGS]>,

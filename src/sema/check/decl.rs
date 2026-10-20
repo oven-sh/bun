@@ -27,8 +27,6 @@ impl Predicate {
 /// `signature.thisParameter` in `Checker::resolved_parameter_types`.
 const THIS_PARAMETER: u32 = u32::MAX;
 
-pub(super) const RECENT_SCOPES: usize = 64;
-
 /// The parameters whose types `sig_params_of_declaration` instantiates, besides a rest parameter.
 #[derive(Copy, Clone)]
 enum Read {
@@ -885,32 +883,13 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         scope: ScopeId,
     ) -> MapperId {
-        let slot = (scope.0 as usize).wrapping_add(file.0 as usize * 31) % RECENT_SCOPES;
-        let recent = self.recent_identity_mappers[slot];
-        if recent.0 == (file, scope) {
-            return recent.1;
-        }
-        let (mapper, is_final) = self.look_up_identity_mapper_with_adopted(file, scope);
-        if is_final {
-            self.recent_identity_mappers[slot] = ((file, scope), mapper);
-        }
-        mapper
-    }
-
-    /// The uncached `identity_mapper_with_adopted`. The flag is true if the result is final, which means that it's
-    /// stored in a table or that nothing is adopted in `scope`.
-    fn look_up_identity_mapper_with_adopted(
-        &mut self,
-        file: FileId,
-        scope: ScopeId,
-    ) -> (MapperId, bool) {
         let declared = self.identity_mapper(file, scope);
         let (hir, bound) = (self.hir(file), self.bound(file));
         // FOR SPEED: only a function with a contextual type adopts anything.
         let mut at = scope;
         loop {
             if at.is_none() {
-                return (declared, true);
+                return declared;
             }
             let s = &bound.scopes[at.idx()];
             if let ScopeKind::Fn(f) = s.kind
@@ -923,19 +902,16 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let known = (self.p.identity_mappers_with_adopted).get(&self.task, &(file, scope));
         if let Some(cached) = known {
-            return (cached, true);
+            return cached;
         }
         let computation = self.begin_scope();
         let mapper = self.with_adopted_type_params(declared, file, scope, u32::MAX);
         match self.end_scope_by_counters(computation) {
             Ok(stored) => {
                 let table = &self.p.identity_mappers_with_adopted;
-                (
-                    table.insert(&self.task, (file, scope), mapper, stored),
-                    true,
-                )
+                table.insert(&self.task, (file, scope), mapper, stored)
             }
-            Err(_) => (mapper, false),
+            Err(_) => mapper,
         }
     }
 

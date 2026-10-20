@@ -525,76 +525,102 @@ describe("Http2Session.ping()", () => {
   });
 });
 
-// A process that has made no AsyncLocalStorage yet. The script gets `http2`, `Duplex`, `manualPair`
-// and `report`, and the test gets what it reports.
+// A process that has made no AsyncLocalStorage. One process runs the three scenarios, because a
+// debug build takes more than a second to load node:http2. The tests below read what it prints.
+type FreshProcess = {
+  tracking?: { before: boolean; after: boolean };
+  thrown: { uncaught: string; emitted: boolean; pendingSettingsAck: boolean };
+  stores: { settings: string; ping: string; localSettings: string };
+};
 const execFileAsync = promisify(execFile);
-async function inFreshProcess(script: string) {
+let freshProcess: Promise<FreshProcess> | undefined;
+function inFreshProcess() {
   const source = `
     const http2 = require("node:http2");
+    const { once } = require("node:events");
     const { Duplex } = require("node:stream");
     const manualPair = ${manualPair.toString()};
-    const report = value => console.log(JSON.stringify(value));
-    (async () => {${script}})();
-  `;
-  const { stdout } = await execFileAsync(process.execPath, ["-e", source], {
-    env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
-  });
-  return JSON.parse(stdout);
-}
+    const tick = () => new Promise(resolve => setImmediate(resolve));
+    (async () => {
+      const report = {};
+      const server = http2.createServer().listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const client = http2.connect("http://127.0.0.1:" + server.address().port);
+      await once(client, "localSettings");
 
-describe("a process that makes its first AsyncLocalStorage after a settings() or ping() call", () => {
-  test("runs the callbacks with no store when the acknowledgements arrive inside one", async () => {
-    const stores = await inFreshProcess(`
+      // node always tracks async contexts. Bun starts when something needs it.
+      if (typeof Bun !== "undefined") {
+        const frames = require("bun:internal-for-testing").exposedInternals["internal/async_context_frame"];
+        // A promise reaction runs in the frame that was current when it was made, only while
+        // the process tracks async contexts.
+        const isTracking = () => {
+          const frame = { storage: {}, value: 1, prev: undefined, masked: undefined };
+          const previous = frames.exchange(frame);
+          const tracked = Promise.resolve().then(() => frames.current() === frame);
+          frames.exchange(previous);
+          return tracked;
+        };
+        const before = await isTracking();
+        await new Promise(resolve => client.settings({}, () => client.ping(resolve)));
+        report.tracking = { before, after: await isTracking() };
+      }
+
+      let emitted = false;
+      client.on("localSettings", () => (emitted = true));
+      const uncaught = once(process, "uncaughtException");
+      client.settings({}, () => {
+        throw new Error("thrown by the callback");
+      });
+      const [err] = await uncaught;
+      await tick();
+      report.thrown = { uncaught: err.message, emitted, pendingSettingsAck: client.pendingSettingsAck };
+      client.destroy();
+      server.close();
+
       const { a, b, pump } = manualPair();
       const session = http2.performServerHandshake(b);
-      const client = http2.connect("http://localhost", { createConnection: () => a });
+      const other = http2.connect("http://localhost", { createConnection: () => a });
       let acknowledged = 0;
-      client.once("localSettings", () => acknowledged++);
+      other.once("localSettings", () => acknowledged++);
       session.once("localSettings", () => acknowledged++);
-      const tick = () => new Promise(resolve => setImmediate(resolve));
-      while (acknowledged < 2) { pump(); await tick(); }
-
+      while (acknowledged < 2) {
+        pump();
+        await tick();
+      }
       const stores = {};
       let als;
       const store = () => als.getStore() ?? "no store";
-      client.settings({}, () => (stores.settings = store()));
-      client.ping(() => (stores.ping = store()));
-      client.on("localSettings", () => (stores.localSettings = store()));
-      const { AsyncLocalStorage } = require("node:async_hooks");
-      als = new AsyncLocalStorage();
+      other.settings({}, () => (stores.settings = store()));
+      other.ping(() => (stores.ping = store()));
+      other.on("localSettings", () => (stores.localSettings = store()));
+      // The first AsyncLocalStorage of the process, after the two calls.
+      als = new (require("node:async_hooks").AsyncLocalStorage)();
       await als.run("transport", async () => {
-        while (Object.keys(stores).length < 3) { pump(); await tick(); }
+        while (Object.keys(stores).length < 3) {
+          pump();
+          await tick();
+        }
       });
-      report(stores);
-      client.destroy();
+      report.stores = stores;
+      other.destroy();
       session.destroy();
-    `);
-    assert.deepStrictEqual(stores, { settings: "no store", ping: "no store", localSettings: "no store" });
-  });
-});
+      console.log(JSON.stringify(report));
+    })();
+  `;
+  return (freshProcess ??= execFileAsync(process.execPath, ["-e", source], {
+    env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+  }).then(({ stdout }) => JSON.parse(stdout)));
+}
 
-describe("a settings() callback that throws", () => {
-  test("ends the delivery: the session has its acknowledgement, and 'localSettings' is not emitted", async () => {
-    const seen = await inFreshProcess(`
-      const server = http2.createServer().listen(0, "127.0.0.1", () => {
-        const client = http2.connect("http://127.0.0.1:" + server.address().port);
-        client.once("localSettings", () => {
-          let emitted = false;
-          client.on("localSettings", () => (emitted = true));
-          process.once("uncaughtException", err => {
-            setImmediate(() => {
-              report({ uncaught: err.message, emitted, pendingSettingsAck: client.pendingSettingsAck });
-              client.destroy();
-              server.close();
-            });
-          });
-          client.settings({}, () => {
-            throw new Error("thrown by the callback");
-          });
-        });
-      });
-    `);
-    assert.deepStrictEqual(seen, { uncaught: "thrown by the callback", emitted: false, pendingSettingsAck: false });
+describe("a process that has made no AsyncLocalStorage", () => {
+  test("ends the delivery when a settings() callback throws: 'localSettings' is not emitted", async () => {
+    const { thrown } = await inFreshProcess();
+    assert.deepStrictEqual(thrown, { uncaught: "thrown by the callback", emitted: false, pendingSettingsAck: false });
+  });
+
+  test("runs the callbacks with no store when it makes one before the acknowledgements, and they arrive inside it", async () => {
+    const { stores } = await inFreshProcess();
+    assert.deepStrictEqual(stores, { settings: "no store", ping: "no store", localSettings: "no store" });
   });
 });
 
@@ -639,33 +665,9 @@ if (typeof Bun !== "undefined") {
     });
   });
 
-  describe("a process with no AsyncLocalStorage", () => {
+  describe("a process that has made no AsyncLocalStorage", () => {
     test("does not start to track async contexts for settings() or ping()", async () => {
-      const tracking = await inFreshProcess(`
-        const frames = require("bun:internal-for-testing").exposedInternals["internal/async_context_frame"];
-        // A frame that is current when a promise reaction is made is current when it runs, only
-        // while the process tracks async contexts.
-        function isTracking() {
-          const frame = { storage: {}, value: 1, prev: undefined, masked: undefined };
-          const previous = frames.exchange(frame);
-          const tracked = Promise.resolve().then(() => frames.current() === frame);
-          frames.exchange(previous);
-          return tracked;
-        }
-        const before = await isTracking();
-        const server = http2.createServer().listen(0, "127.0.0.1", () => {
-          const client = http2.connect("http://127.0.0.1:" + server.address().port);
-          client.on("connect", () => {
-            client.settings({}, () => {
-              client.ping(async () => {
-                report({ before, after: await isTracking() });
-                client.destroy();
-                server.close();
-              });
-            });
-          });
-        });
-      `);
+      const { tracking } = await inFreshProcess();
       assert.deepStrictEqual(tracking, { before: false, after: false });
     });
   });

@@ -19,13 +19,7 @@ pub trait Ch: PathChar + Into<u32> + bun_core::NoUninit {}
 impl Ch for u8 {}
 impl Ch for u16 {}
 
-/// Borrow `wbuf[..len]` as a `&WStr`, where `wbuf[len] == 0`. Safe-surface
-/// form of [`WStr::from_raw`] for the dominant call shape in this module: a
-/// stack `WPathBuffer` filled to `len` with a NUL written at `wbuf[len]`.
-/// The slice borrow proves `wbuf[..=len]` lies in one allocation and ties the
-/// returned lifetime to it; the NUL is debug-asserted (release relies on the
-/// caller upholding the documented `wbuf[len] == 0` precondition).
-/// Mirrors [`ZStr::from_buf`].
+/// [`WStr::from_buf`] (which asserts `wbuf[len] == 0`) for this module's `WPathBuffer` call shape.
 #[inline(always)]
 fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {
     WStr::from_buf(wbuf, len)

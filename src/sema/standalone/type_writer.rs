@@ -42,33 +42,6 @@ impl Checker<'_, '_> {
         results
     }
 
-    /// Returns the position and kind of each node in `file` whose type is the error type. It's the
-    /// same walk as `types_at_locations` without the printing. TypeScript produces the error type
-    /// only where it reports an error or receives an error type as input, so in a file without
-    /// errors each of these is a bug. Returns nothing for a file whose semantic errors aren't
-    /// reported, or are only partly reported. The file must have been checked.
-    pub fn error_types_at_locations(&mut self, file: FileId) -> Vec<(u32, String)> {
-        if !self.reports_semantic_errors(file) || self.is_plain_js(file) {
-            return Vec::new();
-        }
-        if self.is_flow_analysis_left_disabled(file) {
-            self.disable_flow_analysis(file);
-        }
-        let mut found = Vec::new();
-        for node in self.visited_nodes(file) {
-            if self.is_omitted_from_types(file, node.kind) {
-                continue;
-            }
-            let ty = self.get_type_of_written_node(file, node);
-            if self.is_error_type(ty) && !self.is_error_type_printed_as_any(file, node.node) {
-                found.push((node.start, format!("{:?}", node.kind)));
-            }
-        }
-        self.rechecked_exprs.clear();
-        self.rechecked_members.clear();
-        found
-    }
-
     /// `writeTypeOrSymbol`, in the walk for types.
     fn write_type_of_visited_node(
         &mut self,

@@ -8,25 +8,6 @@ pub mod native;
 #[cfg(unix)]
 use core::mem::MaybeUninit;
 
-/// Returns the number of instructions the process has executed and the cycles they took, on all
-/// threads. The instruction count is nearly constant between runs, unlike the elapsed time. Returns
-/// (0, 0) where it isn't available.
-pub fn instructions_and_cycles() -> (u64, u64) {
-    #[cfg(target_os = "macos")]
-    {
-        // SAFETY: all zeros is a valid `rusage_info_v4`.
-        let mut info: libc::rusage_info_v4 = unsafe { MaybeUninit::zeroed().assume_init() };
-        // SAFETY: `info` has the type that `RUSAGE_INFO_V4` fills in, and it outlives the call.
-        let failed = unsafe {
-            libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast())
-        };
-        if failed == 0 {
-            return (info.ri_instructions, info.ri_cycles);
-        }
-    }
-    (0, 0)
-}
-
 /// Returns the column count of the terminal attached to standard output, or 0 if it isn't a terminal.
 pub fn terminal_width() -> usize {
     #[cfg(unix)]
@@ -58,24 +39,8 @@ pub fn peak_memory() -> u64 {
     peak_rss()
 }
 
-pub fn current_memory() -> u64 {
-    #[cfg(target_os = "macos")]
-    {
-        // SAFETY: all zeros is a valid `rusage_info_v4`.
-        let mut info: libc::rusage_info_v4 = unsafe { MaybeUninit::zeroed().assume_init() };
-        // SAFETY: `info` has the type that `RUSAGE_INFO_V4` fills in, and it outlives the call.
-        let failed = unsafe {
-            libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast())
-        };
-        if failed == 0 {
-            return info.ri_phys_footprint;
-        }
-    }
-    0
-}
-
 /// Returns the process's peak resident memory in bytes.
-pub fn peak_rss() -> u64 {
+fn peak_rss() -> u64 {
     #[repr(C)]
     struct Rusage {
         times: [i64; 4],

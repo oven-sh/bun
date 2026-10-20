@@ -278,9 +278,10 @@ describe("JPEG codec: libjpeg-turbo jsimd runtime dispatch", () => {
   });
 });
 
-describe("png({ palette }): Highway ShownCompactImpl runtime dispatch", () => {
-  // The kernel copies the pixels that are not fully transparent. 25x7 = 175
-  // pixels: whole vectors at 4, 8 and 16 lanes, and a tail of 3, 7 or 15.
+describe("png({ palette }): Highway ShownRowImpl and ShownCompactImpl runtime dispatch", () => {
+  // The kernels give what pixels show over mid-grey, one of them without the
+  // fully transparent ones. 25x7 = 175 pixels: whole vectors at 4, 8 and 16
+  // lanes, and a tail of 3, 7 or 15.
   const width = 25;
   const height = 7;
   type Rgba = [number, number, number, number];
@@ -344,22 +345,31 @@ describe("png({ palette }): Highway ShownCompactImpl runtime dispatch", () => {
     [250, 40, 90, 255],
     [0, 0, 0, 255],
   ];
-  // Pixels 0 to 31 are opaque: whole vectors with nothing to drop. After
-  // them every other pixel is fully transparent over a different colour.
+  // Pixels 0 to 31 are opaque: whole vectors take the opaque path of the
+  // kernels at every width. Then, by i % 4: alpha 0 and alpha 1 over a
+  // different colour each time, alpha 254 with channels 127 or 128, and opaque.
   function source(i: number): Rgba {
     const v = Math.imul(i + 1, 0x9e3779b1) >>> 0;
     if (i < 32) return opaque[i % 3];
-    if (i % 2 === 0) return [v & 255, (v >> 8) & 255, (v >> 16) & 255, 0];
+    if (i % 4 === 0) return [v & 255, (v >> 8) & 255, (v >> 16) & 255, 0];
+    if (i % 4 === 1) return [v & 255, (v >> 8) & 255, (v >> 16) & 255, 1];
+    if (i % 4 === 2) return [127 + (v & 1), 127 + ((v >> 1) & 1), 127 + ((v >> 2) & 1), 254];
     return opaque[(v >>> 3) % 3];
   }
-  // 75 distinct RGBA values that show 4 colours. Each has its own entry, so
-  // the palette and every index are exact.
-  const written = (pixel: Rgba): Rgba => (pixel[3] === 0 ? [0, 0, 0, 0] : pixel);
+  // 110 distinct RGBA values that show 13 colours. Each has its own entry, so
+  // the palette and every index are exact. At alpha 1 a channel shows one
+  // level from 128 up. At alpha 254, 127 and 128 show the same.
+  function written([r, g, b, a]: Rgba): Rgba {
+    if (a === 0) return [0, 0, 0, 0];
+    if (a === 1) return [r >= 128 ? 255 : 0, g >= 128 ? 255 : 0, b >= 128 ? 255 : 0, 1];
+    if (a === 254) return [128, 128, 128, 254];
+    return [r, g, b, a];
+  }
 
-  test.each([false, true])("fully transparent pixels beside opaque ones at colors 16 (dither %p)", async dither => {
+  test.each([false, true])("alpha 0, 1, 254 and 255 at colors 16 (dither %p)", async dither => {
     const out = await new Bun.Image(png(source)).png({ palette: true, colors: 16, dither }).bytes();
     const { entries, pixels } = indexed(out);
-    expect(new Set(entries.map(String)).size).toBe(4);
+    expect(new Set(entries.map(String)).size).toBe(13);
     expect(pixels).toEqual(Array.from({ length: width * height }, (_, i) => written(source(i))));
   });
 });

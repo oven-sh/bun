@@ -243,7 +243,7 @@ static void FlipVImpl(const uint8_t* HWY_RESTRICT src, size_t w, size_t h, uint8
         std::memcpy(dp, sp, row);
 }
 
-// Nearest-palette index for one RGBA point. Squared Euclidean over all four
+// Nearest-palette index for one point of four channels (`Shown` in quantize.rs). Squared Euclidean over all four
 // channels; SIMD across palette entries (4 entries' R/G/B/A laid out as
 // contiguous u8, so we load 16 at a time and compute 4 distances per step on
 // targets where Lanes(u32) ≥ 4). Used by quantize.rs's Floyd–Steinberg
@@ -341,24 +341,71 @@ static void CmykToRgbaImpl(uint8_t* HWY_RESTRICT buf, size_t npx)
     }
 }
 
-// The pixels of `src` that are not fully transparent, one after the other. Returns how many that is.
+// What one RGBA8 pixel shows over mid-grey, the scalar form of ShownOverGrey.
+static HWY_INLINE void ShownPixel(const uint8_t* HWY_RESTRICT px, uint8_t* HWY_RESTRICT out)
+{
+    const uint32_t a = px[3];
+    const uint32_t grey = 127 - (a >> 1);
+    for (size_t c = 0; c < 3; c++) {
+        const uint32_t t = px[c] * a + 128;
+        out[c] = static_cast<uint8_t>(((t + (t >> 8)) >> 8) + grey);
+    }
+    out[3] = px[3];
+}
+
+// What RGBA8 pixels show over mid-grey (`shown` in quantize.rs): a colour channel is colour·alpha/255 plus 127 − alpha/2, and alpha stays. An opaque pixel comes back as it is.
+template<class D8, class V8 = hn::Vec<D8>>
+static HWY_INLINE V8 ShownOverGrey(D8 d8, V8 px)
+{
+    const hn::Repartition<uint32_t, D8> d32;
+    // Byte 3 of each pixel, on all four bytes of that pixel.
+    const auto a = hn::TableLookupBytes(px, hn::Dup128VecFromValues(d8, 3, 3, 3, 3, 7, 7, 7, 7, 11, 11, 11, 11, 15, 15, 15, 15));
+    const auto shown = hn::Add(MulDiv255(d8, px, a), hn::Sub(hn::Set(d8, 127), hn::ShiftRight<1>(a)));
+    return hn::IfVecThenElse(hn::BitCast(d8, hn::Set(d32, 0xFF000000u)), px, shown);
+}
+
+// ShownOverGrey for `n` pixels.
+static void ShownRowImpl(const uint8_t* HWY_RESTRICT src, size_t n, uint8_t* HWY_RESTRICT dst)
+{
+    const hn::ScalableTag<uint32_t> d32;
+    const hn::Repartition<uint8_t, decltype(d32)> d8;
+    const size_t N = hn::Lanes(d32);
+    const auto opaque = hn::Set(d32, 0xFF000000u);
+    size_t i = 0;
+    for (; i + N <= n; i += N) {
+        const auto px = hn::LoadU(d8, src + i * 4);
+        const bool allOpaque = hn::AllTrue(d32, hn::Ge(hn::BitCast(d32, px), opaque));
+        hn::StoreU(allOpaque ? px : ShownOverGrey(d8, px), d8, dst + i * 4);
+    }
+    for (; i < n; i++)
+        ShownPixel(src + i * 4, dst + i * 4);
+}
+
+// ShownOverGrey for the pixels of `src` that are not fully transparent, one after the other. Returns how many that is.
 static size_t ShownCompactImpl(const uint8_t* HWY_RESTRICT src, size_t n, uint8_t* HWY_RESTRICT dst)
 {
     const hn::ScalableTag<uint32_t> d32;
     const hn::Repartition<uint8_t, decltype(d32)> d8;
     const size_t N = hn::Lanes(d32);
+    const auto opaque = hn::Set(d32, 0xFF000000u);
     const auto visible = hn::Set(d32, 0x01000000u);
     size_t kept = 0;
     size_t i = 0;
     for (; i + N <= n; i += N) {
-        const auto px = hn::BitCast(d32, hn::LoadU(d8, src + i * 4));
+        const auto px = hn::LoadU(d8, src + i * 4);
+        const auto px32 = hn::BitCast(d32, px);
+        if (hn::AllTrue(d32, hn::Ge(px32, opaque))) {
+            hn::StoreU(px, d8, dst + kept * 4);
+            kept += N;
+            continue;
+        }
         // CompressStore can write all N lanes: `kept` is at most `i`, so that stays inside the first i + N pixels of `dst`.
-        kept += hn::CompressStore(px, hn::Ge(px, visible), d32, reinterpret_cast<uint32_t*>(dst + kept * 4));
+        kept += hn::CompressStore(hn::BitCast(d32, ShownOverGrey(d8, px)), hn::Ge(px32, visible), d32, reinterpret_cast<uint32_t*>(dst + kept * 4));
     }
     for (; i < n; i++) {
         if (src[i * 4 + 3] == 0)
             continue;
-        std::memcpy(dst + kept * 4, src + i * 4, 4);
+        ShownPixel(src + i * 4, dst + kept * 4);
         kept++;
     }
     return kept;
@@ -381,6 +428,7 @@ HWY_EXPORT(FlipVImpl);
 HWY_EXPORT(ModulateImpl);
 HWY_EXPORT(CmykToRgbaImpl);
 HWY_EXPORT(NearestPaletteImpl);
+HWY_EXPORT(ShownRowImpl);
 HWY_EXPORT(ShownCompactImpl);
 
 namespace {
@@ -626,6 +674,11 @@ void bun_image_modulate_rgba8(uint8_t* buf, size_t len, float brightness, float 
 void bun_image_cmyk_to_rgba8(uint8_t* buf, size_t len)
 {
     BUN_HWY_DISPATCH(CmykToRgbaImpl)(buf, len / 4);
+}
+
+void bun_image_shown_row(uint8_t* dst, const uint8_t* src, size_t n)
+{
+    BUN_HWY_DISPATCH(ShownRowImpl)(src, n, dst);
 }
 
 size_t bun_image_shown_compact(uint8_t* dst, const uint8_t* src, size_t n)

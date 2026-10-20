@@ -93,6 +93,8 @@ static size_t incompleteTrailingUTF8(std::span<const uint8_t> data)
     return 0;
 }
 
+static constexpr uint8_t utf8BOM[] = { 0xEF, 0xBB, 0xBF };
+
 JSC::JSString* streamingUTF8Decode(JSGlobalObject* globalObject, std::span<const uint8_t> chunk, StreamingUTF8DecodeState& state, bool flush)
 {
     auto& vm = getVM(globalObject);
@@ -112,11 +114,10 @@ JSC::JSString* streamingUTF8Decode(JSGlobalObject* globalObject, std::span<const
     }
 
     if (!state.bomSeen) {
-        static constexpr uint8_t bom[] = { 0xEF, 0xBB, 0xBF };
-        if (joined.size() >= 3 && !memcmp(joined.data(), bom, 3)) {
+        if (joined.size() >= 3 && !memcmp(joined.data(), utf8BOM, 3)) {
             joined = joined.subspan(3);
             state.bomSeen = true;
-        } else if (!flush && !joined.empty() && joined.size() < 3 && !memcmp(joined.data(), bom, joined.size())) {
+        } else if (!flush && !joined.empty() && joined.size() < 3 && !memcmp(joined.data(), utf8BOM, joined.size())) {
             // Still a possible BOM prefix; carry it to the next chunk.
             state.setPending(joined.data(), static_cast<unsigned>(joined.size()));
             return nullptr;
@@ -140,6 +141,20 @@ JSC::JSString* streamingUTF8Decode(JSGlobalObject* globalObject, std::span<const
     JSValue decoded = JSValue::decode(Bun__encoding__toStringUTF8(toDecode.data(), toDecode.size(), globalObject));
     RETURN_IF_EXCEPTION(scope, nullptr);
     return asString(decoded);
+}
+
+JSC::JSString* utf8Decode(JSGlobalObject* globalObject, std::span<const uint8_t> bytes)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (bytes.size() >= sizeof(utf8BOM) && !memcmp(bytes.data(), utf8BOM, sizeof(utf8BOM)))
+        bytes = bytes.subspan(sizeof(utf8BOM));
+    WTF::String text = Zig::convertUTF8ToString(bytes);
+    if (text.isNull() && !bytes.empty()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    return jsString(vm, text);
 }
 
 bool nativeSinkWriteIsBackpressure(JSC::VM& vm, JSValue wrote)

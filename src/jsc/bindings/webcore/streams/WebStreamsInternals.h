@@ -261,6 +261,8 @@ void webStreamControllerError(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSVa
 // when no complete code points were produced (callers skip the enqueue), or on a decode
 // throw (check the scope).
 JSC::JSString* streamingUTF8Decode(JSC::JSGlobalObject*, std::span<const uint8_t> chunk, StreamingUTF8DecodeState&, bool flush); // userJS: no — WebStreamsMisc.cpp
+// "UTF-8 decode" of all the bytes of a stream at once: drops one leading BOM. nullptr only on a throw.
+JSC::JSString* utf8Decode(JSC::JSGlobalObject*, std::span<const uint8_t> bytes); // userJS: no — WebStreamsMisc.cpp
 
 // ReadableStreamOperations.cpp — stream-level RS ops, reader set-up, controller set-up,
 // tee, from-iterable.
@@ -655,12 +657,13 @@ JSC::JSValue readableStreamToFormData(JSC::JSGlobalObject*, JSReadableStream*, J
 JSC::JSValue tryUseReadableStreamBufferedFastPath(JSC::JSGlobalObject*, JSReadableStream*, const JSC::Identifier& method); // userJS: yes — BunStreamConsumers.cpp
 
 // The generic toText path: the readMany array pump + a single chunk-array -> string
-// conversion (BunStreamConsumers.cpp convertChunksToText); BOM-strips its result.
+// conversion (BunStreamConsumers.cpp convertChunksToText).
 JSC::JSValue readableStreamIntoText(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 // toArray's generic path (getReader + readMany until done).
 JSC::JSValue readableStreamIntoArray(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
-// Drop ONE leading U+FEFF, and only on the generic toText path.
-WTF::String withoutUTF8BOM(const WTF::String&); // userJS: no — BunStreamConsumers.cpp
+struct BunTextAccumulator;
+// The text of both BunTextAccumulator owners; releases what was accumulated. nullptr only on a throw.
+JSC::JSString* finishTextAccumulator(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* owner, BunTextAccumulator&); // userJS: no — BunStreamConsumers.cpp
 // UTF-8 size / write via the simdutf-backed Buffer encoders. Lone surrogates count (and write) as
 // U+FFFD, so the pair always agrees; plain simdutf::utf8_length_from_utf16 does not.
 size_t utf8ByteLengthWithReplacement(WTF::StringView); // userJS: no — BunStreamConsumers.cpp

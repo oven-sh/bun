@@ -530,6 +530,7 @@ pub enum Value {
     ///   var body = await response.text();
     ///
     /// In this case, even though there's an emoji, we can use the StringImpl directly.
+    /// (`.text()` and `.json()` drop one leading U+FEFF from it, as they do for bytes.)
     /// BUT, if we were instead using it in the HTTP server, this cannot be used directly.
     ///
     /// When the server calls .toBlobIfPossible(), we will automatically

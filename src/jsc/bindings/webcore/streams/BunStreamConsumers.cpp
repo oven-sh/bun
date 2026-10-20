@@ -229,20 +229,6 @@ using WebCore::JSReadableStreamIntoArrayOperation;
 using WebCore::JSReadRequest;
 using WebCore::JSStreamsRuntime;
 
-WTF::String withoutUTF8BOM(const WTF::String& string)
-{
-    if (string.length() && string[0] == 0xFEFF)
-        return string.substring(1);
-    return string;
-}
-
-// The generic toText result strip: the accumulator's rope-path strip followed by the
-// end()-path strip of the sink pump this replaced (so "\uFEFF\uFEFF..." loses both).
-static WTF::String stripTextResultBOM(const WTF::String& string)
-{
-    return withoutUTF8BOM(withoutUTF8BOM(string));
-}
-
 size_t utf8ByteLengthWithReplacement(StringView string)
 {
     if (string.isEmpty())
@@ -277,6 +263,14 @@ bool appendUTF8WithinStringLimit(const WTF::String& string, WTF::Vector<uint8_t>
     if (written < byteLength) [[unlikely]]
         bytes.shrink(oldSize + written);
     return true;
+}
+
+// text() drops one leading U+FEFF from string chunks, as utf8Decode does for bytes.
+static JSC::JSString* textOfString(JSC::VM& vm, const WTF::String& string, JSC::JSString* cell = nullptr)
+{
+    if (string.is8Bit() || string[0] != 0xFEFF) [[likely]]
+        return cell ? cell : jsString(vm, string);
+    return jsString(vm, string.substringSharingImpl(1));
 }
 
 // `obj[name](...args)` with `this` = obj.
@@ -538,7 +532,6 @@ static JSValue convertChunksToBytes(JSGlobalObject* globalObject, JSValue chunks
 }
 
 static JSValue textAccumulatorWrite(JSC::VM& vm, JSGlobalObject*, JSC::JSObject* owner, BunTextAccumulator&, JSValue chunk);
-static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject*, JSC::JSObject* owner, BunTextAccumulator&);
 
 // The chunk-array -> text conversion: pure-string arrays join once (no UTF-8 round trip);
 // mixed/binary chunk arrays run through the shared text accumulator.
@@ -561,10 +554,7 @@ static JSValue convertChunksToText(JSGlobalObject* globalObject, JSValue chunksV
         if (chunk.isString()) {
             WTF::String string = asString(chunk)->value(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            WTF::String stripped = stripTextResultBOM(string);
-            if (stripped.impl() == string.impl())
-                return chunk;
-            RELEASE_AND_RETURN(scope, jsString(vm, stripped));
+            return textOfString(vm, string, asString(chunk));
         }
         std::span<const uint8_t> span;
         if (binaryChunkSpan(chunk, span)) {
@@ -572,12 +562,7 @@ static JSValue convertChunksToText(JSGlobalObject* globalObject, JSValue chunksV
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
             }
-            WTF::String text = Zig::convertUTF8ToString(span);
-            if (text.isNull() && !span.empty()) [[unlikely]] {
-                throwOutOfMemoryError(globalObject, scope);
-                return {};
-            }
-            RELEASE_AND_RETURN(scope, jsString(vm, withoutUTF8BOM(text)));
+            RELEASE_AND_RETURN(scope, utf8Decode(globalObject, span));
         }
     }
 
@@ -615,11 +600,11 @@ static JSValue convertChunksToText(JSGlobalObject* globalObject, JSValue chunksV
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
-        RELEASE_AND_RETURN(scope, jsString(vm, stripTextResultBOM(rope.toString())));
+        return textOfString(vm, rope.toString());
     }
 
     // Mixed string/binary chunks: drive the shared accumulator so adjacent-string rope
-    // joining, the flush-on-buffer ordering, and both BOM strips stay identical.
+    // joining and the flush-on-buffer ordering stay identical to the direct Text sink.
     auto* domGlobalObject = defaultGlobalObject(globalObject);
     auto* runtime = JSStreamsRuntime::from(globalObject);
     auto* sink = WebCore::JSBunStandaloneTextSink::create(vm, runtime->standaloneTextSinkStructure(domGlobalObject));
@@ -627,9 +612,7 @@ static JSValue convertChunksToText(JSGlobalObject* globalObject, JSValue chunksV
         textAccumulatorWrite(vm, globalObject, sink, sink->m_accumulator, values.at(i));
         RETURN_IF_EXCEPTION(scope, {});
     }
-    WTF::String text = finishTextAccumulator(vm, globalObject, sink, sink->m_accumulator);
-    RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, jsString(vm, withoutUTF8BOM(text)));
+    RELEASE_AND_RETURN(scope, finishTextAccumulator(vm, globalObject, sink, sink->m_accumulator));
 }
 
 static JSObject* createLockedError(JSGlobalObject* globalObject)
@@ -706,9 +689,8 @@ static JSValue textAccumulatorWrite(JSC::VM& vm, JSGlobalObject* globalObject, J
     return jsNumber(static_cast<double>(byteLength));
 }
 
-// createTextStream.finishInternal (RSI:1463-1501). Does NOT strip the leading UTF-8 BOM on
-// the buffer / mixed paths (only the pure-string rope path strips it) — see withoutUTF8BOM.
-static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObject, JSC::JSObject* owner, BunTextAccumulator& accumulator)
+// The finisher of both accumulator owners. Every exit is textOfString or utf8Decode.
+JSC::JSString* finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObject, JSC::JSObject* owner, BunTextAccumulator& accumulator)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     // Once the result is materialized nothing may keep the accumulated payload alive:
@@ -720,18 +702,16 @@ static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObje
     const bool hasString = accumulator.hasString;
     const bool hasBuffer = accumulator.hasBuffer;
     if (!hasString && !hasBuffer)
-        return WTF::emptyString();
+        return jsEmptyString(vm);
     if (hasString && !hasBuffer) {
         if (exceedsStringLimit(accumulator.rope.length())) [[unlikely]] {
             releaseAccumulated();
             throwOutOfMemoryError(globalObject, scope);
-            return WTF::String();
+            return nullptr;
         }
         WTF::String rope = accumulator.rope.toString();
         releaseAccumulated();
-        if (rope.length() && rope[0] == 0xFEFF)
-            return rope.substring(1);
-        return rope;
+        return textOfString(vm, rope);
     }
     // estimatedLength never overcounts the bytes, so an estimate past the limit is final.
     const double estimatedLength = accumulator.estimatedLength;
@@ -739,13 +719,13 @@ static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObje
         || exceedsStringLimit(static_cast<size_t>(estimatedLength))) [[unlikely]] {
         releaseAccumulated();
         throwOutOfMemoryError(globalObject, scope);
-        return WTF::String();
+        return nullptr;
     }
     WTF::Vector<uint8_t> bytes;
     if (estimatedLength > 0 && !bytes.tryReserveInitialCapacity(static_cast<size_t>(estimatedLength))) [[unlikely]] {
         releaseAccumulated();
         throwOutOfMemoryError(globalObject, scope);
-        return WTF::String();
+        return nullptr;
     }
     for (auto& piece : accumulator.pieces) {
         JSValue value = piece.get();
@@ -754,30 +734,21 @@ static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObje
         bool appended = appendChunkBytes(vm, globalObject, value, bytes);
         if (scope.exception() || !appended) [[unlikely]] {
             releaseAccumulated();
-            return WTF::String();
+            return nullptr;
         }
     }
-    if (accumulator.rope.length()) {
-        WTF::String rope = accumulator.rope.toString();
-        if (rope[0] == 0xFEFF)
-            rope = rope.substring(1);
-        if (!appendUTF8WithinStringLimit(rope, bytes)) [[unlikely]] {
-            releaseAccumulated();
-            throwOutOfMemoryError(globalObject, scope);
-            return WTF::String();
-        }
+    // isEmpty(), not length(): length() asserts on a builder that has overflowed.
+    if (!accumulator.rope.isEmpty() && !appendUTF8WithinStringLimit(accumulator.rope.toString(), bytes)) [[unlikely]] {
+        releaseAccumulated();
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
     }
     releaseAccumulated();
     if (exceedsStringLimit(bytes.size())) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
-        return WTF::String();
+        return nullptr;
     }
-    WTF::String text = Zig::convertUTF8ToString(bytes.span());
-    if (text.isNull() && !bytes.isEmpty()) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return WTF::String();
-    }
-    return text;
+    RELEASE_AND_RETURN(scope, utf8Decode(globalObject, bytes.span()));
 }
 
 // reader.read() as a Promise-kind read request.

@@ -421,28 +421,14 @@ export const cases: Record<string, Case> = {
  1|} catch {}
 `,
   },
+  // What is after a statement that the function was left at, and did not come back to.
   "generators.ts": {
-    functions: "4/4",
+    functions: "7/7",
     lines: `
- 1|function* once() {
- 1|  yield 1;
- -|}
  1|function* never() {
  0|  yield 1;
  -|}
- 1|async function stuck() {
- 1|  await new Promise(() => {});
- -|}
- 1|once().next();
  1|never();
- 1|stuck();
-`,
-  },
-  // What is a function to the engine alone: not one of the file's functions, and not run until it is.
-  // What is after a statement that the function was left at, and did not come back to.
-  "suspended.ts": {
-    functions: "4/4",
-    lines: `
  2|function* generator() {
  2|  at();
  2|  yield 1;
@@ -454,6 +440,26 @@ export const cases: Record<string, Case> = {
  1|resumed.next();
  1|resumed.next();
  1|generator().next();
+ 2|function* left() {
+ 2|  try {
+ 2|    yield 1;
+ 0|    at();
+ 1|  } catch {
+ 1|    at();
+ -|  }
+ 1|  at();
+ -|}
+ 1|const returned = left();
+ 1|returned.next();
+ 1|returned.return();
+ 1|const thrown = left();
+ 1|thrown.next();
+ 1|thrown.throw(new Error());
+ 1|function* delegates() {
+ 1|  yield* [1, 2];
+ 0|  at();
+ -|}
+ 1|delegates().next();
  1|async function stuck() {
  1|  at();
  1|  await new Promise(() => {});
@@ -472,7 +478,7 @@ export const cases: Record<string, Case> = {
  1|rejected();
 `,
   },
-  // What `?.`, a logical assignment and a value that is there skip.
+  // What `?.`, a logical assignment and a value that is there skip. A `case` that does not match did not run.
   "skipped.ts": {
     functions: "8/8",
     lines: `
@@ -489,10 +495,9 @@ export const cases: Record<string, Case> = {
  1|chain();
  1|chain({ a() {} });
  2|function call(f?: (n: number) => void) {
- 2|  f
- -|    ?.(
- 1|      one(),
- 1|    );
+ 2|  f?.(
+ 1|    one(),
+ 1|  );
  -|}
  1|call();
  1|call(() => {});
@@ -530,6 +535,7 @@ export const cases: Record<string, Case> = {
  -|}
 `,
   },
+  // What is a function to the engine alone: not one of the file's functions, and not run until it is.
   "engine-functions.ts": {
     functions: "5/6",
     lines: `

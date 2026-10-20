@@ -1087,8 +1087,18 @@ describe.concurrent("bun build --watch", () => {
     expect(proc.exitCode).toBeNull();
 
     // The failed build left the watcher running: fixing the entry point rebuilds.
-    writeFileSync(entry, `console.log("fixed");\n`);
-    expect(await outputUntil(proc.stdout, "index.js")).toContain("Bundled 1 module");
+    // On Windows the watcher thread can start to listen after the error is printed,
+    // and then it misses the fix. Write it again, each time after a longer wait: a
+    // build in progress starts again on every write.
+    const rebuilt = outputUntil(proc.stdout, "index.js");
+    let settled = false;
+    const settle = () => void (settled = true);
+    rebuilt.then(settle, settle);
+    for (let wait = 2000; !settled; wait *= 2) {
+      writeFileSync(entry, `console.log("fixed");\n`);
+      await Promise.race([rebuilt.catch(settle), Bun.sleep(wait)]);
+    }
+    expect(await rebuilt).toContain("Bundled 1 module");
     expect(await Bun.file(join(String(dir), "dist", "index.js")).text()).toContain("fixed");
   });
 });

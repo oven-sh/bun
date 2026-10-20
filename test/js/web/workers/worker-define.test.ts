@@ -86,23 +86,16 @@ async function expectFreed(define: string, node = false) {
 // went into the process heap, and nothing freed them when the Worker ended: 576 KiB here.
 const string = JSON.stringify(Buffer.alloc(512 * 1024, "x").toString());
 
-test("a Worker frees the define values that it parsed", async () => {
+test.concurrent("a Worker frees the define values that it parsed", async () => {
   await expectFreed(string);
 });
 
 // A `node:worker_threads` Worker takes 1 to 2 seconds to start on a debug build.
-test.skipIf(isDebug)("a node:worker_threads Worker frees the define values that it parsed", async () => {
+test.concurrent.skipIf(isDebug)("a node:worker_threads Worker frees the define values that it parsed", async () => {
   await expectFreed(string, true);
 });
 
-// The lists of an object or an array value do not go into the arena of the Worker:
-// https://github.com/oven-sh/bun/pull/44222
-test.todo("a Worker frees an object define value that it parsed", async () => {
-  const entries = Array.from({ length: 2000 }, (_, i) => ["key" + i, ["item" + i, i]]);
-  await expectFreed(JSON.stringify(Object.fromEntries(entries)));
-});
-
-test("a Worker and a Worker of a Worker read the define values of the process", async () => {
+test.concurrent("a Worker and a Worker of a Worker read the define values of the process", async () => {
   const define = {
     CFG: `{"a":1,"b":[1,{"c":"d"}]}`,
     GREETING: `"hello world"`,
@@ -159,4 +152,11 @@ test("a Worker and a Worker of a Worker read the define values of the process", 
   expect(stderr).toBe("");
   expect(JSON.parse(stdout)).toEqual({ main: values, worker: values, nested: values });
   expect(exitCode).toBe(0);
+});
+
+// The lists of an object or an array value do not go into the arena of the Worker:
+// https://github.com/oven-sh/bun/pull/44222
+test.todo("a Worker frees an object define value that it parsed", async () => {
+  const entries = Array.from({ length: 2000 }, (_, i) => ["key" + i, ["item" + i, i]]);
+  await expectFreed(JSON.stringify(Object.fromEntries(entries)));
 });

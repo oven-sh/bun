@@ -3298,11 +3298,17 @@ impl BlobExt for Blob {
     // is_detached: defined once above; duplicate removed to fix E0034.
 
     fn calculate_estimated_byte_size(&self) {
+        // A heap block comes in steps of 16 bytes.
+        const BLOB: usize = core::mem::size_of::<Blob>().next_multiple_of(16);
+        const STORE: usize = core::mem::size_of::<Store>().next_multiple_of(16);
+        // JSC drops a report of 256 bytes or less (`Heap::minExtraMemory`).
+        const _: () = assert!(BLOB + STORE > 256);
+
         // in-memory size. not the size on disk.
-        let mut size: usize = core::mem::size_of::<Blob>();
+        let mut size: usize = BLOB;
 
         if let Some(store) = self.store.get() {
-            size += core::mem::size_of::<Store>();
+            size += STORE;
             match &store.data {
                 store::Data::Bytes(bytes) => {
                     size += bytes.stored_name.len();

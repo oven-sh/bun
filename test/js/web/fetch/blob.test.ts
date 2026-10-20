@@ -785,9 +785,7 @@ test.skipIf(!isASAN).each(["Blob", "File"] as const)(
   },
 );
 
-// https://github.com/oven-sh/bun/issues/35284: the type lived on the byte store
-// as well, so a Response or a Request could write it onto a Blob it shares bytes
-// with. A Blob now reports its own type and nothing else.
+// https://github.com/oven-sh/bun/issues/35284: a Blob's type is its own. Blobs that share bytes do not share it.
 describe("a Blob reports its own type, never one another Blob put on the shared bytes", () => {
   test("reading a Response or a Request body does not retype the Blob it was made from", async () => {
     const blob = new Blob(["hello world"]);
@@ -810,44 +808,56 @@ describe("a Blob reports its own type, never one another Blob put on the shared 
     }).toEqual({ blob: "", sliceTakenFirst: "", body: "", sliceOfBody: "" });
   });
 
-  test("an empty type stays empty, and a slice keeps only an interned parent type", async () => {
+  test("an empty type stays empty, and a slice of a body follows the rule of every slice", async () => {
     const typedBody = await new Response("hi", { headers: { "content-type": "image/png" } }).blob();
+    const unlistedBody = await new Response("hi", { headers: { "content-type": "x-unlisted/type" } }).blob();
     const searchParams = await new Response(new URLSearchParams("h=i")).blob();
 
     expect({
       typedBody: typedBody.type,
+      unlistedBody: unlistedBody.type,
       emptyTypeOverBody: new Blob([typedBody], { type: "" }).type,
       emptyTypeOverSearchParams: new Blob([searchParams], { type: "" }).type,
-      // A slice keeps an interned parent type and drops a heap-owned one. That
-      // rule is unchanged; the test below pins the interned set.
+      // A slice keeps a parent type that is in the MIME table. The test at the end of this file pins that table.
       sliceOfBody: typedBody.slice(0, 1).type,
       sliceOfSearchParams: searchParams.slice(0, 1).type,
+      sliceOfUnlistedBody: unlistedBody.slice(0, 1).type,
+      sliceOfUnlistedBlob: new Blob(["hi"], { type: "x-unlisted/type" }).slice(0, 1).type,
     }).toEqual({
       typedBody: "image/png",
+      unlistedBody: "x-unlisted/type",
       emptyTypeOverBody: "",
       emptyTypeOverSearchParams: "",
-      sliceOfBody: "",
+      sliceOfBody: "image/png",
       sliceOfSearchParams: "application/x-www-form-urlencoded;charset=UTF-8",
+      sliceOfUnlistedBody: "",
+      sliceOfUnlistedBlob: "",
     });
   });
 
-  test("a Bun.build() output and a Bun.Archive() do not type the Blobs made from their bytes", async () => {
+  test("a Bun.build() output owns its type, and a Bun.Archive() takes none from a Response", async () => {
     using dir = tempDir("blob-own-type-build", { "entry.js": "export default 1;" });
     const build = await Bun.build({ entrypoints: [path.join(String(dir), "entry.js")] });
     const output = build.outputs[0];
+    await using server = Bun.serve({
+      port: 0,
+      fetch: request => new Response(request.headers.get("content-type")),
+    });
 
     const archive = await new Bun.Archive({ "a.txt": "hi" }).blob();
     await new Response(archive, { headers: { "content-type": "application/x-tar" } }).blob();
 
     expect({
       output: output.type,
-      // The output owns its type, so its stream carries it.
+      // The type is the output's own, so its stream and a fetch() body carry it.
       fromStreamOfOutput: (await Bun.readableStreamToBlob(output.stream())).type,
+      fetchBody: await (await fetch(server.url, { method: "POST", body: output })).text(),
       archive: archive.type,
       archiveRead: (await new Bun.Archive(archive).blob()).type,
     }).toEqual({
       output: "text/javascript;charset=utf-8",
       fromStreamOfOutput: "text/javascript;charset=utf-8",
+      fetchBody: "text/javascript;charset=utf-8",
       archive: "",
       archiveRead: "",
     });

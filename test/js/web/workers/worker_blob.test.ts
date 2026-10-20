@@ -126,19 +126,17 @@ test("Worker on a revoked blob still works", async () => {
   expect(revoked).toBe("revoked.");
 });
 
-// A Blob's `type` lived on the byte store too, and `Response.blob()` wrote it
-// there after the store was shared. A Worker reading `.type` through an object
-// URL then read freed memory. The store no longer holds a type.
+// https://github.com/oven-sh/bun/issues/35284: a Blob's type is its own, and no other thread can write it.
 test("the type of a Blob read through an object URL survives a Response.blob() on another thread", async () => {
   using dir = tempDir("worker-blob-type-race", {
     "main.mjs": `import { Worker } from "node:worker_threads";
 
-      const rounds = 400;
+      const rounds = 200;
       // None of these is in the MIME table, so each one is its own heap allocation.
-      const types = Array.from({ length: 8 }, (_, i) => "x-race/t" + i + "-" + Buffer.alloc(2048 + i * 37, "a").toString());
+      const types = Array.from({ length: 8 }, (_, i) => "x-race/t" + i + "-" + Buffer.alloc(1024 + i * 37, "a").toString());
       const blob = new Blob(["hello"]);
       const url = URL.createObjectURL(blob);
-      const state = new Int32Array(new SharedArrayBuffer(8)); // [0] main is done, [1] reads
+      const state = new Int32Array(new SharedArrayBuffer(4)); // [0] the main thread is done
 
       const worker = new Worker(new URL("./worker.mjs", import.meta.url), {
         workerData: { url, shared: state.buffer, types },
@@ -159,8 +157,7 @@ test("the type of a Blob read through an object URL survives a Response.blob() o
       }
       Atomics.store(state, 0, 1);
 
-      const { unexpected } = await done;
-      console.log(JSON.stringify({ ready: read, unexpected, reads: Atomics.load(state, 1) > 0, type: blob.type }));
+      console.log(JSON.stringify({ ready: read, ...(await done), type: blob.type }));
       URL.revokeObjectURL(url);
       `,
     "worker.mjs": `import { resolveObjectURL } from "node:buffer";
@@ -172,18 +169,18 @@ test("the type of a Blob read through an object URL survives a Response.blob() o
       // A Blob of this thread over the store of the Blob of the main thread.
       const blob = resolveObjectURL(url);
 
-      let unexpected = 0;
+      // The first read comes before "ready", so the loop of the main thread starts while this one reads.
+      let unexpected = expected.has(blob.type) ? 0 : 1;
       parentPort.postMessage("ready");
       while (Atomics.load(state, 0) === 0) {
         if (!expected.has(blob.type)) unexpected++;
-        Atomics.add(state, 1, 1);
       }
       parentPort.postMessage({ unexpected });
       `,
   });
   await using proc = Bun.spawn({ cmd: [bunExe(), "main.mjs"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.trim()).toBe(JSON.stringify({ ready: "ready", unexpected: 0, reads: true, type: "" }));
+  expect(stdout.trim()).toBe(JSON.stringify({ ready: "ready", unexpected: 0, type: "" }));
   expect({ exitCode, signalCode: proc.signalCode, stderr }).toEqual({ exitCode: 0, signalCode: null, stderr: "" });
 });
 

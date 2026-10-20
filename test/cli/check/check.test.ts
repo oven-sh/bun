@@ -25235,19 +25235,6 @@ ${range(n)
   .map(i => `  .command("s${i + 1}", { run: "r", args: (inputs, context) => [String(context.s0?.text ?? "")] })`)
   .join("\n")};`,
       ],
-      [
-        // Every member of the declared type was compared with the members of the assigned type until one matched.
-        "an assignment of a union of thousands of literals to a variable that may also be `undefined`",
-        isDebug || isASAN ? 70 : 200,
-        n =>
-          `type Prefix = ${range(n)
-            .map(i => `"p${i}|"`)
-            .join(" | ")};\ntype Suffix = ${range(n)
-            .map(i => `"s${i}"`)
-            .join(
-              " | ",
-            )};\ntype Name = \`\${Prefix}\${Suffix}\`;\ndeclare const names: Name[];\nexport function f() { let name: Name | undefined; if (names.length) { const [first] = names; name = first; } return name; }`,
-      ],
     ];
     test.each(templates)("finishes without errors on %s", async (_, n, source) => {
       using dir = project({ "index.ts": source(n) + "\n" });

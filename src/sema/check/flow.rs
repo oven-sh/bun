@@ -7206,20 +7206,8 @@ impl<'p, 's> Checker<'p, 's> {
         let is_fresh_boolean =
             matches!(*self.data(assigned), TypeData::BoolLit { fresh: true, .. });
         let assigned = self.regular(assigned);
-        // Comparing two unit types resolves nothing, so if `m` is among the assigned types, the comparisons before the
-        // one of `m` with itself can be skipped. And a literal that isn't an enum member is only assignable to another
-        // one if they're the same type.
-        let is_all_units = self.is_every_type_unit(assigned);
-        let is_all_plain = is_all_units && self.types().member_flags(assigned) & !tf::LITERAL == 0;
         let reduced = self.filter(declared, |c, m| {
-            let (assigned, regular) = (c.parts(assigned), c.regular(m));
-            if is_all_units && c.contains_type(assigned, regular) {
-                return true;
-            }
-            if is_all_plain && c.flags(m) & !tf::LITERAL == 0 {
-                return false;
-            }
-            assigned.iter().any(|&a| c.is_assignable(a, m))
+            c.parts(assigned).iter().any(|&a| c.is_assignable(a, m))
         });
         if !self.is_assignable(assigned, reduced) {
             return declared;

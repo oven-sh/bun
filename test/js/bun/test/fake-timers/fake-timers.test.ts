@@ -7,7 +7,7 @@ import { spawnSync as childProcessSpawnSync } from "node:child_process";
 import { once } from "node:events";
 import http from "node:http";
 import net, { type AddressInfo } from "node:net";
-import { performance, PerformanceObserver } from "node:perf_hooks";
+import { performance as perfHooksPerformance, PerformanceObserver } from "node:perf_hooks";
 import nodeTimers, { setTimeout as nodeSetTimeout } from "node:timers";
 import { setTimeout as nodeSetTimeoutPromise } from "node:timers/promises";
 import { promisify } from "node:util";
@@ -968,6 +968,84 @@ describe("performance.now() mocking", () => {
     });
   });
 
+  describe(`vi of "vitest" replaces the performance object`, () => {
+    const real = performance;
+
+    test("code that kept the real object still reads the real clock", () => {
+      const realTimeOrigin = real.timeOrigin;
+      vi.useFakeTimers({ now: 5000 });
+      expect(performance).not.toBe(real);
+      expect(perfHooksPerformance).toBe(real);
+      const before = real.now();
+      vi.advanceTimersByTime(3_600_000);
+      expect(performance.now()).toBe(3_600_000);
+      expect(real.now() - before).toBeLessThan(3_600_000);
+      expect(real.timeOrigin).toBe(realTimeOrigin);
+    });
+
+    test("a spy on the new object's now() isn't called through the real object", () => {
+      vi.useFakeTimers();
+      const spy = vi.spyOn(performance, "now").mockImplementation(() => {
+        throw new Error("from the spy");
+      });
+      expect(() => performance.now()).toThrow("from the spy");
+      expect(real.now()).toBeNumber();
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    test("the new object matches the one @sinonjs/fake-timers makes", () => {
+      vi.useFakeTimers({ now: 5000 });
+      expect({
+        prototype: Object.getPrototypeOf(performance),
+        missing: Object.getOwnPropertyNames(Performance.prototype).filter(name => !(name in performance)),
+        timeOrigin: performance.timeOrigin,
+        mark: performance.mark("a"),
+        measure: performance.measure("b"),
+        entries: [performance.getEntries(), performance.getEntriesByName("a"), performance.getEntriesByType("mark")],
+        others: [performance.clearMarks(), performance.toJSON()],
+      }).toEqual({
+        prototype: null,
+        missing: [],
+        timeOrigin: 5000,
+        mark: { name: "a", entryType: "mark", startTime: 0, duration: 0 },
+        measure: { name: "b", entryType: "measure", startTime: 0, duration: 100 },
+        entries: [[], [], []],
+        others: [undefined, undefined],
+      });
+      expect(real.getEntriesByName("a")).toEqual([]);
+    });
+
+    test("useRealTimers() puts the real object back, and the fake one's now() reads the real clock", () => {
+      vi.useFakeTimers();
+      const fake = performance;
+      vi.useFakeTimers();
+      expect([performance === fake, performance === real]).toEqual([false, false]);
+      vi.useRealTimers();
+      expect(performance).toBe(real);
+      expect(fake.now()).toBeGreaterThan(0);
+    });
+
+    test("an object a test put there is back afterwards", () => {
+      const own = { now: () => 7 };
+      vi.stubGlobal("performance", own);
+      vi.useFakeTimers();
+      expect(performance.now()).toBe(0);
+      vi.useRealTimers();
+      expect(performance).toBe(own);
+      vi.unstubAllGlobals();
+      expect(performance).toBe(real);
+    });
+
+    test.each([
+      [`if "performance" isn't faked`, vi, { toFake: ["setTimeout"] }],
+      [`for vi of "bun:test"`, bunVi, {}],
+      ["for jest", jest, {}],
+    ])("the object isn't replaced %s", (_, api, options) => {
+      api.useFakeTimers(options);
+      expect(performance).toBe(real);
+    });
+  });
+
   test("performance.timeOrigin is not affected by setSystemTime without fake timers", () => {
     const realTimeOrigin = performance.timeOrigin;
     setSystemTime(new Date("2000-01-01T00:00:00.000Z"));
@@ -983,7 +1061,7 @@ describe("performance.now() mocking", () => {
     reset => {
       const realTimeOrigin = performance.timeOrigin;
       const realBefore = Date.now();
-      vi.useFakeTimers({ now: 5000 });
+      bunVi.useFakeTimers({ now: 5000 });
       expect(performance.timeOrigin).toBe(5000);
 
       setSystemTime(reset);
@@ -1020,9 +1098,10 @@ describe.each([
   ["jest", jest],
 ])("what a test put on Date.now and performance.now, %s", (_, api) => {
   const builtins = [Date.now, performance.now];
+  const realPerformance = performance;
   const descriptors = () => [
     Object.getOwnPropertyDescriptor(Date, "now"),
-    Object.getOwnPropertyDescriptor(performance, "now"),
+    Object.getOwnPropertyDescriptor(realPerformance, "now"),
   ];
   const untouched = descriptors();
   afterEach(() => {
@@ -2222,7 +2301,8 @@ describe('toFake: ["performance"] in a beforeEach', () => {
     expect(process.hrtime.bigint() - before.hrtime).toBeLessThan(3_600_000_000_000n);
   });
 
-  test("marks and measures are on the fake clock, which starts at the real time", () => {
+  test(`for vi of "bun:test", marks and measures are on the fake clock, which starts at the real time`, () => {
+    bunVi.useFakeTimers({ toFake: ["performance"] });
     vi.advanceTimersByTime(3_600_000);
     const mark = performance.mark("fake-timers-mark");
     vi.advanceTimersByTime(50);

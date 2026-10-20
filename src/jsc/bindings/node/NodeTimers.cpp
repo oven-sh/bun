@@ -9,6 +9,7 @@
 #include "ZigGlobalObject.h"
 #include "InternalModuleRegistry.h"
 #include "Performance.h"
+#include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/DateConstructor.h>
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/JSBoundFunction.h>
@@ -23,6 +24,7 @@ extern "C" JSC::EncodedJSValue Bun__FakeTimers__requestAnimationFrame(JSC::JSGlo
 extern "C" void Bun__FakeTimers__queueTick(JSC::JSGlobalObject*, JSC::EncodedJSValue callback, JSC::EncodedJSValue arguments);
 extern "C" bool Bun__FakeTimers__isInstalled(JSC::EncodedJSValue function);
 extern "C" void Bun__FakeTimers__runStep(JSC::JSGlobalObject*, uint32_t id);
+extern "C" double Bun__FakeTimers__replacedPerformanceNow();
 
 namespace Zig {
 JSC_DECLARE_HOST_FUNCTION(functionQueueMicrotask);
@@ -310,7 +312,10 @@ JSC_DEFINE_HOST_FUNCTION(functionFakeDateNow, (JSGlobalObject * globalObject, Ca
 
 JSC_DEFINE_HOST_FUNCTION(functionFakePerformanceNow, (JSGlobalObject * globalObject, CallFrame*))
 {
-    return JSValue::encode(jsDoubleNumber(static_cast<double>(Bun__readOriginTimer(bunVM(globalObject))) / 1000000.0));
+    double now = Bun__FakeTimers__replacedPerformanceNow();
+    if (std::isnan(now))
+        now = static_cast<double>(Bun__readOriginTimer(bunVM(globalObject))) / 1000000.0;
+    return JSValue::encode(jsDoubleNumber(now));
 }
 
 // Must match `Api` in FakeTimers.rs.
@@ -378,6 +383,17 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] __attribute__((minsize)) JSC::EncodedJS
         return JSValue::encode(JSFunction::create(vm, globalObject, 0, "now"_s, functionFakePerformanceNow, ImplementationVisibility::Public));
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] __attribute__((minsize)) JSC::EncodedJSValue Bun__FakeTimers__createPerformance(Zig::GlobalObject* globalObject, JSC::EncodedJSValue original, double timeOrigin)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* create = JSFunction::create(vm, globalObject, fakeTimersCreatePerformanceCodeGenerator(vm), globalObject);
+    MarkedArgumentBuffer args;
+    args.append(JSValue::decode(original));
+    args.append(JSFunction::create(vm, globalObject, 0, "now"_s, functionFakePerformanceNow, ImplementationVisibility::Public));
+    args.append(jsNumber(timeOrigin));
+    return JSValue::encode(JSC::profiledCall(globalObject, ProfilingReason::API, create, JSC::getCallData(create), jsUndefined(), args));
 }
 
 // Maps each fake to the function it replaced, for when a jest.spyOn() restored after jest.useRealTimers() puts a fake back.

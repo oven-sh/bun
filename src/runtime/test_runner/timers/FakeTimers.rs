@@ -60,10 +60,12 @@ enum Api {
     Date,
     Performance,
     Hrtime,
+    /// `vi` of "vitest" replaces `globalThis.performance`, like @sinonjs/fake-timers. The object it replaces keeps the real clock.
+    PerformanceObject,
 }
 
 impl Api {
-    const FUNCTIONS: [Api; 12] = [
+    const FUNCTIONS: [Api; 13] = [
         Api::SetTimeout,
         Api::ClearTimeout,
         Api::SetInterval,
@@ -76,6 +78,7 @@ impl Api {
         Api::CancelAnimationFrame,
         Api::Date,
         Api::Performance,
+        Api::PerformanceObject,
     ];
 
     /// Indexed by `Api as usize`. A `None` name is accepted but there's nothing to fake for it.
@@ -107,6 +110,7 @@ impl Api {
     fn property(self) -> &'static str {
         match self {
             Api::Date | Api::Performance => "now",
+            Api::PerformanceObject => "performance",
             _ => self.name(),
         }
     }
@@ -227,7 +231,6 @@ struct Options {
     now: Option<f64>,
     faked: ApiSet,
     fakes_abort_signal_timeout: bool,
-    system_time_moves_time_origin: bool,
     tick_mode: TickMode,
     loop_limit: u32,
 }
@@ -239,7 +242,6 @@ impl Options {
             now: None,
             faked,
             fakes_abort_signal_timeout: true,
-            system_time_moves_time_origin: true,
             tick_mode: TickMode::Manual,
             loop_limit: match flavor {
                 Flavor::Vi => 10_000,
@@ -478,8 +480,6 @@ pub(crate) struct FakeTimers {
     pub(crate) timers: TimerHeap,
     now: Timespec,
     date_now_offset: f64,
-    /// `performance.timeOrigin` for `vi` of "vitest": the time at `useFakeTimers()`, whatever `setSystemTime()` does later.
-    fixed_time_origin: Option<f64>,
     loop_limit: u32,
     replaced: Vec<Replaced>,
     /// JS `WeakMap` from every fake ever created, installed or not, to the function it replaced.
@@ -506,7 +506,6 @@ impl Default for FakeTimers {
             timers: TimerHeap::default(),
             now: Timespec::EPOCH,
             date_now_offset: 0.0,
-            fixed_time_origin: None,
             loop_limit: 0,
             replaced: Vec::new(),
             originals: StrongOptional::empty(),
@@ -528,7 +527,7 @@ const AUTO_STEP: u32 = 0;
 /// `globalObject->overridenDateNow` directly; rebase `date_now_offset` here so
 /// the next `advanceTimersByTime` recomputes `Date.now` from the set time
 /// instead of the stale activation-time offset. `performance.now()` does not
-/// move, so `performance.timeOrigin` follows the rebased offset, except for `vi` of "vitest". While fake
+/// move, so `performance.timeOrigin` follows the rebased offset. While fake
 /// timers are inactive it only records `from_preload`. A NaN `ms` is the "clear override" sentinel:
 /// `Date.now()` is real again until the next tick, so the mocked wall clock
 /// and `performance.timeOrigin` go back to real as well.
@@ -551,6 +550,17 @@ extern "C" fn Bun__FakeTimers__setSystemTime(global: &JSGlobalObject, ms: f64) {
     if !this.faked.contains(Api::Date) {
         JSMock__setOverridenDateNow(global, f64::NAN);
     }
+}
+
+/// Returns NaN unless `performance` is replaced.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__FakeTimers__replacedPerformanceNow() -> f64 {
+    // SAFETY: per-thread `timer::All`; field reads only.
+    let this = unsafe { &(*timer_all()).fake_timers };
+    if !this.faked.contains(Api::PerformanceObject) {
+        return f64::NAN;
+    }
+    this.now.ns() as f64 / 1_000_000.0
 }
 
 /// Owners of the nodes [`FakeTimers::clear`] popped, still to be told their
@@ -678,8 +688,7 @@ impl FakeTimers {
             vm.overridden_performance_now = Some(self.now.ns());
             // `Date.now() == date_now_offset + performance.now()`, so the offset is
             // the fake clock's `performance.timeOrigin`.
-            vm.overridden_time_origin =
-                Some(self.fixed_time_origin.unwrap_or(self.date_now_offset));
+            vm.overridden_time_origin = Some(self.date_now_offset);
         }
     }
 
@@ -711,8 +720,6 @@ impl FakeTimers {
         self.loop_limit = options.loop_limit;
         self.now = Timespec::EPOCH;
         self.date_now_offset = date_now.floor();
-        self.fixed_time_origin =
-            (!options.system_time_moves_time_origin).then_some(self.date_now_offset);
         self.publish_clock(global);
     }
 
@@ -873,7 +880,7 @@ impl FakeTimers {
         date_now: f64,
     ) -> JsResult<Vec<AsyncDrive>> {
         bun_jsc::cpp::Bun__FakeTimers__loadNodeTimers(global)?;
-        let replaced = Self::fakes(global, options.faked)?;
+        let replaced = Self::fakes(global, options.faked, date_now.floor())?;
         let drives = Self::uninstall(global, Restore::Always);
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
         unsafe {
@@ -900,7 +907,7 @@ impl FakeTimers {
     }
 
     /// Each `original` is the value `uninstall(Restore::Always)` will leave on the global, never another fake.
-    fn fakes(global: &JSGlobalObject, faked: ApiSet) -> JsResult<Vec<Replaced>> {
+    fn fakes(global: &JSGlobalObject, faked: ApiSet, time_origin: f64) -> JsResult<Vec<Replaced>> {
         let _reading = ReadingGlobals::begin();
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
         let originals = unsafe { (*timer_all()).fake_timers.originals(global) };
@@ -940,7 +947,13 @@ impl FakeTimers {
                 });
                 continue;
             }
-            let fake = bun_jsc::cpp::Bun__FakeTimers__createFunction(global, api as u8)?;
+            let fake = match api {
+                Api::PerformanceObject if !original.is_object() => continue,
+                Api::PerformanceObject => {
+                    bun_jsc::cpp::Bun__FakeTimers__createPerformance(global, original, time_origin)?
+                }
+                _ => bun_jsc::cpp::Bun__FakeTimers__createFunction(global, api as u8)?,
+            };
             Bun__FakeTimers__setOriginal(global, originals, fake, original);
             fakes.push(Replaced {
                 api,
@@ -1618,7 +1631,9 @@ fn use_fake_timers_with_default(
 ) -> JsResult<JSValue> {
     let mut options = Options::from_js(global, frame.argument(0), flavor, faked)?;
     options.fakes_abort_signal_timeout = !is_of_vitest;
-    options.system_time_moves_time_origin = !is_of_vitest;
+    if is_of_vitest && options.faked.contains(Api::Performance) {
+        options.faked.0 ^= 1 << Api::Performance as u16 | 1 << Api::PerformanceObject as u16;
+    }
     let date_now = match flavor {
         // Vitest calls `Date.now()` even when there's a `now` option.
         Flavor::Vi => {

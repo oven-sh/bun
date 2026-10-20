@@ -205,18 +205,8 @@ pub(super) struct FlowMemo {
     /// `getTypeWithFacts`, keyed by the type and the facts, and `getAdjustedTypeWithFacts`, keyed
     /// by the type and the facts with `ADJUSTED` set.
     types_with_facts: instantiate::Recent,
-    /// `getAssignmentReducedType`, keyed by declared and assigned type.
-    assignment_reduced_types: FxHashMap<(TypeId, TypeId), TypeId>,
     /// `getNarrowedType`, keyed by type, candidate, `assumeTrue` and `checkDerived`.
     narrowed_types: FxHashMap<(TypeId, TypeId, bool, bool), TypeId>,
-    /// `narrowTypeByEquality`, keyed by the type, the unmodified type of the other operand, whether
-    /// the operator is `==`, and whether the operands are equal.
-    equal_types: FxHashMap<(TypeId, TypeId, bool, bool), TypeId>,
-    /// `type_of_discriminant`, keyed by the type, the name, `?.` and `!`.
-    discriminant_types: FxHashMap<(TypeId, Atom, bool, bool), Option<(TypeId, bool)>>,
-    /// `members_with_discriminant`, keyed by the type, the name and the narrowed type of the
-    /// property.
-    discriminated_types: FxHashMap<(TypeId, Atom, TypeId), TypeId>,
     /// `flowLoopCache`, keyed by the loop label and `getFlowReferenceKey`: the declared and the
     /// initial type, then the reference.
     flow_loop_cache: FxHashMap<FlowLoopKey, SmallVec<[(Reference, TypeId); 1]>>,
@@ -2615,22 +2605,6 @@ impl<'p, 's> Checker<'p, 's> {
     /// Returns the type that the property `access` reads has in `ty`, and whether it's `never` in
     /// some member. `None` means the property is ignored.
     fn type_of_discriminant(&mut self, ty: TypeId, access: Access) -> Option<(TypeId, bool)> {
-        let key = (ty, access.name, access.optional, access.non_null);
-        if let Some(&known) = self.flow_memo.discriminant_types.get(&key) {
-            return known;
-        }
-        let (found, stored) = self.run_memoizable(|c| c.type_of_discriminant_uncached(ty, access));
-        if stored.is_some() && !self.is_stack_low() {
-            self.flow_memo.discriminant_types.insert(key, found);
-        }
-        found
-    }
-
-    fn type_of_discriminant_uncached(
-        &mut self,
-        ty: TypeId,
-        access: Access,
-    ) -> Option<(TypeId, bool)> {
         let remove_nullable = self.p.files.options.strict_null_checks
             && (access.optional || access.non_null)
             && self.maybe_type_of_kind(ty, tf::NULLABLE);
@@ -2656,24 +2630,14 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Returns the members of `ty` whose property `name` overlaps `narrowed`.
     fn members_with_discriminant(&mut self, ty: TypeId, name: Atom, narrowed: TypeId) -> TypeId {
-        let key = (ty, name, narrowed);
-        if let Some(&known) = self.flow_memo.discriminated_types.get(&key) {
-            return known;
-        }
-        let (left, stored) = self.run_memoizable(|c| {
-            c.filter(ty, |c, m| {
-                let discriminant = c
-                    .type_of_property_or_index_signature_of_type(m, name)
-                    .unwrap_or(TypeId::UNKNOWN);
-                !discriminant.is_never()
-                    && !narrowed.is_never()
-                    && c.are_comparable(narrowed, discriminant)
-            })
-        });
-        if stored.is_some() && !self.is_stack_low() {
-            self.flow_memo.discriminated_types.insert(key, left);
-        }
-        left
+        self.filter(ty, |c, m| {
+            let discriminant = c
+                .type_of_property_or_index_signature_of_type(m, name)
+                .unwrap_or(TypeId::UNKNOWN);
+            !discriminant.is_never()
+                && !narrowed.is_never()
+                && c.are_comparable(narrowed, discriminant)
+        })
     }
 
     // ───────────────────────────── tests ─────────────────────────────
@@ -3472,28 +3436,6 @@ impl<'p, 's> Checker<'p, 's> {
         if value_ty == TypeId::UNRESOLVED {
             return ty;
         }
-        let key = (ty, operand_type, loose, sense);
-        if let Some(&known) = self.flow_memo.equal_types.get(&key) {
-            return known;
-        }
-        let (narrowed, stored) = self
-            .run_memoizable(|c| c.narrow_by_equal_type(ty, operand_type, value_ty, loose, sense));
-        if stored.is_some() && !self.is_stack_low() {
-            self.flow_memo.equal_types.insert(key, narrowed);
-        }
-        narrowed
-    }
-
-    /// Narrows `ty` given whether it's equal (`sense`) to a value of type `operand_type`.
-    /// `value_ty` is the same type as an annotation would denote it. `loose` means `==` semantics.
-    fn narrow_by_equal_type(
-        &mut self,
-        ty: TypeId,
-        operand_type: TypeId,
-        value_ty: TypeId,
-        loose: bool,
-        sense: bool,
-    ) -> TypeId {
         if value_ty.is_null() || value_ty.is_undefined() {
             if !self.p.files.options.strict_null_checks {
                 return ty;
@@ -6853,20 +6795,6 @@ impl<'p, 's> Checker<'p, 's> {
         if assigned.is_never() {
             return assigned;
         }
-        let key = (declared, assigned);
-        if let Some(&known) = self.flow_memo.assignment_reduced_types.get(&key) {
-            return known;
-        }
-        let (reduced, stored) =
-            self.run_memoizable(|c| c.assignment_reduced_type_uncached(declared, assigned));
-        if stored.is_some() {
-            self.flow_memo.assignment_reduced_types.insert(key, reduced);
-        }
-        reduced
-    }
-
-    /// `getAssignmentReducedTypeWorker`
-    fn assignment_reduced_type_uncached(&mut self, declared: TypeId, assigned: TypeId) -> TypeId {
         // A fresh `true` or `false` narrows to fresh types: `var n = s` then widens it.
         let is_fresh_boolean =
             matches!(*self.data(assigned), TypeData::BoolLit { fresh: true, .. });

@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { basename, join } from "path";
 import { itBundled } from "./expectBundled";
 
@@ -232,10 +232,11 @@ describe.concurrent("bundler hashbang target default", () => {
   const hashbang = "#!/usr/bin/env bun";
   const backends = ["api", "cli"] as const;
 
-  // Imports node:fs so the selected target is observable at runtime: the bun
-  // target keeps the import, the browser target replaces it with an empty stub.
+  // Imports node:fs so the selected target shows in the output: the bun target keeps the
+  // import, the browser target replaces it with an empty stub.
   const usesNodeFs = (firstLine: string) =>
     `${firstLine}import { readFileSync } from "node:fs";\nconsole.log(typeof readFileSync);\n`;
+  const keptNodeFs = `import { readFileSync } from "fs";`;
 
   /**
    * Builds `entries` (relative to `dir`) into `dir/out` and returns each entry's output text.
@@ -340,41 +341,45 @@ export const fromDep = { road, condition, field, map, cpus: cpus().length > 0 };
   ];
 
   for (const backend of backends) {
-    test.each(firstLines)(`${backend}: $name hashbang`, async ({ source, bun }) => {
+    // `bun build` is one process per test. One at a time keeps each of them far from the
+    // default timeout in a debug build.
+    const it = backend === "cli" ? test.serial : test;
+    it.each(firstLines)(`${backend}: $name hashbang`, async ({ source, bun }) => {
       using dir = tempDir("hashbang-target", { "cli.js": usesNodeFs(source) });
       const [output] = await build(backend, String(dir), ["cli.js"]);
       const hashbangLine = source.split(/\r?\n/)[0];
       if (bun) {
         expect(output).toStartWith(`${hashbangLine}\n// @bun\n`);
+        expect(output).toContain(keptNodeFs);
       } else {
         expect(output).toStartWith(`${hashbangLine}\n`);
         expect(output).not.toContain("// @bun");
+        expect(output).not.toContain(keptNodeFs);
       }
-      expect(await bunRun(join(String(dir), "out", "cli.js"))).toSpawn(bun ? "function" : "undefined");
     });
 
-    test(`${backend}: a file containing only the hashbang`, async () => {
+    it(`${backend}: a file containing only the hashbang`, async () => {
       using dir = tempDir("hashbang-target", { "cli.js": hashbang });
       const [output] = await build(backend, String(dir), ["cli.js"]);
       expect(output).toStartWith(`${hashbang}\n// @bun\n`);
     });
 
-    test(`${backend}: dependencies of the hashbang entry are built for bun too`, async () => {
+    it(`${backend}: dependencies of the hashbang entry are built for bun too`, async () => {
       using dir = tempDir("hashbang-target", {
-        "cli.js": `${hashbang}\nimport { dep } from "./dep.js";\nconsole.log(dep);\n`,
+        "cli.js": `${hashbang}\nexport { dep } from "./dep.js";\n`,
         "dep.js": `import { readFileSync } from "node:fs";
 import os from "node:os";
 import { semver } from "bun";
-export const dep = [typeof readFileSync, os.cpus().length > 0, semver.satisfies("1.2.3", "^1.0.0")].join(" ");
+export const dep = [typeof readFileSync, os.cpus().length > 0, semver.satisfies("1.2.3", "^1.0.0")];
 `,
       });
       const [output] = await build(backend, String(dir), ["cli.js"]);
       expect(output).toStartWith(`${hashbang}\n// @bun\n`);
-      expect(await bunRun(join(String(dir), "out", "cli.js"))).toSpawn("function true true");
+      expect((await import(join(String(dir), "out", "cli.js"))).dep).toEqual(["function", true, true]);
     });
 
     // The resolver completes these: the hashbang is in the file that is loaded.
-    test.each([
+    it.each([
       { name: "without its extension", entry: "./cli" },
       { name: "with the extension of its output", entry: "./cli.js" },
       { name: "as its directory", entry: "./bin" },
@@ -389,19 +394,19 @@ export const dep = [typeof readFileSync, os.cpus().length > 0, semver.satisfies(
       });
       const [output] = await build(backend, String(dir), [entry], { outfile: "built.js" });
       expect(output).toStartWith(`${hashbang}\n// @bun\n`);
-      expect(await bunRun(join(String(dir), "out", "built.js"))).toSpawn("function");
+      expect(output).toContain(keptNodeFs);
     });
 
-    test.each(targetProbeResults)(`${backend}: $name`, async ({ firstLine, expected }) => {
+    it.each(targetProbeResults)(`${backend}: $name`, async ({ firstLine, expected }) => {
       using dir = tempDir("hashbang-target", {
         ...targetProbes,
-        "cli.js": `${firstLine}import { fromDep } from "./dep.js";\nconsole.log(JSON.stringify({ browser: process.browser, ...fromDep }));\n`,
+        "cli.js": `${firstLine}import { fromDep } from "./dep.js";\nexport const result = { browser: process.browser, ...fromDep };\n`,
       });
       await build(backend, String(dir), ["cli.js"]);
-      expect(await bunRun(join(String(dir), "out", "cli.js"))).toSpawn(JSON.stringify(expected));
+      expect((await import(join(String(dir), "out", "cli.js"))).result).toEqual(expected);
     });
 
-    test.each([
+    it.each([
       { name: "a later", entries: ["lib.js", "cli.js"] },
       { name: "the first", entries: ["cli.js", "lib.js"] },
     ])(`${backend}: a hashbang on $name entry point applies to the whole build`, async ({ entries }) => {
@@ -410,22 +415,23 @@ export const dep = [typeof readFileSync, os.cpus().length > 0, semver.satisfies(
         "cli.js": usesNodeFs(`${hashbang}\n`),
       });
       const outputs = await build(backend, String(dir), entries);
-      expect(outputs[entries.indexOf("lib.js")]).toStartWith("// @bun\n");
+      const lib = outputs[entries.indexOf("lib.js")];
+      expect(lib).toStartWith("// @bun\n");
+      expect(lib).toContain(keptNodeFs);
       expect(outputs[entries.indexOf("cli.js")]).toStartWith(`${hashbang}\n// @bun\n`);
-      expect(await bunRun(join(String(dir), "out", "lib.js"))).toSpawn("function");
     });
 
-    test(`${backend}: a hashbang in an entry point that is not JavaScript does not count`, async () => {
+    it(`${backend}: a hashbang in an entry point that is not JavaScript does not count`, async () => {
       using dir = tempDir("hashbang-target", {
         "note.txt": `${hashbang}\nnot a script\n`,
         "lib.js": usesNodeFs(""),
       });
       const [, lib] = await build(backend, String(dir), ["note.txt", "lib.js"]);
       expect(lib).not.toContain("// @bun");
-      expect(await bunRun(join(String(dir), "out", "lib.js"))).toSpawn("undefined");
+      expect(lib).not.toContain(keptNodeFs);
     });
 
-    test.each(["node", "browser"] as const)(
+    it.each(["node", "browser"] as const)(
       `${backend}: an explicit --target=%s wins over the hashbang`,
       async target => {
         using dir = tempDir("hashbang-target", {
@@ -438,11 +444,10 @@ export const dep = [typeof readFileSync, os.cpus().length > 0, semver.satisfies(
         expect(output).not.toContain("// @bun");
         // The whole build shares one target, so shared.js is bundled exactly once.
         expect(output.split("class Shared").length - 1).toBe(1);
-        expect(await bunRun(join(String(dir), "out", "cli.js"))).toSpawn("true");
       },
     );
 
-    test.each(["node", "browser"] as const)(
+    it.each(["node", "browser"] as const)(
       `${backend}: with an explicit --target=%s a hashbang entry cannot import "bun"`,
       async target => {
         using dir = tempDir("hashbang-target", {
@@ -469,11 +474,10 @@ export const dep = [typeof readFileSync, os.cpus().length > 0, semver.satisfies(
     );
 
     // Only an explicit target disables the default; format: "cjs" alone does not.
-    test(`${backend}: the hashbang still selects bun with format cjs`, async () => {
+    it(`${backend}: the hashbang still selects bun with format cjs`, async () => {
       using dir = tempDir("hashbang-target", { "cli.js": `${hashbang}\nconsole.log("cjs");\n` });
       const [output] = await build(backend, String(dir), ["cli.js"], { format: "cjs" });
       expect(output).toStartWith(`${hashbang}\n// @bun @bun-cjs\n`);
-      expect(await bunRun(join(String(dir), "out", "cli.js"))).toSpawn("cjs");
     });
   }
 

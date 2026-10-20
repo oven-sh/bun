@@ -1100,7 +1100,7 @@ fn prefetch_manifest(
     let cached: Option<Npm::PackageManifest> = match cached {
         Some(_) if !expired => return ManifestState::Ready,
         // `bind_row` takes an exact version from an expired manifest without asking the registry.
-        // For the peers where it does ask, it sends the request itself.
+        // For a peer that has to agree with other packages, `bind_row` sends the request itself.
         Some(manifest) => {
             if exact().is_some_and(|exact| manifest.find_by_version(exact).is_some()) {
                 return ManifestState::Unavailable;
@@ -3583,9 +3583,11 @@ fn get_or_put_resolved_package(
             {
                 return bind_existing(this, dependency_id, id, success_fn);
             } else {
-                shared_range = (!peer_ranges.is_empty())
-                    .then(|| range_most_peers_accept(this, manifest, dependency))
-                    .flatten();
+                shared_range = if peer_ranges.is_empty() {
+                    None
+                } else {
+                    range_most_peers_accept(this, manifest, dependency)
+                };
                 version = shared_range.as_ref().unwrap_or(version);
                 manifest.find_for_dependency(
                     version,
@@ -4414,7 +4416,11 @@ fn range_most_peers_accept(
     let resolutions = lockfile.packages.items_resolution();
     let askers: Vec<_> = (peer_askers(this, peer.name_hash).iter())
         .filter_map(|&(_, id, owner, has_no_provider)| {
-            let range = asker_range(lockfile, id).filter(|_| has_no_provider)?;
+            // A package that has a provider uses the provider's version.
+            if !has_no_provider {
+                return None;
+            }
+            let range = asker_range(lockfile, id)?;
             let found = manifest.find_for_dependency(
                 &range,
                 buf,
@@ -4422,14 +4428,13 @@ fn range_most_peers_accept(
                 this.options.minimum_release_age_excludes,
             );
             let newest = found.unwrap()?.version;
-            // A package that has a provider uses the provider's version.
+            // The project's own peers provide too. `has_no_provider` is from before they resolve.
             let provider = peer_provided_from_above(lockfile, peer.name_hash, id);
             (provider.is_none()).then_some((owner as usize, range, newest))
         })
         .collect();
     (askers.iter())
-        // Of the versions of one package, only the lowest proposes its range. Deduplication can
-        // still drop a higher one.
+        // Dedupe can still drop the higher versions of a package, so only the lowest proposes.
         .filter(|&&(owner, ..)| {
             !(askers.iter()).any(|&(other, ..)| {
                 names[other] == names[owner]
@@ -4442,12 +4447,12 @@ fn range_most_peers_accept(
             let accepting = (askers.iter())
                 .filter(|other| other.1.npm().version.satisfies(*newest, buf, versions))
                 .count();
-            // The package is `exact_pinned` if one of the ranges that pick it is exact.
             (accepting, *newest, range.npm().version.is_exact(), range)
         })
         .max_by(|a, b| {
             (a.0.cmp(&b.0))
                 .then_with(|| a.1.order(b.1, versions, versions))
+                // An exact range makes the package `exact_pinned`, in whatever order they come.
                 .then(a.2.cmp(&b.2))
         })
         .map(|(.., range)| range.clone())

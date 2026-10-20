@@ -4053,8 +4053,8 @@ type OrderedShape = {
 };
 const zVersions = { "1.0.0": {}, "1.0.5": {}, "1.1.0": {}, "2.0.0": {} };
 
-// The manifests of the packages in `broken` are not JSON. `time` has the publish dates, by package and version.
-// `headers` go on every manifest.
+// The manifests of the packages in `broken` are not JSON. `time` has the publish dates, by package and
+// version. `headers` go on every manifest.
 async function registryWithHolds(
   manifests: OrderedManifests,
   {
@@ -4572,15 +4572,15 @@ it.each<OrderedShape>([
 
 // Renames every package in `value`, where the names are keys: of the manifests and of the dependency groups.
 function renamed<T>(value: T, names: Record<string, string>): T {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+  if (typeof value !== "object" || value === null) return value;
   return Object.fromEntries(
     Object.entries(value).map(([key, inner]) => [names[key] ?? key, renamed(inner, names)]),
   ) as T;
 }
 
-// No version of v satisfies a, b and c. y is installed for d's peer dependency, after v, and its `*` only shares v@2.0.0
-// if a package asks for exactly that version. Otherwise it picks v@3.0.0 first, which brings z@1.0.0 for t to share.
-// y ends up with v@2.0.0 both times, so only z tells them apart.
+// No version of v satisfies a, b and c. y is installed for d's peer dependency, after v, and its `*` only shares
+// v@2.0.0 if a package asks for exactly that version. Otherwise it picks v@3.0.0 first, which brings z@1.0.0 for t to
+// share. y ends up with v@2.0.0 both times, so only z tells them apart.
 const exactPeerManifests = (rangeOfB: string): OrderedManifests => ({
   a: { "1.0.0": { peerDependencies: { v: "1.0.0" } } },
   b: { "1.0.0": { peerDependencies: { v: rangeOfB } } },
@@ -4611,7 +4611,7 @@ it.concurrent.each<{
     },
     root: ["a", "b"],
     swap: ["a", "b"],
-    z: ["2.0.0"],
+    z: ["z@2.0.0"],
   },
   {
     shape: "no version satisfies all three ranges, one satisfies two",
@@ -4623,7 +4623,7 @@ it.concurrent.each<{
     },
     root: ["a", "b", "c"],
     swap: ["a", "c"],
-    z: ["1.0.5"],
+    z: ["z@1.0.5"],
   },
   {
     shape: "three packages have one range and one package has another",
@@ -4636,7 +4636,7 @@ it.concurrent.each<{
     },
     root: ["a", "b", "c", "d"],
     swap: ["a", "d"],
-    z: ["1.1.0"],
+    z: ["z@1.1.0"],
   },
   {
     shape: "of two versions of one package, only the lowest proposes its range",
@@ -4648,11 +4648,11 @@ it.concurrent.each<{
     },
     root: ["a", "b"],
     swap: ["a", "b"],
-    z: ["1.1.0"],
+    z: ["z@1.1.0"],
   },
   {
-    // a gets g@2.0.0 first. Deduplication replaces it with g@1.2.0, so only that one is left with the peer.
-    shape: "deduplication drops the higher of two versions of one package",
+    // a gets g@2.0.0 first. The collapse replaces it with g@1.2.0, so only that one is left with the peer.
+    shape: "the collapse drops the higher of two versions of one package",
     manifests: {
       a: { "1.0.0": { dependencies: { g: ">=1.0.0" } } },
       b: { "1.0.0": { dependencies: { g: "^1.0.0" } } },
@@ -4661,7 +4661,7 @@ it.concurrent.each<{
     },
     root: ["a", "b"],
     swap: ["a", "b"],
-    z: ["1.1.0"],
+    z: ["z@1.1.0"],
   },
   {
     shape: "the higher of two versions of one package counts for the range of another package",
@@ -4674,34 +4674,34 @@ it.concurrent.each<{
     },
     root: ["a", "b", "c"],
     swap: ["c", "g"],
-    z: ["1.1.0"],
+    z: ["z@1.1.0"],
   },
   {
-    shape: "a version counts next to a lower one without the peer",
+    shape: "a version proposes its range next to a lower one without the peer",
     manifests: {
       a: { "1.0.0": { dependencies: { g: "2.0.0" } } },
       b: { "1.0.0": { dependencies: { g: "1.0.0" }, peerDependencies: { z: "^1.0.0" } } },
       c: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
-      g: { "1.0.0": {}, "2.0.0": { peerDependencies: { z: "^1.0.0" } } },
+      g: { "1.0.0": {}, "2.0.0": { peerDependencies: { z: "~1.0.0" } } },
       z: zVersions,
     },
     root: ["a", "b", "c"],
     swap: ["b", "c"],
-    z: ["1.1.0"],
+    z: ["z@1.0.5"],
   },
   {
     shape: "an exact range loses, so the shared version isn't one that a package asks for exactly",
     manifests: exactPeerManifests("^2.0.0"),
     root: ["a", "b", "c", "d"],
     swap: ["a", "c"],
-    z: ["1.0.0"],
+    z: ["z@1.0.0"],
   },
   {
     shape: "an exact range and a wider one pick the shared version",
     manifests: exactPeerManifests("2.0.0"),
     root: ["a", "b", "c", "d"],
     swap: ["a", "c"],
-    z: ["2.0.0"],
+    z: ["z@2.0.0"],
   },
   {
     // b uses the provider's version wherever it's loaded, so its range doesn't choose a version for a.
@@ -4714,7 +4714,7 @@ it.concurrent.each<{
     },
     root: ["a", "b", "provider"],
     swap: ["a", "b"],
-    z: ["1.0.5", "1.1.0"],
+    z: ["z@1.0.5", "z@1.1.0"],
   },
 ])("a fresh install resolves peers the same way whatever the packages are called: $shape", async shape => {
   const [first, second] = shape.swap;
@@ -4722,8 +4722,7 @@ it.concurrent.each<{
     using server = (await registryWithHolds(renamed(shape.manifests, names))).server;
     const dependencies = Object.fromEntries(shape.root.map(name => [name, "1.0.0"]));
     const lock = await freshInstallLock(server, { "package.json": renamed({ name: "foo", dependencies }, names) });
-    const installed = Object.values(instancesOf(lock, "z")).map(id => id.slice(id.indexOf("@", 1) + 1));
-    expect({ names, z: [...new Set(installed)].sort() }).toEqual({ names, z: shape.z });
+    expect({ names, z: [...new Set(Object.values(instancesOf(lock, "z")))].sort() }).toEqual({ names, z: shape.z });
   }
 });
 
@@ -4797,10 +4796,10 @@ it.concurrent.each([
       stderr: "pipe",
     });
     const [err, code] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(err.split("\n").filter(line => line.startsWith("warn:"))).toEqual([
-      `warn: incorrect peer dependency "z@1.1.0": "${unmet}@1.0.0" requires "z@${range}"`,
-    ]);
-    expect(code).toBe(0);
+    expect({ warnings: err.split("\n").filter(line => line.startsWith("warn:")), code }).toEqual({
+      warnings: [`warn: incorrect peer dependency "z@1.1.0": "${unmet}@1.0.0" requires "z@${range}"`],
+      code: 0,
+    });
   },
 );
 

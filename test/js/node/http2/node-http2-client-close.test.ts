@@ -5,11 +5,15 @@
  * Once the peer's half has ended (END_STREAM on a HEADERS frame, or a server push, which has no
  * inbound half) the readable already has its EOF, so 'end' comes first for every code.
  *
+ * After the close, frames that the peer still sends on the stream get no reply (RFC 9113 5.1).
+ *
  * Works with both:
  *   bun bd test test/js/node/http2/node-http2-client-close.test.ts
  *   node --test test/js/node/http2/node-http2-client-close.test.ts
  */
 import assert from "node:assert";
+import { spawn, type ChildProcess } from "node:child_process";
+import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
 import { describe, test } from "node:test";
@@ -322,14 +326,623 @@ for (const [site, table] of [
   }
 }
 
+// A raw h2c server for one connection. The test writes its frames and reads what the client sent.
+type WireFrame = { type: number; flags: number; id: number; payload: Buffer };
+const T = { DATA: 0, HEADERS: 1, RST_STREAM: 3, SETTINGS: 4, PING: 6, GOAWAY: 7, WINDOW_UPDATE: 8, CONTINUATION: 9 };
+const END_STREAM = 0x1;
+const END_HEADERS = 0x4;
+const ACK = 0x1;
+
+function wire(type: number, flags: number, id: number, payload: Buffer = Buffer.alloc(0)): Buffer {
+  const header = Buffer.alloc(9);
+  header.writeUIntBE(payload.length, 0, 3);
+  header[3] = type;
+  header[4] = flags;
+  header.writeUInt32BE(id, 5);
+  return Buffer.concat([header, payload]);
+}
+function u32(value: number): Buffer {
+  const b = Buffer.alloc(4);
+  b.writeUInt32BE(value);
+  return b;
+}
+/** An HPACK literal field that the decoder adds to its dynamic table. */
+function indexedLiteral(name: string, value: string): Buffer {
+  return Buffer.concat([
+    Buffer.from([0x40, name.length]),
+    Buffer.from(name),
+    Buffer.from([value.length]),
+    Buffer.from(value),
+  ]);
+}
+const STATUS_200 = Buffer.from([0x88]);
+const responseHeaders = (id: number, flags = END_HEADERS) => wire(T.HEADERS, flags, id, STATUS_200);
+const data = (id: number, body: string | Buffer, flags = 0) => wire(T.DATA, flags, id, Buffer.from(body));
+const windowUpdate = (id: number, increment: number) => wire(T.WINDOW_UPDATE, 0, id, u32(increment));
+const rstStream = (id: number, code: number) => wire(T.RST_STREAM, 0, id, u32(code));
+
+class RawPeer {
+  server: net.Server;
+  socket: net.Socket | undefined;
+  port = 0;
+  frames: WireFrame[] = [];
+  #pings = 0;
+  #waiters: { matches: (f: WireFrame) => boolean; resolve: () => void }[] = [];
+
+  constructor(server: net.Server) {
+    this.server = server;
+  }
+
+  static async listen(): Promise<RawPeer> {
+    const peer = new RawPeer(net.createServer());
+    peer.server.on("connection", socket => {
+      peer.socket = socket;
+      socket.setNoDelay(true);
+      let buffered = Buffer.alloc(0);
+      let preface = 24;
+      socket.on("error", () => {});
+      socket.on("data", (chunk: Buffer) => {
+        buffered = Buffer.concat([buffered, chunk]);
+        if (preface > 0) {
+          if (buffered.length < preface) return;
+          buffered = buffered.subarray(preface);
+          preface = 0;
+        }
+        while (buffered.length >= 9) {
+          const length = buffered.readUIntBE(0, 3);
+          if (buffered.length < 9 + length) break;
+          const frame = {
+            type: buffered[3],
+            flags: buffered[4],
+            id: buffered.readUInt32BE(5) & 0x7fffffff,
+            payload: buffered.subarray(9, 9 + length),
+          };
+          buffered = buffered.subarray(9 + length);
+          peer.frames.push(frame);
+          peer.#waiters = peer.#waiters.filter(w => !(w.matches(frame) && (w.resolve(), true)));
+        }
+      });
+    });
+    peer.port = await listen(peer.server);
+    return peer;
+  }
+
+  /** One write, so that the client gets these frames in one read. */
+  write(...frames: Buffer[]) {
+    this.socket!.write(Buffer.concat(frames));
+  }
+
+  /** Resolves once the client has sent a frame that matches. */
+  async until(matches: (f: WireFrame) => boolean): Promise<void> {
+    if (this.frames.some(matches)) return;
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const timer = setTimeout(() => reject(new Error("the client did not send the frame")), 10_000);
+    this.#waiters.push({ matches, resolve });
+    await promise.finally(() => clearTimeout(timer));
+  }
+  untilReset(id: number) {
+    return this.until(f => f.type === T.RST_STREAM && f.id === id);
+  }
+
+  /** Two PING round trips: what the client wrote while it read the frames before is here. */
+  async settle() {
+    for (let i = 0; i < 2; i++) {
+      const opaque = Buffer.alloc(8);
+      opaque.writeUInt32BE(++this.#pings, 4);
+      this.write(wire(T.PING, 0, 0, opaque));
+      await this.until(f => f.type === T.PING && (f.flags & ACK) !== 0 && f.payload.equals(opaque));
+    }
+  }
+
+  /** Every RST_STREAM, GOAWAY and stream WINDOW_UPDATE of the client, and whether it gave connection credit. */
+  sent(): string[] {
+    const out: string[] = [];
+    for (const f of this.frames) {
+      if (f.type === T.RST_STREAM) out.push(`RST_STREAM ${f.id} code=${f.payload.readUInt32BE(0)}`);
+      else if (f.type === T.GOAWAY) out.push(`GOAWAY code=${f.payload.readUInt32BE(4)}`);
+      else if (f.type === T.WINDOW_UPDATE && f.id !== 0) out.push(`WINDOW_UPDATE ${f.id}`);
+      else if (f.type === T.WINDOW_UPDATE && !out.includes("WINDOW_UPDATE 0")) out.push("WINDOW_UPDATE 0");
+    }
+    return out;
+  }
+
+  close() {
+    this.socket?.destroy();
+    this.server.close();
+  }
+}
+
+describe("frames on a stream that the client closed get no reply", () => {
+  type Ctx = {
+    peer: RawPeer;
+    client: http2.ClientHttp2Session;
+    req: http2.ClientHttp2Stream;
+    /** Resolves at the 'close' event of `req`. */
+    reqClosed: Promise<void>;
+    events: string[];
+  };
+  const ignoreErrors = (stream: http2.ClientHttp2Stream) => stream.on("error", () => {});
+  const closed = (emitter: http2.ClientHttp2Stream | http2.ClientHttp2Session) =>
+    new Promise<void>(resolve => emitter.once("close", () => resolve()));
+  // Until the stream emits 'close' the client can write its reset a second time. That frame is
+  // not a reply to a late frame, so the peer waits for 'close' before it sends one.
+  const reset = async ({ req, peer, reqClosed }: Ctx, code = NGHTTP2_CANCEL) => {
+    req.close(code);
+    await peer.untilReset(1);
+    await reqClosed;
+  };
+  const lateBody = [data(1, "late "), data(1, "body", END_STREAM)];
+  const lateResponse = [responseHeaders(1), ...lateBody];
+  const trailers = wire(T.HEADERS, END_HEADERS | END_STREAM, 1, indexedLiteral("x-trailer", "1"));
+  // An uppercase field name makes the block malformed (RFC 9113 8.2.1).
+  const malformed = Buffer.concat([
+    STATUS_200,
+    Buffer.from([0x00, 1]),
+    Buffer.from("X"),
+    Buffer.from([1]),
+    Buffer.from("y"),
+  ]);
+  const altSvc = (id: number) => wire(0xa, 0, id, Buffer.concat([Buffer.from([0, 0]), Buffer.from('h2=":443"')]));
+  const chunk = data(1, Buffer.alloc(16_384));
+  const finished = responseHeaders(1, END_HEADERS | END_STREAM);
+  const aborter = new AbortController();
+
+  type Case = {
+    name: string;
+    options?: http2.ClientSessionRequestOptions;
+    /** Closes stream 1. The default is close(NGHTTP2_CANCEL). */
+    close?: (ctx: Ctx) => Promise<void> | void;
+    /** What the peer sends after that, in one write. */
+    late: Buffer[];
+    /** The RST_STREAM, GOAWAY and WINDOW_UPDATE frames that the client sends after the late frames. */
+    reply?: string[];
+    events?: string[];
+  };
+  const cases: Case[] = [
+    { name: "close(NGHTTP2_CANCEL), then the whole response", late: lateResponse },
+    {
+      name: "close(NGHTTP2_CANCEL) after 'response', then the body",
+      async close(ctx) {
+        ctx.peer.write(responseHeaders(1));
+        await new Promise(resolve => ctx.req.once("response", resolve));
+        await reset(ctx);
+      },
+      late: lateBody,
+      events: ["response"],
+    },
+    {
+      name: "close(NGHTTP2_CANCEL), then the response and its trailers",
+      late: [responseHeaders(1), data(1, "late "), data(1, "body"), trailers],
+    },
+    {
+      name: "close(NGHTTP2_CANCEL), then a response split over CONTINUATION",
+      late: [
+        responseHeaders(1, 0),
+        wire(T.CONTINUATION, END_HEADERS, 1, indexedLiteral("x-late", "1")),
+        data(1, "late", END_STREAM),
+      ],
+    },
+    {
+      name: "close(NGHTTP2_CANCEL), then 48 KiB of DATA",
+      late: [responseHeaders(1), chunk, chunk, chunk],
+      reply: ["WINDOW_UPDATE 0"],
+    },
+    {
+      name: "close(NGHTTP2_CANCEL), then WINDOW_UPDATE and RST_STREAM",
+      late: [windowUpdate(1, 0), windowUpdate(1, 100), rstStream(1, NGHTTP2_NO_ERROR), rstStream(1, NGHTTP2_CANCEL)],
+    },
+    {
+      name: "close(NGHTTP2_NO_ERROR), then the whole response",
+      close: ctx => reset(ctx, NGHTTP2_NO_ERROR),
+      late: lateResponse,
+    },
+    {
+      name: "destroy(), then the whole response",
+      async close(ctx) {
+        ctx.req.destroy();
+        await ctx.peer.untilReset(1);
+        await ctx.reqClosed;
+      },
+      late: lateResponse,
+    },
+    {
+      name: "an aborted signal, then the whole response",
+      options: { signal: aborter.signal },
+      async close(ctx) {
+        aborter.abort();
+        await ctx.peer.untilReset(1);
+        await ctx.reqClosed;
+      },
+      late: lateResponse,
+      events: ["error:ABORT_ERR"],
+    },
+    {
+      name: "setNextStreamID() with a lower id, close(NGHTTP2_CANCEL), then the whole response",
+      close(ctx) {
+        // @types/node does not declare setNextStreamID().
+        (ctx.client as http2.ClientHttp2Session & { setNextStreamID(id: number): void }).setNextStreamID(1);
+        return reset(ctx);
+      },
+      late: lateResponse,
+    },
+    {
+      name: "a second response after the stream finished",
+      async close(ctx) {
+        ctx.peer.write(finished);
+        await ctx.reqClosed;
+      },
+      late: lateResponse,
+      events: ["response"],
+    },
+    // In the next three, the late frame is in the read that finishes the stream.
+    {
+      name: "a second response in the read that finished the stream",
+      close() {},
+      late: [finished, responseHeaders(1)],
+      events: ["response"],
+    },
+    {
+      name: "DATA in the read that finished the stream",
+      close() {},
+      late: [finished, data(1, "late")],
+      events: ["response"],
+    },
+    {
+      name: "WINDOW_UPDATE with a 0 increment in the read that finished the stream",
+      close() {},
+      late: [finished, windowUpdate(1, 0)],
+      events: ["response"],
+    },
+    {
+      name: "a response after the server's RST_STREAM",
+      async close(ctx) {
+        ctx.peer.write(rstStream(1, NGHTTP2_CANCEL));
+        await ctx.reqClosed;
+      },
+      late: lateResponse,
+    },
+    {
+      name: "a malformed response, then its body and trailers",
+      async close(ctx) {
+        ctx.peer.write(wire(T.HEADERS, END_HEADERS, 1, malformed));
+        await ctx.peer.untilReset(1);
+        await ctx.reqClosed;
+      },
+      late: [data(1, "late "), data(1, "body"), trailers],
+      events: ["error:ERR_HTTP2_STREAM_ERROR"],
+    },
+    {
+      name: "ALTSVC before and after close(NGHTTP2_CANCEL)",
+      async close(ctx) {
+        ctx.client.on("altsvc", (_alt, _origin, id) => ctx.events.push("altsvc:" + id));
+        ctx.peer.write(altSvc(1));
+        await ctx.peer.settle();
+        await reset(ctx);
+      },
+      late: [altSvc(1)],
+      events: ["altsvc:1"],
+    },
+  ];
+
+  async function openRequest(options?: http2.ClientSessionRequestOptions): Promise<Ctx> {
+    const peer = await RawPeer.listen();
+    const client = http2.connect(`http://127.0.0.1:${peer.port}`);
+    client.on("error", () => {});
+    const events: string[] = [];
+    const req = client.request({ ":path": "/" }, options);
+    const reqClosed = closed(req);
+    req.on("response", () => events.push("response"));
+    req.on("data", () => events.push("data"));
+    req.on("error", e => events.push("error:" + (e as NodeJS.ErrnoException).code));
+    await peer.until(f => f.type === T.HEADERS && f.id === 1);
+    peer.write(wire(T.SETTINGS, 0, 0), wire(T.SETTINGS, ACK, 0));
+    await peer.settle();
+    return { peer, client, req, reqClosed, events };
+  }
+
+  /** The late frames did not count as an open stream if close() completes. */
+  async function closeSession(client: http2.ClientHttp2Session) {
+    const sessionClosed = closed(client);
+    client.close();
+    await sessionClosed;
+  }
+  function cleanUp({ client, peer }: Pick<Ctx, "client" | "peer">) {
+    client.destroy();
+    peer.close();
+  }
+
+  for (const { name, options, close = reset, late, reply = [], events = [] } of cases) {
+    test(name, async () => {
+      const ctx = await openRequest(options);
+      try {
+        await close(ctx);
+        await ctx.peer.settle();
+        const before = ctx.peer.sent().length;
+        ctx.peer.write(...late);
+        await ctx.reqClosed;
+        await ctx.peer.settle();
+        assert.deepStrictEqual({ reply: ctx.peer.sent().slice(before), events: ctx.events }, { reply, events });
+        await closeSession(ctx.client);
+      } finally {
+        cleanUp(ctx);
+      }
+    });
+  }
+
+  test("the client decodes a header block that it drops", async () => {
+    const ctx = await openRequest();
+    try {
+      await reset(ctx);
+      await ctx.peer.settle();
+      const before = ctx.peer.sent().length;
+      const block = Buffer.concat([STATUS_200, indexedLiteral("x-late", "1")]);
+      ctx.peer.write(wire(T.HEADERS, END_HEADERS | END_STREAM, 1, block));
+      await ctx.peer.settle();
+      // This response names "x-late: 1" by the index that the dropped block gave it.
+      const next = ignoreErrors(ctx.client.request({ ":path": "/" }));
+      const response = new Promise<http2.IncomingHttpHeaders>(resolve => next.once("response", resolve));
+      await ctx.peer.until(f => f.type === T.HEADERS && f.id === 3);
+      ctx.peer.write(wire(T.HEADERS, END_HEADERS | END_STREAM, 3, Buffer.from([0x88, 0xbe])));
+      assert.strictEqual((await response)["x-late"], "1");
+      next.resume();
+      await closed(next);
+      assert.deepStrictEqual(ctx.peer.sent().slice(before), []);
+      await closeSession(ctx.client);
+    } finally {
+      cleanUp(ctx);
+    }
+  });
+
+  test("ALTSVC on a stream that was never opened is not reported", async () => {
+    const ctx = await openRequest();
+    try {
+      ctx.client.on("altsvc", (_alt, _origin, id) => ctx.events.push("altsvc:" + id));
+      // Stream 1 is open. 99 is above every request, and no PUSH_PROMISE reserved 2.
+      ctx.peer.write(altSvc(99), altSvc(2), altSvc(1));
+      await ctx.peer.settle();
+      assert.deepStrictEqual({ sent: ctx.peer.sent(), events: ctx.events }, { sent: [], events: ["altsvc:1"] });
+    } finally {
+      cleanUp(ctx);
+    }
+  });
+
+  test("RST_STREAM on an even id that no PUSH_PROMISE reserved ends the session", async () => {
+    const ctx = await openRequest();
+    const sessionError = new Promise<NodeJS.ErrnoException>(resolve => ctx.client.once("error", resolve));
+    try {
+      // A second request: the even id is below a request id, which does not make it a closed stream.
+      ignoreErrors(ctx.client.request({ ":path": "/" }));
+      await ctx.peer.until(f => f.type === T.HEADERS && f.id === 3);
+      ctx.peer.write(rstStream(2, NGHTTP2_CANCEL));
+      assert.strictEqual((await sessionError).code, "ERR_HTTP2_ERROR");
+      await ctx.peer.until(f => f.type === T.GOAWAY);
+    } finally {
+      cleanUp(ctx);
+    }
+  });
+
+  // Guard for the other side of the rule: a stream that still uploads is open, not closed.
+  for (const when of ["the same read", "a later read"]) {
+    test(`a second response in ${when} on a request that still uploads ends the session`, async () => {
+      const peer = await RawPeer.listen();
+      const client = http2.connect(`http://127.0.0.1:${peer.port}`);
+      const sessionError = new Promise<NodeJS.ErrnoException>(resolve => client.once("error", resolve));
+      try {
+        ignoreErrors(client.request({ ":path": "/", ":method": "POST" })).resume();
+        await peer.until(f => f.type === T.HEADERS && f.id === 1);
+        peer.write(wire(T.SETTINGS, 0, 0), wire(T.SETTINGS, ACK, 0));
+        await peer.settle();
+        const first = responseHeaders(1, END_HEADERS | END_STREAM);
+        if (when === "the same read") peer.write(first, responseHeaders(1));
+        else {
+          peer.write(first);
+          await peer.settle();
+          peer.write(responseHeaders(1));
+        }
+        const err = await sessionError;
+        assert.deepStrictEqual(
+          { code: err.code, message: err.message },
+          { code: "ERR_HTTP2_ERROR", message: "Stream was already closed or invalid" },
+        );
+        await peer.until(f => f.type === T.GOAWAY);
+      } finally {
+        cleanUp({ peer, client });
+      }
+    });
+  }
+
+  test("close(NGHTTP2_CANCEL) before the client reads anything, then the whole response", async () => {
+    const peer = await RawPeer.listen();
+    const client = http2.connect(`http://127.0.0.1:${peer.port}`);
+    client.on("error", () => {});
+    try {
+      const req = ignoreErrors(client.request({ ":path": "/" }));
+      const reqClosed = closed(req);
+      await peer.until(f => f.type === T.HEADERS && f.id === 1);
+      req.close(NGHTTP2_CANCEL);
+      await peer.untilReset(1);
+      await reqClosed;
+      // The first bytes that the client reads carry the response to the stream it already reset.
+      peer.write(wire(T.SETTINGS, 0, 0), wire(T.SETTINGS, ACK, 0), ...lateResponse);
+      await peer.settle();
+      // The client's own reset, which it can write twice.
+      assert.deepStrictEqual([...new Set(peer.sent())], ["RST_STREAM 1 code=8"]);
+      await closeSession(client);
+    } finally {
+      cleanUp({ peer, client });
+    }
+  });
+});
+
+// Alpine's node segfaults at a random point of this file (alpine 3.23 aarch64, on main too), and
+// the CI runner fails a file for any new core dump, whichever process wrote it. The glibc, macOS
+// and Windows lanes keep the tests that run node.
+const isMusl =
+  process.platform === "linux" &&
+  !(process.report.getReport() as { header: { glibcVersionRuntime?: string } }).header.glibcVersionRuntime;
+const node = typeof Bun !== "undefined" ? Bun.which("node") : process.execPath;
+
+// A stock node server: "/" streams 100-byte messages until the stream closes, "/ping" answers "pong".
+const streamingServer = `
+const server = require("http2").createServer();
+server.on("stream", (stream, headers) => {
+  stream.on("error", () => {});
+  stream.respond({ ":status": 200 });
+  if (headers[":path"] === "/ping") return stream.end("pong");
+  const message = Buffer.alloc(100, 0x61);
+  const next = () => {
+    if (stream.destroyed || stream.closed) return;
+    if (stream.write(message)) setImmediate(next);
+    else stream.once("drain", next);
+  };
+  next();
+});
+// console.log colors a number when FORCE_COLOR is set.
+server.listen(0, "127.0.0.1", () => console.log(String(server.address().port)));
+`;
+
+/** Calls onFrame for each whole frame of a byte stream, after `preface` bytes that pass as one piece. */
+function frameSplitter(onFrame: (raw: Buffer, type: number, id: number) => void, preface = 0) {
+  let buffered = Buffer.alloc(0);
+  return (chunk: Buffer) => {
+    buffered = Buffer.concat([buffered, chunk]);
+    if (preface > 0) {
+      if (buffered.length < preface) return;
+      onFrame(buffered.subarray(0, preface), -1, 0);
+      buffered = buffered.subarray(preface);
+      preface = 0;
+    }
+    while (buffered.length >= 9) {
+      const length = buffered.readUIntBE(0, 3);
+      if (buffered.length < 9 + length) break;
+      onFrame(Buffer.from(buffered.subarray(0, 9 + length)), buffered[3], buffered.readUInt32BE(5) & 0x7fffffff);
+      buffered = buffered.subarray(9 + length);
+    }
+  };
+}
+
+/**
+ * A TCP relay that fixes the order of delivery, as a slow network does. After the first DATA frame of a
+ * stream it holds the server's frames until the client's RST_STREAM for that stream is there and `late`
+ * more DATA frames of the stream came. Then the client gets those frames and the server the RST_STREAM.
+ */
+function lateDataRelay(serverPort: number, streams: number, late: number) {
+  const resets: Record<string, number> = {};
+  const relay = net.createServer(client => {
+    const upstream = net.connect(serverPort, "127.0.0.1");
+    client.on("error", () => upstream.destroy());
+    upstream.on("error", () => client.destroy());
+    client.on("close", () => upstream.destroy());
+    upstream.on("close", () => client.destroy());
+    const seen = new Set<number>();
+    let held: { id: number; count: number; reset: boolean; toClient: Buffer[]; toServer: Buffer[] } | null = null;
+    const release = () => {
+      if (!held || !held.reset || held.count < late) return;
+      const { toClient, toServer } = held;
+      held = null;
+      for (const raw of toClient) client.write(raw);
+      for (const raw of toServer) upstream.write(raw);
+    };
+    upstream.on(
+      "data",
+      frameSplitter((raw, type, id) => {
+        if (held) {
+          held.toClient.push(raw);
+          if (type === T.DATA && id === held.id) held.count++;
+          return release();
+        }
+        client.write(raw);
+        if (type === T.DATA && !seen.has(id) && seen.size < streams) {
+          seen.add(id);
+          held = { id, count: 0, reset: false, toClient: [], toServer: [] };
+        }
+      }),
+    );
+    client.on(
+      "data",
+      frameSplitter((raw, type, id) => {
+        if (type === T.RST_STREAM) {
+          const key = `RST_STREAM code=${raw.readUInt32BE(9)}`;
+          resets[key] = (resets[key] ?? 0) + 1;
+        }
+        // Connection frames are never held: the server needs its WINDOW_UPDATE.
+        if (!held || id === 0) return void upstream.write(raw);
+        held.toServer.push(raw);
+        if (type === T.RST_STREAM && id === held.id) held.reset = true;
+        release();
+      }, 24),
+    );
+  });
+  return { relay, resets };
+}
+
+/** The port that the spawned server printed. Rejects when the server exits first. */
+function listeningPort(server: ChildProcess): Promise<number> {
+  const { promise, resolve, reject } = Promise.withResolvers<number>();
+  let output = "";
+  server.stdout!.setEncoding("utf8").on("data", (text: string) => {
+    output += text;
+    const port = /^\d+$/m.exec(output);
+    if (port) resolve(Number(port[0]));
+  });
+  server.once("error", reject);
+  server.once("exit", (code, signal) => reject(new Error(`the server exited: code ${code}, signal ${signal}`)));
+  return promise;
+}
+
+// nghttp2 ends a session after 1,000 RST_STREAM frames (and 33 more per second). A client that
+// answers each late DATA frame with RST_STREAM uses that up in a few cancelled responses.
+test("a node server keeps the session after cancelled streaming responses", { skip: !node || isMusl }, async () => {
+  const cancels = 4;
+  const server = spawn(node as string, ["-e", streamingServer], { stdio: ["ignore", "pipe", "inherit"] });
+  try {
+    // 500 late DATA frames for each cancelled stream.
+    const { relay, resets } = lateDataRelay(await listeningPort(server), cancels, 500);
+    relay.listen(0, "127.0.0.1");
+    await once(relay, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(relay.address() as net.AddressInfo).port}`);
+    try {
+      const sessionEvents: string[] = [];
+      client.on("error", e => sessionEvents.push("error:" + (e as NodeJS.ErrnoException).code));
+      client.on("goaway", code => sessionEvents.push("goaway:" + code));
+      await once(client, "connect");
+      // Only the stream window (a new one for each stream) limits the server, so the late frames always come.
+      client.setLocalWindowSize(1 << 24);
+      let cancelled = 0;
+      for (let i = 0; i < cancels && !client.destroyed; i++) {
+        const req = client.request({ ":path": "/" });
+        req.on("error", () => {});
+        const first = await Promise.race([
+          once(req, "data").then(() => "data"),
+          once(req, "close").then(() => "close"),
+        ]);
+        if (first !== "data") break;
+        const closed = once(req, "close");
+        req.close(NGHTTP2_CANCEL);
+        await closed;
+        cancelled++;
+      }
+      let body = "";
+      if (!client.destroyed) {
+        const ping = client.request({ ":path": "/ping" });
+        ping.on("error", () => {});
+        ping.setEncoding("utf8").on("data", chunk => (body += chunk));
+        await once(ping, "close");
+      }
+      assert.deepStrictEqual(
+        { cancelled, body, sessionEvents, resets },
+        { cancelled: cancels, body: "pong", sessionEvents: [], resets: { "RST_STREAM code=8": cancels } },
+      );
+    } finally {
+      client.destroy();
+      relay.close();
+    }
+  } finally {
+    server.kill();
+  }
+});
+
 if (typeof Bun !== "undefined") {
-  const node = Bun.which("node");
-  // Alpine's node segfaults at a random point of this file (alpine 3.23 aarch64, on main too), and
-  // the CI runner fails a file for any new core dump, whichever process wrote it. The glibc, macOS
-  // and Windows lanes keep the cross-check.
-  const isMusl =
-    process.platform === "linux" &&
-    !(process.report.getReport() as { header: { glibcVersionRuntime?: string } }).header.glibcVersionRuntime;
   describe("Node.js compatibility", () => {
     test("tests should run on node.js", { skip: !node || isMusl }, async () => {
       await using proc = Bun.spawn({

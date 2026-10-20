@@ -5016,15 +5016,9 @@ class ClientHttp2Session extends Http2Session {
 
   static #Handlers = {
     binaryType: "buffer",
-    streamStart(self: ClientHttp2Session, stream_id: number) {
+    streamStart(self: ClientHttp2Session) {
       if (!self) return;
       self.#connections++;
-      if (stream_id % 2 === 0) {
-        // A pushed (even-id) stream announced by the server: its context object must be a stream,
-        // not a session. Returned to the native caller, which stores it as the stream context.
-        const stream = new ClientHttp2Stream(stream_id, self, null);
-        return stream;
-      }
     },
     streamPush(
       self: ClientHttp2Session,

@@ -1008,12 +1008,10 @@ impl Drop for Keepalive<'_> {
     }
 }
 
-/// A SETTINGS or PING frame this side sent and the peer has not acknowledged yet (node's
-/// `Http2Settings` and `Http2Ping`): what the ACK is delivered to.
+/// What the ACK of a SETTINGS or PING frame is delivered to (node's `Http2Settings` and `Http2Ping`).
 struct PendingAck {
     callback: StrongOptional,
-    /// The session's delivery function, bound to the async context of the call that sent the
-    /// frame. Empty while nothing tracks async contexts: the session's handler then delivers.
+    /// The delivery function, bound to the async context of the call that sent the frame. Empty while nothing tracks them.
     deliver: StrongOptional,
     /// Read for a callback only.
     sent_at: Option<std::time::Instant>,
@@ -2126,11 +2124,7 @@ impl H2FrameParser {
     }
 
     /// `ack`: what the peer's ACK of this frame is delivered to. Kept only when the frame is sent.
-    fn set_settings(
-        &self,
-        settings: FullSettingsPayload,
-        ack: Option<PendingAck>,
-    ) -> bool {
+    fn set_settings(&self, settings: FullSettingsPayload, ack: Option<PendingAck>) -> bool {
         bun_output::scoped_log!(H2FrameParser, "HTTP_FRAME_SETTINGS ack false");
 
         if self.outstanding_settings.get() >= self.max_outstanding_settings.get() {
@@ -2162,10 +2156,10 @@ impl H2FrameParser {
         self.outstanding_settings
             .set(self.outstanding_settings.get() + 1);
 
-        // Remember which values this submission carries so the engine can attribute the peer's
-        // ACK to it (§6.5.3 - ACKs apply to outstanding SETTINGS in order). The record is kept
-        // before the write: a transport that is written to from JS can deliver the ACK inside it.
+        // Kept before the write: a transport that JS writes to can deliver the ACK inside it.
         let token = self.keep_settings_ack(ack);
+        // Remember which values this submission carries so the engine can attribute the peer's
+        // ACK to it (§6.5.3 - ACKs apply to outstanding SETTINGS in order).
         self.pending_settings_window_submissions.with_mut(|v| {
             v.push(crate::api::h2::connection::PendingLocalSettings {
                 settings: settings.to_engine_settings(),
@@ -2568,9 +2562,7 @@ impl H2FrameParser {
         );
     }
 
-    /// The peer acknowledged the frame `ack` was kept for. `event`'s handler gets
-    /// `(session, ...values, callback, duration)` and does the session's own part in the async
-    /// context of the session. The callback is then called in the context of its caller.
+    /// `event`'s handler does the session's part of an ACK. The callback is then called in the async context of its caller.
     fn dispatch_ack(&self, event: JSH2FrameParser::Gc, values: &[JSValue], ack: &PendingAck) {
         let (callback, duration) = (ack.callback(), ack.duration());
         match ack.deliver.get() {
@@ -2613,15 +2605,13 @@ impl H2FrameParser {
         data[len - 2] = callback;
         data[len - 1] = duration;
         let _dispatch = self.enter_dispatch();
-        let _ =
-            self.handlers
-                .get()
-                .call_event_handler(event, this_value, ctx_value, &data[..len]);
+        let _ = self
+            .handlers
+            .get()
+            .call_event_handler(event, this_value, ctx_value, &data[..len]);
     }
 
-    /// Calls `deliver(session, value, callback, duration)`. `deliver` is what
-    /// `PendingAck::capture` bound: the call runs in the async context of the call that sent the
-    /// acknowledged frame.
+    /// Calls what `PendingAck::capture` bound: it runs in the async context of the call that sent the frame.
     fn deliver_ack(&self, deliver: JSValue, value: JSValue, callback: JSValue, duration: JSValue) {
         let Some(this_value) = self.strong_this.get().try_get() else {
             return;
@@ -2644,8 +2634,7 @@ impl H2FrameParser {
         );
     }
 
-    /// node cancels the pings that a session still waits on when it goes away: each callback
-    /// hears of it, in the async context of its ping() call. No payload says so.
+    /// node cancels the pings that a closing session still waits on. No payload tells the callback.
     fn cancel_pings(&self) {
         while let Some(ack) = self
             .pending_acks
@@ -5030,8 +5019,7 @@ impl H2FrameParser {
 
         if let Some(array_buffer) = payload_arg.as_array_buffer(global_object) {
             let slice = array_buffer.slice();
-            // Kept before the write: a transport that is written to from JS can deliver the ACK
-            // inside it.
+            // Kept before the write: a transport that JS writes to can deliver the ACK inside it.
             let ack = PendingAck::capture(global_object, callback, deliver);
             this.pending_acks
                 .with_mut(|acks| acks.get_or_insert_default().pings.push_back(ack));

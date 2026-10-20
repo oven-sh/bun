@@ -18,10 +18,7 @@ public:
     // When given a JSFunction that you want to call later, wrap it with this function
     static JSC::JSValue withAsyncContextIfNeeded(JSC::JSGlobalObject* globalObject, JSC::JSValue callback);
 
-    // Like withAsyncContextIfNeeded, but "no async context" is captured too: the callback then runs
-    // with none, and not with the one that is current where it is called. A callback that is
-    // already wrapped is bound again. While nothing tracks async contexts, the callback is returned
-    // as it is.
+    // Like withAsyncContextIfNeeded, but it captures "no async context" too, and it binds a wrapped callback again.
     static JSC::JSValue withAsyncContext(JSC::JSGlobalObject* globalObject, JSC::JSValue callback);
 
     // For a handler script sets on something long-lived whose events arrive from the event loop (a

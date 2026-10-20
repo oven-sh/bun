@@ -33,8 +33,7 @@ mod pseudo {
 #[derive(Clone, Copy)]
 pub(crate) struct PendingLocalSettings {
     pub settings: Settings,
-    /// The embedder's name for what it keeps on record for this submission (0: nothing).
-    /// `Sink::on_local_settings` hands it back with the ACK.
+    /// The embedder's name for what it keeps for this submission (0: nothing), handed back with the ACK.
     pub token: u32,
 }
 

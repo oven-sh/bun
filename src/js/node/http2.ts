@@ -1936,9 +1936,7 @@ function streamErrorFromCode(code: number) {
 hideFromStack(streamErrorFromCode);
 const kEmptyPingPayload = Buffer.alloc(8);
 
-// What the peer's ACK of a settings() call delivers, in node's order (settingsCallback in
-// lib/internal/http2/core.js): the callback, then 'localSettings'. The parser binds it to the
-// async context of each settings() call, where node makes an Http2Settings.
+// node's settingsCallback. The parser binds it to the async context of each settings() call, as node's Http2Settings is.
 function settingsAcked(
   self: Http2Session,
   settings: Settings,
@@ -1949,9 +1947,7 @@ function settingsAcked(
   self.emit("localSettings", settings);
 }
 
-// A copy of settings that validateSettings() accepted, for the parser to read when the session
-// connects. validateSettings() reads a custom setting id with Number(), as node does ("0x10" is 16).
-// The parser reads decimal ids only, and it must not throw that late.
+// For the parser to read at 'connect' without a throw: it reads decimal ids, validateSettings() accepts what Number() reads.
 function settingsToSendLater(settings: Settings): Settings {
   const copy = { ...settings };
   const custom = settings.customSettings;
@@ -1963,12 +1959,28 @@ function settingsToSendLater(settings: Settings): Settings {
   return copy;
 }
 
-// What a ping() callback hears: the peer's ACK, or with no payload that the session went away
-// first (like node's pingCallback, a cancelled ping reports only the error). The parser binds it
-// to the async context of each ping() call, where node makes an Http2Ping.
-function pingAcked(_self: Http2Session, payload: Buffer | undefined, callback: Function, duration: number) {
+// node's pingCallback, bound by the parser like settingsAcked. No payload: the session went away before the ACK.
+function pingAcked(_self: Http2Session, payload: Buffer | undefined, callback: Function | undefined, duration: number) {
+  if (callback === undefined) return;
   if (payload === undefined) process.nextTick(callback, $ERR_HTTP2_PING_CANCEL());
   else callback(null, duration, payload);
+}
+
+// How the ACK handlers deliver. `callback` is false when the parser calls `deliver` next, bound to the caller's context.
+function deliverAck(
+  deliver: typeof settingsAcked | typeof pingAcked,
+  self: Http2Session,
+  value: any,
+  callback: Function | false | undefined,
+  duration: number | undefined,
+) {
+  if (callback === false) return;
+  if (callback === undefined || $getInternalField($asyncContext, 0) === undefined) {
+    deliver(self, value, callback, duration as number);
+  } else {
+    // The parser bound nothing: nothing tracked async contexts when the callback was passed, so its caller had none.
+    runInFrame(undefined, deliver, undefined, self, value, callback, duration);
+  }
 }
 
 // ERR_HTTP2_STREAM_CANCEL is not in the native error-code registry (the registry is positional
@@ -4246,8 +4258,7 @@ class ServerHttp2Session extends Http2Session {
         captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
         setImmediate(destroyIfNotDestroyedNT, self);
       }
-      // false: the parser calls settingsAcked() next, in the async context of that settings() call.
-      if (callback !== false) settingsAcked(self, settings, callback, duration);
+      deliverAck(settingsAcked, self, settings, callback, duration);
     },
     remoteSettings(self: ServerHttp2Session, settings: Settings) {
       if (!self) return;
@@ -4284,8 +4295,7 @@ class ServerHttp2Session extends Http2Session {
           }
         }
       }
-      // false: the parser calls pingAcked() next, in the async context of that ping() call.
-      if (typeof callback === "function") pingAcked(self, payload, callback, duration);
+      deliverAck(pingAcked, self, payload, callback, duration);
     },
     error(self: ServerHttp2Session, errorCode: number | string, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
@@ -4982,10 +4992,8 @@ class ClientHttp2Session extends Http2Session {
   #closeCalled: boolean = false;
   /// connected indicates that the connection/socket is connected
   #connected: boolean = false;
-  // node's `!connecting`: true once #onConnect ran, and at once for a socket that createConnection()
-  // returned connected.
+  // node's `!connecting`: set by #onConnect, or at once for a socket that createConnection() returned connected.
   #ready: boolean = false;
-  // The settings() calls made before that, for #onConnect to send.
   #settingsBeforeConnect: Array<[Settings, Function | undefined]> | null = null;
   #connections: number = 0;
 
@@ -5248,8 +5256,7 @@ class ClientHttp2Session extends Http2Session {
         captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
         setImmediate(destroyIfNotDestroyedNT, self);
       }
-      // false: the parser calls settingsAcked() next, in the async context of that settings() call.
-      if (callback !== false) settingsAcked(self, settings, callback, duration);
+      deliverAck(settingsAcked, self, settings, callback, duration);
     },
     remoteSettings(self: ClientHttp2Session, settings: Settings) {
       if (!self) return;
@@ -5292,8 +5299,7 @@ class ClientHttp2Session extends Http2Session {
           }
         }
       }
-      // false: the parser calls pingAcked() next, in the async context of that ping() call.
-      if (typeof callback === "function") pingAcked(self, payload, callback, duration);
+      deliverAck(pingAcked, self, payload, callback, duration);
     },
     error(self: ClientHttp2Session, errorCode: number | string, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
@@ -5640,9 +5646,7 @@ class ClientHttp2Session extends Http2Session {
     this.#pendingSettingsAckCount++;
     this.#pendingSettingsAck = true;
     if (!this.#ready) {
-      // node sends it from a 'connect' listener, so the callback and 'localSettings' run in the
-      // async context of that event and not of this call:
-      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1569-L1574
+      // node sends it from a 'connect' listener, in that event's async context: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1569-L1574
       (this.#settingsBeforeConnect ??= []).push([settingsToSendLater(settings), callback]);
       return;
     }

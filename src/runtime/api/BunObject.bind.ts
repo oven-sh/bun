@@ -154,7 +154,7 @@ export const which = b.fn({
     options: WhichOptions.nullable.default({}),
   },
   length: 1,
-  returns: b.string.utf8.nullable,
+  returns: b.string.local.nullable,
   capability: "heap",
   throws: true,
 });

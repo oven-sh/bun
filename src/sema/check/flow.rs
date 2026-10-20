@@ -193,10 +193,6 @@ pub(super) struct FlowMemo {
     /// is `None` (idle).
     settled_calls: Vec<(u64, u64)>,
     settled_calls_of: Option<FileId>,
-    /// Indexed by flow node of the same file, or empty. For a call from which a walk passed a long
-    /// run of idle calls: the node where the run ended, and how many calls it passed. See
-    /// `before_idle_calls`.
-    idle_runs: Vec<(FlowId, u32)>,
     /// The subjects of each test in the file `tests_of`, indexed by the test's flow node.
     tests: Vec<TestSubjects>,
     tests_of: Option<FileId>,
@@ -6461,9 +6457,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 Flow::Call { before, call } => {
                     if self.flow_memo.is_idle_call(file, flow) {
-                        let (arrived_at, passed) = self.before_idle_calls(file, flow, before);
-                        walk.steps = walk.steps.saturating_add(passed);
-                        flow = arrived_at;
+                        flow = before;
                         continue;
                     }
                     // `getTypeAtFlowCall`
@@ -7690,36 +7684,6 @@ impl<'p, 's> Checker<'p, 's> {
         true
     }
 
-    /// FOR SPEED. Follows a walk from `before`, the antecedent of the idle call `flow`, through the
-    /// idle calls that only one node follows. Returns where it ends up and how many calls it
-    /// passed. Idle calls don't affect any walk. Each reference in n consecutive call statements
-    /// walks back through the ones before it. To keep that from taking n * n steps, the result is
-    /// cached at the call where a long run was entered, and the next walk enters right after that
-    /// call.
-    fn before_idle_calls(&mut self, file: FileId, flow: FlowId, before: FlowId) -> (FlowId, u32) {
-        const LONG: u32 = 32;
-        let bound = self.bound(file);
-        let memo = &mut self.flow_memo;
-        let (mut at, mut passed) = (before, 0u32);
-        while let Flow::Call { before, .. } = bound.flow[at.idx()]
-            && memo.is_idle_call(file, at)
-            && !bound.is_shared(at)
-        {
-            // An idle call may have appeared since at the node where a cached run ended.
-            (at, passed) = match memo.idle_runs.get(at.idx()) {
-                Some(&(arrived_at, more)) if more != 0 => (arrived_at, passed + 1 + more),
-                _ => (before, passed + 1),
-            };
-        }
-        if passed > LONG {
-            if memo.idle_runs.is_empty() {
-                memo.idle_runs.resize(bound.flow.len(), (FlowId::NONE, 0));
-            }
-            memo.idle_runs[flow.idx()] = (at, passed);
-        }
-        (at, passed)
-    }
-
     /// Records that `effects_signatures` has an entry for the flow node `flow`'s call. `is_idle`
     /// means the entry is `None`.
     #[inline(never)]
@@ -7734,7 +7698,6 @@ impl<'p, 's> Checker<'p, 's> {
             memo.settled_calls_of = Some(file);
             memo.settled_calls.clear();
             memo.settled_calls.resize(words, (0, 0));
-            memo.idle_runs.clear();
         }
         let (word, bit) = (flow.idx() / 64, 1 << (flow.idx() % 64));
         memo.settled_calls[word].0 |= bit;

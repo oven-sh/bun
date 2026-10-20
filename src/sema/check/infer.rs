@@ -401,12 +401,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let mut targets = Unmatched::Borrowed(self.parts(target));
                 // Identical members on both sides are matched, then those instantiated from the
                 // same generic type or alias.
-                self.infer_from_matching(
-                    n,
-                    &mut sources,
-                    &mut targets,
-                    Self::is_type_or_base_identical_to,
-                );
+                self.infer_from_identical(n, &mut sources, &mut targets);
                 self.infer_from_closely_matching(n, &mut sources, &mut targets);
                 if targets.is_empty() {
                     return;
@@ -851,6 +846,59 @@ impl<'p, 's> Checker<'p, 's> {
         for (j, &t) in targets.iter().enumerate() {
             for (i, &s) in sources.iter().enumerate() {
                 if matches(self, s, t) {
+                    self.infer_types(n, s, t);
+                    matched.add(i, j, (sources.len(), targets.len()));
+                }
+            }
+        }
+        matched.remove_from(sources, targets);
+    }
+
+    /// `inferFromMatchingTypes` with `isTypeOrBaseIdenticalTo`.
+    ///
+    /// FOR SPEED: two types of which one may simplify (`isTypeRelatedTo` can't tell them apart by their flags) go through
+    /// `checkTypeRelatedTo`, where `isRelatedToEx` normalizes both and then compares the flags. Between a union of
+    /// object types and a union of conditional or indexed access types that's every pair, and nearly all end there.
+    /// Here each member is normalized once, at the pair where `isRelatedToEx` would normalize it first, and a pair
+    /// whose normalized flags differ is skipped. Such a comparison stores nothing. The pairs for which it does more
+    /// than that are left to `related`: a primitive on either side, a limit reached earlier in the file
+    /// (`relations_cut_short`), no query in progress (`begin_comparison` resets the instantiation count), a low stack.
+    fn infer_from_identical(
+        &mut self,
+        n: &mut Inference,
+        sources: &mut Unmatched<'_>,
+        targets: &mut Unmatched<'_>,
+    ) {
+        let may_simplify =
+            tf::UNION_OR_INTERSECTION | tf::INDEXED_ACCESS | tf::CONDITIONAL | tf::SUBSTITUTION;
+        let is_in_query = !self.stack.is_empty();
+        let mut matched = Matched::default();
+        let mut normalized_sources: SmallVec<[Option<TypeId>; 8]> = smallvec![None; sources.len()];
+        for (j, &t) in targets.iter().enumerate() {
+            let mut normalized_target = None;
+            for (i, &s) in sources.iter().enumerate() {
+                let differs_by_flags = is_in_query
+                    && self.cuts() == 0
+                    && s != t
+                    && t != TypeId::MISSING
+                    && (self.flags(s) | self.flags(t)) & may_simplify != 0
+                    && !self.has_primitive_flag(s)
+                    && !self.has_primitive_flag(t)
+                    && !self.is_stack_low()
+                    && {
+                        let source = match normalized_sources[i] {
+                            Some(known) => known,
+                            None => *normalized_sources[i].insert(self.normalized(s, false)),
+                        };
+                        let target = match normalized_target {
+                            Some(known) => known,
+                            None => *normalized_target.insert(self.normalized(t, true)),
+                        };
+                        self.cuts() == 0
+                            && source != target
+                            && self.flags(source) != self.flags(target)
+                    };
+                if !differs_by_flags && self.is_type_or_base_identical_to(s, t) {
                     self.infer_types(n, s, t);
                     matched.add(i, j, (sources.len(), targets.len()));
                 }

@@ -1612,6 +1612,137 @@ u.balance
     expect(exitCode).toBe(1);
   });
 
+  test("infers what's left of a union once its conditional, indexed access and intersection members are matched", async () => {
+    using dir = project({
+      "generic.ts": `type Cond<T> = T extends string ? { s: T } : { n: T };
+interface M { a: { x: 1 }; b: { y: 2 } }
+declare function f1<T, K extends keyof M>(k: K, x: T | M[K] | Cond<K>): T;
+export function g1<K extends keyof M>(k: K, v: M[K] | Cond<K> | { z: 3 }) {
+  const r = f1(k, v);
+  const bad: string = r;
+  return bad;
+}
+declare function f2<T, U>(u: U, x: T | (U & { a: 1 }) | undefined): T;
+export function g2<U>(u: U, v: (U & { a: 1 }) | { z: 3 } | number | undefined) {
+  const r = f2(u, v);
+  const bad: string = r;
+  return bad;
+}
+declare function f3<T, U extends object>(u: U, x: T | U[keyof U] | keyof U | Partial<U>): T;
+export function g3<U extends object>(u: U, v: U[keyof U] | keyof U | Partial<U> | Readonly<U> | "lit" | 4) {
+  const r = f3(u, v);
+  const bad: boolean = r;
+  return bad;
+}
+// The members differ only after normalization: \`{ a: X }["a"]\`-like accesses on a generic key.
+type Pick1<O, K extends keyof O> = O[K];
+declare function f4<T, K extends "p" | "q">(k: K, x: T | Pick1<{ p: { one: 1 }; q: { two: 2 } }, K> | { three: 3 }): T;
+export function g4<K extends "p" | "q">(k: K, v: Pick1<{ p: { one: 1 }; q: { two: 2 } }, K> | { three: 3 } | { four: 4 }) {
+  const r = f4(k, v);
+  const bad: boolean = r;
+  return bad;
+}
+`,
+      "events.ts": `// A union of many object types against a union of conditional types, as in an event map.
+interface Events { open: { id: number }; close: { code: string }; move: { x: number; y: number }; tick: {} }
+type Payload<K extends keyof Events> = K extends keyof Events ? { type: K; data: Events[K] } : never;
+type Any = Payload<keyof Events>;
+declare function on<K extends keyof Events, R>(k: K, value: Payload<K> | R): R;
+export function h1<K extends keyof Events>(k: K, v: Any | Payload<K> | Date) {
+  const r = on(k, v);
+  const bad: string = r;
+  return bad;
+}
+declare function pick<K extends keyof Events, R>(k: K, value: Payload<K>["data"] | Events[K] | R | null): R;
+export function h2<K extends keyof Events>(k: K, v: Payload<K>["data"] | Events[K] | Any | null | RegExp) {
+  const r = pick(k, v);
+  const bad: string = r;
+  return bad;
+}
+type Sub<T> = T extends { id: infer I } ? [T, I] | T : never;
+declare function sub<T extends { id: unknown }, R>(t: T, value: Sub<T> | R): R;
+export function h3<T extends { id: unknown }>(t: T, v: Sub<T> | T | { other: 1 }) {
+  const r = sub(t, v);
+  const bad: string = r;
+  return bad;
+}
+`,
+      "intersections.ts": `// Intersections that reduce or normalize to something with other flags.
+type A = { kind: "a"; a: 1 }; type B = { kind: "b"; b: 2 };
+declare function i1<T, U>(u: U, x: T | (A & B) | (U & A) | (A & { extra: U })): T;
+export function j1<U>(u: U, v: (U & A) | (A & { extra: U }) | B | (U & B)) {
+  const r = i1(u, v);
+  const bad: string = r;
+  return bad;
+}
+declare function i2<T, U extends string>(u: U, x: T | \`\${U}-x\` | Uppercase<U> | (U & { brand: 1 }) | boolean): T;
+export function j2<U extends string>(u: U, v: \`\${U}-x\` | Uppercase<U> | (U & { brand: 1 }) | boolean | "k" | 1n | (U & { brand: 2 })) {
+  const r = i2(u, v);
+  const bad: number = r;
+  return bad;
+}
+enum E { X, Y }
+declare function i3<T, U>(u: U, x: T | E | (U extends number ? E : never) | [U] | U[]): T;
+export function j3<U>(u: U, v: E | (U extends number ? E : never) | [U] | U[] | E.X | readonly U[] | (U extends string ? E : never)) {
+  const r = i3(u, v);
+  const bad: symbol = r;
+  return bad;
+}
+`,
+      "normalized.ts": `// These members are identical only once they're normalized.
+export function l1<U extends { a: unknown }>(v: (U["a"] & 1) | { z: 3 }) {
+  const k = null! as <T>(x: T | (U & { a: 1 })["a"]) => T;
+  const bad: string = k(v);
+  return bad;
+}
+export function l2<U>(v: U | { z: 3 }) {
+  const k = null! as <T>(x: T | (U extends unknown ? U : never)) => T;
+  const bad: string = k(v);
+  return bad;
+}
+export function l3<U, V, K extends keyof U & keyof V>(v: (U[K] & V[K]) | { z: 3 } | null) {
+  const k = null! as <T>(x: T | (U & V)[K] | null) => T;
+  const bad: string = k(v);
+  return bad;
+}
+export function l4<U extends { a: unknown }, V extends { a: unknown }>(v: U["a"] | V["a"] | { z: 3 }) {
+  const k = null! as <T>(x: T | (U | V)["a"]) => T;
+  const bad: string = k(v);
+  return bad;
+}
+`,
+    });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout.split("\n")).toEqual([
+      `events.ts(8,9): error TS2322: Type 'Date | { type: "close"; data: { code: string; }; } | { type: "move"; data: { x: number; y: number; }; } | { type: "open"; data: { id: number; }; } | { type: "tick"; data: {}; }' is not assignable to type 'string'.`,
+      `  Type 'Date' is not assignable to type 'string'.`,
+      `events.ts(14,9): error TS2322: Type 'RegExp | { type: "close"; data: { code: string; }; } | { type: "move"; data: { x: number; y: number; }; } | { type: "open"; data: { id: number; }; } | { type: "tick"; data: {}; }' is not assignable to type 'string'.`,
+      `  Type 'RegExp' is not assignable to type 'string'.`,
+      `events.ts(21,9): error TS2322: Type 'T | { other: 1; }' is not assignable to type 'string'.`,
+      `  Type 'T' is not assignable to type 'string'.`,
+      `    Type '{ id: unknown; }' is not assignable to type 'string'.`,
+      `generic.ts(6,9): error TS2322: Type '{ z: 3; }' is not assignable to type 'string'.`,
+      `generic.ts(12,9): error TS2322: Type 'number | { z: 3; }' is not assignable to type 'string'.`,
+      `  Type 'number' is not assignable to type 'string'.`,
+      `generic.ts(18,9): error TS2322: Type '"lit" | 4 | Readonly<U>' is not assignable to type 'boolean'.`,
+      `  Type 'string' is not assignable to type 'boolean'.`,
+      `generic.ts(26,9): error TS2322: Type '{ four: 4; }' is not assignable to type 'boolean'.`,
+      `intersections.ts(6,9): error TS2322: Type 'B | (U & B)' is not assignable to type 'string'.`,
+      `  Type 'B' is not assignable to type 'string'.`,
+      `intersections.ts(12,9): error TS2322: Type '"k" | 1n | (U & { brand: 2; })' is not assignable to type 'number'.`,
+      `  Type 'string' is not assignable to type 'number'.`,
+      `intersections.ts(19,9): error TS2322: Type 'readonly U[] | [U] | E' is not assignable to type 'symbol'.`,
+      `  Type 'E' is not assignable to type 'symbol'.`,
+      `normalized.ts(4,9): error TS2322: Type '{ z: 3; }' is not assignable to type 'string'.`,
+      `normalized.ts(9,9): error TS2322: Type '{ z: 3; }' is not assignable to type 'string'.`,
+      `normalized.ts(14,9): error TS2322: Type '{ z: 3; } | (U[K] & V[K])' is not assignable to type 'string'.`,
+      `  Type '{ z: 3; }' is not assignable to type 'string'.`,
+      `normalized.ts(19,9): error TS2322: Type '{ z: 3; } | U["a"] | V["a"]' is not assignable to type 'string'.`,
+      `  Type '{ z: 3; }' is not assignable to type 'string'.`,
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
   // Each error about an entry used to reparse the file and scan all the entries: 18 s for 4,000 in a release build.
   // `tsc` takes 75 s for 60,000.
   test("doesn't slow down on a tsconfig.json with an error in each of 120,000 `paths` entries", async () => {

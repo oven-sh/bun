@@ -243,7 +243,14 @@ fn convert_utf8_bytes_into_utf16_with_length(
     len: U3Fast,
     remaining_len: usize,
 ) -> UTF16Replacement {
-    debug_assert!(sequence[0] > 127);
+    // A shared buffer can change between the caller's scan and this read.
+    if sequence[0] < 0x80 {
+        return UTF16Replacement {
+            len: 1,
+            code_point: u32::from(sequence[0]),
+            ..Default::default()
+        };
+    }
     match len {
         2 => {
             debug_assert!(sequence[0] >= 0xC0);
@@ -404,7 +411,6 @@ pub(super) fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
         3 => [bytes[0], bytes[1], bytes[2], 0],
         _ => bytes[..4].try_into().expect("infallible: size matches"),
     };
-    debug_assert!(sequence[0] > 127);
     let sequence_length = non_ascii_sequence_length(sequence[0]);
     convert_utf8_bytes_into_utf16_with_length(sequence, sequence_length, bytes.len())
 }
@@ -666,6 +672,7 @@ pub enum ToUTF16Error {
 
 crate::oom_from_alloc!(ToUTF16Error);
 
+/// Reads `bytes` twice: copy a SharedArrayBuffer before calling.
 pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: bool>(
     bytes: &[u8],
 ) -> Result<Option<(Vec<u16>, [u8; 3], u8)>, ToUTF16Error> {
@@ -697,8 +704,10 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
                 )
             };
             if res.is_successful() {
-                // SAFETY: on success simdutf initialised exactly `out_length` units.
-                unsafe { out.set_len(out_length) };
+                // Commit what simdutf wrote, not what the length pass predicted.
+                let written = res.count.min(out.capacity());
+                // SAFETY: simdutf initialised `res.count` units and `written <= capacity`.
+                unsafe { out.set_len(written) };
                 crate::scoped_log!(
                     strings,
                     "toUTF16 {} UTF8 -> {} UTF16",

@@ -1,6 +1,7 @@
 #include "root.h"
 #include "ErrorCode.h"
 #include "AsyncStackTrace.h"
+#include "JSBuffer.h"
 
 #include "WebStreamsInternals.h"
 
@@ -1066,6 +1067,13 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
         }
         return;
     }
+    if (exceedsStringLimit(bytes.size())) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    WTF::Vector<uint8_t> storage;
+    bytes = Bun::stableBytes(globalObject, scope, bytes, storage);
+    RETURN_IF_EXCEPTION(scope, void());
     auto* decoded = streamingUTF8Decode(globalObject, bytes, controller->m_algorithms.textDecodeState, /* flush */ false);
     RETURN_IF_EXCEPTION(scope, void());
     if (!decoded || !decoded->length()) {

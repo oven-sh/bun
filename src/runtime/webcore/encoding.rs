@@ -242,6 +242,47 @@ unsafe extern "C" fn Bun__encoding__toString(
     }
 }
 
+/// `Bun__encoding__toString` for bytes another thread can write while it runs,
+/// which is every byte of a JS `ArrayBuffer`. Only a non-ASCII input reaches
+/// the two-pass decoder, so only it is copied. An ASCII input keeps the
+/// borrowing path: that one sizes its output from the byte count and reads
+/// each byte once, so a write under it changes the text and nothing else.
+///
+/// # Safety
+/// Caller (C++) must guarantee `input[..len]` is valid for reading.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__encoding__toStringUnstable(
+    input: *const u8,
+    len: usize,
+    global_object: &JSGlobalObject,
+    encoding: u8,
+) -> JSValue {
+    // SAFETY: forwarded from this fn's contract.
+    let input = unsafe { bun_core::ffi::slice(input, len) };
+    let encoding = encoding_from_u8(encoding);
+    if matches!(encoding, Encoding::Utf8 | Encoding::Buffer)
+        && strings::first_non_ascii(input).is_none()
+    {
+        // One copy of exactly `input.len()` bytes, which is what the borrowing
+        // path does for an ASCII input. No byte can change that size, so this
+        // needs no snapshot. A byte that turns non-ASCII first is read as
+        // Latin-1, the same outcome node's ASCII fast path produces.
+        return match BunString::clone_latin1(input).into_js(global_object) {
+            Ok(v) => v,
+            Err(_) => JSValue::ZERO,
+        };
+    }
+    let mut snapshot: Vec<u8> = Vec::new();
+    if snapshot.try_reserve_exact(input.len()).is_err() {
+        return global_object.throw_out_of_memory_value();
+    }
+    snapshot.extend_from_slice(input);
+    match to_bun_string_from_owned_slice(snapshot, encoding).into_js(global_object) {
+        Ok(v) => v,
+        Err(_) => JSValue::ZERO,
+    }
+}
+
 pub(crate) fn to_string(
     input: &[u8],
     global_object: &JSGlobalObject,

@@ -28,7 +28,7 @@ bun_output::declare_scope!(UpgradedDuplex, visible);
 pub(crate) struct UpgradedDuplex {
     pub wrapper: JsCell<Option<WrapperType>>,
     /// The owning `JSTLSSocket` wrapper. Its `values:` slots root `origin` and
-    /// the four listener thunks; the `JSValue` fields below are read-side
+    /// the three listener thunks; the `JSValue` fields below are read-side
     /// shadows of those slots.
     pub js_wrapper: JSValue,
     pub origin: Cell<JSValue>, // any duplex
@@ -42,7 +42,6 @@ pub(crate) struct UpgradedDuplex {
     pub handlers: Handlers,
     pub on_data_callback: Cell<JSValue>,
     pub on_end_callback: Cell<JSValue>,
-    pub on_writable_callback: Cell<JSValue>,
     pub on_close_callback: Cell<JSValue>,
     pub event_loop_timer: JsCell<EventLoopTimer>,
     pub current_timeout: Cell<u32>,
@@ -114,7 +113,7 @@ use crate::jsc_hooks::timer_all_mut as timer_all;
 
 /// Lazily create-and-cache a JS host-function callback in `shadow`, mirrored
 /// into the owning `JSTLSSocket` wrapper's visited `values:` slot (the GC
-/// root). All four `get_js_handlers` slots follow the identical
+/// root). All three `get_js_handlers` slots follow the identical
 /// `NewFunctionWithData(global, null, 0, fn, self)` → `ensureStillAlive` →
 /// `setFunctionData(self)` → store pattern.
 #[inline]
@@ -453,7 +452,6 @@ impl UpgradedDuplex {
             ssl_error: JsCell::new(CertError::default()),
             on_data_callback: Cell::new(JSValue::ZERO),
             on_end_callback: Cell::new(JSValue::ZERO),
-            on_writable_callback: Cell::new(JSValue::ZERO),
             on_close_callback: Cell::new(JSValue::ZERO),
             event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::UpgradedDuplex,
@@ -467,7 +465,7 @@ impl UpgradedDuplex {
     }
 
     pub(crate) fn get_js_handlers(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let array = JSValue::create_empty_array(global, 4)?;
+        let array = JSValue::create_empty_array(global, 3)?;
         array.ensure_still_alive();
 
         let this_ptr = std::ptr::from_ref(self).cast_mut().cast::<c_void>();
@@ -499,18 +497,6 @@ impl UpgradedDuplex {
         array.put_index(
             global,
             2,
-            lazy_js_handler(
-                &self.on_writable_callback,
-                js_wrapper,
-                js_TLSSocket::duplex_on_writable_set_cached,
-                global,
-                __jsc_host_on_writable,
-                this_ptr,
-            ),
-        )?;
-        array.put_index(
-            global,
-            3,
             lazy_js_handler(
                 &self.on_close_callback,
                 js_wrapper,
@@ -729,7 +715,6 @@ impl UpgradedDuplex {
         for cb in [
             &self.on_data_callback,
             &self.on_end_callback,
-            &self.on_writable_callback,
             &self.on_close_callback,
         ] {
             let value = cb.get();
@@ -751,7 +736,7 @@ impl Drop for UpgradedDuplex {
     }
 }
 
-// SAFETY (all four host fns): the function data is the `*mut UpgradedDuplex`
+// SAFETY (all three host fns): the function data is the `*mut UpgradedDuplex`
 // installed by `get_js_handlers`; `teardown` clears it before the storage is
 // freed, so a non-null data pointer is live for the call.
 
@@ -803,24 +788,6 @@ fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // Like node's JSStreamSocket. Ahead of staged bytes too: no handshake can complete after it.
         (this.handlers.on_end)(this.handlers.ctx);
     }
-    Ok(JSValue::UNDEFINED)
-}
-
-#[bun_jsc::host_fn]
-fn on_writable(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    bun_output::scoped_log!(UpgradedDuplex, "onWritable");
-
-    let function = frame.callee();
-
-    if let Some(self_ptr) = host_fn::get_function_data(function) {
-        // SAFETY: see host-fn note above.
-        let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
-        // flush pending data
-        this.flush();
-        // call onWritable (will flush on demand)
-        (this.handlers.on_writable)(this.handlers.ctx);
-    }
-
     Ok(JSValue::UNDEFINED)
 }
 

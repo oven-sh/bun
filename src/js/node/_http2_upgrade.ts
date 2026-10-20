@@ -10,7 +10,7 @@ interface NativeHandle {
 }
 
 type UpgradeEventListener = (...args: any[]) => void;
-type UpgradeEvents = [UpgradeEventListener, UpgradeEventListener, UpgradeEventListener, UpgradeEventListener];
+type UpgradeEvents = [UpgradeEventListener, UpgradeEventListener, UpgradeEventListener];
 
 interface UpgradeContextType {
   connectionListener: (...args: any[]) => any;
@@ -83,6 +83,15 @@ function tlsSocketRead(this: TLSProxySocket) {
   this._ctx.rawSocket.resume();
 }
 
+// One SSL_write takes at most 2^31 - 1 bytes, and nothing sends the rest of a longer chunk later.
+const kMaxTLSWrite = 0x7fffffff;
+function writeInSlices(h: NativeHandle, chunk: Buffer, encoding: string) {
+  for (let offset = 0; offset < chunk.length; offset += kMaxTLSWrite) {
+    if (!h.$write(chunk.subarray(offset, offset + kMaxTLSWrite), encoding)) return false;
+  }
+  return true;
+}
+
 // _write: called when the H2 session writes outbound frames.
 // Forward to the native TLS handle for encryption, then back to rawSocket.
 // Mirrors net.ts Socket.prototype._write which calls socket.$write().
@@ -92,11 +101,11 @@ function tlsSocketWrite(this: TLSProxySocket, chunk: Buffer, encoding: string, c
     callback(new Error("Socket is closed"));
     return;
   }
-  // $write returns true if fully flushed, false if buffered
-  if (h.$write(chunk, encoding)) {
+  // $write returns true once the TLS layer has taken the whole chunk.
+  if (chunk.length > kMaxTLSWrite ? writeInSlices(h, chunk, encoding) : h.$write(chunk, encoding)) {
     callback();
   } else {
-    // Store callback so drain event can invoke it (backpressure)
+    // The TLS layer takes no more writes: it sent its close_notify or it failed. _destroy fails the callback.
     this._writeCallback = callback;
   }
 }
@@ -153,16 +162,6 @@ function socketData(this: TLSProxySocket, _socket: NativeHandle, chunk: Buffer) 
 // end: TLS peer signaled end-of-stream; signal EOF to the H2 session.
 function socketEnd(this: TLSProxySocket) {
   this.push(null);
-}
-
-// drain: raw socket is writable again after being full; propagate backpressure signal.
-// If _write stored a callback waiting for drain, invoke it now.
-function socketDrain(this: TLSProxySocket) {
-  const cb = this._writeCallback;
-  if (cb) {
-    this._writeCallback = null;
-    cb();
-  }
 }
 
 // close: TLS connection closed; tear down the tlsSocket Duplex.
@@ -268,8 +267,7 @@ function onTlsClose(this: TLSProxySocket) {
   if (!ev) return;
   raw.removeListener("data", ev[0]);
   raw.removeListener("end", ev[1]);
-  raw.removeListener("drain", ev[2]);
-  raw.removeListener("close", ev[3]);
+  raw.removeListener("close", ev[2]);
 }
 
 // ---------------------------------------------------------------------------
@@ -344,7 +342,7 @@ function upgradeRawSocketToH2(
   try {
     // upgradeDuplexToTLS wraps rawSocket with a TLS layer in server mode (isServer: true).
     // The native side will:
-    //   1. Read encrypted data from rawSocket via events[0..3]
+    //   1. Read encrypted data from rawSocket via events[0..2]
     //   2. Decrypt it through the TLS engine (with ALPN negotiation for "h2")
     //   3. Call our socket callbacks below with the decrypted plaintext
     //
@@ -367,7 +365,8 @@ function upgradeRawSocketToH2(
         open: socketOpen,
         data: socketData.bind(tlsSocket),
         end: socketEnd.bind(tlsSocket),
-        drain: socketDrain.bind(tlsSocket),
+        // The native side only flushes at the end of the handshake when a drain callback exists. No write waits for it.
+        drain: noop,
         close: socketClose.bind(tlsSocket),
         error: socketError.bind(tlsSocket),
         timeout: socketTimeout.bind(tlsSocket),
@@ -387,13 +386,10 @@ function upgradeRawSocketToH2(
   tlsSocket._ctx.nativeHandle = handle;
   tlsSocket._ctx.events = events;
 
-  // Wire up the raw TCP socket to feed encrypted data into the TLS layer.
-  // events[0..3] are native event handlers returned by upgradeDuplexToTLS that
-  // the native TLS engine expects to receive data/end/drain/close through.
+  // Feed the raw TCP socket's data, end and close to the native TLS engine through the handlers it returned.
   rawSocket.on("data", events[0]);
   rawSocket.on("end", events[1]);
-  rawSocket.on("drain", events[2]);
-  rawSocket.on("close", events[3]);
+  rawSocket.on("close", events[2]);
 
   // When the TLS socket closes (e.g. H2 session destroyed), clean up the raw socket
   // listeners to prevent memory leaks and stale callback references.

@@ -1397,7 +1397,8 @@ it.concurrent(
   },
 );
 
-it.concurrent("a write made in the middle of a renegotiation leaves when it ends, over a Duplex", async () => {
+const duplexes = ["a Duplex", "a Duplex that emits 'drain' in its write()"] as const;
+it.concurrent.each(duplexes)("a write made in the middle of a renegotiation leaves once, over %s", async duplexKind => {
   const tcp = netConnect(quiet.staysOpen, "127.0.0.1");
   tcp.on("error", () => {});
   const APPLICATION_DATA = 23;
@@ -1408,6 +1409,7 @@ it.concurrent("a write made in the middle of a renegotiation leaves when it ends
   const duplex = new Duplex({
     read() {},
     write(chunk: Buffer, _encoding: string, callback: () => void) {
+      if (duplexKind !== "a Duplex") this.emit("drain");
       const forward = () => void tcp.write(chunk, callback);
       if (!established) return forward();
       if (sent.push(chunk[0]) === 1) clientHello.resolve(forward);
@@ -1425,7 +1427,10 @@ it.concurrent("a write made in the middle of a renegotiation leaves when it ends
     socket.write("parked", err => (err ? written.reject(err) : written.resolve()));
     forward();
     await Promise.race([written.promise, failed.promise]);
-    expect(sent.at(-1)).toBe(APPLICATION_DATA);
+    expect({ last: sent.at(-1), applicationData: sent.filter(type => type === APPLICATION_DATA).length }).toEqual({
+      last: APPLICATION_DATA,
+      applicationData: 1,
+    });
   } finally {
     socket.destroy();
     tcp.destroy();

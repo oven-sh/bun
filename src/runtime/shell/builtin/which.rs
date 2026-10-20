@@ -50,16 +50,9 @@ impl Which {
             let mut had_not_found = false;
             for i in 0..argc {
                 let arg = Self::arg(interp, cmd, i);
-                match search.resolve(&arg) {
-                    Some(resolved) => {
-                        let buf = Builtin::fmt_error_arena(
-                            interp,
-                            cmd,
-                            None,
-                            format_args!("{}\n", bstr::BStr::new(&resolved)),
-                        )
-                        .to_vec();
-                        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+                match search.resolve_line(&arg) {
+                    Some(line) => {
+                        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &line);
                     }
                     None => {
                         had_not_found = true;
@@ -100,7 +93,7 @@ impl Which {
         }
 
         let arg = Self::arg(interp, cmd, arg_idx);
-        let resolved = SearchEnv::load(interp, cmd).resolve(&arg);
+        let resolved = SearchEnv::load(interp, cmd).resolve_line(&arg);
 
         let child = ChildPtr::new(cmd, WriterTag::Builtin);
         match resolved {
@@ -132,28 +125,18 @@ impl Which {
                 let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                 Self::arg_complete(interp, cmd)
             }
-            Some(resolved) => {
+            Some(line) => {
                 if let State::MultiArgs { waiting_write, .. } =
                     &mut Self::state_mut(interp, cmd).state
                 {
                     *waiting_write = true;
                 }
                 if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-                    return Builtin::of_mut(interp, cmd).stdout.enqueue_fmt(
-                        child,
-                        None,
-                        format_args!("{}\n", bstr::BStr::new(&resolved)),
-                        safeguard,
-                    );
+                    return Builtin::of_mut(interp, cmd)
+                        .stdout
+                        .enqueue(child, &line, safeguard);
                 }
-                let buf = Builtin::fmt_error_arena(
-                    interp,
-                    cmd,
-                    None,
-                    format_args!("{}\n", bstr::BStr::new(&resolved)),
-                )
-                .to_vec();
-                let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+                let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &line);
                 Self::arg_complete(interp, cmd)
             }
         }
@@ -219,9 +202,10 @@ impl SearchEnv {
         }
     }
 
-    fn resolve(&self, arg: &[u8]) -> Option<Vec<u8>> {
+    /// The line `which` prints for `arg`. The path is appended, not formatted: it is not always UTF-8.
+    fn resolve_line(&self, arg: &[u8]) -> Option<Vec<u8>> {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         bun_which::which(&mut *path_buf, &self.path_env, &self.cwd, arg)
-            .map(|z| z.as_bytes().to_vec())
+            .map(|z| [z.as_bytes(), b"\n"].concat())
     }
 }

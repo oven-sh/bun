@@ -1497,6 +1497,90 @@ describe("output timing", () => {
   });
 });
 
+// The runner relays a script's output. It must not decode it: output in Latin-1, Shift-JIS or GBK
+// is not valid UTF-8, and each byte of it would become U+FFFD.
+describe("a script's output that is not UTF-8 is relayed without a changed byte", () => {
+  const files = {
+    "package.json": JSON.stringify({ name: "filter-bytes", workspaces: ["packages/*"] }),
+    "packages/app/package.json": JSON.stringify({
+      name: "app",
+      scripts: Object.fromEntries(["out", "err", "split", "tail"].map(kind => [kind, `${bunExe()} write.js ${kind}`])),
+    }),
+    "packages/app/write.js": /* js */ `
+      const bytes = text => Buffer.from(text, "latin1");
+      switch (process.argv[2]) {
+        case "out":
+          process.stdout.write(bytes("a\\xffb\\n"));
+          break;
+        case "err":
+          process.stderr.write(bytes("c\\xfed\\n"));
+          break;
+        case "split":
+          process.stdout.write(bytes("e\\xff"));
+          // The pause makes the runner read the two halves of the line as two chunks.
+          await Bun.sleep(250);
+          process.stdout.write(bytes("f\\n"));
+          break;
+        case "tail":
+          process.stdout.write(bytes("g\\xfdh"));
+          break;
+      }
+    `,
+  };
+
+  // One byte of output is one character of the string, so a failure shows the bytes.
+  async function run(dir: string, args: string[], env: Record<string, string | undefined> = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: dir,
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+    return { stdout: Buffer.from(stdout).toString("latin1"), stderr, exitCode };
+  }
+
+  test.each([
+    ["bun run --filter", ["run", "--filter", "*"]],
+    ["bun --filter", ["--filter", "*"]],
+    ["bun run --workspaces", ["run", "--workspaces"]],
+  ])("%s", async (_, args) => {
+    using dir = tempDir("filter-bytes", files);
+    expect(await run(String(dir), [...args, "out"])).toEqual({
+      stdout: "app out: a\xffb\napp out: Exited with code 0\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.each([
+    ["stderr", "err", "c\xfed\n"],
+    ["a stdout line that arrives in two chunks while stderr is silent", "split", "e\xfff\n"],
+    ["a last line without a line break", "tail", "g\xfdh\n"],
+  ])("%s", async (_, script, line) => {
+    using dir = tempDir("filter-bytes", files);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--filter", "*", script]);
+    expect(stdout).toEndWith(`${line}app ${script}: Exited with code 0\n`);
+    // U+FFFD in UTF-8, read as Latin-1.
+    expect(stdout).not.toContain("\xef\xbf\xbd");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // FORCE_COLOR=1 selects the renderer. Whichever one writes into a pipe, it has to keep the bytes.
+  test("with FORCE_COLOR=1 and a pipe", async () => {
+    using dir = tempDir("filter-bytes", files);
+    const { stdout, exitCode } = await run(String(dir), ["run", "--filter", "*", "out"], {
+      NO_COLOR: undefined,
+      FORCE_COLOR: "1",
+    });
+    expect(stdout).toContain("a\xffb\n");
+    expect(stdout).not.toContain("\xef\xbf\xbd");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("auto-discovered bunfig.toml [run] section", () => {
   // With `run.bun = true` bun puts a `node` shim on PATH, so `typeof Bun`
   // tells which binary ran the script.

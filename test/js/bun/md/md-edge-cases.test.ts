@@ -1927,7 +1927,8 @@ describe("white space behind the marker of a block quote", () => {
 // CommonMark 2.2: "Tabs in lines are not expanded to spaces." What a line of code or of an HTML block starts with is
 // written as it is. Only what is left of a tab that the indentation of its block ends in is made of spaces.
 describe("white space at the start of a line of code or HTML", () => {
-  // `html` is what commonmark.js 0.31.2 prints. `text` is all text of the document in its order.
+  // `html` is what commonmark.js 0.31.2 prints. `text` is all text of the document in its order. The rows have the
+  // forms of md4c's tests for this (mity/md4c@2671f259).
   const cases: [name: string, markdown: string, html: string, text: string][] = [
     [
       "fenced code",
@@ -1965,11 +1966,18 @@ describe("white space at the start of a line of code or HTML", () => {
       "<pre><code>  one\n \ttwo\n</code></pre>\n",
       "  one\n \ttwo\n",
     ],
+    [
+      "a tab behind a tab that the indentation of a fence splits",
+      "  ```\n\t\tx\n  \ty\n```\n",
+      "<pre><code>  \tx\n\ty\n</code></pre>\n",
+      "  \tx\n\ty\n",
+    ],
     ["indented code", "\t\tfoo\n", "<pre><code>\tfoo\n</code></pre>\n", "\tfoo\n"],
     ["a second line of indented code", "\tfoo\n\t\tbar\n", "<pre><code>foo\n\tbar\n</code></pre>\n", "foo\n\tbar\n"],
     ["indented code behind four spaces", "    \tfoo\n", "<pre><code>\tfoo\n</code></pre>\n", "\tfoo\n"],
     ["indented code behind five spaces", "     \tfoo\n", "<pre><code> \tfoo\n</code></pre>\n", " \tfoo\n"],
     ["indented code behind a tab and a space", "\t \tfoo\n", "<pre><code> \tfoo\n</code></pre>\n", " \tfoo\n"],
+    ["indented code behind a space and two tabs", " \t\tx\n", "<pre><code>\tx\n</code></pre>\n", "\tx\n"],
     [
       "a line of only white space in indented code",
       "\tfoo\n\t\t\n\tbar\n",
@@ -1987,6 +1995,12 @@ describe("white space at the start of a line of code or HTML", () => {
       "> ```\n>\tone\n> ```\n",
       "<blockquote>\n<pre><code>  one\n</code></pre>\n</blockquote>\n",
       "  one\n",
+    ],
+    [
+      "two tabs behind the marker of a block quote",
+      "> ```\n>\t\tx\n> ```\n",
+      "<blockquote>\n<pre><code>  \tx\n</code></pre>\n</blockquote>\n",
+      "  \tx\n",
     ],
     [
       "indented code in a block quote",
@@ -2017,6 +2031,12 @@ describe("white space at the start of a line of code or HTML", () => {
       "- ```\n\tone\n  ```\n",
       "<ul>\n<li>\n<pre><code>  one\n</code></pre>\n</li>\n</ul>\n",
       "  one\n",
+    ],
+    [
+      "two tabs as the indentation of a list item",
+      "- ```\n\t\tx\n  ```\n",
+      "<ul>\n<li>\n<pre><code>  \tx\n</code></pre>\n</li>\n</ul>\n",
+      "  \tx\n",
     ],
     [
       "fenced code in an ordered list item",
@@ -2078,6 +2098,12 @@ describe("white space at the start of a line of code or HTML", () => {
       "- <div>\n  \tfoo\n\tbar\n",
       "<ul>\n<li>\n<div>\n\tfoo\n  bar\n</li>\n</ul>\n",
       "<div>\n\tfoo\n  bar\n",
+    ],
+    [
+      "an HTML block in a list item in a block quote",
+      "> - <pre>\n>   \tx\n>   </pre>\n",
+      "<blockquote>\n<ul>\n<li>\n<pre>\n\tx\n</pre>\n</li>\n</ul>\n</blockquote>\n",
+      "<pre>\n\tx\n</pre>\n",
     ],
     [
       "HTML behind a tab behind the marker of a block quote",

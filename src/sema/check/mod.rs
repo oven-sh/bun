@@ -985,6 +985,7 @@ impl<'s> Program<'s> {
             rejected_at: 0,
             enclosing_module_specifier_mode: None,
             emit_resolver_links: Default::default(),
+            exporting_modules: None,
             expected: Requested::All,
             declaration_file: None,
             declaration_indent: None,
@@ -1885,6 +1886,8 @@ pub struct Checker<'p, 's> {
     /// while the name of an import or an export is printed.
     enclosing_module_specifier_mode: Option<ResolutionMode>,
     emit_resolver_links: errors_declaration_emit::EmitResolverLinks,
+    /// See `Checker::modules_that_export`. Unlike `emit_resolver_links`, it's the same for every file.
+    exporting_modules: Option<std::rc::Rc<errors_declaration_emit::ExportingModules>>,
     expected: Requested,
     /// The output `get_declaration_diagnostics` leaves for `checked`.
     declaration_file: Option<Vec<u8>>,

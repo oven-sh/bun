@@ -32,6 +32,7 @@ use bstr::ByteSlice;
 use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, relative_normalized};
+use smallvec::SmallVec;
 use std::rc::Rc;
 
 mod commonjs;
@@ -934,6 +935,15 @@ pub(super) struct EmitResolverLinks {
     fake_locals: Vec<(Atom, SymFlags, Option<Sym>)>,
     /// `specifierCache`
     specifiers: FxHashMap<(Sym, FileId, ResolutionMode), Vec<u8>>,
+}
+
+/// The modules that `getAlternativeContainingModules` searches when no import of the file exports the symbol.
+#[derive(Default)]
+pub(super) struct ExportingModules {
+    /// By `merged_resolved_symbol` of an export: the positions in `Files::order` of the modules that have such an export.
+    by_target: FxHashMap<Sym, SmallVec<[u32; 2]>>,
+    /// The position of each module that is searched.
+    positions: FxHashMap<FileId, u32>,
 }
 
 impl EmitResolverLinks {
@@ -2149,28 +2159,89 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         if results.is_empty() {
-            // `c.program.SourceFiles()`
-            for &file in files.order {
-                let module = files.module(file);
-                // A leaf file doesn't export aliases. The task that checks it frees its HIR (`Files::free_tree`). Test
-                // `is_leaf`, which is immutable after loading, before reading `hir`.
-                if module.is_leaf && self.task.file != Some(file) {
-                    continue;
-                }
-                if !module.hir.has_module_syntax {
-                    continue;
-                }
-                let module = files.file_symbol(file);
-                if self.alias_for_symbol_in_container(module, symbol).is_some() {
-                    results.push(module);
-                }
-            }
+            results = self.modules_that_export(symbol);
         }
         let results = Rc::new(results);
         self.emit_resolver_links
             .containing_modules
             .insert((symbol, at.file), Rc::clone(&results));
         results
+    }
+
+    /// The modules of the program, in the order of `c.program.SourceFiles()`, in which `alias_for_symbol_in_container`
+    /// finds `symbol`. tsgo searches the exports of every module for every symbol that no import of the file exports, which
+    /// is quadratic in a program whose files name types they don't import. Here the first search indexes the exports.
+    fn modules_that_export(&mut self, symbol: Sym) -> Vec<Sym> {
+        let files = self.files();
+        let index = match &self.exporting_modules {
+            Some(index) => Rc::clone(index),
+            None => {
+                let mut index = ExportingModules::default();
+                for (position, &file) in (0..).zip(files.order) {
+                    let module = files.module(file);
+                    // A leaf file doesn't export aliases. The task that checks it frees its HIR (`Files::free_tree`). Test
+                    // `is_leaf`, which is immutable after loading, before reading `hir`.
+                    if module.is_leaf || !module.hir.has_module_syntax {
+                        continue;
+                    }
+                    index.positions.insert(file, position);
+                    let module = files.file_symbol(file);
+                    let equals = files.export(module, known::export_equals);
+                    let exports = self.exports_of_symbol(module);
+                    for exported in equals.into_iter().chain(exports.iter().map(|it| it.1)) {
+                        if let AliasTarget::Symbol(target) = self.merged_resolved_symbol(exported) {
+                            let positions = index.by_target.entry(target).or_default();
+                            if positions.last() != Some(&position) {
+                                positions.push(position);
+                            }
+                        }
+                    }
+                }
+                let index = Rc::new(index);
+                self.exporting_modules = Some(Rc::clone(&index));
+                index
+            }
+        };
+        let mut positions: SmallVec<[u32; 4]> = SmallVec::new();
+        match self.merged_resolved_symbol(symbol) {
+            AliasTarget::Symbol(target) => {
+                positions.extend(index.by_target.get(&target).into_iter().flatten().copied());
+            }
+            // Equal to every export that resolves to the same property, or to nothing.
+            _ => {
+                for (&file, &position) in &index.positions {
+                    let module = files.file_symbol(file);
+                    if self.alias_for_symbol_in_container(module, symbol).is_some() {
+                        positions.push(position);
+                    }
+                }
+            }
+        }
+        // The module that declares the symbol counts whether it exports it or not.
+        if let Some(parent) = self.parent_of_symbol(symbol)
+            && parent == files.file_symbol(parent.file)
+            && let Some(&position) = index.positions.get(&parent.file)
+        {
+            positions.push(position);
+        }
+        positions.sort_unstable();
+        positions.dedup();
+        let mut modules: Vec<Sym> = (positions.iter())
+            .map(|&position| files.file_symbol(files.order[position as usize]))
+            .collect();
+        // The file being checked is searched even if it's a leaf.
+        if let Some(file) = self.task.file
+            && files.module(file).is_leaf
+            && files.module(file).hir.has_module_syntax
+        {
+            let module = files.file_symbol(file);
+            if self.alias_for_symbol_in_container(module, symbol).is_some() {
+                let own = files.order.iter().position(|&it| it == file);
+                let at = positions.partition_point(|&it| Some(it as usize) < own);
+                modules.insert(at, module);
+            }
+        }
+        modules
     }
 
     /// "look for a variable in scope with the container's type which may be acting like a namespace (eg, `Symbol` acts

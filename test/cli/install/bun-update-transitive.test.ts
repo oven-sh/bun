@@ -4087,7 +4087,7 @@ test.concurrent(
 );
 
 // peer-deps-fixed has a peer dependency on no-deps@^1.0.0, and strict-peer-dep on no-deps@^2.0.0. No version satisfies
-// both, so they share the newer of the two versions that satisfy one, and the install warns about the other.
+// both, so they share the newest version that satisfies one of them, and the install warns about the other.
 test.concurrent("on a fresh install, two peer dependencies that nothing provides still share one no-deps", async () => {
   const { packageDir: dir } = await registry.createTestDir({
     bunfigOpts: { saveTextLockfile: true, linker: "hoisted" },

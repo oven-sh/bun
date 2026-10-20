@@ -4054,10 +4054,14 @@ type OrderedShape = {
 const zVersions = { "1.0.0": {}, "1.0.5": {}, "1.1.0": {}, "2.0.0": {} };
 
 // The manifests of the packages in `broken` are not JSON. `time` has the publish dates, by package and version.
+// `headers` go on every manifest.
 async function registryWithHolds(
   manifests: OrderedManifests,
-  broken: string[] = [],
-  time: Record<string, Record<string, string>> = {},
+  {
+    broken = [],
+    time = {},
+    headers = {},
+  }: { broken?: string[]; time?: Record<string, Record<string, string>>; headers?: Record<string, string> } = {},
 ) {
   const tarballs = new Map<string, Uint8Array>();
   for (const [name, versions] of Object.entries(manifests)) {
@@ -4089,7 +4093,7 @@ async function registryWithHolds(
         versions[version] = { name, version, dist: { tarball: `${origin}/${name}-${version}.tgz` }, ...extra };
       }
       const latest = Object.keys(entry).sort(Bun.semver.order).at(-1);
-      return Response.json({ name, versions, "dist-tags": { latest }, time: time[name] });
+      return Response.json({ name, versions, "dist-tags": { latest }, time: time[name] }, { headers });
     },
   });
   return {
@@ -4576,9 +4580,10 @@ function renamed<T>(value: T, names: Record<string, string>): T {
 
 // No version of v satisfies a, b and c. y is installed for d's peer dependency, after v, and its `*` only shares v@2.0.0
 // if a package asks for exactly that version. Otherwise it picks v@3.0.0 first, which brings z@1.0.0 for t to share.
-const sharesAnExactVersion = (b: string): OrderedManifests => ({
+// y ends up with v@2.0.0 both times, so only z tells them apart.
+const exactPeerManifests = (rangeOfB: string): OrderedManifests => ({
   a: { "1.0.0": { peerDependencies: { v: "1.0.0" } } },
-  b: { "1.0.0": { peerDependencies: { v: b } } },
+  b: { "1.0.0": { peerDependencies: { v: rangeOfB } } },
   c: { "1.0.0": { peerDependencies: { v: "~2.0.0" } } },
   d: { "1.0.0": { peerDependencies: { y: "*" } } },
   y: { "1.0.0": { dependencies: { v: "*", x: "1.0.0" } } },
@@ -4634,7 +4639,7 @@ it.concurrent.each<{
     z: ["1.1.0"],
   },
   {
-    shape: "no version satisfies the ranges of two versions of one package",
+    shape: "of two versions of one package, only the lowest counts",
     manifests: {
       a: { "1.0.0": { dependencies: { d: "1.0.0" } } },
       b: { "1.0.0": { dependencies: { d: "2.0.0" } } },
@@ -4643,18 +4648,32 @@ it.concurrent.each<{
     },
     root: ["a", "b"],
     swap: ["a", "b"],
-    z: ["2.0.0"],
+    z: ["1.1.0"],
+  },
+  {
+    // m gets g@2.0.0 first, and g@1.0.0 replaces it once n has brought that in.
+    shape: "a version that deduplication replaces doesn't count",
+    manifests: {
+      a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
+      m: { "1.0.0": { dependencies: { g: "*" } } },
+      n: { "1.0.0": { dependencies: { g: "1.0.0" } } },
+      g: { "1.0.0": {}, "2.0.0": { peerDependencies: { z: "^2.0.0" } } },
+      z: zVersions,
+    },
+    root: ["a", "m", "n"],
+    swap: ["a", "g"],
+    z: ["1.1.0"],
   },
   {
     shape: "an exact range loses, so the shared version isn't one that a package asks for exactly",
-    manifests: sharesAnExactVersion("^2.0.0"),
+    manifests: exactPeerManifests("^2.0.0"),
     root: ["a", "b", "c", "d"],
     swap: ["a", "c"],
     z: ["1.0.0"],
   },
   {
     shape: "an exact range and a wider one pick the shared version",
-    manifests: sharesAnExactVersion("2.0.0"),
+    manifests: exactPeerManifests("2.0.0"),
     root: ["a", "b", "c", "d"],
     swap: ["a", "c"],
     z: ["2.0.0"],
@@ -4673,8 +4692,8 @@ it.concurrent.each<{
     z: ["1.0.5", "1.1.0"],
   },
 ])("a fresh install resolves peers the same way whatever the packages are called: $shape", async shape => {
-  const [x, y] = shape.swap;
-  for (const names of [{}, { [x]: y, [y]: x }] as Record<string, string>[]) {
+  const [first, second] = shape.swap;
+  for (const names of [{}, { [first]: second, [second]: first }] as Record<string, string>[]) {
     using server = (await registryWithHolds(renamed(shape.manifests, names))).server;
     const dependencies = Object.fromEntries(shape.root.map(name => [name, "1.0.0"]));
     const lock = await freshInstallLock(server, { "package.json": renamed({ name: "foo", dependencies }, names) });
@@ -4689,32 +4708,51 @@ it.concurrent(
   async () => {
     using server = (
       await registryWithHolds({
-        h: { "1.0.0": { dependencies: { g: "1.0.0" } }, "3.0.0": { dependencies: { l: "1.0.0" } } },
         l: { "1.0.0": { peerDependencies: { z: "2.0.0" } } },
         g: { "1.0.0": { peerDependencies: { z: "~1.0.0" } } },
         z: zVersions,
       })
     ).server;
     const lock = await freshInstallLock(server, {
-      "package.json": { name: "foo", workspaces: ["packages/*"], dependencies: { h: "^3.0.0" } },
+      "package.json": { name: "foo", workspaces: ["packages/*"], dependencies: { g: "1.0.0", l: "1.0.0" } },
       "packages/wa/package.json": { name: "wa", peerDependencies: { l: "1.0.0" } },
-      "packages/wb/package.json": { name: "wb", dependencies: { h: "~1.0.0" } },
       "packages/wc/package.json": { name: "wc", dependencies: { z: "1.1.0", wa: "workspace:*" } },
     });
     expect([...new Set(Object.values(instancesOf(lock, "z")))].sort()).toEqual(["z@1.0.5", "z@1.1.0"]);
   },
 );
 
-const published = (date: string) => ({ "1.0.0": date, "1.0.5": date, "1.1.0": date, "2.0.0": date });
+const peerOnZ2 = { "1.0.0": { peerDependencies: { z: "^2.0.0" } } };
+it.concurrent.each(["a", "d"])(
+  "an exact peer range resolves the same way with an expired manifest in the cache: %s next to b and c",
+  async exact => {
+    using server = (
+      await registryWithHolds(
+        { [exact]: { "1.0.0": { peerDependencies: { z: "1.0.0" } } }, b: peerOnZ2, c: peerOnZ2, z: zVersions },
+        { headers: { "cache-control": "max-age=0" } },
+      )
+    ).server;
+    using dir = projectOn(server, {
+      "package.json": { name: "foo", dependencies: { [exact]: "1.0.0", b: "1.0.0", c: "1.0.0" } },
+    });
+    for (const cache of ["empty", "expired"]) {
+      const lock = await installAndReadLock(String(dir));
+      expect({ cache, z: instancesOf(lock, "z") }).toEqual({ cache, z: { z: "z@2.0.0" } });
+      await rm(join(String(dir), "bun.lock"));
+      await rm(join(String(dir), "node_modules"), { recursive: true });
+    }
+  },
+);
+
 it.concurrent.each([
-  { unmet: "a", range: "^9.0.0", args: [] },
-  { unmet: "c", range: "^9.0.0", args: [] },
-  { unmet: "a", range: "^2.0.0", args: ["--minimum-release-age", "864000"] },
-  { unmet: "c", range: "^2.0.0", args: ["--minimum-release-age", "864000"] },
+  { unmet: "a", range: "^9.0.0", why: "no such version", args: [] },
+  { unmet: "c", range: "^9.0.0", why: "no such version", args: [] },
+  { unmet: "a", range: "^2.0.0", why: "--minimum-release-age", args: ["--minimum-release-age", "864000"] },
+  { unmet: "c", range: "^2.0.0", why: "--minimum-release-age", args: ["--minimum-release-age", "864000"] },
 ])(
-  "a peer range without a version to install shares the version of the other package: $unmet with z@$range next to b",
+  "a peer range without a version to install shares the version of the other package: $unmet with z@$range ($why) next to b",
   async ({ unmet, range, args }) => {
-    const old = published("2020-01-01T00:00:00.000Z");
+    const old = Object.fromEntries(Object.keys(zVersions).map(version => [version, "2020-01-01T00:00:00.000Z"]));
     using server = (
       await registryWithHolds(
         {
@@ -4722,8 +4760,7 @@ it.concurrent.each([
           b: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
           z: zVersions,
         },
-        [],
-        { [unmet]: old, b: old, z: { ...old, "2.0.0": new Date().toISOString() } },
+        { time: { [unmet]: old, b: old, z: { ...old, "2.0.0": new Date().toISOString() } } },
       )
     ).server;
     using dir = projectOn(server, { "package.json": { name: "foo", dependencies: { [unmet]: "1.0.0", b: "1.0.0" } } });
@@ -4827,7 +4864,6 @@ it("an install that adds packages to a bun.lock writes the same bun.lock whichev
 // must not decide which versions its dependencies share with the rest of the tree. p's peer keeps
 // z@2.0.0 in the tree once something has picked it, so the collapse cannot even the orders out.
 const pinAndPeer = { dependencies: { p: "1.0.0", z: "1.0.0" } };
-const peerOnZ2 = { "1.0.0": { peerDependencies: { z: "^2.0.0" } } };
 
 function dependenciesOnTarballs(server: Bun.Server, names: string[]) {
   return Object.fromEntries(names.map(name => [name, `${server.url.origin}/${name}-1.0.0.tgz`]));
@@ -4905,7 +4941,7 @@ it("a broken manifest that no dependency needs in the end does not fail the inst
       x: { "1.0.0": {}, "1.1.0": { dependencies: { junk: "^1.0.0" } } },
       junk: { "1.0.0": {} },
     },
-    ["junk"],
+    { broken: ["junk"] },
   );
   using server = ordered.server;
   ordered.hold([

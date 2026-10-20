@@ -179,7 +179,9 @@ if (mode === "end" || mode === "end-strict" || mode === "destroySoon") {
     const log = [];
     const peer = await stalledPeer();
     // The local port of a live connection: nothing listens on it, and no listen(0) can be handed it.
-    const holder = net.connect(peer.port, "127.0.0.1");
+    // localAddress has bind() choose it: a port that connect() chose, Linux may also choose for
+    // `raw`, which then connects to itself.
+    const holder = net.connect({ port: peer.port, host: "127.0.0.1", localAddress: "127.0.0.1" });
     await once(holder, "connect");
 
     const raw = net.connect(transport === "refused" ? holder.localPort : peer.port, "127.0.0.1");

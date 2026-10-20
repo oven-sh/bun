@@ -841,7 +841,7 @@ impl Checker<'_, '_> {
         let may_repeat =
             !in_destructuring && (!is_all_written || properties.len() > 1 && has_repeated);
         // `lateBindMember`
-        let container = self.bound(file).expr_symbol[node.idx()];
+        let container = self.bound(file).symbol_of_expr(node);
         if may_repeat && !is_all_written && properties.len() > 1 && container.is_some() {
             let container = self.files().sym(file, container);
             self.report_conflicts_of_late_bound_members(file, container, false);

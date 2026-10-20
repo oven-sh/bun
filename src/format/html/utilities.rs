@@ -270,6 +270,11 @@ impl<'a> Tree<'a> {
         {
             return true;
         }
+        // Whitespace-only content of a `<pre>` is rendered, and in a `<textarea>` it's the value. Prettier collapses it
+        // to one space or removes it.
+        if is_pre_like(node) && node.has(Flags::HAS_DANGLING_SPACES | Flags::HAS_END_SPAN) {
+            return true;
+        }
         self.is_vue_non_html_block(id, options) && !is_script_like_tag(node, options)
     }
 

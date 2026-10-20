@@ -243,6 +243,8 @@ pub(crate) struct TakeJSBundleOptionsClient<'a> {
     pub(crate) initial_response_entry_point: &'a [u8],
     pub(crate) react_refresh_entry_point: &'a [u8],
     pub(crate) console_log: bool,
+    /// The page and layouts of a route whose pages also run in the browser: `config.route`.
+    pub(crate) route_page_files: Option<&'a super::router_glue::ClientPageFiles>,
 }
 impl Default for TakeJSBundleOptionsClient<'_> {
     fn default() -> Self {
@@ -251,6 +253,7 @@ impl Default for TakeJSBundleOptionsClient<'_> {
             script_id: source_map_store::Key::init(0),
             initial_response_entry_point: b"",
             react_refresh_entry_point: b"",
+            route_page_files: None,
             console_log: false,
         }
     }
@@ -1784,6 +1787,30 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         rel,
                         &mut end_list,
                     )?;
+                }
+                if let Some(files) = options.route_page_files {
+                    let write_id = |end_list: &mut Vec<u8>, abs: &[u8]| -> crate::Result<()> {
+                        let mut buf = bun_paths::path_buffer_pool::get();
+                        // SAFETY: `relative_path` reads `dev.root` only.
+                        let rel = unsafe { (*dev).relative_path(&mut *buf, abs) };
+                        bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
+                            rel, end_list,
+                        )?;
+                        Ok(())
+                    };
+                    end_list.extend_from_slice(b",\n  route: { page: ");
+                    match &files.page {
+                        Some(page) => write_id(&mut end_list, page)?,
+                        None => end_list.extend_from_slice(b"null"),
+                    }
+                    end_list.extend_from_slice(b", layouts: [");
+                    for (i, layout) in files.layouts.iter().enumerate() {
+                        if i > 0 {
+                            end_list.extend_from_slice(b", ");
+                        }
+                        write_id(&mut end_list, layout)?;
+                    }
+                    end_list.extend_from_slice(b"] }");
                 }
                 end_list.extend_from_slice(b"\n})");
             }

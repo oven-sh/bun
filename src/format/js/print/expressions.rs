@@ -5,7 +5,9 @@ use super::class::format_grouped_parameters_with_return_type_for_method;
 use super::function::FormatFunctionBody;
 use super::object_like::ObjectLike;
 use super::object_pattern_like::ObjectPatternLike;
-use super::return_or_throw_statement::has_argument_leading_comments;
+use super::return_or_throw_statement::{
+    has_argument_leading_comments, has_comment_right_after_keyword,
+};
 use crate::js::format::{FormatExpr, format_name, format_node};
 use crate::js::parentheses::expression::left_edge_end;
 use crate::js::utils::array::write_array_node;
@@ -324,10 +326,14 @@ pub(crate) fn write_yield_expression<'a>(
         return;
     };
     write!(f, space());
+    // A line break after `yield` ends the expression, so without the parentheses `yield ( // a\n b )` would yield nothing.
+    // Prettier drops them. A line break after `yield*` is fine.
     if !f.is_quiet()
-        && yield_writes_its_argument_as_return_does(f)
         && !matches!(argument.kind(), ExprKind::Jsx(_))
-        && has_argument_leading_comments(argument, f)
+        && match yield_writes_its_argument_as_return_does(f) {
+            true => has_argument_leading_comments(argument, f),
+            false => !delegate && has_comment_right_after_keyword(argument, f),
+        }
     {
         return write!(f, ["(", block_indent(&argument), ")"]);
     }

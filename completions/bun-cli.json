@@ -125,15 +125,15 @@
         },
         {
           "name": "reporter",
-          "description": "Test output reporter format. Available: 'junit' (requires --reporter-outfile). Default: console output.",
+          "description": "Add a test reporter. Available: 'junit' (requires --reporter-outfile), 'dots'. Default: console output.",
           "hasValue": true,
           "valueType": "val",
           "required": false,
-          "multiple": false
+          "multiple": true
         },
         {
           "name": "reporter-outfile",
-          "description": "Output file path for the reporter format (required with --reporter).",
+          "description": "File that --reporter=junit writes the XML report to.",
           "hasValue": true,
           "valueType": "val",
           "required": false,

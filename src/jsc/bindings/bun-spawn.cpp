@@ -110,7 +110,10 @@ typedef struct bun_spawn_request_t {
     bool set_uid;
     bool set_gid;
     int cgroup_fd; // -1 = unset; Linux: directory fd of the cgroup the child starts in
+    bool forwards_signals; // the caller sends the signals it gets on to this child (Bun__registerSignalsForForwarding)
 } bun_spawn_request_t;
+
+extern "C" void Bun__setSyncChildDuringSpawn(int64_t pid, const sigset_t* pendingBeforeChild);
 
 // Raw exit syscall that doesn't go through libc.
 // This avoids potential deadlocks when forking from a multi-threaded process,
@@ -486,6 +489,12 @@ extern "C" ssize_t posix_spawn_bun(
         return -1;
     };
 
+    // A signal that is pending now came before the child exists: a terminal did not send it to the child.
+    sigset_t pendingBeforeChild;
+    sigemptyset(&pendingBeforeChild);
+    if (request->forwards_signals)
+        sigpending(&pendingBeforeChild);
+
 #if OS(LINUX)
     if (request->cgroup_fd >= 0 && clone3Unavailable.load(std::memory_order_relaxed)) {
         join_cgroup_in_child = true;
@@ -619,6 +628,9 @@ extern "C" ssize_t posix_spawn_bun(
         (void)prctl(PR_SET_DUMPABLE, saved_dumpable, 0, 0, 0);
     }
 #endif
+
+    if (request->forwards_signals && res == 0)
+        Bun__setSyncChildDuringSpawn(request->new_process_group ? -static_cast<int64_t>(child) : child, &pendingBeforeChild);
 
     sigprocmask(SIG_SETMASK, &oldmask, 0);
 #if !OS(ANDROID)

@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
+import { chmodSync } from "fs";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, libcPathForDlopen, normalizeBunSnapshot, tempDir } from "harness";
+import { join } from "path";
 
 // When multiple listeners are registered for the same signal, removing one
 // listener must NOT uninstall the underlying OS signal handler while other
@@ -196,3 +198,58 @@ describe.concurrent.skipIf(isWindows)("SIGABRT and SIGIOT", () => {
     expect(await run({ sent: removed, events: [kept], removed })).toEqual(listenersRan([kept]));
   });
 });
+
+// The last listener of a signal goes away while another handler has the signal: here the one
+// that `Bun.openInEditor` installs to send signals on to the editor. That disposition is not
+// ours, so it must stay as it is. It used to be installed again with signal(), which drops the
+// flags of the handler (SA_SIGINFO).
+test.skipIf(!isLinux && !isMacOS)(
+  "removing the last signal listener leaves a disposition that is not ours as it is",
+  async () => {
+    using dir = tempDir("signal-disposition-not-ours", {
+      // The editor. It ends when its stdin does.
+      "bin/subl": "#!/bin/sh\nexec cat\n",
+      "main.js": /*js*/ `
+        const { dlopen, ptr } = require("bun:ffi");
+        const libc = dlopen(process.env.LIBC_PATH, { sigaction: { args: ["i32", "ptr", "ptr"], returns: "i32" } });
+        const SIGINT = 2;
+        // struct sigaction: the handler is first, sa_flags is at this offset.
+        const flagsOffset = process.platform === "linux" ? 136 : 12;
+        function disposition() {
+          const action = new Uint8Array(256);
+          if (libc.symbols.sigaction(SIGINT, null, ptr(action)) !== 0) throw new Error("sigaction failed");
+          const view = new DataView(action.buffer);
+          return view.getBigUint64(0, true).toString(16) + " flags " + view.getUint32(flagsOffset, true).toString(16);
+        }
+
+        const listener = () => {};
+        process.on("SIGINT", listener);
+        const ours = disposition();
+        Bun.openInEditor(__filename, { editor: "subl" });
+        // The editor starts on another thread.
+        while (disposition() === ours) await Bun.sleep(1);
+        const theirs = disposition();
+        process.off("SIGINT", listener);
+        console.log(disposition() === theirs ? "unchanged" : "changed");
+        process.exit(0);
+      `,
+    });
+    chmodSync(join(String(dir), "bin", "subl"), 0o755);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, PATH: `${join(String(dir), "bin")}:${bunEnv.PATH}`, LIBC_PATH: libcPathForDlopen() },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    proc.stdin.end();
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("unchanged\n");
+    expect(exitCode).toBe(0);
+  },
+);

@@ -106,6 +106,9 @@ pub mod ffi {
         /// Forwards a signal that arrived before the child PID was known.
         /// Call after a `SeqCst` store of the PID.
         pub safe fn Bun__sendPendingSignalIfNecessary();
+
+        /// Whether the terminal that sent `sig` to this process sent it to the child `pid` too. `si_code` is the handler's.
+        pub safe fn Bun__childAlreadyHasSignal(sig: c_int, si_code: c_int, pid: i64) -> bool;
     }
 }
 

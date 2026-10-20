@@ -40,6 +40,17 @@ pub use bun_event_loop::EventLoopHandle;
 // Raw OS-spawn types from the leaf -sys crate.
 pub use bun_spawn_sys::{Argv, CStrPtr, Envp, ffi};
 
+/// For a runner that sends its signals on to a child: whether the child already has `sig`. See `Bun__childAlreadyHasSignal`.
+#[cfg(unix)]
+#[inline]
+pub fn child_already_has_signal(
+    sig: core::ffi::c_int,
+    si_code: core::ffi::c_int,
+    pid: libc::pid_t,
+) -> bool {
+    ffi::Bun__childAlreadyHasSignal(sig, si_code, i64::from(pid))
+}
+
 pub use bun_spawn_sys::RusageFields;
 pub use process::{
     Dup2, Exited, ExtraPipe, PidT, Poller, Process, ProcessHandle, Rusage, SpawnEnv, SpawnOptions,

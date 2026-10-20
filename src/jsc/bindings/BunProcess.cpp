@@ -1591,10 +1591,10 @@ static void uninstallForwardSignalHandler(int signalNumber)
     if (signalNumber == SIGSYS && Bun__forwardSIGSYSToJS(false))
         return;
 #endif
-    if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
-        // Don't uninstall the old handler if it's not the one we installed.
-        signal(signalNumber, oldHandler);
-    }
+    // A look leaves a handler that is not ours as it is: signal() would install it again without its flags (SA_SIGINFO).
+    struct sigaction current;
+    if (sigaction(signalNumber, nullptr, &current) == 0 && current.sa_handler == forwardSignal)
+        signal(signalNumber, SIG_DFL);
 }
 
 extern "C" void Bun__installWatchModeSignalHandler(int signalNumber)

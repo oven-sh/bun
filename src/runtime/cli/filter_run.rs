@@ -1,5 +1,7 @@
 use core::ffi::{c_char, c_void};
 use std::io::Write as _;
+#[cfg(unix)]
+use std::sync::atomic::AtomicI32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
@@ -64,6 +66,9 @@ pub(crate) struct ProcessHandle<'a> {
     /// `remaining_scripts`, so a later pipe/exit event or the abort sweep
     /// cannot finish it twice.
     finished: bool,
+    /// The SIGINT that aborts the run came before this script was running: no terminal sent it to this script.
+    #[cfg(unix)]
+    spawned_after_abort_signal: bool,
     buffer: Vec<u8>,
 
     process: Option<ProcessInfo>,
@@ -87,6 +92,20 @@ enum VisitState {
 }
 
 impl<'a> ProcessHandle<'a> {
+    /// Whether a terminal sent the SIGINT that aborts the run to this script too: one from `abort()` would be a second Ctrl+C.
+    fn already_has_abort_signal(&self) -> bool {
+        #[cfg(unix)]
+        if let Some(info) = &self.process {
+            return !self.spawned_after_abort_signal
+                && bun_spawn::child_already_has_signal(
+                    libc::SIGINT,
+                    ABORT_SIGNAL_CODE.load(Ordering::SeqCst),
+                    info.process.pid,
+                );
+        }
+        false
+    }
+
     fn start(&mut self) -> crate::Result<()> {
         // Copy the BackRef out so the `&mut State` borrow is detached from `self`.
         let mut state_ref = self.state;
@@ -137,6 +156,10 @@ impl<'a> ProcessHandle<'a> {
             }??;
             // `_guard` drops here (or on `?` above), restoring PATH.
         };
+        #[cfg(unix)]
+        {
+            handle.spawned_after_abort_signal = SHOULD_ABORT.load(Ordering::SeqCst);
+        }
         #[cfg(unix)]
         let (stdout_fd, stderr_fd) = (spawned.stdout, spawned.stderr);
         // Windows: `spawn_process_windows` has already moved the heap pipe out of
@@ -703,8 +726,11 @@ impl<'a> State<'a> {
         for handle in handles {
             // SAFETY: points into `self.handles`, live for the whole run loop.
             if let Some(proc) = unsafe { (*handle).process.as_ref() } {
-                // if we get an error here we simply ignore it
-                let _ = proc.process.kill(bun_sys::SignalCode::SIGINT.0);
+                // SAFETY: same `self.handles` element; a shared read of one field.
+                if !unsafe { (*handle).already_has_abort_signal() } {
+                    // if we get an error here we simply ignore it
+                    let _ = proc.process.kill(bun_sys::SignalCode::SIGINT.0);
+                }
             }
             // An already-exited handle may be waiting on pipes a grandchild
             // still holds; with `aborted` set this finishes it now. Killed
@@ -742,6 +768,9 @@ struct AbortHandler;
 
 static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
 // Atomic because it is set from a signal handler.
+/// `si_code` of the SIGINT that set `SHOULD_ABORT`: it tells `abort()` whether a terminal sent that SIGINT, to the scripts too.
+#[cfg(unix)]
+static ABORT_SIGNAL_CODE: AtomicI32 = AtomicI32::new(0);
 
 impl AbortHandler {
     #[cfg(unix)]
@@ -751,7 +780,8 @@ impl AbortHandler {
         _: *const c_void,
     ) {
         let _ = sig;
-        let _ = info;
+        // SAFETY: the kernel passes a valid `siginfo_t` to an `SA_SIGINFO` handler.
+        ABORT_SIGNAL_CODE.store(unsafe { (*info).si_code }, Ordering::SeqCst);
         SHOULD_ABORT.store(true, Ordering::SeqCst);
     }
 
@@ -1021,6 +1051,8 @@ pub(crate) fn run_scripts_with_filter(
             buffer: Vec::new(),
             remaining_fds: 0,
             finished: false,
+            #[cfg(unix)]
+            spawned_after_abort_signal: false,
             process: None,
             options: SpawnOptions {
                 stdin: spawn::Stdio::Ignore,

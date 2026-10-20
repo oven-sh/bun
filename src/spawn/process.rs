@@ -2543,6 +2543,8 @@ mod spawn_process_body {
                     stream: false,
                     argv0: self.argv0,
                     new_process_group,
+                    #[cfg(unix)]
+                    forwards_signals: true,
                     #[cfg(windows)]
                     windows: self.windows.clone(),
                     ..Default::default()

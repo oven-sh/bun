@@ -133,10 +133,12 @@ test.if(isWindows).each([[[]], [["run"]]])(
 
 // Ctrl+C on a terminal reaches `bun run` and the script together (same pgroup /
 // same console). `bun run` must leave it to the script and report its exit; on
-// Windows it used to die first with STATUS_CONTROL_C_EXIT. The script raises the
-// Ctrl+C itself once it is listening: on POSIX it signals its own foreground
-// process group, which is what the line discipline does for ^C; on Windows it
-// calls GenerateConsoleCtrlEvent on its own (pseudo)console.
+// Windows it used to die first with STATUS_CONTROL_C_EXIT.
+//
+// On POSIX the test types the Ctrl+C: it writes 0x03 to the pty once the script
+// has printed a marker, and the line discipline signals the foreground process
+// group. On Windows the script raises it itself once it is listening, with
+// GenerateConsoleCtrlEvent on its own (pseudo)console.
 //
 // CI agents start the test runner in a new process group, which on Windows means
 // "Ctrl+C ignored" - an attribute every descendant inherits (it is also why a
@@ -150,38 +152,75 @@ if (isWindows) {
   if (!ok) throw new Error("SetConsoleCtrlHandler(NULL, FALSE) failed; the Ctrl+C tests below cannot run");
 }
 
+// Windows only. On POSIX the test types the key.
 const raiseCtrlC = `
   globalThis.raiseCtrlC = () => {
-    if (process.platform === "win32") {
-      const { dlopen } = require("bun:ffi");
-      const k32 = dlopen("kernel32.dll", { GenerateConsoleCtrlEvent: { args: ["u32", "u32"], returns: "i32" } });
-      if (k32.symbols.GenerateConsoleCtrlEvent(0, 0) === 0) throw new Error("GenerateConsoleCtrlEvent failed");
-    } else {
-      process.kill(0, "SIGINT");
-    }
+    if (process.platform !== "win32") return;
+    const { dlopen } = require("bun:ffi");
+    const k32 = dlopen("kernel32.dll", { GenerateConsoleCtrlEvent: { args: ["u32", "u32"], returns: "i32" } });
+    if (k32.symbols.GenerateConsoleCtrlEvent(0, 0) === 0) throw new Error("GenerateConsoleCtrlEvent failed");
   };
 `;
 
-async function runInTerminal(cmd: string[], cwd: string) {
+/** `cmd` in its own session / pseudoconsole, so the Ctrl+C stays between `bun run` and the script. */
+function openTerminal(cmd: string[], cwd: string, env: Record<string, string | undefined> = bunEnv) {
   let output = "";
   const decoder = new TextDecoder();
-  await using proc = Bun.spawn({
+  let wake = Promise.withResolvers<void>();
+  const proc = Bun.spawn({
     cmd,
     cwd,
-    env: bunEnv,
-    // Own session / pseudoconsole, so the Ctrl+C stays between `bun run` and the script.
+    env,
     terminal: {
       cols: 200,
       rows: 24,
       data(_t, chunk: Uint8Array) {
         output += decoder.decode(chunk, { stream: true });
+        wake.resolve();
+        wake = Promise.withResolvers<void>();
       },
     },
   });
-  const exitCode = await proc.exited;
-  proc.terminal?.close();
-  output += decoder.decode();
-  return { text: Bun.stripANSI(output), exitCode, signalCode: proc.signalCode };
+  const exited = proc.exited.then(() => "exited" as const);
+  return {
+    pid: proc.pid,
+    /** "\x03" is Ctrl+C and "\x1c" is Ctrl+\ on POSIX. */
+    type: (keys: string) => void proc.terminal!.write(keys),
+    /** Waits until the terminal shows `text`. */
+    async printed(text: string) {
+      while (!output.includes(text)) {
+        if ((await Promise.race([wake.promise, exited])) === "exited" && !output.includes(text))
+          throw new Error(`exited before it printed ${JSON.stringify(text)}: ${JSON.stringify(output)}`);
+      }
+    },
+    /** Linux. Waits until the main thread of the command is stopped ("T") or asleep in a wait ("S"). */
+    async state(state: "T" | "S") {
+      for (;;) {
+        const stat = readFileSync(`/proc/${proc.pid}/stat`, "latin1");
+        if (stat[stat.lastIndexOf(")") + 2] === state) return;
+        await Bun.sleep(1);
+      }
+    },
+    async end() {
+      const exitCode = await proc.exited;
+      proc.terminal?.close();
+      output += decoder.decode();
+      return { text: Bun.stripANSI(output), exitCode, signalCode: proc.signalCode };
+    },
+    [Symbol.asyncDispose]: () => proc[Symbol.asyncDispose](),
+  };
+}
+
+/** On POSIX, types Ctrl+C each time the next of `typeCtrlCAfter` shows in the output. */
+async function runInTerminal(cmd: string[], cwd: string, typeCtrlCAfter: string[]) {
+  await using terminal = openTerminal(cmd, cwd);
+  if (!isWindows) {
+    for (const marker of typeCtrlCAfter) {
+      await terminal.printed(marker);
+      terminal.type("\x03");
+    }
+  }
+  return await terminal.end();
 }
 
 // `bun run <script>` with each shell, and `bun run <bin>` (POSIX only: a Windows
@@ -202,12 +241,13 @@ for (const mode of ctrlCModes) {
           process.exit(42);
         });
         setInterval(() => {}, 1000);
+        console.log("ready");
         raiseCtrlC();
       `,
     });
     chmodSync(join(String(dir), "node_modules/.bin/childbin"), 0o755);
 
-    const { text, exitCode } = await runInTerminal([bunExe(), "run", ...mode.args], String(dir));
+    const { text, exitCode } = await runInTerminal([bunExe(), "run", ...mode.args], String(dir), ["ready"]);
     expect(text).toContain("child got SIGINT");
     expect(exitCode).toBe(42);
   });
@@ -242,7 +282,10 @@ for (const mode of ctrlCModes) {
     });
     chmodSync(join(String(dir), "node_modules/.bin/childbin"), 0o755);
 
-    const { text, exitCode, signalCode } = await runInTerminal([bunExe(), "run", ...mode.args], String(dir));
+    const { text, exitCode, signalCode } = await runInTerminal([bunExe(), "run", ...mode.args], String(dir), [
+      "ready",
+      "child cleanup done",
+    ]);
     expect(text).toContain("ready");
     // `bun run` outlived the child's cleanup...
     expect(existsSync(join(String(dir), "cleanup-done"))).toBe(true);
@@ -318,6 +361,268 @@ test.skipIf(!isLinux)(
   // 20 runs of a debug build need more than the default 5 seconds.
   30_000,
 );
+
+// One key at the terminal is one signal for the script. The terminal sends it to the whole
+// foreground process group, so a runner must not send a copy of its own on to a script that is
+// in that group. A signal that a process sends to the runner alone is still sent on.
+//
+// Linux only: there the kernel marks a terminal's signal (si_code SI_KERNEL). macOS does not, so
+// bun still sends every signal on there. /proc also shows when the runner is stopped ("T") and
+// when it has handled its signals and waits again ("S").
+describe.skipIf(!isLinux)("one key at the terminal is one signal for the script", () => {
+  for (const [signal, key] of [
+    ["SIGINT", "\x03"],
+    ["SIGQUIT", "\x1c"],
+  ] as const) {
+    for (const mode of [
+      { name: "--shell=system", args: ["--shell=system", "go"] },
+      { name: "<bin>", args: ["childbin"] },
+    ]) {
+      test(`${signal}: bun run ${mode.name} sends on a kill(2), not the key`, async () => {
+        using dir = tempDir("run-key-once", {
+          "package.json": JSON.stringify({ name: "t", scripts: { go: "bun child.js" } }),
+          "node_modules/.bin/childbin": '#!/bin/sh\nexec bun "$(dirname "$0")/../../child.js"\n',
+          "child.js": `
+            let signals = 0;
+            process.on("${signal}", () => console.log("${signal} " + ++signals));
+            let lines = 0;
+            process.stdin.on("data", () => {
+              if (++lines === 2) process.exit(0);
+              console.log("still here");
+            });
+            console.log("ready");
+          `,
+        });
+        chmodSync(join(String(dir), "node_modules/.bin/childbin"), 0o755);
+
+        await using terminal = openTerminal([bunExe(), "run", ...mode.args], String(dir));
+        await terminal.printed("ready");
+        // For `bun run` alone: the script gets it from `bun run`.
+        process.kill(terminal.pid, signal);
+        await terminal.printed(`${signal} 1`);
+        // `bun run` is stopped while the key is typed. The script takes the key first, so a
+        // copy from `bun run` could not merge with it.
+        process.kill(terminal.pid, "SIGSTOP");
+        await terminal.state("T");
+        terminal.type(key);
+        await terminal.printed(`${signal} 2`);
+        process.kill(terminal.pid, "SIGCONT");
+        await terminal.state("S");
+        // Two lines to the script and back: it would have printed a copy by now.
+        terminal.type("\n");
+        await terminal.printed("still here");
+        terminal.type("\n");
+        const { text, exitCode } = await terminal.end();
+        expect(text).not.toContain(`${signal} 3`);
+        expect(exitCode).toBe(0);
+      });
+    }
+  }
+
+  // The key can come while `bun run` is inside the spawn of the script. It blocks every signal
+  // there, which /proc/<pid>/status shows, and it must know the pid when it unblocks them: the
+  // script exists and has the key.
+  test("SIGINT: bun run does not send the key on when it comes during the spawn of the script", async () => {
+    using dir = tempDir("run-key-in-spawn", {
+      "node_modules/.bin/childbin": '#!/bin/sh\nexec bun "$(dirname "$0")/../../child.js"\n',
+      "child.js": `
+          let signals = 0;
+          process.on("SIGINT", () => console.log("SIGINT " + ++signals));
+          let lines = 0;
+          process.stdin.on("data", () => {
+            if (++lines === 2) process.exit(0);
+            console.log("still here");
+          });
+          console.log("ready");
+        `,
+    });
+    chmodSync(join(String(dir), "node_modules/.bin/childbin"), 0o755);
+
+    async function run() {
+      await using terminal = openTerminal([bunExe(), "run", "childbin"], String(dir));
+      const look = () => {
+        const status = readFileSync(`/proc/${terminal.pid}/status`, "latin1");
+        // A signal set is 16 hex digits. SIGINT (2) and SIGQUIT (3) are in the last digit.
+        const last = (set: string) => parseInt(status[status.indexOf(set) + set.length + 15], 16);
+        return {
+          state: status[status.indexOf("State:\t") + 7],
+          // The handler that sends signals on is installed: nothing else in `bun run` catches SIGQUIT.
+          sendsOn: (last("SigCgt:\t") & 4) !== 0,
+          blocked: (last("SigBlk:\t") & 2) !== 0,
+        };
+      };
+      // Stops the polling if `bun run` never gets to the spawn.
+      const deadline = performance.now() + 10_000;
+      let now = look();
+      // Until `bun run` is inside the spawn, or past it and asleep in its wait for the script.
+      while (!(now.sendsOn && (now.blocked || now.state === "S")) && performance.now() < deadline) now = look();
+      process.kill(terminal.pid, "SIGSTOP");
+      while (now.state !== "T" && performance.now() < deadline) now = look();
+      const inSpawn = now.state === "T" && now.sendsOn && now.blocked;
+      await terminal.printed("ready");
+      if (inSpawn) {
+        terminal.type("\x03");
+        await terminal.printed("SIGINT 1");
+      }
+      process.kill(terminal.pid, "SIGCONT");
+      await terminal.state("S");
+      terminal.type("\n");
+      await terminal.printed("still here");
+      terminal.type("\n");
+      return { inSpawn, ...(await terminal.end()) };
+    }
+
+    // A run that was not stopped inside the spawn proves nothing, so try again.
+    let stoppedInSpawn = false;
+    for (let attempt = 0; attempt < 20 && !stoppedInSpawn; attempt++) {
+      const { inSpawn, text, exitCode } = await run();
+      expect(text).not.toContain("SIGINT 2");
+      expect(exitCode).toBe(0);
+      stoppedInSpawn = inSpawn;
+    }
+    expect(stoppedInSpawn).toBe(true);
+  }, 30_000); // 20 runs of a debug build need more than the default 5 seconds.
+
+  // The first SIGINT starts a shutdown that the test ends with a file. A second one forces the exit.
+  const graceful = (onFirstSigint: string) => `
+    const { existsSync, writeFileSync } = require("fs");
+    let sigints = 0;
+    process.on("SIGINT", () => {
+      if (++sigints > 1) {
+        console.log("second SIGINT: forced exit");
+        process.exit(130);
+      }
+      ${onFirstSigint};
+      setInterval(() => {
+        if (existsSync(process.env.GO_FILE)) {
+          console.log("shutdown finished");
+          process.exit(0);
+        }
+      }, 5);
+    });
+    setInterval(() => {}, 1000);
+    console.log("graceful ready");
+  `;
+
+  for (const mode of [
+    { name: "--filter", args: ["--filter", "a", "graceful"] },
+    { name: "--parallel", args: ["--parallel", "graceful"] },
+    { name: "of a script that is bun run --filter", args: ["nested"] },
+  ]) {
+    test(`Ctrl+C: bun run ${mode.name} leaves the script its graceful shutdown`, async () => {
+      using dir = tempDir("run-key-once-multi", {
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          scripts: { graceful: "bun graceful.js", nested: `${bunExe()} run --filter a graceful` },
+        }),
+        "packages/a/package.json": JSON.stringify({ name: "a", scripts: { graceful: "bun ../../graceful.js" } }),
+        "graceful.js": graceful(`console.log("shutdown started")`),
+      });
+      const goFile = join(String(dir), "go");
+      await using terminal = openTerminal([bunExe(), "run", ...mode.args], String(dir), {
+        ...bunEnv,
+        GO_FILE: goFile,
+      });
+      await terminal.printed("graceful ready");
+      terminal.type("\x03");
+      await terminal.printed("shutdown started");
+      // The runner has shown that line, and then it acts on the Ctrl+C: wait for that.
+      await terminal.state("S");
+      writeFileSync(goFile, "");
+      const { text, exitCode } = await terminal.end();
+      expect(text).toContain("shutdown finished");
+      expect(text).not.toContain("forced exit");
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  test("Ctrl+C: the failure of one --parallel script does not signal the other again", async () => {
+    using dir = tempDir("run-key-once-cascade", {
+      "package.json": JSON.stringify({ name: "t", scripts: { fails: "bun fails.js", graceful: "bun graceful.js" } }),
+      // Both scripts take the Ctrl+C without a word, so that the exit of this one is what wakes the runner.
+      "fails.js": `
+        const { existsSync } = require("fs");
+        process.on("SIGINT", () => {});
+        setInterval(() => {
+          if (existsSync(process.env.FAIL_FILE)) process.exit(1);
+        }, 5);
+        console.log("fails ready");
+      `,
+      "graceful.js": graceful(`writeFileSync(process.env.STARTED_FILE, "")`),
+    });
+    const file = (name: string) => join(String(dir), name);
+    await using terminal = openTerminal([bunExe(), "run", "--parallel", "fails", "graceful"], String(dir), {
+      ...bunEnv,
+      FAIL_FILE: file("fail"),
+      STARTED_FILE: file("started"),
+      GO_FILE: file("go"),
+    });
+    await terminal.printed("fails ready");
+    await terminal.printed("graceful ready");
+    terminal.type("\x03");
+    while (!existsSync(file("started"))) await Bun.sleep(1);
+    writeFileSync(file("fail"), "");
+    await terminal.printed("Exited with code 1");
+    await terminal.state("S");
+    writeFileSync(file("go"), "");
+    const { text, exitCode } = await terminal.end();
+    expect(text).toContain("shutdown finished");
+    expect(text).not.toContain("forced exit");
+    expect(exitCode).toBe(1);
+  });
+
+  // No terminal sent the Ctrl+C to a script that was not running yet.
+  test("Ctrl+C: a script that starts after it gets the SIGINT from the runner", async () => {
+    const idle = (name: string) => `
+      setInterval(() => {}, 1000);
+      console.log("${name} ready");
+    `;
+    using dir = tempDir("run-key-once-late", {
+      "package.json": JSON.stringify({ name: "t", scripts: { first: "bun first.js", second: "bun second.js" } }),
+      "first.js": idle("first"),
+      "second.js": idle("second"),
+    });
+    await using terminal = openTerminal(
+      [bunExe(), "run", "--sequential", "--no-exit-on-error", "first", "second"],
+      String(dir),
+    );
+    await terminal.printed("first ready");
+    terminal.type("\x03");
+    const { exitCode } = await terminal.end();
+    expect(exitCode).toBe(130);
+  });
+
+  for (const mode of [
+    { name: "--filter", args: ["--filter", "a", "chatty"] },
+    { name: "--parallel", args: ["--parallel", "chatty"] },
+  ]) {
+    test(`a SIGINT for bun run ${mode.name} alone reaches the script`, async () => {
+      using dir = tempDir("run-sigint-multi", {
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          scripts: { chatty: "bun chatty.js" },
+        }),
+        "packages/a/package.json": JSON.stringify({ name: "a", scripts: { chatty: "bun ../../chatty.js" } }),
+        // The runner looks at a SIGINT when a script prints or exits.
+        "chatty.js": `
+          process.on("SIGINT", () => {
+            console.log("script got SIGINT");
+            process.exit(0);
+          });
+          setInterval(() => console.log("tick"), 5);
+        `,
+      });
+      await using terminal = openTerminal([bunExe(), "run", ...mode.args], String(dir));
+      await terminal.printed("tick");
+      process.kill(terminal.pid, "SIGINT");
+      const { text, exitCode } = await terminal.end();
+      expect(text).toContain("script got SIGINT");
+      expect(exitCode).toBe(0);
+    });
+  }
+});
 
 describe.concurrent.each([
   ["ESC [ 2 K", "\x1b[2K", "\\x1b[2K"],

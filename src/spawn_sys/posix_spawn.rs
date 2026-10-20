@@ -196,6 +196,7 @@ pub mod bun_spawn {
         pub uid: Option<u32>,
         pub gid: Option<u32>,
         pub cgroup_fd: i32,
+        pub forwards_signals: bool,
     }
 
     impl Default for Attr {
@@ -213,6 +214,7 @@ pub mod bun_spawn {
                 uid: None,
                 gid: None,
                 cgroup_fd: -1,
+                forwards_signals: false,
             }
         }
     }
@@ -601,6 +603,7 @@ pub mod posix_spawn {
                     set_uid: uid.is_some(),
                     set_gid: gid.is_some(),
                     cgroup_fd: attr.map_or(-1, |a| a.cgroup_fd),
+                    forwards_signals: attr.is_some_and(|a| a.forwards_signals),
                 },
                 argv,
                 envp,

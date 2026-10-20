@@ -347,6 +347,8 @@ pub struct PosixSpawnOptions {
     /// Linux only. Directory fd of a cgroup the child starts inside
     /// (`CLONE_INTO_CGROUP`, else a pre-exec `cgroup.procs` write). Caller owns the fd.
     pub cgroup_fd: Option<Fd>,
+    /// The caller has `Bun__registerSignalsForForwarding` installed for this child. See `BunSpawnRequest::forwards_signals`.
+    pub forwards_signals: bool,
 }
 
 impl Default for PosixSpawnOptions {
@@ -371,6 +373,7 @@ impl Default for PosixSpawnOptions {
             pty_slave_fd: -1,
             linux_pdeathsig: None,
             cgroup_fd: None,
+            forwards_signals: false,
         }
     }
 }
@@ -688,6 +691,7 @@ pub unsafe fn spawn_process_posix(
     attr.uid = options.uid;
     attr.gid = options.gid;
     attr.cgroup_fd = options.cgroup_fd.map_or(-1, |fd| fd.native());
+    attr.forwards_signals = options.forwards_signals;
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {

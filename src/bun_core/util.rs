@@ -4549,6 +4549,8 @@ pub mod spawn_ffi {
         pub set_gid: bool,
         /// Linux: directory fd of the cgroup the child starts in. -1 = unset.
         pub cgroup_fd: c_int,
+        /// The caller sends its signals on to this child: the spawn gives the pid to that handler before it unblocks signals.
+        pub forwards_signals: bool,
     }
 
     impl Default for BunSpawnRequest {
@@ -4565,6 +4567,7 @@ pub mod spawn_ffi {
                 set_uid: false,
                 set_gid: false,
                 cgroup_fd: -1,
+                forwards_signals: false,
             }
         }
     }

@@ -1152,6 +1152,38 @@ extern "C" void Bun__sendPendingSignalIfNecessary()
     kill(pid, sig);
 }
 
+// Whether the terminal that sent us this SIGINT (Ctrl+C) or SIGQUIT (Ctrl+\) sent it to `pid` too: a child in our process group.
+extern "C" bool Bun__childAlreadyHasSignal(int sig, int si_code, int64_t pid)
+{
+#ifdef SI_KERNEL
+    if (sig != SIGINT && sig != SIGQUIT)
+        return false;
+    // A negative pid is a process group of its own (--no-orphans), which the terminal did not signal with ours.
+    return si_code == SI_KERNEL && pid > 0 && getpgid(static_cast<pid_t>(pid)) == getpgrp();
+#else
+    // XNU gives a terminal's signal the siginfo of a kill(2) (si_code 0), so on macOS every signal is sent on.
+    UNUSED_PARAM(sig);
+    UNUSED_PARAM(si_code);
+    UNUSED_PARAM(pid);
+    return false;
+#endif
+}
+
+// SIGINT and SIGQUIT that were pending before the child existed, as 1 << sig: the child does not have these.
+static std::atomic<unsigned> Bun__signalsOlderThanChild { 0 };
+
+// posix_spawn_bun calls this with signals blocked, once the child exists. `pendingBeforeChild` is sigpending() from before it.
+extern "C" void Bun__setSyncChildDuringSpawn(int64_t pid, const sigset_t* pendingBeforeChild)
+{
+    unsigned older = 0;
+    if (sigismember(pendingBeforeChild, SIGINT) == 1)
+        older |= 1u << SIGINT;
+    if (sigismember(pendingBeforeChild, SIGQUIT) == 1)
+        older |= 1u << SIGQUIT;
+    Bun__signalsOlderThanChild.store(older);
+    Bun__currentSyncPID.store(pid);
+}
+
 extern "C" void Bun__registerSignalsForForwarding()
 {
     WTF::Locker locker { signalForwardingLock };
@@ -1159,21 +1191,29 @@ extern "C" void Bun__registerSignalsForForwarding()
         return;
 
     Bun__pendingSignalToSend.store(0);
+    Bun__signalsOlderThanChild.store(0);
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sigemptyset(&sa.sa_mask);
     // Not SA_RESETHAND: a nested runner sees the signal more than once and must not die on a repeat delivery.
-    sa.sa_flags = 0;
-    sa.sa_handler = [](int sig) {
+    sa.sa_flags = SA_SIGINFO;
+    sa.sa_sigaction = [](int sig, siginfo_t* info, void*) {
+        int savedErrno = errno;
         int64_t pid = Bun__currentSyncPID.load();
         if (pid == 0) {
+            // No pid yet, so nothing tells whether the child has this signal: it is sent on once the pid is there.
             Bun__pendingSignalToSend.store(sig);
             pid = Bun__currentSyncPID.load();
-            if (pid == 0 || Bun__pendingSignalToSend.exchange(0) == 0)
-                return;
+            if (pid != 0 && Bun__pendingSignalToSend.exchange(0) != 0)
+                kill(pid, sig);
+        } else {
+            // Every signal in FOR_EACH_SIGNAL is below 32.
+            unsigned bit = 1u << sig;
+            bool olderThanChild = Bun__signalsOlderThanChild.fetch_and(~bit) & bit;
+            if (olderThanChild || !Bun__childAlreadyHasSignal(sig, info->si_code, pid))
+                kill(pid, sig);
         }
-
-        kill(pid, sig);
+        errno = savedErrno;
     };
 
 #define REGISTER_SIGNAL(SIG)                                 \

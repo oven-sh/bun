@@ -1605,12 +1605,14 @@ unsafe fn parse_worker_exec_argv_flags(
 fn exec_argv_has_eval_string<'a>(
     tokens: impl Iterator<Item = &'a bun_core::WTFStringImplStruct>,
 ) -> bool {
+    // Node's parser stops at a lone `-`, so it is not a flag.
     let is_flag = |token: &bun_core::WTFStringImplStruct| {
-        if token.is_8bit() {
-            token.latin1_slice().first() == Some(&b'-')
-        } else {
-            token.utf16_slice().first() == Some(&u16::from(b'-'))
-        }
+        token.length() > 1
+            && if token.is_8bit() {
+                token.latin1_slice().first() == Some(&b'-')
+            } else {
+                token.utf16_slice().first() == Some(&u16::from(b'-'))
+            }
     };
     let mut tokens = tokens.peekable();
     let mut has_eval_string = false;
@@ -1649,8 +1651,9 @@ fn exec_argv_has_eval_string<'a>(
                 .next_if(|next| next.length() != 0 && !(is_flag(next) && is_option(next)))
                 .is_some();
         } else {
-            let takes_none = crate::cli::arguments::takes_value(flag) == Some(false);
-            value_may_follow = !takes_none && !bun_core::strings::contains_char(flag, b'=');
+            let has_value = bun_core::strings::contains_char(flag, b'=');
+            value_may_follow =
+                !has_value && crate::cli::arguments::takes_value(flag) != Some(false);
         }
     }
     has_eval_string

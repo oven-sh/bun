@@ -258,6 +258,7 @@ describe("parseArgs default args in a Worker", () => {
     [["-e", "\u0000"], slicedAt1],
     // The flags end at a token that is not a flag and not a value, and at `--`.
     [["x", "-e", "1"], slicedAt2],
+    [["-", "-e", "1"], slicedAt2],
     [["--no-addons", "x", "-e", "1"], slicedAt2],
     [["--conditions=x", "x", "-e", "1"], slicedAt2],
     [["--", "-e", "1"], slicedAt2],

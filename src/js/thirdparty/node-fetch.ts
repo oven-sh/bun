@@ -1,7 +1,31 @@
 // Users may override the global fetch implementation, so we need to ensure these are the originals.
 const bindings = $cpp("NodeFetch.cpp", "createNodeFetchInternalBinding");
-const WebResponse: typeof globalThis.Response = bindings[0];
-const WebRequest: typeof globalThis.Request = bindings[1];
+// undici-types declares these members as class properties; at runtime they are prototype accessors and
+// methods, which the subclasses below override and reach through `super`.
+interface WebResponseMembers {
+  readonly body: ReadableStream | null;
+  readonly headers: globalThis.Headers;
+  readonly ok: boolean;
+  readonly type: globalThis.Response["type"];
+  clone(): globalThis.Response;
+  text(): Promise<string>;
+  json(): Promise<any>;
+  arrayBuffer(): Promise<ArrayBuffer>;
+}
+type WebResponseConstructor = new (
+  body?: ConstructorParameters<typeof globalThis.Response>[0],
+  init?: ConstructorParameters<typeof globalThis.Response>[1],
+) => Omit<globalThis.Response, keyof WebResponseMembers> & WebResponseMembers;
+interface WebRequestMembers {
+  readonly url: string;
+}
+type WebRequestConstructor = new (
+  input: string | URL | globalThis.Request,
+  init?: RequestInit,
+) => Omit<globalThis.Request, keyof WebRequestMembers> & WebRequestMembers;
+
+const WebResponse: WebResponseConstructor = bindings[0];
+const WebRequest: WebRequestConstructor = bindings[1];
 const Blob: typeof globalThis.Blob = bindings[2];
 const WebHeaders: typeof globalThis.Headers = bindings[3];
 const FormData: typeof globalThis.FormData = bindings[4];
@@ -13,7 +37,7 @@ const JSONParse = JSON.parse;
 // https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/headers.js#L44
 class Headers extends WebHeaders {
   raw() {
-    const obj = this.toJSON();
+    const obj: Record<string, string | string[]> = this.toJSON();
     for (const key in obj) {
       const val = obj[key];
       if (!$isJSArray(val)) {
@@ -43,6 +67,19 @@ function closeEmptyBody(controller) {
   controller.close();
 }
 
+// An old-style Stream (minipass, form-data's CombinedStream) is not a Readable, which Readable.toWeb() needs.
+function readableFromOldStyleStream(source: import("node:stream").Stream) {
+  const { PassThrough } = require("node:stream");
+  const passthrough = new PassThrough();
+  // pipe() does not forward "error", so a source that fails would leave the body open forever.
+  source.on("error", err => {
+    // After "end" the body is complete: https://github.com/node-fetch/node-fetch/blob/65ae25a1da2834b046c218685f2085a06f679492/src/body.js#L259-L268
+    if (!passthrough.writableEnded) passthrough.destroy(err);
+  });
+  source.pipe(passthrough);
+  return passthrough;
+}
+
 class Response extends WebResponse {
   [kBody]: any;
   [kHeaders];
@@ -51,7 +88,7 @@ class Response extends WebResponse {
   constructor(body, init) {
     const { Readable, Stream } = require("node:stream");
     if (body && typeof body === "object" && (body instanceof Stream || body instanceof Readable)) {
-      body = Readable.toWeb(body);
+      body = Readable.toWeb(body instanceof Readable ? body : readableFromOldStyleStream(body));
     }
 
     super(body, init);
@@ -76,7 +113,7 @@ class Response extends WebResponse {
   }
 
   clone() {
-    const cloned = Object.setPrototypeOf(super.clone(this), ResponsePrototype);
+    const cloned = Object.setPrototypeOf(super.clone(), ResponsePrototype);
     // clone() moved the body to a new web stream, so `body` gets a new node stream, as in node-fetch.
     this[kBody] = undefined;
     if (this[kFetched]) cloned[kFetched] = true;
@@ -107,6 +144,18 @@ class Response extends WebResponse {
 var ResponsePrototype = Response.prototype;
 
 const kUrl = Symbol("kUrl");
+const ObjectHasOwn = Object.hasOwn;
+
+// https.Agent applies `agent.options` to every tls.connect() it makes.
+function tlsFromAgent(agent, url) {
+  if ($isCallable(agent)) {
+    const href = $isObject(url) ? (url.href ?? url.url) : url;
+    if (typeof href !== "string" || !URL.canParse(href)) return undefined;
+    agent = agent.$call(undefined, new URL(href));
+  }
+  if (!$isObject(agent) || !ObjectHasOwn(agent, "options") || !$isObject(agent.options)) return undefined;
+  return require("internal/tls").nodeClientTlsToNative({ __proto__: null, ...agent.options });
+}
 
 class Request extends WebRequest {
   [kUrl]?: string;
@@ -148,18 +197,15 @@ async function fetch(
   // Node.js Stream but doesn't implement Symbol.asyncIterator.
   const initBody = init?.body;
   if (initBody && typeof initBody === "object" && !initBody[Symbol.asyncIterator]) {
-    const { Readable, Stream, PassThrough } = require("node:stream");
+    const { Readable, Stream } = require("node:stream");
     if (initBody instanceof Stream || initBody instanceof Readable) {
-      // For old-style streams that don't have asyncIterator (like CombinedStream used by form-data),
-      // pipe through a PassThrough stream to convert to a Readable that can be converted to a web stream.
-      let readable = initBody;
-      if (!(readable instanceof Readable)) {
-        const passthrough = new PassThrough();
-        readable.pipe(passthrough);
-        readable = passthrough;
-      }
+      const readable = initBody instanceof Readable ? initBody : readableFromOldStyleStream(initBody);
       init = { ...init, body: Readable.toWeb(readable) };
     }
+  }
+  if (init && ObjectHasOwn(init, "agent") && (init as any).agent && (init as any).tls === undefined) {
+    const tls = tlsFromAgent((init as any).agent, url);
+    if (tls !== undefined) init = { ...init, tls } as any;
   }
   const response = await nativeFetch.$call(undefined, url, init);
   Object.setPrototypeOf(response, ResponsePrototype);

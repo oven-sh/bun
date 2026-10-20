@@ -11,7 +11,7 @@ use bun_semver::string::Buf as StringBuf;
 use bun_semver::version::VersionInt;
 
 use crate::dependency::{self, TagExt as _};
-use crate::repository::{Repository, RepositoryExt as _};
+use crate::repository::{Repository, RepositoryExt as _, is_safe_resolved_tag};
 use crate::versioned_url::VersionedURLType;
 
 pub type Resolution = ResolutionType<u64>;
@@ -49,6 +49,17 @@ impl Resolution {
         }
 
         false
+    }
+
+    /// Returns which of a dependency's two names the entries of `trustedDependencies` are matched
+    /// against.
+    #[inline]
+    pub fn trusted_name<T>(&self, by_alias: T, by_pkg_name: T) -> T {
+        if self.tag == Tag::Npm {
+            by_pkg_name
+        } else {
+            by_alias
+        }
     }
 }
 
@@ -96,17 +107,6 @@ pub enum TaggedValue<SemverInt: VersionInt> {
 }
 
 impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
-    /// Const-evaluable zeroed sentinel. Mirrors `Default::default()` but usable
-    /// in `const` / `static` position (e.g. dummy `&'static Resolution` returns).
-    /// Only the tag/padding are guaranteed zero — the union payload is the
-    /// `uninitialized` variant, which is the only field a `Tag::Uninitialized`
-    /// reader may legally access.
-    pub(crate) const ZEROED: Self = Self {
-        tag: Tag::Uninitialized,
-        _padding: [0; 7],
-        value: Value { uninitialized: () },
-    };
-
     /// Construct from a tagged value, e.g. `Resolution::init(TaggedValue::Npm(...))`.
     #[inline]
     pub(crate) fn init(value: TaggedValue<SemverInt>) -> Self {
@@ -275,11 +275,18 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                 return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
             };
             let committish = &tar_committish[tar_end + 1..];
+            if !is_safe_resolved_tag(committish) {
+                return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
+            }
+            let committish = string_buf.append(committish)?;
 
             return Ok(Resolution::init(TaggedValue::Github(Repository {
                 owner: string_buf.append(user)?,
                 repo: string_buf.append(repo)?,
-                committish: string_buf.append(committish)?,
+                committish,
+                // `resolved` names the cache folder. As in the package-lock.json migration, it is
+                // the full commit hash.
+                resolved: committish,
                 ..Default::default()
             })));
         }
@@ -593,23 +600,50 @@ pub(crate) fn fmt_store_url(url: &[u8]) -> StoreURLFormatter<'_> {
     StoreURLFormatter { url }
 }
 
+/// Returns `(authority_start, host_start, query_start)`. The userinfo is
+/// `authority_start..host_start`.
+fn url_credential_offsets(url: &[u8]) -> (usize, usize, usize) {
+    // RFC 3986: the authority ends at the first `/`, `?` or `#`, and the userinfo ends at the
+    // authority's last `@`.
+    let authority_start = match strings::index_of_char_usize(url, b':') {
+        Some(colon) if url[colon + 1..].starts_with(b"//") => colon + b"://".len(),
+        _ => 0,
+    };
+    let authority_end = strings::index_of_any(&url[authority_start..], b"/?#")
+        .map_or(url.len(), |i| authority_start + i);
+    let host_start = strings::last_index_of_char(&url[authority_start..authority_end], b'@')
+        .map_or(authority_start, |at| authority_start + at + 1);
+    let query_start = strings::index_of_char_usize(&url[host_start..], b'?')
+        .map_or(url.len(), |i| host_start + i);
+    (authority_start, host_start, query_start)
+}
+
+/// Appends a `scheme://` URL without its userinfo and query string. The `#fragment` is kept.
+pub(crate) fn append_without_url_credentials(out: &mut Vec<u8>, specifier: &[u8]) {
+    let (authority_start, host_start, query_start) = url_credential_offsets(specifier);
+    if authority_start == 0 {
+        out.extend_from_slice(specifier);
+        return;
+    }
+    out.extend_from_slice(&specifier[..authority_start]);
+    out.extend_from_slice(&specifier[host_start..query_start]);
+    let query = &specifier[query_start..];
+    if let Some(fragment) = strings::index_of_char_usize(query, b'#') {
+        out.extend_from_slice(&query[fragment..]);
+    }
+}
+
+/// Keeps the query string, because a registry may sign its tarball URLs.
+pub(crate) fn append_without_url_userinfo(out: &mut Vec<u8>, url: &[u8]) {
+    let (authority_start, host_start, _) = url_credential_offsets(url);
+    out.extend_from_slice(&url[..authority_start]);
+    out.extend_from_slice(&url[if authority_start == 0 { 0 } else { host_start }..]);
+}
+
 impl fmt::Display for StoreURLFormatter<'_> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         let url = self.url;
-
-        // RFC 3986: the authority follows `scheme://` (or, for an scp-like
-        // `user@host:path`, starts the string) and ends at the first `/`, `?`
-        // or `#`; the userinfo is everything in it up to the last `@`.
-        let authority_start = match strings::index_of_char_usize(url, b':') {
-            Some(colon) if url[colon + 1..].starts_with(b"//") => colon + b"://".len(),
-            _ => 0,
-        };
-        let authority_end = strings::index_of_any(&url[authority_start..], b"/?#")
-            .map_or(url.len(), |i| authority_start + i);
-        let host_start = strings::last_index_of_char(&url[authority_start..authority_end], b'@')
-            .map_or(authority_start, |at| authority_start + at + 1);
-        let query_start = strings::index_of_char_usize(&url[host_start..], b'?')
-            .map_or(url.len(), |i| host_start + i);
+        let (authority_start, host_start, query_start) = url_credential_offsets(url);
 
         write!(
             writer,
@@ -963,13 +997,6 @@ fn value_init<SemverInt: VersionInt>(field: TaggedValue<SemverInt>) -> Value<Sem
 #[derive(Clone, Copy, PartialEq, Eq, Debug, core::marker::ConstParamTy)]
 pub struct Tag(pub u8);
 
-impl Default for Tag {
-    #[inline]
-    fn default() -> Self {
-        Tag::Uninitialized
-    }
-}
-
 #[allow(non_upper_case_globals)]
 impl Tag {
     pub(crate) const Uninitialized: Tag = Tag(0);
@@ -1019,6 +1046,29 @@ impl Tag {
     /// These get `local_package_features`.
     pub(crate) fn is_local_package(self) -> bool {
         self == Tag::Root || self == Tag::Workspace || self == Tag::Folder
+    }
+
+    /// The path or URL can serve different bytes tomorrow, so it's cached under the integrity that
+    /// bun.lock records.
+    pub(crate) fn is_tarball(self) -> bool {
+        self == Tag::LocalTarball || self == Tag::RemoteTarball
+    }
+
+    /// `Uninitialized` only exists before a package is appended, and nothing produces
+    /// `SingleFileModule`.
+    pub(crate) fn belongs_in_lockfile(self) -> bool {
+        matches!(
+            self,
+            Tag::Root
+                | Tag::Npm
+                | Tag::Folder
+                | Tag::LocalTarball
+                | Tag::Github
+                | Tag::Git
+                | Tag::Symlink
+                | Tag::Workspace
+                | Tag::RemoteTarball
+        )
     }
 
     pub(crate) fn can_enqueue_install_task(self) -> bool {

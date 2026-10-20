@@ -2467,8 +2467,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut e_ = expr.data.e_new().expect("infallible: variant checked");
         p.visit_expr(&mut e_.target);
 
+        // Matched on the source form, before the visit inlines `import.meta.url` or constants.
+        let is_url_of_import_meta = p.options.features.embed_new_url_assets
+            && e_.args.len_u32() == 2
+            && p.is_url_constructor(&e_.target)
+            && matches!(e_.args.slice()[0].data, Data::EString(..))
+            && matches!(
+                &e_.args.slice()[1].data,
+                Data::EDot(dot) if matches!(dot.target.data, Data::EImportMeta(..)) && dot.name.slice() == b"url"
+            );
+
         for arg in e_.args.slice_mut() {
             p.visit_expr(arg);
+        }
+
+        if is_url_of_import_meta && !p.is_control_flow_dead {
+            p.embed_new_url_asset(&mut e_);
         }
 
         if p.options.features.minify_syntax {
@@ -2483,6 +2497,104 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return;
             }
         }
+    }
+
+    /// The name of `target` when it is an identifier that nothing in the file declares.
+    fn unbound_global_name(&self, target: &Expr) -> Option<&[u8]> {
+        let Data::EIdentifier(ident) = target.data else {
+            return None;
+        };
+        let symbol = &self.symbols[ident.ref_.inner_index() as usize];
+        (symbol.kind == js_ast::symbol::Kind::Unbound).then(|| symbol.original_name.slice())
+    }
+
+    /// `URL` as the global, or imported from `url` / `node:url`.
+    fn is_url_constructor(&self, target: &Expr) -> bool {
+        match target.data {
+            Data::EIdentifier(..) => self.unbound_global_name(target) == Some(&b"URL"[..]),
+            Data::EImportIdentifier(ident) => {
+                self.url_import_refs.iter().any(|r| r.eql(ident.ref_))
+            }
+            _ => false,
+        }
+    }
+
+    /// `new URL("./file", import.meta.url)` -> `new URL("file:" + require("./file"))`, file loader.
+    fn embed_new_url_asset(&mut self, e_: &mut E::New) {
+        let args = e_.args.slice_mut();
+        let arg_loc = args[0].loc;
+        let Some(mut specifier) = args[0].data.as_e_string() else {
+            return;
+        };
+        let specifier: &'a [u8] = specifier.slice(self.arena);
+        // A plugin module has no directory on disk to resolve against.
+        let dir = self.source.path.name().dir;
+        if !self.source.path.is_file()
+            || !bun_paths::is_absolute(dir)
+            || !is_relative_file_specifier(specifier)
+        {
+            return;
+        }
+        // Not a JS/TS source (a worker or import() target) and not a dotfile such as `.env`.
+        let ext = bun_paths::extension(specifier);
+        if [".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".jsx", ".tsx"]
+            .iter()
+            .any(|e| ext.eq_ignore_ascii_case(e.as_bytes()))
+            || bun_paths::basename(specifier).starts_with(b".")
+        {
+            return;
+        }
+
+        let mut joined = bun_paths::path_buffer_pool::get();
+        let Some(z) = bun_paths::resolve_path::join_abs_string_buf_z_checked::<
+            bun_paths::resolve_path::platform::Auto,
+        >(dir, &mut joined.0[..], &[specifier]) else {
+            return;
+        };
+        if !is_regular_file(z) {
+            return;
+        }
+
+        // The resolver reads a bare name as a package name: the record path is always `./`-relative.
+        let record_path: &'a [u8] = if specifier.starts_with(b"./") || specifier.starts_with(b"../")
+        {
+            specifier
+        } else {
+            let mut with_prefix = Vec::with_capacity(2 + specifier.len());
+            with_prefix.extend_from_slice(b"./");
+            with_prefix.extend_from_slice(specifier);
+            self.arena.alloc_slice_copy(&with_prefix)
+        };
+        let import_record_index =
+            self.add_import_record(js_ast::ImportKind::Require, arg_loc, record_path);
+        self.import_records.items_mut()[import_record_index as usize].loader =
+            Some(bun_ast::Loader::File);
+        self.import_records_for_current_part
+            .push(import_record_index);
+
+        let scheme = self.new_expr(
+            E::String {
+                data: E::Str::new(b"file:"),
+                ..Default::default()
+            },
+            arg_loc,
+        );
+        let path = self.new_expr(
+            E::RequireString {
+                import_record_index,
+                ..Default::default()
+            },
+            arg_loc,
+        );
+        let url = self.new_expr(
+            E::Binary {
+                op: Op::BinAdd,
+                left: scheme,
+                right: path,
+            },
+            arg_loc,
+        );
+        e_.args = ExprNodeList::init_one(url);
     }
 
     /// Note: Caller must check `p.bundler_feature_flag_ref.is_valid()` before calling.
@@ -2809,4 +2921,44 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             e_.class_name = None;
         }
     }
+}
+
+/// A socket or FIFO beside the module must not be read by the bundler.
+fn is_regular_file(path: &bun_core::ZStr) -> bool {
+    #[cfg(unix)]
+    {
+        bun_sys::fstatat(bun_sys::Fd::cwd(), path)
+            .is_ok_and(|st| bun_core::S::ISREG(st.st_mode as _))
+    }
+    #[cfg(windows)]
+    {
+        matches!(
+            bun_sys::exists_at_type(bun_sys::Fd::cwd(), path),
+            Ok(bun_sys::ExistsAtType::File)
+        )
+    }
+}
+
+/// Relative, no scheme or drive letter, and no byte the URL parser strips or reads as syntax.
+fn is_relative_file_specifier(specifier: &[u8]) -> bool {
+    if specifier.is_empty() || matches!(specifier[0], b'/' | b'\\') {
+        return false;
+    }
+    if specifier[0] <= b' ' || specifier[specifier.len() - 1] <= b' ' {
+        return false;
+    }
+    if strings::index_of_any(specifier, b"?#%\\\0\t\n\r").is_some() {
+        return false;
+    }
+    if specifier[0].is_ascii_alphabetic() {
+        for &c in specifier {
+            if c == b':' {
+                return false;
+            }
+            if !(c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.')) {
+                break;
+            }
+        }
+    }
+    true
 }

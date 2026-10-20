@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { rmSync } from "fs";
+import { copyFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
@@ -1922,4 +1922,196 @@ test("a standalone executable does not run a synchronous full GC after loading i
   expect(stderr).toMatch(/\[GC<(0x)?[0-9a-fA-F]+>: starting /); // %p: "0x7f…" on POSIX, "00007FF6…" on Windows
   expect(stderr).not.toContain("FullCollection");
   expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/44695
+// `new URL(<relative literal>, import.meta.url)` names a file beside the module. Under --compile the file is embedded
+// and the URL points at the embedded copy, so the executable works after the build directory is gone.
+describe("compile/NewUrlSiblingAsset", () => {
+  async function compileAndMove(dir: string, extraArgs: string[]) {
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "./index.ts", "--outfile", "app", ...extraArgs],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+    using moved = tempDir("compile-new-url-moved", {});
+    const exe = join(String(moved), isWindows ? "app.exe" : "app");
+    copyFileSync(join(dir, isWindows ? "app.exe" : "app"), exe);
+    rmSync(dir, { recursive: true, force: true });
+    await using proc = Bun.spawn({
+      cmd: [exe],
+      cwd: String(moved),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [runStdout, runStderr, runExit] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { buildStdout: stdout, stdout: runStdout, stderr: runStderr, exitCode: runExit };
+  }
+
+  for (const [name, extraArgs] of [
+    ["default", []],
+    ["bytecode", ["--bytecode"]],
+  ] as const) {
+    test(
+      name,
+      async () => {
+        using dir = tempDir("compile-new-url-asset", {
+          "index.ts": /* ts */ `
+          import { existsSync, readFileSync } from "node:fs";
+          import { fileURLToPath } from "node:url";
+          import { viaNodeUrl } from "./lib.ts";
+          // --bytecode emits CommonJS, which has no top-level await.
+          async function main() {
+            const viaUrl = readFileSync(new URL("./data.txt", import.meta.url), "utf8");
+            const viaPath = readFileSync(fileURLToPath(new URL("./sub/nested.txt", import.meta.url)), "utf8");
+            const viaBare = readFileSync(new URL("data.txt", import.meta.url), "utf8");
+            const viaBunFile = await Bun.file(new URL("sub/nested.txt", import.meta.url)).text();
+            const exists = existsSync(new URL("./data.txt", import.meta.url));
+            const protocol = new URL("./data.txt", import.meta.url).protocol;
+            console.log(JSON.stringify({ viaUrl, viaPath, viaBare, viaBunFile, viaNodeUrl, exists, protocol }));
+          }
+          main();
+        `,
+          "lib.ts": /* ts */ `
+          import { readFileSync } from "node:fs";
+          import { URL } from "node:url";
+          export const viaNodeUrl = readFileSync(new URL("./lib.txt", import.meta.url), "utf8");
+        `,
+          "data.txt": "hello from data",
+          "lib.txt": "hello from lib",
+          "sub/nested.txt": "hello from nested",
+        });
+        const { buildStdout, stdout, stderr, exitCode } = await compileAndMove(String(dir), [...extraArgs]);
+        expect(buildStdout).toMatch(/embed\s+data\.txt\s+15 bytes/);
+        expect(buildStdout).toMatch(/embed\s+lib\.txt\s+14 bytes/);
+        expect(buildStdout).toMatch(/embed\s+sub[\\/]nested\.txt\s+17 bytes/);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual({
+          viaUrl: "hello from data",
+          viaPath: "hello from nested",
+          viaBare: "hello from data",
+          viaBunFile: "hello from nested",
+          viaNodeUrl: "hello from lib",
+          exists: true,
+          protocol: "file:",
+        });
+        expect(exitCode).toBe(0);
+      },
+      30_000,
+    );
+  }
+
+  // Also with --minify: a constant folded into the first argument is not the source form and is not embedded.
+  test("a missing file, a dotfile, a variable, and a worker URL are left as written", async () => {
+    using dir = tempDir("compile-new-url-untouched", {
+      "index.ts": /* ts */ `
+        import { existsSync } from "node:fs";
+        const missing = new URL("./missing.txt", import.meta.url);
+        const dotfile = new URL("./.secret", import.meta.url);
+        const name = "./named.txt";
+        const named = new URL(name, import.meta.url);
+        const worker = new Worker(new URL("./worker.ts", import.meta.url));
+        const message = await new Promise(resolve => {
+          worker.onmessage = event => resolve(event.data);
+        });
+        worker.terminate();
+        console.log(JSON.stringify({
+          missingIsSibling: missing.href === new URL("missing.txt", import.meta.url).href,
+          missingExists: existsSync(missing),
+          dotfileExists: existsSync(dotfile),
+          namedExists: existsSync(named),
+          message,
+          embedded: Bun.embeddedFiles.length,
+        }));
+      `,
+      "worker.ts": /* ts */ `postMessage("from worker");`,
+      ".secret": "SECRET=1",
+      "named.txt": "named",
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--minify", "./index.ts", "./worker.ts", "--outfile", "app"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [buildStdout, buildStderr, buildExit] = await Promise.all([
+      build.stdout.text(),
+      build.stderr.text(),
+      build.exited,
+    ]);
+    expect(buildStderr).not.toContain("error");
+    expect(buildStdout).not.toContain("embed");
+    expect(buildExit).toBe(0);
+    await using proc = Bun.spawn({
+      cmd: [join(String(dir), isWindows ? "app.exe" : "app")],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      missingIsSibling: true,
+      missingExists: false,
+      dotfileExists: false,
+      namedExists: false,
+      message: "from worker",
+      embedded: 0,
+    });
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
+  // The same file passed as --asset under a name the bundler also produces is embedded once, not rejected.
+  test("a file that is also an --asset with the same name is embedded once", async () => {
+    using dir = tempDir("compile-new-url-asset-overlap", {
+      "index.ts": /* ts */ `
+        import { readFileSync } from "node:fs";
+        console.log(JSON.stringify({
+          text: readFileSync(new URL("./data.txt", import.meta.url), "utf8"),
+          embedded: Bun.embeddedFiles.map(f => f.name),
+        }));
+      `,
+      "data.txt": "same bytes",
+    });
+    await using build = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "./index.ts",
+        "--outfile",
+        "app",
+        "--asset",
+        "./data.txt",
+        "--asset-naming",
+        "[name].[ext]",
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("collides");
+    expect(buildExit).toBe(0);
+    await using proc = Bun.spawn({
+      cmd: [join(String(dir), isWindows ? "app.exe" : "app")],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ text: "same bytes", embedded: ["data.txt"] });
+    expect(exitCode).toBe(0);
+  }, 30_000);
 });

@@ -1,5 +1,5 @@
 import { sleep } from "bun";
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { createRequire } from "module";
 
@@ -755,6 +755,75 @@ describe("EventEmitter error handling", () => {
     }).toThrow("Hello");
 
     expect(handled).toBe(true);
+  });
+
+  // process is backed by the native emitter. Its errorMonitor listeners must
+  // see 'error' before the handlers do, like on any other EventEmitter.
+  describe("errorMonitor on process", () => {
+    const registered: Array<[event: string | symbol, listener: (...args: any[]) => void]> = [];
+    afterEach(() => {
+      for (const [event, listener] of registered.splice(0)) process.removeListener(event, listener);
+      expect(process.listenerCount(EventEmitter.errorMonitor)).toBe(0);
+      expect(process.listenerCount("error")).toBe(0);
+    });
+
+    test("runs before the 'error' handlers", () => {
+      const seen: unknown[][] = [];
+      const monitor = (...args: unknown[]) => seen.push(["monitor", ...args]);
+      const onceMonitor = (...args: unknown[]) => seen.push(["once monitor", ...args]);
+      const handler = (...args: unknown[]) => seen.push(["handler", ...args]);
+      const err = new Error("on process");
+      registered.push(
+        [EventEmitter.errorMonitor, monitor],
+        [EventEmitter.errorMonitor, onceMonitor],
+        ["error", handler],
+      );
+      process.on(EventEmitter.errorMonitor, monitor);
+      process.once(EventEmitter.errorMonitor, onceMonitor);
+      process.on("error", handler);
+      expect(process.emit("error", err, 1)).toBe(true);
+      expect(process.emit("error", err, 2)).toBe(true);
+      expect(seen).toEqual([
+        ["monitor", err, 1],
+        ["once monitor", err, 1],
+        ["handler", err, 1],
+        ["monitor", err, 2],
+        ["handler", err, 2],
+      ]);
+      expect(process.listenerCount(EventEmitter.errorMonitor)).toBe(1);
+    });
+
+    test("a listener that throws runs once per emit", async () => {
+      // The throw must not start a second 'error' dispatch, which would run
+      // the monitor again. Where the throw surfaces is not part of this test.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { errorMonitor } = require("node:events");
+            let calls = 0;
+            process.on("uncaughtException", () => {});
+            process.on(errorMonitor, () => {
+              calls++;
+              throw new Error("monitor throws");
+            });
+            process.on("error", () => {});
+            try {
+              process.emit("error", new Error("boom"));
+            } catch {}
+            console.log("monitor calls: " + calls);
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("monitor calls: 1\n");
+      expect(exitCode).toBe(0);
+    });
   });
 });
 

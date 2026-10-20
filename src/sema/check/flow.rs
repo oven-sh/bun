@@ -1714,14 +1714,6 @@ impl<'p, 's> Checker<'p, 's> {
         reference.has_key
     }
 
-    /// `getResolvedSymbol(target)`, with its errors, for one of `unchecked_assignment_targets`.
-    #[cold]
-    fn resolve_unchecked_assignment_target(&mut self, file: FileId, target: ExprId, name: Atom) {
-        if self.symbol_of_identifier(file, target, name).is_none() {
-            self.note_unresolved_identifier(file, target, name);
-        }
-    }
-
     /// `isMatchingReference` of `e` and the first `len` steps of `reference`. The source is the
     /// reference, or `e` if `is_source`.
     fn matches_prefix(
@@ -1801,15 +1793,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 _ if is_source && reference.satisfies == 0 => return false,
                 ExprKind::Ident(name) => {
-                    let root = self.root_of_identifier(file, at, name);
-                    // FOR SPEED: `checkSourceFile` resolves every other identifier too.
-                    if matches!(root, Root::Global(_))
-                        && matches!(reference.root, Root::Symbol(_) | Root::Global(_))
-                        && (self.bound(file).unchecked_assignment_targets).contains(&at)
-                    {
-                        self.resolve_unchecked_assignment_target(file, at, name);
-                    }
-                    return reference.root == root;
+                    return reference.root == self.root_of_identifier(file, at, name);
                 }
                 ExprKind::This => return reference.root == Root::This,
                 ExprKind::Super => return reference.root == Root::Super,

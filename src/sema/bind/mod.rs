@@ -1562,10 +1562,6 @@ pub struct BoundIn<S: Storage> {
     pub var_stmt: S::List<StmtId>,
     /// The identifiers that are assigned to, keyed by the variable they resolve to.
     pub assignments: S::List<(SymbolId, ExprId)>,
-    /// The identifiers that are assigned to (or have a property that is), that nothing in this file
-    /// declares, and that `checkDestructuringAssignment` never reaches. It returns early at a rest
-    /// element that isn't last (2462) or that has an initializer (1186).
-    pub unchecked_assignment_targets: S::Few<ExprId>,
     /// The expressions that are (part of) the operand of a `typeof` in a type. Sorted.
     pub type_query_operands: S::Few<ExprId>,
     /// The expressions at or under a node that is in tsgo's AST but that `checkSourceFile` never
@@ -2552,7 +2548,6 @@ impl BoundBuilder {
             module_instance_state,
             var_stmt,
             assignments,
-            unchecked_assignment_targets,
             type_query_operands,
             unchecked_exprs,
             unchecked_types,
@@ -2645,7 +2640,6 @@ impl BoundBuilder {
         module_instance_state.clear();
         var_stmt.clear();
         assignments.clear();
-        unchecked_assignment_targets.clear();
         type_query_operands.clear();
         unchecked_exprs.clear();
         unchecked_types.clear();
@@ -2762,10 +2756,6 @@ impl BoundBuilder {
             ),
             var_stmt: copy_to_arena(&mut self.var_stmt, arena),
             assignments: copy_to_arena(&mut self.assignments, arena),
-            unchecked_assignment_targets: few_to_arena(
-                std::mem::take(&mut self.unchecked_assignment_targets),
-                arena,
-            ),
             type_query_operands: few_to_arena(std::mem::take(&mut self.type_query_operands), arena),
             unchecked_exprs: few_to_arena(std::mem::take(&mut self.unchecked_exprs), arena),
             unchecked_types: few_to_arena(std::mem::take(&mut self.unchecked_types), arena),
@@ -2902,10 +2892,6 @@ impl Bound<'_> {
             ),
             var_stmt: Fixed::shared(&self.var_stmt),
             assignments: Fixed::shared(&self.assignments),
-            unchecked_assignment_targets: ArenaFew::from_iter_in(
-                self.unchecked_assignment_targets.iter().cloned(),
-                arena,
-            ),
             type_query_operands: ArenaFew::from_iter_in(
                 self.type_query_operands.iter().cloned(),
                 arena,

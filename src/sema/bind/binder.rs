@@ -249,13 +249,6 @@ struct InstanceStates {
     ran_out_of_stack: bool,
 }
 
-/// See `Binder::assignment_target_in`.
-#[derive(Copy, Clone)]
-struct ReachedBy {
-    is_bound: bool,
-    is_checked: bool,
-}
-
 impl<'f, 's> Binder<'f, 's> {
     pub(super) fn run(
         f: &'f File<'s>,
@@ -1320,91 +1313,43 @@ impl<'f, 's> Binder<'f, 's> {
 
     /// `bindAssignmentTargetFlow`
     fn assignment_target(&mut self, e: ExprId) {
-        self.assignment_target_in(
-            e,
-            ReachedBy {
-                is_bound: true,
-                is_checked: true,
-            },
-        );
+        self.assignment_target_in(e, true);
     }
 
     /// `is_bound` means that `bindAssignmentTargetFlow` reaches `e`. It doesn't enter a
     /// parenthesized pattern, `x!` or an assignment. `GetAssignmentTarget` climbs out of all three,
     /// so `markNodeAssignmentsWorker` still treats the names inside them as assigned.
-    /// `is_checked` means that `checkDestructuringAssignment` reaches `e` (see
-    /// `unchecked_assignment_targets`). It treats a parenthesized pattern as an expression and
-    /// checks it as a whole.
-    fn assignment_target_in(&mut self, e: ExprId, reached_by: ReachedBy) {
-        let ReachedBy {
-            is_bound,
-            is_checked,
-        } = reached_by;
-        let is_expression = is_parenthesized(self.f, e);
-        let enters = is_bound && !is_expression;
+    fn assignment_target_in(&mut self, e: ExprId, is_bound: bool) {
+        let enters = is_bound && !is_parenthesized(self.f, e);
         match self.f[e].kind {
             ExprKind::Array(items) => {
-                for (i, item) in self.f.ids(items).enumerate() {
-                    let (target, is_visited) = match self.f[item].kind {
-                        ExprKind::Spread(x) => {
-                            let is_last = i + 1 == items.len();
-                            (x, is_last && self.destructuring_target(x) == x)
-                        }
-                        _ => (self.destructuring_target(item), true),
+                for item in self.f.ids(items) {
+                    let target = match self.f[item].kind {
+                        ExprKind::Spread(x) => x,
+                        _ => self.destructuring_target(item),
                     };
-                    let is_checked = is_checked && (is_expression || is_visited);
-                    let reached_by = ReachedBy {
-                        is_bound: enters,
-                        is_checked,
-                    };
-                    self.assignment_target_in(target, reached_by);
+                    self.assignment_target_in(target, enters);
                 }
                 return;
             }
             ExprKind::Object(props) => {
-                for (i, p) in props.iter().enumerate() {
+                for p in props.iter() {
                     let (kind, value) = (self.f[p].kind, self.f[p].value);
                     if value.is_none() {
                         continue;
                     }
-                    let (target, is_visited) = match kind {
-                        PropKind::Spread => (value, i + 1 == props.len()),
-                        _ => (self.destructuring_target(value), true),
+                    let target = match kind {
+                        PropKind::Spread => value,
+                        _ => self.destructuring_target(value),
                     };
-                    let is_checked = is_checked && (is_expression || is_visited);
-                    let reached_by = ReachedBy {
-                        is_bound: enters,
-                        is_checked,
-                    };
-                    self.assignment_target_in(target, reached_by);
+                    self.assignment_target_in(target, enters);
                 }
                 return;
             }
             ExprKind::NonNull(x) | ExprKind::Assign { target: x, .. } => {
-                let reached_by = ReachedBy {
-                    is_bound: false,
-                    is_checked,
-                };
-                self.assignment_target_in(x, reached_by);
+                self.assignment_target_in(x, false);
             }
-            ExprKind::Ident(_) => {
-                self.assigned.push(e);
-                if !is_checked {
-                    self.b.unchecked_assignment_targets.push(e);
-                }
-            }
-            ExprKind::Dot { .. } | ExprKind::Index { .. } if !is_checked => {
-                let mut root = e;
-                while let ExprKind::Dot { obj: x, .. }
-                | ExprKind::Index { obj: x, .. }
-                | ExprKind::NonNull(x) = self.f[root].kind
-                {
-                    root = x;
-                }
-                if matches!(self.f[root].kind, ExprKind::Ident(_)) {
-                    self.b.unchecked_assignment_targets.push(root);
-                }
-            }
+            ExprKind::Ident(_) => self.assigned.push(e),
             // `(x as T) = v` isn't an assignment to `x` as far as `GetAssignmentTarget` and
             // `isNarrowableReference` are concerned.
             _ => {}
@@ -2140,10 +2085,6 @@ impl<'f, 's> Binder<'f, 's> {
         }
         self.assigned = assigned;
         self.b.assignments.sort_unstable_by_key(|a| (a.0.0, a.1.0));
-        let (expr_symbol, arguments_objects) = (&self.b.expr_symbol, &self.b.arguments_objects);
-        self.b.unchecked_assignment_targets.retain(|target| {
-            expr_symbol[target.idx()].is_none() && !arguments_objects.contains(target)
-        });
         self.b.type_query_operands.as_mut_slice().sort_unstable();
         self.b.unchecked_exprs.as_mut_slice().sort_unstable();
         self.b.unchecked_types.as_mut_slice().sort_unstable();

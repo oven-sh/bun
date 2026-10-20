@@ -27,7 +27,8 @@ use crate::LinkerContext;
 use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
 use crate::{
-    AdditionalFile, CompileResult, LinkerGraph, PartRange, PathTemplate, cheap_prefix_normalizer,
+    AdditionalFile, CompileResult, LinkerGraph, PartRange, PathTemplate, PrefixedPath,
+    cheap_prefix_normalizer,
 };
 
 use crate::IndexInt;
@@ -510,6 +511,34 @@ fn additional_output_file_index(f: &AdditionalFile) -> usize {
     }
 }
 
+/// Where a chunk's linked source map is: under the public path, or beside the chunk by its file name.
+pub(crate) fn linked_source_map_url<'a>(
+    public_path: &'a [u8],
+    map_rel_path: &'a [u8],
+) -> PrefixedPath<'a> {
+    if public_path.is_empty() {
+        PrefixedPath {
+            prefix: b"",
+            separator: b"",
+            path: bun_paths::basename(map_rel_path),
+        }
+    } else {
+        cheap_prefix_normalizer(public_path, map_rel_path)
+    }
+}
+
+/// Ends `code` with the `//# sourceMappingURL=` line for `url`.
+pub(crate) fn append_source_mapping_url(code: &mut Box<[u8]>, url: PrefixedPath<'_>) {
+    *code = strings::concat(&[
+        &**code,
+        b"//# sourceMappingURL=",
+        url.prefix,
+        url.separator,
+        url.path,
+        b"\n",
+    ]);
+}
+
 impl IntermediateOutput {
     pub(crate) fn allocator_for_size(_size: usize) -> &'static DynAlloc {
         // mimalloc serves large allocations via mmap already, so the global
@@ -815,7 +844,7 @@ impl IntermediateOutput {
                                     )
                                 },
                             );
-                            count += cheap_normalizer[0].len() + cheap_normalizer[1].len();
+                            count += cheap_normalizer.len();
                         }
                         QueryKind::None => {}
                     }
@@ -1014,21 +1043,14 @@ impl IntermediateOutput {
                                 },
                             );
 
-                            if !cheap_normalizer[0].is_empty() {
-                                remain[..cheap_normalizer[0].len()]
-                                    .copy_from_slice(cheap_normalizer[0]);
-                                remain = &mut remain[cheap_normalizer[0].len()..];
-                                if ENABLE_SOURCE_MAP_SHIFTS {
-                                    shift.after.advance(cheap_normalizer[0]);
+                            for part in cheap_normalizer.parts() {
+                                if part.is_empty() {
+                                    continue;
                                 }
-                            }
-
-                            if !cheap_normalizer[1].is_empty() {
-                                remain[..cheap_normalizer[1].len()]
-                                    .copy_from_slice(cheap_normalizer[1]);
-                                remain = &mut remain[cheap_normalizer[1].len()..];
+                                remain[..part.len()].copy_from_slice(part);
+                                remain = &mut remain[part.len()..];
                                 if ENABLE_SOURCE_MAP_SHIFTS {
-                                    shift.after.advance(cheap_normalizer[1]);
+                                    shift.after.advance(part);
                                 }
                             }
 

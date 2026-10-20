@@ -1080,8 +1080,8 @@ describe("a client stream whose response ends on a HEADERS frame", () => {
     });
   }
 
-  // Bun delivers this frame and node refuses it with PROTOCOL_ERROR. The stream settles either way.
-  test("does not hang when an informational HEADERS frame carries END_STREAM", async () => {
+  // node refuses this frame with PROTOCOL_ERROR. Bun delivers it, so the readable needs its EOF.
+  test("settles when an informational HEADERS frame carries END_STREAM", async () => {
     const server = rawH2Server(sid => [frame(F.HEADERS, END_HEADERS | END_STREAM, sid, hp([[":status", "103"]]))]);
     const client = http2.connect(`http://127.0.0.1:${await listen(server)}`);
     try {
@@ -1090,11 +1090,40 @@ describe("a client stream whose response ends on a HEADERS frame", () => {
       req.on("end", () => settled.resolve("end"));
       req.on("error", error => settled.resolve((error as NodeJS.ErrnoException).code!));
       req.resume();
-      assert.match(await settled.promise, /^(end|ERR_HTTP2_STREAM_ERROR)$/);
+      assert.strictEqual(await settled.promise, process.versions.bun ? "end" : "ERR_HTTP2_STREAM_ERROR");
     } finally {
       client.destroy();
       server.close();
     }
+  });
+
+  // A server stream that nothing read ends for NO_ERROR only. A client stream ends for every code.
+  test("ends when close(code) closes it before anything read it", async () => {
+    const actual: Record<string, string[]> = {};
+    for (const code of [NGHTTP2_NO_ERROR, NGHTTP2_CANCEL, NGHTTP2_INTERNAL_ERROR]) {
+      const server = rawH2Server(responses["HEADERS"]);
+      const client = http2.connect(`http://127.0.0.1:${await listen(server)}`);
+      try {
+        const req = client.request({ ":method": "POST", ":path": "/" });
+        const events: string[] = [];
+        const closed = Promise.withResolvers<void>();
+        record(req, events);
+        req.on("close", closed.resolve);
+        await once(req, "response");
+        await waits["setImmediate"]();
+        req.close(code);
+        await closed.promise;
+        actual[code] = events;
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    }
+    assert.deepStrictEqual(actual, {
+      [NGHTTP2_NO_ERROR]: ["aborted", "finish", "end", "close"],
+      [NGHTTP2_CANCEL]: ["aborted", "finish", "end", "close"],
+      [NGHTTP2_INTERNAL_ERROR]: ["aborted", "finish", "end", "error:ERR_HTTP2_STREAM_ERROR", "close"],
+    });
   });
 
   test("emits no 'end' after close(code) when the closing HEADERS frame follows in the same write", async () => {

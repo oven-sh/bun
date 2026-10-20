@@ -325,9 +325,7 @@ impl<'p, 's> Checker<'p, 's> {
             || self.instantiation_limit_hits != limit_hits
             || self.links.uncached_derivations != uncached_derivations
             || !is_settled(self, &part);
-        // Whatever reads a type, a constraint or a comparison in progress without a mark calls `Task::hold_back`.
-        let stored = (self.end_scope_as(scope, is_open).ok())
-            .filter(|&stored| !self.task.has_held_back_since(stored));
+        let stored = self.end_scope_as(scope, is_open).ok();
         if stored.is_none() {
             self.links.uncached_derivations += 1;
         }

@@ -216,7 +216,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
     }
 }
 
-/// `which()` that passes over the directory of a file `accept` refuses, as if the name were absent.
+/// Like `which()`, but if `accept` refuses a file, the search skips the directory that file is in.
 #[cfg(windows)]
 pub fn which_with<'a>(
     buf: &'a mut PathBuffer,
@@ -233,7 +233,7 @@ pub fn which_with<'a>(
     Some(utf16_result_into(buf, result))
 }
 
-/// The `accept` of `which()` and `which_for_spawn()`.
+/// `which()` and `which_for_spawn()` accept every file.
 #[cfg(windows)]
 #[inline(always)]
 fn any_file(_: &WStr) -> bool {

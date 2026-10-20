@@ -463,7 +463,7 @@ mod host {
         }
     }
 
-    /// `bun_which::which`, but a runtime is not taken from a bin link whose target is gone.
+    /// Like `bun_which::which`, but `bun`, `bunx` and `node` skip a bin link whose target is gone.
     pub fn which<'a>(
         buf: &'a mut bun_paths::PathBuffer,
         path: &[u8],
@@ -485,13 +485,13 @@ mod host {
         bun_which::which_with(buf, path, cwd, bin, |exe| !is_dead_bin_shim(exe))
     }
 
-    /// Whether `exe` is the launcher of a bin link whose target is gone: on POSIX, a dangling symlink.
+    /// Returns true if `exe` is the launcher of a bin link whose target is gone.
     fn is_dead_bin_shim(exe: &bun_core::WStr) -> bool {
         use bun_core::WStr;
         use bun_sys::windows as win;
 
         fn is_missing(path: &WStr) -> bool {
-            // SAFETY: `path` is NUL-terminated. As in `CreateProcessW`, its `..` are resolved.
+            // SAFETY: `path` is NUL-terminated. This resolves `..` the way `CreateProcessW` does.
             let attributes = unsafe { win::kernel32::GetFileAttributesW(path.as_ptr()) };
             attributes == win::INVALID_FILE_ATTRIBUTES
                 && matches!(
@@ -501,7 +501,7 @@ mod host {
         }
 
         let exe = exe.as_slice();
-        // The launcher gets its own path from the OS: absolute. Behind `\\?\` nothing resolves `..`.
+        // A relative or `\\?\` path isn't checked, because `..` could resolve differently there.
         if exe.len() < 4
             || !strings::eql_case_insensitive_t(&exe[exe.len() - 4..], b".exe")
             || !bun_paths::is_absolute_windows_wtf16(exe)
@@ -509,12 +509,12 @@ mod host {
         {
             return false;
         }
-        // Outside a `.bin` directory a real program can have a stale `<name>.bunx` beside it.
+        // Outside a `.bin` directory, a real program can have a stale `<name>.bunx` next to it.
         let bin_dir = bun_paths::resolve_path::dirname_w(exe);
         let Some(base_len) = bin_dir.len().checked_sub(b".bin".len()) else {
             return false;
         };
-        // `C:\project\node_modules\`: where a relative `bin_path` starts.
+        // For example `C:\project\node_modules\`. A relative `bin_path` is resolved from here.
         let base = &exe[..base_len];
         if !strings::eql_case_insensitive_t(&bin_dir[base_len..], b".bin")
             || !matches!(base.last(), Some(&unit) if unit == b'\\' as u16 || unit == b'/' as u16)
@@ -540,14 +540,14 @@ mod host {
             return false;
         };
 
-        // Like the launcher: the file is read to where its path belongs, after `base`.
+        // Like the launcher, read the file right after `base` so a relative `bin_path` is in place.
         buf[..base.len()].copy_from_slice(base);
         let file: &mut [u8] = bytemuck::cast_slice_mut(&mut buf[base.len()..]);
         let Ok(file_len) = bunx.read(file) else {
             return false;
         };
         drop(bunx);
-        // A file that fills the buffer can be longer than the buffer.
+        // If the file fills the buffer, it may be longer than the buffer.
         if file_len == file.len() {
             return false;
         }
@@ -560,7 +560,7 @@ mod host {
             return false;
         };
         let flags = Flags::from_bits(u16::from_le_bytes(*flags));
-        // The launcher never opens the target of a link with a shebang: its interpreter does.
+        // With a shebang, the launcher starts the interpreter and never opens the target itself.
         if !flags.is_valid() || flags.has_shebang() || bin_path_len == 0 {
             return false;
         }
@@ -571,12 +571,12 @@ mod host {
         };
         let end = base.len() + bin_path_len;
 
-        // The NUL goes over the `"` that ends `bin_path`.
+        // Overwrite the `"` that ends `bin_path` with a NUL.
         buf[end] = 0;
         if !is_missing(WStr::from_buf(&buf[start..], end - start)) {
             return false;
         }
-        // `CreateProcessW` adds `.exe` to a file name that has no extension.
+        // `CreateProcessW` appends `.exe` to a file name that has no extension.
         if strings::index_of_any16(
             strings::basename_windows(&buf[start..end]),
             bun_core::w!("."),

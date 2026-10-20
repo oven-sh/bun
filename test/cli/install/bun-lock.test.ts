@@ -4564,14 +4564,27 @@ it.each<OrderedShape>([
 
 // Renames every package in `value`, where the names are keys: of the manifests and of the dependency groups.
 function respell<T>(value: T, names: Record<string, string>): T {
-  if (typeof value !== "object" || value === null) return value;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
   return Object.fromEntries(
     Object.entries(value).map(([key, inner]) => [names[key] ?? key, respell(inner, names)]),
   ) as T;
 }
 
-// Peers are resolved in the order of the names of the packages that declare them. Each project is installed twice, the
-// second time with the names of the two packages in `swap` exchanged.
+// No version of v satisfies a, b and c. y is installed for d's peer dependency, after v, and its `*` only shares v@2.0.0
+// if a package asks for exactly that version. Otherwise it picks v@3.0.0 first, which brings z@1.0.0 for t to share.
+const sharesAnExactVersion = (b: string): OrderedManifests => ({
+  a: { "1.0.0": { peerDependencies: { v: "1.0.0" } } },
+  b: { "1.0.0": { peerDependencies: { v: b } } },
+  c: { "1.0.0": { peerDependencies: { v: "~2.0.0" } } },
+  d: { "1.0.0": { peerDependencies: { y: "*" } } },
+  y: { "1.0.0": { dependencies: { v: "*", x: "1.0.0" } } },
+  x: { "1.0.0": { dependencies: { t: "1.0.0" } } },
+  t: { "1.0.0": { dependencies: { z: "*" } } },
+  v: { "1.0.0": {}, "2.0.0": {}, "3.0.0": { dependencies: { z: "1.0.0" } } },
+  z: { "1.0.0": {}, "2.0.0": {} },
+});
+
+// Each project is installed twice, the second time with the names of the two packages in `swap` exchanged.
 // `z` lists the versions of z that get installed.
 it.each<{ shape: string; manifests: OrderedManifests; root: string[]; swap: [string, string]; z: string[] }>([
   {
@@ -4596,6 +4609,45 @@ it.each<{ shape: string; manifests: OrderedManifests; root: string[]; swap: [str
     root: ["a", "b", "c"],
     swap: ["a", "c"],
     z: ["1.0.5"],
+  },
+  {
+    shape: "three packages have one range and one package has another",
+    manifests: {
+      a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
+      b: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
+      c: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
+      d: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
+      z: zVersions,
+    },
+    root: ["a", "b", "c", "d"],
+    swap: ["a", "d"],
+    z: ["1.1.0"],
+  },
+  {
+    shape: "no version satisfies the ranges of two versions of one package",
+    manifests: {
+      a: { "1.0.0": { dependencies: { d: "1.0.0" } } },
+      b: { "1.0.0": { dependencies: { d: "2.0.0" } } },
+      d: { "1.0.0": { peerDependencies: { z: "^1.0.0" } }, "2.0.0": { peerDependencies: { z: "^2.0.0" } } },
+      z: zVersions,
+    },
+    root: ["a", "b"],
+    swap: ["a", "b"],
+    z: ["2.0.0"],
+  },
+  {
+    shape: "an exact range loses, so the shared version isn't one that a package asks for exactly",
+    manifests: sharesAnExactVersion("^2.0.0"),
+    root: ["a", "b", "c", "d"],
+    swap: ["a", "c"],
+    z: ["1.0.0"],
+  },
+  {
+    shape: "an exact range and a wider one pick the shared version",
+    manifests: sharesAnExactVersion("2.0.0"),
+    root: ["a", "b", "c", "d"],
+    swap: ["a", "c"],
+    z: ["2.0.0"],
   },
   {
     // A package uses the copy of the package above it, so the one above has to be resolved first.
@@ -4658,6 +4710,70 @@ it("a package that a workspace has a peer dependency on uses the workspace's cop
   });
   expect(instancesOf(lock, "z")).toEqual({ "z": "z@1.0.0" });
 });
+
+// wc depends on wa. wa still comes first, so it gets a version in its own range and not the copy of wc.
+it("the peers of workspaces are resolved in the order of the names of the workspaces", async () => {
+  using server = (await registryWithHolds({ z: zVersions })).server;
+  const lock = await freshInstallLock(server, {
+    "package.json": { name: "foo", workspaces: ["packages/*"] },
+    "packages/wa/package.json": { name: "wa", version: "1.0.0", peerDependencies: { z: "^1.0.0" } },
+    "packages/wc/package.json": {
+      name: "wc",
+      dependencies: { wa: "workspace:*" },
+      peerDependencies: { z: "^2.0.0" },
+    },
+  });
+  expect(instancesOf(lock, "z")).toEqual({ "z": "z@1.1.0", "wc/z": "z@2.0.0" });
+});
+
+it.each(["a", "c"])(
+  "a peer range that no version satisfies shares the version of the other package: %s next to b",
+  async unmet => {
+    using server = (
+      await registryWithHolds({
+        [unmet]: { "1.0.0": { peerDependencies: { z: "^9.0.0" } } },
+        b: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
+        z: zVersions,
+      })
+    ).server;
+    using dir = projectOn(server, { "package.json": { name: "foo", dependencies: { [unmet]: "1.0.0", b: "1.0.0" } } });
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--verbose"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, code] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err.split("\n").filter(line => line.startsWith("warn:"))).toEqual([
+      `warn: incorrect peer dependency "z@1.1.0": "${unmet}@1.0.0" requires "z@^9.0.0"`,
+    ]);
+    expect(code).toBe(0);
+  },
+);
+
+// The edit of the overrides makes both peers resolve again, and until the first one has, nothing depends on p.
+it.each(["a", "q"])(
+  "a peer of a package from bun.lock that only a peer depends on resolves like on a fresh install: %s -> p",
+  async dependent => {
+    using server = (
+      await registryWithHolds({
+        [dependent]: { "1.0.0": { peerDependencies: { p: "^1.0.0" } } },
+        p: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
+        z: zVersions,
+      })
+    ).server;
+    const root = { name: "foo", workspaces: ["packages/*"] };
+    using dir = projectOn(server, {
+      "package.json": { ...root, overrides: { z: "2.0.0" } },
+      "packages/w/package.json": { name: "w", dependencies: { [dependent]: "1.0.0", z: "2.0.0" } },
+    });
+    await installAndReadLock(String(dir));
+
+    await write(join(String(dir), "package.json"), JSON.stringify({ ...root, overrides: { p: "1.0.0" } }));
+    expect(instancesOf(await installAndReadLock(String(dir)), "z")).toEqual({ "z": "z@2.0.0" });
+  },
+);
 
 // The collapse chooses among the versions the install added, and j's row adds its own best match (1.5.0) only
 // when it is resolved before k's 1.0.9 is in place. With 1.5.0 the two versions kept are 1.5.0 and 1.0.9,

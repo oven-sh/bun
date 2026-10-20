@@ -706,23 +706,28 @@ impl PackageManager {
         }
         self.look_ahead.in_peer_pass = true;
         self.look_ahead.deferred_peers_seen = 0;
-        self.resolutions_before_peers.clear();
-        (self.resolutions_before_peers).extend_from_slice(&self.lockfile.buffers.resolutions);
-        for i in self.peer_batch_order(&mut batch) {
+        (self.resolutions_before_batch).clone_from(&self.lockfile.buffers.resolutions);
+        let (order, next_batch) = self.peer_batch_order(&mut batch);
+        for i in order {
             (self.lockfile.scratch.dependency_list_queue).push(QueuedRows {
                 rows: DependencySlice::new(batch[i as usize], 1),
                 install_peer: true,
                 from_command: true,
             })?;
         }
+        for i in next_batch {
+            self.peer_dependencies.write_item(batch[i as usize])?;
+        }
         Ok(())
     }
 
-    /// Sorts `batch` by id and returns indices into it, in an order independent of arrival.
-    fn peer_batch_order(&self, batch: &mut [DependencyID]) -> Vec<u32> {
+    /// Sorts `batch` by id and returns indices into it, in an order independent of arrival: the
+    /// project's own peers, then a package before the packages that it depends on. The second list
+    /// has the peers that wait for the next batch.
+    fn peer_batch_order(&self, batch: &mut [DependencyID]) -> (Vec<u32>, Vec<u32>) {
         let mut order = index_sort::identity(batch.len());
         if batch.len() < 2 {
-            return order;
+            return (order, Vec::new());
         }
         index_sort::sort_indices_unstable(batch, &mut |a, b| a.cmp(&b));
 
@@ -745,32 +750,17 @@ impl PackageManager {
             ResolutionTag::Workspace => 1,
             _ => 2,
         };
-        // A package uses the copy of the package above it if both have the peer dependency, so a
-        // package comes after every package that depends on it.
-        let lists = lockfile.packages.items_dependencies();
-        let mut position: Vec<u32> = vec![u32::MAX; lists.len()];
-        let mut finished: Vec<PackageID> = Vec::with_capacity(lists.len());
-        let mut path: Vec<(PackageID, u32)> = vec![(0, lists[0].end())];
-        position[0] = 0;
-        // The last dependency first, so that two packages with nothing between them keep the order
-        // of the dependencies on them.
-        while let Some((package, row)) = path.last_mut() {
-            if *row == lists[*package as usize].begin() {
-                finished.push(*package);
-                path.pop();
-                continue;
-            }
-            *row -= 1;
-            let id = lockfile.buffers.resolutions[*row as usize];
-            if position.get(id as usize) == Some(&u32::MAX) {
-                position[id as usize] = 0;
-                path.push((id, lists[id as usize].end()));
-            }
-        }
-        for (i, &package) in finished.iter().rev().enumerate() {
-            if rank(package as usize) == 2 {
-                position[package as usize] = i as u32;
-            }
+        // A package uses the copy of the package above it if both have the peer dependency, so the
+        // one above comes first. The project's own peers stay in the order of the names: a workspace
+        // would otherwise never get its own range next to a workspace that depends on it.
+        let mut position: Vec<u32> = vec![u32::MAX; names.len()];
+        let dependents_first = crate::lockfile::reachable::dependents_first(lockfile);
+        for (i, &package) in dependents_first.iter().enumerate() {
+            position[package as usize] = if rank(package as usize) == 2 {
+                i as u32
+            } else {
+                0
+            };
         }
         index_sort::sort_indices_unstable(&mut order, &mut |a, b| {
             let (a, b) = (a as usize, b as usize);
@@ -792,6 +782,15 @@ impl PackageManager {
                 })
                 .then(batch[a].cmp(&batch[b]))
         });
-        order
+        // Nothing depends yet on a package from bun.lock that only a peer in this batch resolves
+        // to. Its own peers wait until something does, like the peers of a package that's new.
+        let (now, later): (Vec<u32>, Vec<u32>) = order.into_iter().partition(|&i| {
+            (position.get(owners[i as usize] as usize)).is_some_and(|&at| at != u32::MAX)
+        });
+        if now.is_empty() {
+            (later, now)
+        } else {
+            (now, later)
+        }
     }
 }

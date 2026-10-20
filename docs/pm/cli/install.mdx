@@ -502,7 +502,7 @@ Each flag can be repeated, takes `*` to allow every value, and takes `!name` to 
 
 1. If a package above the one with the peer dependency depends on that name, the peer uses that version. "Above" means its parent, its parent's parent, and so on up to your workspace and the root `package.json`. This applies even if the version is out of range: if your app depends on `react@17`, every library that it uses gets `react@17`.
 2. Otherwise, Bun picks one version that satisfies every package with a peer dependency on that name. It prefers a version that's already installed, then the newest matching version in the registry.
-3. If no version satisfies all of them, Bun doesn't install a copy for each one, because packages like `react` or `graphql` break when two copies are loaded. Each package uses an installed version that satisfies its range if there is one. Otherwise, it shares the version that the others use, which is out of its range.
+3. If no version satisfies all of them, Bun doesn't install a copy for each one, because packages like `react` or `graphql` break when two copies are loaded. Each package uses an installed version that satisfies its range if there is one. Otherwise, it shares the version that the others use, which is out of its range. If none is installed yet, Bun installs the version that satisfies the most of them, and the newest one on a tie.
 
 The isolated linker applies these rules everywhere a package is used. The hoisted linker usually installs a package once, and that copy loads whichever version of the peer is nearest to it in `node_modules`. If another version of the peer is at the top of `node_modules`, the packages that need the peer can each get their own copy of it.
 

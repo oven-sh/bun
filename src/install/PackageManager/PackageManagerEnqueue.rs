@@ -3406,7 +3406,7 @@ fn settle_without_manifest(
         let ranges = if version_was_replaced {
             Vec::new()
         } else {
-            ranges_of_askers(this, dependency, dependency_id, true)
+            ranges_of_every_asker(this, dependency, dependency_id)
         };
         // If no installed version satisfies every range, the registry may have one, unless two of
         // the ranges don't overlap. Then the result is the same with and without the manifest.
@@ -3550,10 +3550,12 @@ fn get_or_put_resolved_package(
             let manifest: &Npm::PackageManifest = manifest;
 
             let peer_ranges = if install_peer && behavior.is_peer() && !version_was_replaced {
-                ranges_of_askers(this, dependency, dependency_id, true)
+                ranges_of_every_asker(this, dependency, dependency_id)
             } else {
                 Vec::new()
             };
+            let shared_range: dependency::Version;
+            let mut version = version;
             let version_result: Npm::FindVersionResult = if latest_for_target {
                 manifest.find_by_dist_tag_with_filter(
                     b"latest",
@@ -3575,15 +3577,11 @@ fn get_or_put_resolved_package(
                     })
             {
                 return bind_existing(this, dependency_id, id, success_fn);
-            } else if !peer_ranges.is_empty()
-                && let Some((_, shared)) = version_most_peers_accept(
-                    this,
-                    manifest,
-                    &ranges_of_askers(this, dependency, dependency_id, false),
-                )
-            {
-                shared
             } else {
+                if !peer_ranges.is_empty() {
+                    shared_range = range_most_peers_accept(this, manifest, dependency, version);
+                    version = &shared_range;
+                }
                 manifest.find_for_dependency(
                     version,
                     this.lockfile.buffers.string_bytes.as_slice(),
@@ -4050,7 +4048,7 @@ fn installed_peer_target(
         return None;
     }
     let provided =
-        peer_provided_from_above(lockfile, &this.resolutions_before_peers, name_hash, row)?;
+        peer_provided_from_above(lockfile, &this.resolutions_before_batch, name_hash, row)?;
     (!would_revive_leftover(lockfile, row, provided)).then_some(provided)
 }
 
@@ -4109,13 +4107,12 @@ fn installed_version_in_any_range(
 ///
 /// Returns `None` if nothing above the owner has a dependency or a peer dependency on this name.
 ///
-/// A peer dependency that is resolved puts its package above another one. `before_peers` is
-/// `PackageManager::resolutions_before_peers`: the peers that are resolved together with `row` don't
-/// count for that, so the result doesn't depend on which of them came first. The project's own do
-/// count, because they always come first.
+/// A peer dependency also puts its owner above the package that it resolves to. Only the ones that
+/// were resolved before the batch of `row` was queued count (`before_batch`), so the result doesn't
+/// depend on the order in the batch. The project's own always count: they come first in a batch.
 fn peer_provided_from_above(
     lockfile: &Lockfile::Lockfile,
-    before_peers: &[PackageID],
+    before_batch: &[PackageID],
     name_hash: PackageNameHash,
     row: DependencyID,
 ) -> Option<PackageID> {
@@ -4160,13 +4157,14 @@ fn peer_provided_from_above(
             for (parent, list) in lists.iter().enumerate() {
                 if seen.is_set(parent)
                     || !(list.begin() as usize..list.end() as usize).any(|id| {
-                        let below = if is_project(parent) {
-                            resolutions[id]
+                        let below = if !deps[id].behavior.is_peer() || is_project(parent) {
+                            Some(&resolutions[id])
+                        } else if follows_peers {
+                            before_batch.get(id)
                         } else {
-                            before_peers.get(id).copied().unwrap_or(resolutions[id])
+                            None
                         };
-                        (follows_peers || !deps[id].behavior.is_peer() || is_project(parent))
-                            && level.is_set_allow_out_of_bound(below as usize, false)
+                        below.is_some_and(|&id| level.is_set_allow_out_of_bound(id as usize, false))
                     })
                 {
                     continue;
@@ -4351,14 +4349,10 @@ fn peer_askers(
 
 /// Returns the distinct ranges of the packages that have to agree with `row` on a version of this
 /// peer dependency. Returns an empty list if the range of `row` alone should decide.
-///
-/// A package that has a provider in one place uses the provider's version. Without
-/// `provided_somewhere`, the result only has the ranges of the packages that use the agreed version.
-fn ranges_of_askers(
+fn ranges_of_every_asker(
     this: &PackageManager,
     peer: &Dependency,
     row: DependencyID,
-    provided_somewhere: bool,
 ) -> Vec<dependency::Version> {
     let lockfile: &Lockfile::Lockfile = &this.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
@@ -4366,9 +4360,6 @@ fn ranges_of_askers(
     let mut ranges: Vec<dependency::Version> = Vec::new();
     let mut row_counts = false;
     for &(_, id, _, has_no_provider) in peer_askers(this, peer.name_hash) {
-        if !has_no_provider && !provided_somewhere {
-            continue;
-        }
         let dep = &deps[id as usize];
         let Some(range) = crate::dedupe::effective_npm_range(lockfile, id, dep) else {
             continue;
@@ -4388,26 +4379,14 @@ fn ranges_of_askers(
 }
 
 /// Returns the newest version that satisfies every range in `ranges`, which come from
-/// `ranges_of_askers`.
+/// `ranges_of_every_asker`.
 fn version_every_peer_accepts<'m>(
     this: &PackageManager,
     manifest: &'m Npm::PackageManifest,
     ranges: &[dependency::Version],
 ) -> Option<Npm::FindVersionResult<'m>> {
-    version_most_peers_accept(this, manifest, ranges)
-        .filter(|&(accepting, _)| accepting == ranges.len())
-        .map(|(_, found)| found)
-}
-
-/// Returns the version that satisfies the most ranges in `ranges`, the newest of them, and how many
-/// it satisfies. Every package that asks gets the same answer, whichever is resolved first.
-fn version_most_peers_accept<'m>(
-    this: &PackageManager,
-    manifest: &'m Npm::PackageManifest,
-    ranges: &[dependency::Version],
-) -> Option<(usize, Npm::FindVersionResult<'m>)> {
     let buf = this.lockfile.buffers.string_bytes.as_slice();
-    let mut best: Option<(usize, Semver::Version, Npm::FindVersionResult<'m>)> = None;
+    let mut best: Option<(Semver::Version, Npm::FindVersionResult<'m>)> = None;
     for range in ranges {
         let found = manifest.find_for_dependency(
             range,
@@ -4421,17 +4400,68 @@ fn version_most_peers_accept<'m>(
             Npm::FindVersionResult::Err(_) => continue,
         };
         let versions = &manifest.string_buf;
-        let accepting = (ranges.iter())
-            .filter(|range| range.npm().version.satisfies(version, buf, versions))
-            .count();
-        if !best.as_ref().is_some_and(|&(most, newest, _)| {
-            (accepting.cmp(&most)).then_with(|| version.order(newest, versions, versions))
-                != core::cmp::Ordering::Greater
-        }) {
-            best = Some((accepting, version, found));
+        if (ranges.iter()).all(|range| range.npm().version.satisfies(version, buf, versions))
+            && !best.as_ref().is_some_and(|(newest, _)| {
+                version.order(*newest, versions, versions) != core::cmp::Ordering::Greater
+            })
+        {
+            best = Some((version, found));
         }
     }
-    best.map(|(accepting, _, found)| (accepting, found))
+    best.map(|(_, found)| found)
+}
+
+/// No version satisfies every package with this peer dependency, and none that they can share is
+/// installed. Returns the range that picks the version to install: the one whose newest version
+/// satisfies the most packages that will use it, then the one with the newest version. Every
+/// package gets the same answer, whichever is resolved first.
+///
+/// Returns `version`, the range that is being resolved, if no version satisfies any of them.
+fn range_most_peers_accept(
+    this: &PackageManager,
+    manifest: &Npm::PackageManifest,
+    peer: &Dependency,
+    version: &dependency::Version,
+) -> dependency::Version {
+    let lockfile: &Lockfile::Lockfile = &this.lockfile;
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let versions = &manifest.string_buf;
+    // A package that has a provider in one place uses the provider's version everywhere.
+    let ranges: Vec<dependency::Version> = (peer_askers(this, peer.name_hash).iter())
+        .filter(|&&(.., has_no_provider)| has_no_provider)
+        .filter_map(|&(_, id, ..)| {
+            crate::dedupe::effective_npm_range(lockfile, id, &deps[id as usize])
+        })
+        .filter(|range| !range.npm().is_alias)
+        .collect();
+    let mut best: Option<(usize, Semver::Version, bool, &dependency::Version)> = None;
+    for range in &ranges {
+        let newest = match manifest.find_for_dependency(
+            range,
+            buf,
+            this.options.minimum_release_age_ms,
+            this.options.minimum_release_age_excludes,
+        ) {
+            Npm::FindVersionResult::Found(result)
+            | Npm::FindVersionResult::FoundWithFilter { result, .. } => result.version,
+            Npm::FindVersionResult::Err(_) => continue,
+        };
+        let accepting = (ranges.iter())
+            .filter(|other| other.npm().version.satisfies(newest, buf, versions))
+            .count();
+        // The package is `exact_pinned` if one of the ranges that pick it is exact.
+        let is_exact = range.npm().version.is_exact();
+        if best.is_none_or(|(most, highest, was_exact, _)| {
+            (accepting.cmp(&most))
+                .then_with(|| newest.order(highest, versions, versions))
+                .then(is_exact.cmp(&was_exact))
+                .is_gt()
+        }) {
+            best = Some((accepting, newest, is_exact, range));
+        }
+    }
+    best.map_or(version, |(.., range)| range).clone()
 }
 
 /// `package_index` lists the highest version first.

@@ -355,16 +355,18 @@ impl BuiltinIO {
                 // stored cursor is u32.
                 let idx = *i as usize;
                 let total = arraybuf.byte_len;
-                if idx >= total {
+                let write_len = total.saturating_sub(idx).min(buf.len());
+                if write_len > 0 {
+                    let dst = &mut arraybuf.slice_mut()[idx..idx + write_len];
+                    dst.copy_from_slice(&buf[..write_len]);
+                    *i = i.saturating_add(write_len as u32);
+                }
+                if write_len < buf.len() {
                     return Err(bun_sys::Error::from_code(
                         bun_sys::E::ENOSPC,
                         bun_sys::Tag::write,
                     ));
                 }
-                let write_len = (total - idx).min(buf.len());
-                let dst = &mut arraybuf.slice_mut()[idx..idx + write_len];
-                dst.copy_from_slice(&buf[..write_len]);
-                *i = i.saturating_add(write_len as u32);
                 Ok(write_len)
             }
             BuiltinIO::Blob(_) | BuiltinIO::Ignore => Ok(buf.len()),
@@ -810,18 +812,25 @@ impl Builtin {
         use std::io::Write as _;
         let mut buf = Vec::new();
         let _ = buf.write_fmt(args);
-        if let Some(_safeguard) = interp.as_cmd(cmd).io.stderr.needs_io() {
+        if interp.as_cmd(cmd).io.stderr.needs_io().is_some() {
             // Only the `Fd` arm transitions state.
             interp.as_cmd_mut(cmd).state = CmdState::WaitingWriteErr;
-            let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Cmd);
-            // SAFETY: `OutKind::Fd` guaranteed by `needs_io()`.
-            if let OutKind::Fd(fd) = &interp.as_cmd(cmd).io.stderr {
-                return fd.writer.enqueue(child, fd.captured, &buf);
-            }
-            unreachable!()
         }
-        // No-IO path: append to the shell env's captured stderr and finish
-        // synchronously with exit 1 (Cmd::on_io_writer_chunk's behaviour).
+        if let Some(y) = Self::cmd_write_stderr(interp, cmd, &buf) {
+            return y;
+        }
+        // No-IO path: finish with exit 1, as `Cmd::on_io_writer_chunk` does.
+        let parent = interp.as_cmd(cmd).base.parent;
+        interp.child_done(parent, cmd, 1)
+    }
+
+    /// Writes to the *Cmd's* `io.stderr`. `Some`: the write completes in `Cmd::on_io_writer_chunk`.
+    pub(crate) fn cmd_write_stderr(interp: &Interpreter, cmd: NodeId, buf: &[u8]) -> Option<Yield> {
+        if let OutKind::Fd(fd) = &interp.as_cmd(cmd).io.stderr {
+            let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Cmd);
+            return Some(fd.writer.enqueue(child, fd.captured, buf));
+        }
+        // No-IO path: append to the shell env's captured stderr.
         if let OutKind::Pipe = &interp.as_cmd(cmd).io.stderr {
             // SAFETY: single trampoline frame; no other borrow of the env's
             // (or its parent's) stderr buffer is live.
@@ -832,10 +841,9 @@ impl Builtin {
                     .shell_mut()
                     .buffered_stderr_mut()
             };
-            stderr.append_slice(&buf);
+            stderr.append_slice(buf);
         }
-        let parent = interp.as_cmd(cmd).base.parent;
-        interp.child_done(parent, cmd, 1)
+        None
     }
 
     /// Finish the builtin with `exit_code` and signal the owning Cmd.
@@ -882,7 +890,7 @@ impl Builtin {
     /// Write `buf` to stdout/stderr without going through IOWriter (the
     /// stream is a captured buffer / arraybuffer / blob / /dev/null).
     ///
-    /// Returns `Err(ENOSPC)` when an ArrayBuffer target is already full.
+    /// `Err(ENOSPC)`: an ArrayBuffer target cannot hold all of `buf`. Sets `Cmd::redirect_overflow`.
     /// **WARNING**: caller must have checked `needs_io() == None` first.
     pub(crate) fn write_no_io(
         interp: &Interpreter,
@@ -905,7 +913,11 @@ impl Builtin {
             IoKind::Stderr => &mut me.stderr,
         };
         // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd's lifetime.
-        unsafe { out.write_no_io_to(shell, buf) }
+        let result = unsafe { out.write_no_io_to(shell, buf) };
+        if result.is_err() {
+            cmd_node.redirect_overflow = true;
+        }
+        result
     }
 
     /// Shell exec env of the owning Cmd.

@@ -6281,12 +6281,10 @@ impl<'p, 's> Checker<'p, 's> {
                 if !*target_readonly && source_readonly {
                     return Ternary::FALSE;
                 }
-                let is_required =
-                    |f: &&ElemFlags| f.intersects(ElemFlags::REQUIRED | ElemFlags::VARIADIC);
                 let (source_arity, target_arity) = (source_elems.len(), target_elems.len());
                 let source_rest = source_flags.iter().any(|f| f.contains(ElemFlags::REST));
-                let source_min_length = source_flags.iter().filter(is_required).count();
-                let target_min_length = target_flags.iter().filter(is_required).count();
+                let source_min_length = Self::min_length(source_flags);
+                let target_min_length = Self::min_length(target_flags);
                 if !source_rest && source_arity < target_min_length {
                     if REPORT {
                         let args = [Arg::Number(source_arity), Arg::Number(target_min_length)];
@@ -7292,6 +7290,12 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Tuple { flags, .. } => Some(flags),
             _ => None,
         }
+    }
+
+    /// `TupleType.minLength`
+    pub(super) fn min_length(flags: &[ElemFlags]) -> usize {
+        let is_required = |f: &&ElemFlags| f.intersects(ElemFlags::REQUIRED | ElemFlags::VARIADIC);
+        flags.iter().filter(is_required).count()
     }
 
     pub(super) fn fixed_length(flags: &[ElemFlags]) -> usize {

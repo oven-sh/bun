@@ -1791,11 +1791,7 @@ impl<'p, 's> Checker<'p, 's> {
             (self.data(source), self.data(target))
         {
             let variable = ElemFlags::REST | ElemFlags::VARIADIC;
-            let min_length = |f: &[ElemFlags]| {
-                f.iter()
-                    .filter(|f| f.intersects(ElemFlags::REQUIRED | ElemFlags::VARIADIC))
-                    .count()
-            };
+            let min_length = |f: &[ElemFlags]| Self::min_length(f);
             let fixed_length = |f: &[ElemFlags]| Self::fixed_length(f);
             let has = |f: &[ElemFlags], which: ElemFlags| f.iter().any(|f| f.intersects(which));
             return !has(t, ElemFlags::VARIADIC) && min_length(t) > min_length(s)

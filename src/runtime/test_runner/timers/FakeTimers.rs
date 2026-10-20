@@ -176,7 +176,7 @@ impl FakeTimers {
         self.active
     }
 
-    /// 1 while a fake timer's callback runs (sinon's `duringTick` rule): a zero-delay re-arm is due again in the drain that runs it.
+    /// 1 while a fake timer's callback runs (sinon's `duringTick` rule): a zero-delay timer armed by a callback is due again in the drain that runs it.
     pub(crate) fn min_delay_ms(&self) -> u32 {
         if self.active && self.firing > 0 { 1 } else { 0 }
     }
@@ -451,11 +451,10 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
             max_advance, arg_number
         )));
     }
-    // When advanceTimersByTime(0) is called, advance by 1ms to fire setTimeout(fn, 0) timers.
-    // This is because setTimeout(fn, 0) is internally scheduled with a 1ms delay per HTML spec,
-    // and Jest/testing-library expect advanceTimersByTime(0) to fire such "immediate" timers.
-    let effective_advance = if arg_number == 0.0 { 1.0 } else { arg_number };
-    let target = current.add_ms_float(effective_advance);
+    // A `setTimeout(fn, 0)` armed under fake timers keeps a 0 interval
+    // (`js_value_to_countdown`) and is due at `current`, so an advance of 0
+    // fires it without moving the clock. Same as sinon's `tick(0)`.
+    let target = current.add_ms_float(arg_number);
 
     let advanced = FakeTimers::execute_until(global, target);
     CURRENT_TIME.set(global, &target, None);

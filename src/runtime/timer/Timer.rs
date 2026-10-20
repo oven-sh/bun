@@ -134,7 +134,9 @@ impl All {
         // validated to be <= i32::MAX), so callers always receive a value
         // in that range.
         // We don't deal with nesting levels directly
-        // but we do set the minimum timeout to be 1ms for repeating timers
+        // but we do set the minimum timeout to be 1ms for repeating timers.
+        // Under fake timers a sub-1ms delay stays 0, so `reschedule` keys it
+        // at the current fake time (sinon's rule, via `min_delay_ms`).
         let countdown_double = countdown.to_number(global_this)?;
         let countdown_int: u32 = match overflow_behavior {
             CountdownOverflowBehavior::Clamp => {
@@ -172,7 +174,11 @@ impl All {
                             )?;
                         }
                     }
-                    1
+                    if self.fake_timers.is_active() && !(countdown_double > i32::MAX as f64) {
+                        0
+                    } else {
+                        1
+                    }
                 } else {
                     countdown_double as u32
                 }

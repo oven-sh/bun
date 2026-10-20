@@ -168,10 +168,15 @@ impl<'a> TestRunner<'a> {
             if let Some(group) = active_file.execution.active_group_ref() {
                 let mut latest: Option<bun_core::Timespec> = None;
                 for seq in group.sequences_const(&active_file.execution) {
+                    // Not started yet: its `EPOCH` is "not set", not "no timeout".
+                    if !seq.executing {
+                        continue;
+                    }
                     let Some(entry) = seq.active_entry else { continue };
                     // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
                     let ts = unsafe { entry.as_ref() }.timespec;
-                    if latest.is_none_or(|l| ts.order(&l) == core::cmp::Ordering::Greater) {
+                    // A running entry with no timeout (`EPOCH`) is the latest of all.
+                    if latest.is_none_or(|l| bun_core::Timespec::order_ignore_epoch(ts, l).is_gt()) {
                         latest = Some(ts);
                     }
                 }

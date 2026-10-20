@@ -857,8 +857,8 @@ impl<T: JsPayload> JsWrapperRef<T> {
             .set_strong(wrapper.as_value().0, heap.global_object());
     }
     #[inline]
-    pub fn upgrade(&mut self, heap: &JsHeap<'_>) {
-        self.0.upgrade(heap.global_object());
+    pub fn upgrade(&mut self, global: &JSGlobalObject) {
+        self.0.upgrade(global);
     }
     #[inline]
     pub fn set_weak(&mut self, wrapper: JsWrapper<'_, T>) {

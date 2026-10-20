@@ -272,12 +272,7 @@ impl JSMySQLConnection {
             bun_core::scoped_log!(MySQLConnection, "connection is active");
             if self.js_value.get().is_not_empty() && !self.js_value.get().is_strong() {
                 bun_core::scoped_log!(MySQLConnection, "strong ref until connection is closed");
-                // SAFETY: same as in `with_js_value`.
-                unsafe {
-                    JsScope::with(self.global_object.as_mut_ptr(), |cx| {
-                        self.js_value.with_mut(|r| r.upgrade(&cx.heap));
-                    })
-                }
+                self.js_value.with_mut(|r| r.upgrade(&self.global_object));
             }
             let ctx = self.vm_ctx();
             if self.connection.get().status == my_sql_connection::Status::Connected

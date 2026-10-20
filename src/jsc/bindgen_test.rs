@@ -560,10 +560,8 @@ impl TestRefCountedClass for TestRefCounted {
         Ok(self.value.get())
     }
 
-    fn keep(&self) {
-        // SAFETY: `self` is a live `TestRefCounted` made by `RefPtr::new`.
-        let kept = unsafe { RefPtr::init_ref(core::ptr::from_ref(self).cast_mut()) };
-        KEPT.set(Some(kept));
+    fn keep<'a>(&self, this: JsWrapper<'a, RefPtr<Self>>, cx: &mut JsScope<'a>) {
+        KEPT.set(Some(this.with(&cx.payloads, RefPtr::clone)));
     }
 
     fn dispose(&self) {

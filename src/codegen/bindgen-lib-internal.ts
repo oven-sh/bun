@@ -1943,7 +1943,7 @@ export class Method extends Signature {
   readonly privateSymbol: string | undefined;
   readonly functionName: string | undefined;
   constructor(name: string, options: FunctionField, isStatic = false, refCounted = false) {
-    super(options, !!options.passThis);
+    super(options, !isStatic && !!options.passThis);
     this.name = name;
     this.rustName = memberRustName(options.rustName ?? snakeCase(memberIdentifier(name)));
     assert(

@@ -267,6 +267,10 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.class({ rustPath: "T", proto: { x: { returns: b.self } } })).toThrow(
     "or passThis to return the object itself",
   );
+  // @ts-expect-error
+  expect(() => b.class({ rustPath: "T", construct: {}, static: { x: { returns: b.self, passThis: true } } })).toThrow(
+    "or passThis to return the object itself",
+  );
   expect(() => b.string.allowStringObject.loose).toThrow(".loose already takes a String object");
   expect(() => b.string.loose.allowStringObject).toThrow(".loose already takes a String object");
   // No overload can have the argument left out, so `undefined` goes to the one that reports its own error.

@@ -252,7 +252,7 @@ export const TestRefCounted = b.class({
     /** Calls the listener, which may call back into this object, then returns the value. */
     notify: { returns: b.i32, capability: "js", passThis: true, throws: true },
     /** Makes Rust hold a ref until `TestRefCounted.release()`. */
-    keep: {},
+    keep: { capability: "js", passThis: true },
     "@@dispose": {},
     "@@toPrimitive": { returns: b.i32, name: "" },
     valueOrUndefined: { returns: b.i32, invalidThis: "undefined" },

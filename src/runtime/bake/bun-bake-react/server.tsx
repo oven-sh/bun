@@ -76,10 +76,15 @@ async function loadData(
   }
   if (result && typeof result === "object") {
     if ("props" in result) {
+      const { revalidate } = result;
       let cacheControl = keepForever;
       if (name === "getServerSideProps") cacheControl = keepNever;
-      else if (typeof result.revalidate === "number")
-        cacheControl = `s-maxage=${result.revalidate}, stale-while-revalidate`;
+      else if (revalidate !== undefined && revalidate !== false) {
+        if (!Number.isInteger(revalidate) || revalidate <= 0) {
+          throw new TypeError(`revalidate of getStaticProps must be a whole number of seconds above 0, or false.`);
+        }
+        cacheControl = `s-maxage=${revalidate}, stale-while-revalidate`;
+      }
       return { props: result.props, cacheControl };
     }
     if ("notFound" in result && result.notFound) return notFound();

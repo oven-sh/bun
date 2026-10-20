@@ -3,8 +3,9 @@
 // framework, the browser files and `public/`.
 //
 // A framework page renders on request with the framework's `render`, as in `bun bake`. A response
-// with `Cache-Control: s-maxage=N` is kept in memory for N seconds and sent again for the same path;
-// after that, the next request gets the kept response and the page renders again in the background
+// to a GET with `Cache-Control: s-maxage=N` is kept in memory for N seconds and sent again for the
+// same path, whatever the query: a response that depends on the query must not set `s-maxage`. After
+// that, the next request gets the kept response and the page renders again in the background
 // (`stale-while-revalidate`). The default framework sets it for pages without
 // `getServerSideProps`.
 
@@ -22,7 +23,10 @@ type FrameworkRoute = {
   /** The inner-most first. */
   layouts: object[];
   modules: string[];
+  modulepreload: string[];
   styles: string[];
+  /** Its last response was not kept, so requests for one path do not wait for each other. */
+  rendersPerRequest?: boolean;
 };
 
 type Build = {
@@ -38,71 +42,147 @@ type Kept = {
   headers: Headers;
   body: ArrayBuffer;
   freshUntil: number;
-  rendering: boolean;
 };
 
+/** A render for one path: the response that was kept, or one that cannot be. */
+type Rendered = { kept: Kept } | { response: Response; controller: AbortController };
+
+/** Any URL can make a page: the least recently used pages go first past these. */
+const maxKeptPages = 10_000;
+const maxKeptBytes = 128 * 1024 * 1024;
+
+/** The least recently used first. */
 const kept = new Map<string, Kept>();
+let keptBytes = 0;
+const rendering = new Map<string, Promise<Rendered>>();
+
+function forget(key: string) {
+  const entry = kept.get(key);
+  if (entry === undefined) return;
+  keptBytes -= entry.body.byteLength;
+  kept.delete(key);
+}
+
+function keep(key: string, entry: Kept) {
+  forget(key);
+  kept.set(key, entry);
+  keptBytes += entry.body.byteLength;
+  for (const oldest of kept.keys()) {
+    if (kept.size <= maxKeptPages && keptBytes <= maxKeptBytes) break;
+    forget(oldest);
+  }
+}
 
 function keepFor(response: Response): number | undefined {
   if (response.status !== 200) return undefined;
   const cacheControl = response.headers.get("cache-control");
   const maxAge = cacheControl && /(?:^|,)\s*s-maxage=(\d+)/i.exec(cacheControl);
-  return maxAge ? Number(maxAge[1]) : undefined;
+  const seconds = maxAge ? Number(maxAge[1]) : 0;
+  return seconds > 0 ? seconds : undefined;
 }
 
-function paramsOf(route: FrameworkRoute, request: Request & { params?: Record<string, string> }): Params {
+/** The parameters of a request, or `null` when its path cannot be decoded. */
+function paramsOf(route: FrameworkRoute, request: Request & { params?: Record<string, string> }): Params | null {
   const params: Params = { ...request.params };
   if (route.catchAll !== null) {
-    const segments = new URL(request.url).pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    let segments: string[];
+    try {
+      segments = new URL(request.url).pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    } catch (error) {
+      if (error instanceof URIError) return null;
+      throw error;
+    }
     const rest = segments.slice(route.catchAllIndex);
     if (rest.length > 0) params[route.catchAll] = rest;
   }
   return params;
 }
 
-async function render(route: FrameworkRoute, request: Request): Promise<Response> {
+async function render(route: FrameworkRoute, request: Request, params: Params): Promise<Response> {
   return route.render(request, {
     pageModule: route.page,
     layouts: route.layouts,
-    params: paramsOf(route, request),
+    params,
     modules: route.modules,
-    modulepreload: [],
+    modulepreload: route.modulepreload,
     styles: route.styles,
   });
 }
 
-async function renderAndKeep(route: FrameworkRoute, request: Request, key: string): Promise<Response> {
-  const response = await render(route, request);
-  const seconds = keepFor(response);
-  if (seconds === undefined) return response;
-  const body = await response.arrayBuffer();
-  kept.set(key, {
-    status: response.status,
-    headers: response.headers,
-    body,
-    freshUntil: Date.now() + seconds * 1000,
-    rendering: false,
+function respond(entry: Kept) {
+  return new Response(entry.body, { status: entry.status, headers: entry.headers });
+}
+
+/**
+ * Renders a GET of the path and keeps the response if it can. The request has a signal of its own:
+ * a page that is kept, and that other requests wait for, is rendered in full when a client goes
+ * away, not with the loading state that React writes when its signal aborts.
+ */
+function renderToKeep(route: FrameworkRoute, request: Request, params: Params, key: string) {
+  const controller = new AbortController();
+  const run = async (): Promise<Rendered> => {
+    const response = await render(route, new Request(request, { method: "GET", signal: controller.signal }), params);
+    const seconds = keepFor(response);
+    route.rendersPerRequest = seconds === undefined;
+    if (seconds === undefined) {
+      forget(key);
+      return { response, controller };
+    }
+    const entry = {
+      status: response.status,
+      headers: response.headers,
+      body: await response.arrayBuffer(),
+      freshUntil: Date.now() + seconds * 1000,
+    };
+    keep(key, entry);
+    return { kept: entry };
+  };
+  const running = run().finally(() => {
+    if (rendering.get(key) === running) rendering.delete(key);
   });
-  return new Response(body, { status: response.status, headers: response.headers });
+  rendering.set(key, running);
+  return running;
+}
+
+/** Renders a kept page again. On a failure it stays, and the next request tries again. */
+async function renderAgain(route: FrameworkRoute, request: Request, params: Params, key: string) {
+  try {
+    const result = await renderToKeep(route, request, params, key);
+    if ("kept" in result) return;
+    result.controller.abort();
+    await result.response.body?.cancel();
+  } catch (error) {
+    console.error(error);
+  }
 }
 
 function handler(route: FrameworkRoute) {
   return async (request: Request) => {
-    if (request.method !== "GET" && request.method !== "HEAD") return render(route, request);
+    const params = paramsOf(route, request);
+    if (params === null) return new Response("Not Found", { status: 404 });
+    const { method } = request;
+    if (method !== "GET" && method !== "HEAD") return render(route, request, params);
     const key = new URL(request.url).pathname;
     const entry = kept.get(key);
-    if (entry === undefined) return renderAndKeep(route, request, key);
-    if (Date.now() >= entry.freshUntil && !entry.rendering) {
-      entry.rendering = true;
-      renderAndKeep(route, request, key).then(
-        () => {},
-        error => {
-          entry.rendering = false;
-          console.error(error);
-        },
-      );
+    if (entry !== undefined) {
+      kept.delete(key);
+      kept.set(key, entry);
+      if (Date.now() >= entry.freshUntil && !rendering.has(key)) renderAgain(route, request, params, key);
+      return respond(entry);
     }
-    return new Response(entry.body, { status: entry.status, headers: entry.headers });
+    if (method === "HEAD") return render(route, request, params);
+
+    const running = route.rendersPerRequest ? undefined : rendering.get(key);
+    const result = await (running ?? renderToKeep(route, request, params, key));
+    if ("kept" in result) return respond(result.kept);
+    // That render was for another request, and this response cannot be shared.
+    if (running !== undefined) return render(route, request, params);
+    // Only this request gets it, so its client going away ends it.
+    const { response, controller } = result;
+    const { signal } = request;
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener("abort", () => controller.abort(), { once: true });
+    return response;
   };
 }
 

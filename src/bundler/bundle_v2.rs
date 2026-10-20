@@ -478,6 +478,7 @@ pub mod bv2_impl {
             /// their router's `serverExports`, and the imports that only those use.
             pub(crate) client_page_dirs: Vec<ClientPageDir>,
         }
+        #[derive(Clone)]
         pub struct ClientPageDir {
             /// Absolute.
             pub dir: Box<[u8]>,
@@ -503,20 +504,21 @@ pub mod bv2_impl {
                     client_page_dirs,
                 }
             }
-
-            /// The `serverExports` of the `clientPages` router whose folder holds `path`: the
-            /// deepest, when the folders of routers are nested.
-            pub(crate) fn client_page_server_exports(&self, path: &[u8]) -> Option<&[Box<[u8]>]> {
-                self.client_page_dirs
-                    .iter()
-                    .filter(|cp| {
-                        path.len() > cp.dir.len()
-                            && path.starts_with(&cp.dir)
-                            && bun_core::path_sep::is_sep_any(path[cp.dir.len()])
-                    })
-                    .max_by_key(|cp| cp.dir.len())
-                    .map(|cp| &*cp.server_exports)
-            }
+        }
+        /// The `serverExports` of the `clientPages` router whose folder holds `path`: the
+        /// deepest, when the folders of routers are nested.
+        pub(crate) fn client_page_server_exports<'a>(
+            dirs: &'a [ClientPageDir],
+            path: &[u8],
+        ) -> Option<&'a [Box<[u8]>]> {
+            dirs.iter()
+                .filter(|cp| {
+                    path.len() > cp.dir.len()
+                        && path.starts_with(&cp.dir)
+                        && bun_core::path_sep::is_sep_any(path[cp.dir.len()])
+                })
+                .max_by_key(|cp| cp.dir.len())
+                .map(|cp| &*cp.server_exports)
         }
         /// `Framework.ServerComponents` — full string
         /// surface so the parser-side projection (ParseTask.rs `run_with_source_code`)

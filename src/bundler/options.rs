@@ -1376,6 +1376,8 @@ pub struct BundleOptions<'a> {
     pub dev_server: *const (),
     /// Set when Bake is bundling. Affects module resolution.
     pub framework: Option<&'a crate::bake_types::Framework>,
+    /// `bun bake build`, which has no `framework` here: the routers with `clientPages`.
+    pub client_page_dirs: Vec<crate::bake_types::ClientPageDir>,
 
     pub serve_plugins: Option<Box<[Box<[u8]>]>>,
     pub bunfig_path: Box<[u8]>,
@@ -1571,6 +1573,7 @@ impl<'a> BundleOptions<'a> {
             metafile_markdown_path: self.metafile_markdown_path.clone(),
             dev_server: self.dev_server,
             framework: self.framework,
+            client_page_dirs: self.client_page_dirs.clone(),
             serve_plugins: self.serve_plugins.clone(),
             bunfig_path: self.bunfig_path.clone(),
             unwrap_commonjs_packages: self.unwrap_commonjs_packages,
@@ -1823,6 +1826,7 @@ impl<'a> BundleOptions<'a> {
             metafile_markdown_path: Box::default(),
             dev_server: core::ptr::null(),
             framework: None,
+            client_page_dirs: Vec::new(),
             serve_plugins: None,
             bunfig_path: Box::default(),
             unwrap_commonjs_packages: Self::DEFAULT_UNWRAP_COMMONJS_PACKAGES,

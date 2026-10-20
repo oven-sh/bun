@@ -2653,10 +2653,13 @@ pub mod parse_worker {
 
         // The browser copy of a page of a `clientPages` router drops the exports that its router
         // says run on the server only.
-        if let Some(server_exports) = topts
-            .framework
+        let client_page_dirs = match topts.framework {
+            Some(framework) => &*framework.client_page_dirs,
+            None => &*topts.client_page_dirs,
+        };
+        if let Some(server_exports) = Some(client_page_dirs)
             .filter(|_| target == options::Target::Browser)
-            .and_then(|f| f.client_page_server_exports(task.path.text))
+            .and_then(|dirs| crate::bake_types::client_page_server_exports(dirs, task.path.text))
             .filter(|names| !names.is_empty())
         {
             for name in server_exports {

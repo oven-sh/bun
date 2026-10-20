@@ -10,8 +10,9 @@
 const path = require("node:path");
 const fs = require("node:fs");
 
-const pagesFramework = $newRustFunction("bake/config/plugins.rs", "pagesFramework", 0);
+const buildFramework = $newRustFunction("bake/config/plugins.rs", "buildFramework", 1);
 const serveStaticEnv = $newRustFunction("bake/config/plugins.rs", "serveStaticEnv", 0);
+const serveStaticPlugins = $newRustFunction("bake/config/plugins.rs", "serveStaticPlugins", 0);
 const productionServerCode = $newRustFunction("bake/config/plugins.rs", "productionServerCode", 0);
 const { FrameworkRouter } = $rust("FrameworkRouter.rs", "JSFrameworkRouter.getBindings") as {
   FrameworkRouter: new (options: object) => { toJSON(): RouteNode };
@@ -47,16 +48,47 @@ Builds the app in the working directory into dist/ (or <dir>). Run it with: bun 
 The server listens on $PORT (default 3000), or the port of app/server.ts.
 `;
 
+/** In the output folder from the start of a build: a folder with this file holds only a build. */
+const buildMarker = ".bun-bake-build";
+
+/** Empties `outdir`, which must not hold anything but a build, and marks it as a build. */
+function prepareOutdir(outdir: string, cwd: string, h: Helpers) {
+  const fromOutdir = path.relative(outdir, cwd);
+  if (fromOutdir === "" || (!fromOutdir.startsWith("..") && !path.isAbsolute(fromOutdir))) {
+    throw new h.BakeError(`--outdir "${outdir}" holds the project. Pick another --outdir.`, false);
+  }
+  const stat = fs.statSync(outdir, { throwIfNoEntry: false });
+  if (stat !== undefined) {
+    if (!stat.isDirectory()) throw new h.BakeError(`--outdir "${h.display(outdir)}" is not a folder.`, false);
+    const names: string[] = fs.readdirSync(outdir);
+    if (names.length > 0 && !names.includes(buildMarker)) {
+      throw new h.BakeError(
+        `"${h.display(outdir)}" is not empty and is not a build: it has no ${buildMarker} file. Move it, or pick another --outdir.`,
+        false,
+      );
+    }
+    fs.rmSync(outdir, { recursive: true, force: true });
+  }
+  fs.mkdirSync(outdir, { recursive: true });
+  fs.writeFileSync(path.join(outdir, buildMarker), "");
+}
+
 /** The pages of a router of a framework, from its files. */
-function pagesOfRouter(router: any): FrameworkPage[] {
-  const scanned = new FrameworkRouter({
-    root: router.root,
-    style: router.style,
-    extensions: router.extensions,
-    ignoreUnderscores: router.ignoreUnderscores,
-    ignoreDirs: router.ignoreDirs,
-    layouts: router.layouts,
-  });
+function pagesOfRouter(router: any, h: Helpers): FrameworkPage[] {
+  let scanned: { toJSON(): RouteNode };
+  try {
+    scanned = new FrameworkRouter({
+      root: router.root,
+      style: router.style,
+      extensions: router.extensions,
+      ignoreUnderscores: router.ignoreUnderscores,
+      ignoreDirs: router.ignoreDirs,
+      layouts: router.layouts,
+    });
+  } catch (error) {
+    if (!(error instanceof AggregateError)) throw error;
+    throw new h.BakeError(error.errors.map(each => each.message).join("\n"), false);
+  }
   const pages: FrameworkPage[] = [];
   const walk = (node: RouteNode, prefix: string, outerLayouts: string[]) => {
     const pattern = node.part === "/" ? prefix : prefix + node.part;
@@ -69,24 +101,42 @@ function pagesOfRouter(router: any): FrameworkPage[] {
   return pages;
 }
 
+/** A path as browsers send it: non-ASCII characters and spaces are encoded, `&` and `=` are not. */
+function encodedPath(file: string) {
+  return new URL("/" + file.replaceAll("\\", "/"), "http://localhost").pathname;
+}
+
 /**
  * The `Bun.serve()` routes of a router pattern. `:name` is the same; a catch-all `:*name` is `*`,
  * and the server gives the rest of the path as `name`; an optional catch-all `:*?name` also matches
- * without it.
+ * without it. A route group `(name)` is not in the URL.
  */
-function servePatterns(pattern: string, prefix: string) {
+function servePatterns(page: FrameworkPage, prefix: string, h: Helpers) {
   const base = prefix === "/" || !prefix ? "" : prefix.replace(/\/$/, "");
-  const segments = pattern.split("/").filter(Boolean);
+  const segments = page.pattern.split("/").filter(Boolean);
   let catchAll: string | null = null;
   let optional = false;
   const out: string[] = [];
   for (const segment of segments) {
+    if (segment.startsWith("(") && segment.endsWith(")")) continue;
     if (segment.startsWith(":*")) {
       optional = segment.startsWith(":*?");
       catchAll = segment.slice(optional ? 3 : 2);
       break;
     }
-    out.push(segment.startsWith(":") ? segment : encodeURIComponent(segment));
+    if (segment.startsWith(":")) {
+      out.push(segment);
+      continue;
+    }
+    // `Bun.serve` routes read `:` as a parameter and `*` as a wildcard. In a URL, `?` and `#` end
+    // the path and `%` starts an escape.
+    if (/[:*?#%]/.test(segment)) {
+      throw new h.BakeError(
+        `"${h.display(page.page)}": a page cannot have ":", "*", "?", "#" or "%" in its path. Its URL must be fixed.`,
+        false,
+      );
+    }
+    out.push(encodedPath(segment).slice(1));
   }
   const head = base + (out.length ? "/" + out.join("/") : "");
   const patterns = catchAll === null ? [head || "/"] : [head + "/*", ...(optional ? [head || "/"] : [])];
@@ -100,6 +150,21 @@ function exactly(names: string[]) {
 
 function formatLogs(logs: readonly unknown[]) {
   return logs.map(log => String(log)).join("\n");
+}
+
+/** The plugins of `[serve.static]` in bunfig.toml, which `bun bake` builds with too. */
+async function loadServeStaticPlugins(h: Helpers) {
+  const names: string[] = serveStaticPlugins();
+  const folder = names.pop()!;
+  const plugins: unknown[] = [];
+  for (const name of names) {
+    const plugin = (await import(await Bun.resolve(name, folder))).default;
+    if (!plugin?.name || !$isCallable(plugin.setup)) {
+      throw new h.BakeError(`"${name}" of [serve.static] in bunfig.toml must default export a bundler plugin.`, false);
+    }
+    plugins.push(plugin);
+  }
+  return plugins;
 }
 
 async function build(h: Helpers) {
@@ -117,16 +182,6 @@ async function build(h: Helpers) {
     else if (arg.startsWith("--outdir=")) outdir = path.resolve(cwd, arg.slice("--outdir=".length));
     else throw new h.BakeError(`Unknown argument "${arg}". Run "bun bake build --help" for the usage.`, false);
   }
-  // Removed before each build, so it must hold only a build.
-  if (fs.existsSync(outdir)) {
-    if (fs.readdirSync(outdir).some(name => name !== ".bun-bake") && !fs.existsSync(path.join(outdir, "server.js"))) {
-      throw new h.BakeError(
-        `"${h.display(outdir)}" is not empty and has no server.js. Move it, or pick another --outdir.`,
-        false,
-      );
-    }
-    fs.rmSync(outdir, { recursive: true, force: true });
-  }
 
   const config = await h.loadConfig(cwd, "production");
   const pagesDir = path.join(cwd, "app", "pages");
@@ -134,7 +189,8 @@ async function build(h: Helpers) {
   const components = config.framework === undefined ? h.componentPages(pagesDir) : [];
   h.checkPageClashes(pagesDir, components, htmlPages);
   if (components.length > 0) h.checkReactForPages(cwd);
-  const framework = config.framework?.object ?? (components.length > 0 ? pagesFramework() : undefined);
+  const framework =
+    config.framework !== undefined || components.length > 0 ? buildFramework(config.framework?.object) : undefined;
 
   let appServer: string | undefined;
   try {
@@ -142,16 +198,6 @@ async function build(h: Helpers) {
   } catch (error: any) {
     if (error?.code !== "ERR_MODULE_NOT_FOUND") throw error;
   }
-
-  // Built-in modules of the framework, such as the default framework's `bun-bake-react/server.tsx`.
-  // They load from a path in the project, so that their imports (`react`) resolve from it.
-  const builtIns = new Map<string, { code?: string; path?: string }>();
-  for (const module of framework?.builtInModules ?? []) builtIns.set(module.import, module);
-  const builtInPath = (specifier: string) => path.join(cwd, "node_modules", ".bun-bake", specifier);
-  // The generated modules, which a plugin gives. `Bun.build()` needs the folder of an entry point.
-  // Removed after the build.
-  const virtualDir = path.join(outdir, ".bun-bake");
-  fs.mkdirSync(virtualDir, { recursive: true });
 
   type Route = FrameworkPage & {
     router: any;
@@ -162,32 +208,30 @@ async function build(h: Helpers) {
   };
   const routes: Route[] = [];
   for (const router of framework?.fileSystemRouterTypes ?? []) {
-    for (const page of pagesOfRouter(router)) {
-      routes.push({ ...page, router, index: routes.length, ...servePatterns(page.pattern, router.prefix) });
+    for (const page of pagesOfRouter(router, h)) {
+      routes.push({ ...page, router, index: routes.length, ...servePatterns(page, router.prefix, h) });
     }
   }
 
-  // Each file under a `clientPages` router loses its router's server exports in the browser.
-  const strippers: { dir: string; transpilers: Map<string, any> }[] = [];
-  for (const router of framework?.fileSystemRouterTypes ?? []) {
-    const serverExports = router.clientPages?.serverExports;
-    if (!serverExports?.length) continue;
-    strippers.push({ dir: path.resolve(cwd, router.root) + path.sep, transpilers: new Map() });
-    const transpilers = strippers[strippers.length - 1].transpilers;
-    for (const loader of ["ts", "tsx", "js", "jsx"] as const) {
-      transpilers.set(
-        loader,
-        new Bun.Transpiler({
-          loader,
-          exports: { eliminate: serverExports },
-          trimUnusedImports: true,
-          tsconfig: { compilerOptions: { jsx: "react-jsx" } },
-        }),
-      );
-    }
-  }
+  prepareOutdir(outdir, cwd, h);
 
-  const routeKey = Symbol.for("bun:bake/route").description!;
+  // Built-in modules of the framework, such as the default framework's `bun-bake-react/server.tsx`.
+  // They load from a path in the project, so that their imports (`react`) resolve from it.
+  const builtIns = new Map<string, { code?: string; path?: string }>();
+  for (const module of framework?.builtInModules ?? []) builtIns.set(module.import, module);
+  const builtInPath = (specifier: string) => path.join(cwd, "node_modules", ".bun-bake", specifier);
+  // An entry point of a framework resolves from the project, not from the generated module that
+  // imports it, as in `bun bake`.
+  const entryPoint = (specifier: string) =>
+    !builtIns.has(specifier) && specifier.startsWith(".") ? path.resolve(cwd, specifier) : specifier;
+  // The generated modules, which a plugin gives. `Bun.build()` needs the folder of an entry point.
+  // Removed after the build.
+  const virtualDir = path.join(outdir, ".bun-bake");
+  fs.mkdirSync(virtualDir, { recursive: true });
+  // Not in `virtualDir`: with `[dir]` in the names, the name of a file comes from where it is in the
+  // project, which gives each `.html` page its own output and this one `<outdir>/server.js`.
+  const serverEntry = path.join(cwd, "server.js");
+
   const bakePlugin: any = {
     name: "bun-bake",
     setup(build: any) {
@@ -196,7 +240,7 @@ async function build(h: Helpers) {
       build.onResolve(
         {
           filter: new RegExp(
-            `^${RegExp.escape(virtualDir + path.sep)}(?:route-\\d+\\.js|server\\.js|production-server\\.ts)$`,
+            `^(?:${RegExp.escape(virtualDir + path.sep)}(?:route-\\d+\\.js|production-server\\.ts)|${RegExp.escape(serverEntry)})$`,
           ),
         },
         (args: any) => ({
@@ -210,9 +254,10 @@ async function build(h: Helpers) {
       if (builtIns.size > 0) {
         build.onResolve({ filter: exactly([...builtIns.keys()]) }, (args: any) => {
           const module = builtIns.get(args.path)!;
-          return { path: module.path !== undefined ? path.resolve(cwd, module.path) : builtInPath(args.path) };
+          return { path: module.path !== undefined ? Bun.resolveSync(module.path, cwd) : builtInPath(args.path) };
         });
       }
+      if (!browser) build.onLoad({ filter: exactly([serverEntry]) }, () => ({ contents: serverCode, loader: "js" }));
       build.onLoad({ filter: new RegExp(`^${RegExp.escape(virtualDir + path.sep)}`) }, (args: any) => {
         const file: string = args.path;
         return { contents: generated(path.basename(file), browser), loader: path.extname(file).slice(1) };
@@ -224,17 +269,6 @@ async function build(h: Helpers) {
         if (code === undefined) return undefined;
         return { contents: code, loader: path.extname(file).slice(1) || "js" };
       });
-      if (browser && strippers.length > 0) {
-        const underRouters = new RegExp(`^(?:${strippers.map(s => RegExp.escape(s.dir)).join("|")}).*\\.[jt]sx?$`);
-        build.onLoad({ filter: underRouters }, async (args: any) => {
-          const file: string = args.path;
-          const stripper = strippers.find(s => file.startsWith(s.dir));
-          if (stripper === undefined || file.includes(`${path.sep}node_modules${path.sep}`)) return undefined;
-          const loader = path.extname(file).slice(1);
-          const code = await Bun.file(file).text();
-          return { contents: stripper.transpilers.get(loader).transformSync(code), loader: "js" };
-        });
-      }
     },
   };
 
@@ -245,49 +279,47 @@ async function build(h: Helpers) {
   };
 
   // The browser half of a route.
-  let serverEntry = "";
+  const routeOnPage = `globalThis[Symbol.for("bun:bake/route")]`;
+  let serverCode = "";
   const generated = (file: string, browser: boolean): string => {
     if (file === "bake-client.js") {
-      // A page loads after this module: `route` waits for it.
       return `
-        const ready = (globalThis[Symbol.for(${JSON.stringify(routeKey)})] ??= Promise.withResolvers());
         export const route = {
-          page: () => ready.promise.then(route => route.page),
-          layouts: () => ready.promise.then(route => route.layouts),
+          page: async () => ${routeOnPage}.page,
+          layouts: async () => ${routeOnPage}.layouts,
         };
         export function onServerSideReload() {}
       `;
     }
     if (file === "bake-server.js") return `export const serverManifest = {}, ssrManifest = {}, actionManifest = null;`;
     if (file === "production-server.ts") return productionServerCode();
-    if (file === "server.js") return serverEntry;
     const route = routes[Number(/^route-(\d+)\.js$/.exec(file)![1])];
     if (!browser) return "";
     const layouts = route.layouts.map((layout, i) => `import * as l${i} from ${JSON.stringify(layout)};`).join("\n");
+    // `import()`, since the client entry point waits for the page at its top level. An `import`
+    // runs before this module's statements, and from a shared chunk, before all of this module.
     return `
       import * as page from ${JSON.stringify(route.page)};
       ${layouts}
-      (globalThis[Symbol.for(${JSON.stringify(routeKey)})] ??= Promise.withResolvers()).resolve({
-        page,
-        layouts: [${route.layouts.map((_, i) => `l${i}`).join(", ")}],
-      });
-      import ${JSON.stringify(route.router.clientEntryPoint)};
+      ${routeOnPage} = { page, layouts: [${route.layouts.map((_, i) => `l${i}`).join(", ")}] };
+      import(${JSON.stringify(entryPoint(route.router.clientEntryPoint))});
     `;
   };
 
-  const plugins = [bakePlugin, ...config.plugins];
+  const plugins = [bakePlugin, ...(await loadServeStaticPlugins(h)), ...config.plugins];
   const define = { "process.env.NODE_ENV": '"production"' };
+  const env = serveStaticEnv();
 
   // The browser build.
   const clientRoutes = routes.filter(route => route.router.clientPages && route.router.clientEntryPoint);
-  const clientOfRoute = new Map<number, { modules: string[]; styles: string[] }>();
+  const clientOfRoute = new Map<number, { modules: string[]; modulepreload: string[]; styles: string[] }>();
   const files: Record<string, string> = {};
   if (clientRoutes.length > 0) {
-    const env = serveStaticEnv();
+    const clientDir = path.join(outdir, "client");
     const result = await Bun.build({
       entrypoints: clientRoutes.map(route => path.join(virtualDir, `route-${route.index}.js`)),
       target: "browser",
-      outdir: path.join(outdir, "client"),
+      outdir: clientDir,
       splitting: true,
       minify: true,
       metafile: true,
@@ -300,18 +332,26 @@ async function build(h: Helpers) {
       define,
       ...(env !== undefined && { env }),
       plugins,
+      // The bundler drops these exports from each file, as in `bun bake`, after the plugins load it.
+      bakeClientPageDirs: framework.fileSystemRouterTypes
+        .filter(router => router.clientPages)
+        .map(router => ({ dir: path.resolve(cwd, router.root), serverExports: router.clientPages.serverExports })),
       throw: false,
     } as any);
     if (!result.success) throw new h.BakeError(`The browser build failed:\n${formatLogs(result.logs)}`, false);
-    const metafile = typeof result.metafile === "string" ? JSON.parse(result.metafile) : result.metafile;
-    for (const [output, info] of Object.entries<any>(metafile.outputs)) {
-      const url = "/" + output.replace(/^\.\//, "");
+    for (const output of result.outputs) {
+      const url = encodedPath(path.relative(clientDir, output.path));
       files[url] = "./client" + url;
+    }
+    const metafile = typeof result.metafile === "string" ? JSON.parse(result.metafile) : result.metafile;
+    const publicUrl = (output: string) => encodedPath(output.replace(/^\.\//, ""));
+    for (const [output, info] of Object.entries<any>(metafile.outputs)) {
       const entry = /route-(\d+)\.js$/.exec(info.entryPoint ?? "");
       if (entry === null || output.endsWith(".css")) continue;
       clientOfRoute.set(Number(entry[1]), {
-        modules: [url],
-        styles: info.cssBundle ? ["/" + info.cssBundle.replace(/^\.\//, "")] : [],
+        modules: [publicUrl(output)],
+        modulepreload: info.imports.filter(each => each.kind === "dynamic-import").map(each => publicUrl(each.path)),
+        styles: info.cssBundle ? [publicUrl(info.cssBundle)] : [],
       });
     }
   }
@@ -320,8 +360,8 @@ async function build(h: Helpers) {
   const publicDir = path.join(cwd, "public");
   if (fs.existsSync(publicDir)) {
     fs.cpSync(publicDir, path.join(outdir, "public"), { recursive: true });
-    for (const relative of new Bun.Glob("**/*").scanSync({ cwd: publicDir, onlyFiles: true, dot: false })) {
-      const url = new URL("/" + relative.replaceAll("\\", "/"), "http://localhost").pathname;
+    for (const relative of new Bun.Glob("**/*").scanSync({ cwd: publicDir, onlyFiles: true, dot: true })) {
+      const url = encodedPath(relative);
       files[url] = "./public" + url;
     }
   }
@@ -330,8 +370,8 @@ async function build(h: Helpers) {
   const appName = appServer !== undefined ? name(appServer) : undefined;
   const htmlNames = htmlPages.map(page => name(page.file));
   const routeEntries = routes.map(route => {
-    const server = name(route.router.serverEntryPoint);
-    const client = clientOfRoute.get(route.index) ?? { modules: [], styles: [] };
+    const server = name(entryPoint(route.router.serverEntryPoint));
+    const client = clientOfRoute.get(route.index) ?? { modules: [], modulepreload: [], styles: [] };
     return `{
       patterns: ${JSON.stringify(route.patterns)},
       catchAll: ${JSON.stringify(route.catchAll)},
@@ -340,11 +380,12 @@ async function build(h: Helpers) {
       page: ${name(route.page)},
       layouts: [${route.layouts.map(layout => name(layout)).join(", ")}],
       modules: ${JSON.stringify(client.modules)},
+      modulepreload: ${JSON.stringify(client.modulepreload)},
       styles: ${JSON.stringify(client.styles)},
     }`;
   });
   const htmlNamesSet = new Set(htmlNames);
-  serverEntry = `
+  serverCode = `
     import { start } from ${JSON.stringify(path.join(virtualDir, "production-server.ts"))};
     ${imports.map((specifier, i) => (htmlNamesSet.has(`m${i}`) ? `import m${i} from ${JSON.stringify(specifier)};` : `import * as m${i} from ${JSON.stringify(specifier)};`)).join("\n")}
     start({
@@ -355,13 +396,24 @@ async function build(h: Helpers) {
     });
   `;
   const result = await Bun.build({
-    entrypoints: [path.join(virtualDir, "server.js")],
+    entrypoints: [serverEntry],
     target: "bun",
     outdir,
-    naming: { entry: "[name].[ext]", chunk: "_bun/[name]-[hash].[ext]", asset: "_bun/[name]-[hash].[ext]" },
+    // The real path: the bundler compares it with the real folder of each file for `[dir]`.
+    root: fs.realpathSync(cwd),
+    naming: {
+      entry: "[dir]/[name].[ext]",
+      chunk: "_bun/[name]-[hash].[ext]",
+      asset: "_bun/[name]-[hash].[ext]",
+    },
+    // As in the browser build, so that the URL of an imported file is the same in the HTML.
+    publicPath: "/",
     minify: { syntax: true },
     sourcemap: "linked",
     define,
+    // For the browser code of the `.html` pages. It applies to the server code too: "inline" would
+    // put every variable of this machine into it.
+    ...(env !== undefined && env !== "inline" && htmlPages.length > 0 && { env }),
     plugins,
     throw: false,
   } as any);

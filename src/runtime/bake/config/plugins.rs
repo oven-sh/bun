@@ -96,13 +96,22 @@ pub(crate) fn check_framework(global: &JSGlobalObject, frame: &CallFrame) -> JsR
     Ok(JSValue::UNDEFINED)
 }
 
-/// `pagesFramework()`: the default framework of `.tsx` and `.jsx` pages, as the `framework` object
-/// that a plugin would give, with its built-in modules as `code`. `bun bake build` builds it as it
-/// builds the framework of a plugin.
-pub(crate) fn pages_framework(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+/// `buildFramework(framework?)`: the `framework` object of a plugin as the dev server reads it, with
+/// its defaults, or the default framework of `.tsx` and `.jsx` pages when it is undefined, with its
+/// built-in modules as `code`. `bun bake build` builds what this returns.
+pub(crate) fn build_framework(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use crate::bake::BuiltInModule;
-    let vm = global.bun_vm().as_mut();
-    let framework = crate::bake::Framework::bake_pages(&mut vm.transpiler.resolver);
+    let [plugin_framework] = frame.arguments_as_array::<1>();
+    let framework = if plugin_framework.is_undefined_or_null() {
+        let vm = global.bun_vm().as_mut();
+        crate::bake::Framework::bake_pages(&mut vm.transpiler.resolver)
+    } else {
+        let mut bundler_options = crate::bake::SplitBundlerOptions::default();
+        let result =
+            crate::bake::Framework::from_js(plugin_framework, global, &mut bundler_options);
+        bundler_options.destroy_plugin();
+        result?
+    };
     let strings = |list: &[bun_core::Utf8Bytes<'static>]| {
         JSValue::create_array_from_iter(global, list.iter(), |item| {
             bun_jsc::bun_string_jsc::create_utf8_for_js(global, item)
@@ -169,6 +178,25 @@ pub(crate) fn pages_framework(global: &JSGlobalObject, _frame: &CallFrame) -> Js
     result.put(global, b"fileSystemRouterTypes", routers);
     result.put(global, b"builtInModules", modules);
     Ok(result)
+}
+
+/// `serveStaticPlugins()`: the names in `plugins` of `[serve.static]` in bunfig.toml, then the folder
+/// that they resolve from, as the dev server loads them.
+pub(crate) fn serve_static_plugins(
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let options = &global.bun_vm().as_mut().transpiler.options;
+    let folder: &[u8] = if options.bunfig_path.is_empty() {
+        bun_resolver::fs::FileSystem::get().top_level_dir
+    } else {
+        bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(&options.bunfig_path)
+    };
+    let names = options.serve_plugins.as_deref().unwrap_or_default();
+    let list: Vec<&[u8]> = names.iter().map(|name| &**name).chain([folder]).collect();
+    JSValue::create_array_from_iter(global, list.iter(), |item| {
+        bun_jsc::bun_string_jsc::create_utf8_for_js(global, item)
+    })
 }
 
 /// `serveStaticEnv()`: the `env` of `[serve.static]` in bunfig.toml, as the `env` option of

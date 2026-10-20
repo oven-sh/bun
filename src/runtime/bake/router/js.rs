@@ -30,7 +30,7 @@ pub(crate) struct JSFrameworkRouter {
 pub(crate) struct StoredParseError {
     /// Owned by global allocator
     pub rel_path: Box<[u8]>,
-    pub log: TinyLog,
+    pub message: Box<[u8]>,
 }
 
 impl JSFrameworkRouter {
@@ -151,7 +151,7 @@ impl JSFrameworkRouter {
                     Ok(global.create_error_instance(format_args!(
                         "Invalid route {}: {}",
                         bun_core::fmt::quote(&item.rel_path),
-                        bstr::BStr::new(item.log.msg.const_slice()),
+                        bstr::BStr::new(&item.message),
                     )))
                 })?;
             return Err(global.throw_value(global.create_aggregate_error_with_array(
@@ -382,20 +382,32 @@ impl InsertionHandler for JSFrameworkRouterScanCtx<'_> {
     }
 
     fn on_router_syntax_error(&mut self, rel_path: &[u8], log: TinyLog) -> Result<(), AllocError> {
-        let rel_path_dupe: Box<[u8]> = rel_path.into();
         self.stored_parse_errors.push(StoredParseError {
-            rel_path: rel_path_dupe,
-            log,
+            rel_path: rel_path.into(),
+            message: log.msg.const_slice().into(),
         });
         Ok(())
     }
 
     fn on_router_collision_error(
         &mut self,
-        _rel_path: &[u8],
-        _other_id: OpaqueFileId,
-        _file_kind: FileKind,
+        rel_path: &[u8],
+        other_id: OpaqueFileId,
+        file_kind: FileKind,
     ) -> Result<(), AllocError> {
-        panic!("TODO: onRouterCollisionError for JSFrameworkRouter")
+        let other = self.files[other_id.get() as usize].to_utf8();
+        let message = format!(
+            "Multiple {} matching the same route pattern is ambiguous: this one and {}",
+            file_kind.collision_noun(),
+            bun_core::fmt::quote(paths::resolve_path::relative(
+                bun_resolver::fs::FileSystem::get().top_level_dir,
+                &other,
+            )),
+        );
+        self.stored_parse_errors.push(StoredParseError {
+            rel_path: rel_path.into(),
+            message: message.into_bytes().into_boxed_slice(),
+        });
+        Ok(())
     }
 }

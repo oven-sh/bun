@@ -167,6 +167,8 @@ pub(crate) mod js_bundler {
         /// Named imports from these packages will only load the submodules
         /// that are actually used instead of parsing all re-exported submodules.
         pub(crate) optimize_imports: StringSet,
+        /// Not documented: `bun bake build` passes the routers with `clientPages`.
+        pub(crate) client_page_dirs: Vec<bun_bundler::bake_types::ClientPageDir>,
     }
 
     impl Default for Config {
@@ -230,6 +232,7 @@ pub(crate) mod js_bundler {
                 files: FileMap::default(),
                 metafile: false,
                 optimize_imports: StringSet::default(),
+                client_page_dirs: Vec::new(),
             }
         }
     }
@@ -1117,6 +1120,29 @@ pub(crate) mod js_bundler {
                     let slice = entry.to_utf8(global_this)?;
                     this.features.insert(slice.slice())?;
                     drop(slice);
+                }
+            }
+
+            if let Some(dirs) = config.get_own_array(global_this, "bakeClientPageDirs")? {
+                let mut iter = dirs.array_iterator(global_this)?;
+                while let Some(entry) = iter.next()? {
+                    let Some(dir) = entry.get(global_this, "dir")? else {
+                        continue;
+                    };
+                    let dir = dir.to_utf8(global_this)?;
+                    let mut server_exports = Vec::new();
+                    if let Some(names) = entry.get(global_this, "serverExports")? {
+                        let mut names = names.array_iterator(global_this)?;
+                        while let Some(name) = names.next()? {
+                            server_exports
+                                .push(Box::<[u8]>::from(name.to_utf8(global_this)?.slice()));
+                        }
+                    }
+                    this.client_page_dirs
+                        .push(bun_bundler::bake_types::ClientPageDir {
+                            dir: Box::from(dir.slice()),
+                            server_exports,
+                        });
                 }
             }
 

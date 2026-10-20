@@ -1143,6 +1143,7 @@ impl CompletionStruct for JSBundleCompletionTask {
             Box::from(config.metafile_json_path.list.as_slice());
         transpiler.options.metafile_markdown_path =
             Box::from(config.metafile_markdown_path.list.as_slice());
+        transpiler.options.client_page_dirs = config.client_page_dirs.clone();
         if config.optimize_imports.count() > 0 {
             // SAFETY: `self.config` outlives `bump` and `optimize_imports` is not mutated
             // during the bundle; a bump.alloc'd clone leaked (arena never runs Drop).

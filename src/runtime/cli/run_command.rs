@@ -2808,7 +2808,7 @@ impl RunCommand {
                 .first()
                 .is_some_and(|arg| &arg[..] == b"build")
             {
-                if check
+                if ctx.runtime_options.check
                     || ctx.debug.watch_flag
                     || ctx.debug.hot_reload != cli::command::HotReload::None
                 {

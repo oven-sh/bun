@@ -465,6 +465,8 @@ pub mod open_for_writing_mod;
 pub mod pipe_read_scratch;
 #[path = "PipeReader.rs"]
 pub mod pipe_reader;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+mod pipe_relay;
 #[path = "PipeWriter.rs"]
 pub mod pipe_writer;
 #[path = "pipes.rs"]

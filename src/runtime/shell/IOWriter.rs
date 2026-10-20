@@ -534,6 +534,8 @@ impl IOWriter {
         while s.writer_idx < s.writers.len() {
             let w = &s.writers[s.writer_idx];
             if w.is_dead() {
+                #[cfg(not(windows))]
+                s.writer.discard_staged();
                 s.total_bytes_written += w.len - w.written;
                 s.writer_idx += 1;
                 continue;

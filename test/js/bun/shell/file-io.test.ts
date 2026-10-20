@@ -1,9 +1,52 @@
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { afterAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, isPosix, tempDir } from "harness";
 import * as fs from "node:fs";
 import { join } from "node:path";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
+
+function lastLineAsJSON(output: string): unknown {
+  try {
+    return JSON.parse(output.trim().split("\n").pop() ?? "");
+  } catch {
+    return output;
+  }
+}
+
+function buildSpliceShim() {
+  const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+  if (!cc) return null;
+  const dir = tempDir("shell-splice-shim", {
+    "shim.c": /* c */ `
+      #define _GNU_SOURCE
+      #include <dlfcn.h>
+      #include <errno.h>
+      #include <fcntl.h>
+      #include <stdlib.h>
+
+      ssize_t splice(int in, loff_t *off_in, int out, loff_t *off_out, size_t len, unsigned int flags) {
+        static ssize_t (*real)(int, loff_t *, int, loff_t *, size_t, unsigned int);
+        static long calls;
+        const char *allowed = getenv("SPLICES_ALLOWED");
+        if (allowed && calls++ >= atol(allowed)) {
+          errno = ENOSYS;
+          return -1;
+        }
+        if (!real) real = (ssize_t (*)(int, loff_t *, int, loff_t *, size_t, unsigned int))dlsym(RTLD_NEXT, "splice");
+        return real(in, off_in, out, off_out, len, flags);
+      }
+    `,
+  });
+  const path = join(String(dir), "shim.so");
+  const { exitCode, stderr } = Bun.spawnSync({
+    cmd: [cc, "-shared", "-fPIC", "-o", path, join(String(dir), "shim.c"), "-ldl"],
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  if (exitCode !== 0) throw new Error("shim compile failed: " + stderr.toString());
+  return { dir, path };
+}
 
 describe("IOWriter file output redirection", () => {
   describe("basic file redirection", () => {
@@ -124,6 +167,222 @@ describe("IOWriter file output redirection", () => {
       } finally {
         fs.closeSync(holder);
       }
+    });
+
+    // The shell writes to dups of fd 1 and fd 2. It cannot make them
+    // nonblocking: the open file description is shared with fd 1, fd 2 and
+    // every child. So it needs a write that does not wait for the reader.
+    // Linux only: that write is splice(2) or send(2) there. macOS bounds the
+    // write with the byte count that kqueue reports.
+    describe.skipIf(!isLinux)("stdout that its reader does not drain", () => {
+      // More than a pipe holds.
+      const payloadLen = 100 * 1024;
+
+      // Refuses splice(2) the way a seccomp policy can, once SPLICES_ALLOWED
+      // calls went through. Built before the tests run, so a host without a
+      // C compiler reports a skip.
+      const shim = isLinux ? buildSpliceShim() : null;
+      afterAll(() => shim?.dir[Symbol.dispose]());
+
+      // The fixture is the only reader of its own stdout and reads on the
+      // thread that runs the shell. It finishes only if no write waits.
+      async function fifoStdout(env: Record<string, string>) {
+        using dir = tempDir("shell-fifo-stdout", {
+          "fixture.ts": /* ts */ `
+            import { $ } from "bun";
+            import * as fs from "node:fs";
+
+            const rfd = fs.openSync(process.env.FIFO!, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+            const buf = Buffer.alloc(65536);
+            async function stdoutOf(command: Promise<unknown>) {
+              const chunks: Buffer[] = [];
+              const drain = () => {
+                let n = 0;
+                try { n = fs.readSync(rfd, buf); } catch (e: any) { if (e.code !== "EAGAIN") throw e; }
+                if (n > 0) chunks.push(Buffer.from(buf.subarray(0, n)));
+                return n;
+              };
+              let settled = false;
+              command = command.finally(() => (settled = true));
+              while (!settled) {
+                drain();
+                await new Promise<void>(r => setImmediate(r));
+              }
+              await command;
+              while (drain() > 0);
+              return Buffer.concat(chunks);
+            }
+            const openFds = () => fs.readdirSync("/proc/self/fd").length;
+
+            // 23 does not divide a pipe page, so a dropped or swapped piece changes the text.
+            const lower = Buffer.alloc(${payloadLen}, "abcdefghijklmnopqrstuvw").toString();
+            const upper = lower.toUpperCase();
+            fs.writeFileSync("upper.txt", upper);
+
+            const builtin = await stdoutOf($\`echo \${lower}\`);
+
+            // Two shells wait on the same pipe at once. Each one keeps its own bytes in order.
+            async function together() {
+              const out = await stdoutOf(Promise.all([$\`echo \${lower}\`, $\`echo \${upper}\`]));
+              const fromLower = Buffer.alloc(out.length);
+              const fromUpper = Buffer.alloc(out.length);
+              let l = 0, u = 0;
+              for (let i = 0; i < out.length; i++) {
+                if (out[i] >= 0x61) fromLower[l++] = out[i];
+                else if (out[i] >= 0x41) fromUpper[u++] = out[i];
+              }
+              return (
+                out.length === ${2 * payloadLen + 2} &&
+                fromLower.toString("latin1", 0, l) === lower &&
+                fromUpper.toString("latin1", 0, u) === upper
+              );
+            }
+            const first = await together();
+            const fdsAfterFirst = openFds();
+            const second = await together();
+            const fdsAfterSecond = openFds();
+
+            // The output of a command that is not a builtin goes through the same writer.
+            const external = await stdoutOf($\`cat upper.txt\`);
+
+            fs.closeSync(rfd);
+            console.error(JSON.stringify({
+              builtin: builtin.toString() === lower + "\\n",
+              together: first && second,
+              fdsLeaked: fdsAfterSecond - fdsAfterFirst,
+              external: external.toString() === upper,
+              shim: fs.readFileSync("/proc/self/maps", "utf8").includes("shim.so"),
+            }));
+          `,
+        });
+        const fifo = join(String(dir), "out.fifo");
+        await using mk = Bun.spawn({ cmd: [Bun.which("mkfifo")!, fifo], env: bunEnv });
+        await mk.exited;
+
+        // The read end lets the blocking open of the write end return, and it
+        // keeps the FIFO alive if the child aborts.
+        const holder = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        const stdout = fs.openSync(fifo, fs.constants.O_WRONLY);
+        try {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "fixture.ts"],
+            cwd: String(dir),
+            env: { ...bunEnv, ...env, FIFO: fifo },
+            stdout,
+            stderr: "pipe",
+          });
+          const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+          return { result: lastLineAsJSON(stderr), exitCode };
+        } finally {
+          fs.closeSync(stdout);
+          fs.closeSync(holder);
+        }
+      }
+      const intact = { builtin: true, together: true, fdsLeaked: 0, external: true };
+
+      // These three are serial: on a timeout the runner kills the child of a
+      // serial test only, and a fixture that fails here is stuck in a syscall.
+      test("a blocking FIFO", async () => {
+        expect(await fifoStdout({})).toEqual({ result: { ...intact, shim: false }, exitCode: 0 });
+      });
+
+      // Without splice(2) the writer sends what one pipe slot holds per
+      // POLLOUT. The first writer is refused after a part of its bytes moved,
+      // every later writer on its first call.
+      test.skipIf(!shim)("a blocking FIFO where splice(2) is refused", async () => {
+        const env = { LD_PRELOAD: shim!.path, SPLICES_ALLOWED: "1" };
+        expect(await fifoStdout(env)).toEqual({ result: { ...intact, shim: true }, exitCode: 0 });
+      });
+
+      // Bun.spawn and node's child_process give a child a socketpair for a
+      // piped stdout. `lazy` keeps this process from reading it until the
+      // child reports on stderr that its event loop still turns.
+      test("a socket", async () => {
+        const socketLen = 4 * 1024 * 1024;
+        const big = Buffer.alloc(socketLen, "abcdefghijklmnopqrstuvw").toString();
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+              import { $ } from "bun";
+              import * as fs from "node:fs";
+
+              const big = Buffer.alloc(${socketLen}, "abcdefghijklmnopqrstuvw").toString();
+              let done = false;
+              const command = $\`echo \${big}\`.then(result => ((done = true), result));
+              // The shell has tried its write long before the 100th turn.
+              let turns = 0;
+              await new Promise<void>(resolve => {
+                const turn = () => (++turns === 100 ? resolve() : setImmediate(turn));
+                setImmediate(turn);
+              });
+              console.error(JSON.stringify({ socket: fs.fstatSync(1).isSocket(), doneWhileFull: done }));
+              process.exitCode = (await command).exitCode;
+            `,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+          lazy: true,
+        });
+
+        const decoder = new TextDecoder();
+        const stderr = proc.stderr.getReader();
+        let errors = "";
+        const readStderr = async (until: () => boolean) => {
+          while (!until()) {
+            const { value, done } = await stderr.read();
+            if (done) break;
+            errors += decoder.decode(value, { stream: true });
+          }
+        };
+        await readStderr(() => errors.includes("\n"));
+        const report = lastLineAsJSON(errors);
+
+        const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), readStderr(() => false), proc.exited]);
+        expect({ report, intact: stdout === big + "\n", exitCode }).toEqual({
+          report: { socket: true, doneWhileFull: false },
+          intact: true,
+          exitCode: 0,
+        });
+      });
+
+      // A tty has no write that cannot wait. It keeps the plain write, as in
+      // Node, and the bytes still arrive once and in order.
+      test.concurrent("a tty", async () => {
+        const big = Buffer.alloc(payloadLen, "abcdefghijklmnopqrstuvw").toString();
+        const decoder = new TextDecoder();
+        let output = "";
+        const complete = Promise.withResolvers<void>();
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+              import { $ } from "bun";
+              const big = Buffer.alloc(${payloadLen}, "abcdefghijklmnopqrstuvw").toString();
+              process.exitCode = (await $\`echo \${big}\`.nothrow()).exitCode;
+            `,
+          ],
+          env: bunEnv,
+          terminal: {
+            data(_terminal, chunk) {
+              output += decoder.decode(chunk, { stream: true });
+              if (output.length >= payloadLen + 2) complete.resolve();
+            },
+            exit() {
+              complete.reject(new Error("the terminal closed after " + output.length + " bytes"));
+            },
+          },
+        });
+        const [exitCode] = await Promise.all([proc.exited, complete.promise]);
+        expect({ intact: output === big + "\r\n", length: output.length, exitCode }).toEqual({
+          intact: true,
+          length: payloadLen + 2,
+          exitCode: 0,
+        });
+      });
     });
   });
 

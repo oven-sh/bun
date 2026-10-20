@@ -1609,6 +1609,8 @@ mod safe_libc {
         // `c_int` writes); kernel only writes the slot and reports failure via
         // the return value — no other preconditions.
         pub(crate) safe fn pipe(fds: &mut [c_int; 2]) -> c_int;
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        pub(crate) safe fn pipe2(fds: &mut [c_int; 2], flags: c_int) -> c_int;
         pub(crate) safe fn socketpair(
             domain: c_int,
             ty: c_int,
@@ -3149,6 +3151,16 @@ mod posix_impl {
     pub fn pipe() -> Maybe<[Fd; 2]> {
         let mut fds = [0i32; 2];
         check!(safe_libc::pipe(&mut fds), Tag::pipe);
+        Ok([Fd::from_native(fds[0]), Fd::from_native(fds[1])])
+    }
+    /// `pipe2(O_NONBLOCK | O_CLOEXEC)`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub fn pipe_nonblocking() -> Maybe<[Fd; 2]> {
+        let mut fds = [0i32; 2];
+        check!(
+            safe_libc::pipe2(&mut fds, libc::O_NONBLOCK | libc::O_CLOEXEC),
+            Tag::pipe
+        );
         Ok([Fd::from_native(fds[0]), Fd::from_native(fds[1])])
     }
     pub fn isatty(fd: Fd) -> bool {
@@ -7534,6 +7546,33 @@ pub fn write_nowait(fd: Fd, buf: &[u8]) -> Maybe<Option<usize>> {
             }
             libc::EOPNOTSUPP | libc::EPERM | libc::EACCES => return Ok(None),
             e => return Err(Error::from_code_int(e, Tag::write).with_fd(fd)),
+        }
+    }
+}
+
+/// `splice(SPLICE_F_NONBLOCK)` from one pipe into another. It waits for neither pipe, whatever their `O_NONBLOCK`, and moves whole pipe buffers while `len` covers them. `Ok(None)` means the kernel or a seccomp policy refuses the call; nothing moved.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn splice_nowait(from: Fd, to: Fd, len: usize) -> Maybe<Option<usize>> {
+    loop {
+        // SAFETY: raw splice(2); both fds are valid, and pipes take null offsets.
+        let rc = unsafe {
+            libc::splice(
+                from.native(),
+                core::ptr::null_mut(),
+                to.native(),
+                core::ptr::null_mut(),
+                len,
+                libc::SPLICE_F_NONBLOCK,
+            )
+        };
+        if rc >= 0 {
+            return Ok(Some(rc as usize));
+        }
+        match last_errno() {
+            libc::EINTR => continue,
+            libc::ENOSYS | libc::EINVAL | libc::EPERM | libc::EACCES => return Ok(None),
+            // The caller is writing to `to`; the error reads like the write it stands in for.
+            e => return Err(Error::from_code_int(e, Tag::write).with_fd(to)),
         }
     }
 }

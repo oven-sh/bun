@@ -289,6 +289,24 @@ impl StringOrBuffer<'static> {
         unsafe { ThreadIsolated::new(Self::owned(bytes)) }
     }
 
+    /// A string for a work-pool job.
+    pub(crate) fn string_isolated(
+        global: &JSGlobalObject,
+        str: bun_core::String,
+    ) -> ThreadIsolated<Self> {
+        // SAFETY: a thread-isolated string, or owned bytes.
+        unsafe { ThreadIsolated::new(Self::thread_isolated_string(global, str)) }
+    }
+
+    fn thread_isolated_string(global: &JSGlobalObject, str: bun_core::String) -> Self {
+        shared_or_utf8(
+            global,
+            str.into_utf8_with_string_thread_isolated(),
+            Self::ThreadIsolatedString,
+            Self::Utf8,
+        )
+    }
+
     /// `value` is ArrayBuffer-like (the caller checked): borrowed for `Sync`,
     /// pinned and GC-rooted for `Async`.
     pub(crate) fn buffer_from_js(
@@ -349,12 +367,7 @@ impl StringOrBuffer<'static> {
                 }
                 let str = bun_core::String::from_js(value, global)?;
                 *out = if flavor == Flavor::Async {
-                    shared_or_utf8(
-                        global,
-                        str.into_utf8_with_string_thread_isolated(),
-                        Self::ThreadIsolatedString,
-                        Self::Utf8,
-                    )
+                    Self::thread_isolated_string(global, str)
                 } else {
                     Self::String(str.into_utf8_with_string())
                 };
@@ -400,23 +413,6 @@ impl StringOrBuffer<'static> {
     #[inline]
     pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
         Self::from_js_maybe_async(global, value, Flavor::Sync, StringObjects::Allow)
-    }
-
-    /// [`from_js`](Self::from_js) for a work-pool job that reads the bytes itself: strings thread-isolated, buffers pinned and GC-rooted, a resizable buffer copied ([`PinnedArrayBuffer::copy_if_resizable`]).
-    #[inline]
-    pub(crate) fn from_js_async(
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<Option<ThreadIsolated<Self>>> {
-        let mut parsed =
-            Self::from_js_maybe_async(global, value, Flavor::Async, StringObjects::Allow)?;
-        if let Some(Self::PinnedBuffer(buffer)) = &mut parsed
-            && !buffer.copy_if_resizable(global)
-        {
-            return Err(global.throw_out_of_memory());
-        }
-        // SAFETY: parsed with `Flavor::Async`.
-        Ok(parsed.map(|v| unsafe { ThreadIsolated::new(v) }))
     }
 
     #[inline]

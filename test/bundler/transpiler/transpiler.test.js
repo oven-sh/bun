@@ -5075,6 +5075,31 @@ console.log(foo, array);
     new Bun.Transpiler().scanImports("");
   });
 
+  it("transformSync takes undefined as no context", () => {
+    const transpiler = new Bun.Transpiler();
+    expect(transpiler.transformSync("let a: number = 1;", "ts", undefined)).toBe("let a = 1;\n");
+    expect(() => transpiler.transformSync("let a: number = 1;", "ts", null)).toThrow(
+      "Expected context to be a object or loader for 'transformSync'.",
+    );
+  });
+
+  it("a buffer that converting the loader detaches is empty", () => {
+    const transpiler = new Bun.Transpiler();
+    const transferred = [];
+    const call = method => {
+      const code = new TextEncoder().encode(`export const a = 1; import "x";`);
+      const loader = new String("js");
+      loader.toString = () => {
+        transferred.push(code.buffer.transfer());
+        return "js";
+      };
+      return transpiler[method](code, loader);
+    };
+    expect(call("scan")).toEqual({ exports: [], imports: [] });
+    expect(call("scanImports")).toEqual([]);
+    expect(call("transformSync")).toBe("");
+  });
+
   it("preserves exotic directives", () => {
     expect(
       new Bun.Transpiler().transformSync(`"use client";

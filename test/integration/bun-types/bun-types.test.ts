@@ -331,6 +331,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "TOMLObject.bind.ts": "typeof Bun.TOML",
   "TextDecoder.bind.ts": "{ TextDecoder: typeof TextDecoder }",
   "Timer.bind.ts": null,
+  "Transpiler.bind.ts": "typeof Bun",
   "UnsafeObject.bind.ts": "typeof Bun.unsafe",
   "XMLObject.bind.ts": "typeof Bun.XML",
   "YAMLObject.bind.ts": "typeof Bun.YAML",

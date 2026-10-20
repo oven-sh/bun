@@ -50,6 +50,7 @@
 #include "GeneratedPasswordObject.h"
 #include "GeneratedSemverObject.h"
 #include "GeneratedTOMLObject.h"
+#include "GeneratedTranspiler.h"
 #include "GeneratedUnsafeObject.h"
 #include "GeneratedXMLObject.h"
 #include "GeneratedYAMLObject.h"
@@ -948,7 +949,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     TOML                                           Bun::Bindgen::Generated::TOMLObject::createTOML                     DontDelete|PropertyCallback
     XML                                            Bun::Bindgen::Generated::XMLObject::createXML                       DontDelete|PropertyCallback
     YAML                                           Bun::Bindgen::Generated::YAMLObject::createYAML                     DontDelete|PropertyCallback
-    Transpiler                                     BunObject_lazyPropCb_wrap_Transpiler                                DontDelete|PropertyCallback
+    Transpiler                                     Bun::Bindgen::Generated::Transpiler::getTranspilerConstructor       DontDelete|PropertyCallback
     embeddedFiles                                  BunObject_lazyPropCb_wrap_embeddedFiles                             DontDelete|PropertyCallback
     S3Client                                       BunObject_lazyPropCb_wrap_S3Client                                  DontDelete|PropertyCallback
     s3                                             BunObject_lazyPropCb_wrap_s3                                        DontDelete|PropertyCallback

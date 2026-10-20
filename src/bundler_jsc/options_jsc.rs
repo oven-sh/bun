@@ -31,13 +31,18 @@ pub fn loader_from_js(
     }
 
     let loader_str = loader.to_js_string_view(global)?;
-    if loader_str.is_empty() {
+    loader_from_utf8(global, loader_str.to_utf8().slice())
+}
+
+pub fn loader_from_utf8(
+    global: &JSGlobalObject,
+    loader: &[u8],
+) -> JsResult<Option<bun_ast::Loader>> {
+    if loader.is_empty() {
         return Ok(None);
     }
 
-    let slice = loader_str.to_utf8();
-
-    let Some(v) = bun_ast::Loader::from_string(slice.slice()) else {
+    let Some(v) = bun_ast::Loader::from_string(loader) else {
         return Err(global.throw_invalid_arguments(format_args!(
             "invalid loader - must be js, jsx, tsx, ts, css, json, jsonc, json5, toml, yaml, xml, text, wasm, or md"
         )));
@@ -57,7 +62,7 @@ pub fn loader_from_js(
     ) {
         return Err(global.throw_invalid_arguments(format_args!(
             "loader \"{}\" is not supported in Bun.Transpiler",
-            bstr::BStr::new(slice.slice()),
+            bstr::BStr::new(loader),
         )));
     }
     Ok(Some(v))

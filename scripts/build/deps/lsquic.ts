@@ -134,6 +134,9 @@ export const lsquic: Dependency = {
     // H3_CLOSED_CRITICAL_STREAM and closes the connection, which kills the
     // requests the graceful stop was draining. Reject only request streams.
     "patches/lsquic/goaway-accept-uni-streams.patch",
+    // The iovec reader of lsquic_stream_writev kept its offset in an
+    // unsigned, so an iovec of 4 GiB or more made it spin.
+    "patches/lsquic/iovec-reader-size_t.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

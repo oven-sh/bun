@@ -516,30 +516,14 @@ impl Stream {
         unsafe { lsquic_stream_read(self.0, buf.as_mut_ptr().cast(), buf.len()) }
     }
     /// Returns the bytes lsquic copied out of `bufs`, 0 when it can take none, -1 on error.
-    /// A buffer over `u32::MAX` bytes is cut there (lsquic's iovec offset is an
-    /// `unsigned`), and the buffers after it are kept for the next call.
     pub fn writev<const N: usize>(&self, bufs: [&[u8]; N]) -> isize {
-        const MAX_IOV_LEN: usize = u32::MAX as usize;
-        let mut iov = [const {
-            iovec {
-                iov_base: core::ptr::null_mut(),
-                iov_len: 0,
-            }
-        }; N];
-        let mut count = 0;
-        for buf in bufs {
-            iov[count] = iovec {
-                iov_base: buf.as_ptr().cast_mut().cast::<c_void>(),
-                iov_len: buf.len().min(MAX_IOV_LEN),
-            };
-            count += 1;
-            if buf.len() > MAX_IOV_LEN {
-                break;
-            }
-        }
+        let iov = bufs.map(|buf| iovec {
+            iov_base: buf.as_ptr().cast_mut().cast::<c_void>(),
+            iov_len: buf.len(),
+        });
         // SAFETY: as above; `iov` and the slices it points into are live for
         // the call, and lsquic only reads through `iov_base`.
-        unsafe { lsquic_stream_writev(self.0, iov.as_ptr(), count as c_int) }
+        unsafe { lsquic_stream_writev(self.0, iov.as_ptr(), N as c_int) }
     }
     pub fn flush(&self) -> c_int {
         // SAFETY: as above.

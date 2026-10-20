@@ -1,0 +1,26 @@
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -3771,7 +3771,7 @@
+ struct inner_reader_iovec {
+     const struct iovec       *iov;
+     const struct iovec *end;
+-    unsigned                  cur_iovec_off;
++    size_t                    cur_iovec_off;
+ };
+ 
+ 
+@@ -3781,12 +3781,12 @@
+     struct inner_reader_iovec *const iro = ctx;
+     unsigned char *p = buf;
+     unsigned char *const end = p + count;
+-    unsigned n_tocopy;
++    size_t n_tocopy;
+ 
+     while (iro->iov < iro->end && p < end)
+     {
+         n_tocopy = iro->iov->iov_len - iro->cur_iovec_off;
+-        if (n_tocopy > (unsigned) (end - p))
++        if (n_tocopy > (size_t) (end - p))
+             n_tocopy = end - p;
+         memcpy(p, (unsigned char *) iro->iov->iov_base + iro->cur_iovec_off,
+                                                                     n_tocopy);

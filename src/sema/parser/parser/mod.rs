@@ -414,6 +414,10 @@ pub(crate) fn run<'a>(
             after: lx.rejected_after,
         });
     }
+    if !f.has_room_for_handles() {
+        scratch.recycled = Some(f);
+        return Err(Rejected::new(Rejection::TooLarge));
+    }
     f.comment_directives = comment_directives;
     let names = &mut scratch.names;
     let source = text;

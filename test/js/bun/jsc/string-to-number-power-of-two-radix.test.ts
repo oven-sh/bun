@@ -137,7 +137,7 @@ test("the transpiler folds a string of long hex, octal or binary digits to the n
 
 test("a transpiler cache entry from before that fold changed is not restored", async () => {
   // The fold above is in the transpiler's output, and the runtime transpiler cache keeps that output
-  // on disk. An entry of version 36 can hold the number that the engine gave before.
+  // on disk. An entry of version 37 can hold the number that the engine gave before.
   const padding = Array.from({ length: 400 }, (_, i) => `const pad_${i} = ${i};`).join("\n");
   using dir = tempDir("pow2-radix-cache", {
     "fold.js": `console.log(+"0x97b89d834f82bbef");\n${padding}\n`,
@@ -166,13 +166,13 @@ test("a transpiler cache entry from before that fold changed is not restored", a
   expect(await run()).toEqual({ stdout: "10932661282742122000\n", stderr: "", exitCode: 0 });
   const written = versions();
   expect(written.length).toBeGreaterThan(0);
-  for (const version of written) expect(version).toBeGreaterThan(36);
+  for (const version of written) expect(version).toBeGreaterThan(37);
 
-  // Make every entry look like one of version 36. The next run must translate the file again
+  // Make every entry look like one of version 37. The next run must translate the file again
   // and write the entry again, not restore it.
   for (const name of readdirSync(cachePath).filter(name => name.endsWith(".pile"))) {
     const bytes = readFileSync(join(cachePath, name));
-    bytes.writeUInt32LE(36, 0);
+    bytes.writeUInt32LE(37, 0);
     writeFileSync(join(cachePath, name), bytes);
   }
   expect(await run()).toEqual({ stdout: "10932661282742122000\n", stderr: "", exitCode: 0 });

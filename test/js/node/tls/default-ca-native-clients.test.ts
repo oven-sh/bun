@@ -1,6 +1,6 @@
 // fetch and WebSocket are built natively, so tls.setDefaultCACertificates() has to reach them as it does node:tls.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tls as serverCert } from "harness";
+import { bunEnv, bunExe, tls as serverCert, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 

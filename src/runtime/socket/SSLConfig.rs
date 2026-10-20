@@ -278,7 +278,8 @@ impl SSLConfigFromJs for SSLConfig {
             apply_default_ciphers(vm, &mut result);
         }
         // `ca: []` parses to no list, but it was given, so it skips the default.
-        if matches!(generated.ca, generated::TLSOptionsFile::None) && result.ca_file_name.is_null() {
+        if matches!(generated.ca, generated::TLSOptionsFile::None) && result.ca_file_name.is_null()
+        {
             apply_default_ca(vm, &mut result);
         }
         Ok(Some(result))

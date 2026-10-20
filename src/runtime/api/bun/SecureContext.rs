@@ -76,7 +76,8 @@ impl SecureContext {
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();
         // Only a server reads `rejectUnauthorized` back from a context (`server_ctx_rejects_unauthorized`).
-        let mut config = SSLConfig::from_js(vm, global, opts, true)?.unwrap_or_else(SSLConfig::zero);
+        let mut config =
+            SSLConfig::from_js(vm, global, opts, true)?.unwrap_or_else(SSLConfig::zero);
         crate::socket::apply_empty_default_ca(vm, &mut config);
         // `defer config.deinit()` — handled by Drop.
 
@@ -236,7 +237,8 @@ impl SecureContext {
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();
         // Only a server reads `rejectUnauthorized` back from a context (`server_ctx_rejects_unauthorized`).
-        let mut config = SSLConfig::from_js(vm, global, opts, true)?.unwrap_or_else(SSLConfig::zero);
+        let mut config =
+            SSLConfig::from_js(vm, global, opts, true)?.unwrap_or_else(SSLConfig::zero);
         crate::socket::apply_empty_default_ca(vm, &mut config);
         // `defer config.deinit()` — handled by Drop.
 
@@ -278,7 +280,8 @@ impl SecureContext {
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();
         // Only a server reads `rejectUnauthorized` back from a context (`server_ctx_rejects_unauthorized`).
-        let mut config = SSLConfig::from_js(vm, global, opts, true)?.unwrap_or_else(SSLConfig::zero);
+        let mut config =
+            SSLConfig::from_js(vm, global, opts, true)?.unwrap_or_else(SSLConfig::zero);
         crate::socket::apply_empty_default_ca(vm, &mut config);
         // `defer config.deinit()` — handled by Drop.
 

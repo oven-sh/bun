@@ -124,7 +124,8 @@ pub(crate) mod socket {
     pub(crate) use super::socket_body::{
         js_check_server_identity_in_handshake, js_create_socket_pair, js_first_flight_before_fin,
         js_get_buffered_amount, js_is_named_pipe_socket, js_release_held_flight,
-        js_set_socket_options, js_upgrade_duplex_to_tls, js_upgrade_tls_deferred, testing_ap_is,
+        js_set_socket_options, js_shutdown_write, js_upgrade_duplex_to_tls,
+        js_upgrade_tls_deferred, testing_ap_is,
     };
 }
 

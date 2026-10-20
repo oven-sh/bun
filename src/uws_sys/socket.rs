@@ -286,6 +286,16 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// The peer ended its side and the socket stayed open. Only a connected socket reports it.
+    pub fn read_ended(&self) -> bool {
+        on_socket!(self.socket;
+            connected s => s.read_ended(),
+            duplex _d => false,
+            pipe _p => false,
+            else => false,
+        )
+    }
+
     #[inline]
     pub fn is_closed_or_has_error(&self) -> bool {
         self.is_closed() || self.is_shutdown() || self.get_error() != 0

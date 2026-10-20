@@ -925,15 +925,28 @@ struct SendDataOptions {
     defer_write_callback: bool,
 }
 
-/// Frames count as sent once serialized, so `detach(true)` leaves the parser attached until the socket has them.
+/// Frames count as sent once serialized, so what the socket has not taken is still owed to the peer: the socket's half-close waits for it (`defer_shutdown`), and `detach(true)` leaves the parser attached until the socket has it.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Draining {
     #[default]
     No,
+    /// A live session whose peer has ended its side: the half-close its socket asked for (`defer_shutdown`) follows what the session still writes.
+    Fin,
     /// Attached only to write that output: no streams, no JS context, no inbound frames.
     Output,
     /// And then to issue the half-close the socket asked for meanwhile (`defer_shutdown`).
     OutputThenFin,
+}
+
+impl Draining {
+    /// The session let go of the parser (`detach(true)`).
+    fn released(self) -> bool {
+        matches!(self, Draining::Output | Draining::OutputThenFin)
+    }
+
+    fn holds_fin(self) -> bool {
+        matches!(self, Draining::Fin | Draining::OutputThenFin)
+    }
 }
 
 struct DispatchGuard<'a>(&'a Cell<u32>);
@@ -3618,7 +3631,7 @@ impl H2FrameParser {
     /// Feed inbound bytes through the rewrite engine, buffering the unconsumed tail (design B).
     fn rewrite_read(&self, bytes: &[u8]) {
         bun_output::scoped_log!(H2FrameParser, "rewriteRead {}", bytes.len());
-        if self.draining.get() != Draining::No {
+        if self.draining.get().released() {
             return;
         }
         // Re-entrancy guard: receive() dispatches into JS between frames, and user code can feed
@@ -3778,10 +3791,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     /// A frame callback left an exception pending (a value it could not build): no later frame
     /// in this batch is dispatched over it; `read()` throws it and `on_native_read` returns it to
     /// the socket dispatch. (A termination between frames is what `run_callback`'s gate covers.)
-    /// Nor is one dispatched once a frame callback has ended the session (`Draining`).
+    /// Nor is one dispatched once a frame callback has ended the session (`Draining::released`).
     #[inline]
     fn should_stop(&self) -> bool {
-        self.left_exception.get() || self.draining.get() != Draining::No
+        self.left_exception.get() || self.draining.get().released()
     }
 
     fn on_frame_counters(&self, received: u64, sent: u64) {
@@ -7414,11 +7427,17 @@ impl H2FrameParser {
         Ok(())
     }
 
-    pub(crate) fn on_native_writable(&self) {
+    /// True when the half-close that `defer_shutdown` held back went out in this event: the socket then runs its own drain dispatch, because node:net waits for that drain.
+    pub(crate) fn on_native_writable(&self) -> bool {
         // flush() re-enters JS (write callbacks, onStreamEnd, onWantTrailers);
         // that JS can destroy the session and drop the socket's ref, so the
         // keepalive must span the whole loop, not just each flush() call.
         let _keepalive = self.keepalive();
+        self.flush_until_blocked();
+        self.draining.get() != Draining::No && self.finish_draining()
+    }
+
+    fn flush_until_blocked(&self) {
         // flush() ends in flush_stream_queue() → write() → cork(), leaving the
         // newly-serialized frames in CORK_BUFFER (not on the wire). Returning
         // here would let loop.c see last_write_failed==0 and disarm WRITABLE,
@@ -7431,27 +7450,33 @@ impl H2FrameParser {
                 break;
             }
         }
-        if self.draining.get() != Draining::No {
-            self.finish_draining();
-        }
     }
 
-    /// Lets go of the socket once it has taken the output a draining parser kept.
+    /// The socket has the output that `Draining` waits for, or can take no more of it: the held half-close goes out, and a released parser lets go of the socket. True when a half-close went out.
     #[cold]
-    fn finish_draining(&self) {
+    fn finish_draining(&self) -> bool {
         if self.has_unsent_output() && self.socket_takes_output() {
-            return;
+            return false;
         }
-        if self.draining.replace(Draining::No) == Draining::OutputThenFin {
-            match self.native_socket.get() {
-                BunSocket::Tcp(socket) => socket.get().socket.get().shutdown(),
-                BunSocket::Tls(socket) => socket.get().socket.get().shutdown(),
-                BunSocket::TcpWriteonly(_) | BunSocket::TlsWriteonly(_) | BunSocket::None => {}
-            }
+        let waited = self.draining.replace(Draining::No);
+        let fin_issued = waited.holds_fin()
+            && match self.native_socket.get() {
+                BunSocket::Tcp(socket) => {
+                    socket.get().socket.get().shutdown();
+                    true
+                }
+                BunSocket::Tls(socket) => {
+                    socket.get().socket.get().shutdown();
+                    true
+                }
+                BunSocket::TcpWriteonly(_) | BunSocket::TlsWriteonly(_) | BunSocket::None => false,
+            };
+        if waited.released() {
+            self.write_buffer.with_mut(|wb| wb.clear_and_free());
+            self.write_buffer_offset.set(0);
+            self.detach_native_socket();
         }
-        self.write_buffer.with_mut(|wb| wb.clear_and_free());
-        self.write_buffer_offset.set(0);
-        self.detach_native_socket();
+        fin_issued
     }
 
     fn has_unsent_output(&self) -> bool {
@@ -7472,13 +7497,38 @@ impl H2FrameParser {
         self.has_unsent_output() && !self.transport_write_fatal.get() && self.socket_takes_output()
     }
 
-    /// True when a draining parser holds back the socket's half-close: `finish_draining` issues it after the output.
+    /// The socket is asked for its half-close. True while output is owed and no frame can arrive any more (the peer has ended its side, or the session has let go of the parser): `finish_draining` then issues the half-close after that output.
+    #[cold]
     pub(crate) fn defer_shutdown(&self) -> bool {
-        if self.draining.get() == Draining::No || !self.owes_output() {
+        if self.transport_write_runs_js() {
             return false;
         }
-        self.draining.set(Draining::OutputThenFin);
+        // The flush runs JS (write callbacks), and a write can close a TLS socket from inside the call: either can drop the socket's ref on this parser.
+        let _keepalive = self.keepalive();
+        // The frames of this turn and the DATA queued on streams are owed too: what the socket takes now leaves ahead of the half-close.
+        self.flush_until_blocked();
+        if !self.owes_output() {
+            return false;
+        }
+        let waited = self.draining.get();
+        // A live session whose peer still sends would go on answering it, and the half-close would wait for that.
+        if !waited.released() && !self.peer_ended() {
+            return false;
+        }
+        self.draining.set(if waited.released() {
+            Draining::OutputThenFin
+        } else {
+            Draining::Fin
+        });
         true
+    }
+
+    fn peer_ended(&self) -> bool {
+        match self.native_socket.get() {
+            BunSocket::Tcp(socket) => socket.get().peer_ended(),
+            BunSocket::Tls(socket) => socket.get().peer_ended(),
+            BunSocket::TcpWriteonly(_) | BunSocket::TlsWriteonly(_) | BunSocket::None => false,
+        }
     }
 
     pub(crate) fn on_native_close(&self) {
@@ -7488,7 +7538,7 @@ impl H2FrameParser {
         let _keepalive = self.keepalive();
         self.detach_native_socket();
         // Else the output a draining parser kept stays allocated until its wrapper is collected.
-        if self.draining.replace(Draining::No) != Draining::No {
+        if self.draining.replace(Draining::No).released() {
             self.write_buffer.with_mut(|wb| wb.clear_and_free());
             self.write_buffer_offset.set(0);
         }
@@ -7822,8 +7872,36 @@ impl H2FrameParser {
         _global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        this.release_from_js(callframe.argument(0).to_boolean());
+        let keep_output = callframe.argument(0).to_boolean();
+        match this.native_socket.get() {
+            BunSocket::Tcp(socket) if this.draining.get().holds_fin() => {
+                this.release_with_held_fin::<false>(socket, keep_output)?
+            }
+            BunSocket::Tls(socket) if this.draining.get().holds_fin() => {
+                this.release_with_held_fin::<true>(socket, keep_output)?
+            }
+            _ => this.release_from_js(keep_output),
+        }
         Ok(JSValue::UNDEFINED)
+    }
+
+    /// `release_from_js` for a socket whose half-close waits on this parser (`defer_shutdown`): a parser that lets go of the socket has no writable event left to issue it from, so it goes out here, with the drain that node:net waits for.
+    fn release_with_held_fin<const SSL: bool>(
+        &self,
+        socket: bun_ptr::BackRef<crate::socket::NewSocket<SSL>>,
+        keep_output: bool,
+    ) -> JsResult<()> {
+        // SAFETY: the attachment is live, so is its socket (`BunSocket`); the pointer is the
+        // root `m_ctx` pointer `NativeSocket::attach` stored.
+        let socket = unsafe { bun_ptr::ThisPtr::new(socket.as_const_ptr().cast_mut()) };
+        // The release drops what kept the socket alive for this parser, and the drain handlers run JS.
+        let _socket_alive = RefPtr::from_this(socket);
+        self.release_from_js(keep_output);
+        if self.draining.get() != Draining::No {
+            return Ok(());
+        }
+        socket.socket.get().shutdown();
+        crate::socket::NewSocket::<SSL>::on_writable(socket, socket.socket.get())
     }
 
     /// The session is over: free its streams, let go of the socket, and stop keeping the wrapper
@@ -7857,7 +7935,9 @@ impl H2FrameParser {
         if !draining {
             self.draining.set(Draining::No);
             self.detach_native_socket();
-        } else if self.draining.get() == Draining::No {
+        } else if self.draining.get().holds_fin() {
+            self.draining.set(Draining::OutputThenFin);
+        } else {
             self.draining.set(Draining::Output);
         }
 

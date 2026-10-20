@@ -961,8 +961,15 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.socket.get().is_detached() {
             return Ok(());
         }
-        if this.native_callback.get().on_writable() {
-            return Ok(());
+        match this.native_callback.get().on_writable() {
+            NativeWritable::Unattached => {}
+            NativeWritable::Taken => return Ok(()),
+            NativeWritable::FinIssued => {
+                // The parser's flush ran JS, which can have closed this socket.
+                if !this.has_handlers() || this.socket.get().is_detached() {
+                    return Ok(());
+                }
+            }
         }
         let handlers = this.get_handlers();
         let callback = handlers.on_writable();
@@ -2669,6 +2676,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         res
     }
 
+    pub(crate) fn peer_ended(&self) -> bool {
+        self.socket.get().read_ended()
+    }
+
     /// Whether a write refused with would-block can still be taken after a writable event.
     pub(crate) fn write_side_open(&self) -> bool {
         let socket = self.socket.get();
@@ -3277,11 +3288,20 @@ impl<const SSL: bool> NewSocket<SSL> {
         let [arg] = callframe.arguments_as_array::<1>();
         if callframe.arguments_count() > 0 && arg.to_boolean() {
             this.socket.get().shutdown_read();
-        } else if !this.native_callback.get().defer_shutdown() {
-            this.socket.get().shutdown();
+        } else {
+            this.shutdown_write();
         }
 
         Ok(JSValue::UNDEFINED)
+    }
+
+    /// False while the attached HTTP/2 parser holds the FIN behind output it still owes: it sends the FIN after that output, and a drain follows.
+    fn shutdown_write(&self) -> bool {
+        if self.native_callback.get().defer_shutdown() {
+            return false;
+        }
+        self.socket.get().shutdown();
+        true
     }
 
     #[bun_jsc::host_fn(method)]
@@ -4153,6 +4173,16 @@ pub(crate) enum NativeCallbacks {
     None,
 }
 
+/// What a writable event leaves for the socket's own drain dispatch.
+pub(crate) enum NativeWritable {
+    /// Nothing is attached: the event is the socket's.
+    Unattached,
+    /// The attached parser took the event.
+    Taken,
+    /// And it sent the half-close that `NativeCallbacks::defer_shutdown` held back: node:net waits for the drain of this event. The parser's flush ran JS, so the socket checks that it is still open before it dispatches.
+    FinIssued,
+}
+
 impl NativeCallbacks {
     /// `&self` borrows the socket's `JsCell<NativeCallbacks>`; the dispatch
     /// re-enters JS, which can `detach_native_callback` and overwrite that cell.
@@ -4167,22 +4197,28 @@ impl NativeCallbacks {
         unsafe { (*h2).on_native_read(data) }?;
         Ok(true)
     }
-    pub(crate) fn on_writable(&self) -> bool {
+    pub(crate) fn on_writable(&self) -> NativeWritable {
+        let h2 = match self {
+            NativeCallbacks::H2(h2) => h2.as_ptr(),
+            NativeCallbacks::None => return NativeWritable::Unattached,
+        };
+        // SAFETY: `on_native_writable` takes a keepalive; `h2` stays live across re-entry.
+        if unsafe { (*h2).on_native_writable() } {
+            NativeWritable::FinIssued
+        } else {
+            NativeWritable::Taken
+        }
+    }
+    /// Whether the attached parser takes over the half-close, to send the FIN after its own output.
+    #[inline]
+    pub(crate) fn defer_shutdown(&self) -> bool {
         let h2 = match self {
             NativeCallbacks::H2(h2) => h2.as_ptr(),
             NativeCallbacks::None => return false,
         };
-        // SAFETY: `on_native_writable` takes a keepalive; `h2` stays live across re-entry.
-        unsafe { (*h2).on_native_writable() };
-        true
-    }
-    /// Whether the attached parser takes over the half-close, to send the FIN after its own output.
-    pub(crate) fn defer_shutdown(&self) -> bool {
-        match self {
-            // No JS runs under this call, so the cell keeps its ref on the parser.
-            NativeCallbacks::H2(h2) => h2.defer_shutdown(),
-            NativeCallbacks::None => false,
-        }
+        // SAFETY: `defer_shutdown` takes a keepalive; `h2` stays live when its flush runs JS or
+        // closes the socket, either of which can overwrite this cell.
+        unsafe { (*h2).defer_shutdown() }
     }
 }
 
@@ -5045,6 +5081,23 @@ pub(crate) fn js_is_named_pipe_socket(
         return Ok(JSValue::from(this.socket.get().is_named_pipe()));
     }
     Ok(JSValue::FALSE)
+}
+
+/// node:net's `_final`. `false`: the handle holds the FIN (`NewSocket::shutdown_write`). `undefined`: not a native socket.
+#[bun_jsc::host_fn]
+pub(crate) fn js_shutdown_write(
+    _global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    jsc::mark_binding!();
+
+    let [socket, _, _] = callframe.arguments_as_array::<3>();
+    if let Some(this) = socket.as_class_ref::<TCPSocket>() {
+        return Ok(JSValue::from(this.shutdown_write()));
+    } else if let Some(this) = socket.as_class_ref::<TLSSocket>() {
+        return Ok(JSValue::from(this.shutdown_write()));
+    }
+    Ok(JSValue::UNDEFINED)
 }
 
 #[bun_jsc::host_fn]

@@ -573,13 +573,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // there were no conversion errors.
             if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon && invalid_log.is_empty() {
                 if opts.is_after_question_and_before_colon {
+                    // "()", a rest item and an item with a type are parameters or an error, never an expression. "async()" and "async(...a)" are also calls.
+                    let is_parameter_list = type_colon_range.len > 0
+                        || (!opts.is_async && (items.is_empty() || spread_range.len > 0));
                     // Only do this very expensive check if we must
-                    is_arrow_fn = p
-                        .is_type_script_arrow_return_type_after_question_and_before_colon(
+                    is_arrow_fn = is_parameter_list
+                        || p.is_type_script_arrow_return_type_after_question_and_before_colon(
                             &arrow_data,
                         )?;
                     if is_arrow_fn {
-                        // We know this will succeed because we've already done it once above
+                        // After the check above this cannot fail. For a parameter list it reports a wrong return type.
                         p.lexer.next()?;
                         p.skip_typescript_return_type()?;
                     }

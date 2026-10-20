@@ -67,7 +67,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 35: Long hexadecimal, octal and binary literals are rounded to the nearest double.
 /// Version 36: `export`, `require()`, `import()`, a JSX element, an exported async function and
 /// an abstract class are mapped elsewhere.
-const EXPECTED_VERSION: u32 = 36;
+/// Version 37: TypeScript `a ? (b: B): T => {...} : c` parses its body once, so `emitDecoratorMetadata` in it names the right type.
+const EXPECTED_VERSION: u32 = 37;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

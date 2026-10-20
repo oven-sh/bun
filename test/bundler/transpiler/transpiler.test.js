@@ -431,6 +431,11 @@ describe("Bun.Transpiler", () => {
         "x = class {\n  #y;\n  y = a ? (b) => this.#y : c;\n};\n",
       );
       exp("for (x = a ? () : T => b in c : d; ; ) ;", "for (x = a ? () => (b in c) : d;; )\n  ;\n");
+      exp(
+        "x = class { #y; y = a ? (b) : T => this.#y : c }",
+        "x = class {\n  #y;\n  y = a ? (b) => this.#y : c;\n};\n",
+      );
+      exp("for (x = a ? (b) : T => c in d : e; ; ) ;", "for (x = a ? (b) => (c in d) : e;; )\n  ;\n");
 
       // A discarded attempt must leave no scopes, symbols, import records or
       // enum bookkeeping behind.
@@ -477,6 +482,70 @@ describe("Bun.Transpiler", () => {
       }
       exp(`x = ${kept}`, `x = ${keptOut};\n`);
       exp(`x = ${discarded}`, `x = ${discardedOut};\n`);
+    });
+
+    it("parentheses that can only be parameters are an arrow function without a second parse", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // "()", a rest item and an item with a type are parameters or an error, never an
+      // expression. The arrow function is taken as it stands.
+      exp("x = a ? (): T => b : c", "x = a ? () => b : c;\n");
+      exp("x = a ? (b: B): T => c : d", "x = a ? (b) => c : d;\n");
+      exp("x = a ? (b, c: C): T => d : e", "x = a ? (b, c) => d : e;\n");
+      exp("x = a ? (b, ...c): T => d : e", "x = a ? (b, ...c) => d : e;\n");
+      exp("x = a ? async (b: B): T => c : d", "x = a ? async (b) => c : d;\n");
+
+      // The conditional reports its missing ":"
+      err("x = a ? (): T => b", 'Expected ":" but found end of file');
+      err("x = a ? (b: B): T => c", 'Expected ":" but found end of file');
+      err("x = a ? (b, c: C): T => d", 'Expected ":" but found end of file');
+      err("x = a ? (b, ...c): T => d", 'Expected ":" but found end of file');
+      err("x = a ? async (b: B): T => c", 'Expected ":" but found end of file');
+
+      // An error in the body is reported in the body
+      err("x = a ? (): T => { const y = ; } : c", "Unexpected ;");
+      err("x = a ? (b: B): T => { const y = ; } : c", "Unexpected ;");
+      err("x = a ? (b, ...c): T => { const y = ; } : c", "Unexpected ;");
+      err("x = a ? async (b: B): T => { const y = ; } : c", "Unexpected ;");
+
+      // ... and a missing return type at its place
+      err("x = a ? (): => b : c", "Unexpected =>");
+      err("x = a ? (b: B): => c : d", "Unexpected =>");
+      err("x = a ? (b, ...c): Promise<T> | => d : e", "Unexpected =>");
+
+      // "async()" and "async(...b)" are also calls
+      exp("x = a ? async() : b => c", "x = a ? async() : (b) => c;\n");
+      exp("x = a ? async (): T => b : c", "x = a ? async () => b : c;\n");
+      expect(() => new Bun.Transpiler({ loader: "ts" }).transformSync("x = a ? async(...b) : c => d")).not.toThrow();
+    });
+
+    describe("a decorated class in a typed arrow function of a true branch", () => {
+      const source = head => `x = a ? ${head}: T => { class A { @d() p: Date; } return A; } : null;`;
+      const tsconfig = { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } };
+      const designType = '("design:type", typeof Date === "undefined" ? Object : Date)';
+
+      // A second parse of the body named the class in place of the type.
+      it.each(["(b: unknown)", "(b, c: C)", "(...b)", "(b, ...c)", "async (b: unknown)"])("after %s", head => {
+        const transpiler = new Bun.Transpiler({ loader: "ts", tsconfig });
+        expect(transpiler.transformSync(source(head))).toContain(designType);
+      });
+
+      // After "()" the second parse ended the process: "panic: index out of bounds".
+      it("after ()", async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const transpiler = new Bun.Transpiler({ loader: "ts", tsconfig: ${JSON.stringify(tsconfig)} });
+             console.log(transpiler.transformSync(${JSON.stringify(source("()"))}).includes(${JSON.stringify(designType)}));`,
+          ],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+      });
     });
 
     it("type-only import syntax", () => {

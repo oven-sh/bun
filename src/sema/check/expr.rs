@@ -1296,12 +1296,17 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // Every `a.b` gets here. `check_property_accessibility_at_location` looks the property
             // up again and then starts with this same test. For an object type, which is its own
-            // apparent type, it finds the same property, so the call is skipped.
+            // apparent type, it finds the same property, so the call is skipped. For a union it looks
+            // the property up in every member, and the union's property already lists what it finds.
             let is_within_reach = !is_super
-                && self.is_object_type(apparent)
                 && prop.is_some_and(|prop| {
-                    !prop.flags.intersects(PropFlags::MAY_BE_OUT_OF_REACH)
-                        && !matches!(prop.source, PropSource::Intersected(..))
+                    if self.is_object_type(apparent) {
+                        return !prop.flags.intersects(PropFlags::MAY_BE_OUT_OF_REACH)
+                            && !matches!(prop.source, PropSource::Intersected(..));
+                    }
+                    let mut flags = PropFlags::empty();
+                    super::relate::for_each_property(prop, &mut |part| flags |= part.flags);
+                    self.is_union(apparent) && !flags.intersects(PropFlags::MAY_BE_OUT_OF_REACH)
                 });
             if !is_within_reach {
                 self.check_property_accessibility(file, e, is_super, apparent, name, name_pos);

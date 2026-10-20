@@ -4735,6 +4735,45 @@ describe.concurrent("a test file's module mocks are undone when it ends, even wi
       ["--preload", "./preload.js", "./a.test.js", "./b.test.js"],
     );
   });
+
+  test("a load that never finishes doesn't block the next file if a timer is left running", async () => {
+    await expectFixturesToPass(
+      {
+        ...modules,
+        "preload.js": `
+          globalThis.asked = Promise.withResolvers();
+          let calls = 0;
+          Bun.plugin({
+            name: "does not answer the first time",
+            setup(build) {
+              build.onLoad({ filter: /slow\\.js$/ }, () => {
+                globalThis.asked.resolve();
+                if (++calls === 1) return new Promise(() => {});
+              });
+            },
+          });
+        `,
+        "a.test.js": `
+          import { test, vi } from "bun:test";
+          test("leaves an import that never settles, and a timer", async () => {
+            vi.doMock("./k.js", () => ({ x: "mock" }));
+            await import("./k.js");
+            void import("./user.js");
+            await globalThis.asked.promise;
+            setInterval(() => {}, 10);
+          }, 30_000);
+        `,
+        "b.test.js": `
+          import { expect, test } from "bun:test";
+          import { seen } from "./user.js";
+          test("the next file loads the modules", () => expect(seen).toBe("real/slow"), 30_000);
+        `,
+      },
+      2,
+      // The wait between files uses the hook timeout.
+      ["--timeout=100", "--preload", "./preload.js", "./a.test.js", "./b.test.js"],
+    );
+  });
 });
 
 describe.concurrent("a test file's module mocks are undone when it ends, for modules that import one another", () => {

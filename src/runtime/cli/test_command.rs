@@ -3088,11 +3088,19 @@ impl TestCommand {
             return;
         }
         // Wait for in-flight modules to load and be evicted, or the next file would get them with this file's mocks.
-        let loaded = vm
-            .event_loop_ref()
-            .wait_at_top_level(|| !bun_jsc::cpp::JSMock__hasModulesToEvict(global));
-        if loaded == Err(TopLevelWaitError::NothingLeft) {
-            // They can never finish loading. The next file would hang on them and take the blame.
+        // Uses the hook timeout. A leaked timer or server keeps the loop alive, so a load that never settles would
+        // block here forever.
+        let timeout = jest::Jest::runner().map_or(0, |runner| runner.default_timeout_ms);
+        let real_time = bun::TimespecMockMode::ForceRealTime;
+        let deadline = bun::Timespec::ms_from_now(real_time, timeout.into());
+        let waited = vm.event_loop_ref().wait_at_top_level(|| {
+            !bun_jsc::cpp::JSMock__hasModulesToEvict(global)
+                || (timeout != 0 && bun::Timespec::now(real_time).greater(&deadline))
+        });
+        if waited != Err(TopLevelWaitError::Stopped)
+            && bun_jsc::cpp::JSMock__hasModulesToEvict(global)
+        {
+            // The next file would hang on them and take the blame.
             drop(bun_jsc::cpp::Bun__evictUnfinishedModules(global));
         }
         // Also evict the test file: it holds its own copies of the mock's importers.

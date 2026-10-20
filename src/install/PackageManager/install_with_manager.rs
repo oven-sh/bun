@@ -1805,8 +1805,7 @@ fn reresolve_links_to_dropped_workspaces(manager: &mut PackageManager) -> bool {
     any
 }
 
-/// Queues the unresolved optional rows of the loaded packages still reached from the root, on the
-/// found lane so that a second failure stays a warning. Returns the rows queued.
+/// Queues the unresolved optional rows of the reached loaded packages on the found lane. Returns them.
 #[cold]
 #[inline(never)]
 fn retry_unresolved_optional_rows(manager: &mut PackageManager) -> Vec<DependencyID> {

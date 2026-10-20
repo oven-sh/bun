@@ -187,8 +187,7 @@ pub struct Lockfile {
     /// Packages that a row other than a weak peer (`is_weak_peer`) resolved to at load.
     pub(crate) held_at_load: DynamicBitSet,
 
-    /// A loaded optional (non-peer) row has no package (`bun_lock::may_stay_unresolved`). Set by
-    /// `mark_loaded_packages`, read by the install that retries those rows. Runtime-only.
+    /// A loaded optional (non-peer) row has no package. Set by `mark_loaded_packages`. Runtime-only.
     pub(crate) has_unresolved_optional_rows: bool,
 
     /// Packages that were appended for a dependency on one exact version. A wider range may share

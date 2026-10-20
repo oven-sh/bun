@@ -331,6 +331,56 @@ async function withTerminalRepl(
   }
 }
 
+// Runs `cmd` on a terminal of its own. An inline `terminal` option makes that terminal the
+// controlling terminal of the child, so the byte 0x03 is a SIGINT for the foreground process
+// group while the terminal is in cooked mode. `withTerminalRepl` passes an existing
+// Bun.Terminal, which is the child's stdio and nothing more.
+async function withControllingTerminal(
+  cmd: string[],
+  env: Record<string, string | undefined>,
+  fn: (helpers: {
+    proc: Bun.Subprocess;
+    write: (text: string) => void;
+    /** Resolves with what arrived up to and including the match, and forgets it. */
+    waitFor: (pattern: string | RegExp) => Promise<string>;
+  }) => Promise<void>,
+) {
+  using home = tempDir("repl-home", {});
+  const decoder = new TextDecoder();
+  let output = "";
+  let wake: (() => void) | null = null;
+  await using proc = Bun.spawn({
+    cmd,
+    env: { ...bunEnv, TERM: "xterm-256color", ...env, HOME: String(home), USERPROFILE: String(home) },
+    terminal: {
+      cols: 120,
+      rows: 40,
+      data(_terminal, chunk) {
+        output += decoder.decode(chunk, { stream: true });
+        wake?.();
+      },
+    },
+  });
+  const waitFor = async (pattern: string | RegExp) => {
+    while (true) {
+      const match = typeof pattern === "string" ? output.indexOf(pattern) : output.search(pattern);
+      if (match !== -1) {
+        const end = match + (typeof pattern === "string" ? pattern.length : pattern.exec(output)![0].length);
+        const seen = output.slice(0, end);
+        output = output.slice(end);
+        return seen;
+      }
+      if (proc.exitCode !== null || proc.signalCode !== null) {
+        throw new Error(`The process ended before ${pattern} arrived. Output:\n${stripAnsi(output)}`);
+      }
+      const { promise, resolve } = Promise.withResolvers<void>();
+      wake = resolve;
+      await Promise.race([promise, proc.exited]);
+    }
+  };
+  await fn({ proc, write: text => proc.terminal!.write(text), waitFor });
+}
+
 describe.concurrent("Bun REPL", () => {
   describe("basic evaluation", () => {
     test("prints the value of each evaluated line", async () => {
@@ -1100,6 +1150,24 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       },
       { env: { BUN_GC_TIMER_DISABLE: "1" } },
     );
+  });
+
+  // Without a terminal of its own (stdout is a pipe here) the REPL has no raw-mode prompt. The
+  // terminal on stdin stays with the line discipline, also after an await: it echoes what is
+  // typed, and Ctrl+C is a SIGINT that ends the foreground job.
+  test("a REPL with a terminal on stdin only leaves it in cooked mode after an await", async () => {
+    await withControllingTerminal(["sh", "-c", '"$0" repl | cat', bunExe()], {}, async ({ proc, write, waitFor }) => {
+      await waitFor("> ");
+      write("await ('after' + 'Await')\n");
+      await waitFor("afterAwait");
+
+      write("40 + 2\n");
+      expect(await waitFor("42")).toContain("40 + 2");
+
+      write("\x03");
+      await proc.exited;
+      expect(proc.signalCode).toBe("SIGINT");
+    });
   });
 
   test("require works in terminal", async () => {

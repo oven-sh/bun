@@ -1089,9 +1089,11 @@ impl<'a> Repl<'a> {
             unsafe { SIGINT_WAKES.set(bun_uws::Loop::get()) };
 
             // Switch to normal terminal mode (has ISIG) so Ctrl+C generates SIGINT
-            let _ = self
-                .tty_state
-                .set_mode(0, tty::Mode::Normal, tty::SetAttrWhen::Drain);
+            if self.drawing.is_some() {
+                let _ = self
+                    .tty_state
+                    .set_mode(0, tty::Mode::Normal, tty::SetAttrWhen::Drain);
+            }
 
             // Install SIGINT handler
             // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; we set
@@ -1130,10 +1132,12 @@ impl<'a> Repl<'a> {
 
         #[cfg(unix)]
         {
-            // Back to raw mode
-            let _ = self
-                .tty_state
-                .set_mode(0, tty::Mode::Raw, tty::SetAttrWhen::Drain);
+            // Back to raw mode, for a REPL that has a raw-mode prompt (`setup_terminal`)
+            if self.drawing.is_some() {
+                let _ = self
+                    .tty_state
+                    .set_mode(0, tty::Mode::Raw, tty::SetAttrWhen::Drain);
+            }
 
             // Restore default SIGINT handling
             // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; SIG_DFL

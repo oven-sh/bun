@@ -1505,7 +1505,7 @@ impl PackageFiles<'_> {
                             // `from_raw`'s release-mode transmute on an unexpected value.
                             Err(e) => match e.get_errno() {
                                 sys::Errno::EXDEV => return Err(crate::Error::NotSupported), // not same file system
-                                sys::Errno::EOPNOTSUPP => {
+                                errno if bun_errno::is_not_supported(errno) => {
                                     return Err(crate::Error::NotSupported);
                                 }
                                 sys::Errno::ENOENT => {
@@ -1558,7 +1558,7 @@ impl PackageFiles<'_> {
             Ok(()) => Ok(InstallResult::Success),
             Err(e) => match e.get_errno() {
                 sys::Errno::EXDEV => Err(crate::Error::NotSupported), // not same file system
-                sys::Errno::EOPNOTSUPP => Err(crate::Error::NotSupported),
+                errno if bun_errno::is_not_supported(errno) => Err(crate::Error::NotSupported),
                 sys::Errno::ENOENT => Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)),
                 // We first try to delete the directory
                 // But, this can happen if this package contains a node_modules folder

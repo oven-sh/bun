@@ -274,6 +274,14 @@ pub fn e_from_negated(errno: core::ffi::c_int) -> E {
     }
 }
 
+/// `ENOTSUP` or `EOPNOTSUPP`. Darwin has two values: 45 (`ENOTSUP`) is what the kernel reports
+/// when a file system lacks an operation, 102 (`EOPNOTSUPP`) is for sockets. Linux, FreeBSD and
+/// Windows have one value, where a pattern that names both is unreachable.
+#[inline]
+pub fn is_not_supported(errno: E) -> bool {
+    errno == E::ENOTSUP || errno == E::EOPNOTSUPP
+}
+
 impl SystemErrno {
     /// The kernel is not bound to this table (FUSE, `ENOTSUPP` 524): an undeclared code is `EUNKNOWN`.
     #[inline]

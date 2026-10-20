@@ -109,7 +109,7 @@ pub fn copy_file_with_state(
             E::SUCCESS => return Ok(()),
             // The source file is not a directory, symbolic link, or regular file.
             // Try with the fallback path before giving up.
-            E::EOPNOTSUPP => {}
+            e if bun_errno::is_not_supported(e) => {}
             e => return Err(crate::Error::from_code(e, Tag::copyfile)),
         }
     }

@@ -389,7 +389,7 @@ impl<'p, 's> Checker<'p, 's> {
         for (at, member) in parts.iter().enumerate() {
             let lacks_it = self.union_members.facts(*member).is_some_and(|facts| {
                 self.has_only_its_properties(*member, facts)
-                    && facts.members.resolved.prop_with_filter(name).is_none()
+                    && facts.members.resolved.prop(name).is_none()
             });
             if !lacks_it {
                 to_search.insert(at);
@@ -423,7 +423,7 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         };
         let (t, members) = (facts.apparent_type, facts.members);
-        if let Some(prop) = members.resolved.prop_with_filter(walk.name) {
+        if let Some(prop) = members.resolved.prop(walk.name) {
             let symbol = self.identity_of_own_property(facts.reduced_apparent_type, prop);
             self.add_member_property(builder, t, (symbol, prop), members.mapper);
             return;

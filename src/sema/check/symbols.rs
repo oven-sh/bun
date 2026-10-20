@@ -2312,7 +2312,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // The names in the context are distinct, so only the type's own properties can have one of them.
         for &prop in self.get_properties_of_context(context).iter() {
-            if members.resolved.prop_with_filter(prop.name).is_none() {
+            if members.resolved.prop(prop.name).is_none() {
                 let undefined = self.get_undefined_property(prop);
                 shape.props.push(undefined);
             }

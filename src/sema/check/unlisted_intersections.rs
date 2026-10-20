@@ -100,9 +100,6 @@ fn find_shared_names(constituents: &mut [Constituent]) -> usize {
         let (earlier, rest) = constituents.split_at_mut(later);
         let later = &mut rest[0];
         for earlier in earlier {
-            if !(earlier.members.resolved).may_share_a_name_with(later.members.resolved) {
-                continue;
-            }
             let (few, many) = match earlier.props().len() <= later.props().len() {
                 true => (&mut *earlier, &mut *later),
                 false => (&mut *later, &mut *earlier),
@@ -179,7 +176,7 @@ impl<'p> Unlisted<'p> {
             return Some(prop);
         }
         for constituent in &self.constituents {
-            let Some(position) = constituent.members.resolved.position_with_filter(name) else {
+            let Some(position) = constituent.members.resolved.position(name) else {
                 continue;
             };
             let copy: &'p Prop<'p> = arena.alloc(constituent.copy_of_property(position, arena));

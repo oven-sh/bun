@@ -120,8 +120,6 @@ impl<P: std::ops::DerefMut<Target = [u32]>> Names<P> {
 #[repr(C, align(64))]
 pub struct Resolved<'s> {
     names: Names<ArenaBox<'s, [u32]>>,
-    /// A 256-bit filter of the property names. A name whose bit is clear isn't one of them.
-    name_filter: [u64; 4],
     pub shape: Listed<'s>,
     /// `isWeakType` of an object type with these members: it has properties, all of them optional, and nothing else.
     is_weak: bool,
@@ -136,7 +134,6 @@ impl crate::types::Follow for Resolved<'_> {
         let Resolved {
             shape,
             names: _,
-            name_filter: _,
             is_weak: _,
             has_distinct_names: _,
         } = self;
@@ -155,7 +152,6 @@ impl<'s> Resolved<'s> {
         let is_weak = Resolved::is_weak_shape(&shape);
         Resolved {
             names,
-            name_filter: Resolved::name_filter_of(&shape.props),
             is_weak,
             has_distinct_names,
             shape,
@@ -185,27 +181,9 @@ impl<'s> Resolved<'s> {
         self.is_weak
     }
 
-    fn name_filter_of(props: &[Prop]) -> [u64; 4] {
-        let mut filter = [0; 4];
-        for prop in props {
-            filter[prop.name.0 as usize / 64 % 4] |= 1 << (prop.name.0 % 64);
-        }
-        filter
-    }
-
-    /// `false` means the two definitely have no property name in common.
-    #[inline]
-    fn may_share_a_name_with(&self, other: &Resolved) -> bool {
-        let both = self.name_filter.iter().zip(&other.name_filter);
-        both.fold(0, |any, (a, b)| any | a & b) != 0
-    }
-
     /// True if the two have a property name in common. Looks up the names of the one with fewer properties in the
     /// other.
     fn shares_a_name_with(&self, other: &Self) -> bool {
-        if !self.may_share_a_name_with(other) {
-            return false;
-        }
         let (few, many) = match self.shape.props.len() < other.shape.props.len() {
             true => (self, other),
             false => (other, self),
@@ -217,23 +195,6 @@ impl<'s> Resolved<'s> {
     #[inline]
     pub fn prop(&self, name: Atom) -> Option<&Prop<'s>> {
         self.position(name).map(|at| &self.shape.props[at])
-    }
-
-    /// `prop` for callers whose lookups mostly miss. Checks the filter first.
-    #[inline]
-    pub(super) fn prop_with_filter(&self, name: Atom) -> Option<&Prop<'s>> {
-        self.position_with_filter(name)
-            .map(|at| &self.shape.props[at])
-    }
-
-    /// The same for `position`.
-    #[inline]
-    fn position_with_filter(&self, name: Atom) -> Option<usize> {
-        let n = name.0 as usize;
-        if self.name_filter[n / 64 % 4] & 1 << (n % 64) == 0 {
-            return None;
-        }
-        self.position(name)
     }
 
     #[inline]
@@ -6282,9 +6243,6 @@ impl<'p, 's> Checker<'p, 's> {
     ) {
         let props = &member.shape().props;
         for other in others {
-            if !member.resolved.may_share_a_name_with(other.resolved) {
-                continue;
-            }
             let other_props = &other.shape().props;
             if other_props.len() < props.len() {
                 for prop in other_props {

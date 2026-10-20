@@ -236,9 +236,11 @@ describe("expect()", () => {
       done = true;
     }, 10);
     // Each wait ends inside its immediate's checkpoint, and the next one starts
-    // before the loop gets a turn. The timer must still fire in between.
+    // before the loop gets a turn. The timer must still fire in between. The
+    // clock bounds the loop: when timers starve, the test's own timeout starves too.
+    const start = performance.now();
     try {
-      for (let i = 0; i < 500 && !done; i++) {
+      while (!done && performance.now() - start < 5000) {
         await expect(new Promise(resolve => setImmediate(resolve))).resolves.toBeUndefined();
       }
     } finally {

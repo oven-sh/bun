@@ -438,7 +438,8 @@ test.concurrent("a matcher wait that is the first await of a file returns when a
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
-    env: bunEnv,
+    // Without the GC timer, nothing but the sentinel wakes a parked poll.
+    env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain(" 1 pass");

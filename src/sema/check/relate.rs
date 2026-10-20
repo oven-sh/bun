@@ -14,7 +14,6 @@ use super::related::FileSpan;
 use super::shape::{IgnoreReturnTypes, IgnoreThisTypes, PartialMatch};
 use super::shortcuts::task_fact;
 use super::*;
-use crate::util::SharedSort;
 use crate::util::{FxHashSet, FxHasher, Window, Windowed};
 use smallvec::SmallVec;
 use std::hash::Hasher;
@@ -6702,24 +6701,7 @@ impl<'p, 's> Checker<'p, 's> {
                 ..
             }
         );
-        // `getNamedMembers`: members without a declaration (a tuple's elements and length) come
-        // last, sorted by name. The order decides which one is reported.
-        let mut in_order: Vec<&Prop> = Vec::new();
-        if REPORT && matches!(td, TypeData::Tuple { .. }) {
-            in_order.extend(&tm.shape().props);
-            let atoms = &self.atoms();
-            let sort_key = |tp: &Prop| match tp.source {
-                PropSource::Type(_) => (true, atoms.bytes(tp.name)),
-                _ => (false, &[][..]),
-            };
-            in_order.shared_sort_by(|a, b| sort_key(a).cmp(&sort_key(b)));
-        }
-        for (i, tp) in tm.shape().props.iter().enumerate() {
-            let tp = if REPORT {
-                in_order.get(i).copied().unwrap_or(tp)
-            } else {
-                tp
-            };
+        for tp in &tm.shape().props {
             if excluded.contains(&tp.name)
                 || optionals_only && !tp.flags.contains(PropFlags::OPTIONAL)
                 || target_is_class && tp.name == known::prototype

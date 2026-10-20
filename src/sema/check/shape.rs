@@ -4713,7 +4713,12 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Ref { target, .. } => Some((target, this)),
             _ => None,
         };
+        let own = b.shape.props.len();
         self.inherit(&mut b, array, heir);
+        // `getNamedMembers`: members without a declaration come last, sorted by name. The inherited ones are in order.
+        let atoms = &self.atoms();
+        b.shape.props[..own].shared_sort_unstable_by_key(|prop| atoms.bytes(prop.name));
+        b.shape.props.rotate_left(own);
         b.shape
     }
 

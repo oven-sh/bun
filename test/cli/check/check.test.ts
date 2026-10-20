@@ -15736,6 +15736,70 @@ export const k2 = three({ f: [1] }, { f: ["a"] }, { f: [] });
       expect(exitCode).toBe(1);
     });
 
+    // From an intersection, tsc infers to a tuple property by property. The members of `Array` come first, so `pop()`
+    // provides the first candidate, and the elements come last, sorted by name.
+    test("infers from an intersection to a tuple in the order of the tuple's properties", async () => {
+      using dir = project({
+        "a.ts": `interface Sink<in T> { put(v: T): void }
+type AO<T> = { p: T; q?: T };
+declare function f1<T>(x: (a: [T, T[]] & { brand: 1 }) => void): [T];
+declare const s1: (a: [number, string[]] & { brand: 1 }) => void;
+export const r1: never = f1(s1);
+declare function f2<T>(x: Sink<[T, string] & { m(a: T): T }>): [T];
+declare const s2: Sink<["a", boolean] & { m(a: null): string }>;
+export const r2: never = f2(s2);
+declare function f3<V>(x: (a: [V, AO<V>] & AO<V>) => V): [V];
+declare const s3: (a: [string, AO<number>] & AO<number>) => string;
+export const r3: never = f3(s3);
+declare function f4<T>(x: ((...a: any[]) => void) & [1, { [k: string]: T }]): [T];
+declare const s4: ((...a: any[]) => void) & [{ x: 1; y: "s" }, { [k: string]: string }];
+export const r4: never = f4(s4);
+// "10" comes before "2".
+declare const swapped: [0, 1, 10, 3, 4, 5, 6, 7, 8, 9, 2, 11] & { brand: 1 };
+export const r5: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] = swapped;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(5,14): error TS2322: Type '[string]' is not assignable to type 'never'.
+        a.ts(5,29): error TS2345: Argument of type '(a: [number, string[]] & { brand: 1; }) => void' is not assignable to parameter of type '(a: [string, string[]] & { brand: 1; }) => void'.
+          Types of parameters 'a' and 'a' are incompatible.
+            Type '[string, string[]] & { brand: 1; }' is not assignable to type '[number, string[]] & { brand: 1; }'.
+              Type '[string, string[]] & { brand: 1; }' is not assignable to type '[number, string[]]'.
+                The types returned by 'pop()' are incompatible between these types.
+                  Type 'string | string[] | undefined' is not assignable to type 'number | string[] | undefined'.
+                    Type 'string' is not assignable to type 'number | string[] | undefined'.
+        a.ts(8,14): error TS2322: Type '[boolean]' is not assignable to type 'never'.
+        a.ts(8,29): error TS2345: Argument of type 'Sink<["a", boolean] & { m(a: null): string; }>' is not assignable to parameter of type 'Sink<[boolean, string] & { m(a: boolean): boolean; }>'.
+          Type '[boolean, string] & { m(a: boolean): boolean; }' is not assignable to type '["a", boolean] & { m(a: null): string; }'.
+            Type '[boolean, string] & { m(a: boolean): boolean; }' is not assignable to type '["a", boolean]'.
+              The types returned by 'pop()' are incompatible between these types.
+                Type 'string | boolean | undefined' is not assignable to type '"a" | boolean | undefined'.
+                  Type 'string' is not assignable to type '"a" | boolean | undefined'.
+        a.ts(11,14): error TS2322: Type '[number]' is not assignable to type 'never'.
+        a.ts(11,29): error TS2345: Argument of type '(a: [string, AO<number>] & AO<number>) => string' is not assignable to parameter of type '(a: [number, AO<number>] & AO<number>) => number'.
+          Types of parameters 'a' and 'a' are incompatible.
+            Type '[number, AO<number>] & AO<number>' is not assignable to type '[string, AO<number>] & AO<number>'.
+              Type '[number, AO<number>] & AO<number>' is not assignable to type '[string, AO<number>]'.
+                The types returned by 'pop()' are incompatible between these types.
+                  Type 'number | AO<number> | undefined' is not assignable to type 'string | AO<number> | undefined'.
+                    Type 'number' is not assignable to type 'string | AO<number> | undefined'.
+        a.ts(14,14): error TS2322: Type '["s" | 1]' is not assignable to type 'never'.
+        a.ts(14,29): error TS2345: Argument of type '((...a: any[]) => void) & [{ x: 1; y: "s"; }, { [k: string]: string; }]' is not assignable to parameter of type '((...a: any[]) => void) & [1, { [k: string]: "s" | 1; }]'.
+          Type '((...a: any[]) => void) & [{ x: 1; y: "s"; }, { [k: string]: string; }]' is not assignable to type '[1, { [k: string]: "s" | 1; }]'.
+            The types returned by 'pop()' are incompatible between these types.
+              Type '{ x: 1; y: "s"; } | { [k: string]: string; } | undefined' is not assignable to type '1 | { [k: string]: "s" | 1; } | undefined'.
+                Type '{ [k: string]: string; }' is not assignable to type '1 | { [k: string]: "s" | 1; } | undefined'.
+                  Type '{ [k: string]: string; }' is not assignable to type '{ [k: string]: "s" | 1; }'.
+                    'string' index signatures are incompatible.
+                      Type 'string' is not assignable to type '"s" | 1'.
+        a.ts(17,14): error TS2322: Type '[0, 1, 10, 3, 4, 5, 6, 7, 8, 9, 2, 11] & { brand: 1; }' is not assignable to type '[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]'.
+          Types of property '10' are incompatible.
+            Type '2' is not assignable to type '10'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS2345 for a function argument against an index signature inferred from `keyof T`", async () => {
       using dir = project({
         "a.ts": `declare function m<T>(a: T, b: keyof T): T;

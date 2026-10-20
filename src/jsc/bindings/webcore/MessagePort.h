@@ -108,7 +108,9 @@ public:
     JSValue tryTakeMessage(JSGlobalObject*, bool& hadMessage);
 
     void jsRef(JSGlobalObject*);
-    void jsUnref(JSGlobalObject*);
+    void jsUnref();
+    // The onmessage= setter. Only a callable handler counts as a 'message' listener (node counts functions only).
+    void setOnmessage(JSValue, JSC::JSObject& wrapper, JSGlobalObject*);
     // Report the actual loop-ref state (matches Node's uv_has_ref), not the intent flag.
     bool jsHasRef() { return m_hasRef || m_listenerLoopRefActive; }
 
@@ -153,7 +155,9 @@ private:
     // Read from the GC thread: a port whose only listener is 'close' must survive
     // until that event is delivered, or the peer's close is lost to a collection.
     std::atomic<bool> m_hasCloseEventListener { false };
+    // jsRef() (.ref() or a callable .onmessage=) holds a self-ref plus an event-loop ref; releaseJsRef() drops both.
     bool m_hasRef { false };
+    void releaseJsRef();
 
     // Whether .ref()/.unref() want this port to keep the loop alive (default refd);
     // independent of m_hasRef (the .onmessage=/.ref() keepalive).
@@ -163,7 +167,10 @@ private:
     bool m_listenerLoopRefActive { false };
 
     uint32_t m_messageEventCount { 0 };
+    // setOnmessage() is installing or clearing the attribute listener; the hook must not count it.
+    bool m_settingOnmessage { false };
     static void onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind);
+    void setMessageListenerCount(uint32_t);
     // Reconciles the listener event-loop ref with (m_isRefd && m_messageEventCount > 0).
     void updateListenerEventLoopRef();
 };

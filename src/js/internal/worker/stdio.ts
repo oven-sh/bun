@@ -21,11 +21,11 @@ function makePortReadable(port: MessagePort, incrementsPortRef: boolean) {
   function onMessage(event: { data: Uint8Array[] | null }) {
     const payload = event.data;
     if (payload === null) {
+      // The listener (and with it the port's ref) comes off in 'close', once the buffered data is consumed.
       if (ended === false) {
         ended = true;
         stream.push(null);
       }
-      port.removeEventListener("message", onMessage);
     } else if (ended === false) {
       for (let i = 0; i < payload.length; i++) {
         stream.push(Buffer.from(payload[i]));

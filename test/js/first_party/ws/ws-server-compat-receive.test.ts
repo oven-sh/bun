@@ -115,11 +115,18 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
     // The server is shared, so the client's port picks its 'connection'. An upgrade that a test abandoned when it
     // timed out can arrive during a later test.
     const connection = Promise.withResolvers<[WebSocket, IncomingMessage]>();
-    server.wss.on("connection", function onConnection(ws: WebSocket, req: IncomingMessage) {
+    const onConnection = (ws: WebSocket, req: IncomingMessage) => {
       const port = client.socket.localPort;
       if (!port || req.socket.remotePort !== port) return;
       server.wss.off("connection", onConnection);
       connection.resolve([ws, req]);
+    };
+    server.wss.on("connection", onConnection);
+    // No 'connection' follows a response that isn't a 101. Fail then, and not at the test's timeout.
+    client.response.then(({ status }) => {
+      if (status.startsWith("HTTP/1.1 101 ")) return;
+      server.wss.off("connection", onConnection);
+      connection.reject(new Error(`upgrade failed: ${status}`));
     });
     const [ws, req] = await connection.promise;
     const events = recordEvents(ws);

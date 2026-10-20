@@ -99,16 +99,13 @@ pub(super) mod task_fact {
     pub(in super::super) const GENERIC_OBJECT_FLAGS_COMPUTED: u32 = 1 << 2;
     pub(in super::super) const IS_GENERIC_OBJECT_TYPE: u32 = 1 << 3;
     pub(in super::super) const IS_GENERIC_INDEX_TYPE: u32 = 1 << 4;
-    /// Set on a conditional type's extends type. Two instantiations of one declaration that both have this extends type
-    /// have been related, so the inference between their extends types has already run.
-    pub(in super::super) const HAS_INFERRED_BETWEEN_SAME_EXTENDS: u32 = 1 << 5;
     /// See `union_property`. Every member of the union has been visited for a property. Facts are stored starting
     /// with the second walk. Storing them costs about as much as one walk, and many unions only ever have one
     /// property looked up.
-    pub(in super::super) const IS_WALKED_UNION: u32 = 1 << 6;
+    pub(in super::super) const IS_WALKED_UNION: u32 = 1 << 5;
     /// See `union_property`. Set on an intersection that is stored as a `MemberFacts::apparent_type` or a
     /// `MemberFacts::reduced_apparent_type`.
-    pub(in super::super) const IS_IN_MEMBER_FACTS: u32 = 1 << 7;
+    pub(in super::super) const IS_IN_MEMBER_FACTS: u32 = 1 << 6;
 }
 
 /// A set of `task_fact` bits for each type.

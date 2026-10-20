@@ -5465,17 +5465,8 @@ impl<'p, 's> Checker<'p, 's> {
                     let mut mapper = MapperId::IDENTITY;
                     // The inference also runs when both sides have the same extends type. It requests the variances of
                     // the generic types in it, and in a cycle of variance computations their values depend on which is
-                    // requested first. FOR SPEED: skip the inference once it has run with all of those variances
-                    // measured. Both sides come from one declaration, so they have the same `infer` type parameters and
-                    // each one in the extends type maps to itself, so repeating the inference changes nothing.
-                    let maps_to_itself = !source_params.is_empty()
-                        && source_extends == target_extends
-                        && !(self.params_mentioned_in(source_extends, &source_params))
-                            .contains(&false);
-                    let fact = task_fact::HAS_INFERRED_BETWEEN_SAME_EXTENDS;
-                    let is_repeated = maps_to_itself && self.task_facts.has(target_extends, fact);
-                    if !source_params.is_empty() && !is_repeated {
-                        let reads = self.in_progress_variance_reads;
+                    // requested first.
+                    if !source_params.is_empty() {
                         let outer_mapper = self.cond_origin(source).2;
                         let inferred = self.infer_from_types_comparing(
                             &source_params,
@@ -5486,9 +5477,6 @@ impl<'p, 's> Checker<'p, 's> {
                         );
                         mapper = self.mapper_from(&source_params, &inferred);
                         source_extends = self.instantiate(source_extends, mapper);
-                        if maps_to_itself && self.in_progress_variance_reads == reads {
-                            self.task_facts.add(target_extends, fact);
-                        }
                     }
                     if self.is_identical(source_extends, target_extends) {
                         let (sc, tc) = (self.cond_check(source), self.cond_check(target));

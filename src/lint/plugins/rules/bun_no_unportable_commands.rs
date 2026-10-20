@@ -1,14 +1,14 @@
-use crate::bun::{LaunchOptions, Starter, is_listed, launches, list_option, written_start};
+use crate::bun::{LaunchOptions, Starter, is_listed, launches, list_option, static_prefix};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint_oxlint::ast_util::callee_name;
 use rustc_hash::FxHashSet;
 
-/// Disallow starting a process with a command that is written out and does not behave alike on every system.
+/// Disallow starting a process with a hard-coded command that doesn't work the same on every system.
 ///
-/// `scripts`: what package managers install on Windows as `.cmd` files: see "Spawning .bat and .cmd files on Windows"
-/// in the documentation of Node.js. `posixOnly`: utilities of POSIX.1-2017 (XCU, chapter 4) that Windows does not have.
+/// `scripts`: commands that package managers install on Windows as `.cmd` files. See "Spawning .bat and .cmd files on
+/// Windows" in the Node.js docs. `posixOnly`: POSIX.1-2017 utilities (XCU, chapter 4) that Windows doesn't have.
 pub struct NoUnportableCommands {
     scripts: Box<[Box<[u8]>]>,
     posix_only: Box<[Box<[u8]>]>,
@@ -35,7 +35,7 @@ const POSIX_ONLY_UTILITIES: [&str; 33] = [
 ];
 const SHELL_OPERATORS: [&str; 8] = ["&&", "||", "|", ";", ">", "<", "$(", "`"];
 
-/// The expression that says which program is started.
+/// Returns the expression that specifies the program to start.
 fn command_of<'a>(call: Call<'a>, starter: Starter, options: &LaunchOptions<'a>) -> Option<Expr<'a>> {
     let first = call.args().first()?;
     if starter != Starter::Bun {
@@ -48,7 +48,7 @@ fn command_of<'a>(call: Call<'a>, starter: Starter, options: &LaunchOptions<'a>)
     }
 }
 
-/// Whether `text` has the word `ps` with options after it: `ps -ef`, `ps aux`.
+/// True if `text` contains the word `ps` followed by options: `ps -ef`, `ps aux`.
 fn has_ps_with_options(mut text: &[u8]) -> bool {
     while let Some(at) = strings::index_of(text, b"ps ") {
         let before = at.checked_sub(1).and_then(|it| text.get(it));
@@ -67,14 +67,14 @@ fn has_ps_with_options(mut text: &[u8]) -> bool {
 }
 
 impl NoUnportableCommands {
-    /// Reports what is wrong with a call that starts a process, and returns the command then.
+    /// Reports a problem with a call that starts a process. Returns the command if it reported one.
     fn check_launch<'a>(&self, call: Call<'a>, starter: Starter, cx: &Cx<'a, Self>) -> Option<Expr<'a>> {
         let options = LaunchOptions::of(call, starter);
         let command = command_of(call, starter, &options)?;
-        let (text, is_whole) = written_start(command)?;
+        let (text, is_whole) = static_prefix(command)?;
         let has_shell_option = options.get("shell").is_some_and(|it| it.tag() != ExprTag::False);
         let uses_shell = starter == Starter::Shell || has_shell_option;
-        // A shell takes the first word for the program.
+        // A shell runs the first word as the program.
         let end = if uses_shell { strings::index_of_any(text, b" \t\n") } else { None };
         if end.is_none() && !is_whole {
             return None;

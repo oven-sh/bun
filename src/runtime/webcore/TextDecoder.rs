@@ -251,7 +251,7 @@ impl TextDecoder {
                     unsafe { core::slice::from_raw_parts_mut(units.as_mut_ptr(), out_length) };
                 let out = strings::copy_cp1252_into_utf16(buf, buffer_slice);
                 // SAFETY: the copy above initialized `out.written` (≤ `out_length`) units.
-                unsafe { units.set_len(out.written as usize) };
+                unsafe { units.set_len(out.written) };
                 heap.create_utf16_string_from_vec(units)
             }
             EncodingLabel::Utf8 => {

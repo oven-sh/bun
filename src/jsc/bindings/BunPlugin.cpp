@@ -30,7 +30,6 @@
 #include <JavaScriptCore/JavaScript.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/RegExpObject.h>
-#include <JavaScriptCore/RegularExpression.h>
 #include <JavaScriptCore/SourceOrigin.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/SubspaceInlines.h>
@@ -52,13 +51,14 @@ namespace Zig {
 
 static void evictModulesAndTheirImporters(Zig::GlobalObject*, Vector<String>&& modules);
 
+static bool isValidNamespaceCharacter(char16_t c)
+{
+    return isASCIIAlphanumeric(c) || c == '_' || c == '-' || c == '/' || c == '@';
+}
+
 static bool isValidNamespaceString(String& namespaceString)
 {
-    static JSC::Yarr::RegularExpression* namespaceRegex = nullptr;
-    if (!namespaceRegex) {
-        namespaceRegex = new JSC::Yarr::RegularExpression("^([/@a-zA-Z0-9_\\-]+)$"_s);
-    }
-    return namespaceRegex->match(namespaceString) > -1;
+    return !namespaceString.isEmpty() && namespaceString.containsOnly<isValidNamespaceCharacter>();
 }
 
 static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin)
@@ -393,6 +393,15 @@ JSC::JSObject* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, String&
     }
 
     return nullptr;
+}
+
+// fileSystemPath() returns null if a percent escape in the specifier doesn't decode to UTF-8. Retry with every "%" escaped.
+static String relativeSpecifierToFileSystemPath(const URL& base, const String& specifier)
+{
+    String path = URL(base, specifier).fileSystemPath();
+    if (path.isNull()) [[unlikely]]
+        path = URL(base, makeStringByReplacingAll(specifier, "%"_s, "%25"_s)).fileSystemPath();
+    return path;
 }
 
 void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mockObject)
@@ -2608,7 +2617,7 @@ __attribute__((minsize)) static bool resolveModuleMockSpecifier(Zig::GlobalObjec
     auto relativeURL = URL(url, specifier);
     if (!relativeURL.isValid())
         return false;
-    specifier = relativeURL.protocolIsFile() ? relativeURL.fileSystemPath() : relativeURL.string();
+    specifier = relativeURL.protocolIsFile() ? relativeSpecifierToFileSystemPath(url, specifier) : relativeURL.string();
     specifierString = jsString(vm, specifier);
     return true;
 }
@@ -3806,7 +3815,8 @@ JSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, const String& 
     if (matches.callbacks.isEmpty())
         return {};
 
-    matches.path = jsString(vm, path);
+    // `key` can borrow the caller's bytes, and `args.path` outlives this call, so give it a copy.
+    matches.path = jsString(vm, path.isolatedCopy());
     RELEASE_AND_RETURN(scope, ask(globalObject, matches, jsUndefined()));
 }
 
@@ -3847,13 +3857,16 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
 {
     ASSERT(virtualModules);
 
+    if (path.isNull()) [[unlikely]]
+        return std::nullopt;
+
     if (this->mustDoExpensiveRelativeLookup) {
         String joinedPath = path;
 
         if (path.startsWith("./"_s) || path.startsWith(".."_s)) {
             auto url = WTF::URL::fileURLWithFileSystemPath(from);
             ASSERT(url.isValid());
-            joinedPath = URL(url, path).fileSystemPath();
+            joinedPath = relativeSpecifierToFileSystemPath(url, path);
         }
 
         return virtualModules->contains(joinedPath) ? std::optional<String> { joinedPath } : std::nullopt;

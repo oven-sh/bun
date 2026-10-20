@@ -1119,6 +1119,25 @@ describe("only block", () => {
       expect({ xml: bunfig.xml, exitCode: bunfig.exitCode }).toEqual({ xml: null, exitCode: 1 });
     });
   });
+
+  it("prints a write error when the outfile is longer than the path buffer", async () => {
+    // A bunfig value can be longer than the path buffer on every platform.
+    const outfile = Buffer.alloc(100_000, "j").toString();
+    await using tmpDir = tempDir("junit-outfile-too-long", {
+      "package.json": "{}",
+      "bunfig.toml": `[test.reporter]\njunit = "${outfile}"\n`,
+      "passing.test.js": `
+        import { test } from "bun:test";
+        test("passes", () => {});
+      `,
+    });
+    await using proc = spawn([bunExe(), "test"], { cwd: tmpDir, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain(" 1 pass");
+    expect(stderr).toContain(`Failed to write JUnit report to ${outfile}`);
+    expect(exitCode).toBe(0);
+  });
 });
 
 function filterJunitXmlOutput(xmlContent) {

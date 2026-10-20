@@ -26,8 +26,10 @@ namespace NodeVM {
 
 RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC::SourceCodeType, const JSC::SourceCode& source);
 bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedData);
-// Copies `bytes`: a decoded code block reads the payload long after decodeCodeBlock() returns.
-Ref<JSC::CachedBytecode> createOwnedCachedBytecode(std::span<const uint8_t> bytes);
+JSC::JSUint8Array* createCachedDataBuffer(JSGlobalObject* globalObject, std::span<const uint8_t> bytecode);
+// Returns null unless `cachedData` is intact output from createCachedDataBuffer().
+// Copies the bytecode because a decoded code block keeps reading it after decodeCodeBlock() returns.
+RefPtr<JSC::CachedBytecode> unwrapCachedData(std::span<const uint8_t> cachedData);
 String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset);
 JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::SourceCode& source);
 bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Exception> exception, ThrowScope& throwScope);
@@ -78,6 +80,7 @@ public:
     JSGlobalObject* parsingContext = nullptr;
     JSValue contextExtensions {};
     bool produceCachedData = false;
+    bool cachedDataProvided = false;
 
     using BaseVMOptions::BaseVMOptions;
 

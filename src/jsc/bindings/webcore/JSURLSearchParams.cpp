@@ -231,7 +231,8 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_inspectCustom, (JSGl
         for (size_t i = 0; i < names.size(); ++i) {
             JSValue v = options->get(lexicalGlobalObject, names[i]);
             RETURN_IF_EXCEPTION(scope, {});
-            opts->putDirect(vm, names[i], v, 0);
+            opts->putDirectMayBeIndex(lexicalGlobalObject, names[i], v);
+            RETURN_IF_EXCEPTION(scope, {});
         }
         if (!depthValue.isUndefinedOrNull())
             childDepth = jsNumber(depth - 1);

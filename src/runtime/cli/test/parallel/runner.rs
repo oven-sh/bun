@@ -174,7 +174,7 @@ pub(crate) fn run_as_coordinator(
         files: sorted,
         costs,
         // SAFETY: FileSystem singleton is initialized before any test runner code runs.
-        cwd: FileSystem::get().top_level_dir,
+        cwd: FileSystem::get().top_level_dir(),
         argv,
         envps,
         // Coordinator borrows the workers slice while each Worker holds a raw
@@ -757,13 +757,13 @@ pub(crate) fn run_as_worker(
     // sees repeat_bufs / coverage_file.
     vm_ref.run_with_api_lock(|| {
         while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done.get() {
-            // SAFETY: caller guarantees `vm` is a valid live VM pointer; its event_loop pointer is valid while it lives.
-            unsafe { (*(*vm).event_loop()).tick() };
+            // SAFETY: event_loop pointer is valid while vm lives.
+            unsafe { (*vm_ref.event_loop()).tick() };
             if !wloop.cmds.channel.has_pending_writes() || wloop.cmds.channel.done.get() {
                 break;
             }
-            // SAFETY: as above.
-            unsafe { (*(*vm).event_loop()).auto_tick() };
+            // SAFETY: event_loop pointer is valid while vm lives.
+            unsafe { (*vm_ref.event_loop()).auto_tick() };
         }
     });
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown

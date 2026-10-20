@@ -97,6 +97,7 @@ impl Resolver<'_> {
         let resolution = ESModule {
             conditions: &self.opts.conditions.import,
             debug_logs: None,
+            stack_check: bun_core::StackCheck::init(),
         }
         .resolve_imports(&specifier, &package_json.imports.as_ref()?.root);
         matches!(

@@ -8,7 +8,7 @@ use bun_lint_oxlint::text::contains_name;
 
 /// Disallow usage of invalid attributes
 pub struct NoInvalidHtmlAttribute {
-    /// The schema admits no other attribute.
+    /// `rel` is the only attribute the schema allows.
     checks_rel: bool,
 }
 
@@ -52,7 +52,7 @@ const AREA: u8 = 2;
 const A: u8 = 4;
 const FORM: u8 = 8;
 
-/// upstream's `rel`: each value with the elements that it is valid on.
+/// upstream's `rel`: each value with the elements it's valid on.
 const VALID_VALUES: [(&[u8], u8); 30] = [
     (b"alternate", LINK | AREA | A),
     (b"apple-touch-icon", LINK),
@@ -91,18 +91,18 @@ fn allowed_tags(value: &[u8]) -> Option<u8> {
     VALID_VALUES.iter().find(|it| it.0 == value).map(|it| it.1)
 }
 
-/// upstream's `HTML_ELEMENTS`: it has `portal`, and lacks eight of the list that jsx-a11y goes by.
+/// upstream's `HTML_ELEMENTS`. It has `portal`, and lacks eight entries of the list jsx-a11y uses.
 fn is_html_element(name: &[u8]) -> bool {
-    const ONLY_THERE: [&[u8]; 8] =
+    const MISSING_UPSTREAM: [&[u8]; 8] =
         [b"command", b"element", b"isindex", b"listing", b"multicol", b"nextid", b"rbc", b"search"];
-    name == b"portal" || (contains_name(&HTML_TAG, name) && !ONLY_THERE.contains(&name))
+    name == b"portal" || (contains_name(&HTML_TAG, name) && !MISSING_UPSTREAM.contains(&name))
 }
 
-/// An element of upstream's `COMPONENT_ATTRIBUTE_MAP.get("rel")`.
+/// One element of upstream's `COMPONENT_ATTRIBUTE_MAP.get("rel")`.
 #[derive(Copy, Clone)]
 struct Element<'a> {
     name: &'a [u8],
-    /// What it is in `VALID_VALUES`.
+    /// Its bit in `VALID_VALUES`.
     bit: u8,
 }
 
@@ -119,16 +119,16 @@ impl<'a> Element<'a> {
     }
 }
 
-/// A match of `/\s+/g` or of `/\S+/g` in the value of a string.
+/// A match of `/\s+/g` or `/\S+/g` in a string's value.
 #[derive(Copy, Clone)]
 struct Part<'a> {
     value: &'a [u8],
-    /// Where in the value of the string it starts.
+    /// Its start offset in the string's value.
     start: usize,
     is_space: bool,
 }
 
-/// upstream's `splitIntoRangedParts`, for both expressions at once.
+/// upstream's `splitIntoRangedParts`, for both regular expressions at once.
 fn split_into_parts(value: &[u8]) -> impl Iterator<Item = Part<'_>> {
     let mut at = 0;
     std::iter::from_fn(move || {
@@ -145,34 +145,34 @@ fn split_into_parts(value: &[u8]) -> impl Iterator<Item = Part<'_>> {
     })
 }
 
-/// Where upstream takes a part of the value of a string to be in the file: as far behind the opening quote as it is
-/// in the VALUE, in UTF-16. Behind a `\n` or an `&amp;` that is too far to the left.
+/// Maps a part of a string's value to the source range that upstream assumes for it, which is as many UTF-16 units
+/// after the opening quote as in the VALUE. After a `\n` escape or an `&amp;` that's too far to the left.
 struct Ranges<'a> {
     value: &'a [u8],
-    /// The file from behind the opening quote.
-    written: &'a [u8],
-    written_start: u32,
-    /// What was asked for last, and where that is in `written`.
+    /// The source text after the opening quote.
+    source: &'a [u8],
+    source_start: u32,
+    /// The last offset requested, and the matching offset in `source`.
     value_at: usize,
-    written_at: usize,
+    source_at: usize,
 }
 
 impl<'a> Ranges<'a> {
     fn new(node: Expr<'a>, value: &'a [u8]) -> Ranges<'a> {
-        let written = node.text().get(1..).unwrap_or_default();
-        Ranges { value, written, written_start: node.span().start + 1, value_at: 0, written_at: 0 }
+        let source = node.text().get(1..).unwrap_or_default();
+        Ranges { value, source, source_start: node.span().start + 1, value_at: 0, source_at: 0 }
     }
 
-    /// `at`: in the value, and not before what was asked for last.
+    /// `at`: an offset in the value, not before the last one requested.
     fn offset(&mut self, at: usize) -> u32 {
         let units = strings::wtf8_len_utf16(self.value.get(self.value_at..at).unwrap_or_default());
-        let rest = self.written.get(self.written_at..).unwrap_or_default();
-        self.written_at += strings::wtf8_offset_of_utf16_index(rest, units);
+        let rest = self.source.get(self.source_at..).unwrap_or_default();
+        self.source_at += strings::wtf8_offset_of_utf16_index(rest, units);
         self.value_at = at;
-        self.written_start + self.written_at as u32
+        self.source_start + self.source_at as u32
     }
 
-    fn of(&mut self, part: Part<'_>) -> Span {
+    fn span_of(&mut self, part: Part<'_>) -> Span {
         let start = self.offset(part.start);
         Span::new(start, self.offset(part.start + part.value.len()))
     }
@@ -190,7 +190,7 @@ impl Rule for NoInvalidHtmlAttribute {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let on = On::new().exprs(&[ExprTag::Jsx]);
-        // `React.#createElement()` is a call of it too.
+        // `React.#createElement()` counts as such a call too.
         let mentions_create_element = file.mentions("createElement") || file.mentions("#createElement");
         if file.mentions("React") && mentions_create_element { on.method_calls(&["createElement"]) } else { on }
     }
@@ -237,7 +237,7 @@ fn check_attribute<'a>(node: Prop<'a>, parent_node_name: &'a [u8], cx: &Cx<'a, N
         check_literal_value_node(value, node, element, cx);
         return;
     }
-    // With an element as the value upstream throws.
+    // Upstream throws if the value is an element.
     if let Some(container) = value.jsx_container_span()
         && (value.tag() == ExprTag::Object || value.is_ident("undefined"))
     {
@@ -261,7 +261,7 @@ fn check_literal_value_node<'a>(
         return;
     };
     if strings::is_all_js_whitespace(value) {
-        // `node.parent`: of `{""}` the braces.
+        // `node.parent`, which for `{""}` is the braces.
         cx.report(node, NO_EMPTY).data("attributeName", REL).suggest_with(
             SUGGEST_REMOVE_EMPTY,
             &ATTRIBUTE_NAME,
@@ -283,11 +283,12 @@ fn check_literal_value_node<'a>(
         report.data("attributeName", REL).data("reportingValue", reporting_value).suggest_with(
             SUGGEST_REMOVE_INVALID,
             &[("attributeName", REL), ("reportingValue", reporting_value)],
-            |fixer| fixer.remove(ranges.of(single_part)),
+            |fixer| fixer.remove(ranges.span_of(single_part)),
         );
     }
 
-    // Only at the end of a part is what `/(?=(\b\S+\s*\S+))/g` captures `shortcut`, or starts with that and a blank.
+    // What `/(?=(\b\S+\s*\S+))/g` captures can only be `shortcut`, or start with `shortcut` and whitespace, at the end
+    // of a part.
     for part in split_into_parts(value).filter(|it| !it.is_space) {
         let Some(before) = part.value.strip_suffix(b"shortcut") else {
             continue;
@@ -295,7 +296,7 @@ fn check_literal_value_node<'a>(
         if before.last().is_some_and(|it| it.is_ascii_alphanumeric() || *it == b'_') {
             continue;
         }
-        // The white space and the part behind it. White space at the end is not captured.
+        // The whitespace and the part after it. Trailing whitespace isn't captured.
         let rest = value.get(part.start + part.value.len()..).unwrap_or_default();
         let next = split_into_parts(rest).nth(1).map_or(0, |it| it.start + it.value.len());
         let mut attributes = strings::split(rest.get(..next).unwrap_or_default(), b" ");
@@ -318,7 +319,8 @@ fn check_literal_value_node<'a>(
 
     let mut ranges = Ranges::new(node, value);
     for whitespace_part in split_into_parts(value).filter(|it| it.is_space) {
-        // A value with a `\n` or an `&amp;` is shorter than what is written: nothing in it is at the closing quote.
+        // A value with a `\n` escape or an `&amp;` is shorter than its source text, so nothing in it is at the closing
+        // quote.
         let end = whitespace_part.start + whitespace_part.value.len();
         let is_at_a_quote = whitespace_part.start == 0 || end + 2 == node.span().len() as usize;
         if !is_at_a_quote && whitespace_part.value == b" " {
@@ -327,12 +329,12 @@ fn check_literal_value_node<'a>(
         cx.report(node, SPACE_DELIMITED).data("attributeName", REL).suggest_with(
             SUGGEST_REMOVE_WHITESPACES,
             &ATTRIBUTE_NAME,
-            |fixer| fixer.replace(ranges.of(whitespace_part), if is_at_a_quote { "" } else { " " }),
+            |fixer| fixer.replace(ranges.span_of(whitespace_part), if is_at_a_quote { "" } else { " " }),
         );
     }
 }
 
-/// upstream's `isValidCreateElement`, its listener for calls and `checkCreateProps`
+/// upstream's `isValidCreateElement`, its call listener and `checkCreateProps`
 fn check_call<'a>(node: Call<'a>, cx: &Cx<'a, NoInvalidHtmlAttribute>) {
     let callee = node.callee();
     if !is_member_called(callee, "createElement") || !callee.object().is_some_and(|it| it.is_ident("React")) {
@@ -341,7 +343,7 @@ fn check_call<'a>(node: Call<'a>, cx: &Cx<'a, NoInvalidHtmlAttribute>) {
     let Some(elem_name_arg) = node.args().first().filter(|it| ast_utils::is_literal(*it)) else {
         return;
     };
-    // A literal that is no string is looked at as an element that is none of the four.
+    // A literal that isn't a string is checked as an element that's none of the four.
     let element_name = elem_name_arg.as_string().map(Name::bytes);
     if element_name.is_some_and(|it| !is_html_element(it)) {
         return;
@@ -362,7 +364,7 @@ fn check_call<'a>(node: Call<'a>, cx: &Cx<'a, NoInvalidHtmlAttribute>) {
         match (prop.kind(), prop.value().map(|it| (it, it.kind()))) {
             (PropKind::Method, _) => drop(cx.report(prop, NO_METHOD).data("attributeName", REL)),
             _ if key.is_computed() => {}
-            // At a hole upstream throws.
+            // Upstream throws on a hole.
             (PropKind::Init, Some((_, ExprKind::Array(elements)))) => {
                 for value in elements.iter() {
                     check_prop_valid_value(value, element, cx);

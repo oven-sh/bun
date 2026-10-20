@@ -2956,6 +2956,12 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     if (object->type() == JSC::JSType::GlobalProxyType)
         object = uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
 
+    // A WebAssembly GC object's Structure can't change, so the direct stores below would abort.
+    if (object->type() == JSC::JSType::WebAssemblyGCObjectType) {
+        throwTypeError(globalObject, scope, "spyOn(target, prop) does not support WebAssembly GC objects"_s);
+        return {};
+    }
+
     // A node:vm global reads a key that the contextified object inherits from that object, but says it has no such key. So spy there.
     if (auto* contextGlobal = dynamicDowncast<NodeVMGlobalObject>(object)) {
         if (JSObject* contextified = contextGlobal->contextifiedObject()) {

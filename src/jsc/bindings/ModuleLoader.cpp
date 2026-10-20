@@ -349,20 +349,34 @@ static OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject
         (void)scope.tryClearException();
         return result;
     }
+    // While the transpiler reads the bytes, another thread can write to a SharedArrayBuffer and a macro can overwrite or detach any buffer.
+    auto copyContents = [&](std::span<const uint8_t> bytes) -> bool {
+        if (!result.sourceTextCopy.tryAppend(bytes)) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            result.value.error = scope.exception();
+            (void)scope.tryClearException();
+            return false;
+        }
+        result.value.sourceText.string = contentsFromBytes(result.sourceTextCopy.span().data(), result.sourceTextCopy.size());
+        return true;
+    };
     if (contentsValue) {
         if (contentsValue.isString()) {
             JSC::JSString* contentsJSString = contentsValue.toStringOrNull(globalObject);
             RETURN_IF_EXCEPTION(scope, result);
             if (contentsJSString) {
-                result.value.sourceText.string = Zig::toEncodedSlice(contentsJSString, globalObject);
+                auto contents = contentsJSString->view(globalObject);
                 RETURN_IF_EXCEPTION(scope, result);
-                result.value.sourceText.value = contentsValue;
+                result.value.sourceText.string = Zig::toEncodedSlice(contents.data);
+                result.value.sourceText.value = contents.owner;
             }
         } else if (JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(contentsValue)) {
-            result.value.sourceText.string = contentsFromBytes(view->vector(), view->byteLength());
+            if (!copyContents(view->span()))
+                return result;
             result.value.sourceText.value = contentsValue;
         } else if (JSC::JSArrayBuffer* buffer = dynamicDowncast<JSC::JSArrayBuffer>(contentsValue)) {
-            result.value.sourceText.string = contentsFromBytes(buffer->impl()->data(), buffer->impl()->byteLength());
+            if (!copyContents(buffer->impl()->span()))
+                return result;
             result.value.sourceText.value = contentsValue;
         }
     }

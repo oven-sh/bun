@@ -520,7 +520,7 @@ fn file_path(buntest: &BunTest) -> &'static [u8] {
 }
 
 fn file_name(buntest: &BunTest) -> Vec<u8> {
-    let mut name = resolve_path::relative(FileSystem::instance().top_level_dir, file_path(buntest)).to_vec();
+    let mut name = resolve_path::relative(FileSystem::instance().top_level_dir(), file_path(buntest)).to_vec();
     resolve_path::platform_to_posix_in_place::<u8>(&mut name);
     name
 }

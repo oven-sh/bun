@@ -32,7 +32,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { generateBuildOptionsRs } from "./buildOptionsRs.ts";
-import type { CodegenFields } from "./config.ts";
+import { webkitVersionName, type CodegenFields } from "./config.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import { generateJsonByteClass } from "./jsonByteClass.ts";
@@ -839,6 +839,8 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const nativeModuleListInput = resolve(cfg.cwd, "src", "jsc", "modules", "NativeModuleList.h");
   // replacements.ts reads the native globals' names from this file.
   const globalObjectTableInput = resolve(cfg.cwd, "src", "jsc", "bindings", "ZigGlobalObject.lut.txt");
+  // bundle-modules.ts hashes this header's entries into the builtins section (engineStamp).
+  const builtinNamesInput = resolve(cfg.cwd, "src", "js", "builtins", "BunBuiltinNames.h");
 
   const outputs = [
     resolve(cfg.codegenDir, "WebCoreJSBuiltins.cpp"),
@@ -877,6 +879,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
       errorCodeInput,
       nativeModuleListInput,
       globalObjectTableInput,
+      builtinNamesInput,
     ],
     orderOnlyInputs: [dirStamp],
     vars: {
@@ -884,7 +887,15 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
       desc: "JS modules (bundle-modules)",
       // Note: arg is BUILD_PATH (buildDir), not CODEGEN_PATH. The script
       // derives CODEGEN_DIR = join(BUILD_PATH, "codegen") internally.
-      args: shJoin(cfg, ["run", script, debugFlag(cfg), cfg.buildDir, cfg.typesDir, typesOnlyFlag(cfg, sources)]),
+      args: shJoin(cfg, [
+        "run",
+        script,
+        debugFlag(cfg),
+        cfg.buildDir,
+        cfg.typesDir,
+        typesOnlyFlag(cfg, sources),
+        `--webkit-version=${webkitVersionName(cfg.webkitVersion)}`,
+      ]),
     },
   });
 

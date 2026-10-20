@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { cpSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, DirectoryTree, isDebug, tempDir, tempDirWithFiles } from "harness";
+import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, DirectoryTree, isDebug, isWindows, MAX_PATH_BYTES, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 function test1000000(arg1: any, arg218718132: any) {}
@@ -3036,4 +3036,36 @@ describe.concurrent("what script hands to the printer of snapshots", () => {
     },
     timeout,
   );
+});
+
+// Windows cannot create directories as deep as its path buffer is long.
+test.skipIf(isWindows)("snapshot file path longer than PATH_MAX fails the test instead of crashing", async () => {
+  using dir = tempDir("snapshot-long-path", {});
+  let deep = String(dir);
+  const component = Buffer.alloc(100, "a").toString();
+  while (deep.length + 1 + component.length <= MAX_PATH_BYTES - 116) {
+    deep = join(deep, component);
+    mkdirSync(deep);
+  }
+  // `<deep>/<sub>/snapx.test.ts` is 16 bytes under PATH_MAX, so
+  // `<deep>/<sub>/__snapshots__/snapx.test.ts.snap` is over it.
+  const sub = Buffer.alloc(MAX_PATH_BYTES - 16 - deep.length - 1 - "/snapx.test.ts".length, "b").toString();
+  mkdirSync(join(deep, sub));
+  writeFileSync(
+    join(deep, sub, "snapx.test.ts"),
+    `import { test, expect } from "bun:test";\ntest("snap", () => { expect(1).toMatchSnapshot(); });\n`,
+  );
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", `./${sub}/snapx.test.ts`],
+    env: bunEnv,
+    cwd: deep,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("Failed to open snapshot file for test file: ");
+  expect(stderr).toContain("snapx.test.ts");
+  expect(stdout + stderr).toContain("1 fail");
+  expect(exitCode).toBe(1);
 });

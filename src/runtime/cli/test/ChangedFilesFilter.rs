@@ -68,7 +68,7 @@ pub(crate) fn filter<'a>(
     test_files: &'a mut [Interned],
     changed_since: &[u8],
 ) -> core::result::Result<Result<'a>, crate::Error> {
-    let top_level_dir: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let top_level_dir: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
 
     // If this process was restarted by the --watch file watcher, it
     // recorded exactly which files changed in this env var before

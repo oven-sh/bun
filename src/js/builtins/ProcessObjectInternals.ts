@@ -96,8 +96,8 @@ export function getStdioWriteStream(
     stream._handle = { fd, setBlocking: (blocking: boolean) => setStdioBlocking(fd, !!blocking) };
   }
 
+  // This is undefined if a FileSink couldn't be opened for the fd. The stream then writes through node:fs.
   const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
-  $assert(underlyingSink);
   return [stream, underlyingSink];
 }
 

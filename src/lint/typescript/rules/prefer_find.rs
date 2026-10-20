@@ -21,21 +21,21 @@ const PREFER_FIND_SUGGESTION: Message =
 
 #[derive(Copy, Clone)]
 struct FilterExpressionData {
-    /// The `filter` of `.filter(..)`, the `'filter'` of `['filter'](..)`.
+    /// The `filter` in `.filter(..)` or the `'filter'` in `['filter'](..)`.
     filter_node: Span,
     is_bracket_syntax_for_filter: bool,
 }
 
 type FilterExpressions = SmallVec<[FilterExpressionData; 2]>;
 
-/// Whether the type is a possibly nullable array or tuple, or a union thereof.
+/// True if the type is a possibly nullable array or tuple, or a union of those.
 fn is_arrayish(ty: Type) -> bool {
     let mut is_at_least_one_arrayish_component = false;
     for union_part in union_constituents(ty) {
         if is_intrinsic_null_type(union_part) || is_intrinsic_undefined_type(union_part) {
             continue;
         }
-        // `T[] & S[]` is not an array type for the checker.
+        // The checker doesn't treat `T[] & S[]` as an array type.
         let is_array_or_intersection_thereof = intersection_constituents(union_part)
             .iter()
             .all(|intersection_part| intersection_part.is_array_type() || intersection_part.is_tuple_type());
@@ -47,8 +47,8 @@ fn is_arrayish(ty: Type) -> bool {
     is_at_least_one_arrayish_component
 }
 
-/// Adds the calls of `Array.prototype.filter` whose result is the value of `node`. There are
-/// several where it is a ternary. False if it can have another value.
+/// Collects the `Array.prototype.filter` calls that produce `node`'s value. A ternary can have several. Returns false
+/// if `node` can have any other value.
 fn parse_array_filter_expressions(mut node: Expr, found: &mut FilterExpressions) -> bool {
     loop {
         node = node.with_jsdoc_cast();
@@ -68,7 +68,7 @@ fn parse_array_filter_expressions(mut node: Expr, found: &mut FilterExpressions)
             ExprKind::Call(call) if !call.is_optional() => {
                 let callee = call.callee();
                 let is_oxlint = node.file().language().is_oxlint;
-                // ESLint has a `ChainExpression` around the callee of `(a?.filter)()`. tsgolint skips the parentheses.
+                // ESLint wraps the callee of `(a?.filter)()` in a `ChainExpression`. tsgolint skips the parentheses.
                 if !is_oxlint && callee.is_chain_root() {
                     return false;
                 }
@@ -95,7 +95,7 @@ fn parse_array_filter_expressions(mut node: Expr, found: &mut FilterExpressions)
     }
 }
 
-/// The index that `Array.prototype.at` makes of `value` is 0.
+/// True if `Array.prototype.at` converts `value` to index 0.
 fn is_treated_as_zero_by_array_at(value: &StaticValue) -> bool {
     if matches!(value, StaticValue::Symbol(_)) {
         return false;
@@ -103,13 +103,13 @@ fn is_treated_as_zero_by_array_at(value: &StaticValue) -> bool {
     value.to_js_number().is_some_and(|as_number| as_number.is_nan() || as_number.trunc() == 0.0)
 }
 
-/// `array[value]` is the first element.
+/// True if `array[value]` is the first element.
 fn is_treated_as_zero_by_member_access(value: &StaticValue) -> bool {
     value.to_js_string().is_some_and(|text| &*text == b"0")
 }
 
-/// tsgolint's `staticValue`. It has no symbol: what the rule asks of one, it answers as for an
-/// expression without a static value. Of a bigint it only asks whether it is zero.
+/// tsgolint's `staticValue`. There's no symbol variant because the rule treats a symbol like an expression without a
+/// static value. For a bigint the rule only needs to know whether it's zero.
 #[derive(Copy, Clone)]
 enum TsgolintStaticValue<'a> {
     String(&'a [u8]),
@@ -132,9 +132,9 @@ fn tsgolint_to_number(value: TsgolintStaticValue) -> Option<f64> {
     }
 }
 
-/// tsgolint's `getStaticValue`, which is not that of eslint-utils: `undefined`, `NaN` and `Infinity`
-/// are told by their text, a variable is followed if the value declaration of the checker's symbol
-/// is a `const` with an initializer, and of the operators only `+`, `-`, `as`, `<T>` and `!` are known.
+/// tsgolint's `getStaticValue`, which differs from eslint-utils': it recognizes `undefined`, `NaN` and `Infinity` by
+/// their text, follows a variable only if the checker symbol's value declaration is a `const` with an initializer, and
+/// evaluates only the operators `+`, `-`, `as`, `<T>` and `!`.
 fn tsgolint_get_static_value<'a>(
     node: Expr<'a>,
     visited: &mut IdSet<TsSymbol<'a>>,
@@ -198,8 +198,8 @@ fn tsgolint_get_static_value<'a>(
     }
 }
 
-/// tsgolint's `isStaticMemberAccessOfValue`, for a `value` that is not what a number, a boolean,
-/// `null` or `undefined` is as a property name.
+/// tsgolint's `isStaticMemberAccessOfValue`. `value` must not be the property name that a number, a boolean, `null` or
+/// `undefined` converts to.
 fn tsgolint_is_static_member_access_of_value(node: Expr, value: &[u8]) -> bool {
     match node.kind() {
         ExprKind::Dot { name, .. } => name.bytes() == value,
@@ -227,7 +227,7 @@ fn tsgolint_is_treated_as_zero_by_member_access(value: TsgolintStaticValue) -> b
 }
 
 impl PreferFind {
-    /// `whole`: `object[0]`, `object.at(0)`
+    /// `whole` is `object[0]` or `object.at(0)`.
     fn report<'a>(
         cx: &Cx<'a, Self>,
         whole: Expr<'a>,
@@ -235,9 +235,9 @@ impl PreferFind {
         filter_expressions: &FilterExpressions,
     ) {
         let is_oxlint = cx.language().is_oxlint;
-        // Where unicorn's rule reports too, `object` is the call of `filter`.
+        // unicorn's rule reports the same problem on the `filter` call, which is `object`.
         cx.report(whole, PREFER_FIND).claims(object).suggest(PREFER_FIND_SUGGESTION, |fixer| {
-            // tsgolint also suggests `a.find(f) = 1` and `a.find(f)++`, which do not parse.
+            // tsgolint also suggests `a.find(f) = 1` and `a.find(f)++`, which don't parse.
             if is_oxlint && (is_assignee(whole) || is_assignment_target(whole)) {
                 return None;
             }
@@ -258,7 +258,7 @@ impl PreferFind {
                 })
                 .collect();
             fixes.push(fixer.remove(Span::new(token_to_start_deleting_from.start(), whole.span().end)));
-            // `(filtered.at)(0)`: no suggestion.
+            // No suggestion for `(filtered.at)(0)`.
             if is_oxlint && whole.callee().is_some_and(|callee| callee.is_parenthesized()) {
                 return None;
             }
@@ -281,7 +281,7 @@ impl PreferFind {
         };
         let is_oxlint = cx.language().is_oxlint;
         let is_at = match is_oxlint {
-            // tsgolint only minds the `?.` of the call, `a.at?.(0)`, and skips the parentheses of the callee.
+            // tsgolint only checks the call's own `?.`, as in `a.at?.(0)`, and skips parentheses around the callee.
             true => !call.is_optional() && tsgolint_is_static_member_access_of_value(callee, b"at"),
             false => {
                 !callee.is_optional() && !callee.is_chain_root() && is_static_member_access_of_value(callee, &["at"])

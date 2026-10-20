@@ -22,6 +22,7 @@
 #include "ZigGlobalObject.h"
 #include "headers.h"
 #include "ErrorCode.h"
+#include "VectorSizeLimit.h"
 #include "BunString.h"
 
 #include "GeneratedNodeModuleModule.h"
@@ -367,7 +368,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
                 if (scope.exception())
                     return;
 
-                paths.append(Bun::toStringRef(pathStr));
+                BunString pathRef = Bun::toStringRef(pathStr);
+                if (!Bun::tryAppendWithinLimit(paths, pathRef)) [[unlikely]] {
+                    pathRef.deref();
+                    throwOutOfMemoryError(lexicalGlobalObject, scope);
+                }
             });
 
             if (scope.exception()) {
@@ -618,10 +623,11 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
 
 static JSValue getModuleCacheObject(VM& vm, JSObject* moduleObject)
 {
-    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(moduleObject->globalObject());
+    // See getBuiltinModulesObject for why this needs a top exception scope.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(moduleObject->globalObject());
     JSValue cache = Bun::requireCacheOf(globalObject, Bun::testFileModuleGraph(globalObject), nullptr);
-    ASSERT_UNUSED(scope, !scope.exception());
+    RETURN_IF_EXCEPTION(scope, {});
     return cache;
 }
 
@@ -654,6 +660,8 @@ static JSValue getSourceMapFunction(VM& vm, JSObject* moduleObject)
 
 static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
 {
+    // reifyAllStaticProperties calls PropertyCallback builders without checking for exceptions, so check here.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     MarkedArgumentBuffer args;
     args.ensureCapacity(countof(builtinModuleNames));
 
@@ -662,7 +670,9 @@ static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
     }
 
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    return JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList(args));
+    auto* builtinModules = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList(args));
+    RETURN_IF_EXCEPTION(scope, {});
+    return builtinModules;
 }
 
 static JSValue getConstantsObject(VM& vm, JSObject* moduleObject)
@@ -690,9 +700,13 @@ static JSValue getConstantsObject(VM& vm, JSObject* moduleObject)
 
 static JSValue getGlobalPathsObject(VM& vm, JSObject* moduleObject)
 {
-    return JSC::constructEmptyArray(
+    // See getBuiltinModulesObject for why this needs a top exception scope.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* globalPaths = JSC::constructEmptyArray(
         moduleObject->globalObject(),
         static_cast<ArrayAllocationProfile*>(nullptr), 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    return globalPaths;
 }
 
 // Like the _resolveFilename / runMain setters: writing back the default (e.g. copying Module's statics onto a
@@ -1192,17 +1206,6 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
         [](const Zig::GlobalObject::Initializer<JSFunction>& init) {
             JSC::JSFunction* requireESM = JSC::JSFunction::create(init.vm, init.owner, commonJSRequireESMFromHijackedExtensionCodeGenerator(init.vm), init.owner);
             init.set(requireESM);
-        });
-
-    globalObject->m_lazyRequireCacheObject.initLater(
-        [](const Zig::GlobalObject::Initializer<JSObject>& init) {
-            JSC::VM& vm = init.vm;
-            JSC::JSGlobalObject* globalObject = init.owner;
-
-            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            JSValue result = Bun::createRequireCacheObject(globalObject, uncheckedDowncast<Zig::GlobalObject>(globalObject)->requireMap());
-            ASSERT_UNUSED(scope, !scope.exception());
-            init.set(result.toObject(globalObject));
         });
 
     globalObject->m_lazyRequireExtensionsObject.initLater(

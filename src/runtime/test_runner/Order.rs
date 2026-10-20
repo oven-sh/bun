@@ -32,16 +32,6 @@ impl Order {
     }
     // `deinit` only freed `groups` / `sequences` — handled by Drop on Vec; no impl Drop needed.
 
-    pub(crate) fn generate_order_sub(&mut self, current: &mut TestScheduleEntry) -> JsResult<()> {
-        match current {
-            TestScheduleEntry::Describe(describe) => self.generate_order_describe(describe)?,
-            TestScheduleEntry::TestCallback(test_callback) => {
-                self.generate_order_test(NonNull::from(&mut **test_callback))?
-            }
-        }
-        Ok(())
-    }
-
     /// Vitest doesn't run the hooks of a scope where every test is skipped, so `!runs_a_test` drops Vitest hooks.
     pub(crate) fn generate_all_order(
         &mut self,
@@ -89,10 +79,42 @@ impl Order {
         Ok(AllOrderResult { start, end })
     }
 
-    #[optimize(size)]
-    pub(crate) fn generate_order_describe(&mut self, current: &mut DescribeScope) -> JsResult<()> {
+    /// Uses an explicit stack instead of recursion, because `describe()` can nest arbitrarily deep.
+    pub(crate) fn generate_order_describe(&mut self, root: &mut DescribeScope) -> JsResult<()> {
+        let mut open: Vec<OpenDescribe<'_>> = Vec::new();
+        if let Some(frame) = self.enter_describe(root)? {
+            open.push(frame);
+        }
+        while let Some(frame) = open.last_mut() {
+            let scope_only = frame.only;
+            let Some(entry) = frame.children.next() else {
+                let frame = open.pop().expect("non-empty");
+                self.exit_describe(&frame)?;
+                continue;
+            };
+            if scope_only == Only::Contains && entry.base().only == Only::No {
+                continue;
+            }
+            match entry {
+                TestScheduleEntry::Describe(describe) => {
+                    if let Some(child) = self.enter_describe(describe)? {
+                        open.push(child);
+                    }
+                }
+                TestScheduleEntry::TestCallback(test_callback) => {
+                    self.generate_order_test(NonNull::from(&mut **test_callback))?
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn enter_describe<'a>(
+        &mut self,
+        current: &'a mut DescribeScope,
+    ) -> JsResult<Option<OpenDescribe<'a>>> {
         if current.failed {
-            return Ok(()); // do not schedule any tests in a failed describe scope
+            return Ok(None); // do not schedule any tests in a failed describe scope
         }
         let use_hooks = self.cfg.always_use_hooks || current.base.has_callback;
 
@@ -123,22 +145,25 @@ impl Order {
             }
         }
 
-        // gather children
-        // reshaped for borrowck — iterate by index since generate_order_sub borrows &mut self.
-        let scope_only = current.base.only;
-        for i in 0..current.entries.len() {
-            if scope_only == Only::Contains && current.entries[i].base().only == Only::No {
-                continue;
-            }
-            self.generate_order_sub(&mut current.entries[i])?;
-        }
+        Ok(Some(OpenDescribe {
+            children: current.entries.iter_mut(),
+            only: current.base.only,
+            use_hooks,
+            has_callback: current.base.has_callback,
+            aroundall_order,
+            beforeall_order,
+            after_all: &current.after_all,
+            around_all_teardown: &current.around_all_teardown,
+        }))
+    }
 
+    fn exit_describe(&mut self, frame: &OpenDescribe<'_>) -> JsResult<()> {
         // update skip_to values for beforeAll to skip to the first afterAll
-        beforeall_order.set_failure_skip_to(self);
+        frame.beforeall_order.set_failure_skip_to(self);
 
         // gather afterAll
-        let afterall_order: AllOrderResult = if use_hooks {
-            self.generate_all_order(&current.after_all, current.base.has_callback)?
+        let afterall_order: AllOrderResult = if frame.use_hooks {
+            self.generate_all_order(frame.after_all, frame.has_callback)?
         } else {
             AllOrderResult::EMPTY
         };
@@ -147,9 +172,9 @@ impl Order {
         afterall_order.set_failure_skip_to(self);
 
         // An aroundAll that fails before `runSuite()` skips to the teardown of the ones around it. Its own slot has no callback.
-        aroundall_order.set_failure_skip_to(self);
-        if use_hooks {
-            self.generate_all_order(&current.around_all_teardown, current.base.has_callback)?;
+        frame.aroundall_order.set_failure_skip_to(self);
+        if frame.use_hooks {
+            self.generate_all_order(frame.around_all_teardown, frame.has_callback)?;
         }
 
         Ok(())
@@ -295,6 +320,18 @@ impl Order {
             .push(ConcurrentGroup::init(sequences_start, sequences_end, failure_skip_to)); // otherwise, add a new concurrentgroup to order
         Ok(())
     }
+}
+
+/// Tracks a describe scope whose children `generate_order_describe` is still scheduling.
+struct OpenDescribe<'a> {
+    children: core::slice::IterMut<'a, TestScheduleEntry>,
+    only: Only,
+    use_hooks: bool,
+    has_callback: bool,
+    aroundall_order: AllOrderResult,
+    beforeall_order: AllOrderResult,
+    after_all: &'a [Box<ExecutionEntry>],
+    around_all_teardown: &'a [Box<ExecutionEntry>],
 }
 
 pub(crate) struct AllOrderResult {

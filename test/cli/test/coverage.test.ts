@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
 
@@ -1150,4 +1150,75 @@ test("b", () => {
       both: expect.stringMatching(/host-and-graph\.ts \| +100\.00 \| +100\.00 \| $/),
     });
   });
+});
+
+test("prints the report when a data: URL is longer than the path buffer", async () => {
+  using dir = tempDir("cov-long-data", {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = false\n`,
+    "data.test.ts": `
+import { test, expect } from "bun:test";
+
+test("imports a data: URL", async () => {
+  const url = "data:text/javascript," + encodeURIComponent("export default 1; //") + Buffer.alloc(${MAX_PATH_BYTES}, "x").toString();
+  expect((await import(url)).default).toBe(1);
+});
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 1 pass");
+  expect(readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8")).toContain("SF:data.test.ts\n");
+  expect(exitCode).toBe(0);
+});
+
+test("reports an uncalled function on the last line of a // @bun file without a final newline", async () => {
+  using dir = tempDir("cov-no-final-newline", {
+    "prebuilt.js": "// @bun\nexport function first() {\n  return 1;\n}\nexport const second = () => 2;",
+    "a.test.ts": `
+      import { expect, test } from "bun:test";
+      import { first } from "./prebuilt.js";
+      test("calls first", () => { expect(first()).toBe(1); });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toMatch(/prebuilt\.js +\| +50\.00 \|/);
+  expect(exitCode).toBe(0);
+});
+
+test("reports an error for a coverage directory longer than the path buffer", async () => {
+  // A bunfig value can be longer than the buffer on every platform.
+  using dir = tempDir("coverage-dir-too-long", {
+    "bunfig.toml": `[test]\ncoverageDir = "${Buffer.alloc(100_000, "c").toString()}"\n`,
+    "lib.ts": `export const covered = () => 1;`,
+    "covered.test.ts": `
+      import { test, expect } from "bun:test";
+      import { covered } from "./lib";
+      test("covered", () => { expect(covered()).toBe(1); });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("(pass) covered");
+  expect(stderr).toContain("ENAMETOOLONG: File name too long: Failed to write lcov.info");
+  expect(exitCode).toBe(1);
 });

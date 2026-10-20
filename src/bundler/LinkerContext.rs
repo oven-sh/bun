@@ -2174,7 +2174,7 @@ impl<'a> LinkerContext<'a> {
                                 write!(
                                     &mut text,
                                     "The top-level await in {} is here:",
-                                    bstr::BStr::new(tla_pretty_path)
+                                    bun_core::fmt::quote(tla_pretty_path)
                                 )
                                 .expect("infallible: in-memory write");
                                 notes.push(Data {
@@ -2203,11 +2203,11 @@ impl<'a> LinkerContext<'a> {
                             write!(
                                 &mut text,
                                 "The file {} imports the file {} here:",
-                                bstr::BStr::new(
-                                    &input_files[parent_source_index as usize].path.pretty
+                                bun_core::fmt::quote(
+                                    input_files[parent_source_index as usize].path.pretty
                                 ),
-                                bstr::BStr::new(
-                                    &input_files[other_source_index as usize].path.pretty
+                                bun_core::fmt::quote(
+                                    input_files[other_source_index as usize].path.pretty
                                 ),
                             )
                             .unwrap();
@@ -2226,13 +2226,13 @@ impl<'a> LinkerContext<'a> {
                         }
 
                         let source: &Source = &input_files[source_index as usize];
-                        let imported_pretty_path = &source.path.pretty;
                         let mut text = Vec::new();
                         use std::io::Write;
-                        if imported_pretty_path[..] == tla_pretty_path[..] {
-                            write!(&mut text, "This require call is not allowed because the imported file \"{}\" contains a top-level await", bstr::BStr::new(imported_pretty_path)).expect("infallible: in-memory write");
+                        // esbuild compares `pretty` paths here, but two bun modules can share one.
+                        if tla_keywords[record.source_index.get() as usize].len > 0 {
+                            write!(&mut text, "This require call is not allowed because the imported file {} contains a top-level await", bun_core::fmt::quote(tla_pretty_path)).expect("infallible: in-memory write");
                         } else {
-                            write!(&mut text, "This require call is not allowed because the transitive dependency \"{}\" contains a top-level await", bstr::BStr::new(tla_pretty_path)).expect("infallible: in-memory write");
+                            write!(&mut text, "This require call is not allowed because the transitive dependency {} contains a top-level await", bun_core::fmt::quote(tla_pretty_path)).expect("infallible: in-memory write");
                         }
 
                         // Split-borrow with `source`/`record` (parse_graph backref

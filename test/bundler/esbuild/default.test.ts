@@ -3597,10 +3597,114 @@ describe.concurrent("bundler", () => {
       "/entry.js": [
         'This require call is not allowed because the transitive dependency "c.js" contains a top-level await',
         'This require call is not allowed because the transitive dependency "c.js" contains a top-level await',
-        'This require call is not allowed because the transitive dependency "c.js" contains a top-level await',
+        'This require call is not allowed because the imported file "c.js" contains a top-level await',
         'This require call is not allowed because the imported file "entry.js" contains a top-level await',
       ],
     },
+  });
+  test("default/TopLevelAwaitForbiddenRequireFromFileWithoutAwait", async () => {
+    // esbuild 0.28.2 accepts a require() in a file that is not async. bun refuses it, as esbuild did up to 0.28.1.
+    using dir = tempDir("tla-forbidden-require-sync-file", {
+      "entry.js": `
+        require("./a.js");
+        require("./b.js");
+      `,
+      "a.js": `import "./b.js";`,
+      "b.js": `await 0;`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stderr: stderr.match(/^(error|note): .*$/gm), exitCode }).toEqual({
+      stderr: [
+        'error: This require call is not allowed because the transitive dependency "b.js" contains a top-level await',
+        'note: The file "a.js" imports the file "b.js" here:',
+        'note: The top-level await in "b.js" is here:',
+        'error: This require call is not allowed because the imported file "b.js" contains a top-level await',
+        'note: The top-level await in "b.js" is here:',
+      ],
+      exitCode: 1,
+    });
+  });
+  itBundled("default/TopLevelAwaitForbiddenRequireOfImporter", {
+    // require() names a.js, and the await is in entry.js, which a.js imports.
+    files: {
+      "/entry.js": /* js */ `
+        require('./a')
+        await 0
+      `,
+      "/a.js": `import './entry'`,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/entry.js": [
+        'This require call is not allowed because the transitive dependency "entry.js" contains a top-level await',
+      ],
+    },
+  });
+  itBundled("default/TopLevelAwaitForbiddenRequireOfFileWithSameDisplayPath", ({ root }) => ({
+    // The plugin makes a second module that is shown as "entry.js". It has no await, and it imports entry.js.
+    files: {
+      "/entry.js": /* js */ `
+        require('./wrapper')
+        await 0
+      `,
+    },
+    format: "esm",
+    plugins(builder) {
+      builder.onResolve({ filter: /^\.\/wrapper$/ }, () => ({ path: root + "/./entry.js" }));
+      builder.onLoad({ filter: /[\\/]\.[\\/]entry\.js$/ }, () => ({ contents: `import "./entry.js";`, loader: "js" }));
+    },
+    bundleErrors: {
+      "/entry.js": [
+        'This require call is not allowed because the transitive dependency "entry.js" contains a top-level await',
+      ],
+    },
+  }));
+  test("default/TopLevelAwaitForbiddenRequireOfPathWithQuote", async () => {
+    using dir = tempDir("tla-forbidden-require-quote", {
+      "entry.js": `require('virtual:a"b.js');`,
+      "build.js": `
+        const { logs } = await Bun.build({
+          entrypoints: ["./entry.js"],
+          throw: false,
+          plugins: [
+            {
+              name: "virtual",
+              setup(build) {
+                build.onResolve({ filter: /^virtual:/ }, args => ({ path: args.path.slice(8), namespace: "virtual" }));
+                build.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({ contents: "await 0;", loader: "js" }));
+              },
+            },
+          ],
+        });
+        console.log(JSON.stringify(logs.map(log => [log.message, ...log.notes.map(note => note.message)])));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout:
+        JSON.stringify([
+          [
+            'This require call is not allowed because the imported file "virtual:a\\"b.js" contains a top-level await',
+            'The top-level await in "virtual:a\\"b.js" is here:',
+          ],
+        ]) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
   const forbiddenRequireWithNamedImport = {
     "a.js": `
@@ -3635,8 +3739,7 @@ describe.concurrent("bundler", () => {
     }
     expect(builds).toEqual(
       Array(forbiddenRequireBuilds).fill({
-        error:
-          'error: This require call is not allowed because the transitive dependency "b.js" contains a top-level await',
+        error: 'error: This require call is not allowed because the imported file "b.js" contains a top-level await',
         exitCode: 1,
       }),
     );
@@ -3665,7 +3768,7 @@ describe.concurrent("bundler", () => {
       stdout:
         JSON.stringify(
           Array(forbiddenRequireBuilds).fill(
-            'This require call is not allowed because the transitive dependency "b.js" contains a top-level await',
+            'This require call is not allowed because the imported file "b.js" contains a top-level await',
           ),
         ) + "\n",
       stderr: "",

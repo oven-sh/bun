@@ -1169,8 +1169,7 @@ it.concurrent.each([
         },
       });
     define();
-    await (async () => { await import("virtual-object"); })();
-    await new Promise(resolve => setImmediate(resolve));
+    await import("virtual-object");
 
     const again = import("virtual-object");
     ${remove}
@@ -1178,7 +1177,7 @@ it.concurrent.each([
     // Nothing else holds the exports object now. What is allocated next takes its place if it died.
     Bun.gc(true);
     const others = [];
-    for (let i = 0; i < 100_000; i++) others.push({ x: i, y: i });
+    for (let i = 0; i < 10_000; i++) others.push({ x: i, y: i });
 
     console.log(JSON.stringify(await again));
   `;

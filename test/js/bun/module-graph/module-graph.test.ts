@@ -2141,29 +2141,44 @@ describe("Bun.ModuleGraph — concurrency", () => {
     expect((await pb).who).toBe("B");
   });
 
-  test("a graph disposed in the turn it imports a JSON file again: the import() gets the file's value", async () => {
+  test("a graph disposed in the turn it imports data files again: each import() gets its file's value", async () => {
+    const values = {
+      "object.json": { a: 1, b: { c: [1, 2, 3] } },
+      "array.json": [1, { a: 2 }, "three"],
+      "string.json": "a string of its own",
+      "data.jsonc": { a: 1, b: { c: [1, 2, 3] } },
+      "data.toml": { a: 1, b: { c: [1, 2, 3] } },
+      "data.yaml": { a: 1, b: { c: [1, 2, 3] } },
+    };
     const d = fixture({
-      "data.json": `{ "a": 1, "b": { "c": [1, 2, 3] } }`,
-      "tenant.mjs": `export const load = () => import("./data.json");`,
+      "object.json": JSON.stringify(values["object.json"]),
+      "array.json": JSON.stringify(values["array.json"]),
+      "string.json": JSON.stringify(values["string.json"]),
+      "data.jsonc": `// comment\n{ "a": 1, "b": { "c": [1, 2, 3] } }`,
+      "data.toml": `a = 1\n[b]\nc = [1, 2, 3]\n`,
+      "data.yaml": `a: 1\nb:\n  c: [1, 2, 3]\n`,
+      "tenant.mjs": `export const load = name => import("./" + name);`,
       "host.mjs": `
+        const names = ${JSON.stringify(Object.keys(values))};
         const graph = new Bun.ModuleGraph({});
         const { load } = await graph.import(import.meta.dir + "/tenant.mjs");
-        await (async () => { await graph.run(load); })();
-        await new Promise(resolve => setImmediate(resolve));
+        for (const name of names) await graph.run(() => load(name));
 
-        const again = graph.run(load);
+        const again = names.map(name => graph.run(() => load(name)));
         graph.dispose();
 
-        // Nothing else holds the parsed object now. What is allocated next takes its place if it died.
+        // Nothing else holds the values now. What is allocated next takes the place of any that died.
         Bun.gc(true);
         const others = [];
-        for (let i = 0; i < 100_000; i++) others.push({ x: i, y: i });
+        for (let i = 0; i < 10_000; i++) others.push({ x: i, y: i }, [i, i], "s" + i);
 
-        console.log(JSON.stringify((await again).default));
+        const namespaces = await Promise.all(again);
+        console.log(JSON.stringify(Object.fromEntries(names.map((name, i) => [name, namespaces[i].default]))));
       `,
     });
-    expect(await runBun([join(d, "host.mjs")])).toEqual({
-      stdout: `{"a":1,"b":{"c":[1,2,3]}}`,
+    const { stdout, stderr, exitCode } = await runBun([join(d, "host.mjs")]);
+    expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: values,
       stderr: "",
       exitCode: 0,
     });

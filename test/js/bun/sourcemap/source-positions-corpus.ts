@@ -169,9 +169,9 @@ export const cases: Record<string, Case> = {
  0|];
 `,
   },
-  // The `{` of an object is code. The `{` of a block or of a body is not, and no `}` is.
+  // The `{` where an object starts is code, unless it is after a `:`. The `{` of a block or of a body is not. No `}` is.
   "braces.ts": {
-    functions: "2/3",
+    functions: "3/4",
     lines: `
  2|const twice = (
  2|  n: number,
@@ -199,13 +199,41 @@ export const cases: Record<string, Case> = {
  1|    two: 2,
  -|  },
  1|];
- 1|export const chosen = typed.v
- 1|  ? {
- 1|      yes: 1,
+ 1|export const chosen = !typed.v
+ 0|  ? {
+ 0|      yes: 1,
  -|    }
  -|  : {
- 0|      no: 1,
+ 1|      no: 1,
  -|    };
+ 1|export const either = !typed.v ||
+ 1|  {
+ 1|    or: 1,
+ -|  };
+ 1|export const neither = !typed.v &&
+ 0|  {
+ 0|    and: 1,
+ -|  };
+ 1|export const spread = {
+ 1|  ...{
+ 1|    inner: 1,
+ -|  },
+ -|};
+ 1|function pattern(
+ -|  {
+ 1|    one,
+ -|  }: { one?: number },
+ -|) {
+ 1|  return one;
+ -|}
+ 1|pattern(
+ 1|  {
+ 1|    one: 1,
+ -|  },
+ 1|);
+ 2|for (const item of list) ({
+ 2|  two: item.two,
+ 2|}).two;
  1|for (const item of list) {
  2|  twice(item.one ?? 0);
  -|}

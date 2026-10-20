@@ -313,7 +313,6 @@ impl<'p> Members<'p> {
 
 pub(super) const RECENT_MEMBERS: usize = 512;
 pub(super) const RECENT_SIGNATURES: usize = 256;
-pub(super) const RECENT_PROPS: usize = 256;
 
 /// A type, and its entry in `Program::members`.
 #[derive(Copy, Clone)]
@@ -5568,12 +5567,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             PropSource::Intersected(whole, parts) => {
                 let key = (*whole, prop.name);
-                let at = whole.0.wrapping_add(prop.name.0.wrapping_mul(31)) as usize % RECENT_PROPS;
-                let recent = self.recent_intersected_props[at];
-                if recent.0 == key {
-                    recent.1
-                } else if let Some(known) = self.p.intersected_props.get(&self.task, &key) {
-                    self.recent_intersected_props[at] = (key, known);
+                if let Some(known) = self.p.intersected_props.get(&self.task, &key) {
                     known
                 } else {
                     let scope = self.begin_scope();

@@ -1,12 +1,11 @@
 // `bun bake build`: builds the app in the working directory into `dist/`, for `bun dist/server.js`.
 //
 // Two `Bun.build()` runs:
-// - The browser build: one entry per page of a framework router with `clientPages`. Each loads the
-//   page and its layouts, then the framework's client entry point, which reads them from
-//   `route` of `bun:bake/client`, as in `bun bake`.
-// - The server build: `dist/server.js`, which imports `app/server.ts`, the `.html` pages, the
-//   framework's server entry points and the pages, and starts the server of
-//   `src/runtime/bake/production/server.ts`.
+// - The browser build: the `.html` pages, and one entry per page of a framework router with a client
+//   entry point. With `clientPages`, it loads the page and its layouts, then the client entry point,
+//   which reads them from `route` of `bun:bake/client`, as in `bun bake`.
+// - The server build: `dist/server.js`, which imports `app/server.ts`, the framework's server entry
+//   points and the pages, and starts the server of `src/runtime/bake/production/server.ts`.
 const path = require("node:path");
 const fs = require("node:fs");
 
@@ -213,6 +212,13 @@ async function build(h: Helpers) {
     }
   }
 
+  if (htmlPages.length === 0 && routes.length === 0 && appServer === undefined) {
+    throw new h.BakeError(
+      `Nothing to serve in "${cwd}". Add a page, such as app/pages/index.html, or an app/server.ts.`,
+      false,
+    );
+  }
+
   prepareOutdir(outdir, cwd, h);
 
   // Built-in modules of the framework, such as the default framework's `bun-bake-react/server.tsx`.
@@ -295,6 +301,8 @@ async function build(h: Helpers) {
     if (file === "production-server.ts") return productionServerCode();
     const route = routes[Number(/^route-(\d+)\.js$/.exec(file)![1])];
     if (!browser) return "";
+    const clientEntry = JSON.stringify(entryPoint(route.router.clientEntryPoint));
+    if (!route.router.clientPages) return `import ${clientEntry};`;
     const layouts = route.layouts.map((layout, i) => `import * as l${i} from ${JSON.stringify(layout)};`).join("\n");
     // `import()`, since the client entry point waits for the page at its top level. An `import`
     // runs before this module's statements, and from a shared chunk, before all of this module.
@@ -302,7 +310,7 @@ async function build(h: Helpers) {
       import * as page from ${JSON.stringify(route.page)};
       ${layouts}
       ${routeOnPage} = { page, layouts: [${route.layouts.map((_, i) => `l${i}`).join(", ")}] };
-      import(${JSON.stringify(entryPoint(route.router.clientEntryPoint))});
+      import(${clientEntry});
     `;
   };
 
@@ -311,13 +319,16 @@ async function build(h: Helpers) {
   const env = serveStaticEnv();
 
   // The browser build.
-  const clientRoutes = routes.filter(route => route.router.clientPages && route.router.clientEntryPoint);
+  const clientRoutes = routes.filter(route => route.router.clientEntryPoint);
   const clientOfRoute = new Map<number, { modules: string[]; modulepreload: string[]; styles: string[] }>();
   const files: Record<string, string> = {};
-  if (clientRoutes.length > 0) {
+  if (clientRoutes.length > 0 || htmlPages.length > 0) {
     const clientDir = path.join(outdir, "client");
     const result = await Bun.build({
-      entrypoints: clientRoutes.map(route => path.join(virtualDir, `route-${route.index}.js`)),
+      entrypoints: [
+        ...clientRoutes.map(route => path.join(virtualDir, `route-${route.index}.js`)),
+        ...htmlPages.map(page => page.file),
+      ],
       target: "browser",
       outdir: clientDir,
       splitting: true,
@@ -333,7 +344,7 @@ async function build(h: Helpers) {
       ...(env !== undefined && { env }),
       plugins,
       // The bundler drops these exports from each file, as in `bun bake`, after the plugins load it.
-      bakeClientPageDirs: framework.fileSystemRouterTypes
+      bakeClientPageDirs: (framework?.fileSystemRouterTypes ?? [])
         .filter(router => router.clientPages)
         .map(router => ({ dir: path.resolve(cwd, router.root), serverExports: router.clientPages.serverExports })),
       throw: false,
@@ -345,7 +356,12 @@ async function build(h: Helpers) {
     }
     const metafile = typeof result.metafile === "string" ? JSON.parse(result.metafile) : result.metafile;
     const publicUrl = (output: string) => encodedPath(output.replace(/^\.\//, ""));
+    const urlOfHtmlFile = new Map(htmlPages.map(page => [page.file, page.url]));
     for (const [output, info] of Object.entries<any>(metafile.outputs)) {
+      if (output.endsWith(".html")) {
+        files[urlOfHtmlFile.get(path.resolve(cwd, info.entryPoint))!] = "./client" + publicUrl(output);
+        continue;
+      }
       const entry = /route-(\d+)\.js$/.exec(info.entryPoint ?? "");
       if (entry === null || output.endsWith(".css")) continue;
       clientOfRoute.set(Number(entry[1]), {
@@ -368,7 +384,6 @@ async function build(h: Helpers) {
 
   // The server build.
   const appName = appServer !== undefined ? name(appServer) : undefined;
-  const htmlNames = htmlPages.map(page => name(page.file));
   const routeEntries = routes.map(route => {
     const server = name(entryPoint(route.router.serverEntryPoint));
     const client = clientOfRoute.get(route.index) ?? { modules: [], modulepreload: [], styles: [] };
@@ -384,13 +399,11 @@ async function build(h: Helpers) {
       styles: ${JSON.stringify(client.styles)},
     }`;
   });
-  const htmlNamesSet = new Set(htmlNames);
   serverCode = `
     import { start } from ${JSON.stringify(path.join(virtualDir, "production-server.ts"))};
-    ${imports.map((specifier, i) => (htmlNamesSet.has(`m${i}`) ? `import m${i} from ${JSON.stringify(specifier)};` : `import * as m${i} from ${JSON.stringify(specifier)};`)).join("\n")}
+    ${imports.map((specifier, i) => `import * as m${i} from ${JSON.stringify(specifier)};`).join("\n")}
     start({
       app: ${appName !== undefined ? `${appName}.default` : "undefined"},
-      htmlPages: [${htmlPages.map((page, i) => `{ url: ${JSON.stringify(page.url)}, bundle: ${htmlNames[i]} }`).join(", ")}],
       frameworkRoutes: [${routeEntries.join(", ")}],
       files: ${JSON.stringify(files)},
     });
@@ -411,9 +424,6 @@ async function build(h: Helpers) {
     minify: { syntax: true },
     sourcemap: "linked",
     define,
-    // For the browser code of the `.html` pages. It applies to the server code too: "inline" would
-    // put every variable of this machine into it.
-    ...(env !== undefined && env !== "inline" && htmlPages.length > 0 && { env }),
     plugins,
     throw: false,
   } as any);

@@ -17,7 +17,7 @@ type PageModule = {
 };
 
 type DataResult =
-  | { props: Record<string, unknown>; revalidate?: number | false }
+  | { props: Record<string, unknown>; revalidate?: number | boolean }
   | { notFound: true }
   | { redirect: { destination: string; permanent: boolean } };
 
@@ -44,8 +44,8 @@ const notFound = () => new Response("Not Found", { status: 404, headers: { "cont
 
 /**
  * How long a server may keep the page and send it again, as `Cache-Control` (as Next.js sets it): a
- * page with `getServerSideProps` never, one with `revalidate: N` for N seconds, and any other for a
- * year. `bun bake build`'s server keeps it in memory; `bun bake` renders every request.
+ * page with `getServerSideProps` never, one with `revalidate: N` for N seconds (`true` is 1), and
+ * any other for a year. `bun bake build`'s server keeps it in memory; `bun bake` renders every request.
  */
 const keepForever = "s-maxage=31536000, stale-while-revalidate";
 const keepNever = "private, no-cache, no-store, max-age=0, must-revalidate";
@@ -80,10 +80,11 @@ async function loadData(
       let cacheControl = keepForever;
       if (name === "getServerSideProps") cacheControl = keepNever;
       else if (revalidate !== undefined && revalidate !== false) {
-        if (!Number.isInteger(revalidate) || revalidate <= 0) {
-          throw new TypeError(`revalidate of getStaticProps must be a whole number of seconds above 0, or false.`);
+        const seconds = revalidate === true ? 1 : revalidate;
+        if (!Number.isInteger(seconds) || seconds <= 0) {
+          throw new TypeError(`revalidate of getStaticProps must be a whole number of seconds above 0, true or false.`);
         }
-        cacheControl = `s-maxage=${revalidate}, stale-while-revalidate`;
+        cacheControl = `s-maxage=${seconds}, stale-while-revalidate`;
       }
       return { props: result.props, cacheControl };
     }

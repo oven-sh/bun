@@ -126,6 +126,7 @@ impl EncodedPattern {
                     params.params.slice()[param_num] = MatchedParamEntry {
                         key: bun_ptr::RawSlice::new(name),
                         value: bun_ptr::RawSlice::new(&path[i..end]),
+                        catch_all: false,
                     };
                     param_num += 1;
                     i = if end == path.len() { end } else { end + 1 };
@@ -148,6 +149,7 @@ impl EncodedPattern {
                                     value: bun_ptr::RawSlice::new(
                                         &path[segment_start..segment_end],
                                     ),
+                                    catch_all: true,
                                 };
                                 param_num += 1;
                             }

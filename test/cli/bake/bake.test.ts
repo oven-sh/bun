@@ -1,6 +1,6 @@
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
 import { existsSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -1509,10 +1509,10 @@ test.concurrent("bun bake reports two pages with the same URL pattern, and keeps
 });
 
 /** Runs `bun dist/server.js` in `dir` on a free port, and returns its URL. */
-async function startBuild(dir: string, server = "dist/server.js") {
+async function startBuild(dir: string, server = "dist/server.js", extraEnv: Record<string, string> = {}) {
   const proc = Bun.spawn({
     cmd: [bunExe(), server],
-    env: { ...env, PORT: "0" },
+    env: { ...env, PORT: "0", ...extraEnv },
     cwd: dir,
     stdin: "ignore",
     stdout: "pipe",
@@ -1522,7 +1522,7 @@ async function startBuild(dir: string, server = "dist/server.js") {
   let text = "";
   for await (const chunk of proc.stdout) {
     text += decoder.decode(chunk, { stream: true });
-    const url = text.match(/Listening on (http:\/\/\S+)/)?.[1];
+    const url = text.match(/Listening on (https?:\/\/\S+)/)?.[1];
     if (url) return { proc, url };
   }
   throw new Error("dist/server.js exited: " + text + (await proc.stderr.text()));
@@ -1588,36 +1588,39 @@ test.concurrent("bun bake build builds the pages and app/server.ts into dist/ser
   expect(browserCode).not.toContain("getServerSideProps");
 });
 
-test.concurrent("bun bake build keeps a page with revalidate for that many seconds", async () => {
-  using dir = tempDir("bake-build-revalidate", {
-    "app/pages/index.tsx": `
-      let renders = 0;
-      export const getStaticProps = async () => ({ props: { renders: ++renders }, revalidate: 1 });
-      export default function Home({ renders }) { return <p>{"render " + renders}</p>; }
-    `,
-  });
-  linkReact(String(dir));
-
-  await using build = spawnBake(String(dir), ["bake", "build"]);
-  expect(await build.exited).toBe(0);
-  const { proc, url } = await startBuild(String(dir));
-  await using _ = proc;
-  const text = async () => (await get(url, "/")).replaceAll("<!-- -->", "");
-
-  expect(await text()).toContain("render 1");
-  expect(await text()).toContain("render 1");
-  // After a second the kept page is sent once more while it renders again, then the new one.
-  const start = Date.now();
-  let latest = "";
-  while (!latest.includes("render 2") && Date.now() - start < 10_000) latest = await text();
-  expect(latest).toContain("render 2");
-});
-
 async function buildApp(dir: string, args: string[] = []) {
   await using build = spawnBake(dir, ["bake", "build", ...args]);
   const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
   return { stdout, stderr, exitCode };
 }
+
+test.concurrent.each([[1], [true]])(
+  "bun bake build keeps a page with revalidate: %p for a second",
+  async revalidate => {
+    using dir = tempDir("bake-build-revalidate", {
+      "app/pages/index.tsx": `
+      let renders = 0;
+      export const getStaticProps = async () => ({ props: { renders: ++renders }, revalidate: ${revalidate} });
+      export default function Home({ renders }) { return <p>{"render " + renders}</p>; }
+    `,
+    });
+    linkReact(String(dir));
+
+    const build = await buildApp(String(dir));
+    expect(build.stderr).toBe("");
+    expect(build.exitCode).toBe(0);
+    const { proc, url } = await startBuild(String(dir));
+    await using _ = proc;
+    const text = async () => (await get(url, "/")).replaceAll("<!-- -->", "");
+
+    expect(await text()).toContain("render 1");
+    expect(await text()).toContain("render 1");
+    // After a second the kept page is sent once more while it renders again, then the new one.
+    let latest = "";
+    while (!latest.includes("render 2")) latest = await text();
+    expect(latest).toContain("render 2");
+  },
+);
 
 const hydrateInHappyDom = `
   import { GlobalRegistrator } from "happy-dom-registrator";
@@ -1632,14 +1635,16 @@ const hydrateInHappyDom = `
       build.onResolve({ filter: /^\\/_bun\\// }, args => ({ path: join(import.meta.dir, "dist/client", args.path) }));
     },
   });
-  GlobalRegistrator.register({ url });
+  // The import below runs the script. happy-dom's own module loader cannot read import.meta.
+  GlobalRegistrator.register({
+    url,
+    settings: { disableJavaScriptFileLoading: true, handleDisabledFileLoadingAsSuccess: true },
+  });
   document.write(html);
   import(join(import.meta.dir, "dist/client", script));
-  const deadline = Date.now() + 5000;
   while (document.querySelector("button").textContent !== buttonText) {
-    if (Date.now() > deadline) throw new Error("not hydrated: " + document.querySelector("button").textContent);
     document.querySelector("button").click();
-    await Bun.sleep(10);
+    await new Promise(resolve => setImmediate(resolve));
   }
   console.log("hydrated " + document.querySelector("button").textContent);
   process.exit(0);
@@ -1824,23 +1829,28 @@ test.concurrent("bun bake build renders a kept page again until it can, and drop
   expect(await text()).toContain("render 1");
   // The second render fails, and the kept page stays until the next one. The third is not a page,
   // so the kept page goes, and the next request gets what its own render gives.
-  const deadline = Date.now() + 10_000;
   let latest = "";
-  while (!latest.startsWith("404") && Date.now() < deadline) latest = await text();
+  while (!latest.startsWith("404")) latest = await text();
   expect(latest).toBe("404 Not Found");
 });
 
 test.concurrent("bun bake build keeps a page in full when the client goes away during the render", async () => {
   using dir = tempDir("bake-build-disconnect", {
-    "app/gate.ts": `export const gate = Promise.withResolvers();`,
+    "app/gate.ts": `export const started = Promise.withResolvers(), gate = Promise.withResolvers();`,
     "app/server.ts": `
-      import { gate } from "./gate.ts";
-      export default { routes: { "/open": () => (gate.resolve(), new Response("open")) } };
+      import { gate, started } from "./gate.ts";
+      export default {
+        routes: {
+          "/started": async () => (await started.promise, new Response("started")),
+          "/open": () => (gate.resolve(), new Response("open")),
+        },
+      };
     `,
     "app/pages/index.tsx": `
       import { lazy, Suspense } from "react";
-      import { gate } from "../gate.ts";
+      import { gate, started } from "../gate.ts";
       const Loaded = lazy(async () => {
+        started.resolve();
         await gate.promise;
         return { default: () => <p>loaded</p> };
       });
@@ -1856,10 +1866,11 @@ test.concurrent("bun bake build keeps a page in full when the client goes away d
 
   const client = new AbortController();
   const gone = fetch(new URL("/", url), { signal: client.signal }).catch(error => error.name);
-  await Bun.sleep(100); // Nothing tells that the render has started: the response waits for the page.
+  expect(await get(url, "/started")).toBe("200 started");
   client.abort();
   expect(await gone).toBe("AbortError");
-  await Bun.sleep(100); // Nor that the server saw the client go away.
+  // The server handles this request after the close of the connection that went away.
+  expect(await get(url, "/started")).toBe("200 started");
 
   const next = fetch(new URL("/", url)).then(res => res.text());
   expect(await get(url, "/open")).toBe("200 open");
@@ -1924,6 +1935,7 @@ const frameworkFiles = {
   "routes/q&a/page.ts": `export default "q&a";`,
   "routes/mjs/page.mjs": `export default "mjs";`,
   "routes/big/[n]/page.ts": `export const big = true; export default "big";`,
+  "routes/item/[id]/page.ts": `export default "item";`,
   "routes/register.js": `import "./from-bunfig.js"; globalThis.registered = "side-effect-kept"; export default 1;`,
   "routes/from-bunfig.js": `globalThis.seen = "bunfig-plugin-did-not-run";`,
   "routes/secret.ts": `export const secret = "server-only-secret";`,
@@ -1949,14 +1961,14 @@ test.concurrent("bun bake build finds and builds the pages of a framework as bun
   const json = async (path: string) => (await fetch(new URL(path, url))).json();
 
   // The default of `layouts` is false.
-  expect(await json("/")).toMatchObject({ params: {}, layouts: 0 });
+  expect(await json("/")).toMatchObject({ params: null, layouts: 0 });
   // A route group is not in the URL, nor counted as a part of it.
-  expect(await json("/about")).toMatchObject({ params: {} });
+  expect(await json("/about")).toMatchObject({ params: null });
   expect(await json("/docs/a/b%20c")).toMatchObject({ params: { rest: ["a", "b c"] } });
   // As browsers send it.
-  expect(await json("/q&a")).toMatchObject({ params: {} });
+  expect(await json("/q&a")).toMatchObject({ params: null });
   // The default of `extensions` has `.mjs`.
-  expect(await json("/mjs")).toMatchObject({ params: {} });
+  expect(await json("/mjs")).toMatchObject({ params: null });
   expect((await fetch(new URL("/docs/%zz", url))).status).toBe(404);
 
   // The browser code: what a plugin and the tsconfig.json make of the file, without the exports
@@ -1982,6 +1994,81 @@ test.concurrent("bun bake build finds and builds the pages of a framework as bun
   for (let n = 1; n <= 16; n++) renders.push(await render(n));
   expect(await render(16)).toBe(renders.at(-1));
   expect(await render(0)).not.toBe(first);
+});
+
+test.concurrent("bun bake and bun bake build give a page the same params", async () => {
+  using dir = tempDir("bake-build-params", frameworkFiles);
+  await using dev = spawnBake(String(dir), ["bake", "--port=0"]);
+  const devUrl = await getServerUrl(dev);
+  const build = await buildApp(String(dir));
+  expect(build.stderr).toBe("");
+  expect(build.exitCode).toBe(0);
+  const { proc, url } = await startBuild(String(dir));
+  await using _ = proc;
+
+  const paramsFrom = async (server: string, path: string) => (await (await fetch(new URL(path, server))).json()).params;
+  const expected = {
+    "/": null,
+    "/item/caf%C3%A9": { id: "café" },
+    "/docs/one": { rest: ["one"] },
+    "/docs/a/b%20c": { rest: ["a", "b c"] },
+  };
+  for (const server of [devUrl, url]) {
+    const params = Object.fromEntries(
+      await Promise.all(Object.keys(expected).map(async path => [path, await paramsFrom(server, path)])),
+    );
+    expect(params).toEqual(expected);
+  }
+});
+
+test.concurrent("bun bake build loads the client entry point of a framework without clientPages", async () => {
+  using dir = tempDir("bake-build-client-entry", {
+    "bake.config.ts": `export default { plugins: [{ name: "a", framework: {
+      fileSystemRouterTypes: [{
+        root: "routes",
+        style: "nextjs-pages",
+        serverEntryPoint: "./render/server.ts",
+        clientEntryPoint: "./render/client.ts",
+      }],
+    } }] };`,
+    "render/server.ts": `export function render(request, meta) { return Response.json(meta.modules); }`,
+    "render/client.ts": `console.log("from-client-entry");`,
+    "routes/index.ts": `export default "server-only-page";`,
+  });
+  const build = await buildApp(String(dir));
+  expect(build.stderr).toBe("");
+  expect(build.exitCode).toBe(0);
+  const { proc, url } = await startBuild(String(dir));
+  await using _ = proc;
+
+  const [module] = await (await fetch(url)).json();
+  const code = await get(url, module);
+  expect(code).toContain("from-client-entry");
+  expect(code).not.toContain("server-only-page");
+});
+
+test.concurrent("bun bake build reports a folder with nothing to serve", async () => {
+  using dir = tempDir("bake-build-nothing", { "readme.txt": "not an app" });
+  const { stdout, stderr, exitCode } = await buildApp(String(dir));
+  expect(stderr).toContain("Nothing to serve in");
+  expect(existsSync(join(String(dir), "dist"))).toBe(false);
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+});
+
+test.concurrent("bun bake build runs app/server.ts with the project as the working directory", async () => {
+  using dir = tempDir("bake-build-tls", {
+    "certs/key.pem": tlsCert.key,
+    "certs/cert.pem": tlsCert.cert,
+    "app/server.ts": `export default {
+      tls: { key: Bun.file("./certs/key.pem"), cert: Bun.file("./certs/cert.pem") },
+      routes: { "/api": () => new Response("api") },
+    };`,
+  });
+  expect((await buildApp(String(dir))).exitCode).toBe(0);
+  const { proc, url } = await startBuild(String(dir));
+  await using _ = proc;
+  const res = await fetch(new URL("/api", url), { tls: { rejectUnauthorized: false } });
+  expect(await res.text()).toBe("api");
 });
 
 test.concurrent("bun bake build reports two pages with the same URL pattern", async () => {
@@ -2029,30 +2116,30 @@ const htmlFiles = {
   "app/pages/index.html": `<!doctype html><html><body><h1>home html</h1><script type="module" src="./home.ts"></script></body></html>`,
   "app/pages/home.ts": `console.log("home script", process.env.PUBLIC_NAME);`,
   "app/pages/docs/index.html": `<!doctype html><html><body><h1>docs html</h1></body></html>`,
+  "app/server.ts": `export default { routes: { "/api/name": () => new Response(process.env.PUBLIC_NAME) } };`,
   "bunfig.toml": `[serve.static]\nenv = "PUBLIC_*"\n`,
   ".env": `PUBLIC_NAME=from-env\n`,
 };
 
-test.concurrent("bun bake build serves .html pages of the same file name", async () => {
+test.concurrent("bun bake build serves .html pages of the same file name, from any folder", async () => {
   using dir = tempDir("bake-build-html", htmlFiles);
   expect((await buildApp(String(dir))).exitCode).toBe(0);
-  const { proc, url } = await startBuild(join(String(dir), "dist"), "server.js");
-  await using _ = proc;
 
-  const home = await get(url, "/");
-  expect(home).toContain("<h1>home html</h1>");
-  expect(await get(url, "/docs")).toContain("<h1>docs html</h1>");
-  const [, script] = home.match(/<script type="module"[^>]* src="([^"]+)"/)!;
-  const code = await get(url, script);
-  expect(code).toContain("home script");
-  expect(code).toContain("from-env");
-});
+  for (const [cwd, server] of [
+    [String(dir), "dist/server.js"],
+    [join(String(dir), "dist"), "server.js"],
+  ]) {
+    const { proc, url } = await startBuild(cwd, server, { PUBLIC_NAME: "from-the-server" });
+    await using _ = proc;
 
-// `Bun.serve()` opens the files of a built `.html` page from the working directory.
-test.failing("bun bake build serves .html pages when it runs from the project", async () => {
-  using dir = tempDir("bake-build-html-root", htmlFiles);
-  expect((await buildApp(String(dir))).exitCode).toBe(0);
-  const { proc, url } = await startBuild(String(dir));
-  await using _ = proc;
-  expect(await get(url, "/")).toContain(`src="/_bun/`);
+    const home = await get(url, "/");
+    expect(home).toContain("<h1>home html</h1>");
+    expect(await get(url, "/docs")).toContain("<h1>docs html</h1>");
+    const [, script] = home.match(/<script type="module"[^>]* src="([^"]+)"/)!;
+    const code = await get(url, script);
+    expect(code).toContain("home script");
+    // `[serve.static] env` is for the browser code. The server reads its own environment.
+    expect(code).toContain("from-env");
+    expect(await get(url, "/api/name")).toBe("200 from-the-server");
+  }
 });

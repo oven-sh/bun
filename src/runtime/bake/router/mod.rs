@@ -8,7 +8,7 @@ use core::mem::size_of;
 
 use bun_alloc::{AllocError, Arena};
 use bun_collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
-use bun_jsc::{JSGlobalObject, JSValue, StringJsc, StrongOptional};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, StrongOptional};
 use bun_paths as paths;
 use bun_resolver::{DirInfo, Resolver};
 
@@ -426,34 +426,38 @@ pub(crate) struct MatchedParamEntry {
     // `MatchedParams` stack frame. See `RawSlice` invariant.
     pub key: bun_ptr::RawSlice<u8>,
     pub value: bun_ptr::RawSlice<u8>,
+    /// One segment of a catch-all: the last entries of a match.
+    pub catch_all: bool,
 }
 
 impl MatchedParams {
     pub(crate) const MAX_COUNT: usize = 64;
 
-    /// Convert the matched params to a JavaScript object
+    /// Convert the matched params to a JavaScript object, with decoded values, as the server of
+    /// `bun bake build` gives them: a catch-all is always an array.
     /// Returns null if there are no params
-    pub(crate) fn to_js(&self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let params_array = self.params.const_slice();
 
         if params_array.is_empty() {
-            return JSValue::NULL;
+            return Ok(JSValue::NULL);
         }
 
-        // Create a JavaScript object with params
+        let decoded = |param: &MatchedParamEntry| {
+            let value = bun_url::PercentEncoding::decode_lenient_alloc(param.value.slice());
+            bun_jsc::bun_string_jsc::create_utf8_for_js(global, &value)
+        };
         let obj = JSValue::create_empty_object(global, params_array.len());
-        for param in params_array {
-            let key_str = bun_core::String::clone_utf8(param.key.slice());
-            let value_str = bun_core::String::clone_utf8(param.value.slice());
-
-            obj.put_bun_string_one_or_array(
-                global,
-                &key_str,
-                value_str.into_js(global).expect("unreachable"),
-            )
-            .expect("unreachable");
+        let (named, catch_all) =
+            params_array.split_at(params_array.partition_point(|param| !param.catch_all));
+        for param in named {
+            obj.put(global, param.key.slice(), decoded(param)?);
         }
-        obj
+        if let Some(first) = catch_all.first() {
+            let segments = JSValue::create_array_from_iter(global, catch_all.iter(), decoded)?;
+            obj.put(global, first.key.slice(), segments);
+        }
+        Ok(obj)
     }
 }
 

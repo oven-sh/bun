@@ -366,8 +366,8 @@ devTest("SSG pages router - catch-all routes [...slug]", {
     // Test single segment
     await using c1 = await dev.client("/docs");
     expect(await c1.elemText("h1")).toBe("Catch-all Route");
-    expect(await c1.elemText("#params")).toBe('{"slug":"docs"}');
-    expect(await c1.elemsText("li")).toEqual(["No slug array"]);
+    expect(await c1.elemText("#params")).toBe('{"slug":["docs"]}');
+    expect(await c1.elemsText("li")).toEqual(["docs"]);
 
     // Test two segments
     await using c2 = await dev.client("/docs/getting-started");

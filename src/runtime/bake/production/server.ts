@@ -31,9 +31,8 @@ type FrameworkRoute = {
 
 type Build = {
   app: Record<string, any> | undefined;
-  htmlPages: { url: string; bundle: unknown }[];
   frameworkRoutes: FrameworkRoute[];
-  /** URL path to file, relative to `dist/`: the browser files and `public/`. */
+  /** URL path to file, relative to `dist/`: the `.html` pages, the browser files and `public/`. */
   files: Record<string, string>;
 };
 
@@ -81,24 +80,30 @@ function keepFor(response: Response): number | undefined {
   return seconds > 0 ? seconds : undefined;
 }
 
-/** The parameters of a request, or `null` when its path cannot be decoded. */
-function paramsOf(route: FrameworkRoute, request: Request & { params?: Record<string, string> }): Params | null {
+/**
+ * The parameters of a request, as `bun bake` gives them: `null` when it has none. `undefined` when
+ * its path cannot be decoded.
+ */
+function paramsOf(
+  route: FrameworkRoute,
+  request: Request & { params?: Record<string, string> },
+): Params | null | undefined {
   const params: Params = { ...request.params };
   if (route.catchAll !== null) {
     let segments: string[];
     try {
       segments = new URL(request.url).pathname.split("/").filter(Boolean).map(decodeURIComponent);
     } catch (error) {
-      if (error instanceof URIError) return null;
+      if (error instanceof URIError) return undefined;
       throw error;
     }
     const rest = segments.slice(route.catchAllIndex);
     if (rest.length > 0) params[route.catchAll] = rest;
   }
-  return params;
+  return Object.keys(params).length > 0 ? params : null;
 }
 
-async function render(route: FrameworkRoute, request: Request, params: Params): Promise<Response> {
+async function render(route: FrameworkRoute, request: Request, params: Params | null): Promise<Response> {
   return route.render(request, {
     pageModule: route.page,
     layouts: route.layouts,
@@ -118,7 +123,7 @@ function respond(entry: Kept) {
  * a page that is kept, and that other requests wait for, is rendered in full when a client goes
  * away, not with the loading state that React writes when its signal aborts.
  */
-function renderToKeep(route: FrameworkRoute, request: Request, params: Params, key: string) {
+function renderToKeep(route: FrameworkRoute, request: Request, params: Params | null, key: string) {
   const controller = new AbortController();
   const run = async (): Promise<Rendered> => {
     const response = await render(route, new Request(request, { method: "GET", signal: controller.signal }), params);
@@ -145,7 +150,7 @@ function renderToKeep(route: FrameworkRoute, request: Request, params: Params, k
 }
 
 /** Renders a kept page again. On a failure it stays, and the next request tries again. */
-async function renderAgain(route: FrameworkRoute, request: Request, params: Params, key: string) {
+async function renderAgain(route: FrameworkRoute, request: Request, params: Params | null, key: string) {
   try {
     const result = await renderToKeep(route, request, params, key);
     if ("kept" in result) return;
@@ -159,7 +164,7 @@ async function renderAgain(route: FrameworkRoute, request: Request, params: Para
 function handler(route: FrameworkRoute) {
   return async (request: Request) => {
     const params = paramsOf(route, request);
-    if (params === null) return new Response("Not Found", { status: 404 });
+    if (params === undefined) return new Response("Not Found", { status: 404 });
     const { method } = request;
     if (method !== "GET" && method !== "HEAD") return render(route, request, params);
     const key = new URL(request.url).pathname;
@@ -187,7 +192,7 @@ function handler(route: FrameworkRoute) {
 }
 
 export function start(build: Build) {
-  const routes: Record<string, unknown> = {};
+  const routes: Record<string, any> = {};
   for (const [url, file] of Object.entries(build.files)) {
     routes[url] = new Response(Bun.file(new URL(file, import.meta.url)));
   }
@@ -195,7 +200,6 @@ export function start(build: Build) {
     const handle = handler(route);
     for (const pattern of route.patterns) routes[pattern] = handle;
   }
-  for (const page of build.htmlPages) routes[page.url] = page.bundle;
   const app = build.app;
   const appRoutes = app?.routes ?? app?.static;
   if (appRoutes && typeof appRoutes === "object" && !Array.isArray(appRoutes)) {
@@ -205,24 +209,15 @@ export function start(build: Build) {
     }
   }
 
-  // TEMPORARY: `Bun.serve()` finds the files of an `.html` page from the working directory, not
-  // from this bundle's folder.
-  const cwd = process.cwd();
-  process.chdir(import.meta.dir);
-  let server;
-  try {
-    server = Bun.serve({
-      ...app,
-      static: undefined,
-      routes,
-      fetch: app?.fetch ?? (() => new Response("Not Found", { status: 404 })),
-      development: false,
-      port: process.env.PORT ?? app?.port ?? 3000,
-      hostname: process.env.HOST ?? app?.hostname ?? app?.host,
-    });
-  } finally {
-    process.chdir(cwd);
-  }
+  const server = Bun.serve({
+    ...app,
+    static: undefined,
+    routes,
+    fetch: app?.fetch ?? (() => new Response("Not Found", { status: 404 })),
+    development: false,
+    port: process.env.PORT ?? app?.port ?? 3000,
+    hostname: process.env.HOST ?? app?.hostname ?? app?.host,
+  });
   console.log(`Listening on ${server.url}`);
   return server;
 }

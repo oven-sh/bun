@@ -2657,8 +2657,8 @@ pub mod parse_worker {
             Some(framework) => &*framework.client_page_dirs,
             None => &*topts.client_page_dirs,
         };
-        if let Some(server_exports) = Some(client_page_dirs)
-            .filter(|_| target == options::Target::Browser)
+        if let Some(server_exports) = (target == options::Target::Browser)
+            .then_some(client_page_dirs)
             .and_then(|dirs| crate::bake_types::client_page_server_exports(dirs, task.path.text))
             .filter(|names| !names.is_empty())
         {

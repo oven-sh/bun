@@ -43,6 +43,7 @@ const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
 const {
+  kAcceptedTLS,
   kArmHandshakeTimeout,
   kDestroyOnRead,
   kPreHandshakeWrite,
@@ -485,6 +486,10 @@ function onUpgradedReadError(self, err) {
   SocketEmitEndNT(self, err);
   self.destroy();
 }
+// Node wraps whatever stream it is given in a JSStreamSocket: a Duplex of another streams implementation works too.
+function isWrappableStream(stream) {
+  return stream instanceof Duplex || require("internal/tls").hasStreamMethods(stream);
+}
 // Whatever state the wrapped stream is in: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
 function linkUpgraded(self, connection: SocketInstance) {
   const isSocket = connection instanceof Socket;
@@ -492,7 +497,8 @@ function linkUpgraded(self, connection: SocketInstance) {
   self._parent = isSocket ? connection : null;
   destroyWhenUpgradedCloses(self, connection);
   connection.on("error", onUpgradedError.bind(null, self));
-  self.connecting = isSocket && (connection.connecting || !connection._handle);
+  // `pending`, not `!_handle`: the socket of an http 'connect' or 'upgrade' event is connected and has no handle of its own.
+  self.connecting = isSocket && connection.pending;
 }
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
 function onUpgradedConnect(self, connection) {
@@ -1376,6 +1382,8 @@ const ServerHandlers = {
       }
     }
     self[kSessionAccepted] = true;
+    // The handshake ran over a net.Socket that has a transport of its own and reports no 'connect'.
+    if (self.connecting) onUpgradedConnect(self, self[kupgraded]);
     const pauseOnConnect = server?.pauseOnConnect;
     if (pauseOnConnect) {
       pauseOnCreate(self, socket);
@@ -1637,7 +1645,10 @@ function onconnection(err, clientHandle) {
     pauseOnCreate(_socket, clientHandle);
   }
 
-  if (isTLS) initAcceptedTLSSocket(self, _socket);
+  if (isTLS) {
+    initAcceptedTLSSocket(self, _socket);
+    _socket[kAcceptedTLS] = self;
+  }
 
   // Node reports a throwing 'connection' listener as uncaughtException and keeps the socket.
   try {
@@ -2347,7 +2358,7 @@ Socket.prototype.connect = function connect(...args) {
     }
     if (
       // TLSSocket already created a socket and is forwarding it here. This is a private API.
-      !(socket && $isObject(socket) && socket instanceof Duplex) &&
+      !(socket && $isObject(socket) && isWrappableStream(socket)) &&
       // public api for net.Socket.connect
       port === undefined &&
       path == null
@@ -2372,12 +2383,15 @@ Socket.prototype.connect = function connect(...args) {
         this[bunTLSConnectOptions] = tls;
       }
       if (connection) {
+        // Connected, and nothing to adopt: the socket of an http 'connect' or 'upgrade' event.
+        const connectedWithoutHandle = !connection._handle && !connection.pending;
         if (
           typeof connection !== "object" ||
           !(connection instanceof Socket) ||
-          typeof connection[bunTlsSymbol] === "function"
+          typeof connection[bunTlsSymbol] === "function" ||
+          connectedWithoutHandle
         ) {
-          if (connection instanceof Duplex) {
+          if (isWrappableStream(connection)) {
             upgradeDuplex = true;
           } else {
             throw new TypeError("socket must be an instance of net.Socket or Duplex");
@@ -2675,11 +2689,20 @@ Socket.prototype.pause = function pause() {
 // native read path drives the handshake. Lives here, not tls.ts, to reach
 // ServerHandlers — the shared accepted-socket handler table, with per-socket
 // state carried via `data` (mirrors tls.createServer's one-handler-for-all model).
-Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, tls) {
+Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (
+  connection: SocketInstance & { encrypted?: boolean },
+  tls,
+) {
   linkUpgraded(this, connection);
   const options = { data: this, tls, socket: serverHandlersFor(this), isServer: true };
   const socket = connection._handle;
-  if (!socket || connection.encrypted || isNamedPipeSocket(socket) || hasUnflushedWrites(connection)) {
+  if (
+    !socket ||
+    !(connection instanceof Socket) ||
+    connection.encrypted ||
+    isNamedPipeSocket(socket) ||
+    hasUnflushedWrites(connection)
+  ) {
     // No adoptable fd (generic Duplex, named pipe, never dialed), TLS over TLS (the fd belongs to the
     // outer SSL layer), or pending plain writes that must flush first.
     attachTLSEngine(this, connection, options);

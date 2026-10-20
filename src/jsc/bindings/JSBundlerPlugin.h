@@ -124,7 +124,7 @@ public:
     // The onResolve / onLoad requests this plugin chain currently holds (handed over by the bundle thread,
     // not yet answered). A request has exactly one answer, produced on this (the JS) thread: by the plugin
     // (onResolveAsync / onLoadAsync / addError — whichever comes first; anything later for the same request
-    // is dropped), or, once the VM that runs the plugins is shutting down, by tombstone(). JS thread only.
+    // is dropped), or by releaseHeldRequests() / tombstone(). JS thread only.
     enum class RequestKind : uint8_t { Resolve = 0,
         Load = 1 };
     void holdRequest(RequestKind kind, void* context) { held.add(context, kind); }
@@ -142,6 +142,9 @@ public:
         held.remove(context);
         return true;
     }
+    // What the plugin object holds is answered as cancelled now (the pass that asked is discarded), and
+    // whatever its JS side delivers later for those requests is dropped. It answers later requests itself.
+    void releaseHeldRequests();
     // From here the plugin object answers nothing itself: what it still holds is answered as cancelled now,
     // and whatever its JS side delivers later is dropped.
     void tombstone();

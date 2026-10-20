@@ -36,6 +36,9 @@ pub enum Error {
     FormatError,
     #[error("ResolveMessage")]
     ResolveMessage,
+    /// Not a failure: see `BundleOptions::target_defaults_from_hashbang`.
+    #[error("RestartForBunTarget")]
+    RestartForBunTarget,
     #[error("JSError")]
     Js(bun_core::JsError),
     #[error(transparent)]
@@ -120,6 +123,7 @@ impl Error {
             Self::EmptyAST => "EmptyAST",
             Self::FormatError => "FormatError",
             Self::ResolveMessage => "ResolveMessage",
+            Self::RestartForBunTarget => "RestartForBunTarget",
             Self::Js(bun_core::JsError::OutOfMemory) => "OutOfMemory",
             Self::Js(_) => "JSError",
             Self::Sys(e) => <&'static str>::from(e),

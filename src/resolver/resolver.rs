@@ -504,6 +504,11 @@ pub struct Resolver<'a> {
     pub caches: CacheSet,
     pub generation: Generation,
 
+    /// `Some` after `record_dir_info_diagnostics`: a copy of what this resolver logged while it read
+    /// a directory for the first time in the process. No later resolver logs that again.
+    dir_info_diagnostics: Option<Vec<bun_ast::Msg>>,
+    is_recording_dir_info: bool,
+
     /// Auto-install backend. `bun_install::PackageManager` implements
     /// [`AutoInstaller`]; the resolver only sees the trait object so it stays
     /// below `bun_install` in the dep graph. `None` until the auto-install
@@ -641,6 +646,8 @@ impl<'a> Resolver<'a> {
             watcher: from.watcher,
             caches: CacheSet::init(),
             generation: from.generation,
+            dir_info_diagnostics: None,
+            is_recording_dir_info: false,
             package_manager: from.package_manager,
             on_wake_package_manager: from.on_wake_package_manager,
             env_loader: from.env_loader,
@@ -767,6 +774,18 @@ impl<'a> Resolver<'a> {
         // alias-UB with the narrow `log_mut()` retags elsewhere (none are live
         // across a `log_ref()` call).
         unsafe { self.log.as_ref() }
+    }
+
+    /// From here, keep a copy of what this resolver logs while it reads a directory for the first
+    /// time in the process (its package.json and tsconfig.json diagnostics). A caller that runs
+    /// its work again in the same process takes them with `take_dir_info_diagnostics`, because the
+    /// second run finds the directory cached and logs nothing.
+    pub fn record_dir_info_diagnostics(&mut self) {
+        self.dir_info_diagnostics = Some(Vec::new());
+    }
+
+    pub fn take_dir_info_diagnostics(&mut self) -> Vec<bun_ast::Msg> {
+        self.dir_info_diagnostics.take().unwrap_or_default()
     }
 
     /// Unique-borrow of the resolver's `Log` for `add_*_fmt` / `add_msg`.
@@ -976,6 +995,8 @@ impl<'a> Resolver<'a> {
             elapsed: 0,
             watcher: None,
             generation: 0,
+            dir_info_diagnostics: None,
+            is_recording_dir_info: false,
             package_manager: None,
             on_wake_package_manager: Default::default(),
             env_loader: None,
@@ -6112,6 +6133,62 @@ impl<'a> Resolver<'a> {
     }
 
     fn dir_info_uncached(
+        &mut self,
+        info: *mut DirInfo::DirInfo,
+        path: &'static [u8],
+        entries: *mut Fs::file_system::real_fs::EntriesOption,
+        result: allocators::Result,
+        dir_entry_index: allocators::IndexType,
+        parent: Option<DirInfoRef>,
+        parent_index: allocators::IndexType,
+        fd: FD,
+        package_id: Option<Install::PackageID>,
+    ) -> crate::CrateResult<()> {
+        // A fill can read another directory (a tsconfig.json that `extends` a package): the
+        // outermost one records for all of them.
+        let records = self.dir_info_diagnostics.is_some() && !self.is_recording_dir_info;
+        let logged_before = if records {
+            self.is_recording_dir_info = true;
+            self.log_ref().msgs.len()
+        } else {
+            0
+        };
+        let filled = self.dir_info_uncached_impl(
+            info,
+            path,
+            entries,
+            result,
+            dir_entry_index,
+            parent,
+            parent_index,
+            fd,
+            package_id,
+        );
+        if records {
+            self.is_recording_dir_info = false;
+            if self.log_ref().msgs.len() > logged_before {
+                self.record_dir_info_diagnostics_since(logged_before);
+            }
+        }
+        filled
+    }
+
+    #[cold]
+    fn record_dir_info_diagnostics_since(&mut self, logged_before: usize) {
+        let logged: Vec<bun_ast::Msg> = self
+            .log_ref()
+            .msgs
+            .get(logged_before..)
+            .unwrap_or_default()
+            .iter()
+            .map(bun_ast::Msg::clone)
+            .collect();
+        if let Some(recorded) = &mut self.dir_info_diagnostics {
+            recorded.extend(logged);
+        }
+    }
+
+    fn dir_info_uncached_impl(
         &mut self,
         info: *mut DirInfo::DirInfo,
         path: &'static [u8],

@@ -77,12 +77,6 @@ impl BuildCommand {
             return crate::bake::production::build_command(ctx);
         }
 
-        if ctx.args.target.is_none()
-            && options::any_entry_point_has_bun_hashbang(&ctx.args.entry_points, None)
-        {
-            ctx.args.target = Some(api::Target::Bun);
-        }
-
         if fetcher.is_some() {
             ctx.args.packages = Some(api::PackagesMode::External);
             ctx.bundler_options.compile = false;
@@ -132,6 +126,11 @@ impl BuildCommand {
         let this_transpiler: &mut transpiler::Transpiler<'static> = arena.alloc(
             transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?,
         );
+        // `--compile` and `--bytecode` set the target above, and the dependency scan has no target
+        // to choose: its output is a list of package names.
+        if ctx.args.target.is_none() && fetcher.is_none() {
+            this_transpiler.set_target_defaults_from_hashbang();
+        }
         bun_core::asan::register_root_region(
             std::ptr::from_ref::<transpiler::Transpiler>(this_transpiler).cast(),
             core::mem::size_of::<transpiler::Transpiler>(),
@@ -615,9 +614,6 @@ impl BuildCommand {
                 )
                 .expect("unreachable");
                 this_transpiler.options.entry_naming = entry_naming.into_boxed_slice();
-                if let Some(dir) = bun_core::dirname(outfile) {
-                    ctx.bundler_options.outdir = dir.into();
-                }
                 // resolver.opts.entry_naming — field does not exist on the
                 // resolver subset; bundler-side `entry_naming` is sufficient.
             }
@@ -638,6 +634,11 @@ impl BuildCommand {
                 fetcher,
             ) {
                 Ok(r) => r,
+                Err(bun_bundler::Error::RestartForBunTarget) => {
+                    // Every option that follows from the target is built above, from `ctx.args`.
+                    ctx.args.target = Some(api::Target::Bun);
+                    return Self::exec(ctx, fetcher);
+                }
                 Err(err) => {
                     if !log_ref.msgs.is_empty() {
                         log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(

@@ -72,6 +72,8 @@ pub trait CompletionStruct: Node + Send + 'static {
     fn complete_on_bundle_thread(&mut self);
     fn set_result(&mut self, result: BundleV2Result);
     fn set_log(&mut self, log: bun_ast::Log);
+    /// The build ended with `Error::RestartForBunTarget`: configure the next run for bun.
+    fn restart_for_bun_target(&mut self);
     fn set_transpiler(&mut self, this: *mut BundleV2<'_>);
     fn plugins(&self) -> Option<NonNull<JSBundlerPlugin>>;
     /// Returns the file map if non-empty; a single accessor so the opaque
@@ -270,8 +272,23 @@ impl<C: CompletionStruct> BundleThread<C> {
         generation: bun_core::Generation,
     ) -> Result<(), crate::Error> {
         let heap = Arena::new();
+        let run = Self::generate_pass(completion, generation, &heap);
+        if !matches!(run, Err(crate::Error::RestartForBunTarget)) {
+            return run;
+        }
+        completion.restart_for_bun_target();
+        // `heap` outlives the second pass. The plugins know a request by its address, and they
+        // can still answer one that the first pass took back: no request of the second pass
+        // gets that address.
+        Self::generate_pass(completion, generation, &Arena::new())
+    }
 
-        let bump = &heap;
+    fn generate_pass(
+        completion: &mut C,
+        generation: bun_core::Generation,
+        heap: &Arena,
+    ) -> Result<(), crate::Error> {
+        let bump = heap;
         let ast_memory_store: &mut bun_ast::ASTMemoryAllocator =
             bump.alloc(bun_ast::ASTMemoryAllocator::new(bump));
         ast_memory_store.reset();

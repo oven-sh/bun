@@ -131,6 +131,11 @@ pub struct BundleV2<'a> {
     /// If false we can skip TLA validation and propagation.
     pub(crate) has_any_top_level_await_modules: bool,
 
+    /// An entry point answered `Error::RestartForBunTarget` (see
+    /// `BundleOptions::target_defaults_from_hashbang`). The pass is discarded: it keeps no result
+    /// that arrives from here on, and ends with that error once nothing is pending.
+    pub(crate) restart_for_bun_target: bool,
+
     /// Barrel optimization: tracks which exports have been requested from each
     /// module encountered during barrel BFS. Keys are source indices. Values
     /// track requested export names for deduplication and cycle detection.
@@ -782,6 +787,8 @@ pub mod bv2_impl {
                 );
                 #[link_name = "JSBundlerPlugin__drainDeferred"]
                 safe fn JSBundlerPlugin__drainDeferred(this: &mut Plugin, rejected: bool);
+                #[link_name = "JSBundlerPlugin__releaseHeldRequests"]
+                safe fn JSBundlerPlugin__releaseHeldRequests(this: &mut Plugin);
                 #[link_name = "JSBundlerPlugin__hasOnBeforeParsePlugins"]
                 safe fn JSBundlerPlugin__hasOnBeforeParsePlugins(this: &Plugin) -> i32;
                 // `ctx`/`args`/`result` are opaque cookies the C++ side round-trips
@@ -810,6 +817,13 @@ pub mod bv2_impl {
                 /// behaviour at this tier.
                 pub(crate) fn drain_deferred(&mut self, rejected: bool) {
                     JSBundlerPlugin__drainDeferred(self, rejected)
+                }
+
+                /// Plugins' (JS) thread. Every `onResolve` / `onLoad` request that the plugins
+                /// hold is answered as cancelled. What a plugin answers later for one of them
+                /// is dropped, as after any other answer.
+                pub(crate) fn release_held_requests(&mut self) {
+                    JSBundlerPlugin__releaseHeldRequests(self)
                 }
 
                 #[inline]
@@ -954,7 +968,9 @@ pub mod bv2_impl {
                     self.get_key_value(specifier).is_some()
                 }
                 /// Returns a `resolver::Result` for a file in the map, or `None` if
-                /// not found (see [`Self::lookup`] for what matches).
+                /// not found. Handles direct key matches and relative specifiers
+                /// joined against `dirname(source_file)` (with Windows
+                /// drive-letter / separator normalization).
                 ///
                 /// `arena` is the build's bump arena (`BundleV2::arena()`);
                 /// the matched key is copied into it so the returned
@@ -967,33 +983,23 @@ pub mod bv2_impl {
                     source_file: &[u8],
                     specifier: &[u8],
                 ) -> Option<bun_resolver::Result> {
-                    let (key, _) = self.lookup(source_file, specifier)?;
+                    if self.map.is_empty() {
+                        return None;
+                    }
+
                     // SAFETY: ARENA — `arena` is the build-pass bump arena
                     // (never freed before the `Result` is consumed); detaching the
                     // borrow lifetime matches the established `Path<'static>`
                     // convention used throughout `bun_resolver` (PORTING.md
                     // §Lifetimes: ARENA → `&'bump T`).
-                    let key: &'static [u8] =
-                        unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(key)) };
-                    Some(Self::result_for_key(key))
-                }
-
-                /// Map-owned key and contents. Handles direct key matches and
-                /// relative specifiers joined against `dirname(source_file)` (with
-                /// Windows drive-letter / separator normalization). `source_file`
-                /// is `b""` for an entry point.
-                pub(crate) fn lookup(
-                    &self,
-                    source_file: &[u8],
-                    specifier: &[u8],
-                ) -> Option<(&[u8], &[u8])> {
-                    if self.map.is_empty() {
-                        return None;
-                    }
+                    let dupe = |key: &[u8]| -> &'static [u8] {
+                        // SAFETY: see ARENA note above — bytes live in the build-pass arena.
+                        unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(key)) }
+                    };
 
                     // Direct key match. Return the map-owned key, not the parameter.
-                    if let Some(found) = self.get_key_value(specifier) {
-                        return Some(found);
+                    if let Some((key, _)) = self.get_key_value(specifier) {
+                        return Some(Self::result_for_key(dupe(key)));
                     }
 
                     // Also try joining a relative specifier against the importer's
@@ -1057,8 +1063,8 @@ pub mod bv2_impl {
                             );
                         }
                         let joined = &buf[0..joined_len];
-                        if let Some((key, value)) = self.map.get_key_value(joined) {
-                            return Some((key.as_ref(), value.as_ref()));
+                        if let Some((key, _)) = self.map.get_key_value(joined) {
+                            return Some(Self::result_for_key(dupe(key.as_ref())));
                         }
                     }
 
@@ -2529,6 +2535,38 @@ pub mod bv2_impl {
             );
         }
 
+        /// Bundle thread. An entry point starts with a bun hashbang and no target was given
+        /// (`BundleOptions::target_defaults_from_hashbang`), so every option that follows from
+        /// the target is wrong for this build. Nothing further is handed to the plugins, and
+        /// they give back what they hold: a request of theirs can wait on a file that this
+        /// pass will never load.
+        fn discard_pass_for_bun_target(&mut self) {
+            self.thread_lock.assert_locked();
+            self.restart_for_bun_target = true;
+            self.graph.cancelled = true;
+            if self.plugins.is_some() {
+                self.drain_defer_task.schedule_release();
+            }
+        }
+
+        /// After `wait_for_parse`. A discarded pass ends here with the error that makes its
+        /// caller build again with target bun. That build logs again what this pass logged,
+        /// except what the resolver logs once for a directory.
+        fn restart_for_bun_target_if_discarded(&mut self) -> Result<(), Error> {
+            if !self.restart_for_bun_target {
+                return Ok(());
+            }
+            let once_per_directory = self.transpiler.resolver.take_dir_info_diagnostics();
+            let log = self.transpiler.log_mut();
+            log.reset();
+            for msg in once_per_directory {
+                log.errors += u32::from(msg.kind == bun_ast::Kind::Err);
+                log.warnings += u32::from(msg.kind == bun_ast::Kind::Warn);
+                log.msgs.push(msg);
+            }
+            Err(crate::Error::RestartForBunTarget)
+        }
+
         /// Callers require an entry point, so none after parsing means one was dropped without an error.
         fn fail_if_no_entry_points(&self) -> Result<(), Error> {
             if !self.graph.entry_points.is_empty() {
@@ -3319,6 +3357,7 @@ pub mod bv2_impl {
                 drain_defer_task: DeferredBatchTask::default(),
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
+                restart_for_bun_target: false,
                 requested_exports: Vec::new(),
             });
             if let Some(bo) = bake_options {
@@ -4475,6 +4514,7 @@ pub mod bv2_impl {
 
                 // Like `run_from_js_in_new_thread`: drain the pool, then report entry point errors.
                 this.wait_for_parse();
+                this.restart_for_bun_target_if_discarded()?;
                 this.dump_pool_stats("parse");
 
                 *minify_duration = (((bun_core::time::nano_timestamp() as i64)
@@ -5680,6 +5720,7 @@ pub mod bv2_impl {
 
             // We must wait for all the parse tasks to complete, even if there are errors.
             self.wait_for_parse();
+            self.restart_for_bun_target_if_discarded()?;
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
@@ -7648,7 +7689,9 @@ pub mod bv2_impl {
             let mut resolve_queue = ResolveQueue::default();
             let mut process_log = true;
 
-            if matches!(parse_result.value, parse_task::ResultValue::Success(_)) {
+            if !this.restart_for_bun_target
+                && matches!(parse_result.value, parse_task::ResultValue::Success(_))
+            {
                 barrel_imports::apply_barrel_optimization(this, parse_result);
                 resolve_queue = Self::run_resolution_for_parse_task(parse_result, this);
                 if matches!(parse_result.value, parse_task::ResultValue::Err(_)) {
@@ -7686,6 +7729,18 @@ pub mod bv2_impl {
                         };
                     }
                 }
+            }
+
+            if this.restart_for_bun_target {
+                if let parse_task::ResultValue::Success(result) = &mut parse_result.value {
+                    if let Some(css) = result.ast.css.take() {
+                        // SAFETY: the stylesheet is in the worker arena and is not in the graph,
+                        // so `deinit_without_freeing_arena` does not drop it. Dropped exactly once.
+                        unsafe { core::ptr::drop_in_place(css.as_ptr()) };
+                    }
+                }
+                this.decrement_scan_counter();
+                return;
             }
 
             match &mut parse_result.value {
@@ -8001,6 +8056,10 @@ pub mod bv2_impl {
                     }
                 }
                 parse_task::ResultValue::Err(err) => {
+                    if err.err == crate::Error::RestartForBunTarget {
+                        this.discard_pass_for_bun_target();
+                        process_log = false;
+                    }
                     if process_log {
                         if let Some(dev_server) = this.dev_server {
                             // Copy out the `'static` path slice so the `input_files`

@@ -106,6 +106,9 @@ pub(crate) mod js_bundler {
 
     pub(crate) struct Config {
         pub(crate) target: Target,
+        /// `target`, `bytecode` and `compile` were not given: see
+        /// `BundleOptions::target_defaults_from_hashbang`.
+        pub(crate) target_defaults_from_hashbang: bool,
         pub(crate) entry_points: StringSet,
         pub(crate) react_fast_refresh: bool,
         pub(crate) react_compiler: bun_ast::runtime::ReactCompilerMode,
@@ -173,6 +176,7 @@ pub(crate) mod js_bundler {
         fn default() -> Self {
             Self {
                 target: Target::Browser,
+                target_defaults_from_hashbang: false,
                 entry_points: StringSet::default(),
                 react_fast_refresh: false,
                 react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
@@ -965,16 +969,6 @@ pub(crate) mod js_bundler {
                 this.files = file_map_from_js(global_this, JSValue::from_cell(files_obj))?;
             }
 
-            if !did_set_target
-                && this.target != Target::Bun
-                && options::any_entry_point_has_bun_hashbang(
-                    this.entry_points.keys(),
-                    Some(&this.files),
-                )
-            {
-                this.target = Target::Bun;
-            }
-
             if let Some(flag) =
                 config.get_boolean_loose(global_this, "deprecatedNamespaceObjectSetters")?
             {
@@ -1327,6 +1321,9 @@ pub(crate) mod js_bundler {
             )? {
                 this.compile = Some(compile);
             }
+
+            this.target_defaults_from_hashbang =
+                !did_set_target && !this.bytecode && this.compile.is_none();
 
             if let Some(compile) = this.compile.as_mut() {
                 // When compile + target=browser + all HTML entrypoints, produce standalone HTML.

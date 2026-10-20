@@ -488,6 +488,14 @@ impl<'a> Transpiler<'a> {
         Err(crate::Error::ResolveMessage)
     }
 
+    /// For a build whose target was not given. Call it right after `init`: see
+    /// `BundleOptions::target_defaults_from_hashbang`. The build that runs again finds every
+    /// directory in the resolver's cache, so this one keeps what the resolver logs about them.
+    pub fn set_target_defaults_from_hashbang(&mut self) {
+        self.options.target_defaults_from_hashbang = true;
+        self.resolver.record_dir_info_diagnostics();
+    }
+
     /// Load env files and build `options.define`. Idempotent — a no-op once
     /// `options.defines_loaded` is set.
     pub fn configure_defines(&mut self) -> crate::Result<()> {

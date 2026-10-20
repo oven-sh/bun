@@ -1025,6 +1025,9 @@ impl CompletionStruct for JSBundleCompletionTask {
             },
         };
         transpiler.options.no_macros = config.no_macros;
+        if config.target_defaults_from_hashbang {
+            transpiler.set_target_defaults_from_hashbang();
+        }
         transpiler.options.loaders =
             options::loaders_from_transform_options(config.loaders.as_ref(), config.target)?;
         transpiler
@@ -1219,6 +1222,10 @@ impl CompletionStruct for JSBundleCompletionTask {
     }
     fn set_log(&mut self, log: bun_ast::Log) {
         self.log = log;
+    }
+    fn restart_for_bun_target(&mut self) {
+        self.config.target = bun_ast::Target::Bun;
+        self.config.target_defaults_from_hashbang = false;
     }
     fn set_transpiler(&mut self, this: *mut BundleV2<'_>) {
         self.transpiler = this.cast();

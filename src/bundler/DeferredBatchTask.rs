@@ -14,6 +14,15 @@ use bun_event_loop::{Task, task_tag};
 pub struct DeferredBatchTask {
     /// Intrusive node for the trip back to the bundle thread's Mini loop.
     returned: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
+    /// Bundle thread only. The hop is out: scheduled and not back. One node makes the trip back, so a
+    /// second hop waits for the first.
+    out: bool,
+    /// Bundle thread only. `schedule_release` was called while the hop was out.
+    release_when_back: bool,
+    /// The pass is discarded (`BundleV2::restart_for_bun_target`): on the plugins' thread the hop also
+    /// makes the plugins give back every request they hold, and it rejects the `.defer()` promises.
+    /// The bundle thread writes it while no hop is out, and the plugins' thread reads it in the hop.
+    release_held_requests: bool,
 }
 
 impl bun_event_loop::Taskable for DeferredBatchTask {
@@ -43,20 +52,41 @@ impl DeferredBatchTask {
         }
     }
 
+    /// Bundle thread. For a pass that is discarded: the hop makes the plugins give back what they
+    /// hold. It counts itself as a pending item.
+    pub(crate) fn schedule_release(&mut self) {
+        if self.out {
+            self.release_when_back = true;
+            return;
+        }
+        self.release_held_requests = true;
+        self.get_bundle_v2().graph.pending_items += 1;
+        self.schedule();
+    }
+
     /// Bundle thread. The caller has counted the hop as a pending item (`Graph::drain_deferred_tasks`).
     pub(crate) fn schedule(&mut self) {
+        debug_assert!(!self.out);
+        self.out = true;
         let task = ConcurrentTask::create(Task::init(std::ptr::from_mut::<Self>(self)));
         self.get_bundle_v2().enqueue_on_js_loop_for_plugins(task);
     }
 
     /// Plugins' (JS) thread.
     pub fn run_on_js_thread(&mut self) {
+        let release_held_requests = self.release_held_requests;
         {
             let bv2 = self.get_bundle_v2();
-            // A cancelled pass rejects the `.defer()` promises rather than resuming plugins into it.
-            // (The completion's flag, not `graph.cancelled`: that one is the bundle thread's.)
-            let rejected = bv2.completion.as_ref().is_some_and(|c| c.is_cancelled());
-            bv2.plugins_mut().expect("plugins").drain_deferred(rejected);
+            // A cancelled or discarded pass rejects the `.defer()` promises rather than resuming
+            // plugins into it. (The completion's flag, not `graph.cancelled`: that one is the
+            // bundle thread's.)
+            let rejected =
+                release_held_requests || bv2.completion.as_ref().is_some_and(|c| c.is_cancelled());
+            let plugins = bv2.plugins_mut().expect("plugins");
+            if release_held_requests {
+                plugins.release_held_requests();
+            }
+            plugins.drain_deferred(rejected);
         }
         self.come_back();
     }
@@ -64,21 +94,28 @@ impl DeferredBatchTask {
     /// Plugins' (JS) thread → bundle thread: the hop's pending item is consumed there.
     fn come_back(&mut self) {
         let this: *mut Self = self;
-        let bv2 = self.get_bundle_v2();
-        match bv2.any_loop_mut() {
-            // bake: the plugins run on the loop that runs the bundle; already there.
-            bun_event_loop::AnyEventLoop::Js { .. } => bv2.decrement_scan_counter(),
-            bun_event_loop::AnyEventLoop::Mini(mini) => {
-                // SAFETY: `returned` is this struct's own node; `BundleV2` (and so `self`) is alive until
-                // the bundle thread runs this.
-                unsafe {
-                    mini.enqueue_task_concurrent_with_extra_ctx::<Self, BundleV2<'static>>(
-                        this,
-                        |_, bv2| (*bv2).decrement_scan_counter(),
-                        core::mem::offset_of!(Self, returned),
-                    );
-                }
+        if let bun_event_loop::AnyEventLoop::Mini(mini) = self.get_bundle_v2().any_loop_mut() {
+            // SAFETY: `returned` is this struct's own node; `BundleV2` (and so `self`) is alive until
+            // the bundle thread runs this.
+            unsafe {
+                mini.enqueue_task_concurrent_with_extra_ctx::<Self, BundleV2<'static>>(
+                    this,
+                    |this, _| (*this).on_back(),
+                    core::mem::offset_of!(Self, returned),
+                );
             }
+            return;
         }
+        // bake: the plugins run on the loop that runs the bundle; already there.
+        self.on_back();
+    }
+
+    /// Bundle thread. The hop is back.
+    fn on_back(&mut self) {
+        self.out = false;
+        if core::mem::take(&mut self.release_when_back) {
+            self.schedule_release();
+        }
+        self.get_bundle_v2().decrement_scan_counter();
     }
 }

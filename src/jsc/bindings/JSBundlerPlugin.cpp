@@ -683,11 +683,21 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
     RETURN_IF_EXCEPTION(scope, );
 }
 
+void BundlerPlugin::releaseHeldRequests()
+{
+    for (auto& [context, kind] : std::exchange(held, {}))
+        JSBundlerPlugin__answerCancelled(static_cast<uint8_t>(kind), context);
+}
+
 void BundlerPlugin::tombstone()
 {
     tombstoned = true;
-    for (auto& [context, kind] : std::exchange(held, {}))
-        JSBundlerPlugin__answerCancelled(static_cast<uint8_t>(kind), context);
+    releaseHeldRequests();
+}
+
+extern "C" void JSBundlerPlugin__releaseHeldRequests(Bun::JSBundlerPlugin* plugin)
+{
+    plugin->plugin.releaseHeldRequests();
 }
 
 extern "C" void JSBundlerPlugin__tombstone(Bun::JSBundlerPlugin* plugin)

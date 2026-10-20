@@ -59,8 +59,9 @@ pub struct Graph<'a> {
     /// Which deferred batch is being collected: bumped each time `drain_deferred_tasks` moves the parked
     /// units back, so a `Load` can tell whether its own unit is still parked. Bundle thread only.
     pub(crate) defer_epoch: u32,
-    /// The VM that owns the plugins is shutting down: `dispatch()` hands it nothing further (what it
-    /// holds comes back answered as cancelled) and the pass fails at its next checkpoint.
+    /// The VM that owns the plugins is shutting down, or the pass is discarded
+    /// (`BundleV2::restart_for_bun_target`): `dispatch()` hands the plugins nothing further (what they
+    /// hold comes back answered as cancelled) and the pass ends at its next checkpoint.
     pub(crate) cancelled: bool,
 
     /// A map of build targets to their corresponding module graphs.

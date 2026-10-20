@@ -456,7 +456,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled"
         ),
         parse_param!(
-            "--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\""
+            "--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\". Default: \"browser\", or \"bun\" if an entrypoint starts with #!/usr/bin/env bun"
         ),
         parse_param!("--outdir <STR>                   Default to \"dist\" if multiple files"),
         parse_param!("--outfile <STR>                  Write to a file"),

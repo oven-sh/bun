@@ -325,23 +325,8 @@ impl TargetExt for Target {
 
 const BUN_HASHBANG: &[u8] = b"#!/usr/bin/env bun";
 
-/// The `target` default documented in docs/bundler/index.mdx; callers apply it only when no target was given.
-pub fn any_entry_point_has_bun_hashbang(
-    entry_points: &[Box<[u8]>],
-    file_map: Option<&crate::bundle_v2::FileMap>,
-) -> bool {
-    entry_points.iter().any(|entry_point| {
-        if let Some((_, contents)) = file_map.and_then(|files| files.lookup(b"", entry_point)) {
-            return has_bun_hashbang(contents);
-        }
-        let mut first_bytes = [0u8; BUN_HASHBANG.len() + 1];
-        bun_sys::File::openat(bun_sys::Fd::cwd(), entry_point, bun_sys::O::RDONLY, 0)
-            .and_then(|file| file.read_all(&mut first_bytes))
-            .is_ok_and(|len| has_bun_hashbang(&first_bytes[..len]))
-    })
-}
-
-fn has_bun_hashbang(contents: &[u8]) -> bool {
+/// The first line that makes `target` default to bun (docs/bundler/index.mdx, `target`).
+pub fn has_bun_hashbang(contents: &[u8]) -> bool {
     contents.starts_with(BUN_HASHBANG)
         && matches!(
             contents.get(BUN_HASHBANG.len()),
@@ -1274,6 +1259,9 @@ pub struct BundleOptions<'a> {
 
     pub(crate) tsconfig_override: Option<Box<[u8]>>,
     pub target: Target,
+    /// No target was given. An entry point that starts with a bun hashbang then ends the pass
+    /// with `Error::RestartForBunTarget`, and its caller builds again with target bun.
+    pub target_defaults_from_hashbang: bool,
     pub(crate) main_fields: Box<[Box<[u8]>]>,
     /// TODO: remove this in favor accessing bundler.log
     /// raw `*mut` (not `&'a mut`) — the same `*Log` is aliased
@@ -1526,6 +1514,7 @@ impl<'a> BundleOptions<'a> {
             output_format: self.output_format,
             tsconfig_override: self.tsconfig_override.clone(),
             target: self.target,
+            target_defaults_from_hashbang: self.target_defaults_from_hashbang,
             main_fields: self.main_fields.clone(),
             log: self.log,
             external: self.external.clone(),
@@ -1753,6 +1742,7 @@ impl<'a> BundleOptions<'a> {
             loaders,
             output_dir: Box::from(transform.output_dir.as_deref().unwrap_or(b"out")),
             target,
+            target_defaults_from_hashbang: false,
             write: transform.write.unwrap_or(false),
             external: ExternalModules::default(), // filled below
             entry_points: transform.entry_points.clone().into_boxed_slice(),

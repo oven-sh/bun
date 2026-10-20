@@ -2467,6 +2467,10 @@ pub mod parse_worker {
         } else {
             topts.target
         };
+        let entry_point_has_bun_hashbang = task.is_entry_point
+            && topts.target_defaults_from_hashbang
+            && loader.is_javascript_like()
+            && options::has_bun_hashbang(entry_contents);
 
         let output_format = topts.output_format;
 
@@ -2703,6 +2707,8 @@ pub mod parse_worker {
             if let Some(message) = unsupported_directive {
                 log.add_range_error(Some(source), UseDirective::range(entry_contents), message);
                 Err(crate::Error::ParserError)
+            } else if entry_point_has_bun_hashbang {
+                Err(crate::Error::RestartForBunTarget)
             } else if !is_empty || loader.handles_empty_file() {
                 get_ast(
                     log,

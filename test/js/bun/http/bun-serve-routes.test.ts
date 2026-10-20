@@ -1,6 +1,6 @@
 import type { BunRequest, ServeOptions, Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import net from "node:net";
 
 describe("path parameters", () => {
@@ -324,6 +324,46 @@ describe("static responses", () => {
   it("skips route when false", async () => {
     const res = await fetch(`${server.url}skip`);
     expect(await res.text()).toBe("fallback");
+  });
+});
+
+// A route takes its Content-Type from the type of its Blob. slice() keeps a type
+// only when it is a registered MIME type. "text/x" is not one, so those slices
+// have the empty type and give no Content-Type.
+it("static and file routes send no Content-Type for a Blob whose type is empty", async () => {
+  using dir = tempDir("serve-routes-empty-type", { "data.txt": "hello world" });
+  const blob = () => new Blob(["hello world"], { type: "text/x" });
+  const file = (type?: string) => Bun.file(`${dir}/data.txt`, type ? { type } : undefined);
+  expect({ blob: blob().slice(0, 5).type, file: file("text/x").slice(0, 5).type }).toEqual({ blob: "", file: "" });
+
+  const routes = {
+    "/static/slice": new Response(blob().slice(0, 5)),
+    "/static/slice-with-no-bytes": new Response(blob().slice(0, 0)),
+    "/static/typed": new Response(blob()),
+    "/file/slice": new Response(file("text/x").slice(0, 5)),
+    "/file/slice-without-response": file("text/x").slice(0, 5),
+    "/file/typed": new Response(file("text/x")),
+    "/file/slice-of-sniffed-type": new Response(file().slice(0, 5)),
+  };
+  await using server = Bun.serve({ port: 0, routes, fetch: () => new Response("fallback", { status: 404 }) });
+
+  const seen: Record<string, unknown> = {};
+  for (const pathname of Object.keys(routes)) {
+    for (const method of ["GET", "HEAD"]) {
+      const res = await fetch(new URL(pathname, server.url), { method });
+      await res.arrayBuffer();
+      seen[`${method} ${pathname}`] = res.headers.get("content-type");
+    }
+  }
+  const both = (pathname: string, type: string | null) => ({ [`GET ${pathname}`]: type, [`HEAD ${pathname}`]: type });
+  expect(seen).toEqual({
+    ...both("/static/slice", null),
+    ...both("/static/slice-with-no-bytes", null),
+    ...both("/static/typed", "text/x"),
+    ...both("/file/slice", null),
+    ...both("/file/slice-without-response", null),
+    ...both("/file/typed", "text/x"),
+    ...both("/file/slice-of-sniffed-type", "text/plain;charset=utf-8"),
   });
 });
 

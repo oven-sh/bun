@@ -7981,17 +7981,17 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getApparentTypeOfIntersectionType`: the intersection of the apparent types of the members of
-    /// `ty`. `apparent_type` returns an intersection unchanged if its members are all their own
+    /// `intersection`. `apparent_type` returns an intersection unchanged if its members are all their own
     /// apparent types. `getTypeWithThisArgument` also replaces a member that's a reference with a
     /// `this` type. Neither the new reference nor the new intersection has an alias.
-    pub(super) fn apparent_type_of_intersection(&mut self, ty: TypeId) -> TypeId {
-        let TypeData::Intersection(parts) = self.data(ty) else {
-            return ty;
+    pub(super) fn apparent_type_of_intersection(&mut self, intersection: TypeId) -> TypeId {
+        let TypeData::Intersection(parts) = self.data(intersection) else {
+            return intersection;
         };
         if !parts.iter().any(|&p| {
             self.intersection_member_has_other_apparent_type(p) || self.takes_this_argument(p)
         }) {
-            return ty;
+            return intersection;
         }
         let apparent_parts: Vec<TypeId> = parts
             .iter()
@@ -7999,8 +7999,8 @@ impl<'p, 's> Checker<'p, 's> {
                 if self.intersection_member_has_other_apparent_type(p) {
                     self.apparent_type(p)
                 } else if self.takes_this_argument(p) {
-                    // `this` in the members stays `ty`, with its aliases, not the type returned here.
-                    self.type_with_this_argument(p, ty)
+                    // `this` in the members stays `intersection`, with its aliases, not the type returned here.
+                    self.type_with_this_argument(p, intersection)
                 } else {
                     p
                 }

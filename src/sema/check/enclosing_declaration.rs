@@ -126,13 +126,29 @@ impl Checker<'_, '_> {
 
     /// For the expression `e`, and for the name of a property access `e`.
     pub(super) fn enclosing_scope_of_expr(&self, file: FileId, e: ExprId) -> ScopeId {
-        let mut at = e;
-        loop {
+        // Most expressions reach the node that determines their scope within this many steps, so nothing is cached for
+        // them. In a chain like `a + a + ..`, each operand's distance is the length of the rest of the chain.
+        const UNCACHED_STEPS: usize = 32;
+        let (mut at, mut steps) = (e, 0);
+        let mut passed = Vec::new();
+        let scope = loop {
+            if steps >= UNCACHED_STEPS {
+                if let Some(&known) = self.scopes_inside_exprs.borrow().get(&(file, at)) {
+                    break known;
+                }
+                passed.push(at);
+            }
             match self.enclosing_scope_or_outer_expr(file, at, at != e) {
-                Ok(scope) => return scope,
+                Ok(scope) => break scope,
                 Err(outer) => at = outer,
             }
+            steps += 1;
+        };
+        if !passed.is_empty() {
+            let mut known = self.scopes_inside_exprs.borrow_mut();
+            known.extend(passed.into_iter().map(|it| ((file, it), scope)));
         }
+        scope
     }
 
     /// Returns the scope if `at`'s parent determines it, otherwise the expression enclosing `at`. `is_ancestor` is true

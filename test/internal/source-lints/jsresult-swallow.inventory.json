@@ -6,7 +6,7 @@
     "taken exception discarded": 1
   },
   "src/runtime/api/bun/h2_frame_parser.rs": {
-    "discarded result of a call that enters script": 4
+    "discarded result of a call that enters script": 3
   },
   "src/runtime/ipc.rs": {
     "discarded result of a call that enters script": 4

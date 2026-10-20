@@ -21,6 +21,8 @@ import { loadProtoFile } from "./common";
 
 import assert from "assert";
 import { afterAll as after, beforeAll as before, describe, it } from "bun:test";
+import http2 from "node:http2";
+import net from "node:net";
 
 const protoFile = path.join(__dirname, "fixtures", "echo_service.proto");
 const EchoService = loadProtoFile(protoFile).EchoService as grpc.ServiceClientConstructor;
@@ -363,4 +365,118 @@ describe("Retries", () => {
       });
     });
   });
+});
+
+// Not from grpc-node. grpc-js retries a call transparently when the status of the refused stream
+// has rstCode, and only its 'close' handler makes that status. The write in flight must not fail
+// before 'close': a write error ends the call with UNAVAILABLE, and grpc-js does not retry it.
+describe("A stream that the server refuses while a message waits for the flow-control window", () => {
+  const FRAME = { DATA: 0, HEADERS: 1, RST_STREAM: 3, SETTINGS: 4, GOAWAY: 7, WINDOW_UPDATE: 8 };
+  const WINDOW = 65535;
+  const frame = (type: number, flags: number, streamId: number, payload = Buffer.alloc(0)) => {
+    const header = Buffer.alloc(9);
+    header.writeUIntBE(payload.length, 0, 3);
+    header[3] = type;
+    header[4] = flags;
+    header.writeUInt32BE(streamId, 5);
+    return Buffer.concat([header, payload]);
+  };
+  const uint32 = (...values: number[]) => {
+    const buffer = Buffer.alloc(4 * values.length);
+    values.forEach((value, i) => buffer.writeUInt32BE(value, 4 * i));
+    return buffer;
+  };
+  // HPACK "literal header field never indexed, new name": no table state on either side.
+  const headerBlock = (headers: [string, string][]) =>
+    Buffer.concat(
+      headers.flatMap(([name, value]) => [
+        Buffer.from([0x10, name.length]),
+        Buffer.from(name),
+        Buffer.from([value.length]),
+        Buffer.from(value),
+      ]),
+    );
+  const pong = (streamId: number) =>
+    Buffer.concat([
+      frame(
+        FRAME.HEADERS,
+        0x4,
+        streamId,
+        headerBlock([
+          [":status", "200"],
+          ["content-type", "application/grpc"],
+        ]),
+      ),
+      // One message: not compressed, 4 bytes long.
+      frame(FRAME.DATA, 0, streamId, Buffer.concat([Buffer.from([0, 0, 0, 0, 4]), Buffer.from("pong")])),
+      frame(FRAME.HEADERS, 0x5, streamId, headerBlock([["grpc-status", "0"]])),
+    ]);
+  // [name, the frame that refuses stream `id`]
+  const refusals: [string, (id: number) => Buffer][] = [
+    [
+      "RST_STREAM(REFUSED_STREAM)",
+      id => frame(FRAME.RST_STREAM, 0, id, uint32(http2.constants.NGHTTP2_REFUSED_STREAM)),
+    ],
+    // The last-stream-id is 0: the server did not process the call. The retry needs a new connection.
+    ["GOAWAY", () => frame(FRAME.GOAWAY, 0, 0, uint32(0, http2.constants.NGHTTP2_NO_ERROR))],
+  ];
+  for (const [name, refuse] of refusals) {
+    it(`is retried on a new stream after ${name}`, async () => {
+      let streams = 0;
+      const sockets = new Set<net.Socket>();
+      // A raw h2c server. It refuses the first call when it holds one window of the message: the
+      // rest of the message is then in flight in the client. It answers every later call.
+      const server = net.createServer(socket => {
+        sockets.add(socket);
+        socket.on("error", () => {});
+        socket.write(frame(FRAME.SETTINGS, 0, 0));
+        const calls = new Map<number, number>();
+        let buffered = Buffer.alloc(0);
+        let preface = 24;
+        let received = 0;
+        socket.on("data", (chunk: Buffer) => {
+          buffered = Buffer.concat([buffered, chunk]);
+          if (buffered.length < preface) return;
+          buffered = buffered.subarray(preface);
+          preface = 0;
+          while (buffered.length >= 9 && buffered.length >= 9 + buffered.readUIntBE(0, 3)) {
+            const length = buffered.readUIntBE(0, 3);
+            const [type, flags, id] = [buffered[3], buffered[4], buffered.readUInt32BE(5) & 0x7fffffff];
+            buffered = buffered.subarray(9 + length);
+            if (type === FRAME.SETTINGS && !(flags & 1)) socket.write(frame(FRAME.SETTINGS, 1, 0));
+            else if (type === FRAME.HEADERS) calls.set(id, ++streams);
+            else if (type === FRAME.DATA && calls.get(id) === 1) {
+              received += length;
+              // The window of the connection opens again, so a retry on this connection can send.
+              if (received === WINDOW)
+                socket.write(Buffer.concat([frame(FRAME.WINDOW_UPDATE, 0, 0, uint32(WINDOW)), refuse(id)]));
+            } else if (type === FRAME.DATA) {
+              const grant = uint32(length);
+              if (length > 0)
+                socket.write(
+                  Buffer.concat([frame(FRAME.WINDOW_UPDATE, 0, 0, grant), frame(FRAME.WINDOW_UPDATE, 0, id, grant)]),
+                );
+              if (flags & 1) socket.write(pong(id));
+            }
+          }
+        });
+      });
+      server.listen(0, "127.0.0.1");
+      await new Promise(resolve => server.once("listening", resolve));
+      const { port } = server.address() as net.AddressInfo;
+      const client = new grpc.Client(`127.0.0.1:${port}`, grpc.credentials.createInsecure());
+      try {
+        const identity = (value: Buffer) => value;
+        const { promise, resolve } = Promise.withResolvers<{ code: grpc.status; details: string }>();
+        client.makeUnaryRequest("/test.Echo/Echo", identity, identity, Buffer.alloc(200 * 1024, 97), (error, reply) =>
+          resolve({ code: error ? error.code : grpc.status.OK, details: error ? error.details : String(reply) }),
+        );
+        assert.deepStrictEqual({ ...(await promise), streams }, { code: grpc.status.OK, details: "pong", streams: 2 });
+      } finally {
+        client.close();
+        for (const socket of sockets) socket.destroy();
+        server.close();
+      }
+    });
+  }
 });

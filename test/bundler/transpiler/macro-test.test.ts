@@ -651,6 +651,10 @@ describe("macro calls in node_modules", () => {
       import { stamp } from "./m.js" with { type: "macro" };
       export default false ? stamp() : "DEAD_BRANCH";
     `,
+    "dead-tagged.js": `
+      import { stamp } from "./m.js" with { type: "macro" };
+      export default false ? stamp\`\` : "DEAD_BRANCH";
+    `,
   };
 
   const files = {
@@ -658,6 +662,7 @@ describe("macro calls in node_modules", () => {
     "call.js": `import v from "dep"; console.log(v);`,
     "tagged.js": `import v from "dep/tagged.js"; console.log(v);`,
     "dead.js": `import v from "dep/dead.js"; console.log(v);`,
+    "dead-tagged.js": `import v from "dep/dead-tagged.js"; console.log(v);`,
     "own.js": `
       import { stamp } from "dep/m.js" with { type: "macro" };
       console.log(stamp());
@@ -679,10 +684,13 @@ describe("macro calls in node_modules", () => {
 
   const isRefused = { stderr: expect.stringContaining(refused), exitCode: 1, macroRan: false };
 
-  test.concurrent.each([
-    ["a call", "call.js"],
-    ["a tagged template", "tagged.js"],
-  ])("bun build refuses %s in a package", async (_, entry) => {
+  // The parser has a copy of the guard for each syntax. Row: name, an entry that calls it, the same call in dead code.
+  const syntaxes: [string, string, string][] = [
+    ["a call", "call.js", "dead.js"],
+    ["a tagged template", "tagged.js", "dead-tagged.js"],
+  ];
+
+  test.concurrent.each(syntaxes)("bun build refuses %s in a package", async (_, entry) => {
     using dir = tempDir("macro-guard-build", files);
     expect(await bun(String(dir), ["build", `./${entry}`, "--outdir", "out"])).toMatchObject(isRefused);
   });
@@ -708,25 +716,20 @@ describe("macro calls in node_modules", () => {
     });
   });
 
-  test.concurrent("--no-macros is reported before the package check", async () => {
+  test.concurrent.each(syntaxes)("--no-macros is reported before the package check for %s", async (_, entry) => {
     using dir = tempDir("macro-guard-no-macros", files);
-    const { stderr, exitCode, macroRan } = await bun(String(dir), [
-      "build",
-      "--no-macros",
-      "./call.js",
-      "--outdir",
-      "out",
-    ]);
+    const args = ["build", "--no-macros", `./${entry}`, "--outdir", "out"];
+    const { stderr, exitCode, macroRan } = await bun(String(dir), args);
     expect(stderr).toContain("Macros are disabled");
     expect(stderr).not.toContain(refused);
     expect({ exitCode, macroRan }).toEqual({ exitCode: 1, macroRan: false });
   });
 
-  test.concurrent("a call in dead code is removed without an error", async () => {
+  test.concurrent.each(syntaxes)("%s in dead code is removed without an error", async (_, __, entry) => {
     using dir = tempDir("macro-guard-dead-code", files);
-    const result = await bun(String(dir), ["build", "./dead.js", "--outdir", "out"]);
+    const result = await bun(String(dir), ["build", `./${entry}`, "--outdir", "out"]);
     expect(result).toMatchObject({ exitCode: 0, macroRan: false });
-    expect(await Bun.file(path.join(String(dir), "out", "dead.js")).text()).toContain("DEAD_BRANCH");
+    expect(await Bun.file(path.join(String(dir), "out", entry)).text()).toContain("DEAD_BRANCH");
   });
 
   test.concurrent("the project can call a macro that it imports from a package", async () => {

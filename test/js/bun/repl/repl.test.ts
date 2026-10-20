@@ -915,6 +915,47 @@ describe.concurrent("Bun REPL", () => {
         signalCode: "SIGINT",
       });
     });
+
+    test.skipIf(isWindows)(
+      "SIGINT cuts an await short in a REPL that reads a pipe, and the next input runs",
+      async () => {
+        using home = tempDir("repl-home", {});
+        const repl = spawnPipedRepl(String(home));
+        await using proc = repl.proc;
+        // "parked" is printed from inside the wait, when the REPL's SIGINT handler is installed.
+        // The interval turns the loop, so the wait sees the SIGINT with no wakeup too.
+        repl.send(
+          "await new Promise(() => { setInterval(() => {}, 1); setTimeout(() => console.log('par' + 'ked'), 1); })\n",
+        );
+        expect(await repl.waitFor("parked")).toContain("parked");
+
+        proc.kill("SIGINT");
+        repl.send("6 * 7\n");
+        expect(await repl.waitFor("42")).toContain("42");
+
+        repl.send(".exit\n");
+        await proc.exited;
+        expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+      },
+    );
+
+    // After a wait SIGINT gets the action it had when the REPL started. That is not always the
+    // default action: here the parent said to ignore it.
+    test.skipIf(isWindows)("a REPL that was started with SIGINT ignored still ignores it after an await", async () => {
+      using home = tempDir("repl-home", {});
+      const repl = spawnPipedRepl(String(home), ["sh", "-c", 'trap "" INT; exec "$0" repl', bunExe()]);
+      await using proc = repl.proc;
+      repl.send("await ('after' + 'Await')\n");
+      expect(await repl.waitFor("afterAwait")).toContain("afterAwait");
+
+      proc.kill("SIGINT");
+      repl.send("6 * 7\n");
+      expect(await repl.waitFor("42")).toContain("42");
+
+      proc.stdin.end();
+      await proc.exited;
+      expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+    });
   });
 
   describe("TypeScript support", () => {
@@ -1239,6 +1280,42 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
         proc.exited.then(() => `ended by ${proc.signalCode}`),
       ]);
       expect(outcome).toBe("evaluated");
+    });
+  });
+
+  // When the REPL ends it gives the terminal back, and SIGINT the action it had at the start.
+  // So Ctrl+C still ends a process that hangs in its exit.
+  test("SIGINT ends a REPL that hangs in an exit listener after an await", async () => {
+    await withTerminalRepl(async ({ send, waitFor, proc }) => {
+      // The listener sleeps, so that a run in which the SIGINT does nothing leaves no busy process.
+      send("process.on('exit', () => { console.log('in' + 'Exit'); Bun.sleepSync(30000); }), 'regi' + 'stered'\n");
+      await waitFor("registered");
+      send("await ('set' + 'tled')\n");
+      await waitFor("settled");
+      send("\x04"); // Ctrl+D on an empty line ends the REPL
+      await waitFor("inExit");
+      proc.kill("SIGINT");
+      await proc.exited;
+      expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+        exitCode: null,
+        signalCode: "SIGINT",
+      });
+    });
+  });
+
+  // The key itself. For the wait the terminal is with the line discipline, which turns the byte
+  // 0x03 into a SIGINT. At the prompt the terminal is raw again and the byte is a key.
+  test("Ctrl+C on the controlling terminal interrupts an await", async () => {
+    await withControllingTerminal([bunExe(), "repl"], { BUN_GC_TIMER_DISABLE: "1" }, async ({ write, waitFor }) => {
+      await waitFor(/\u276f|> /);
+      write(
+        "await new Promise(() => { setTimeout(() => console.log('par' + 'ked'), 1); setTimeout(() => {}, 600000); })\n",
+      );
+      await waitFor("parked");
+      write("\x03");
+      await waitFor(/\u276f|> /);
+      write("40 + 2\n");
+      await waitFor("42");
     });
   });
 

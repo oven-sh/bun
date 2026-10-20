@@ -375,6 +375,9 @@ impl Host for Virtual {
     fn extra_file_extensions(&self) -> &[(Vec<u8>, bun_sema::resolve::ScriptKind)] {
         &[]
     }
+    fn plugin_imports(&self) -> &[(Vec<u8>, Vec<bun_sema::resolve::PluginImport>)] {
+        &[]
+    }
     fn scripts_of_page(&self, _page: &[u8]) -> Vec<Vec<u8>> {
         Vec::new()
     }

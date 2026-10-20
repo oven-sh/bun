@@ -159,6 +159,7 @@ impl BuildCommand {
                 tsconfig: ctx.args.tsconfig_override.as_deref(),
                 conditions: &ctx.args.conditions,
                 loaders: &this_transpiler.options.loaders,
+                plugin_imports: &mut core::iter::empty(),
                 entry_points: &mut entry_points.map(|path| &**path),
                 sources: &mut core::iter::empty(),
             };

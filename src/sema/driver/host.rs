@@ -20,6 +20,7 @@ use bun_sema::resolve::{
     hash_without_case, inside, is_declaration_file_name, is_same_path, join, root_length,
     to_file_name_lower_case, to_path, typescript_path,
 };
+pub use bun_sema::resolve::{PluginImport, PluginImports};
 use bun_sema::session::Arena;
 use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, FxHashSet, ShardedMap};
@@ -280,6 +281,8 @@ pub struct Disk {
     extended_configs: bun_threading::Guarded<FxHashMap<Vec<u8>, Kept>>,
     /// `Host::shared_paths`
     paths: bun_threading::Guarded<FxHashSet<Arc<Paths>>>,
+    /// `Host::plugin_imports`
+    plugin_imports: PluginImports,
     pub(crate) scripts_of_page: Option<ScriptsOfPage>,
 }
 
@@ -301,6 +304,8 @@ pub type ScriptsOfPage = Box<dyn Fn(&[u8]) -> Vec<Vec<u8>> + Send + Sync>;
 pub struct Provided {
     pub already_read: AlreadyRead,
     pub before_read: Option<BeforeRead>,
+    /// `Host::plugin_imports`, in any order, with paths in the checker's format.
+    pub plugin_imports: PluginImports,
     pub scripts_of_page: Option<ScriptsOfPage>,
     /// The text of a script keeps the UTF-8 byte order mark that the file starts with, which TypeScript drops. The parser
     /// takes it for a blank. `bun lint` has a rule about it, and writes the text back.
@@ -523,6 +528,7 @@ impl Disk {
             script_kinds: Vec::new(),
             script_kinds_by_extension: Vec::new(),
             before_read: None,
+            plugin_imports: PluginImports::default(),
             scripts_of_page: None,
         }
     }
@@ -685,6 +691,30 @@ impl Disk {
         let (mut name, mut real) = (path_buffer_pool::get(), path_buffer_pool::get());
         bun_sys::realpath(z(native, &mut name), &mut real)
             .map_or_else(|_| path.to_vec(), from_native)
+    }
+
+    /// `Provided::plugin_imports`, by `tspath.Path` like `script_kinds`. Only a file has a path.
+    pub(crate) fn take_plugin_imports(&mut self, mut imports: PluginImports) {
+        let key = |name: &[u8]| match name.starts_with(b"/") {
+            true => to_path(&self.as_written(name), self.case_sensitive).into_owned(),
+            false => name.to_vec(),
+        };
+        for (importer, imported) in &mut imports {
+            *importer = key(importer);
+            for import in imported {
+                import.path = key(&import.path);
+            }
+        }
+        imports.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        // The bundler has a file once for each target that it is bundled for.
+        imports.dedup_by(|again, first| {
+            let is_same = again.0 == first.0;
+            if is_same {
+                first.1.append(&mut again.1);
+            }
+            is_same
+        });
+        self.plugin_imports = imports;
     }
 
     /// `path`, with every name in it spelled as its directory has it. Links are not followed.
@@ -1292,6 +1322,9 @@ impl Host for Asking<'_> {
     fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)] {
         &[]
     }
+    fn plugin_imports(&self) -> &[(Vec<u8>, Vec<PluginImport>)] {
+        &[]
+    }
     fn scripts_of_page(&self, _: &[u8]) -> Vec<Vec<u8>> {
         Vec::new()
     }
@@ -1447,6 +1480,9 @@ impl Host for Disk {
     }
     fn is_case_sensitive(&self) -> bool {
         self.case_sensitive
+    }
+    fn plugin_imports(&self) -> &[(Vec<u8>, Vec<PluginImport>)] {
+        &self.plugin_imports
     }
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>> {
         let scripts = self.scripts_of_page.as_ref().map(|of| of(page));

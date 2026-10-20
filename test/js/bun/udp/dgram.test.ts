@@ -1,9 +1,10 @@
 import { dlopen, ptr } from "bun:ffi";
+import { exposedInternals } from "bun:internal-for-testing";
 import { afterAll, describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
 import { Worker } from "node:worker_threads";
 
-import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, isIPv6, isLinux, isMusl, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, isLinux, isMusl, isWindows } from "harness";
 import path from "path";
 import { replyServerAfterVanishedClient } from "./reply-server";
 import { nodeDataCases } from "./testdata";
@@ -942,7 +943,7 @@ async function loopbackRoundTrips() {
 // connected or not: the next recvmmsg fails with it, and so does the next
 // send, whichever peer that one is for. Bun sets that option on no socket.
 for (const address of ["127.0.0.1", "::1"]) {
-  test.concurrent.skipIf(address === "::1" && !isIPv6())(
+  test.concurrent.skipIf(address === "::1" && !hasIPv6Loopback())(
     `an echo server on ${address} without an 'error' listener outlives a client that closed its port`,
     async () => {
       expect(await replyServerAfterVanishedClient("dgram", address)).toEqual({
@@ -987,8 +988,8 @@ test("a send to a closed port does not fail the send to a live peer that follows
 // that option also gets a queued report for each ICMP error and for each send
 // that failed locally, and each report would be one more 'error'.
 describe.skipIf(!isLinux)("connected socket and ICMP errors", () => {
-  const internals = () => require("bun:internal-for-testing").exposedInternals["internal/dgram"];
-  const fdOf = (socket: any): number => socket[internals().kStateSymbol].handle.fd;
+  const { kStateSymbol, _createSocketHandle } = exposedInternals["internal/dgram"];
+  const fdOf = (socket: any): number => socket[kStateSymbol].handle.fd;
 
   let libc: ReturnType<typeof dlopen> | undefined;
   afterAll(() => libc?.close());
@@ -1111,7 +1112,7 @@ describe.skipIf(!isLinux)("connected socket and ICMP errors", () => {
     const IPPROTO_IP = 0;
     const IP_RECVERR = 11;
     const deadPort = await getDeadPort();
-    const wrap = internals()._createSocketHandle("127.0.0.1", 0, "udp4");
+    const wrap = _createSocketHandle("127.0.0.1", 0, "udp4");
     expect(typeof wrap).not.toBe("number");
     const live = createSocket("udp4");
     const socket = createSocket("udp4");
@@ -1149,7 +1150,7 @@ describe.skipIf(!isLinux)("connected socket and ICMP errors", () => {
       socket.disconnect();
       socket.send("alive", live.address().port, "127.0.0.1");
       expect(await delivered).toBe("alive");
-      expect(socket[internals().kStateSymbol].handle.socket.closed).toBe(false);
+      expect(socket[kStateSymbol].handle.socket.closed).toBe(false);
     } finally {
       socket.close();
       live.close();

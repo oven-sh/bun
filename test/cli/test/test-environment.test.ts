@@ -1471,9 +1471,12 @@ describe.concurrent("test environment with the real", () => {
         using server = Bun.serve({ port: 0, fetch: async request => new Response(request.method + (await request.text())) });
         const form = new FormData();
         form.append("a", "b");
+        form.append("file", new File(["x"], "photo.png", { type: "image/png" }));
         expect(form).toBeInstanceOf(jsdom.window.FormData);
         expect(await (await fetch(new Request(server.url, { method: "POST", body: new Blob(["blob"]) }))).text()).toBe("POSTblob");
-        expect(await (await fetch(new Request(server.url, { method: "POST", body: form }))).text()).toContain('name="a"');
+        const sent = await (await fetch(new Request(server.url, { method: "POST", body: form }))).text();
+        expect(sent).toContain('name="a"');
+        expect(sent).toContain('name="file"; filename="photo.png"\\r\\nContent-Type: image/png');
         expect(() => new Request("/relative")).toThrow();
         expect([Request.name, URL.name]).toEqual(["Request", "URL"]);
       });
@@ -1485,6 +1488,9 @@ describe.concurrent("test environment with the real", () => {
         document.body.addEventListener("click", () => clicks++, { signal: controller.signal });
         document.body.click();
         controller.abort();
+        document.body.click();
+        expect(clicks).toBe(1);
+        document.body.addEventListener("click", () => clicks++, { signal: AbortSignal.abort() });
         document.body.click();
         expect(clicks).toBe(1);
       });

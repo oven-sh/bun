@@ -192,7 +192,8 @@ function acceptNativeAbortSignals(win: any) {
       let controller = controllers.get(signal);
       if (!controller) {
         const created: AbortController = (controller = new JSDOMAbortController());
-        signal.addEventListener("abort", () => created.abort(signal.reason));
+        if (signal.aborted) created.abort(signal.reason);
+        else signal.addEventListener("abort", () => created.abort(signal.reason));
         controllers.set(signal, created);
       }
       options = { __proto__: null, ...options, signal: controller!.signal };
@@ -311,9 +312,11 @@ function createJSDOM(requireFromTest: NodeJS.Require, exports: any, options: any
   }
   function toNativeFormData(formData: any) {
     const native = new NativeFormData();
-    formData.forEach((value: any, key: string) =>
-      native.append(key, value instanceof win.Blob ? toNativeBlob(value) : value),
-    );
+    formData.forEach((value: any, key: string) => {
+      // Every Blob in a FormData is a File.
+      if (value instanceof win.Blob) native.append(key, toNativeBlob(value), value.name);
+      else native.append(key, value);
+    });
     return native;
   }
   // Named by their property key, since the bundler renames a class declaration that shadows a global.

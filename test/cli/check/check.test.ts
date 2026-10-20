@@ -24593,6 +24593,63 @@ export const related: S extends T ? 1 : 2 = 0;
       },
     );
 
+    // `A` and `B` never end, and they differ only at one level: `string` instead of `number`. tsc stops at the third
+    // level of one declaration and takes the rest for granted, so it reports a difference at level 1 and none at level
+    // 2. Every level is an intersection, and a long one is compared with the levels above it in another way than a
+    // short one.
+    describe.each([32, 33])("endless types whose levels are intersections of %d members", members => {
+      const parts = range(members - 2).map(i => `P${i + 1}`);
+      const declared = parts.map((name, i) => `type ${name} = { p${i + 1}: ${i + 1} };`).join(" ");
+      const all = parts.join(" & ");
+      const printed = `${parts.slice(0, 16).join(" & ")} & ... ${members - 19} more ... & ${parts.at(-1)}`;
+      const brand = (level: number) => `(D["length"] extends ${level} ? string : number)`;
+      const last = [
+        `          Type 'A<[0, 0]> & string & ${printed}' is not assignable to type 'B<[0, 0]> & number & ${printed}'.`,
+        `            Type 'A<[0, 0]> & string & ${printed}' is not assignable to type 'number'.`,
+      ];
+      const shapes: [name: string, source: (level: number) => string, elaboration: string[]][] = [
+        [
+          "at every level",
+          level => `interface A<D extends 0[]> { x: A<[...D, 0]> & ${brand(level)} & ${all} }
+interface B<D extends 0[]> { x: B<[...D, 0]> & number & ${all} }`,
+          [
+            `    Type 'A<[0]> & number & ${printed}' is not assignable to type 'B<[0]> & number & ${printed}'.`,
+            `      Type 'A<[0]> & number & ${printed}' is not assignable to type 'B<[0]>'.`,
+          ],
+        ],
+        [
+          "at every other level",
+          level => `interface A<D extends 0[]> { x: C<[...D, 0]> & ${brand(level)} & P1 }
+interface C<D extends 0[]> { x: A<[...D, 0]> & ${brand(level)} & ${all} }
+interface B<D extends 0[]> { x: E<[...D, 0]> & number & P1 }
+interface E<D extends 0[]> { x: B<[...D, 0]> & number & ${all} }`,
+          [
+            "    Type 'C<[0]> & number & P1' is not assignable to type 'E<[0]> & number & P1'.",
+            "      Type 'C<[0]> & number & P1' is not assignable to type 'E<[0]>'.",
+          ],
+        ],
+      ];
+      test.concurrent.each(shapes.flatMap(([name, ...shape]) => [1, 2].map(level => [name, level, ...shape] as const)))(
+        "%s, with a difference at level %d",
+        async (_, level, source, elaboration) => {
+          using dir = project({
+            "index.ts": `${declared}\n${source(level)}\ndeclare let a: A<[]>;\nexport const b: B<[]> = a;\n`,
+          });
+          const { stdout, exitCode } = await check(dir);
+          const line = source(level).split("\n").length + 3;
+          const reported = [
+            `index.ts(${line},14): error TS2322: Type 'A<[]>' is not assignable to type 'B<[]>'.`,
+            "  Types of property 'x' are incompatible.",
+            ...elaboration,
+            "        Types of property 'x' are incompatible.",
+            ...last,
+          ];
+          expect(stdout).toBe(level === 1 ? reported.join("\n") : "");
+          expect(exitCode).toBe(level === 1 ? 1 : 0);
+        },
+      );
+    });
+
     // A parser like the ones PEG.js generates, as found in Yarn's release bundle. Its rules call each other in a cycle
     // and collect their results in arrays, in loops. Each alternative of the last rule used to make the check seven
     // times slower.

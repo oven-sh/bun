@@ -1418,12 +1418,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       });
     });
     // A node:vm timeout counts from before the script starts, so on a busy machine it can fire too early. These
-    // fixtures report whether the script of napi_run_script had started, and this runs one again until it had.
+    // fixtures report whether the script of napi_run_script had started, and this runs one again when it had not.
     async function runUntilCutShortInScript(executable: string, fixture: string) {
-      while (true) {
-        const result = await runFixtureWith(executable, [], fixture);
-        if (!result.stdout.includes('"started":false')) return result;
+      let result = await runFixtureWith(executable, [], fixture);
+      for (let attempt = 1; attempt < 5 && result.stdout.includes('"started":false'); attempt++) {
+        result = await runFixtureWith(executable, [], fixture);
       }
+      return result;
     }
     it("a termination that interrupts the script does not let a catch block of the JS caller start", async () => {
       // The addon leaves what napi_run_script reports pending and returns. `caught` is written twice before the

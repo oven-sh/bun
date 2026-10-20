@@ -1016,6 +1016,56 @@ test("can't use bytecode from a different script", () => {
   expect(secondScript.runInThisContext()).toBe(4);
 });
 
+test("a Script built from accepted cachedData runs like the one that produced it", () => {
+  const source =
+    "(function (n) { class C { #c = 0; inc() { return ++this.#c; } } const c = new C(); return [n * 2, c.inc(), c.inc()]; })";
+  const cachedData = new Script(source).createCachedData();
+  const script = new Script(source, { cachedData });
+  expect(script.cachedDataRejected).toBeFalse();
+  expect(script.runInThisContext()(2)).toEqual([4, 1, 2]);
+  expect(script.runInNewContext()(3)).toEqual([6, 1, 2]);
+});
+
+test("a Script built from accepted cachedData keeps filename and lineOffset", () => {
+  const source = "\n\nnew Error('x').stack.split('\\n')[1].trim()";
+  const options = { filename: "cached.js", lineOffset: 100 };
+  const cachedData = new Script(source, options).createCachedData();
+  const script = new Script(source, { ...options, cachedData });
+  expect(script.cachedDataRejected).toBeFalse();
+  expect(script.runInThisContext()).toBe("at cached.js:103:10");
+});
+
+test("a SyntaxError is still thrown at construction when cachedData is passed", () => {
+  const cachedData = new Script("1 + 1;").createCachedData();
+  expect(() => new Script("(function (", { cachedData })).toThrow("Unexpected end of script");
+});
+
+test("accepted cachedData does not leave a second compile of the source alive", async () => {
+  const fixture = `
+    const { Script } = require("node:vm");
+    const { heapStats } = require("bun:jsc");
+    const source = "(function (e) { " + "e.x = 1;".repeat(200) + " })";
+    const cachedData = process.argv[1] === "cached" ? new Script(source).createCachedData() : undefined;
+    Bun.gc(true);
+    const before = heapStats().objectTypeCounts.UnlinkedProgramCodeBlock ?? 0;
+    const script = new Script(source, { cachedData });
+    Bun.gc(true);
+    console.log((heapStats().objectTypeCounts.UnlinkedProgramCodeBlock ?? 0) - before, script.cachedDataRejected);
+  `;
+  async function run(mode: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture, mode],
+      env: { ...bunEnv, BUN_JSC_useCodeCache: "0" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(mode === "cached" ? "1 false" : "1 undefined");
+    expect(exitCode).toBe(0);
+  }
+  await Promise.all([run("plain"), run("cached")]);
+});
+
 test("SourceTextModule accepts the cachedData it produced", () => {
   const source = `{ function inBlock() { return 1; } }\nexport default await Promise.resolve(inBlock);`; // module-only syntax, and a block function (strict semantics)
   const cachedData = (new SourceTextModule(source, { identifier: "m" }) as any).createCachedData();

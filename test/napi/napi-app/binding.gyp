@@ -373,5 +373,15 @@
                 "NAPI_VERSION=8",
             ],
         },
+        {
+            "target_name": "test_isolate_cross_file_function",
+            "sources": ["test_isolate_cross_file_function.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+            ],
+        },
     ]
 }

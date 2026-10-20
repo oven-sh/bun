@@ -14,7 +14,7 @@
 // ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 // IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-import { semverIntersects } from "bun:internal-for-testing";
+import { install_test_helpers, semverIntersects } from "bun:internal-for-testing";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "node:path";
 import nodeSemver from "semver";
@@ -2228,6 +2228,61 @@ describe("range intersection", () => {
       ranges.map(range => [range, [satisfies(version, range), satisfies(version, range)]]),
     );
     expect(got).toEqual(want);
+  });
+});
+
+describe("a range printed by the package manager", () => {
+  // The debug form of the lockfile prints the range of each dependency. `bun install --verbose`
+  // prints a range in the same way in its `[minimum-release-age]` line.
+  function print(ranges: string[]): Record<string, string> {
+    const names = ranges.map((_, i) => `dep-${i}`);
+    using dir = tempDir("semver-print-range", {
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: {
+          "": {
+            name: "root",
+            peerDependencies: Object.fromEntries(ranges.map((range, i) => [names[i], range])),
+            optionalPeers: names,
+          },
+        },
+        packages: {},
+      }),
+    });
+    const { dependencies } = install_test_helpers.parseLockfile(String(dir));
+    return Object.fromEntries(dependencies.map((dep: any) => [dep.literal, dep.npm.version]));
+  }
+
+  test("has each alternative once and every comparator of an intersection", () => {
+    const printed = {
+      "1.0.0": "==1.0.0",
+      "*": ">=0.0.0",
+      "^18": ">=18.0.0 <19.0.0-0",
+      "1.x": "<2.0.0-0 >=1.0.0",
+      // ` && ` between the comparators of an intersection
+      ">=16.8.0 <19.0.0": ">=16.8.0 && <19.0.0",
+      ">=16.8.0 <19.0.0 <20.0.0": ">=16.8.0 && <19.0.0 && <20.0.0",
+      ">1.0.0 >2.0.0 >3.0.0 >4.0.0": ">1.0.0 && >2.0.0 && >3.0.0 && >4.0.0",
+      // ` || ` between the alternatives
+      "1.0.0 || 2.0.0": "==1.0.0 || ==2.0.0",
+      "1.0.0 || 2.0.0 || 3.0.0": "==1.0.0 || ==2.0.0 || ==3.0.0",
+      "^16.8 || ^17 || ^18": ">=16.8.0 <17.0.0-0 || >=17.0.0 <18.0.0-0 || >=18.0.0 <19.0.0-0",
+      ">=1.0.0 <2.0.0 <3.0.0 || >=4.0.0 <5.0.0 <6.0.0": ">=1.0.0 && <2.0.0 && <3.0.0 || >=4.0.0 && <5.0.0 && <6.0.0",
+      "^1.2.3 <1.5.0 || 2.0.0 || >=3.0.0 <4.0.0": ">=1.2.3 <2.0.0-0 && <1.5.0 || ==2.0.0 || >=3.0.0 && <4.0.0",
+    };
+    expect(print(Object.keys(printed))).toEqual(printed);
+  });
+
+  // After `||`, the parser keeps `^latest` as an alternative that accepts every version.
+  test("has `>=0.0.0` for an alternative without a comparator", () => {
+    const printed = {
+      "1.0.0 || ^latest": "==1.0.0 || >=0.0.0",
+      "1.0.0 || ^latest || 3.0.0": "==1.0.0 || >=0.0.0 || ==3.0.0",
+      // Inside an intersection, and alone, it adds nothing.
+      ">1.0.0 ^latest >3.0.0": ">1.0.0 && >3.0.0",
+      "^latest": "",
+    };
+    expect(print(Object.keys(printed))).toEqual(printed);
   });
 });
 

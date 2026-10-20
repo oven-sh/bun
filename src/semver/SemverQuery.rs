@@ -58,38 +58,7 @@ impl Drop for Query {
     }
 }
 
-pub struct QueryFormatter<'a> {
-    query: &'a Query,
-    buffer: &'a [u8],
-}
-
-impl<'a> fmt::Display for QueryFormatter<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let this = self.query;
-
-        if let Some(ptr) = &this.next {
-            if ptr.range.has_left() || ptr.range.has_right() {
-                return write!(
-                    f,
-                    "{} && {}",
-                    this.range.fmt(self.buffer),
-                    ptr.range.fmt(self.buffer)
-                );
-            }
-        }
-
-        write!(f, "{}", this.range.fmt(self.buffer))
-    }
-}
-
 impl Query {
-    pub(crate) fn fmt<'a>(&'a self, buf: &'a [u8]) -> QueryFormatter<'a> {
-        QueryFormatter {
-            query: self,
-            buffer: buf,
-        }
-    }
-
     /// The version when this AND chain is one `=version` comparator.
     pub(crate) fn exact_version(&self) -> Option<Version> {
         let range = &self.range;
@@ -230,32 +199,7 @@ impl Clone for List {
     }
 }
 
-pub struct ListFormatter<'a> {
-    list: &'a List,
-    buffer: &'a [u8],
-}
-
-impl<'a> fmt::Display for ListFormatter<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut this = self.list;
-
-        while let Some(ptr) = &this.next {
-            write!(f, "{} || ", this.head.fmt(self.buffer))?;
-            this = ptr;
-        }
-
-        write!(f, "{}", this.head.fmt(self.buffer))
-    }
-}
-
 impl List {
-    pub(crate) fn fmt<'a>(&'a self, buf: &'a [u8]) -> ListFormatter<'a> {
-        ListFormatter {
-            list: self,
-            buffer: buf,
-        }
-    }
-
     pub(crate) fn satisfies(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
         let mut node = self;
         loop {
@@ -418,23 +362,33 @@ pub struct GroupFormatter<'a> {
 
 impl<'a> fmt::Display for GroupFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let this = self.group;
-
-        if this.tail.is_none() && this.head.tail.is_none() && !this.head.head.range.has_left() {
-            return Ok(());
+        let mut wrote_alternative = false;
+        let mut list = Some(&self.group.head);
+        while let Some(alternative) = list {
+            let mut wrote_comparator = false;
+            let mut query = Some(&alternative.head);
+            while let Some(node) = query {
+                // A node without a comparator does not narrow its alternative.
+                if node.range.has_left() || node.range.has_right() {
+                    if wrote_comparator {
+                        f.write_str(" && ")?;
+                    } else if wrote_alternative {
+                        f.write_str(" || ")?;
+                    }
+                    fmt::Display::fmt(&node.range.fmt(self.buf), f)?;
+                    wrote_comparator = true;
+                }
+                query = node.next.as_deref();
+            }
+            if wrote_comparator {
+                wrote_alternative = true;
+            } else if wrote_alternative {
+                // `satisfies` accepts every version for an alternative without a comparator.
+                f.write_str(" || >=0.0.0")?;
+            }
+            list = alternative.next.as_deref();
         }
-
-        if this.tail.is_none() && this.head.tail.is_none() {
-            return write!(f, "{}", this.head.fmt(self.buf));
-        }
-
-        let mut list = &this.head;
-        while let Some(next) = &list.next {
-            write!(f, "{} && ", list.fmt(self.buf))?;
-            list = next;
-        }
-
-        write!(f, "{}", list.fmt(self.buf))
+        Ok(())
     }
 }
 

@@ -9,6 +9,49 @@ type DeclarationPosition = (bool, FileId, u32);
 /// The members of a union or an intersection under construction.
 type Flat = smallvec::SmallVec<[TypeId; 16]>;
 
+/// `orderedSet`: the members of an intersection under construction, in the order they were added.
+struct OrderedSet {
+    values: Flat,
+    /// The same members, once there are more than `Self::SCANNED`.
+    values_by_key: crate::util::FxHashSet<TypeId>,
+}
+
+impl OrderedSet {
+    /// `orderedSetMapThreshold`
+    const SCANNED: usize = 16;
+
+    fn with_capacity(capacity: usize) -> OrderedSet {
+        OrderedSet {
+            values: Flat::with_capacity(capacity),
+            values_by_key: Default::default(),
+        }
+    }
+
+    #[inline]
+    fn contains(&self, value: TypeId) -> bool {
+        if self.values.len() <= Self::SCANNED {
+            return self.values.contains(&value);
+        }
+        self.values_by_key.contains(&value)
+    }
+
+    #[inline]
+    fn add(&mut self, value: TypeId) {
+        self.values.push(value);
+        if self.values.len() > Self::SCANNED {
+            self.index(value);
+        }
+    }
+
+    #[cold]
+    fn index(&mut self, value: TypeId) {
+        if self.values_by_key.is_empty() {
+            self.values_by_key.extend(self.values.iter().copied());
+        }
+        self.values_by_key.insert(value);
+    }
+}
+
 /// What the flags of an intersection's members say about it.
 #[derive(Copy, Clone, Default)]
 struct MembersByFlags {
@@ -1489,7 +1532,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// removes duplicates. Returns `found` plus what the types add.
     fn add_types_to_intersection(
         &mut self,
-        set: &mut Flat,
+        set: &mut OrderedSet,
         mut found: MembersByFlags,
         types: &[TypeId],
     ) -> MembersByFlags {
@@ -1503,7 +1546,7 @@ impl<'p, 's> Checker<'p, 's> {
             if self.is_empty_anonymous_object_type(ty) {
                 if found.includes & tf::INCLUDES_EMPTY_OBJECT == 0 {
                     found.includes |= tf::INCLUDES_EMPTY_OBJECT;
-                    set.push(ty);
+                    set.add(ty);
                 }
                 continue;
             }
@@ -1524,8 +1567,8 @@ impl<'p, 's> Checker<'p, 's> {
                 if member != ty {
                     found.includes |= tf::INCLUDES_MISSING_TYPE;
                 }
-                if !set.contains(&member) {
-                    set.push(member);
+                if !set.contains(member) {
+                    set.add(member);
                 }
                 found.add(one);
                 continue;
@@ -1607,8 +1650,9 @@ impl<'p, 's> Checker<'p, 's> {
         no_constraint_reduction: bool,
         alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
-        let mut set = Flat::with_capacity(types.len());
+        let mut set = OrderedSet::with_capacity(types.len());
         let found = self.add_types_to_intersection(&mut set, MembersByFlags::default(), types);
+        let mut set = set.values;
         let includes = found.includes;
         if includes & tf::NEVER != 0 {
             return if set.contains(&TypeId::SILENT_NEVER) {

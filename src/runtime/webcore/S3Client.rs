@@ -780,8 +780,7 @@ struct BucketRequest {
 }
 
 impl BucketRequest {
-    /// `base_bucket` is the bucket of the client or the environment, before
-    /// the options of the call.
+    /// `base_bucket`: the bucket of the client or the environment, before the options of the call.
     fn new(
         global: &JSGlobalObject,
         mut aws_options: bun_s3_signing::S3CredentialsWithOptions,

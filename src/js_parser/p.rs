@@ -4450,7 +4450,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // i.e. import {graphql} "react-relay"
 
         // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
-        if remap_count > 0 && stmt.items.is_empty() && stmt.default_name.is_none() {
+        if remap_count > 0
+            && stmt.items.is_empty()
+            && stmt.default_name.is_none()
+            && stmt.star_name_loc.is_empty()
+        {
             self.import_records.items_mut()[stmt.import_record_index as usize]
                 .path
                 .namespace = crate::Macro::NAMESPACE;

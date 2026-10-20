@@ -12,7 +12,7 @@ use bun_sema::messages::text;
 use bun_sema::resolve::{Host, displayed_path, join, to_path};
 use bun_sema::session::Session;
 use bun_sema::util::SharedSort;
-use bun_sema_driver::{Category, Diagnostic, Report, Request};
+use bun_sema_driver::{Category, Diagnostic, Report, Request, TaskSize};
 use bun_threading::Guarded;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -1962,6 +1962,124 @@ fn run_one(
     })
 }
 
+/// The ways to split a program's files into tasks that `compare_task_groupings` tries: a name, `PlanOptions::task_size`,
+/// `Request::order` and `PlanOptions::discards_first_visits`. The first is what `bun check --threads=1` does. In a
+/// program with fewer than a hundred files, that's a task per file.
+const TASK_GROUPINGS: [(&str, TaskSize, u32, bool); 6] = [
+    ("by cost", TaskSize::ByCost, 1, false),
+    ("one task", TaskSize::Unlimited, 1, false),
+    ("last file first", TaskSize::ByCost, u32::MAX, false),
+    ("each file twice", TaskSize::ByCost, 1, true),
+    ("one task, each file twice", TaskSize::Unlimited, 1, true),
+    (
+        "last file first, each file twice",
+        TaskSize::ByCost,
+        u32::MAX,
+        true,
+    ),
+];
+
+/// `--task-groupings --root=<directory> <name>..`: which files share a task depends on timing, so the report must not
+/// depend on it. Checks each of `projects`, which are directories, under the first two entries of `TASK_GROUPINGS` and
+/// one of the others, on one thread, so that a run is repeatable. Prints the reports that differ from the first entry's,
+/// then how many tasks each entry took for how many files. Returns true if no report differs.
+fn compare_task_groupings(projects: &[String], lib_dir: &str, threads: usize) -> bool {
+    let check = |project: &str, (_, task_size, order, discards_first_visits): (_, _, _, _)| {
+        let request = Request {
+            compiler_options: &[],
+            cwd: project.as_bytes(),
+            project: None,
+            listed_projects: None,
+            build: false,
+            errors: &[],
+            paths: &[],
+            are_entry_points: false,
+            threads: 1,
+            libs: bun_sema_driver::Libs::Directory(lib_dir.as_bytes()),
+            progress: None,
+            only: None,
+            order,
+            plan_options: bun_sema_driver::PlanOptions {
+                task_size,
+                discards_first_visits,
+                ..Default::default()
+            },
+            retains_everything: false,
+            script_kinds: &[],
+            script_kinds_by_extension: &[],
+            conditions: &[],
+            stops_like_tsc: true,
+            uses_typescript_wording: false,
+            loaded: None,
+            checked: None,
+            declaration_file_emitted: None,
+            after_file: None,
+        };
+        bun_sema_driver::check_then(&request, |report| {
+            let mut printed = Vec::new();
+            let style = bun_sema_driver::format::Style {
+                layout: bun_sema_driver::format::Layout::Plain,
+                color: false,
+                cwd: &bun_sema_driver::host::from_native(project.as_bytes()),
+                is_case_sensitive: report.is_case_sensitive,
+                github_annotations: false,
+                width: 0,
+                show_all: true,
+            };
+            bun_sema_driver::format::write_diagnostics(&mut printed, &report, &style);
+            (printed, [report.tasks_run, report.files_checked])
+        })
+    };
+    let tasks_and_files = Guarded::new([[0; 2]; TASK_GROUPINGS.len()]);
+    let different = Guarded::new(Vec::new());
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        for _ in 0..threads.max(1) {
+            let stack = bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize;
+            let thread = std::thread::Builder::new().stack_size(stack);
+            let spawned = thread.spawn_scoped(scope, || {
+                bun_core::StackCheck::configure_thread();
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(project) = projects.get(i) else {
+                        break;
+                    };
+                    let mut expected = Vec::new();
+                    for (nth, &grouping) in TASK_GROUPINGS.iter().enumerate() {
+                        if nth > 1 && nth - 2 != i % (TASK_GROUPINGS.len() - 2) {
+                            continue;
+                        }
+                        let (printed, [tasks, files]) = check(project, grouping);
+                        let sums = &mut tasks_and_files.lock()[nth];
+                        *sums = [sums[0] + tasks, sums[1] + files];
+                        if nth == 0 {
+                            expected = printed;
+                        } else if printed != expected {
+                            let both = format!(
+                                "{project} differs with {}:\n{}by cost:\n{}",
+                                grouping.0,
+                                text(&printed),
+                                text(&expected)
+                            );
+                            different.lock().push((i, nth, both));
+                        }
+                    }
+                }
+            });
+            spawned.unwrap();
+        }
+    });
+    let mut different = std::mem::take(&mut *different.lock());
+    different.shared_sort_unstable_by_key(|it| (it.0, it.1));
+    for (_, _, both) in &different {
+        output_line!("{both}");
+    }
+    for (grouping, [tasks, files]) in TASK_GROUPINGS.iter().zip(*tasks_and_files.lock()) {
+        output_line!("{}: {tasks} tasks, {files} files", grouping.0);
+    }
+    different.is_empty()
+}
+
 /// Runs the tests of `suite`.
 pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
     let tests = setup.tests_under(suite.cases);
@@ -2352,6 +2470,15 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
             .find_map(|a| a.strip_prefix(&format!("--{name}=")).map(str::to_owned))
     };
     let number = |name: &str| flag(name).and_then(|n| n.parse().ok());
+    if args.iter().any(|it| it == "--task-groupings") {
+        let (Some(lib_dir), Some(root)) = (flag("lib"), flag("root")) else {
+            error_line!("--lib and --root are required");
+            return false;
+        };
+        let names = args.iter().filter(|it| !it.starts_with("--"));
+        let projects: Vec<String> = names.map(|name| format!("{root}/{name}")).collect();
+        return compare_task_groupings(&projects, &lib_dir, number("threads").unwrap_or(8));
+    }
     let (Some(lib_dir), Some(test_lib)) = (flag("lib"), flag("testlib")) else {
         error_line!("--lib and --testlib are required");
         return false;

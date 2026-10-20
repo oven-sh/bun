@@ -257,6 +257,13 @@ fn run(args: &[String]) {
                     "--projects-at-once=",
                     defaults.max_concurrent_projects,
                 ),
+                task_size: match args.iter().find_map(|a| a.strip_prefix("--task-size=")) {
+                    None => defaults.task_size,
+                    Some("one-file") => bun_sema_driver::TaskSize::OneFile,
+                    Some("unlimited") => bun_sema_driver::TaskSize::Unlimited,
+                    Some(other) => panic!("--task-size={other}"),
+                },
+                discards_first_visits: has("--discard-first-visits"),
                 ..defaults
             };
             let request = bun_sema_driver::Request {

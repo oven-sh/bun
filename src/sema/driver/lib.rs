@@ -453,9 +453,26 @@ const MIN_TASKS: usize = 128;
 /// the number of threads and by this.
 const RUNS_PER_THREAD: usize = 4;
 
+/// How many files a task checks. See `PlanOptions::task_size`.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum TaskSize {
+    /// `1 / MIN_TASKS` of the total cost. In a program with fewer files than that, no two files share a task.
+    #[default]
+    ByCost,
+    OneFile,
+    /// Every file that its thread takes from the queue, for as long as they're in program order. With one thread and
+    /// `Request::order` 1, one task checks the whole program.
+    Unlimited,
+}
+
 /// How a request is run.
 #[derive(Clone, Copy)]
 pub struct PlanOptions {
+    /// Which files share a task normally depends on their cost and on which thread is free. The output doesn't depend
+    /// on it, and tests use this and `discards_first_visits` to verify that.
+    pub task_size: TaskSize,
+    /// The first visit of every file is discarded like one that ends with an invalid commit, so the file is rechecked.
+    pub discards_first_visits: bool,
     /// The maximum number of projects of a `tsc -b` run that are loaded or checked at the same time, if each reads the
     /// sources of what it references. Otherwise four times as many. Each occupies memory.
     pub max_concurrent_projects: usize,
@@ -515,6 +532,8 @@ pub struct PlanOptions {
 impl Default for PlanOptions {
     fn default() -> PlanOptions {
         PlanOptions {
+            task_size: TaskSize::ByCost,
+            discards_first_visits: false,
             max_concurrent_projects: 4,
             after_file_only_for_checked_files: false,
             checks_only_requested_paths: false,
@@ -1091,6 +1110,8 @@ pub struct Report {
     /// The files that would have been checked in a program with an error in its syntax, its options or its global
     /// types. As in `tsc`, nothing else is reported for such a program.
     pub files_not_checked: usize,
+    /// The number of tasks that checked them. See `PlanOptions::task_size`.
+    pub tasks_run: usize,
     /// The rounds that ran, in order.
     pub rounds: Vec<RoundReport>,
     /// Number of projects reported, if `references` are followed. Otherwise 0.
@@ -1143,6 +1164,7 @@ impl Report {
         self.shared_parses += other.shared_parses;
         self.files_checked += other.files_checked;
         self.files_not_checked += other.files_not_checked;
+        self.tasks_run += other.tasks_run;
         self.rounds.extend(other.rounds);
         self.check_time += other.check_time;
         for (phase, more) in self.load_phases.iter_mut().zip(other.load_phases) {
@@ -4307,6 +4329,7 @@ fn check_named_files(
         Some(room_slot) if room_slot.fits_one_thread => 1,
         _ => threads,
     };
+    let tasks_run = AtomicUsize::new(0);
     let rounds: Guarded<Vec<RoundReport>> = Guarded::new(Vec::new());
     // For each task of the round: wall time, number of files, index of the first file.
     let task_times: Guarded<Vec<(Duration, usize, usize)>> = Guarded::new(Vec::new());
@@ -4362,9 +4385,11 @@ fn check_named_files(
     let run_tasks = |round: usize, files: &[usize], expected: Requested, is_last_round: bool| {
         let cost: usize = files.iter().map(|&file| size_of(file)).sum();
         // A checker is replaced after this much cost, because its private tables grow with every file.
-        let task_cost = match is_last_round {
-            true => usize::MAX,
-            false => (cost / MIN_TASKS).max(1),
+        let task_cost = match request.plan_options.task_size {
+            _ if is_last_round => usize::MAX,
+            TaskSize::ByCost => (cost / MIN_TASKS).max(1),
+            TaskSize::OneFile => 1,
+            TaskSize::Unlimited => usize::MAX,
         };
         let workers = if is_last_round { 1 } else { threads };
         // The heavy files go first, largest first, so that no thread starts one when the others are nearly done. Then
@@ -4520,6 +4545,12 @@ fn check_named_files(
                     );
                 }
                 let checked = checker.check_file(file);
+                if request.plan_options.discards_first_visits
+                    && !is_last_round
+                    && visits.lock()[index].rechecks == 0
+                {
+                    checker.discard_until_recheck();
+                }
                 if let Some(after_file) = request.after_file
                     && expected == wanted
                     && !checker.was_discarded()
@@ -4582,6 +4613,7 @@ fn check_named_files(
             for (sum, more) in members.lock().iter_mut().zip(checker.member_counts()) {
                 *sum += more;
             }
+            tasks_run.fetch_add(1, Ordering::Relaxed);
             let ended = checker.end_task_after_commits();
             {
                 let mut sums = sums.lock();
@@ -4928,6 +4960,7 @@ fn check_named_files(
     report.deepest_stack = deepest_stack.into_inner();
     report.inference_walks = *inference_walks.lock();
     report.members = *members.lock();
+    report.tasks_run = tasks_run.into_inner();
     report.rounds = std::mem::take(&mut *rounds.lock());
     report.incomplete = std::mem::take(&mut *incomplete.lock());
     report.incomplete.shared_sort();

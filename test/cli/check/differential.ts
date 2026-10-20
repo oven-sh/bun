@@ -87,6 +87,31 @@ export async function inBatches<T>(items: T[], run: (item: T) => Promise<void>) 
  */
 type Case = { files: Record<string, string>; build?: true; deep?: true; theirs?: string[] };
 
+/** Returns the programs of differential-cases.json that this build and system can check, each written to `root`/name. */
+export async function writtenCases(root: string, isWanted: (it: Case, index: number) => boolean) {
+  const all: Record<string, Case> = await Bun.file(join(import.meta.dir, "differential-cases.json")).json();
+  return (
+    Object.entries(all)
+      .filter(([, it]) => !(it.deep && (isDebug || isASAN)))
+      .filter(([, it], index) => isWanted(it, index))
+      // Windows can't create a directory named `c:` or `w*d`.
+      .filter(([, it]) => !isWindows || !Object.keys(it.files).some(path => /[:*?"<>|]/.test(path)))
+      .filter(([name, it]) => {
+        try {
+          for (const path in it.files) {
+            mkdirSync(dirname(join(root, name, path)), { recursive: true });
+            writeFileSync(join(root, name, path), it.files[path]);
+          }
+          return true;
+        } catch (error) {
+          // APFS rejects a character that's newer than the system's Unicode tables.
+          if ((error as NodeJS.ErrnoException).code === "EILSEQ") return false;
+          throw error;
+        }
+      })
+  );
+}
+
 /**
  * Small programs on which `bun check` and tsc once disagreed, each named after where it was found.
  * A program takes two processes, and a test file has three minutes, so each file tests one of `parts` parts.
@@ -97,29 +122,14 @@ export function programsThatOnceDiffered(part: number, parts: number) {
     test.skipIf(!tsc)(
       `matches tsc on programs where the two once disagreed, ${part * tests + nth + 1} of ${parts * tests}`,
       async () => {
-        const all: Record<string, Case> = await Bun.file(join(import.meta.dir, "differential-cases.json")).json();
         using dir = tempDir("bun-check-differential", {});
         const root = String(dir);
-        const cases = Object.entries(all)
-          .filter(([, it]) => !(it.deep && (isDebug || isASAN)))
-          // A debug build checks a sample, always the same one.
-          .filter((_, index) => index % (isDebug || isASAN ? 40 : 1) === 0)
-          .filter((_, index) => index % (parts * tests) === part * tests + nth)
-          // Windows can't create a directory named `c:` or `w*d`.
-          .filter(([, it]) => !isWindows || !Object.keys(it.files).some(path => /[:*?"<>|]/.test(path)))
-          .filter(([name, it]) => {
-            try {
-              for (const path in it.files) {
-                mkdirSync(dirname(join(root, name, path)), { recursive: true });
-                writeFileSync(join(root, name, path), it.files[path]);
-              }
-              return true;
-            } catch (error) {
-              // APFS rejects a character that's newer than the system's Unicode tables.
-              if ((error as NodeJS.ErrnoException).code === "EILSEQ") return false;
-              throw error;
-            }
-          });
+        // A debug build checks a sample, always the same one.
+        const every = isDebug || isASAN ? 40 : 1;
+        const cases = await writtenCases(
+          root,
+          (_, index) => index % every === 0 && (index / every) % (parts * tests) === part * tests + nth,
+        );
         const different: Record<string, object> = {};
         await inBatches(cases, async ([name, it]) => {
           const cwd = join(root, name);

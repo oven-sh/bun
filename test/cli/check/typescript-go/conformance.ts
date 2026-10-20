@@ -20,7 +20,8 @@ const only = process.env.ONLY;
 const sample = only ? 1 : isDebug || isASAN ? 40 : undefined;
 
 // The runner is compiled into debug and canary builds only.
-const hasRunner = isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
+export const hasRunner =
+  isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
 
 /**
  * Declares the tests of one file of `../conformance`. CI limits the time a test file may take, so the files divide

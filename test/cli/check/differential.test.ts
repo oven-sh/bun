@@ -1,9 +1,11 @@
 import { afterAll, expect, test } from "bun:test";
 import { bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { availableParallelism } from "node:os";
+import { dirname, join } from "node:path";
 import { endChildren, longLimit, spawn } from "../children";
-import { env, inBatches, linesOf, modulesInCycles, tsc } from "./differential";
+import { env, inBatches, linesOf, modulesInCycles, tsc, writtenCases } from "./differential";
+import { hasRunner } from "./typescript-go/conformance";
 
 afterAll(endChildren);
 
@@ -43,6 +45,50 @@ test.concurrent.skipIf(!tsc)("matches `tsc --singleThreaded` on one thread for m
   ]);
   expect(theirs.length).toBeGreaterThan(100);
   expect(ours).toEqual(theirs);
+});
+
+// Which files share a task depends on their cost and on which thread is free. A task checks at least 1/128 of a program,
+// so in a small program no two files share one, and nothing shows what a file finds of an earlier file in the task's
+// checker. The runner forces the extremes: one task for all files, the last file first, every file checked twice.
+test.concurrent.skipIf(!tsc || !hasRunner)("reports the same whichever files share a task", async () => {
+  using dir = tempDir("bun-check-task-groupings", {});
+  const root = String(dir);
+  const isSource = (path: string) => /\.[cm]?[jt]sx?$/.test(path) && !path.includes("node_modules/");
+  let programs = 0;
+  const cases = await writtenCases(
+    root,
+    it => !it.build && Object.keys(it.files).filter(isSource).length > 1 && programs++ % (2 * every) === 0,
+  );
+  await using proc = spawn({
+    timeout: longLimit,
+    cmd: [
+      bunExe(),
+      "check",
+      "--run-typescript-tests",
+      "--task-groupings",
+      `--lib=${dirname(tsc!)}`,
+      `--root=${root}`,
+      `--threads=${availableParallelism()}`,
+      ...cases.map(([name]) => name),
+    ],
+    env,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const lines = stdout.split(/\r?\n/).filter(line => line);
+  const counts = Object.fromEntries(
+    lines
+      .splice(-6)
+      .map(line => /^(.+): (\d+) tasks, (\d+) files$/.exec(line)!)
+      .map(([, grouping, tasks, files]) => [grouping, { tasks: +tasks, files: +files }]),
+  );
+  expect(lines).toEqual([]);
+  expect(counts["by cost"].tasks).toBeGreaterThan(2 * cases.length);
+  expect(counts["one task"].tasks).toBeLessThanOrEqual(cases.length);
+  expect(counts["last file first"].tasks).toBeGreaterThanOrEqual(counts["last file first"].files);
+  expect(counts["each file twice"].tasks).toBeGreaterThan(counts["each file twice"].files);
+  expect(exitCode).toBe(0);
 });
 
 /**

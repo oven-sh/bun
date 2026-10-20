@@ -718,6 +718,11 @@ impl<'s> Checker<'_, 's> {
         }
     }
 
+    /// Discards the task the way an invalid commit does. Call it after `check_file`.
+    pub fn discard_until_recheck(&self) {
+        self.task.discard_until_recheck("the caller's request");
+    }
+
     /// True if the task is discarded. Its files will be rechecked, and nothing it computes from now on is kept.
     pub fn was_discarded(&self) -> bool {
         self.task.was_discarded()

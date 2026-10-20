@@ -63,6 +63,15 @@ fn parse_platform_flag<T: Npm::NegatableEnum>(
     Some(negatable.combine())
 }
 
+/// Whether `value`, the value that clap kept for an option, is part of a `BUN_OPTIONS` argument.
+fn is_from_bun_options(value: &[u8]) -> bool {
+    (bun_core::argv().as_slice())
+        .get(1..1 + bun_core::bun_options_argc())
+        .unwrap_or_default()
+        .iter()
+        .any(|option| bun_core::is_slice_in_buffer(value, option.as_bytes()))
+}
+
 type ParamType = clap::Param<clap::Help>;
 /// A list of slices that's joined on use, because a param is 96 bytes and most params are shared by
 /// 17 commands.
@@ -1688,7 +1697,8 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                 patches_dir: args.option(b"--patches-dir").unwrap_or(b"patches"),
             };
         } else if subcommand == Subcommand::Patch {
-            if args.has(b"--patches-dir") {
+            // `BUN_OPTIONS` is the only way to set the directory once, so a flag from it is skipped.
+            if (args.option(b"--patches-dir")).is_some_and(|dir| !is_from_bun_options(dir)) {
                 Output::err_generic("--patches-dir only applies to bun patch --commit", ());
                 bun_core::note!("Run 'bun patch --help' for more information");
                 Global::crash();

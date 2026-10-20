@@ -3676,10 +3676,10 @@ describe.concurrent("--patches-dir with an absolute path", () => {
 describe.concurrent("--patches-dir without --commit", () => {
   const indexJs = (dir: string) => join(dir, "node_modules", "no-deps", "index.js");
 
-  /** What a commit to `my-patches` leaves in the project. */
-  const committed = async (dir: string) => ({
+  /** What a commit leaves in the project when it writes the patch file to `patchesDir`. */
+  const committed = async (dir: string, patchesDir = "my-patches") => ({
     patchedDependencies: (await Bun.file(join(dir, "package.json")).json()).patchedDependencies,
-    patchFiles: await readdirSorted(join(dir, "my-patches")),
+    patchFiles: (await readdirSorted(join(dir, patchesDir))).filter(name => name.endsWith(".patch")),
     indexJs: await Bun.file(indexJs(dir)).text(),
   });
   const inMyPatches = {
@@ -3712,8 +3712,8 @@ describe.concurrent("--patches-dir without --commit", () => {
       ["patch --dry-run --patches-dir my-patches no-deps"],
       // The flag takes the next argument as its value, no matter what it is.
       ["patch --patches-dir --commit node_modules/no-deps"],
-      // The flags in BUN_OPTIONS are added before the typed arguments.
-      ["patch no-deps", "--patches-dir=my-patches"],
+      // A typed flag is an error even when BUN_OPTIONS has the flag too.
+      ["patch --patches-dir my-patches no-deps", "--patches-dir=other-patches"],
     ];
     // None of them writes anything, so they can run at the same time.
     const results = await Promise.all(
@@ -3731,18 +3731,13 @@ describe.concurrent("--patches-dir without --commit", () => {
     expect(await committed(dir)).toEqual(inMyPatches);
   });
 
-  // The commit step still accepts the flag, also when one of the two flags comes from BUN_OPTIONS.
+  // The commit step still accepts the flag.
   test.each([
     ["bun patch-commit --patches-dir <dir>", "patch-commit --patches-dir my-patches node_modules/no-deps", undefined],
     [
       "bun patch --patches-dir <dir> with BUN_OPTIONS=--commit",
       "patch --patches-dir my-patches node_modules/no-deps",
       "--commit",
-    ],
-    [
-      "bun patch --commit with BUN_OPTIONS=--patches-dir=<dir>",
-      "patch --commit node_modules/no-deps",
-      "--patches-dir=my-patches",
     ],
   ])("%s still writes the patch file to <dir>", async (_, args, BUN_OPTIONS) => {
     await using project = await installedProject({ dependencies: { "no-deps": "1.0.0" } });
@@ -3753,4 +3748,27 @@ describe.concurrent("--patches-dir without --commit", () => {
     await bunOk(dir, { ...env, BUN_OPTIONS }, ...args.split(" "));
     expect(await committed(dir)).toEqual(inMyPatches);
   });
+
+  // BUN_OPTIONS is the only way to set the directory for every commit. Nobody typed a flag that comes from it, so the
+  // prepare step skips it.
+  test.each([
+    ["--patches-dir=my-patches", "my-patches", "my-patches/no-deps@1.0.0.patch"],
+    // An empty value puts the patch file in the root of the project.
+    ["--patches-dir=", ".", "no-deps@1.0.0.patch"],
+  ])(
+    "with BUN_OPTIONS=%s, bun patch prepares the package and bun patch --commit writes the patch file",
+    async (BUN_OPTIONS, patchesDir, patchFile) => {
+      await using project = await installedProject({ dependencies: { "no-deps": "1.0.0" } });
+      const { dir } = project;
+      const env = { ...project.env, BUN_OPTIONS };
+      await expectPrepared(dir, env, "no-deps", "no-deps", "node_modules/no-deps");
+      await Bun.write(indexJs(dir), patched);
+
+      await bunOk(dir, env, "patch", "--commit", "node_modules/no-deps");
+      expect(await committed(dir, patchesDir)).toEqual({
+        ...inMyPatches,
+        patchedDependencies: { "no-deps@1.0.0": patchFile },
+      });
+    },
+  );
 });

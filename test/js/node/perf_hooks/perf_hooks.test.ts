@@ -122,6 +122,19 @@ test("export surface matches Node v26.3.0", () => {
   ).toEqual(["PerformanceNodeTiming"]);
 });
 
+test("monitorEventLoopDelay().enable() doesn't reset a histogram that's already enabled", async () => {
+  const histogram = perf.monitorEventLoopDelay({ resolution: 1 });
+  expect(histogram.enable()).toBe(true);
+  try {
+    while (histogram.count === 0) await new Promise(resolve => setTimeout(resolve, 1));
+    const { count } = histogram;
+    expect(histogram.enable()).toBe(false);
+    expect(histogram.count).toBeGreaterThanOrEqual(count);
+  } finally {
+    histogram.disable();
+  }
+});
+
 // The options defaults must not read through a polluted Object.prototype.
 // Node uses kEmptyObject for both; verified against Node v26.3.0.
 test("timerify and createHistogram survive Object.prototype option pollution", async () => {

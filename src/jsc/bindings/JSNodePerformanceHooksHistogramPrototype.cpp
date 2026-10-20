@@ -484,11 +484,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_enableEventLoopDelay, (JSGlobalObject * glob
     int32_t resolution = callFrame->argument(1).toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Reset histogram data on enable
-    histogram->reset();
-
     // Enable the event loop delay monitor in the native timer implementation
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(Timer_enableEventLoopDelayMonitoring(bunVM(globalObject), JSValue::encode(histogram), resolution))));
+    bool wasDisabled = Timer_enableEventLoopDelayMonitoring(bunVM(globalObject), JSValue::encode(histogram), resolution);
+    if (wasDisabled)
+        histogram->reset();
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(wasDisabled)));
 }
 
 // Disable event loop delay monitoring

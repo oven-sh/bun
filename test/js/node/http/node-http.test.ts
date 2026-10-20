@@ -5412,7 +5412,7 @@ test("https 'clientError' for a connection whose handshake completes after close
     raw.on("close", () => wire.push(null));
     const c = (client = tlsConnect({ socket: wire, rejectUnauthorized: false }));
     c.on("error", () => {});
-    for (const t = Date.now(); held.length === 0 && Date.now() - t < 10_000; ) await Bun.sleep(5);
+    for (const t = Date.now(); held.length === 0 && Date.now() - t < 10_000;) await Bun.sleep(5);
     expect(held.length).toBeGreaterThan(0);
 
     const closed = new Promise<void>(r => server!.close(() => r()));

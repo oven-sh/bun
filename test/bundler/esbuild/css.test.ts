@@ -1,4 +1,6 @@
-import { describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, expectRssDeltaBelow, isASAN, isDebug, tempDir } from "harness";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
@@ -1602,9 +1604,10 @@ c {
     },
   });
 
-  // This tests that bun correctly clones the import records for all import
-  // condition tokens. If they aren't cloned correctly, then something will
-  // likely crash with an out-of-bounds error.
+  // In esbuild a url() in an @import condition has an import record, and this
+  // test covers remapping it. In bun the value of a supports() declaration is
+  // raw text with no import record: a.png and b.png are never resolved, and the
+  // @supports wrapper prints the url() as written.
   itBundled("css/CSSAtImportConditionsWithImportRecordsBundle", {
     files: {
       "/entry.css": /* css */ `
@@ -1978,6 +1981,202 @@ c {
         api.expectFile(join(file)).toMatchSnapshot(file);
       }
     },
+  });
+
+  // An `@import` condition can own heap memory: the fallback and the indices
+  // of env(), a calc() tree, a layer name with more than one segment. The
+  // linker used to clone each condition into memory that is freed without
+  // destructors. The cli builds run with leak checking on. The api builds run
+  // in this process, which the ASAN lane checks for leaks when it exits. A
+  // build without ASAN checks the output only.
+  const leakCheck = {
+    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+    LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../leaksan.supp")}`,
+  };
+  const rule = (name: string) => `.${name} { color: red }`;
+  const wrapped = (name: string, media: string) => `/* ${name}.css */
+@media ${media} {
+  .${name} {
+    color: red;
+  }
+}
+`;
+  const entryRule = `/* entry.css */
+.entry {
+  color: #00f;
+}
+`;
+  const conditionLeakCases = {
+    // a.css is imported twice with equal conditions: only the last one is kept.
+    Env: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css" (min-width: env(foo, 1px));
+          @import "./b.css" (min-width: env(safe-area-inset-top 1 2));
+          @import "./c.css" (min-width: env(foo, var(--x, 1px)));
+          @import "./d.css" (min-width: env(foo, lab(50% 20 30)));
+          @import "./a.css" (min-width: env(foo, 1px));
+          .entry { color: blue }
+        `,
+        ...Object.fromEntries(["a", "b", "c", "d"].map(name => [`/${name}.css`, rule(name)])),
+      },
+      expected: [
+        wrapped("b", "(min-width: env(safe-area-inset-top 1 2))"),
+        wrapped("c", "(min-width: env(foo, var(--x, 1px)))"),
+        wrapped("d", "(min-width: env(foo, lab(50% 20 30)))"),
+        wrapped("a", "(min-width: env(foo, 1px))"),
+        entryRule,
+      ].join("\n"),
+    },
+    Calc: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css" (min-width: calc(100px + 1em));
+          @import "./b.css" (width >= calc(100px + 1em));
+          @import "./c.css" (calc(10px + 1em) <= width <= calc(100px + 1em));
+          @import "./d.css" (min-width: max(100px, 10em));
+          @import "./e.css" (max-width: min(100px, 10em));
+          .entry { color: blue }
+        `,
+        ...Object.fromEntries(["a", "b", "c", "d", "e"].map(name => [`/${name}.css`, rule(name)])),
+      },
+      expected: [
+        wrapped("a", "(min-width: calc(100px + 1em))"),
+        wrapped("b", "(min-width: calc(100px + 1em))"),
+        wrapped("c", "(min-width: calc(10px + 1em)) and (max-width: calc(100px + 1em))"),
+        wrapped("d", "(min-width: max(100px, 10em))"),
+        wrapped("e", "(max-width: min(100px, 10em))"),
+        entryRule,
+      ].join("\n"),
+    },
+    External: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/a.css" (min-width: env(foo, 1px));
+          @import "https://example.com/b.css" (min-width: env(safe-area-inset-top 1 2));
+          @import "https://example.com/c.css" (min-width: calc(100px + 1em));
+          .entry { color: blue }
+        `,
+      },
+      expected: `@import "https://example.com/a.css" (min-width: env(foo, 1px));
+@import "https://example.com/b.css" (min-width: env(safe-area-inset-top 1 2));
+@import "https://example.com/c.css" (min-width: calc(100px + 1em));
+
+${entryRule}`,
+    },
+    // mid.css is imported with conditions and has conditional imports of its
+    // own, so each of its imports carries the conditions of the whole chain.
+    Nested: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./mid.css" layer(a.b) (min-width: env(foo, 1px));
+          .entry { color: blue }
+        `,
+        "/mid.css": /* css */ `
+          @import "./leaf.css" (max-width: calc(100px + 1em));
+          @import "https://example.com/x.css" screen;
+          .mid { color: red }
+        `,
+        "/leaf.css": rule("leaf"),
+      },
+      expected: `@import "data:text/css,@import \\"https://example.com/x.css\\" screen;" layer(a.b) (min-width: env(foo, 1px));
+
+/* leaf.css */
+@media (min-width: env(foo, 1px)) {
+  @layer a.b {
+    @media (max-width: calc(100px + 1em)) {
+      .leaf {
+        color: red;
+      }
+    }
+  }
+}
+
+/* mid.css */
+@media (min-width: env(foo, 1px)) {
+  @layer a.b {
+    .mid {
+      color: red;
+    }
+  }
+}
+
+${entryRule}`,
+    },
+  };
+  for (const [name, { files, expected }] of Object.entries(conditionLeakCases)) {
+    for (const backend of ["cli", "api"] as const) {
+      itBundled(`css/CSSAtImportConditionsLeakCheck${name}${backend === "api" ? "API" : ""}`, {
+        files,
+        backend,
+        env: backend === "cli" ? leakCheck : undefined,
+        outfile: "/out.css",
+        onAfterBundle(api) {
+          api.expectFile("/out.css").toBe(expected);
+        },
+      });
+    }
+  }
+
+  // a.js and b.js get different CSS chunks, and both wrap leaf.css in the
+  // condition that shared.css owns. The chunk of c.js equals the chunk of b.js.
+  itBundled("css/CSSAtImportConditionsLeakCheckTwoChunks", {
+    files: {
+      "/a.js": `import "./shared.css"; import "./a-only.css"; console.log("a");`,
+      "/b.js": `import "./shared.css"; console.log("b");`,
+      "/c.js": `import "./shared.css"; console.log("c");`,
+      "/shared.css": /* css */ `
+        @import "./leaf.css" (min-width: env(foo, 1px));
+        .entry { color: blue }
+      `,
+      "/leaf.css": rule("leaf"),
+      "/a-only.css": rule("a-only"),
+    },
+    entryPoints: ["/a.js", "/b.js", "/c.js"],
+    env: leakCheck,
+    outdir: "/out",
+    onAfterBundle(api) {
+      const shared = `${wrapped("leaf", "(min-width: env(foo, 1px))")}
+/* shared.css */
+.entry {
+  color: #00f;
+}
+`;
+      expect(readdirSync(api.outdir).sort()).toEqual(["a.css", "a.js", "b.css", "b.js", "c.js"]);
+      api.expectFile("/out/b.css").toBe(shared);
+      api.expectFile("/out/a.css").toBe(`${shared}
+/* a-only.css */
+.a-only {
+  color: red;
+}
+`);
+    },
+  });
+
+  // A build without ASAN has no leak check, so it watches RSS over repeated
+  // builds. mid.css is imported under a condition with a long env() fallback,
+  // and each conditional import in mid.css made the linker clone it again.
+  // Without the fix this grows about 370 MiB.
+  test.skipIf(isASAN || isDebug)("css/CSSAtImportConditionsLeakCheckRSS", async () => {
+    const leaves = Array.from({ length: 16 }, (_, i) => `leaf${i}.css`);
+    using dir = tempDir("css-import-condition-leak", {
+      "entry.css": `@import "./mid.css" (min-width: env(foo, ${Buffer.alloc(8_000, "1px ").toString()}));\n`,
+      "mid.css": leaves.map(leaf => `@import "./${leaf}" screen;\n`).join(""),
+      ...Object.fromEntries(leaves.map((leaf, i) => [leaf, `.leaf${i} { color: green }\n`])),
+    });
+    const code = /* js */ `
+      const build = async () => {
+        const result = await Bun.build({ entrypoints: [${JSON.stringify(join(String(dir), "entry.css"))}] });
+        if (!result.success) throw new AggregateError(result.logs, "build failed");
+      };
+      for (let i = 0; i < 20; i++) await build();
+      Bun.gc(true);
+      const before = process.memoryUsage.rss();
+      for (let i = 0; i < 40; i++) await build();
+      Bun.gc(true);
+      console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+    `;
+    await expectRssDeltaBelow(["--smol", "-e", code], { release: 100, debug: 100 });
   });
 
   itBundled("css/CSSAtImportConditionsAtLayerBundle", {

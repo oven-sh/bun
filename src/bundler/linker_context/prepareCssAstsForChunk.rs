@@ -15,6 +15,7 @@ use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Inde
 use bun_ast::{Loc, Range};
 use bun_collections::VecExt;
 use bun_core::strings;
+use bun_ptr::BackRef;
 use bun_resolver::DataURL;
 
 use crate::chunk::{Content, CssImportOrderKind};
@@ -154,13 +155,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                     css_chunk.asts[i] = ast;
                 }
                 CssImportOrderKind::ExternalPath(p) => {
-                    // Taking `&mut` at index 0 here would exclusively borrow
-                    // the whole `entry.conditions` Vec while the `while j != 1`
-                    // loop below still reads `entry.conditions.len` / `.at(j)`.
-                    // The borrow is not actually needed until after the loop, so
-                    // defer acquiring it until `actual_conditions` is built below.
-                    let had_conditions = entry.conditions.len() > 0;
-                    if had_conditions {
+                    if entry.conditions.len() > 0 {
                         entry.condition_import_records.push(ImportRecord {
                             kind: ImportKind::At,
                             path: *p,
@@ -184,15 +179,8 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         while j != 1 {
                             j -= 1;
 
-                            // `ast_import` holds a bitwise-duplicated `ImportConditions`
-                            // (see `ptr::read` below);
-                            // dropping it would run `Drop` on that aliased
-                            // `ImportConditions` — freeing Global-backed buffers
-                            // (`MediaList.media_queries: Vec`, `SupportsCondition::{Box,Vec}`,
-                            // `LayerName.v: SmallList`) that are still owned by
-                            // `entry.conditions[j]`, i.e. a double-free / UAF. Wrap in
-                            // `ManuallyDrop` so the duplicate is abandoned instead; the rule
-                            // slab itself is arena-owned so it is reclaimed on arena reset.
+                            // Never dropped: its rule holds a bitwise copy of conditions
+                            // that a parsed stylesheet owns.
                             let ast_import = core::mem::ManuallyDrop::new(BundlerStyleSheet {
                                 license_comments: Default::default(),
                                 sources: Default::default(),
@@ -208,9 +196,9 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                     // SAFETY: shallow struct
                                     // copy. The duplicate is never dropped (`ManuallyDrop`
                                     // above), so the aliased heap stays singly-owned by
-                                    // `entry.conditions[j]`.
-                                    *import_rule.conditions_mut() =
-                                        unsafe { core::ptr::read(entry.conditions.at(j)) };
+                                    // the `ImportRule` behind `entry.conditions[j]`.
+                                    import_rule.conditions =
+                                        unsafe { core::ptr::read(entry.conditions[j].get()) };
                                     arena_rule_list_one(bump, BundlerCssRule::Import(import_rule))
                                 },
                                 composes: Default::default(),
@@ -281,15 +269,6 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         }
                     }
 
-                    let mut empty_conditions = ImportConditions::default();
-                    // Index 0 is disjoint from every `at(j)` (j>=1) read above;
-                    // only now do we materialize the exclusive borrow.
-                    let actual_conditions: &mut ImportConditions = if had_conditions {
-                        entry.conditions.mut_(0)
-                    } else {
-                        &mut empty_conditions
-                    };
-
                     entry.condition_import_records.push(ImportRecord {
                         kind: ImportKind::At,
                         path: *p,
@@ -307,14 +286,12 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                 p.pretty,
                                 entry.condition_import_records.len() as u32,
                             );
-                            // SAFETY: shallow struct copy. The duplicate lives in an
-                            // `ImportRule` inside the `arena_rule_list_one` slab assigned
-                            // to `css_chunk.asts[i]`, whose elements never run `Drop`
-                            // (`CssChunk::Drop` frees the slab via `set_len(0)`), so
-                            // `entry.conditions[0]` / `empty_conditions` remain the sole
-                            // owners of the interior heap.
-                            *import_rule.conditions_mut() =
-                                unsafe { core::ptr::read(actual_conditions) };
+                            if let Some(conditions) = entry.conditions.first() {
+                                // SAFETY: shallow copy into a rule slab that never runs `Drop`
+                                // (see `CssChunk::drop`), so the parsed `ImportRule` stays the only owner.
+                                import_rule.conditions =
+                                    unsafe { core::ptr::read(conditions.get()) };
+                            }
                             arena_rule_list_one(bump, BundlerCssRule::Import(import_rule))
                         },
                         sources: Default::default(),
@@ -461,22 +438,18 @@ fn arena_rule_list_one(bump: &Bump, rule: BundlerCssRule) -> BundlerCssRuleList 
 fn wrap_rules_with_conditions(
     ast: &mut BundlerStyleSheet,
     temp_bump: &Bump,
-    conditions: &Vec<ImportConditions>,
+    conditions: &[BackRef<ImportConditions>],
 ) {
-    let mut dummy_import_records: Vec<ImportRecord> = Vec::new();
-
-    let mut i: usize = conditions.len() as usize;
+    let mut i: usize = conditions.len();
     while i > 0 {
         i -= 1;
-        let item = conditions.at(i);
+        let item: &ImportConditions = &conditions[i];
 
         // Generate "@layer" wrappers. Note that empty "@layer" rules still have
         // a side effect (they set the layer order) so they cannot be removed.
         if let Some(l) = &item.layer {
-            // SAFETY: by-value `?LayerName` copy. The
-            // `SmallList<&'static [u8],1>` payload is arena-backed and never
-            // freed via this view, so the bitwise duplicate is sound (same as
-            // every other `ptr::read` shallow-copy in this file).
+            // SAFETY: shallow copy. The wrapper rule goes into an `arena_rule_list` slab, whose elements
+            // never run `Drop`, so the parsed `ImportRule` stays the only owner.
             let layer = unsafe { core::ptr::read(&raw const l.v) };
             let mut do_block_rule = true;
             if ast.rules.v.is_empty() {
@@ -522,8 +495,8 @@ fn wrap_rules_with_conditions(
                 ast.rules = arena_rule_list_one(
                     temp_bump,
                     BundlerCssRule::Supports(BundlerSupportsRule {
-                        condition: supports
-                            .clone_with_import_records(temp_bump, &mut dummy_import_records),
+                        // SAFETY: as for `layer` above. A clone would never be dropped, so it would leak.
+                        condition: unsafe { core::ptr::read(supports) },
                         rules: core::mem::take(&mut ast.rules),
                         loc: Location::dummy(),
                     }),
@@ -537,17 +510,14 @@ fn wrap_rules_with_conditions(
             ast.rules = arena_rule_list_one(
                 temp_bump,
                 BundlerCssRule::Media(BundlerMediaRule {
-                    query: item
-                        .media
-                        .clone_with_import_records(temp_bump, &mut dummy_import_records),
+                    // SAFETY: as for `layer` above.
+                    query: unsafe { core::ptr::read(&raw const item.media) },
                     rules: core::mem::take(&mut ast.rules),
                     loc: Location::dummy(),
                 }),
             );
         }
     }
-
-    debug_assert!(dummy_import_records.len() == 0);
 }
 
 pub use crate::ThreadPool;

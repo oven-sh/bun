@@ -1249,17 +1249,6 @@ impl MediaList {
         Self { media_queries }
     }
 
-    /// `MediaList` carries no
-    /// `ImportRecord` indices so this is just `deep_clone`.
-    #[inline]
-    pub fn clone_with_import_records(
-        &self,
-        bump: &bun_alloc::Arena,
-        _import_records: &mut Vec<bun_ast::ImportRecord>,
-    ) -> Self {
-        self.deep_clone(bump)
-    }
-
     /// Structural eq.
     #[inline]
     pub fn eql(&self, other: &Self) -> bool {

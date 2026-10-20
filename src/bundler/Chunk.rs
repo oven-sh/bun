@@ -1368,25 +1368,16 @@ impl Drop for CssChunk {
     }
 }
 
+/// The `@import` conditions that wrap an import order entry, outermost first. The list is in the `LinkerGraph`
+/// arena. Each element borrows an `ImportRule` whose `rules` buffer nothing writes after the parse.
+pub(crate) type CssImportConditions =
+    bun_ptr::RawSlice<bun_ptr::BackRef<bun_css::ImportConditions>>;
+
 pub struct CssImportOrder {
-    pub(crate) conditions: Vec<bun_css::ImportConditions>,
+    pub(crate) conditions: CssImportConditions,
     pub(crate) condition_import_records: Vec<ImportRecord>,
 
     pub(crate) kind: CssImportOrderKind,
-}
-
-impl Drop for CssImportOrder {
-    fn drop(&mut self) {
-        // `conditions`: bitwise-shared across multiple order entries by
-        // `findImportedFilesInCSSOrder` (`bitwise_copy(wrapping_conditions)`);
-        // freeing here would double-free. The slab is allocated from the
-        // `LinkerGraph` arena and is bulk-freed with it.
-        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.conditions));
-        // `condition_import_records`: every populated value is uniquely owned
-        // (moved `all_import_records`) or an empty-Vec bitwise copy (cap == 0,
-        // drop is a no-op). Normal drop frees the owned buffers; no
-        // double-free path exists.
-    }
 }
 
 #[derive(strum::IntoStaticStr)]

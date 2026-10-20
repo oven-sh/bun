@@ -13,11 +13,11 @@ const OUT_OF_SCOPE: Message = Message::new(
 #[derive(Default)]
 pub struct State<'a> {
     binding_contexts: AncestorMemo<'a, Span>,
-    /// The last statement with several names that declares the symbol.
+    /// The last multi-name statement that declares the symbol.
     declared_in: IdMap<Symbol<'a>, Stmt<'a>>,
 }
 
-/// All that is on the left in the declaration that `pat` is in.
+/// The whole left side of the declarator that contains `pat`.
 fn pattern_of(pat: Pat) -> Span {
     match Declaration::Var(pat).node() {
         Some(Node::VarDecl(declarator)) => declarator.pat().span(),
@@ -26,8 +26,8 @@ fn pattern_of(pat: Pat) -> Span {
 }
 
 impl BlockScopedVar {
-    /// The innermost block, loop, `switch` or static block around `statement`. `None` at the top
-    /// level of the file, which nothing is outside of.
+    /// Returns the innermost block, loop, `switch` or static block around `statement`. `None` at the top level of the
+    /// file, since nothing is outside it.
     fn binding_context<'a>(statement: Stmt<'a>, cx: &mut Cx<'a, Self>) -> Option<Span> {
         cx.state
             .binding_contexts
@@ -80,7 +80,7 @@ impl Rule for BlockScopedVar {
         let Some(context) = Self::binding_context(statement, cx) else {
             return;
         };
-        // oxlint goes through them all.
+        // oxlint checks every one of them.
         let is_oxlint = cx.language().is_oxlint;
         let has_one_name =
             is_oxlint || first.pat().tag() == PatTag::Ident && declarations.iter().nth(1).is_none();
@@ -88,7 +88,7 @@ impl Rule for BlockScopedVar {
             let Some(symbol) = pat.symbol() else {
                 return;
             };
-            // Of several declarations of a name in the statement, the first stands for all.
+            // If the statement declares a name several times, only the first declaration is checked.
             if !has_one_name && cx.state.declared_in.insert(symbol, statement) == Some(statement) {
                 return;
             }
@@ -109,7 +109,7 @@ impl Rule for BlockScopedVar {
                     .data("definitionColumn", definition.column + 1)
                     .labels_with(|labels| {
                         let name = bstr::BStr::new(reference.name().bytes());
-                        // A declaration that gives the variable a value.
+                        // A declaration with an initializer.
                         if matches!(reference.node(), Node::Pat(_)) {
                             labels.first("it is redeclared here");
                             return labels
@@ -120,11 +120,11 @@ impl Rule for BlockScopedVar {
                     });
                 false
             };
-            // They are in source order, but for those in one pattern, which is not partly in a block.
-            // So those outside the block are at the two ends.
+            // References are in source order, except within one pattern, and a pattern is never only partly inside a
+            // block. So the references outside the block are at the two ends.
             let mut references = symbol.references();
             if is_oxlint {
-                // In the order of the text.
+                // In source order.
                 for reference in references {
                     is_inside(reference);
                 }
@@ -134,7 +134,7 @@ impl Rule for BlockScopedVar {
             if !is_oxlint || symbol.declaration_count() < 2 {
                 return;
             }
-            // For oxlint another declaration is a use. One that gives the variable a value is a reference here.
+            // oxlint counts another declaration as a use. One with an initializer is already a reference here.
             let is_declared_inside = |declaration: Declaration<'a>| {
                 let Some(name) = declaration.name_span() else {
                     return false;

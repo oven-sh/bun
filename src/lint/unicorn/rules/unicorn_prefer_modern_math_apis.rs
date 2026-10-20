@@ -72,7 +72,7 @@ fn is_math(member_expr: Expr) -> bool {
     member_expr.object().is_some_and(|it| get_inner_expression(it).is_ident("Math"))
 }
 
-/// The `a` of `Math.method(a)`.
+/// The `a` in `Math.method(a)`.
 fn argument_of_math_method<'a>(call_expr: Call<'a>, method: &str) -> Option<Expr<'a>> {
     let member_expr = as_member_expression(call_expr.callee())?;
     (call_expr.args().len() == 1 && static_property_name(member_expr)?.is(method) && is_math(member_expr))
@@ -106,7 +106,7 @@ fn is_pow_2_expression(expression: Expr) -> bool {
     }
 }
 
-/// On one line, with one blank where there are many.
+/// Removes line breaks and collapses runs of spaces and tabs into one space.
 fn clean_string(input: &[u8]) -> Vec<u8> {
     let mut result = Vec::with_capacity(input.len());
     let mut prev_char = b' ';

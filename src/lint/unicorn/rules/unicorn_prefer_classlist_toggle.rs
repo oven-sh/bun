@@ -60,7 +60,8 @@ impl Rule for PreferClasslistToggle {
     }
 }
 
-/// `object.toggle(class, test)`, where `member` is `object.add`, and `!(test)` if `add` is not what `test` is for.
+/// Prints `object.toggle(class, test)`, where `member` is `object.add`. Uses `!(test)` if `add` is in the `else`
+/// branch.
 fn toggle(member: Expr, call: Call, test: Expr, is_add_first: bool, end: &str) -> Option<Vec<u8>> {
     fn source(it: Expr<'_>) -> &[u8] {
         it.file().slice(it.outer_span())
@@ -82,7 +83,7 @@ fn toggle(member: Expr, call: Call, test: Expr, is_add_first: bool, end: &str) -
     )
 }
 
-/// The `e` of `e;` and of `{ e; }`.
+/// The `e` in `e;` or `{ e; }`.
 fn extract_single_expression_from_statement(stmt: Stmt<'_>) -> Option<Expr<'_>> {
     let stmt = match stmt.kind() {
         StmtKind::Block(body) if body.len() == 1 => body.first()?,
@@ -94,7 +95,7 @@ fn extract_single_expression_from_statement(stmt: Stmt<'_>) -> Option<Expr<'_>> 
     }
 }
 
-/// The `a.classList` and the name of `a.classList.name(b)`, with the call.
+/// The call, the `a.classList` and the name in `a.classList.name(b)`.
 fn as_classlist_call(expr: Expr<'_>) -> Option<(Call<'_>, Expr<'_>, Name<'_>)> {
     fn as_static_member(it: Expr<'_>) -> Option<Expr<'_>> {
         Some(get_inner_expression(it)).filter(|it| !it.is_chain_root() && !it.is_private_member())
@@ -105,15 +106,15 @@ fn as_classlist_call(expr: Expr<'_>) -> Option<(Call<'_>, Expr<'_>, Name<'_>)> {
         return None;
     };
     let classlist = as_static_member(obj)?;
-    let is_one = call.args().len() == 1
+    let is_plain_classlist_call = call.args().len() == 1
         && !call.is_optional()
         && !member.is_optional()
         && call.args().first()?.tag() != ExprTag::Spread
         && matches!(classlist.kind(), ExprKind::Dot { name, .. } if name.name().is("classList"));
-    is_one.then_some((call, classlist, name.name()))
+    is_plain_classlist_call.then_some((call, classlist, name.name()))
 }
 
-/// The call of `add`, and whether it is the first.
+/// The `add` call, and whether it comes first.
 fn identify_add_remove_pair<'a>(first: Expr<'a>, second: Expr<'a>) -> Option<(Call<'a>, bool)> {
     let (first, first_classlist, first_name) = as_classlist_call(first)?;
     let (second, second_classlist, second_name) = as_classlist_call(second)?;

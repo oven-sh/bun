@@ -59,7 +59,7 @@ impl Rule for RoleSupportsAriaProps {
     }
 }
 
-/// Empty if the element has none.
+/// Returns an empty string if the element has no implicit role.
 fn get_implicit_role(node: Jsx, element_type: &[u8]) -> &'static str {
     let string_of = |name: &str| has_jsx_prop_ignore_case(node, name).and_then(get_string_literal_prop_value);
     match element_type {

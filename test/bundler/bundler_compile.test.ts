@@ -804,7 +804,7 @@ describe("bundler", () => {
           blobOtherBytes: Bun.deepEquals(Bun.file(a), new Blob(["abd"])),
           entrySameBytes: Bun.deepEquals(form(Bun.file(a)), form(Bun.file(c))),
           entryOtherBytes: Bun.deepEquals(form(Bun.file(a)), form(Bun.file(b))),
-          storeNameIsLatin1: latin1Name === storeName,
+          latin1NameHasTheSameText: latin1Name === storeName,
           storeNameAgainstLatin1Name: Bun.deepEquals(
             structuredClone(Bun.file(accented)),
             Object.assign(new Blob(["abc"]), { name: latin1Name }),
@@ -826,7 +826,7 @@ describe("bundler", () => {
           blobOtherBytes: false,
           entrySameBytes: true,
           entryOtherBytes: false,
-          storeNameIsLatin1: true,
+          latin1NameHasTheSameText: true,
           storeNameAgainstLatin1Name: true,
         });
       },

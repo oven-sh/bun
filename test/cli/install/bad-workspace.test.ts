@@ -654,11 +654,13 @@ describe("below a package.json that cannot say what its workspaces are", () => {
       async lockfile => {
         using project = workspace("", { [lockfile]: "" });
 
-        expect(await runBun(["pm", "bin"], project.member)).toEqual({
+        const result = await runBun(["pm", "bin"], project.member);
+        expect({ ...result, stderr: slashes(result.stderr) }).toEqual({
           stdout: "",
-          stderr:
+          stderr: slashes(
             `error: failed to parse '${project.packageJson}': file is empty\n` +
-            cannotTell(project.member, project.root),
+              cannotTell(project.member, project.root),
+          ),
           exitCode: 1,
         });
       },
@@ -892,7 +894,7 @@ describe("below a package.json that cannot say what its workspaces are", () => {
       using project = workspace(undefined, { "packages/pkg1/package.json": `{ "name": "pkg1", oops` });
 
       const { stdout, stderr, exitCode } = await runBun(["pm", "bin"], project.member);
-      expect({ stdout, errors: errorLines(stderr), exitCode }).toEqual({
+      expect({ stdout, errors: errorLines(slashes(stderr)), exitCode }).toEqual({
         stdout: "",
         errors: [
           `error: Expected string but found "oops"`,

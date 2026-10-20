@@ -748,7 +748,7 @@ impl Checker<'_, '_> {
 
     fn interface_declarations(&mut self, sym: Sym) -> std::rc::Rc<InterfaceDeclarations> {
         if let Some(known) = self.interface_declarations.get(&sym) {
-            return known.clone();
+            return std::rc::Rc::clone(known);
         }
         let decls = self.files().decls_of(sym);
         let interfaces = decls.iter().filter_map(|&(f, d)| match d {
@@ -774,7 +774,8 @@ impl Checker<'_, '_> {
             first_checked,
             first_in_file,
         });
-        self.interface_declarations.insert(sym, all.clone());
+        self.interface_declarations
+            .insert(sym, std::rc::Rc::clone(&all));
         all
     }
 

@@ -589,6 +589,75 @@ export namespace Shapes {
     expect(eslint).toEqual([`a.ts:2:3 error ${rule}`, `a.ts:8:8 error ${rule}`]);
   });
 
+  describe("no-var and a var that only declares a type", () => {
+    const files = {
+      "a.ts": `declare var top: number;
+// eslint-disable-next-line no-var
+declare var disabled: number;
+export declare var exported: number;
+declare namespace ns { var inNamespace: number; }
+declare module "m" { var inModule: number; }
+declare global { var inGlobal: number; }
+declare global { export var exportedInGlobal: number; }
+declare global { namespace inner { var nestedInGlobal: number; } }
+namespace real { declare var inReal: number; }
+var plain = 1;
+`,
+    };
+    const eslint = {
+      ...files,
+      "eslint.config.mjs": `export default [{ files: ["**/*.ts"], extends: ["typescript-eslint/base"], rules: { "no-var": "error" } }];\n`,
+    };
+    const oxlint = {
+      ...files,
+      ".oxlintrc.json": `{ "categories": { "correctness": "off" }, "rules": { "no-var": "error" } }`,
+    };
+    const at = (...places: string[]) => places.map(place => `a.ts:${place} error no-var`);
+
+    test("is reported with an ESLint config, so the comment that disables it isn't unused, and not without a config", async () => {
+      const [withEslint, native] = await Promise.all([lint(eslint, ["a.ts"]), lint(files, [])]);
+      expect(withEslint.reports).toEqual(at("1:1", "4:8", "5:24", "6:22", "8:25", "9:36", "10:18", "11:1"));
+      expect(native.reports.filter(it => it.endsWith(" no-var"))).toEqual(["a.ts:11:1 warning no-var"]);
+    });
+
+    test("with an ESLint config, --fix changes what ESLint changes", async () => {
+      const { texts } = await lint(eslint, ["--fix", "a.ts"]);
+      expect(texts["a.ts"]).toBe(`declare let top: number;
+// eslint-disable-next-line no-var
+declare var disabled: number;
+export declare var exported: number;
+declare namespace ns { let inNamespace: number; }
+declare module "m" { let inModule: number; }
+declare global { var inGlobal: number; }
+declare global { export var exportedInGlobal: number; }
+declare global { namespace inner { let nestedInGlobal: number; } }
+namespace real { declare let inReal: number; }
+let plain = 1;
+`);
+    });
+
+    test("with an ESLint 8 config, a var in declare global is reported too, and --fix changes none in a block", async () => {
+      const eslintrc = `{ "root": true, "parser": "@typescript-eslint/parser", "parserOptions": { "sourceType": "module" }, "rules": { "no-var": "error" } }`;
+      const eslint8 = { ...files, ".eslintrc.json": eslintrc };
+      const [{ reports }, { texts }] = await Promise.all([
+        lint(eslint8, ["--report-unused-disable-directives", "a.ts"]),
+        lint(eslint8, ["--fix", "a.ts"]),
+      ]);
+      expect(reports).toEqual(at("1:1", "4:8", "5:24", "6:22", "7:18", "8:25", "9:36", "10:18", "11:1"));
+      expect(texts["a.ts"]).toBe(
+        files["a.ts"].replace("declare var top", "declare let top").replace("var plain", "let plain"),
+      );
+    });
+
+    test("with an oxlint config, only a var in an ambient block isn't reported", async () => {
+      const { json } = await lint(oxlint, ["--report-unused-disable-directives", "a.ts"]);
+      const reports = json.diagnostics.map(
+        (it: any) => `${it.labels[0].span.line}:${it.labels[0].span.column} ${it.code}`,
+      );
+      expect(reports).toEqual(["1:9", "4:16", "10:26", "11:1"].map(place => `${place} eslint(no-var)`));
+    });
+  });
+
   const react = { "package.json": JSON.stringify({ dependencies: { react: "^19.0.0" } }) };
 
   test("a parameter named use isn't React's hook", async () => {
@@ -1438,6 +1507,7 @@ declare const c: any;
     const config = `export default [{ files: ["**/*.ts"], extends: ["typescript-eslint/recommended"] }];\n`;
     const { reports } = await lint({ "types.d.ts": code, "eslint.config.js": config }, ["types.d.ts"]);
     expect(reports).toEqual([
+      "types.d.ts:1:1 error no-var",
       "types.d.ts:1:16 error @typescript-eslint/no-explicit-any",
       "types.d.ts:2:19 error @typescript-eslint/no-misused-new",
       "types.d.ts:3:18 error @typescript-eslint/no-empty-object-type",

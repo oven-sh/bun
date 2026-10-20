@@ -180,7 +180,8 @@ impl<'a> State<'a> {
             return false;
         }
         let is_in_statement_list = ast_utils::is_statement_list_parent(parent)
-            || matches!(parent, Node::Stmt(it) if it.tag() == StmtTag::Module);
+            || matches!(parent, Node::Stmt(it) if it.tag() == StmtTag::Module)
+                && knows_typescript(statement.file());
         if !is_in_statement_list && !utils::is_for_init(statement) {
             return false;
         }
@@ -234,6 +235,17 @@ impl<'a> State<'a> {
         }
         true
     }
+}
+
+/// True if the rule treats TypeScript's blocks as ESLint 9 and later do. ESLint 8's rule only knows JavaScript.
+fn knows_typescript(file: &File<'_>) -> bool {
+    file.language().eslint_major >= 9
+}
+
+/// True if `node` is a `global { }` block.
+fn is_global_block(node: Node<'_>) -> bool {
+    let module = node.as_stmt().and_then(Stmt::as_module);
+    module.is_some_and(|it| matches!(it.name(), ModuleName::Global))
 }
 
 /// Returns the `var` keyword of `statement`, which can come after modifiers.
@@ -362,19 +374,32 @@ impl Rule for NoVar {
             return;
         }
         let span = statement.span_without_export();
-        // `declare var`, or a `var` in `declare global`, declares that a global exists. Only a `var` becomes a property
-        // of `globalThis`, and only a `var` can be declared in two files, so with `let` the project would stop type
-        // checking. ESLint and oxlint only skip `declare global`.
-        if statement.flags().contains(Flags::AMBIENT)
-            || cx
-                .state
-                .ambient
-                .has_ambient_typescript_ancestor(statement.into())
-        {
+        let is_oxlint = cx.language().is_oxlint;
+        let is_eslint = !is_oxlint && !cx.language().has_no_foreign_config;
+        // ESLint reports every ambient `var` that isn't directly in a `global` block, and projects have comments that
+        // disable those reports. ESLint 8 reports that one too. oxlint reports `declare var`, but no `var` in an ambient
+        // block.
+        // Without either config, no ambient `var` is reported. It declares that a global exists. Only a `var` becomes a
+        // property of `globalThis`, and only a `var` can be declared in two files, so with `let` the project would stop
+        // type checking.
+        let is_allowed = match is_eslint {
+            true => {
+                knows_typescript(cx)
+                    && !statement.is_exported()
+                    && is_global_block(statement.parent())
+            }
+            false => {
+                (!is_oxlint && statement.flags().contains(Flags::AMBIENT))
+                    || cx
+                        .state
+                        .ambient
+                        .has_ambient_typescript_ancestor(statement.into())
+            }
+        };
+        if is_allowed {
             return;
         }
         // oxlint reports only the `var` keyword.
-        let is_oxlint = cx.language().is_oxlint;
         let location = var_keyword(statement).filter(|_| is_oxlint).unwrap_or(span);
         cx.report(location, UNEXPECTED_VAR)
             .called_with(statement)

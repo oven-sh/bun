@@ -5277,18 +5277,8 @@ maybe(() => { return f; });
         }
         return Object.fromEntries(names.map(it => [it, byProject[it].sort()]));
       };
-      // Reports from oxlint that `bun lint` omits. `declare var` declares an existing global, and changing it to `let`
-      // breaks the project's type check.
-      const notReported: Record<string, string[]> = {
-        "ambient/var": ["a.ts:19:9+3 eslint(no-var)", "a.ts:20:16+3 eslint(no-var)"],
-      };
       const expected = (names: string[]) =>
-        Object.fromEntries(
-          names.map(it => [
-            it,
-            whatOxlintReports[it as keyof typeof whatOxlintReports].filter(line => !notReported[it]?.includes(line)),
-          ]),
-        );
+        Object.fromEntries(names.map(it => [it, whatOxlintReports[it as keyof typeof whatOxlintReports]]));
       // Returns all the labels of each report, with their text, unless the report only has one label without text.
       // labels.json has only the projects with such a report.
       const marked = (raw: string, names: string[]) => {
@@ -6181,15 +6171,11 @@ maybe(() => { return f; });
           }
           const reads = some.map(({ it, directory }) => `${directory}/${it.file}`);
           const result = await lint(files, [...flagSets[flags], ...(typed ? ["--type-aware"] : [])], { reads });
-          // oxlint rewrites `declare var`. `bun lint` never does, because its no-var doesn't report it.
-          const notRewritten = ["76-no-var"];
           expect(result.files).toEqual(
             Object.fromEntries(
               some.map(({ it, directory }) => [
                 `${directory}/${it.file}`,
-                notRewritten.includes(directory)
-                  ? it.text
-                  : whatOxlintFixes[directory as keyof typeof whatOxlintFixes][flags],
+                whatOxlintFixes[directory as keyof typeof whatOxlintFixes][flags],
               ]),
             ),
           );

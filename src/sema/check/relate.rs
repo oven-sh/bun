@@ -18,6 +18,7 @@ use crate::util::{FxHashSet, FxHasher, Window, Windowed};
 use smallvec::SmallVec;
 use std::hash::Hasher;
 use std::ops::{BitAnd, BitAndAssign};
+use std::rc::Rc;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum Relation {
@@ -4640,12 +4641,12 @@ impl<'p, 's> Checker<'p, 's> {
     #[cold]
     fn has_member_with_recursion_identity(&mut self, t: TypeId, identity: RecursionId) -> bool {
         let members = match self.members_by_identity.get(&t) {
-            Some(known) => std::rc::Rc::clone(known),
+            Some(known) => Rc::clone(known),
             None => {
                 let mut members = MembersByIdentity::default();
                 self.add_members_by_identity(t, &mut members);
-                let members = std::rc::Rc::new(members);
-                (self.members_by_identity).insert(t, std::rc::Rc::clone(&members));
+                let members = Rc::new(members);
+                (self.members_by_identity).insert(t, Rc::clone(&members));
                 members
             }
         };

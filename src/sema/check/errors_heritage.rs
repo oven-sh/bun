@@ -10,6 +10,7 @@ use super::sink::held;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner};
 use smallvec::SmallVec;
+use std::rc::Rc;
 
 /// The arguments `checkIndexConstraints` passes on.
 struct IndexConstraints<'a> {
@@ -748,9 +749,9 @@ impl Checker<'_, '_> {
             )
     }
 
-    fn interface_declarations(&mut self, sym: Sym) -> std::rc::Rc<InterfaceDeclarations> {
+    fn interface_declarations(&mut self, sym: Sym) -> Rc<InterfaceDeclarations> {
         if let Some(known) = self.interface_declarations.get(&sym) {
-            return std::rc::Rc::clone(known);
+            return Rc::clone(known);
         }
         let decls = self.files().decls_of(sym);
         let interfaces = decls.iter().filter_map(|&(f, d)| match d {
@@ -771,13 +772,13 @@ impl Checker<'_, '_> {
                 *first = id;
             }
         }
-        let declarations = std::rc::Rc::new(InterfaceDeclarations {
+        let declarations = Rc::new(InterfaceDeclarations {
             first: interfaces.clone().next(),
             first_checked,
             first_in_file,
         });
         self.interface_declarations
-            .insert(sym, std::rc::Rc::clone(&declarations));
+            .insert(sym, Rc::clone(&declarations));
         declarations
     }
 

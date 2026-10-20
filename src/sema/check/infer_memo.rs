@@ -183,7 +183,7 @@ const _: () = assert!(matches!(DISTURBANCES[COMMITS].as_bytes(), b"commits"));
 /// Snapshot of every value that a trace would change. One is recorded before the walk and one after it.
 struct Readings {
     traces: [u64; TRACES.len()],
-    disturbances: [u64; DISTURBANCES.len()],
+    disturbances: Disturbances,
     /// Always `usize::MAX` before the walk.
     lowest_taint: usize,
     /// Always `false` before the walk.
@@ -217,7 +217,7 @@ pub(in super::super) struct InferenceMemo {
     /// Entries from an earlier generation are stale.
     generation: u64,
     /// `Checker::inference_disturbances` at the start of this generation.
-    disturbances: [u64; DISTURBANCES.len()],
+    disturbances: Disturbances,
     counts: [u64; INFERENCE_WALK_COUNTS.len()],
 }
 
@@ -254,7 +254,7 @@ impl InferenceMemo {
     }
 
     /// `now` is the current `Checker::inference_disturbances`.
-    fn begin_generation_if_disturbed(&mut self, now: &[u64; DISTURBANCES.len()]) {
+    fn begin_generation_if_disturbed(&mut self, now: &Disturbances) {
         if self.disturbances != *now {
             self.disturbances = *now;
             self.generation += 1;
@@ -573,7 +573,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// The last counter changes when `getUniqueTypeParameters` adds type parameters to `unresolved_renamed_params`.
     /// Requesting the constraint of one removes it from the set, which is a trace. So a stored walk doesn't request the
     /// constraint of any type parameter in the set, and that stays true until more are added.
-    pub(in super::super) fn inference_disturbances(&self) -> [u64; DISTURBANCES.len()] {
+    pub(in super::super) fn inference_disturbances(&self) -> Disturbances {
         let from_loops = self.incomplete_flow_taints;
         [
             self.cycles.wrapping_sub(from_loops),

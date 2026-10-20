@@ -2175,35 +2175,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// builds an index of the exports.
     fn modules_that_export(&mut self, symbol: Sym) -> Vec<Sym> {
         let files = self.files();
-        let index = match &self.exporting_modules {
-            Some(index) => Rc::clone(index),
-            None => {
-                let mut index = ExportingModules::default();
-                for (position, &file) in (0..).zip(files.order) {
-                    let module = files.module(file);
-                    // A leaf file doesn't export aliases. The task that checks it frees its HIR (`Files::free_tree`). Test
-                    // `is_leaf`, which is immutable after loading, before reading `hir`.
-                    if module.is_leaf || !module.hir.has_module_syntax {
-                        continue;
-                    }
-                    index.positions.insert(file, position);
-                    let module = files.file_symbol(file);
-                    let equals = files.export(module, known::export_equals);
-                    let exports = self.exports_of_symbol(module);
-                    for exported in equals.into_iter().chain(exports.iter().map(|it| it.1)) {
-                        if let AliasTarget::Symbol(target) = self.merged_resolved_symbol(exported) {
-                            let positions = index.by_target.entry(target).or_default();
-                            if positions.last() != Some(&position) {
-                                positions.push(position);
-                            }
-                        }
-                    }
-                }
-                let index = Rc::new(index);
-                self.exporting_modules = Some(Rc::clone(&index));
-                index
-            }
-        };
+        let index = self.exporting_modules();
         let mut positions: SmallVec<[u32; 4]> = SmallVec::new();
         match self.merged_resolved_symbol(symbol) {
             AliasTarget::Symbol(target) => {
@@ -2244,6 +2216,38 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         modules
+    }
+
+    /// The first call builds the index.
+    fn exporting_modules(&mut self) -> Rc<ExportingModules> {
+        if let Some(index) = &self.exporting_modules {
+            return Rc::clone(index);
+        }
+        let files = self.files();
+        let mut index = ExportingModules::default();
+        for (position, &file) in (0..).zip(files.order) {
+            let module = files.module(file);
+            // A leaf file doesn't export aliases. The task that checks it frees its HIR (`Files::free_tree`). Test
+            // `is_leaf`, which is immutable after loading, before reading `hir`.
+            if module.is_leaf || !module.hir.has_module_syntax {
+                continue;
+            }
+            index.positions.insert(file, position);
+            let module = files.file_symbol(file);
+            let equals = files.export(module, known::export_equals);
+            let exports = self.exports_of_symbol(module);
+            for exported in equals.into_iter().chain(exports.iter().map(|it| it.1)) {
+                if let AliasTarget::Symbol(target) = self.merged_resolved_symbol(exported) {
+                    let positions = index.by_target.entry(target).or_default();
+                    if positions.last() != Some(&position) {
+                        positions.push(position);
+                    }
+                }
+            }
+        }
+        let index = Rc::new(index);
+        self.exporting_modules = Some(Rc::clone(&index));
+        index
     }
 
     /// "look for a variable in scope with the container's type which may be acting like a namespace (eg, `Symbol` acts

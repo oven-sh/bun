@@ -29,14 +29,23 @@ const VISITED_INDEX_FROM: usize = 16;
 /// result.
 const REPEATED_ARGUMENT_WALKS_FROM: u32 = 256;
 
-/// Everything that a walk between the type arguments of two types reads from the `Inference`, apart from `visited` and
-/// the infos: the source, the target, `priority`, `depth`, `propagated`, and as bits `contra`, `bivariant` and which
-/// type arguments they are (`ArgumentsOf`).
-type ArgumentWalk = (TypeId, TypeId, u32, u32, Option<TypeId>, u8);
+/// A walk between the type arguments of two types, with everything it reads from the `Inference` apart from `visited`
+/// and the infos.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+struct ArgumentWalk {
+    source: TypeId,
+    target: TypeId,
+    of: ArgumentsOf,
+    priority: u32,
+    depth: u32,
+    propagated: Option<TypeId>,
+    contra: bool,
+    bivariant: bool,
+}
 
 /// Whose type arguments a walk is between. `inferFromTypes` looks for a common alias first, and it may reduce the
 /// source and the target before it gets to the other two. So one pair of types can arrive as two of these.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum ArgumentsOf {
     Alias,
     Reference,
@@ -426,7 +435,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let mut targets = Unmatched::Borrowed(self.parts(target));
                 // Identical members on both sides are matched, then those instantiated from the
                 // same generic type or alias.
-                self.infer_from_identical(n, &mut sources, &mut targets);
+                self.infer_from_identical_or_base(n, &mut sources, &mut targets);
                 self.infer_from_closely_matching(n, &mut sources, &mut targets);
                 if targets.is_empty() {
                     return;
@@ -454,9 +463,7 @@ impl<'p, 's> Checker<'p, 's> {
                     _ => &source_only[..],
                 });
                 let mut targets = Unmatched::Borrowed(&target_parts[..]);
-                self.infer_from_matching(n, &mut sources, &mut targets, |c, s, t| {
-                    s == t || c.is_identical(s, t)
-                });
+                self.infer_from_identical(n, &mut sources, &mut targets);
                 if sources.is_empty() || targets.is_empty() {
                     return;
                 }
@@ -728,8 +735,16 @@ impl<'p, 's> Checker<'p, 's> {
         target: TypeId,
         of: ArgumentsOf,
     ) -> Option<ArgumentWalk> {
-        let flags = u8::from(n.contra) | u8::from(n.bivariant) << 1 | (of as u8) << 2;
-        let key = (source, target, n.priority, n.depth, n.propagated, flags);
+        let key = ArgumentWalk {
+            source,
+            target,
+            of,
+            priority: n.priority,
+            depth: n.depth,
+            propagated: n.propagated,
+            contra: n.contra,
+            bivariant: n.bivariant,
+        };
         let disturbances = self.inference_disturbances();
         let repeated = n.repeated_argument_walks.get_or_insert_default();
         if repeated.disturbances != disturbances {
@@ -896,19 +911,18 @@ impl<'p, 's> Checker<'p, 's> {
         n.inference_priority = n.inference_priority.min(saved_priority);
     }
 
-    /// `inferFromMatchingTypes`. Infers between the pairs for which `matches` returns true, and
+    /// `inferFromMatchingTypes` with `isTypeIdenticalTo`. Infers between the pairs that match, and
     /// leaves the unmatched members in `sources` and `targets`.
-    fn infer_from_matching(
+    fn infer_from_identical(
         &mut self,
         n: &mut Inference,
         sources: &mut Unmatched<'_>,
         targets: &mut Unmatched<'_>,
-        matches: impl Fn(&mut Self, TypeId, TypeId) -> bool,
     ) {
         let mut matched = Matched::default();
         for (j, &t) in targets.iter().enumerate() {
             for (i, &s) in sources.iter().enumerate() {
-                if matches(self, s, t) {
+                if s == t || self.is_identical(s, t) {
                     self.infer_types(n, s, t);
                     matched.add(i, j, (sources.len(), targets.len()));
                 }
@@ -926,7 +940,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// whose normalized flags differ is skipped. Such a comparison stores nothing. `related` still gets the pairs for
     /// which it does more than that: a primitive on either side, a limit reached earlier in the file
     /// (`relations_cut_short`), no query in progress (`begin_comparison` resets the instantiation count), a low stack.
-    fn infer_from_identical(
+    fn infer_from_identical_or_base(
         &mut self,
         n: &mut Inference,
         sources: &mut Unmatched<'_>,

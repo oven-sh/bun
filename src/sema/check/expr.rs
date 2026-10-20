@@ -1304,9 +1304,12 @@ impl<'p, 's> Checker<'p, 's> {
                         return !prop.flags.intersects(PropFlags::MAY_BE_OUT_OF_REACH)
                             && !matches!(prop.source, PropSource::Intersected(..));
                     }
+                    if !self.is_union(apparent) {
+                        return false;
+                    }
                     let mut flags = PropFlags::empty();
                     super::relate::for_each_property(prop, &mut |part| flags |= part.flags);
-                    self.is_union(apparent) && !flags.intersects(PropFlags::MAY_BE_OUT_OF_REACH)
+                    !flags.intersects(PropFlags::MAY_BE_OUT_OF_REACH)
                 });
             if !is_within_reach {
                 self.check_property_accessibility(file, e, is_super, apparent, name, name_pos);

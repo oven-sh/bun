@@ -544,7 +544,7 @@ function checkVariants(path, variants) {
   }
 }
 
-// Usage: bun src/css/build-prefixes.js [targets] [prefixes] [compat]. No argument writes all three.
+// Usage: bun src/css/build-prefixes.js [targets] [prefixes] [compat]. No argument selects all three.
 const outputs = ["targets", "prefixes", "compat"];
 const selected = process.argv.slice(2);
 for (const name of selected) {
@@ -553,6 +553,11 @@ for (const name of selected) {
   }
 }
 const wants = name => selected.length === 0 || selected.includes(name);
+
+// The checks run before the first write, so a run that fails changes no file.
+const variantsOf = map => [...new Set([...map.keys()].flat().map(enumify))].sort();
+if (wants("prefixes")) checkVariants("src/css/prefixes.rs", variantsOf(p));
+if (wants("compat")) checkVariants("src/css/compat.rs", variantsOf(compat));
 
 // ─── targets.rs: rewrite the `bitflags! { ... Features ... }` block ───────
 if (wants("targets")) {
@@ -589,8 +594,7 @@ if (wants("targets")) {
 
 // ─── prefixes.rs ──────────────────────────────────────────────────────────
 if (wants("prefixes")) {
-  const variants = [...new Set([...p.keys()].flat().map(enumify))].sort();
-  checkVariants("src/css/prefixes.rs", variants);
+  const variants = variantsOf(p);
   const arms = [];
   for (const [features, versions] of p) {
     const pats = features.map(enumify).join("\n            | ");
@@ -675,8 +679,7 @@ ${grad}
 
 // ─── compat.rs ────────────────────────────────────────────────────────────
 if (wants("compat")) {
-  const variants = [...new Set([...compat.keys()].flat().map(enumify))].sort();
-  checkVariants("src/css/compat.rs", variants);
+  const variants = variantsOf(compat);
   // One row of per-browser minimum versions per variant: 0 = any version,
   // UNSUPPORTED = never shipped. A feature with no data at all is a row of
   // all-UNSUPPORTED, which `is_compatible` special-cases to `false`.

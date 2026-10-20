@@ -1,7 +1,8 @@
 import { file, spawn } from "bun";
+import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { realpath, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tempDir } from "harness";
+import { bunExe, bunEnv as env, githubTarball, hostedGitRepository, readdirSorted, tempDir } from "harness";
 import { createHash, randomBytes } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { dirname, join } from "path";
@@ -14,6 +15,8 @@ import {
   setContextHandler,
   type TestContext,
 } from "./dummy.registry";
+
+const { parseLockfile } = install_test_helpers;
 
 setDefaultTimeout(1000 * 60 * 5);
 
@@ -540,11 +543,12 @@ describe.concurrent.each(
     (["hoisted", "isolated"] as const).map(linker => [kind, linker] as const),
   ),
 )("%s tarball cache entries (%s)", (kind, linker) => {
-  async function tarball(exported: string, manifest: object = {}, name = "pkg") {
+  async function tarball(exported: string, manifest: object = {}, name = "pkg", files: Record<string, string> = {}) {
     const tgz = await new Bun.Archive(
       {
         "package/package.json": JSON.stringify({ name, version: "1.0.0", ...manifest }),
         "package/index.js": `module.exports = ${JSON.stringify(exported)};\n`,
+        ...Object.fromEntries(Object.entries(files).map(([path, text]) => [`package/${path}`, text])),
       },
       { compress: "gzip" },
     ).bytes();
@@ -955,6 +959,183 @@ describe.concurrent.each(
     expect(await file(join(siblings, "dep", "index.js")).text()).toBe('module.exports = "dep";\n');
   });
 
+  // The row of a tarball that is read again describes what was read: its lifecycle scripts, which only
+  // bun.lockb records, and whether it has one, which both lockfiles record.
+  const writes = (hook: "preinstall" | "postinstall", says: string) => ({ [hook]: `echo ${says} > ran.txt` });
+  const trusting = { trustedDependencies: ["pkg"] };
+  /** True if the install said that it did not run a lifecycle script of `pkg`, which is not trusted. */
+  const reportsBlocked = (stdout: string) => stdout.includes("Blocked 1 postinstall");
+  /** What the lifecycle script of the installed `pkg` wrote, or null if none ran. */
+  async function ranIn(box: ReturnType<typeof sandbox>, project: string) {
+    const wrote = file(join(box.root, project, "node_modules", "pkg", "ran.txt"));
+    return (await wrote.exists()) ? await wrote.text() : null;
+  }
+  /** Makes `project` save `lockfile`, with more in its package.json. */
+  async function configure(
+    box: ReturnType<typeof sandbox>,
+    project: string,
+    lockfile: "bun.lock" | "bun.lockb",
+    manifest: object = {},
+  ) {
+    await writeFile(
+      join(box.root, project, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { pkg: box.spec }, ...manifest }),
+    );
+    await writeFile(
+      join(box.root, project, "bunfig.toml"),
+      Bun.TOML.stringify({ install: { linker, saveTextLockfile: lockfile === "bun.lock" } }),
+    );
+  }
+  /** The second item of the row of `pkg` in bun.lock. */
+  const locked = async (box: ReturnType<typeof sandbox>, project: string) =>
+    (Bun.JSONC.parse(await box.lockfile(project)) as any).packages.pkg[1];
+  // The same code takes what was read for a `file:` row and for a URL row.
+  const fileOnly = it.skipIf(kind === "URL");
+
+  fileOnly.each(
+    (["bun.lock", "bun.lockb"] as const).flatMap(lockfile =>
+      (
+        [
+          ["adds", {}, writes("postinstall", "v2"), "v2\n"],
+          ["changes", writes("preinstall", "v1"), writes("preinstall", "v2"), "v2\n"],
+          ["drops", writes("postinstall", "v1"), {}, null],
+        ] as const
+      ).map(row => [lockfile, ...row] as const),
+    ),
+  )(
+    "with %s, bun update runs what the new build has when it %s a lifecycle script",
+    async (lockfile, verb, from, to, wrote) => {
+      using box = sandbox(`tarball-scripts-${verb}`, { app: {} });
+      await configure(box, "app", lockfile, trusting);
+
+      await box.put("app", await tarball("v1", { scripts: from }));
+      await box.ok("app", "install");
+      expect(await ranIn(box, "app")).toBe(verb === "adds" ? null : "v1\n");
+
+      await box.put("app", await tarball("v2", { scripts: to }));
+      await box.ok("app", "update");
+      expect(await box.installed("app")).toBe('module.exports = "v2";\n');
+      expect(await ranIn(box, "app")).toBe(wrote);
+      // What the installs that follow read.
+      if (lockfile === "bun.lockb") {
+        expect(parseLockfile(join(box.root, "app")).packages[1].scripts).toEqual(to);
+      } else {
+        expect(await locked(box, "app")).toEqual(verb === "drops" ? {} : { hasInstallScript: true });
+      }
+    },
+  );
+
+  it("each command that takes the new bytes records whether they have a lifecycle script", async () => {
+    using box = sandbox("tarball-has-install-script", { app: {}, fresh: {} });
+    let build = await tarball("v1");
+
+    await box.put("app", build);
+    await box.ok("app", "install");
+    expect(await locked(box, "app")).toEqual({});
+
+    // A binding.gyp is built by `node-gyp rebuild`, unless the package.json says `gypfile: false`.
+    for (const [command, scripted, manifest, files] of [
+      [["update"], true, { scripts: { postinstall: "echo built" } }, {}],
+      [["install", "--force"], false, { gypfile: false }, { "binding.gyp": "{}" }],
+      [["add", box.spec], true, { scripts: { preinstall: "echo built" } }, {}],
+      [["update", "pkg"], false, {}, {}],
+      [["update"], true, {}, { "binding.gyp": "{}" }],
+    ] as const) {
+      build = await tarball(command.join(" "), manifest, "pkg", files);
+      await box.put("app", build);
+      const { stdout } = await box.ok("app", ...command);
+      expect({ reported: reportsBlocked(stdout), locked: await locked(box, "app") }).toEqual({
+        reported: scripted,
+        locked: scripted ? { hasInstallScript: true } : {},
+      });
+    }
+
+    // The same bun.lock as in a project that never had another build.
+    await box.put("fresh", build);
+    await box.ok("fresh", "install");
+    expect(await box.lockfile("app")).toBe(await box.lockfile("fresh"));
+  });
+
+  // `bun pm untrusted` and `bun pm trust` read the scripts that bun.lockb records.
+  it("bun.lockb records the scripts of the new build of a package that is not trusted", async () => {
+    using box = sandbox("tarball-lockb-untrusted", { app: {}, fresh: {} });
+    await configure(box, "app", "bun.lockb");
+
+    await box.put("app", await tarball("v1"));
+    await box.ok("app", "install");
+
+    await box.put("app", await tarball("v2", { scripts: writes("postinstall", "v2") }));
+    expect(reportsBlocked((await box.ok("app", "update")).stdout)).toBe(true);
+    expect((await box.ok("app", "pm", "untrusted")).stdout).toContain("[postinstall]: echo v2 > ran.txt");
+    expect(reportsBlocked((await box.reinstall("app")).stdout)).toBe(true);
+
+    // The row that was loaded from bun.lockb is saved in bun.lock.
+    const v3 = await tarball("v3", { scripts: writes("postinstall", "v3") });
+    await box.put("app", v3);
+    expect(reportsBlocked((await box.ok("app", "update", "--save-text-lockfile")).stdout)).toBe(true);
+    await box.put("fresh", v3);
+    await box.ok("fresh", "install");
+    expect(await box.lockfile("app")).toBe(await box.lockfile("fresh"));
+  });
+
+  // An older bun.lock, and the same bytes. The tarball is read again for each of these commands.
+  fileOnly.each([
+    ["no integrity", false],
+    ["the integrity and no hasInstallScript", true],
+  ] as const)("each command records the lifecycle script of a row that has %s", async (_, pinned) => {
+    using box = sandbox("tarball-older-lockfile", { app: {} });
+    const build = await tarball("v1", { scripts: writes("postinstall", "v1") });
+    await box.put("app", build);
+
+    for (const command of [["update"], ["update", "pkg"], ["install", "--force"], ["add", box.spec]]) {
+      await rm(join(box.root, "app", "node_modules"), { recursive: true, force: true });
+      await writeFile(
+        join(box.root, "app", "bun.lock"),
+        JSON.stringify({
+          lockfileVersion: 1,
+          configVersion: 1,
+          workspaces: { "": { name: "app", dependencies: { pkg: box.spec } } },
+          packages: { pkg: [`pkg@${box.resolution}`, {}, ...(pinned ? [build.integrity] : [])] },
+        }),
+      );
+      const { stdout } = await box.ok("app", ...command);
+      expect({
+        reported: reportsBlocked(stdout),
+        locked: (Bun.JSONC.parse(await box.lockfile("app")) as any).packages.pkg,
+      }).toEqual({
+        reported: true,
+        locked: [`pkg@${box.resolution}`, { hasInstallScript: true }, build.integrity],
+      });
+    }
+  });
+
+  // bun.lock records no scripts: they are read from the installed package.json, which a patch can edit.
+  fileOnly("bun update runs the lifecycle script that a patch edited, as bun install does", async () => {
+    using box = sandbox("tarball-scripts-patched", { app: {} });
+    const manifest = (says: string) =>
+      JSON.stringify({ name: "pkg", version: "1.0.0", scripts: writes("postinstall", says) });
+    const noNewline = "\\ No newline at end of file";
+    await configure(box, "app", "bun.lock", {
+      ...trusting,
+      patchedDependencies: { [`pkg@${box.resolution}`]: "pkg.patch" },
+    });
+    await writeFile(
+      join(box.root, "app", "pkg.patch"),
+      `diff --git a/package.json b/package.json\n--- a/package.json\n+++ b/package.json\n@@ -1 +1 @@\n-${manifest("tarball")}\n${noNewline}\n+${manifest("patched")}\n${noNewline}\n`,
+    );
+
+    await box.put("app", await tarball("v1", { scripts: writes("postinstall", "tarball") }));
+    await box.ok("app", "install");
+    await box.reinstall("app");
+    expect(await ranIn(box, "app")).toBe("patched\n");
+
+    await box.put("app", await tarball("v2", { scripts: writes("postinstall", "tarball") }));
+    await box.ok("app", "update");
+    expect(await box.installed("app")).toBe('module.exports = "v2";\n');
+    expect(await file(join(box.root, "app", "node_modules", "pkg", "package.json")).text()).toBe(manifest("patched"));
+    expect(await ranIn(box, "app")).toBe("patched\n");
+  });
+
   // `--no-verify` skips the hash check of a download (a `file:` tarball is always checked).
   // Unverified bytes never get a cache entry named after the hash in bun.lock: their entry
   // is named after the URL and that hash together, and only `--no-verify` installs look there.
@@ -1126,6 +1307,100 @@ describe.concurrent.each(
       await box.ok("app", "update", "--no-verify");
       expect(await box.state("app")).toEqual(stateOf("v2", v2));
     });
+  });
+});
+
+// `bun update` reads a git or GitHub dependency again when its commit is the same, so that what it depends
+// on resolves again. Nothing of the package is new then. Only a bun.lock from before `hasInstallScript` was
+// written lacks it.
+describe.concurrent("a git or GitHub row that bun update reads again", () => {
+  const manifest = (scripts: object) => JSON.stringify({ name: "pkg", version: "1.0.0", scripts });
+
+  /** A project that depends on `pkg`. */
+  function project(name: string, dependency: string, environment: Record<string, string>) {
+    const dir = tempDir(name, { "package.json": JSON.stringify({ name: "app", dependencies: { pkg: dependency } }) });
+    const cache = join(String(dir), "cache");
+    const lockfile = () => file(join(String(dir), "bun.lock")).text();
+    const locked = async () => (Bun.JSONC.parse(await lockfile()) as any).packages.pkg[1];
+    return {
+      cache,
+      locked,
+      async ok(...args: string[]) {
+        await using proc = spawn({
+          cmd: [bunExe(), ...args],
+          cwd: String(dir),
+          env: { ...env, ...environment, BUN_INSTALL_CACHE_DIR: cache },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect({ stdout, exitCode }).toEqual({ stdout: expect.any(String), exitCode: 0 });
+      },
+      /** Makes bun.lock one from before `hasInstallScript` was written. */
+      async forget() {
+        await writeFile(
+          join(String(dir), "bun.lock"),
+          (await lockfile()).replace('{ "hasInstallScript": true }', "{}"),
+        );
+        expect(await locked()).toEqual({});
+      },
+      [Symbol.dispose]: () => dir[Symbol.dispose](),
+    };
+  }
+  const gitRepository = (scripts: object) =>
+    hostedGitRepository(["https://gitlab.com/group/pkg"], { "package.json": manifest(scripts) });
+
+  it("records the lifecycle script of a git dependency", async () => {
+    using repo = await gitRepository({ postinstall: "echo built" });
+    using app = project("git-has-install-script", "gitlab:group/pkg", repo.env);
+
+    await app.ok("install");
+    expect(await app.locked()).toEqual({ hasInstallScript: true });
+    await app.forget();
+    await app.ok("update");
+    expect(await app.locked()).toEqual({ hasInstallScript: true });
+  });
+
+  it("records the lifecycle script of a GitHub dependency", async () => {
+    const archive = await githubTarball("gh-owner-gh-repo-0badc0d", {
+      "package.json": manifest({ postinstall: "echo built" }),
+    });
+    await using github = Bun.serve({
+      port: 0,
+      fetch: req =>
+        new URL(req.url).pathname === "/repos/gh-owner/gh-repo/tarball/0badc0d"
+          ? new Response(archive)
+          : new Response("not found", { status: 404 }),
+    });
+    using app = project("github-has-install-script", "gh-owner/gh-repo#0badc0d", {
+      GITHUB_API_URL: github.url.origin,
+    });
+
+    await app.ok("install");
+    expect(await app.locked()).toEqual({ hasInstallScript: true });
+    await app.forget();
+    await app.ok("update");
+    expect(await app.locked()).toEqual({ hasInstallScript: true });
+  });
+
+  // node_modules links to the files of the checkout in the cache, so a lifecycle script can edit them.
+  it("does not clear the flag of a git dependency whose checkout was edited", async () => {
+    using repo = await gitRepository({});
+    using app = project("git-edited-checkout", "gitlab:group/pkg", repo.env);
+    const checkout = join(app.cache, `@G@${repo.sha}`, "package.json");
+
+    await app.ok("install");
+    expect(await app.locked()).toEqual({});
+
+    // `bun update` reads the package.json of that checkout.
+    await writeFile(checkout, manifest({ postinstall: "echo built" }));
+    await app.ok("update");
+    expect(await app.locked()).toEqual({ hasInstallScript: true });
+
+    await writeFile(checkout, manifest({}));
+    await app.ok("update");
+    expect(await app.locked()).toEqual({ hasInstallScript: true });
   });
 });
 

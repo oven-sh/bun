@@ -179,7 +179,18 @@ impl PackageManager {
                 }
                 _ => false,
             };
-            if !(from_lockfile && moved) {
+            if !from_lockfile {
+                return existing;
+            }
+            if existing.resolution.tag.is_tarball() {
+                // A row that records no scripts leaves them to the installed package.json.
+                if existing.scripts.filled {
+                    existing.scripts = package.scripts;
+                }
+                (existing.meta).set_has_install_script(package.meta.has_install_script());
+                self.lockfile.packages.set(existing_id as usize, existing);
+            }
+            if !moved {
                 return existing;
             }
             if existing.resolution.tag.is_tarball() && existing.meta.integrity.tag.is_supported() {
@@ -198,6 +209,10 @@ impl PackageManager {
             existing.dependencies = package.dependencies;
             existing.resolutions = package.resolutions;
             existing.bin = package.bin;
+            if existing.resolution.tag.is_git() && package.meta.has_install_script() {
+                // The same commit: only a lockfile from before `hasInstallScript` lacks it.
+                (existing.meta).set_has_install_script(true);
+            }
             if data.integrity.tag.is_supported() {
                 existing.meta.integrity = data.integrity;
             }

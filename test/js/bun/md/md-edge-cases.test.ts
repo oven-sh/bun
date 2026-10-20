@@ -2140,7 +2140,11 @@ describe("an empty list item and the blank line behind it", () => {
       "- 1. -\n\n       some text\n",
       "<ul>\n<li>\n<ol>\n<li>\n<ul>\n<li></li>\n</ul>\n<p>some text</p>\n</li>\n</ol>\n</li>\n</ul>\n",
     ],
-  ])("the next line is measured from the innermost of two containers: %j", (markdown, html) => {
+    [
+      "> > > > -\n> > > >\n> > > >\n> > > >   b\n",
+      "<blockquote>\n<blockquote>\n<blockquote>\n<blockquote>\n<ul>\n<li></li>\n</ul>\n<p>b</p>\n</blockquote>\n</blockquote>\n</blockquote>\n</blockquote>\n",
+    ],
+  ])("the next line is measured from the innermost of several containers: %j", (markdown, html) => {
     expect(Markdown.html(markdown)).toBe(html);
   });
 
@@ -2169,6 +2173,8 @@ describe("an empty list item and the blank line behind it", () => {
       "> - x\n>\n>     let a = 1;\n",
       "<blockquote>\n<ul>\n<li>\n<p>x</p>\n<p>let a = 1;</p>\n</li>\n</ul>\n</blockquote>\n",
     ],
+    // A reference definition is something behind the marker, so the item is not empty.
+    ["-\n  [ref]: /url\n\n\n  b\n", "<ul>\n<li>\n<p>b</p>\n</li>\n</ul>\n"],
     // The blank line is not in the block quote, so it ends the quote and not the outer item.
     [
       "- > -\n\n  some text\n",

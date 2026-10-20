@@ -766,7 +766,6 @@ impl TransformTask {
         };
 
         let parse_options = ParseOptions {
-            arena: arena_ref,
             macro_remappings: clone_macro_map(&self.macro_map),
             dirname_fd: bun_sys::Fd::INVALID,
             file_descriptor: None,
@@ -793,7 +792,7 @@ impl TransformTask {
             allow_bytecode_cache: false,
         };
 
-        let Some(parse_result) = self.transpiler.parse(parse_options, None) else {
+        let Some(parse_result) = self.transpiler.parse(arena_ref, parse_options, None) else {
             self.err = Some(crate::Error::ParseError);
             return;
         };
@@ -1221,7 +1220,6 @@ impl JSTranspiler {
         };
 
         let parse_options = ParseOptions {
-            arena,
             macro_remappings: clone_macro_map(&config.macro_map),
             dirname_fd: bun_sys::Fd::INVALID,
             file_descriptor: None,
@@ -1257,7 +1255,7 @@ impl JSTranspiler {
         };
 
         // SAFETY: see `transpiler_mut` — `parse` may re-enter JS via macros.
-        unsafe { self.transpiler_mut() }.parse(parse_options, None)
+        unsafe { self.transpiler_mut() }.parse(arena, parse_options, None)
     }
 
     #[bun_jsc::host_fn(method)]

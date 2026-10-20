@@ -843,13 +843,12 @@ pub mod parse_worker {
                 return if let Some(res) =
                     (crate::cache::JavaScript {}).parse(bump, opts, &topts.define, log, source)?
                 {
-                    // `Cached`/`AlreadyBundled` are runtime-loader
-                    // states that never reach the bundler's `getAST`, so unwrap.
+                    // `AlreadyBundled` is a runtime-loader
+                    // state that never reaches the bundler's `getAST`, so unwrap.
                     match res {
                         bun_js_parser::Result::Ast(ast) => Ok(JSAst::init(*ast)),
-                        bun_js_parser::Result::Cached
-                        | bun_js_parser::Result::AlreadyBundled(_) => {
-                            unreachable!("bundler parse never yields Cached/AlreadyBundled")
+                        bun_js_parser::Result::AlreadyBundled(_) => {
+                            unreachable!("bundler parse never yields AlreadyBundled")
                         }
                     }
                 } else if module_type == options::ModuleType::Esm {

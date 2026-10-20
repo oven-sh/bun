@@ -14,12 +14,12 @@ enum CountThis {
     Always,
 }
 
-/// The options, and the check. typescript-eslint's rule of the same name is the same rule.
+/// The options and the check. typescript-eslint's rule of the same name is the same rule.
 pub struct Config {
-    /// `None`: `{ "maximum": 0 }`, with which upstream compares to `undefined` and reports nothing.
+    /// `None` for `{ "maximum": 0 }`, where upstream compares against `undefined` and reports nothing.
     max: Option<usize>,
     count_this: CountThis,
-    /// typescript-eslint hands the core rule a copy of the function without `this: void`.
+    /// typescript-eslint passes the core rule a copy of the function without `this: void`.
     removes_void_this: bool,
 }
 
@@ -56,7 +56,7 @@ impl Config {
 
     #[inline]
     pub fn check<'a, R: Rule>(&self, func: Func<'a>, cx: &Cx<'a, R>) {
-        // `this` is one more at most.
+        // `this` adds at most one.
         if let Some(max) = self.max
             && func.params().len() >= max
         {
@@ -69,8 +69,8 @@ impl Config {
         let is_oxlint = cx.language().is_oxlint;
         let is_checked = match func.kind() {
             FnKind::Decl | FnKind::Expr | FnKind::Arrow | FnKind::FunctionType => true,
-            // Without a body it is a `TSEmptyBodyFunctionExpression` or a `TSMethodSignature`. The first is a function
-            // for oxlint.
+            // Without a body it's a `TSEmptyBodyFunctionExpression` or a `TSMethodSignature`. oxlint treats the first
+            // as a function.
             FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor => {
                 func.has_body()
                     || is_oxlint && matches!(func.owner(), Node::Member(it) if !it.is_signature())
@@ -85,12 +85,12 @@ impl Config {
             CountThis::ExceptVoid => !this.ty().is_some_and(|ty| ty.is_keyword(Keyword::Void)),
             CountThis::Always => true,
         });
-        // oxlint does not count a rest parameter.
+        // oxlint doesn't count a rest parameter.
         let has_uncounted_rest = is_oxlint && func.params().last().is_some_and(Param::is_rest);
         let count =
             func.params().len() + usize::from(counts_this) - usize::from(has_uncounted_rest);
         if count > max {
-            // oxlint knows the name that the function itself has.
+            // oxlint only uses the function's own name.
             let name = match (is_oxlint, func.name()) {
                 (false, _) => text::upper_case_first(&ast_utils::get_function_name_with_kind(func))
                     .into_owned(),
@@ -98,7 +98,7 @@ impl Config {
                 (true, Some(name)) => [&b"Function '"[..], name.bytes(), b"'"].concat(),
                 (true, None) => b"Function".to_vec(),
             };
-            // oxlint points at the parameters.
+            // oxlint reports at the parameters.
             if is_oxlint && let Some(params) = func.params_span() {
                 let report = cx.report(params, EXCEED).called_with(func);
                 report
@@ -108,7 +108,7 @@ impl Config {
                 return;
             }
             let mut head = ast_utils::get_function_head_loc(func);
-            // In the copy, the parameter that is left looks like the one of `a => {}`.
+            // In the copy, the remaining parameter looks like the one in `a => {}`.
             if self.removes_void_this
                 && func.is_arrow()
                 && func.arrow_span() != Some(head)
@@ -120,7 +120,7 @@ impl Config {
             {
                 head.end = only.span().start;
             }
-            // Before ESLint 10 the head of a function type is what is before its parameters.
+            // Before ESLint 10, a function type's head is whatever comes before its parameters.
             if cx.language().eslint_major < 10
                 && func.kind() == FnKind::FunctionType
                 && let Some(paren) = func.open_paren()

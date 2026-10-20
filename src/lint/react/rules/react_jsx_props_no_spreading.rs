@@ -41,13 +41,13 @@ impl Rule for JsxPropsNoSpreading {
         }
         let is_oxlint = cx.language().is_oxlint;
         let tag_name = match jsx.tag().map(Expr::kind) {
-            // oxlint has `a.b.c`. The original asks for the name of the object, and `a.b` has none.
+            // oxlint uses `a.b.c`. The plugin reads the object's `name`, and `a.b` has none.
             Some(ExprKind::Dot { obj, name, .. }) if !is_oxlint && obj.tag() == ExprTag::Dot => {
                 Cow::Owned([&b"undefined."[..], name.bytes()].concat())
             }
             _ => get_jsx_element_name(jsx),
         };
-        // oxlint asks for a capital letter of ASCII.
+        // oxlint checks for an ASCII capital.
         let is_html_tag = if is_oxlint {
             !is_react_component_name(&tag_name)
         } else {
@@ -55,9 +55,9 @@ impl Rule for JsxPropsNoSpreading {
             let (first, size) = strings::wtf8_codepoint_at(&tag_name, 0);
             first <= 0xFFFF && !tag_name.get(..size).is_some_and(text::is_upper_case)
         };
-        // `a.b` is both.
+        // `a.b` counts as both.
         let is_custom_tag = !is_html_tag || strings::contains_char(&tag_name, b'.');
-        // oxlint takes `a:b` for a name like others. For the original it is neither.
+        // oxlint treats `a:b` like any other name. For the plugin it's neither kind of tag.
         let has_name = is_oxlint || !strings::contains_char(&tag_name, b':');
         let is_exception = self.exceptions.iter().any(|exception| **exception == *tag_name);
         if has_name
@@ -69,7 +69,7 @@ impl Rule for JsxPropsNoSpreading {
         for spread_attr in spread_attrs {
             // `{...{ a, b }}`
             if self.ignore_explicit_spread
-                // oxlint sees the parentheses of `{...({ a })}`.
+                // oxlint's AST has a node for the parentheses in `{...({ a })}`.
                 && let Some(argument) = spread_attr.value().filter(|it| !is_oxlint || !it.is_parenthesized())
                 && let ExprKind::Object(properties) = argument.kind()
                 && properties.iter().all(|it| it.kind() != PropKind::Spread)

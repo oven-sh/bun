@@ -16,12 +16,12 @@ fn check_unsafe_declaration<'a>(
     let Some(variable) = scope.get_name(name.name()) else {
         return;
     };
-    // oxlint compares a declaration with the first of the name, which is also where it points.
+    // oxlint compares a declaration with the name's first declaration, which is also what it points at.
     if cx.language().is_oxlint {
         if let Some(first) = variable.declarations().next().filter(|it| is_unsafe_kind(*it))
-            && let Some(place) = first.name_span()
+            && let Some(report_span) = first.name_span()
         {
-            cx.report(place, UNSAFE_MERGING).label(name, "");
+            cx.report(report_span, UNSAFE_MERGING).label(name, "");
         }
         return;
     }
@@ -41,7 +41,7 @@ impl Rule for NoUnsafeDeclarationMerging {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        // A class and an interface of one name.
+        // Only needed if a class and an interface share a name.
         let classes = file.stmts_of_kind(StmtTag::Class).filter_map(|it| it.as_class()?.name());
         let classes: SmallVec<[Name<'a>; 8]> = classes.map(Ident::name).collect();
         let mut interfaces = file.stmts_of_kind(StmtTag::Interface).filter_map(Stmt::as_interface);
@@ -51,15 +51,15 @@ impl Rule for NoUnsafeDeclarationMerging {
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         match statement.kind() {
             StmtKind::Class(class) => {
-                // What merges with the class is in the scope around the scope of the class.
+                // Whatever merges with the class is in the scope around the class's own scope.
                 if let Some(name) = class.name()
                     && let Some(scope) = class.scope().and_then(|it| it.parent())
                 {
                     check_unsafe_declaration(scope, name, |it| matches!(it, Declaration::Interface(_)), cx);
                 }
             }
-            // Upstream looks in the scope of the interface. With type parameters that is its own, which
-            // only declares those. oxlint looks around it.
+            // Upstream looks in the interface's scope. With type parameters that's the interface's own scope, which
+            // only declares those. oxlint looks in the scope around it.
             StmtKind::Interface(interface) => {
                 let own = Node::Stmt(statement).scope();
                 let scope = match interface.type_params().is_empty() {

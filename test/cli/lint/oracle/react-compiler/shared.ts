@@ -1,9 +1,9 @@
-// What the scripts of this directory have in common: the rules, the records, and how oxlint is run and read.
+// Shared by the scripts in this directory: the rules, the record types, and running oxlint and parsing its output.
 
 import { closeSync, openSync, readdirSync, readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
-/** oxlint's rule, its category in oxlint, and the category of the compiler's diagnostics that it reports. */
+/** oxlint's rule, its oxlint category, and the compiler diagnostic category it reports. */
 export const RULES: readonly (readonly [rule: string, oxlint: string, compiler: string])[] = [
   ["capitalized-calls", "suspicious", "CapitalizedCalls"],
   ["error-boundaries", "correctness", "ErrorBoundaries"],
@@ -29,7 +29,7 @@ export const RULES: readonly (readonly [rule: string, oxlint: string, compiler: 
   ["void-use-memo", "correctness", "VoidUseMemo"],
 ];
 
-/** The rules that only eslint-plugin-react-hooks has, each with the category of the compiler's diagnostics that it reports. */
+/** The rules that only eslint-plugin-react-hooks has, each with the compiler diagnostic category it reports. */
 export const ESLINT_ONLY: readonly (readonly [rule: string, compiler: string])[] = [
   ["memoized-effect-dependencies", "EffectDependencies"],
   ["config", "Config"],
@@ -44,7 +44,7 @@ export function ruleOfCategory(category: string): string {
   return RULE_OF_CATEGORY.get(category) ?? `compiler/${category}`;
 }
 
-/** The react plugin with nothing on but `rules`. */
+/** Returns a config with the react plugin and only `rules` enabled. */
 export function configOf(rules: readonly string[], severity = "error"): object {
   return {
     plugins: ["react"],
@@ -54,7 +54,7 @@ export function configOf(rules: readonly string[], severity = "error"): object {
 }
 
 export type Label = {
-  /** Offsets in bytes of UTF-8. */
+  /** UTF-8 byte offsets. */
   start: number;
   end: number;
   line?: number;
@@ -63,7 +63,7 @@ export type Label = {
 };
 
 export type Diagnostic = {
-  /** `react/refs`. Null where the source of the record does not say (upstream's printed errors). */
+  /** For example `react/refs`. Null if the record's source doesn't have it (upstream's printed errors). */
   rule: string | null;
   severity?: string;
   message: string;
@@ -75,9 +75,9 @@ export type Diagnostic = {
 
 export type FileRecord = {
   path: string;
-  /** What the tool exits with for this file alone. */
+  /** The tool's exit code when it lints only this file. */
   exit?: number;
-  /** `ok`; `error`: syntax errors are reported; `silent`: not parsed and nothing said (a file with `@flow`). */
+  /** `error` means syntax errors were reported. `silent` means the file was skipped without a message (`@flow`). */
   parse: "ok" | "error" | "silent";
   /** The syntax errors. */
   syntax?: Diagnostic[];
@@ -86,7 +86,7 @@ export type FileRecord = {
 
 export const INPUT = /\.(?:js|jsx|ts|tsx|mjs)$/;
 
-/** The inputs below `dir` for each directory, sorted, relative to `dir`. `shared-runtime.ts` is what they import. */
+/** Returns the inputs under `dir` by directory, sorted, relative to `dir`. Skips `shared-runtime.ts`, a helper. */
 export function inputsByDirectory(dir: string): Map<string, string[]> {
   const found = new Map<string, string[]>();
   const walk = (relative: string) => {
@@ -148,7 +148,7 @@ export function diagnosticOf(raw: RawDiagnostic): Diagnostic {
 
 export type Run = { exit: number; report: RawReport; stderr: string };
 
-/** One process of oxlint with `-f json`. `command` may have arguments of its own, after blanks. */
+/** Runs oxlint once with `-f json`. `command` can include its own arguments, separated by spaces. */
 export function oxlint(command: string, cwd: string, args: readonly string[]): Run {
   const result = Bun.spawnSync({
     cmd: [...command.split(" "), "-f", "json", ...args],
@@ -168,7 +168,7 @@ export function oxlint(command: string, cwd: string, args: readonly string[]): R
   throw new Error(`No report (exit ${result.exitCode}):\n${stdout.slice(0, 2000)}\n${stderr.slice(0, 2000)}`);
 }
 
-/** The objects of JSON that start at the start of a line, on one line or more. Other text between them is skipped. */
+/** Yields the JSON objects that start at the beginning of a line and span one or more lines. Skips any other text. */
 export function* jsonDocuments(text: string): Generator<unknown> {
   let at = 0;
   while (at < text.length) {
@@ -203,7 +203,7 @@ export function* jsonDocuments(text: string): Generator<unknown> {
   }
 }
 
-/** The diagnostics of a report for each file, in the order of the report. */
+/** Groups a report's diagnostics by file, in report order. */
 export function byFile(report: RawReport): Map<string, Diagnostic[]> {
   const files = new Map<string, Diagnostic[]>();
   for (const raw of report.diagnostics) {
@@ -234,7 +234,7 @@ export class JsonlWriter {
   }
 }
 
-/** A table of Markdown. Numbers are set to the right. */
+/** Returns a Markdown table. Numeric columns are right-aligned. */
 export function table(head: readonly string[], rows: readonly (readonly (string | number)[])[]): string {
   const text = rows.map(row => row.map(cell => (typeof cell === "number" ? cell.toLocaleString("en-US") : cell)));
   const width = head.map((cell, i) => Math.max(cell.length, 3, ...text.map(row => row[i].length)));
@@ -245,7 +245,7 @@ export function table(head: readonly string[], rows: readonly (readonly (string 
   return [line(head), rule, ...text.map(line)].join("\n");
 }
 
-/** `--name=value` and `--name` of the command line, and what is left. */
+/** Splits the command line into `--name=value` / `--name` flags and the remaining arguments. */
 export function options(argv: readonly string[]): { flags: Map<string, string>; rest: string[] } {
   const flags = new Map<string, string>();
   const rest: string[] = [];

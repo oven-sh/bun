@@ -11,11 +11,11 @@ const SUGGEST_COMMENT: Message =
     Message::new("suggestComment", "Add comment inside empty {{type}} statement.");
 
 impl NoEmpty {
-    /// `braces` is a `{ }` with no statements or cases, so it can only contain whitespace and comments. `place` is where to
-    /// report. `removed` returns what oxlint suggests removing. `is_handler` returns whether it's the block of a `catch`.
+    /// `braces` is a `{ }` with no statements or cases, so it can only contain whitespace and comments. `removed`
+    /// returns what oxlint suggests removing. `is_handler` returns whether it's the block of a `catch`.
     fn check(
         braces: Span,
-        place: Span,
+        report_span: Span,
         kind: &'static str,
         (removed, is_handler): (&dyn Fn() -> Option<Span>, &dyn Fn() -> bool),
         cx: &Cx<'_, Self>,
@@ -25,7 +25,7 @@ impl NoEmpty {
             return;
         }
         let report = cx
-            .report(place, UNEXPECTED)
+            .report(report_span, UNEXPECTED)
             .data("type", kind)
             .hint(match is_handler() {
                 true => "Handle the error, or put a comment in it that says why the error is ignored.",
@@ -70,7 +70,7 @@ impl NoEmpty {
         if !cx.language().is_oxlint {
             return Self::check(braces, braces, "switch", (&|| None, &|| false), cx);
         }
-        // oxlint points at the whole statement, which a comment does not fill.
+        // oxlint reports the whole statement, even if it contains a comment.
         if strings::is_all_js_whitespace(cx.slice(braces.shrink(1, 1))) {
             Self::check(braces, stmt.span(), "switch", (&|| Some(stmt.span()), &|| false), cx);
         } else {
@@ -79,13 +79,13 @@ impl NoEmpty {
     }
 }
 
-/// What oxlint suggests to remove for the empty `block`: what the block is in. Of a `try` statement the `finally` with
-/// its block; nothing for the block of a `catch`.
+/// Returns what oxlint suggests removing for the empty `block`: the node that contains it. For a `try` statement that's
+/// the `finally` with its block, and nothing for a `catch` block.
 fn removed_by_oxlint(block: Stmt) -> Option<Span> {
     let parent = match block.parent() {
         Node::Stmt(parent) => parent,
         Node::Case(case) => return Some(case.span()),
-        // All of the file, or the body of a function.
+        // The whole file, or a function body.
         _ => return None,
     };
     let StmtKind::Try { handler, finalizer, .. } = parent.kind() else {
@@ -99,7 +99,7 @@ fn removed_by_oxlint(block: Stmt) -> Option<Span> {
     }
     let file = block.file();
     let keyword = file.tokens_before(block).with_comments().next().filter(|it| it.is_keyword("finally"))?;
-    // It counts characters where it has an offset in bytes.
+    // oxlint counts characters where it has a byte offset.
     let is_found = file.text().get(..keyword.start() as usize).is_some_and(<[u8]>::is_ascii);
     is_found.then(|| Span::new(keyword.start(), block.span().end))
 }

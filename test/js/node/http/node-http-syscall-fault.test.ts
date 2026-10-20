@@ -100,7 +100,8 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
     } finally {
       upstream.close();
     }
-  });
+    // About 5 s on a debug build, which is the default limit.
+  }, 30_000);
 
   test("Bun.serve streaming response under 1-byte sends with client abort mid-body (subprocess)", async () => {
     // Covers the uWS HttpResponse path (AsyncSocket → us_socket_write →

@@ -4751,6 +4751,32 @@ describe("backpressure", () => {
         expect(result).toEqual({ events: ["callback"], lengths: bun ? inBun : [2, size, 2] });
       });
 
+      // Node.js takes a Uint8Array only. Bun takes any typed array, and copies only an array of bytes into one write:
+      // the copy is made element by element.
+      it("a write() callback of a chunk that is a Uint16Array", async () => {
+        const events: string[] = [];
+        let thrown: string | undefined;
+        const socket = onBudgetSocket((req, res, socket) => {
+          socket.budget = Infinity;
+          try {
+            // "ab" for each element, in the byte order of every platform that Bun runs on.
+            res.write(new Uint16Array(64).fill(0x6261) as any, () => events.push("callback"));
+          } catch (err) {
+            thrown = (err as NodeJS.ErrnoException).code;
+          }
+        });
+        try {
+          await turn();
+          if (!bun) return void expect(thrown).toBe("ERR_INVALID_ARG_TYPE");
+          expect({ events, chunks: socket.wire.slice(1).map(chunk => chunk.toString("latin1")) }).toEqual({
+            events: ["callback"],
+            chunks: ["80\r\n", Buffer.alloc(128, "ab").toString("latin1"), "\r\n"],
+          });
+        } finally {
+          socket.destroy();
+        }
+      });
+
       it("a write() callback in each of two turns", async () => {
         const result = await run((res, socket, events) => {
           res.setHeader("Content-Length", 200);

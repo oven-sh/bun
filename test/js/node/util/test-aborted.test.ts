@@ -3,9 +3,13 @@
 // and then translated to bun:test using Claude.
 import { expect, test } from "bun:test";
 import { getEventListeners } from "events";
-import { bunEnv, bunExe, isMacOS, isWindows } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDirWithFiles } from "harness";
 import path from "node:path";
 import { aborted } from "util";
+
+// A file for the fs.promises.watch() test below. It is created here and not in the test: on macOS, a watcher
+// can report the creation of a path that was made just before it started.
+const watchedFile = path.join(tempDirWithFiles("aborted-watch", { "watched.txt": "" }), "watched.txt");
 
 test("aborted works when provided a resource that was already aborted", async () => {
   const ac = new AbortController();
@@ -123,10 +127,9 @@ test("the registry callback of aborted() does not keep the resource of the first
 
 test("aborted() and the next() of fs.promises.watch() on one signal settle in the order of Node", async () => {
   // A child process: a test callback can run with the event loop not entered, and then the promise reactions
-  // run before abort() returns (#43356). The fixture watches a directory that no test writes to.
-  const quietDir = path.join(import.meta.dir, "..", "watch", "fixtures");
+  // run before abort() returns (#43356). Nothing writes to the file that the fixture watches.
   await using proc = Bun.spawn({
-    cmd: [bunExe(), path.join(import.meta.dir, "aborted-watch-race-fixture.ts"), quietDir],
+    cmd: [bunExe(), path.join(import.meta.dir, "aborted-watch-race-fixture.ts"), watchedFile],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

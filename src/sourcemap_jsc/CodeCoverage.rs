@@ -844,8 +844,7 @@ fn scan(units: impl ExactSizeIterator<Item = u16>) -> (Vec<u32>, Bitset) {
             continue;
         }
         let is_executable = match unit {
-            // After one of these a `{` can only start an object. After a `:` it can also start
-            // the block of a `case` or of a label.
+            // Only an object starts after one of these. After a `:`, so does the block of a `case`.
             0x7B => matches!(
                 u8::try_from(previous),
                 Ok(b'(' | b'[' | b',' | b'=' | b'?' | b'|' | b'&' | b'.')

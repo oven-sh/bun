@@ -1629,10 +1629,10 @@ impl<'p, 's> Checker<'p, 's> {
         params: Span<TypeParamId>,
     ) -> impl Iterator<Item = TypeParamId> + use<'p, 's> {
         let hir = self.hir(file);
-        let mut names = OrderedSet::default();
         params.iter().filter(move |&tp| {
             let name = hir[tp].name;
-            name == Atom::NONE || name == known::empty || names.insert(name)
+            let mut earlier = params.iter().take_while(|&earlier| earlier != tp);
+            name == Atom::NONE || name == known::empty || earlier.all(|it| hir[it].name != name)
         })
     }
 
@@ -1672,26 +1672,21 @@ impl<'p, 's> Checker<'p, 's> {
         let Some((best_file, best, _)) = best else {
             return SmallVec::new();
         };
-        let (mut names_in_best, mut first_in_best) =
-            (OrderedSet::default(), SmallVec::<[_; 4]>::new());
-        for b in best.iter() {
-            if names_in_best.insert(self.hir(best_file)[b].name) {
-                first_in_best.push(b);
-            }
-        }
-        let (mut names, mut all) = (OrderedSet::default(), SmallVec::new());
+        let mut all: SmallVec<[(Atom, TypeId); 4]> = SmallVec::new();
         for &(file, params) in &lists {
             for tp in params.iter() {
                 let name = self.hir(file)[tp].name;
-                if names.insert(name) {
-                    all.push(match names_in_best.index_of(name) {
-                        Some(index) => self.type_param(best_file, first_in_best[index]),
-                        None => self.type_param(file, tp),
-                    });
+                if all.iter().any(|known| known.0 == name) {
+                    continue;
                 }
+                let param = match best.iter().find(|&b| self.hir(best_file)[b].name == name) {
+                    Some(b) => self.type_param(best_file, b),
+                    None => self.type_param(file, tp),
+                };
+                all.push((name, param));
             }
         }
-        all
+        all.into_iter().map(|known| known.1).collect()
     }
 
     /// The scope that the declaration `i` of an interface creates.

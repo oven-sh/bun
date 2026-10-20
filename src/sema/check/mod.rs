@@ -102,7 +102,7 @@ use crate::table::{At, Bases, Buffered, ById, ByIdIndirect, ByKey, ByNode, ByNod
 use crate::table::{FileLocal, OfExpressions};
 use crate::types::Prop;
 use crate::types::*;
-use crate::util::{FxHashMap, List, OrderedSet};
+use crate::util::{FxHashMap, List};
 use bun_threading::Guarded;
 use errors_aliases::SpecifierSite;
 use errors_names_and_exports::{root_declaration, root_pattern};

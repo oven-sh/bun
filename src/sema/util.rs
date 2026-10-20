@@ -105,60 +105,6 @@ pub fn number_repeated<K: Copy + Eq + std::hash::Hash>(keys: &[K]) -> FxHashMap<
     numbers
 }
 
-/// A set that keeps its keys in the order they were added. Up to `FEW` keys are searched one by one. Beyond that a hash
-/// map finds them, so adding `n` keys is never `n * n` steps.
-pub(crate) struct OrderedSet<K> {
-    keys: SmallVec<[K; OrderedSet::<()>::FEW]>,
-    /// The index of each key in `keys`. Empty while there are at most `FEW` keys.
-    indexes: FxHashMap<K, u32>,
-}
-
-impl<K> OrderedSet<K> {
-    const FEW: usize = 16;
-}
-
-impl<K> Default for OrderedSet<K> {
-    fn default() -> Self {
-        OrderedSet {
-            keys: SmallVec::new(),
-            indexes: FxHashMap::default(),
-        }
-    }
-}
-
-impl<K: Copy + Eq + std::hash::Hash> OrderedSet<K> {
-    /// Returns how many keys were added before `key`, or `None` if it isn't in the set.
-    #[inline]
-    pub(crate) fn index_of(&self, key: K) -> Option<usize> {
-        match self.indexes.is_empty() {
-            true => self.keys.iter().position(|&known| known == key),
-            false => self.indexes.get(&key).map(|&index| index as usize),
-        }
-    }
-
-    /// Returns `index_of(key)`, and true if this call added the key.
-    #[inline]
-    pub(crate) fn insert_full(&mut self, key: K) -> (usize, bool) {
-        if let Some(index) = self.index_of(key) {
-            return (index, false);
-        }
-        let index = self.keys.len();
-        self.keys.push(key);
-        if index == Self::FEW {
-            self.indexes.extend(self.keys.iter().copied().zip(0..));
-        } else if index > Self::FEW {
-            self.indexes.insert(key, index as u32);
-        }
-        (index, true)
-    }
-
-    /// Returns true if this call added the key.
-    #[inline]
-    pub(crate) fn insert(&mut self, key: K) -> bool {
-        self.insert_full(key).1
-    }
-}
-
 /// A bit set of positions in a list. Methods that combine two sets expect both to be for lists of the same length. Sets
 /// of up to 128 positions are stored inline.
 #[derive(Clone, Default)]
@@ -871,23 +817,5 @@ impl<K: Eq, V, A: Allocator + Clone> WindowedMap<K, V, A> {
             || list.push((key.clone(), value.take().unwrap())),
         );
         value.is_none()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn an_ordered_set_keeps_insertion_order_at_any_length() {
-        let mut keys = OrderedSet::default();
-        assert_eq!(keys.index_of(0u32), None);
-        for round in 0..2 {
-            for key in 0..40u32 {
-                assert_eq!(keys.insert_full(key * 7), (key as usize, round == 0));
-            }
-        }
-        assert_eq!(keys.index_of(39 * 7), Some(39));
-        assert!(keys.index_of(1).is_none() && keys.insert(1) && !keys.insert(1));
     }
 }

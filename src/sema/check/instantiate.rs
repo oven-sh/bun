@@ -680,7 +680,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `instantiate` of the type parameter `param` with a mapper that tsgo creates for this one call, so it isn't an
-    /// active mapper. `target` is what it maps `param` to, if anything. No mapper is created here.
+    /// active mapper. `target` is the type it maps `param` to, if any. No mapper is created here.
     pub(super) fn instantiate_type_parameter_once(
         &mut self,
         param: TypeId,

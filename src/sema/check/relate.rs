@@ -362,17 +362,20 @@ struct OnStack {
     may_match: u64,
 }
 
-/// The members of an intersection, by the identities that `has_matching_recursion_identity` can accept for each, now or
-/// later.
+/// An index of an intersection's members by recursion identity. A lookup never misses a member, although identities
+/// change: a reference or a tuple is listed under its identity at the time and under `(0, id, 0)`, the one it may get
+/// later (`current_recursion_identity`). A lookup can find a member that doesn't have the identity anymore, so the
+/// caller asks `has_matching_recursion_identity` about each member it finds.
 #[derive(Default)]
 pub(super) struct MembersByIdentity {
     by_identity: FxHashMap<RecursionId, SmallVec<[TypeId; 1]>>,
-    /// The members for which that can be any identity.
+    /// The mapped types whose target isn't stored. The next request may find another target, so every lookup finds
+    /// them.
     others: Vec<TypeId>,
 }
 
 /// An intersection with more members than this is compared with a stack through an index. For a shorter one, a search
-/// through the members costs less.
+/// through the members costs less. Both ways give the same answer.
 const MANY_ON_A_STACK: usize = 32;
 
 /// Returns one of 64 bits for `identity`.
@@ -4577,9 +4580,9 @@ impl<'p, 's> Checker<'p, 's> {
         false
     }
 
-    /// `is_deeply_nested_among` for each member of the intersection `t`, in one pass over the stack. Asking member by
-    /// member takes a step for every pair of a member of `t` and a member of an intersection on the stack, and `t` itself
-    /// is usually there.
+    /// True if `is_deeply_nested_among` is true for a member of the intersection `t`. Makes one pass over the stack.
+    /// Member by member, there's a step for every pair of a member of `t` and a member of an intersection on the stack,
+    /// and `t` itself is usually on the stack.
     #[cold]
     fn is_any_member_deeply_nested(
         &mut self,
@@ -4633,8 +4636,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `has_matching_recursion_identity` for the intersection `t`, which has many members. Only the members that can
-    /// have the identity are asked.
+    /// `has_matching_recursion_identity` for the intersection `t`, which has many members. See `MembersByIdentity`.
     #[cold]
     fn has_member_with_recursion_identity(&mut self, t: TypeId, identity: RecursionId) -> bool {
         let members = match self.members_by_identity.get(&t) {
@@ -6757,8 +6759,8 @@ impl<'p, 's> Checker<'p, 's> {
                 && (b.flags.contains(PropFlags::THISLESS) || self.is_uninstantiated_member(a, sym)))
     }
 
-    /// `is_member_itself_in_both`, for two properties that may be copies of a member. A spread copies a member's symbol
-    /// under other modifiers, and that's another symbol.
+    /// `is_member_itself_in_both`, for two properties that may be copies of a member. A spread copies a member with
+    /// other modifiers, and the copy is another symbol.
     pub(super) fn is_same_uninstantiated_member(&mut self, a: &Prop, b: &Prop) -> bool {
         let differing = (a.flags ^ b.flags).difference(PropFlags::THISLESS);
         differing.is_empty() && self.is_member_itself_in_both(a, b)

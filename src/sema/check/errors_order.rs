@@ -56,8 +56,9 @@ impl Checker<'_, '_> {
                 .filter(is_property_or_static_block)
                 .map(|m| m.loc),
         );
-        // Elsewhere only a class declared in this file is reported. A namespace or a module has it under its own name or
-        // `default`. Under a name that `export { C as D }` gives it, the property has no value declaration.
+        // Outside an initializer, only a class that this file declares is reported. It's a property of its namespace or
+        // module under its own name or `default`. Under an alias (`export { C as D }`), the property has no value
+        // declaration.
         let names_of_classes: crate::util::FxHashSet<Atom> = (hir.classes.iter().map(|it| it.name))
             .chain([known::default])
             .collect();

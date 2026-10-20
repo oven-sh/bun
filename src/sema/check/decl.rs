@@ -1621,8 +1621,8 @@ impl<'p, 's> Checker<'p, 's> {
         self.declared_type(sym)
     }
 
-    /// `core.AppendIfUnique` in `getTypeParametersFromDeclaration` and `appendTypeParameters`: `params`
-    /// without those that have the same name, and therefore the same symbol, as an earlier one.
+    /// Returns `params` without those that have the same name, and therefore the same symbol, as an earlier
+    /// one. `core.AppendIfUnique` in `getTypeParametersFromDeclaration` and `appendTypeParameters`.
     fn distinct_type_params(
         &self,
         file: FileId,
@@ -1672,7 +1672,6 @@ impl<'p, 's> Checker<'p, 's> {
         let Some((best_file, best, _)) = best else {
             return SmallVec::new();
         };
-        // For each name in `best`, the first type parameter that has it.
         let (mut names_in_best, mut first_in_best) =
             (Distinct::default(), SmallVec::<[_; 4]>::new());
         for b in best.iter() {
@@ -2331,7 +2330,7 @@ impl<'p, 's> Checker<'p, 's> {
         filled.extend_from_slice(&args[..actual]);
         // Invalid forward references in default types are mapped to the error type.
         filled.resize(params.len(), TypeId::ERROR);
-        // Where each parameter is in `params`, once a default needs to know.
+        // The index of each parameter in `params`. Filled in when a default first needs it.
         let mut places: FxHashMap<TypeId, usize> = FxHashMap::default();
         for i in actual..params.len() {
             filled[i] = match self.default_of_type_param(params[i]) {
@@ -2342,13 +2341,12 @@ impl<'p, 's> Checker<'p, 's> {
                 {
                     TypeId::ANY
                 }
-                // A mapper of all parameters would be a new one for every default, because `filled` has changed. Most
-                // defaults don't need it.
+                // `filled` changes with every default, so each one would get a new mapper. Most don't need one.
                 Some(default) => match self.types().instantiation_class(default) {
                     InstantiationClass::Unchanged => default,
                     InstantiationClass::TypeParameter => {
                         if places.is_empty() {
-                            // The first of two equal parameters counts, as in a search from the start.
+                            // Of two equal parameters the first one counts, as in a search from the start.
                             for (at, &param) in params.iter().enumerate() {
                                 places.entry(param).or_insert(at);
                             }

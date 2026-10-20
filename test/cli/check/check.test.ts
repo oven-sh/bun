@@ -8618,8 +8618,8 @@ export function byAssignment(x: { m: string | G; a?: 1 }, g: G) {
       expect(exitCode).toBe(1);
     });
 
-    // Each of these shapes gave a wrong type when the type of a reference at a join was kept from one walk to the next, or
-    // pins something else that a walk depends on.
+    // Each of these shapes gets a wrong type if the type of a reference at a join is kept from one walk to the next
+    // without everything else that the walk depends on.
     test("narrows each reference by what precedes it, whatever was narrowed before and in whatever order", async () => {
       using dir = project({
         "a.ts": `
@@ -8771,7 +8771,7 @@ function shrinks(s: string | undefined, a: Item, r: Fixed, n: 0 | 1 | 2 | 3 | 4 
   const n23: never = n;
   if (!isA) { const q: never = r.q.kind; }
 }
-// What an assignment leaves depends on where the reference is: the object of a property access gets the constraint.
+// The type after an assignment depends on the reference's position: the object of a property access gets the constraint.
 declare function same<V>(v: V): V;
 function generic<T extends string | number>(t: T, s: string | undefined) {
   let first: string | number | boolean = same(t);
@@ -8789,7 +8789,7 @@ function generic<T extends string | number>(t: T, s: string | undefined) {
 interface Frozen { readonly kind: Kind }
 interface Thawed { kind: Kind; thawed: true }
 
-// A test kept in a constant narrows \\\`r.q.kind\\\` only where \\\`kind\\\` is readonly in the type that \\\`r.q\\\` has there.
+// A test kept in a constant narrows \`r.q.kind\` only where \`kind\` is readonly in the type that \`r.q\` has there.
 function aliased(r: { readonly q: Frozen | Thawed }, s: string | undefined) {
   const isA = r.q.kind === "a";
   if (isA) {
@@ -25450,8 +25450,8 @@ export const related: S extends T ? 1 : 2 = 0;
 
     // `A` and `B` never end, and they differ only at one level: `string` instead of `number`. tsc stops at the third
     // level of one declaration and takes the rest for granted, so it reports a difference at level 1 and none at level
-    // 2. Every level is an intersection, and a long one is compared with the levels above it in another way than a
-    // short one.
+    // 2. Every level is an intersection, and a long one is compared with the levels above it differently from a short
+    // one.
     describe.each([32, 33])("endless types whose levels are intersections of %d members", members => {
       const parts = range(members - 2).map(i => `P${i + 1}`);
       const declared = parts.map((name, i) => `type ${name} = { p${i + 1}: ${i + 1} };`).join(" ");

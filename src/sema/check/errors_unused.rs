@@ -755,8 +755,9 @@ impl Checker<'_, '_> {
             return;
         }
         let is_private = |name: Atom| may_be_any || names.contains(&name);
-        // What an access to one of `names` can mark: the same symbols as `note_members_named`. Once all of them are
-        // marked, another access with that name adds nothing. An access with any other name never does.
+        // The symbols that an access to each of `names` can mark, which are the ones that `note_members_named` marks.
+        // Once all of them are marked, another access with that name adds nothing. Neither does an access with any
+        // other name.
         let mut marked_by_name: FxHashMap<Atom, smallvec::SmallVec<[SymbolId; 2]>> =
             FxHashMap::default();
         for (m, member) in hir.members.iter().enumerate() {

@@ -5197,8 +5197,8 @@ impl<'p, 's> Checker<'p, 's> {
                 Flow::Cond { expr, .. } => self.note_test(file, expr, 0, about),
                 Flow::Switch { stmt, from, .. } => {
                     if let StmtKind::Switch { expr, cases } = hir[stmt].kind {
-                        // All the nodes of a `switch` have the same subjects, and its first node has
-                        // the lowest number.
+                        // Every node of a `switch` has the same subjects, and `first_nodes` only keeps
+                        // the lowest node number.
                         if let Some(&(resolves, has_union)) = noted_switches.get(&stmt) {
                             (about.2, about.3) = (resolves, has_union);
                         } else {
@@ -7206,9 +7206,9 @@ impl<'p, 's> Checker<'p, 's> {
         let is_fresh_boolean =
             matches!(*self.data(assigned), TypeData::BoolLit { fresh: true, .. });
         let assigned = self.regular(assigned);
-        // Comparing two unit types resolves nothing, so when `m` is among the assigned types, the comparisons that come
-        // before the one of `m` with itself can be skipped. And a literal that isn't an enum member is only assignable
-        // to another one if they're the same type.
+        // Comparing two unit types resolves nothing, so if `m` is among the assigned types, the comparisons before the
+        // one of `m` with itself can be skipped. And a literal that isn't an enum member is only assignable to another
+        // one if they're the same type.
         let is_all_units = self.is_every_type_unit(assigned);
         let is_all_plain = is_all_units && self.types().member_flags(assigned) & !tf::LITERAL == 0;
         let reduced = self.filter(declared, |c, m| {

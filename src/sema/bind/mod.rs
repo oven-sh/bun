@@ -1078,7 +1078,7 @@ pub enum Flow {
         expr: ExprId,
         sense: bool,
     },
-    /// The clauses of the `switch` that `entered_clauses` returns for `from` were entered.
+    /// The `switch` was entered at clause `from` (see `entered_clauses`), or at none if that's `NO_CLAUSE`.
     Switch {
         before: FlowId,
         stmt: StmtId,
@@ -1131,8 +1131,8 @@ impl Flow {
     }
 }
 
-/// `ClauseStart` and `ClauseEnd` of the `Flow::Switch` with `from`. `bindCaseBlock`: clauses without statements share
-/// a node with the first clause after them that has statements.
+/// Returns `ClauseStart` and `ClauseEnd` of a `Flow::Switch` with `from`. As in `bindCaseBlock`, clauses without
+/// statements share a node with the first clause after them that has statements.
 pub fn entered_clauses(hir: &File, cases: Span<CaseId>, from: u32) -> (usize, usize) {
     if from == Flow::NO_CLAUSE {
         return (0, 0);
@@ -2684,7 +2684,7 @@ impl BoundBuilder {
     /// Same as `into_arena`, but leaves `self` empty, and the lists that are long in most files
     /// keep their capacity.
     fn move_to_arena<'s>(&mut self, arena: &'s Arena) -> Bound<'s> {
-        // The lists that go into the block below.
+        // Every list that's copied to `block` below. One that's missing here gets its own block.
         let room = [
             room_for(&self.scopes),
             room_for(&self.tables),

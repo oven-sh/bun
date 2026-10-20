@@ -7135,8 +7135,8 @@ impl<'s> Files<'s> {
             let by_end = by_end.iter().map(|patterns| slice_in(patterns, arena));
             self.ambient_patterns_by_end = arena.alloc_slice_fill_iter(by_end);
         }
-        // Whether `export_stars_of` a module that has been augmented is empty. A module can have an augmentation in
-        // every file, and each one adds a part to look at.
+        // Whether `export_stars_of` is empty for each module that has been augmented. A module can have an augmentation
+        // in every file, and `export_stars_of` looks at all of them.
         let mut has_no_export_stars: FxHashMap<Sym, bool> = FxHashMap::default();
         for (file, name, sym) in augmentations {
             match self.module_of_specifier_as(file, name, self.module(file).default_mode) {
@@ -8156,7 +8156,7 @@ impl<'s> Files<'s> {
 
     #[inline(never)]
     fn value_declaration_of_merged(&self, sym: Sym, mut index: usize) -> Option<(FileId, Decl)> {
-        // It has none. An interface can have thousands of parts.
+        // The symbol has no value declaration. An interface can have thousands of parts.
         if index == u32::MAX as usize {
             return None;
         }
@@ -8341,7 +8341,7 @@ impl<'s> Files<'s> {
         // parameters with the same name are one symbol, even within one list (`<T, T>`), and it has
         // a default if any of its declarations has one.
         let mut has_default_by_symbol: SmallVec<[bool; 4]> = SmallVec::new();
-        // The names, and where each one's symbol is in the list above.
+        // The names, and the index of each one's symbol in the list above.
         let (mut names, mut places) = (Distinct::default(), SmallVec::<[usize; 4]>::new());
         for (file, params) in lists {
             let hir = self.hir(file);

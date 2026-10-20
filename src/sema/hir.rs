@@ -414,8 +414,8 @@ pub(crate) type Block<'s> = crate::util::memory::Block<&'s Arena>;
 /// or borrowed from an owner that still has the list (`FileBuilder::lend`), or belongs to a file that several programs
 /// share (`File::share`). A file is only shared once nothing writes to it anymore.
 ///
-/// An empty list is in no block, because a file without nodes can also be created by a thread that doesn't own the arena
-/// (`File::empty_in`).
+/// An empty list isn't in a block, because a file without nodes can also be created by a thread that doesn't own the
+/// arena (`File::empty_in`).
 pub struct Fixed<'s, T>(BlockList<'s, T, &'s Arena>);
 
 impl<T> Default for Fixed<'_, T> {
@@ -425,7 +425,7 @@ impl<T> Default for Fixed<'_, T> {
 }
 
 impl<'s, T: Copy> Fixed<'s, T> {
-    /// Copies `list` to a block of its own.
+    /// Copies `list` to its own block.
     #[inline(never)]
     pub(crate) fn copied_in(arena: &'s Arena, list: &[T]) -> Self {
         Fixed::copied_into(
@@ -530,7 +530,7 @@ impl<'s, T: Id> Narrow<'s, T> {
         list.iter().fold(true, fits)
     }
 
-    /// Returns the room that `moved_into` takes up in a block for `list`.
+    /// Returns the room that `moved_into` needs in a block for `list`.
     pub(crate) fn room_for(list: &[T]) -> usize {
         match Self::all_fit(list) {
             true => Block::room_for::<u16>(list.len()),
@@ -538,7 +538,7 @@ impl<'s, T: Id> Narrow<'s, T> {
         }
     }
 
-    /// Copies `list` to a block of its own in `arena` and clears it. `list` keeps its capacity.
+    /// Copies `list` to its own block in `arena` and clears it. `list` keeps its capacity.
     pub(crate) fn moved_in(arena: &'s Arena, list: &mut Vec<T>) -> Self {
         Self::moved_into(&mut Block::with_room_in(Self::room_for(list), arena), list)
     }
@@ -2946,7 +2946,7 @@ macro_rules! long_lists {
     };
 }
 
-/// Returns the room that `list` takes up in a `Block`.
+/// Returns the room that `list` needs in a `Block`.
 pub(crate) fn room_for<T>(list: &[T]) -> usize {
     Block::room_for::<T>(list.len())
 }

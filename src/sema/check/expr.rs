@@ -1297,7 +1297,7 @@ impl<'p, 's> Checker<'p, 's> {
             // Every `a.b` gets here. `check_property_accessibility_at_location` looks the property
             // up again and then starts with this same test. For an object type, which is its own
             // apparent type, it finds the same property, so the call is skipped. For a union it looks
-            // the property up in every member, and the union's property already lists what it finds.
+            // the property up in every member, and the union's property already lists the ones it finds.
             let is_within_reach = !is_super
                 && prop.is_some_and(|prop| {
                     if self.is_object_type(apparent) {

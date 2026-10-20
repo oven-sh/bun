@@ -38,12 +38,14 @@ impl IndexConstraints<'_> {
     }
 }
 
-/// See `Checker::interface_declarations`.
+/// The facts about all the declarations of an interface that the check of one of them needs. An interface can have a
+/// declaration in every file, so the check of one declaration must not look at all the others.
 pub(super) struct InterfaceDeclarations {
     /// `ast.GetDeclarationOfKind(t.symbol, ast.KindInterfaceDeclaration)`
     first: Option<(FileId, InterfaceId)>,
     /// The first in program order among the files whose semantic errors are reported.
     first_checked: Option<(FileId, InterfaceId)>,
+    /// The first in program order in each file.
     first_in_file: FxHashMap<FileId, InterfaceId>,
 }
 

@@ -940,9 +940,10 @@ pub(super) struct EmitResolverLinks {
 /// The modules that `getAlternativeContainingModules` searches when no import of the file exports the symbol.
 #[derive(Default)]
 pub(super) struct ExportingModules {
-    /// By `merged_resolved_symbol` of an export: the positions in `Files::order` of the modules that have such an export.
+    /// Keyed by an export's `merged_resolved_symbol`: the positions in `Files::order` of the modules with such an
+    /// export.
     by_target: FxHashMap<Sym, SmallVec<[u32; 2]>>,
-    /// The position of each module that is searched.
+    /// The position of each module that's searched.
     positions: FxHashMap<FileId, u32>,
 }
 
@@ -2168,9 +2169,10 @@ impl<'p, 's> Checker<'p, 's> {
         results
     }
 
-    /// The modules of the program, in the order of `c.program.SourceFiles()`, in which `alias_for_symbol_in_container`
-    /// finds `symbol`. tsgo searches the exports of every module for every symbol that no import of the file exports, which
-    /// is quadratic in a program whose files name types they don't import. Here the first search indexes the exports.
+    /// Returns the modules in which `alias_for_symbol_in_container` finds `symbol`, in the order of
+    /// `c.program.SourceFiles()`. tsgo searches every module's exports for each symbol that no import of the file
+    /// exports, which is quadratic in a program whose files mention types they don't import. Here the first search
+    /// builds an index of the exports.
     fn modules_that_export(&mut self, symbol: Sym) -> Vec<Sym> {
         let files = self.files();
         let index = match &self.exporting_modules {
@@ -2207,7 +2209,7 @@ impl<'p, 's> Checker<'p, 's> {
             AliasTarget::Symbol(target) => {
                 positions.extend(index.by_target.get(&target).into_iter().flatten().copied());
             }
-            // Equal to every export that resolves to the same property, or to nothing.
+            // The index only has the exports that resolve to a symbol.
             _ => {
                 for (&file, &position) in &index.positions {
                     let module = files.file_symbol(file);

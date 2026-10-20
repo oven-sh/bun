@@ -5109,7 +5109,7 @@ impl<'p, 's> Checker<'p, 's> {
         b.shape.properties_of = Some(whole);
         let mut members_seen = crate::util::FxHashSet::<(Sym, PropFlags)>::default();
         for (prop, mut list) in b.shape.props.iter_mut().zip(lists) {
-            // `propSet` has a symbol once. The constituents gave the same member different mappers.
+            // `propSet` contains each symbol once. The constituents gave the same member different mappers.
             members_seen.clear();
             list.retain(|it| match it.source {
                 PropSource::Symbol(sym) if self.is_uninstantiated_member(it, sym) => {
@@ -8252,8 +8252,8 @@ impl<'p, 's> Checker<'p, 's> {
                 let has_three = members.iter().filter(is_large).nth(2).is_some();
                 let facts = has_three.then(|| self.facts_for_siblings());
                 let outer = std::mem::replace(&mut self.sibling_intersections, facts);
-                // `getReducedUnionType` builds a union of the members that are left. Unlike `filterType` it keeps nothing of
-                // the origin, so `A | (X & Y)` is printed as the members of the alias `A`.
+                // `getReducedUnionType` builds a union of the remaining members. Unlike `filterType`, it drops the
+                // origin, so `A | (X & Y)` is printed as the members of the alias `A`.
                 let mut kept: SmallVec<[TypeId; 8]> = SmallVec::new();
                 for &member in members.iter() {
                     if !self.is_never_intersection(member) {

@@ -105,8 +105,8 @@ pub fn number_repeated<K: Copy + Eq + std::hash::Hash>(keys: &[K]) -> FxHashMap<
     numbers
 }
 
-/// Distinct keys, numbered in order of first occurrence. A few keys are searched one by one. Once there are more, a
-/// hash map finds them, so that adding `n` keys never takes `n * n` steps.
+/// Distinct keys, numbered in order of first occurrence. Up to `FEW` keys are searched one by one. Beyond that a hash
+/// map finds them, so adding `n` keys is never `n * n` steps.
 pub(crate) struct Distinct<K> {
     keys: SmallVec<[K; Distinct::<()>::FEW]>,
     /// Empty while there are at most `FEW` keys.

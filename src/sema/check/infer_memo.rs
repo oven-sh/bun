@@ -172,7 +172,7 @@ const DISTURBANCES: [&str; 9] = [
     "restrictive_resets",
 ];
 
-/// What `Checker::inference_disturbances` returns.
+/// The counters that `Checker::inference_disturbances` returns.
 pub(super) type Disturbances = [u64; DISTURBANCES.len()];
 
 /// The index in `DISTURBANCES` of the counter for other tasks' commits.

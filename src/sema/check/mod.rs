@@ -1817,8 +1817,6 @@ pub struct Checker<'p, 's> {
     identical_base_types_in_progress: Vec<(TypeId, usize)>,
     /// `number_name` of each index, or `NONE` if it hasn't been requested.
     names_of_small_numbers: std::cell::RefCell<Vec<Atom>>,
-    /// What the check of one declaration of an interface needs to know about all of them. An interface can have a
-    /// declaration in every file, so no check of a single declaration may look at all the others.
     interface_declarations: FxHashMap<Sym, std::rc::Rc<errors_heritage::InterfaceDeclarations>>,
     /// See `has_member_with_recursion_identity`.
     members_by_identity: FxHashMap<TypeId, std::rc::Rc<relate::MembersByIdentity>>,

@@ -1824,9 +1824,9 @@ mod fact {
 /// A type's `TypeRecord::summary` and its `Rank`. Two per cache line.
 ///
 /// The fields are atomic because `set` writes to a `Summary` that `TypeStore::reserve_ids` has already added to the
-/// shared table. `Relaxed` is enough for what `set` writes, because a thread only gets a type's id through something
-/// that orders the creator's earlier writes before the read (see `AppendVec`). The rank is written later, by any
-/// thread. See `set_rank`.
+/// shared table. `Relaxed` is enough for the fields `set` writes, because a thread only gets a type's id through
+/// something that orders the creator's earlier writes before the read (see `AppendVec`). The rank is written later, by
+/// any thread. See `set_rank`.
 struct Summary {
     flags: AtomicU32,
     /// See `Types::member_flags`. The top three bits aren't type flags (see `HAS_FRESH_LITERAL`).
@@ -3788,8 +3788,8 @@ impl<'p, 's> Types<'p, 's> {
         }
     }
 
-    /// Computes and stores the rank of `id`, after the ranks of the types its key mentions. A list takes the place of
-    /// recursion, because a key can be nested as deeply as the program makes it.
+    /// Computes and stores the rank of `id`, after the ranks of the types its key mentions. Uses a list instead of
+    /// recursion, because a program can nest a key to any depth.
     #[cold]
     #[inline(never)]
     fn rank_on_first_use(&self, id: TypeId) -> Rank {
@@ -3798,7 +3798,7 @@ impl<'p, 's> Types<'p, 's> {
         let mut last = Rank::NONE;
         while let Some(&next) = unranked.last() {
             let summary = self.own.summaries.get_layered(next.0);
-            // Every type has flags. An id that's reserved and not used yet has none, and no rank.
+            // Every type has flags. An id that's reserved but not used yet doesn't, and it has no rank.
             let known = match summary.flags.load(Ordering::Relaxed) {
                 0 => Some(Rank::NONE),
                 _ => summary.rank(),

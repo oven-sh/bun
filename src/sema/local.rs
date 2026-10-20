@@ -98,8 +98,8 @@ struct Marked {
     slots: Box<[u64]>,
     /// 0 for a free slot, otherwise `mark_of` the slot's tag. Both lists have the same length: 0 or a power of two.
     ///
-    /// Most searches are for a key that isn't there yet, and they read only marks. The marks take an eighth of the
-    /// memory of the slots, so they stay in the cache where the slots of a large table don't.
+    /// Most searches are for a key that hasn't been added yet, and they only read marks. The marks are an eighth of the
+    /// size of the slots, so they stay in the cache when a large table's slots don't.
     marks: Box<[u8]>,
 }
 
@@ -131,7 +131,7 @@ impl Marked {
             slots: vec![0; len].into_boxed_slice(),
             marks: vec![0; len].into_boxed_slice(),
         };
-        // If a zeroed page from the operating system is read before it's written, its first write takes a second page
+        // If a zeroed page from the operating system is read before it's written, its first write causes a second page
         // fault, which interrupts every other thread. So write to each page first. A slot is only read after it's
         // written.
         for page in bigger.marks.chunks_mut(4 << 10) {
@@ -148,8 +148,8 @@ impl Marked {
 /// reference.
 #[derive(Default)]
 pub struct HashIndex {
-    /// No other thread reads them, so the pointers and the length are stored right here, and a table is freed as soon
-    /// as a bigger one replaces it.
+    /// No other thread reads the table, so its pointers and lengths are stored right here, and it's freed as soon as a
+    /// bigger one replaces it.
     table: RefCell<Marked>,
     count: Cell<usize>,
 }

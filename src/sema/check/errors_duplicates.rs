@@ -440,8 +440,9 @@ impl Checker<'_, '_> {
     /// same file.
     fn check_namespace_merge_order(&mut self, file: FileId, sym: Sym) {
         let files = self.files();
-        // Every file that has a part of the symbol gets here, and there can be a part in each file. The symbol's flags
-        // don't tell: a declaration that conflicts with the others is listed without adding its flags.
+        // This runs in every file that declares the symbol, which can be every file, so the answer is kept. The
+        // symbol's flags can't give it: a declaration that conflicts with the others is listed, but its flags aren't
+        // added.
         let is_class_or_function = |d: &Decl| matches!(d, Decl::Class(_) | Decl::Fn(_));
         let has_class_or_function = match self.has_class_or_function_declaration.get(&sym) {
             Some(&known) => known,
@@ -587,7 +588,7 @@ impl Checker<'_, '_> {
                 }
                 _ => !matches!(decl, Decl::Interface(_)),
             };
-            // Every file that declares the module gets here, and the symbol can have a declaration in each of them.
+            // This runs in every file that declares the module, and the symbol can have a declaration in each of them.
             let count = match self.counted_export_declarations.get(&symbol) {
                 Some(&known) => known,
                 None => {

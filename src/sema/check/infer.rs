@@ -24,17 +24,18 @@ type Unmatched<'a> = std::borrow::Cow<'a, [TypeId]>;
 /// From this many pairs on, `Inference::visited` is searched through `Inference::visited_index`.
 const VISITED_INDEX_FROM: usize = 16;
 
-/// A walk that has made this many `infer_types` calls starts to remember the walks between type arguments that it
-/// repeats. See `Checker::infer_from_type_arguments_once`. The number only decides which walks pay for the bookkeeping.
+/// A walk that has made this many `infer_types` calls starts to remember its walks between type arguments. See
+/// `Checker::infer_from_type_arguments_once`. The number only decides which walks pay for the bookkeeping, never a
+/// result.
 const REPEATS_FROM: u32 = 256;
 
-/// What a walk between the type arguments of two types reads from the `Inference`, apart from `visited` and the infos:
-/// the source, the target, `priority`, `depth`, `propagated`, and as bits `contra`, `bivariant` and which type
-/// arguments they are (`ArgumentsOf`).
+/// Everything that a walk between the type arguments of two types reads from the `Inference`, apart from `visited` and
+/// the infos: the source, the target, `priority`, `depth`, `propagated`, and as bits `contra`, `bivariant` and which
+/// type arguments they are (`ArgumentsOf`).
 type ArgumentWalk = (TypeId, TypeId, u32, u32, Option<TypeId>, u8);
 
-/// `inferFromTypes` looks for a common alias before anything else, but it reaches the other two with a source and a
-/// target that it has reduced since. So one pair of types can arrive as two of these.
+/// Whose type arguments a walk is between. `inferFromTypes` looks for a common alias first, and it may reduce the
+/// source and the target before it gets to the other two. So one pair of types can arrive as two of these.
 #[derive(Copy, Clone)]
 enum ArgumentsOf {
     Alias,
@@ -52,7 +53,8 @@ struct RepeatedArgumentWalks {
     disturbances: memo::Disturbances,
 }
 
-/// The priority in `Inference::visited` of a pair whose action hasn't returned. It reads as `PRIORITY_CIRCULARITY`.
+/// The priority in `Inference::visited` of a pair whose action hasn't returned. `invoke_once` reads it as
+/// `PRIORITY_CIRCULARITY`.
 const PRIORITY_IN_PROGRESS: i32 = i32::MIN;
 
 // InferencePriority. The lower the better.
@@ -357,7 +359,7 @@ impl<'p, 's> Checker<'p, 's> {
         if n.calls >= memo::LONG_WALK {
             self.inference_memo.note_long_walk_to(target);
         }
-        // Every clone of the context would copy it.
+        // Otherwise every clone of the context would copy it.
         n.repeated_argument_walks = None;
     }
 
@@ -688,20 +690,20 @@ impl<'p, 's> Checker<'p, 's> {
         n.inference_priority = n.inference_priority.min(n.priority as i32);
     }
 
-    /// Runs `walk`, which infers between the type arguments of `source` and `target`, unless it can only repeat what an
-    /// earlier walk of this `inferTypes` call did.
+    /// Runs `walk`, which infers between the type arguments of `source` and `target`, unless it would only repeat an
+    /// earlier walk of this `inferTypes` call.
     ///
     /// `invokeOnce` stops a second walk between the members of two object types, but nothing stops a second walk between
     /// the type arguments of two references or aliases. In `B<[...S, E<Id, C<X<S>, Y<S>>>]>` each level mentions the
     /// level below it several times, so tsgo walks every path: 2.7 times as many for each call added to a chain of calls
     /// on such a builder.
     ///
-    /// A walk is remembered if it added no pair to `visited`, found none in progress and left no trace in the checker.
-    /// Such a walk only read types, took the stored priority of each pair, and offered candidates. The same walk
-    /// run again reads the same types and the same stored priorities, so it takes the same path. Offering a candidate
-    /// again changes nothing: it's in the list at that depth or a greater one, or a better priority has replaced the
-    /// list and the offer is dropped. `top_level` depends on the type parameter alone. So all that is left of the walk
-    /// is its `inference_priority`.
+    /// A walk is remembered if it added no pair to `visited`, found none in progress and left no trace in the checker
+    /// (`marks_of_argument_walk`). Such a walk only read types, read the stored priority of each pair, and offered
+    /// candidates. Run again, it reads the same types and the same priorities, so it follows the same path. Offering a
+    /// candidate again changes nothing: either it's in the list at that depth or a greater one, or a better priority
+    /// has replaced the list and the offer is dropped. `top_level` depends only on the type parameter. So the walk's
+    /// only other effect is on `inference_priority`, and that's stored and applied again.
     #[inline]
     fn infer_from_type_arguments_once(
         &mut self,
@@ -717,7 +719,8 @@ impl<'p, 's> Checker<'p, 's> {
         self.infer_from_type_arguments_in_long_walk(n, source, target, of, walk)
     }
 
-    /// Returns the walk's key. Returns `None` if an identical walk changed nothing: its priority has been applied then.
+    /// Returns the walk's key, or `None` if an identical walk is remembered. Its priority has been applied in that
+    /// case.
     fn begin_argument_walk(
         &mut self,
         n: &mut Inference,
@@ -759,7 +762,7 @@ impl<'p, 's> Checker<'p, 's> {
         walk(self, n);
         let priority = n.inference_priority;
         n.inference_priority = priority.min(outer);
-        // The marks include the disturbances, so the record is still the one for `disturbances`.
+        // The marks include the disturbances, so `repeated.disturbances` is still current.
         if self.marks_of_argument_walk(n) == before
             && let Some(repeated) = &mut n.repeated_argument_walks
         {
@@ -916,12 +919,12 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `inferFromMatchingTypes` with `isTypeOrBaseIdenticalTo`.
     ///
-    /// FOR SPEED: two types of which one may simplify (`isTypeRelatedTo` can't tell them apart by their flags) go through
+    /// FOR SPEED: if one of two types may simplify, `isTypeRelatedTo` can't tell them apart by their flags. It calls
     /// `checkTypeRelatedTo`, where `isRelatedToEx` normalizes both and then compares the flags. Between a union of
     /// object types and a union of conditional or indexed access types that's every pair, and nearly all end there.
     /// Here each member is normalized once, at the pair where `isRelatedToEx` would normalize it first, and a pair
-    /// whose normalized flags differ is skipped. Such a comparison stores nothing. The pairs for which it does more
-    /// than that are left to `related`: a primitive on either side, a limit reached earlier in the file
+    /// whose normalized flags differ is skipped. Such a comparison stores nothing. `related` still gets the pairs for
+    /// which it does more than that: a primitive on either side, a limit reached earlier in the file
     /// (`relations_cut_short`), no query in progress (`begin_comparison` resets the instantiation count), a low stack.
     fn infer_from_identical(
         &mut self,

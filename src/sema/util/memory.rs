@@ -965,13 +965,13 @@ impl<A: Allocator> BlockHeader<A> {
 pub struct Block<A: Allocator + Clone> {
     /// `None` if it has no room at all. Then nothing is allocated.
     header: Option<NonNull<BlockHeader<A>>>,
-    /// The part that no list has taken yet, as offsets from `header`.
+    /// The unused part, as offsets from `header`.
     free: Range<usize>,
     alloc: A,
 }
 
 impl<A: Allocator + Clone> Block<A> {
-    /// Returns the room that a list of `len` elements takes up.
+    /// Returns the room that a list of `len` elements needs.
     #[inline]
     pub const fn room_for<T>(len: usize) -> usize {
         (len * size_of::<T>()).next_multiple_of(align_of::<BlockHeader<A>>())
@@ -1008,7 +1008,7 @@ impl<A: Allocator + Clone> Block<A> {
         }
     }
 
-    /// True if the lists have taken up all the room.
+    /// True if the lists have used all the room.
     pub fn is_full(&self) -> bool {
         self.free.is_empty()
     }
@@ -1017,7 +1017,7 @@ impl<A: Allocator + Clone> Block<A> {
     /// not be 0. If there isn't enough room left, the memory is in a new block.
     fn take<T>(&mut self, len: usize) -> (NonNull<T>, NonNull<BlockHeader<A>>) {
         const { assert!(align_of::<T>() <= align_of::<BlockHeader<A>>()) };
-        // A list that takes no room would look for a block with room forever.
+        // A list that needs no room would recurse forever in the last arm below.
         const { assert!(size_of::<T>() != 0) };
         let room = Self::room_for::<T>(len);
         match self.header {
@@ -1099,8 +1099,8 @@ pub struct BlockList<'s, T, A: Allocator> {
     borrows: PhantomData<&'s mut [T]>,
 }
 
-// SAFETY: it's a `&mut [T]`, a `&[T]`, or owned elements plus a share of a block. Whichever thread drops the last list of
-// a block takes `A` from the header and frees the block with it.
+// SAFETY: it's a `&mut [T]`, a `&[T]`, or owned elements plus a share of a block. Whichever thread drops the last list
+// of a block moves `A` out of the header and frees the block with it.
 unsafe impl<T: Send + Sync, A: Allocator + Send> Send for BlockList<'_, T, A> {}
 // SAFETY: a shared reference only gives access to `&[T]`.
 unsafe impl<T: Sync, A: Allocator> Sync for BlockList<'_, T, A> {}

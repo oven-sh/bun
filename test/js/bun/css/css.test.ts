@@ -289,7 +289,10 @@ describe("css tests", () => {
     test.each([
       [`@media (min-width: calc(100px * tan(atan2(1in, 1em)))) { a { color: red } }`, "Invalid media query"],
       [`@container (min-width: calc(100px * tan(atan2(1in, 1em)))) { a { color: red } }`, "Invalid media query"],
-      [`@property --x { syntax: '<angle>'; inherits: false; initial-value: atan2(1in, 1em) }`, "Unexpected token: atan2("],
+      [
+        `@property --x { syntax: '<angle>'; inherits: false; initial-value: atan2(1in, 1em) }`,
+        "Unexpected token: atan2(",
+      ],
     ])("ERROR: %s", (source, message) => {
       expect(() => minify_test_with_options(source, "")).toThrow(message);
     });

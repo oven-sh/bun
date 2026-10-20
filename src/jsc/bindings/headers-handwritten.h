@@ -351,6 +351,8 @@ extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunSt
 
 namespace Bun {
 JSC::JSString* toJS(JSC::JSGlobalObject*, BunString);
+// Returns the empty identifier for a zero-length string with any tag.
+JSC::Identifier toIdentifier(JSC::VM&, const BunString&);
 BunString toString(WTF::String& wtfString);
 BunString toString(const WTF::String& wtfString);
 BunString toString(WTF::StringImpl* wtfString);
@@ -425,6 +427,14 @@ extern "C" void EncodedSlice__freeGlobal(const unsigned char* ptr, size_t len);
 
 extern "C" size_t Bun__encoding__writeLatin1(const Latin1Character* ptr, size_t len, unsigned char* to, size_t other_len, Encoding encoding);
 extern "C" size_t Bun__encoding__writeUTF16(const char16_t* ptr, size_t len, unsigned char* to, size_t other_len, Encoding encoding);
+
+// Mirrors `EncodeIntoResult` in bun_core. `written` can be exactly 2^32 when it fills a max-size Uint8Array.
+typedef struct TextEncoderEncodeIntoResult {
+    size_t read;
+    size_t written;
+} TextEncoderEncodeIntoResult;
+extern "C" TextEncoderEncodeIntoResult TextEncoder__encodeInto8(const Latin1Character* stringPtr, size_t stringLen, void* ptr, size_t len);
+extern "C" TextEncoderEncodeIntoResult TextEncoder__encodeInto16(const char16_t* stringPtr, size_t stringLen, void* ptr, size_t len);
 
 extern "C" size_t Bun__encoding__byteLengthLatin1AsUTF8(const Latin1Character* ptr, size_t len);
 extern "C" size_t Bun__encoding__byteLengthUTF16AsUTF8(const char16_t* ptr, size_t len);

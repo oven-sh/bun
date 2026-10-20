@@ -5,7 +5,7 @@ use bun_paths::strings;
 use bun_ast as Log;
 use bun_core::Utf8Bytes;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper, to_js};
-use bun_jsc::ref_string::RefString;
+use bun_jsc::ref_string::{RefString, StringTooLong};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JsCell, JsResult, LogJsc};
 use bun_paths::{self as path, MAX_PATH_BYTES};
@@ -22,6 +22,7 @@ use crate::generated_bindgen::filesystem_router::{
     FileSystemRouterClass, FileSystemRouterInternalFields as _, FileSystemRouterOptions,
     MatchedRouteClass, Routable, RouteKind, RouterStyle,
 };
+use crate::node::types::Valid;
 
 // Note: `FrameworkFileSystemRouter` is declared in this file's
 // `filesystem_router.classes.ts`, so codegen looks for the backing struct here
@@ -61,12 +62,11 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
 struct RefCountedString(BackRef<RefString>);
 
 impl RefCountedString {
-    fn new(vm: &mut VirtualMachine, bytes: &[u8]) -> Self {
-        let string = vm.ref_counted_string::<true>(bytes, None);
-        let string = BackRef::from(core::ptr::NonNull::new(string).expect("ref_counted_string"));
+    fn new(vm: &mut VirtualMachine, bytes: &[u8]) -> Result<Self, StringTooLong> {
+        let string = BackRef::from(vm.ref_counted_string(bytes, None)?);
         // The cache adds no ref on a hit.
         string.ref_();
-        Self(string)
+        Ok(Self(string))
     }
 
     fn bytes(&self) -> &[u8] {
@@ -250,6 +250,7 @@ impl FileSystemRouterClass for FileSystemRouter {
             }
         }
         let global = cx.global();
+        Valid::no_null_bytes(options.dir, "dir", "a string", global)?;
 
         let mut out_buf = [0u8; MAX_PATH_BYTES * 2];
         let mut root_dir_path = global.bun_vm().top_level_dir();
@@ -257,7 +258,7 @@ impl FileSystemRouterClass for FileSystemRouter {
             // An absolute path is joined too: a route's name is cut from the resolver's normalized spelling.
             let Some(joined) =
                 path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-                    Fs::FileSystem::instance().top_level_dir,
+                    Fs::FileSystem::instance().top_level_dir(),
                     &mut out_buf,
                     &[options.dir],
                 )
@@ -300,16 +301,24 @@ impl FileSystemRouterClass for FileSystemRouter {
         };
 
         let vm = global.bun_vm().as_mut();
-        let base_dir = RefCountedString::new(vm, base_dir_str);
-        router.config.dir = Box::from(base_dir.bytes());
-        let mut ref_counted = |bytes: Option<&[u8]>| {
-            let bytes = bytes.filter(|bytes| !bytes.is_empty())?;
-            Some(RefCountedString::new(vm, bytes))
+        let mut ref_counted = |bytes: &[u8]| {
+            RefCountedString::new(vm, bytes).map_err(|_| global.throw_string_too_long())
         };
+        let base_dir = ref_counted(base_dir_str)?;
+        router.config.dir = Box::from(base_dir.bytes());
+        let not_empty = |bytes: &&[u8]| !bytes.is_empty();
         Ok(FileSystemRouter {
-            origin: ref_counted(options.origin),
+            origin: options
+                .origin
+                .filter(not_empty)
+                .map(&mut ref_counted)
+                .transpose()?,
             base_dir,
-            asset_prefix: ref_counted(options.asset_prefix),
+            asset_prefix: options
+                .asset_prefix
+                .filter(not_empty)
+                .map(&mut ref_counted)
+                .transpose()?,
             router,
         })
     }

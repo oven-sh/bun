@@ -1,5 +1,5 @@
 // Ported from Node.js lib/internal/quic/state.js (v26.3.0).
-const { uncurryThis } = require("internal/primordials");
+const { uncurryThis, TypedArrayPrototypeGetBuffer } = require("internal/primordials");
 const { isArrayBuffer } = require("node:util/types");
 const { inspect } = require("node:util");
 
@@ -12,6 +12,13 @@ const DataViewPrototypeGetUint8 = uncurryThis(DataView.prototype.getUint8);
 const DataViewPrototypeSetUint16 = uncurryThis(DataView.prototype.setUint16);
 const DataViewPrototypeSetUint32 = uncurryThis(DataView.prototype.setUint32);
 const DataViewPrototypeSetUint8 = uncurryThis(DataView.prototype.setUint8);
+const DataViewPrototypeGetBuffer = uncurryThis(Object.getOwnPropertyDescriptor(DataView.prototype, "buffer")!.get!);
+const DataViewPrototypeGetByteOffset = uncurryThis(
+  Object.getOwnPropertyDescriptor(DataView.prototype, "byteOffset")!.get!,
+);
+const DataViewPrototypeGetByteLength = uncurryThis(
+  Object.getOwnPropertyDescriptor(DataView.prototype, "byteLength")!.get!,
+);
 
 const kIsLittleEndian = require("node:os").endianness() === "LE";
 
@@ -588,8 +595,8 @@ class QuicStreamState {
   #handle;
   /** @type {number} */
   #offset = 0;
-  /** @type {bigint|undefined} */
-  #id = undefined;
+  /** @type {boolean} */
+  #disconnected = false;
 
   /**
    * @param {symbol} privateSymbol
@@ -611,7 +618,7 @@ class QuicStreamState {
   /** @type {bigint} */
   get id() {
     const handle = this.#handle;
-    if (handle === undefined) return this.#id;
+    if (handle === undefined) return undefined;
     return DataViewPrototypeGetBigInt64(handle, this.#offset + IDX_STATE_STREAM_ID, kIsLittleEndian);
   }
 
@@ -815,7 +822,7 @@ class QuicStreamState {
   }
 
   [kInspect](depth, options) {
-    if (this.#handle === undefined) {
+    if (this.#disconnected || this.#handle === undefined) {
       return "QuicStreamState { <Closed> }";
     }
 
@@ -874,8 +881,19 @@ class QuicStreamState {
   }
 
   [kFinishClose]() {
-    this.#id = this.id;
-    this.#handle = undefined;
+    // Keep the final values readable after the native stream is gone, as
+    // QuicStreamStats does.
+    const handle = this.#handle;
+    const copy = new Uint8Array(
+      new Uint8Array(
+        DataViewPrototypeGetBuffer(handle),
+        DataViewPrototypeGetByteOffset(handle) + this.#offset,
+        DataViewPrototypeGetByteLength(handle) - this.#offset,
+      ),
+    );
+    this.#handle = new DataView(TypedArrayPrototypeGetBuffer(copy));
+    this.#offset = 0;
+    this.#disconnected = true;
   }
 }
 

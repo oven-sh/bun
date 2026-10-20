@@ -823,6 +823,12 @@ impl QuicSession {
         self.stream_is_live(p).then(|| unsafe { &*p })
     }
 
+    /// The connection's death closed this stream (`on_conn_closed` nulls
+    /// `conn` before any event drains), so the session reports its close.
+    fn defers_stream_close(&self, stream: &super::stream::QuicStream) -> bool {
+        self.conn.get().is_null() && stream.unfinished_at_close()
+    }
+
     pub(super) fn apply_peer_datagram_budget(&self) {
         let Some(tp) = self.conn().and_then(|c| c.peer_transport_params()) else {
             return;
@@ -910,7 +916,17 @@ impl QuicSession {
                 self.schedule_process();
                 break;
             }
-            if !matches!(event, SessionEvent::PeerClose { .. } | SessionEvent::Closed) {
+            let runs_js = match &event {
+                SessionEvent::PeerClose { .. } | SessionEvent::Closed => false,
+                SessionEvent::StreamClosed { stream } => {
+                    !self.conn.get().is_null()
+                        || self
+                            .live_stream(*stream)
+                            .is_some_and(|s| s.is_announce_suppressed() || !s.unfinished_at_close())
+                }
+                _ => true,
+            };
+            if runs_js {
                 dispatched_js = true;
             }
             if self.destroyed.get() {
@@ -1462,6 +1478,11 @@ impl QuicSession {
                 if stream.is_announce_suppressed() {
                     self.streams.with_mut(|v| v.retain(|&s| s != stream_ptr));
                     stream.release_close_root();
+                    return Ok(());
+                }
+                // Stays registered so `session.destroy(error)` reaches it
+                // with the connection's error, as Node's FinishClose does.
+                if self.defers_stream_close(stream) {
                     return Ok(());
                 }
                 // Runs the parked reader wakeup — user JS, which may destroy

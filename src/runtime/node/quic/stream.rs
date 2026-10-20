@@ -128,6 +128,8 @@ pub(crate) struct QuicStream {
     blocked_reported: Cell<bool>,
     announce_suppressed: Cell<bool>,
     close_reported: Cell<bool>,
+    /// lsquic reported the close while frames were still in flight.
+    unfinished_at_close: Cell<bool>,
     destroyed: Cell<bool>,
 }
 
@@ -159,6 +161,7 @@ impl QuicStream {
             blocked_reported: Cell::new(false),
             announce_suppressed: Cell::new(false),
             close_reported: Cell::new(false),
+            unfinished_at_close: Cell::new(false),
             destroyed: Cell::new(false),
         };
         let raw_ptr = bun_core::heap::into_raw(Box::new(stream));
@@ -334,6 +337,12 @@ impl QuicStream {
     pub(super) fn pre_reset_code(&self) -> Option<u64> {
         self.with_state(|s| (s.reset != 0).then_some(s.reset_code))
     }
+    /// With the connection gone, a close reported while frames were in flight
+    /// is the connection's death, not the stream's own end (Node keeps such a
+    /// stream until the acknowledgement and gives it the session's error).
+    pub(super) fn unfinished_at_close(&self) -> bool {
+        self.unfinished_at_close.get()
+    }
     pub(super) fn release_close_root(&self) {
         self.this_value.with_mut(|r| r.downgrade());
     }
@@ -424,6 +433,20 @@ impl QuicStream {
                 s.reset_code = code;
             }
         });
+        // lsquic has queued its RESET_STREAM by now (this runs after the
+        // frame's callback). End our write side so the stream can finish
+        // once the reset is acknowledged, as ngtcp2 does.
+        self.outbound.with_mut(|o| {
+            o.data.clear();
+            o.end = PendingEnd::None;
+        });
+        if let Some(s) = self.ls() {
+            if self.with_state(|st| st.read_ended != 0) {
+                s.close();
+            } else {
+                s.shutdown(1);
+            }
+        }
     }
 
     fn mark_reset(&self, code: u64) {
@@ -590,10 +613,9 @@ impl QuicStream {
             unsafe { (*session).remove_stream(core::ptr::from_ref(self).cast_mut()) };
         }
         self.outbound.with_mut(|o| o.data.clear());
-        self.inbound.with_mut(|i| {
-            i.chunks.clear();
-            i.ended = true;
-        });
+        // Received bytes stay readable, as Node's CapReadable does; only a
+        // peer reset discards them (`mark_reset`).
+        self.inbound.with_mut(|i| i.ended = true);
         self.with_state(|s| s.read_ended = 1);
         if let Some(wakeup) = self.take_wakeup() {
             let vm = global.bun_vm().as_mut();
@@ -1140,8 +1162,12 @@ lsquic_callback! {
 
     pub(super) fn on_stream_close(
         ctx: *mut c_void as qs: &QuicStream,
-        _s: *mut lsquic::lsquic_stream,
+        s: *mut lsquic::lsquic_stream,
     ) {
+        // SAFETY: `s` is live for the duration of this lsquic callback.
+        if let Some(stream) = unsafe { lsquic::Stream::from_raw(s) } {
+            qs.unfinished_at_close.set(!stream.is_finished());
+        }
         // The lsquic_stream is freed immediately after this callback returns.
         qs.raw.set(null_mut());
         if let Some(session) = qs.session_ref() {

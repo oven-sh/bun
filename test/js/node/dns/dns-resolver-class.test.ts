@@ -31,4 +31,32 @@ describe.each([
   test("throws a TypeError when called without new", () => {
     expect(() => Resolver()).toThrow(TypeError);
   });
+
+  test.each([
+    ["resolve", "ERR_INVALID_ARG_TYPE"],
+    ["resolveAny", "ERR_INVALID_ARG_TYPE"],
+    ["resolveCaa", "ERR_INVALID_ARG_TYPE"],
+    ["resolveCname", "ERR_INVALID_ARG_TYPE"],
+    ["resolveMx", "ERR_INVALID_ARG_TYPE"],
+    ["resolveNaptr", "ERR_INVALID_ARG_TYPE"],
+    ["resolveNs", "ERR_INVALID_ARG_TYPE"],
+    ["resolvePtr", "ERR_INVALID_ARG_TYPE"],
+    ["resolveSoa", "ERR_INVALID_ARG_TYPE"],
+    ["resolveSrv", "ERR_INVALID_ARG_TYPE"],
+    ["resolveTxt", "ERR_INVALID_ARG_TYPE"],
+    ["reverse", "ERR_INVALID_ARG_TYPE"],
+    ["setLocalAddress", "ERR_INVALID_IP_ADDRESS"],
+    ["setServers", "ERR_INVALID_ARG_TYPE"],
+  ])("_handle.%s() takes a missing argument as undefined", (method, code) => {
+    const handle = new Resolver()._handle;
+    const thrownBy = (...args: undefined[]) => {
+      try {
+        handle[method](...args);
+      } catch (error: any) {
+        return { name: error.name, code: error.code, message: error.message };
+      }
+    };
+    expect(thrownBy()).toEqual({ name: "TypeError", code, message: expect.any(String) });
+    expect(thrownBy()).toEqual(thrownBy(undefined));
+  });
 });

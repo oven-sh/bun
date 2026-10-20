@@ -292,7 +292,9 @@ public:
 
     Structure* NodeVMGlobalObjectStructure() const { return m_cachedNodeVMGlobalObjectStructure.getInitializedOnMainThread(this); }
     JSObject* lazyTestModuleObject() const { return m_lazyTestModuleObject.getInitializedOnMainThread(this); }
-    Structure* CommonJSModuleObjectStructure() const { return m_commonJSModuleObjectStructure.getInitializedOnMainThread(this); }
+    Structure* CommonJSModuleObjectStructure() const { return m_commonJSModuleClassStructure.getInitializedOnMainThread(this); }
+    JSObject* nodeModuleConstructor() const { return m_commonJSModuleClassStructure.constructorInitializedOnMainThread(this); }
+    JSObject* commonJSModulePrototype() const { return m_commonJSModuleClassStructure.prototypeInitializedOnMainThread(this); }
     Structure* JSSocketAddressDTOStructure() const { return m_JSSocketAddressDTOStructure.getInitializedOnMainThread(this); }
     Structure* JSReactElementStructure() const { return m_JSReactElementStructure.getInitializedOnMainThread(this); }
     Structure* JSMarkdownListItemMetaStructure() const { return m_JSMarkdownListItemMetaStructure.getInitializedOnMainThread(this); }
@@ -506,8 +508,8 @@ public:
     V(public, WriteBarrier<JSC::Unknown>, m_moduleResolveFilenameOverride)                                   \
     V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleRunMainFunction)                                   \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_modulePrototypeUnderscoreCompileFunction)            \
+    V(public, WriteBarrier<JSC::Unknown>, m_modulePrototypeCompileOverride)                                  \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_commonJSRequireESMFromHijackedExtensionFunction)     \
-    V(public, LazyPropertyOfGlobalObject<JSObject>, m_nodeModuleConstructor)                                 \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_nodeModuleSourceMapEntryStructure)                    \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_nodeModuleSourceMapOriginStructure)                   \
                                                                                                              \
@@ -648,7 +650,7 @@ public:
     /* Bun::LintHost, for the JavaScript plugins of `bun lint` */                                            \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_lintHost)                                              \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_cachedNodeVMGlobalObjectStructure)                    \
-    V(private, LazyPropertyOfGlobalObject<Structure>, m_commonJSModuleObjectStructure)                       \
+    V(private, JSC::LazyClassStructure, m_commonJSModuleClassStructure)                                      \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSocketAddressDTOStructure)                         \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSReactElementStructure)                             \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSMarkdownListItemMetaStructure)                     \
@@ -807,6 +809,8 @@ public:
     bool hasOverriddenModuleWrapper = false;
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
+    // De-optimization once `require("module").prototype._compile` is written to
+    bool hasOverriddenModulePrototypeCompile = false;
 
     // node:crypto deprecation warnings are emitted at most once per realm, like Node, whose
     // flags live in per-realm module state (lib/internal/crypto/keys.js). They must not be

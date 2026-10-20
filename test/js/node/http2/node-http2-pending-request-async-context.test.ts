@@ -258,6 +258,29 @@ describe("a request that waited for a stream slot or for the connect", () => {
   });
 });
 
+// Over a JS transport the session completes a write on an immediate of its own. The callbacks of
+// the write still run in the store of the writer.
+describe("a request over a Duplex transport", () => {
+  test("uploads in the store of its request() caller", async () => {
+    const seen: Record<string, Stores> = { alice: {}, bob: {}, carol: {} };
+    const unsubscribe = subscribe(seen);
+    const server = http2.createServer();
+    server.on("stream", respondAfterEnd);
+    const [clientSide, serverSide] = duplexPair();
+    server.emit("connection", serverSide);
+    const client = als.run("session", () => http2.connect("http://localhost", { createConnection: () => clientSide }));
+    try {
+      await once(client, "remoteSettings");
+      await Promise.all(users.map(user => als.run(user, () => upload(client as Client, user, seen[user]))));
+      assert.deepStrictEqual(seen, { alice: all("alice"), bob: all("bob"), carol: all("carol") });
+    } finally {
+      unsubscribe();
+      client.close();
+      server.close();
+    }
+  });
+});
+
 describe("a request that the session cannot submit after the wait", () => {
   // alice holds the only stream slot. bob's request fails when the session tries to submit it.
   async function failAfterSlotWait(prepare: (client: Client) => void, headers: http2.OutgoingHttpHeaders) {
@@ -423,62 +446,98 @@ if (typeof Bun !== "undefined") {
       }
     });
 
-    // Over a JS transport a write completes on an immediate, and dispose() drops the immediates of
-    // a graph. A request of a disposed graph is submitted in the context of what drained the queue.
-    test("finishes its upload over a Duplex transport when dispose() stopped its graph during the wait", async () => {
-      const { onStream, held } = peer();
-      const server = http2.createServer({ settings: { maxConcurrentStreams: 1 } });
-      server.on("stream", onStream);
-      const [clientSide, serverSide] = duplexPair();
-      server.emit("connection", serverSide);
-      const client = http2.connect("http://localhost", { createConnection: () => clientSide }) as Client;
-      const waiter = new Bun.ModuleGraph();
-      try {
-        await once(client, "remoteSettings");
-        client.request({ ":method": "POST", ":path": "/held" }).end("chunk").resume();
-        waiter.run(() => {
+    // Over a JS transport a write completes on an immediate. The session arms it, so dispose() of
+    // the writer's graph does not drop it.
+    describe("over a Duplex transport", () => {
+      function connectOverDuplex(onStream: OnStream) {
+        const server = http2.createServer({ settings: { maxConcurrentStreams: 1 } });
+        server.on("stream", onStream);
+        const [clientSide, serverSide] = duplexPair();
+        server.emit("connection", serverSide);
+        return { server, client: http2.connect("http://localhost", { createConnection: () => clientSide }) as Client };
+      }
+      // An upload whose end() waits for the callback of its first write.
+      function upload(client: Client, graph: Bun.ModuleGraph) {
+        return graph.run(() => {
           const req = client.request({ ":method": "POST", ":path": "/" });
           req.on("error", () => {});
           req.resume();
           req.write("chunk", () => req.end("chunk"));
+          return req;
         });
-        const host = hostGetsTheSlot(client);
-        const release = await held;
-        waiter.dispose();
-        release();
-        await host;
-      } finally {
-        waiter.dispose();
-        client.destroy();
-        server.close();
       }
+
+      for (const when of ["while its request waits", "in the middle of the upload"]) {
+        test(`finishes its upload when dispose() stops its graph ${when}`, async () => {
+          const { onStream, held } = peer();
+          const { server, client } = connectOverDuplex(onStream);
+          const graph = new Bun.ModuleGraph();
+          try {
+            await once(client, "remoteSettings");
+            client.request({ ":method": "POST", ":path": "/held" }).end("chunk").resume();
+            const req = upload(client, graph);
+            const host = hostGetsTheSlot(client);
+            const release = await held;
+            // The first write is parked on 'ready' by now, so this listener runs after it.
+            if (when === "in the middle of the upload") req.once("ready", () => graph.dispose());
+            else graph.dispose();
+            release();
+            await host;
+          } finally {
+            graph.dispose();
+            client.destroy();
+            server.close();
+          }
+        });
+      }
+
+      test("finishes an upload that did not wait when dispose() stops its graph", async () => {
+        const { server, client } = connectOverDuplex(peer().onStream);
+        const graph = new Bun.ModuleGraph();
+        try {
+          await once(client, "remoteSettings");
+          upload(client, graph);
+          graph.dispose();
+          await hostGetsTheSlot(client);
+        } finally {
+          graph.dispose();
+          client.destroy();
+          server.close();
+        }
+      });
     });
 
-    test("fails into the onError of its own graph, not of the graph that held the slot", async () => {
-      const failed = Promise.withResolvers<[string, string | undefined]>();
-      const onError = (graph: string) => (error: unknown) =>
-        failed.resolve([graph, (error as NodeJS.ErrnoException).code]);
-      const holder = new Bun.ModuleGraph({ onError: onError("holder") });
-      const waiter = new Bun.ModuleGraph({ onError: onError("waiter") });
-      const server = await listen({ maxConcurrentStreams: 1 });
-      const client = connect(server);
-      try {
-        await once(client, "remoteSettings");
-        // The holder's request takes the last stream id, so the session cannot submit the next one.
-        client.setNextStreamID(2 ** 31 - 1);
-        const first = holder.run(() => client.request({ ":method": "POST", ":path": "/" }));
-        first.resume();
-        // No 'error' listener: the failure is an uncaught exception of the graph it is raised in.
-        waiter.run(() => client.request({ ":path": "/" }));
-        first.end("chunk");
-        assert.deepStrictEqual(await failed.promise, ["waiter", "ERR_HTTP2_OUT_OF_STREAMS"]);
-      } finally {
-        holder.dispose();
-        waiter.dispose();
-        client.destroy();
-        server.close();
-      }
-    });
+    for (const stopped of [false, true]) {
+      const name = stopped
+        ? "fails into the onError of its graph after dispose() stopped that graph"
+        : "fails into the onError of its own graph";
+      test(`${name}, not of the graph that held the slot`, async () => {
+        const failed = Promise.withResolvers<[string, string | undefined]>();
+        const onError = (graph: string) => (error: unknown) =>
+          failed.resolve([graph, (error as NodeJS.ErrnoException).code]);
+        const holder = new Bun.ModuleGraph({ onError: onError("holder") });
+        const waiter = new Bun.ModuleGraph({ onError: onError("waiter") });
+        const server = await listen({ maxConcurrentStreams: 1 });
+        const client = connect(server);
+        try {
+          await once(client, "remoteSettings");
+          // The holder's request takes the last stream id, so the session cannot submit the next one.
+          client.setNextStreamID(2 ** 31 - 1);
+          const first = holder.run(() => client.request({ ":method": "POST", ":path": "/" }));
+          first.resume();
+          // No 'error' listener: the failure is an uncaught exception of the graph it is raised in.
+          waiter.run(() => client.request({ ":path": "/" }));
+          if (stopped) waiter.dispose();
+          first.end("chunk");
+          assert.deepStrictEqual(await failed.promise, ["waiter", "ERR_HTTP2_OUT_OF_STREAMS"]);
+        } finally {
+          holder.dispose();
+          waiter.dispose();
+          client.destroy();
+          server.close();
+        }
+      });
+    }
 
     test("uploads in the store of its request() caller when the callers share one graph", async () => {
       const seen: Record<string, Stores> = { alice: {}, bob: {}, carol: {} };

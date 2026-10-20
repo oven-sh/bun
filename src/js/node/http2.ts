@@ -27,13 +27,7 @@
  * Modifications were made to the original code.
  */
 const { isTypedArray } = require("node:util/types");
-const {
-  hideFromStack,
-  hasObserver,
-  enqueueNodeEntry,
-  PerformanceNodeEntry,
-  isFrameOfStoppedModuleGraph,
-} = require("internal/shared");
+const { hideFromStack, hasObserver, enqueueNodeEntry, PerformanceNodeEntry } = require("internal/shared");
 const { STATUS_CODES, utcDate } = require("internal/http");
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const tls = require("node:tls");
@@ -1912,7 +1906,7 @@ abstract class Http2Session extends EventEmitter {
   // Session-level frame (Node's Http2Session AsyncWrap): destroy()'s emits
   // run inside it so 'close' doesn't inherit the last stream's frame.
   [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
-  [kDeferWriteCallback]: typeof process.nextTick | typeof setImmediate = setImmediate;
+  [kDeferWriteCallback]: typeof process.nextTick | typeof deferWriteCallbackAsSession = deferWriteCallbackAsSession;
   // The GOAWAY this side received (not one it sent), like node's Http2Session getters.
   get goawayCode() {
     return this[kGoawayCode] || NGHTTP2_NO_ERROR;
@@ -2081,7 +2075,12 @@ const kWriteFlushedWithoutCallback = 0x10;
 // event-loop turn so the JS-side delivery has run before 'drain' is observed
 // (test-http2-backpressure). Chosen once per session.
 function deferWriteCallbackForSocket(nativeSocket) {
-  return nativeSocket ? process.nextTick : setImmediate;
+  return nativeSocket ? process.nextTick : deferWriteCallbackAsSession;
+}
+// The session's immediate, and the writer's async context for the callback: dispose() drops an immediate armed as the writer's Bun.ModuleGraph.
+function deferWriteCallbackAsSession(this: Http2Session, callback: () => void) {
+  const frame = $getInternalField($asyncContext, 0);
+  runInFrame(this[bunHTTP2AsyncContextFrame], setImmediate, undefined, runInFrame, frame, callback);
 }
 // Whether this chunk is the writable's last: end() ran, nothing queued behind it (writableLength
 // includes the in-flight chunk, string chunks in code units), no trailers pending (END_STREAM
@@ -6364,14 +6363,9 @@ class ClientHttp2Session extends Http2Session {
       // A pending stream that was close()d (but not destroyed) is still submitted: node sends its
       // HEADERS and follows up with the RST_STREAM once the id is known (see close()).
       if (req.destroyed) continue;
+      // node runs the submission bound to the request's AsyncResource, deferred or not: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1912-L1926
       const frame = req[bunHTTP2AsyncContextFrame];
-      if (frame !== undefined && isFrameOfStoppedModuleGraph(frame)) {
-        // A disposed Bun.ModuleGraph's request stays with the drainer: what runs as that graph arms nothing.
-        this.#submitPendingRequest(parser, req, headers, wireHeaders, sensitiveNames, options);
-      } else {
-        // node runs the submission bound to the request's AsyncResource, deferred or not: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1912-L1926
-        runInFrame(frame, this.#submitPendingRequest, this, parser, req, headers, wireHeaders, sensitiveNames, options);
-      }
+      runInFrame(frame, this.#submitPendingRequest, this, parser, req, headers, wireHeaders, sensitiveNames, options);
     }
   }
 

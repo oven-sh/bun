@@ -742,8 +742,8 @@ describe("DiffieHellman", () => {
   });
 
   it("throws (not returns) validation errors from the constructor", () => {
-    // toThrow() accepts a *returned* Error instance as a throw, so it cannot
-    // distinguish the two here; capture the control-flow outcome explicitly.
+    // The constructor once returned these errors. Record whether the call threw
+    // and what it produced, so that a returned Error cannot pass.
     function outcome(fn) {
       try {
         return { threw: false, value: fn() };

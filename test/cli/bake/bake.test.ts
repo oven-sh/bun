@@ -1100,6 +1100,18 @@ test.concurrent(
   },
 );
 
+test.concurrent("bun bake dev renders a page with NODE_ENV as development", async () => {
+  using dir = tempDir("bake-command-node-env", {
+    "app/pages/index.tsx": `export default function Home() { return <h1>{process.env.NODE_ENV}</h1>; }`,
+  });
+  linkReact(String(dir));
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  expect(await (await fetch(new URL("/", url))).text()).toContain("<h1>development</h1>");
+});
+
 test.concurrent.each([
   {
     name: "React is not installed",

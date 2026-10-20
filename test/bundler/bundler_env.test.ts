@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -129,37 +130,158 @@ for (let backend of ["api", "cli"] as const) {
 }
 
 describe("process.env.NODE_ENV in a build", () => {
-  async function bundle(args: string[], buildEnv: Record<string, string> = {}) {
-    using dir = tempDir("bundler-node-env", { "entry.js": "console.log(process.env.NODE_ENV);" });
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "entry.js", "--outfile=out.js", ...args],
-      env: { ...bunEnv, ...buildEnv },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  const unset = { NODE_ENV: undefined, BUN_ENV: undefined };
+
+  async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
+    await using proc = Bun.spawn({ cmd, env: { ...bunEnv, ...env }, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+    return stdout;
+  }
+
+  async function bundle(args: string[], buildEnv: Record<string, string> = {}) {
+    using dir = tempDir("bundler-node-env", { "entry.js": "console.log(process.env.NODE_ENV);" });
+    await run([bunExe(), "build", "entry.js", "--outfile=out.js", ...args], String(dir), { ...unset, ...buildEnv });
     return await Bun.file(join(String(dir), "out.js")).text();
   }
 
-  test.concurrent.each(["bun", "node"])(
-    "--target=%s reads it at runtime when the build did not set it",
-    async target => {
-      expect(await bundle([`--target=${target}`])).toContain("process.env.NODE_ENV");
-    },
-  );
+  const bunOutput = (value: string) => `// @bun\n// entry.js\nconsole.log(${value});\n`;
+
+  test.concurrent("--target=bun reads it at runtime when the build did not set it", async () => {
+    expect(await bundle(["--target=bun"])).toBe(bunOutput("process.env.NODE_ENV"));
+  });
+
+  test.concurrent("--target=node reads it at runtime when the build did not set it", async () => {
+    expect(await bundle(["--target=node"])).toBe("// entry.js\nconsole.log(process.env.NODE_ENV);\n");
+  });
+
+  test.concurrent("--target=bun reads it at runtime when the build set it to an empty string", async () => {
+    expect(await bundle(["--target=bun"], { NODE_ENV: "" })).toBe(bunOutput("process.env.NODE_ENV"));
+  });
 
   test.concurrent("--target=bun --production uses production", async () => {
-    expect(await bundle(["--target=bun", "--production"])).toContain('"production"');
+    expect(await bundle(["--target=bun", "--production"])).toBe(`// @bun\nconsole.log("production");\n`);
   });
 
   test.concurrent("--target=bun uses a NODE_ENV set at build time", async () => {
-    expect(await bundle(["--target=bun"], { NODE_ENV: "staging" })).toContain('"staging"');
+    expect(await bundle(["--target=bun"], { NODE_ENV: "staging" })).toBe(bunOutput(`"staging"`));
+  });
+
+  test.concurrent("--target=bun uses BUN_ENV before NODE_ENV", async () => {
+    expect(await bundle(["--target=bun"], { BUN_ENV: "staging", NODE_ENV: "other" })).toBe(bunOutput(`"staging"`));
   });
 
   test.concurrent("--target=browser uses development when the build did not set it", async () => {
-    expect(await bundle(["--target=browser"])).toContain('"development"');
+    expect(await bundle(["--target=browser"])).toBe(`// entry.js\nconsole.log("development");\n`);
+  });
+
+  test.concurrent("Bun.build with target bun reads it at runtime", async () => {
+    using dir = tempDir("bundler-node-env-api", {
+      "entry.js": "console.log(process.env.NODE_ENV, process.env.BUN_ENV);",
+      "build.js": `
+        const { outputs } = await Bun.build({ entrypoints: ["./entry.js"], target: "bun" });
+        process.stdout.write(await outputs[0].text());
+      `,
+    });
+    expect(await run([bunExe(), "build.js"], String(dir), unset)).toBe(
+      "// @bun\n// entry.js\nconsole.log(process.env.NODE_ENV, process.env.BUN_ENV);\n",
+    );
+  });
+
+  itBundled("env/CompileReadsNodeEnvAtRuntime", {
+    backend: "cli",
+    compile: true,
+    env: unset,
+    files: { "/entry.js": "console.log(process.env.NODE_ENV);" },
+    run: { env: { NODE_ENV: "production" }, stdout: "production" },
+  });
+
+  test.concurrent("the browser chunks of a server build use development", async () => {
+    using dir = tempDir("bundler-node-env-fullstack", {
+      "server.js": `import page from "./index.html"; console.log(page, process.env.NODE_ENV);`,
+      "index.html": `<!doctype html><html><body><script src="./client.jsx"></script></body></html>`,
+      "client.jsx": `console.log(process.env.NODE_ENV, process.env.BUN_ENV, <p />);`,
+    });
+    await run(
+      [bunExe(), "build", "server.js", "--target=bun", "--outdir=dist", "--external=react/*"],
+      String(dir),
+      unset,
+    );
+
+    const texts: Record<string, string> = {};
+    for (const file of new Bun.Glob("*.js").scanSync(join(String(dir), "dist"))) {
+      texts[file.startsWith("server") ? "server" : "client"] = await Bun.file(join(String(dir), "dist", file)).text();
+    }
+    expect(texts.server).toContain("process.env.NODE_ENV");
+    expect(texts.client).toContain(`console.log("development", "development", `);
+    expect(texts.client).toContain(`"react/jsx-dev-runtime"`);
+  });
+
+  describe("with JSX", () => {
+    const files = {
+      "app.jsx": `console.log(process.env.NODE_ENV, <div />.type);`,
+      "build.js": `
+        const { outputs } = await Bun.build({
+          entrypoints: ["./app.jsx"],
+          target: "bun",
+          external: ["react/*"],
+          jsx: JSON.parse(process.argv[2]),
+        });
+        process.stdout.write(await outputs[0].text());
+      `,
+    };
+
+    test.concurrent.each([["production"], ["development"], [undefined]])(
+      "a React server build with no NODE_ENV runs with NODE_ENV=%s",
+      async nodeEnv => {
+        using dir = tempDir("bundler-node-env-react", files);
+        symlinkSync(join(import.meta.dir, "../node_modules"), join(String(dir), "node_modules"), "junction");
+        await run([bunExe(), "build", "app.jsx", "--target=bun", "--outfile=out.js"], String(dir), unset);
+        expect(await run([bunExe(), "out.js"], String(dir), { ...unset, NODE_ENV: nodeEnv })).toBe(`${nodeEnv} div\n`);
+      },
+    );
+
+    async function jsxImport(
+      args: string[],
+      extraFiles: Record<string, string>,
+      buildEnv: Record<string, string> = {},
+    ) {
+      using dir = tempDir("bundler-node-env-jsx", { ...files, ...extraFiles });
+      const stdout = await run(
+        [bunExe(), "build", "app.jsx", "--target=bun", "--external=react/*", ...args],
+        String(dir),
+        { ...unset, ...buildEnv },
+      );
+      return stdout.match(/"react\/[a-z-]+"/)?.[0];
+    }
+
+    test.concurrent("a build with no NODE_ENV emits the transform both React builds export", async () => {
+      expect(await jsxImport([], {})).toBe(`"react/jsx-runtime"`);
+    });
+
+    test.concurrent("tsconfig react-jsxdev keeps jsxDEV", async () => {
+      const tsconfig = JSON.stringify({ compilerOptions: { jsx: "react-jsxdev" } });
+      expect(await jsxImport([], { "tsconfig.json": tsconfig })).toBe(`"react/jsx-dev-runtime"`);
+    });
+
+    test.concurrent("NODE_ENV=development at build time keeps jsxDEV", async () => {
+      expect(await jsxImport([], {}, { NODE_ENV: "development" })).toBe(`"react/jsx-dev-runtime"`);
+    });
+
+    test.concurrent("a define of NODE_ENV keeps jsxDEV", async () => {
+      const define = `--define=process.env.NODE_ENV="development"`;
+      expect(await jsxImport([define], {})).toBe(`"react/jsx-dev-runtime"`);
+    });
+
+    test.concurrent.each([
+      [{}, `"react/jsx-runtime"`],
+      [{ development: true }, `"react/jsx-dev-runtime"`],
+      [{ runtime: "react-jsxdev" }, `"react/jsx-dev-runtime"`],
+    ])("Bun.build with jsx %j imports %s", async (jsx, expected) => {
+      using dir = tempDir("bundler-node-env-jsx-api", files);
+      const stdout = await run([bunExe(), "build.js", JSON.stringify(jsx)], String(dir), unset);
+      expect(stdout.match(/"react\/[a-z-]+"/)?.[0]).toBe(expected);
+    });
   });
 });

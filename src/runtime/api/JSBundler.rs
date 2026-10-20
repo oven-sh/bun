@@ -119,6 +119,7 @@ pub(crate) mod js_bundler {
         pub(crate) tsconfig_override: OwnedString,
         pub(crate) jsx: api::Jsx,
         pub(crate) force_node_env: options::ForceNodeEnv,
+        pub(crate) jsx_development_explicit: bool,
         pub(crate) code_splitting: bool,
         pub(crate) split_require: bool,
         pub(crate) minify: Minify,
@@ -193,6 +194,7 @@ pub(crate) mod js_bundler {
                     ..Default::default()
                 },
                 force_node_env: options::ForceNodeEnv::Unspecified,
+                jsx_development_explicit: false,
                 code_splitting: false,
                 split_require: true,
                 minify: Minify::default(),
@@ -836,6 +838,7 @@ pub(crate) mod js_bundler {
                         this.jsx.runtime = jsx_runtime_to_api(runtime.runtime);
                         if let Some(dev) = runtime.development {
                             this.jsx.development = dev;
+                            this.jsx_development_explicit = true;
                         }
                     } else {
                         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -863,6 +866,7 @@ pub(crate) mod js_bundler {
 
                 if let Some(dev) = jsx_value.get_boolean_loose(global_this, "development")? {
                     this.jsx.development = dev;
+                    this.jsx_development_explicit = true;
                 }
 
                 if let Some(val) = jsx_value.get_boolean_loose(global_this, "sideEffects")? {

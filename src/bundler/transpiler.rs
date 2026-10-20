@@ -534,6 +534,15 @@ impl<'a> Transpiler<'a> {
         // inside the `&mut self` scope without `unsafe`.
         self.options.load_defines(self.arena, Some(env_loader))?;
 
+        if self.options.node_env_at_runtime {
+            let top_level_dir = self.fs().top_level_dir;
+            if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
+                if let Some(tsconfig) = self.resolver.tsconfig_json(&root_dir) {
+                    self.options.jsx_development_explicit |= tsconfig.sets_jsx_development();
+                }
+            }
+        }
+
         let mut is_development = false;
         if had_explicit_node_env {
             if let Some(node_env) = self.options.define.dots.get(b"NODE_ENV".as_slice()) {

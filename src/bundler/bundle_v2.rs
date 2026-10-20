@@ -1998,6 +1998,18 @@ pub mod bv2_impl {
                 unsafe { Transpiler::for_worker(this_transpiler, arena, this_transpiler.log) };
 
             ct.options.target = Target::Browser;
+            // A browser has no `process` to read NODE_ENV from.
+            if ct.options.node_env_at_runtime {
+                ct.options.node_env_at_runtime = false;
+                static DEVELOPMENT: bun_ast::E::EString =
+                    bun_ast::E::EString::from_static(b"development");
+                for key in [b"process.env.NODE_ENV".as_slice(), b"process.env.BUN_ENV"] {
+                    ct.options.define.insert(
+                        key,
+                        crate::defines::DefineData::init_static_string(&DEVELOPMENT),
+                    )?;
+                }
+            }
             // Don't inherit SSR mode from the server target: the SSR pass
             // drops hook setter bindings, which is invalid for browser code.
             if ct.options.react_compiler.is_ssr() {

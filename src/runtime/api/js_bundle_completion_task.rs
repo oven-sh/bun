@@ -976,6 +976,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         if config.force_node_env != options::ForceNodeEnv::Unspecified {
             transpiler.options.force_node_env = config.force_node_env;
         }
+        transpiler.options.jsx_development_explicit = config.jsx_development_explicit;
 
         transpiler.options.entry_points = config.entry_points.keys().to_vec().into_boxed_slice();
         // Convert API JSX config back to options.JSX.Pragma

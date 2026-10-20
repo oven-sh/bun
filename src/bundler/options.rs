@@ -1399,6 +1399,10 @@ pub struct BundleOptions<'a> {
     /// to determine if a development jsx-runtime is used (by going between
     /// "react-jsx" or "react-jsx-dev-runtime")
     pub force_node_env: ForceNodeEnv,
+    /// A server build with no `NODE_ENV` of its own: set by `load_defines`.
+    pub node_env_at_runtime: bool,
+    /// `jsx.development` came from the user, not from the default.
+    pub jsx_development_explicit: bool,
 
     pub ignore_module_resolution_errors: bool,
 
@@ -1443,7 +1447,10 @@ impl<'a> BundleOptions<'a> {
         match self.force_node_env {
             ForceNodeEnv::Development => true,
             ForceNodeEnv::Production => false,
-            ForceNodeEnv::Unspecified => self.jsx.development,
+            // React picks its build at run time then, and only one build has `jsxDEV`.
+            ForceNodeEnv::Unspecified => {
+                self.jsx.development && (self.jsx_development_explicit || !self.node_env_at_runtime)
+            }
         }
     }
 
@@ -1580,6 +1587,8 @@ impl<'a> BundleOptions<'a> {
             unwrap_commonjs_packages: self.unwrap_commonjs_packages,
             supports_multiple_outputs: self.supports_multiple_outputs,
             force_node_env: self.force_node_env,
+            node_env_at_runtime: self.node_env_at_runtime,
+            jsx_development_explicit: self.jsx_development_explicit,
             ignore_module_resolution_errors: self.ignore_module_resolution_errors,
             optimize_imports: self.optimize_imports,
         }
@@ -1659,7 +1668,7 @@ impl<'a> BundleOptions<'a> {
         // every VM with no `NODE_ENV` in its env hits the `"development"` arm.
         let node_env: Option<Cow<[u8]>> = 'node_env: {
             if let Some(e) = loader_.as_deref() {
-                if let Some(env_) = e.get_node_env() {
+                if let Some(env_) = e.get_node_env().filter(|v| !v.is_empty()) {
                     break 'node_env Some(Cow::Owned(env_.to_vec()));
                 }
             }
@@ -1672,7 +1681,18 @@ impl<'a> BundleOptions<'a> {
                 break 'node_env Some(Cow::Borrowed(b"\"production\"".as_slice()));
             }
 
-            if matches!(self.target, Target::Bun | Target::Node) {
+            // The dev server's own graphs stay in step with its client graph.
+            let user_defined = self.transform_options.define.as_ref().is_some_and(|m| {
+                m.keys
+                    .iter()
+                    .any(|k| &**k == default_user_defines::node_env::KEY)
+            });
+            if matches!(self.target, Target::Bun | Target::Node)
+                && self.framework.is_none()
+                && self.env.behavior != api::DotEnvBehavior::LoadAllWithoutInlining
+                && !user_defined
+            {
+                self.node_env_at_runtime = true;
                 break 'node_env None;
             }
 
@@ -1836,6 +1856,8 @@ impl<'a> BundleOptions<'a> {
             unwrap_commonjs_packages: Self::DEFAULT_UNWRAP_COMMONJS_PACKAGES,
             supports_multiple_outputs: true,
             force_node_env: ForceNodeEnv::Unspecified,
+            node_env_at_runtime: false,
+            jsx_development_explicit: false,
             ignore_module_resolution_errors: false,
             optimize_imports: None,
         };

@@ -252,6 +252,10 @@ impl TSConfigJSON {
         out
     }
 
+    pub fn sets_jsx_development(&self) -> bool {
+        self.jsx_flags.contains(JsxField::Development)
+    }
+
     /// Support ${configDir}, but avoid allocating when possible.
     ///
     /// https://github.com/microsoft/TypeScript/issues/57485

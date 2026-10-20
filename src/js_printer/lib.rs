@@ -786,7 +786,7 @@ pub mod analyze_transpiled_module {
         }
 
         /// find any exports marked as 'local' that are actually 'indirect' and fix them
-        pub fn finalize(&mut self) {
+        pub fn finalize(&mut self) -> Result<(), ()> {
             debug_assert!(!self.finalized);
             #[derive(Clone, Copy)]
             struct LocalImport {
@@ -862,6 +862,7 @@ pub mod analyze_transpiled_module {
                 }
             }
             self.finalized = true;
+            Ok(())
         }
     }
 }
@@ -7858,7 +7859,12 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     let have_module_info = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO
         && printer.module_info.is_some();
     if have_module_info {
-        printer.module_info.as_mut().unwrap().finalize();
+        printer
+            .module_info
+            .as_mut()
+            .unwrap()
+            .finalize()
+            .map_err(|()| crate::Error::Alloc(bun_alloc::AllocError))?;
     }
 
     let mut source_maps_chunk: Option<SourceMap::Chunk> = if GENERATE_SOURCE_MAP {
@@ -8119,7 +8125,9 @@ pub fn serialize_module_info(
 ) -> Option<Box<[u8]>> {
     let mi = module_info?;
     if !mi.finalized {
-        mi.finalize();
+        if mi.finalize().is_err() {
+            return None;
+        }
     }
     let deserialized = mi.as_deserialized();
     let mut buf: Vec<u8> = Vec::new();

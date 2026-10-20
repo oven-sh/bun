@@ -569,9 +569,6 @@ pub struct PackageManager {
     pub(crate) local_in_root: Vec<PackageNameHash>,
     // Every `npm:` alias as (name hash, the package that declares it, the package it resolved to).
     pub(crate) alias_rows: Vec<(PackageNameHash, PackageID, PackageID)>,
-    // `lockfile.buffers.resolutions` when `process_peer_dependency_list` queued the last batch. See
-    // `enqueue::peer_provided_from_above`.
-    pub(crate) resolutions_before_batch: Vec<PackageID>,
     // The packages that the keys of `patchedDependencies` name. See
     // `enqueue::index_patched_versions`.
     pub(crate) patched_versions: Option<Vec<(PackageNameHash, Semver::Version)>>,
@@ -1719,7 +1716,6 @@ fn allocate_package_manager(
         wr!(peer_askers, None);
         wr!(local_in_root, Vec::new());
         wr!(alias_rows, Vec::new());
-        wr!(resolutions_before_batch, Vec::new());
         wr!(patched_versions, None);
         wr!(known_npm_aliases, NpmAliasMap::default());
         wr!(trusted_deps_to_add_to_package_json, Vec::new());

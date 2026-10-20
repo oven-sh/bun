@@ -4047,8 +4047,7 @@ fn installed_peer_target(
     if lockfile.is_overridden_dependency(row) {
         return None;
     }
-    let provided =
-        peer_provided_from_above(lockfile, &this.resolutions_before_batch, name_hash, row)?;
+    let provided = peer_provided_from_above(lockfile, name_hash, row)?;
     (!would_revive_leftover(lockfile, row, provided)).then_some(provided)
 }
 
@@ -4106,13 +4105,8 @@ fn installed_version_in_any_range(
 /// - A library uses the same copy as the UI kit that depends on it, if both have the peer dependency.
 ///
 /// Returns `None` if nothing above the owner has a dependency or a peer dependency on this name.
-///
-/// A peer dependency also puts its owner above the package that it resolves to. Only the ones that
-/// were resolved before the batch of `row` was queued count (`before_batch`), so the result doesn't
-/// depend on the order in the batch. The project's own always count: they come first in a batch.
 fn peer_provided_from_above(
     lockfile: &Lockfile::Lockfile,
-    before_batch: &[PackageID],
     name_hash: PackageNameHash,
     row: DependencyID,
 ) -> Option<PackageID> {
@@ -4157,14 +4151,8 @@ fn peer_provided_from_above(
             for (parent, list) in lists.iter().enumerate() {
                 if seen.is_set(parent)
                     || !(list.begin() as usize..list.end() as usize).any(|id| {
-                        let below = if !deps[id].behavior.is_peer() || is_project(parent) {
-                            Some(&resolutions[id])
-                        } else if follows_peers {
-                            before_batch.get(id)
-                        } else {
-                            None
-                        };
-                        below.is_some_and(|&id| level.is_set_allow_out_of_bound(id as usize, false))
+                        (follows_peers || !deps[id].behavior.is_peer() || is_project(parent))
+                            && level.is_set_allow_out_of_bound(resolutions[id] as usize, false)
                     })
                 {
                     continue;
@@ -4427,9 +4415,11 @@ fn range_most_peers_accept(
     let buf = lockfile.buffers.string_bytes.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
     let versions = &manifest.string_buf;
-    // A package that has a provider in one place uses the provider's version everywhere.
+    // A package that has a provider uses the provider's version.
     let ranges: Vec<dependency::Version> = (peer_askers(this, peer.name_hash).iter())
-        .filter(|&&(.., has_no_provider)| has_no_provider)
+        .filter(|&&(_, id, _, has_no_provider)| {
+            has_no_provider && peer_provided_from_above(lockfile, peer.name_hash, id).is_none()
+        })
         .filter_map(|&(_, id, ..)| {
             crate::dedupe::effective_npm_range(lockfile, id, &deps[id as usize])
         })

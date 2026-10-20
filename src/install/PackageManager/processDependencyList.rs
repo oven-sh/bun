@@ -1,8 +1,7 @@
 use core::cell::Cell;
-use core::cmp::Ordering;
 
-use bun_collections::index_sort;
-use bun_core::{Output, strings};
+use bun_collections::{DynamicBitSetList, index_sort};
+use bun_core::{Output, UnwrapOrOom, strings};
 use bun_semver::{ExternalString, String as SemverString};
 
 use crate::bun_json::Expr;
@@ -16,7 +15,7 @@ use crate::repository_real::{RepositoryExt as _, locked_scp_like};
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
 use crate::{
     Dependency, DependencyID, ExtractData, ExtractDataJson, Features, INVALID_PACKAGE_ID,
-    PackageID, Resolution, TaskCallbackContext, dependency,
+    PackageID, PackageNameHash, Resolution, TaskCallbackContext, dependency,
 };
 
 /// The dependencies of a package.json, parsed into a separate lockfile. `LookAhead` reads it to
@@ -706,28 +705,21 @@ impl PackageManager {
         }
         self.look_ahead.in_peer_pass = true;
         self.look_ahead.deferred_peers_seen = 0;
-        (self.resolutions_before_batch).clone_from(&self.lockfile.buffers.resolutions);
-        let (order, next_batch) = self.peer_batch_order(&mut batch);
-        for i in order {
+        for i in self.peer_batch_order(&mut batch) {
             (self.lockfile.scratch.dependency_list_queue).push(QueuedRows {
                 rows: DependencySlice::new(batch[i as usize], 1),
                 install_peer: true,
                 from_command: true,
             })?;
         }
-        for i in next_batch {
-            self.peer_dependencies.write_item(batch[i as usize])?;
-        }
         Ok(())
     }
 
-    /// Sorts `batch` by id and returns indices into it, in an order independent of arrival: the
-    /// project's own peers, then a package before the packages that it depends on. The second list
-    /// has the peers that wait for the next batch.
-    fn peer_batch_order(&self, batch: &mut [DependencyID]) -> (Vec<u32>, Vec<u32>) {
+    /// Sorts `batch` by id and returns indices into it, in an order independent of arrival.
+    fn peer_batch_order(&self, batch: &mut [DependencyID]) -> Vec<u32> {
         let mut order = index_sort::identity(batch.len());
         if batch.len() < 2 {
-            return (order, Vec::new());
+            return order;
         }
         index_sort::sort_indices_unstable(batch, &mut |a, b| a.cmp(&b));
 
@@ -750,26 +742,44 @@ impl PackageManager {
             ResolutionTag::Workspace => 1,
             _ => 2,
         };
-        // A package uses the copy of the package above it if both have the peer dependency, so the
-        // one above comes first. The project's own peers stay in the order of the names: a workspace
-        // would otherwise never get its own range next to a workspace that depends on it.
-        let mut position: Vec<u32> = vec![u32::MAX; names.len()];
-        let dependents_first = crate::lockfile::reachable::dependents_first(lockfile);
-        for (i, &package) in dependents_first.iter().enumerate() {
-            position[package as usize] = if rank(package as usize) == 2 {
-                i as u32
-            } else {
-                0
-            };
+        // A package uses the copy of the package above it if both have the peer dependency, so a
+        // peer waits if a package above its owner has it too. So does a peer of a package that
+        // nothing depends on until another peer in `batch` is resolved.
+        let mut peers: Vec<PackageNameHash> =
+            (batch.iter().map(|&id| dependencies[id as usize].name_hash)).collect();
+        peers.sort_unstable();
+        peers.dedup();
+        let lists = lockfile.packages.items_dependencies();
+        let above = DynamicBitSetList::init_empty(names.len(), peers.len()).unwrap_or_oom();
+        let mut waits: Vec<bool> = vec![true; batch.len()];
+        for package in crate::lockfile::reachable::dependents_first(lockfile) {
+            let list = lists[package as usize];
+            let first = batch.partition_point(|&id| id < list.begin());
+            for i in first..first + batch[first..].partition_point(|&id| id < list.end()) {
+                waits[i] = false;
+                if rank(package as usize) == 2
+                    && let Ok(peer) =
+                        peers.binary_search(&dependencies[batch[i] as usize].name_hash)
+                {
+                    waits[i] = above.at(package as usize).is_set(peer);
+                    above.set(package as usize, peer);
+                }
+            }
+            for id in list.begin() as usize..list.end() as usize {
+                let below = lockfile.buffers.resolutions[id] as usize;
+                if !dependencies[id].behavior.is_peer() && below < names.len() {
+                    above.set_union(below, &above.at(package as usize));
+                }
+            }
         }
         index_sort::sort_indices_unstable(&mut order, &mut |a, b| {
             let (a, b) = (a as usize, b as usize);
             let by_owner = match (owners[a] as usize, owners[b] as usize) {
-                (x, y) if x == y => Ordering::Equal,
+                (x, y) if x == y => waits[a].cmp(&waits[b]),
                 (x, y) if x >= names.len() || y >= names.len() => x.cmp(&y),
                 (x, y) => rank(x)
                     .cmp(&rank(y))
-                    .then_with(|| position[x].cmp(&position[y]))
+                    .then_with(|| waits[a].cmp(&waits[b]))
                     .then_with(|| strings::order(names[x].slice(buf), names[y].slice(buf)))
                     .then_with(|| resolutions[x].order(&resolutions[y], buf, buf)),
             };
@@ -782,15 +792,6 @@ impl PackageManager {
                 })
                 .then(batch[a].cmp(&batch[b]))
         });
-        // Nothing depends yet on a package from bun.lock that only a peer in this batch resolves
-        // to. Its own peers wait until something does, like the peers of a package that's new.
-        let (now, later): (Vec<u32>, Vec<u32>) = order.into_iter().partition(|&i| {
-            (position.get(owners[i as usize] as usize)).is_some_and(|&at| at != u32::MAX)
-        });
-        if now.is_empty() {
-            (later, now)
-        } else {
-            (now, later)
-        }
+        order
     }
 }

@@ -4381,7 +4381,7 @@ it.each<OrderedShape>([
     z: { "z": "z@1.0.0" },
   },
   {
-    // No version satisfies both, so they share one copy: the newest of the versions that satisfy the most ranges.
+    // No version satisfies both, so they share one copy: the newest of the versions that satisfy the most packages.
     shape: "a peers z@^1.0.0 next to b peers z@^2.0.0",
     manifests: {
       a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
@@ -4662,19 +4662,54 @@ it.each<{ shape: string; manifests: OrderedManifests; root: string[]; swap: [str
     z: ["2.0.0"],
   },
   {
-    // z@1.0.5 is above f only through its own peer dependency on c, which is resolved together with f's on z.
-    shape: "a package is above another one only through a peer dependency",
+    // l@2.0.0 uses j@1.5.0 because l@1.0.0 installs it first. Otherwise it uses the j@2.3.0 of a, and nothing puts
+    // j@1.5.0 below g and its z@1.0.0.
+    shape: "two versions of one package have a peer dependency, next to a package that has none",
     manifests: {
-      c: { "1.0.0": { dependencies: { i: "1.0.0" } } },
-      f: { "1.0.0": { peerDependencies: { z: "1.0.0" } } },
-      g: { "1.0.0": { dependencies: { z: "~1.0.5" } } },
-      i: { "1.0.0": { dependencies: { f: "1.0.0" } } },
-      k: { "1.0.0": { dependencies: { f: "1.0.0" } } },
-      z: { "1.0.0": {}, "1.0.5": { peerDependencies: { c: "*" } } },
+      a: { "1.0.0": { dependencies: { j: "^2.3.0", g: "1.0.0" } } },
+      g: { "1.0.0": { dependencies: { l: "^2.0.0", z: "1.0.0" } } },
+      l: { "1.0.0": { peerDependencies: { j: "1.5.0" } }, "2.0.0": { peerDependencies: { j: "^1.0.5" } } },
+      j: { "1.5.0": { peerDependencies: { z: "^1.1.0" } }, "2.3.0": {} },
+      z: zVersions,
     },
-    root: ["c", "g", "k"],
-    swap: ["f", "z"],
-    z: ["1.0.0", "1.0.5"],
+    root: ["a", "l"],
+    swap: ["a", "x"],
+    z: ["1.0.0"],
+  },
+  {
+    // h is above n@0.5.0 and has a peer dependency, but on another package. n@0.5.0 still comes before n@1.0.0, and
+    // its peer dependency on a puts z@1.0.5 above n@1.0.0.
+    shape: "a package above one of two versions has a peer dependency on something else",
+    manifests: {
+      k: { "1.0.0": { dependencies: { h: "1.0.0" } } },
+      h: { "1.0.0": { dependencies: { z: "~1.0.5" }, peerDependencies: { m: "*" } } },
+      m: { "1.0.0": {} },
+      a: { "1.0.0": { dependencies: { n: "1.0.0" } } },
+      n: { "0.5.0": { peerDependencies: { a: "*" } }, "1.0.0": { peerDependencies: { z: ">=2.0.0" } } },
+      z: { "1.0.5": { dependencies: { n: "^0.5.0" } }, "2.0.0": {} },
+    },
+    root: ["a", "k", "n"],
+    swap: ["h", "q"],
+    z: ["1.0.5"],
+  },
+  {
+    // c@1.1.0 -> k, which has a peer dependency on d -> c@1.0.5. c@1.0.5 still comes first, so both use 1.0.5.
+    shape: "a version of a package is above another version only through a peer dependency",
+    manifests: {
+      m: { "1.0.0": { peerDependencies: { k: "*" } } },
+      k: { "1.0.0": { dependencies: { b: "1.0.0" }, peerDependencies: { d: "1.0.0" } } },
+      b: { "1.0.0": { peerDependencies: { i: "*" } } },
+      i: { "1.0.0": { dependencies: { c: "1.1.0" } } },
+      d: { "1.0.0": { dependencies: { c: "1.0.5" } } },
+      c: {
+        "1.0.5": { peerDependencies: { z: "~1.0.0" } },
+        "1.1.0": { dependencies: { k: "*" }, peerDependencies: { z: ">=1.0.0" } },
+      },
+      z: zVersions,
+    },
+    root: ["m"],
+    swap: ["d", "i"],
+    z: ["1.0.5"],
   },
   {
     // b uses the provider's version wherever it's loaded, so its range doesn't choose a version for a.
@@ -4700,15 +4735,23 @@ it.each<{ shape: string; manifests: OrderedManifests; root: string[]; swap: [str
   }
 });
 
-// The workspace is above e only through its peer dependency on it, which is resolved together with e's on z.
-it("a package that a workspace has a peer dependency on uses the workspace's copy of its own peer", async () => {
-  using server = (await registryWithHolds({ e: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } }, z: zVersions }))
-    .server;
+// wc is above l through wa's peer dependency on it, so l uses the z of wc and g gets a version in its own range.
+it("a package with a provider through a workspace's peer dependency doesn't pick the version that others share", async () => {
+  using server = (
+    await registryWithHolds({
+      h: { "1.0.0": { dependencies: { g: "1.0.0" } }, "3.0.0": { dependencies: { l: "1.0.0" } } },
+      l: { "1.0.0": { peerDependencies: { z: "2.0.0" } } },
+      g: { "1.0.0": { peerDependencies: { z: "~1.0.0" } } },
+      z: zVersions,
+    })
+  ).server;
   const lock = await freshInstallLock(server, {
-    "package.json": { name: "foo", workspaces: ["packages/*"], dependencies: { e: "1.0.0" } },
-    "packages/w/package.json": { name: "w", dependencies: { z: "1.0.0" }, peerDependencies: { e: "*" } },
+    "package.json": { name: "foo", workspaces: ["packages/*"], dependencies: { h: "^3.0.0" } },
+    "packages/wa/package.json": { name: "wa", peerDependencies: { l: "1.0.0" } },
+    "packages/wb/package.json": { name: "wb", dependencies: { h: "~1.0.0" } },
+    "packages/wc/package.json": { name: "wc", dependencies: { z: "1.1.0", wa: "workspace:*" } },
   });
-  expect(instancesOf(lock, "z")).toEqual({ "z": "z@1.0.0" });
+  expect([...new Set(Object.values(instancesOf(lock, "z")))].sort()).toEqual(["z@1.0.5", "z@1.1.0"]);
 });
 
 // wc depends on wa. wa still comes first, so it gets a version in its own range and not the copy of wc.

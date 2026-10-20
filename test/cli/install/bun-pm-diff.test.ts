@@ -62,7 +62,7 @@ beforeAll(async () => {
       if (url.pathname === "/diffme") {
         const versions: any = {};
         for (const [v, files] of Object.entries({ "1.0.0": v1, "2.0.0": v2 })) {
-          // As a registry does, each entry repeats the package.json it was published with.
+          // Like in a real registry, each entry repeats the package.json that it was published with.
           versions[v] = {
             ...JSON.parse(files["package.json"]),
             dist: { tarball: `${registry}/diffme/-/diffme-${v}.tgz` },
@@ -76,7 +76,7 @@ beforeAll(async () => {
       }
       const m = url.pathname.match(/^\/diffme\/-\/diffme-(.+)\.tgz$/);
       if (m && tarballs[m[1]]) return new Response(Bun.file(tarballs[m[1]]));
-      // What diffme@2.0.0 depends on, for the tests that install it.
+      // The dependencies of diffme@2.0.0, for the tests that install it.
       const leftPad = { name: "left-pad", version: "1.3.0" };
       if (url.pathname === "/left-pad") {
         const dist = { tarball: `${registry}/left-pad/-/left-pad-1.3.0.tgz` };
@@ -208,7 +208,7 @@ diffme@1.0.0 → diffme@2.0.0
     },
   );
 
-  test("a second argument that is no version is a package name", async () => {
+  test("a second argument that isn't a version is a package name", async () => {
     const { stdout, stderr, exitCode } = await diff(["diffme@1.0.0", "nosuchpackage"]);
     expect({ stdout, stderr: stderr.includes("nosuchpackage"), exitCode }).toEqual({
       stdout: "",
@@ -343,7 +343,7 @@ diffme@1.0.0 → diffme@2.0.0
   );
 
   test.each(lockfiles)(
-    "a name alone on the left is what the project installs under that name (%s)",
+    "a bare name on the left means what the project installs under that name (%s)",
     async (lockfile, bunfig) => {
       using dir = tempDir("pm-diff-alias", {
         "bunfig.toml": bunfig,
@@ -371,7 +371,7 @@ diffme@1.0.0 → diffme@2.0.0
     },
   );
 
-  test("a name alone on the left that no lockfile knows is latest; a bare `latest` on the right is the tag", async () => {
+  test("a bare name on the left that isn't in any lockfile means latest; a bare `latest` on the right is the tag", async () => {
     expect(await sides(String(root), "diffme", "1.0.0")).toBe("diffme@2.0.0 → diffme@1.0.0");
     expect(await sides(String(root), "diffme@1.0.0", "latest")).toBe("diffme@1.0.0 → diffme@2.0.0");
     expect(await sides(String(root), "./v1", "latest")).toBe("./v1 → diffme@2.0.0");
@@ -468,7 +468,8 @@ diffme@1.0.0 → diffme@2.0.0
       `${rootTgz} → .\nNo differences (6 files)\n`,
     );
 
-    // A folder that is no package of the project keeps what it says: nothing is taken from a workspace of the same name.
+    // A folder that isn't one of the project's packages is compared as written. Nothing is taken from a workspace with
+    // the same name.
     const vendored = await diff([tgz, "./vendor/a", "--json"], String(dir));
     expect(vendored.stderr).toBe("");
     const { files, notes } = JSON.parse(vendored.stdout);
@@ -491,7 +492,7 @@ diffme@1.0.0 → diffme@2.0.0
     });
   });
 
-  test("a workspace: version that does not resolve, or a folder outside of any project, stays as written", async () => {
+  test("a workspace: version that doesn't resolve, or a folder outside of any project, is left as written", async () => {
     const pkg = JSON.stringify({ name: "lonely", version: "1.0.0", dependencies: { gone: "workspace:^" } });
     using dir = tempDir("pm-diff-unresolved", {
       "project/package.json": pkg,
@@ -776,6 +777,12 @@ diffme@1.0.0 → diffme@2.0.0
     expect(hits.some(h => h.endsWith(" /@priv/diffme"))).toBe(true);
   });
 
+  test("treats a name longer than the path buffer as a registry package", async () => {
+    const { stderr, exitCode } = await diff([Buffer.alloc(5000, "x") + "@1.0.0", "2.0.0"]);
+    expect(stderr).toContain("404");
+    expect(exitCode).toBe(1);
+  });
+
   test("errors: unknown package, no matching version; a third argument is a file filter", async () => {
     const unknown = await diff(["nope-nope@1.0.0", "2.0.0"]);
     expect(unknown.exitCode).toBe(1);
@@ -990,7 +997,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
   const LRI = "\u2066";
   const PDI = "\u2069";
 
-  test("a tarball is asked for and checked as bun install does", async () => {
+  test("a tarball is requested and verified the way bun install does it", async () => {
     const versions = ["1.0.0", "2.0.0"];
     const balls = async (body: string) =>
       Object.fromEntries(
@@ -1097,7 +1104,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     expect(exitCode).toBe(0);
   });
 
-  // ConPTY rewrites what the process writes.
+  // ConPTY rewrites the process's output.
   test.skipIf(isWindows)("NO_COLOR on a terminal: the plain patch, with control characters drawn", async () => {
     const added = `exports.b = 2; //${ESC}[2K${ESC}[1A ${CSI_C1}31m ${RLO}\x7f\b `;
     using dir = tempDir("pm-diff-plain-tty", {
@@ -1138,7 +1145,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     expect(piped.stdout).toContain(`+++ b/${RLO}name${CSI_C1}.js\n`);
   });
 
-  test("a NUL byte does not make a binary of a file that is read as text", async () => {
+  test("a NUL byte doesn't turn a file that's read as text into a binary file", async () => {
     const line = "exports.a = 1;\n";
     const more = `exports.b = require("child_process");\n`;
     const text: Record<string, [string, string]> = {
@@ -1201,8 +1208,8 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     expect(shown.exitCode).toBe(0);
   });
 
-  test("a published version is summed up by what the registry says of it", async () => {
-    // What version 2.0.0 adds: [to the package.json in its tarball, to its entry in the registry's document].
+  test("the summary of a published version comes from the registry's metadata", async () => {
+    // What version 2.0.0 adds, as [to the package.json in its tarball, to its entry in the registry's document].
     const cases: Record<string, [object, object]> = {
       "same": [{ dependencies: { dep: "1.0.0" } }, { dependencies: { dep: "1.0.0" } }],
       // A registry writes some fields its own way.
@@ -1520,7 +1527,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
 
   test("the piped patch applies with git: empty files, permission changes, file names that need quotes", async () => {
     const names = ["plain.txt", "with space.txt", "dir with space/x.txt", "é.txt"];
-    // Not valid in a Windows file name.
+    // This isn't valid in a Windows file name.
     if (!isWindows) names.push("t\tab.txt", 'q"uote.txt', "back\\slash.txt", "new\nline.txt");
     const a: Record<string, string> = {
       "grow.txt": "",
@@ -1591,7 +1598,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     expect(stdout).toContain(
       'diff --git "a/changed-with space.txt" "b/changed-with space.txt"\n--- "a/changed-with space.txt"\n+++ "b/changed-with space.txt"\n@@',
     );
-    // No mode line under a header that git skips: GNU patch would take it for the file above.
+    // No mode line is printed under a header that git skips, because GNU patch would apply it to the file above.
     expect(stdout).toContain(
       "diff --bun a/tool.bin b/tool.bin\nnew file\nBinary files differ (0 → 1 bytes, sha256 none → 6e340b9cffb3)\n",
     );
@@ -2012,7 +2019,7 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     expect(byFile(view.text)).toEqual(byFile(raw.text));
     expect(view.exitCode).toBe(0);
 
-    // Each of these is one program twice, but for the edit named: the rest stays folded.
+    // Each of these is the same program twice, except for the edit mentioned. The rest stays folded.
     const same: Record<string, string[]> = {
       "layout.js": [`exports.a = function (x) { return x + 1 }\n`, `exports.a = function (x) {\n  return x + 1;\n};\n`],
       "names.js": [
@@ -2063,7 +2070,7 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     });
   });
 
-  test("minified: the hashbang and exported names are part of what is compared", async () => {
+  test("minified: the hashbang and exported names are compared too", async () => {
     const long = "function(n,t){" + Array.from({ length: 40 }, (_, i) => `n.p${i}=t+${i};`).join("") + "return n}\n";
     const files = byFile(
       (

@@ -554,19 +554,6 @@ extern "C"
     }
   }
 
-  void uws_app_domain(int ssl, uws_app_t *app, const char *server_name)
-  {
-    if (ssl)
-    {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->domain(server_name);
-    }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->domain(server_name);
-    }
-  }
   void uws_app_set_flags(int ssl, uws_app_t *app, bool require_host_header, bool use_strict_method_validation, bool http_allow_half_open) {
     if (ssl) {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
@@ -689,6 +676,11 @@ extern "C"
   void uws_ws_close(int ssl, uws_websocket_t *ws)
   {
     withWebSocket(ssl, ws, [](auto *uws) { uws->close(); });
+  }
+
+  void uws_ws_fail_out_of_memory(int ssl, uws_websocket_t *ws)
+  {
+    withWebSocket(ssl, ws, [](auto *uws) { uws->failOutOfMemory(); });
   }
 
   void uws_ws_pause(int ssl, uws_websocket_t *ws)

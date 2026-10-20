@@ -4,20 +4,20 @@ use bun_lint::rule::Plugin;
 use bun_lint::source::mention_bit;
 use bun_lint_oxlint::ast_util::static_string;
 
-/// Require a package to be imported through the module of the project that wraps it.
+/// Require importing a package through the project's module that wraps it.
 pub struct PreferLocalModule {
     modules: Box<[Wrapped]>,
     exempt_files: Box<[Box<[u8]>]>,
 }
 
-/// An element of `modules`.
+/// One entry of the `modules` option.
 struct Wrapped {
     package: Box<[u8]>,
-    /// `use`: the specifier to write.
+    /// `use`: the specifier to import from instead.
     module: Box<[u8]>,
-    /// `default`: the name under which the module exports what the package exports as its default.
+    /// `default`: the module's export name for the package's default export.
     default: Option<Box<[u8]>>,
-    /// `names`: the names of the package that are others in the module, each with the other.
+    /// `names`: exports that the module renames, as (name in the package, name in the module).
     names: Box<[(Box<[u8]>, Box<[u8]>)]>,
 }
 
@@ -28,7 +28,7 @@ impl Wrapped {
         self.default.is_none() && self.names.is_empty()
     }
 
-    /// What the module calls what the package calls `name`.
+    /// Returns the module's name for the package's export `name`.
     fn name_for<'n>(&'n self, name: &'n [u8]) -> &'n [u8] {
         self.names.iter().find(|it| *it.0 == *name).map_or(name, |it| &*it.1)
     }
@@ -38,7 +38,8 @@ impl Wrapped {
         if name == local { name.to_vec() } else { [name, b" as ", local].concat() }
     }
 
-    /// What is between `import` and `from` to import the same from the module. `None`: that cannot be written.
+    /// Returns the text between `import` and `from` that imports the same bindings from the module, or `None` if
+    /// there's no equivalent clause.
     fn clause(&self, import: Import) -> Option<Vec<u8>> {
         if import.namespace().is_some() || import.is_type_only() {
             return None;
@@ -58,11 +59,12 @@ impl Wrapped {
         })
     }
 
-    /// Reports the specifier at `span`. `import`: the statement, if it is an `import`: the fix can write more of it.
+    /// Reports the specifier at `span`. `import` is the statement if it's an `import`, so the fix can also rewrite its
+    /// clause.
     fn report<'a>(&self, span: Span, import: Option<Import<'a>>, cx: &Cx<'a, PreferLocalModule>) {
         let report = cx.report(span, DIRECT_IMPORT).data("package", self.package.to_vec());
         report.data("module", self.module.to_vec()).fix(|fixer| {
-            // In the quotes that are there.
+            // Keep the existing quote style.
             let quote = fixer.file().slice(span).get(..1)?;
             let specifier = fixer.replace(span, [quote, &self.module, quote].concat());
             match import.filter(|it| !self.exports_the_same_names() && !it.is_side_effect()) {

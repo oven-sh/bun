@@ -728,7 +728,6 @@ fn is_like_new(task: &mut Task) -> bool {
         diagnostics,
         closed_a_cycle,
         order_dependent_variances,
-        assignments_walked,
         held_back,
         view,
         was_discarded,
@@ -753,7 +752,6 @@ fn is_like_new(task: &mut Task) -> bool {
         && diagnostics.is_empty()
         && !*closed_a_cycle
         && order_dependent_variances.is_empty()
-        && assignments_walked.get_mut().is_empty()
         && held_back.get() == 0
         && view.is_none()
         && !was_discarded.get()
@@ -816,10 +814,6 @@ fn ended_task_is_like_new() {
             void_targets: 0,
             inferred: 0,
         });
-    });
-    check(&|task| {
-        let walked = (A, crate::node::Node::NONE, true);
-        task.assignments_walked.get_mut().push(walked);
     });
     check(&|task| task.hold_back());
     ends_like_new(&tables, &session, |task| {

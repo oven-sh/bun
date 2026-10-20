@@ -232,11 +232,7 @@ pub(super) struct FlowMemo {
     context_free_types_in_loops: FxHashMap<(FileId, ExprId), TypeId>,
     /// The depth of `stack` when each `ExhaustiveState::Computing` was set, the innermost last.
     exhaustive_states_computing: SmallVec<[usize; 2]>,
-    /// `has_order_dependent_assignment_marks` by file, plus the most recently queried file's
-    /// result.
-    order_dependent_assignment_marks: std::cell::RefCell<FxHashMap<FileId, bool>>,
-    latest_order_dependent_assignment_marks: std::cell::Cell<Option<(FileId, bool)>>,
-    /// `last_assignment_pos`, where no later walk changes it.
+    /// `last_assignment_pos`
     last_assignment_positions: std::cell::RefCell<FxHashMap<(FileId, SymbolId), u32>>,
 }
 
@@ -858,6 +854,26 @@ fn is_skipped_by_mark_node_assignments(kind: Kind) -> bool {
         )
 }
 
+/// `markNodeAssignmentsWorker`'s `referencingFunction != declaringFunction` for `node`, an identifier
+/// that assigns to a variable of `declaring_function`. Returns `None` if the walk of
+/// `declaring_function` doesn't reach `node`.
+fn is_marked_in_nested_function(hir: &File, declaring_function: Node, node: Node) -> Option<bool> {
+    let mut referencing_function = Node::NONE;
+    let mut is_marked = false;
+    hir.find_ancestor(hir.parent(node), |n| {
+        let kind = hir.kind(n);
+        if is_skipped_by_mark_node_assignments(kind) {
+            return true;
+        }
+        if referencing_function.is_none() && is_function_or_source_file(kind) {
+            referencing_function = n;
+        }
+        is_marked = n == declaring_function;
+        is_marked
+    });
+    is_marked.then_some(referencing_function != declaring_function)
+}
+
 /// See `Checker::begin_memoizable`.
 struct Memoizable {
     scope: Scope,
@@ -1474,10 +1490,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut variable = self.variable_of_key(file, index);
         // FOR SPEED: check once, here, whether `[k]`'s variable is constant. `isMatchingReference`
         // and `writeFlowCacheKey` check each time they reach it.
-        if name == AccessedName::None
-            && !self.has_order_dependent_assignment_marks(file)
-            && !self.is_constant_key(file, variable)
-        {
+        if name == AccessedName::None && !self.is_constant_key(file, variable) {
             variable = Root::Other;
         }
         Step {
@@ -2305,7 +2318,6 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `isSymbolAssigned`
     fn is_symbol_assigned(&self, file: FileId, symbol: SymbolId) -> bool {
-        self.ensure_assignments_marked(file, symbol);
         self.last_assignment_pos(file, symbol) != 0
     }
 
@@ -2552,21 +2564,6 @@ impl<'p, 's> Checker<'p, 's> {
         Some(self.get_control_flow_container(file, declared_in))
     }
 
-    /// From `checkIdentifier`. True if `flowContainer` isn't `declarationContainer` and is a kind
-    /// of function that `flowContainer` can move out of. Whether it does depends on further tests
-    /// of the variable.
-    fn is_closed_over(&self, file: FileId, symbol: SymbolId, e: ExprId) -> bool {
-        // Same as in `flow_containers_up_to_declaration`.
-        let Some(declaration_container) = self.declaration_container(file, symbol) else {
-            return true;
-        };
-        let parent = self.bound(file).parent_of_expr(e);
-        let flow_container = self.get_control_flow_container(file, parent);
-        flow_container != declaration_container
-            && matches!(flow_container, Container::Fn(f)
-                if self.parent_of_function_with_outer_flow(file, f).is_some())
-    }
-
     /// From `checkIdentifier`. Returns how many times `flowContainer` moves to the enclosing
     /// container, starting from `e`'s, until it's `declarationContainer`. Returns `u32::MAX` if no
     /// walk can leave `declarationContainer` or a container isn't known.
@@ -2729,12 +2726,11 @@ impl<'p, 's> Checker<'p, 's> {
     // ───────────────────────────── tests ─────────────────────────────
 
     /// True if `narrow` may narrow `reference` by `expr`, the flow node `flow`'s test. If false,
-    /// `narrow` wouldn't run a query and would return its input type. It may still check whether a
-    /// variable is assigned.
+    /// `narrow` wouldn't run a query and would return its input type.
     fn is_test_about(&mut self, reference: &Reference, flow: FlowId, expr: ExprId) -> bool {
         let file = reference.file;
         // Every comparison resolves the name of the reference's outermost key.
-        if reference.unresolved.get() != 0 || self.has_order_dependent_assignment_marks(file) {
+        if reference.unresolved.get() != 0 {
             cold_path();
             return true;
         }
@@ -4848,16 +4844,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let declared = self.get_narrowable_type_for_reference(file, e, declared, self.check_mode());
         let crossing = self.crossing_of_identifier(file, e, sym, declared);
-        // FOR SPEED: `assumeInitialized` is evaluated when the walk needs it, unless the answer
-        // depends on earlier queries.
-        let start = if !self.has_order_dependent_assignment_marks(file) {
-            Start::Unsettled
-        } else if self.assumes_initialized(file, e, declared) {
-            Start::Known
-        } else {
-            Start::Unassigned
-        };
-        let ty = self.flow_type_of(file, e, declared, start, crossing);
+        // FOR SPEED: `assumeInitialized` is evaluated when the walk needs it.
+        let ty = self.flow_type_of(file, e, declared, Start::Unsettled, crossing);
         let hir = self.hir(file);
         if self.is_automatic_type(declared) && !self.is_evolving_array_operation_target(file, e) {
             // These types only occur under `noImplicitAny`. `checkWithStatement` doesn't check the
@@ -4874,11 +4862,7 @@ impl<'p, 's> Checker<'p, 's> {
         if ty != declared
             && self.contains_undefined(ty)
             && !self.contains_undefined(declared)
-            && match start {
-                Start::Known => false,
-                Start::Unsettled => !self.assumes_initialized(file, e, declared),
-                Start::Unassigned => true,
-            }
+            && !self.assumes_initialized(file, e, declared)
         {
             self.error_at(self.span_of_token(file, hir[e].pos), 2454, &[Arg::Sym(sym)]);
             // "Return the declared type to reduce follow-on errors"
@@ -5564,8 +5548,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Not in tsgo. True if `getFlowTypeOfReference` can only return `declared` for `reference`
     /// (the expression `e`) and resolves nothing along the way. See `index_narrowing_subjects`,
-    /// `may_resolve_key` and `highest_unsettled_call`. It may still check whether a variable is
-    /// assigned.
+    /// `may_resolve_key` and `highest_unsettled_call`.
     fn is_never_narrowed(
         &mut self,
         reference: &Reference,
@@ -5580,7 +5563,6 @@ impl<'p, 's> Checker<'p, 's> {
             || self.is_automatic_type(declared)
             // See `NarrowingSubjects::add_union`.
             || self.is_unresolved_name(declared)
-            || self.has_order_dependent_assignment_marks(file)
         {
             return false;
         }
@@ -5721,7 +5703,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if symbol.is_some()
                     && self.is_parameter_or_mutable_local_variable(decl_file, symbol)
                 {
-                    let last = self.last_assignment_pos_of_global(decl_file, symbol, pat, file);
+                    let last = self.last_assignment_pos_of_global(decl_file, symbol, pat);
                     let pos = self.end_of_token_before(file, self.hir(file)[e].pos);
                     if last == 0 || last < pos {
                         return Crossing::Yes;
@@ -5735,49 +5717,23 @@ impl<'p, 's> Checker<'p, 's> {
             Crossing::UpToDeclaration(s, e)
         } else if !flags.intersects(SymFlags::VARIABLE) {
             Crossing::No
-        } else if !self.has_order_dependent_assignment_marks(file) {
+        } else {
             // FOR SPEED: evaluated when a walk reaches the start of a function.
             Crossing::PastLastAssignment(s, e)
-        } else if self.is_closed_over(file, s, e) {
-            self.settled_crossing(file, Crossing::PastLastAssignment(s, e))
-        } else {
-            Crossing::No
         }
     }
 
     /// `lastAssignmentPos` of a `let` in a `declare global { }` in `declaring`.
     /// `markNodeAssignments` resolves each assigned name, so it also finds the file's assignments
     /// that the binder left without a symbol.
-    ///
-    /// In `referencing`, the file that reads the variable, an assignment counts once a walk has
-    /// reached it. It's in a different function than the declaration, so the position is
-    /// `math.MaxInt32`.
     fn last_assignment_pos_of_global(
         &self,
         declaring: FileId,
         symbol: SymbolId,
         pat: PatId,
-        referencing: FileId,
     ) -> u32 {
-        self.ensure_assignments_marked(declaring, symbol);
         let (hir, bound) = (self.hir(declaring), self.bound(declaring));
         let name = bound.symbol(symbol).name;
-        if referencing != declaring {
-            let (hir, bound) = (self.hir(referencing), self.bound(referencing));
-            let is_marked = bound.free_idents.iter().any(|&(target, _)| {
-                matches!(hir[target].kind, ExprKind::Ident(it) if it == name)
-                    && bound.get_assignment_target_kind(hir, target) != AssignmentKind::None
-                    && (self.is_marked_in_nested_function(
-                        referencing,
-                        Node::NONE,
-                        hir.node(target),
-                    ))
-                    .is_some()
-            });
-            if is_marked {
-                return u32::MAX;
-            }
-        }
         let declaring_function = function_or_source_file_of(hir, hir.node(pat));
         let mut last = self.last_assignment_pos(declaring, symbol);
         for &(target, _) in bound.free_idents.iter() {
@@ -6148,252 +6104,63 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Not in tsgo. True if a symbol's `markedAssignmentSymbolLinks` in `file` can depend on which
-    /// function `ensureAssignmentsMarked` walks first. In any other file, whenever the links are
-    /// read they're what walking the symbol's declaring function produces. The order matters in
-    /// two cases:
-    /// - A function below a node that no walk enters is walked if no enclosing function has the
-    ///   flag yet.
-    /// - Only a walk resolves the `unchecked_assignment_targets`, so which walks happen is
-    ///   observable.
-    #[inline(always)]
-    pub(super) fn has_order_dependent_assignment_marks(&self, file: FileId) -> bool {
-        let is_possible = match self.flow_memo.latest_order_dependent_assignment_marks.get() {
-            Some((latest, known)) if latest == file => known,
-            _ => self.find_order_dependent_assignment_marks(file),
-        };
-        if !is_possible {
-            return false;
-        }
-        cold_path();
-        self.are_assignments_marked_in_program_order(file)
-    }
-
-    /// Not in tsgo. A single checker visits the files in program order, so whatever it evaluates in
-    /// `file` while visiting a later file sees the marks `checkSourceFile(file)` left. A task that
-    /// gets there before `file` is checked can't know those marks. It stores `false` under
-    /// `Node::NONE`, and from then on every task that sees that entry treats the declaring
-    /// function's walk as done in `file`. `true` under `Node::NONE` means `file` has been checked.
-    #[cold]
-    fn are_assignments_marked_in_program_order(&self, file: FileId) -> bool {
-        let (files, marked) = (self.files(), &self.p.assignments_marked);
-        if let Some(is_checked) = marked.get(&self.task, &(file, Node::NONE)) {
-            return is_checked;
-        }
-        let rank = files.rank_of_file(file);
-        let is_ahead = (self.task.file).is_some_and(|visited| files.rank_of_file(visited) > rank);
-        if is_ahead {
-            marked.insert(&self.task, (file, Node::NONE), false, Stored::new());
-        }
-        !is_ahead
-    }
-
-    /// Records that `checkSourceFile(file)` has finished.
-    pub(super) fn note_assignments_marked_by_check(&self, file: FileId) {
-        if self.has_order_dependent_assignment_marks(file) {
-            let marked = &self.p.assignments_marked;
-            marked.insert(&self.task, (file, Node::NONE), true, Stored::new());
-        }
-    }
-
-    #[inline(never)]
-    fn find_order_dependent_assignment_marks(&self, file: FileId) -> bool {
-        let memo = &self.flow_memo;
-        let known = memo
-            .order_dependent_assignment_marks
-            .borrow()
-            .get(&file)
-            .copied();
-        let known = known.unwrap_or_else(|| {
-            let found = self.is_some_assignment_marked_in_order(file);
-            memo.order_dependent_assignment_marks
-                .borrow_mut()
-                .insert(file, found);
-            found
-        });
-        memo.latest_order_dependent_assignment_marks
-            .set(Some((file, known)));
-        known
-    }
-
-    /// Computes `has_order_dependent_assignment_marks` from `file`'s assignments.
-    fn is_some_assignment_marked_in_order(&self, file: FileId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if !bound.unchecked_assignment_targets.is_empty() {
-            return true;
-        }
-        // An assignment to a name the file doesn't declare. A `let` in another file's
-        // `declare global` gets its marks from the walks that reach it.
-        if (bound.free_idents.iter()).any(|&(target, _)| {
-            bound.get_assignment_target_kind(hir, target) != AssignmentKind::None
-        }) {
-            return true;
-        }
-        // An initializer in an enum, the `ExpressionWithTypeArguments` that a class extends.
-        let has_skipped_expressions = hir.enum_members.iter().any(|it| it.init.is_some())
-            || (hir.classes.iter())
-                .any(|it| it.extends.is_some() && !is_entity_name_expression(hir, it.extends));
-        let is_skipped = |n: Node| is_skipped_by_mark_node_assignments(hir.kind(n));
-        has_skipped_expressions
-            && (bound.assignments.iter())
-                .any(|&(_, it)| hir.find_ancestor(hir.node(it), is_skipped).is_some())
-    }
-
-    /// `ensureAssignmentsMarked`, as of TypeScript 7.1: a symbol that already has a
-    /// `lastAssignmentPos` gets the walk of its declaring function too.
-    fn ensure_assignments_marked(&self, file: FileId, symbol: SymbolId) {
-        // FOR SPEED: treat the declaring function's walk as done.
-        if !self.has_order_dependent_assignment_marks(file) {
-            return;
-        }
-        let Some(pat) = self.name_of_value_declaration(file, symbol) else {
-            return;
-        };
-        let (hir, marked) = (self.hir(file), &self.p.assignments_marked);
-        let parent = function_or_source_file_of(hir, hir.node(pat));
-        if parent.is_some() && marked.get(&self.task, &(file, parent)).is_none() {
-            // `hasParentWithAssignmentsMarked`
-            let marked_parent = hir.find_ancestor(hir.parent(parent), |n| {
-                is_function_or_source_file(hir.kind(n))
-                    && marked.get(&self.task, &(file, n)).is_some()
-            });
-            let is_walked = marked_parent.is_none();
-            marked.insert(&self.task, (file, parent), is_walked, Stored::new());
-            if is_walked {
-                let is_visiting = self.task.file == Some(file);
-                let mut walked = self.task.assignments_walked.borrow_mut();
-                walked.push((file, parent, is_visiting));
-                // Nothing imports a leaf file, so no other task walks it.
-                if is_visiting && !self.files().module(file).is_leaf {
-                    self.task.stop_writing_immediately();
-                }
-            }
-        }
-    }
-
     /// `markNodeAssignmentsWorker`: a symbol named by `export { x }` may be assigned at any time,
     /// as far as this file can tell.
-    fn is_marked_by_export_specifier(&self, file: FileId, symbol: SymbolId, pat: PatId) -> bool {
+    fn is_marked_by_export_specifier(&self, file: FileId, symbol: SymbolId) -> bool {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         let name = bound.symbol(symbol).name;
-        let is_marked = |specifier: ExportSpecId| {
-            let declaring_function = function_or_source_file_of(hir, hir.node(pat));
-            let node = hir.node(specifier);
-            (self.is_marked_in_nested_function(file, declaring_function, node)).is_some()
-        };
         hir.exports.iter().enumerate().any(|(i, export)| {
             !export.has_module_specifier
                 && !export.type_only
-                && (export.items.iter())
-                    .any(|s| hir[s].local == name && !hir[s].type_only && is_marked(s))
+                && (export.items.iter()).any(|s| hir[s].local == name && !hir[s].type_only)
                 && files.resolve_name(file, bound.export_scope[i], name, SymFlags::VALUE)
                     == Some(files.sym(file, symbol))
         })
     }
 
-    /// `lastAssignmentPos` of a parameter or mutable local variable, as the `markNodeAssignments`
-    /// walks so far have left it. 0 means no walk has found an assignment. `u32::MAX` is
-    /// `math.MaxInt32`.
+    /// `lastAssignmentPos` of a parameter or mutable local variable, as `markNodeAssignments` leaves
+    /// it when it walks the function that declares the variable. 0 means the walk finds no
+    /// assignment. `u32::MAX` is `math.MaxInt32`.
+    ///
+    /// tsc also walks a function below a node that no walk enters, such as the function in
+    /// `class C extends mix(function () {})`, if it gets there before it has walked an enclosing
+    /// function. That depends on the order of the checks, and isn't done here.
     fn last_assignment_pos(&self, file: FileId, symbol: SymbolId) -> u32 {
         let known = &self.flow_memo.last_assignment_positions;
         if let Some(&known) = known.borrow().get(&(file, symbol)) {
             return known;
         }
-        let (position, is_final) = self.last_assignment_pos_so_far(file, symbol);
-        if is_final {
-            known.borrow_mut().insert((file, symbol), position);
-        }
+        let position = self.find_last_assignment_pos(file, symbol);
+        known.borrow_mut().insert((file, symbol), position);
         position
     }
 
-    /// `last_assignment_pos`, plus whether the result is final, meaning no later walk can change it
-    /// (a walk only adds marks). It runs for each reference to a variable from a nested function,
-    /// and climbs from each assignment to the variable up to a marked function.
-    fn last_assignment_pos_so_far(&self, file: FileId, symbol: SymbolId) -> (u32, bool) {
+    /// Computes `last_assignment_pos`.
+    fn find_last_assignment_pos(&self, file: FileId, symbol: SymbolId) -> u32 {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let Some(pat) = self.name_of_value_declaration(file, symbol) else {
-            return (0, true);
+            return 0;
         };
-        if !hir.exports.is_empty() && self.is_marked_by_export_specifier(file, symbol, pat) {
-            return (u32::MAX, true);
-        }
-        let mut is_final = hir.exports.is_empty();
-        if !bound.symbol(symbol).flags.contains(SymFlags::ASSIGNED) {
-            return (0, is_final);
+        if self.is_marked_by_export_specifier(file, symbol) {
+            return u32::MAX;
         }
         let declaring_function = function_or_source_file_of(hir, hir.node(pat));
         let mut last = ExprId::NONE;
         for &(_, assignment) in bound.assignments_to(symbol) {
             let node = hir.node(assignment);
-            match self.is_marked_in_nested_function(file, declaring_function, node) {
-                None => is_final = false,
-                Some(true) => return (u32::MAX, true),
+            match is_marked_in_nested_function(hir, declaring_function, node) {
+                None => {}
+                Some(true) => return u32::MAX,
                 Some(false) => last = assignment,
             }
         }
-        match last.some() {
-            Some(last) => {
-                let position = self.extend_assignment_position(file, last, hir[pat].pos);
-                (position, is_final)
-            }
-            None => (0, is_final),
-        }
-    }
-
-    /// `markNodeAssignmentsWorker`'s `referencingFunction != declaringFunction` for `node`, an
-    /// identifier that assigns to a variable of `declaring_function` or an export specifier that
-    /// names one. Returns `None` if no walk has reached `node` yet. A walk doesn't enter
-    /// interfaces, type aliases, enums or type nodes.
-    fn is_marked_in_nested_function(
-        &self,
-        file: FileId,
-        declaring_function: Node,
-        node: Node,
-    ) -> Option<bool> {
-        let hir = self.hir(file);
-        let is_order_dependent = self.has_order_dependent_assignment_marks(file);
-        let mut referencing_function = Node::NONE;
-        let mut is_marked = false;
-        hir.find_ancestor(hir.parent(node), |n| {
-            let kind = hir.kind(n);
-            if is_skipped_by_mark_node_assignments(kind) {
-                return true;
-            }
-            if is_function_or_source_file(kind) {
-                if referencing_function.is_none() {
-                    referencing_function = n;
-                }
-                is_marked = if is_order_dependent {
-                    self.p.assignments_marked.get(&self.task, &(file, n)) == Some(true)
-                } else {
-                    n == declaring_function
-                };
-            }
-            is_marked
-        });
-        is_marked.then_some(referencing_function != declaring_function)
-    }
-
-    /// `markNodeAssignmentsWorker`. Runs `getResolvedSymbol(node)`, with its errors, for `file`'s
-    /// assignment targets that nothing else resolves and that a walk has reached.
-    pub(super) fn resolve_marked_assignment_targets(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        for &target in bound.unchecked_assignment_targets.iter() {
-            let ExprKind::Ident(name) = hir[target].kind else {
-                continue;
-            };
-            let node = hir.node(target);
-            if bound.get_assignment_target_kind(hir, target) != AssignmentKind::None
-                && (self.is_marked_in_nested_function(file, Node::NONE, node)).is_some()
-            {
-                self.resolve_unchecked_assignment_target(file, target, name);
-            }
-        }
+        (last.some()).map_or(0, |last| {
+            self.extend_assignment_position(file, last, hir[pat].pos)
+        })
     }
 
     /// `isSymbolAssignedDefinitely`. `+=` and `++` modify a value. They don't initialize one.
     pub(super) fn is_symbol_assigned_definitely(&self, file: FileId, symbol: SymbolId) -> bool {
-        self.ensure_assignments_marked(file, symbol);
         let (hir, bound) = (self.hir(file), self.bound(file));
         let Some(pat) = self.name_of_value_declaration(file, symbol) else {
             return false;
@@ -6402,7 +6169,7 @@ impl<'p, 's> Checker<'p, 's> {
         bound.assignments_to(symbol).iter().any(|&(_, assignment)| {
             let node = hir.node(assignment);
             bound.get_assignment_target_kind(hir, assignment) == AssignmentKind::Definite
-                && (self.is_marked_in_nested_function(file, declaring_function, node)).is_some()
+                && is_marked_in_nested_function(hir, declaring_function, node).is_some()
         })
     }
 
@@ -6416,7 +6183,6 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.is_parameter_or_mutable_local_variable(file, symbol) {
             return false;
         }
-        self.ensure_assignments_marked(file, symbol);
         let last = self.last_assignment_pos(file, symbol);
         last == 0 || last < self.end_of_token_before(file, self.hir(file)[e].pos)
     }

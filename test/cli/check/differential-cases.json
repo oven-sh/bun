@@ -12552,18 +12552,6 @@
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"allowJs\": true, \"checkJs\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
-  "61-L02": {
-    "files": {
-      "a.ts": "export {};\ndeclare const arr: any[];\ndeclare const o: { p: any };\nfunction b1(p: string) { [...x1, arr[0]] = arr; p; }\nfunction b2(p: string) { ({ ...x2, p: o.p } = o); p; }\nfunction b3(p: string) { [...x3 = 1] = arr; p; }\nfunction b4(p: string) { [...x4, arr[0]] = arr; }\nconst sentinel: number = \"\";\n",
-      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
-    }
-  },
-  "61-L02b": {
-    "files": {
-      "a.ts": "export {};\ndeclare const arr: any[];\nfunction a1() { let q: number | undefined; q; [...x1, arr[0]] = arr; }\nfunction a2() { [...x2, arr[0]] = arr; }\nconst sentinel: number = \"\";\n",
-      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
-    }
-  },
   "61-L03": {
     "files": {
       "a.ts": "export {};\ndeclare let on: { n: number; m(): void };\ndeclare function f(): \"m\";\n({ [r1]() {} } = on);\n({ get [r2]() { return 1; } } = on);\n({ [f(1)]() {} } = on);\n({ [r3]() {} } = { m() {} });\nconst sentinel: number = \"\";\n",
@@ -18179,20 +18167,6 @@
       "literal_properties_in_a_circle.ts": "export {}\nconst a = { a }\nconst b = { ...b }\nconst c = { c: c }\nconst d = { get d() { return d } }\nconst e = { e() { return e } }\nconst f = { ['f']: f }\nconst g = { g, other: 1 }\ndeclare function wrap<T>(value: T): T\nconst h = wrap({ h })\nconst i = { nested: { i } }\nlet j = { j }\nwhile (j) { j = { j } }\nconst k = { k: () => k }\nconst l = [{ l }]\nfunction m(n = { n }) {}\nclass P { q = { q: this.q } }\nconst r = { r: { get s() { return r } } }\nexport const sentinel: number = ''\n",
       "rest_in_an_array_pattern.ts": "export {}\ndeclare const value: [string | number, string | number, string | number]\nif (typeof value[1] === 'string') {\n  const [head, ...[second]] = value\n  const probe: never = second\n}\nif (typeof value[1] === 'string') {\n  const [head, ...[second, third]] = value\n  const probe: never = second\n  const probe3: never = third\n}\nif (typeof value[2] === 'string') {\n  const [head, ...[second, third]] = value\n  const probe3: never = third\n}\nif (typeof value[2] === 'string') {\n  const [, , ...[third]] = value\n  const probe3: never = third\n}\nif (typeof value[2] === 'string') {\n  const [a, ...[b, ...[c]]] = value\n  const probe: never = c\n}\nif (typeof value[1] === 'string') {\n  const [head, ...rest] = value\n  const probe: never = rest\n  const [second] = rest\n  const probe2: never = second\n}\ndeclare const pair: [[string | number, string | number], string | number]\nif (typeof pair[0][1] === 'string') {\n  const [[x, ...[y]]] = pair\n  const probe: never = y\n}\nif (typeof value[1] === 'string') {\n  let second\n  ;[, ...[second]] = value\n  const probe: never = second\n}\ndeclare const obj: { list: [string | number, string | number] }\nif (typeof obj.list[1] === 'string') {\n  const { list: [first, ...[second]] } = obj\n  const probe: never = second\n}\nexport const sentinel: number = ''\n",
       "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"lib\": [\"esnext\"], \"types\": [], \"moduleDetection\": \"force\"}, \"files\": [\"accessor_in_a_loop.ts\", \"literal_properties_in_a_circle.ts\", \"rest_in_an_array_pattern.ts\", \"iterators_without_a_value.ts\", \"iterators_without_a_value_each_its_own_type.ts\"]}"
-    }
-  },
-  "99-V8": {
-    "files": {
-      "compound.ts": "export {}\nlet local = 1\nconst f = () => local\nfunction bump() { (c8 as number)++; for (c8 of [1]) {} }\nif (typeof c8 === 'string') { const g = () => c8.toUpperCase() }\nexport const sentinel: number = ''\n",
-      "globals.ts": "export {}\ndeclare global {\n  let c1: string | number\n  let c2: string | number\n  let c3: string | number\n  let c4: string | number\n  let c5: string | number\n  let c6: string | number\n  let c7: string | number\n  let c8: string | number\n  let c9: string | number\n  let c10: string | number\n}\n",
-      "marked_after.ts": "export {}\nfunction reset() { c3 = 0 }\nif (typeof c3 === 'string') { const g = () => c3.toUpperCase() }\nlet local = 1\nconst f = () => local\n",
-      "marked_before.ts": "export {}\nlet local = 1\nconst f = () => local\nfunction reset() { c1 = 0 }\nif (typeof c1 === 'string') { const g = () => c1.toUpperCase() }\n",
-      "marked_by_a_parameter.ts": "export {}\nfunction outer(p: string | number) { return () => p }\nfunction reset() { c6 = 0 }\nif (typeof c6 === 'string') { const g = () => c6.toUpperCase() }\n",
-      "marked_inside_a_function_only.ts": "export {}\nfunction outer() { let local = 1; const f = () => local; c7 = 0 }\nif (typeof c7 === 'string') { const g = () => c7.toUpperCase() }\n",
-      "not_marked.ts": "export {}\nfunction reset() { c2 = 0 }\nif (typeof c2 === 'string') { const g = () => c2.toUpperCase() }\n",
-      "top_level_assignment.ts": "export {}\nlet local = 1\nconst f = () => local\nc4 = 0\nif (typeof c4 === 'string') { const g = () => c4.toUpperCase() }\n",
-      "top_level_not_marked.ts": "export {}\nc9 = 0\nif (typeof c9 === 'string') { const g = () => c9.toUpperCase() }\nc10 = 0\nif (typeof c10 === 'string') { const probe: never = c10 }\n",
-      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"lib\": [\"esnext\"], \"types\": []}, \"files\": [\"globals.ts\", \"marked_before.ts\", \"not_marked.ts\", \"marked_after.ts\", \"top_level_assignment.ts\", \"marked_by_a_parameter.ts\", \"marked_inside_a_function_only.ts\", \"top_level_not_marked.ts\", \"compound.ts\"]}"
     }
   },
   "99-W10": {

@@ -176,7 +176,7 @@ macro_rules! buffered_fields {
             effects_signatures resolved_effects_signatures context_free_expr_types context_free_types
             type_predicates_from_body initializer_is_undefined circular_initializers circular_returns deferred_nodes
             resolved_parameter_symbols
-            calls_before_signatures untyped_signatures_in_js jsx_fragment_types assignments_marked
+            calls_before_signatures untyped_signatures_in_js jsx_fragment_types
             blocks_too_large_for_flow_analysis
         )
     };
@@ -400,10 +400,6 @@ pub struct Program<'s> {
     deferred_nodes: ByNode<(FileId, ExprId), (), buffered!(deferred_nodes), &'s Session>,
     /// `links.jsxFragmentType` of a source file.
     jsx_fragment_types: ByKey<FileId, TypeId, buffered!(jsx_fragment_types), &'s Session>,
-    /// `NodeCheckFlagsAssignmentsMarked` of a function or a source file. `true` means it had no parent with the flag,
-    /// so `markNodeAssignments` walked it. `markedAssignmentSymbolLinks` follows from the walks. Only used for a file
-    /// that `has_order_dependent_assignment_marks`. For `Node::NONE` see `are_assignments_marked_in_program_order`.
-    assignments_marked: ByKey<(FileId, Node), bool, buffered!(assignments_marked), &'s Session>,
     /// `getEffectiveFirstArgumentForJsxSignature` of the signature a JSX element is resolved to,
     /// keyed by the element.
     jsx_attributes_types: ByNode<(FileId, JsxId), TypeId, FileLocal, &'s Session>,
@@ -652,7 +648,6 @@ impl<'s> Program<'s> {
             call_return_types: ByNode::new_in(&exprs, session),
             deferred_nodes: ByNode::new_in(&exprs, session),
             jsx_fragment_types: ByKey::new_in(session),
-            assignments_marked: ByKey::new_in(session),
             blocks_too_large_for_flow_analysis: ByKey::new_in(session),
             jsx_attributes_types: ByNode::new_in(&exprs, session),
             call_diagnostics: ByNodeIndirect::new_in(&exprs, session),

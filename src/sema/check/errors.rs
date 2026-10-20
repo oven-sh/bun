@@ -344,7 +344,6 @@ impl Checker<'_, '_> {
             self.mark_identifier_aliases_referenced(file, true);
         }
         self.produce_type_not_iterable_errors(logged);
-        self.resolve_marked_assignment_targets(file);
         self.report_unresolved_identifiers();
         // `GetDeclarationDiagnostics`: no comment directive suppresses these, and plain JavaScript gets them too. A
         // diagnostic located in another file goes to that file's buffer at the next commit.
@@ -1021,9 +1020,6 @@ impl Checker<'_, '_> {
     /// `checkIdentifier`: true if the variable that the identifier `e` reads, whose type is `declared`, is assumed to
     /// be initialized at the start of its control flow container (`assumeInitialized`).
     pub(super) fn assumes_initialized(&self, file: FileId, e: ExprId, declared: TypeId) -> bool {
-        // FOR SPEED: evaluated last, unless the answer depends on which queries ran before it.
-        let is_never_initialized = (self.has_order_dependent_assignment_marks(file))
-            .then(|| self.is_never_initialized(file, e));
         let is_automatic = self.is_automatic_type(declared);
         if !is_automatic
             && (!self.p.files.options.strict_null_checks
@@ -1078,7 +1074,7 @@ impl Checker<'_, '_> {
         }
         // It's an outer variable, so what's been assigned by the time this code runs is unknown, unless it's never
         // assigned.
-        !is_never_initialized.unwrap_or_else(|| self.is_never_initialized(file, e))
+        !self.is_never_initialized(file, e)
     }
 
     /// `isNeverInitialized` of `checkIdentifier`, for the identifier `e`.

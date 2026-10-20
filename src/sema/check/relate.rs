@@ -2964,7 +2964,7 @@ impl<'p, 's> Checker<'p, 's> {
         let now = self.sharing_blockers();
         let reason = match () {
             _ if (now.0, now.1) != (before.0, before.1) => Some(NotShared::Diagnostic),
-            _ if now.2 != before.2 || self.task.may_be_discarded() => Some(NotShared::Notes),
+            _ if now.2 != before.2 || self.task.was_discarded() => Some(NotShared::Notes),
             _ => None,
         };
         let measured = &self.variances_measured[..];

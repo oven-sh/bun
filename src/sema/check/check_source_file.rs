@@ -24,27 +24,6 @@ use smallvec::SmallVec;
 /// frames come out of it too.
 const TASK_STACK: usize = 3 << 20;
 
-impl<'s> Program<'s> {
-    /// True if a walk that the task made while visiting the file contains an earlier walk or is
-    /// nested in one. `walked` is the task's `Task::assignments_walked`. `earlier` lists the walks
-    /// of earlier commits.
-    pub(super) fn overlaps_earlier_walk(
-        &self,
-        walked: &[(FileId, Node, bool)],
-        earlier: &[(FileId, Node)],
-    ) -> bool {
-        walked.iter().any(|&(file, node, is_visiting)| {
-            let hir = self.files.hir(file);
-            let is_in =
-                |inner: Node, outer: Node| hir.find_ancestor(inner, |n| n == outer).is_some();
-            is_visiting
-                && (earlier.iter()).any(|&(of, other)| {
-                    of == file && other != node && (is_in(node, other) || is_in(other, node))
-                })
-        })
-    }
-}
-
 impl<'s> Checker<'_, 's> {
     /// Call this before the checker is used. See `TASK_STACK`.
     pub fn begin_stack_budget(&mut self) {
@@ -109,7 +88,6 @@ impl<'s> Checker<'_, 's> {
         self.check_deferred_nodes(file);
         self.check_merged_symbols(file);
         self.check_exprs_visited_by_queries(file);
-        self.note_assignments_marked_by_check(file);
         self.reported_unreachable_nodes.clear();
     }
 

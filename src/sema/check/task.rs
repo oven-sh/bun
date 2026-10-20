@@ -12,7 +12,6 @@ use super::commit::View;
 use super::sink::Reported;
 use super::{Program, Query};
 use crate::local::{Buffer, FileLocalTables, SlotNumber};
-use crate::node::Node;
 use crate::program::{FileId, Sym};
 use crate::session::Arena;
 use crate::table::Publish;
@@ -67,10 +66,6 @@ pub struct Task<'s> {
     pub(super) closed_a_cycle: bool,
     /// See `OrderDependent`.
     pub(super) order_dependent_variances: Vec<OrderDependent<'s>>,
-    /// The functions and source files that `markNodeAssignments` has walked in this task since its last commit
-    /// (`Program::assignments_marked`), and whether the task was visiting the file. See `Program::is_invalid`. Appended
-    /// to under `&Checker`.
-    pub(super) assignments_walked: RefCell<Vec<(FileId, Node, bool)>>,
     /// See `hold_back`.
     held_back: Cell<u64>,
     /// `Some`: the task commits while it runs and sees other tasks' commits. See `super::commit`.
@@ -118,7 +113,6 @@ impl<'s> Task<'s> {
             diagnostics: Vec::new(),
             closed_a_cycle: false,
             order_dependent_variances: Vec::new(),
-            assignments_walked: RefCell::default(),
             held_back: Cell::new(0),
             view: None,
             was_discarded: Cell::new(false),
@@ -357,12 +351,6 @@ impl<'s> Task<'s> {
         self.is_trusted
     }
 
-    /// True if the task has noted a walk that can make its next commit invalid, or is already discarded. Anything it
-    /// has computed since then may depend on that.
-    pub(super) fn may_be_discarded(&self) -> bool {
-        self.assignments_walked.borrow().iter().any(|it| it.2) || self.was_discarded()
-    }
-
     /// Ends a task that commits, on its own thread, after its last commit.
     pub(super) fn end(&mut self, program: &Program<'s>) {
         program.types.reclaim_ids(&self.own);
@@ -417,7 +405,6 @@ impl<'s> Task<'s> {
             diagnostics,
             closed_a_cycle,
             order_dependent_variances,
-            assignments_walked,
             held_back,
             view,
             was_discarded,
@@ -441,7 +428,6 @@ impl<'s> Task<'s> {
         diagnostics.clear();
         (*closed_a_cycle, *is_trusted) = (false, false);
         order_dependent_variances.clear();
-        assignments_walked.get_mut().clear();
         held_back.set(0);
         was_discarded.set(false);
         can_recheck_early.set(false);

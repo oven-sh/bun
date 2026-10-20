@@ -1446,6 +1446,32 @@ ${lines(800, i => `export function z${i}(x: { a: number; b: string[] }, y = [x.a
     }
   });
 
+  // tsc finds `x = 1` in the function under `extends` only if it gets to that function before it has looked for the
+  // assignments in `f`. That depends on the order of the checks: here `tsc` says `number`, and `tsc --singleThreaded`
+  // says `string | number`.
+  test("ignores an assignment in a function in an `extends` clause on any number of threads", async () => {
+    using dir = project({
+      "a.ts": `import { f } from "./b";
+const r: never = f()[0];
+`,
+      "b.ts": `declare function mk(f: (p: string | number) => void): new () => object;
+export function f() {
+  let x: string | number = "a";
+  class C extends mk(function (p) { const g = () => p; const v = g(); x = 1; return v; }) {}
+  x = 1;
+  const h = () => x;
+  const r = h();
+  return [r, C] as const;
+}
+`,
+    });
+    const threads = [1, 2, 2, 2, 8, 8, 8];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe("a.ts(2,7): error TS2322: Type 'number' is not assignable to type 'never'.");
+      expect(exitCode).toBe(1);
+    }
+  });
+
   test("--threads 1 produces the same output", async () => {
     using dir = project({
       "a.ts": `import { b } from "./b";\nexport const a: number = b;\n`,

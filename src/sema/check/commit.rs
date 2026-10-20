@@ -26,7 +26,7 @@
 //!   checker, and `Program::is_invalid` detects them. The serial order that a commit is compared with is the order of
 //!   the commits. An invalid commit discards what the task has done since its last commit. The task ends, and the
 //!   driver rechecks the file it was visiting right away, on any thread. The new task starts after the commit that the
-//!   old one conflicted with, so it finds those variances and walks.
+//!   old one conflicted with, so it finds those variances.
 //! - **A task that gives up at a limit isn't trusted** (`Checker::note_gave_up`). How far from a limit a computation
 //!   starts depends on what was computed before, which for a task includes the entries it found. It's discarded like an
 //!   invalid one, but its file waits for the last round.
@@ -84,7 +84,6 @@
 use super::task::{Task, tables_of, tables_written_immediately};
 use super::{Checker, Program, Spare};
 use crate::local::{Log, node_word};
-use crate::node::Node;
 use crate::program::{FileId, Sym};
 use crate::session::Arena;
 use crate::table::Publish;
@@ -95,8 +94,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 /// A field of `Program`.
 pub(super) struct Commits<'s> {
-    /// `Checker::commit`'s mutex.
-    committing: Guarded<Committing>,
+    /// `Checker::commit`'s mutex, around the last commit's number.
+    committing: Guarded<u32>,
     numbers: &'s Numbers,
     claims: Claims,
     /// The commits of tasks that `Task::close_cycle` trusted, ordered by number.
@@ -134,14 +133,6 @@ pub(super) struct CycleCommit {
     members: Vec<u64>,
 }
 
-#[derive(Default)]
-struct Committing {
-    /// The last commit's number.
-    number: u32,
-    /// `Task::assignments_walked` of all commits so far, each with its commit's number, in commit order.
-    walked: Vec<(u32, FileId, Node)>,
-}
-
 impl Drop for Commits<'_> {
     fn drop(&mut self) {
         *self.numbers.ranks.lock() = Vec::new();
@@ -171,7 +162,6 @@ impl<'s> Commits<'s> {
 
     /// See `Program::release`.
     pub(super) fn release(&mut self) {
-        *self.committing.get_mut() = Committing::default();
         *self.claims.table.get_mut() = FxHashMap::default();
         *self.cycle_commits.get_mut() = Vec::new();
         *self.numbers.ranks.lock() = Vec::new();
@@ -201,7 +191,6 @@ impl<'s> Commits<'s> {
             pinned: Cell::new(NO_FILE),
             last_idle_commit: Cell::new(self.numbers.stored.load(Ordering::Acquire)),
             compared_with_pinned: Cell::new(0),
-            oldest_pin: Cell::new(u32::MAX),
             own: RefCell::default(),
             times_unsettled: Cell::new(0),
         }
@@ -284,8 +273,6 @@ pub(crate) struct View<'s> {
     last_idle_commit: Cell<u32>,
     /// Commits up to this number haven't stored anything under `pinned` that the task doesn't see.
     compared_with_pinned: Cell<u32>,
-    /// The lowest snapshot that a file had while it was `pinned`, since the task's last commit.
-    oldest_pin: Cell<u32>,
     /// The task's own commit numbers, ascending.
     own: RefCell<Vec<u32>>,
     /// How many times `state` has caught a commit in the middle of storing.
@@ -344,7 +331,6 @@ impl View<'_> {
         self.rank
             .set(self.ranks_of_files.get(file.idx()).copied().unwrap_or(0));
         self.compared_with_pinned.set(snapshot);
-        self.oldest_pin.set(self.oldest_pin.get().min(snapshot));
     }
 
     /// True if the task ignores what `commit` stored under `file`.
@@ -392,10 +378,6 @@ impl View<'_> {
     pub(super) fn has_committed(&self, number: u32) {
         self.own.borrow_mut().push(number);
         self.forget();
-        self.oldest_pin.set(match self.pinned.get() {
-            NO_FILE => u32::MAX,
-            file => self.snapshot_of(FileId(file)),
-        });
     }
 
     /// Returns a greater number than last time if a commit may have added to the tables in between.
@@ -562,47 +544,25 @@ impl<'s> Program<'s> {
         })
     }
 
-    /// True if something the task has noted contradicts an earlier commit, so that this commit must be discarded.
-    /// - Variances are compared with every earlier commit. A task only notes variances it computed itself, which it
-    ///   only does if it found none. They stay noted, because the task keeps using them.
-    /// - Walks: what `markNodeAssignments` finds about a variable depends on which of the functions around the assignments
-    ///   was walked first. The task is invalid if it walked a function of the file it was visiting that contains, or is
-    ///   nested in, a function that another task walked, unless it saw that task's commit in the file when its visit
-    ///   began. Then it also saw what was evaluated along with the walk.
-    fn is_invalid(&self, task: &Task<'s>, view: &View<'s>, committing: &Committing) -> bool {
-        let has_other_variances = {
-            let serial = self.serial_variances.lock();
-            let mut noted = task.order_dependent_variances.iter();
-            noted.any(|it| {
-                serial
-                    .get(&it.sym)
-                    .is_some_and(|first| it.conflicts_with(first))
-            })
-        };
-        if has_other_variances {
-            return true;
-        }
-        let oldest_pin = view.oldest_pin.get();
-        let from = committing.walked.partition_point(|it| it.0 <= oldest_pin);
-        let unseen = committing.walked[from..].iter();
-        let unseen: Vec<(FileId, Node)> = (unseen.filter(|it| !view.is_own(it.0)))
-            .map(|it| (it.1, it.2))
-            .collect();
-        self.overlaps_earlier_walk(&task.assignments_walked.borrow(), &unseen)
+    /// True if the variances the task has noted contradict an earlier commit, so that this commit must be discarded.
+    /// They're compared with every earlier commit. A task only notes variances it computed itself, which it only does
+    /// if it found none. They stay noted, because the task keeps using them.
+    fn is_invalid(&self, task: &Task<'s>) -> bool {
+        let serial = self.serial_variances.lock();
+        let mut noted = task.order_dependent_variances.iter();
+        noted.any(|it| {
+            serial
+                .get(&it.sym)
+                .is_some_and(|first| it.conflicts_with(first))
+        })
     }
 
-    /// Call once `task`'s commit `number` is known to be valid. Later commits are compared with what the task noted.
-    fn register_notes(&self, task: &mut Task<'s>, committing: &mut Committing, number: u32) {
-        {
-            let mut serial = self.serial_variances.lock();
-            for it in &task.order_dependent_variances {
-                serial.entry(it.sym).or_insert(it.variances);
-            }
+    /// Call once `task`'s commit is known to be valid. Later commits are compared with what the task noted.
+    fn register_notes(&self, task: &Task<'s>) {
+        let mut serial = self.serial_variances.lock();
+        for it in &task.order_dependent_variances {
+            serial.entry(it.sym).or_insert(it.variances);
         }
-        let walked = task.assignments_walked.get_mut().drain(..);
-        committing
-            .walked
-            .extend(walked.map(|it| (number, it.0, it.1)));
     }
 }
 
@@ -760,9 +720,6 @@ impl<'s> Checker<'_, 's> {
     /// See the top of this file. Nothing may be in progress in the task.
     /// `is_between_files` means no file is being checked.
     /// Returns true if the task continues, that is, if it isn't discarded.
-    ///
-    /// Every valid commit stores, even a thread's last one. A task that starts later counts this commit's walks as seen
-    /// (`Program::is_invalid`), so it has to find what was evaluated along with them.
     fn commit(&mut self, is_between_files: bool) -> bool {
         let p = self.p;
         let Some([immediate_diagnostics, mut reported]) =
@@ -803,15 +760,15 @@ impl<'s> Checker<'_, 's> {
         });
         self.withhold_until_the_file_ends(&mut log, is_between_files);
         let mut committing = p.commits.committing.lock();
-        let is_invalid = !self.task.is_trusted()
-            && (self.task.view()).is_some_and(|view| p.is_invalid(&self.task, view, &committing));
+        let is_invalid =
+            !self.task.is_trusted() && self.task.view().is_some() && p.is_invalid(&self.task);
         if is_invalid {
             drop(committing);
             (self.task).discard_until_recheck();
             return false;
         }
-        let number = committing.number + 1;
-        committing.number = number;
+        let number = *committing + 1;
+        *committing = number;
         // Set before the commit stores, so a task that finds one of its entries also sees these.
         for file in self.files_with_errors.drain() {
             if let Some(word) = p.commits.with_errors.get(file.idx() / 32) {
@@ -819,7 +776,7 @@ impl<'s> Checker<'_, 's> {
             }
         }
         p.commits.numbers.ranks.lock().push(rank);
-        p.register_notes(&mut self.task, &mut committing, number);
+        p.register_notes(&self.task);
         let task = &self.task;
         p.drop_diagnostics_of_losers(&mut reported, |commit| {
             task.view().is_some_and(|view| view.is_own(commit))

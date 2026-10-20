@@ -970,6 +970,7 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         transpiler.options.env.behavior = config.env_behavior;
         transpiler.options.env.prefix = Box::from(config.env_prefix.list.as_slice());
+        transpiler.options.env.node_env_define_is_default = config.node_env_define_is_default;
         // `BundleOptions.bundler_feature_flags: Option<Box<StringSet>>` owns
         // its set, so clone rather than alias `config.features`.
         transpiler.options.bundler_feature_flags = Some(Box::new(config.features.clone()?));

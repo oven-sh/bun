@@ -360,7 +360,7 @@ describe("Bun.FetchSession", () => {
 
   // The kernel reports the option back, so a child process scans its fds for
   // the one TCP socket that carries the session's value.
-  test.skipIf(isWindows)("tcp.userTimeout is set once on each connection of the session", async () => {
+  test.concurrent.skipIf(isWindows)("tcp.userTimeout is set once on each connection of the session", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -448,9 +448,11 @@ describe("Bun.FetchSession", () => {
   // A refused option must not leave the request running without the bound it
   // asked for. An LD_PRELOAD shim makes setsockopt(TCP_USER_TIMEOUT) fail.
   const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
-  test.skipIf(!isLinux || !cc)("tcp.userTimeout fails the request when the OS refuses the option", async () => {
-    using dir = tempDir("fetch-session-user-timeout-refused", {
-      "shim.c": String.raw`
+  test.concurrent.skipIf(!isLinux || !cc)(
+    "tcp.userTimeout fails the request when the OS refuses the option",
+    async () => {
+      using dir = tempDir("fetch-session-user-timeout-refused", {
+        "shim.c": String.raw`
         #define _GNU_SOURCE
         #include <dlfcn.h>
         #include <errno.h>
@@ -469,7 +471,7 @@ describe("Bun.FetchSession", () => {
             return real_setsockopt(fd, level, optname, optval, optlen);
         }
       `,
-      "fixture.js": /* js */ `
+        "fixture.js": /* js */ `
         using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
         const url = "http://127.0.0.1:" + server.port + "/";
         const outcome = init => fetch(url, init).then(r => r.text(), e => e.code + ": " + e.message);
@@ -478,35 +480,36 @@ describe("Bun.FetchSession", () => {
           bounded: await outcome({ session: new Bun.FetchSession({ tcp: { userTimeout: 1000 } }) }),
         }));
       `,
-    });
-    const shim = join(String(dir), "shim.so");
-    await using ccProc = Bun.spawn({
-      cmd: [cc!, "-shared", "-fPIC", "-o", shim, join(String(dir), "shim.c"), "-ldl"],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
-    if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
+      });
+      const shim = join(String(dir), "shim.so");
+      await using ccProc = Bun.spawn({
+        cmd: [cc!, "-shared", "-fPIC", "-o", shim, join(String(dir), "shim.c"), "-ldl"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
+      if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.js"],
-      cwd: String(dir),
-      env: { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ out: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
-      out: { plain: "ok", bounded: "EPERM: EPERM: The OS refused the TCP user timeout of this FetchSession" },
-      stderr: "",
-      exitCode: 0,
-    });
-  });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.js"],
+        cwd: String(dir),
+        env: { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+        out: { plain: "ok", bounded: "EPERM: EPERM: The OS refused the TCP user timeout of this FetchSession" },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 
   // Linux TCP_USER_TIMEOUT also covers data the peer's zero window holds back,
   // which is the one dead-peer condition a test can create on loopback.
-  test.skipIf(!isLinux)("tcp.userTimeout fails a request whose peer stopped reading", async () => {
+  test.concurrent.skipIf(!isLinux)("tcp.userTimeout fails a request whose peer stopped reading", async () => {
     const server = net.createServer(socket => {
       socket.on("error", () => {});
       socket.pause();

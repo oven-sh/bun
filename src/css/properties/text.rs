@@ -268,10 +268,11 @@ impl TextDecoration {
                 };
             }
 
+            // No token starts two of these. The thickness is last because its attempt costs the most.
             prop!(line, TextDecorationLine);
-            prop!(thickness, TextDecorationThickness);
             prop!(style, TextDecorationStyle);
             prop!(color, CssColor);
+            prop!(thickness, TextDecorationThickness);
             break;
         }
 

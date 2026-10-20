@@ -46,7 +46,7 @@ test("should handle resolving optional peer from multiple instances of same pack
   await runBunInstall(bunEnv, packageDir);
 });
 
-test("tree written after a ranged peer gains a higher candidate is the tree the next install lays out", async () => {
+test("the tree that's written after a ranged peer gains a higher candidate is the tree that the next install produces", async () => {
   // `peer-deps-fixed` has a peer on `no-deps@^1.0.0`. As a devDependency it is
   // hoisted before the root's `dependencies`, so whatever its peer edge is bound
   // to is the `no-deps` that lands at the root of node_modules. Loading bun.lock
@@ -165,7 +165,7 @@ async function run(cwd: string, ...cmd: string[]) {
   return result.stdout;
 }
 
-// bun.lock keys `packages` by node_modules path; this maps each path to what is installed there.
+// bun.lock keys `packages` by node_modules path. This maps each path to what's installed there.
 async function lockfileTree(dir: string) {
   const { packages } = Bun.JSONC.parse(await Bun.file(join(dir, "bun.lock")).text()) as {
     packages: Record<string, [string, ...unknown[]]>;
@@ -209,7 +209,7 @@ const probe = `
       const edges = require(join(dir, "index.js")).edges();
       wrong = Object.keys(declared).filter(name => edges[name] !== declared[name]).map(name => name + ": wanted " + declared[name] + ", got " + edges[name]);
     } catch (e) {
-      // Also for a package without dependencies: a copy that cannot be loaded is not a good copy.
+      // This also applies to a package without dependencies, because a copy that can't be loaded isn't a valid copy.
       wrong = ["edges() failed: " + String(e)];
     }
     return { id: pkg.version ? pkg.name + "@" + pkg.version : pkg.name, wrong };
@@ -244,7 +244,7 @@ async function installFreshAndFromLockfile(opts: {
   const lockfile = await Bun.file(join(packageDir, "bun.lock")).text();
   expect(await lockfileTree(packageDir)).toEqual(opts.tree);
 
-  // The project and every copy are there, and each resolves every dependency to the version it asks for.
+  // The project and every copy exist, and each one resolves every dependency to the version it asks for.
   const expected = [version ? `${name}@${version}` : name, ...opts.copies]
     .map(id => ({ id, wrong: [] }))
     .sort((a, b) => a.id.localeCompare(b.id));
@@ -329,9 +329,9 @@ describe.concurrent("a dependency cycle that nests without end is an error", () 
 test.concurrent.each(["hoisted", "isolated"] as const)(
   "the same packages are installed when the optional peer is bound to the root's version (%s linker)",
   async linker => {
-    // With x@2.0.0 as the root's x, the first place of y@2.0.0 is next to it and binds the optional
-    // peer. The y@2.0.0 next to x@1.0.0 shares that one and leaves the binding alone, so the y@2.0.0
-    // below the nested x@2.0.0 has what it is bound to and nothing is nested again.
+    // With x@2.0.0 as the root's x, y@2.0.0 is first placed next to it, which binds the optional peer. The y@2.0.0 next
+    // to x@1.0.0 shares that x and doesn't rebind the peer. So the y@2.0.0 below the nested x@2.0.0 already has what
+    // it's bound to, and nothing is nested again.
     const at = (...names: string[]) => names.map(name => `hoist-optional-peer-cycle-${name}`).join("/");
     const files = {
       "package.json": JSON.stringify({
@@ -434,7 +434,7 @@ describe.concurrent("a package installed again below another copy of itself", ()
           "below-self-a/below-self-b/below-self-a": "below-self-a@2.0.0",
           "below-self-a/below-self-b/below-self-a/below-self-c": "below-self-c@1.0.0",
           "below-self-a/below-self-b/below-self-a/below-self-e": "below-self-e@3.0.0",
-          // a@1.0.0 again, now below a@2.0.0's e@3.0.0, so it needs an e@1.0.0 of its own.
+          // a@1.0.0 again, this time below a@2.0.0's e@3.0.0, so it needs its own e@1.0.0.
           "below-self-a/below-self-b/below-self-a/below-self-c/below-self-a": a1,
           "below-self-a/below-self-b/below-self-a/below-self-c/below-self-a/below-self-e": e1,
         },
@@ -469,7 +469,7 @@ describe.concurrent("a package installed again below another copy of itself", ()
   );
 
   test.each(["hoisted", "isolated"] as const)(
-    "has its dependencies laid out again, and the layout ends where one is found (%s linker)",
+    "gets its dependencies installed again, and the nesting ends where one is found (%s linker)",
     async linker => {
       const a1 = "below-self-again-a@1.0.0";
       const a2 = "below-self-again-a@2.0.0";
@@ -525,8 +525,8 @@ describe.concurrent("a package installed again below another copy of itself", ()
   );
 });
 
-// docs/pm/workspaces.mdx: nothing a self-contained workspace depends on is placed above its own
-// node_modules. That includes the workspace itself when one of its dependencies depends back on it.
+// docs/pm/workspaces.mdx: none of a self-contained workspace's dependencies are placed above its own node_modules. That
+// includes the workspace itself if one of its dependencies depends back on it.
 describe.concurrent("a self-contained workspace", () => {
   const rootPackageJson = JSON.stringify({
     name: "root",
@@ -559,8 +559,8 @@ describe.concurrent("a self-contained workspace", () => {
 
     for (const dir of [packageDir, reloadDir]) {
       const desktop = join(dir, "apps", "desktop");
-      // bun.lock is the same with and without `selfContained`, so where the plugin is placed
-      // only shows on disk: inside the workspace, and not above it.
+      // bun.lock is the same with and without `selfContained`, so the plugin's placement is only visible on disk:
+      // inside the workspace, and not above it.
       expect({
         inWorkspace: existsSync(join(desktop, "node_modules", plugin, "package.json")),
         aboveWorkspace: existsSync(join(dir, "node_modules", plugin)),
@@ -569,7 +569,7 @@ describe.concurrent("a self-contained workspace", () => {
     }
   });
 
-  // What keeps a bundle's dependency out of the bundling package's node_modules does not apply here.
+  // The rule that keeps a bundle's dependency out of the bundling package's node_modules doesn't apply here.
   const versionIn = async (dir: string, ...path: string[]) => {
     const packageJson = join(dir, "apps", "desktop", "node_modules", ...path, "no-deps", "package.json");
     return existsSync(packageJson) ? (await file(packageJson).json()).version : null;
@@ -595,7 +595,7 @@ describe.concurrent("a self-contained workspace", () => {
     }).toEqual({ top: "1.0.1", "one-dep": null, "one-fixed-dep": "1.0.0" });
   });
 
-  test("keeps the place of its own devDependency free when --production leaves that out", async () => {
+  test("keeps the slot for its own devDependency free when --production skips it", async () => {
     const packageDir = await createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: {
@@ -659,17 +659,16 @@ describe.concurrent("a self-contained workspace", () => {
   });
 });
 
-// A peer whose own resolution conflicts with the copy the root package.json put
-// at the top of node_modules is served by the root's copy whatever its range
-// says (Tree.hoist_dependency). The install doing that has to say so, even if
-// a copy inside the range is somewhere else in the tree.
+// If a peer's own resolution conflicts with the copy that the root package.json put at the top of node_modules, the
+// peer uses the root's copy regardless of its range (Tree.hoist_dependency). The install that does that has to report
+// it, even if an in-range copy is somewhere else in the tree.
 const peerWarnings = (stderr: string) => stderr.match(/^warn: incorrect peer dependency [^\r\n]*/gm) ?? [];
 const installedVersion = async (packageDir: string, ...path: string[]) =>
   (await file(join(packageDir, "node_modules", ...path, "package.json")).json()).version;
 const hasOwnNodeModules = (packageDir: string, name: string) =>
   exists(join(packageDir, "node_modules", name, "node_modules"));
 
-test.concurrent("warns when a workspace member's peer is served by a root dependency outside its range", async () => {
+test.concurrent("warns when a workspace's peer gets a root dependency outside its range", async () => {
   const rootPackageJson = (noDeps: string) =>
     JSON.stringify({ name: "root", workspaces: ["packages/*"], dependencies: { "no-deps": noDeps } });
   const { packageDir, packageJson } = await registry.createTestDir({
@@ -837,7 +836,7 @@ describe.concurrent("peer dependencies decide how far a package hoists", () => {
   // the CI runner would otherwise override the one in bunfig.toml).
   async function installAndCheck(packageDir: string, check: () => Promise<void>) {
     const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") };
-    // Warnings about peers out of range are not what is under test.
+    // Warnings about out-of-range peers aren't what's being tested.
     await runBunInstall(env, packageDir, { allowWarnings: true });
     await check();
 
@@ -1107,9 +1106,9 @@ describe.concurrent("peer dependencies decide how far a package hoists", () => {
   });
 });
 
-// A command that changes what bun.lock holds knows what the previous bun.lock placed. What it no
-// longer places, and the nested copies the install now provides from above, leave node_modules.
-describe.concurrent("what left the tree leaves node_modules", () => {
+// A command that changes bun.lock knows what the previous bun.lock placed. It removes from node_modules what's no
+// longer placed, and the nested copies that are now provided from above.
+describe.concurrent("packages that are no longer in the tree are removed from node_modules", () => {
   const versionAt = async (...path: string[]) =>
     (await exists(join(...path, "package.json"))) ? (await file(join(...path, "package.json")).json()).version : null;
   const env = (packageDir: string) => ({ ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") });
@@ -1119,7 +1118,7 @@ describe.concurrent("what left the tree leaves node_modules", () => {
       files: Object.fromEntries(Object.entries(files).map(([path, json]) => [path, JSON.stringify(json)])),
     });
 
-  test("a member's own copy, once the member uses the version at the root", async () => {
+  test("a workspace's own copy, once the workspace uses the version at the root", async () => {
     const { packageDir } = await project({
       "package.json": { name: "root", workspaces: ["packages/*"], dependencies: { "no-deps": "2.0.0" } },
       "packages/a/package.json": { name: "a", dependencies: { "no-deps": "1.0.0" } },
@@ -1142,7 +1141,7 @@ describe.concurrent("what left the tree leaves node_modules", () => {
   });
 
   // `bun prune` is the tool for that.
-  test("not a folder in a member's node_modules that bun.lock never placed", async () => {
+  test("but not a folder in a workspace's node_modules that bun.lock never placed", async () => {
     const { packageDir, packageJson } = await project({
       "package.json": {
         name: "root",
@@ -1168,7 +1167,7 @@ describe.concurrent("what left the tree leaves node_modules", () => {
     }).toEqual({ left: null, root: "2.0.0", a: "2.0.0-by-hand" });
   });
 
-  test("not the copy of a member that --filter leaves out", async () => {
+  test("but not the copy of a workspace that --filter skips", async () => {
     const { packageDir } = await project({
       "package.json": { name: "root", workspaces: ["packages/*"], dependencies: { "no-deps": "2.0.0" } },
       "packages/a/package.json": { name: "a", dependencies: { "no-deps": "1.0.0" } },
@@ -1208,7 +1207,7 @@ describe.concurrent("what left the tree leaves node_modules", () => {
       await versionAt(packageDir, "node_modules", "no-deps"),
       await versionAt(packageDir, "node_modules", "one-dep", "node_modules", "no-deps"),
     ]).toEqual(["2.0.0", "1.0.1"]);
-    // bun.lock never placed it: `bun prune` is the tool for that.
+    // bun.lock never placed it, so removing it is a job for `bun prune`.
     await write(join(packageDir, "node_modules", "by-hand", "package.json"), JSON.stringify({ name: "by-hand" }));
 
     await write(packageJson, JSON.stringify({ name: "root", dependencies: { "one-dep": "1.0.0" } }));
@@ -1226,7 +1225,7 @@ describe.concurrent("what left the tree leaves node_modules", () => {
   });
 
   // bun.lock places the bundled no-deps under bundled-1, the install places nothing there.
-  test("not what a tarball ships", async () => {
+  test("but not what a tarball ships", async () => {
     const { packageDir, packageJson } = await project({
       "package.json": { name: "root", dependencies: { "a-dep": "1.0.1", "bundled-1": "1.0.0" } },
     });
@@ -1239,31 +1238,34 @@ describe.concurrent("what left the tree leaves node_modules", () => {
 
   // The host needs no-deps@2.0.0 and nests it, so bun.lock places the no-deps@1.0.0 of the bundled
   // package one level further down, where the tarball ships it.
-  test.each(["install", "update"])("not what a tarball ships below the package it bundles (bun %s)", async command => {
-    const { packageDir, packageJson } = await project({
-      "package.json": {
-        name: "root",
-        dependencies: { "a-dep": "1.0.1", "bundled-conflict-host": "1.0.0", "no-deps": "1.0.1" },
-      },
-    });
-    await runBunInstall(env(packageDir), packageDir);
-    await write(
-      packageJson,
-      JSON.stringify({ name: "root", dependencies: { "bundled-conflict-host": "1.0.0", "no-deps": "1.0.1" } }),
-    );
-    await using proc = Bun.spawn({ cmd: [bunExe(), command], cwd: packageDir, env: env(packageDir), stderr: "pipe" });
-    expect(await proc.stderr.text()).not.toContain("error:");
-    const host = join(packageDir, "node_modules", "bundled-conflict-host", "node_modules");
-    expect({
-      left: await versionAt(packageDir, "node_modules", "a-dep"),
-      nested: await versionAt(host, "no-deps"),
-      shipped: await versionAt(host, "bundled-shipped-inner", "node_modules", "no-deps"),
-    }).toEqual({ left: null, nested: "2.0.0", shipped: "1.0.0" });
-    expect(await proc.exited).toBe(0);
-  });
+  test.each(["install", "update"])(
+    "but not what a tarball ships below the package that it bundles (bun %s)",
+    async command => {
+      const { packageDir, packageJson } = await project({
+        "package.json": {
+          name: "root",
+          dependencies: { "a-dep": "1.0.1", "bundled-conflict-host": "1.0.0", "no-deps": "1.0.1" },
+        },
+      });
+      await runBunInstall(env(packageDir), packageDir);
+      await write(
+        packageJson,
+        JSON.stringify({ name: "root", dependencies: { "bundled-conflict-host": "1.0.0", "no-deps": "1.0.1" } }),
+      );
+      await using proc = Bun.spawn({ cmd: [bunExe(), command], cwd: packageDir, env: env(packageDir), stderr: "pipe" });
+      expect(await proc.stderr.text()).not.toContain("error:");
+      const host = join(packageDir, "node_modules", "bundled-conflict-host", "node_modules");
+      expect({
+        left: await versionAt(packageDir, "node_modules", "a-dep"),
+        nested: await versionAt(host, "no-deps"),
+        shipped: await versionAt(host, "bundled-shipped-inner", "node_modules", "no-deps"),
+      }).toEqual({ left: null, nested: "2.0.0", shipped: "1.0.0" });
+      expect(await proc.exited).toBe(0);
+    },
+  );
 
   // bun.lock still holds it.
-  test("not a package that an install for another platform placed", async () => {
+  test("but not a package that an install for another platform placed", async () => {
     const { packageDir, packageJson } = await project({
       "package.json": { name: "root", dependencies: { "a-dep": "1.0.1", "test-native-binlink": "1.0.0" } },
     });
@@ -1277,7 +1279,7 @@ describe.concurrent("what left the tree leaves node_modules", () => {
     ]);
   });
 
-  test("not a devDependency that --omit=dev skips", async () => {
+  test("but not a devDependency that --omit=dev skips", async () => {
     const { packageDir, packageJson } = await project({
       "package.json": {
         name: "root",
@@ -1295,7 +1297,7 @@ describe.concurrent("what left the tree leaves node_modules", () => {
   });
 
   // one-dep nests its no-deps@1.0.1. ships-no-deps declares no dependency, and its tarball holds a no-deps@1.0.0.
-  test("not the folder a new version of a package ships where the old one had a dependency", async () => {
+  test("but not the folder that a new version of a package ships where the old one had a dependency", async () => {
     const rootPackageJson = (host: string) => ({ name: "root", dependencies: { host, "no-deps": "2.0.0" } });
     const { packageDir, packageJson } = await project({ "package.json": rootPackageJson("npm:one-dep@1.0.0") });
     await runBunInstall(env(packageDir), packageDir);
@@ -1307,7 +1309,7 @@ describe.concurrent("what left the tree leaves node_modules", () => {
   });
 });
 
-// name -> version -> what its package.json has besides these two. `more`: `name-version` -> its other files.
+// Maps name -> version -> the other fields of its package.json. `more` maps `name-version` to its other files.
 async function serveGraph(
   graph: Record<string, Record<string, object>>,
   more: Record<string, Record<string, string>> = {},
@@ -1356,7 +1358,7 @@ function layout(dir: string, ...members: string[]) {
 
 // A row that a run leaves out keeps its place, so a run over the node_modules of another run never
 // finds a package where another version belongs, nor an old copy in front of the one it placed.
-describe.concurrent("where a package stands does not depend on the flags of the run", () => {
+describe.concurrent("where a package is placed doesn't depend on the flags of the install", () => {
   const bunfig = (server: { url: URL }) => `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`;
   const thisOs = process.platform;
   const otherOs = thisOs === "darwin" ? "linux" : "darwin";
@@ -1424,7 +1426,7 @@ describe.concurrent("where a package stands does not depend on the flags of the 
   });
 
   // b finds its d@2.0.0 in the place that the devDependency took.
-  test("a package that is left out and needed stays", async () => {
+  test("a package that's skipped in one place and needed in another is kept", async () => {
     using server = await serveGraph({
       j: { "1.1.0": {}, "2.0.0": {} },
       d: { "1.0.0": {}, "2.0.0": { dependencies: { j: "1.1.0" } } },
@@ -1445,7 +1447,8 @@ describe.concurrent("where a package stands does not depend on the flags of the 
     expect(layout(dir)).toEqual(["a@1.0.0", "a/d@1.0.0", "b@1.0.0", "d@2.0.0", "d/j@1.1.0", "j@2.0.0"]);
   });
 
-  // From the root, tool's optional peer finds the name `native`: not the package it is bound to, w1's alias of tool.
+  // From the root, tool's optional peer finds something under the name `native`, but it isn't the package that it's
+  // bound to. It's w1's alias of tool.
   test("a package that is left out is not linked for an entry that only finds its name", async () => {
     using server = await serveGraph({
       native: { "1.0.0": { cpu: [process.arch === "arm64" ? "x64" : "arm64"] } },
@@ -1473,7 +1476,8 @@ describe.concurrent("where a package stands does not depend on the flags of the 
     expect(layout(dir, "pk/w1")).toEqual(some);
   });
 
-  // m's peer is bound to native@1.1.0, which stands below user. From m the name leads to the root's native@2.0.0.
+  // m's peer is bound to native@1.1.0, which is placed below user. From m, the name resolves to the root's
+  // native@2.0.0.
   test("nor for a workspace's peer that is bound to another version", async () => {
     using server = await serveGraph({
       native: { "1.1.0": {}, "2.0.0": { cpu: [process.arch === "arm64" ? "x64" : "arm64"] } },
@@ -1497,8 +1501,9 @@ describe.concurrent("where a package stands does not depend on the flags of the 
     expect(layout(dir, "pk/m")).toEqual(some);
   });
 
-  // The one place whose package depends on the run: the first of the two entries that the run links fills it.
-  // So x does not share it, and what k@1.1.0 needs has a place too. bun.lockb records a package for each entry.
+  // This is the only slot whose package depends on the install's flags: it goes to the first of the two entries that
+  // the install links. So x doesn't share it, and the dependencies of k@1.1.0 have a slot too. bun.lockb records a
+  // package for each entry.
   test("a name in dependencies and devDependencies", async () => {
     using server = await serveGraph({
       m: { "1.0.0": {}, "2.0.0": {} },
@@ -1540,7 +1545,7 @@ describe.concurrent("a peer dependency is the package that its dependent loads",
   const linkers = ["hoisted", "isolated"] as const;
   const plugs = linkers.flatMap(linker => (["plug", "plug-any"] as const).map(plug => [linker, plug] as const));
 
-  // As node looks `name` up from the real folder of `from`.
+  // Looks `name` up the way Node does, from the real folder of `from`.
   function folderOf(from: string, name: string) {
     for (let dir = realpathSync(from); dir !== dirname(dir); dir = dirname(dir)) {
       if (existsSync(join(dir, "node_modules", name, "package.json"))) return join(dir, "node_modules", name);
@@ -1557,7 +1562,7 @@ describe.concurrent("a peer dependency is the package that its dependent loads",
       .map(path => JSON.parse(readFileSync(join(dir, path), "utf8")).version)
       .sort();
 
-  test.each(plugs)("%s, %s: whatever the run leaves out", async (linker, plug) => {
+  test.each(plugs)("%s, %s: no matter what the install skips", async (linker, plug) => {
     using server = await serveGraph(graph());
     const range = graph()[plug]["1.0.0"].peerDependencies.react;
     using tmp = tempDir("peer-flags", {
@@ -1582,7 +1587,7 @@ describe.concurrent("a peer dependency is the package that its dependent loads",
     }
   });
 
-  test("hoisted: when the run leaves out the member's own devDependency that provides it", async () => {
+  test("hoisted: when the install skips the workspace's own devDependency that provides it", async () => {
     using server = await serveGraph(graph());
     using tmp = tempDir("peer-provider-left-out", {
       "bunfig.toml": bunfig(server, "hoisted"),
@@ -1717,7 +1722,7 @@ describe.concurrent("a peer dependency is the package that its dependent loads",
   });
 
   // `site` puts react 19 at the top, where `ui` finds it for its devDependency. A react 18 for the peer would hide it.
-  test.each(linkers)("%s: a member's own devDependency, outside the range of its peer", async linker => {
+  test.each(linkers)("%s: a workspace's own devDependency that's outside the range of its peer", async linker => {
     using server = await serveGraph(graph());
     using tmp = tempDir("peer-and-dev", {
       "bunfig.toml": bunfig(server, linker),
@@ -1742,8 +1747,8 @@ describe.concurrent("a peer dependency is the package that its dependent loads",
     expect(loaded(ui, "react")).toBe("19.0.0");
   });
 
-  // ui@1.2.0 fits the peer range of `lib` and cannot stand at the top, next to core 1. In the node_modules of `lib`,
-  // next to core 2, it would hide the ui@1.0.0 at the top that `lib` asks for itself.
+  // ui@1.2.0 satisfies the peer range of `lib`, but it can't be at the top, next to core 1. In the node_modules of
+  // `lib`, next to core 2, it would hide the ui@1.0.0 at the top that `lib` itself depends on.
   test.each(
     (["update", "update --latest", "add ui@^1.2.0"] as const).flatMap(command =>
       [
@@ -1805,7 +1810,7 @@ describe.concurrent("a peer dependency is the package that its dependent loads",
       ).map(([host, root]) => [range, host, root] as const),
     ),
   )(
-    "hoisted: peer %p, next to the published version that %s uses of a member (the root has %p)",
+    "hoisted: peer %p, next to the published version of a workspace that %s uses (the root has %p)",
     async (range, host, root) => {
       const plug = { peerDependencies: { lib: range } };
       const uses = { lib: "^1.0.0", plug: "^1.0.0" };
@@ -1841,7 +1846,7 @@ describe.concurrent("a peer dependency is the package that its dependent loads",
   );
 
   // util@1.1.0 below the published lib links the member, which has the published lib below it.
-  test.each(linkers)("%s: a member that builds with the published version of itself", async linker => {
+  test.each(linkers)("%s: a workspace that builds with the published version of itself", async linker => {
     using server = await serveGraph({
       util: { "1.0.0": {}, "1.1.0": { dependencies: { lib: "*" } } },
       lib: { "2.1.0": { optionalDependencies: { util: "^1.0.0" } } },
@@ -2165,11 +2170,11 @@ describe.concurrent("packages nested in a workspace's node_modules", () => {
 });
 
 // An install removes a folder only if the bun.lock it started from placed a package there.
-describe.concurrent("a folder that no bun.lock placed stays", () => {
+describe.concurrent("a folder that no bun.lock placed is kept", () => {
   const bunfig = (server: { url: URL }) => `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`;
 
-  // bun.lock places `dep` at the root alone. `ships` has one in its tarball, without bundledDependencies. `builds` makes
-  // one in its postinstall. Each loads its own.
+  // bun.lock only places `dep` at the root. `ships` has one in its tarball, without bundledDependencies. `builds`
+  // creates one in its postinstall. Each one loads its own copy.
   test.each([
     [[["install"]]],
     [[["install"], ["install"]]],
@@ -2386,7 +2391,8 @@ describe.concurrent("a workspace switches between a member and the registry pack
   });
 });
 
-// bun.lock records no edges: a load binds each peer again, and has to end where the resolver did.
+// bun.lock doesn't record which package a peer resolves to. Loading binds each peer again, and has to get the same
+// result as the resolver.
 describe.concurrent(
   "bun.lock with a member and the published package of its name loads back as it was resolved",
   () => {
@@ -2437,7 +2443,7 @@ describe.concurrent(
         { lib: { name: "lib", version: "5.0.0", dependencies: { root: "workspace:*" } } },
       ],
       [
-        "the member depends on the project, which uses the published package of its own name too",
+        "the workspace depends on the project, which also uses the published package with its own name",
         { lib: { "1.0.0": {} }, d: { "2.0.0": {} } },
         { name: "d", version: "9.0.0", dependencies: { lib: "^1.0.0", d: "^2.0.0" } },
         { lib: { name: "lib", version: "5.0.0", dependencies: { d: "workspace:*" } } },
@@ -2469,7 +2475,7 @@ describe.concurrent(
 
 // The root asks for no-deps@1.0.1, and a member is called no-deps too (2.0.0: not accepted).
 test.concurrent.each(["hoisted", "isolated"] as const)(
-  "%s: the root's own dependency beats the member of that name",
+  "%s: the root's own dependency wins over the workspace with that name",
   async linker => {
     const { packageDir } = await registry.createTestDir({
       bunfigOpts: { linker },
@@ -2501,7 +2507,7 @@ test.concurrent.each(["hoisted", "isolated"] as const)(
     expect(await seen()).toEqual({ root: "1.0.1", "ws-b": "2.0.0" });
     const lockfile = await file(join(packageDir, "bun.lock")).text();
 
-    // What bun.lock holds gives the same.
+    // Installing from bun.lock gives the same result.
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
     await runBunInstall(env, packageDir, { savesLockfile: false });
     expect(await seen()).toEqual({ root: "1.0.1", "ws-b": "2.0.0" });
@@ -2509,9 +2515,268 @@ test.concurrent.each(["hoisted", "isolated"] as const)(
   },
 );
 
+// `a` (or `zz`) has a peer dependency on `host@1`, and nothing provides it. The project already uses `host@2`.
+describe.concurrent("adding an unrelated package doesn't split a plugin from its host", () => {
+  const plugin = (optional: boolean) => ({
+    n: { "1.0.0": { dependencies: { host: "^2.1.0", plug: "1.0.0" } } },
+    plug: { "1.0.0": { peerDependencies: { host: ">=1.0.0" }, peerDependenciesMeta: { host: { optional } } } },
+  });
+  // `a` gets its own host@1 at the top, and plug stays next to the host@2 that n provides.
+  const nested = ["a@1.0.0", "host@1.5.0", "n@1.0.0", "n/host@2.1.0", "n/plug@1.0.0"];
+
+  test.each([
+    ["the host depends on it", plugin(false), { n: "1.0.0" }, "a", nested],
+    ["the host depends on it, and the plugin's peer dependency is optional", plugin(true), { n: "1.0.0" }, "a", nested],
+    [
+      // n's packages are placed first, so they keep the top, and zz gets its own host@1.
+      "the host depends on it, and the unrelated package comes last",
+      plugin(false),
+      { n: "1.0.0" },
+      "zz",
+      ["host@2.1.0", "n@1.0.0", "plug@1.0.0", "zz@1.0.0", "zz/host@1.5.0"],
+    ],
+    [
+      // No version satisfies tg, cx and a, so a shares the host@2 that tg and cx use.
+      "the host only has a peer dependency on it",
+      {
+        tg: { "1.0.0": { dependencies: { cx: "1.0.0" }, peerDependencies: { host: "^2.1.0" } } },
+        cx: { "1.0.0": { peerDependencies: { host: "^1.0.0 || ^2.0.0" } } },
+        holder: { "1.0.0": { dependencies: { host: "^2.1.0" } } },
+      },
+      { holder: "1.0.0", tg: "1.0.0" },
+      "a",
+      ["a@1.0.0", "cx@1.0.0", "holder@1.0.0", "host@2.1.0", "tg@1.0.0"],
+    ],
+    [
+      // kit uses the host@2 that n provides, so kit and plug both stay under n.
+      "the plugin's owner has the same peer dependency",
+      {
+        n: { "1.0.0": { dependencies: { host: "^2.1.0", kit: "1.0.0" } } },
+        kit: { "1.0.0": { dependencies: { plug: "1.0.0" }, peerDependencies: { host: "^2.1.0" } } },
+        plug: { "1.0.0": { peerDependencies: { host: ">=1.0.0" } } },
+      },
+      { n: "1.0.0" },
+      "a",
+      ["a@1.0.0", "host@1.5.0", "n@1.0.0", "n/host@2.1.0", "n/kit@1.0.0", "n/kit/plug@1.0.0"],
+    ],
+    [
+      // As in pnpm, plug belongs to the project and not to n, so it loads the host at the top.
+      "but a plugin that's only installed for a peer dependency goes to the top",
+      {
+        n: { "1.0.0": { dependencies: { host: "^2.1.0" }, peerDependencies: { plug: "1.0.0" } } },
+        plug: { "1.0.0": { peerDependencies: { host: ">=1.0.0" } } },
+      },
+      { n: "1.0.0" },
+      "a",
+      ["a@1.0.0", "host@1.5.0", "n@1.0.0", "n/host@2.1.0", "plug@1.0.0"],
+    ],
+  ])("%s", async (_, graph, dependencies, unrelated, expected) => {
+    using server = await serveGraph({
+      host: { "1.5.0": {}, "2.1.0": {} },
+      [unrelated]: { "1.0.0": { peerDependencies: { host: "^1.0.0" } } },
+      ...graph,
+    });
+    const packageJson = (more: object) => JSON.stringify({ name: "root", dependencies: { ...dependencies, ...more } });
+    using tmp = tempDir("hoist-unrelated-peer", {
+      "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+      "package.json": packageJson({}),
+    });
+    const dir = String(tmp);
+    const lockfile = () => readFileSync(join(dir, "bun.lock"), "utf8");
+
+    await run(dir, "install");
+    await write(join(dir, "package.json"), packageJson({ [unrelated]: "1.0.0" }));
+    await run(dir, "install");
+    expect(layout(dir)).toEqual(expected);
+    const saved = lockfile();
+
+    // bun.lock is stable, and a fresh install gives the same result.
+    await run(dir, "install");
+    await run(dir, "install", "--frozen-lockfile");
+    expect(lockfile()).toBe(saved);
+    await rm(join(dir, "node_modules"), { recursive: true, force: true });
+    await rm(join(dir, "bun.lock"));
+    await run(dir, "install");
+    expect(layout(dir)).toEqual(expected);
+    expect(lockfile()).toBe(saved);
+  });
+});
+
+// kernel@1 is at the top for hook's peer dependency, and kernel@2 is under frame. gear accepts both, and kernel@2 doesn't
+// depend on itself, so gear goes to the top. That's where lockfiles from older versions have it.
+test.concurrent("a package is hoisted past a copy of its peer that its owner doesn't depend on", async () => {
+  using server = await serveGraph({
+    hook: { "1.0.0": { peerDependencies: { kernel: "^1.0.0" } } },
+    kernel: {
+      "1.1.0": { peerDependencies: { frame: "2.0.0" } },
+      "2.0.0": { dependencies: { gear: "1.0.0" } },
+    },
+    frame: { "2.0.0": { dependencies: { kernel: "2.0.0" } } },
+    gear: { "1.0.0": { peerDependencies: { kernel: "^1.0.0 || ^2.0.0" } } },
+  });
+  using tmp = tempDir("hoist-past-peer-copy", {
+    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+    "package.json": JSON.stringify({ name: "root", dependencies: { hook: "1.0.0" } }),
+  });
+  const dir = String(tmp);
+  await run(dir, "install");
+  expect(layout(dir)).toEqual(["frame@2.0.0", "frame/kernel@2.0.0", "gear@1.0.0", "hook@1.0.0", "kernel@1.1.0"]);
+});
+
+// web provides host@2 to its own hostdom. Nothing provides it in ui, where hostdom needs host@2 and refs needs host@1.
+// No version satisfies both, so refs shares host@2 instead of getting a second copy.
+test.concurrent.each(["hoisted", "isolated"])(
+  "packages in one workspace share a copy of a peer that another workspace provides to one of them (%s)",
+  async linker => {
+    using server = await serveGraph({
+      host: { "1.5.0": {}, "2.1.0": {} },
+      hostdom: { "2.1.0": { peerDependencies: { host: "^2.1.0" } } },
+      refs: { "1.0.0": { peerDependencies: { host: "^1.0.0" } } },
+    });
+    using tmp = tempDir("hoist-peer-in-two-workspaces", {
+      "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "${linker}"\n`,
+      "package.json": JSON.stringify({ name: "root", workspaces: ["pk/*"] }),
+      "pk/web/package.json": JSON.stringify({ name: "web", dependencies: { host: "2.1.0", hostdom: "2.1.0" } }),
+      "pk/ui/package.json": JSON.stringify({
+        name: "ui",
+        dependencies: { refs: "1.0.0" },
+        devDependencies: { hostdom: "2.1.0" },
+      }),
+    });
+    const dir = String(tmp);
+    await run(dir, "install");
+    const hosts = Object.entries(await lockfileTree(dir)).filter(([, resolution]) => resolution.startsWith("host@"));
+    expect(hosts).toEqual([["host", "host@2.1.0"]]);
+    await run(dir, "install", "--frozen-lockfile");
+  },
+);
+
+// hostdom needs host@2 and lib needs host@1, so no version can satisfy both, and lib shares the installed host@2. The
+// registry can't change that, so it isn't asked about host.
+test.concurrent("peers whose ranges don't overlap are resolved without a request for their manifest", async () => {
+  using graph = await serveGraph({
+    host: { "1.5.0": {}, "2.1.0": {} },
+    holder: { "1.0.0": { dependencies: { host: "2.1.0" } } },
+    hostdom: { "2.1.0": { peerDependencies: { host: "^2.1.0" } } },
+    lib: { "1.0.0": { peerDependencies: { host: "^1.0.0" } } },
+  });
+  const requested: string[] = [];
+  using server = Bun.serve({
+    port: 0,
+    fetch: request => {
+      const { pathname } = new URL(request.url);
+      requested.push(pathname);
+      return fetch(new URL(pathname, graph.url));
+    },
+  });
+  using tmp = tempDir("hoist-disjoint-peers-no-request", {
+    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+    "package.json": JSON.stringify({ name: "root", dependencies: { holder: "1.0.0", hostdom: "2.1.0" } }),
+  });
+  const dir = String(tmp);
+  await run(dir, "install");
+
+  requested.length = 0;
+  await rm(join(dir, ".bun-cache"), { recursive: true, force: true });
+  await run(dir, "add", "lib@1.0.0");
+  expect(requested).toEqual(["/lib"]);
+  expect(layout(dir)).toEqual(["holder@1.0.0", "host@2.1.0", "hostdom@2.1.0", "lib@1.0.0"]);
+});
+
+// server is only installed for client's peer dependency, and the project's compiler@7 is out of its range. It still uses
+// that version, so no other version is looked up or downloaded.
+test.concurrent("a package that's installed for a peer dependency uses the version that the project has", async () => {
+  using graph = await serveGraph({
+    compiler: { "5.9.3": {}, "7.0.2": {} },
+    client: { "1.0.0": { peerDependencies: { server: "1.0.0" } } },
+    server: { "1.0.0": { peerDependencies: { compiler: "^5.0.0" } } },
+  });
+  const requested: string[] = [];
+  using server = Bun.serve({
+    port: 0,
+    fetch: request => {
+      const { pathname } = new URL(request.url);
+      requested.push(pathname);
+      return fetch(new URL(pathname, graph.url));
+    },
+  });
+  using tmp = tempDir("hoist-peer-of-installed-peer", {
+    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+    "package.json": JSON.stringify({ name: "root", devDependencies: { compiler: "^7.0.0" } }),
+  });
+  const dir = String(tmp);
+  await run(dir, "install");
+
+  requested.length = 0;
+  await rm(join(dir, ".bun-cache"), { recursive: true, force: true });
+  await run(dir, "add", "client@1.0.0");
+  expect(requested.sort()).toEqual(["/client", "/server"]);
+  expect(layout(dir)).toEqual(["client@1.0.0", "compiler@7.0.2", "server@1.0.0"]);
+});
+
+// host@2 is only installed for app's peer dependency. Its own plugin@2 needs host@1, and host@1 depends on plugin@1,
+// which uses host@2. Installing host@1 for plugin@2 would make a cycle that can't be laid out in node_modules.
+test.concurrent("a package provides itself to a dependency that has a peer dependency on it", async () => {
+  using server = await serveGraph({
+    app: { "1.0.0": { dependencies: { plugin: "^1.0.0 || ^2.0.0" }, peerDependencies: { host: "2.0.0" } } },
+    host: { "1.0.0": { dependencies: { plugin: "^1.0.0" } }, "2.0.0": { dependencies: { plugin: "^2.0.0" } } },
+    plugin: { "1.0.0": { peerDependencies: { host: "1.0.5" } }, "2.0.0": { peerDependencies: { host: "1.0.0" } } },
+  });
+  const packageJson = (more: object) => JSON.stringify({ name: "root", dependencies: { app: "1.0.0" }, ...more });
+  using tmp = tempDir("hoist-peer-on-own-parent", {
+    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+    "package.json": packageJson({ overrides: { plugin: "1.0.0" } }),
+  });
+  const dir = String(tmp);
+  await run(dir, "install");
+  expect(layout(dir)).toEqual(["app@1.0.0", "host@2.0.0", "plugin@1.0.0"]);
+
+  await write(join(dir, "package.json"), packageJson({}));
+  await run(dir, "install");
+  expect(layout(dir)).toEqual(["app@1.0.0", "host@2.0.0", "host/plugin@2.0.0", "plugin@1.0.0"]);
+});
+
+test.concurrent.each(["hoisted", "isolated"])(
+  "a plugin in the repository of its host gets the published host (%s)",
+  async linker => {
+    using server = await serveGraph({
+      host: { "2.1.0": {}, "3.0.0": {} },
+      plugin: { "1.0.0": { peerDependencies: { host: "^2.0.0" } } },
+    });
+    using tmp = tempDir("hoist-peer-named-like-the-project", {
+      "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "${linker}"\n`,
+      "package.json": JSON.stringify({ name: "host", version: "3.0.0", devDependencies: { plugin: "1.0.0" } }),
+    });
+    const dir = String(tmp);
+    await run(dir, "install");
+    expect(await lockfileTree(dir)).toEqual({ host: "host@2.1.0", plugin: "plugin@1.0.0" });
+  },
+);
+
+// The project's own peer dependency counts like a regular one, so the project provides compiler@7 to plugin.
+test.concurrent("the project provides its dependencies to a package that it has a peer dependency on", async () => {
+  using server = await serveGraph({
+    compiler: { "5.9.3": {}, "7.0.2": {} },
+    plugin: { "1.0.0": { peerDependencies: { compiler: "^5.0.0" } } },
+  });
+  using tmp = tempDir("hoist-peer-of-project-peer", {
+    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+    "package.json": JSON.stringify({
+      name: "root",
+      peerDependencies: { plugin: "1.0.0" },
+      devDependencies: { compiler: "^7.0.0" },
+    }),
+  });
+  const dir = String(tmp);
+  await run(dir, "install");
+  expect(layout(dir)).toEqual(["compiler@7.0.2", "plugin@1.0.0"]);
+  const downloaded = readdirSync(join(dir, ".bun-cache")).filter(name => name.startsWith("compiler@"));
+  expect(downloaded.map(name => name.split("@")[1])).toEqual(["7.0.2"]);
+});
+
 // The host bundles no-deps@1.0.0, which is what peer-deps-fixed (peer no-deps@^1.0.0) finds next to
 // itself under the host. At the root it would find 2.0.0.
-test.concurrent("a package stays under the host that bundles the version its peer accepts", async () => {
+test.concurrent("a package stays under the host that bundles the version that its peer accepts", async () => {
   const host = {
     name: "host",
     version: "1.0.0",
@@ -2552,8 +2817,8 @@ test.concurrent("a package stays under the host that bundles the version its pee
 
 // The hoisted linker links the packages of the cache on the thread pool. Where few files can be
 // open, and on Windows, the main thread links each in its turn. Nothing else may differ.
-describe("the thread pool links what the main thread links", () => {
-  // Every entry below `dir`: its kind, its mode, and where it leads or what is in it.
+describe("the thread pool links the same files as the main thread", () => {
+  // Returns every entry below `dir`: its kind, its mode, and its link target or contents.
   function entriesOf(dir: string, prefix = "", entries: Record<string, string> = {}) {
     for (const name of readdirSync(dir).sort()) {
       const path = join(dir, name);
@@ -2587,9 +2852,9 @@ describe("the thread pool links what the main thread links", () => {
     return { stdout: timeless(stdout), stderr: timeless(stderr), exitCode };
   }
 
-  // Trees two levels deep, scopes, bins at the root and below a package, a script that runs the bin
-  // of the package nested below its own, what a tarball ships, a folder, a member with copies of its
-  // own, a member that goes by two names, and (`bun patch` adds it) a patched package.
+  // Covers trees two levels deep, scopes, bins at the root and below a package, a script that runs the bin of the
+  // package nested below its own, files that a tarball ships, a folder, a workspace with its own copies, a workspace
+  // that has two names, and a patched package (added by `bun patch`).
   const members = ["member", "twice", "other"];
   const files = (optionalDependencies: Record<string, string>) => ({
     "package.json": JSON.stringify({
@@ -2722,8 +2987,8 @@ describe("the thread pool links what the main thread links", () => {
     }
   }
 
-  // Nothing is deleted first then, so the packages of the members are linked over what is there.
-  test.concurrent("the node_modules of the members were left", async () => {
+  // Nothing is deleted first in that case, so the workspaces' packages are linked over what's already there.
+  test.concurrent("the workspaces' node_modules were kept", async () => {
     using dir = tempDir("linked-by-the-pool-over-members", { project: files({}) });
     const project = join(String(dir), "project");
     const cache = join(String(dir), "cache");

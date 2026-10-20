@@ -77,8 +77,11 @@ export async function inTurns<T>(items: T[], run: (item: T) => Promise<void>) {
   for (let at = 0; at < items.length; at += 6) await Promise.all(items.slice(at, at + 6).map(run));
 }
 
-/** `deep`: nested too deeply for the stack of a build that is not optimised, or too slow in one. */
-type Case = { files: Record<string, string>; build?: true; deep?: true };
+/**
+ * `deep`: nested too deeply for the stack of a build that is not optimised, or too slow in one.
+ * `theirs`: what TypeScript 7.1 reports, where `bun check` follows it and the tsc at hand reports something else.
+ */
+type Case = { files: Record<string, string>; build?: true; deep?: true; theirs?: string[] };
 
 /**
  * Small programs about which `bun check` and tsc once said something else, each named after where it was found.
@@ -123,7 +126,8 @@ export function programsThatOnceDiffered(part: number, parts: number) {
             linesOf([bunExe(), "check", ...build, "--threads=1"], cwd, root),
           ]);
           // After them: `tsc -b` writes files.
-          const theirs = await linesOf([tsc!, ...build, "--pretty", "false", "--singleThreaded"], cwd, root);
+          const theirs =
+            it.theirs ?? (await linesOf([tsc!, ...build, "--pretty", "false", "--singleThreaded"], cwd, root));
           if (!Bun.deepEquals(theirs, ours)) different[name] = { theirs, ours };
           else if (!Bun.deepEquals(theirs, onOneThread)) different[name] = { theirs, onOneThread };
         });

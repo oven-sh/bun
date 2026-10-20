@@ -135,6 +135,7 @@ enum End {
     TagStart,
     Quote(u32),
     Name,
+    UnquotedValue,
 }
 
 /// What ends a raw text.
@@ -192,6 +193,11 @@ fn is_quote(code: u32) -> bool {
 
 fn is_name_end(code: u32) -> bool {
     is_whitespace(code) || matches!(code, 62 | 60 | 47 | 39 | 34 | 61 | 0)
+}
+
+/// HTML's "attribute value (unquoted) state". `=`, `<` and quotes are errors there but, like `/`, part of the value.
+fn is_unquoted_value_end(code: u32) -> bool {
+    matches!(code, 9 | 10 | 12 | 13 | 32 | 62 | 0)
 }
 
 fn is_prefix_end(code: u32) -> bool {
@@ -471,6 +477,7 @@ impl<'a> Tokenizer<'a, '_> {
             End::TagStart => self.is_tag_start(),
             End::Quote(quote) => self.peek() == quote,
             End::Name => is_name_end(self.peek()),
+            End::UnquotedValue => is_unquoted_value_end(self.peek()),
         }
     }
 
@@ -483,7 +490,7 @@ impl<'a> Tokenizer<'a, '_> {
             }
             End::Text => strings::index_of_any(rest, b"<{&\0"),
             End::Quote(quote) => strings::index_of_any(rest, &[quote as u8, b'{', b'&']),
-            End::TagStart | End::Name => return,
+            End::TagStart | End::Name | End::UnquotedValue => return,
         };
         self.pos += next.unwrap_or(rest.len());
     }
@@ -1144,7 +1151,13 @@ impl<'a> Tokenizer<'a, '_> {
                 self.consume_quote(quote)?;
                 value
             } else {
-                self.consume_with_interpolation(text, interpolation, End::Name, End::Name)?
+                // This is a port of Angular's lexer, which ends the value where a name would end: `a=b=c` becomes
+                // `a="b" ="c"`. That's right for Angular templates. Prettier parses HTML and Vue that way too.
+                let end = match self.options.tokenize_angular_blocks {
+                    true => End::Name,
+                    false => End::UnquotedValue,
+                };
+                self.consume_with_interpolation(text, interpolation, end, end)?
             });
         }
         self.skip_whitespace();

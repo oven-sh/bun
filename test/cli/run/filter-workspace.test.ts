@@ -1163,7 +1163,7 @@ describe.concurrent("a '!' entry in \"workspaces\"", () => {
     // `dir/**` removes `dir` and everything below it
     { workspaces: ["packages/**", "!packages/legacy/**"], members: appAndLib },
     { workspaces: ["packages/*", "!packages/leg*/**"], members: appAndLib },
-    // a path that is listed as is stays
+    // A path that's listed literally is kept.
     { workspaces: ["packages/lib", "!packages/lib"], members: ["packages/lib"] },
   ];
   test.each(configs.map(row => [JSON.stringify(row.workspaces), row] as const))(

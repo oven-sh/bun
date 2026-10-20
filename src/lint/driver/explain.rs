@@ -237,6 +237,13 @@ pub(crate) fn write_rules_by_plugin(out: &mut Vec<u8>, registry: &Registry, colo
             rows.len(),
             noun
         );
+        if rows.iter().all(|it| !it.1.languages.is_empty()) {
+            pretty!(
+                out,
+                colors,
+                "<d>These need an ESLint config that says which files are in the language.<r>\n"
+            );
+        }
         let width = rows.iter().map(|it| it.0.len()).max().unwrap_or(0);
         for (id, meta) in rows {
             match defaults.get(in_native_mode(registry, meta, &id)) {

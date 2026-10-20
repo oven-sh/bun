@@ -872,6 +872,8 @@ pub(crate) fn defines_from_transform_options(
     }
 
     if behavior != api::DotEnvBehavior::LoadAllWithoutInlining {
+        // With no NODE_ENV at build time, a server reads it when it runs.
+        let read_at_runtime = node_env.is_none() && matches!(target, Target::Bun | Target::Node);
         let quoted_node_env: Box<[u8]> = 'brk: {
             if let Some(node_env) = node_env {
                 if !node_env.is_empty() {
@@ -902,8 +904,10 @@ pub(crate) fn defines_from_transform_options(
             Box::from(b"\"development\"".as_slice())
         };
 
-        user_defines.get_or_put_value(b"process.env.NODE_ENV", quoted_node_env.clone())?;
-        user_defines.get_or_put_value(b"process.env.BUN_ENV", quoted_node_env)?;
+        if !read_at_runtime {
+            user_defines.get_or_put_value(b"process.env.NODE_ENV", quoted_node_env.clone())?;
+            user_defines.get_or_put_value(b"process.env.BUN_ENV", quoted_node_env)?;
+        }
 
         // Automatically set `process.browser` to `true` for browsers and false for node+js
         // This enables some extra dead code elimination
@@ -1666,6 +1670,10 @@ impl<'a> BundleOptions<'a> {
 
             if self.production {
                 break 'node_env Some(Cow::Borrowed(b"\"production\"".as_slice()));
+            }
+
+            if matches!(self.target, Target::Bun | Target::Node) {
+                break 'node_env None;
             }
 
             Some(Cow::Borrowed(b"\"development\"".as_slice()))

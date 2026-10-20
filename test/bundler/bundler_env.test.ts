@@ -1,4 +1,6 @@
-import { describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 import { itBundled } from "./expectBundled";
 
 for (let backend of ["api", "cli"] as const) {
@@ -125,3 +127,39 @@ for (let backend of ["api", "cli"] as const) {
       });
   });
 }
+
+describe("process.env.NODE_ENV in a build", () => {
+  async function bundle(args: string[], buildEnv: Record<string, string> = {}) {
+    using dir = tempDir("bundler-node-env", { "entry.js": "console.log(process.env.NODE_ENV);" });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.js", "--outfile=out.js", ...args],
+      env: { ...bunEnv, ...buildEnv },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return await Bun.file(join(String(dir), "out.js")).text();
+  }
+
+  test.concurrent.each(["bun", "node"])(
+    "--target=%s reads it at runtime when the build did not set it",
+    async target => {
+      expect(await bundle([`--target=${target}`])).toContain("process.env.NODE_ENV");
+    },
+  );
+
+  test.concurrent("--target=bun --production uses production", async () => {
+    expect(await bundle(["--target=bun", "--production"])).toContain('"production"');
+  });
+
+  test.concurrent("--target=bun uses a NODE_ENV set at build time", async () => {
+    expect(await bundle(["--target=bun"], { NODE_ENV: "staging" })).toContain('"staging"');
+  });
+
+  test.concurrent("--target=browser uses development when the build did not set it", async () => {
+    expect(await bundle(["--target=browser"])).toContain('"development"');
+  });
+});

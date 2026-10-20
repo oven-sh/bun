@@ -37,7 +37,7 @@ use crate::util::fx_hash;
 use smallvec::SmallVec;
 
 /// Labels for `Checker::inference_walk_counts`.
-pub const INFERENCE_WALK_COUNTS: [&str; 16] = [
+pub const INFERENCE_WALK_COUNTS: [&str; 18] = [
     "walks",
     "long",
     "to a long-walk target",
@@ -54,6 +54,8 @@ pub const INFERENCE_WALK_COUNTS: [&str; 16] = [
     "left a trace",
     "stored",
     "disturbances",
+    "argument walks run in long walks",
+    "argument walks skipped",
 ];
 
 /// Index into `INFERENCE_WALK_COUNTS`.
@@ -85,6 +87,8 @@ pub(in super::super) enum Count {
     Stored,
     /// Number of generations that ended.
     Disturbances,
+    ArgumentWalksRun,
+    ArgumentWalksSkipped,
 }
 
 /// A walk is long if it makes at least this many `infer_types` calls. The first long walk to a target marks the target,
@@ -443,6 +447,21 @@ impl<'p, 's> Checker<'p, 's> {
         if walked.words.len() <= InferenceMemo::MAX_WORDS {
             self.inference_memo.store(hash, walked);
         }
+    }
+
+    /// Everything that a walk between type arguments changes if it does more than repeat an earlier one.
+    pub(super) fn marks_of_argument_walk(&self, n: &Inference) -> impl PartialEq + use<'p, 's> {
+        (
+            self.traces_of_inference(),
+            self.inference_disturbances(),
+            self.lowest_taint,
+            self.instantiation_count,
+            (
+                n.visited.len(),
+                n.unfinished_hits,
+                n.has_reached_contextual_function,
+            ),
+        )
     }
 
     /// Returns the counts in `INFERENCE_WALK_COUNTS` order. They depend only on the program and its split into tasks.

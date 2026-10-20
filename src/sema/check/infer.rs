@@ -24,6 +24,17 @@ type Unmatched<'a> = std::borrow::Cow<'a, [TypeId]>;
 /// From this many pairs on, `Inference::visited` is searched through `Inference::visited_index`.
 const VISITED_INDEX_FROM: usize = 16;
 
+/// A walk that has made this many `infer_types` calls starts to remember the walks between type arguments that it
+/// repeats. See `Checker::infer_from_type_arguments_once`. The number only decides which walks pay for the bookkeeping.
+const REPEATS_FROM: u32 = 256;
+
+/// What a walk between the type arguments of two types reads from the `Inference`, apart from `visited` and the infos:
+/// the source, the target, `priority`, `depth`, `propagated`, and `contra` and `bivariant` as bits.
+type ArgumentWalk = (TypeId, TypeId, u32, u32, Option<TypeId>, u8);
+
+/// The priority in `Inference::visited` of a pair whose action hasn't returned. It reads as `PRIORITY_CIRCULARITY`.
+const PRIORITY_IN_PROGRESS: i32 = i32::MIN;
+
 // InferencePriority. The lower the better.
 pub(super) const PRIORITY_NAKED: u32 = 1;
 const PRIORITY_SPECULATIVE_TUPLE: u32 = 1 << 1;
@@ -80,6 +91,10 @@ pub(super) struct Inference {
     visited: SmallVec<[(TypeId, TypeId, i32); 8]>,
     /// The index of each pair in `visited`, once there are `VISITED_INDEX_FROM` of them.
     visited_index: FxHashMap<(TypeId, TypeId), u32>,
+    /// Number of `invoke_once` calls that found their pair in progress.
+    unfinished_hits: u32,
+    /// The walks between type arguments that changed nothing, each with the `inference_priority` it produced.
+    repeated_argument_walks: FxHashMap<ArgumentWalk, i32>,
     /// Each type with its push number. See `is_at_least_as_new`.
     source_stack: SmallVec<[(TypeId, u32); 8]>,
     target_stack: SmallVec<[(TypeId, u32); 8]>,
@@ -131,6 +146,8 @@ impl Inference {
             inference_priority: PRIORITY_MAX,
             visited: SmallVec::new(),
             visited_index: FxHashMap::default(),
+            unfinished_hits: 0,
+            repeated_argument_walks: FxHashMap::default(),
             source_stack: SmallVec::new(),
             target_stack: SmallVec::new(),
             expanding: 0,
@@ -171,6 +188,8 @@ impl Inference {
             inference_priority,
             visited,
             visited_index,
+            unfinished_hits,
+            repeated_argument_walks,
             source_stack,
             target_stack,
             expanding,
@@ -193,6 +212,8 @@ impl Inference {
         candidates.clear();
         visited.clear();
         visited_index.clear();
+        repeated_argument_walks.clear();
+        *unfinished_hits = 0;
         source_stack.clear();
         target_stack.clear();
         inferred_type_params.clear();
@@ -288,6 +309,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !n.visited_index.is_empty() {
             n.visited_index.clear();
         }
+        n.unfinished_hits = 0;
         n.source_stack.clear();
         n.target_stack.clear();
         n.expanding = 0;
@@ -313,6 +335,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if n.calls >= memo::LONG_WALK {
             self.inference_memo.note_long_walk_to(target);
+        }
+        if !n.repeated_argument_walks.is_empty() {
+            // Not `clear`, which keeps the memory: every clone of the context would copy it.
+            n.repeated_argument_walks = FxHashMap::default();
         }
     }
 
@@ -341,7 +367,9 @@ impl<'p, 's> Checker<'p, 's> {
         // Two instantiations of one alias: infer between the type arguments only. Without type arguments there is nothing to infer.
         if let Some((alias, sources, targets, _)) = self.same_alias(source, target) {
             if !sources.is_empty() {
-                self.infer_from_type_arguments_of(n, alias, &sources, &targets);
+                self.infer_from_type_arguments_once(n, source, target, |c, n| {
+                    c.infer_from_type_arguments_of(n, alias, &sources, &targets)
+                });
             }
             return;
         }
@@ -461,8 +489,11 @@ impl<'p, 's> Checker<'p, 's> {
                 if (st == tt || self.is_array(source) && self.is_array(target))
                     && !are_both_deferred =>
             {
-                let (sa, ta) = (self.type_arguments(source), self.type_arguments(target));
-                self.infer_from_type_arguments_of(n, *st, sa, ta);
+                let st = *st;
+                self.infer_from_type_arguments_once(n, source, target, |c, n| {
+                    let (sa, ta) = (c.type_arguments(source), c.type_arguments(target));
+                    c.infer_from_type_arguments_of(n, st, sa, ta)
+                });
             }
             (
                 TypeData::Tuple {
@@ -476,8 +507,10 @@ impl<'p, 's> Checker<'p, 's> {
                     ..
                 },
             ) if sf == tf && sr == tr && !are_both_deferred => {
-                let (se, te) = (self.type_arguments(source), self.type_arguments(target));
-                self.infer_from_type_arguments(n, se, te, &[]);
+                self.infer_from_type_arguments_once(n, source, target, |c, n| {
+                    let (se, te) = (c.type_arguments(source), c.type_arguments(target));
+                    c.infer_from_type_arguments(n, se, te, &[])
+                });
             }
             (TypeData::Keyof(s), TypeData::Keyof(t)) => {
                 self.infer_from_contravariant_types(n, *s, *t)
@@ -625,6 +658,60 @@ impl<'p, 's> Checker<'p, 's> {
         n.inference_priority = n.inference_priority.min(n.priority as i32);
     }
 
+    /// Runs `walk`, which infers between the type arguments of `source` and `target`, unless it can only repeat what an
+    /// earlier walk of this `inferTypes` call did.
+    ///
+    /// `invokeOnce` stops a second walk between the members of two object types, but nothing stops a second walk between
+    /// the type arguments of two references or aliases. In `B<[...S, E<Id, C<X<S>, Y<S>>>]>` each level mentions the
+    /// level below it several times, so tsgo walks every path: 2.7 times as many for each call added to a chain of calls
+    /// on such a builder.
+    ///
+    /// A walk is remembered if it added no pair to `visited`, found none in progress and left no trace in the checker.
+    /// Such a walk only read types, took the stored priority of each pair, and offered candidates. The same walk
+    /// run again reads the same types and the same stored priorities, so it takes the same path. Offering a candidate
+    /// again changes nothing: it's in the list at that depth or a greater one, or a better priority has replaced the
+    /// list and the offer is dropped. `top_level` depends on the type parameter alone. So all that is left of the walk
+    /// is its `inference_priority`.
+    #[inline]
+    fn infer_from_type_arguments_once(
+        &mut self,
+        n: &mut Inference,
+        source: TypeId,
+        target: TypeId,
+        walk: impl FnOnce(&mut Self, &mut Inference),
+    ) {
+        if n.calls < REPEATS_FROM {
+            return walk(self, n);
+        }
+        self.infer_from_type_arguments_in_long_walk(n, source, target, walk)
+    }
+
+    #[inline(never)]
+    fn infer_from_type_arguments_in_long_walk(
+        &mut self,
+        n: &mut Inference,
+        source: TypeId,
+        target: TypeId,
+        walk: impl FnOnce(&mut Self, &mut Inference),
+    ) {
+        let flags = u8::from(n.contra) | u8::from(n.bivariant) << 1;
+        let key = (source, target, n.priority, n.depth, n.propagated, flags);
+        if let Some(&priority) = n.repeated_argument_walks.get(&key) {
+            n.inference_priority = n.inference_priority.min(priority);
+            self.inference_memo.count(memo::Count::ArgumentWalksSkipped);
+            return;
+        }
+        self.inference_memo.count(memo::Count::ArgumentWalksRun);
+        let before = self.marks_of_argument_walk(n);
+        let outer = std::mem::replace(&mut n.inference_priority, PRIORITY_MAX);
+        walk(self, n);
+        let priority = n.inference_priority;
+        n.inference_priority = priority.min(outer);
+        if self.marks_of_argument_walk(n) == before {
+            n.repeated_argument_walks.insert(key, priority);
+        }
+    }
+
     /// `inferFromTypeArguments` between two instantiations of `generic_symbol`. Cached variances are
     /// read in place. All threads share them, so bumping a reference count for every pair of
     /// references would slow down every thread.
@@ -708,11 +795,16 @@ impl<'p, 's> Checker<'p, 's> {
                 .map(|&slot| slot as usize)
         };
         if let Some(seen) = seen {
-            n.inference_priority = n.inference_priority.min(n.visited[seen].2);
+            let mut priority = n.visited[seen].2;
+            if priority == PRIORITY_IN_PROGRESS {
+                n.unfinished_hits += 1;
+                priority = PRIORITY_CIRCULARITY;
+            }
+            n.inference_priority = n.inference_priority.min(priority);
             return;
         }
         let slot = n.visited.len();
-        n.visited.push((source, target, PRIORITY_CIRCULARITY));
+        n.visited.push((source, target, PRIORITY_IN_PROGRESS));
         if n.visited.len() == VISITED_INDEX_FROM {
             n.visited_index.extend(
                 n.visited

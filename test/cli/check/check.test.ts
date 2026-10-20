@@ -23750,6 +23750,54 @@ describe.concurrent("--check", () => {
             .map(i => `export const t${i} = \`a\${n}b\${s}c\${u}d\${${i}}\` + \`\${o}\`;`)
             .join("\n")}`,
       ],
+      [
+        // Each call's type mentions the type before it several times. Inference between the type arguments walked every
+        // path: 2.7 times as long for each call, and 127 s for `tsc` 7.0.2 at 20 calls.
+        "a chain of calls on a builder that collects its arguments' types in a tuple",
+        30,
+        n =>
+          `type Port = { kind: "a" } | { kind: "b"; extra?: unknown };
+type Entry = { readonly id: string; readonly spec: unknown };
+type Step<Id extends string, Spec> = { readonly id: Id; readonly spec: Spec };
+type Result<Spec> = Spec extends { run: string } ? { text: string; ok: boolean; code: number } : { text: string };
+type Context<Steps extends readonly Entry[], Open extends boolean> = { cwd: string } & {
+  [S in Steps[number] as S["id"] & string]?: Result<S["spec"]>;
+} & (Open extends true ? { [id: string]: unknown } : {});
+type Handles<Steps extends readonly Entry[]> = { readonly [S in Steps[number] as S["id"]]: unknown };
+type Spec<C, Prior, Inputs extends Record<string, unknown>, Outputs extends Record<string, Port>> = {
+  run: string;
+  inputs?: (prior: Prior) => Inputs;
+  outputs?: Outputs;
+  args?: (inputs: Inputs, context: C) => readonly string[];
+} & { [field: string]: unknown };
+interface Builder<Steps extends readonly Entry[] = readonly [], Open extends boolean = false, Values extends readonly Entry[] = readonly []> {
+  readonly open?: Open;
+  readonly values?: Values;
+  command<const Id extends string, const Inputs extends Record<string, unknown> = {}, const Outputs extends Record<string, Port> = {}>(
+    id: Id,
+    spec: Spec<Context<[...Steps, ...Values], Open>, Handles<Steps>, Inputs, Outputs>,
+  ): Builder<[...Steps, Step<Id, Spec<Context<[...Steps, ...Values], Open>, Handles<Steps>, Inputs, Outputs>>], Open, Values>;
+}
+declare const builder: Builder;
+export const built = builder
+  .command("s0", { run: "r", outputs: { text: { kind: "a" } }, args: () => [] })
+${range(n)
+  .map(i => `  .command("s${i + 1}", { run: "r", args: (inputs, context) => [String(context.s0?.text ?? "")] })`)
+  .join("\n")};`,
+      ],
+      [
+        // Every member of the declared type was compared with the members of the assigned type until one matched.
+        "an assignment of a union of thousands of literals to a variable that may also be `undefined`",
+        isDebug || isASAN ? 70 : 200,
+        n =>
+          `type Prefix = ${range(n)
+            .map(i => `"p${i}|"`)
+            .join(" | ")};\ntype Suffix = ${range(n)
+            .map(i => `"s${i}"`)
+            .join(
+              " | ",
+            )};\ntype Name = \`\${Prefix}\${Suffix}\`;\ndeclare const names: Name[];\nexport function f() { let name: Name | undefined; if (names.length) { const [first] = names; name = first; } return name; }`,
+      ],
     ];
     test.each(templates)("finishes without errors on %s", async (_, n, source) => {
       using dir = project({ "index.ts": source(n) + "\n" });

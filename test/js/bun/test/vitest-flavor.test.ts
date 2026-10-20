@@ -3016,12 +3016,13 @@ describe.concurrent("exports", () => {
   test(`"vitest" exports everything "bun:test" does, and more`, async () => {
     const { log, exitCode } = await runTests({
       "a.test.ts": `
-        import { suite, describe, vitest, vi, onTestFailed, onTestFinished, assertType, expectTypeOf, test } from "vitest";
+        import { suite, describe, vitest, vi, onTestFailed, onTestFinished, assertType, expectTypeOf, inject, test } from "vitest";
         import * as all from "vitest";
         import * as bun from "bun:test";
         import defaultExport from "vitest";
         console.log(suite === describe, vitest === vi, typeof onTestFailed, typeof onTestFinished, typeof expectTypeOf);
         console.log(assertType<number>(1), assertType.length);
+        console.log(inject("a key"), inject.length);
         console.log(Object.keys(bun).filter((name) => !(name in all)));
         console.log(Object.keys(all).filter((name) => !(name in bun)).sort().join(" "));
         console.log(defaultExport.test === test, "onTestFailed" in bun, "suite" in bun);
@@ -3032,8 +3033,9 @@ describe.concurrent("exports", () => {
       log: [
         "true true function function function",
         "undefined 1",
+        "undefined 1",
         "[]",
-        "TestRunner assertType onTestFailed suite vitest",
+        "TestRunner assertType inject onTestFailed suite vitest",
         "true false false",
         "a suite > test",
       ],

@@ -514,8 +514,9 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 | `.resolves.toThrow()` on a promise resolved to an error   | passes                               | fails                                                                |
 | `.not.not`                                                | cancels out                          | still negates                                                        |
 | `vi.useFakeTimers()`                                      | leaves `setImmediate` real           | fakes `setImmediate` ([list](/test/dates-times#choose-what-to-fake)) |
+| `performance` while fake timers are on                    | the same object, on the fake clock   | a new object; the one it replaces still reads the real clock         |
 
-`"vitest"` also exports `suite`, `vitest`, `onTestFailed`, `assertType` and `TestRunner.getCurrentTest()`, which returns the running test's [`task`](#test-context).
+`"vitest"` also exports `suite`, `vitest`, `onTestFailed`, `assertType` and `TestRunner.getCurrentTest()`, which returns the running test's [`task`](#test-context). It exports `inject` too, which always returns `undefined`, because `bun test` has no `provide` option or global setup file to provide a value.
 
 `import { assert, should } from "vitest"` imports them from the `chai` package in your `node_modules`, which Vitest depends on. They aren't available through `import * as`, `import()` or a re-export of `"vitest"`.
 

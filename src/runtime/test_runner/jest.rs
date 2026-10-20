@@ -488,7 +488,12 @@ pub(crate) mod Jest {
                 module.put(
                     global_object,
                     b"assertType",
-                    jsc::JSFunction::create(global_object, "assertType", __jsc_host_js_assert_type, 1, Default::default()),
+                    jsc::JSFunction::create(global_object, "assertType", __jsc_host_js_return_undefined, 1, Default::default()),
+                );
+                module.put(
+                    global_object,
+                    b"inject",
+                    jsc::JSFunction::create(global_object, "inject", __jsc_host_js_return_undefined, 1, Default::default()),
                 );
             }
         }
@@ -496,9 +501,9 @@ pub(crate) mod Jest {
         Ok(module)
     }
 
-    /// Only the type checker looks at `assertType`, so it's a no-op at runtime.
+    /// Only the type checker looks at `assertType()`. `inject()` returns what Vitest's global setup or config provides, and `bun test` has neither.
     #[bun_jsc::host_fn]
-    fn js_assert_type(_global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+    fn js_return_undefined(_global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
         Ok(JSValue::UNDEFINED)
     }
 

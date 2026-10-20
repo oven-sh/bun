@@ -1477,7 +1477,7 @@ describe.concurrent("test environment with the real", () => {
         const sent = await (await fetch(new Request(server.url, { method: "POST", body: form }))).text();
         expect(sent).toContain('name="a"');
         expect(sent).toContain('name="file"; filename="photo.png"\\r\\nContent-Type: image/png');
-        expect(() => new Request("/relative")).toThrow();
+        expect(() => new Request("/relative")).toThrow(TypeError);
         expect([Request.name, URL.name]).toEqual(["Request", "URL"]);
       });
       test("a listener takes the signal of Bun's AbortController", () => {

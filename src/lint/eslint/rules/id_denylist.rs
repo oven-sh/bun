@@ -12,7 +12,7 @@ const RESTRICTED: Message = Message::new("restricted", "Identifier '{{name}}' is
 const RESTRICTED_PRIVATE: Message =
     Message::new("restrictedPrivate", "Identifier '#{{name}}' is restricted.");
 
-/// `name`: with the `#` of a private name.
+/// `name` includes the `#` of a private name.
 fn report<'a, R: Rule>(at: Span, name: &'a [u8], cx: &Cx<'a, R>) {
     match name {
         [b'#', rest @ ..] => cx.report(at, RESTRICTED_PRIVATE).data("name", rest),
@@ -21,7 +21,7 @@ fn report<'a, R: Rule>(at: Span, name: &'a [u8], cx: &Cx<'a, R>) {
 }
 
 impl<const IS_BLACKLIST: bool> IdList<IS_BLACKLIST> {
-    /// A private name is looked up without its `#`. `id-blacklist` does not check a `PrivateIdentifier`.
+    /// A private name is looked up without its `#`. `id-blacklist` doesn't check a `PrivateIdentifier`.
     #[inline]
     fn is_restricted(&self, name: Name) -> bool {
         match name.bytes() {
@@ -30,14 +30,14 @@ impl<const IS_BLACKLIST: bool> IdList<IS_BLACKLIST> {
         }
     }
 
-    /// An `Identifier` that is checked wherever it is, and does not refer to anything.
+    /// Checks an `Identifier` that's checked wherever it appears and doesn't refer to anything.
     fn check_name<'a>(&self, name: Ident<'a>, cx: &Cx<'a, Self>) {
         if self.is_restricted(name.name()) && !name.is_string() {
             report(name.span(), name.bytes(), cx);
         }
     }
 
-    /// The same for a keyword that ESLint has as an `Identifier`.
+    /// Same for a keyword that's an `Identifier` in ESLint.
     fn check_keyword<'a>(&self, at: Span, cx: &Cx<'a, Self>) {
         let name = cx.slice(at);
         if self.names.contains(name) {
@@ -45,7 +45,7 @@ impl<const IS_BLACKLIST: bool> IdList<IS_BLACKLIST> {
         }
     }
 
-    /// The same for a name that is a reference and not an expression: in a type, in an export.
+    /// Same for a name that's a reference but not an expression: in a type or an export.
     fn check_referencing_name<'a>(&self, name: Ident<'a>, cx: &Cx<'a, Self>) {
         if self.is_restricted(name.name())
             && !name.is_string()
@@ -55,7 +55,7 @@ impl<const IS_BLACKLIST: bool> IdList<IS_BLACKLIST> {
         }
     }
 
-    /// A key that is an `Identifier` or a `PrivateIdentifier`.
+    /// Checks a key that's an `Identifier` or a `PrivateIdentifier`.
     fn check_key<'a>(&self, key: Key<'a>, cx: &Cx<'a, Self>) {
         if let KeyKind::Ident(name) | KeyKind::Private(name) = key.kind()
             && self.is_restricted(name)
@@ -75,7 +75,7 @@ impl<const IS_BLACKLIST: bool> IdList<IS_BLACKLIST> {
         if !self.is_restricted(name) {
             return;
         }
-        // oxlint sees through what only concerns types: `a as T`, `a!`.
+        // oxlint looks through type-only wrappers: `a as T`, `a!`.
         let mut subject = e;
         while cx.language().is_oxlint
             && let Node::Expr(parent) = subject.parent()
@@ -88,7 +88,7 @@ impl<const IS_BLACKLIST: bool> IdList<IS_BLACKLIST> {
         }
         let is_checked = match subject.parent() {
             Node::Expr(parent) => !matches!(parent.tag(), ExprTag::Call | ExprTag::New),
-            // The key of `{ a }` is at the same place, and `check_property` decides.
+            // The key of `{ a }` has the same location, and `check_property` decides.
             Node::Prop(prop) if prop.kind() == PropKind::Shorthand => {
                 matches!(prop.parent(), Node::Expr(object) if utils::is_assignment_target(object))
             }
@@ -102,7 +102,7 @@ impl<const IS_BLACKLIST: bool> IdList<IS_BLACKLIST> {
         }
     }
 
-    /// The `b` of `a.b`: reading it is allowed, the object may not be the user's.
+    /// Checks the `b` of `a.b`. Reading it is allowed, because the object may not be the user's.
     fn check_property_name<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(name) = e.member_name() else {
             return;
@@ -110,14 +110,14 @@ impl<const IS_BLACKLIST: bool> IdList<IS_BLACKLIST> {
         if !self.is_restricted(name.name()) {
             return;
         }
-        // Upstream's `isAssignmentTarget` leaves out the head of a `for`-`in` and a `for`-`of`.
+        // Upstream's `isAssignmentTarget` excludes the head of a `for`-`in` or `for`-`of`.
         let is_written = utils::is_assignment_target(e) && !matches!(e.parent(), Node::Stmt(_));
         if (is_written && (IS_BLACKLIST || !e.is_jsx_tag_name())) || utils::is_in_type_query(e) {
             report(name.span(), name.bytes(), cx);
         }
     }
 
-    /// The key of a property of an object literal, which can be a pattern in an assignment.
+    /// Checks the key of an object literal's property. The literal can also be a pattern in an assignment.
     fn check_property<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(key) = prop.key()
             && let KeyKind::Ident(name) = key.kind()
@@ -177,8 +177,8 @@ impl<const IS_BLACKLIST: bool> IdList<IS_BLACKLIST> {
         }
     }
 
-    /// `a.b.c`. `is_qualified_name`: ESLint has `TSQualifiedName`s, not `MemberExpression`s, in
-    /// which only the first name is checked.
+    /// Checks `a.b.c`. With `is_qualified_name`, ESLint has `TSQualifiedName`s instead of `MemberExpression`s, and only
+    /// the first name is checked.
     fn check_entity_name<'a>(&self, name: EntityName<'a>, is_qualified_name: bool, cx: &Cx<'a, Self>) {
         let mut parts = name.parts();
         if let Some(first) = parts.next() {
@@ -199,7 +199,7 @@ impl<const IS_BLACKLIST: bool> IdList<IS_BLACKLIST> {
             }
             TypeKind::Import { name, .. } => {
                 name.parts().for_each(|part| self.check_name(part, cx));
-                // ESLint has `{ with: { key: "" } }` as an object literal.
+                // In ESLint, `{ with: { key: "" } }` is an object literal.
                 if let Some(attributes) = ty.import_attributes() {
                     self.check_keyword(attributes.keyword_span(), cx);
                     self.check_import_attributes(attributes, cx);
@@ -227,7 +227,7 @@ impl<const IS_BLACKLIST: bool> IdList<IS_BLACKLIST> {
                 self.check_referencing_name(specifier.local(), cx);
             }
         } else if has_from || cx.uses_typescript_parser() {
-            // typescript-estree has a node for `exported` at the same place, which refers to nothing.
+            // typescript-estree has a node for `exported` at the same location, which refers to nothing.
             self.check_name(specifier.local(), cx);
         } else {
             self.check_referencing_name(specifier.local(), cx);
@@ -317,11 +317,10 @@ impl<const IS_BLACKLIST: bool> Rule for IdList<IS_BLACKLIST> {
             if !cx.language().is_oxlint {
                 return report(utils::estree_span(pat.into()), name.bytes(), cx);
             }
-            // For oxlint the type annotation is not part of it, and the parameter of an index signature has no
-            // name.
-            let is_of_index_signature = matches!(pat.parent(), Node::Param(param)
+            // For oxlint the type annotation isn't part of the span, and an index signature's parameter has no name.
+            let is_index_signature_param = matches!(pat.parent(), Node::Param(param)
                 if param.func().is_some_and(|it| it.kind() == FnKind::IndexSignature));
-            if !is_of_index_signature {
+            if !is_index_signature_param {
                 report(pat.span(), name.bytes(), cx);
             }
         }
@@ -358,7 +357,7 @@ impl<const IS_BLACKLIST: bool> Rule for IdList<IS_BLACKLIST> {
         self.check_statement(statement, cx);
     }
 
-    // The name in the other module is not the user's, unless it is also the local one.
+    // The name in the other module isn't the user's, unless it's also the local name.
     fn import_spec<'a>(&self, specifier: ImportSpec<'a>, cx: &mut Cx<'a, Self>) {
         self.check_name(specifier.local(), cx);
     }

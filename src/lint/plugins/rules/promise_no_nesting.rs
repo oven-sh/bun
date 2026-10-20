@@ -11,11 +11,11 @@ const NO_NESTING: Message = Message::new("", "Avoid nesting promises.");
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// Whether something is in a function that is an argument of `then` or `catch`.
+    /// Caches whether a node is inside a function passed to `then` or `catch`.
     callbacks: AncestorMemo<'a, ()>,
-    /// The closest call of `then` or `catch` that something is in.
+    /// Caches the closest enclosing `then` or `catch` call.
     calls: AncestorMemo<'a, Expr<'a>>,
-    /// All of the file, in the order of the source. Listed when they are first looked at.
+    /// All the file's references in source order. Collected lazily.
     references: Option<Vec<Reference<'a>>>,
 }
 
@@ -53,14 +53,14 @@ fn as_then_or_catch(e: Expr<'_>) -> Option<Call<'_>> {
     e.as_call().filter(|it| is_promise(*it).is_some_and(|prop_name| prop_name.is_any(&["then", "catch"])))
 }
 
-/// It is a function that is an argument of `then` or `catch`.
+/// True if it's a function passed to `then` or `catch`.
 fn is_inside_promise(e: Expr) -> bool {
     e.tag() == ExprTag::Fn
         && !e.is_parenthesized()
         && e.parent().as_expr().and_then(as_then_or_catch).is_some_and(|call_expr| call_expr.callee() != e)
 }
 
-/// Whether the first argument of `cb_call_expr` refers to nothing that a callback of `closest` declares.
+/// True if the first argument of `cb_call_expr` doesn't refer to anything that a callback of `closest` declares.
 fn can_safely_unnest<'a>(cb_call_expr: Call<'a>, closest: Call<'a>, references: &mut Option<Vec<Reference<'a>>>) -> bool {
     let Some(cb_span) = cb_call_expr.args().first().map(Expr::outer_span) else {
         return true;
@@ -70,19 +70,20 @@ fn can_safely_unnest<'a>(cb_call_expr: Call<'a>, closest: Call<'a>, references: 
     if callbacks.is_empty() {
         return true;
     }
-    // The references are in the order of the source.
+    // The references are in source order.
     let references = references.get_or_insert_with(|| closest.callee().file().references().collect());
     let first = references.partition_point(|it| it.span().start < cb_span.start);
     let end = references.partition_point(|it| it.span().start < cb_span.end);
     let in_argument = references.get(first..end).unwrap_or_default();
     let is_usage = |usage: Reference<'a>| cb_span.contains(usage.span()) && !matches!(usage.node(), Node::Pat(_));
-    // For oxlint the name of a function expression is declared in the function.
+    // For oxlint a function expression's name is declared inside the function.
     let declared = || {
         let symbols = callbacks.iter().flat_map(|it| it.0.into_iter().flat_map(Scope::symbols).chain(it.1));
         symbols.filter(|it| !it.is_implicit_arguments())
     };
-    // Either the references in the argument are looked at or those to what the callbacks declare, whichever are fewer. The arguments of
-    // calls that are in each other have the same references, and the calls in one callback are asked about the same variables.
+    // Scan either the references inside the argument or the references to what the callbacks declare, whichever are
+    // fewer. Otherwise nested calls would rescan the same references, and calls in one callback would rescan the same
+    // variables.
     let mut fewer_than = in_argument.len();
     let is_less_declared = declared().all(|symbol| {
         let count = symbol.references().len() + 1;

@@ -161,6 +161,8 @@ pub struct WebSocketProxyTunnel {
     write_buffer: JsCell<StreamBuffer>,
     /// Hostname for SNI (Server Name Indication)
     sni_hostname: Option<Box<[u8]>>,
+    /// Set by `on_handshake`, for `receive` to retry the writes that were refused during the renegotiation.
+    renegotiation_ended: Cell<bool>,
 }
 
 use bun_uws::MaybeAnySocket as SocketUnion;
@@ -192,6 +194,7 @@ impl WebSocketProxyTunnel {
             sni_hostname: Some(Box::<[u8]>::from(bun_http::strip_ipv6_brackets(
                 sni_hostname,
             ))),
+            renegotiation_ended: Cell::new(false),
         })
     }
 
@@ -342,6 +345,7 @@ impl WebSocketProxyTunnel {
         // re-enter `tunnel.detach_upgrade_client()` / `tunnel.write()`, so no borrow of
         // `*this` may span the dispatch.
         let Some(upgrade_client) = this.upgrade_client.get() else {
+            this.renegotiation_ended.set(success);
             return;
         };
 
@@ -509,6 +513,12 @@ impl WebSocketProxyTunnel {
 
         if let Some(w) = this.wrapper.get() {
             w.receive_data(data);
+        }
+        // Only now, so that what this read decrypted is delivered first, like openssl.c's `ssl_write_wants_read`.
+        if this.renegotiation_ended.take()
+            && let Some(ws) = this.connected_websocket.get()
+        {
+            WebSocketClient::handle_tunnel_writable(ws.this_ptr());
         }
     }
 

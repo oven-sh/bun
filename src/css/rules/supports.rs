@@ -62,14 +62,6 @@ impl Declaration {
 }
 
 impl SupportsCondition {
-    pub fn clone_with_import_records(
-        &self,
-        bump: &bun_alloc::Arena,
-        _: &mut Vec<bun_ast::ImportRecord>,
-    ) -> Self {
-        self.deep_clone(bump)
-    }
-
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> SupportsCondition {
         // Hand-rolled variant-walk —
         // `#[derive(DeepClone)]` can't be used while `Selector`/`Unknown`

@@ -5,7 +5,6 @@ use std::io::Write as _;
 
 use crate::api::js_bundler::PluginJscExt as _;
 use crate::api::{SocketAddress, js_bundler as JSBundler};
-use crate::bake::dev_server::DevServer;
 use crate::bake::router as FrameworkRouter;
 use crate::bake::{self as bake};
 use crate::node::types::PathLikeExt as _;
@@ -609,7 +608,7 @@ impl AnyRoute {
         let cwd: &[u8] = if StandaloneModuleGraph::is_bun_standalone_file_path(path_slice) {
             StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes()
         } else {
-            FileSystem::instance().top_level_dir
+            FileSystem::instance().top_level_dir()
         };
 
         let abs_path = FileSystem::instance().abs(&[path_slice]);
@@ -731,23 +730,24 @@ impl AnyRoute {
             }
 
             return Ok(AnyRoute::File(FileRoute::init_from_blob(
+                global,
                 blob,
                 &super::file_route::InitOptions {
                     server: None,
                     status_code: 200,
                     headers,
                 },
-            )));
+            )?));
         }
 
-        Ok(AnyRoute::Static(StaticRoute::init_from_any_blob(
-            AnyBlob::Blob(blob),
-            super::static_route::InitFromBytesOptions {
-                server: None,
+        Ok(AnyRoute::Static(
+            StaticRoute::init_from_any_blob_with_headers(
+                global,
+                AnyBlob::Blob(blob),
                 headers,
-                ..Default::default()
-            },
-        )))
+                200,
+            )?,
+        ))
     }
 
     pub(crate) fn html_route_from_js(
@@ -854,6 +854,8 @@ impl AnyRoute {
                             Utf8Bytes::Borrowed(b".jsx".as_slice()),
                         ],
                         allow_layouts: true,
+                        client_pages: false,
+                        server_exports: Vec::new(),
                     });
 
                 // `@typeInfo(FrameworkRouter.Type.Index).@"enum".tag_type` → the index newtype's backing-int MAX.
@@ -903,13 +905,8 @@ pub(crate) enum ServePluginsState {
         promise: jsc::JSPromiseStrong,
         /// Each holds a ref, released once the route is told the outcome.
         html_bundle_routes: Vec<RefPtr<html_bundle::Route>>,
-        // LIFETIMES.tsv classifies this BORROW_PARAM (`Option<&'a DevServer>`),
-        // but `ServePlugins` is a refcounted heap object handed across FFI as
-        // a raw promise-context pointer with dynamic lifetime, so a borrowed
-        // `&'a DevServer` cannot be expressed here. Back-reference invariant:
-        // the DevServer outlives the pending plugin load (see the SAFETY
-        // comments at the deref sites in `on_plugins_resolved`/`_rejected`).
-        dev_server: Option<NonNull<DevServer>>,
+        /// Server whose DevServer is waiting for the plugins to load.
+        dev_server: Option<super::AnyServer>,
     },
     Loaded(Box<JSBundler::Plugin>),
     /// Error information is not stored as it is already reported.
@@ -924,9 +921,10 @@ pub(crate) enum GetOrStartLoadResult<'a> {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum ServePluginsCallback<'a> {
+pub(crate) enum ServePluginsCallback {
     HtmlBundleRoute(bun_ptr::ThisPtr<html_bundle::Route>),
-    DevServer(&'a DevServer),
+    /// The calling server's DevServer.
+    DevServer,
 }
 
 impl ServePlugins {
@@ -940,7 +938,8 @@ impl ServePlugins {
     pub(crate) fn get_or_start_load(
         &mut self,
         global: &JSGlobalObject,
-        cb: ServePluginsCallback<'_>,
+        cb: ServePluginsCallback,
+        server: super::AnyServer,
     ) -> JsResult<GetOrStartLoadResult<'_>> {
         loop {
             match &mut self.state {
@@ -958,13 +957,10 @@ impl ServePlugins {
                         ServePluginsCallback::HtmlBundleRoute(route) => {
                             html_bundle_routes.push(RefPtr::from_this(route));
                         }
-                        ServePluginsCallback::DevServer(server) => {
-                            debug_assert!(
-                                dev_server.is_none()
-                                    || dev_server.map(|p| p.as_ptr().cast_const())
-                                        == Some(std::ptr::from_ref(server))
-                            ); // one dev server per server
-                            *dev_server = Some(NonNull::from(server));
+                        ServePluginsCallback::DevServer => {
+                            // one dev server per server
+                            debug_assert!(dev_server.is_none_or(|s| s == server));
+                            *dev_server = Some(server);
                         }
                     }
                     return Ok(GetOrStartLoadResult::Pending);
@@ -989,9 +985,12 @@ impl ServePlugins {
         // NOTE: reshaped for borrowck — clone the slice refs so we can mutate self.state below
         let plugin_list: Vec<_> = plugin_list.iter().collect();
         let bunfig_path: &[u8] = &global.bun_vm().transpiler.options.bunfig_path;
-        let bunfig_folder: &[u8] = bun_paths::resolve_path::dirname::<
-            bun_paths::resolve_path::platform::Auto,
-        >(bunfig_path);
+        // With no bunfig.toml, only `bake.config.ts` has plugins: their root is the project.
+        let bunfig_folder: &[u8] = if bunfig_path.is_empty() {
+            FileSystem::instance().top_level_dir()
+        } else {
+            bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(bunfig_path)
+        };
 
         // NOTE: the keep-alive ref/deref pair
         // lives in the caller (`get_or_load_plugins`), which holds the heap-allocated
@@ -1007,6 +1006,13 @@ impl ServePlugins {
             bunstring_array.push(BunString::from_bytes(raw_plugin));
         }
         let plugin_js_array = bun_string_jsc::to_js_array(global, &bunstring_array)?;
+        // `bun bake`: the plugin objects of `bake.config.ts`, after the names of bunfig.toml.
+        if let Some(config_plugins) = global.bun_vm().bake_config_plugins.get() {
+            let mut iter = config_plugins.array_iterator(global)?;
+            while let Some(config_plugin) = iter.next()? {
+                plugin_js_array.push(global, config_plugin)?;
+            }
+        }
         let bunfig_folder_bunstr = bun_string_jsc::create_utf8_for_js(global, bunfig_folder)?;
 
         self.state = ServePluginsState::Pending {
@@ -1102,13 +1108,12 @@ impl ServePlugins {
                 Some(NonNull::from(plugin_ref)),
             ));
         }
-        if let Some(mut server) = dev_server {
-            // SAFETY: dev_server outlives plugin load (stored as a back-reference
-            // by `get_or_start_load`; the owning Box<DevServer> is held by the
-            // server instance, which itself holds a counted ref on `self`).
-            bun_core::handle_oom(unsafe { server.as_mut() }.on_plugins_resolved(Some(
-                std::ptr::from_ref::<JSBundler::Plugin>(plugin_ref).cast_mut(),
-            )));
+        if let Some(server) = dev_server {
+            if let Some(dev) = server.dev_server_mut() {
+                bun_core::handle_oom(dev.on_plugins_resolved(Some(
+                    std::ptr::from_ref::<JSBundler::Plugin>(plugin_ref).cast_mut(),
+                )));
+            }
         }
     }
 
@@ -1129,13 +1134,23 @@ impl ServePlugins {
         for route in html_bundle_routes {
             bun_core::handle_oom(route.on_plugins_rejected());
         }
-        if let Some(mut server) = dev_server {
-            // SAFETY: dev_server outlives plugin load
-            bun_core::handle_oom(unsafe { server.as_mut() }.on_plugins_rejected());
+        if let Some(server) = dev_server {
+            if let Some(dev) = server.dev_server_mut() {
+                bun_core::handle_oom(dev.on_plugins_rejected());
+            }
         }
 
         Output::err_generic("Failed to load plugins for Bun.serve:", ());
         global.bun_vm().as_mut().run_error_handler(err, None);
+    }
+
+    /// Clears the pending `server` before it's freed, so a load that settles later can't call into it.
+    pub(crate) fn forget_server(&mut self, server: super::AnyServer) {
+        if let ServePluginsState::Pending { dev_server, .. } = &mut self.state {
+            if *dev_server == Some(server) {
+                *dev_server = None;
+            }
+        }
     }
 }
 
@@ -1408,16 +1423,17 @@ where
     /// - .pending if `callback` was stored. It will call `onPluginsResolved` or `onPluginsRejected` later.
     pub(crate) fn get_or_load_plugins(
         &mut self,
-        callback: ServePluginsCallback<'_>,
+        callback: ServePluginsCallback,
     ) -> GetOrStartLoadResult<'_> {
         if let Some(p) = &self.plugins {
             // Keep `*p` alive across re-entrant JS in `load_and_resolve_plugins`.
             let p = p.clone();
             let global = self.global();
+            let server = self.as_any_server();
             // SAFETY: intrusive refcount permits mutation through any owner. No
             // other `&mut ServePlugins` is live on this (single-threaded) JS
             // thread for the call's duration.
-            return match unsafe { &mut *p.as_ptr() }.get_or_start_load(&global, callback) {
+            return match unsafe { &mut *p.as_ptr() }.get_or_start_load(&global, callback, server) {
                 Ok(r) => r,
                 Err(JsError::Thrown | JsError::Terminated) => {
                     panic!("unhandled exception from ServePlugins.getStartOrLoad")
@@ -2115,22 +2131,14 @@ where
 
                 if let Some(headers_) = opts.fast_get(ctx, jsc::BuiltinName::Headers)? {
                     if let Some(headers__) = FetchHeaders::cast_(headers_, ctx.vm()) {
-                        // NOTE: `cast_` returns the `FetchHeaders*` held by the
-                        // JS `Headers` wrapper (`JSFetchHeaders`'s internal
-                        // `Ref<FetchHeaders>`) without bumping the refcount —
-                        // the FFI surface has `WebCore__FetchHeaders__deref` but
-                        // no `ref()`, so a +1 cannot be taken here. Adopting
-                        // hands that wrapper-held ref to the constructed
-                        // `Request` (via `Request::init2` below): the eventual
-                        // single deref happens when the Request's finalizer
-                        // drops its `headers` field (`HeadersRef::Drop`,
-                        // Response.rs), pairing with the wrapper's +1.
-                        // SAFETY: `headers__` is live (rooted by `headers_`),
-                        // and ownership of one ref transfers as described above.
-                        headers = Some(unsafe { HeadersRef::adopt(headers__) });
-                    } else if let Some(headers__) = FetchHeaders::create_from_js(ctx, headers_)? {
-                        // SAFETY: create_from_js returns a +1 ref.
-                        headers = Some(unsafe { HeadersRef::adopt(headers__) });
+                        // Copy the headers like `new Request(url, { headers })` does.
+                        // S008: `FetchHeaders` is an opaque ZST FFI handle — safe deref.
+                        headers = bun_opaque::opaque_deref_mut(headers__.as_ptr())
+                            .clone_this(ctx)?
+                            // SAFETY: `clone_this` returns a +1 ref.
+                            .map(|p| unsafe { HeadersRef::adopt(p) });
+                    } else {
+                        headers = HeadersRef::create_from_js(ctx, headers_)?;
                     }
                 }
 
@@ -3195,7 +3203,8 @@ where
         // So we first use a hash of the main field:
         let first_hash_segment: [u8; 8] = 'brk: {
             let mut buffer = paths::path_buffer_pool::get();
-            let main = self.vm_ref().main();
+            // No entry module (`bun bake`): the hash of the project root below tells servers apart.
+            let main = self.vm_ref().main().unwrap_or_default();
             let len = main.len().min(buffer.len());
             break 'brk hash(strings::copy_lowercase(&main[..len], &mut buffer[..len]))
                 .to_ne_bytes();

@@ -9,14 +9,14 @@ const REDUNDANT_USE_OF_AWAIT: Message = Message::new(
     "Redundant use of `await` on a return value.",
 );
 
-/// ESLint's `hasErrorHandler`: what `node` throws is caught in the same function.
+/// ESLint's `hasErrorHandler`: true if an exception thrown by `node` is caught in the same function.
 fn has_error_handler(node: Node) -> bool {
     let mut inner = node;
     for ancestor in node.ancestors() {
         match ancestor {
             Node::Func(func) if ast_utils::is_function_with_body(func) => return false,
             Node::Stmt(statement) => {
-                // What is neither the block nor the finalizer is in the `catch` clause.
+                // Anything that's neither the block nor the finalizer is in the `catch` clause.
                 if let StmtKind::Try { block, finalizer, .. } = statement.kind()
                     && (inner == Node::Stmt(block) || finalizer.is_some_and(|it| inner != Node::Stmt(it)))
                 {

@@ -18,20 +18,20 @@ pub(crate) struct Printer<'t, 'a, 'o, 'w, 'f> {
     pub(crate) tree: &'t Tree<'a>,
     pub(crate) options: &'o Options<'o>,
     pub(crate) out: Writer<'w, 'f>,
-    /// How many nodes are around the one that is being printed.
+    /// The number of ancestors of the node being printed.
     pub(crate) ancestors: usize,
     pub(crate) stack_check: bun_core::StackCheck,
     pub(crate) is_nested_too_deeply: bool,
-    /// `isVueSfcWithTypescriptScript`, once it has been asked.
+    /// Cached `isVueSfcWithTypescriptScript`.
     pub(crate) has_typescript_script: Option<bool>,
-    /// oxfmt's `hasTsxScriptBlock`, once it has been asked.
+    /// Cached `hasTsxScriptBlock` from oxfmt.
     pub(crate) has_tsx_script: Option<bool>,
     pub(crate) cursor: Cursor,
-    /// For the style sheets.
+    /// Reused for formatting style sheets.
     pub(crate) css_scratch: crate::css::Scratch,
 }
 
-/// What `printBetweenLine` returns.
+/// The return value of `printBetweenLine`.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum BetweenLine {
     Nothing,
@@ -113,7 +113,7 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
         )
     }
 
-    /// `ends_with_line_break`: `stripTrailingHardline` is not called for the document.
+    /// `ends_with_line_break` is false if `stripTrailingHardline` is called on the document.
     pub(crate) fn print_root(&mut self, ends_with_line_break: bool) {
         let root = self.tree.root;
         self.out.start_group();
@@ -124,7 +124,7 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
         }
     }
 
-    /// Calls `print`, which prints `target`, and notes where the part of the text that the cursor is in starts and ends.
+    /// Calls `print`, which prints `target`, and marks where the part of the text around the cursor starts and ends.
     pub(crate) fn with_cursor_marks(&mut self, target: Target, print: impl FnOnce(&mut Self)) {
         let (starts_before, starts_after, ends_before, ends_after) = match self.cursor {
             Cursor::Nowhere => return print(self),
@@ -148,7 +148,8 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
         }
     }
 
-    /// What Prettier's `mainPrint` comes to: what `embed` has made of the node, or else what `genericPrint` makes.
+    /// The effect of Prettier's `mainPrint`: uses `embed`'s output for the node if there is one, and `genericPrint`
+    /// otherwise.
     pub(crate) fn print_node(&mut self, id: Id) {
         self.with_cursor_marks(Target::Node(id), |printer| {
             printer.print_node_without_marks(id)
@@ -228,7 +229,7 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
                 self.out.text(node.span.of(self.options.original_text));
                 self.out.built_text(|out| tags.closing_tag_suffix(id, out));
             }
-            // It has become a text.
+            // It has been merged into a text.
             Kind::Cdata => {}
         }
     }
@@ -247,7 +248,7 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             return;
         };
         if parent.kind == Kind::Interpolation {
-            // The line break at the end is not a literal one: `/\n[^\S\n]*$/`
+            // The line break at the end isn't a literal one: `/\n[^\S\n]*$/`
             let text_len = strings::trim_js_whitespace_end(value).len();
             return match strings::last_index_of_char(&value[text_len..], b'\n') {
                 Some(at) => {
@@ -258,7 +259,7 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             };
         }
         if parent.has(Flags::IS_WHITESPACE_SENSITIVE) {
-            // All that is between the parts of the `fill` is forced line breaks, so it is as good as an array.
+            // All separators in the `fill` are forced line breaks, so a plain array prints the same.
             self.out.built_text(|out| tags.opening_tag_prefix(id, out));
             match parent.has(Flags::IS_INDENTATION_SENSITIVE) {
                 true => self.out.text(value),
@@ -275,8 +276,8 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             }
             return self.out.built_text(|out| tags.closing_tag_suffix(id, out));
         }
-        // The first and the last part of the `fill` have what is borrowed. One part is no `fill`: `cleanDoc` makes it so in
-        // a template of JavaScript, where the part can be more than a string.
+        // The first and last parts of the `fill` include the borrowed markers. A single part isn't a `fill`: `cleanDoc`
+        // unwraps it in a JavaScript template, where the part can be more than a string.
         let is_fill = html_split(value).nth(1).is_some();
         if is_fill {
             self.out.start_fill();
@@ -330,11 +331,9 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             start += tags.len_of(|tags, out| tags.opening_tag_start_marker(child, out));
         }
         let mut end = self.end_location(child) as usize;
-        if self
-            .tree
-            .next(child)
-            .is_some_and(|next| tags.needs_to_borrow_prev_closing_tag_end_marker(next))
-        {
+        // Prettier only checks whether the next sibling borrows the marker. The parent borrows it from its last child,
+        // so Prettier prints it twice: `<a><b></b>></a>`.
+        if tags.lends_closing_tag_end_marker(child) {
             end = end
                 .saturating_sub(tags.len_of(|tags, out| tags.closing_tag_end_marker(child, out)));
         }
@@ -433,9 +432,9 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             }
             return;
         }
-        // What is between a child and the one before it, if the one before it has asked.
+        // The line between a child and its previous sibling, if it was already computed for that sibling.
         let mut known_line = None;
-        // The id of the group of the child before, if this one asks about it.
+        // The group id of the previous child, if this child needs it.
         let mut prev_group_id = None;
         for child in tree.children(parent) {
             let prev = tree.prev(child);
@@ -464,7 +463,7 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
                 next.map_or(BetweenLine::Nothing, |next| self.between_line(child, next));
             known_line = Some(next_line);
 
-            // What comes before the groups, and what is at the start of the outer one.
+            // Write what comes before the groups, and remember what goes at the start of the outer group.
             let mut leading_line = None;
             if let Some(prev) = prev.filter(|_| prev_line != BetweenLine::Nothing) {
                 if tree.force_next_empty_line(prev, options) {
@@ -491,7 +490,7 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             let is_trailing_line = next_line != BetweenLine::Nothing
                 && !forces_next_empty_line
                 && next_line != BetweenLine::Hardline;
-            // Only an element behind it asks whether the group is broken.
+            // Only an element after it checks whether the group is broken.
             prev_group_id = match next {
                 Some(next) if is_trailing_line && !is_text_like(&tree[next]) => {
                     Some(self.out.new_group_id())
@@ -522,15 +521,18 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
         let (tags, tree, options) = (self.tags(), self.tree, self.options);
         let node = &tree[id];
         if node.has(Flags::PRESERVES_CONTENT) {
-            self.out.built_text(|out| tags.opening_tag_prefix(id, out));
+            // The tags already include the markers they borrow. Prettier prints those markers again around them:
+            // `<b>a</b>><pre>` with strict whitespace sensitivity, and
+            // `<span>><!--[if a]><p>b<![endif]--></span</span>`.
             self.out.start_group();
             self.print_opening_tag(id);
             self.out.end_group();
             self.out.text(tags.node_content(id));
-            if !tags.is_written_to_its_end(id) {
-                self.out.built_text(|out| tags.closing_tag(id, out));
-            }
-            self.out.built_text(|out| tags.closing_tag_suffix(id, out));
+            self.out
+                .built_text(|out| match tags.is_verbatim_without_end_tag(id) {
+                    true => tags.closing_tag_suffix(id, out),
+                    false => tags.closing_tag(id, out),
+                });
             return;
         }
         let (Some(first), Some(last)) = (tree.first_child(id), tree.last_child(id)) else {
@@ -685,7 +687,7 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
         } else {
             self.out.line();
         }
-        // In the order they are written in.
+        // In source order.
         let (mut attributes, mut comments) =
             (attributes.iter().peekable(), comments.iter().peekable());
         let mut is_first = true;

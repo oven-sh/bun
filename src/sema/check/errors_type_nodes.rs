@@ -1,33 +1,28 @@
-//! Type nodes, and indexed access:
-//! 1257 1265 1266 2574 (tuple types), 1338 2838 (`infer`), 1354 (`readonly`), 2795 (`intrinsic`),
-//! 2526 (`this`), 1021 1268 1337 (index signatures), 18016 (private names), 1176 (interfaces),
-//! 1099 1009 (type argument lists), 2848 2635 (instantiation expressions), 2536 4105 2542 2862 2514
-//! (`T[K]`, `a[k]`).
+//! Type nodes, and indexed access types: 1257 1265 1266 2574 (tuple types), 1338 2838 (`infer`), 1354 (`readonly`),
+//! 2795 (`intrinsic`), 1021 1268 1337 (index signatures), 18016 (private names), 1176 (interfaces), 2848 (instantiation
+//! expressions), 2536 4105 (`T[K]`), and 2514 for `T[-1]` through `type_from_node`.
 //!
-//! Follows `checkTupleType`, `checkInferType`, `getThisType`, `checkTypeAliasDeclaration`,
-//! `checkObjectTypeForDuplicateDeclarations`, `checkPropertySignature`, `checkMethodDeclaration`,
-//! `checkIndexedAccessIndexType`, `getPropertyTypeForIndexType`, `checkExpressionWithTypeArguments`
-//! and `getInstantiationExpressionType` of TypeScript 7.0.2's checker.go, and
-//! `checkGrammarIndexSignatureParameters`, `checkGrammarTypeArguments`,
-//! `checkGrammarInterfaceDeclaration` and `checkGrammarTypeOperatorNode` of its grammarchecks.go.
+//! Mirrors `checkTupleType`, `checkInferType`, `checkTypeAliasDeclaration`, `checkPropertySignature`,
+//! `checkMethodDeclaration`, `checkIndexedAccessIndexType` and `checkExpressionWithTypeArguments` in TypeScript 7.0.2's
+//! checker.go, and `checkGrammarIndexSignatureParameters`, `checkGrammarInterfaceDeclaration` and
+//! `checkGrammarTypeOperatorNode` in its grammarchecks.go.
 //!
-//! What the HIR of a file does not store (parentheses around types, the position of a type argument
-//! list) is read from the source text.
+//! Anything a file's HIR doesn't store (parentheses around types, the position of a type argument list) is read from
+//! the source text.
 
 use super::*;
 use crate::bind::{Decl, MemberOwner, Parent};
 
-/// `hasParseDiagnostics`: the parser or the scanner reported an error in the file, so
-/// `grammarErrorOnNode` and similar functions report nothing.
-/// The parser sets the flag by the origin of each error, so a code the parser shares with
-/// `grammarErrorOnNode` (1005 ..) does not count.
+/// `hasParseDiagnostics`: the parser or the scanner reported an error in the file, so `grammarErrorOnNode` and similar
+/// functions don't report anything. The parser sets the flag by the origin of each error, so a code the parser shares
+/// with `grammarErrorOnNode` (1005 ..) doesn't count.
 pub(super) fn has_parse_diagnostics(hir: &hir::File) -> bool {
     hir.has_parse_diagnostics || hir.has_errors
 }
 
-// ───────────────────────────── the text ─────────────────────────────
+// ───────────────────────────── source text ─────────────────────────────
 
-/// The position after the string or the template that starts at `pos`.
+/// The position after the string or template that starts at `pos`.
 fn end_of_string(text: &[u8], pos: usize) -> Option<usize> {
     let quote = text[pos];
     let mut at = pos + 1;
@@ -52,7 +47,7 @@ fn end_of_type_arguments(text: &[u8], pos: usize) -> Option<usize> {
             b'<' | b'(' | b'[' | b'{' => depth += 1,
             b'=' if text.get(at + 1) == Some(&b'>') => at += 1,
             b'>' if depth == 0 => return Some(at),
-            // Closes parentheses around the type, which are not stored.
+            // Closes parentheses around the type, which aren't stored.
             b')' if depth == 0 => {}
             b'>' | b')' | b']' | b'}' => depth = depth.checked_sub(1)?,
             b'"' | b'\'' | b'`' => {
@@ -65,9 +60,9 @@ fn end_of_type_arguments(text: &[u8], pos: usize) -> Option<usize> {
     }
 }
 
-/// The start in the source of the type `node`. Neither the parentheses around a type nor a `|` or a
-/// `&` before its only member are stored. Only for a type that follows a token that is none of
-/// these: a whole element or argument, a return type, a constraint, a default.
+/// The start in the source of the type `node`. Neither the parentheses around a type nor a `|` or `&` before its only
+/// member are stored. Only use it for a type that follows some other token: a whole element or argument, a return type,
+/// a constraint, a default.
 pub(super) fn start_of_type(hir: &hir::File, node: TypeNodeId) -> u32 {
     let text: &[u8] = &hir.text;
     let mut at = hir[node].pos as usize;
@@ -81,9 +76,8 @@ pub(super) fn start_of_type(hir: &hir::File, node: TypeNodeId) -> u32 {
     }
 }
 
-/// Position of `implements` in the head of the interface whose name is at `name_pos`. `None` if
-/// there is none, or if a second `extends` comes first: `checkGrammarInterfaceDeclaration` stops at
-/// whichever comes first.
+/// Position of `implements` in the head of the interface whose name is at `name_pos`. `None` if there's none, or if a
+/// second `extends` comes first: `checkGrammarInterfaceDeclaration` stops at whichever comes first.
 fn implements_in_interface_head(text: &[u8], name_pos: usize) -> Option<usize> {
     let mut at = word_end(text, name_pos);
     let (mut depth, mut seen_extends, mut previous) = (0usize, false, 0u8);
@@ -137,9 +131,9 @@ pub(super) fn array_element_type_node(hir: &hir::File, node: TypeNodeId) -> Opti
     }
 }
 
-/// `getArrayElementTypeNode(node.Type())` for an element that starts with `...`: a `RestType`, or a
-/// `NamedTupleMember` with a `DotDotDotToken`. The type in `...name: ...T` is a `RestType`, that in
-/// `...name: T?` an `OptionalType`.
+/// `getArrayElementTypeNode(node.Type())` for an element that starts with `...`: a `RestType`, or a `NamedTupleMember`
+/// with a `DotDotDotToken`. The type in `...name: ...T` is a `RestType`, and the one in `...name: T?` is an
+/// `OptionalType`.
 pub(super) fn rest_element_type_node(hir: &hir::File, elem: &TupleElem) -> Option<TypeNodeId> {
     match elem.member_type {
         TupleMemberType::Plain => array_element_type_node(hir, elem.written),
@@ -147,7 +141,7 @@ pub(super) fn rest_element_type_node(hir: &hir::File, elem: &TupleElem) -> Optio
     }
 }
 
-/// `getTupleElementFlags`. Of the elements without a name only those without `...` are optional.
+/// `getTupleElementFlags`. Among unnamed elements, only those without `...` are optional.
 fn tuple_element_flags(hir: &hir::File, elem: &TupleElem) -> ElemFlags {
     if elem.optional {
         ElemFlags::OPTIONAL
@@ -161,9 +155,9 @@ fn tuple_element_flags(hir: &hir::File, elem: &TupleElem) -> ElemFlags {
 }
 
 impl Checker<'_, '_> {
-    pub(super) fn check_x_typenodes(&mut self, file: FileId) {
+    pub(super) fn check_all_instantiation_expressions(&mut self, file: FileId) {
         let hir = self.hir(file);
-        // The text of the default library is not stored.
+        // The default library's text isn't stored.
         if hir.text.is_empty() {
             return;
         }
@@ -177,7 +171,7 @@ impl Checker<'_, '_> {
     /// `checkTupleType`: 2574, 1265 1266 1257.
     pub(super) fn check_tuple_type(&mut self, file: FileId, elems: Span<TupleElemId>) {
         let hir = self.hir(file);
-        // The text of the default library is not stored.
+        // The default library's text isn't stored.
         if hir.text.is_empty() {
             return;
         }
@@ -239,8 +233,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    // ───────────────────────────── instantiation depth ─────────────────────────────
-
     // ───────────────────────────── `infer`, `readonly`, `this`, `intrinsic` ─────────────────────────────
 
     /// `checkInferType`: 1338, 2838.
@@ -255,14 +247,14 @@ impl Checker<'_, '_> {
             self.grammar_error_at(at, 1338, &[]);
             return;
         }
-        // Several occurrences of `infer T` declare one type parameter: reported once for all of
-        // them (`typeParametersChecked`).
+        // Several occurrences of `infer T` declare one type parameter, so it's reported once for all of them
+        // (`typeParametersChecked`).
         let symbol = bound.type_param_symbol[param.idx()];
         if symbol.is_none() {
             return;
         }
-        // The type of an index signature is bound twice, so a declaration in it is listed twice.
-        let decls = &bound.symbols[symbol.idx()].decls;
+        // An index signature's type is bound twice, so a declaration in it is listed twice.
+        let decls = bound.symbol(symbol).decls;
         if decls.first() != Some(&Decl::TypeParam(param)) || decls.iter().all(|d| *d == decls[0]) {
             return;
         }
@@ -282,7 +274,7 @@ impl Checker<'_, '_> {
             let own = self.type_from_node(file, hir[p].constraint);
             if !self.is_identical(own, expected) {
                 for p in declarations {
-                    let name = self.place_of_token(file, hir[p].pos);
+                    let name = self.span_of_token(file, hir[p].pos);
                     self.error_at(name, 2838, &[Arg::Atom(hir[p].name)]);
                 }
                 return;
@@ -293,7 +285,7 @@ impl Checker<'_, '_> {
     /// `checkGrammarTypeOperatorNode`
     pub(super) fn check_grammar_type_operator_node(&mut self, file: FileId, node: TypeNodeId) {
         let hir = self.hir(file);
-        // The text of the default library is not stored.
+        // The default library's text isn't stored.
         if hir.text.is_empty() {
             return;
         }
@@ -312,11 +304,11 @@ impl Checker<'_, '_> {
                 TypeNodeKind::Array(_) | TypeNodeKind::Tuple(_)
             ) || hir[inner].pos as usize != operand
             {
-                self.grammar_error_at(self.place_of_token(file, hir[node].pos), 1354, &[]);
+                self.grammar_error_at(self.span_of_token(file, hir[node].pos), 1354, &[]);
             }
             return;
         }
-        // `WalkUpParenthesizedTypes(node.Parent)`: parentheses are not stored.
+        // `WalkUpParenthesizedTypes(node.Parent)`: parentheses aren't stored.
         let parent = hir.parent(hir.node(node));
         let (name, code) = match hir.data(parent) {
             NodeData::VarDecl(d) => {
@@ -327,7 +319,7 @@ impl Checker<'_, '_> {
                     (None, 1334)
                 // `NodeFlagsConst` is one of the two bits of `NodeFlagsAwaitUsing`.
                 } else if !matches!(hir[d].kind, VarKind::Const | VarKind::AwaitUsing) {
-                    (Some(self.place_of_token(file, hir[hir[d].pat].pos)), 1332)
+                    (Some(self.span_of_token(file, hir[hir[d].pat].pos)), 1332)
                 } else {
                     return;
                 }
@@ -364,7 +356,7 @@ impl Checker<'_, '_> {
         {
             return;
         }
-        // It is a keyword only directly after the `=`: in parentheses it is an ordinary name.
+        // It's a keyword only directly after the `=`. In parentheses it's an ordinary name.
         let start = hir[alias.ty].pos;
         if !hir.text[..skip_trivia_back(&hir.text, start as usize)].ends_with(b"=") {
             return;
@@ -379,14 +371,13 @@ impl Checker<'_, '_> {
             _ => false,
         };
         if !is_provided {
-            self.error_at(self.place_of_token(file, start), 2795, &[]);
+            self.error_at(self.span_of_token(file, start), 2795, &[]);
         }
     }
 
     // ───────────────────────────── members ─────────────────────────────
 
-    /// `checkGrammarIndexSignatureParameters`, starting at the check of the parameter's type: 1337
-    /// 1268 1021.
+    /// `checkGrammarIndexSignatureParameters`, starting at the check of the parameter's type: 1337 1268 1021.
     pub(super) fn check_grammar_index_signature_parameters(&mut self, file: FileId, m: MemberId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if has_parse_diagnostics(hir) {
@@ -404,7 +395,7 @@ impl Checker<'_, '_> {
         if self.grammar_error_in_modifiers(file, m).is_some() || func.params.len() != 1 {
             return;
         }
-        // A parameter that is not exactly `name: type` has already been reported.
+        // A parameter that isn't exactly `name: type` has already been reported.
         let param = &hir[func.params.at(0)];
         if !param.flags.is_empty() || param.default.is_some() || param.ty.is_none() {
             return;
@@ -433,26 +424,26 @@ impl Checker<'_, '_> {
         }
         let name = hir[param.pat].pos;
         if is_literal || self.is_generic(keys) {
-            self.error_at(self.place_of_token(file, name), 1337, &[]);
+            self.error_at(self.span_of_token(file, name), 1337, &[]);
         } else if !self
             .parts(keys)
             .iter()
             .all(|&t| self.is_valid_index_key_type(t))
             || keys.is_never()
         {
-            self.error_at(self.place_of_token(file, name), 1268, &[]);
+            self.error_at(self.span_of_token(file, name), 1268, &[]);
         } else if member.ty.is_none() {
             self.error_at((file, member.start, member.loc.end), 1021, &[]);
         }
     }
 
-    /// `checkPropertySignature`, `checkMethodDeclaration`: 18016 for a signature with a private name. A property signature is always
-    /// an error, a method signature only outside every class, an accessor signature never.
+    /// `checkPropertySignature`, `checkMethodDeclaration`: 18016 for a signature with a private name. A property
+    /// signature is always an error, a method signature only outside every class, an accessor signature never.
     pub(super) fn check_private_name_in_signature(&mut self, file: FileId, m: MemberId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let member = &hir[m];
-        // Outside every class the front end gives a private name no key (`getDeclarationName`), so
-        // the source text decides.
+        // Outside every class the front end doesn't give a private name a key (`getDeclarationName`), so the source
+        // text decides.
         let is_private = match member.key {
             PropKey::Private(_) => true,
             PropKey::None => is_private_name_at(hir, member.name_pos),
@@ -468,9 +459,9 @@ impl Checker<'_, '_> {
         }
         match member.kind {
             MemberKind::Property => {
-                self.error_at(self.place_of_token(file, member.name_pos), 18016, &[]);
+                self.error_at(self.span_of_token(file, member.name_pos), 18016, &[]);
             }
-            // `GetErrorRangeForNode` has no case for a method signature: the error starts at the first modifier.
+            // `GetErrorRangeForNode` has no case for a method signature, so the error starts at the first modifier.
             MemberKind::Method if !self.is_signature_inside_a_class(file, m) => {
                 self.error_at((file, member.start, member.loc.end), 18016, &[]);
             }
@@ -494,14 +485,13 @@ impl Checker<'_, '_> {
             .grammar_error_in_modifiers(file, interface.stmt)
             .is_none()
         {
-            self.error_at(self.place_of_token(file, keyword as u32), 1176, &[]);
+            self.error_at(self.span_of_token(file, keyword as u32), 1176, &[]);
         }
     }
 
     // ───────────────────────────── instantiation expressions ─────────────────────────────
 
-    /// `checkExpressionWithTypeArguments` for an `f<T>` that is not called: 1009, 2848 for `a
-    /// instanceof B<T>`, 2635.
+    /// `checkExpressionWithTypeArguments` for an `f<T>` that isn't called: 2848 for `a instanceof B<T>`.
     fn check_instantiation_expressions(&mut self, file: FileId, exprs: &ExprsByKind) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for i in exprs.of(ExprTag::Instantiation).iter().map(|e| e.idx()) {
@@ -511,9 +501,8 @@ impl Checker<'_, '_> {
             if bound.is_unchecked(i) {
                 continue;
             }
-            // Parentheses are not stored, so its direct parent is the result of
-            // `WalkUpParenthesizedExpressions`.
-            if matches!(bound.expr_parent[i], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Binary { op: BinOp::Instanceof, right, .. } if right.idx() == i))
+            // Parentheses aren't stored, so its direct parent is the result of `WalkUpParenthesizedExpressions`.
+            if matches!(bound.parent_of_expr(ExprId(i as u32)), Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Binary { op: BinOp::Instanceof, right, .. } if right.idx() == i))
             {
                 let end = self.end_inside_parentheses(file, ExprId(i as u32));
                 self.error_at((file, self.start_of(file, expr), end), 2848, &[]);
@@ -521,8 +510,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// The same where the type arguments were not stored, because the list is empty or the parser
-    /// bailed out: 2848. They are searched for after the name.
+    /// Same as `check_instantiation_expressions`, where the type arguments weren't stored because the list is empty or
+    /// the parser bailed out: 2848. They're searched for after the name.
     fn check_instantiations_after_instanceof(&mut self, file: FileId, exprs: &ExprsByKind) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let text: &[u8] = &hir.text;
@@ -540,17 +529,16 @@ impl Checker<'_, '_> {
             }
             let (name, name_pos) = match hir[right].kind {
                 ExprKind::Ident(name) => (name, hir[right].pos),
-                ExprKind::Dot { name, name_pos, .. } => (name, name_pos),
+                ExprKind::Dot { name, .. } => (name, hir.name_pos(right)),
                 _ => continue,
             };
             let after = skip_trivia(text, name_pos as usize + self.atoms().bytes(name).len());
             if text.get(after) != Some(&b'<') || matches!(text.get(after + 1), Some(b'<' | b'=')) {
                 continue;
             }
-            // `a instanceof B < c` is a comparison. Within its own parentheses, the name would not
-            // be the only content.
+            // `a instanceof B < c` is a comparison. Within its own parentheses, the name wouldn't be the only content.
             let is_in_parentheses = is_parenthesized(hir, right);
-            let is_compared = matches!(bound.expr_parent[i], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Binary { op: BinOp::Lt, left, .. } if left.idx() == i));
+            let is_compared = matches!(bound.parent_of_expr(ExprId(i as u32)), Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Binary { op: BinOp::Lt, left, .. } if left.idx() == i));
             if is_in_parentheses || !is_compared {
                 let start = self.start_inside_parentheses(file, right);
                 let end =
@@ -564,7 +552,7 @@ impl Checker<'_, '_> {
 
     /// `checkIndexedAccessType`
     pub(super) fn check_indexed_access_type(&mut self, file: FileId, node: TypeNodeId) {
-        // The text of the default library is not stored.
+        // The default library's text isn't stored.
         if self.hir(file).text.is_empty() {
             return;
         }
@@ -582,16 +570,16 @@ impl Checker<'_, '_> {
         self.check_indexed_access_index_type(whole, access_node, None);
     }
 
-    /// `checkIndexedAccessIndexType` for a deferred indexed access type `object[keys]`: the error code (4105 or 2536) if `keys` cannot
-    /// index `object`.
-    pub(super) fn why_not_a_key_of(&mut self, object: TypeId, keys: TypeId) -> Option<u32> {
-        let object_keys = self.keys_to_look_into(object);
+    /// `checkIndexedAccessIndexType` for a deferred indexed access type `object[keys]`: the error code (4105 or 2536)
+    /// if `keys` can't index `object`.
+    pub(super) fn invalid_index_key_code(&mut self, object: TypeId, keys: TypeId) -> Option<u32> {
+        let object_keys = self.object_index_type(object);
         let has_number_index = self.index_type_of_type(object, TypeId::NUMBER).is_some();
-        let fits = self.parts(keys).iter().all(|&key| {
+        let are_valid_keys = self.parts(keys).iter().all(|&key| {
             self.is_assignable(key, object_keys)
                 || has_number_index && self.is_applicable_index_type(key, TypeId::NUMBER)
         });
-        if fits {
+        if are_valid_keys {
             return None;
         }
         if self.is_generic_object_type(object)
@@ -615,9 +603,8 @@ impl Checker<'_, '_> {
         Some(2536)
     }
 
-    /// `objectIndexType` of `checkIndexedAccessIndexType`: "skip index type deferral on remapping
-    /// mapped types"
-    fn keys_to_look_into(&mut self, object: TypeId) -> TypeId {
+    /// `objectIndexType` of `checkIndexedAccessIndexType`: "skip index type deferral on remapping mapped types"
+    fn object_index_type(&mut self, object: TypeId) -> TypeId {
         if self.is_generic_mapped_type(object)
             && let Some(name_type) = self.mapped_name_type(object)
         {

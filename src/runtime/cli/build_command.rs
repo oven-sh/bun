@@ -155,7 +155,7 @@ impl BuildCommand {
             // Nothing is bundled, so nothing has been resolved or read.
             let entry_points = this_transpiler.options.entry_points.iter();
             let checked = options::TypeChecked {
-                cwd: bun_resolver::fs::FileSystem::instance().top_level_dir,
+                cwd: bun_resolver::fs::FileSystem::instance().top_level_dir(),
                 tsconfig: ctx.args.tsconfig_override.as_deref(),
                 conditions: &ctx.args.conditions,
                 loaders: &this_transpiler.options.loaders,
@@ -1262,6 +1262,8 @@ pub(crate) fn collect_compile_assets(
     }
     let mut push =
         |out: &mut Vec<options::OutputFile>, asset: &[u8], dest: Vec<u8>, bytes: Vec<u8>| {
+            // Names are stored as valid UTF-8, so two names that differ only in invalid bytes collide.
+            let dest = bstr::BStr::new(&dest).to_string().into_bytes();
             if seen.contains_key(&dest) {
                 return Err(format!(
                     "asset {} collides with another embedded file at {}",

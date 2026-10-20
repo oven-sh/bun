@@ -29,7 +29,7 @@ async function lint(files: Record<string, string | Buffer>, args: string[], read
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // Where a run ends with an error, or dies, the assertion that fails is often about something else.
+  // If a run fails or crashes, the assertion that fails is often about something else, so print the real cause.
   if (exitCode !== 0 && exitCode !== 1) console.error(`bun lint ${args.join(" ")}: exit code ${exitCode}\n${stderr}`);
   return {
     raw: stdout,
@@ -40,7 +40,7 @@ async function lint(files: Record<string, string | Buffer>, args: string[], read
   };
 }
 
-// `file: line:column rule message`, with what else there is to a message.
+// Returns `file: line:column rule message` for each message, followed by its other properties in brackets.
 function summary(json: string) {
   const lines: string[] = [];
   for (const { filePath, messages, suppressedMessages } of JSON.parse(json)) {
@@ -71,7 +71,7 @@ const repeated = (fill: string, count: number) => Buffer.alloc(count * Buffer.by
 const hasTestRunner =
   isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
 
-// Takes the blocks between ``` out of a file, and puts what is reported about them where they are.
+// A processor that extracts the ``` blocks from a file, and maps their reports back to positions in the file.
 const fenced = (supportsAutofix: boolean) => `
 const blocksOf = new Map();
 export const processor = {
@@ -130,7 +130,7 @@ const rules = `
 
 describe.concurrent("bun lint with processors", () => {
   test(
-    "the blocks are linted with the configuration for their own names, next to other files",
+    "lints each block with the config for the block's own name, alongside other files",
     async () => {
       const result = await lint(
         {
@@ -200,7 +200,7 @@ describe.concurrent("bun lint with processors", () => {
   );
 
   test(
-    "a processor that an object of the configuration has itself, without supportsAutofix: no fixes",
+    "an inline processor object without supportsAutofix gets no fixes",
     async () => {
       const result = await lint(
         {
@@ -226,7 +226,7 @@ describe.concurrent("bun lint with processors", () => {
   );
 
   test(
-    "a processor that throws, blocks without a name, and a processor that does not exist",
+    "handles a processor that throws, blocks without a name, and a processor that doesn't exist",
     async () => {
       const files = {
         "fenced.mjs": fenced(true),
@@ -260,7 +260,7 @@ describe.concurrent("bun lint with processors", () => {
   );
 
   test(
-    "a rule in JavaScript sees the name of the block and the name of the file",
+    "a JavaScript rule gets the block's name and the file's name",
     async () => {
       const result = await lint(
         {
@@ -300,7 +300,7 @@ describe.concurrent("bun lint with processors", () => {
     timeout,
   );
 
-  // As with `configs.recommended` and `configs.processor` of @eslint/markdown.
+  // This is what @eslint/markdown's `configs.recommended` and `configs.processor` give you together.
   test(
     "a file with a language and a processor goes to the processor",
     async () => {
@@ -324,18 +324,19 @@ describe.concurrent("bun lint with processors", () => {
         `"a.md: 2:1 no-var Unexpected var, use let or const instead. [fix 6,9 "let"]"`,
       );
       expect(result.exitCode).toBe(1);
-      // What the processor gives back without a name is for the language.
-      const whole = await lint(files, ["b.txt"]);
-      expect(whole.stderr).toContain(
+      // A block that the processor returns without a name is linted in the file's language.
+      const unnamedBlock = await lint(files, ["b.txt"]);
+      expect(unnamedBlock.stderr).toContain(
         "1 file was not linted because it needs eslint, which is not installed (1 *.txt): b.txt",
       );
-      expect(whole.exitCode).toBe(2);
+      expect(unnamedBlock.exitCode).toBe(2);
     },
     timeout,
   );
 });
 
-// Enough of the package `eslint` to lint a text in the language of a plugin: `Linter.verify` with one object of configuration.
+// A stand-in for the `eslint` package with just enough to lint text in a plugin's language: `Linter.verify` with one
+// config object.
 const eslintPackage = {
   "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version: "10.0.0", main: "index.js" }),
   "node_modules/eslint/index.js": `
@@ -408,7 +409,7 @@ const lines = {
 
 describe.concurrent("bun lint with languages", () => {
   test(
-    "a file in the language of a plugin is linted by the Linter of the eslint that is installed",
+    "a file in a plugin's language is linted by the installed eslint's Linter",
     async () => {
       const result = await lint({ ...eslintPackage, ...lines }, ["-f", "json", "a.js", "b.txt"]);
       expect(summary(result.raw)).toMatchInlineSnapshot(`
@@ -422,9 +423,9 @@ describe.concurrent("bun lint with languages", () => {
     timeout,
   );
 
-  // As `vue-eslint-parser` for `.vue`.
+  // Like `vue-eslint-parser` for `.vue`.
   test(
-    "so is a file that a parser of its own reads",
+    "a file with a custom parser is linted by the installed eslint's Linter",
     async () => {
       const result = await lint(
         {
@@ -450,17 +451,18 @@ describe.concurrent("bun lint with languages", () => {
     timeout,
   );
 
-  // `Linter#verify` takes a `ruleFilter` since ESLint 9. That of ESLint 8 runs every rule, and finds a comment that disables one unused.
+  // `Linter#verify` has accepted a `ruleFilter` since ESLint 9. ESLint 8's runs every rule, and then reports a comment
+  // that disables one of them as unused.
   test.each([
     ["9", "rules.filter(ruleFilter)"],
     ["8", `[...rules, ...["'semi'", "'indent' or 'semi'", "'semi' or 'no-var'"].map(unused)]`],
   ])(
-    "the deprecated rules about layout do not run there either: ESLint %s",
+    "the deprecated layout rules don't run in the installed eslint either: ESLint %s",
     async (_, reported) => {
       const result = await lint(
         {
           ...eslintPackage,
-          // One message for each rule that runs.
+          // Reports one message for each rule that runs.
           "node_modules/eslint/index.js": `
             const unused = names => ({ ruleId: null, severity: 1, text: "Unused eslint-disable directive (no problems were reported from " + names + ")." });
             exports.Linter = class Linter {
@@ -491,10 +493,11 @@ describe.concurrent("bun lint with languages", () => {
     timeout,
   );
 
-  // As `@babel/eslint-parser` with a plugin for syntax that is no standard yet. What is called like JavaScript is read here, as
-  // long as it can be. As in nodejs/node the packages are not above the configuration file: eslint is beside the parser.
+  // Like `@babel/eslint-parser` with a plugin for syntax that isn't standard yet. Bun parses a file with a JavaScript
+  // extension itself if it can. As in nodejs/node, the packages aren't in a directory above the config file: eslint is
+  // next to the parser.
   test(
-    "so is a file called like JavaScript that only its own parser can read, and no rule sees what is made of it here",
+    "a .js file that only its custom parser can parse goes to the installed eslint, and no rule sees Bun's tree for it",
     async () => {
       const result = await lint(
         {
@@ -536,7 +539,7 @@ describe.concurrent("bun lint with languages", () => {
   );
 
   test(
-    "so is a file for which eslint-plugin-html is configured, which changes the Linter when it is loaded",
+    "a file configured with eslint-plugin-html, which patches the Linter when it loads, goes to the installed eslint",
     async () => {
       const result = await lint(
         {
@@ -569,9 +572,9 @@ describe.concurrent("bun lint with languages", () => {
     timeout,
   );
 
-  // As @antfu/eslint-config for `.vue`: the export is a promise, and the processor forgets a file in `postprocess`.
+  // Like @antfu/eslint-config for `.vue`: the export is a promise, and the processor forgets a file in `postprocess`.
   test(
-    "the whole configuration file, which exports a promise, and a processor, which is called once",
+    "passes on a whole config file that exports a promise, and calls its processor only once",
     async () => {
       const result = await lint(
         {
@@ -796,7 +799,7 @@ rules = { "no-console" = "off" }
   });
 
   test(
-    "files for which the parser is asked for types all go to one engine",
+    "files whose parser options request types all go to one engine",
     async () => {
       const files: Record<string, string> = {
         ...eslintPackage,
@@ -817,7 +820,7 @@ rules = { "no-console" = "off" }
             { files: ["plain/*.vue"], plugins: { own }, languageOptions: { parser }, rules: { "own/seen": "error" } },
           ];`,
       };
-      // 6 MB, which is work for several engines.
+      // 6 MB, which is enough work for several engines.
       const text = Buffer.alloc(250_000, "<!-- comment -->\n").toString();
       for (let i = 0; i < 24; i++) files[`typed/${i}.vue`] = files[`plain/${i}.vue`] = text;
       const realms = async (directory: string) => {
@@ -833,7 +836,7 @@ rules = { "no-console" = "off" }
   );
 
   test(
-    "--fix goes on until nothing is left to fix",
+    "--fix repeats until there's nothing left to fix",
     async () => {
       const result = await lint({ ...eslintPackage, ...lines }, ["--fix", "b.txt"], ["b.txt"]);
       expect(result.files).toEqual({ "b.txt": "one\n two \n\tthree # off\n" });
@@ -843,7 +846,7 @@ rules = { "no-console" = "off" }
   );
 
   test(
-    "without the package eslint such files are named, and the others are linted",
+    "without the eslint package, lists the files that need it and lints the others",
     async () => {
       const result = await lint(lines, ["-f", "unix", "a.js", "b.txt"]);
       expect(result.stdout).toContain("a.js:1:1: Unexpected var, use let or const instead. [Error/no-var]");
@@ -925,7 +928,7 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
     expect(result.exitCode).toBe(1);
   });
 
-  test("an object with many keys", async () => {
+  test("finds the duplicates in an object with many keys", async () => {
     const count = many(50_000);
     const keys = Array.from({ length: count }, (_, i) => `"k${i}": ${i}`);
     const text = `{${keys.join(",")},"k7":0,"k${count - 1}":0,"new":0}`;
@@ -953,6 +956,14 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
       ["json", "[1,]", "1:3 Trailing commas are not allowed in JSON"],
       ["json", "[1", "1:3 Unterminated array"],
       ["json", "[1 2]", "1:4 Expected ','"],
+      ["json", '{\n  "a": 1\n  "b": 2\n}', "3:3 Expected ','"],
+      ["json", '["a" "b"]', "1:6 Expected ','"],
+      ["json", '{"a":1 2}', "1:8 Expected ','"],
+      ["json", '{"a" "b"}', "1:6 Expected ':' after object key"],
+      ["json", '{"a":}', "1:6 Unexpected token"],
+      ["json", '{"a":,"b":1}', "1:6 Unexpected token"],
+      ["json", "[1,,2]", "1:4 Unexpected token"],
+      ["json", '"a" "b"', "1:5 Unexpected token after JSON value"],
       ["json", "[1}", "1:3 Expected ']'"],
       ["json", '{"a":1]', "1:7 Expected '}'"],
       ["json", "{} {}", "1:4 Unexpected token after JSON value"],
@@ -978,19 +989,26 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
       ["jsonc", "/* c", "1:5 Unterminated multi-line comment"],
       ["jsonc", "[1, // c\n", "2:1 Unexpected end of input"],
       ["jsonc", "{a:1}", "1:2 Keys must be strings in double quotes"],
+      ["jsonc", '{"a": "b" // c\n"d": 1}', "2:1 Expected ','"],
+      ["jsonc", '{"a" /* c */ "b"}', "1:14 Expected ':' after object key"],
+      ["jsonc", '{"a": /* c */ }', "1:15 Unexpected token"],
       ["json5", "{1:1}", "1:2 Invalid identifier start character"],
       ["json5", "0x", "1:3 Invalid hex number"],
       ["json5", "01", "1:1 Leading zeros are not allowed in JSON5"],
       ["json5", "[,]", "1:2 Unexpected token"],
       ["json5", "{a-b:1}", "1:4 Unexpected character"],
       ["json5", "1 2", "1:3 Unexpected token after JSON5 value"],
+      ["json5", "{a: 1 b: 2}", "1:7 Expected ','"],
+      ["json5", "['a' 'b']", "1:6 Expected ','"],
+      ["json5", "{a 'b'}", "1:4 Expected ':' after object key"],
+      ["json5", "{a:}", "1:4 Unexpected token"],
     ];
     const files = cases.map(([language, text], i) => [`${String(i).padStart(2, "0")}.${language}`, text]);
     const result = await lint({ ...json, ...Object.fromEntries(files) }, ["-f", "json", "."]);
     expect(summary(result.raw).split("\n")).toEqual(
       cases.map(([, , expected], i) => {
-        const [place, ...message] = expected.split(" ");
-        return `${files[i][0]}: ${place} null Parsing error: ${message.join(" ")} [fatal]`;
+        const [position, ...message] = expected.split(" ");
+        return `${files[i][0]}: ${position} null Parsing error: ${message.join(" ")} [fatal]`;
       }),
     );
     expect(result.exitCode).toBe(1);
@@ -1434,7 +1452,7 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
       expect(result.exitCode).toBe(2);
     });
 
-    test("many keys out of order, with comments", async () => {
+    test("handle many keys out of order, with comments", async () => {
       const count = many(30_000);
       const keys = Array.from({ length: count }, (_, i) => `"k${count - i}": ${i}, // ${i}`);
       const result = await lint({ ...all, "many.jsonc": `{\n${keys.join("\n")}\n"a": 1\n}` }, [
@@ -1497,33 +1515,38 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
     ["a byte order mark", (text: string) => mark + text],
     ["carriage returns", (text: string) => text.replaceAll("\n", "\r\n")],
     ["both", (text: string) => mark + text.replaceAll("\n", "\r\n")],
-  ])("U+2028 and U+2029 aren't line breaks in JSON: a file with %s", (_, written) => {
+  ])("U+2028 and U+2029 aren't line breaks in JSON: a file with %s", (_, transform) => {
     // Unless the file is short, the linter counts lines without saving their offsets, so the formatter recomputes them.
     const more = Array.from({ length: 50 }, (_, i) => `  "${i}": "${"-".repeat(40)}",\n`).join("");
     const text = `{\n  "s": "${separators}",\n${more}  "a": 1,\n  "a": 2\n}\n`;
-    const files = { ...json, "a.json": written(text) };
+    const files = { ...json, "a.json": transform(text) };
 
-    test.each(["pretty", "agent"])("the code excerpt in %s", async format => {
+    test.each(["pretty", "agent"])("the code excerpt in %s shows the right line", async format => {
       const result = await lint(files, ["-f", format, "a.json"]);
-      const shown = result.stdout.split("\n").filter(line => line.includes('"a"') && !line.includes("Duplicate"));
-      expect(shown.at(-1)).toEndWith('"a": 2');
+      const excerptLines = result.stdout
+        .split("\n")
+        .filter(line => line.includes('"a"') && !line.includes("Duplicate"));
+      expect(excerptLines.at(-1)).toEndWith('"a": 2');
       expect(result.stdout).toContain(format === "pretty" ? "a.json:54:3" : 'line="54" column="3"');
     });
 
-    test.each(["stylish", "json", "unix", "github", "checkstyle", "junit", "gitlab", "sarif"])("%s", async format => {
-      const result = await lint(files, ["-f", format, "a.json"]);
-      const places = {
-        stylish: "  54:3  error",
-        json: '"line":54,"column":3,"messageId":"duplicateKey","endLine":54,"endColumn":6',
-        unix: "a.json:54:3:",
-        github: "line=54,col=3,endLine=54,endColumn=6",
-        checkstyle: 'line="54" column="3"',
-        junit: "line 54, column 3",
-        gitlab: '"begin": 54',
-        sarif: '"startLine": 54',
-      };
-      expect(result.stdout).toContain(places[format as keyof typeof places]);
-    });
+    test.each(["stylish", "json", "unix", "github", "checkstyle", "junit", "gitlab", "sarif"])(
+      "%s prints the right line",
+      async format => {
+        const result = await lint(files, ["-f", format, "a.json"]);
+        const expectedByFormat = {
+          stylish: "  54:3  error",
+          json: '"line":54,"column":3,"messageId":"duplicateKey","endLine":54,"endColumn":6',
+          unix: "a.json:54:3:",
+          github: "line=54,col=3,endLine=54,endColumn=6",
+          checkstyle: 'line="54" column="3"',
+          junit: "line 54, column 3",
+          gitlab: '"begin": 54',
+          sarif: '"startLine": 54',
+        };
+        expect(result.stdout).toContain(expectedByFormat[format as keyof typeof expectedByFormat]);
+      },
+    );
   });
 
   test("comments disable and configure rules in JSONC and JSON5", async () => {
@@ -1573,7 +1596,7 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("noInlineConfig, --no-inline-config and --report-unused-disable-directives-severity", async () => {
+  test("noInlineConfig, --no-inline-config and --report-unused-disable-directives-severity work", async () => {
     const files = {
       ...jsonPackage(),
       "eslint.config.mjs": jsonConfig(`{ files: ["no/*"], linterOptions: { noInlineConfig: true } }`),
@@ -1601,7 +1624,7 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
       "a.jsonc": '{ "a": [1,], }',
       "x.json": "{}",
     });
-    const [allowed, printed, refused, wrong, elsewhere] = await Promise.all([
+    const [allowed, printed, disallowed, wrong, elsewhere] = await Promise.all([
       lint(files("{ allowTrailingCommas: true, globals: { a: true } }"), ["-f", "json", "a.jsonc"]),
       lint(files("{ allowTrailingCommas: true }"), ["--print-config", "a.jsonc"]),
       lint(files("{ allowTrailingCommas: false }"), ["-f", "json", "a.jsonc"]),
@@ -1612,7 +1635,7 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
     expect(allowed.exitCode).toBe(0);
     expect(JSON.parse(printed.raw).language).toBe("json/jsonc");
     expect(JSON.parse(printed.raw).languageOptions).toEqual({ allowTrailingCommas: true });
-    expect(summary(refused.raw)).toBe(
+    expect(summary(disallowed.raw)).toBe(
       "a.jsonc: 1:10 null Parsing error: Trailing commas are not allowed in JSONC [fatal]",
     );
     expect(wrong.stderr).toContain('Key "languageOptions": allowTrailingCommas must be a boolean if provided.');
@@ -1621,7 +1644,7 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
     expect(elsewhere.exitCode).toBe(2);
   });
 
-  test("--stdin, and a format that shows the code", async () => {
+  test("--stdin works, also with a format that shows the code", async () => {
     using dir = tempDir("bun-lint-js-parsers", json);
     const run = async (format: string) => {
       await using proc = spawn({
@@ -1783,7 +1806,8 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
       expect(result.stderr).toContain("the eslint package linted 1 files");
     });
 
-    // A rule that needs eslint can be turned on in the config or by a comment in the file. Either way the run goes on.
+    // A rule that needs eslint can be turned on in the config or by a comment in the file. Either way the run
+    // continues.
     describe("if eslint isn't installed, the file is skipped with a warning and the rest is linted", () => {
       const languages = {
         JSON: {
@@ -1791,7 +1815,7 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
           good: "good.jsonc",
           text: `${text}\n`,
           comment: '/* eslint no-irregular-whitespace: "error" */',
-          // The comment that disables nothing is what `--fix` removes.
+          // `--fix` removes the unused disable comment.
           fixable: '{\n  "a": 1 // eslint-disable-line json/no-duplicate-keys\n}\n',
           fixed: '{\n  "a": 1  \n}\n',
           project: (more: string) => ({ ...jsonPackage(), "eslint.config.mjs": jsonConfig(more) }),
@@ -1949,7 +1973,7 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
         };
         const fence = (language: string, code: string) => `\`\`\`${language}\n${code}\n\`\`\`\n\n`;
 
-        test("is named in the warning, and the file's other blocks are reported", async () => {
+        test("is listed in the warning, and the file's other blocks are reported", async () => {
           const files = {
             ...project,
             "a.md": [
@@ -1979,7 +2003,7 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
           expect(result.exitCode).toBe(2);
         });
 
-        test("--fix fixes the other blocks, and names the block once", async () => {
+        test("--fix fixes the other blocks, and the warning lists the block once", async () => {
           const files = { ...project, "a.md": fence("js", "var a = 1; var b = 2;") + fence("css", "a {}") };
           const result = await lint(files, ["--fix", "a.md"], ["a.md"]);
           expect(result.files["a.md"]).toBe(fence("js", "let a = 1; let b = 2;") + fence("css", "a {}"));
@@ -1989,7 +2013,7 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
           expect(result.exitCode).toBe(2);
         });
 
-        test("with a name, which is the whole file: the warning names the file", async () => {
+        test("if a named block is the whole file, the warning lists the file", async () => {
           const result = await lint({ ...project, "b.txt": "text\n", "b.js": "var c;\n" }, [
             "-f",
             "json",
@@ -2003,8 +2027,8 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
           expect(result.exitCode).toBe(2);
         });
 
-        // ESLint skips such a block too, and says nothing.
-        test("is skipped without a warning if no config object is for its name", async () => {
+        // ESLint silently skips a block like this too.
+        test("is skipped without a warning if no config object matches its name", async () => {
           const languages = ["ts", "yaml", "json", "sh", "html", "py", "rs", "toml", "vue", "scss"];
           const readme = languages.map(language => fence(language, "a {}")).join("");
           const result = await lint({ ...project, "README.md": fence("js", "let a;") + readme }, [
@@ -2268,7 +2292,7 @@ describe.concurrent("bun lint with built-in Markdown", () => {
     );
   });
 
-  test("noInlineConfig, --no-inline-config and --report-unused-disable-directives-severity", async () => {
+  test("noInlineConfig, --no-inline-config and --report-unused-disable-directives-severity work", async () => {
     const files = {
       ...markdownPackage(),
       "eslint.config.mjs": markdownConfig(`{ files: ["no.md"], linterOptions: { noInlineConfig: true } }`),
@@ -2382,7 +2406,7 @@ describe.concurrent("bun lint with built-in Markdown", () => {
     expect([config.exitCode, comment.exitCode]).toEqual([2, 2]);
   });
 
-  test("--fix, after a byte order mark and with CRLF", async () => {
+  test("--fix works after a byte order mark and with CRLF", async () => {
     const text = `${mark}#Ünï 😀\r\n\r\n** a** and (b)[c] and https://example.com and [d](e)\r\n\r\n[e]: f\r\n`;
     const result = await lint({ ...project, "a.gfm.md": text }, ["--fix", "."], ["a.gfm.md"]);
     expect(result.files).toEqual({
@@ -2391,7 +2415,7 @@ describe.concurrent("bun lint with built-in Markdown", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("--stdin, and the formats", async () => {
+  test("--stdin works with stylish, unix and pretty", async () => {
     using dir = tempDir("bun-lint-js-parsers", project);
     const run = async (format: string) => {
       await using proc = spawn({
@@ -2481,6 +2505,62 @@ describe.concurrent("bun lint with built-in Markdown", () => {
         "paren-in-title.md: 1:2 markdown/no-missing-label-refs Label reference 'a' not found.
         slash-in-value.md: 1:3 markdown/no-html HTML element "a" is not allowed."
       `);
+  });
+
+  describe("markdown/no-space-in-emphasis", () => {
+    const options = `{ files: ["**/*.md"], rules: { "markdown/no-space-in-emphasis": ["error", { checkStrikethrough: true }] } }`;
+    const files = { ...markdownPackage(), "eslint.config.mjs": markdownConfig(options, "[]") };
+
+    // The plugin pairs a paragraph's first marker with the second and the third with the fourth, regardless of the text
+    // around them. It reports every line below through the table, and its fix changes the rendered text: `2 *3* 4`,
+    // `*.ts,*.tsx`.
+    test("ignores stars and underscores that are plain text", async () => {
+      const text = [
+        "The area is 2 * 3 * 4 units.",
+        "x = a * b + c * d",
+        'globs: "*.ts, *.tsx, *.html, *.css"',
+        "Matches **/*.js, **/*.mjs and src/* files.",
+        "Prints [[ cyclic ref *1 ]] and then [[ cyclic ref *2 ]].",
+        "In C: char *a, *b; and x = *p * 2;",
+        "f(*args, **kwargs) and g(*a, **k)",
+        "/* one comment */ and (* another *)",
+        "This is * ambiguous * too.",
+        "Will _flag on _words, and words* with asterisks* after them.",
+        "About ~ 5 or ~ 10.",
+        "# 2 * 3 * 4",
+        "| a * b * c |\n| --------- |\n| 1 * 2 * 3 |",
+        "`*.ts, *.tsx` and `2 * 3 * 4`",
+        "See https://example.com/*/a and https://example.com/*/b.",
+      ].join("\n\n");
+      const result = await lint({ ...files, "a.gfm.md": `${text}\n` }, ["--fix", "-f", "json", "."], ["a.gfm.md"]);
+      expect(summary(result.raw)).toBe("");
+      expect(result.files).toEqual({ "a.gfm.md": `${text}\n` });
+      expect(result.exitCode).toBe(0);
+    });
+
+    test.each([
+      ["This is ** important**.", "This is **important**."],
+      ["This is **important **.", "This is **important**."],
+      ["This is ** important ** too.", "This is **important** too."],
+      ["This is _important _.", "This is _important_."],
+      ["This is _ important _ too.", "This is _important_ too."],
+      ["This is *** very important***.", "This is ***very important***."],
+      ["One-sided *broken emphasis *", "One-sided *broken emphasis*"],
+      ["(*broken *)", "(*broken*)"],
+      ["(* broken*)", "(*broken*)"],
+      ["**`code` **", "**`code`**"],
+      ["Follow ** [a link](b)**", "Follow **[a link](b)**"],
+      ["**Several ** in **one ** line.", "**Several** in **one** line."],
+      ["2 * 3 is ** important**.", "2 * 3 is **important**."],
+      ["This is ~~ gone~~.", "This is ~~gone~~."],
+      ["# A ** heading**", "# A **heading**"],
+    ])("--fix turns %j into emphasis", async (before, after) => {
+      expect(Bun.markdown.html(before)).not.toMatch(/<(em|strong|del)>/);
+      expect(Bun.markdown.html(after)).toMatch(/<(em|strong|del)>/);
+      const result = await lint({ ...files, "a.gfm.md": `${before}\n` }, ["--fix", "."], ["a.gfm.md"]);
+      expect(result.files).toEqual({ "a.gfm.md": `${after}\n` });
+      expect(result.exitCode).toBe(0);
+    });
   });
 
   // The rules are only as good as the tree. `conformance/markdown-trees.mjs` recorded the plugin's trees.
@@ -2668,7 +2748,7 @@ const oxlintrc = JSON.stringify({
   },
 });
 
-// `file line:column rule` of oxlint's JSON.
+// Returns `file line:column rule` for each diagnostic in oxlint's JSON format.
 const diagnostics = (json: string) =>
   JSON.parse(json)
     .diagnostics.map((it: any) => `${it.filename} ${it.labels[0].span.line}:${it.labels[0].span.column} ${it.code}`)
@@ -2722,7 +2802,7 @@ debugger;
 <script is:inline src="x.js" />
 </body></html>
 `,
-  // No language that is known: nothing from there on is linted.
+  // After a script in an unknown language, the rest of the file isn't linted.
   "d.vue": `<script lang="coffee">
 x = 1
 </script>
@@ -2733,9 +2813,9 @@ debugger;
 };
 
 describe.concurrent("bun lint with an .oxlintrc.json", () => {
-  test("lints the scripts in .vue, .svelte and .astro files, as oxlint does", async () => {
+  test("lints the scripts in .vue, .svelte and .astro files like oxlint", async () => {
     const result = await lint(scripts, ["-f", "json"]);
-    // What oxlint 1.80 reports.
+    // This is what oxlint 1.80 reports.
     expect(diagnostics(result.raw)).toMatchInlineSnapshot(`
       "a.vue 14:15 eslint(no-undef)
       a.vue 15:22 eslint(no-var)
@@ -2757,9 +2837,9 @@ describe.concurrent("bun lint with an .oxlintrc.json", () => {
     expect(result.exitCode).toBe(1);
   });
 
-  test("--fix fixes the scripts where they are", async () => {
+  test("--fix fixes the scripts in place", async () => {
     const result = await lint(scripts, ["--fix", "-f", "json"], ["a.vue", "b.svelte", "c.astro", "d.vue"]);
-    // The bytes that oxlint 1.87 writes.
+    // These are the exact bytes oxlint 1.87 writes.
     expect(result.files).toMatchInlineSnapshot(`
       {
         "a.vue": 

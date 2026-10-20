@@ -1,6 +1,6 @@
 // The same object @sinonjs/fake-timers replaces `performance` with.
 export function createPerformance(original: object, now: Function, timeOrigin: number) {
-  const fake = { __proto__: null };
+  const fake: Record<string, unknown> = { __proto__: null };
   for (const name of Object.getOwnPropertyNames(Object.getPrototypeOf(original) ?? {})) {
     fake[name] = name.startsWith("getEntries") ? () => [] : () => {};
   }

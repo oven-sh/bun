@@ -548,6 +548,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Few: the data functions of a page and what they use.
     pub(crate) used_by_deleted_exports: Vec<u32>,
     pub(crate) declaration_parts: Vec<crate::server_only_code::DeclarationPart>,
+    /// The import records in the default value of each binding, by the binding's location.
+    pub(crate) default_value_records: Vec<(bun_ast::Loc, u32)>,
     /// Fill `scope_uses` (bundling with the number renamer).
     pub(crate) track_scope_uses: bool,
     /// Next `Scope::visit_span` pre-order index. The module scope is 0.
@@ -9810,6 +9812,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             in_deleted_export: false,
             used_by_deleted_exports: Default::default(),
             declaration_parts: Default::default(),
+            default_value_records: Default::default(),
             track_scope_uses,
             visit_scope_count: 0,
             field_init_class_bodies: Vec::new(),

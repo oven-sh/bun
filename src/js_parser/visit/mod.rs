@@ -867,7 +867,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 }
                             }
                         }
+                        let records_before = self.import_records_for_current_part.len();
                         self.visit_expr(item.default_value.as_mut().unwrap());
+                        self.note_default_value_records(item.binding.loc, records_before);
                         self.decorator_class_name = prev_decorator_class_name2;
 
                         if let BData::BIdentifier(bind_) = item.binding.data {
@@ -906,7 +908,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 }
                             }
                         }
+                        let records_before = self.import_records_for_current_part.len();
                         self.visit_expr(property.default_value.as_mut().unwrap());
+                        self.note_default_value_records(property.value.loc, records_before);
                         self.decorator_class_name = prev_decorator_class_name3;
 
                         if let BData::BIdentifier(bind_) = property.value.data {

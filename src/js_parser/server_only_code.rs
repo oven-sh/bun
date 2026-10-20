@@ -5,9 +5,10 @@
 //! code used every name it declares and nothing that stays can reach it, even if creating it has
 //! side effects. A binding that nothing used stays, as Next.js's SSG transform keeps it.
 
-use bun_ast::{self as js_ast, ImportRecordFlags, Ref, flags};
+use bun_ast::{self as js_ast, ImportRecordFlags, Loc, Ref, flags};
 use bun_collections::{HashMap, VecExt};
 
+use crate::ImportItemForNamespaceMap;
 use crate::p::P;
 
 type BindingData = js_ast::b::B;
@@ -58,34 +59,36 @@ fn removable_names(stmt: js_ast::Stmt) -> Option<Vec<Ref>> {
     Some(names)
 }
 
-/// Takes the names `is_dead` accepts out of a pattern, and returns whether none are left. The
-/// initializer still runs, so array elements keep their positions, and an object with a live
-/// `...rest` keeps its properties, which `rest` must not receive.
-fn strip_dead_names(binding: js_ast::Binding, is_dead: &impl Fn(Ref) -> bool) -> bool {
+/// Takes the names `is_dead` accepts out of a pattern, and returns whether it lost all it had. The
+/// initializer still runs, so array elements keep their positions, a hole of the source stays, and
+/// an object with a live `...rest` keeps its properties, which `rest` must not receive. `dropped`
+/// gets the binding of each default value that goes.
+fn strip_dead_names(
+    binding: js_ast::Binding,
+    is_dead: &dyn Fn(Ref) -> bool,
+    dropped: &mut Vec<Loc>,
+) -> bool {
     match binding.data {
         BindingData::BIdentifier(id) => is_dead(id.r#ref),
-        BindingData::BMissing(_) => true,
+        BindingData::BMissing(_) => false,
         BindingData::BArray(mut array) => {
-            for item in array.items_mut() {
-                if strip_dead_names(item.binding, is_dead) {
+            let len = array.items().len();
+            let mut end = 0;
+            for (i, item) in array.items_mut().iter_mut().enumerate() {
+                if strip_dead_names(item.binding, is_dead, dropped) {
+                    if item.default_value.take().is_some() {
+                        dropped.push(item.binding.loc);
+                    }
                     item.binding.data = BindingData::BMissing(js_ast::b::Missing {});
-                    item.default_value = None;
+                } else {
+                    end = i + 1;
                 }
             }
-            let mut end = array.items().len();
-            while end > 0
-                && matches!(
-                    array.items()[end - 1].binding.data,
-                    BindingData::BMissing(_)
-                )
-            {
-                end -= 1;
-            }
-            if end != array.items().len() {
+            if end != len {
                 array.items.truncate(end);
                 array.has_spread = false;
             }
-            end == 0
+            len != 0 && end == 0
         }
         BindingData::BObject(mut object) => {
             let live_rest = object.properties().iter().any(|property| {
@@ -98,16 +101,80 @@ fn strip_dead_names(binding: js_ast::Binding, is_dead: &impl Fn(Ref) -> bool) ->
                 return false;
             }
             let properties = object.properties_mut();
+            let len = properties.len();
             let mut end = 0;
-            for i in 0..properties.len() {
-                let dead = strip_dead_names(properties[i].value, is_dead);
+            for i in 0..len {
+                let dead = strip_dead_names(properties[i].value, is_dead, dropped);
                 if !dead || properties[i].flags.contains(flags::Property::IsComputed) {
                     properties.swap(end, i);
                     end += 1;
+                } else if properties[i].default_value.is_some() {
+                    dropped.push(properties[i].value.loc);
                 }
             }
             object.properties.truncate(end);
-            end == 0
+            len != 0 && end == 0
+        }
+    }
+}
+
+/// The names a statement declares and exports.
+fn exported_declarations(stmt: js_ast::Stmt, names: &mut Vec<Ref>) {
+    match stmt.data {
+        js_ast::StmtData::SLocal(local) if local.is_export => {
+            for decl in local.decls.slice() {
+                if let BindingData::BIdentifier(id) = decl.binding.data {
+                    names.push(id.r#ref);
+                }
+            }
+        }
+        js_ast::StmtData::SFunction(function)
+            if function.func.flags.contains(flags::Function::IsExport) =>
+        {
+            names.extend(function.func.name.map(|name| name.ref_));
+        }
+        js_ast::StmtData::SClass(class) if class.is_export => {
+            names.extend(class.class.class_name.map(|name| name.ref_));
+        }
+        _ => {}
+    }
+}
+
+/// `X.prop` while bundling is a property use of `X`, which `symbol_uses` does not count.
+fn release_property_uses(symbols: &mut [js_ast::Symbol], exports_ref: Ref, part: &js_ast::Part) {
+    let Some(uses) = part.import_symbol_property_uses.as_ref() else {
+        return;
+    };
+    for (base, properties) in uses.keys().iter().zip(uses.values()) {
+        // Calls of `exports.name()`, recorded here without a use of `exports`.
+        if *base == exports_ref {
+            continue;
+        }
+        let symbol = &mut symbols[base.inner_index() as usize];
+        for property in properties.values() {
+            symbol.use_count_estimate = symbol
+                .use_count_estimate
+                .saturating_sub(property.count_estimate);
+        }
+    }
+}
+
+/// `ns.a` while bundling is a use of the generated symbol for `a`, not of `ns`, so the namespace
+/// stays until its removed items are gone.
+fn release_namespace_items(
+    namespaces: &mut HashMap<Ref, ImportItemForNamespaceMap>,
+    symbols: &[js_ast::Symbol],
+    used_by_removed: &mut [bool],
+) {
+    for (namespace, items) in namespaces.iter_mut() {
+        let before = items.count();
+        items.retain(|_, item| {
+            !item.ref_.is_valid()
+                || symbols[item.ref_.inner_index() as usize].use_count_estimate != 0
+                || !used_by_removed[item.ref_.inner_index() as usize]
+        });
+        if items.count() != before {
+            used_by_removed[namespace.inner_index() as usize] = true;
         }
     }
 }
@@ -137,6 +204,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             });
         }
         Ok(())
+    }
+
+    /// `export function f` goes by its name, but `export { f as other }` needs `f`, so `f` stays.
+    pub(crate) fn keep_exports_with_kept_aliases(&mut self, stmts: &[js_ast::Stmt]) {
+        let mut declared = Vec::new();
+        for &stmt in stmts {
+            exported_declarations(stmt, &mut declared);
+        }
+        for stmt in stmts {
+            let js_ast::StmtData::SExportClause(clause) = stmt.data else {
+                continue;
+            };
+            for item in clause.items.slice() {
+                let name = self.load_name_from_ref(item.name.ref_);
+                let replace_exports = &self.options.features.replace_exports;
+                if !replace_exports.contains(item.alias.slice())
+                    && replace_exports.contains(name)
+                    && declared.iter().any(|&r| self.load_name_from_ref(r) == name)
+                {
+                    self.options.features.replace_exports.swap_remove(name);
+                }
+            }
+        }
+    }
+
+    /// Records the `require()` and `import()` calls in the default value of `binding`, which
+    /// visiting it just added.
+    pub(crate) fn note_default_value_records(&mut self, binding: Loc, records_before: usize) {
+        if self.options.features.remove_server_only_code {
+            for &record in &self.import_records_for_current_part.as_slice()[records_before..] {
+                self.default_value_records.push((binding, record));
+            }
+        }
     }
 
     pub(crate) fn note_used_by_deleted_export(&mut self, ref_: Ref) {
@@ -236,6 +336,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
             self.clear_symbol_usages_from_dead_part(part);
+            release_property_uses(self.symbols.as_mut_slice(), self.exports_ref, part);
             // `require()` and `import()` calls in the removed code.
             for &record in part.import_record_indices.slice() {
                 self.import_records.items_mut()[record as usize]
@@ -248,6 +349,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let symbol = self.symbol_index(ref_);
             used_by_removed[symbol] && !symbol_is_live[symbol]
         };
+        let mut dropped_defaults = Vec::new();
         for declaration in &declarations {
             let part = &parts[declaration.part as usize];
             if !part_is_live[declaration.part as usize] {
@@ -259,9 +361,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
                 for decl in local.decls.slice() {
                     if !matches!(decl.binding.data, BindingData::BIdentifier(_)) {
-                        strip_dead_names(decl.binding, &is_dead);
+                        strip_dead_names(decl.binding, &is_dead, &mut dropped_defaults);
                     }
                 }
+            }
+        }
+        for (binding, record) in core::mem::take(&mut self.default_value_records) {
+            if dropped_defaults.contains(&binding) {
+                self.import_records.items_mut()[record as usize]
+                    .flags
+                    .insert(ImportRecordFlags::IS_UNUSED);
             }
         }
 
@@ -271,24 +380,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             part_is_live[part_index - 1]
         });
 
-        // `ns.a` while bundling is a use of the generated symbol for `a`, not of `ns`, so the
-        // namespace stays until its removed items are gone.
-        let mut used_namespaces = Vec::new();
-        let symbols = &self.symbols;
-        for (namespace, items) in self.import_items_for_namespace.iter_mut() {
-            let before = items.count();
-            items.retain(|_, item| {
-                !item.ref_.is_valid()
-                    || symbols[item.ref_.inner_index() as usize].use_count_estimate != 0
-                    || !used_by_removed[item.ref_.inner_index() as usize]
-            });
-            if items.count() != before {
-                used_namespaces.push(namespace.inner_index());
-            }
-        }
-        for namespace in used_namespaces {
-            used_by_removed[namespace as usize] = true;
-        }
+        release_namespace_items(
+            &mut self.import_items_for_namespace,
+            self.symbols.as_slice(),
+            &mut used_by_removed,
+        );
 
         self.used_by_deleted_exports = used_by_removed
             .iter()

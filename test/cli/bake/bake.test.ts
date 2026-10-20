@@ -1605,6 +1605,89 @@ test.concurrent("the browser build of a page removes server-only code of every f
       gone: ["data-module-secret", "other-data-module-secret"],
       kept: ["kept-page"],
     },
+    // `X.prop` while bundling counts as a property use, not as a use of `X`.
+    "property-of-import": {
+      source: `
+        import db from "../db-default.js";
+        import { client } from "../named-client.js";
+        function load() { return db.user.findMany() + client.table; }
+        export const getServerSideProps = async () => ({ props: { value: load() } });
+        ${view(`"kept-page"`)}
+      `,
+      gone: ["db-default-secret", "named-client-secret"],
+      kept: ["kept-page"],
+    },
+    "property-of-import-live": {
+      source: `
+        import db from "../db-default.js";
+        function load() { return db.user.findMany("property-removed-read"); }
+        export const getServerSideProps = async () => ({ props: { value: load() } });
+        ${view(`db.user.findMany()`)}
+      `,
+      gone: ["property-removed-read"],
+      kept: ["db-default-secret"],
+    },
+    // A kept export still needs the declaration of a deleted name it refers to.
+    "alias-of-deleted-function": {
+      source: `
+        const helperValue = "kept-alias-helper";
+        export function getServerSideProps() { return helperValue; }
+        export { getServerSideProps as other };
+        ${view(`"kept-page"`)}
+      `,
+      gone: [],
+      kept: ["function getServerSideProps", "kept-alias-helper", "kept-page"],
+    },
+    "alias-of-deleted-variable": {
+      source: `
+        export const getStaticProps = () => "kept-alias-variable", second = "kept-second-export";
+        export { getStaticProps as other };
+        ${view(`"kept-page"`)}
+      `,
+      gone: [],
+      kept: ["kept-alias-variable", "kept-second-export", "kept-page"],
+    },
+    "alias-of-deleted-class": {
+      source: `
+        export { getServerSideProps as other };
+        export class getServerSideProps { value = "kept-alias-class"; }
+        ${view(`"kept-page"`)}
+      `,
+      gone: [],
+      kept: ["kept-alias-class", "kept-page"],
+    },
+    "alias-and-deleted-item": {
+      source: `
+        function getServerSideProps() { return "kept-clause-alias"; }
+        export { getServerSideProps as other, getServerSideProps };
+        ${view(`"kept-page"`)}
+      `,
+      gone: ["getServerSideProps:"],
+      kept: ["kept-clause-alias", "kept-page"],
+    },
+    // Each element is one step of the iterator, so a hole in the source stays.
+    "pattern-holes": {
+      source: `
+        const [holeBefore, ,] = ["kept-trailing-hole", 1];
+        const [middle, , hiddenAfterHole] = ["kept-inner-hole", 1, 2];
+        const [[,], shownNested, hiddenAfterNested] = [[0], "kept-nested", 1];
+        export const getServerSideProps = async () => ({ props: { value: [hiddenAfterHole, hiddenAfterNested] } });
+        ${view(`holeBefore + middle + shownNested`)}
+      `,
+      gone: ["hiddenAfterHole", "hiddenAfterNested"],
+      kept: ["[holeBefore, ,]", "[middle, ,]", "[[,], shownNested]"],
+    },
+    "pattern-default-require": {
+      source: `
+        const { shown, hidden = require("../data-module.js") } = { shown: "kept-shown" };
+        const [item, hiddenItem = import("../other-data-module.js")] = ["kept-item"];
+        const { used = require("../kept-required.js"), hiddenSibling } = {};
+        export const getServerSideProps = async () => ({ props: { value: [hidden, hiddenItem, hiddenSibling] } });
+        ${view(`shown + item + used`)}
+      `,
+      gone: ["data-module-secret", "other-data-module-secret"],
+      kept: ["kept-shown", "kept-item", "kept-required-module"],
+    },
   };
 
   using dir = tempDir("bake-command-server-only-forms", {
@@ -1618,6 +1701,9 @@ test.concurrent("the browser build of a page removes server-only code of every f
       export const shownValue = 1;
     `,
     "app/other-data-module.js": `console.log("other-data-module-secret");`,
+    "app/kept-required.js": `console.log("kept-required-module");`,
+    "app/db-default.js": `export default { user: { findMany: () => "db-default-secret" } };`,
+    "app/named-client.js": `export const client = { table: "named-client-secret" };`,
     ...Object.fromEntries(Object.entries(pages).map(([name, page]) => [`app/pages/${name}.js`, page.source])),
     "render/server.ts": `export function render(request, meta) {
       return new Response(meta.modules[0]);

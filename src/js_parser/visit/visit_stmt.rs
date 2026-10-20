@@ -1032,8 +1032,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut rr: Result<(), Error> = Ok(());
         // A deleted function has no declaration left for these to reference.
-        let is_deleted = mark_as_dead && p.options.features.remove_server_only_code;
-        if p.options.features.react_fast_refresh && !is_deleted {
+        if p.options.features.react_fast_refresh && !mark_as_dead {
             if let Some(hook) = react_hook_data.as_mut() {
                 let signature_cb = hook.signature_cb;
                 stmts.push(p.get_react_refresh_hook_signal_decl(signature_cb));

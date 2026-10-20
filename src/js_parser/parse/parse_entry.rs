@@ -1064,6 +1064,9 @@ impl<'a> Parser<'a> {
         //
         // Removing server-only code needs a part per statement, even for HMR, whose
         // `ConvertESMExportsForHmr` merges the parts back into one.
+        if p.options.features.remove_server_only_code {
+            p.keep_exports_with_kept_aliases(stmts);
+        }
         let remove_server_only_code = p.options.features.remove_server_only_code
             && p.options.bundle
             && !p.will_wrap_module_in_try_catch_for_using;

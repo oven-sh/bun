@@ -45,7 +45,7 @@ The coordinator sorts files by path and splits them into one contiguous chunk pe
 
 `--parallel` implies [`--isolate`](#--isolate): each file runs in a fresh global object even when two files land on the same worker. Tests that pass with `--parallel` don't depend on state leaked by an earlier file.
 
-`--parallel --no-isolate` turns that off: each worker keeps a single global and module registry for all the files it is handed, exactly like a serial `bun test` does for the whole suite. Each worker evaluates imports (and `--preload` modules) once instead of once per file, which is the fastest way to run a large suite of small files. The price is that a file can observe whatever an earlier file on the same worker left behind. Preload-level `beforeAll`/`afterAll` hooks still wrap every file, since a worker never knows which file is its last.
+`--parallel --no-isolate` turns that off: each worker keeps a single global and module registry for all the files it is handed, exactly like a serial `bun test` does for the whole suite. Each worker evaluates imports (and `--preload` modules) once instead of once per file, which is the fastest way to run a large suite of small files. The price is that a file can observe whatever an earlier file on the same worker left behind. A timer or promise that a file leaves pending also keeps running in that worker after the file ends. If it throws while a later test runs, that test fails. If it throws while no test runs on that worker, `bun test` reports an [error between tests](/test/runtime-behavior#unhandled-errors) and exits with a non-zero code. Preload-level `beforeAll`/`afterAll` hooks still wrap every file, since a worker never knows which file is its last.
 
 ### Worker environment
 

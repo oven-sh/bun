@@ -9,7 +9,7 @@ use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResu
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_ptr::RefPtr;
-use super::jest::{Jest, FileId, FileColumns as _};
+use super::jest::{Jest, FileId, FileColumns as _, TestRunner};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
 use crate::cli::test_command::CommandLineReporter;
 use super::execution::TimespecExt as _;
@@ -1305,24 +1305,16 @@ impl BunTest {
         };
 
         self.bun_test_root.on_before_print();
+        let vm = global_this.bun_vm().as_mut();
         if matches!(
             handle_status,
             HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
                 | HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe
         ) {
-            // SAFETY: reporter is Some (asserted by call sites that reach here);
-            // `NonNull<CommandLineReporter>` carries write provenance from
-            // `enter_file`'s `&mut`; single-threaded, no other borrow live.
-            unsafe {
-                (*self.reporter.unwrap().as_ptr()).jest.unhandled_errors_between_tests += 1;
-            }
-            bun_core::pretty_errorln!(
-                "<r>\n<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>\n<d>-------------------------------<r>\n",
-            );
-            Output::flush();
+            TestRunner::report_unowned(vm, exception, None);
+            return;
         }
 
-        let vm = global_this.bun_vm().as_mut();
         if !failure_ctx.is_null() {
             vm.on_print_error_zig_exception =
                 Some(crate::cli::test_command::TestFailure::record_cb);
@@ -1332,14 +1324,6 @@ impl BunTest {
         if !failure_ctx.is_null() {
             vm.on_print_error_zig_exception = None;
             vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
-        }
-
-        if matches!(
-            handle_status,
-            HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
-                | HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe
-        ) {
-            bun_core::pretty_error!("<r><d>-------------------------------<r>\n\n");
         }
 
         Output::flush();

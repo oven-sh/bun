@@ -13,4 +13,6 @@
 
 pub(crate) use super::parallel::runner::run_as_coordinator;
 pub(crate) use super::parallel::runner::run_as_worker;
+pub(crate) use super::parallel::runner::worker_counts_unowned_errors;
 pub(crate) use super::parallel::runner::worker_emit_test_done;
+pub(crate) use super::parallel::runner::worker_emit_unowned_error;

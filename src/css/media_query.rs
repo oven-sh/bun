@@ -1182,7 +1182,9 @@ impl MediaFeatureValue {
 
         // The real `ParserOptions` are threaded down from
         // `QueryFeature::parse`; `depth = 0` since this is a fresh value.
-        if let Ok(env) = input.try_parse(|i| EnvironmentVariable::parse(i, options, 0)) {
+        if let Ok(env) = input.try_parse(|i| {
+            i.parse_at_rule_prelude_tokens(|i| EnvironmentVariable::parse(i, options, 0))
+        }) {
             return Ok(MediaFeatureValue::Env(env));
         }
 

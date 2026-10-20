@@ -1,5 +1,7 @@
-import { describe } from "bun:test";
-import { join } from "node:path";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { readdirSync } from "node:fs";
+import { basename, join } from "node:path";
 import { itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -1273,6 +1275,525 @@ b {
           a { color: red }
         }
       `,
+    },
+  });
+
+  // A url() in an at-rule prelude that is kept as raw tokens is not an import.
+  // None of these targets exist except x.json, so the build passes only when
+  // no prelude url() goes through path resolution.
+  itBundled("css/URLInUnknownAtRulePreludeIsNotAnImport", {
+    files: {
+      "/entry.css": /* css */ `
+        @media print { .c2 { z-index: 1 } @import url(sub/g.css); }
+        @supports (display: grid) { @import url(sub/g.css); }
+        @layer foo { @import url(sub/g.css); }
+        @media print { @namespace url(sub/g.css); }
+        @foo url(sub/g.css);
+        @foo url("sub/g.css");
+        @foo bar(url(sub/g.css), url("sub/h.css"));
+        @media print { @foo url(sub/g.css); }
+        @media (min-width: env(foo, url(sub/g.css))) { .b { color: red } }
+        @foo url(x.json);
+        .c0 { color: blue }
+      `,
+      "/x.json": `{}`,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toBe(`/* entry.css */
+@media print {
+  .c2 {
+    z-index: 1;
+  }
+
+  @import url(sub/g.css);
+}
+
+@supports (display: grid) {
+  @import url(sub/g.css);
+}
+
+@layer foo {
+  @import url(sub/g.css);
+}
+
+@media print {
+  @namespace url(sub/g.css);
+}
+
+@foo url(sub/g.css);
+
+@foo url("sub/g.css");
+
+@foo bar(url(sub/g.css), url("sub/h.css"));
+
+@media print {
+  @foo url(sub/g.css);
+}
+
+@media (min-width: env(foo, url(sub/g.css))) {
+  .b {
+    color: red;
+  }
+}
+
+@foo url(x.json);
+
+.c0 {
+  color: #00f;
+}
+`);
+    },
+  });
+
+  // The same holds inside a style rule. Where the rule prints is not checked.
+  itBundled("css/URLInUnknownAtRulePreludeInStyleRuleIsNotAnImport", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { @import url(sub/missing.css); color: red }
+        .z { @foo url(missing.png); color: blue }
+      `,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.css").match(/url\([^)]*\)/g)).toEqual([
+        "url(sub/missing.css)",
+        "url(missing.png)",
+      ]);
+    },
+  });
+
+  // The target exists here. It must not become a bundle input.
+  itBundled("css/URLInNestedAtImportKeptAsWrittenMinified", {
+    files: {
+      "/entry.css": /* css */ `
+        @media print { .c2 { z-index: 1 } @import url(sub/g.css); }
+        .c0 { color: blue }
+      `,
+      "/sub/g.css": `.c0 { color: red }`,
+    },
+    backend: "cli",
+    minifyWhitespace: true,
+    metafile: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toBe("@media print{.c2{z-index:1}@import url(sub/g.css);}.c0{color:#00f}\n");
+      expect(Object.keys(JSON.parse(api.readFile("/metafile.json")).inputs)).toEqual(["entry.css"]);
+    },
+  });
+
+  {
+    const resolved: string[] = [];
+    itBundled("css/URLInUnknownAtRulePreludeSkipsOnResolve", {
+      files: {
+        "/entry.css": /* css */ `
+          @media print { @import url(sub/g.css); }
+          @foo url("sub/h.css");
+          @media (min-width: env(foo, url(sub/i.css))) { .b { color: red } }
+          .a { background: url(./a.txt) }
+        `,
+        "/sub/g.css": `.g { color: red }`,
+        "/sub/h.css": `.h { color: red }`,
+        "/sub/i.css": `.i { color: red }`,
+        "/a.txt": `hello`,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        builder.onResolve({ filter: /.*/ }, args => {
+          resolved.push(args.path);
+          return undefined;
+        });
+      },
+      onAfterBundle(api) {
+        expect(resolved.filter(path => !path.endsWith("entry.css"))).toEqual(["./a.txt"]);
+        api.expectFile("/out/entry.css").toBe(`/* entry.css */
+@media print {
+  @import url(sub/g.css);
+}
+
+@foo url("sub/h.css");
+
+@media (min-width: env(foo, url(sub/i.css))) {
+  .b {
+    color: red;
+  }
+}
+
+.a {
+  background: url("data:text/plain;base64,aGVsbG8=");
+}
+`);
+      },
+    });
+  }
+
+  // Before: `panic: index out of bounds: the len is 0 but the index is 0`.
+  // The url() record index pointed into the importing file's records, and
+  // the condition was printed with the records of the import chain.
+  // Skipped under ASAN: the linker clones an import condition and never frees
+  // the token list of an env() fallback (`Direct leak of 72 byte(s)` in
+  // `TokenList::deep_clone`), also for `env(foo, 1px)` on main.
+  (isASAN ? itBundled.skip : itBundled)("css/URLInEnvFallbackOfAtImportMediaQuery", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./b.css" (min-width: env(foo, url(sub/g.css)));
+        .c0 { color: blue }
+      `,
+      "/b.css": `.b1 { color: green }`,
+      "/sub/g.css": `.c0 { color: red }`,
+    },
+    backend: "cli",
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toBe(`/* b.css */
+@media (min-width: env(foo, url(sub/g.css))) {
+  .b1 {
+    color: green;
+  }
+}
+
+/* entry.css */
+.c0 {
+  color: #00f;
+}
+`);
+    },
+  });
+
+  // Before: the url() record of `@foo` took the place of the `@import`
+  // record, so g.css was inlined and b.css was not.
+  itBundled("css/URLInUnknownAtRuleBeforeAtImport", {
+    files: {
+      "/entry.css": /* css */ `
+        @foo url(sub/g.css);
+        @import "./b.css";
+        .c0 { color: blue }
+      `,
+      "/b.css": `.b1 { color: green }`,
+      "/sub/g.css": `.g { color: red }`,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+      expect(css).toStartWith(`/* b.css */
+.b1 {
+  color: green;
+}
+
+/* entry.css */
+@foo url(sub/g.css);
+`);
+      expect(css).not.toContain(".g {");
+    },
+  });
+
+  // A url() after a prelude is an import again: in a declaration, in a custom
+  // property, next to var(), and in the block of an unknown at-rule.
+  // `@media (foo: bar)` covers the env() attempt that fails and backtracks.
+  itBundled("css/URLAfterAtRulePreludeIsStillAnImport", {
+    files: {
+      "/entry.css": /* css */ `
+        @import url(sub/g.css);
+        @foo url(missing.css);
+        @media (min-width: env(foo, url(missing.css))) { .b { color: red } }
+        @media (foo: bar) { .b2 { color: red } }
+        @foo url(missing.css) { background: url(./a.txt) }
+        .a { --x: url(./a.txt); background: url(./a.txt) }
+        .v { --y: 1; background: var(--y) url(./a.txt) }
+        @container style(--x: url(./a.txt)) { .c { color: red } }
+      `,
+      "/sub/g.css": `.g { color: red }`,
+      "/a.txt": `hello`,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toBe(`/* sub/g.css */
+.g {
+  color: red;
+}
+
+/* entry.css */
+@foo url(missing.css);
+
+@media (min-width: env(foo, url(missing.css))) {
+  .b {
+    color: red;
+  }
+}
+
+@media (foo: bar) {
+  .b2 {
+    color: red;
+  }
+}
+
+@foo url(missing.css) {
+  background: url("data:text/plain;base64,aGVsbG8=")
+}
+
+.a {
+  --x: url("data:text/plain;base64,aGVsbG8=");
+  background: url("data:text/plain;base64,aGVsbG8=");
+}
+
+.v {
+  --y: 1;
+  background: var(--y) url("data:text/plain;base64,aGVsbG8=");
+}
+
+@container style(--x: url("data:text/plain;base64,aGVsbG8=")) {
+  .c {
+    color: red;
+  }
+}
+`);
+    },
+  });
+
+  itBundled("css/MissingURLAfterAtRulePreludeIsStillAnError", {
+    files: {
+      "/entry.css": /* css */ `
+        @foo url(missing.css);
+        @media (min-width: env(foo, url(missing.css))) { .b { color: red } }
+        @media (foo: bar) { .b2 { color: red } }
+        .a { --x: url(./one.png) }
+        .v { --y: 1; background: var(--y) url(./two.png) }
+        .t { background: url(./three.png) }
+        @foo { background: url(./four.png) }
+      `,
+    },
+    bundleErrors: {
+      "/entry.css": [
+        'Could not resolve: "./one.png"',
+        'Could not resolve: "./two.png"',
+        'Could not resolve: "./three.png"',
+        'Could not resolve: "./four.png"',
+      ],
+    },
+  });
+
+  // A url() that resolves to a file with no URL form (a stylesheet, a .toml
+  // file) prints as written, not as the absolute path of the build directory.
+  itBundled("css/URLWithNoAssetURLPrintsAsWritten", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { background: url(sub/g.css) }
+        .t { background: url(./x.toml) }
+        .s { background: url(./x.sh) }
+        .v { --y: 1; background: var(--y) url(sub/g.css) }
+        .j { --x: url(sub/g.css) }
+        .i { background: image-set(url(sub/g.css) 1x) }
+        .q { background: url(./sub/g.css?x=1#y) }
+        @font-face { font-family: a; src: url(sub/g.css) }
+        @foo { background: url(sub/g.css) }
+      `,
+      "/sub/g.css": `.g { color: red }`,
+      "/x.toml": `a = 1`,
+      "/x.sh": `echo hi`,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+      expect(css.match(/url\([^)]*\)/g)).toEqual([
+        'url("sub/g.css")',
+        'url("./x.toml")',
+        'url("./x.sh")',
+        'url("sub/g.css")',
+        'url("sub/g.css")',
+        'url("sub/g.css")',
+        'url("./sub/g.css?x=1#y")',
+        'url("sub/g.css")',
+        'url("sub/g.css")',
+      ]);
+      expect(css).toContain('image-set("sub/g.css" 1x)');
+    },
+  });
+
+  // `composes` in a file that is not a CSS module still bundles its target.
+  // Only the printed specifier is checked here.
+  itBundled("css/ComposesFromInPlainCSSPrintsAsWritten", {
+    files: {
+      "/entry.css": `.k { composes: g from "./sub/g.css" }`,
+      "/sub/g.css": `.g { color: red }`,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.css")).toContain('composes: g from "./sub/g.css";');
+    },
+  });
+
+  itBundled("css/URLWithNoAssetURLPrintsAsWrittenFromCLI", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { background: url(sub/g.css) }
+      `,
+      "/sub/g.css": `.g { color: red }`,
+    },
+    backend: "cli",
+    minifyWhitespace: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toBe(".a{background:url(sub/g.css)}\n");
+    },
+  });
+
+  itBundled("css/URLWithNoAssetURLPrintsAsWrittenFromHTMLAndJS", {
+    files: {
+      "/index.html": /* html */ `
+        <!doctype html>
+        <html>
+          <head>
+            <link rel="stylesheet" href="./page.css" />
+            <script type="module" src="./app.js"></script>
+          </head>
+          <body></body>
+        </html>
+      `,
+      "/page.css": `.page { background: url(./other.css) }`,
+      "/app.js": /* js */ `
+        import "./plain.css";
+        import styles from "./mod.module.css";
+        console.log(styles.mod);
+      `,
+      "/plain.css": `.plain { background: url(./other.css) }`,
+      "/mod.module.css": `.mod { background: url(./other.css) }`,
+      "/other.css": `.other { color: red }`,
+    },
+    entryPoints: ["/index.html"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const chunks = readdirSync(api.outdir).filter(name => name.endsWith(".css"));
+      expect(chunks).toHaveLength(1);
+      expect(api.readFile("/out/" + chunks[0]).match(/url\([^)]*\)/g)).toEqual([
+        'url("./other.css")',
+        'url("./other.css")',
+        'url("./other.css")',
+      ]);
+    },
+  });
+
+  // Two files name the same stylesheet in a url(). Before, the first one to
+  // be resolved got the absolute path and the other kept the written text,
+  // and which one was first changed from build to build.
+  test("css url() to the same stylesheet from two files prints the same in every build", async () => {
+    using dir = tempDir("css-url-two-importers", {
+      "entry.css": `@import "./one.css";\n@import "./two.css";\n`,
+      "one.css": `.one { background: url(./shared.css) }\n`,
+      "two.css": `.two { background: url(./shared.css) }\n`,
+      "shared.css": `.shared { color: red }\n`,
+    });
+    const outputs = new Set<string>();
+    for (let i = 0; i < 5; i++) {
+      const result = await Bun.build({ entrypoints: [join(String(dir), "entry.css")] });
+      expect(result.success).toBe(true);
+      outputs.add(await result.outputs[0].text());
+    }
+    expect(outputs.size).toBe(1);
+    expect([...outputs][0].match(/url\([^)]*\)/g)).toEqual(['url("./shared.css")', 'url("./shared.css")']);
+  });
+
+  test("css url() with the in-memory files map prints as written", async () => {
+    const result = await Bun.build({
+      entrypoints: ["/virtual/entry.css"],
+      files: {
+        "/virtual/entry.css": `@media print { @import url(sub/g.css); }\n.a { background: url(sub/g.css) }\n`,
+        "/virtual/sub/g.css": `.g { color: red }\n`,
+      },
+    });
+    expect(result.success).toBe(true);
+    expect((await result.outputs[0].text()).match(/url\([^)]*\)/g)).toEqual(["url(sub/g.css)", 'url("sub/g.css")']);
+  });
+
+  // The dataurl loader gives no data: URL yet. Until it does, the url() must
+  // at least not name the build directory.
+  test("css url() to a file with the dataurl loader does not print the build directory", async () => {
+    using dir = tempDir("css-url-dataurl-loader", {
+      "entry.css": `.d { background: url(./logo.data) }\n`,
+      "logo.data": `logo`,
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.css")],
+      loader: { ".data": "dataurl" },
+    });
+    expect(result.success).toBe(true);
+    const urls = (await result.outputs[0].text()).match(/url\([^)]*\)/g)!;
+    expect(urls).toHaveLength(1);
+    expect(urls[0]).not.toContain(basename(String(dir)));
+  });
+
+  // `bun build --no-bundle` parses with no import record list, so it rejects
+  // every url() that needs a record. A url() in a prelude needs none.
+  test("css url() in an at-rule prelude builds with --no-bundle", async () => {
+    using dir = tempDir("css-url-prelude-no-bundle", {
+      "unknown.css": `@foo url(sub/g.css);\n`,
+      "nested.css": `@media print { @import url("sub/g.css"); }\n`,
+      "env.css": `@media (min-width: env(foo, url(sub/g.css))) { .b { color: red } }\n`,
+      "import.css": `@import "./b.css" (min-width: env(foo, url(sub/g.css)));\n`,
+    });
+    const build = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--no-bundle", ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, log: stderr.split("\n").filter(line => /^(warn|error):/.test(line)), exitCode };
+    };
+    expect(
+      await Promise.all([
+        build("unknown.css"),
+        build("--minify", "unknown.css"),
+        build("nested.css"),
+        build("--minify", "nested.css"),
+        build("env.css"),
+        build("--minify", "env.css"),
+        build("import.css"),
+        build("--minify", "import.css"),
+      ]),
+    ).toEqual([
+      { stdout: "@foo url(sub/g.css);\n", log: ["warn: invalid @ rule encountered: '@foo'"], exitCode: 0 },
+      { stdout: "@foo url(sub/g.css);", log: ["warn: invalid @ rule encountered: '@foo'"], exitCode: 0 },
+      {
+        stdout: '@media print {\n  @import url("sub/g.css");\n}\n',
+        log: ["warn: invalid @ rule encountered: '@import'"],
+        exitCode: 0,
+      },
+      {
+        stdout: '@media print{@import url("sub/g.css");}',
+        log: ["warn: invalid @ rule encountered: '@import'"],
+        exitCode: 0,
+      },
+      {
+        stdout: "@media (min-width: env(foo, url(sub/g.css))) {\n  .b {\n    color: red;\n  }\n}\n",
+        log: [],
+        exitCode: 0,
+      },
+      { stdout: "@media (min-width:env(foo,url(sub/g.css))){.b{color:red}}", log: [], exitCode: 0 },
+      { stdout: '@import "./b.css" (min-width: env(foo, url(sub/g.css)));\n', log: [], exitCode: 0 },
+      { stdout: '@import "./b.css" (min-width:env(foo,url(sub/g.css)));', log: [], exitCode: 0 },
+    ]);
+  });
+
+  // A token list in a CSS module is not a prelude: its url() is still an import.
+  itBundled("css/URLInCSSModuleTokenListIsStillAnImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import styles from "./a.module.css";
+        console.log(styles.a);
+      `,
+      "/a.module.css": `.a { --x: url(./a.txt); background: var(--x) url(./a.txt) }`,
+      "/a.txt": `hello`,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      const chunks = readdirSync(api.outdir).filter(name => name.endsWith(".css"));
+      expect(chunks).toHaveLength(1);
+      expect(api.readFile("/out/" + chunks[0]).match(/url\([^)]*\)/g)).toEqual([
+        'url("data:text/plain;base64,aGVsbG8=")',
+        'url("data:text/plain;base64,aGVsbG8=")',
+      ]);
     },
   });
 

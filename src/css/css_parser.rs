@@ -362,7 +362,7 @@ fn parse_custom_at_rule_prelude<T: CustomAtRuleParser>(
     let name: &'static [u8] = unsafe { src_str(name) };
     options.warn(&input.new_error(BasicParseErrorKind::at_rule_invalid(name)));
     input.skip_whitespace();
-    let tokens = TokenListFns::parse(input, options, 0)?;
+    let tokens = input.parse_at_rule_prelude_tokens(|i| TokenListFns::parse(i, options, 0))?;
     Ok(AtRulePrelude::Unknown { name, tokens })
 }
 
@@ -2982,12 +2982,19 @@ bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
     pub struct ParserOpts: u8 {
         const CSS_MODULES = 0b1;
+        /// A `url()` in an at-rule prelude token list is not an import: `TokenList::parse` keeps it raw.
+        const AT_RULE_PRELUDE_TOKENS = 0b100;
     }
 }
 impl ParserOpts {
     #[inline]
     pub(crate) fn css_modules(self) -> bool {
         self.contains(Self::CSS_MODULES)
+    }
+
+    #[inline]
+    pub(crate) fn at_rule_prelude_tokens(self) -> bool {
+        self.contains(Self::AT_RULE_PRELUDE_TOKENS)
     }
 }
 
@@ -3228,6 +3235,23 @@ impl<'a> Parser<'a> {
         if result.is_err() {
             self.reset(&start);
         }
+        result
+    }
+
+    pub(crate) fn parse_at_rule_prelude_tokens<R>(
+        &mut self,
+        func: impl FnOnce(&mut Parser) -> CssResult<R>,
+    ) -> CssResult<R> {
+        let saved = self.flags;
+        let import_record_count = self.state().import_record_count;
+        self.flags.insert(ParserOpts::AT_RULE_PRELUDE_TOKENS);
+        let result = func(self);
+        self.flags = saved;
+        debug_assert_eq!(
+            import_record_count,
+            self.state().import_record_count,
+            "at-rule prelude tokens must not create an import record"
+        );
         result
     }
 

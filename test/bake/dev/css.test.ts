@@ -697,6 +697,32 @@ devTest("css import before create project relative", {
     await dev.fetch("/").expect.toContain("HELLO");
   },
 });
+devTest("css url() that is not an asset is served as written", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `hello world`,
+    }),
+    "styles.css": `
+      @media print {
+        @import url(other.css);
+      }
+      body {
+        background-image: url(./other.css);
+      }
+    `,
+    "other.css": `
+      .other {
+        color: red;
+      }
+    `,
+  },
+  async test(dev) {
+    const stylesheetHref = (await (await dev.fetch("/")).text()).match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)![1];
+    const stylesheet = await (await dev.fetch(stylesheetHref)).text();
+    expect(stylesheet.match(/url\([^)]*\)/g)).toEqual(["url(other.css)", 'url("./other.css")']);
+  },
+});
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

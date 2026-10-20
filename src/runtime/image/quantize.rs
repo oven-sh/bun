@@ -286,21 +286,43 @@ fn split_boxes(pixels: &[[u8; 4]], want: usize) -> Result<Vec<u8>, AllocError> {
         let slice = &mut pixels[b.lo..b.hi];
         let clear_here = if pick == 0 { clear } else { 0 };
         // A box of one colour has no cut, and then no other box has error.
-        let Some(value) = cut(slice, ch, &b.moments, &mut at_value, clear_here) else {
+        let Some((value, below)) = cut(slice, ch, &b.moments, &mut at_value, clear_here) else {
             break;
         };
-        // The pixels below `value` go first, and with them the fully transparent ones.
-        let mut at: usize = 0;
-        let mut left = Moments::of(CLEAR, clear_here);
-        for i in 0..slice.len() {
-            if slice[i][ch] < value {
-                left.add(slice[i]);
-                slice.swap(at, i);
-                at += 1;
+        // Part two starts `below` pixels in: only a pixel on the wrong side of that changes places.
+        let at = usize::try_from(below - clear_here).expect("int cast");
+        let (first, second) = slice.split_at_mut(at);
+        let mut from: usize = 0;
+        for pixel in first.iter_mut() {
+            if pixel[ch] >= value {
+                while second[from][ch] >= value {
+                    from += 1;
+                }
+                core::mem::swap(pixel, &mut second[from]);
+                from += 1;
             }
         }
+        debug_assert!(first.iter().all(|pixel| pixel[ch] < value));
+        debug_assert!(second.iter().all(|pixel| pixel[ch] >= value));
+        // Only the shorter part is summed. The other part is the rest of the box.
+        let sum_first = first.len() <= second.len();
+        let (summed, clear_summed) = if sum_first {
+            (&*first, clear_here)
+        } else {
+            (&*second, 0)
+        };
+        let mut part = Moments::of(CLEAR, clear_summed);
+        for &pixel in summed {
+            part.add(pixel);
+        }
+        let rest = b.moments.minus(&part);
+        let (left, right) = if sum_first {
+            (part, rest)
+        } else {
+            (rest, part)
+        };
         boxes[pick] = ColorBox::new(b.lo, b.lo + at, &left);
-        boxes.push(ColorBox::new(b.lo + at, b.hi, &b.moments.minus(&left)));
+        boxes.push(ColorBox::new(b.lo + at, b.hi, &right));
     }
     let mut palette: Vec<u8> = Vec::with_capacity(boxes.len() * 4);
     for (i, b) in boxes.iter().enumerate() {
@@ -340,14 +362,14 @@ struct Sums {
     sum: [u64; 4],
 }
 
-/// The least-error cut of a box (`pixels` and `clear` fully transparent ones) along `ch`, as the value that starts part two.
+/// The least-error cut of a box (`pixels` and `clear` fully transparent ones): the value that starts part two, and the count below it.
 fn cut(
     pixels: &[[u8; 4]],
     ch: usize,
     total: &Moments,
     at_value: &mut [Sums],
     clear: u64,
-) -> Option<u8> {
+) -> Option<(u8, u64)> {
     // One bit per value of `ch` that the box has: a box of a few pixels has few of the 256.
     let mut has = [0u64; 4];
     if clear != 0 {
@@ -370,7 +392,7 @@ fn cut(
     }
     // The sum of squares is fixed: least error is the largest L²/nL + R²/nR over the parts' sums.
     let mut left = Sums::default();
-    let mut best: Option<(u128, u8)> = None;
+    let mut best: Option<(u128, u8, u64)> = None;
     for (word, mut bits) in has.into_iter().enumerate() {
         while bits != 0 {
             let value = word * 64 + bits.trailing_zeros() as usize;
@@ -393,12 +415,12 @@ fn cut(
             // 32 fraction bits (< 2^115 in all): whole units tie in a box of a few pixels.
             let score = (left_sq << 32) / u128::from(left.n)
                 + (right_sq << 32) / u128::from(total.n - left.n);
-            if best.is_none_or(|(s, _)| score > s) {
-                best = Some((score, u8::try_from(value + 1).expect("int cast")));
+            if best.is_none_or(|(s, _, _)| score > s) {
+                best = Some((score, u8::try_from(value + 1).expect("int cast"), left.n));
             }
         }
     }
-    best.map(|(_, value)| value)
+    best.map(|(_, value, below)| (value, below))
 }
 
 /// Index of the palette entry nearest to the colour `key`, the first one on a tie.

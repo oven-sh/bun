@@ -7,6 +7,7 @@ use bun_lint::regex::{
     ast::{Assertion, Kind as RegexKind},
 };
 use bun_lint::rule::Plugin;
+use bun_lint::utils::visible::is_visibly_string;
 
 /// Prefer `String#startsWith()` and `String#endsWith()` over `RegExp#test()`.
 pub struct PreferStringStartsEndsWith;
@@ -48,14 +49,18 @@ impl Rule for PreferStringStartsEndsWith {
         let Some((is_start, characters)) = check_regex(literal.pattern(), literal.flags()) else {
             return;
         };
-        cx.report(member, if is_start { STARTS_WITH } else { ENDS_WITH }).unless_claimed(e).fix(|fixer| {
+        // `test` converts `undefined`, a number or a `URL` to a string, but those values have no `startsWith` method. A
+        // call whose result is unused is only there for its side effect on `RegExp.$_`.
+        let is_unused = || matches!(e.parent(), Node::Stmt(it) if it.tag() == StmtTag::Expr);
+        let is_safe = || can_replace(call).is_some_and(is_visibly_string) && !is_unused();
+        cx.report(member, if is_start { STARTS_WITH } else { ENDS_WITH }).unless_claimed(e).fix_where_safe(is_safe, |fixer| {
             let target = can_replace(call)?;
             let argument: String = characters.iter().map(|it| char::from_u32(*it)).collect::<Option<_>>()?;
             let method: &[u8] = if is_start { b".startsWith(" } else { b".endsWith(" };
             let mut content = [target.text(), method].concat();
             print_string(&mut content, argument.as_bytes(), b'\'');
             content.push(b')');
-            Some(fixer.replace(e, content))
+            Some(fixer.replace(e, content)).filter(|it| fixer.keeps_comments(it))
         });
     }
 }

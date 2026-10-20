@@ -110,7 +110,8 @@ fn parse(args: &[&ZStr]) -> Options {
     }
     if let Some(cwd) = parsed.option(b"--cwd") {
         // The copy is freed here: `exit` does not return, so nothing would free it afterwards.
-        let changed = bun_sys::chdir(&bun_core::ZBox::from_bytes(cwd));
+        let directory = super::script_or_command::directory_of_cwd(cwd);
+        let changed = bun_sys::chdir(&bun_core::ZBox::from_vec(directory));
         if let bun_sys::Result::Err(err) = changed {
             Output::err(
                 err,
@@ -352,8 +353,6 @@ fn request<'a>(
         progress,
         only: None,
         order: 1,
-        digests: false,
-        task_clock: None,
         plan_options: bun_sema_driver::PlanOptions::default(),
         retains_everything: false,
         stops_like_tsc: true,
@@ -458,7 +457,11 @@ impl CheckCommand {
             &Paths::Arguments(command_line),
             &command_line.compiler_options,
             options.threads,
-            Provided::default(),
+            // Only set here, because this function never returns.
+            Provided {
+                ends_the_process: true,
+                ..Default::default()
+            },
             // The process exits without freeing what was loaded. Under leak detection, everything
             // is freed first.
             |report| match bun_core::feature_flags::HELP_CATCH_MEMORY_ISSUES {
@@ -488,7 +491,6 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
             )
         },
     );
-    let _ = Output::writer().write_all(&out);
     let mut summary = Vec::new();
     format::write_summary(
         &mut summary,
@@ -523,9 +525,8 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
             );
         }
     }
-    let _ = Output::error_writer().write_all(&summary);
-    Output::flush();
-    Global::exit(u32::from(!report.is_ok()));
+    let exit_code = super::lint_command::print(&out, &summary, u8::from(!report.is_ok()));
+    Global::exit(u32::from(exit_code));
 }
 
 /// What is run.

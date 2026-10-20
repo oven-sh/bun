@@ -847,7 +847,7 @@ describe("Package Resolution", () => {
 });
 
 describe("Dependencies that do not come from a registry", () => {
-  // Trusted, so that its postinstall runs whenever the install goes ahead.
+  // Trusted, so that its postinstall runs whenever the install continues.
   const depFiles = {
     "package.json": JSON.stringify({
       name: "dep",
@@ -1136,7 +1136,8 @@ describe("every command that installs runs the scanner", () => {
     const ctx = await createTestContext();
     try {
       const dir = ctx.package_dir;
-      // `bar` takes any baz. Its baz 0.0.3 stays in the lockfile next to the project's 0.0.5, for `bun dedupe` to merge.
+      // `bar` accepts any baz. Its baz 0.0.3 stays in the lockfile next to the project's 0.0.5, until `bun dedupe`
+      // merges them.
       const versions: Record<string, Record<string, object>> = {
         bar: { "0.0.2": { dependencies: { baz: ">=0.0.3" } } },
         boba: { "0.0.2": {} },
@@ -1193,7 +1194,7 @@ describe("every command that installs runs the scanner", () => {
   }
 
   const stopped = { scanned: "bar baz boba", aborted: true, installed: false, exitCode: 1 };
-  // Several installs each, all at once: as for the tests above.
+  // Several installs each, all at the same time, like in the tests above.
   const timeout = 30_000;
 
   it.concurrent.each(["install", "dedupe", "patch bar", "remove baz", "update"])(

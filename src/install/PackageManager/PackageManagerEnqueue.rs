@@ -1100,7 +1100,7 @@ fn prefetch_manifest(
     let cached: Option<Npm::PackageManifest> = match cached {
         Some(_) if !expired => return ManifestState::Ready,
         // `bind_row` takes an exact version from an expired manifest without asking the registry.
-        // For a peer that has to agree with other packages, `bind_row` sends the request itself.
+        // For a peer that another package doesn't accept, `bind_row` sends the request itself.
         Some(manifest) => {
             if exact().is_some_and(|exact| manifest.find_by_version(exact).is_some()) {
                 return ManifestState::Unavailable;
@@ -1980,13 +1980,17 @@ pub(crate) fn bind_row(
                             let excludes = this.options.minimum_release_age_excludes;
 
                             // An exact version in an expired manifest needs no request, unless
-                            // it's a peer that has to agree with other packages on the version.
+                            // it's a peer and another package with that peer doesn't accept it.
                             let exact = (version.tag == dependency::version::Tag::Npm
-                                && version.npm().version.is_exact()
-                                && (!dependency.behavior.is_peer()
+                                && version.npm().version.is_exact())
+                            .then(|| version.npm().version.head.head.range.left.version)
+                            .filter(|&exact| {
+                                let buf = this.lockfile.buffers.string_bytes.as_slice();
+                                !dependency.behavior.is_peer()
                                     || version_was_replaced
-                                    || ranges_of_every_asker(this, dependency, id).is_empty()))
-                            .then(|| version.npm().version.head.head.range.left.version);
+                                    || (ranges_of_every_asker(this, dependency, id).iter())
+                                        .all(|range| range.npm().version.satisfies(exact, buf, buf))
+                            });
                             if let Some(exact) = exact
                                 && (!needs_extended_manifest
                                     || manifest.pkg.has_extended_manifest

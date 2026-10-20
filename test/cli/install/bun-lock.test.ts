@@ -4075,10 +4075,12 @@ async function registryWithHolds(
   }
   let gates = new Map<string, PromiseWithResolvers<void>>();
   let heldUntil = new Map<string, string>();
+  const requests: string[] = [];
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
       const { origin, pathname } = new URL(request.url);
+      requests.push(pathname);
       gates.get(pathname)?.resolve();
       const name = pathname.slice(1);
       const until = heldUntil.get(name);
@@ -4098,6 +4100,7 @@ async function registryWithHolds(
   });
   return {
     server,
+    requests,
     hold(holds: Hold[]) {
       gates = new Map(holds.map(({ until }) => [until, Promise.withResolvers<void>()]));
       heldUntil = new Map(holds.map(({ manifest, until }) => [manifest, until]));
@@ -4747,21 +4750,30 @@ it.concurrent(
 );
 
 const peerOnZ2 = { "1.0.0": { peerDependencies: { z: "^2.0.0" } } };
-it.concurrent.each(["a", "d"])(
-  "an exact peer range resolves the same way with an expired manifest in the cache: %s next to b and c",
-  async exact => {
-    using server = (
-      await registryWithHolds(
-        { [exact]: { "1.0.0": { peerDependencies: { z: "1.0.0" } } }, b: peerOnZ2, c: peerOnZ2, z: zVersions },
-        { headers: { "cache-control": "max-age=0" } },
-      )
-    ).server;
+it.concurrent.each([
+  { exact: "a", range: "1.0.0", expired: ["/z"] },
+  { exact: "d", range: "1.0.0", expired: ["/z"] },
+  // b and c accept z@2.0.0, so it comes from the expired manifest.
+  { exact: "a", range: "2.0.0", expired: [] },
+])(
+  "an exact peer range resolves the same way with an expired manifest in the cache: $exact with z@$range next to b and c",
+  async ({ exact, range, expired }) => {
+    const registry = await registryWithHolds(
+      { [exact]: { "1.0.0": { peerDependencies: { z: range } } }, b: peerOnZ2, c: peerOnZ2, z: zVersions },
+      { headers: { "cache-control": "max-age=0" } },
+    );
+    using server = registry.server;
     using dir = projectOn(server, {
       "package.json": { name: "foo", dependencies: { [exact]: "1.0.0", b: "1.0.0", c: "1.0.0" } },
     });
-    for (const cache of ["empty", "expired"]) {
+    for (const [cache, asked] of Object.entries({ empty: ["/z"], expired })) {
+      registry.requests.length = 0;
       const lock = await installAndReadLock(String(dir));
-      expect({ cache, z: instancesOf(lock, "z") }).toEqual({ cache, z: { z: "z@2.0.0" } });
+      expect({ cache, z: instancesOf(lock, "z"), asked: registry.requests.filter(path => path === "/z") }).toEqual({
+        cache,
+        z: { z: "z@2.0.0" },
+        asked,
+      });
       await rm(join(String(dir), "bun.lock"));
       await rm(join(String(dir), "node_modules"), { recursive: true });
     }

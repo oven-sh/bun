@@ -26,7 +26,7 @@ use crate::session::{
 };
 use crate::table::{Bases, ByNode, ByNodeIndirect, Frozen, RawWord};
 use crate::util::SharedSort;
-use crate::util::{Distinct, FxBuild, FxHashMap, FxHashSet, List, ShardedMap};
+use crate::util::{FxBuild, FxHashMap, FxHashSet, List, OrderedSet, ShardedMap};
 use crate::verify::{ConfigLocation, Problem};
 use bstr::ByteSlice;
 use bun_core::strings;
@@ -8342,16 +8342,16 @@ impl<'s> Files<'s> {
         // a default if any of its declarations has one.
         let mut has_default_by_symbol: SmallVec<[bool; 4]> = SmallVec::new();
         // The names, and the index of each one's symbol in the list above.
-        let (mut names, mut places) = (Distinct::default(), SmallVec::<[usize; 4]>::new());
+        let (mut names, mut places) = (OrderedSet::default(), SmallVec::<[usize; 4]>::new());
         for (file, params) in lists {
             let hir = self.hir(file);
             for tp in params.iter() {
                 let (name, has_default) = (hir[tp].name, hir[tp].default.is_some());
                 let is_named = !is_single_list || (name != Atom::NONE && name != known::empty);
                 if is_named {
-                    let (number, is_new) = names.add(name);
+                    let (index, is_new) = names.insert_full(name);
                     if !is_new {
-                        has_default_by_symbol[places[number]] |= has_default;
+                        has_default_by_symbol[places[index]] |= has_default;
                         continue;
                     }
                     places.push(has_default_by_symbol.len());

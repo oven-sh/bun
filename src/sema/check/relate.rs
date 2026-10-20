@@ -376,7 +376,7 @@ pub(super) struct MembersByIdentity {
 
 /// An intersection with more members than this is compared with a stack through an index. For a shorter one, a search
 /// through the members costs less. Both ways give the same answer.
-const MANY_ON_A_STACK: usize = 32;
+const MANY_INTERSECTION_MEMBERS: usize = 32;
 
 /// Returns one of 64 bits for `identity`.
 #[inline]
@@ -4550,7 +4550,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (t, data) = self.mapped_target_with_symbol(t);
         if let TypeData::Intersection(parts) = data
-            && match parts.len() > MANY_ON_A_STACK {
+            && match parts.len() > MANY_INTERSECTION_MEMBERS {
                 true => self.is_any_member_deeply_nested(t, stacks, is_source, max_depth),
                 false => parts
                     .iter()
@@ -4593,9 +4593,9 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> bool {
         let mut identities = Vec::new();
         self.add_recursion_identities(t, &mut identities);
-        let mut members = Distinct::default();
+        let mut members = OrderedSet::default();
         for &identity in &identities {
-            members.add(identity);
+            members.insert(identity);
         }
         // For each identity: `count` and `last` of `is_deeply_nested_among`, and the last stack entry that matched.
         let mut states: Vec<(usize, Option<TypeId>, usize)> =
@@ -4604,7 +4604,7 @@ impl<'p, 's> Checker<'p, 's> {
             identities.clear();
             self.add_recursion_identities(on_stack, &mut identities);
             for &identity in &identities {
-                let Some(member) = members.number_of(identity) else {
+                let Some(member) = members.index_of(identity) else {
                     continue;
                 };
                 let (count, last, matched_at) = &mut states[member];
@@ -4861,7 +4861,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn has_matching_recursion_identity(&mut self, t: TypeId, identity: RecursionId) -> bool {
         let (t, data) = self.mapped_target_with_symbol(t);
         match data {
-            TypeData::Intersection(parts) if parts.len() > MANY_ON_A_STACK => {
+            TypeData::Intersection(parts) if parts.len() > MANY_INTERSECTION_MEMBERS => {
                 self.has_member_with_recursion_identity(t, identity)
             }
             TypeData::Intersection(parts) => parts
@@ -6753,17 +6753,17 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// True if `a` and `b` are the same member of a class or an interface, uninstantiated.
-    pub(super) fn is_member_itself_in_both(&mut self, a: &Prop, b: &Prop) -> bool {
+    fn have_same_uninstantiated_symbol(&mut self, a: &Prop, b: &Prop) -> bool {
         matches!((&a.source, &b.source), (&PropSource::Symbol(sym), &PropSource::Symbol(other))
             if sym == other
                 && (b.flags.contains(PropFlags::THISLESS) || self.is_uninstantiated_member(a, sym)))
     }
 
-    /// `is_member_itself_in_both`, for two properties that may be copies of a member. A spread copies a member with
-    /// other modifiers, and the copy is another symbol.
+    /// Same, for two properties that may be copies of a member. A spread copies a member with other modifiers, and the
+    /// copy is another symbol.
     pub(super) fn is_same_uninstantiated_member(&mut self, a: &Prop, b: &Prop) -> bool {
         let differing = (a.flags ^ b.flags).difference(PropFlags::THISLESS);
-        differing.is_empty() && self.is_member_itself_in_both(a, b)
+        differing.is_empty() && self.have_same_uninstantiated_symbol(a, b)
     }
 
     /// `a == b` for two property symbols, each with the mapper of the type that has it.
@@ -6777,7 +6777,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return true;
         }
-        if self.is_member_itself_in_both(a.0, b.0) {
+        if self.have_same_uninstantiated_symbol(a.0, b.0) {
             return true;
         }
         let (own_a, own_b) = (self.mapper_of_prop(a.0), self.mapper_of_prop(b.0));

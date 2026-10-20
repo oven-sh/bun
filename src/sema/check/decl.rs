@@ -1629,10 +1629,10 @@ impl<'p, 's> Checker<'p, 's> {
         params: Span<TypeParamId>,
     ) -> impl Iterator<Item = TypeParamId> + use<'p, 's> {
         let hir = self.hir(file);
-        let mut names = Distinct::default();
+        let mut names = OrderedSet::default();
         params.iter().filter(move |&tp| {
             let name = hir[tp].name;
-            name == Atom::NONE || name == known::empty || names.add(name).1
+            name == Atom::NONE || name == known::empty || names.insert(name)
         })
     }
 
@@ -1673,19 +1673,19 @@ impl<'p, 's> Checker<'p, 's> {
             return SmallVec::new();
         };
         let (mut names_in_best, mut first_in_best) =
-            (Distinct::default(), SmallVec::<[_; 4]>::new());
+            (OrderedSet::default(), SmallVec::<[_; 4]>::new());
         for b in best.iter() {
-            if names_in_best.add(self.hir(best_file)[b].name).1 {
+            if names_in_best.insert(self.hir(best_file)[b].name) {
                 first_in_best.push(b);
             }
         }
-        let (mut names, mut all) = (Distinct::default(), SmallVec::new());
+        let (mut names, mut all) = (OrderedSet::default(), SmallVec::new());
         for &(file, params) in &lists {
             for tp in params.iter() {
                 let name = self.hir(file)[tp].name;
-                if names.add(name).1 {
-                    all.push(match names_in_best.number_of(name) {
-                        Some(number) => self.type_param(best_file, first_in_best[number]),
+                if names.insert(name) {
+                    all.push(match names_in_best.index_of(name) {
+                        Some(index) => self.type_param(best_file, first_in_best[index]),
                         None => self.type_param(file, tp),
                     });
                 }

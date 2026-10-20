@@ -771,25 +771,25 @@ impl Checker<'_, '_> {
                 *first = id;
             }
         }
-        let all = std::rc::Rc::new(InterfaceDeclarations {
+        let declarations = std::rc::Rc::new(InterfaceDeclarations {
             first: interfaces.clone().next(),
             first_checked,
             first_in_file,
         });
         self.interface_declarations
-            .insert(sym, std::rc::Rc::clone(&all));
-        all
+            .insert(sym, std::rc::Rc::clone(&declarations));
+        declarations
     }
 
     pub(super) fn check_interface_heritage(&mut self, file: FileId, i: InterfaceId) {
         let sym = self
             .files()
             .sym(file, self.bound(file).interface_symbol[i.idx()]);
-        let all = self.interface_declarations(sym);
+        let declarations = self.interface_declarations(sym);
         // `interfaceChecked`: once per interface, at the first of its declarations that's checked.
-        let is_first = all.first_checked == Some((file, i));
-        let is_first_in_file = all.first_in_file.get(&file) == Some(&i);
-        let interface_declaration = all.first;
+        let is_first = declarations.first_checked == Some((file, i));
+        let is_first_in_file = declarations.first_in_file.get(&file) == Some(&i);
+        let interface_declaration = declarations.first;
         let ty = self.declared_type(sym);
         let name_pos = self.hir(file)[i].name_pos;
         let bases = self.base_types(sym);

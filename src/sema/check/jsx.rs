@@ -631,8 +631,8 @@ impl<'p, 's> Checker<'p, 's> {
             literal: run,
             ..Shape::new_in(self.arena)
         };
-        // The names in `pending.props`, numbered by their place there.
-        let mut pending_names = Distinct::default();
+        // The names in `pending.props`, in the same order.
+        let mut pending_names = OrderedSet::default();
         let flush = |c: &mut Self, spread: &mut Option<TypeId>, pending: &mut Shape<'s>| {
             if pending.props.is_empty() {
                 return;
@@ -654,7 +654,7 @@ impl<'p, 's> Checker<'p, 's> {
             let prop = &hir[p];
             if prop.kind == PropKind::Spread {
                 flush(self, &mut spread, &mut pending);
-                pending_names = Distinct::default();
+                pending_names = OrderedSet::default();
                 let ty = self.type_of_expr(file, prop.value);
                 let ty = self.reduced(ty);
                 if self.is_any(ty) {
@@ -689,7 +689,7 @@ impl<'p, 's> Checker<'p, 's> {
             };
             // Attributes with the same name are declarations of one symbol, and `compareSymbols`
             // orders by the first declaration.
-            match pending_names.add(name) {
+            match pending_names.insert_full(name) {
                 (_, true) => pending.props.push(attribute),
                 (earlier, false) => pending.props[earlier] = attribute,
             }

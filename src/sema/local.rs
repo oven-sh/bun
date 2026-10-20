@@ -93,7 +93,7 @@ impl Placement for TaskPlacement {
 
 /// The slots of a `HashIndex`, and a mark for each slot.
 #[derive(Default)]
-struct Marked {
+struct MarkedSlots {
     /// See `slot_value`. A slot whose mark is 0 is free, whatever it contains.
     slots: Box<[u64]>,
     /// 0 for a free slot, otherwise `mark_of` the slot's tag. Both lists have the same length: 0 or a power of two.
@@ -110,7 +110,7 @@ fn mark_of(tag: u32) -> u8 {
     0x80 | (tag >> 25) as u8
 }
 
-impl Marked {
+impl MarkedSlots {
     /// Returns the free slot for a new entry with `tag`.
     #[inline]
     fn free_slot(&self, tag: u32) -> usize {
@@ -127,7 +127,7 @@ impl Marked {
     #[inline(never)]
     fn grow(&mut self, count: usize) {
         let len = slots_for::<TaskPlacement>(count, self.marks.len());
-        let mut bigger = Marked {
+        let mut bigger = MarkedSlots {
             slots: vec![0; len].into_boxed_slice(),
             marks: vec![0; len].into_boxed_slice(),
         };
@@ -150,7 +150,7 @@ impl Marked {
 pub struct HashIndex {
     /// No other thread reads the table, so its pointers and lengths are stored right here, and it's freed as soon as a
     /// bigger one replaces it.
-    table: RefCell<Marked>,
+    table: RefCell<MarkedSlots>,
     count: Cell<usize>,
 }
 
@@ -239,7 +239,7 @@ impl HashIndex {
         if count != 0 && table.marks.len() <= 4 * slots_for::<TaskPlacement>(count, 0) {
             table.marks.fill(0);
         } else if count != 0 {
-            *table = Marked::default();
+            *table = MarkedSlots::default();
         }
     }
 

@@ -105,57 +105,67 @@ pub fn number_repeated<K: Copy + Eq + std::hash::Hash>(keys: &[K]) -> FxHashMap<
     numbers
 }
 
-/// Distinct keys, numbered in order of first occurrence. Up to `FEW` keys are searched one by one. Beyond that a hash
+/// A set that keeps its keys in the order they were added. Up to `FEW` keys are searched one by one. Beyond that a hash
 /// map finds them, so adding `n` keys is never `n * n` steps.
-pub(crate) struct Distinct<K> {
-    keys: SmallVec<[K; Distinct::<()>::FEW]>,
-    /// Empty while there are at most `FEW` keys.
-    numbers: FxHashMap<K, u32>,
+pub(crate) struct OrderedSet<K> {
+    keys: SmallVec<[K; OrderedSet::<()>::FEW]>,
+    /// The index of each key in `keys`. Empty while there are at most `FEW` keys.
+    indexes: FxHashMap<K, u32>,
 }
 
-impl<K> Distinct<K> {
+impl<K> OrderedSet<K> {
     /// `orderedSetMapThreshold`
     const FEW: usize = 16;
 
-    /// Returns the keys in the order they were added.
-    pub(crate) fn into_keys(self) -> SmallVec<[K; Distinct::<()>::FEW]> {
+    pub(crate) fn into_keys(self) -> SmallVec<[K; OrderedSet::<()>::FEW]> {
         self.keys
     }
 }
 
-impl<K> Default for Distinct<K> {
+impl<K> Default for OrderedSet<K> {
     fn default() -> Self {
-        Distinct {
+        OrderedSet {
             keys: SmallVec::new(),
-            numbers: FxHashMap::default(),
+            indexes: FxHashMap::default(),
         }
     }
 }
 
-impl<K: Copy + Eq + std::hash::Hash> Distinct<K> {
-    /// Returns the number of `key`, if it has been added.
+impl<K: Copy + Eq + std::hash::Hash> OrderedSet<K> {
+    /// Returns how many keys were added before `key`, or `None` if it isn't in the set.
     #[inline]
-    pub(crate) fn number_of(&self, key: K) -> Option<usize> {
-        match self.numbers.is_empty() {
+    pub(crate) fn index_of(&self, key: K) -> Option<usize> {
+        match self.indexes.is_empty() {
             true => self.keys.iter().position(|&known| known == key),
-            false => self.numbers.get(&key).map(|&number| number as usize),
+            false => self.indexes.get(&key).map(|&index| index as usize),
         }
     }
 
-    /// Returns the number of `key`, and true if this call added it.
     #[inline]
-    pub(crate) fn add(&mut self, key: K) -> (usize, bool) {
-        if let Some(number) = self.number_of(key) {
-            return (number, false);
+    pub(crate) fn contains(&self, key: K) -> bool {
+        self.index_of(key).is_some()
+    }
+
+    /// Returns `index_of(key)`, and true if this call added the key.
+    #[inline]
+    pub(crate) fn insert_full(&mut self, key: K) -> (usize, bool) {
+        if let Some(index) = self.index_of(key) {
+            return (index, false);
         }
-        let number = self.keys.len();
+        let index = self.keys.len();
         self.keys.push(key);
-        if number == Self::FEW {
-            self.numbers.extend(self.keys.iter().copied().zip(0..));
-        } else if number > Self::FEW {
-            self.numbers.insert(key, number as u32);
+        if index == Self::FEW {
+            self.indexes.extend(self.keys.iter().copied().zip(0..));
+        } else if index > Self::FEW {
+            self.indexes.insert(key, index as u32);
         }
-        (number, true)
+        (index, true)
+    }
+
+    /// Returns true if this call added the key.
+    #[inline]
+    pub(crate) fn insert(&mut self, key: K) -> bool {
+        self.insert_full(key).1
     }
 }
 
@@ -879,15 +889,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn distinct_numbers_keys_by_first_occurrence_at_any_length() {
-        let mut keys = Distinct::default();
-        assert_eq!(keys.number_of(0u32), None);
+    fn an_ordered_set_keeps_insertion_order_at_any_length() {
+        let mut keys = OrderedSet::default();
+        assert_eq!(keys.index_of(0u32), None);
         for round in 0..2 {
             for key in 0..40u32 {
-                assert_eq!(keys.add(key * 7), (key as usize, round == 0));
+                assert_eq!(keys.insert_full(key * 7), (key as usize, round == 0));
             }
         }
-        assert_eq!(keys.number_of(39 * 7), Some(39));
-        assert_eq!(keys.number_of(1), None);
+        assert_eq!(keys.index_of(39 * 7), Some(39));
+        assert!(!keys.contains(1) && keys.insert(1) && !keys.insert(1));
+        assert!(
+            keys.into_keys()
+                .into_iter()
+                .eq((0..40).map(|key| key * 7).chain([1]))
+        );
     }
 }

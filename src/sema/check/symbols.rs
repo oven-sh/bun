@@ -3467,9 +3467,9 @@ impl<'p, 's> Checker<'p, 's> {
         // Which properties go into the rest, and the names of the others.
         let (mut rest_indexes, mut excluded_keys): (Vec<usize>, Vec<TypeId>) =
             (Vec::new(), Vec::new());
-        let mut omitted_names = Distinct::default();
+        let mut omitted_names = OrderedSet::default();
         for &name in omitted {
-            omitted_names.add(name);
+            omitted_names.insert(name);
         }
         if let Some(members) = &members {
             for (i, prop) in members.shape().props.iter().enumerate() {
@@ -3484,7 +3484,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let Some(key) = self.key_type_of_prop(apparent, prop) else {
                     continue;
                 };
-                let is_omitted = omitted_names.number_of(prop.name).is_some()
+                let is_omitted = omitted_names.contains(prop.name)
                     || !omitted_keys.is_never() && self.is_assignable(key, omitted_keys);
                 if !is_omitted && self.is_spreadable_property(prop) {
                     rest_indexes.push(i);

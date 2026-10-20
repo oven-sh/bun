@@ -818,7 +818,7 @@ impl Checker<'_, '_> {
             return;
         }
         // `instanceNames`, `staticNames`: 1 for a property, 2 for an accessor, 3 once errors have been reported.
-        let (mut names, mut states) = (Distinct::default(), SmallVec::<[u8; 4]>::new());
+        let (mut names, mut states) = (OrderedSet::default(), SmallVec::<[u8; 4]>::new());
         // 1 for an instance member, 2 for a static member.
         let mut private_names: SmallVec<[(Atom, u8); 4]> = SmallVec::new();
         for m in members.iter() {
@@ -857,7 +857,7 @@ impl Checker<'_, '_> {
                 if count < 2 || kind == 0 {
                     continue;
                 }
-                match names.add((name, is_static)) {
+                match names.insert_full((name, is_static)) {
                     (_, true) => states.push(kind),
                     (at, false) if states[at] == 1 || states[at] == 2 && kind != 2 => {
                         states[at] = 3;

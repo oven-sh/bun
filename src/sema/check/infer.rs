@@ -27,7 +27,7 @@ const VISITED_INDEX_FROM: usize = 16;
 /// A walk that has made this many `infer_types` calls starts to remember its walks between type arguments. See
 /// `Checker::infer_from_type_arguments_once`. The number only decides which walks pay for the bookkeeping, never a
 /// result.
-const REPEATS_FROM: u32 = 256;
+const REPEATED_ARGUMENT_WALKS_FROM: u32 = 256;
 
 /// Everything that a walk between the type arguments of two types reads from the `Inference`, apart from `visited` and
 /// the infos: the source, the target, `priority`, `depth`, `propagated`, and as bits `contra`, `bivariant` and which
@@ -713,7 +713,7 @@ impl<'p, 's> Checker<'p, 's> {
         of: ArgumentsOf,
         walk: impl FnOnce(&mut Self, &mut Inference),
     ) {
-        if n.calls < REPEATS_FROM {
+        if n.calls < REPEATED_ARGUMENT_WALKS_FROM {
             return walk(self, n);
         }
         self.infer_from_type_arguments_in_long_walk(n, source, target, of, walk)

@@ -346,13 +346,13 @@ impl Checker<'_, '_> {
                 self.grammar_error_at((file, tag.pos, tag.end), 2639, &[]);
             }
         }
-        let mut seen = Distinct::default();
+        let mut seen = OrderedSet::default();
         for p in jsx.attrs.iter() {
             let attr = &hir[p];
             if attr.kind == PropKind::Spread {
                 continue;
             }
-            if !seen.add(attr.key).1 {
+            if !seen.insert(attr.key) {
                 let at = (file, attr.pos, self.end_of_jsx_attr_name(file, p));
                 return self.grammar_error_at(at, 17001, &[]);
             }

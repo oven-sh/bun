@@ -853,7 +853,7 @@ impl Checker<'_, '_> {
             self.report_conflicts_of_late_bound_members(file, container, false);
         }
         // The names so far, and the kinds of the properties that have each name.
-        let (mut seen, mut kinds) = (Distinct::default(), SmallVec::<[u8; 8]>::new());
+        let (mut seen, mut kinds) = (OrderedSet::default(), SmallVec::<[u8; 8]>::new());
         for p in properties.iter() {
             let prop = &hir[p];
             let current_kind = match prop.kind {
@@ -920,7 +920,7 @@ impl Checker<'_, '_> {
             else {
                 continue;
             };
-            let (at, is_new) = seen.add(effective_name);
+            let (at, is_new) = seen.insert_full(effective_name);
             if is_new {
                 kinds.push(current_kind);
                 continue;

@@ -3046,13 +3046,19 @@ test.concurrent("a FinalizationRegistry cleanup job is dropped when its context 
     const nextTurn = () => new Promise(resolve => setImmediate(resolve));
     const liveContextCleanedUp = Promise.withResolvers();
     let liveContext;
-    let deadContextCleanups = 0;
+    const unreferenced = [];
 
     function setup() {
       // A collection sweeps the first 8 cells of a type itself and leaves the rest for later. ~JSGlobalObject
       // cancels the job too, so these contexts are past the first 8 and their registries are not.
       const swept = Array.from({ length: 8 }, () => vm.createContext({}));
-      const contexts = Array.from({ length: 4 }, () => vm.createContext({ onCleanup: () => deadContextCleanups++ }));
+      const contexts = Array.from({ length: 4 }, () => {
+        const entry = { cleanups: 0 };
+        const context = vm.createContext({ onCleanup: () => entry.cleanups++ });
+        entry.context = new WeakRef(context);
+        unreferenced.push(entry);
+        return context;
+      });
       liveContext = vm.createContext({ onCleanup: liveContextCleanedUp.resolve });
       contexts.push(liveContext);
       for (const context of contexts) vm.runInContext("globalThis.registry = new FinalizationRegistry(onCleanup)", context);
@@ -3066,12 +3072,17 @@ test.concurrent("a FinalizationRegistry cleanup job is dropped when its context 
     fullGC(); // All contexts but one are dead, and their registries are destroyed.
     await liveContextCleanedUp.promise;
     await nextTurn(); // A job posted after the live context's has run by now too.
-    console.log({ deadContextCleanups });
+    // A context that fullGC() didn't collect keeps its job, so only the ones that died count.
+    const dead = unreferenced.filter(entry => !entry.context.deref());
+    console.log({
+      someContextsDied: dead.length >= 2,
+      deadContextCleanups: dead.reduce((sum, entry) => sum + entry.cleanups, 0),
+    });
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: "{\n  deadContextCleanups: 0,\n}\n",
+    stdout: "{\n  someContextsDied: true,\n  deadContextCleanups: 0,\n}\n",
     stderr: "",
     exitCode: 0,
   });

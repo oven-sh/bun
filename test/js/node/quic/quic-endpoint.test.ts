@@ -2,7 +2,7 @@
 // connect() through an endpoint; a later connect in the other mode must fail
 // loudly instead of silently reusing an engine that cannot frame it.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, withoutAsanQuarantine } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { createSocket } from "node:dgram";
 import { readFileSync } from "node:fs";
@@ -308,5 +308,278 @@ describe("endpoint.close() while a session is live", () => {
     held.close();
     await server.closed;
     expect({ announced, resolved }).toEqual({ announced: 1, resolved: true });
+  });
+});
+
+// The session of a server handshake exists from the handshake's first packet,
+// and lsquic keeps it on the connection. So what the handshake reports (its key
+// log, its failure, its completion) reaches that session and no other.
+describe("a server session and its handshake", () => {
+  const tp = { maxIdleTimeout: 1 };
+  const sniOpt = { "*": { keys: [key], certs: [cert] } };
+  const alpn = "handshake-test";
+  const dial = { alpn, servername: "localhost", verifyPeer: "manual", transportParams: tp };
+  const tls13Labels = [
+    "CLIENT_HANDSHAKE_TRAFFIC_SECRET",
+    "CLIENT_TRAFFIC_SECRET_0",
+    "EXPORTER_SECRET",
+    "SERVER_HANDSHAKE_TRAFFIC_SECRET",
+    "SERVER_TRAFFIC_SECRET_0",
+  ];
+  // An NSS key log line is "<label> <client random> <secret>".
+  const keyLogOf = (lines: string[]) => {
+    const fields = lines.map(line => line.trim().split(" "));
+    return { labels: fields.map(f => f[0]).sort(), clientRandoms: [...new Set(fields.map(f => f[1]))] };
+  };
+  const quiet = (s: any) => {
+    s.onerror = () => {};
+    s.closed.catch(() => {});
+  };
+
+  test("a session does not get the key log of a connection that the listen callback destroyed", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        join(import.meta.dir, "quic-keylog-refused-fixture.ts"),
+        join(keysDir, "agent1-key.pem"),
+        join(keysDir, "agent1-cert.pem"),
+        "3",
+        "3",
+      ],
+      // A session can only get another handshake's lines by mistake when its
+      // own handshake's TLS state takes the allocation of a refused one's.
+      // The release allocator hands a freed block out again. ASAN does so
+      // only without its quarantine.
+      env: withoutAsanQuarantine(bunEnv),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const own = { labels: tls13Labels, clientRandoms: 1 };
+    // `stderr` holds the ExperimentalWarning of a clean run. It is in the
+    // compared object so that a failure shows it.
+    expect({ sessions: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      sessions: [own, own, own],
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  }, 30000);
+
+  test("a session keeps its key log when another connection from the same client endpoint closes during its handshake", async () => {
+    const sessions: any[] = [];
+    const logs = new Map<object, string[]>();
+    await using server = await listen(
+      (s: any) => {
+        quiet(s);
+        logs.set(s, []);
+        sessions.push(s);
+      },
+      {
+        sni: sniOpt,
+        alpn: [alpn],
+        keylog: true,
+        transportParams: tp,
+        onkeylog(this: object, line: string) {
+          logs.get(this)!.push(line);
+        },
+      },
+    );
+
+    // One endpoint, so the server sees both connections from one address.
+    await using endpoint = new QuicEndpoint();
+    const first = await connect(server.address!, { ...dial, endpoint } as SessionOptions);
+    first.closed.catch(() => {});
+    const clientLines: string[] = [];
+    const second = await connect(server.address!, {
+      ...dial,
+      endpoint,
+      keylog: true,
+      onkeylog(line: string) {
+        clientLines.push(line);
+      },
+    } as SessionOptions);
+    first.close();
+    await second.opened;
+
+    const opened = await Promise.any(sessions.map(s => s.opened.then(() => s)));
+    expect(keyLogOf(logs.get(opened)!)).toEqual({
+      labels: tls13Labels,
+      clientRandoms: keyLogOf(clientLines).clientRandoms,
+    });
+    second.close();
+  });
+
+  test("a session gets its key log when the listen callback assigns the handler", async () => {
+    const serverLines: string[] = [];
+    const accepted = Promise.withResolvers<any>();
+    await using server = await listen(
+      (s: any) => {
+        quiet(s);
+        s.onkeylog = (line: string) => serverLines.push(line);
+        accepted.resolve(s);
+      },
+      { sni: sniOpt, alpn: [alpn], keylog: true, transportParams: tp },
+    );
+
+    const clientLines: string[] = [];
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(server.address!, {
+      ...dial,
+      endpoint,
+      keylog: true,
+      onkeylog(line: string) {
+        clientLines.push(line);
+      },
+    } as SessionOptions);
+    await client.opened;
+    await (
+      await accepted.promise
+    ).opened;
+
+    expect(keyLogOf(serverLines)).toEqual({
+      labels: tls13Labels,
+      clientRandoms: keyLogOf(clientLines).clientRandoms,
+    });
+    client.close();
+  });
+
+  test("a session gets the key log of a handshake that the client then rejects", async () => {
+    const serverLines: string[] = [];
+    const serverClosed = Promise.withResolvers<void>();
+    await using server = await listen(
+      (s: any) => {
+        s.onerror = () => {};
+        s.closed.catch(() => {}).then(serverClosed.resolve);
+      },
+      {
+        sni: sniOpt,
+        alpn: [alpn],
+        keylog: true,
+        transportParams: tp,
+        onkeylog(line: string) {
+          serverLines.push(line);
+        },
+      },
+    );
+
+    // The client has no CA for the server's certificate. It ends the
+    // handshake when it reads the server's reply, after the server made all
+    // of its secrets.
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(server.address!, {
+      ...dial,
+      endpoint,
+      verifyPeer: "strict",
+      onerror() {},
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    await expect(client.opened).rejects.toThrow();
+    await serverClosed.promise;
+
+    expect(keyLogOf(serverLines).labels).toEqual(tls13Labels);
+  });
+
+  // A refused client that logs no secrets got no TLS handshake from the
+  // server: the refusal is the answer to its first packet.
+  test.each(["busy", "at maxConnectionsTotal", "closing"] as const)(
+    "an endpoint that is %s refuses a connection before its TLS handshake",
+    async reason => {
+      let announced = 0;
+      const server = await listen(
+        (s: any) => {
+          announced++;
+          quiet(s);
+        },
+        {
+          endpoint: new QuicEndpoint(reason === "at maxConnectionsTotal" ? { maxConnectionsTotal: 1 } : {}),
+          sni: sniOpt,
+          alpn: [alpn],
+          transportParams: tp,
+        },
+      );
+      // close() clears `address`.
+      const address = server.address!;
+
+      await using heldEndpoint = new QuicEndpoint();
+      const held = await connect(address, { ...dial, endpoint: heldEndpoint } as SessionOptions);
+      await held.opened;
+      if (reason === "busy") server.busy = true;
+      if (reason === "closing") server.close();
+
+      const clientLines: string[] = [];
+      await using refusedEndpoint = new QuicEndpoint();
+      const refused = await connect(address, {
+        ...dial,
+        endpoint: refusedEndpoint,
+        keylog: true,
+        onerror() {},
+        onkeylog(line: string) {
+          clientLines.push(line);
+        },
+      } as SessionOptions);
+      const refusedClosed = refused.closed.catch(() => "rejected");
+      await expect(refused.opened).rejects.toThrow(expect.objectContaining({ code: "ERR_QUIC_TRANSPORT_ERROR" }));
+      expect(await refusedClosed).toBe("rejected");
+
+      expect({ announced, clientKeyLog: clientLines }).toEqual({ announced: 1, clientKeyLog: [] });
+      held.close();
+      await server.close();
+    },
+  );
+
+  test("the connection whose session the listen callback destroyed is the one that is refused", async () => {
+    let announced = 0;
+    await using server = await listen(
+      (s: any) => {
+        quiet(s);
+        // The first session is for the connection whose first packet came first.
+        if (++announced === 1) s.destroy();
+      },
+      { sni: sniOpt, alpn: [alpn], transportParams: tp },
+    );
+
+    // One endpoint, so the server sees both connections from one address.
+    await using endpoint = new QuicEndpoint();
+    const options = { ...dial, endpoint, onerror() {} } as SessionOptions;
+    const first = await connect(server.address!, options);
+    first.closed.catch(() => {});
+    const second = await connect(server.address!, options);
+    second.closed.catch(() => {});
+
+    const [firstOpened, secondOpened] = await Promise.allSettled([first.opened, second.opened]);
+    expect({ first: firstOpened.status, second: secondOpened.status }).toEqual({
+      first: "rejected",
+      second: "fulfilled",
+    });
+    second.close();
+  });
+
+  test("a datagram that starts no handshake announces no session", async () => {
+    let announced = 0;
+    await using server = await listen(
+      (s: any) => {
+        announced++;
+        quiet(s);
+      },
+      { sni: sniOpt, alpn: [alpn], transportParams: tp },
+    );
+
+    // A QUIC v1 Initial header (RFC 9000 §17.2.2) with an 8-byte DCID, in a
+    // datagram below the 1200 bytes a first Initial needs (RFC 9000 §14.1).
+    const shortInitial = Buffer.alloc(64);
+    shortInitial.set([0xc0, 0, 0, 0, 1, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0]);
+    const sock = createSocket("udp4");
+    await new Promise<void>((resolve, reject) => {
+      sock.send(shortInitial, server.address!.port, "127.0.0.1", err => (err ? reject(err) : resolve()));
+    });
+    sock.close();
+
+    // The server reads this connection's first packet after that datagram.
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(server.address!, { ...dial, endpoint } as SessionOptions);
+    await client.opened;
+    expect(announced).toBe(1);
+    client.close();
   });
 });

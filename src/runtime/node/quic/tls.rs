@@ -210,45 +210,26 @@ unsafe extern "C" fn keylog_cb(ssl: *const ssl::SSL, line: *const core::ffi::c_c
     if line.is_null() {
         return;
     }
-    // SAFETY: `line` is the NUL-terminated NSS key log line BoringSSL
-    // guarantees valid for this callback; the SSL → conn → session walk is
-    // safe because lsquic owns all three for the SSL's lifetime.
-    let bytes = unsafe { core::ffi::CStr::from_ptr(line).to_bytes().to_vec() };
-    // SAFETY: lsquic stored the conn on the SSL via SSL_set_app_data — but
-    // we can't rely on that index; use lsquic_ssl_to_conn instead.
+    // SAFETY: lsquic keeps the SSL -> conn link for as long as the SSL lives.
     let conn = unsafe { bun_lsquic_sys::lsquic_ssl_to_conn(ssl.cast()) };
     if conn.is_null() {
         return;
     }
-    // SAFETY: as above.
-    let ctx = unsafe { bun_lsquic_sys::lsquic_conn_get_ctx(conn) };
-    if ctx.is_null() {
-        // SAFETY: peer_ctx is the Rust QuicEndpoint for every conn on it.
-        let peer_ctx = unsafe { bun_lsquic_sys::lsquic_conn_get_peer_ctx(conn, core::ptr::null()) };
-        if !peer_ctx.is_null() {
-            // SAFETY: as above.
-            let endpoint = unsafe { &*peer_ctx.cast::<super::endpoint::QuicEndpoint>() };
-            let mut local = core::ptr::null();
-            let mut peer = core::ptr::null();
-            // SAFETY: `conn` is live; out-params point at stack slots.
-            let peer_addr = if unsafe {
-                bun_lsquic_sys::lsquic_conn_get_sockaddr(
-                    conn,
-                    core::ptr::from_mut(&mut local),
-                    core::ptr::from_mut(&mut peer),
-                )
-            } == 0
-            {
-                super::endpoint::stored_addr_from_sockaddr(peer)
-            } else {
-                return;
-            };
-            endpoint.buffer_early_keylog(ssl.cast_mut().cast(), peer_addr, bytes);
-        }
+    // A conn has its session as ctx for its whole handshake: a client conn
+    // from `connect`, a server conn from its first packet
+    // (`QuicEndpoint::on_new_mini_conn`). A conn without one lost its session,
+    // and its secrets go nowhere.
+    // SAFETY: `conn` is live; `ctx_ref` documents the context-pointer contract.
+    let Some(session) = (unsafe {
+        super::ffi::ctx_ref::<super::session::QuicSession>(bun_lsquic_sys::lsquic_conn_get_ctx(
+            conn,
+        ))
+    }) else {
         return;
-    }
-    // SAFETY: ctx is the QuicSession (conn-ctx).
-    let session = unsafe { &*ctx.cast::<super::session::QuicSession>() };
+    };
+    // SAFETY: `line` is the NUL-terminated NSS key log line BoringSSL
+    // guarantees valid for this callback.
+    let bytes = unsafe { core::ffi::CStr::from_ptr(line).to_bytes().to_vec() };
     session.push_event(super::session::SessionEvent::Keylog(bytes));
 }
 

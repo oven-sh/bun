@@ -350,6 +350,13 @@ pub(crate) struct QuicSession {
     /// `*(us_nq_vtable**)conn_ctx`.
     vtable: *const lsquic::NqVtable,
     pub(super) conn: Cell<*mut lsquic::lsquic_conn>,
+    /// The mini conn that runs this server session's handshake. lsquic holds
+    /// the session as that conn's ctx from its first packet
+    /// (`QuicEndpoint::on_new_mini_conn`) until it promotes the conn
+    /// (`bind_conn`) or the handshake fails (`on_mini_conn_failed`). It is not
+    /// `conn`: lsquic accepts only the ctx accessors,
+    /// `lsquic_conn_get_sockaddr` and `abort_silent` on a mini conn.
+    mini_conn: Cell<*mut lsquic::lsquic_conn>,
     /// The owning endpoint (raw pointer; the JS-side Strong keeps it alive).
     endpoint: Cell<*mut QuicEndpoint>,
     endpoint_js: JsCell<Option<Strong>>,
@@ -405,6 +412,7 @@ impl QuicSession {
         Self {
             vtable,
             conn: Cell::new(null_mut()),
+            mini_conn: Cell::new(null_mut()),
             endpoint: Cell::new(null_mut()),
             endpoint_js: JsCell::new(None),
             is_server: Cell::new(false),
@@ -454,7 +462,6 @@ impl QuicSession {
         vtable: *const lsquic::NqVtable,
         endpoint: *mut QuicEndpoint,
         endpoint_handle: JSValue,
-        conn: *mut lsquic::lsquic_conn,
         is_server: bool,
     ) -> JsResult<(*mut QuicSession, JSValue)> {
         let raw = bun_core::heap::into_raw(Box::new(Self::new(global, vtable)));
@@ -493,7 +500,6 @@ impl QuicSession {
             reason = "`stats_ptr` is the base of a fresh JSC ArrayBuffer (byteOffset 0), 16-byte aligned as above"
         )]
         this.stats.set(stats_ptr.cast::<u64>());
-        this.conn.set(conn);
         this.endpoint.set(endpoint);
         this.endpoint_js
             .set(Some(Strong::create(endpoint_handle, global)));
@@ -501,24 +507,23 @@ impl QuicSession {
         this.this_value.with_mut(|r| r.set_strong(handle, global));
         this.write_stat(IDX_STATS_SESSION_CREATED_AT, now_ns());
         let _ = this.vtable;
-        if !conn.is_null() {
-            this.cache_sockaddrs(conn);
-        }
         Ok((raw, handle))
     }
 
+    /// `conn` is the mini conn lsquic made for this session's handshake. The
+    /// caller returns the session to lsquic as that conn's ctx.
+    pub(super) fn bind_mini_conn(&self, conn: *mut lsquic::lsquic_conn) {
+        debug_assert!(self.conn.get().is_null() && self.mini_conn.get().is_null());
+        self.mini_conn.set(conn);
+        self.cache_sockaddrs(conn);
+    }
+
+    /// lsquic promoted the mini conn to `conn`, moved the ctx to it, and frees
+    /// the mini conn next.
     pub(super) fn bind_conn(&self, conn: *mut lsquic::lsquic_conn) {
+        debug_assert!(self.conn.get().is_null() && !self.mini_conn.get().is_null());
+        self.mini_conn.set(null_mut());
         self.conn.set(conn);
-        // SAFETY: `conn` is the live conn lsquic just promoted; `self` is
-        // the heap-allocated session (conn-ctx contract).
-        unsafe { lsquic::lsquic_conn_set_ctx(conn, core::ptr::from_ref(self).cast_mut().cast()) };
-        // SAFETY: `conn` is the live conn lsquic just promoted.
-        let promoted = unsafe { lsquic::Conn::from_raw(conn) };
-        if let (Some(ep), Some(c)) = (self.endpoint_ref(), promoted) {
-            for line in ep.take_early_keylog(c.ssl()) {
-                self.push_event(SessionEvent::Keylog(line));
-            }
-        }
         self.cache_sockaddrs(conn);
         if self.close_when_bound.get() {
             // Carry the user's {type, code, reason} through rather than
@@ -1847,6 +1852,18 @@ impl QuicSession {
             // late callbacks no-op.
             unsafe { lsquic::lsquic_conn_set_ctx(conn, null_mut()) };
         }
+        let mini = self.mini_conn.replace(null_mut());
+        // SAFETY: lsquic frees a mini conn only after it cleared `mini_conn`
+        // through `bind_conn` or `on_mini_conn_failed`.
+        if let Some(handshake) = unsafe { lsquic::Conn::from_raw(mini) } {
+            // The handshake has no session now. Without the ctx its key log
+            // and its later callbacks reach none, and it stops here without a
+            // CONNECTION_CLOSE (node parity: Session::Destroy).
+            // SAFETY: as above.
+            unsafe { lsquic::lsquic_conn_set_ctx(mini, null_mut()) };
+            handshake.abort_silent();
+            self.schedule_process();
+        }
         self.events.with_mut(Vec::clear);
         let ep = self.endpoint.replace(null_mut());
         if !ep.is_null() {
@@ -2407,6 +2424,16 @@ impl QuicSession {
 }
 
 lsquic_callback! {
+    pub(super) fn on_new_mini_conn(
+        endpoint: &QuicEndpoint,
+        c: *mut lsquic::lsquic_conn,
+    ) -> *mut c_void = null_mut(); {
+        if c.is_null() {
+            return null_mut();
+        }
+        endpoint.on_new_mini_conn(c).cast()
+    }
+
     pub(super) fn on_new_conn(
         endpoint: &QuicEndpoint,
         c: *mut lsquic::lsquic_conn,
@@ -2415,6 +2442,41 @@ lsquic_callback! {
             return null_mut();
         }
         endpoint.on_new_conn(c).cast()
+    }
+
+    /// The mini conn of this session's handshake died before lsquic promoted
+    /// it. lsquic took the session off the conn and frees the conn next.
+    pub(super) fn on_mini_conn_failed(session: &QuicSession, error_code: u64) {
+        /// CRYPTO_ERROR base (RFC 9001 §4.8) + TLS no_application_protocol(120).
+        const CRYPTO_ERROR_NO_APPLICATION_PROTOCOL: u64 = 0x0100 + 120;
+        /// Bit 63 marks "the peer sent its own CONNECTION_CLOSE" (QUIC codes
+        /// fit in 62 bits); the low bits carry the peer's code. See the
+        /// connection-close-pns lsquic patch.
+        const PEER_CLOSE_BIT: u64 = 1 << 63;
+        debug_assert!(!session.mini_conn.get().is_null());
+        session.mini_conn.set(null_mut());
+        let (code, reason): (u64, &[u8]) = if error_code & PEER_CLOSE_BIT != 0 {
+            // Not a failure: the client closed during the handshake
+            // (connect() then immediate close()). Report the peer's own code
+            // so `closed` settles the way node's does.
+            (error_code & !PEER_CLOSE_BIT, b"")
+        } else if error_code == 0 {
+            // The peer went away without a frame (destroyed client, dropped
+            // packets): node's server surfaces the idle death of a
+            // handshaking session as a clean close, not an error.
+            (0, b"")
+        } else if error_code == CRYPTO_ERROR_NO_APPLICATION_PROTOCOL {
+            (error_code, b"no application protocol")
+        } else {
+            (error_code, b"handshake failed")
+        };
+        session.push_event(SessionEvent::PeerClose {
+            app_error: false,
+            code,
+            reason: reason.to_vec(),
+        });
+        session.push_event(SessionEvent::Closed);
+        session.schedule_process();
     }
 
     pub(super) fn on_goaway_received(session: &QuicSession) {

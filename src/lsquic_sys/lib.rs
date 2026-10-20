@@ -106,8 +106,9 @@ pub struct NqVtable {
     ) -> *mut SSL_CTX,
     pub packets_out:
         unsafe extern "C" fn(owner: *mut c_void, specs: *const lsquic_out_spec, n: c_uint) -> c_int,
-    pub on_mini_conn_failed:
-        unsafe extern "C" fn(owner: *mut c_void, peer_sa: *const sockaddr, error_code: u64),
+    pub on_new_mini_conn:
+        unsafe extern "C" fn(owner: *mut c_void, c: *mut lsquic_conn) -> *mut c_void,
+    pub on_mini_conn_failed: unsafe extern "C" fn(conn_ctx: *mut c_void, error_code: u64),
 }
 
 unsafe extern "C" {
@@ -149,7 +150,6 @@ unsafe extern "C" {
     ) -> *mut lsquic_conn;
 
     pub fn lsquic_conn_get_ctx(c: *const lsquic_conn) -> *mut c_void;
-    pub fn lsquic_conn_get_peer_ctx(c: *const lsquic_conn, local_sa: *const c_void) -> *mut c_void;
     pub fn lsquic_conn_set_ctx(c: *mut lsquic_conn, ctx: *mut c_void);
     pub fn lsquic_conn_close(c: *mut lsquic_conn);
     fn lsquic_conn_going_away(c: *mut lsquic_conn);

@@ -2043,10 +2043,7 @@ function endInboundHalf(stream: Http2Stream) {
   pushToStream(stream, null);
 }
 
-// The readable side of a stream at its half-close (state 6) or full close (state 7), for both
-// session types. The parser reports state 6 only for END_STREAM on a DATA frame: a HEADERS frame
-// that leaves the stream open gets its EOF from streamHeaders and, as in node, nothing reads the
-// stream until its consumer does.
+// Node's rules for the readable side at END_STREAM on a DATA frame (state 6) and at the full close (state 7).
 function endReadable(stream: Http2Stream, state: number, isServer: boolean) {
   if (!stream.readable) return;
   endInboundHalf(stream);
@@ -2055,13 +2052,11 @@ function endReadable(stream: Http2Stream, state: number, isServer: boolean) {
   if (state === 7 && isServer) {
     // Node's onStreamClose: a stream that nobody tried to consume is dumped so that it can finish.
     if (stream.readableFlowing === null) stream.resume();
-    // A paused stream is read after the call that closed it has returned, and only when the close
-    // has NO_ERROR: close(code) stores its code after its end().
+    // close(code) stores its code after its end(): a paused stream is read once the closing call has returned.
     else process.nextTick(readUnlessResetNT, stream);
     return;
   }
-  // Node's onStreamRead at EOF: read(0) ends an empty readable whatever its flow state and
-  // leaves buffered data to its reader.
+  // Node's onStreamRead at EOF: read(0) ends an empty readable and leaves buffered data to its reader.
   stream.read(0);
 }
 function readUnlessResetNT(stream: Http2Stream) {
@@ -3806,12 +3801,11 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
       }
     }
     if (stream.readable) {
-      // The EOF of a HEADERS frame that nothing read yet: node's onStreamClose still ends such a
-      // readable when the reset has NO_ERROR.
       const unreadEof = stream._readableState.ended && stream.readableLength === 0;
       stream.resume(); // we have a error we consume and close
       pushToStream(stream, null);
-      if (unreadEof && destroy && error === NGHTTP2_NO_ERROR) stream.read(0);
+      // Node's onStreamClose ends a readable that has its EOF and no data when the reset has NO_ERROR.
+      if (unreadEof && error === NGHTTP2_NO_ERROR) stream.read(0);
     }
     if (destroy) {
       // node marks the stream closed (and publishes the close diagnostics channel) from inside
@@ -4129,8 +4123,7 @@ class ServerHttp2Session extends Http2Session {
       if (state == 6) endReadable(stream, 6, true);
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
-        // The close can come from inside the respond(), end() or close() of user code: the 'end'
-        // it starts is the stream's, not that caller's (AsyncLocalStorage).
+        // This 'end' belongs to the stream, not to the respond(), end() or close() call that closed it.
         runInFrame(stream[bunHTTP2AsyncContextFrame], endReadable, undefined, stream, 7, true);
         stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
         markStreamClosed(stream);
@@ -4183,8 +4176,7 @@ class ServerHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object" || stream.closed) return;
       const endOfStream = (flags & constants.NGHTTP2_FLAG_END_STREAM) !== 0;
       if (self.closed) {
-        // The frame is dropped, its END_STREAM is not: no streamEnd follows a HEADERS frame that
-        // leaves the stream open.
+        // The frame is dropped but not its END_STREAM: no streamEnd call follows a HEADERS frame.
         if (endOfStream) endInboundHalf(stream);
         return;
       }
@@ -4965,14 +4957,12 @@ function sessionTimerExpired(session: Http2Session) {
 function destroySelfOnEnd(this: Http2Stream) {
   this.destroy();
 }
-// The 'end' of a cleanly closed stream. Like node's kMaybeDestroy, the writable side finishes
-// first: destroy() would swallow its 'finish'.
+// Like node's kMaybeDestroy: a destroy() before 'finish' swallows it.
 function destroySelfOnEndAndFinish(this: Http2Stream) {
   if (this.writableEnded && !this.writableFinished) this.on("finish", destroySelfOnEnd);
   else this.destroy();
 }
-// A write() after end() errors the stream, and an errored stream emits no 'end'. Node's
-// onStreamClose destroys a stream that is no longer readable. Here the close can come first.
+// An errored stream emits no 'end', so a write() after end() would leave it open.
 function destroySelfIfErrored(this: Http2Stream) {
   if (this.errored != null) process.nextTick(destroyIfNotDestroyedNT, this);
 }

@@ -75,8 +75,7 @@ pub(crate) enum WriteResult {
 /// The frame whose END_STREAM flag `Sink::on_stream_end` reports.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum EndStreamFrame {
-    /// A header block (a request, a response or trailers). `Sink::on_headers_complete` already
-    /// reported this END_STREAM, in `end_stream` and in the END_STREAM bit of `flags`.
+    /// A header block. `Sink::on_headers_complete` reported this END_STREAM already.
     Headers,
     Data,
 }
@@ -240,8 +239,7 @@ pub(crate) trait Sink {
     fn on_headers_complete(&self, _stream_id: u32, _end_stream: bool, _flags: u8) {}
     /// A DATA payload (padding already stripped).
     fn on_data(&self, _stream_id: u32, _data: &[u8]) {}
-    /// The peer ended its half of the stream with END_STREAM on `frame`; `state` is the
-    /// `stream::State` integer the stream is in now.
+    /// The stream half/fully closed; `state` is the `stream::State` integer.
     fn on_stream_end(&self, _stream_id: u32, _state: u8, _frame: EndStreamFrame) {}
     /// The stream was reset (inbound RST_STREAM or a local stream error). `code` is the raw
     /// u32 from the wire so unknown error codes survive to JS (node parity).

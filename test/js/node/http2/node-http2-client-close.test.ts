@@ -21,7 +21,7 @@ import fs from "node:fs";
 import http2 from "node:http2";
 import net from "node:net";
 import { type Duplex, duplexPair } from "node:stream";
-import { describe, test } from "node:test";
+import { after, before, describe, test } from "node:test";
 import { promisify } from "node:util";
 
 const { NGHTTP2_NO_ERROR, NGHTTP2_CANCEL, NGHTTP2_INTERNAL_ERROR, NGHTTP2_ENHANCE_YOUR_CALM } = http2.constants;
@@ -398,13 +398,13 @@ type Transport = (typeof transports)[number];
 //            loop has turned once more, so every tick those frames queued has run
 //   answer:  the body of the response to stream 1, once that response ends
 //   goaway:  the server sent GOAWAY
-function rawPeer(socket: Duplex) {
+function rawPeer(socket: Duplex, fail: (error: Error) => void) {
   const answer = Promise.withResolvers<string>();
   const pong = Promise.withResolvers<void>();
   const goaway = Promise.withResolvers<void>();
   let buf = Buffer.alloc(0);
   let body = "";
-  socket.on("error", () => {});
+  socket.on("error", fail);
   socket.on("data", (d: Buffer) => {
     buf = Buffer.concat([buf, d]);
     while (buf.length >= 9) {
@@ -435,25 +435,31 @@ type RawPeer = ReturnType<typeof rawPeer>;
 
 // A server session whose 'stream' listener is `onStream`, and a raw peer as its client. Over a
 // duplexPair the session reads from a JS stream, not from a socket.
+//   until: the given promise, or a rejection when the session or the peer's socket fails first
 async function rawConnection(
   transport: Transport,
   onStream: (stream: http2.ServerHttp2Stream, peer: RawPeer) => void,
-): Promise<{ peer: RawPeer; close: () => void }> {
+): Promise<{ peer: RawPeer; until: <T>(wait: Promise<T>) => Promise<T>; close: () => void }> {
+  const failed = Promise.withResolvers<never>();
+  failed.promise.catch(() => {});
+  const until = <T>(wait: Promise<T>) => Promise.race([wait, failed.promise]);
   if (transport === "duplexPair") {
     const [socket, serverSide] = duplexPair();
-    const peer = rawPeer(socket);
+    const peer = rawPeer(socket, failed.reject);
     const session = http2.performServerHandshake(serverSide);
     session.on("stream", stream => onStream(stream, peer));
-    session.on("error", () => {});
-    return { peer, close: () => session.destroy() };
+    session.on("error", failed.reject);
+    return { peer, until, close: () => session.destroy() };
   }
   const server = http2.createServer();
   let peer!: RawPeer;
   server.on("stream", stream => onStream(stream, peer));
+  server.on("sessionError", failed.reject);
   const socket = net.connect(await listen(server), "127.0.0.1");
-  peer = rawPeer(socket);
+  peer = rawPeer(socket, failed.reject);
   return {
     peer,
+    until,
     close: () => {
       socket.destroy();
       server.close();
@@ -477,7 +483,7 @@ const record = (stream: http2.Http2Stream, events: string[]) => {
 // answers with what it read. Resolves to the stream as the wait left it, and the answer.
 async function readLate(transport: Transport, frames: readonly Buffer[], wait: () => Promise<void>, consume: Consume) {
   const before = Promise.withResolvers<Seen>();
-  const { peer, close } = await rawConnection(transport, async stream => {
+  const { peer, until, close } = await rawConnection(transport, async stream => {
     stream.on("error", before.reject);
     await wait();
     before.resolve(seen(stream));
@@ -488,9 +494,10 @@ async function readLate(transport: Transport, frames: readonly Buffer[], wait: (
   });
   try {
     peer.send(frames);
-    const state = await before.promise;
+    const state = await until(before.promise);
     // An 'end' that came before the listeners never reaches them: there is no answer to wait for.
-    return { before: state, answer: state.readableEnded ? "none: 'end' came before the listeners" : await peer.answer };
+    const answer = state.readableEnded ? "none: 'end' came before the listeners" : await until(peer.answer);
+    return { before: state, answer };
   } finally {
     close();
   }
@@ -504,14 +511,14 @@ async function serverStreamEvents(
 ) {
   const events: string[] = [];
   const closed = Promise.withResolvers<void>();
-  const { peer, close } = await rawConnection(transport, (stream, peer) => {
+  const { peer, until, close } = await rawConnection(transport, (stream, peer) => {
     record(stream, events);
     stream.on("close", closed.resolve);
     scenario(stream, peer, events);
   });
   try {
     peer.send(frames);
-    await closed.promise;
+    await until(closed.promise);
     return events;
   } finally {
     close();
@@ -527,15 +534,15 @@ async function afterFrames(
 ) {
   const delivered = Promise.withResolvers<http2.ServerHttp2Stream>();
   const events: string[] = [];
-  const { peer, close } = await rawConnection(transport, stream => {
+  const { peer, until, close } = await rawConnection(transport, stream => {
     record(stream, events);
     listen?.(stream, events);
     delivered.resolve(stream);
   });
   try {
     peer.send(frames);
-    const stream = await delivered.promise;
-    await peer.settled;
+    const stream = await until(delivered.promise);
+    await until(peer.settled);
     return { events: [...events], ...seen(stream) };
   } finally {
     close();
@@ -636,15 +643,15 @@ for (const transport of transports) {
 
     // The 'trailers' event itself is not asserted: Bun does not emit it on a closed session.
     test("ends when its trailers arrive after session.close()", async () => {
-      const { peer, close } = await rawConnection(transport, stream => {
+      const { peer, until, close } = await rawConnection(transport, stream => {
         consumers["on('data') + on('end')"](stream, () => answer(stream));
         stream.session!.close();
       });
       try {
         peer.send([frame(F.HEADERS, END_HEADERS, 1, REQUEST)]);
-        await peer.goaway;
+        await until(peer.goaway);
         peer.write(frame(F.HEADERS, END_HEADERS | END_STREAM, 1, TRAILERS));
-        assert.strictEqual(await peer.answer, "ok");
+        assert.strictEqual(await until(peer.answer), "ok");
       } finally {
         close();
       }
@@ -796,7 +803,7 @@ for (const transport of transports) {
     test("keeps unread data until the user reads it", async () => {
       const delivered = Promise.withResolvers<http2.ServerHttp2Stream>();
       const events: string[] = [];
-      const { peer, close } = await rawConnection(transport, stream => {
+      const { peer, until, close } = await rawConnection(transport, stream => {
         stream.pause();
         record(stream, events);
         answer(stream);
@@ -804,8 +811,8 @@ for (const transport of transports) {
       });
       try {
         peer.send(requestThatEndsOn["a DATA frame"]);
-        const stream = await delivered.promise;
-        await peer.answer;
+        const stream = await until(delivered.promise);
+        await until(peer.answer);
         if (!stream.writableFinished) await once(stream, "finish");
         // An 'error' event that user code emits is not an error of the stream: the wait goes on.
         stream.emit("error", new Error("from user code"));
@@ -870,13 +877,9 @@ describe("a compat request", () => {
 });
 
 // In a child process: the session of a test is created inside the test runner's async context,
-// which hides the store of the caller from the stream's handlers. A debug build starts slowly.
-const childOptions = { timeout: 30_000 };
-test(
-  "a server stream emits 'end' outside the AsyncLocalStorage store of the call that answers",
-  childOptions,
-  async () => {
-    const script = `
+// which hides the store of the caller from the stream's handlers.
+test("a server stream emits 'end' outside the AsyncLocalStorage store of the call that answers", async () => {
+  const script = `
     const http2 = require("node:http2");
     const storage = new (require("node:async_hooks").AsyncLocalStorage)();
     const stores = {};
@@ -898,10 +901,9 @@ test(
       http2.connect("http://127.0.0.1:" + server.address().port).request({ ":path": "/" }).resume();
     });
   `;
-    const { stdout } = await promisify(execFile)(process.execPath, ["-e", script]);
-    assert.deepStrictEqual(JSON.parse(stdout), { end: "none", finish: "answer" });
-  },
-);
+  const { stdout } = await promisify(execFile)(process.execPath, ["-e", script]);
+  assert.deepStrictEqual(JSON.parse(stdout), { end: "none", finish: "answer" });
+});
 
 // Over a duplexPair the trailers are dispatched before close(code) takes effect, on node as well.
 for (const transport of transports) {
@@ -944,14 +946,14 @@ describe("a stream that the peer resets with NO_ERROR before its half ended", ()
     });
   }
 
-  // node ends this readable as well. Bun ends it only when it already had its EOF.
-  test("a server stream that nothing read gets no 'end'", { skip: !process.versions.bun }, async () => {
+  // Bun ends a readable at this reset only when it already has its EOF: it emits no 'end' here.
+  test("a server stream that nothing read ends as well", { todo: !!process.versions.bun }, async () => {
     const open = [frame(F.HEADERS, END_HEADERS, 1, REQUEST)];
     const events = await serverStreamEvents("TCP", open, async (stream, peer) => {
       await peer.settled;
       peer.write(frame(F.RST_STREAM, 0, 1, Buffer.alloc(4)));
     });
-    assert.deepStrictEqual(events, ["aborted", "finish", "close"]);
+    assertEvents(events, ["aborted", "end", "finish", "close"]);
   });
 
   for (const [name, respond, read] of [
@@ -1078,19 +1080,17 @@ describe("a client stream whose response ends on a HEADERS frame", () => {
     });
   }
 
-  // node refuses this frame with PROTOCOL_ERROR. Bun accepts it, so the readable must get its EOF.
-  test("ends when an informational HEADERS frame carries END_STREAM", { skip: !process.versions.bun }, async () => {
+  // Bun delivers this frame and node refuses it with PROTOCOL_ERROR. The stream settles either way.
+  test("does not hang when an informational HEADERS frame carries END_STREAM", async () => {
     const server = rawH2Server(sid => [frame(F.HEADERS, END_HEADERS | END_STREAM, sid, hp([[":status", "103"]]))]);
     const client = http2.connect(`http://127.0.0.1:${await listen(server)}`);
     try {
       const req = client.request({ ":method": "POST", ":path": "/" });
-      await once(req, "headers");
-      await waits["setImmediate"]();
-      const before = seen(req);
-      const ended = once(req, "end");
+      const settled = Promise.withResolvers<string>();
+      req.on("end", () => settled.resolve("end"));
+      req.on("error", error => settled.resolve((error as NodeJS.ErrnoException).code!));
       req.resume();
-      await ended;
-      assert.deepStrictEqual(before, untouched);
+      assert.match(await settled.promise, /^(end|ERR_HTTP2_STREAM_ERROR)$/);
     } finally {
       client.destroy();
       server.close();
@@ -1163,16 +1163,26 @@ if (typeof Bun !== "undefined") {
   const isMusl =
     process.platform === "linux" &&
     !(process.report.getReport() as { header: { glibcVersionRuntime?: string } }).header.glibcVersionRuntime;
+  // node runs this file while Bun runs it. The test then only waits for the result.
+  const runOnNode = () =>
+    Bun.spawn({
+      cmd: [node as string, "--test", import.meta.filename],
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+  let run: ReturnType<typeof runOnNode> | undefined;
+  let output: Promise<string[]> | undefined;
+  before(() => {
+    if (!node || isMusl) return;
+    run = runOnNode();
+    output = Promise.all([run.stdout.text(), run.stderr.text()]);
+  });
+  after(() => run?.kill());
   describe("Node.js compatibility", () => {
-    // node runs every test of this file: give its cold start room.
-    test("tests should run on node.js", { skip: !node || isMusl, timeout: 30_000 }, async () => {
-      await using proc = Bun.spawn({
-        cmd: [node as string, "--test", import.meta.filename],
-        stdout: "inherit",
-        stderr: "inherit",
-        stdin: "ignore",
-      });
-      assert.strictEqual(await proc.exited, 0);
+    test("tests should run on node.js", { skip: !node || isMusl }, async () => {
+      const [stdout, stderr] = await output!;
+      assert.strictEqual(await run!.exited, 0, stdout + stderr);
     });
   });
 }

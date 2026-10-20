@@ -4197,8 +4197,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 };
             }
         }
-        // onStreamHeaders already reported this END_STREAM in its flags, and its JS handler pushed
-        // the EOF (node: onSessionHeaders). No half-close dispatch follows. A full close dispatches.
+        // onStreamHeaders carried this END_STREAM to JS already: only a full close dispatches.
         if effective == 6 && frame == crate::api::h2::connection::EndStreamFrame::Headers {
             return;
         }

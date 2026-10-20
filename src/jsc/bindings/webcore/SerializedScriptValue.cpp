@@ -2272,8 +2272,6 @@ public:
 #endif
     )
     {
-        if (!buffer.size())
-            return std::make_pair(jsNull(), SerializationReturnCode::UnspecifiedError);
         CloneDeserializer deserializer(lexicalGlobalObject, globalObject, messagePorts, arrayBufferContentsArray, std::span<uint8_t> { buffer.begin(), buffer.end() }, blobURLs, blobFilePaths, sharedBuffers
 #if ENABLE(WEBASSEMBLY)
             ,
@@ -2356,7 +2354,7 @@ private:
         , m_isDOMGlobalObject(globalObject->inherits<JSDOMGlobalObject>())
         , m_ptr(buffer.data())
         , m_end(buffer.data() + buffer.size())
-        , m_version(0xFFFFFFFF)
+        , m_version(readVersionHeader(buffer.size()))
         , m_messagePorts(messagePorts)
         , m_arrayBufferContents(arrayBufferContents)
         , m_arrayBuffers(arrayBufferContents ? arrayBufferContents->size() : 0)
@@ -2365,8 +2363,6 @@ private:
         , m_wasmMemoryHandles(wasmMemoryHandles)
 #endif
     {
-        if (!read(m_version))
-            m_version = 0xFFFFFFFF;
     }
 
     CloneDeserializer(JSGlobalObject* lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<RefPtr<MessagePort>>& messagePorts, ArrayBufferContentsArray* arrayBufferContents, const std::span<uint8_t>& buffer, const Vector<String>& blobURLs, const Vector<String> blobFilePaths, ArrayBufferContentsArray* sharedBuffers
@@ -2380,7 +2376,7 @@ private:
         , m_isDOMGlobalObject(globalObject->inherits<JSDOMGlobalObject>())
         , m_ptr(buffer.data())
         , m_end(buffer.data() + buffer.size())
-        , m_version(0xFFFFFFFF)
+        , m_version(readVersionHeader(buffer.size()))
         , m_messagePorts(messagePorts)
         , m_arrayBufferContents(arrayBufferContents)
         , m_arrayBuffers(arrayBufferContents ? arrayBufferContents->size() : 0)
@@ -2392,13 +2388,22 @@ private:
         , m_wasmMemoryHandles(wasmMemoryHandles)
 #endif
     {
-        if (!read(m_version))
-            m_version = 0xFFFFFFFF;
     }
 
     DeserializationResult deserialize();
 
     bool isValid() const { return m_version <= CurrentVersion; }
+
+    // The size check guards a null span (an empty Vector's data()), which readLittleEndian's bounds check lets through.
+    uint32_t readVersionHeader(size_t size)
+    {
+        uint32_t version;
+        if (size < sizeof(version) || !read(version)) {
+            fail();
+            return 0xFFFFFFFF;
+        }
+        return version;
+    }
 
     template<typename T> bool readLittleEndian(T& value)
     {
@@ -4936,6 +4941,32 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
     return deserialize(lexicalGlobalObject, globalObject, dummyPorts, dummyBlobs, dummyPaths, throwExceptions, didFail);
 }
 
+// A global that is having a bad time stores every array as ArrayStorage, so a packed butterfly cannot be copied in.
+static NEVER_INLINE JSArray* createArrayStorageArrayFromPackedElements(VM& vm, Structure* structure, std::span<const uint8_t> elements, unsigned length, bool isDouble)
+{
+    ASSERT(elements.size() == length * sizeof(EncodedJSValue));
+    ObjectInitializationScope initScope(vm);
+    JSArray* array = JSArray::tryCreateUninitializedRestricted(initScope, structure, length);
+    if (!array) [[unlikely]]
+        return nullptr;
+
+    const uint8_t* slot = elements.data();
+    for (unsigned i = 0; i < length; i++, slot += sizeof(EncodedJSValue)) {
+        JSValue value;
+        if (isDouble) {
+            double number;
+            memcpy(&number, slot, sizeof(number));
+            value = JSValue(JSValue::EncodeAsDouble, number);
+        } else {
+            EncodedJSValue encoded;
+            memcpy(&encoded, slot, sizeof(encoded));
+            value = JSValue::decode(encoded);
+        }
+        array->initializeIndex(initScope, i, value);
+    }
+    return array;
+}
+
 JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<RefPtr<MessagePort>>& messagePorts, const Vector<String>& blobURLs, const Vector<String>& blobFilePaths, SerializationErrorMode throwExceptions, bool* didFail)
 {
     VM& vm = lexicalGlobalObject.vm();
@@ -5103,8 +5134,17 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
         IndexingType arrayType = (m_fastPath == FastPath::Int32Array) ? ArrayWithInt32 : ArrayWithDouble;
         Structure* resultStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(arrayType);
 
-        if (hasAnyArrayStorage(resultStructure->indexingType())) [[unlikely]]
-            break; // isHavingABadTime → fall through to normal deserialization
+        if (hasAnyArrayStorage(resultStructure->indexingType())) [[unlikely]] {
+            JSArray* resultArray = createArrayStorageArrayFromPackedElements(vm, resultStructure, m_arrayButterflyData.span(), m_arrayLength, m_fastPath == FastPath::DoubleArray);
+            if (!resultArray) [[unlikely]] {
+                if (didFail)
+                    *didFail = true;
+                return {};
+            }
+            if (didFail)
+                *didFail = false;
+            return resultArray;
+        }
 
         unsigned outOfLineStorage = resultStructure->outOfLineCapacity();
         unsigned vectorLength = Butterfly::optimalContiguousVectorLength(resultStructure, m_arrayLength);
@@ -5141,6 +5181,8 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
     }
     }
 
+    // Only FastPath::None has wire bytes in m_data.
+    ASSERT(m_fastPath == FastPath::None);
     DeserializationResult result = CloneDeserializer::deserialize(&lexicalGlobalObject, globalObject, messagePorts,
         m_arrayBufferContentsArray.get(), m_data, blobURLs, blobFilePaths, m_sharedBufferContentsArray.get()
 #if ENABLE(WEBASSEMBLY)

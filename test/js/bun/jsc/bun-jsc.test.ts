@@ -27,6 +27,7 @@ import {
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBuildKite, isWindows } from "harness";
+import { deserialize as v8Deserialize, serialize as v8Serialize } from "node:v8";
 
 describe("bun:jsc", () => {
   function count() {
@@ -672,6 +673,59 @@ it("deserialize applies the same nesting depth limit to arrays as to objects", a
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, exitCode }).toEqual({ stdout: "rejected\n65\n", exitCode: 0 });
+});
+
+// Every payload starts with a 4-byte version. Input with fewer bytes has no header, so the
+// decoder must reject it. Zero bytes used to decode to null, which reads like a stored null.
+describe("deserialize rejects input shorter than the version header", () => {
+  const rejected = { threw: "TypeError: Unable to deserialize data." };
+  const outcome = (fn: (bytes: any) => unknown, bytes: unknown) => {
+    try {
+      return { returned: fn(bytes) };
+    } catch (e: any) {
+      return { threw: `${e.name}: ${e.message}` };
+    }
+  };
+
+  const emptyInputs: [string, () => unknown][] = [
+    ["Buffer.alloc(0)", () => Buffer.alloc(0)],
+    ["new Uint8Array(0)", () => new Uint8Array(0)],
+    ["new Float64Array(0)", () => new Float64Array(0)],
+    ["new DataView(new ArrayBuffer(0))", () => new DataView(new ArrayBuffer(0))],
+    ["new ArrayBuffer(0)", () => new ArrayBuffer(0)],
+    ["new SharedArrayBuffer(0)", () => new SharedArrayBuffer(0)],
+    ["a zero-length view inside a non-empty buffer", () => new Uint8Array(new ArrayBuffer(8), 4, 0)],
+    [
+      "a length-tracking view of a resizable buffer resized to 0",
+      () => {
+        const buffer = new ArrayBuffer(8, { maxByteLength: 8 });
+        const view = new Uint8Array(buffer);
+        buffer.resize(0);
+        return view;
+      },
+    ],
+  ];
+
+  describe.each([
+    ["bun:jsc deserialize", deserialize],
+    ["v8.deserialize", v8Deserialize],
+  ])("%s", (_api, fn) => {
+    it.each(emptyInputs)("rejects %s", (_name, make) => {
+      expect(outcome(fn, make())).toEqual(rejected);
+    });
+
+    it("rejects every proper prefix of serialize(null) and accepts the whole payload", () => {
+      const whole = new Uint8Array(serialize(null));
+      const outcomes = Array.from({ length: whole.length + 1 }, (_, length) => outcome(fn, whole.slice(0, length)));
+      expect(outcomes).toEqual([...Array.from({ length: whole.length }, () => rejected), { returned: null }]);
+    });
+  });
+
+  it("a serialized empty Buffer still round-trips", () => {
+    const cloned = v8Deserialize(v8Serialize(Buffer.alloc(0)));
+    expect(Buffer.isBuffer(cloned)).toBe(true);
+    expect(cloned).toHaveLength(0);
+  });
 });
 
 describe("JsRef::Weak liveness", () => {

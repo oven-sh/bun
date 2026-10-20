@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isASAN, rss } from "harness";
+import { bunEnv, bunExe, isASAN, rss } from "harness";
 
 describe("Structured Clone Fast Path", () => {
   test("structuredClone should work with empty object", () => {
@@ -361,6 +361,59 @@ describe("Structured Clone Fast Path", () => {
     expect(result).toEqual(input);
     port1.close();
     port2.close();
+  });
+
+  test("Int32 and Double arrays arrive in a realm that is having a bad time", async () => {
+    // The fast path keeps the elements out of the wire buffer. A realm that is "having a bad
+    // time" stores arrays as ArrayStorage, so the butterfly copy does not apply there. The
+    // array used to arrive as null. A subprocess, because the accessor cannot be undone.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import vm from "node:vm";
+         import { MessageChannel, receiveMessageOnPort } from "node:worker_threads";
+
+         // Each of these holds a packed Int32 or Double array made before the realm changes.
+         const foreign = vm.runInNewContext("({ ints: [1, 2, 3], doubles: [1.5, 2.5] })");
+         const mark = performance.mark("packed", { detail: [4, 5, 6] });
+         const delivered = new MessageChannel();
+         const polled = new MessageChannel();
+         delivered.port1.postMessage([7, 8, 9]);
+         polled.port1.postMessage([0.5, 1.5]);
+
+         // An indexed accessor on Array.prototype moves every array in this realm to ArrayStorage.
+         Object.defineProperty(Array.prototype, 1000000, { get() {}, configurable: true });
+
+         const show = value => (Array.isArray(value) ? JSON.stringify(value) : String(value));
+         console.log("structuredClone ints: " + show(structuredClone(foreign.ints)));
+         console.log("structuredClone doubles: " + show(structuredClone(foreign.doubles)));
+         console.log("performance.mark detail: " + show(mark.detail));
+         console.log("receiveMessageOnPort: " + show(receiveMessageOnPort(polled.port2)?.message));
+         delivered.port2.onmessage = event => {
+           console.log("message event: " + show(event.data));
+           delivered.port2.close();
+         };`,
+      ],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim().split("\n"), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+      stdout: [
+        "structuredClone ints: [1,2,3]",
+        "structuredClone doubles: [1.5,2.5]",
+        "performance.mark detail: [4,5,6]",
+        "receiveMessageOnPort: [0.5,1.5]",
+        "message event: [7,8,9]",
+      ],
+      stderr: expect.any(String),
+      signalCode: null,
+      exitCode: 0,
+    });
   });
 
   test("structuredClone of array multiple times produces independent copies", () => {

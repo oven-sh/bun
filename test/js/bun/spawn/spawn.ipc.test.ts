@@ -322,6 +322,76 @@ describe("ipc mode advanced", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  // Runs a parent whose child writes a raw frame, [u8 type][u32 LE length][payload], to the IPC
+  // fd. `payload` is source text that the child evaluates to get the payload bytes. A valid
+  // "sentinel" message follows in the same write, so a swallowed frame shows up as a message
+  // and not as a hang.
+  async function receiveRawFrame(type: number, payload: string) {
+    const child = `
+      const frame = (type, payload) => {
+        const head = Buffer.alloc(5);
+        head[0] = type;
+        head.writeUInt32LE(payload.length, 1);
+        return Buffer.concat([head, payload]);
+      };
+      const sentinel = require("bun:jsc").serialize("sentinel", { binaryType: "nodebuffer" });
+      process.on("disconnect", () => process.exit(42));
+      require("fs").writeSync(3, Buffer.concat([frame(${type}, Buffer.from(${payload})), frame(2, sentinel)]));
+    `;
+    const parent = `
+      const child = Bun.spawn({
+        cmd: [process.execPath, "-e", ${JSON.stringify(child)}],
+        stdio: ["ignore", "inherit", "inherit"],
+        serialization: "advanced",
+        ipc(msg, subprocess) {
+          console.log("MESSAGE", JSON.stringify(msg));
+          // The sentinel is the last frame. Release the child, which waits for a disconnect.
+          if (msg === "sentinel") subprocess.disconnect();
+        },
+      });
+      process.on("uncaughtException", err => console.log("UNCAUGHT", err.name + ": " + err.message));
+      const exitCode = await child.exited;
+      console.log("CHILD_EXIT", exitCode, child.signalCode);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", parent],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.split("\n").filter(Boolean), stderr, signalCode: proc.signalCode, exitCode };
+  }
+
+  const serializedNull = `require("bun:jsc").serialize(null, { binaryType: "nodebuffer" })`;
+
+  // The payload is a structured-clone record, which starts with a 4-byte version. A frame with
+  // no payload used to decode to null: type 2 delivered it as a message, type 3 swallowed it.
+  // The channel closes on the bad frame, so the sentinel behind it is not delivered.
+  it.skipIf(isWindows).each([
+    ["a message frame with no payload", 2, "[]"],
+    ["an internal frame with no payload", 3, "[]"],
+    ["a Buffer-envelope frame with no payload", 4, "[]"],
+    ["a message frame that stops inside the version header", 2, `${serializedNull}.subarray(0, 3)`],
+  ])("closes the channel on %s", async (_name, type, payload) => {
+    expect(await receiveRawFrame(type, payload)).toEqual({
+      stdout: ["UNCAUGHT TypeError: Unable to deserialize data.", "CHILD_EXIT 42 null"],
+      stderr: "",
+      signalCode: null,
+      exitCode: 0,
+    });
+  });
+
+  it.skipIf(isWindows)("still delivers a message frame whose payload is a serialized null", async () => {
+    expect(await receiveRawFrame(2, serializedNull)).toEqual({
+      stdout: ["MESSAGE null", 'MESSAGE "sentinel"', "CHILD_EXIT 42 null"],
+      stderr: "",
+      signalCode: null,
+      exitCode: 0,
+    });
+  });
 });
 
 // getIPCInstance error path: on Windows, windowsConfigureClient can open the

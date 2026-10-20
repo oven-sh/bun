@@ -3,6 +3,7 @@ import { bunEnv, bunExe, isPosix, nodeExeAtLeast, tempDir } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { join } from "node:path";
+import { finished } from "node:stream";
 import { getSystemErrorName } from "node:util";
 
 const CHILD_PROCESS_FILE = import.meta.dir + "/spawned-child.js";
@@ -197,6 +198,8 @@ describe("child.stdin", () => {
       "destroy() with nothing written": "closed=true, close, child alive",
       "'close' listener added one tick after destroy()": "close, late listener, child alive",
       "destroy() in 'prefinish'": "prefinish, finish, close, child alive",
+      "end(callback), then destroy()": "callback write ECANCELED, end write ECANCELED, close, child alive",
+      "destroy(), then end(callback)": "callback write ECANCELED, end write ECANCELED, close, child alive",
     };
     // Before v24 node passes no error to a canceled write. On Windows a pipe takes the first write whole.
     const node = isPosix ? nodeExeAtLeast("24.0.0") : null;
@@ -379,22 +382,22 @@ describe("child.stdin", () => {
       }
     });
 
-    it("with the pipe full, loses less than one buffer of acknowledged bytes and keeps the error", async () => {
-      // write() acknowledges a small chunk from a buffer. One per loop turn, until one is not called back by the next.
-      async function writeSmall(stdin, limit) {
-        const errors = [];
-        for (let count = 0; count < limit; count++) {
-          let acknowledged = false;
-          stdin.write(Buffer.alloc(1000, 97), err => {
-            acknowledged = true;
-            if (err) errors.push(err);
-          });
-          await turn();
-          if (!acknowledged) return { count, errors };
-        }
-        return { count: limit, errors };
+    // write() acknowledges a small chunk from a buffer. One per loop turn, until one is not called back by the next.
+    async function writeSmall(stdin, limit) {
+      const errors = [];
+      for (let count = 0; count < limit; count++) {
+        let acknowledged = false;
+        stdin.write(Buffer.alloc(1000, 97), err => {
+          acknowledged = true;
+          if (err) errors.push(err);
+        });
+        await turn();
+        if (!acknowledged) return { count, errors };
       }
+      return { count: limit, errors };
+    }
 
+    it("with the pipe full, loses less than one buffer of acknowledged bytes and keeps the error", async () => {
       const probe = await spawnChild();
       let acknowledged;
       try {
@@ -422,6 +425,45 @@ describe("child.stdin", () => {
         // The writer's buffer is one page: 4 KB, or 16 KB on Apple Silicon.
         expect(lost).toBeWithin(0, 16384);
         expect(lost === 0 ? stdin.errored : shape(stdin.errored)).toEqual(lost === 0 ? null : canceled);
+      } finally {
+        await stop(child);
+      }
+    });
+
+    // Windows is not run: a write that is with the kernel there is the open repair of this teardown.
+    it.skipIf(!isPosix)("end() and then destroy() keeps the error of those bytes too", async () => {
+      const probe = await spawnChild();
+      let acknowledged;
+      try {
+        probe.stdin.on("error", () => {});
+        acknowledged = (await writeSmall(probe.stdin, Infinity)).count;
+      } finally {
+        await stop(probe);
+      }
+      expect(acknowledged).toBeGreaterThan(0);
+
+      const child = await spawnCounter();
+      try {
+        const { stdin } = child;
+        stdin.on("error", () => {});
+        const { count, errors } = await writeSmall(stdin, acknowledged);
+        expect(errors).toEqual([]);
+
+        // No write is parked: the flush of end() is what waits for the pipe.
+        const finishedWith = Promise.withResolvers();
+        finished(stdin, err => finishedWith.resolve(err ?? null));
+        const closed = closeOf(stdin);
+        stdin.end();
+        stdin.destroy();
+        await closed;
+
+        const lost = count * 1000 - (await receivedBy(child));
+        expect(lost).toBeWithin(0, 16384);
+        const error = await finishedWith.promise;
+        expect({ errored: stdin.errored, finished: error && shape(error) }).toEqual({
+          errored: error,
+          finished: lost === 0 ? null : canceled,
+        });
       } finally {
         await stop(child);
       }

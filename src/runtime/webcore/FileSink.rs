@@ -347,6 +347,18 @@ impl FileSink {
         }
     }
 
+    /// The error the child's exit latches on the write parked on its stdin. `None` keeps the result it has.
+    fn errno_at_exit(&self) -> Option<sys::Errno> {
+        let pending = self.pending.get();
+        // It has failed already, and a task is on its way to report that error.
+        if pending.state == streams::PendingState::Pending
+            && matches!(pending.result, streams::Writable::Err(_))
+        {
+            return None;
+        }
+        Some(sys::Errno::EPIPE)
+    }
+
     /// `bun.spawn`'s subprocess exited while this `FileSink` was its stdin.
     ///
     /// Takes the canonical `*mut FileSink` (not `&mut self`): `writer.close()`
@@ -387,7 +399,10 @@ impl FileSink {
                 }
             }
 
-            FileSink::abort(this, sys::Errno::EPIPE);
+            match (*this).errno_at_exit() {
+                Some(errno) => FileSink::abort(this, errno),
+                None => (*this).writer.with_mut(|w| w.close()),
+            }
             FileSink::run_pending(this);
 
             // `writer.close()` → `onClose` already released this above; kept for

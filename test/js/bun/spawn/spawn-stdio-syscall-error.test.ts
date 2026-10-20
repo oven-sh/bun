@@ -17,6 +17,7 @@ const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 // SPAWN_FAULT_RECV_MID_FILL=1  the recv() that directly follows a recv() that returned bytes fails with EIO: the
 //   reader asks again in the same pass because its buffer has room, so the failure lands behind bytes it holds.
 // SPAWN_FAULT_SEND_AT=N  the Nth send() on each AF_UNIX socket fails with ENOBUFS.
+// SPAWN_FAULT_SEND_AFTER=path  once this file exists, a send() of bytes on an AF_UNIX socket fails with ENOBUFS.
 // SPAWN_FAULT_REPORT=path  the failing recv() writes how many bytes that socket received before it to this file.
 // SPAWN_FAULT_READS_AFTER=path  how many recv() calls that socket got after the failing one (0 from the failure on).
 // With SPAWN_FAULT_RECV_AT, two more settings shape the reads before the failing one:
@@ -44,6 +45,7 @@ static long (*real_syscall)(long, long, long, long, long, long, long);
 static int fail_recv_at = -1;
 static int fail_recv_mid_fill = -1;
 static int fail_send_at = -1;
+static const char *fail_send_after;
 static int eagain_recv_at = -1;
 static long recv_cap = -1;
 static unsigned int recv_count[MAX_FD];
@@ -67,6 +69,7 @@ static void init_modes(void) {
     s = getenv("SPAWN_FAULT_SEND_AT");
     fail_send_at = s ? atoi(s) : 0;
   }
+  fail_send_after = getenv("SPAWN_FAULT_SEND_AFTER");
   if (eagain_recv_at < 0) {
     s = getenv("SPAWN_FAULT_RECV_EAGAIN_AT");
     eagain_recv_at = s ? atoi(s) : 0;
@@ -128,6 +131,10 @@ ssize_t send(int fd, const void *buf, size_t len, int flags) {
     init_modes();
   }
   if (fail_send_at > 0 && is_unix_sock(fd) && ++send_count[fd] == (unsigned)fail_send_at) {
+    errno = ENOBUFS;
+    return -1;
+  }
+  if (fail_send_after && len > 0 && access(fail_send_after, F_OK) == 0 && is_unix_sock(fd)) {
     errno = ENOBUFS;
     return -1;
   }
@@ -348,6 +355,50 @@ console.log(
 );
 `;
 
+// node:child_process: a second write fails in the kernel while the first is parked. The sink keeps that error for the
+// parked write and reports it from a task. The exit of the child comes before that task: the second write is made in
+// the 'exit' listener of another child, and the parent sees the two exits in one turn of the event loop.
+const CHILD_PROCESS_STDIN_FAILED_FIXTURE = /* js */ `
+import { spawn } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
+function waitForExitOf(pid) {
+  for (;;) {
+    let stat;
+    try {
+      stat = readFileSync("/proc/" + pid + "/stat", "latin1");
+    } catch {
+      return;
+    }
+    if (stat.slice(stat.lastIndexOf(")") + 2).startsWith("Z")) return;
+  }
+}
+const events = [];
+const other = spawn("true", { stdio: "ignore" });
+waitForExitOf(other.pid);
+const child = spawn("sh", ["-c", "exec 3<&0; sleep 30 <&3 3<&- >/dev/null 2>&1 & echo $!"], { stdio: ["pipe", "pipe", "inherit"] });
+child.stdin.on("error", e => events.push("stdin.error:" + e.code));
+child.stdin.on("close", () => events.push("stdin.close"));
+child.stdin.write(Buffer.alloc(1 << 20, 97), e => events.push("write1:" + (e ? e.code : "ok")));
+other.on("exit", () => {
+  writeFileSync(process.env.SPAWN_FAULT_SEND_AFTER, "");
+  child.stdin.write("y", e => events.push("write2:" + (e ? e.code : "ok")));
+});
+let holder = "";
+child.stdout.on("data", chunk => (holder += chunk));
+child.on("exit", () => events.push("exit"));
+child.on("close", () => {
+  let held = false;
+  if (/^[1-9][0-9]*\\n$/.test(holder)) {
+    try {
+      process.kill(Number(holder), "SIGKILL");
+      held = true;
+    } catch {}
+  }
+  console.log(JSON.stringify({ held, events }));
+});
+waitForExitOf(child.pid);
+`;
+
 // Bun.spawnSync / child_process.spawnSync / execFileSync: the lost output is an error, not a success.
 const SPAWN_SYNC_FIXTURE = /* js */ `
 import { spawnSync, execFileSync } from "node:child_process";
@@ -388,6 +439,7 @@ beforeAll(async () => {
     "child-process.mjs": CHILD_PROCESS_FIXTURE,
     "child-process-bytes.mjs": CHILD_PROCESS_BYTES_FIXTURE,
     "child-process-readable.mjs": CHILD_PROCESS_READABLE_FIXTURE,
+    "child-process-stdin-failed.mjs": CHILD_PROCESS_STDIN_FAILED_FIXTURE,
     "stdout-stream-mid-fill.mjs": STDOUT_STREAM_MID_FILL_FIXTURE,
     "spawn-sync.mjs": SPAWN_SYNC_FIXTURE,
   });
@@ -415,6 +467,7 @@ async function runWithFault(fixture: string, fault: Record<string, string>) {
     SPAWN_FAULT_RECV_AT: undefined,
     SPAWN_FAULT_RECV_MID_FILL: undefined,
     SPAWN_FAULT_SEND_AT: undefined,
+    SPAWN_FAULT_SEND_AFTER: undefined,
     SPAWN_FAULT_REPORT: undefined,
     SPAWN_FAULT_READS_AFTER: undefined,
     SPAWN_FAULT_RECV_EAGAIN_AT: undefined,
@@ -580,6 +633,18 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
         stderr: "",
         exitCode: 0,
       });
+    });
+  });
+
+  test("node:child_process: the exit of the child keeps the error of a write that has failed", async () => {
+    const after = join(String(dir), "send-fails-after");
+    expect(await runWithFault("child-process-stdin-failed.mjs", { SPAWN_FAULT_SEND_AFTER: after })).toEqual({
+      parsed: {
+        held: true,
+        events: ["write1:ENOBUFS", "write2:ENOBUFS", "stdin.error:ENOBUFS", "stdin.close", "exit"],
+      },
+      stderr: "",
+      exitCode: 0,
     });
   });
 

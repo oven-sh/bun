@@ -67,4 +67,4 @@ it("has the positions in the .svelte file in error.stack, with Svelte's source m
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout).toBe("throws.svelte:4:15 throws.svelte:6:3\n");
   expect(exitCode).toBe(0);
-}, 30_000);
+});

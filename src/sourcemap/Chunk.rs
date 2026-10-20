@@ -351,8 +351,7 @@ impl LineOffsetTables<'_> {
     }
 }
 
-/// The `source_index` of a mapping that [`NewBuilder::input_source_map`] does not
-/// cover. Every other mapping of a module's own map has 0.
+/// The `source_index` of a mapping that [`NewBuilder::input_source_map`] does not cover.
 pub const NOT_IN_INPUT_SOURCE_MAP: i32 = 1;
 
 pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
@@ -388,9 +387,7 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
     /// When generating sourcemappings for bun, we store a count of how many mappings there were
     pub prepend_count: bool,
 
-    /// The map the source came with. Each mapping goes through it, back to the
-    /// text the source was made from. What the map does not cover stays a
-    /// position in the source, with [`NOT_IN_INPUT_SOURCE_MAP`].
+    /// The map the source came with. Each mapping goes through it, or gets [`NOT_IN_INPUT_SOURCE_MAP`].
     pub input_source_map: Option<&'a ParsedSourceMap>,
 }
 
@@ -622,10 +619,11 @@ impl NewBuilder<'_, VLQSourceMap> {
             ) {
                 current_state.source_index = 0;
                 current_state.original_line = mapping.original.lines.zero_based();
-                // The text from the mapping on came from there, so a position further
-                // along is as far along there. A map with few mappings keeps its columns.
-                current_state.original_column = mapping.original.columns.zero_based()
-                    + (current_state.original_column - mapping.generated.columns.zero_based());
+                // The distance from the mapping stays, so a map with one mapping per line keeps the columns.
+                current_state.original_column =
+                    mapping.original.columns.zero_based().saturating_add(
+                        current_state.original_column - mapping.generated.columns.zero_based(),
+                    );
             } else {
                 current_state.source_index = NOT_IN_INPUT_SOURCE_MAP;
             }

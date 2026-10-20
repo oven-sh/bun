@@ -2631,8 +2631,7 @@ fn transpile_source_code_of_any_provenance(
                     keep_json_and_toml_as_one_statement: true,
                     allow_bytecode_cache: true,
                     set_breakpoint_on_first_line,
-                    // The key of the cache is the text, and with an input source
-                    // map the mappings depend on the path as well.
+                    // The cache's key is the text. With an input source map the path matters too.
                     runtime_transpiler_cache: if !disable_transpilying
                         && input_source_map.is_none()
                         && !<RuntimeTranspilerCache as bun_bundler::RuntimeTranspilerCacheExt>::disabled()

@@ -688,8 +688,8 @@ impl ByteRangeMapping {
                 .as_mut()
                 .source_mappings()
                 .get(source_url)
-                // The lines in the map of a file that was built earlier are lines of other files.
-                .filter(|source_map| !source_map.is_external())
+                // The lines in the map of a bundle are lines of other files.
+                .filter(|map| !map.is_external() || map.only_source_is(source_url))
         };
 
         let mut blocks: Vec<CountedRange> =

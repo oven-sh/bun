@@ -1073,11 +1073,13 @@ export function throws() {
   throw new Error("here");
 }
 `;
+  const injected = "globalThis.injected = function injected() { return new Error().stack; };\n";
 
   type Rewrite = {
     /** `sources[0]`. The absolute path of the file when it is `null`. */
     source: string | null;
-    sourceRoot?: string;
+    /** `sources[1]`. */
+    secondSource?: string;
     sourcesContent?: boolean;
     mediaType?: string;
     /** Lines above the text, which the map does not cover. */
@@ -1091,7 +1093,7 @@ export function throws() {
     text: string,
     {
       source,
-      sourceRoot,
+      secondSource,
       sourcesContent = true,
       mediaType = "",
       above = "// 1\n// 2\nglobalThis.injected = function injected() { return new Error().stack; };\n",
@@ -1111,11 +1113,11 @@ export function throws() {
     }
     const lines = text.split("\n");
     let column = 0;
+    const sources = secondSource ? [source, secondSource] : [source];
     const map = {
       version: 3,
-      sourceRoot,
-      sources: [source],
-      sourcesContent: sourcesContent ? [text] : undefined,
+      sources,
+      sourcesContent: sourcesContent ? sources.map(() => text) : undefined,
       names: [],
       mappings:
         ";".repeat(above.split("\n").length - 1) +
@@ -1245,6 +1247,14 @@ export function throws() {
     },
   );
 
+  test.concurrent("from a plugin, of the file: a text that Bun does not transpile", async () => {
+    expect(await report(moved, { source: "moved.ts", above: "// @bun\n// 2\n" + injected })).toEqual({
+      positions: "thrown at moved.ts:10:18, injected at moved.ts:3:61",
+      lines: "FNF:3 FNH:2 DA:1,1 DA:2,0 DA:4,1 DA:5,1 DA:6,1 DA:7,1 DA:9,1 DA:10,1",
+      exitCode: 0,
+    });
+  });
+
   test.concurrent("from a plugin, of the file: one statement above a line with one statement", async () => {
     const text = `import "./other";\n${moved}`;
     const expected = {
@@ -1274,7 +1284,7 @@ export function throws() {
 
   test.concurrent.each<[string, Rewrite]>([
     ["another file", { source: "another.ts" }],
-    ["a file of the same name under sourceRoot", { source: "moved.ts", sourceRoot: "../src" }],
+    ["the file and another file", { source: "moved.ts", secondSource: "another.ts" }],
   ])("from a plugin, of %s", async (_, plugin) => {
     expect(await report(moved, plugin)).toEqual(inTheText);
   });

@@ -24,8 +24,7 @@ pub struct ParsedSourceMap {
     /// If this is empty, this implies that the source code is a single file
     /// transpiled on-demand. If there are items, then it means this is a file
     /// loaded without transpilation but with external sources. This array
-    /// maps `source_index` to the correct filename. When it is empty, the
-    /// index is 0 or [`crate::chunk::NOT_IN_INPUT_SOURCE_MAP`].
+    /// maps `source_index` to the correct filename.
     pub external_source_names: Vec<Box<[u8]>>,
     /// In order to load source contents from a source-map after the fact,
     /// a handle to the underlying source provider is stored, along with a
@@ -236,6 +235,19 @@ impl ParsedSourceMap {
 
     pub fn is_external(&self) -> bool {
         !self.external_source_names.is_empty()
+    }
+
+    pub fn only_source_is(&self, path: &[u8]) -> bool {
+        use bun_paths::{platform::Auto, resolve_path};
+
+        let [name] = self.external_source_names.as_slice() else {
+            return false;
+        };
+        bun_paths::is_absolute(path)
+            && resolve_path::join_abs_string_checked::<Auto>(
+                resolve_path::dirname::<Auto>(path),
+                &[name],
+            ) == Some(path)
     }
 
     pub fn find_mapping(&self, line: Ordinal, column: Ordinal) -> Option<Mapping> {

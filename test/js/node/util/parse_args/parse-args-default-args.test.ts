@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { parseArgs } from "node:util";
 
 // The calls each launch below makes. `programArgs` holds what Node v26.3.0 returns from them for
@@ -104,6 +104,33 @@ describe("parseArgs default args when eval code is the program", () => {
   });
 });
 
+// A file is the program. `process.execArgv` has bun's own flags, and the result does not.
+describe("parseArgs default args when a file is the program", () => {
+  const files = {
+    "package.json": JSON.stringify({ scripts: { "script-test": "file-test.js" } }),
+    "file-test.js": `
+      const { values, positionals } = require("node:util").parseArgs({ strict: false });
+      console.log(JSON.stringify({ names: Object.keys(values).sort(), positionals, execArgv: process.execArgv }));
+    `,
+  };
+  const launches: [cmd: string, names: string[], positionals: string[], execArgv: string[]][] = [
+    ["file-test.js --foo asdf", ["foo"], ["asdf"], []],
+    ["run file-test.js --foo asdf", ["foo"], ["asdf"], []],
+    ["--bun file-test.js --foo asdf", ["foo"], ["asdf"], ["--bun"]],
+    ["run --bun file-test.js --foo asdf", ["foo"], ["asdf"], ["--bun"]],
+    ["--bun run file-test.js --foo asdf", ["foo"], ["asdf"], ["--bun"]],
+    ["--bun run --env-file='' file-test.js --foo asdf", ["foo"], ["asdf"], ["--bun", "--env-file=''"]],
+    ["run file-test.js --bun", ["bun"], [], []],
+    ["--bun run file-test.js --foo asdf -- --foo2 -- --foo3", ["foo"], ["asdf", "--foo2", "--", "--foo3"], ["--bun"]],
+  ];
+
+  test.each(launches)("bun %s", async (cmd, names, positionals, execArgv) => {
+    using dir = tempDir("parse-args-file", files);
+    const expected = JSON.stringify({ names, positionals, execArgv });
+    expect(await run(cmd.split(" "), { cwd: String(dir) })).toEqual(printed(expected));
+  });
+});
+
 describe("parseArgs default args when process.argv has a script entry", () => {
   const program = `process.stdout.write(${calls()})`;
 
@@ -158,8 +185,9 @@ describe("parseArgs default args when process.argv is short", () => {
 });
 
 // `--eval` has a value in Node's REPL only when the `-e` code is not empty. Every expected value is
-// what Node v26.3.0 prints for `node -i` with the same flags.
-describe("parseArgs default args under --interactive", () => {
+// what Node v26.3.0 prints for `node -i` with the same flags. Not in a debug build: node:repl takes
+// 4 seconds to start there, and the limit of a test is 5.
+describe.skipIf(isDebug)("parseArgs default args under --interactive", () => {
   const input =
     'process.argv = ["a", "b", "c"];' +
     ' console.log("R=" + JSON.stringify(require("node:util").parseArgs({ strict: false }).positionals))\n';
@@ -168,43 +196,43 @@ describe("parseArgs default args under --interactive", () => {
     ["--interactive -e ''", ["-e", ""], ["c"]],
   ];
 
-  // node:repl takes 5 seconds to start in a debug build.
-  test.each(launches)(
-    "bun %s",
-    async (_, flags, positionals) => {
-      using dir = tempDir("parse-args-interactive", {});
-      const env = { ...bunEnv, NO_COLOR: "1", NODE_REPL_HISTORY: "" };
-      const options = { cwd: String(dir), stdin: Buffer.from(input), env };
-      const { stdout, ...rest } = await run(["--interactive", ...flags], options);
-      const lines = stdout
-        .split("\n")
-        .filter(line => line.includes("R="))
-        .map(line => line.slice(line.indexOf("R=")));
-      expect({ lines, ...rest }).toEqual({
-        lines: [`R=${JSON.stringify(positionals)}`],
-        stderr: "",
-        signalCode: null,
-        exitCode: 0,
-      });
-    },
-    30_000,
-  );
+  test.each(launches)("bun %s", async (_, flags, positionals) => {
+    using dir = tempDir("parse-args-interactive", {});
+    const env = { ...bunEnv, NO_COLOR: "1", NODE_REPL_HISTORY: "" };
+    const options = { cwd: String(dir), stdin: Buffer.from(input), env };
+    const { stdout, ...rest } = await run(["--interactive", ...flags], options);
+    const lines = stdout
+      .split("\n")
+      .filter(line => line.includes("R="))
+      .map(line => line.slice(line.indexOf("R=")));
+    expect({ lines, ...rest }).toEqual({
+      lines: [`R=${JSON.stringify(positionals)}`],
+      stderr: "",
+      signalCode: null,
+      exitCode: 0,
+    });
+  });
 });
 
 // Node keeps `--eval` per thread: a Worker has the value of the thread that made it, or the one
 // in its own `execArgv`. Every expected value is what Node v26.3.0 returns in a `worker_threads`
-// Worker with the same `argv` and `execArgv`.
+// Worker with the same `argv` and `execArgv`, but for the rows that say Node rejects them.
 describe("parseArgs default args in a Worker", () => {
   const files = {
     "worker.cjs": `
       const { positionals } = require("node:util").parseArgs({ strict: false });
       postMessage(positionals.map(arg => arg.split(/[\\\\/]/).pop()));
     `,
+    // A Worker that makes the Worker above and passes its answer on.
+    "relay.cjs": `
+      const worker = new Worker("./worker.cjs", { argv: ["zzz", "yyy"] });
+      worker.onmessage = event => postMessage(event.data);
+    `,
     "preload.cjs": "",
   };
   // Prints what parseArgs returns in a Worker that is given `options`.
-  const startWorker = (options: { execArgv?: string[] }, more = "") =>
-    `const worker = new Worker('./worker.cjs', { argv: ['zzz', 'yyy'], ...${JSON.stringify(options)}${more} });` +
+  const startWorker = (options: { execArgv?: string[] }, more = "", file = "./worker.cjs") =>
+    `const worker = new Worker('${file}', { argv: ['zzz', 'yyy'], ...${JSON.stringify(options)}${more} });` +
     " worker.onmessage = event => console.log(JSON.stringify(event.data));" +
     " worker.onerror = event => { console.error(event.message); process.exitCode = 1; };";
   const slicedAt1 = JSON.stringify(["worker.cjs", "zzz", "yyy"]);
@@ -229,7 +257,13 @@ describe("parseArgs default args in a Worker", () => {
     [["-e", "\u0000"], slicedAt1],
     // The flags end at a token that is not a flag and not a value, and at `--`.
     [["x", "-e", "1"], slicedAt2],
+    [["--no-addons", "x", "-e", "1"], slicedAt2],
+    [["--conditions=x", "x", "-e", "1"], slicedAt2],
     [["--", "-e", "1"], slicedAt2],
+    // Node rejects the next three. They are read as bun's CLI reads them.
+    [["-e=1"], slicedAt1],
+    [["-p=1"], slicedAt1],
+    [["-e", "-1"], slicedAt1],
   ];
 
   test.each(
@@ -264,6 +298,19 @@ describe("parseArgs default args in a Worker", () => {
   test.each(evalParents)("with bun %s as the program", async (_, cmd, stdout) => {
     using dir = tempDir("parse-args-worker", files);
     expect(await run(cmd, { cwd: String(dir) })).toEqual(printed(stdout));
+  });
+
+  // A Worker without `execArgv` has the value of the Worker that made it, and not the value of the program.
+  test('made by a Worker with execArgv ["-e","1"], with a file as the program', async () => {
+    const parent = startWorker({ execArgv: ["-e", "1"] }, "", "./relay.cjs");
+    using dir = tempDir("parse-args-worker", { ...files, "parent.cjs": parent });
+    expect(await run(["parent.cjs"], { cwd: String(dir) })).toEqual(printed(slicedAt1));
+  });
+
+  test('made by a Worker with execArgv ["--no-addons"], with bun -e <code> as the program', async () => {
+    using dir = tempDir("parse-args-worker", files);
+    const cmd = ["-e", startWorker({ execArgv: ["--no-addons"] }, "", "./relay.cjs")];
+    expect(await run(cmd, { cwd: String(dir) })).toEqual(printed(slicedAt2));
   });
 });
 

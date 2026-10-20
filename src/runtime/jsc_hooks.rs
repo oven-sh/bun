@@ -1635,7 +1635,8 @@ fn exec_argv_has_eval_string<'a>(
         {
             has_eval_string = !code.is_empty();
         } else if matches!(flag, b"-e" | b"--eval" | b"-pe") {
-            if let Some(code) = tokens.next_if(|next| !is_flag(next)) {
+            // Node rejects a code that starts with `-`. Bun's CLI takes it, so it is the code here too.
+            if let Some(code) = tokens.next() {
                 has_eval_string = code.length() != 0;
             }
         } else if matches!(flag, b"-p" | b"--print") {
@@ -1644,7 +1645,11 @@ fn exec_argv_has_eval_string<'a>(
                 .next_if(|next| next.length() != 0 && !is_flag(next))
                 .is_some();
         } else {
-            value_may_follow = !bun_core::strings::contains_char(flag, b'=');
+            let takes_no_value = matches!(
+                flag,
+                b"--no-addons" | b"--no-ffi-cc" | b"--disallow-code-generation-from-strings"
+            );
+            value_may_follow = !takes_no_value && !bun_core::strings::contains_char(flag, b'=');
         }
     }
     has_eval_string

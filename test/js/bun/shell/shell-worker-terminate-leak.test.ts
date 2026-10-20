@@ -183,6 +183,25 @@ test.skipIf(!isASAN || isWindows)(
   LEAK_TEST_TIMEOUT,
 );
 
+test.skipIf(!isASAN || isWindows)(
+  "worker.terminate() while the builtins of a failed Bun.$ pipeline are stopped does not leak or crash",
+  async () => {
+    // The last member throws as soon as it starts. The builtins before it are
+    // stopped then, and reported later: `yes` by the task it has on the event
+    // loop, `ls` by its pool task, `seq` by the task the stop queued. The
+    // terminate races all three: the finalizer finds any of them still out,
+    // or the script already finished.
+    await runTerminateScenario(`
+      const running = Bun.$\`yes 1>&2 | ls . | seq 1 100000 1>&2 | echo hi > \${new Blob(["x"])}\`.quiet().nothrow();
+      running.then(
+        () => postMessage("resolved"),
+        () => postMessage("ok"),
+      );
+    `);
+  },
+  LEAK_TEST_TIMEOUT,
+);
+
 test.skipIf(!isLinux)(
   "worker.terminate() kills a live Bun.$ subprocess",
   async () => {

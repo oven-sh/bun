@@ -1573,6 +1573,10 @@ mod _async_tasks {
             // thread) may hold `&Self` to the same parent concurrently; `ParentRef`
             // invariant: the parent outlives all subtasks (subtask_count refcount).
             let parent = cp_task.get();
+            if parent.stopped() {
+                drop(self);
+                return NewAsyncCpTask::on_subtask_done(cp_task.as_mut_ptr());
+            }
 
             // TODO: error strings on node_fs will die
             let mut node_fs = NodeFS::default();
@@ -1631,6 +1635,12 @@ mod _async_tasks {
     }
 
     impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
+        /// The shell stopped the `cp` this copy belongs to: nothing more is copied.
+        #[inline]
+        fn stopped(&self) -> bool {
+            IS_SHELL && self.shelltask.is_some_and(|task| task.task.stopped())
+        }
+
         pub(crate) fn on_copy(
             &self,
             src: impl AsRef<[OSPathChar]>,
@@ -2164,6 +2174,9 @@ mod _async_tasks {
                         None => break,
                     },
                 };
+                if this_ref.stopped() {
+                    return false;
+                }
                 let cname = current.name.slice();
 
                 // The accumulated path for deep directory trees can exceed the fixed

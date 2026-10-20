@@ -363,10 +363,13 @@ impl ByName {
                 Some(&hir::ExprKind::Call(call)) => hir.calls.get(call.idx()),
                 _ => None,
             };
-            let callee = callee.and_then(|it| hir.exprs.get(file.written_expr(it.callee).idx()));
-            match callee.map(|it| &it.kind) {
-                Some(&hir::ExprKind::Dot { name, name_pos, .. }) => {
-                    classes.of_member(name, name_pos)
+            let callee = callee.map(|it| file.written_expr(it.callee));
+            match callee
+                .and_then(|it| hir.exprs.get(it.idx()))
+                .map(|it| &it.kind)
+            {
+                Some(&hir::ExprKind::Dot { name, .. }) => {
+                    classes.of_member(name, hir.name_pos(callee.unwrap_or_default()))
                 }
                 Some(&hir::ExprKind::Ident(name)) => {
                     (ByName::FUNCTIONS + classes.of(name) as usize % (NAME_CLASSES / 2)) as u8
@@ -380,7 +383,9 @@ impl ByName {
     fn of_members<'a>(file: &'a File<'a>) -> ByName {
         let mut classes = Classes::new(file);
         let group_of = |&id: &u32| match file.hir.exprs.get(id as usize).map(|it| &it.kind) {
-            Some(&hir::ExprKind::Dot { name, name_pos, .. }) => classes.of_member(name, name_pos),
+            Some(&hir::ExprKind::Dot { name, .. }) => {
+                classes.of_member(name, file.hir.name_pos(hir::ExprId(id)))
+            }
             _ => ByName::OTHERS as u8,
         };
         ByName::new(file.exprs_of(ExprTag::Dot).iter().map(group_of).collect())
@@ -842,7 +847,9 @@ impl<'a> File<'a> {
                 let is_other = |id: &u32| {
                     let callee = grouped_expr(self, *id).callee();
                     match callee.and_then(Expr::try_raw).map(|it| it.kind) {
-                        Some(hir::ExprKind::Dot { name_pos, .. }) => is_private(name_pos),
+                        Some(hir::ExprKind::Dot { .. }) => callee
+                            .and_then(Expr::member_name_start)
+                            .is_some_and(is_private),
                         Some(hir::ExprKind::Ident(_)) => false,
                         _ => true,
                     }
@@ -855,7 +862,9 @@ impl<'a> File<'a> {
                     return Vec::new();
                 }
                 let is_other = |id: &u32| match self.hir.exprs.get(*id as usize).map(|it| it.kind) {
-                    Some(hir::ExprKind::Dot { name_pos, .. }) => is_private(name_pos),
+                    Some(hir::ExprKind::Dot { .. }) => {
+                        is_private(self.hir.name_pos(hir::ExprId(*id)))
+                    }
                     _ => true,
                 };
                 let all = self.exprs_of(ExprTag::Dot).iter().copied();

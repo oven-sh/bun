@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::visible::{is_declared_again, is_only_declaration};
 
 /// Enforce type definitions to consistently use either `interface` or `type`.
 pub struct ConsistentTypeDefinitions {
@@ -92,9 +93,9 @@ impl Rule for ConsistentTypeDefinitions {
                 return;
             };
             let report = cx.report(place(interface.name(), "interface", cx), TYPE_OVER_INTERFACE);
-            let fix = |fixer: Fixer<'a>| fix_interface(fixer, statement, interface);
+            let fix = |fixer: Fixer<'a>| (!is_declared_again(interface)).then(|| fix_interface(fixer, statement, interface));
             match is_within_declare_global(statement) {
-                false => report.fix(fix),
+                false => report.fix_where_safe(|| is_only_declaration(interface), fix),
                 // For oxlint the fix is dangerous there.
                 true if cx.language().is_oxlint => report.fix_dangerously(fix),
                 true => report,

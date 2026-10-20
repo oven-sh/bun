@@ -57,7 +57,8 @@ pub struct PlannedEdge {
 
 #[derive(PartialEq, Eq)]
 pub struct Blocker {
-    /// The dependent package or importer file; `package.json` when `override_rule` is set.
+    /// The dependent package or the project's package.json file. It's `package.json` when
+    /// `override_rule` is set.
     pub dependent: Box<[u8]>,
     pub range: Box<[u8]>,
     pub bundled: bool,
@@ -194,9 +195,9 @@ pub struct FixOutcome {
 struct Edge {
     dep_id: DependencyID,
     parent: PackageID,
-    /// After overrides and catalogs are applied; `None` unless that is an npm range.
+    /// The range after overrides and catalogs are applied. `None` unless that's an npm range.
     range: Option<dependency::Version>,
-    /// The override rule's value, else the dependent's specifier; shown when `range` is `None`.
+    /// The override's value, or else the dependent's specifier. Shown when `range` is `None`.
     literal: Box<[u8]>,
     dependent: Box<[u8]>,
     override_rule: Option<Box<[u8]>>,
@@ -443,7 +444,8 @@ fn print_manifest_unavailable(manager: &PackageManager, items: &[ManifestUnavail
     Output::flush();
 }
 
-/// The entry whose rewrite would move this edge: an exact pin, or with `latest` any npm range.
+/// Returns the entry whose rewrite would move this dependency: an exact pin, or with `latest`, any
+/// npm range.
 fn pin_for(
     lockfile: &Lockfile,
     root_json: Option<&Expr>,
@@ -499,7 +501,8 @@ fn pin_for(
                     let selector = OverrideSelector::from_rule(rule, buf);
                     let written =
                         package_json_edits::override_literal(root_json?, name, &selector)?;
-                    // Differs for a `$ref` in package.json: bun.lock stores what it resolved to.
+                    // They differ for a `$ref` in package.json, because bun.lock stores what it
+                    // resolved to.
                     if *written != *strings::trim(literal, &strings::WHITESPACE_CHARS) {
                         return None;
                     }

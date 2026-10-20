@@ -583,7 +583,7 @@ impl TarballStream {
                     Phase::WantData => {
                         let mut offset: i64 = 0;
                         let Some(block) = archive.next(&mut offset) else {
-                            // End of this entry's data; `offset` is its length.
+                            // This is the end of the entry's data, and `offset` is its length.
                             (*this).finish_output_file(offset)?;
                             (*this).phase = Phase::WantHeader;
                             continue;
@@ -721,7 +721,7 @@ impl TarballStream {
         Ok(())
     }
 
-    /// The entry's data ended at `end`: the output file gets that length.
+    /// The entry's data ended at `end`, so the output file is set to that length.
     fn finish_output_file(&mut self, end: i64) -> crate::Result<()> {
         let Some(mut out) = self.out.take() else {
             return Ok(());

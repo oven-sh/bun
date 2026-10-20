@@ -44,6 +44,8 @@ pub(crate) enum Step {
     Suspend,
     Done(ExitCode),
     Next,
+    /// Every chunk queued so far is written and the input goes on.
+    ReadMore,
 }
 
 impl Step {
@@ -52,6 +54,7 @@ impl Step {
             Step::Suspend => Yield::suspended(),
             Step::Done(code) => Builtin::done(interp, cmd, code),
             Step::Next => Cat::next(interp, cmd),
+            Step::ReadMore => Cat::read_more(interp, cmd),
         }
     }
 }
@@ -284,10 +287,12 @@ impl Cat {
                 ..
             } => {
                 *chunks_done += 1;
-                if *in_done && *chunks_done >= *chunks_queued {
+                if *chunks_done < *chunks_queued {
+                    Step::Suspend
+                } else if *in_done {
                     Step::Done(0)
                 } else {
-                    Step::Suspend
+                    Step::ReadMore
                 }
             }
             CatState::ExecFilepathArgs {
@@ -303,6 +308,8 @@ impl Cat {
                 }
                 if *in_done && *out_done {
                     Step::Next
+                } else if *chunks_done >= *chunks_queued {
+                    Step::ReadMore
                 } else {
                     Step::Suspend
                 }
@@ -311,6 +318,35 @@ impl Cat {
             _ => panic!("Invalid state"),
         };
         step.run(interp, cmd)
+    }
+
+    /// The reader stops while every cat on it still writes (`IOReader::nobody_ready`).
+    pub(crate) fn awaits_write(interp: &Interpreter, cmd: NodeId) -> bool {
+        match &Self::state_mut(interp, cmd).state {
+            CatState::ExecStdin {
+                chunks_queued,
+                chunks_done,
+                ..
+            }
+            | CatState::ExecFilepathArgs {
+                chunks_queued,
+                chunks_done,
+                ..
+            } => chunks_done < chunks_queued,
+            _ => false,
+        }
+    }
+
+    /// The reader may have stopped for this cat: lets it read on.
+    fn read_more(interp: &Interpreter, cmd: NodeId) -> Yield {
+        let reader = match &Self::state_mut(interp, cmd).state {
+            CatState::ExecFilepathArgs { reader, .. } => reader.as_ref(),
+            _ => match &Builtin::of(interp, cmd).stdin {
+                BuiltinInput::Fd(r) => Some(r),
+                _ => None,
+            },
+        };
+        reader.map_or(Yield::suspended(), |r| r.resume())
     }
 
     pub(crate) fn on_io_reader_chunk(

@@ -1,7 +1,8 @@
 import type { FileSink } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { closeSync, openSync } from "node:fs";
+import { join } from "node:path";
 
 // On POSIX the builtin `cat` is only used with this flag set (see
 // `Kind::DISABLED_ON_POSIX`); without it `cat` is the system binary. On Windows
@@ -15,6 +16,17 @@ const bun = `"${bunExe().replaceAll("\\", "/")}"`;
 const subprocess = `${bun} -e 0`;
 // A subprocess that ends once the test answers its request to RELEASE_URL.
 const gate = `${bun} -e "await (await fetch(process.env.RELEASE_URL)).text()"`;
+// A subprocess that prints the size and the SHA-256 of its stdin.
+const digestStdin = `const hash = new Bun.CryptoHasher('sha256'); let size = 0; for await (const chunk of Bun.stdin.stream()) { hash.update(chunk); size += chunk.length; } console.log(size, hash.digest('hex'));`;
+const digest = `${bun} -e "${digestStdin}"`;
+// The same, but it only starts to read once the test answers its request to
+// RELEASE_URL.
+const gatedDigest = `${bun} -e "await (await fetch(process.env.RELEASE_URL)).text(); ${digestStdin}"`;
+
+// What `digest` prints for `text` (ASCII) on its stdin.
+function digestOf(text: string) {
+  return `${text.length} ${new Bun.CryptoHasher("sha256").update(text).digest("hex")}`;
+}
 
 // The cases of this file run one after the other. Each one starts one to three
 // bun processes, and a debug build that starts several of those at the same
@@ -361,6 +373,18 @@ describe("cat (builtin) sharing one stdin reader", () => {
       const result = await runScript("cat | echo [$(cat)]", { unpollable: import.meta.dir });
       expect(result).toEqual({ stdout: "[]\nexit=0\n", stderr: "", exitCode: 0 });
     });
+
+    // The cat of the pipeline waits for its write from the first chunks on:
+    // nothing reads its pipe before the substitution is done. The cat of the
+    // substitution takes every chunk at once, so the reader goes on for it:
+    // a reader that stopped as soon as one cat waits would never reach EOF.
+    // The waiting cat still gets every chunk that is read. The input is only
+    // newlines, so the substitution expands to no argument.
+    test("one cat waits for its write while the other one is ready for more", async () => {
+      const input = Buffer.alloc(1_000_000, "\n").toString();
+      const result = await runScript(`cat | ${digest} $(cat)`, { input });
+      expect(result).toEqual({ stdout: `${digestOf(input)}\nexit=0\n`, stderr: "", exitCode: 0 });
+    });
   });
 
   describe.skipIf(!isLinux)("after a read of stdin failed", () => {
@@ -595,7 +619,114 @@ describe("cat (builtin) that stops reading stdin leaves the rest of stdin to the
   // fd, so a subprocess does not see them.
   test.todo("after the writer hung up: a later subprocess gets the rest");
 
-  // Not yet: a cat whose write is only slow (`cat | sleep 1`) keeps reading
-  // stdin into memory, and nothing is left for the next reader.
-  test.todo("a cat that waits for its write does not read ahead");
+  // After a hang-up the reader still reads on to EOF in one go, also when its
+  // cat waits for a write. The cat queues what that brings, and ends when all
+  // of it is written.
+  test.skipIf(!isLinux || !Bun.which("python3"))(
+    "after the writer hung up: a cat that waits for its write gets the rest",
+    async () => {
+      const queued = 600_000;
+      const result = await runScriptOnStdinFromPython(hungUpPipe, queued, `cat | ${digest}`);
+      const all = Buffer.alloc(queued, "x").toString();
+      expect(result).toEqual({ stdout: `${digestOf(all)}\nexit=0\n`, stderr: "", exitCode: 0 });
+    },
+  );
+});
+
+// Runs `script` in a child that gets `input` on stdin, followed by EOF. The
+// script has one command that asks RELEASE_URL before it goes on (`gate` or
+// `gatedDigest`), and the test answers as soon as that command has asked. The
+// rest of the script has been running since the child started.
+async function runGated(script: string, input: string, mode: "inherited" | "exec" = "inherited") {
+  const pinged = Promise.withResolvers<(response: Response) => void>();
+  await using server = Bun.serve({
+    port: 0,
+    fetch: () => new Promise<Response>(release => pinged.resolve(release)),
+  });
+  await using proc = Bun.spawn({
+    cmd: mode === "exec" ? [bunExe(), "exec", script] : [bunExe(), "-e", childCode(script, false)],
+    env: { ...builtinEnv, RELEASE_URL: server.url.href },
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const exitedEarly = proc.exited.then(code => {
+    throw new Error(`the child exited with code ${code} before the script asked to go on`);
+  });
+  // Not awaited here: with more input than the child takes while the command
+  // waits, the write and the close only complete once the script reads on.
+  proc.stdin.write(input);
+  const closed = proc.stdin.end();
+  const release = await Promise.race([pinged.promise, exitedEarly]);
+  release(new Response());
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited, closed]);
+  // As in `runScript`: `bun exec` prints no trailer.
+  if (mode === "exec") return { stdout: `${stdout}exit=${exitCode}\n`, stderr, exitCode: 0 };
+  return { stdout, stderr, exitCode };
+}
+
+// The builtin cat reads its input only as fast as its output is taken: while a
+// chunk waits to be written, the cat does not read the next one.
+describe("cat (builtin) that waits for its write", () => {
+  // 2 MiB in blocks that each start with their own number, so that a piece of
+  // it fits at one place only.
+  const blockSize = 4096;
+  const input = (() => {
+    const bytes = Buffer.alloc(2 * 1024 * 1024, "-");
+    for (let at = 0; at < bytes.length; at += blockSize) bytes.write(`\n${at / blockSize}\n`, at);
+    return bytes.toString();
+  })();
+  // The most the first cat may take while its consumer takes nothing: what the
+  // pipe to the consumer holds, and one more read (`readSize` at most) that
+  // waits to be written. The pipe is a socket pair on POSIX, 256 KiB at most
+  // with the default settings of Linux and macOS, and holds 64 KiB on Windows.
+  // A cat that does not wait takes the input as fast as the test writes it,
+  // more than the limit by the time the consumer, a bun process, has started
+  // and asked.
+  const readAheadLimit = 1024 * 1024;
+
+  describe("does not read ahead", () => {
+    test("a later builtin cat gets the rest", async () => {
+      const result = await runGated(`cat | ${gate}; cat`, input);
+      const rest = result.stdout.slice(0, -"exit=0\n".length);
+      expect({
+        stdoutIsTailOfInput: input.endsWith(rest),
+        trailer: result.stdout.slice(rest.length),
+        stderr: result.stderr,
+        exitCode: result.exitCode,
+      }).toEqual({ stdoutIsTailOfInput: true, trailer: "exit=0\n", stderr: "", exitCode: 0 });
+      expect(input.length - rest.length).toBeLessThanOrEqual(readAheadLimit);
+    });
+
+    // `bun exec` is how a package.json script runs the shell on Windows. The
+    // subprocess reads the fd itself, so what it gets was never read.
+    test("a later subprocess gets the rest (bun exec)", async () => {
+      const result = await runGated(`cat | ${gate}; ${digest}`, input, "exec");
+      const left = parseInt(result.stdout);
+      expect(result).toEqual({
+        stdout: `${digestOf(input.slice(input.length - (left || 0)))}\nexit=0\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(input.length - left).toBeLessThanOrEqual(readAheadLimit);
+    });
+  });
+
+  // The consumer only reads once the test has answered it. Until then the cat
+  // waits. Then it reads on, chunk by chunk, as its writes complete.
+  test("reads on when its consumer does", async () => {
+    const result = await runGated(`cat | ${gatedDigest}`, input);
+    expect(result).toEqual({ stdout: `${digestOf(input)}\nexit=0\n`, stderr: "", exitCode: 0 });
+  });
+
+  // The cat of a file operand has a reader of its own. It used to read the
+  // file to its end whatever its consumer took, and to finish there with
+  // chunks still queued. Windows only: on POSIX the builtin does not read a
+  // regular file yet.
+  test.skipIf(!isWindows)("a file operand arrives complete at a consumer that starts late", async () => {
+    using dir = tempDir("cat-operand", { input });
+    const file = join(String(dir), "input").replaceAll("\\", "/");
+    const result = await runGated(`cat "${file}" | ${gatedDigest}`, "");
+    expect(result).toEqual({ stdout: `${digestOf(input)}\nexit=0\n`, stderr: "", exitCode: 0 });
+  });
 });

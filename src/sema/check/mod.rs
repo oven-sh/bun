@@ -11,7 +11,9 @@ macro_rules! cat {
 
 mod alias;
 mod call;
+mod check_order;
 mod check_source_file;
+pub mod commit;
 mod context;
 mod decl;
 mod decorators;
@@ -59,6 +61,7 @@ mod instantiate;
 pub mod jsdoc;
 mod jsx;
 mod late_bound;
+mod links;
 mod loop_cycles;
 mod mapped;
 mod order;
@@ -69,6 +72,8 @@ mod related;
 mod related_expected;
 pub mod services;
 mod shape;
+mod shortcuts;
+mod signature_links;
 mod sink;
 pub mod spans;
 mod symbol_ids;
@@ -80,6 +85,7 @@ pub mod task;
 #[cfg(feature = "baselines")]
 #[path = "../standalone/type_writer.rs"]
 pub mod type_writer;
+mod union_property;
 mod unions;
 #[cfg(feature = "baselines")]
 #[path = "../standalone/visit_node.rs"]
@@ -91,8 +97,9 @@ use crate::hir::{self, *};
 use crate::local::MaybeLocal;
 use crate::program::{FileId, Files, Sym};
 use crate::session::{Arena, ArenaBox, Session};
-use crate::session::{ArenaHashMap, ArenaHashSet, ArenaVec, map_in, set_in, vec_from_iter_in};
-use crate::table::{Bases, Buffered, ById, ByIdIndirect, ByKey, ByNode, ByNodeIndirect, FileLocal};
+use crate::session::{ArenaVec, vec_from_iter_in};
+use crate::table::{At, Bases, Buffered, ById, ByIdIndirect, ByKey, ByNode, ByNodeIndirect};
+use crate::table::{FileLocal, OfExpressions};
 use crate::types::Prop;
 use crate::types::*;
 use crate::util::{FxHashMap, List};
@@ -118,7 +125,8 @@ use symbols::{AliasTarget, ExcludedMeanings};
 use task::{Open, OrderDependent, Stored, Task};
 
 pub use call::ResolvedCall;
-pub use shape::Members;
+pub use infer::INFERENCE_WALK_COUNTS;
+pub use shape::{MEMBER_COUNTS, Members};
 pub use spans::compute_ecma_line_starts;
 
 const RECENT_SIGS: usize = 256;
@@ -140,9 +148,9 @@ struct Provisional {
     serial: u64,
 }
 
-/// Calls `$each!` with the names of the `Buffered` fields of `Program`, in the order in which a
-/// barrier may publish them: a table whose entries hold handles of another one comes after it, so
-/// `shapes` is before `members`. This is the only list: a new `Buffered` field must be added here.
+/// Calls `$each!` with the names of the `Buffered` fields of `Program`. A table whose entries hold
+/// handles of another one comes after it, so `shapes` is before `members`. This is the only list:
+/// a new `Buffered` field must be added here.
 macro_rules! buffered_fields {
     ($each:ident) => {
         $each!(
@@ -154,7 +162,7 @@ macro_rules! buffered_fields {
             resolved_type_arguments instantiations key_properties composed outer_type_params declared_type_params
             identity_mappers identity_mappers_with_adopted base_types context_checked relations variances
             awaited_types mapped_prop_types reverse_mapped_cache optional_properties intersected_props
-            union_properties union_objects intersection_objects listed_properties keys_of_properties never_intersections mapped_targets inferred_constraints constraints plain_global_refs
+            union_properties union_objects intersection_objects keys_of_properties never_intersections mapped_targets inferred_constraints constraints plain_global_refs
             equivalent_base_types type_param_constraints enum_values type_param_defaults
             circular_type_param_defaults conditionals
             mapped_param_constraints
@@ -168,6 +176,16 @@ macro_rules! buffered_fields {
     };
 }
 pub(crate) use buffered_fields;
+
+/// The policy of the `Buffered` field `$field`, which says where a task has the task-local part of the table.
+macro_rules! buffered {
+    ($field:ident) => {
+        Buffered<At<{ task::slot_of(stringify!($field)) }>>
+    };
+    ($field:ident, of expressions) => {
+        Buffered<OfExpressions<{ task::slot_of(stringify!($field)) }>>
+    };
+}
 
 /// The same for the `FileLocal` fields. Only a pure cache is `FileLocal`: a function of entries
 /// that are published. What tsgo stores on a node, a symbol or a signature is `Buffered`, so that a
@@ -186,22 +204,17 @@ pub(crate) type AssignedSignature = (Option<SigId>, bool);
 pub struct Program<'s> {
     /// The arenas that the program and everything computed from it are in.
     pub session: &'s Session,
-    /// Whether a query of any task has been circular. Written at a barrier, from
-    /// `Finished::closed_a_cycle`.
+    /// True if a query of any task has been circular. Set at a commit, from `Task::closed_a_cycle`.
     pub closed_a_cycle: AtomicBool,
-    /// `Finished::order_dependent_variances` of the valid tasks so far: the first value in serial order for each symbol. Written at a
-    /// barrier (`Program::validate`), read on a cache miss in `variances_worker`.
-    serial_variances: Guarded<ArenaHashMap<'s, Sym, &'s [u8]>>,
-    /// `Finished::listings` of the valid tasks so far: the first in serial order for each
-    /// intersection. Written and read at a barrier (`Program::validate`).
-    serial_listings: Guarded<ArenaHashMap<'s, Sym, (bool, bool)>>,
-    /// A round of retries left every invalid task invalid: `Finished::listings` are not compared
-    /// for the rest of the step (`Program::stop_comparing_listings`).
-    listings_are_not_compared: Guarded<bool>,
+    /// `Task::order_dependent_variances` of the valid commits so far: the first value for each symbol. Written at a commit,
+    /// read on a cache miss in `variances_worker`. Any thread adds to this map, so it's on the regular heap: `release`.
+    serial_variances: Guarded<FxHashMap<Sym, &'s [u8]>>,
+    /// See `commit`.
+    commits: commit::Commits<'s>,
     /// `Checker::referenced_properties` of all tasks. The task that checks the file of a
     /// declaration does not see what another one has marked, so `finish_file` takes back what it
     /// has reported. A union: it does not depend on which task comes first.
-    /// Tasks write to this set and the next one directly. Add any other such field to `has_notes_outside_finished`.
+    /// Tasks write to this set and the next one directly.
     properties_referenced_before: Guarded<crate::util::FxHashSet<Sym>>,
     /// What `check_external_emit_helpers_of_later_files` has reported, of all tasks. `finish_file`
     /// keeps the first of each. It does not depend on which task comes first.
@@ -215,190 +228,268 @@ pub struct Program<'s> {
 
     /// `links.resolvedType` of an expression (`checkExpressionCached`). Also serves as a memo where
     /// tsgo rechecks an expression.
-    expr_types: ByNode<(FileId, ExprId), TypeId, Buffered, &'s Session>,
-    type_node_types: ByNode<(FileId, TypeNodeId), TypeId, Buffered, &'s Session>,
+    expr_types:
+        ByNode<(FileId, ExprId), TypeId, buffered!(expr_types, of expressions), &'s Session>,
+    type_node_types: ByNode<(FileId, TypeNodeId), TypeId, buffered!(type_node_types), &'s Session>,
     /// The flag, here and in `pat_types`, `declared_types` and `constraints`: the type is the result of a resolution cycle
     /// (`!popTypeResolution()`).
-    fn_return_types: ByNode<(FileId, FnId), (TypeId, bool), Buffered, &'s Session>,
-    pat_types: ByNode<(FileId, PatId), (TypeId, bool), Buffered, &'s Session>,
-    literal_prop_types: ByNode<(FileId, PropId), TypeId, Buffered, &'s Session>,
-    symbol_types: ByNode<Sym, TypeId, Buffered, &'s Session>,
+    fn_return_types:
+        ByNode<(FileId, FnId), (TypeId, bool), buffered!(fn_return_types), &'s Session>,
+    pat_types: ByNode<(FileId, PatId), (TypeId, bool), buffered!(pat_types), &'s Session>,
+    literal_prop_types:
+        ByNode<(FileId, PropId), TypeId, buffered!(literal_prop_types), &'s Session>,
+    symbol_types: ByNode<Sym, TypeId, buffered!(symbol_types), &'s Session>,
     /// The parameters for which `parameterInitializerContainsUndefined` closed a cycle. Their entry in `pat_types` is older than the cycle.
-    circular_initializers: ByNode<(FileId, PatId), (), Buffered, &'s Session>,
+    circular_initializers:
+        ByNode<(FileId, PatId), (), buffered!(circular_initializers), &'s Session>,
     /// The symbols whose type is the result of a resolution cycle.
-    circular_symbols: ByNode<Sym, (), Buffered, &'s Session>,
+    circular_symbols: ByNode<Sym, (), buffered!(circular_symbols), &'s Session>,
     /// The classes and interfaces whose base types were requested while they were being resolved
     /// (2310).
-    circular_base_types: ByNode<Sym, (), Buffered, &'s Session>,
+    circular_base_types: ByNode<Sym, (), buffered!(circular_base_types), &'s Session>,
     /// The aliases whose `aliasTarget` is `unknownSymbol` because `resolveAlias` found a cycle
     /// through a type (2303).
-    circular_alias_targets: ByNode<Sym, (), Buffered, &'s Session>,
+    circular_alias_targets: ByNode<Sym, (), buffered!(circular_alias_targets), &'s Session>,
     /// The mapped types whose key has a circular constraint (2313), by the node and the mapper:
     /// their `constraintType` is `errorType`.
-    circular_mapped_constraints: ByKey<(FileId, TypeNodeId, MapperId), (), Buffered, &'s Session>,
+    circular_mapped_constraints: ByKey<
+        (FileId, TypeNodeId, MapperId),
+        (),
+        buffered!(circular_mapped_constraints),
+        &'s Session,
+    >,
     /// The annotations of the setters whose `writeType` is `anyType` because
     /// `getWriteTypeOfAccessors` found a cycle (2502).
-    circular_write_types: ByKey<(FileId, TypeNodeId), (), Buffered, &'s Session>,
+    circular_write_types:
+        ByKey<(FileId, TypeNodeId), (), buffered!(circular_write_types), &'s Session>,
     /// The functions for which 7023 was reported and whose entry in `fn_return_types` is not the result of the cycle: it is in flight and
     /// keeps its inferred type, or the cycle is that of a composite signature.
-    circular_returns: ByNode<(FileId, FnId), (), Buffered, &'s Session>,
+    circular_returns: ByNode<(FileId, FnId), (), buffered!(circular_returns), &'s Session>,
     /// The calls that found no signature among members that were in place, or while index
     /// signatures were being computed. The callee may be the static side of a class whose members
     /// were in place and whose signatures were not (`resolveAnonymousTypeMembers`).
-    calls_before_signatures: ByNode<(FileId, ExprId), (), Buffered, &'s Session>,
+    calls_before_signatures:
+        ByNode<(FileId, ExprId), (), buffered!(calls_before_signatures), &'s Session>,
     /// References whose control flow walk reached depth 2000 (2563). `getTypeAtFlowNode`
-    flows_too_deep: ByNode<(FileId, ExprId), (), Buffered, &'s Session>,
+    flows_too_deep: ByNode<(FileId, ExprId), (), buffered!(flows_too_deep), &'s Session>,
     /// The same for the references that are no expressions: a binding pattern, a function, the name
     /// of a parameter, a synthesized access. `FindAncestor(reference, IsFunctionOrModuleBlock)`.
-    blocks_too_large_for_flow_analysis: ByKey<(FileId, Node), (), Buffered, &'s Session>,
+    blocks_too_large_for_flow_analysis:
+        ByKey<(FileId, Node), (), buffered!(blocks_too_large_for_flow_analysis), &'s Session>,
     /// `getEffectsSignature`, by call.
-    effects_signatures: ByNode<(FileId, ExprId), Option<SigId>, Buffered, &'s Session>,
+    effects_signatures: ByNode<
+        (FileId, ExprId),
+        Option<SigId>,
+        buffered!(effects_signatures, of expressions),
+        &'s Session,
+    >,
     /// `links.effectsSignature` of the calls `getEffectsSignature` has to resolve: generic or overloaded.
-    resolved_effects_signatures: ByNode<(FileId, ExprId), Option<SigId>, Buffered, &'s Session>,
+    resolved_effects_signatures: ByNode<
+        (FileId, ExprId),
+        Option<SigId>,
+        buffered!(resolved_effects_signatures, of expressions),
+        &'s Session,
+    >,
     /// `links.contextFreeType` of an expression (`getContextFreeTypeOfExpression`). `context_free_types` is that of a function.
-    context_free_expr_types: ByNode<(FileId, ExprId), TypeId, Buffered, &'s Session>,
+    context_free_expr_types: ByNode<
+        (FileId, ExprId),
+        TypeId,
+        buffered!(context_free_expr_types, of expressions),
+        &'s Session,
+    >,
     /// `flowNodeReachable`
     flow_node_reachable: ByNode<(FileId, crate::bind::FlowId), bool, FileLocal, &'s Session>,
     /// `sig.resolvedTypePredicate` for a function without a return type annotation.
-    type_predicates_from_body:
-        ByNodeIndirect<(FileId, FnId), Option<decl::Predicate>, Buffered, &'s Session>,
+    type_predicates_from_body: ByNodeIndirect<
+        (FileId, FnId),
+        Option<decl::Predicate>,
+        buffered!(type_predicates_from_body),
+        &'s Session,
+    >,
     /// `resolvedBaseConstructorType` of each class.
-    base_constructor_types: ByNode<Sym, TypeId, Buffered, &'s Session>,
+    base_constructor_types: ByNode<Sym, TypeId, buffered!(base_constructor_types), &'s Session>,
     /// `symbolReferenceLinks`: the symbols `Resolve` found when called with `isUse`, where the
     /// caller records that. `check_unused` computes the rest.
-    symbol_reference_links: ByNode<Sym, (), Buffered, &'s Session>,
+    symbol_reference_links: ByNode<Sym, (), buffered!(symbol_reference_links), &'s Session>,
     /// `GetGlobalDiagnostics`: errors that belong to no file. `Cannot find global type 'Array'.`
     /// The code and the message arguments.
     global_errors: bun_threading::Guarded<std::collections::BTreeSet<(u32, Vec<Vec<u8>>)>>,
     sink: sink::Sink<'s>,
     /// `MappedType.containsError`
-    mapped_types_with_errors: ById<TypeId, (), Buffered, &'s Session>,
+    mapped_types_with_errors: ById<TypeId, (), buffered!(mapped_types_with_errors), &'s Session>,
     /// `NodeCheckFlagsInitializerIsUndefinedComputed` and `NodeCheckFlagsInitializerIsUndefined`
-    initializer_is_undefined: ByNode<(FileId, ParamId), bool, Buffered, &'s Session>,
+    initializer_is_undefined:
+        ByNode<(FileId, ParamId), bool, buffered!(initializer_is_undefined), &'s Session>,
     /// `links.resolvedType != nil` of the symbol of a parameter that `is_resolved_on_request`: the
     /// type is in `pat_types`, with or without it.
-    resolved_parameter_symbols: ByNode<(FileId, ParamId), (), Buffered, &'s Session>,
+    resolved_parameter_symbols:
+        ByNode<(FileId, ParamId), (), buffered!(resolved_parameter_symbols), &'s Session>,
     /// See `is_untyped_signature_in_js_file`.
-    untyped_signatures_in_js: ByNode<(FileId, FnId), bool, Buffered, &'s Session>,
+    untyped_signatures_in_js:
+        ByNode<(FileId, FnId), bool, buffered!(untyped_signatures_in_js), &'s Session>,
     /// The flag, of a type alias: `typeAliasLinks.typeParameters` is nil, because no evaluation has ended with a
     /// `popTypeResolution` that succeeded.
-    declared_types: ByNode<Sym, (TypeId, bool), Buffered, &'s Session>,
-    shapes: ByIdIndirect<TypeId, shape::Resolved<'s>, Buffered, &'s Session>,
+    declared_types: ByNode<Sym, (TypeId, bool), buffered!(declared_types), &'s Session>,
+    shapes: ByIdIndirect<TypeId, shape::Resolved<'s>, buffered!(shapes), &'s Session>,
     /// `intersectionTypes`, for sets that contain a union.
-    distributed_intersections: ByKey<unions::IntersectionKey, TypeId, Buffered, &'s Session>,
-    sig_params: ByIdIndirect<SigId, ArenaBox<'s, [SigParam]>, Buffered, &'s Session>,
-    sig_type_params: ByIdIndirect<SigId, ArenaBox<'s, [TypeId]>, Buffered, &'s Session>,
+    distributed_intersections:
+        ByKey<unions::IntersectionKey, TypeId, buffered!(distributed_intersections), &'s Session>,
+    sig_params: ByIdIndirect<SigId, ArenaBox<'s, [SigParam]>, buffered!(sig_params), &'s Session>,
+    sig_type_params:
+        ByIdIndirect<SigId, ArenaBox<'s, [TypeId]>, buffered!(sig_type_params), &'s Session>,
     /// `Signature.resolvedReturnType` of a signature with a `target`.
-    resolved_return_types: ById<SigId, TypeId, Buffered, &'s Session>,
-    call_signatures: ByIdIndirect<TypeId, ArenaBox<'s, [SigId]>, Buffered, &'s Session>,
-    construct_signatures: ByIdIndirect<TypeId, ArenaBox<'s, [SigId]>, Buffered, &'s Session>,
+    resolved_return_types: ById<SigId, TypeId, buffered!(resolved_return_types), &'s Session>,
+    call_signatures:
+        ByIdIndirect<TypeId, ArenaBox<'s, [SigId]>, buffered!(call_signatures), &'s Session>,
+    construct_signatures:
+        ByIdIndirect<TypeId, ArenaBox<'s, [SigId]>, buffered!(construct_signatures), &'s Session>,
     /// Keyed by the first of several signatures: the list they are in, then the same list in the
     /// order `candidates_in_order` produces.
-    candidate_orders: ByIdIndirect<SigId, ArenaBox<'s, [SigId]>, Buffered, &'s Session>,
+    candidate_orders:
+        ByIdIndirect<SigId, ArenaBox<'s, [SigId]>, buffered!(candidate_orders), &'s Session>,
     /// The result of `members` for a type, once it is final.
-    members: ByIdIndirect<TypeId, shape::CachedMembers, Buffered, &'s Session>,
+    members: ByIdIndirect<TypeId, shape::CachedMembers, buffered!(members), &'s Session>,
     /// `TypeReference.resolvedTypeArguments` of a deferred type reference.
-    resolved_type_arguments: ByIdIndirect<TypeId, ArenaBox<'s, [TypeId]>, Buffered, &'s Session>,
-    instantiations: ByKey<(TypeId, MapperId), TypeId, Buffered, &'s Session>,
+    resolved_type_arguments: ByIdIndirect<
+        TypeId,
+        ArenaBox<'s, [TypeId]>,
+        buffered!(resolved_type_arguments),
+        &'s Session,
+    >,
+    instantiations: ByKey<(TypeId, MapperId), TypeId, buffered!(instantiations), &'s Session>,
     /// `UnionType.keyPropertyName`, `constituentMap`
-    key_properties:
-        ByIdIndirect<TypeId, Option<(Atom, FxHashMap<TypeId, TypeId>)>, Buffered, &'s Session>,
+    key_properties: ByIdIndirect<
+        TypeId,
+        Option<(Atom, FxHashMap<TypeId, TypeId>)>,
+        buffered!(key_properties),
+        &'s Session,
+    >,
     /// `compose`
-    composed: ByKey<(MapperId, MapperId), MapperId, Buffered, &'s Session>,
+    composed: ByKey<(MapperId, MapperId), MapperId, buffered!(composed), &'s Session>,
     outer_type_params: ByNodeIndirect<
         (FileId, crate::bind::ScopeId),
         ArenaBox<'s, [TypeId]>,
-        Buffered,
+        buffered!(outer_type_params),
         &'s Session,
     >,
     /// `type_param`
-    declared_type_params: ByNode<(FileId, TypeParamId), TypeId, Buffered, &'s Session>,
+    declared_type_params:
+        ByNode<(FileId, TypeParamId), TypeId, buffered!(declared_type_params), &'s Session>,
     /// `identity_mapper`
-    identity_mappers: ByNode<(FileId, crate::bind::ScopeId), MapperId, Buffered, &'s Session>,
-    identity_mappers_with_adopted:
-        ByNode<(FileId, crate::bind::ScopeId), MapperId, Buffered, &'s Session>,
-    base_types: ByNodeIndirect<Sym, ArenaBox<'s, [TypeId]>, Buffered, &'s Session>,
+    identity_mappers:
+        ByNode<(FileId, crate::bind::ScopeId), MapperId, buffered!(identity_mappers), &'s Session>,
+    identity_mappers_with_adopted: ByNode<
+        (FileId, crate::bind::ScopeId),
+        MapperId,
+        buffered!(identity_mappers_with_adopted),
+        &'s Session,
+    >,
+    base_types: ByNodeIndirect<Sym, ArenaBox<'s, [TypeId]>, buffered!(base_types), &'s Session>,
     /// `links.resolvedSignature`. `Checker::cached_resolved_signature` reads it together with `call_return_types`, `cache_call` writes both.
-    calls: ByNode<(FileId, ExprId), Option<SigId>, Buffered, &'s Session>,
+    calls: ByNode<(FileId, ExprId), Option<SigId>, buffered!(calls, of expressions), &'s Session>,
     /// `ResolvedCall::ret` of the entry of `calls`. A cell has 32 bits.
-    call_return_types: ByNode<(FileId, ExprId), TypeId, Buffered, &'s Session>,
+    call_return_types:
+        ByNode<(FileId, ExprId), TypeId, buffered!(call_return_types, of expressions), &'s Session>,
     /// `links.deferredNodes` for a file that the task was not checking at the time. See
     /// `check_node_deferred`.
-    deferred_nodes: ByNode<(FileId, ExprId), (), Buffered, &'s Session>,
+    deferred_nodes: ByNode<(FileId, ExprId), (), buffered!(deferred_nodes), &'s Session>,
     /// `links.jsxFragmentType` of a source file.
-    jsx_fragment_types: ByKey<FileId, TypeId, Buffered, &'s Session>,
+    jsx_fragment_types: ByKey<FileId, TypeId, buffered!(jsx_fragment_types), &'s Session>,
     /// `NodeCheckFlagsAssignmentsMarked` of a function or a source file. `true`: it had no parent
     /// with the flag, so `markNodeAssignments` has walked it. `markedAssignmentSymbolLinks` follows
     /// from the walks. Only for a file that `has_order_dependent_assignment_marks`. For
     /// `Node::NONE` see `are_assignments_marked_in_program_order`.
-    assignments_marked: ByKey<(FileId, Node), bool, Buffered, &'s Session>,
+    assignments_marked: ByKey<(FileId, Node), bool, buffered!(assignments_marked), &'s Session>,
     /// `getEffectiveFirstArgumentForJsxSignature` of the signature a JSX element is resolved to,
     /// keyed by the element.
     jsx_attributes_types: ByNode<(FileId, JsxId), TypeId, FileLocal, &'s Session>,
     /// The diagnostics `resolveCall` reported for a call at its final resolution, with their
     /// related information.
-    call_diagnostics: ByNodeIndirect<(FileId, ExprId), Vec<Reported>, Buffered, &'s Session>,
+    call_diagnostics:
+        ByNodeIndirect<(FileId, ExprId), Vec<Reported>, buffered!(call_diagnostics), &'s Session>,
     /// `NodeCheckFlagsContextChecked`, with the signature passed to
     /// `assignContextualParameterTypes`. `None`: it was not called.
-    context_checked: ByNode<(FileId, FnId), AssignedSignature, Buffered, &'s Session>,
+    context_checked:
+        ByNode<(FileId, FnId), AssignedSignature, buffered!(context_checked), &'s Session>,
     /// `contextFreeTypes` for a function.
-    context_free_types: ByNode<(FileId, FnId), TypeId, Buffered, &'s Session>,
+    context_free_types: ByNode<(FileId, FnId), TypeId, buffered!(context_free_types), &'s Session>,
     /// The diagnostics `resolveCall` reported for a call the first time it was resolved again while
     /// its resolution was in progress, with their related information.
-    diagnostics_of_re_resolved_calls:
-        ByNodeIndirect<(FileId, ExprId), Vec<Reported>, Buffered, &'s Session>,
-    relations: ByKey<relate::Key, u8, Buffered, &'s Session>,
-    variances: ByNodeIndirect<Sym, &'s [u8], Buffered, &'s Session>,
+    diagnostics_of_re_resolved_calls: ByNodeIndirect<
+        (FileId, ExprId),
+        Vec<Reported>,
+        buffered!(diagnostics_of_re_resolved_calls),
+        &'s Session,
+    >,
+    relations: ByKey<relate::Key, u8, buffered!(relations), &'s Session>,
+    variances: ByNodeIndirect<Sym, &'s [u8], buffered!(variances), &'s Session>,
     /// `resolvedType` of a property declared by assignment declarations, keyed by the first
     /// declaration.
     /// `CachedTypeKindAwaitedType`. `None`: `awaited_no_alias` with an empty `awaitedTypeStack` has
     /// no result.
-    awaited_types: ById<TypeId, Option<TypeId>, Buffered, &'s Session>,
+    awaited_types: ById<TypeId, Option<TypeId>, buffered!(awaited_types), &'s Session>,
     /// `resolvedType` of a property of a mapped type, keyed by the mapped type and the property name. `getTypeOfMappedSymbol`
-    mapped_prop_types: ByKey<(TypeId, Atom), TypeId, Buffered, &'s Session>,
+    mapped_prop_types: ByKey<(TypeId, Atom), TypeId, buffered!(mapped_prop_types), &'s Session>,
     /// `reverseMappedCache`
-    reverse_mapped_cache: ByKey<(TypeId, TypeId, TypeId), Option<TypeId>, Buffered, &'s Session>,
+    reverse_mapped_cache: ByKey<
+        (TypeId, TypeId, TypeId),
+        Option<TypeId>,
+        buffered!(reverse_mapped_cache),
+        &'s Session,
+    >,
     /// See `cached_optional_property`.
-    optional_properties: ById<TypeId, TypeId, Buffered, &'s Session>,
-    intersected_props: ByKey<(TypeId, Atom), TypeId, Buffered, &'s Session>,
+    optional_properties: ById<TypeId, TypeId, buffered!(optional_properties), &'s Session>,
+    intersected_props: ByKey<(TypeId, Atom), TypeId, buffered!(intersected_props), &'s Session>,
     /// `UnionOrIntersectionType.propertyCache`. A synthetic type holds the property.
-    union_properties: ByKey<(TypeId, Atom), Option<TypeId>, Buffered, &'s Session>,
+    union_properties:
+        ByKey<(TypeId, Atom), Option<TypeId>, buffered!(union_properties), &'s Session>,
     /// `UnionOrIntersectionType.resolvedProperties` of a union: `union_as_object`.
-    union_objects: ById<TypeId, TypeId, Buffered, &'s Session>,
+    union_objects: ById<TypeId, TypeId, buffered!(union_objects), &'s Session>,
     /// An object type with the signatures and the index signatures of an intersection:
     /// `structured_members`.
-    intersection_objects: ById<TypeId, TypeId, Buffered, &'s Session>,
-    /// `resolvedProperties` of an intersection, where `getPropertiesOfUnionOrIntersectionType`
-    /// assigned it while the members of a constituent were still in place: an object type with
-    /// the properties it found. `getPropertyOfType` finds the others by name all the same.
-    listed_properties: ById<TypeId, TypeId, Buffered, &'s Session>,
+    intersection_objects: ById<TypeId, TypeId, buffered!(intersection_objects), &'s Session>,
     /// `get_literal_type_from_properties` without index flags. Instantiations under several
     /// mappers arrive at one object type.
-    keys_of_properties: ById<TypeId, TypeId, Buffered, &'s Session>,
-    never_intersections: ById<TypeId, bool, Buffered, &'s Session>,
+    keys_of_properties: ById<TypeId, TypeId, buffered!(keys_of_properties), &'s Session>,
+    never_intersections: ById<TypeId, bool, buffered!(never_intersections), &'s Session>,
     /// `getMappedTargetWithSymbol` of a mapped type.
-    mapped_targets: ById<TypeId, TypeId, Buffered, &'s Session>,
-    inferred_constraints: ById<TypeId, Option<TypeId>, Buffered, &'s Session>,
+    mapped_targets: ById<TypeId, TypeId, buffered!(mapped_targets), &'s Session>,
+    inferred_constraints:
+        ById<TypeId, Option<TypeId>, buffered!(inferred_constraints), &'s Session>,
     /// `ConstrainedType.resolvedBaseConstraint`: `None` is `noConstraintType`, the flag
     /// `circularConstraintType`.
-    constraints: ById<TypeId, (Option<TypeId>, bool), Buffered, &'s Session>,
+    constraints: ById<TypeId, (Option<TypeId>, bool), buffered!(constraints), &'s Session>,
     /// `global_ref` of a name, without type arguments.
-    plain_global_refs: ById<Atom, TypeId, Buffered, &'s Session>,
+    plain_global_refs: ById<Atom, TypeId, buffered!(plain_global_refs), &'s Session>,
     /// `CachedTypeKindEquivalentBaseType`
-    equivalent_base_types: ById<TypeId, Option<TypeId>, Buffered, &'s Session>,
+    equivalent_base_types:
+        ById<TypeId, Option<TypeId>, buffered!(equivalent_base_types), &'s Session>,
     /// `constraint_of_type_param` of a type parameter, once it is final.
-    type_param_constraints: ById<TypeId, Option<TypeId>, Buffered, &'s Session>,
-    enum_values: ByNodeIndirect<(FileId, EnumMemberId), decl::Evaluated, Buffered, &'s Session>,
+    type_param_constraints:
+        ById<TypeId, Option<TypeId>, buffered!(type_param_constraints), &'s Session>,
+    enum_values: ByNodeIndirect<
+        (FileId, EnumMemberId),
+        decl::Evaluated,
+        buffered!(enum_values),
+        &'s Session,
+    >,
     /// `default_of_type_param` of a type parameter, once it is final.
-    type_param_defaults: ById<TypeId, Option<TypeId>, Buffered, &'s Session>,
+    type_param_defaults: ById<TypeId, Option<TypeId>, buffered!(type_param_defaults), &'s Session>,
     /// The type parameters whose `resolvedDefaultType` is `circularConstraintType`.
-    circular_type_param_defaults: ById<TypeId, (), Buffered, &'s Session>,
+    circular_type_param_defaults:
+        ById<TypeId, (), buffered!(circular_type_param_defaults), &'s Session>,
     /// `ConditionalRoot.instantiations`, for the keys without an alias. The flag: nothing moved
     /// `non_cacheable_mark` while the type was computed, so `getConditionalType` returns it again.
-    conditionals: ByKey<(FileId, TypeNodeId, MapperId), (TypeId, bool), Buffered, &'s Session>,
+    conditionals:
+        ByKey<(FileId, TypeNodeId, MapperId), (TypeId, bool), buffered!(conditionals), &'s Session>,
     /// The constraint of the parameter of each mapped type, if any. See
     /// `constraint_of_mapped_param`.
-    mapped_param_constraints: ByNode<(FileId, TypeNodeId), Option<TypeId>, Buffered, &'s Session>,
+    mapped_param_constraints: ByNode<
+        (FileId, TypeNodeId),
+        Option<TypeId>,
+        buffered!(mapped_param_constraints),
+        &'s Session,
+    >,
 }
 
 /// No id: the arguments are printed when it is created, and `take_reported_from` gives no table a
@@ -407,7 +498,6 @@ impl crate::types::Follow for Reported {
     fn visit<V: crate::types::Visitor>(&self, visitor: &mut V) {
         visitor.plain(&(self.file.0, self.start, self.end, self.code));
     }
-    fn follow(&mut self, _: &crate::types::Link) {}
 }
 
 impl crate::types::Follow for decl::Predicate {
@@ -422,11 +512,13 @@ impl crate::types::Follow for decl::Predicate {
         name.visit(visitor);
         ty.visit(visitor);
     }
-    fn follow(&mut self, link: &crate::types::Link) {
-        self.name.follow(link);
-        self.ty.follow(link);
-    }
 }
+
+/// `Checker::rechecked_exprs` and `Checker::rechecked_members`.
+type Rechecked = (
+    FxHashMap<(FileId, ExprId), TypeId>,
+    FxHashMap<(FileId, PropId), TypeId>,
+);
 
 impl<'s> Program<'s> {
     /// The footprint of the shared part of every table, with the name of the field. It reads every
@@ -455,13 +547,13 @@ impl<'s> Program<'s> {
         let scopes = bases(|m| m.bound.scopes.len());
         let type_params = bases(|m| m.hir.type_params.len());
         let symbols = bases(|m| m.bound.symbols.len());
-        let types = TypeStore::new_in(session);
+        let mut types = TypeStore::new_in(session, files.atoms);
         let arena = session.arena();
         let auto_array_type =
             types.publish_constant(match files.global_type_of_arity(known::Array, 1) {
                 Some(target) => TypeData::Ref {
                     target,
-                    args: ArenaBox::copy_from_slice_in(&[TypeId::AUTO], arena).into(),
+                    args: TypeArguments::given_in(&[TypeId::AUTO], arena),
                 },
                 // It is a marker: without a global `Array` it is still a distinct type.
                 None => TypeData::Synth(ArenaBox::new_in(
@@ -472,12 +564,13 @@ impl<'s> Program<'s> {
                     arena,
                 )),
             });
+        types.share_records();
         let mut program = Program {
             session,
             closed_a_cycle: Default::default(),
-            serial_variances: Guarded::new(map_in(session.arena())),
-            serial_listings: Guarded::new(map_in(session.arena())),
-            listings_are_not_compared: Guarded::new(false),
+            serial_variances: Guarded::default(),
+            commits: commit::Commits::new_in(session.arena())
+                .for_files(files.ranks(), session.arena()),
             properties_referenced_before: Default::default(),
             emit_helper_errors_of_earlier_files: Default::default(),
             auto_array_type,
@@ -554,7 +647,6 @@ impl<'s> Program<'s> {
             mapped_targets: ById::new_in(session),
             union_objects: ById::new_in(session),
             intersection_objects: ById::new_in(session),
-            listed_properties: ById::new_in(session),
             keys_of_properties: ById::new_in(session),
             inferred_constraints: ById::new_in(session),
             constraints: ById::new_in(session),
@@ -579,6 +671,9 @@ impl<'s> Program<'s> {
         let session = self.session;
         let no_nodes = Bases::none_in(&session);
         self.sink.release();
+        self.types.release();
+        self.commits.release();
+        *self.serial_variances.get_mut() = FxHashMap::default();
         *self.global_errors.get_mut() = Default::default();
         self.call_diagnostics = ByNodeIndirect::new_in(&no_nodes, session);
         self.diagnostics_of_re_resolved_calls = ByNodeIndirect::new_in(&no_nodes, session);
@@ -625,15 +720,15 @@ impl<'s> Program<'s> {
 
     pub fn checker(&self) -> Checker<'_, 's> {
         let arena = self.session.arena();
+        let task = Task::new_in(arena, &self.types);
 
         Checker {
             p: self,
             arena,
-            task: Task::new_in(arena),
+            task,
             left_frame: None,
             files: self.files,
             variance_type_parameter: Atom::NONE,
-            first_jsx: (FileId(u32::MAX), None, None),
             auto_array_type: self.auto_array_type,
             stack: Vec::new(),
             in_progress: [0; 1024],
@@ -652,6 +747,8 @@ impl<'s> Program<'s> {
             late_bound_members: Default::default(),
             late_bound_declarations: Default::default(),
             this_types: Default::default(),
+            this_types_in_progress: Vec::new(),
+            thisless_members: Default::default(),
             instantiated_symbol_links: Default::default(),
             late_binding: Vec::new(),
             late_binding_by_symbol: Vec::new(),
@@ -691,6 +788,7 @@ impl<'s> Program<'s> {
             circular_before_parameter_symbol: Default::default(),
             parameter_symbol_taken_as_unresolved: None,
             taints: 0,
+            incomplete_flow_taints: 0,
             checked_type_references: (None, Vec::new()),
             taints_before_patterns: 0,
             cycles: 0,
@@ -707,14 +805,20 @@ impl<'s> Program<'s> {
             type_only_node: None,
             rechecked_exprs: Default::default(),
             rechecked_members: Default::default(),
+            spare_rechecked: Vec::new(),
             literals_checked_under: Default::default(),
             inference_contexts: Vec::new(),
+            inference_memo: Default::default(),
             instantiation_depth: 0,
             outermost_comparison: None,
             instantiation_count: 0,
             instantiations_computed: 0,
             recent_instantiations: Default::default(),
             recent_composed: Default::default(),
+            recent_const_type_variables: Default::default(),
+            recent_derived_sigs: Default::default(),
+            known_mapped_prop_types: Default::default(),
+            props_without_write_types: Default::default(),
             unresolved_members: Vec::new(),
             unresolved_members_hits: 0,
             members_in_place_hits: 0,
@@ -723,28 +827,40 @@ impl<'s> Program<'s> {
             active_mappers: Default::default(),
             limits: 0,
             instantiation_limit_hits: 0,
+            limits_in_earlier_files: 0,
             comparisons_of_deeply_nested_types: 0,
+            relations_of_this_task: Default::default(),
+            keeps_relations_for_this_task: false,
+            constraints_of_this_task: Default::default(),
+            constraint_cuts: Default::default(),
+            instantiations_in_progress: Vec::new(),
+            keys_of_properties_in_progress: Vec::new(),
             instantiations_up_to_a_limit: Default::default(),
             relations_cut_short: Default::default(),
             enum_relation: Default::default(),
             enum_literal_types: Default::default(),
-            unknown_like_unions: Default::default(),
+            task_facts: Default::default(),
+            counterparts_of_literals: Default::default(),
             relation_sizes: [0; 6],
-            generic_relation_entries_not_published: 0,
             variances_cut_short: Default::default(),
             free_relaters: Vec::new(),
+            spare_inferences: Vec::new(),
             reliability: 0,
             in_variance_computation: false,
             is_marker_comparison: false,
             is_trial_comparison: false,
             variances_in_progress: Vec::new(),
-            variance_cycles: 0,
+            variances_marked_empty: Vec::new(),
+            suspended_variances: Vec::new(),
+            in_progress_variance_reads: 0,
             variances_measured: Vec::new(),
             failed_type_argument: 0,
             order_dependent: Default::default(),
             order_dependent_filter: 0,
+            order_dependent_uses: 0,
             simplified: Default::default(),
             inherited_names: [0; 4],
+            inherited_name_set: None,
             cond_distributive_memo: Default::default(),
             relation_too_complex: false,
             relation_too_deep: false,
@@ -756,11 +872,14 @@ impl<'s> Program<'s> {
             is_checking_in_flow_loop: false,
             never_checked: Default::default(),
             never_in_progress: Vec::new(),
+            reduced_unions: Default::default(),
+            union_members: Default::default(),
+            unlisted_intersections: Default::default(),
+            reductions: Default::default(),
             never_in_progress_from: Vec::new(),
             reverse_mapped_inferences_from: Vec::new(),
             defaults_in_progress: Vec::new(),
             identical_base_types_in_progress: Vec::new(),
-            generic_object_flags: FxHashMap::default(),
             names_of_small_numbers: Default::default(),
             generic_mapped_types_in_progress: Vec::new(),
             generic_mapped_types_cut_short: Vec::new(),
@@ -774,6 +893,8 @@ impl<'s> Program<'s> {
             recent_unions: Default::default(),
             recent_unreduced_unions: Default::default(),
             unions_of_union_types: Default::default(),
+            union_calls: Default::default(),
+            wholes_of_unions: Default::default(),
             constraint_stack: Vec::new(),
             constraints_marked_circular: Vec::new(),
             circular_constraint_origins: Vec::new(),
@@ -798,15 +919,21 @@ impl<'s> Program<'s> {
             declaration_indent: None,
             has_ambient_context: false,
             suggestions_among_globals: Default::default(),
-            alias_symbols: Default::default(),
-            could_contain_type_variables: Default::default(),
+            checked_leaves: Default::default(),
+            links: Default::default(),
+            signature_links: Default::default(),
             has_compared_without_total_order: std::cell::Cell::new(false),
-            symbol_ids: None,
             parsed_again_for_await: None,
             flow_analysis_disabled: Vec::new(),
             inline_level: 0,
             walk_declared: TypeId::NEVER,
             constants_in_evaluation: Vec::new(),
+            recent_identity_mappers: Box::new(
+                [(
+                    (FileId(u32::MAX), crate::bind::ScopeId::NONE),
+                    MapperId::IDENTITY,
+                ); decl::RECENT_SCOPES],
+            ),
             recent_sig_params: Box::new([(SigId(u32::MAX), &[] as &[SigParam]); RECENT_SIGS]),
             recent_sig_type_params: Box::new([(SigId(u32::MAX), &[] as &[TypeId]); RECENT_SIGS]),
             awaiting: Vec::new(),
@@ -829,14 +956,16 @@ impl<'s> Program<'s> {
             reverse_expanding: 0,
             flow_memo: Default::default(),
             discriminated: Default::default(),
+            conditional_roots: Default::default(),
             contextual_properties: Default::default(),
             apparent_types_of_intersections: Default::default(),
+            apparent_types_with_this_argument: Default::default(),
             deferred_nodes: Default::default(),
             deferred_type_parameters: Vec::new(),
-            emit_helpers_checked_early: Vec::new(),
-            emit_helpers_checked_elsewhere: Vec::new(),
             unresolved_identifiers: Vec::new(),
             unknown_symbols: Default::default(),
+            withheld_until_the_file_ends: Vec::new(),
+            files_with_errors: Default::default(),
             alias_targets_reported: Default::default(),
             alias_targets_in_progress: Vec::new(),
             is_deferred_node: Default::default(),
@@ -865,13 +994,13 @@ impl<'s> Program<'s> {
             restrictive_instantiations_kept: Default::default(),
             kept_a_renamed_param: Default::default(),
             instantiating_generic_argument: None,
-            inferred_between_same_extends: Default::default(),
             prepared: Default::default(),
             last_prepared: (FileId(u32::MAX), FnId::NONE),
             prepared_exprs: (FileId(u32::MAX), Vec::new()),
             stack_base: stack_pointer(),
             stack_limit: 6 << 20,
             work: 0,
+            scopes_begun: 0,
             work_trap: WORK_TRAP_DISARMED,
             refused_expressions: Vec::new(),
             side_effect_free: Default::default(),
@@ -898,6 +1027,8 @@ struct Scope {
     frames: u32,
     /// `non_cacheable_mark()` when it began, for `end_scope_by_counters`.
     counters: (u64, u64),
+    /// `Task::held_back` when it began, for `Stored::since`.
+    held_back: u64,
 }
 
 /// A query that may be circular.
@@ -954,47 +1085,81 @@ enum Query {
     Comparison(u64),
 }
 
-/// The names that go with `Finished::foreign_evaluations`, for `--timing`.
-pub const FOREIGN_EVALUATION_KINDS: [&str; 14] = Query::SYNTAX_KINDS;
+/// A record that `Mentioned` still has to visit, or has visited.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+enum Mention {
+    Type(TypeId),
+    Signature(SigId),
+    Mapper(MapperId),
+    Components(ComponentsId),
+}
+
+/// Searches a record, and the records it references, for a node or symbol of a file that `is_near` accepts. See
+/// `Checker::is_reachable_only_by_importers`.
+struct Mentioned<'a> {
+    is_near: &'a dyn Fn(FileId) -> bool,
+    is_found: bool,
+    seen: crate::util::FxHashSet<Mention>,
+    to_visit: Vec<Mention>,
+}
+
+impl Mentioned<'_> {
+    fn record(&mut self, record: Mention) {
+        if !self.is_found && self.seen.insert(record) {
+            self.to_visit.push(record);
+        }
+    }
+}
+
+impl Visitor for Mentioned<'_> {
+    fn atom(&mut self, _: Atom) {}
+    fn components(&mut self, id: ComponentsId) {
+        self.record(Mention::Components(id));
+    }
+    fn mapper(&mut self, id: MapperId) {
+        self.record(Mention::Mapper(id));
+    }
+    fn sig(&mut self, id: SigId) {
+        self.record(Mention::Signature(id));
+    }
+    fn ty(&mut self, id: TypeId) {
+        self.record(Mention::Type(id));
+    }
+    fn file(&mut self, file: FileId) {
+        self.is_found |= (self.is_near)(file);
+    }
+    fn plain<T: std::hash::Hash + ?Sized>(&mut self, _: &T) {}
+}
+
+/// Whether tsgo notices that it comes round to `q`. See `Checker::close_ring_from`.
+fn is_guarded(q: Query) -> bool {
+    !matches!(
+        q,
+        Query::TypeNode(..) | Query::Cond(..) | Query::InferredConstraint(_)
+    )
+}
 
 impl Query {
-    /// The kinds whose key names syntax, for `Task::foreign_evaluations`. The first eight are inference, and `--timing` sums them. The
-    /// others are mostly type syntax, which every task resolves for itself.
-    const SYNTAX_KINDS: [&'static str; 14] = [
-        "Expr",
-        "Call",
-        "LiteralProp",
-        "Return",
-        "ReturnAtFirstLook",
-        "Pat",
-        "InitializerIsUndefined",
-        "Symbol",
-        "TypeNode",
-        "Declared",
-        "Cond",
-        "Enum",
-        "Bases",
-        "BaseConstructor",
-    ];
-
-    /// The file whose syntax the key names, and the index of the kind in `SYNTAX_KINDS`. `None`: the key is a type or a signature.
+    /// Returns the file whose syntax the key refers to, or `None` if the key is a type or a signature.
     #[inline]
-    fn syntax(self) -> Option<(FileId, usize)> {
-        Some(match self {
-            Query::Expr(file, _) | Query::ExprInFlowLoop(file, _) => (file, 0),
-            Query::Call(file, _) => (file, 1),
-            Query::LiteralProp(file, _) => (file, 2),
-            Query::Return(file, _) => (file, 3),
-            Query::ReturnAtFirstLook(file, _) => (file, 4),
-            Query::Pat(file, _) | Query::ParameterSymbol(file, _) => (file, 5),
-            Query::InitializerIsUndefined(file, _) => (file, 6),
-            Query::Symbol(sym) => (sym.file, 7),
-            Query::TypeNode(file, _) => (file, 8),
-            Query::Declared(sym) => (sym.file, 9),
-            Query::Cond(file, ..) => (file, 10),
-            Query::Enum(file, _) => (file, 11),
-            Query::Bases(sym) => (sym.file, 12),
-            Query::BaseConstructor(sym) => (sym.file, 13),
+    fn syntax(self) -> Option<FileId> {
+        match self {
+            Query::Expr(file, _)
+            | Query::ExprInFlowLoop(file, _)
+            | Query::Call(file, _)
+            | Query::LiteralProp(file, _)
+            | Query::Return(file, _)
+            | Query::ReturnAtFirstLook(file, _)
+            | Query::Pat(file, _)
+            | Query::ParameterSymbol(file, _)
+            | Query::InitializerIsUndefined(file, _)
+            | Query::TypeNode(file, _)
+            | Query::Cond(file, ..)
+            | Query::Enum(file, _) => Some(file),
+            Query::Symbol(sym)
+            | Query::Declared(sym)
+            | Query::Bases(sym)
+            | Query::BaseConstructor(sym) => Some(sym.file),
             Query::ReturnOfSignature(_)
             | Query::Shape(_)
             | Query::Properties(_)
@@ -1004,8 +1169,8 @@ impl Query {
             | Query::TypeArguments(_)
             | Query::AliasTarget(_)
             | Query::WriteType(..)
-            | Query::Comparison(_) => return None,
-        })
+            | Query::Comparison(_) => None,
+        }
     }
 }
 
@@ -1049,8 +1214,8 @@ struct ContextualInfo {
 struct InferenceContextInfo {
     file: FileId,
     node: ExprId,
-    /// `None`: `pushInferenceContext(node, nil)`.
-    context: Option<infer::Inference>,
+    /// `None`: `pushInferenceContext(node, nil)`. In a box: it goes to and fro between here and whoever works on it.
+    context: Option<Box<infer::Inference>>,
 }
 
 /// How an `enter` ended.
@@ -1068,12 +1233,6 @@ pub(super) enum CurrentNode {
     TypeNode(FileId, TypeNodeId),
     Node(FileId, Node),
 }
-
-/// For unbounded recursion. tsgo has no limit. A declaration without an annotation whose type is
-/// that of the next one takes three queries: `Symbol`, `Pat`, `Expr`, or `Return`, `Expr`, `Call`.
-/// One query takes 1 to 2 KB of stack in a release build, which `is_stack_low` guards. See
-/// `refuse_as_too_deep`.
-const MAX_DEPTH: usize = 1000;
 
 /// The metadata of an entry of `Checker::stack`.
 #[derive(Copy, Clone)]
@@ -1114,6 +1273,8 @@ struct QueryFrame {
     is_quick_type: bool,
     /// `Checker::current_source_element` when it was pushed.
     source_element: Option<CurrentNode>,
+    /// `Task::held_back` when it was pushed, for `Stored::since`.
+    held_back: u64,
 }
 
 /// Which diagnostics of a file `check_file` computes.
@@ -1145,9 +1306,6 @@ pub struct Checker<'p, 's> {
     files: &'p Files<'s>,
     /// `varianceTypeParameter`: its name.
     variance_type_parameter: Atom,
-    /// A file that the task has checked, and the first JSX node and the first fragment of it that
-    /// `checkExpression` reached.
-    first_jsx: (FileId, Option<ExprId>, Option<ExprId>),
     /// `autoArrayType`
     auto_array_type: TypeId,
     stack: Vec<Query>,
@@ -1172,6 +1330,10 @@ pub struct Checker<'p, 's> {
     late_bound_declarations: crate::util::FxHashSet<(FileId, crate::bind::Decl)>,
     /// `has_this_type` of an interface.
     this_types: FxHashMap<Sym, bool>,
+    /// The interfaces that `has_this_type` is looking at.
+    this_types_in_progress: Vec<Sym>,
+    /// See `is_thisless_for_this_mapper`.
+    thisless_members: FxHashMap<Sym, bool>,
     /// `links.resolvedType` and, with `true`, `links.writeType` of the instantiated symbols, by target
     /// and mapper, that are not what the type of the target gives. See `link_of_instantiated_symbol`.
     instantiated_symbol_links: FxHashMap<Sym, Vec<(MapperId, bool, TypeId)>>,
@@ -1311,6 +1473,8 @@ pub struct Checker<'p, 's> {
     parameter_symbol_taken_as_unresolved: Option<(FileId, ParamId)>,
     /// Number of times frames were marked non-cacheable for any reason except `mark_tainted_by_pattern_from`.
     taints: u64,
+    /// How many of them, and of `cycles`, are from `taint_from`.
+    incomplete_flow_taints: u64,
     /// See `is_type_reference_checked`: the file, and a bit for each of its type nodes.
     checked_type_references: (Option<FileId>, Vec<u64>),
     /// `taints` when the first entry of `contextual_binding_patterns` was pushed. `u64::MAX` if the innermost frame was non-cacheable then.
@@ -1340,10 +1504,14 @@ pub struct Checker<'p, 's> {
     /// expression, and by member of an object literal or JSX attribute.
     rechecked_exprs: FxHashMap<(FileId, ExprId), TypeId>,
     rechecked_members: FxHashMap<(FileId, PropId), TypeId>,
+    /// Empty maps that `set_rechecked_aside` reuses.
+    spare_rechecked: Vec<Rechecked>,
     /// `arg_type_under`: the type of a literal argument under a parameter type.
     literals_checked_under: FxHashMap<(FileId, ExprId, TypeId, u8), TypeId>,
     /// `inferenceContextInfos`
     inference_contexts: Vec<InferenceContextInfo>,
+    /// What the walks of `inferTypes` have written. See check/infer_memo.rs.
+    inference_memo: infer::InferenceMemo,
     instantiation_depth: u32,
     /// The comparison that began while no query and no instantiation was in progress and has not
     /// ended: its `errorNode`. See `begin_comparison`.
@@ -1356,6 +1524,17 @@ pub struct Checker<'p, 's> {
     recent_instantiations: instantiate::Recent,
     /// The entries most recently read from or written to `Program::composed`.
     recent_composed: instantiate::Recent,
+    /// `is_const_type_variable`, by the type and 1 + the depth.
+    recent_const_type_variables: instantiate::Recent,
+    /// By a signature and a `relate::DerivedSig`.
+    recent_derived_sigs: instantiate::Recent,
+    /// The types that `type_of_mapped_prop` has found in `Program::mapped_prop_types`, by what decides which entry it
+    /// reads: the mapped type in the source of the property, the mapper of the property and its name. Not a `Recent`: the
+    /// properties of a union of a hundred `Omit<..>` are read in turn, over and over, and are more than that has places for.
+    known_mapped_prop_types: FxHashMap<(TypeId, MapperId, Atom), TypeId>,
+    /// The properties of unions and intersections of which no constituent has a write type that is not its type: the union
+    /// or the intersection, the name and the number of constituents.
+    props_without_write_types: crate::util::FxHashSet<(TypeId, Atom, usize)>,
     /// `ObjectFlagsUnresolvedMembers`. `resolveObjectTypeMembers` calls `setStructuredTypeMembers`
     /// with the members that the class or interface declares before it instantiates the base
     /// types. A request for the members of the type reference in the meantime finds no inherited
@@ -1388,9 +1567,27 @@ pub struct Checker<'p, 's> {
     limits: u64,
     /// How many times `instantiate` returned the error type at a limit since `check_file` began.
     instantiation_limit_hits: u64,
+    /// The sum of the two at the end of each file that `check_file` has finished.
+    limits_in_earlier_files: u64,
     /// How many comparisons were `TernaryMaybe` because both types were deeply nested (`isDeeplyNestedType`). That depends on the
     /// comparisons in progress and on the order in which the types were created.
     comparisons_of_deeply_nested_types: u64,
+    /// In a task that commits: the comparisons that hold because one inside them was `TernaryMaybe` for two deeply nested
+    /// types. Another task may get another result, and in `Program::relations` the first of them would stay for
+    /// everybody. See `known_relation`.
+    relations_of_this_task: FxHashMap<relate::Key, u8>,
+    /// `insert_relation` stores in `relations_of_this_task`.
+    keeps_relations_for_this_task: bool,
+    /// The same for the base constraints that were cut short, or follow from one that was: where the cut is depends on how
+    /// deep the computation was when it got to the type. See `known_constraint`.
+    constraints_of_this_task: FxHashMap<TypeId, (Option<TypeId>, bool)>,
+    /// How many times a base constraint was cut short, or an entry of `constraints_of_this_task` was read.
+    constraint_cuts: std::cell::Cell<u64>,
+    /// In a task that commits: the keys of the `instantiate_cached` in progress that have found no entry, and the types of
+    /// the `get_literal_type_from_properties` in progress. Of two with one key the outer one stores last, and its entry
+    /// is the one that stays. So the inner one does not write at once.
+    instantiations_in_progress: Vec<(TypeId, MapperId)>,
+    keys_of_properties_in_progress: Vec<TypeId>,
     /// The results withheld from `Program::instantiations` because `instantiate` returned the error type at a limit, with the serial number
     /// of the activation of the mapper, and whether `limits` moved. While the mapper is active no
     /// path to the limit is taken twice (`activeTypeMappersCaches`). The next caller hits the limit
@@ -1402,18 +1599,27 @@ pub struct Checker<'p, 's> {
     enum_relation: FxHashMap<(Sym, Sym), bool>,
     /// `enumLiteralTypes` and `enumNaNLiteralTypes`, by the enum symbol and the value.
     enum_literal_types: FxHashMap<(Sym, crate::types::EnumValue), TypeId>,
-    /// `ObjectFlagsIsUnknownLikeUnion` of the unions that have
-    /// `ObjectFlagsIsUnknownLikeUnionComputed`, `undefined` and `null`.
-    unknown_like_unions: FxHashMap<TypeId, bool>,
+    /// See `shortcuts::task_fact`.
+    task_facts: shortcuts::TaskFacts,
+    /// `LiteralType.freshType` and `regularType`. Once one has been made from the other, each id is cached under the
+    /// other id. Read under `&Checker`.
+    counterparts_of_literals: std::cell::RefCell<shortcuts::TypeMap<TypeId>>,
     /// `Relation.size()`, indexed by `relate::Relation`: the entries of `relations` that this task
     /// has stored. Those of the files that a single checker would have checked before are not
     /// counted.
     relation_sizes: [i32; 6],
-    /// Entries of `relations` under a generic key whose hash included a task-local id. They are not
-    /// published: see `relate::Key`.
-    pub(super) generic_relation_entries_not_published: u64,
     variances_cut_short: FxHashMap<Sym, (u64, &'s [u8])>,
-    free_relaters: Vec<relate::Relater>,
+    #[expect(
+        clippy::vec_box,
+        reason = "whoever takes one moves a pointer, not 280 bytes"
+    )]
+    free_relaters: Vec<Box<relate::Relater>>,
+    /// Each is as `Inference::for_params(&[], None)` makes it: to put in the place of one that is taken out.
+    #[expect(
+        clippy::vec_box,
+        reason = "whoever takes one moves a pointer, not 592 bytes"
+    )]
+    spare_inferences: Vec<Box<infer::Inference>>,
     /// What the comparisons in progress found about the reliability of the variance being computed.
     reliability: u8,
     in_variance_computation: bool,
@@ -1423,8 +1629,12 @@ pub struct Checker<'p, 's> {
     /// `Relater::caches_failures`.
     pub(super) is_trial_comparison: bool,
     variances_in_progress: Vec<Sym>,
-    /// How many times `variances_worker` was re-entered for a symbol in `variances_in_progress`.
-    variance_cycles: u32,
+    /// In-progress symbols that a cycle re-entered. Their variances read as empty until the measurement finishes.
+    variances_marked_empty: Vec<Sym>,
+    /// Measurements suspended by a restart. Their marker types still count as marker types.
+    suspended_variances: Vec<Sym>,
+    /// Counts requests for the variances of a symbol that is still being measured.
+    in_progress_variance_reads: u64,
     /// The entries cached since the outermost `variances_worker` call on the stack began.
     variances_measured: Vec<(Sym, &'s [u8])>,
     /// After `type_arguments_related_to` returns false: the index of the pair that is not related.
@@ -1433,10 +1643,16 @@ pub struct Checker<'p, 's> {
     order_dependent: FxHashMap<Sym, u32>,
     /// A 64-bit Bloom filter for the keys of `order_dependent`.
     order_dependent_filter: u64,
-    simplified: FxHashMap<(TypeId, bool), TypeId>,
+    /// How many times variances in `order_dependent` were used.
+    order_dependent_uses: u64,
+    /// `simplifiedForReading` and `simplifiedForWriting`.
+    simplified: [shortcuts::TypeMap<TypeId>; 2],
     /// A 256-bit filter of the property names of `Object`, `Function`, `CallableFunction` and
     /// `NewableFunction`: a name whose bit is clear is not one of them. All zero: not built yet.
     pub(super) inherited_names: [u64; 4],
+    /// The names themselves, for a name whose bit is set. `None`: not built yet, or the members of one of the four types
+    /// are not stored, so that looking a name up in it resolves them again.
+    pub(super) inherited_name_set: Option<crate::util::FxHashSet<Atom>>,
     /// `resolvedConstraintOfDistributive`. `None` is `noConstraintType`.
     cond_distributive_memo: FxHashMap<TypeId, Option<TypeId>>,
     /// Set when a comparison exhausts `Relater::relation_count` (2859). The caller clears it before comparing.
@@ -1463,6 +1679,14 @@ pub struct Checker<'p, 's> {
     never_checked: std::cell::RefCell<Vec<(u32, u32)>>,
     /// The intersections being tested for being uninhabited.
     pub(super) never_in_progress: Vec<TypeId>,
+    /// `resolvedReducedType` of a union, once the answer for every member is final.
+    reduced_unions: shortcuts::TypeMap<TypeId>,
+    /// See `union_property`.
+    union_members: union_property::UnionMembers<'p>,
+    /// See check/unlisted_intersections.rs.
+    unlisted_intersections: shape::UnlistedIntersections<'p>,
+    /// See check/intersection_reduction.rs.
+    reductions: shape::Reductions,
     /// The height of `stack` at which `is_empty_intersection` began, for each one in progress.
     pub(super) never_in_progress_from: Vec<usize>,
     /// The height of `stack` at which the worker of each `inferReverseMappedType` in progress began.
@@ -1474,11 +1698,9 @@ pub struct Checker<'p, 's> {
     /// `ObjectFlagsIdenticalBaseTypeCalculated` and has not returned, each with the height of
     /// `stack` when that began.
     identical_base_types_in_progress: Vec<(TypeId, usize)>,
-    /// The mapped types with an `as` clause for which `isGenericMappedType` is in progress.
-    /// `ObjectFlagsIsGenericTypeComputed` with the two flags, of unions and intersections.
-    generic_object_flags: FxHashMap<TypeId, (bool, bool)>,
     /// `number_name` of the index, `NONE` where it has not been asked for.
     names_of_small_numbers: std::cell::RefCell<Vec<Atom>>,
+    /// The mapped types with an `as` clause for which `isGenericMappedType` is in progress.
     generic_mapped_types_in_progress: Vec<(FileId, TypeNodeId)>,
     /// Those for which it has ended at the limit of `instantiation_count` since `check_file` began.
     generic_mapped_types_cut_short: Vec<TypeId>,
@@ -1493,6 +1715,10 @@ pub struct Checker<'p, 's> {
     recent_unreduced_unions: instantiate::Recent,
     /// `unionOfUnionTypes`, for `UnionReductionSubtype`: the lower id first.
     unions_of_union_types: FxHashMap<(TypeId, TypeId), TypeId>,
+    union_calls: unions::UnionCalls,
+    /// For a union that has some of the members of another union, that other union, under the id
+    /// and 0. See `join_by_position`.
+    wholes_of_unions: instantiate::Recent,
     /// The `stack` of `getResolvedBaseConstraint`: the recursion identities of the nested
     /// constraint computations in progress.
     constraint_stack: Vec<relate::RecursionId>,
@@ -1541,14 +1767,13 @@ pub struct Checker<'p, 's> {
     /// Whether anything in the file that is being checked is in an ambient context.
     has_ambient_context: bool,
     suggestions_among_globals: errors::SuggestionsAmongGlobals,
-    /// `t.alias.symbol` by type: see `alias_symbol_of_type`.
-    alias_symbols: std::cell::RefCell<FxHashMap<TypeId, Option<Sym>>>,
-    /// What `could_contain_type_variables` has found, by type.
-    could_contain_type_variables: std::cell::RefCell<FxHashMap<TypeId, bool>>,
+    checked_leaves: errors::CheckedLeaves,
+    /// The derived parts of conditional and mapped types, and the aliases of types.
+    links: links::TypeLinks,
+    /// The derived parts of signatures.
+    signature_links: signature_links::SignatureLinks<'p>,
     /// Set by `compare_type_names` where `CompareTypes` is not transitive.
     has_compared_without_total_order: std::cell::Cell<bool>,
-    /// `Some`: this checker hands out symbol ids. See check/symbol_ids.rs.
-    symbol_ids: Option<std::cell::RefCell<symbol_ids::SymbolIds>>,
     /// `reparseTopLevelAwait`: the statements of that file that end up in an await context. Sorted.
     /// Computed on first use.
     parsed_again_for_await: Option<Vec<StmtId>>,
@@ -1565,6 +1790,8 @@ pub struct Checker<'p, 's> {
     walk_declared: TypeId,
     /// The constants whose initializers `evaluateEntity` is evaluating.
     constants_in_evaluation: Vec<(FileId, VarDeclId)>,
+    /// See `identity_mapper_with_adopted`.
+    recent_identity_mappers: Box<[((FileId, crate::bind::ScopeId), MapperId); decl::RECENT_SCOPES]>,
     /// The most recent final results of `sig_params` and `sig_type_params`, indexed by the low bits
     /// of the signature id.
     recent_sig_params: Box<[(SigId, &'p [SigParam]); RECENT_SIGS]>,
@@ -1590,7 +1817,7 @@ pub struct Checker<'p, 's> {
     /// The contexts of the unions being widened. A `*WideningContext` is an index into it.
     widening_contexts: Vec<symbols::WideningContext<'p>>,
     /// `cachedTypes[CachedTypeKindWidened]`
-    widened_types: FxHashMap<TypeId, TypeId>,
+    widened_types: shortcuts::TypeMap<TypeId>,
     /// `iterationTypesCache`, by the type and `IterationUse::cache_flags`. The flag: tsgo has the
     /// entry too (`iterable_types`).
     iteration_types_cache: FxHashMap<(TypeId, u8), (symbols::Iter3, bool)>,
@@ -1615,9 +1842,10 @@ pub struct Checker<'p, 's> {
         TypeId,
         usize,
     )>,
-    /// The types for which a reverse mapped type inference is in progress.
-    reverse_mapped_source_stack: Vec<TypeId>,
-    reverse_mapped_target_stack: Vec<TypeId>,
+    /// The types for which a reverse mapped type inference is in progress, each with its push number. See
+    /// `is_created_no_earlier`.
+    reverse_mapped_source_stack: Vec<(TypeId, u32)>,
+    reverse_mapped_target_stack: Vec<(TypeId, u32)>,
     reverse_expanding: u8,
     /// Final results of narrowing.
     flow_memo: flow::FlowMemo,
@@ -1627,20 +1855,16 @@ pub struct Checker<'p, 's> {
     /// The class expressions that have two entries in `deferred_nodes`, the first for their type
     /// parameters, and whether `checkDeferredNodes` has come to the first.
     deferred_type_parameters: Vec<(ExprId, bool)>,
-    /// With `importHelpers`: the expressions of the file being checked whose check calls
-    /// `checkExternalEmitHelpers` and came before their regular order, because something asked for
-    /// a type. In the order of those checks, each with `emit_helpers_order_of_early_check`. Until
-    /// `check_external_emit_helpers`.
-    emit_helpers_checked_early: Vec<(FileId, ExprId, (u32, u32))>,
-    /// The same for the expressions of files that are checked later than the file being checked,
-    /// in the order of those checks.
-    emit_helpers_checked_elsewhere: Vec<(FileId, ExprId)>,
     /// The identifiers `getResolvedSymbol` could not resolve, until
     /// `report_unresolved_identifiers`.
     unresolved_identifiers: Vec<(FileId, ExprId, Atom)>,
     /// `links.resolvedSymbol == c.unknownSymbol`, for the identifiers of the file being checked:
     /// the error of `onFailedToResolveSymbol` has been created. `true`: and discarded.
     unknown_symbols: FxHashMap<ExprId, bool>,
+    /// See the function of that name: entries of `Log::of_nodes`.
+    withheld_until_the_file_ends: Vec<[u32; 3]>,
+    /// The other files in which this task has found an error. See `View::hides`.
+    files_with_errors: crate::util::FxHashSet<FileId>,
     /// The aliases that `check_target_of_alias_symbol` has reported on since `check_file` began:
     /// `aliasSymbolLinks.aliasTarget != nil`, or `resolveAlias` is in progress.
     alias_targets_reported: crate::util::FxHashSet<Sym>,
@@ -1676,11 +1900,14 @@ pub struct Checker<'p, 's> {
     /// `discriminatedContextualTypes`: the result of `discriminate_by_object_members` for an object
     /// literal and a union, where it is final.
     discriminated: FxHashMap<(FileId, ExprId, TypeId), TypeId>,
+    /// Caches a `ConditionalRoot` per conditional type node, once the types of its check and extends nodes are final.
+    conditional_roots: FxHashMap<(FileId, TypeNodeId), mapped::ConditionalRoot>,
     /// See `contextual_property_of_value`.
     contextual_properties: FxHashMap<(TypeId, Atom, Option<TypeId>), Option<TypeId>>,
-    /// `resolvedApparentType`, `cachedTypes[CachedTypeKindApparentType]`: by the intersection and
-    /// the `this` argument.
-    apparent_types_of_intersections: FxHashMap<(TypeId, TypeId), TypeId>,
+    /// `resolvedApparentType` of an intersection: the `this` argument is the intersection.
+    apparent_types_of_intersections: shortcuts::TypeMap<TypeId>,
+    /// `cachedTypes[CachedTypeKindApparentType]`: by the intersection and another `this` argument.
+    apparent_types_with_this_argument: FxHashMap<(TypeId, TypeId), TypeId>,
     /// The next target to be related to is a member of an intersection.
     /// The diagnostics `resolveCall` has just reported. `resolved_signature` takes them, and stores
     /// them only together with the entry of `calls`.
@@ -1754,9 +1981,6 @@ pub struct Checker<'p, 's> {
     /// The argument whose generic signature `instantiateTypeWithSingleGenericCallSignature` is
     /// instantiating, and the depth of `stack` when it began: `currentNode` is still the argument.
     instantiating_generic_argument: Option<(FileId, ExprId, usize)>,
-    /// The extends types of conditional types that were related to an instantiation of the same
-    /// declaration with the same extends type: the inference between the two has been made.
-    inferred_between_same_extends: crate::util::FxHashSet<TypeId>,
     /// Functions whose context `prepare_enclosing` has already prepared.
     prepared: crate::util::FxHashSet<(FileId, FnId)>,
     last_prepared: (FileId, FnId),
@@ -1767,6 +1991,9 @@ pub struct Checker<'p, 's> {
     stack_limit: usize,
     /// Number of queries made so far.
     pub work: u64,
+    /// Number of calls of `begin_scope` so far for an answer that stays once it is stored. Not those of a memo that
+    /// forgets, as `FlowMemo::types_with_facts` does: it begins one more for the same question, which computes nothing new.
+    scopes_begun: u64,
     /// `enter` takes its slow path when `work` has this value: the next value of `work` while `refused_expressions` is not empty,
     /// `WORK_TRAP_DISARMED` otherwise.
     work_trap: u64,
@@ -1778,8 +2005,8 @@ pub struct Checker<'p, 's> {
     context_sensitive_functions: std::cell::RefCell<FxHashMap<(FileId, FnId), bool>>,
     /// Of how many functions it has been asked.
     context_sensitivity_asked: std::cell::Cell<u64>,
-    /// A query was refused at `MAX_DEPTH`: `enter` refuses every query while `stack` is higher than this. `usize::MAX`: none was. See
-    /// `refuse_as_too_deep`.
+    /// A query was refused for lack of stack: `enter` refuses every query while `stack` is higher than this. `usize::MAX`: none
+    /// was. See `starts_over_from_lower`.
     unwind_to: usize,
     /// `work` of the next `enter` while that is so. It takes the slow path (`work_trap`).
     unwind_work: u64,
@@ -1834,6 +2061,13 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     pub fn intern_key(&self, key: TypeKey<'_>) -> TypeId {
         self.types().intern_key(key)
+    }
+
+    /// `intern_key`. `first_request`: see `Types::as_first_request`.
+    #[inline]
+    fn intern_key_as(&self, key: TypeKey<'_>, first_request: FirstRequest) -> TypeId {
+        let types = self.types();
+        types.as_first_request(first_request, || types.intern_key(key))
     }
 
     /// A copy of `items`, to store in a type, a signature or a value of a table.
@@ -1939,6 +2173,7 @@ impl<'p, 's> Checker<'p, 's> {
         if used > self.stack_limit {
             self.ran_out_of_stack.set(true);
             self.times_cut_short.set(self.times_cut_short.get() + 1);
+            self.note_gave_up("the native stack");
             return true;
         }
         false
@@ -1956,6 +2191,14 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     pub(crate) fn is_half_of_stack_in_use(&self) -> bool {
         self.stack_base.saturating_sub(stack_pointer()) > self.stack_limit / 2
+    }
+
+    /// Whether three quarters of the stack that queries may use are in use. A chain of declarations starts over from here
+    /// (`starts_over_from_lower`), while there is still stack for the recursion between two queries, which only asks
+    /// `is_stack_low`.
+    #[inline]
+    pub(crate) fn is_most_of_stack_in_use(&self) -> bool {
+        self.stack_base.saturating_sub(stack_pointer()) > self.stack_limit - self.stack_limit / 4
     }
 
     /// The maximum stack in use at any query.
@@ -1983,8 +2226,8 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return false;
         }
-        if self.stack.len() >= MAX_DEPTH {
-            return self.refuse_as_too_deep(q);
+        if self.is_most_of_stack_in_use() && self.starts_over_from_lower(q) {
+            return false;
         }
         self.last_enter = EnterOutcome::Entered;
         if self.stack.is_empty() {
@@ -1992,11 +2235,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.stack.push(q);
         self.in_progress[class as usize] += 1;
-        if let Some((file, kind)) = q.syntax()
-            && Some(file) != self.task.file
-        {
-            self.note_foreign_evaluation(file, kind);
-        }
         // A query made under a context that a non-cacheable query has pushed is non-cacheable too.
         let tainted = !self.inference_contexts.is_empty() && self.is_innermost_tainted();
         // Diagnostics reported under a loop in progress are kept (`taint_from`).
@@ -2022,25 +2260,9 @@ impl<'p, 's> Checker<'p, 's> {
             may_substitute_constraints: false,
             is_quick_type: false,
             source_element: self.current_source_element,
+            held_back: self.task.held_back(),
         });
         true
-    }
-
-    /// Counts the evaluation of a query about `file`, which is not the file the task is checking,
-    /// if `file` is a source file in another component of the import graph. Nothing has published
-    /// the result, so the task computes its own copy. A declaration file does not count: every task
-    /// resolves nodes of the library for itself.
-    #[inline(never)]
-    fn note_foreign_evaluation(&mut self, file: FileId, kind: usize) {
-        let Some(own) = self.task.file else {
-            return;
-        };
-        let component_of = &self.files.components.of_file;
-        if self.hir(file).kind != FileKind::Declaration
-            && component_of[file.idx()] != component_of[own.idx()]
-        {
-            self.task.foreign_evaluations[kind] += 1;
-        }
     }
 
     /// The slow path of the first test in `enter`. `false`: `q` is not refused.
@@ -2067,9 +2289,13 @@ impl<'p, 's> Checker<'p, 's> {
         let is_low = self.is_stack_low();
         if is_low {
             self.refuse_outermost_in_flight(q);
+            // Not every query is about an expression or a type node. One that goes on regardless comes back here.
+            self.unwind_to = 0;
+            self.unwind_work = self.work + 1;
+            self.restart_with = None;
         }
         // Every later `enter` takes this path.
-        self.work_trap = if self.refused_expressions.is_empty() {
+        self.work_trap = if self.refused_expressions.is_empty() && !is_low {
             WORK_TRAP_DISARMED
         } else {
             self.work + 1
@@ -2136,27 +2362,23 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `q` would be entry `MAX_DEPTH` of `stack`. Always `false`.
+    /// `is_most_of_stack_in_use`, and `q` would take more. tsgo has a stack that grows. Returns whether `q` is refused.
     ///
-    /// The result of no frame in progress is cached. A frame that goes on regardless computes
+    /// The type of a variable, the return type of a function and the declared type of a symbol are
+    /// the same from any height, if nothing in progress is a context for them. Then the outermost such frame resolves the
+    /// innermost one from its own height, where that has the stack which the frames in between
+    /// took, and starts over: `resolve_what_was_too_deep`. The frames below it see no refusal. A
+    /// cycle that needs more stack than there is never closes, and is refused again.
+    ///
+    /// The result of no frame in between is cached. A frame that goes on regardless computes
     /// again, from its lower height, what the frames above it could not finish: a chain of
     /// functions that is n links too long costs n^3. So every query is refused until `stack` is
     /// back at `unwind_to`.
     ///
-    /// The type of a variable, the return type of a function and the declared type of a symbol are
-    /// the same from any height, if nothing in progress is a context for them. Then the outermost such frame resolves the
-    /// innermost one from its own height, where that has the depth which the frames in between
-    /// took, and starts over: `resolve_what_was_too_deep`. The frames below it see no refusal. A
-    /// cycle that is longer than `MAX_DEPTH` never closes, and is refused again.
+    /// Anything else goes on with the stack that is left: see `refuse_for_lack_of_stack`.
     #[cold]
     #[inline(never)]
-    fn refuse_as_too_deep(&mut self, q: Query) -> bool {
-        self.last_enter = EnterOutcome::Refused;
-        bun_core::scoped_log!(
-            SemaCycles,
-            "too deep: {:?}",
-            &self.stack[self.stack.len() - 12..]
-        );
+    fn starts_over_from_lower(&mut self, q: Query) -> bool {
         let starts_over =
             |q: &Query| matches!(q, Query::Symbol(_) | Query::Return(..) | Query::Declared(_));
         let is_without_context = self.flow_loops.is_empty()
@@ -2172,29 +2394,29 @@ impl<'p, 's> Checker<'p, 's> {
             true => Some(q),
             false => self.stack.iter().rev().find(|q| starts_over(q)).copied(),
         };
+        let (Some(outermost), Some(innermost)) = (outermost, innermost) else {
+            return false;
+        };
+        if !is_without_context || self.stack[outermost] == innermost {
+            return false;
+        }
+        bun_core::scoped_log!(
+            SemaCycles,
+            "too deep: {:?}",
+            &self.stack[self.stack.len().saturating_sub(12)..]
+        );
+        self.last_enter = EnterOutcome::Refused;
         self.unwind_work = self.work + 1;
         self.work_trap = self.work + 1;
-        match (outermost, innermost) {
-            (Some(outermost), Some(innermost))
-                if is_without_context && self.stack[outermost] != innermost =>
-            {
-                self.unwind_to = outermost;
-                self.restart_with = Some(innermost);
-            }
-            _ => {
-                self.unwind_to = 0;
-                self.restart_with = None;
-                self.ran_out_of_stack.set(true);
-                self.refuse_outermost_in_flight(q);
-            }
-        }
-        self.bailed_out_from(self.unwind_to);
-        false
+        self.unwind_to = outermost;
+        self.restart_with = Some(innermost);
+        self.bailed_out_from(outermost);
+        true
     }
 
     /// After the `leave` of a `Query::Symbol`, a `Query::Return` or a `Query::Declared`, if
     /// `stack.len() == unwind_to`.
-    /// Returns whether the caller is to start over: what `refuse_as_too_deep` refused has a result.
+    /// Returns whether the caller is to start over: what `starts_over_from_lower` refused has a result.
     #[cold]
     #[inline(never)]
     fn resolve_what_was_too_deep(&mut self) -> bool {
@@ -2230,10 +2452,96 @@ impl<'p, 's> Checker<'p, 's> {
         is_resolved
     }
 
+    /// The checker has come round to `stack[i]`: `Task::close_ring`, unless the ring gets the same from every entry. tsgo
+    /// goes round until it comes to a member that it guards. Type syntax and conditional types have no guard, so with one
+    /// other member the ring closes there, wherever it was entered. And of base constraints that lead to each other
+    /// every one is circular.
+    pub(super) fn close_ring_from(&self, i: usize) {
+        let mut guarded = self.stack[i..].iter().filter(|&&q| is_guarded(q));
+        let are_constraints = matches!(guarded.next(), Some(Query::Constraint(_)));
+        if guarded.any(|q| !are_constraints || !matches!(q, Query::Constraint(_))) {
+            self.close_ring(i);
+        }
+    }
+
+    /// Calls `Task::close_ring` for a cycle whose queries are all in `stack[from..]`.
+    pub(super) fn close_ring(&self, from: usize) {
+        let members = self.stack[from..].iter().map(crate::util::fx_hash);
+        (self.task).close_ring(|| self.is_reachable_only_by_importers(from), members);
+    }
+
+    /// True if only files that import the current file can run any query in `stack[from..]`.
+    ///
+    /// That's the case when every query is about, or mentions, a declaration in the current file's import cycle
+    /// (`Components`), and those files declare nothing global. An importer comes after the files it imports in program
+    /// order, unless they import each other.
+    fn is_reachable_only_by_importers(&self, from: usize) -> bool {
+        let (files, Some(visited)) = (self.files(), self.task.file) else {
+            return false;
+        };
+        let component_of = |file: FileId| files.components.of_file.get(file.idx());
+        let is_near = |file: FileId| {
+            component_of(file) == component_of(visited) && files.module(file).is_closed
+        };
+        let mut mentioned = Mentioned {
+            is_near: &is_near,
+            is_found: false,
+            seen: Default::default(),
+            to_visit: Vec::new(),
+        };
+        self.stack[from..].iter().all(|&q| {
+            mentioned.is_found = q.syntax().is_some_and(is_near);
+            match q {
+                Query::Shape(ty)
+                | Query::Properties(ty)
+                | Query::Constraint(ty)
+                | Query::InferredConstraint(ty)
+                | Query::TypeArguments(ty)
+                | Query::MappedProp(ty, _) => mentioned.ty(ty),
+                Query::ReturnOfSignature(signature) => mentioned.sig(signature),
+                Query::Cond(_, _, mapper) => mentioned.mapper(mapper),
+                Query::AliasTarget(alias) => mentioned.file(alias.file),
+                Query::WriteType(file, _) => mentioned.file(file),
+                _ => {}
+            }
+            while let Some(record) = mentioned.to_visit.pop().filter(|_| !mentioned.is_found) {
+                match record {
+                    Mention::Type(ty) => self.data(ty).visit(&mut mentioned),
+                    Mention::Signature(signature) => {
+                        self.types().sig(signature).visit(&mut mentioned)
+                    }
+                    Mention::Mapper(mapper) => {
+                        for &(from, to) in self.types().mapping(mapper) {
+                            mentioned.ty(from);
+                            mentioned.ty(to);
+                        }
+                    }
+                    Mention::Components(list) => {
+                        self.types().components(list).visit(&mut mentioned)
+                    }
+                }
+            }
+            mentioned.to_visit.clear();
+            mentioned.seen.clear();
+            mentioned.is_found
+        })
+    }
+
+    /// Like `close_ring_from`, for in-progress state that isn't a query and was started when `stack` had `height` entries.
+    /// tsgo silently continues with the partial state. If it had entered the cycle at one of the resolutions in between,
+    /// it would have reported a circular reference there instead.
+    pub(super) fn close_cycle_above(&self, height: usize) {
+        self.task.hold_back();
+        if self.stack[height..].iter().any(|&q| self.is_resolution(q)) {
+            self.close_ring(height);
+        }
+    }
+
     /// How `enter` handles a `q` that is in progress at `stack[i]`. `false`: it is restarted.
     #[cold]
     #[inline(never)]
     fn on_reentry(&mut self, q: Query, i: usize) -> bool {
+        self.close_ring_from(i);
         // `findResolutionCycleStartIndex` searches no further down than a resolution that has its
         // result: the query is restarted, and arrives at that result.
         if self.is_resolution(q) && self.is_resolved_since(i) {
@@ -2748,7 +3056,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn is_checked_by_check_expression_cached(&self, file: FileId, e: ExprId) -> bool {
         use crate::bind::Parent;
         let hir = self.hir(file);
-        match self.bound(file).expr_parent[e.idx()] {
+        match self.bound(file).parent_of_expr(e) {
             Parent::VarInit(_) | Parent::ParamDefault(_) => true,
             Parent::MemberInit(m) => hir[m].init == e,
             Parent::Stmt(s) => s.is_some() && matches!(hir[s].kind, StmtKind::Return(_)),
@@ -2781,8 +3089,9 @@ impl<'p, 's> Checker<'p, 's> {
         self.bailed_out_from(0);
     }
 
-    /// `bailed_out`, where the frame at `from` makes the query again: see `refuse_as_too_deep`.
+    /// `bailed_out`, where the frame at `from` makes the query again: see `starts_over_from_lower`.
     fn bailed_out_from(&mut self, from: usize) {
+        self.note_gave_up("a query that was refused");
         self.mark_tainted_from(from);
         self.note_cycle();
         self.refused_at = self.work;
@@ -2896,6 +3205,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// refused. Returns `UNRESOLVED` where the recursion here is no evidence of recursion in tsgo:
     /// after a refusal, and more than 60 levels of `instantiate` deep under a conditional type.
     pub(super) fn excessively_deep(&mut self) -> TypeId {
+        self.note_gave_up("instantiation that is excessively deep");
         // Only the call right after a refused `enter` sees the refusal.
         let is_limit_in_tsgo = match std::mem::replace(&mut self.last_enter, EnterOutcome::Entered)
         {
@@ -2917,6 +3227,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `instantiateTypeWithAlias`: `instantiationDepth == 100`. `instantiation_depth` counts what tsgo counts under a conditional type
     /// too: `resolve_conditional` follows a tail call in a loop, as `getConditionalType` does.
     pub(super) fn instantiation_too_deep(&mut self) -> TypeId {
+        self.note_gave_up("the depth of instantiation");
         self.instantiation_limit_hits += 1;
         if std::mem::replace(&mut self.last_enter, EnterOutcome::Entered) == EnterOutcome::Refused {
             return TypeId::UNRESOLVED;
@@ -2969,6 +3280,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// the program, so which task reaches the limit, and at which node, is too.
     #[cold]
     fn error_at_current_node(&mut self, code: u32) {
+        self.note_gave_up("a limit that is reported");
         // Under `eager`, tsgo evaluates this later or never, with another `currentNode`.
         let is_reported = self.eager.is_empty();
         // Outside of an expression, `c.currentNode` is the statement or declaration that
@@ -3061,7 +3373,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.left_frame = Some(frame);
             return Err(Open);
         }
-        Ok(Stored::new())
+        Ok(Stored::since(frame.held_back))
     }
 
     /// `leave` for `module` or `exports`: the first time, its entry stays on `typeResolutions`.
@@ -3174,6 +3486,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn mark_tainted_by_pattern_from(&mut self, from: usize) {
         self.lowest_taint = self.lowest_taint.min(from);
         self.note_taint_event(from);
+        self.note_state_was_read();
         for frame in &mut self.frames[from..] {
             frame.tainted = true;
             frame.drops_reported = true;
@@ -3205,10 +3518,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// Begins a computation that is not a query on `stack` but whose result is cached, such as a type comparison.
     #[inline]
     fn begin_scope(&mut self) -> Scope {
+        self.scopes_begun += 1;
         Scope {
             outer_taint: std::mem::replace(&mut self.lowest_taint, usize::MAX),
             frames: self.frames.len() as u32,
             counters: self.non_cacheable_mark(),
+            held_back: self.task.held_back(),
         }
     }
 
@@ -3232,22 +3547,31 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     fn end_scope_as(
         &mut self,
-        Scope { outer_taint, .. }: Scope,
+        Scope {
+            outer_taint,
+            held_back,
+            ..
+        }: Scope,
         is_open: bool,
     ) -> Result<Stored, Open> {
         self.lowest_taint = self.lowest_taint.min(outer_taint);
         if is_open {
             Err(Open)
         } else {
-            Ok(Stored::new())
+            Ok(Stored::since(held_back))
         }
     }
 
     /// Permission to store the result that a member of a resolution cycle gets: `any` or the error type. tsgo caches it for every member
     /// (`!popTypeResolution()`) and after a failed `pushTypeResolution`, also where `leave` returns `Err`. The value is a constant, derived
     /// from no unfinished result.
+    ///
+    /// The entry waits for a commit, but what the task computes from it until then looks like any other result:
+    /// `Task::stop_writing_at_once`. Which member gets it can depend on where the task has entered the cycle:
+    /// `close_ring_from`.
     fn cycle_result(&self) -> Stored {
         debug_assert!(self.left_a_cycle || self.found_cycle);
+        self.task.stop_writing_at_once();
         Stored::new()
     }
 
@@ -3299,7 +3623,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `provisional` returns it while it is valid.
     ///
     /// A frame is non-cacheable if its result depends on a query in flight (a cycle), on a refused
-    /// query (native stack, `MAX_DEPTH`, instantiation depth) or on a binding pattern whose implied
+    /// query (native stack, instantiation depth) or on a binding pattern whose implied
     /// type is being computed. Nothing is written to a shared cache then. The result stays valid
     /// until the outermost non-cacheable frame is popped, because everything it depends on is
     /// unchanged until then. It is stored in `provisional` for that time. Otherwise it would be
@@ -3471,20 +3795,55 @@ impl<'p, 's> Checker<'p, 's> {
         is_valid.then_some(entry.raw)
     }
 
+    /// `Task::hold_back`: the computations in progress have read something that holds only while the stack of this checker is
+    /// as it is: a query in progress, members that are in place, `anySignature`, the incomplete type of a loop, a limit, or a
+    /// result that follows from one of these. Most of them store nothing then. Some do, as tsgo does, by a test of their own
+    /// (`end_scope_as`, `end_scope_by_counters`, a frame that members in place do not taint): that is for this task alone.
+    #[inline]
+    fn note_state_was_read(&self) {
+        self.task.hold_back();
+    }
+
+    /// The checker has given up: at a limit of instantiation (2589), of the size of a union (2590) or of a comparison (2859,
+    /// 2321), for lack of native stack, or at a depth at which a query is refused. What it returns then is no function
+    /// of the question alone. How far from the limit a computation begins, and how much of it is left to do, depends on
+    /// what was computed before, which for a task that sees commits includes what it has found. Such a task is lost.
+    /// `limit`: its name, for `--timing`.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn note_gave_up(&self, limit: &'static str) {
+        self.note_state_was_read();
+        self.task.lose(limit);
+    }
+
     /// Increments `cycles`.
     #[inline]
     fn note_cycle(&mut self) {
         self.cycles += 1;
         self.cycle_at = self.work;
+        self.note_state_was_read();
     }
 
     /// Increments `cycles` for a request for members that got those in place. See
     /// `members_in_place_hits`.
     #[inline]
     fn note_members_in_place(&mut self) {
+        self.close_ring(0);
+        self.count_members_in_place();
+    }
+
+    /// Like `note_members_in_place`, when the partial members belong to `key`: the cycle starts at its `Query::Shape`.
+    fn note_members_in_place_of(&mut self, key: TypeId) {
+        let from = self.stack.iter().rposition(|&q| q == Query::Shape(key));
+        self.close_ring(from.unwrap_or(0));
+        self.count_members_in_place();
+    }
+
+    fn count_members_in_place(&mut self) {
         self.cycles += 1;
         self.members_in_place_hits += 1;
         self.members_in_place_hit_at = self.work;
+        self.note_state_was_read();
     }
 
     /// Increments `any_signature_reads`.
@@ -3492,6 +3851,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn note_any_signature(&mut self) {
         self.any_signature_reads += 1;
         self.any_signature_read_at = self.work;
+        self.note_state_was_read();
     }
 
     /// Increments `limits`.
@@ -3499,6 +3859,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn note_limit(&mut self) {
         self.limits += 1;
         self.limit_at = self.work;
+        self.note_state_was_read();
     }
 
     /// A provisional value was just read, stored when `stack` was `depth` deep: the results of the
@@ -3525,6 +3886,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.frames[at].incomplete_flow = true;
         }
         self.taints += 1;
+        self.incomplete_flow_taints += 1;
         self.note_cycle();
     }
 
@@ -3600,7 +3962,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `TypeFlagsObject`, except for an evolving array.
     #[inline]
     pub fn is_object_type(&self, ty: TypeId) -> bool {
-        self.flags(ty) & tf::OBJECT != 0 && !matches!(self.data(ty), TypeData::EvolvingArray(_))
+        self.types().is_object_type(ty)
     }
 
     #[inline]
@@ -3684,6 +4046,15 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `every_type(ty, is_unit)`
+    pub(crate) fn is_every_type_unit(&self, ty: TypeId) -> bool {
+        // A member of an enum has `ENUM_LITERAL` beside the flag of its value. An intersection isn't a unit type, whatever
+        // it consists of.
+        let others = self.types().member_flags(ty) & !(tf::UNIT | tf::ENUM_LITERAL);
+
+        others == 0 && !self.may_be_reduced(ty)
+    }
+
     pub fn some_type(&self, ty: TypeId, f: impl Fn(&Self, TypeId) -> bool) -> bool {
         match self.data(ty) {
             TypeData::Union(members) => members.iter().any(|&m| f(self, m)),
@@ -3721,7 +4092,30 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `t.freshType` or `t.regularType` of a literal type. Any other type is returned as it is.
     fn with_freshness(&self, ty: TypeId, fresh: bool) -> TypeId {
+        if !fresh && self.is_without_fresh_literal(ty) {
+            return ty;
+        }
+
+        if let Some(counterpart) = self.counterparts_of_literals.borrow().get(ty) {
+            let kept = match self.types().has_fresh_literal(ty) == fresh {
+                true => ty,
+                false => counterpart,
+            };
+
+            return kept;
+        }
+        let found = self.intern_with_freshness(ty, fresh);
+        if found != ty {
+            let mut counterparts = self.counterparts_of_literals.borrow_mut();
+            counterparts.insert(ty, found);
+            counterparts.insert(found, ty);
+        }
+        found
+    }
+
+    fn intern_with_freshness(&self, ty: TypeId, fresh: bool) -> TypeId {
         match *self.data(ty) {
             TypeData::StringLit { value, fresh: f } if f != fresh => {
                 self.intern(TypeData::StringLit { value, fresh })
@@ -3756,11 +4150,14 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub fn is_fresh_literal(&self, ty: TypeId) -> bool {
-        relate::is_fresh_literal_kind(self.data(ty))
+        !self.is_without_fresh_literal(ty) && relate::is_fresh_literal_kind(self.data(ty))
     }
 
     /// The literal type as an annotation would denote it.
     pub fn regular(&mut self, ty: TypeId) -> TypeId {
+        if self.is_without_fresh_literal(ty) {
+            return ty;
+        }
         match self.data(ty) {
             TypeData::Union(members) if members.iter().any(|&m| self.is_fresh_literal(m)) => {
                 self.map_type(ty, |c, m| c.with_freshness(m, false))
@@ -3796,6 +4193,9 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The type of a mutable location initialized with `ty`: a fresh `"a"` becomes `string`.
     pub fn widen_literal(&mut self, ty: TypeId) -> TypeId {
+        if self.is_without_fresh_literal(ty) {
+            return ty;
+        }
         match self.data(ty) {
             TypeData::Union(members) => {
                 if !members.iter().any(|&m| self.is_fresh_literal(m)) {
@@ -3915,17 +4315,31 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub fn array_of(&mut self, element: TypeId) -> TypeId {
-        self.global_ref(known::Array, &[element])
+        self.array_as(element, false, FirstRequest::NONE)
     }
 
-    /// `globalReadonlyArrayType` is `globalArrayType` if `ReadonlyArray` does not exist.
     pub fn readonly_array_of(&mut self, element: TypeId) -> TypeId {
-        let name = if self.global_type_of_arity(known::ReadonlyArray, 1).is_some() {
+        self.array_as(element, true, FirstRequest::NONE)
+    }
+
+    /// `global_ref` for `Array`, or for `ReadonlyArray`: `globalReadonlyArrayType` is `globalArrayType` if that does not
+    /// exist. `first_request`: see `Types::as_first_request`.
+    pub(super) fn array_as(
+        &mut self,
+        element: TypeId,
+        readonly: bool,
+        first_request: FirstRequest,
+    ) -> TypeId {
+        let name = if readonly && self.global_type_of_arity(known::ReadonlyArray, 1).is_some() {
             known::ReadonlyArray
         } else {
             known::Array
         };
-        self.global_ref(name, &[element])
+        let args = &[element];
+        match self.global_type_of_arity(name, 1) {
+            Some(target) => self.intern_key_as(TypeKey::Ref { target, args }, first_request),
+            None => TypeId::EMPTY_OBJECT,
+        }
     }
 
     /// `createPromiseType`
@@ -4034,15 +4448,27 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `createNormalizedTupleTypeEx`, once the variadic elements that are known have been spread (`normalized_tuple`).
     pub fn tuple(&mut self, elems: &[TypeId], flags: &[ElemFlags], readonly: bool) -> TypeId {
+        self.tuple_as(elems, flags, readonly, FirstRequest::NONE)
+    }
+
+    /// `tuple`. `first_request`: for the result, see `Types::as_first_request`.
+    pub(super) fn tuple_as(
+        &mut self,
+        elems: &[TypeId],
+        flags: &[ElemFlags],
+        readonly: bool,
+        first_request: FirstRequest,
+    ) -> TypeId {
         if !flags
             .iter()
             .any(|f| f.intersects(ElemFlags::OPTIONAL | ElemFlags::REST | ElemFlags::VARIADIC))
         {
-            return self.intern_key(TypeKey::Tuple {
+            let key = TypeKey::Tuple {
                 elems,
                 flags,
                 readonly,
-            });
+            };
+            return self.intern_key_as(key, first_request);
         }
         // `TupleNormalizer.add`: an optional element may be undefined.
         let mut types = Vec::with_capacity(elems.len());
@@ -4090,17 +4516,14 @@ impl<'p, 's> Checker<'p, 's> {
         if let ([element], [only]) = (&types[..], &infos[..])
             && only.contains(ElemFlags::REST)
         {
-            return if readonly {
-                self.readonly_array_of(*element)
-            } else {
-                self.array_of(*element)
-            };
+            return self.array_as(*element, readonly, first_request);
         }
-        self.intern_key(TypeKey::Tuple {
+        let key = TypeKey::Tuple {
             elems: &types,
             flags: &infos,
             readonly,
-        })
+        };
+        self.intern_key_as(key, first_request)
     }
 
     pub fn synth(&self, mut shape: Shape<'s>) -> TypeId {

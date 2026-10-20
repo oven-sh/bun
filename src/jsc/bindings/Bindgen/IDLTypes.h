@@ -106,19 +106,25 @@ struct BytesOptions {
     bool fromString { false };
     bool fromBuffer { false };
     bool fromBlob { false };
-    // `ToString` of anything else, except the two below. Without it, anything else is refused.
+    // `ToString` of anything else, except what `refuseUndefined` and `refuseNull` say. Without it, anything else is refused.
     bool toStringOtherwise { false };
     bool refuseUndefined { false };
     bool refuseNull { false };
+    // With `fromString`: only a string, as IDLStrictString.
+    bool refuseStringObject { false };
 };
 
 // `Sink` is JSBytesView, where a string is its UTF-8, or JSBlobOrStringOrBuffer, where it is the WTF::String.
 template<typename Sink, BytesOptions>
 struct IDLBytes : WebCore::IDLType<Sink> {
     using SequenceStorageType = void;
+    using NullableType = Sink;
+    using NullableInnerParameterType = Sink;
+    static Sink nullValue() { return {}; }
 };
 
-// A BufferSource that is not shared, as the `JSValue` itself. See IDLRawAny.
+// A BufferSource as the `JSValue` itself. See IDLRawAny.
+template<bool allowShared>
 struct IDLRawBufferSource : WebCore::IDLType<JSC::JSValue> {
     using SequenceStorageType = void;
 };
@@ -130,6 +136,15 @@ struct IDLRawInterface : WebCore::IDLType<JSClass*> {
     using NullableType = JSClass*;
     using NullableInnerParameterType = JSClass*;
     static JSClass* nullValue() { return nullptr; }
+};
+
+// An instance of a class of a `.classes.ts` file, as what it wraps. The caller's frame keeps the cell alive.
+template<typename JSClass, auto name>
+struct IDLWrappedInterface : WebCore::IDLType<void*> {
+    using SequenceStorageType = void;
+    using NullableType = void*;
+    using NullableInnerParameterType = void*;
+    static void* nullValue() { return nullptr; }
 };
 
 }

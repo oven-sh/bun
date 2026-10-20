@@ -75,6 +75,12 @@ impl<'a> Spread<'a> {
     }
 }
 
+/// Returns `fix` unless it drops a comment. The printer doesn't emit comments, and the text between the brackets and
+/// the elements is removed too.
+fn keeping_comments(fixer: Fixer, fix: Fix) -> Option<Fix> {
+    fixer.keeps_comments(&fix).then_some(fix)
+}
+
 /// Whether `...literal` in `list` is reported whatever else is in `list`.
 fn is_useless_spread_in_list(literal: ExprTag, list: ExprTag) -> bool {
     match literal {
@@ -134,10 +140,10 @@ fn check_useless_spread_in_list<'a>(spread: Spread<'a>, cx: &mut Cx<'a, NoUseles
             codegen.code.push(b'(');
             codegen.print_object_expression(&properties);
             codegen.code.push(b')');
-            fixer.replace(list, codegen.code)
+            keeping_comments(fixer, fixer.replace(list, codegen.code))
         }),
         (ExprKind::Array(_), ExprKind::Array(outer)) if outer.len() == 1 => {
-            report.fix(|fixer| fixer.replace(list, argument.text()))
+            report.fix(|fixer| keeping_comments(fixer, fixer.replace(list, argument.text())))
         }
         (ExprKind::Array(_), ExprKind::Array(outer)) => report.fix(|fixer| {
             if cx.state.contains(list) {
@@ -161,7 +167,7 @@ fn check_useless_spread_in_list<'a>(spread: Spread<'a>, cx: &mut Cx<'a, NoUseles
                 }
             }
             codegen.code.push(b']');
-            Some(fixer.replace(list, codegen.code))
+            keeping_comments(fixer, fixer.replace(list, codegen.code))
         }),
         (ExprKind::Array(elements), _) => report.fix(|fixer| {
             let (file, brackets) = (fixer.file(), argument.span());
@@ -177,7 +183,7 @@ fn check_useless_spread_in_list<'a>(spread: Spread<'a>, cx: &mut Cx<'a, NoUseles
                 };
                 Span::new(start, end)
             });
-            fixer.replace(spread.span(), elements.map_or(&b""[..], |it| file.slice(it)))
+            keeping_comments(fixer, fixer.replace(spread.span(), elements.map_or(&b""[..], |it| file.slice(it))))
         }),
         _ => report,
     };
@@ -230,7 +236,7 @@ fn check_useless_iterable_to_array<'a>(spread: Spread<'a>, cx: &Cx<'a, NoUseless
             if accepts_iterable && let Some(ctor_name) = new.callee().as_ident() {
                 cx.report(spread.dots(), ITERABLE_TO_ARRAY)
                     .data("ctor_name", ctor_name)
-                    .fix(|fixer| fixer.replace(array.outer_span(), spread.argument_text()));
+                    .fix(|fixer| keeping_comments(fixer, fixer.replace(array.outer_span(), spread.argument_text())));
             }
             accepts_iterable
         }
@@ -242,7 +248,7 @@ fn check_useless_iterable_to_array<'a>(spread: Spread<'a>, cx: &Cx<'a, NoUseless
             if accepts_iterable && let Some(method_name) = get_method_name(call) {
                 cx.report(spread.dots(), ITERABLE_TO_ARRAY)
                     .data("ctor_name", method_name)
-                    .fix(|fixer| fixer.replace(array, spread.argument_text()));
+                    .fix(|fixer| keeping_comments(fixer, fixer.replace(array, spread.argument_text())));
             }
             accepts_iterable
         }
@@ -298,7 +304,7 @@ fn check_useless_clone<'a>(spread: Spread<'a>, is_array: bool, cx: &Cx<'a, NoUse
         let has_holes = matches!(target.kind(), ExprKind::New(new)
             if new.args().len() == 1 && get_inner_expression(new.callee()).is_ident("Array"));
         let suffix: &[u8] = if has_holes { b".fill()" } else { b"" };
-        fixer.replace(spread.list, [spread.argument_text(), suffix].concat())
+        keeping_comments(fixer, fixer.replace(spread.list, [spread.argument_text(), suffix].concat()))
     });
 }
 

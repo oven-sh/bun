@@ -3,7 +3,7 @@
 use core::ffi::{c_uint, c_void};
 
 use super::JsHeap;
-use crate::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
+use crate::{JSGlobalObject, JSValue};
 
 /// `WTF::StringImpl*` carrying one ref, or null.
 pub type ExternString = *mut bun_core::WTFStringImplStruct;
@@ -120,10 +120,6 @@ pub struct ExternWithValue<T: Copy> {
 unsafe extern "C" {
     /// `value` is a `BufferSource` or a `Blob` whose bytes are in memory.
     pub(super) safe fn Bun__Bindgen__bytesOfBlobOrBuffer(value: JSValue) -> ExternBytes;
-    pub(super) fn Bun__Bindgen__constructArray(
-        global: *mut JSGlobalObject,
-        values: *mut MarkedArgumentBuffer,
-    ) -> JSValue;
     pub(super) fn Bun__Bindgen__constructArrayFromValues(
         global: *mut JSGlobalObject,
         values: *const JSValue,

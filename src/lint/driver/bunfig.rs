@@ -949,7 +949,8 @@ fn plugins(value: &Expr) -> Result<(Vec<Vec<u8>>, Vec<PluginOfBunfig>), Refusal>
 #[derive(Clone, Debug)]
 pub struct RuleOfBunfig {
     pub key_at: usize,
-    pub setting: Json,
+    /// `None` if `--rule` has overridden this entry.
+    pub setting: Option<Json>,
     pub place: Place,
 }
 
@@ -988,7 +989,7 @@ fn rules(table: &Expr) -> Result<Rules, Refusal> {
         let written = json_of(setting)?;
         places.push(RuleOfBunfig {
             key_at,
-            setting: written.clone(),
+            setting: Some(written.clone()),
             place: Place::of(setting),
         });
         rules.push((rule.name, written));

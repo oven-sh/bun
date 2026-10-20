@@ -283,7 +283,8 @@ fn copy_linked_files(checkout: &bun_sys::Dir, tree: &[u8]) -> bun_sys::Maybe<()>
             continue;
         }
         let from = match checkout.open_file(from, O::RDONLY | O::CLOEXEC | O::NOFOLLOW, 0) {
-            // A listed file can be missing: `finish_checkout` deletes a checked-in `.bun-tag`.
+            // A listed file can be missing, because `finish_checkout` deletes a checked-in
+            // `.bun-tag`.
             Err(err) if err.get_errno() == E::ENOENT => continue,
             from => from?,
         };
@@ -293,8 +294,8 @@ fn copy_linked_files(checkout: &bun_sys::Dir, tree: &[u8]) -> bun_sys::Maybe<()>
     Ok(())
 }
 
-/// Returns whether a path from git's listing stays inside the folder it is opened from. git
-/// writes no file for a path that does not.
+/// Returns true if a path from git's listing stays inside the folder that it's opened from. git
+/// doesn't write a file for a path that leaves it.
 fn stays_in_checkout(path: &[u8]) -> bool {
     if cfg!(windows) {
         return bun_patch::is_safe_patch_path(path);
@@ -321,7 +322,8 @@ fn link_ends(entries: &[(&[u8], &[u8])], targets: &[Option<Vec<u8>>]) -> Vec<Lin
         link: usize,
         /// The path resolved so far.
         at: Vec<u8>,
-        /// The path components still to resolve, in reverse order: the next one is the last.
+        /// The path components that still have to be resolved, in reverse order, so the next one is
+        /// last.
         rest: Vec<&'a [u8]>,
     }
     let walk_of = |link: usize| {
@@ -409,21 +411,28 @@ fn strip_node_modules(checkout: &bun_sys::Dir) -> bun_sys::Maybe<()> {
         Err(err) if err.get_errno() == bun_sys::E::ENOENT => return Ok(()),
         Err(_) => {}
     }
+    crate::initialize_mini_store();
     if bundles_dependencies(checkout) {
         return Ok(());
     }
     checkout.delete_tree(b"node_modules")
 }
 
-fn bundles_dependencies(checkout: &bun_sys::Dir) -> bool {
-    const KEYS: &[&[u8]] = &[b"bundleDependencies", b"bundledDependencies"];
-    let Ok(contents) = read_package_json_in(checkout) else {
+/// The caller must initialize an AST store on this thread first.
+pub(crate) fn bundles_dependencies(package_dir: &bun_sys::Dir) -> bool {
+    let Ok(contents) = read_package_json_in(package_dir) else {
         return false;
     };
-    crate::initialize_mini_store();
     let source = bun_ast::Source::init_path_string("package.json", &contents[..]);
-    crate::bun_json::ParsedJson::parse_package_json(&source, &mut bun_ast::Log::init())
-        .is_ok_and(|parsed| parsed.root.has_any_property_named(KEYS))
+    crate::bun_json::ParsedJson::parse_package_json(&source, &mut bun_ast::Log::init()).is_ok_and(
+        |parsed| {
+            let root = &parsed.root;
+            // Either `true` or a non-empty list of names. `as_array` returns `None` for `[]`.
+            (root.get(b"bundleDependencies"))
+                .or_else(|| root.get(b"bundledDependencies"))
+                .is_some_and(|field| field.as_bool() == Some(true) || field.as_array().is_some())
+        },
+    )
 }
 
 /// Reads the `package.json` in a package's folder, without following a symlink.
@@ -549,7 +558,8 @@ impl CacheStaging {
         let _ = bun_sys::Dir::borrow(&self.cache_dir).delete_tree(&self.tmp_name);
     }
 
-    /// Opens `folder_name`: the staging folder, or one there already that passes `is_complete`.
+    /// Opens `folder_name`, which is either the staging folder renamed into place, or a folder that
+    /// already exists and passes `is_complete`.
     fn publish(
         self,
         log: &mut bun_ast::Log,
@@ -583,8 +593,8 @@ fn is_tagged_checkout(dir: &bun_sys::Dir) -> bool {
     bun_sys::exists_at(dir.fd(), bun_core::zstr!(".bun-tag"))
 }
 
-/// Returns whether `read_package_json_in` failed because `package.json` is a symlink. Only older
-/// versions of Bun cached such a checkout. It is not used: the commit is checked out again.
+/// Returns true if `read_package_json_in` failed because `package.json` is a symlink. Only older
+/// versions of Bun cached such a checkout. It isn't used, and the commit is checked out again.
 fn is_link(json: &bun_sys::Maybe<Vec<u8>>) -> bool {
     matches!(json, Err(err) if err.get_errno() == bun_sys::E::ELOOP)
 }
@@ -917,7 +927,7 @@ impl GitSubprocess {
         let offline = this.manager().options.offline
             == crate::package_manager_real::options::OfflineMode::Offline;
         let folder_name = bare_repo_folder_name(this.task().id);
-        // If anything other than a usable clone has this name, clone again: `publish` replaces it.
+        // If anything other than a usable clone has this name, clone again. `publish` replaces it.
         match bun_sys::Dir::borrow(&this.cache_dir)
             .open_at_with(&folder_name, O::RDONLY | O::CLOEXEC | O::NOFOLLOW)
         {
@@ -925,7 +935,8 @@ impl GitSubprocess {
                 if !urls.is_empty() && is_own_clone(&repo) {
                     try_last_url_first(&repo, &mut urls);
                     this.urls.set(urls);
-                    // --prefer-offline still fetches: a stale clone may lack the pinned commit.
+                    // `--prefer-offline` still fetches, because a stale clone may not have the
+                    // pinned commit.
                     if !offline {
                         return Self::fetch_next(this, repo);
                     }
@@ -1393,7 +1404,8 @@ impl GitSubprocess {
                 ..
             }
         ) && matches!(status, Status::Exited(exit) if exit.code == 1);
-        // `Fetch` and `Clone` report later: they hold git's output until the last URL has failed.
+        // `Fetch` and `Clone` report later, because they hold on to git's output until the last URL
+        // has failed.
         if !ok && matches!(step, Step::Log | Step::ListTree(_) | Step::Checkout(_)) {
             this.report_failure(status, stderr);
         }

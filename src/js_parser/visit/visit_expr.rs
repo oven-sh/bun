@@ -2582,8 +2582,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionArgs, expr.loc)
             .expect("unreachable");
         let dupe: &'a mut [Stmt] = p.arena.alloc_slice_copy(e_.body.stmts.slice());
-        let rc_candidate =
-            p.enter_react_compiler_candidate(None, e_.has_react_hooks_suppression, dupe);
+        let prev_may_replace_body = p.enter_react_compiler_candidate(
+            None,
+            e_.has_react_hooks_suppression,
+            dupe,
+            e_.body.loc,
+        );
 
         let args_mut: &mut [G::Arg] = e_.args.slice_mut();
         p.visit_args(
@@ -2610,7 +2614,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             kind: crate::parser::StmtsKind::FnBody,
             ..Default::default()
         };
-        if rc_candidate.is_candidate() {
+        let rc_binding = p.take_react_compiler_claim(e_.body.loc);
+        if rc_binding.is_some() {
             let mut flags = bun_ast::flags::FUNCTION_NONE;
             if e_.is_async {
                 flags |= bun_ast::flags::Function::IsAsync;
@@ -2621,20 +2626,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if e_.has_react_hooks_suppression {
                 flags |= bun_ast::flags::Function::HasReactHooksSuppression;
             }
-            p.react_compiler_pending =
-                Some(rc_candidate.pending(e_.args, flags, e_.body.loc, e_.body.loc));
+            p.react_compiler_pending = Some(bun_react_compiler::PendingCompile {
+                args: e_.args,
+                flags,
+                body_loc: e_.body.loc,
+                args_loc: e_.body.loc,
+                binding: rc_binding,
+                in_react_hoc: core::mem::take(&mut p.react_compiler_in_react_hoc),
+            });
         }
         p.visit_stmts_and_prepend_temp_refs(&mut stmts_list, &mut temp_opts)
             .expect("unreachable");
-        if let Some(result) = p.leave_react_compiler_candidate(rc_candidate) {
+        p.react_compiler_pending = None;
+        if let Some(result) = p.react_compiler_result.take() {
             e_.args = result.args;
             e_.is_async = result.flags.contains(bun_ast::flags::Function::IsAsync);
             e_.has_rest_arg = result.flags.contains(bun_ast::flags::Function::HasRestArg);
             e_.prefer_expr = false;
+            if let Some(b) = rc_binding.filter(|r| *r != js_ast::Ref::NONE) {
+                p.record_usage(b);
+            }
         }
         p.pop_scope();
         p.pop_scope();
 
+        p.react_compiler_may_replace_body = prev_may_replace_body;
         p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
 
         // Restore before any further `p.*` call so the stack-local pointer

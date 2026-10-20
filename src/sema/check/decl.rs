@@ -27,6 +27,8 @@ impl Predicate {
 /// `signature.thisParameter` in `Checker::resolved_parameter_types`.
 const THIS_PARAMETER: u32 = u32::MAX;
 
+pub(super) const RECENT_SCOPES: usize = 64;
+
 /// The parameters whose types `sig_params_of_declaration` instantiates, besides a rest parameter.
 #[derive(Copy, Clone)]
 enum Read {
@@ -835,11 +837,11 @@ impl<'p, 's> Checker<'p, 's> {
                 | ScopeKind::TypeParams
         ) {
             for &(_, symbol) in bound.table(s.locals) {
-                let symbol = &bound.symbols[symbol.idx()];
+                let symbol = bound.symbol(symbol);
                 if !symbol.flags.contains(SymFlags::TYPE_PARAMETER) {
                     continue;
                 }
-                for decl in &symbol.decls {
+                for decl in symbol.decls {
                     if let Decl::TypeParam(tp) = *decl {
                         own.push((tp.0, self.type_param(file, tp)));
                     }
@@ -886,13 +888,32 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         scope: ScopeId,
     ) -> MapperId {
+        let place = (scope.0 as usize).wrapping_add(file.0 as usize * 31) % RECENT_SCOPES;
+        let recent = self.recent_identity_mappers[place];
+        if recent.0 == (file, scope) {
+            return recent.1;
+        }
+        let (mapper, is_final) = self.look_up_identity_mapper_with_adopted(file, scope);
+        if is_final {
+            self.recent_identity_mappers[place] = ((file, scope), mapper);
+        }
+        mapper
+    }
+
+    /// The uncached `identity_mapper_with_adopted`. The flag is true if the result is final, which means that it is
+    /// stored in a table or that nothing is adopted in `scope`.
+    fn look_up_identity_mapper_with_adopted(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+    ) -> (MapperId, bool) {
         let declared = self.identity_mapper(file, scope);
         let (hir, bound) = (self.hir(file), self.bound(file));
         // For speed: only a function with a contextual type adopts anything.
         let mut at = scope;
         loop {
             if at.is_none() {
-                return declared;
+                return (declared, true);
             }
             let s = &bound.scopes[at.idx()];
             if let ScopeKind::Fn(f) = s.kind
@@ -905,7 +926,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let known = (self.p.identity_mappers_with_adopted).get(&self.task, &(file, scope));
         if let Some(kept) = known {
-            return kept;
+            return (kept, true);
         }
         let computation = self.begin_scope();
         let adopted = self.adopted_type_params_in_scope(file, scope, u32::MAX);
@@ -917,13 +938,14 @@ impl<'p, 's> Checker<'p, 's> {
             self.types().mapper(pairs)
         };
         match self.end_scope_by_counters(computation) {
-            Ok(stored) => (self.p.identity_mappers_with_adopted).insert(
-                &self.task,
-                (file, scope),
-                mapper,
-                stored,
-            ),
-            Err(_) => mapper,
+            Ok(stored) => {
+                let table = &self.p.identity_mappers_with_adopted;
+                (
+                    table.insert(&self.task, (file, scope), mapper, stored),
+                    true,
+                )
+            }
+            Err(_) => (mapper, false),
         }
     }
 
@@ -1529,12 +1551,12 @@ impl<'p, 's> Checker<'p, 's> {
                     return;
                 };
                 let bound = self.bound(file);
-                let symbol = bound.expr_symbol[root.idx()];
+                let symbol = bound.symbol_of_expr(root);
                 // Nothing in the file declares it: its declaration has no enclosing type parameter.
                 if symbol.is_none() {
                     return;
                 }
-                let decls = &bound.symbols[symbol.idx()].decls;
+                let decls = bound.symbol(symbol).decls;
                 let mut scope = bound.type_scope[node.idx()];
                 while scope.is_some() {
                     let s = &bound.scopes[scope.idx()];
@@ -1882,8 +1904,8 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `infer U` occurring twice is one type parameter.
         let symbol = bound.type_param_symbol[tp.idx()];
-        if symbol.is_some() && bound.symbols[symbol.idx()].decls.len() > 1 {
-            for &decl in &bound.symbols[symbol.idx()].decls {
+        if symbol.is_some() && bound.symbol(symbol).decls.len() > 1 {
+            for &decl in bound.symbol(symbol).decls {
                 if let Decl::TypeParam(p) = decl
                     && part(&hir[p]).is_some()
                 {
@@ -1903,7 +1925,7 @@ impl<'p, 's> Checker<'p, 's> {
         if owner.is_none() {
             return (file, tp, None);
         }
-        let declared = &bound.symbols[owner.idx()];
+        let declared = bound.symbol(owner);
         if declared.decls.len() < 2 && !declared.flags.contains(SymFlags::MERGED) {
             return (file, tp, None);
         }
@@ -2022,7 +2044,7 @@ impl<'p, 's> Checker<'p, 's> {
                 .ok()
                 .map(|i| bound.infer_positions[i].1)
         };
-        let decls = &bound.symbols[symbol.idx()].decls;
+        let decls = bound.symbol(symbol).decls;
         if !decls
             .iter()
             .any(|d| matches!(*d, Decl::TypeParam(p) if position_of(p).is_some()))
@@ -2152,6 +2174,8 @@ impl<'p, 's> Checker<'p, 's> {
         let mut in_progress = self.defaults_in_progress.iter_mut();
         if let Some(resolving) = in_progress.find(|resolving| resolving.0 == param) {
             resolving.2 = true;
+            let height = resolving.1;
+            self.close_cycle_above(height);
             return None;
         }
         let (before, scope) = (self.non_cacheable_mark(), self.begin_scope());
@@ -2505,8 +2529,6 @@ impl<'p, 's> Checker<'p, 's> {
         let members: Vec<TypeId> = member_types.iter().map(|it| it.1).collect();
         let union = self.union(&members);
         let enum_type = if self.is_union(union) {
-            // `getUnionKey`
-            self.get_symbol_id(sym);
             self.with_alias(union, sym, &[])
         } else {
             union
@@ -3029,20 +3051,12 @@ impl<'p, 's> Checker<'p, 's> {
         let ty = match hir[node].kind {
             TypeNodeKind::Array(element) => {
                 let element = self.type_from_node(file, element);
-                if readonly {
-                    self.readonly_array_of(element)
-                } else {
-                    self.array_of(element)
-                }
+                self.array_as(element, readonly, FirstRequest::FROM_TYPE_NODE)
             }
             // `createTypeReferenceEx(target, elementTypes, ..)`: the target of `[...X[]]`.
             TypeNodeKind::Tuple(elems) if array.is_some() => {
                 let element = self.type_from_tuple_element(file, hir[elems.at(0)]);
-                if readonly {
-                    self.readonly_array_of(element)
-                } else {
-                    self.array_of(element)
-                }
+                self.array_as(element, readonly, FirstRequest::FROM_TYPE_NODE)
             }
             TypeNodeKind::Tuple(elems) => {
                 let mut types = self.tuple_element_types_from_nodes(file, elems);
@@ -3059,7 +3073,7 @@ impl<'p, 's> Checker<'p, 's> {
                         (*ty, *flag) = (element, ElemFlags::REST.with_label(label));
                     }
                 }
-                self.normalized_tuple(&types, &flags, readonly)
+                self.normalized_tuple_as(&types, &flags, readonly, FirstRequest::FROM_TYPE_NODE)
             }
             _ => TypeId::ERROR,
         };
@@ -3092,7 +3106,9 @@ impl<'p, 's> Checker<'p, 's> {
             .as_ref()
             .map(|(alias, type_arguments)| (*alias, &type_arguments[..]));
         let first_new_type_id = self.types().first_new_type_id();
-        let ty = self.deferred_type_reference(reference, alias);
+        let ty = (self.types()).as_first_request(FirstRequest::FROM_TYPE_NODE, || {
+            self.deferred_type_reference(reference, alias)
+        });
         self.types().mark_from_type_node(ty, first_new_type_id);
         ty
     }
@@ -3742,7 +3758,7 @@ impl<'p, 's> Checker<'p, 's> {
                         if decl.kind == VarKind::Const
                             && stmt.is_some()
                             && matches!(hir[stmt].kind, StmtKind::Var(_))
-                            && !matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(parent) if parent.is_some() && matches!(hir[parent].kind, StmtKind::For { init, .. } if init == stmt)) =>
+                            && !matches!(bound.parent_of_stmt(stmt), Parent::Stmt(parent) if parent.is_some() && matches!(hir[parent].kind, StmtKind::For { init, .. } if init == stmt)) =>
                     {
                         self.unique_symbol_of_variable(file, decl.pat, name)
                     }
@@ -3767,7 +3783,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     _ => self.unique_symbol_declaration(file, m, name),
                 };
-                self.new_unique_es_symbol_type(symbol, name)
+                self.intern(TypeData::UniqueSymbol { symbol, name })
             }
             _ => TypeId::SYMBOL,
         }
@@ -3930,9 +3946,9 @@ impl<'p, 's> Checker<'p, 's> {
         let alias = files.resolve_entity(file, scope, &names, SymFlags::ALIAS)?;
         // In `a.b` the first name is resolved as a namespace, as it was before.
         if names.len() == 1 {
-            // Written to the same buffer as `type_node_types[(file, node)]`, so both are published
-            // at the same barrier: a task that hits that entry sees the mark, and a task that
-            // misses it reaches this code itself.
+            // Written to the same buffer as `type_node_types[(file, node)]`, so one commit publishes
+            // both: a task that hits that entry sees the mark, and a task that misses it reaches
+            // this code itself.
             for &part in files.parts(alias).iter() {
                 (self.p.symbol_reference_links).insert(&self.task, part, (), Stored::new());
             }
@@ -3953,7 +3969,7 @@ impl<'p, 's> Checker<'p, 's> {
         // the type created here. The target of an alias reference is created by instantiation and gets no flag.
         self.declared_type(sym);
         let first_new_type_id = self.types().first_new_type_id();
-        let ty = self.type_reference(sym, args);
+        let ty = self.class_or_interface_reference(sym, args, FirstRequest::FROM_TYPE_NODE);
         self.types().mark_from_type_node(ty, first_new_type_id);
         ty
     }
@@ -4089,6 +4105,35 @@ impl<'p, 's> Checker<'p, 's> {
         self.type_reference_type(sym, args, None)
     }
 
+    /// `getTypeFromClassOrInterfaceReference`. See `Types::as_first_request` for `first_request`.
+    fn class_or_interface_reference(
+        &mut self,
+        sym: Sym,
+        args: &[TypeId],
+        first_request: FirstRequest,
+    ) -> TypeId {
+        let declared = self.declared_type(sym);
+        let params = self.local_type_params_of_symbol(sym);
+        if params.is_empty() {
+            return declared;
+        }
+        let filled = self.fill_type_args(&params, args);
+        // Only its own type parameters get type arguments. The outer type parameters of the
+        // declaration are passed through unchanged.
+        let all = self.type_arguments(declared);
+        let outer = &all[..all.len().saturating_sub(params.len())];
+        let args = if outer.is_empty() {
+            filled
+        } else {
+            outer.iter().copied().chain(filled).collect()
+        };
+        let key = TypeKey::Ref {
+            target: sym,
+            args: &args,
+        };
+        self.intern_key_as(key, first_request)
+    }
+
     /// `getTypeReferenceType`. `alias`: the alias passed to `getTypeAliasInstantiation`, where
     /// `sym` is a generic type alias.
     pub(super) fn type_reference_type(
@@ -4099,25 +4144,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> TypeId {
         let flags = self.files().flags(sym);
         if flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE) {
-            let declared = self.declared_type(sym);
-            let params = self.local_type_params_of_symbol(sym);
-            if params.is_empty() {
-                return declared;
-            }
-            let filled = self.fill_type_args(&params, args);
-            // `getTypeFromClassOrInterfaceReference`: only its own type parameters get type
-            // arguments. The outer type parameters of the declaration are passed through unchanged.
-            let all = self.type_arguments(declared);
-            let outer = &all[..all.len().saturating_sub(params.len())];
-            let args = if outer.is_empty() {
-                filled
-            } else {
-                outer.iter().copied().chain(filled).collect()
-            };
-            return self.intern_key(TypeKey::Ref {
-                target: sym,
-                args: &args,
-            });
+            return self.class_or_interface_reference(sym, args, FirstRequest::NONE);
         }
         if flags.contains(SymFlags::TYPE_ALIAS) {
             let (declared, has_no_type_parameters) = self.type_alias_links(sym);
@@ -4148,11 +4175,7 @@ impl<'p, 's> Checker<'p, 's> {
             let declared = self.declared_type(sym);
             let mapper = self.mapper_from(&params, &args);
             return match alias {
-                Some(alias) => {
-                    // `getTypeAliasInstantiationKey`
-                    self.get_symbol_id(alias.0);
-                    self.instantiate_with_alias(declared, mapper, alias)
-                }
+                Some(alias) => self.instantiate_with_alias(declared, mapper, alias),
                 None => self.type_alias_instantiation(declared, mapper),
             };
         }
@@ -4351,31 +4374,57 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `sig_type_params` for a signature that was not queried recently.
     fn sig_type_params_not_recent(&mut self, sig: SigId) -> List<'p, TypeId> {
+        if (self.signature_links).has(sig, signature_links::fact::HAS_NO_TYPE_PARAMETERS) {
+            return List::default();
+        }
+        if let Some(kept) = self.signature_links.type_parameters(sig) {
+            return List::Kept(kept);
+        }
+        self.look_up_sig_type_params(sig)
+    }
+
+    /// Caches `kept`, the stored result of `sig_type_params(sig)`, in `signature_links` and returns it.
+    fn kept_sig_type_params(&mut self, sig: SigId, kept: &'p [TypeId]) -> List<'p, TypeId> {
+        self.signature_links.keep_type_parameters(sig, kept);
+
+        List::Kept(kept)
+    }
+
+    fn look_up_sig_type_params(&mut self, sig: SigId) -> List<'p, TypeId> {
         match self.types().sig(sig) {
             SigData::Synth { type_params, .. } => return List::Kept(type_params),
             SigData::WithReturn { sig: inner, .. } => return self.sig_type_params(*inner),
             // Most functions have none.
             SigData::Decl { file, func, .. } if self.hir(*file)[*func].type_params.is_empty() => {
+                let times_cut_short = self.times_cut_short.get();
                 // `assignContextualParameterTypes`: `sig.typeParameters = context.typeParameters`
                 // Not final until the function is checked, so it is not cached.
                 return match self.takes_context(*file, *func) {
                     Some(owner) if self.is_context_sensitive(*file, owner) => {
                         List::Own(self.adopted_type_params(sig))
                     }
-                    _ => List::default(),
+                    _ => {
+                        // If the stack ran low, the result of `is_context_sensitive` depends on the caller's stack
+                        // depth, so the fact isn't cached.
+                        if self.times_cut_short.get() == times_cut_short {
+                            let fact = signature_links::fact::HAS_NO_TYPE_PARAMETERS;
+                            self.signature_links.add_fact(sig, fact);
+                        }
+                        List::default()
+                    }
                 };
             }
             _ => {}
         }
         if let Some(kept) = self.p.sig_type_params.get_ref(&self.task, &sig) {
-            return List::Kept(kept);
+            return self.kept_sig_type_params(sig, kept);
         }
         let scope = self.begin_scope();
         let params = self.sig_type_params_of_declaration(sig);
         if let Ok(stored) = self.end_scope_by_counters(scope) {
             let params = self.list(&params);
             let kept = (self.p.sig_type_params).insert_ref(&self.task, sig, params, stored);
-            return List::Kept(kept.1);
+            return self.kept_sig_type_params(sig, kept.1);
         }
         List::Own(params)
     }
@@ -4724,11 +4773,21 @@ impl<'p, 's> Checker<'p, 's> {
     /// `kept` is the stored result of `sig_params(sig)`.
     fn cached_sig_params(&mut self, sig: SigId, kept: &'p [SigParam]) -> List<'p, SigParam> {
         self.recent_sig_params[sig.0 as usize % RECENT_SIGS] = (sig, kept);
+        self.signature_links.keep_parameters(sig, kept);
+
         List::Kept(kept)
     }
 
     /// `sig_params_with_first` for a signature that was not queried recently.
     fn sig_params_not_recent(&mut self, sig: SigId, count: usize) -> List<'p, SigParam> {
+        if let Some(kept) = self.signature_links.parameters(sig) {
+            self.recent_sig_params[sig.0 as usize % RECENT_SIGS] = (sig, kept);
+            return List::Kept(kept);
+        }
+        self.look_up_sig_params(sig, count)
+    }
+
+    fn look_up_sig_params(&mut self, sig: SigId, count: usize) -> List<'p, SigParam> {
         let (file, func, mapper) = match self.types().sig(sig) {
             SigData::WithReturn { sig: inner, .. } => {
                 return self.sig_params_with_first(*inner, count);
@@ -4785,7 +4844,7 @@ impl<'p, 's> Checker<'p, 's> {
             && let PatKind::Ident(name) = hir[hir[param].pat].kind
             && let locals = bound.scopes[bound.fns[func.idx()].scope.idx()].locals
             && let Some(resolved) = bound.lookup(locals, name)
-            && let resolved = &bound.symbols[resolved.idx()]
+            && let resolved = bound.symbol(resolved)
             && let Some(&Decl::Param(pat)) = resolved.decls.get(resolved.value_declaration as usize)
             && let PatParent::Param(declaration) = bound.pat_parent[pat.idx()]
         {
@@ -4903,7 +4962,16 @@ impl<'p, 's> Checker<'p, 's> {
         out
     }
 
+    /// `getReturnTypeOfSignature`
+    #[inline]
     pub fn sig_return(&mut self, sig: SigId) -> TypeId {
+        match self.kept_return_type(sig) {
+            Some(kept) => kept,
+            None => self.derive_and_keep_return_type(sig),
+        }
+    }
+
+    pub(super) fn derive_return_type(&mut self, sig: SigId) -> TypeId {
         match *self.types().sig(sig) {
             // `case sig.composite != nil`
             SigData::Synth {
@@ -5084,6 +5152,13 @@ impl<'p, 's> Checker<'p, 's> {
     /// `signature.thisParameter`: its type and the signature that declares it. A context-sensitive function without a `this` parameter
     /// takes the one of its contextual signature (`assignContextualParameterTypes`: `createSymbolWithType(context.thisParameter, nil)`).
     pub(super) fn sig_this_parameter(&mut self, sig: SigId) -> Option<(TypeId, SigId)> {
+        if (self.signature_links).has(sig, signature_links::fact::HAS_NO_THIS_PARAMETER) {
+            return None;
+        }
+        self.look_up_sig_this_parameter(sig)
+    }
+
+    fn look_up_sig_this_parameter(&mut self, sig: SigId) -> Option<(TypeId, SigId)> {
         let (file, func, mapper) = match *self.types().sig(sig) {
             SigData::WithReturn { sig: inner, .. } => return self.sig_this_parameter(inner),
             SigData::Synth { this, .. } => return Some((this?, sig)),
@@ -5119,10 +5194,18 @@ impl<'p, 's> Checker<'p, 's> {
             let declared_by = self.sig_of_fn(of, other);
             return Some((self.instantiate(declared, mapper), declared_by));
         }
-        let crate::bind::FnOwner::Expr(owner) = self.bound(file).fns[func.idx()].owner else {
-            return None;
+        // The fact isn't cached for an accessor, where it depends on the sibling accessor. It isn't cached either if
+        // the stack ran low, because the result of `is_context_sensitive` then depends on the caller's stack depth.
+        let times_cut_short = self.times_cut_short.get();
+        let takes_one_from_context = match self.bound(file).fns[func.idx()].owner {
+            crate::bind::FnOwner::Expr(owner) => self.is_context_sensitive(file, owner),
+            _ => false,
         };
-        if !self.is_context_sensitive(file, owner) {
+        if !takes_one_from_context {
+            if other_kind.is_none() && self.times_cut_short.get() == times_cut_short {
+                let fact = signature_links::fact::HAS_NO_THIS_PARAMETER;
+                self.signature_links.add_fact(sig, fact);
+            }
             return None;
         }
         let contextual = self.assigned_contextual_signature(file, func)?;
@@ -5134,7 +5217,16 @@ impl<'p, 's> Checker<'p, 's> {
         Some((self.instantiate(this, mapper), declared_by))
     }
 
+    /// `getTypePredicateOfSignature`
+    #[inline]
     pub fn sig_predicate(&mut self, sig: SigId) -> Option<Predicate> {
+        match self.kept_type_predicate(sig) {
+            Some(kept) => kept,
+            None => self.derive_and_keep_type_predicate(sig),
+        }
+    }
+
+    pub(super) fn derive_type_predicate(&mut self, sig: SigId) -> Option<Predicate> {
         let (file, func, mapper) = match *self.types().sig(sig) {
             SigData::WithReturn { sig: inner, .. } => return self.sig_predicate(inner),
             SigData::Synth {

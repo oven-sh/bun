@@ -1012,7 +1012,7 @@
 "vitest/prefer-hooks-in-order": {"0":[[7,1,9,3,"Test hooks are not in a consistent order."]]},
 "vitest/prefer-hooks-on-top": {"0":[[7,1,9,3,"Suggest having hooks before any test cases."]]},
 "vitest/prefer-import-in-mock": {"0":[[3,9,6,2,"Mocked modules must be dynamic imported."]],"2":[[3,11,3,18,"Mocked modules must be dynamic imported."]]},
-"vitest/prefer-importing-vitest-globals": {"0":[[1,1,1,9,"Do not use Vitest global functions"]],"2":[[3,1,3,31,"Do not use Vitest global functions"]]},
+"vitest/prefer-importing-vitest-globals": {"0":[[1,1,1,9,"Do not use Vitest global functions"]]},
 "vitest/prefer-lowercase-title": {"0":[[3,6,3,20,"Enforce lowercase test names"]],"1":[[3,7,3,25,"Enforce lowercase test names"]],"4":[[4,12,4,22,"Enforce lowercase test names"]],"5":[[3,6,3,20,"Enforce lowercase test names"]]},
 "vitest/prefer-mock-promise-shorthand": {"0":[[3,27,3,42,"Prefer mock resolved/rejected shorthands for promises."],[4,26,4,48,"Prefer mock resolved/rejected shorthands for promises."]]},
 "vitest/prefer-mock-return-shorthand": {"0":[[3,25,3,43,"Mock functions that return simple values should use `mockReturnValue/mockReturnValueOnce`."],[5,25,5,47,"Mock functions that return simple values should use `mockReturnValue/mockReturnValueOnce`."]],"3":[[3,25,3,43,"Mock functions that return simple values should use `mockReturnValue/mockReturnValueOnce`."]]},

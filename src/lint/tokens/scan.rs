@@ -121,7 +121,7 @@ impl Marks {
         let marks_accesses = dialect == Dialect::TypeScript && !hir.jsx.is_empty();
         let mut marks = Marks::default();
         let end_of = |e: hir::ExprId| hir.exprs.get(e.idx()).map_or(0, |e| e.end);
-        for e in hir.exprs {
+        for (e, id) in hir.exprs.iter().zip(0..) {
             match e.kind {
                 ExprKind::Regex => marks.regexes.push((e.pos, e.end)),
                 ExprKind::Jsx(_) => marks.elements.push(e.pos),
@@ -137,8 +137,8 @@ impl Marks {
                 } => marks.shifts.push(operator_after(text, end_of(operand))),
                 ExprKind::AsConst(_) => marks.as_const(text, e),
                 ExprKind::Yield { .. } if is_typescript => marks.keywords.push(e.pos),
-                ExprKind::Dot { obj, name_pos, .. } if marks_accesses => {
-                    marks.accesses.push(name_pos);
+                ExprKind::Dot { obj, .. } if marks_accesses => {
+                    marks.accesses.push(hir.name_pos(hir::ExprId(id)));
                     if let Some(obj) = hir.exprs.get(obj.idx())
                         && matches!(obj.kind, ExprKind::Ident(_))
                         && text.get(skip_trivia(text, obj.end) as usize) != Some(&b')')

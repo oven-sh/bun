@@ -18,9 +18,13 @@ use crate::webcore::s3::client::{
     S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3ListObjectsOptions,
     S3ListObjectsResult,
 };
+use crate::webcore::s3::multipart_ops::{self, UploadId, UploadPartResult};
+use crate::webcore::s3::simple_request::{S3CommitResult, S3DownloadResult};
 use bun_core::strings;
 use bun_http_types::MimeType::MimeType;
+use bun_jsc::bun_string_jsc;
 use bun_ptr::RefPtr;
+use bun_s3_signing::error::S3Error;
 
 #[cfg(unix)]
 use super::SizeType;
@@ -80,6 +84,31 @@ pub(crate) trait S3Ext {
         store: &RefPtr<Store>,
         cx: &bun_jsc::JsThread<'_>,
         list_options: JSValue,
+        extra_options: Option<JSValue>,
+    ) -> JsResult<JSValue>;
+    /// CreateMultipartUpload. Resolves `{ uploadId }`. See `unlink`.
+    fn create_multipart_upload(
+        &self,
+        store: &RefPtr<Store>,
+        cx: &bun_jsc::JsThread<'_>,
+        content_type: Option<&[u8]>,
+        extra_options: Option<JSValue>,
+    ) -> JsResult<JSValue>;
+    /// CompleteMultipartUpload. Resolves `undefined`. See `unlink`.
+    fn complete_multipart_upload(
+        &self,
+        store: &RefPtr<Store>,
+        cx: &bun_jsc::JsThread<'_>,
+        upload_id: &UploadId,
+        parts: &mut [UploadPartResult],
+        extra_options: Option<JSValue>,
+    ) -> JsResult<JSValue>;
+    /// AbortMultipartUpload. Resolves `undefined`. See `unlink`.
+    fn abort_multipart_upload(
+        &self,
+        store: &RefPtr<Store>,
+        cx: &bun_jsc::JsThread<'_>,
+        upload_id: &UploadId,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue>;
 }
@@ -420,6 +449,206 @@ impl S3Ext for S3 {
             unsafe { &(*wrapper).resolved_list_options },
             Wrapper::resolve,
             wrapper.cast::<c_void>(),
+        )?;
+
+        Ok(value)
+    }
+
+    fn create_multipart_upload(
+        &self,
+        store: &RefPtr<Store>,
+        cx: &bun_jsc::JsThread<'_>,
+        content_type: Option<&[u8]>,
+        extra_options: Option<JSValue>,
+    ) -> JsResult<JSValue> {
+        struct Wrapper {
+            promise: bun_jsc::JSPromiseStrong,
+            store: RefPtr<Store>,
+            global: bun_ptr::BackRef<JSGlobalObject>,
+        }
+
+        impl Wrapper {
+            fn resolve(result: S3DownloadResult<'_>, opaque_self: *mut c_void) -> JsResult<()> {
+                // SAFETY: opaque_self was created via heap::into_raw(Box::new(..)) below.
+                let mut self_ = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
+                let global_object = self_.global.get();
+                let err = match result {
+                    S3DownloadResult::Success(response) => {
+                        match multipart_ops::parse_initiate_result(response.body.list.as_slice())
+                        {
+                            Some(upload_id) => {
+                                let object = JSValue::create_empty_object(global_object, 1);
+                                object.put(
+                                    global_object,
+                                    b"uploadId",
+                                    bun_string_jsc::create_utf8_for_js(
+                                        global_object,
+                                        upload_id.as_raw(),
+                                    )?,
+                                );
+                                return self_.promise.resolve(global_object, object);
+                            }
+                            None => S3Error {
+                                code: b"InvalidResponse",
+                                message: b"CreateMultipartUpload response is not an <InitiateMultipartUploadResult> document with a valid <UploadId>",
+                            },
+                        }
+                    }
+                    S3DownloadResult::NotFound(err) | S3DownloadResult::Failure(err) => err,
+                };
+                let err_val = err.to_js_with_async_stack(
+                    global_object,
+                    self_.store.get_path(),
+                    self_.promise.get(),
+                );
+                self_.promise.reject(global_object, err_val)
+            }
+        }
+
+        let promise = bun_jsc::JSPromiseStrong::init(cx.global());
+        let value = promise.value();
+        let aws_options = self.get_credentials_with_options(extra_options, cx.global())?;
+
+        multipart_ops::create_multipart_upload(
+            &aws_options.credentials,
+            cx.context(),
+            self.path(),
+            &multipart_ops::CreateMultipartOptions {
+                content_type,
+                content_disposition: aws_options.content_disposition.as_deref(),
+                content_encoding: aws_options.content_encoding.as_deref(),
+                acl: aws_options.acl,
+                storage_class: aws_options.storage_class,
+                request_payer: aws_options.request_payer,
+                proxy_url: None,
+            },
+            Wrapper::resolve,
+            bun_core::heap::into_raw(Box::new(Wrapper {
+                promise,
+                store: store.clone(),
+                global: bun_ptr::BackRef::new(cx.global()),
+            }))
+            .cast::<c_void>(),
+        )?;
+
+        Ok(value)
+    }
+
+    fn complete_multipart_upload(
+        &self,
+        store: &RefPtr<Store>,
+        cx: &bun_jsc::JsThread<'_>,
+        upload_id: &UploadId,
+        parts: &mut [UploadPartResult],
+        extra_options: Option<JSValue>,
+    ) -> JsResult<JSValue> {
+        struct Wrapper {
+            promise: bun_jsc::JSPromiseStrong,
+            store: RefPtr<Store>,
+            global: bun_ptr::BackRef<JSGlobalObject>,
+        }
+
+        impl Wrapper {
+            fn resolve(result: S3CommitResult<'_>, opaque_self: *mut c_void) -> JsResult<()> {
+                // SAFETY: opaque_self was created via heap::into_raw(Box::new(..)) below.
+                let mut self_ = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
+                let global_object = self_.global.get();
+                let err = match result {
+                    S3CommitResult::Success(_) => {
+                        return self_.promise.resolve(global_object, JSValue::UNDEFINED);
+                    }
+                    S3CommitResult::Unrecognized => S3Error {
+                        code: b"InvalidResponse",
+                        message: b"CompleteMultipartUpload response is not a 200 with a <CompleteMultipartUploadResult> document",
+                    },
+                    S3CommitResult::Failure(err) => err,
+                };
+                let err_val = err.to_js_with_async_stack(
+                    global_object,
+                    self_.store.get_path(),
+                    self_.promise.get(),
+                );
+                self_.promise.reject(global_object, err_val)
+            }
+        }
+
+        let promise = bun_jsc::JSPromiseStrong::init(cx.global());
+        let value = promise.value();
+        let aws_options = self.get_credentials_with_options(extra_options, cx.global())?;
+        let body = multipart_ops::complete_body(parts);
+
+        multipart_ops::complete_multipart_upload(
+            &aws_options.credentials,
+            cx.context(),
+            self.path(),
+            upload_id,
+            &body,
+            None,
+            aws_options.request_payer,
+            Wrapper::resolve,
+            bun_core::heap::into_raw(Box::new(Wrapper {
+                promise,
+                store: store.clone(),
+                global: bun_ptr::BackRef::new(cx.global()),
+            }))
+            .cast::<c_void>(),
+        )?;
+
+        Ok(value)
+    }
+
+    fn abort_multipart_upload(
+        &self,
+        store: &RefPtr<Store>,
+        cx: &bun_jsc::JsThread<'_>,
+        upload_id: &UploadId,
+        extra_options: Option<JSValue>,
+    ) -> JsResult<JSValue> {
+        struct Wrapper {
+            promise: bun_jsc::JSPromiseStrong,
+            store: RefPtr<Store>,
+            global: bun_ptr::BackRef<JSGlobalObject>,
+        }
+
+        impl Wrapper {
+            fn resolve(result: S3DeleteResult<'_>, opaque_self: *mut c_void) -> JsResult<()> {
+                // SAFETY: opaque_self was created via heap::into_raw(Box::new(..)) below.
+                let mut self_ = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
+                let global_object = self_.global.get();
+                match result {
+                    S3DeleteResult::Success => {
+                        self_.promise.resolve(global_object, JSValue::UNDEFINED)
+                    }
+                    S3DeleteResult::NotFound(err) | S3DeleteResult::Failure(err) => {
+                        let err_val = err.to_js_with_async_stack(
+                            global_object,
+                            self_.store.get_path(),
+                            self_.promise.get(),
+                        );
+                        self_.promise.reject(global_object, err_val)
+                    }
+                }
+            }
+        }
+
+        let promise = bun_jsc::JSPromiseStrong::init(cx.global());
+        let value = promise.value();
+        let aws_options = self.get_credentials_with_options(extra_options, cx.global())?;
+
+        multipart_ops::abort_multipart_upload(
+            &aws_options.credentials,
+            cx.context(),
+            self.path(),
+            upload_id,
+            None,
+            aws_options.request_payer,
+            Wrapper::resolve,
+            bun_core::heap::into_raw(Box::new(Wrapper {
+                promise,
+                store: store.clone(),
+                global: bun_ptr::BackRef::new(cx.global()),
+            }))
+            .cast::<c_void>(),
         )?;
 
         Ok(value)

@@ -301,6 +301,9 @@ pub(crate) mod __s3_list_objects;
 #[path = "webcore/s3/multipart.rs"]
 pub(crate) mod __s3_multipart;
 #[doc(hidden)]
+#[path = "webcore/s3/multipart_ops.rs"]
+pub(crate) mod __s3_multipart_ops;
+#[doc(hidden)]
 #[path = "webcore/s3/simple_request.rs"]
 pub(crate) mod __s3_simple_request;
 #[doc(hidden)]
@@ -317,6 +320,7 @@ pub(crate) mod s3 {
     pub(crate) use super::__s3_download_stream as download_stream;
     pub(crate) use super::__s3_list_objects as list_objects;
     pub(crate) use super::__s3_multipart as multipart;
+    pub(crate) use super::__s3_multipart_ops as multipart_ops;
     pub(crate) use super::__s3_simple_request as simple_request;
     pub(crate) use super::__s3_xml_response as xml_response;
     pub(crate) use multipart::MultiPartUpload;

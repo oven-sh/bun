@@ -44,6 +44,18 @@ export default [
         fn: "staticStat",
         length: 2,
       },
+      createMultipartUpload: {
+        fn: "staticCreateMultipartUpload",
+        length: 2,
+      },
+      completeMultipartUpload: {
+        fn: "staticCompleteMultipartUpload",
+        length: 4,
+      },
+      abortMultipartUpload: {
+        fn: "staticAbortMultipartUpload",
+        length: 3,
+      },
     },
     JSType: "0b11101110",
     proto: {
@@ -83,6 +95,18 @@ export default [
       stat: {
         fn: "stat",
         length: 2,
+      },
+      createMultipartUpload: {
+        fn: "createMultipartUpload",
+        length: 2,
+      },
+      completeMultipartUpload: {
+        fn: "completeMultipartUpload",
+        length: 4,
+      },
+      abortMultipartUpload: {
+        fn: "abortMultipartUpload",
+        length: 3,
       },
     },
   }),

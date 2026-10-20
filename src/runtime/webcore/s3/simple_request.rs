@@ -19,6 +19,7 @@ use bun_s3_signing::storage_class::StorageClass;
 use bun_threading::thread_pool;
 use bun_url::URL;
 
+use crate::webcore::s3::multipart_ops::{self, CompleteResponse, Completed};
 use crate::webcore::s3::{list_objects, xml_response};
 
 // The result/options structs below carry borrowed slices that are valid only for the
@@ -91,9 +92,12 @@ pub(crate) enum S3ListObjectsResult<'a> {
     Failure(S3Error<'a>),
 }
 
-// commit result also fails if status 200 but with body containing an Error
+/// How the answer to CompleteMultipartUpload was read.
 pub(crate) enum S3CommitResult<'a> {
-    Success,
+    /// A 200 whose body is a `<CompleteMultipartUploadResult>` document.
+    Success(Completed),
+    /// A 206, or a 200 whose body is neither that document nor an `<Error>` document.
+    Unrecognized,
     /// failure error is not owned and need to be copied if used after this callback
     Failure(S3Error<'a>),
 }
@@ -266,7 +270,7 @@ impl S3HttpSimpleTask {
         Ok(())
     }
 
-    /// A commit can answer 200 and still carry an `<Error>` document.
+    /// Fails the request unless it got a 206, or a 200 whose body is not an `<Error>` document.
     fn fail_if_contains_error(&mut self, status: u32) -> bun_jsc::JsResult<bool> {
         let mut code: &[u8] = b"UnknownError";
         let mut message: &[u8] = b"an unexpected error has occurred";
@@ -381,13 +385,22 @@ impl S3HttpSimpleTask {
                     this.error_with_body(ErrorType::Failure)?;
                 }
             },
-            Callback::Commit(callback) => {
-                // commit multipart upload can fail with status 200
-                let status = response.status_code;
-                if !this.fail_if_contains_error(status)? {
-                    callback(S3CommitResult::Success, this.callback_context)?;
-                }
-            }
+            Callback::Commit(callback) => match response.status_code {
+                200 => match multipart_ops::read_complete_response(
+                    this.response_buffer.list.as_slice(),
+                ) {
+                    CompleteResponse::Completed(completed) => {
+                        callback(S3CommitResult::Success(completed), this.callback_context)?
+                    }
+                    CompleteResponse::Error => this.error_with_body(ErrorType::Failure)?,
+                    CompleteResponse::Unrecognized => {
+                        callback(S3CommitResult::Unrecognized, this.callback_context)?
+                    }
+                },
+                // A 206 is not an error status and not an answer to CompleteMultipartUpload.
+                206 => callback(S3CommitResult::Unrecognized, this.callback_context)?,
+                _ => this.error_with_body(ErrorType::Failure)?,
+            },
             Callback::Part(callback) => {
                 let status = response.status_code;
                 if !this.fail_if_contains_error(status)? {
@@ -618,6 +631,8 @@ pub(crate) fn execute_simple_s3_request(
             content_hash: None,
             content_md5: None,
             content_type: None,
+            upload_id: None,
+            part_number: None,
         },
         None,
     ) {

@@ -1086,6 +1086,8 @@ impl Response {
                             acl: None,
                             storage_class: None,
                             request_payer: false,
+                            upload_id: None,
+                            part_number: None,
                         },
                         Some(bun_s3_signing::SignQueryOptions { expires: 15 * 60 }),
                     ) {

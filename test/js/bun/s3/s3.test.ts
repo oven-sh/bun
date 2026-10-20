@@ -1579,6 +1579,353 @@ describe.concurrent("s3 missing credentials", () => {
   });
 });
 
+// Answers to CompleteMultipartUpload. S3 sends the 200 status line first and whitespace while it
+// assembles the file, so only the body says how it ended. The last column: "result" (the file
+// exists), "unread" (nothing says that it does), or the code of the error that the answer is.
+const completeResult =
+  '<?xml version="1.0" encoding="UTF-8"?>\n<CompleteMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Location>http://b.s3.amazonaws.com/k</Location><Bucket>b</Bucket><Key>k</Key><ETag>"3858f62230ac3c915f300c664312c11f-1"</ETag></CompleteMultipartUploadResult>';
+const completeError =
+  '<?xml version="1.0" encoding="UTF-8"?>\n<Error><Code>InternalError</Code><Message>We encountered an internal error. Please try again.</Message></Error>';
+const completeAnswers = [
+  ["the result", 200, completeResult, "result"],
+  ["whitespace, then the result", 200, " \n \n" + completeResult, "result"],
+  ["an Error document", 200, completeError, "InternalError"],
+  ["whitespace, then an Error document", 200, " \n \n" + completeError, "InternalError"],
+  ["an empty body", 200, "", "unread"],
+  ["whitespace alone", 200, " \n \n ", "unread"],
+  ["an Error document that is cut off", 200, completeError.slice(0, 70), "unread"],
+  ["a result that is cut off", 200, completeResult.slice(0, 120), "unread"],
+  ["an HTML page", 200, "<html><body><h1>502 Bad Gateway</h1></body></html>", "unread"],
+  ["JSON", 200, '{"ok":true}', "unread"],
+  [
+    "the answer to another call",
+    200,
+    "<InitiateMultipartUploadResult><Bucket>b</Bucket><Key>k</Key><UploadId>u</UploadId></InitiateMultipartUploadResult>",
+    "unread",
+  ],
+  ["status 206 and the result", 206, completeResult, "unread"],
+  ["status 206 and an Error document", 206, completeError, "unread"],
+  ["status 206 and an empty body", 206, "", "unread"],
+  ["status 204", 204, null, "UnknownError"],
+  ["status 201 and the result", 201, completeResult, "UnknownError"],
+  [
+    "status 404 and NoSuchUpload",
+    404,
+    "<Error><Code>NoSuchUpload</Code><Message>The specified upload does not exist.</Message></Error>",
+    "NoSuchUpload",
+  ],
+  ["status 500 and an empty body", 500, "", "UnknownError"],
+] as const;
+
+describe("multipart upload primitives", () => {
+  // The browser-driven flow: the server creates the upload and presigns one
+  // UploadPart URL per part, the client PUTs the parts, the server completes.
+  const client = new S3Client(localCredentials);
+  const { service: _, ...credentials } = localCredentials;
+  const partOne = Buffer.alloc(5 * 1024 * 1024, "a");
+  const partTwo = Buffer.from("the last part can be small");
+
+  async function putPart(url: string, body: Buffer): Promise<string> {
+    const response = await fetch(url, { method: "PUT", body });
+    expect(await response.text()).toBe("");
+    expect(response.status).toBe(200);
+    return response.headers.get("etag")!;
+  }
+
+  // Registered right after create: drops the upload if it is still open, then the file.
+  function leaveNothing(key: string, uploadId: string) {
+    return {
+      async [Symbol.asyncDispose]() {
+        await client.abortMultipartUpload(key, uploadId).catch(error => {
+          if (error.code !== "NoSuchUpload") throw error;
+        });
+        await client.unlink(key);
+      },
+    };
+  }
+
+  it("create, presign each part, complete, read back", async () => {
+    const key = `multipart/${randomUUIDv7()}.bin`;
+    const { uploadId } = await client.createMultipartUpload(key, { type: "application/octet-stream" });
+    await using _ = leaveNothing(key, uploadId);
+    expect(uploadId).toBeString();
+    expect(uploadId).not.toBeEmpty();
+
+    const etags: string[] = [];
+    for (const [index, body] of [partOne, partTwo].entries()) {
+      const url = client.presign(key, { method: "PUT", expiresIn: 60, uploadId, partNumber: index + 1 });
+      const query = new URL(url).searchParams;
+      expect(query.get("uploadId")).toBe(uploadId);
+      expect(query.get("partNumber")).toBe(String(index + 1));
+      etags.push(await putPart(url, body));
+    }
+
+    // Part numbers do not have to be listed in order.
+    await client.completeMultipartUpload(key, uploadId, [
+      { partNumber: 2, etag: etags[1] },
+      { partNumber: 1, etag: etags[0] },
+    ]);
+    const file = client.file(key);
+    expect(await file.bytes()).toEqual(new Uint8Array(Buffer.concat([partOne, partTwo])));
+    expect((await file.stat()).type).toBe("application/octet-stream");
+  });
+
+  it("create sets the type, disposition, encoding, storage class and acl of the file", async () => {
+    const key = `multipart/${randomUUIDv7()}.txt`;
+    const { uploadId } = await client.createMultipartUpload(key, {
+      contentDisposition: 'attachment; filename="x.bin"',
+      contentEncoding: "gzip",
+      storageClass: "STANDARD_IA",
+      acl: "public-read",
+    });
+    await using _ = leaveNothing(key, uploadId);
+    const etag = await putPart(client.presign(key, { method: "PUT", uploadId, partNumber: 1 }), partTwo);
+    await client.completeMultipartUpload(key, uploadId, [{ partNumber: 1, etag }]);
+
+    // The type comes from the key, as it does for write() and writer().
+    expect((await client.stat(key)).type).toBe("text/plain;charset=utf-8");
+    const response = await fetch(client.presign(key), { decompress: false });
+    expect(await response.bytes()).toEqual(new Uint8Array(partTwo));
+    expect(response.headers.get("content-disposition")).toBe('attachment; filename="x.bin"');
+    expect(response.headers.get("content-encoding")).toBe("gzip");
+    expect((await client.list({ prefix: key })).contents?.[0]?.storageClass).toBe("STANDARD_IA");
+    // public-read: the object is readable without a signature.
+    const { origin, pathname } = new URL(client.presign(key));
+    expect((await fetch(origin + pathname, { decompress: false })).status).toBe(200);
+  });
+
+  it("abort drops the upload", async () => {
+    const key = `multipart/${randomUUIDv7()}.bin`;
+    const { uploadId } = await client.createMultipartUpload(key);
+    await using _ = leaveNothing(key, uploadId);
+    const etag = await putPart(client.presign(key, { method: "PUT", uploadId, partNumber: 1 }), partTwo);
+    await client.abortMultipartUpload(key, uploadId);
+
+    await expect(client.completeMultipartUpload(key, uploadId, [{ partNumber: 1, etag }])).rejects.toMatchObject({
+      code: "NoSuchUpload",
+    });
+    await expect(client.abortMultipartUpload(key, uploadId)).rejects.toMatchObject({ code: "NoSuchUpload" });
+    expect(await client.exists(key)).toBe(false);
+  });
+
+  it("complete rejects a wrong etag, and escapes the etag in the request body", async () => {
+    const key = `multipart/${randomUUIDv7()}.bin`;
+    const { uploadId } = await client.createMultipartUpload(key);
+    await putPart(client.presign(key, { method: "PUT", uploadId, partNumber: 1 }), partTwo);
+    try {
+      // Unescaped, `<&>` would not parse as XML (MalformedXML). Escaped, the
+      // server reads it and reports the mismatch.
+      await expect(
+        client.completeMultipartUpload(key, uploadId, [{ partNumber: 1, etag: '"<&>"' }]),
+      ).rejects.toMatchObject({
+        code: "InvalidPart",
+      });
+    } finally {
+      await client.abortMultipartUpload(key, uploadId);
+    }
+  });
+
+  // The method resolves only when it read the result. The writer test below reads the same answers.
+  it.each(completeAnswers)("complete, answered with %s", async (_, status, body, outcome) => {
+    let requests = 0;
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        await req.arrayBuffer();
+        requests++;
+        return new Response(body, { status });
+      },
+    });
+    const options = { ...credentials, endpoint: server.url.href };
+    const parts = [{ partNumber: 1, etag: '"e"' }];
+    for (const complete of [
+      () => new S3Client(options).completeMultipartUpload("k", "u", parts),
+      () => S3Client.completeMultipartUpload("k", "u", parts, options),
+    ]) {
+      if (outcome === "result") {
+        expect(await complete()).toBeUndefined();
+      } else if (outcome === "unread") {
+        await expect(complete()).rejects.toMatchObject({
+          name: "S3Error",
+          code: "InvalidResponse",
+          message: "CompleteMultipartUpload response is not a 200 with a <CompleteMultipartUploadResult> document",
+        });
+      } else {
+        await expect(complete()).rejects.toMatchObject({ name: "S3Error", code: outcome });
+      }
+    }
+    // One request per call: a complete that rejects is not sent again.
+    expect(requests).toBe(2);
+  });
+
+  it("static forms take the credentials as the last argument", async () => {
+    const key = `multipart/${randomUUIDv7()}.bin`;
+    const { uploadId } = await S3Client.createMultipartUpload(key, credentials);
+    await using _ = leaveNothing(key, uploadId);
+    const etag = await putPart(
+      S3Client.presign(key, { ...credentials, method: "PUT", uploadId, partNumber: 1 }),
+      partTwo,
+    );
+    await S3Client.completeMultipartUpload(key, uploadId, [{ partNumber: 1, etag }], credentials);
+    expect(await S3Client.file(key, credentials).text()).toBe(partTwo.toString());
+
+    const { uploadId: other } = await S3Client.createMultipartUpload(key, credentials);
+    await using __ = leaveNothing(key, other);
+    await S3Client.abortMultipartUpload(key, other, credentials);
+    await expect(S3Client.abortMultipartUpload(key, other, credentials)).rejects.toMatchObject({
+      code: "NoSuchUpload",
+    });
+  });
+
+  it("S3File.presign and S3Client.presign take uploadId and partNumber", () => {
+    for (const url of [
+      client.file("k").presign({ method: "PUT", uploadId: "u", partNumber: 7 }),
+      S3Client.presign("k", { ...credentials, method: "PUT", uploadId: "u", partNumber: 7 }),
+    ]) {
+      const query = new URL(url).searchParams;
+      expect(query.get("uploadId")).toBe("u");
+      expect(query.get("partNumber")).toBe("7");
+    }
+  });
+
+  it("percent-encodes a long upload id with reserved characters and the server verifies it", async () => {
+    // Ids from S3-compatible stores carry `+`, `/` and `=`. 666 `+` and "ab"
+    // encode to exactly 2000 bytes, the limit.
+    const uploadId = Buffer.alloc(666, "+").toString() + "ab";
+    const encoded = Buffer.alloc(666 * 3, "%2B").toString() + "ab";
+    const url = client.presign("k", { method: "PUT", uploadId, partNumber: 1, contentEncoding: "gzip" });
+    expect(url).toContain(`&partNumber=1&response-content-encoding=gzip&uploadId=${encoded}`);
+    expect(new URL(url).searchParams.get("uploadId")).toBe(uploadId);
+    // A verified signature for an upload that does not exist: NoSuchUpload, not SignatureDoesNotMatch.
+    const response = await fetch(url, { method: "PUT", body: "x" });
+    expect(await response.text()).toContain("<Code>NoSuchUpload</Code>");
+    expect(response.status).toBe(404);
+    await expect(client.abortMultipartUpload("k", uploadId)).rejects.toMatchObject({ code: "NoSuchUpload" });
+    await expect(client.completeMultipartUpload("k", uploadId, [{ partNumber: 1, etag: '"e"' }])).rejects.toMatchObject(
+      {
+        code: "NoSuchUpload",
+      },
+    );
+    // Query delimiters are encoded too.
+    expect(client.presign("k", { uploadId: "a&b#c?d" })).toContain("&uploadId=a%26b%23c%3Fd");
+  });
+
+  it("presign query parameters stay in byte order with every option", () => {
+    const url = client.presign("k", {
+      method: "PUT",
+      acl: "public-read",
+      storageClass: "GLACIER",
+      type: "text/plain",
+      contentDisposition: "attachment",
+      contentEncoding: "gzip",
+      requestPayer: true,
+      uploadId: "u",
+      partNumber: 1,
+    });
+    const names = [...new URL(url).searchParams.keys()];
+    expect(names).toEqual([...names].sort());
+    expect(names).toEqual([
+      "X-Amz-Acl",
+      "X-Amz-Algorithm",
+      "X-Amz-Credential",
+      "X-Amz-Date",
+      "X-Amz-Expires",
+      "X-Amz-Signature",
+      "X-Amz-SignedHeaders",
+      "partNumber",
+      "response-content-disposition",
+      "response-content-encoding",
+      "response-content-type",
+      "uploadId",
+      "x-amz-request-payer",
+      "x-amz-storage-class",
+    ]);
+  });
+
+  it("presigns with a session token and a long upload id", () => {
+    const session = new S3Client({ ...credentials, sessionToken: Buffer.alloc(2000, "t").toString() });
+    const uploadId = Buffer.alloc(666, "+").toString() + "ab";
+    const query = new URL(
+      session.presign(Buffer.alloc(900, "k").toString(), {
+        method: "PUT",
+        uploadId,
+        partNumber: 10000,
+        contentDisposition: Buffer.alloc(400, "d").toString(),
+        type: Buffer.alloc(200, "t").toString(),
+      }),
+    ).searchParams;
+    expect(query.get("uploadId")).toBe(uploadId);
+    expect(query.get("X-Amz-Security-Token")).toHaveLength(2000);
+  });
+
+  it("rejects an invalid uploadId or partNumber before any request", () => {
+    const invalidUploadId = "uploadId must be printable ASCII, at most 2000 bytes once percent-encoded";
+    // 667 `+` encode to 2001 bytes.
+    for (const uploadId of ["", "a b", "é", Buffer.alloc(2001, "x").toString(), Buffer.alloc(667, "+").toString()]) {
+      expect(() => client.presign("k", { uploadId })).toThrow(invalidUploadId);
+      expect(() => client.abortMultipartUpload("k", uploadId)).toThrow(invalidUploadId);
+      expect(() => client.completeMultipartUpload("k", uploadId, [{ partNumber: 1, etag: "e" }])).toThrow(
+        invalidUploadId,
+      );
+    }
+    expect(() => client.presign("k", { uploadId: 1 as any })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    for (const call of [
+      () => (client as any).createMultipartUpload(),
+      () => (client as any).abortMultipartUpload(),
+      () => (client as any).abortMultipartUpload("k"),
+      () => (client as any).completeMultipartUpload(),
+      () => (client as any).completeMultipartUpload("k"),
+      () => (client as any).completeMultipartUpload("k", "u"),
+    ]) {
+      expect(call).toThrow(expect.objectContaining({ code: "ERR_MISSING_ARGS" }));
+    }
+    // The static forms report a missing path like the static presign() does.
+    for (const call of [
+      () => (S3Client as any).createMultipartUpload(),
+      () => (S3Client as any).abortMultipartUpload(),
+      () => (S3Client as any).completeMultipartUpload(),
+    ]) {
+      expect(call).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    }
+    expect(() => client.abortMultipartUpload("k", 1 as any)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    for (const [partNumber, code] of [
+      [0, "ERR_OUT_OF_RANGE"],
+      [10001, "ERR_OUT_OF_RANGE"],
+      [-1, "ERR_OUT_OF_RANGE"],
+      [1.5, "ERR_INVALID_ARG_TYPE"],
+      [NaN, "ERR_INVALID_ARG_TYPE"],
+      ["1", "ERR_INVALID_ARG_TYPE"],
+    ] as const) {
+      expect(() => client.presign("k", { partNumber: partNumber as number })).toThrow(
+        expect.objectContaining({ code }),
+      );
+      expect(() => client.completeMultipartUpload("k", "u", [{ partNumber: partNumber as number, etag: "e" }])).toThrow(
+        expect.objectContaining({ code }),
+      );
+    }
+    expect(() => client.completeMultipartUpload("k", "u", [] as any)).toThrow("parts must have 1 to 10000 entries");
+    expect(() => client.completeMultipartUpload("k", "u", {} as any)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    expect(() => client.completeMultipartUpload("k", "u", [{ partNumber: 1, etag: "" }])).toThrow(
+      "etag must not be empty",
+    );
+    expect(() => client.completeMultipartUpload("k", "u", [{ partNumber: 1 } as any])).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    expect(() =>
+      client.completeMultipartUpload("k", "u", [
+        { partNumber: 1, etag: "e" },
+        { partNumber: 1, etag: "f" },
+      ]),
+    ).toThrow("parts lists part 1 more than once");
+  });
+});
+
 // Archive + S3 integration tests
 describe("Archive with S3", () => {
   const credentials = localCredentials;
@@ -1771,6 +2118,14 @@ describe("s3 multipart upload id validation", () => {
           console.log("valid-id: resolved");
         }
 
+        try {
+          await client.createMultipartUpload("malformed-id-object");
+          console.log("create malformed-id: resolved");
+        } catch (err) {
+          console.log("create malformed-id: rejected", err?.code);
+        }
+        console.log("create valid-id:", (await client.createMultipartUpload("valid-id-object")).uploadId);
+
         server.stop(true);
       `;
 
@@ -1788,8 +2143,213 @@ describe("s3 multipart upload id validation", () => {
     expect(stdout).toContain("malformed-id: rejected UnknownError - Failed to initiate multipart upload");
     // A well-formed upload id still completes the multipart upload in the same process.
     expect(stdout).toContain("valid-id: resolved");
+    expect(stdout).toContain("create malformed-id: rejected InvalidResponse");
+    expect(stdout).toContain("create valid-id: valid-upload-id-1234567890");
     expect(exitCode).toBe(0);
   }, 60_000);
+  const secretAccessKey = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY";
+  const uriEncode = (value: string) =>
+    encodeURIComponent(value).replace(/[!'()*]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+
+  // The signature a SigV4 verifier derives from the request as it arrived: it parses the
+  // query like any server does, then encodes each name and value again.
+  function signatureFromTheWire(req: Request) {
+    const url = new URL(req.url);
+    const [, day, region, service, signedHeaders] =
+      /Credential=[^/]+\/(\d{8})\/([^/]+)\/([^/]+)\/aws4_request, SignedHeaders=([^,]+),/.exec(
+        req.headers.get("authorization")!,
+      )!;
+    const canonicalRequest = [
+      req.method,
+      url.pathname,
+      [...url.searchParams]
+        .map(([name, value]) => `${uriEncode(name)}=${uriEncode(value)}`)
+        .sort()
+        .join("&"),
+      ...signedHeaders.split(";").map(name => `${name}:${req.headers.get(name)!.trim()}`),
+      "",
+      signedHeaders,
+      req.headers.get("x-amz-content-sha256"),
+    ].join("\n");
+    const stringToSign = [
+      "AWS4-HMAC-SHA256",
+      req.headers.get("x-amz-date"),
+      `${day}/${region}/${service}/aws4_request`,
+      createHash("sha256").update(canonicalRequest).digest("hex"),
+    ].join("\n");
+    const hmac = (key: string | Buffer, data: string) => createHmac("sha256", key).update(data).digest();
+    const signingKey = hmac(hmac(hmac(hmac("AWS4" + secretAccessKey, day), region), service), "aws4_request");
+    return createHmac("sha256", signingKey).update(stringToSign).digest("hex");
+  }
+
+  // One multipart upload of two parts against a mock S3 that mints `uploadId`. Resolves with
+  // every request that carried the id: the query as sent, and whether its signature verifies.
+  async function multipartRequests(uploadId: string, { failParts }: { failParts: boolean }) {
+    const requests: { request: string; signatureVerifies: boolean }[] = [];
+    const aborted = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        await req.arrayBuffer();
+        const { search } = new URL(req.url);
+        if (search === "?uploads=") {
+          return new Response(
+            `<InitiateMultipartUploadResult><Bucket>my_bucket</Bucket><Key>obj</Key><UploadId>${Bun.escapeHTML(uploadId)}</UploadId></InitiateMultipartUploadResult>`,
+          );
+        }
+        requests.push({
+          request: `${req.method} ${search}`,
+          signatureVerifies:
+            /Signature=([0-9a-f]{64})/.exec(req.headers.get("authorization")!)?.[1] === signatureFromTheWire(req),
+        });
+        if (req.method === "DELETE") {
+          aborted.resolve();
+          return new Response(undefined, { status: 204 });
+        }
+        if (req.method === "POST") {
+          return new Response('<CompleteMultipartUploadResult><ETag>"etag"</ETag></CompleteMultipartUploadResult>');
+        }
+        if (failParts) {
+          return new Response("<Error><Code>InternalError</Code><Message>try again</Message></Error>", {
+            status: 500,
+          });
+        }
+        return new Response(undefined, { headers: { ETag: '"etag"' } });
+      },
+    });
+    const client = new S3Client({
+      accessKeyId: "test",
+      secretAccessKey,
+      region: "us-east-1",
+      bucket: "my_bucket",
+      endpoint: `http://127.0.0.1:${server.port}`,
+    });
+    // One part size plus 1 MiB, one part in flight at a time: part 1, part 2, then the last request.
+    const writer = client.file("obj").writer({ partSize: 5 * 1024 * 1024, queueSize: 1, retry: 0 });
+    writer.write(Buffer.alloc(6 * 1024 * 1024, "a"));
+    if (failParts) {
+      await expect(writer.end()).rejects.toMatchObject({ code: "InternalError" });
+      await aborted.promise;
+    } else {
+      await writer.end();
+    }
+    return requests;
+  }
+
+  // S3 calls the upload id opaque, so a store may mint one with `+`, `/` or `=` in it.
+  it("percent-encodes the upload id in the UploadPart, CompleteMultipartUpload and AbortMultipartUpload queries", async () => {
+    const uploadId = "2~XlNd+M+261dHJobVe9J/iszJktw==";
+    const encoded = "2~XlNd%2BM%2B261dHJobVe9J%2FiszJktw%3D%3D";
+
+    expect(await multipartRequests(uploadId, { failParts: false })).toEqual([
+      { request: `PUT ?partNumber=1&uploadId=${encoded}&x-id=UploadPart`, signatureVerifies: true },
+      { request: `PUT ?partNumber=2&uploadId=${encoded}&x-id=UploadPart`, signatureVerifies: true },
+      { request: `POST ?uploadId=${encoded}`, signatureVerifies: true },
+    ]);
+    expect(await multipartRequests(uploadId, { failParts: true })).toEqual([
+      { request: `PUT ?partNumber=1&uploadId=${encoded}&x-id=UploadPart`, signatureVerifies: true },
+      { request: `DELETE ?uploadId=${encoded}`, signatureVerifies: true },
+    ]);
+  });
+
+  it("sends back an upload id that holds query delimiters", async () => {
+    expect(await multipartRequests("a&b#c?d", { failParts: false })).toEqual([
+      { request: "PUT ?partNumber=1&uploadId=a%26b%23c%3Fd&x-id=UploadPart", signatureVerifies: true },
+      { request: "PUT ?partNumber=2&uploadId=a%26b%23c%3Fd&x-id=UploadPart", signatureVerifies: true },
+      { request: "POST ?uploadId=a%26b%23c%3Fd", signatureVerifies: true },
+    ]);
+  });
+
+  it("limits the length of the percent-encoded upload id, not of the raw one", async () => {
+    // 666 `+` and "ab" encode to exactly 2000 bytes, which is the limit.
+    const encoded = Buffer.alloc(666 * 3, "%2B").toString() + "ab";
+    expect(await multipartRequests(Buffer.alloc(666, "+").toString() + "ab", { failParts: false })).toEqual([
+      { request: `PUT ?partNumber=1&uploadId=${encoded}&x-id=UploadPart`, signatureVerifies: true },
+      { request: `PUT ?partNumber=2&uploadId=${encoded}&x-id=UploadPart`, signatureVerifies: true },
+      { request: `POST ?uploadId=${encoded}`, signatureVerifies: true },
+    ]);
+    // 667 `+` encode to 2001 bytes.
+    await expect(multipartRequests(Buffer.alloc(667, "+").toString(), { failParts: false })).rejects.toMatchObject({
+      code: "UnknownError",
+      message: "Failed to initiate multipart upload",
+    });
+  });
+});
+
+// What the writer does with each answer to its own CompleteMultipartUpload. It commits on the nine
+// "unread" answers below: that is what released versions do, not a rule.
+// `S3Client.completeMultipartUpload` rejects them: see "complete, answered with".
+describe("s3 writer commit", () => {
+  const part = Buffer.alloc(5 * 1024 * 1024, "a");
+  const cutOffError = "an Error document that is cut off";
+  const committed = completeAnswers.filter(
+    ([name, , , outcome]) => (outcome === "result" || outcome === "unread") && name !== cutOffError,
+  );
+  const failed = completeAnswers.filter(([, , , outcome]) => outcome !== "result" && outcome !== "unread");
+
+  // A writer with one part uploaded, and the requests that the mock S3 gets after the part.
+  function onePartWriter(status: number, body: string | null, retry: number) {
+    const requests: string[] = [];
+    const aborted = Promise.withResolvers<void>();
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        await req.arrayBuffer();
+        const query = new URL(req.url).searchParams;
+        if (req.method === "POST" && query.has("uploads")) {
+          return new Response(
+            "<InitiateMultipartUploadResult><Bucket>b</Bucket><Key>k</Key><UploadId>u</UploadId></InitiateMultipartUploadResult>",
+          );
+        }
+        if (req.method === "PUT") return new Response(undefined, { headers: { ETag: '"etag"' } });
+        if (req.method === "POST") {
+          requests.push("complete");
+          return new Response(body, { status });
+        }
+        if (req.method === "HEAD") {
+          requests.push("exists");
+          return new Response(undefined, { status: 404 });
+        }
+        requests.push("abort");
+        aborted.resolve();
+        return new Response(undefined, { status: 204 });
+      },
+    });
+    const client = new S3Client({
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      region: "us-east-1",
+      bucket: "b",
+      endpoint: server.url.href,
+    });
+    const writer = client.file("k").writer({ partSize: part.length, queueSize: 1, retry });
+    writer.write(part);
+    return { writer, client, requests, aborted: aborted.promise, [Symbol.dispose]: () => void server.stop(true) };
+  }
+
+  it.concurrent.each(committed)("answered with %s: one commit, no abort", async (_, status, body) => {
+    using upload = onePartWriter(status, body, 3);
+    expect(await upload.writer.end()).toBe(part.length);
+    // An abort would come after the writer settles. It would reach the server before this request.
+    expect(await upload.client.exists("k")).toBe(false);
+    expect(upload.requests).toEqual(["complete", "exists"]);
+  });
+
+  describe.each([0, 3])("retry %d", retry => {
+    it.concurrent.each(failed)("answered with %s: every commit, then an abort", async (_, status, body, code) => {
+      using upload = onePartWriter(status, body, retry);
+      await expect(upload.writer.end()).rejects.toMatchObject({ code });
+      await upload.aborted;
+      expect(upload.requests).toEqual([...Array(1 + retry).fill("complete"), "abort"]);
+    });
+  });
+
+  // Rejected up to bun 1.3.14. Resolves since #37194.
+  it.failing(`answered with ${cutOffError}`, async () => {
+    const [, status, body] = completeAnswers.find(([name]) => name === cutOffError)!;
+    using upload = onePartWriter(status, body, 0);
+    await expect(upload.writer.end()).rejects.toBeInstanceOf(Error);
+  });
 });
 
 describe("s3 upload stream body error", () => {

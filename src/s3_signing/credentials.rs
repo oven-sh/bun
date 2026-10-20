@@ -471,7 +471,8 @@ impl S3Credentials {
         let service_name: &str = "s3";
 
         let aws_content_hash: &[u8] = content_hash.unwrap_or(b"UNSIGNED-PAYLOAD");
-        let mut tmp_buffer = [0u8; 4096];
+        // Holds the canonical request with every component at its largest encoded size.
+        let mut tmp_buffer = [0u8; 12288];
 
         let authorization: Box<[u8]> = 'brk: {
             // we hash the hash so we need 2 buffers
@@ -579,11 +580,30 @@ impl S3Credentials {
                     );
                 }
 
+                let mut content_encoding_encoded_buffer = [0u8; 256];
+                let mut encoded_content_encoding: Option<&[u8]> = None;
+                if let Some(ce) = content_encoding {
+                    encoded_content_encoding = Some(
+                        encode_uri_component::<true>(ce, &mut content_encoding_encoded_buffer)
+                            .map_err(|_| SignError::FailedToGenerateSignature)?,
+                    );
+                }
+
+                let mut upload_id_encoded_buffer = [0u8; 2048];
+                let mut encoded_upload_id: Option<&[u8]> = None;
+                if let Some(id) = sign_options.upload_id {
+                    encoded_upload_id = Some(
+                        encode_uri_component::<true>(id, &mut upload_id_encoded_buffer)
+                            .map_err(|_| SignError::FailedToGenerateSignature)?,
+                    );
+                }
+                let part_number = sign_options.part_number;
+
                 // Build query parameters in alphabetical order for AWS Signature V4 canonical request
                 let canonical: &[u8] = 'brk_canonical: {
-                    let mut query_parts: Vec<Vec<u8>> = Vec::with_capacity(13);
+                    let mut query_parts: Vec<Vec<u8>> = Vec::with_capacity(16);
 
-                    // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, response-content-disposition, response-content-type, x-amz-request-payer, x-amz-storage-class
+                    // Add parameters in byte order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, partNumber, response-content-disposition, response-content-encoding, response-content-type, uploadId, x-amz-request-payer, x-amz-storage-class
 
                     if let Some(v) = encoded_content_md5 {
                         query_parts.push(alloc_print!("Content-MD5={}", BStr::new(v)));
@@ -605,14 +625,24 @@ impl S3Credentials {
                         query_parts.push(alloc_print!("X-Amz-Security-Token={}", BStr::new(token)));
                     }
                     query_parts.push(alloc_print!("X-Amz-SignedHeaders=host"));
+                    if let Some(n) = part_number {
+                        query_parts.push(alloc_print!("partNumber={n}"));
+                    }
                     if let Some(cd) = encoded_content_disposition {
                         query_parts.push(alloc_print!(
                             "response-content-disposition={}",
                             BStr::new(cd)
                         ));
                     }
+                    if let Some(ce) = encoded_content_encoding {
+                        query_parts
+                            .push(alloc_print!("response-content-encoding={}", BStr::new(ce)));
+                    }
                     if let Some(ct) = encoded_content_type {
                         query_parts.push(alloc_print!("response-content-type={}", BStr::new(ct)));
+                    }
+                    if let Some(id) = encoded_upload_id {
+                        query_parts.push(alloc_print!("uploadId={}", BStr::new(id)));
                     }
                     if request_payer {
                         query_parts.push(alloc_print!("x-amz-request-payer=requester"));
@@ -671,9 +701,9 @@ impl S3Credentials {
                 .ok_or(SignError::FailedToGenerateSignature)?;
 
                 // Build final URL with query parameters in alphabetical order to match canonical request
-                let mut url_query_parts: Vec<Vec<u8>> = Vec::with_capacity(14);
+                let mut url_query_parts: Vec<Vec<u8>> = Vec::with_capacity(17);
 
-                // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-Signature, X-Amz-SignedHeaders, response-content-disposition, response-content-type, x-amz-request-payer, x-amz-storage-class
+                // Add parameters in byte order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-Signature, X-Amz-SignedHeaders, partNumber, response-content-disposition, response-content-encoding, response-content-type, uploadId, x-amz-request-payer, x-amz-storage-class
 
                 if let Some(v) = encoded_content_md5 {
                     url_query_parts.push(alloc_print!("Content-MD5={}", BStr::new(v)));
@@ -699,14 +729,24 @@ impl S3Credentials {
                     HexLower(&signature[0..DIGESTED_HMAC_256_LEN])
                 ));
                 url_query_parts.push(alloc_print!("X-Amz-SignedHeaders=host"));
+                if let Some(n) = part_number {
+                    url_query_parts.push(alloc_print!("partNumber={n}"));
+                }
                 if let Some(cd) = encoded_content_disposition {
                     url_query_parts.push(alloc_print!(
                         "response-content-disposition={}",
                         BStr::new(cd)
                     ));
                 }
+                if let Some(ce) = encoded_content_encoding {
+                    url_query_parts
+                        .push(alloc_print!("response-content-encoding={}", BStr::new(ce)));
+                }
                 if let Some(ct) = encoded_content_type {
                     url_query_parts.push(alloc_print!("response-content-type={}", BStr::new(ct)));
+                }
+                if let Some(id) = encoded_upload_id {
+                    url_query_parts.push(alloc_print!("uploadId={}", BStr::new(id)));
                 }
                 if request_payer {
                     url_query_parts.push(alloc_print!("x-amz-request-payer=requester"));
@@ -1070,6 +1110,10 @@ pub struct SignOptions<'a> {
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
     pub request_payer: bool,
+    /// Presign only: the `uploadId` query parameter, raw.
+    pub upload_id: Option<&'a [u8]>,
+    /// Presign only: the `partNumber` query parameter.
+    pub part_number: Option<u16>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1227,6 +1271,8 @@ impl<'a> Default for SignOptions<'a> {
             acl: None,
             storage_class: None,
             request_payer: false,
+            upload_id: None,
+            part_number: None,
         }
     }
 }

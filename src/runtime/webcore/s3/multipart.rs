@@ -91,7 +91,6 @@
 
 use core::cell::Cell;
 use core::ffi::c_void;
-use std::io::Write as _;
 
 use bstr::BStr;
 
@@ -111,13 +110,13 @@ use bun_s3_signing::storage_class::StorageClass;
 // File-level mods are declared flat in `webcore.rs` via `#[path]`, so `super`
 // here is `crate::webcore`, not the `s3` directory. Route through the `s3`
 // re-export hub instead.
+pub(crate) use crate::webcore::s3::multipart_ops::UploadPartResult;
+use crate::webcore::s3::multipart_ops::{self, UploadId};
 use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 use crate::webcore::s3::simple_request::{
     self as s3_simple_request, S3CommitResult, S3DeleteResult, S3DownloadResult, S3PartResult,
     S3UploadResult, execute_simple_s3_request,
 };
-use crate::webcore::s3::xml_response;
-use bun_collections::index_sort;
 
 declare_scope!(S3MultiPartUpload, hidden);
 
@@ -157,7 +156,7 @@ pub struct MultiPartUpload {
     pub(crate) content_type: Option<Box<[u8]>>,
     pub(crate) content_disposition: Option<Box<[u8]>>,
     pub(crate) content_encoding: Option<Box<[u8]>>,
-    pub(crate) upload_id: JsCell<Box<[u8]>>,
+    pub(crate) upload_id: JsCell<UploadId>,
 
     pub(crate) multipart_etags: JsCell<Vec<UploadPartResult>>,
     pub(crate) multipart_upload_list: JsCell<Vec<u8>>, // was bun.Vec<u8>
@@ -227,7 +226,6 @@ impl MultiPartUpload {
     }
 
     const MAX_QUEUE_SIZE: usize = MultiPartUploadOptions::MAX_QUEUE_SIZE as usize;
-    const MAX_UPLOAD_ID_LEN: usize = 2000;
     // `const AWS = S3Credentials;` — type alias unused in this file; dropped.
 
     // bun.ptr.RefCount(Self, "ref_count", deinit, .{}) — intrusive refcount.
@@ -277,11 +275,6 @@ pub(crate) struct UploadPart {
     pub(crate) part_number: Cell<u16>, // max is 10,000
     pub(crate) retry: Cell<u8>,        // auto retry, decrement until 0 and fail after this
     pub(crate) index: Cell<u8>,
-}
-
-pub(crate) struct UploadPartResult {
-    pub(crate) number: u16,
-    pub(crate) etag: Box<[u8]>,
 }
 
 impl UploadPart {
@@ -368,19 +361,11 @@ impl UploadPart {
 
     fn perform(&self) -> bun_jsc::JsResult<()> {
         let ctx = self.ctx.get();
-        let mut params_buffer = [0u8; 2048];
-        let written = {
-            let mut w: &mut [u8] = &mut params_buffer[..];
-            write!(
-                w,
-                "?partNumber={}&uploadId={}&x-id=UploadPart",
-                self.part_number.get(),
-                BStr::new(ctx.upload_id.get()),
-            )
-            .expect("unreachable");
-            2048 - w.len()
-        };
-        let search_params = &params_buffer[..written];
+        let mut query = [0u8; multipart_ops::QUERY_BUFFER_LEN];
+        let search_params =
+            ctx.upload_id
+                .get()
+                .part_query(&mut query, self.part_number.get(), true);
         execute_simple_s3_request(
             &ctx.credentials,
             ctx.context(),
@@ -661,28 +646,9 @@ impl MultiPartUpload {
         if state == State::MultipartCompleted && self.is_queue_empty() {
             // we are a multipart upload so we need to send the etags and commit
             self.state.set(State::Finished);
-            self.multipart_upload_list.with_mut(|list| {
-                // start the multipart upload list
-                list.extend_from_slice(
-                    b"<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">",
-                );
-                self.multipart_etags.with_mut(|etags| {
-                    // sort the etags
-                    index_sort::sort_slice_by(etags, |a, b| a.number.cmp(&b.number));
-                    for tag in etags.drain(..) {
-                        write!(
-                            list,
-                            "<Part><PartNumber>{}</PartNumber><ETag>{}</ETag></Part>",
-                            tag.number,
-                            BStr::new(&tag.etag),
-                        )
-                        .expect("oom");
-                        // tag.etag (Box<[u8]>) freed at end of iteration
-                    }
-                });
-                list.extend_from_slice(b"</CompleteMultipartUpload>");
-            });
-            self.multipart_etags.set(Vec::new());
+            let mut etags = self.multipart_etags.replace(Vec::new());
+            self.multipart_upload_list
+                .set(multipart_ops::complete_body(&mut etags));
             // will deref and ends after commit
             self.commit_multi_part_request()
         } else if state == State::SinglefileStarted {
@@ -724,24 +690,7 @@ impl MultiPartUpload {
                 self_.fail(err)
             }
             S3DownloadResult::Success(response) => {
-                // response.body is bun.MutableString — `list` is a Vec<u8>
-                let slice = response.body.list.as_slice();
-                // <InitiateMultipartUploadResult><Bucket/><Key/><UploadId/></…>
-                let upload_id = xml_response::parse(slice, |root| {
-                    (root.name == b"InitiateMultipartUploadResult")
-                        .then(|| root.child_text(b"UploadId"))
-                        .flatten()
-                })
-                .flatten()
-                // It goes into query strings as is: printable, and nothing
-                // that would end or split a query value.
-                .filter(|id| {
-                    !id.is_empty()
-                        && id.len() <= Self::MAX_UPLOAD_ID_LEN
-                        && id
-                            .iter()
-                            .all(|&b| b.is_ascii_graphic() && !matches!(b, b'&' | b'#' | b'?'))
-                });
+                let upload_id = multipart_ops::parse_initiate_result(response.body.list.as_slice());
                 let valid = upload_id.is_some();
                 if let Some(upload_id) = upload_id {
                     self_.upload_id.set(upload_id);
@@ -752,7 +701,7 @@ impl MultiPartUpload {
                             S3MultiPartUpload,
                             "startMultiPartRequestResult {} aborting after fail id: {}",
                             BStr::new(&self_.path),
-                            BStr::new(self_.upload_id.get())
+                            BStr::new(self_.upload_id.get().as_raw())
                         );
                         // The rollback callback releases this ref.
                         self_.ref_();
@@ -777,7 +726,7 @@ impl MultiPartUpload {
                     S3MultiPartUpload,
                     "startMultiPartRequestResult {} success id: {}",
                     BStr::new(&self_.path),
-                    BStr::new(self_.upload_id.get())
+                    BStr::new(self_.upload_id.get().as_raw())
                 );
                 self_.state.set(State::MultipartCompleted);
                 // start draining the parts
@@ -808,7 +757,7 @@ impl MultiPartUpload {
         scoped_log!(
             S3MultiPartUpload,
             "onCommitMultiPartRequest {}",
-            BStr::new(self_.upload_id.get())
+            BStr::new(self_.upload_id.get().as_raw())
         );
 
         match result {
@@ -833,7 +782,8 @@ impl MultiPartUpload {
                 let rolled_back = self_.rollback_multi_part_request();
                 r.and(rolled_back)
             }
-            S3CommitResult::Success => {
+            // Released behavior, not a rule: the writer commits on an answer that nothing read as a result.
+            S3CommitResult::Success(_) | S3CommitResult::Unrecognized => {
                 self_.state.set(State::Finished);
                 // The deref must run after the callback:
                 let r =
@@ -856,7 +806,7 @@ impl MultiPartUpload {
         scoped_log!(
             S3MultiPartUpload,
             "onRollbackMultiPartRequest {}",
-            BStr::new(self_.upload_id.get())
+            BStr::new(self_.upload_id.get().as_raw())
         );
         match result {
             S3DeleteResult::Failure(_err) => {
@@ -883,29 +833,17 @@ impl MultiPartUpload {
         scoped_log!(
             S3MultiPartUpload,
             "commitMultiPartRequest {}",
-            BStr::new(self.upload_id.get())
+            BStr::new(self.upload_id.get().as_raw())
         );
-        let mut params_buffer = [0u8; 2048];
-        let written = {
-            let mut w: &mut [u8] = &mut params_buffer[..];
-            write!(w, "?uploadId={}", BStr::new(self.upload_id.get())).expect("unreachable");
-            2048 - w.len()
-        };
-        let search_params = &params_buffer[..written];
-
-        execute_simple_s3_request(
+        multipart_ops::complete_multipart_upload(
             &self.credentials,
             self.context(),
-            s3_simple_request::S3RequestOptions {
-                path: &self.path,
-                method: bun_http::Method::POST,
-                proxy_url: self.proxy_url(),
-                body: self.multipart_upload_list.get().as_slice(),
-                search_params: Some(search_params),
-                request_payer: self.request_payer,
-                ..Default::default()
-            },
-            s3_simple_request::S3Callback::Commit(Self::on_commit_multi_part_request),
+            &self.path,
+            self.upload_id.get(),
+            self.multipart_upload_list.get().as_slice(),
+            self.proxy_url(),
+            self.request_payer,
+            Self::on_commit_multi_part_request,
             self.as_ctx_ptr(),
         )
     }
@@ -914,31 +852,18 @@ impl MultiPartUpload {
         scoped_log!(
             S3MultiPartUpload,
             "rollbackMultiPartRequest {}",
-            BStr::new(self.upload_id.get())
+            BStr::new(self.upload_id.get().as_raw())
         );
-        let mut params_buffer = [0u8; 2048];
-        let written = {
-            let mut w: &mut [u8] = &mut params_buffer[..];
-            write!(w, "?uploadId={}", BStr::new(self.upload_id.get())).expect("unreachable");
-            2048 - w.len()
-        };
-        let search_params = &params_buffer[..written];
-
-        execute_simple_s3_request(
+        multipart_ops::abort_multipart_upload(
             &self.credentials,
             // Not the script's request: it tells the store to drop the parts it holds (they are billed
             // until they expire), and has to go out when the upload fails because its context stopped.
             self.vm.root_context(),
-            s3_simple_request::S3RequestOptions {
-                path: &self.path,
-                method: bun_http::Method::DELETE,
-                proxy_url: self.proxy_url(),
-                body: b"",
-                search_params: Some(search_params),
-                request_payer: self.request_payer,
-                ..Default::default()
-            },
-            s3_simple_request::S3Callback::Delete(Self::on_rollback_multi_part_request),
+            &self.path,
+            self.upload_id.get(),
+            self.proxy_url(),
+            self.request_payer,
+            Self::on_rollback_multi_part_request,
             self.as_ctx_ptr(),
         )
     }
@@ -957,24 +882,20 @@ impl MultiPartUpload {
             // will auto start later
             self.state.set(State::MultipartStarted);
             self.ref_();
-            execute_simple_s3_request(
+            multipart_ops::create_multipart_upload(
                 &self.credentials,
                 self.context(),
-                s3_simple_request::S3RequestOptions {
-                    path: &self.path,
-                    method: bun_http::Method::POST,
-                    proxy_url: self.proxy_url(),
-                    body: b"",
-                    search_params: Some(b"?uploads="),
+                &self.path,
+                &multipart_ops::CreateMultipartOptions {
                     content_type: self.content_type.as_deref(),
                     content_disposition: self.content_disposition.as_deref(),
                     content_encoding: self.content_encoding.as_deref(),
                     acl: self.acl,
                     storage_class: self.storage_class,
                     request_payer: self.request_payer,
-                    ..Default::default()
+                    proxy_url: self.proxy_url(),
                 },
-                s3_simple_request::S3Callback::Download(Self::start_multi_part_request_result),
+                Self::start_multi_part_request_result,
                 self.as_ctx_ptr(),
             )?;
         } else if self.state.get() == State::MultipartCompleted {

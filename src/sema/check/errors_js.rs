@@ -81,7 +81,10 @@ impl Checker<'_, '_> {
                     | StmtKind::Enum(_)
                     | StmtKind::Module(_)
                     | StmtKind::Var(_)
-            ) && !hir.modifier_list(hir[s].modifiers).iter().any(is_declared)
+            ) && !hir
+                .modifier_list(hir.stmt_modifiers(s))
+                .iter()
+                .any(is_declared)
             {
                 let start = hir[s].start;
                 self.error_at((file, start, 0), 1046, &[]);

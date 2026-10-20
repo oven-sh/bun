@@ -399,7 +399,7 @@ describe("yarn berry migration", () => {
       expect(stdout + stderr).not.toContain("Saved");
       expect(await Bun.file(join(dir, "package.json")).text()).toBe(before);
       expect(existsSync(join(dir, "bun.lock"))).toBeFalse();
-      // the patch is applied all the same
+      // The patch is applied anyway.
       expect(await Bun.file(join(dir, "node_modules", "no-deps", "patched.txt")).text()).toBe("hello world\n");
       expect(exitCode).toBe(0);
     });
@@ -1401,7 +1401,7 @@ catalogs:
     await expectFrozenInstall(dir);
   });
 
-  // What yarn.lock pins and bun cannot keep fails the migration; nothing is written.
+  // If yarn.lock pins something that Bun can't keep, the migration fails and nothing is written.
   const rootEntry = (deps: string[]) => [`resolution: "berry-reject@workspace:."`, `dependencies:`, ...deps];
   const noDeps100 = { "no-deps@npm:^1.0.0": [`resolution: "no-deps@npm:1.0.0"`] };
   const rejected: {
@@ -2332,7 +2332,7 @@ catalogs:
       expect(bunLock).toContain(
         `"one-range-dep@1.0.0", "http://localhost:1234/one-range-dep/-/one-range-dep-1.0.0.tgz", { "dependencies": { "no-deps": "^1.0.0 ", "one-fixed-dep": "1.0.0" }, "peerDependencies": { "a-dep": "*" }, "optionalPeers": ["a-dep"] }`,
       );
-      // bun.lock says which edges an extension added, and the extensions go where bun reads them
+      // bun.lock records which dependencies an extension added, and the extensions are written where Bun reads them.
       expect(bunLock).toContain(
         `  "packageExtensions": {\n    "one-range-dep@1.0.0": { "dependencies": ["one-fixed-dep"], "peerDependencies": ["a-dep"] },\n  },\n`,
       );
@@ -2576,7 +2576,7 @@ catalogs:
     expect(bunLock).toContain(`{ "peerDependencies": { "no-deps": "^1.0.0" }, "optionalPeers": ["no-deps"] }`);
     expect(exitCode).toBe(0);
     await expectFrozenInstall(dir);
-    // nothing in package.json stands for yarn's own extension, and the next install keeps what it added
+    // Nothing in package.json corresponds to Yarn's builtin extension, and the next install keeps what it added.
     const again = await run(dir, "install");
     expect(again.stderr).not.toContain("error:");
     expect(await bunLockOf(dir)).toBe(bunLock);

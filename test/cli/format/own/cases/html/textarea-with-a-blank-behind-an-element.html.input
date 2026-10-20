@@ -1,0 +1,8 @@
+<p><label>x</label><textarea> </textarea></p>
+<div><b>a</b><textarea> </textarea></div>
+<p><b>a</b><textarea> </textarea><textarea> </textarea></p>
+<p><b>a</b><textarea> </textarea><b>c</b></p>
+<p><textarea> </textarea><b>a</b></p>
+<form><input><textarea> </textarea></form>
+<p><br><textarea> </textarea></p>
+<p><img><textarea> </textarea><img></p>

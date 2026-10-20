@@ -172,8 +172,9 @@ impl Minimatch {
         if options.noext {
             text = without_groups(&text);
         }
-        // Only `nonegate` leaves a `!` here. It's a plain character then.
-        if text.starts_with(b"!") {
+        // A leading `!` is only still here with `nonegate`. It's then a literal character, unless it starts an extglob
+        // like `!(a)`.
+        if text.starts_with(b"!") && text.get(1) != Some(&b'(') {
             text.insert(0, b'\\');
         }
         let parse = |text: &[u8]| match options.dot {

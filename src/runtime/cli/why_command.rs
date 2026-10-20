@@ -39,7 +39,7 @@ struct VersionInfo {
 struct DependentInfo {
     name: Box<[u8]>,
     version: Box<[u8]>,
-    /// What this dependent calls the package, when that is not the package's name.
+    /// The name that this dependent uses for the package, if it isn't the package's own name.
     alias: Option<Box<[u8]>>,
     spec: Box<[u8]>,
     dep_type: DependencyType,
@@ -273,7 +273,8 @@ Explain why a package is installed
         let log_level = pm.options.log_level;
         let configured_linker = pm.options.node_linker;
 
-        // Into `pm.lockfile` itself: a migration fetches the manifests of the packages it finds there.
+        // Load into `pm.lockfile` itself, because a migration fetches the manifests of the packages
+        // that it finds there.
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();
         PackageManagerCommand::handle_load_lockfile_errors_for(&load_lockfile, log_level, "");
         let linker = load_lockfile.node_linker(configured_linker);
@@ -291,7 +292,8 @@ Explain why a package is installed
 
         let mut all_dependents: HashMap<PackageID, Vec<DependentInfo>> = HashMap::default();
 
-        // A peer edge leads to the copy each placement of its owner resolves, whichever one the resolver bound it to.
+        // A peer dependency leads to the copy that each placement of its owner resolves, regardless
+        // of which one the resolver bound it to.
         let mut peer_targets: HashMap<DependencyID, Vec<PackageID>> = HashMap::default();
         let served_peers = if linker == NodeLinker::Isolated {
             bun_install::isolated_install::served_peers(&*pm, lockfile)?
@@ -524,13 +526,15 @@ fn print_package_with_type(prefix: &[u8], package: &DependentInfo) {
 struct TreeContext<'a> {
     all_dependents: &'a HashMap<PackageID, Vec<DependentInfo>>,
     max_depth: usize,
-    /// Packages being expanded right now; the value records whether a `*circular` pointed at it.
+    /// The packages that are being expanded right now. The value records whether a `*circular`
+    /// pointed at it.
     path_tracker: HashMap<PackageID, bool>,
-    /// `(depth, cutoff)` of printed subtrees; a repeat not shallower than `cutoff` is `*deduped`.
+    /// The `(depth, cutoff)` of each printed subtree. A repeat that isn't shallower than `cutoff`
+    /// is printed as `*deduped`.
     expanded: HashMap<PackageID, (usize, usize)>,
 }
 
-/// Returns `(lines printed, cutoff)`; see `TreeContext::expanded`.
+/// Returns `(lines printed, cutoff)`. See `TreeContext::expanded`.
 fn print_dependency_tree(
     ctx: &mut TreeContext<'_>,
     current_pkg_id: PackageID,
@@ -602,7 +606,8 @@ fn print_dependency_tree(
     }
 
     if ctx.path_tracker.remove(&current_pkg_id) == Some(true) && cutoff > 0 {
-        // Their `*circular` stood in for this cut-off subtree; a repeat reaches it one level down.
+        // Their `*circular` replaced this cut-off subtree, and a repeat reaches it one level
+        // further down.
         for (their_depth, their_cutoff) in ctx.expanded.values_mut() {
             if *their_depth > depth {
                 *their_cutoff = (*their_cutoff).max(cutoff - 1);

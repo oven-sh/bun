@@ -15,7 +15,7 @@ const {
   setRef,
   streamClosed,
 } = $cpp("JSWebSocket.cpp", "createWebSocketBindingForWs") as NativeClientBinding;
-const upgradeWebSocket = $newRustFunction("node_http_binding.rs", "upgradeNodeHTTPResponseToWebSocket", 7) as (
+const upgradeWebSocket = $bindgen("node_http_binding.bind.ts", "upgradeNodeHTTPResponseToWebSocket") as (
   response: unknown,
   websocket: WebSocket,
   handlers: ServerHandlers,
@@ -24,7 +24,7 @@ const upgradeWebSocket = $newRustFunction("node_http_binding.rs", "upgradeNodeHT
   flags: number,
   deflate: NativeStreamOptions["deflate"],
 ) => NativeServer | undefined;
-const serverSendFrame = $newRustFunction("node_http_binding.rs", "sendWebSocketFrame", 5) as (
+const serverSendFrame = $bindgen("node_http_binding.bind.ts", "sendWebSocketFrame") as (
   handle: NativeServer,
   data: string | Buffer | Blob,
   opcode: number,
@@ -228,7 +228,8 @@ interface NativeClientBinding {
     opcode: number,
     fin: boolean,
     compress: boolean,
-  ): void;
+    // False if the connection has ended, so nothing was sent. Its 'close' is queued behind the current task.
+  ): false | undefined;
   setRef(ws: NativeClient, ref: boolean): void;
   remoteAddress(ws: NativeClient): { address: string; family: "IPv4" | "IPv6"; port: number } | undefined;
 }
@@ -294,6 +295,7 @@ interface Agent extends HttpAgent {
 }
 
 interface AgentConnectOptions extends HttpAgentOptions {
+  headers?: HttpHeaders;
   proxy?: string | URL;
 }
 
@@ -1371,9 +1373,9 @@ class WebSocket extends EventEmitter {
       this[kFirstFragment] = !!fin;
       scheduleSendCallback(this, status === -1, cb);
     } else if (transport === NATIVE_CLIENT) {
-      clientSendFrame(this[kNative] as NativeClient, data, opcode, !!fin, !!compress);
+      const sent = clientSendFrame(this[kNative] as NativeClient, data, opcode, !!fin, !!compress);
       this[kFirstFragment] = !!fin;
-      scheduleSendCallback(this, (this[kNative] as NativeClient).bufferedAmount !== 0, cb);
+      scheduleSendCallback(this, sent === false || (this[kNative] as NativeClient).bufferedAmount !== 0, cb);
     } else {
       this[kWriteCallback] = cb && bindAsyncContext(cb);
       try {
@@ -1503,7 +1505,12 @@ function sendControl(
   }
 
   if (isStream) flushUnusedWriteCallback(websocket);
-  else scheduleSendCallback(websocket, nativeBufferedAmount(websocket) !== 0, cb);
+  else scheduleSendCallback(websocket, endedNatively(websocket) || nativeBufferedAmount(websocket) !== 0, cb);
+}
+
+// The connection of a native client has ended, so it sends nothing. Its 'close' is queued behind the current task.
+function endedNatively(websocket: WebSocket): boolean {
+  return websocket[kTransport] === NATIVE_CLIENT && (websocket[kNative] as NativeClient).readyState !== OPEN;
 }
 
 function nativeBufferedAmount(websocket: WebSocket): number {
@@ -2365,10 +2372,13 @@ function extractAgentOptions(agent: Agent): {
     (proxySource && getIgnoringObjectPrototype(proxySource, "proxy")) || getIgnoringObjectPrototype(agent, "proxy");
   const proxyUrl = (agentProxy as URL)?.href || agentProxy;
   if (typeof proxyUrl === "string" && (proxyUrl.startsWith("http:") || proxyUrl.startsWith("https:"))) {
-    const proxyHeaders = getIgnoringObjectPrototype(agent, "proxyHeaders");
+    // hpagent keeps them in `proxyRequestOptions.headers`.
+    const proxyHeaders =
+      getIgnoringObjectPrototype(agent, "proxyHeaders") ??
+      (connectOpts && getIgnoringObjectPrototype(connectOpts, "headers"));
     let headers = $isCallable(proxyHeaders) ? proxyHeaders.$call(agent) : proxyHeaders;
 
-    // https-proxy-agent overwrites this header with the URL's credentials. The native client prefers the header.
+    // Both agents overwrite this header with the URL's credentials. The native client prefers the header.
     const { username, password } = new URL(proxyUrl);
     if ((username || password) && $isObject(headers)) {
       if (headers instanceof Headers) {

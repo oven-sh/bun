@@ -855,6 +855,22 @@ describe("mock()", () => {
       expect(fn()).toBe("1");
     });
 
+    // The result takes that value as the promise of a then() reaction takes the value of its handler: a then() of
+    // the value is called.
+    test("withImplementation (async) resolves with a value that became a thenable after the promise settled", async () => {
+      const fn = jest.fn(() => "1");
+      const value = {};
+      const promise = Promise.resolve(value);
+      value.then = resolve => resolve("from then()");
+      expect(
+        await fn.withImplementation(
+          () => "2",
+          () => promise,
+        ),
+      ).toBe("from then()");
+      expect(fn()).toBe("1");
+    });
+
     // Open: the async stack walker of JSC does not go on through the result promise of a reaction, so the async
     // callers are missing from the stack. The case fails until it does.
     test.failing("withImplementation (async) keeps the async callers in the stack of a failing callback", async () => {

@@ -1,13 +1,14 @@
 // Prints how the next() of fs.promises.watch() settles after an abort: on which microtask tick, and before or after
 // events.once(signal, "abort") on the same signal. It uses only Node APIs, so
-// `node fs-promises-watch-abort-fixture.ts <dir>` prints the values that the test expects.
+// `node fs-promises-watch-abort-fixture.ts <path>` prints the values that the test expects.
 import { once } from "node:events";
 import { watch } from "node:fs/promises";
 import { basename } from "node:path";
 
-const dir = process.argv[2];
+const watched = process.argv[2];
 const turnOfTheEventLoop = () => new Promise(resolve => setImmediate(resolve));
-const iterate = (signal: AbortSignal, recursive: boolean) => watch(dir, { signal, recursive })[Symbol.asyncIterator]();
+const iterate = (signal: AbortSignal, recursive: boolean) =>
+  watch(watched, { signal, recursive })[Symbol.asyncIterator]();
 
 // How the promise settles and on which microtask tick a reaction of it runs: "rejected on tick 3".
 // A Promise.resolve().then() chain counts the ticks. It starts before `trigger` runs.
@@ -166,7 +167,7 @@ async function order(recursive: boolean) {
   {
     const ac = new AbortController();
     const log: string[] = [];
-    const watcher = watch(dir, { signal: ac.signal, recursive });
+    const watcher = watch(watched, { signal: ac.signal, recursive });
     const viaOnce = settled(log, "once() after watch()", once(ac.signal, "abort"));
     const loop = (async () => {
       try {

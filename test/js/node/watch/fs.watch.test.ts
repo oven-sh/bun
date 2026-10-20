@@ -1120,10 +1120,11 @@ describe("fs.promises.watch", () => {
   test("an abort settles next() on the same tick and in the same order as in Node", async () => {
     // A child process: a test callback can run with the event loop not entered, and then the promise reactions
     // run before abort() returns (#43356).
-    // The fixture watches a directory that no test writes to, so next() gets no event.
-    const quietDir = path.join(import.meta.dir, "fixtures");
+    // The fixture watches a file that no test writes to, so next() gets no event. The file exists since this
+    // module was loaded: on macOS, a path that was created just before can report its own creation.
+    const filepath = path.join(testDir, "abort.txt");
     await using proc = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "fs-promises-watch-abort-fixture.ts"), quietDir],
+      cmd: [bunExe(), path.join(import.meta.dir, "fs-promises-watch-abort-fixture.ts"), filepath],
       env: bunEnv,
       stderr: "pipe",
     });

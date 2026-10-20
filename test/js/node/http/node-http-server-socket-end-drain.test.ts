@@ -497,7 +497,7 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
           writeBody(res);
           endLater(res, () => res.socket!.end()).then(onEnd);
         });
-        server.httpAllowHalfOpen = true;
+        (server as any).httpAllowHalfOpen = true;
         const { client, outcome, body } = await connect(server);
         try {
           if (when === "with its request") client.end(GET);
@@ -783,12 +783,8 @@ describe.skipIf(!fault.available() || isWindows)(
         req.socket.end();
       });
       await once(server.listen(0, "127.0.0.1"), "listening");
-      const client = tls.connect({
-        port: (server.address() as net.AddressInfo).port,
-        host: "127.0.0.1",
-        rejectUnauthorized: false,
-        allowHalfOpen: true,
-      });
+      const to = { port: (server.address() as net.AddressInfo).port, host: "127.0.0.1", allowHalfOpen: true };
+      const client = tls.connect({ ...to, rejectUnauthorized: false });
       try {
         let received = "";
         client.on("data", (chunk: Buffer) => (received += chunk.toString("latin1")));

@@ -110,16 +110,14 @@ impl Mv {
                 let cwd = Builtin::cwd(interp, cmd);
                 let target_idx = Self::state_mut(interp, cmd).args.target_idx;
                 let target = ZBox::from_bytes(Builtin::of(interp, cmd).arg_bytes(target_idx));
-                let evtloop = Builtin::event_loop(interp, cmd);
                 let mut task = Box::new(ShellMvCheckTargetTask {
                     cmd,
                     cwd,
                     target,
                     result: None,
                     done: false,
-                    task: ShellTask::new(evtloop),
+                    task: ShellTask::for_builtin(interp, cmd),
                 });
-                task.task.interp = interp.as_ctx_ptr();
                 // SAFETY: `task` is heap-allocated and outlives the worker
                 // call (held in `MvState::CheckTarget` below).
                 unsafe { ShellTask::schedule(&raw mut *task) };
@@ -212,7 +210,6 @@ impl Mv {
                 const BATCH: usize = ShellMvBatchedTask::BATCH_SIZE;
                 let task_count = n_sources.div_ceil(BATCH);
                 let cwd = Builtin::cwd(interp, cmd);
-                let evtloop = Builtin::event_loop(interp, cmd);
                 let (sources_start, target_idx) = {
                     let me = Self::state_mut(interp, cmd);
                     (me.args.sources_start, me.args.target_idx)
@@ -236,7 +233,7 @@ impl Mv {
                         cwd,
                         error_signal: None,
                         err: None,
-                        task: ShellTask::new(evtloop),
+                        task: ShellTask::for_builtin(interp, cmd),
                     });
                 }
 
@@ -249,7 +246,6 @@ impl Mv {
                 };
                 // Now that the AtomicBool has its final address, point
                 // every task at it and schedule.
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 if let MvState::Executing {
                     error_signal,
                     tasks,
@@ -259,7 +255,6 @@ impl Mv {
                     let sig = BackRef::new(&*error_signal);
                     for t in tasks.iter_mut() {
                         t.error_signal = Some(sig);
-                        t.task.interp = interp_ptr;
                         // SAFETY: `t` lives in `MvState::Executing::tasks`,
                         // which is fully populated before any task is scheduled
                         // and never grown afterward, so its address is stable
@@ -297,9 +292,31 @@ impl Mv {
         }
     }
 
+    /// `Builtin::after_stop`: `mv` ends when its pool tasks are back, because they live in this state.
+    pub(crate) fn after_stop(interp: &Interpreter, cmd: NodeId) -> bool {
+        match &Self::state_mut(interp, cmd).state {
+            MvState::CheckTarget(task) => task.done,
+            MvState::Executing {
+                task_count,
+                tasks_done,
+                ..
+            } => tasks_done >= task_count,
+            MvState::Idle | MvState::Done | MvState::WaitingWriteErr { .. } | MvState::Err => true,
+        }
+    }
+
     fn check_target_task_done(interp: &Interpreter, cmd: NodeId) {
-        if let MvState::CheckTarget(t) = &mut Self::state_mut(interp, cmd).state {
+        let stopped = Builtin::of(interp, cmd).is_stopped();
+        let me = Self::state_mut(interp, cmd);
+        if let MvState::CheckTarget(t) = &mut me.state {
             t.done = true;
+            if stopped {
+                // `Drop` closes the directory the check opened.
+                if let Some(Ok(fd)) = t.result.take() {
+                    me.args.target_fd = fd;
+                }
+                return Builtin::done_stopped(interp, cmd).run(interp);
+            }
         }
         Self::next(interp, cmd).run(interp);
     }
@@ -325,6 +342,12 @@ impl Mv {
             *tasks_done += 1;
             (*tasks_done >= *task_count, err.is_some())
         };
+        if Builtin::of(interp, cmd).is_stopped() {
+            if all_done {
+                Builtin::done_stopped(interp, cmd).run(interp);
+            }
+            return;
+        }
         if all_done {
             if had_err {
                 let e = match &mut Self::state_mut(interp, cmd).state {
@@ -745,6 +768,7 @@ impl ShellMvBatchedTask {
             if self
                 .error_signal
                 .is_some_and(|sig| sig.load(Ordering::SeqCst))
+                || self.task.stopped()
             {
                 // Another batch hit an error — abort the move loop, but still
                 // post back to the main thread so `tasks_done` reaches

@@ -6,7 +6,9 @@
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::builtin::{Builtin, Kind as BuiltinKind};
-use crate::shell::interpreter::{CowFd, Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
+use crate::shell::interpreter::{
+    CowFd, Interpreter, Node, NodeId, ShellExecEnv, StateKind, StopCause, log,
+};
 use crate::shell::io::{IO, OutKind as IoOutKind};
 use crate::shell::shell_body::subproc::{Readable, ShellSubprocess, StdioKind};
 use crate::shell::states::assigns::{AssignCtx, Assigns};
@@ -235,13 +237,13 @@ impl Cmd {
                 this,
                 <&'static str>::from(&interp.as_cmd(this).state)
             );
-            if interp.failed()
+            if interp.halted()
                 && !matches!(
                     interp.as_cmd(this).state,
                     CmdState::WaitingWriteErr | CmdState::Done
                 )
             {
-                // The script failed: expand nothing more and do not spawn.
+                // The script failed or its graph was disposed: expand nothing more and do not spawn.
                 let me = interp.as_cmd_mut(this);
                 me.exit_code = Some(1);
                 me.state = CmdState::Done;
@@ -889,18 +891,44 @@ impl Cmd {
         Self::deinit(interp, this);
     }
 
-    /// The script failed: stop the subprocess. Its exit finishes the Cmd through `on_exit`.
-    pub(crate) fn kill_subprocess(interp: &Interpreter, this: NodeId) {
-        let Exec::Subproc(sub) = &interp.as_cmd(this).exec else {
-            return;
-        };
-        if sub.child.is_null() {
+    /// Stop what this command runs (`Interpreter::stop_in_flight`); `true` when its builtin now waits for a stop task.
+    pub(crate) fn stop(interp: &Interpreter, this: NodeId, cause: StopCause) -> bool {
+        let me = interp.as_cmd(this);
+        let interrupted = cause == StopCause::Interrupted;
+        match &me.exec {
+            Exec::None => false,
+            Exec::Subproc(sub) => {
+                if !sub.child.is_null() && !interrupted {
+                    // SAFETY: `child` was set by `spawn_async` from a `heap::alloc(ShellSubprocess)` and stays valid until `deinit`.
+                    let _ = unsafe { (*sub.child).try_kill(bun_core::SignalCode::SIGKILL as i32) };
+                }
+                false
+            }
+            Exec::Builtin(builtin) => {
+                if !matches!(me.state, CmdState::Exec) || builtin.is_stopped() {
+                    return false;
+                }
+                if interrupted {
+                    interp.as_cmd_mut(this).base.interrupted = true;
+                }
+                Builtin::stop(interp, this);
+                true
+            }
+        }
+    }
+
+    /// A stop task's turn: stop the builtin once more, then report it unless it still has work out.
+    pub(crate) fn finish_stopped(interp: &Interpreter, this: NodeId) {
+        let me = interp.as_cmd(this);
+        let stopped = matches!(me.state, CmdState::Exec)
+            && matches!(&me.exec, Exec::Builtin(builtin) if builtin.is_stopped());
+        if !stopped {
             return;
         }
-        // SAFETY: `child` was set by `spawn_async` from a
-        // `heap::alloc(ShellSubprocess)` and stays valid until `deinit`
-        // reclaims the box. Single-threaded.
-        let _ = unsafe { (*sub.child).try_kill(bun_core::SignalCode::SIGKILL as i32) };
+        Builtin::stop(interp, this);
+        if Builtin::after_stop(interp, this) {
+            Builtin::done_stopped(interp, this).run(interp);
+        }
     }
 
     pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {

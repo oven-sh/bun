@@ -1,6 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir } from "harness";
+import { closeSync, constants, existsSync, openSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -371,6 +372,620 @@ describe("yield", async () => {
           await rejectionOf($`${bun} -e ${"setTimeout(() => {}, 100_000)"} | ${bun} --version > ${new Response("r")}`),
         ).toMatchObject({ message: "Blobs are immutable, and cannot be used for stdout/stderr" });
         expect((await $`echo ok`.text()).trim()).toBe("ok");
+      });
+
+      // A builtin runs in the shell's own process, so there is no child to
+      // kill. It is stopped in place: it leaves the reader it listens on, its
+      // queued output is dropped, and the pool work it has out ends it when
+      // that work is back. Before, the failed script lasted as long as the
+      // builtin did: until stdin ended for `cat`, and forever for `yes`.
+      describe("a builtin that still runs is stopped", () => {
+        // The builtin `cat` is the default on Windows only.
+        const env = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
+        const failing = "echo hi > ${new Blob(['x'])}";
+        /** `value` as a `${...}` interpolation in the child's script. */
+        const js = (value: string) => "${" + JSON.stringify(value) + "}";
+
+        /** A child that runs each script of `shapes` in turn and prints how each one settled. */
+        function settleEach(shapes: Record<string, string>) {
+          return child(`
+            const out = {};
+            ${Object.entries(shapes)
+              .map(([name, shell]) => `out[${JSON.stringify(name)}] = await settle(${shell});`)
+              .join("\n")}
+            console.log(JSON.stringify(out));
+          `);
+        }
+
+        /** Reads `stream` up to its first newline. `rest()` reads what follows, to the end. */
+        async function firstLine(stream: ReadableStream<Uint8Array>) {
+          const reader = stream.getReader();
+          const decoder = new TextDecoder();
+          let text = "";
+          const read = async () => {
+            const { value, done } = await reader.read();
+            if (!done) text += decoder.decode(value, { stream: true });
+            return !done;
+          };
+          while (!text.includes("\n") && (await read()));
+          const end = text.includes("\n") ? text.indexOf("\n") : text.length;
+          return {
+            line: text.slice(0, end),
+            async rest() {
+              while (await read());
+              return text.slice(end + 1);
+            },
+          };
+        }
+
+        // The child's stdin is a pipe that stays open and idle, so nothing ends
+        // a `cat` that reads it, and the child has to exit all the same. Not on
+        // Windows: a read the shell has started on stdin cannot be taken back
+        // there, and the process waits for it.
+        describe.skipIf(isWindows)("cat on a stdin that stays open", () => {
+          test.concurrent("wherever it runs in the pipeline", async () => {
+            const shapes = {
+              "a member": `$\`cat | ${failing}\`.quiet().nothrow()`,
+              "two members": `$\`cat | cat | ${failing}\`.quiet().nothrow()`,
+              "next to an external command that throws": `$\`cat | ${bad}\`.quiet().nothrow()`,
+              "in a subshell": `$\`(cat; echo no) | ${failing}\`.quiet().nothrow()`,
+              "in an if": `$\`if true; then cat; fi | ${failing}\`.quiet().nothrow()`,
+              "in a command substitution": `$\`echo $(cat) | ${failing}\`.quiet().nothrow()`,
+              // The member that throws runs a command substitution first, and
+              // the `cat` in it can complete inside its own start. The failure
+              // is then handled under the trampoline that is still starting the
+              // pipeline, and that one names the pipeline again afterwards: a
+              // stop that reported the first `cat` at once would free the
+              // pipeline under it.
+              "the failure is handled under the start of the pipeline": `$\`cat | echo $(cat ${js(import.meta.path)}) > \${new Blob(["x"])}\`.quiet().nothrow()`,
+              // The same, with no other member left: reporting the failed one
+              // there would end the pipeline under the trampoline that starts it.
+              "the first member fails under the start of the pipeline": `$\`echo $(cat ${js(import.meta.path)}) > \${new Blob(["x"])} | cat\`.quiet().nothrow()`,
+              "the last member fails under the start of the pipeline": `$\`true | echo $(cat ${js(import.meta.path)}) > \${new Blob(["x"])}\`.quiet().nothrow()`,
+            };
+            await using proc = Bun.spawn({
+              cmd: settleEach(shapes),
+              env,
+              stdin: "pipe",
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+            expect({ result: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+              result: {
+                ...Object.fromEntries(Object.keys(shapes).map(name => [name, builtin])),
+                "next to an external command that throws": external,
+              },
+              stderr: "",
+              exitCode: 0,
+            });
+          });
+
+          // What arrives on stdin after the failure is not the stopped `cat`'s to read.
+          test.concurrent("stdin is left to the process", async () => {
+            await using proc = Bun.spawn({
+              cmd: child(`
+                const rejection = await settle($\`cat | ${failing}\`.quiet().nothrow());
+                // The stopped builtins are reported on the next turn of the event loop.
+                await new Promise(resolve => setImmediate(resolve));
+                console.log(rejection);
+                console.log(JSON.stringify(await Bun.stdin.text()));
+              `),
+              env,
+              stdin: "pipe",
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+
+            const stdout = await firstLine(proc.stdout);
+            proc.stdin.write("after\n");
+            await proc.stdin.end();
+            const [rest, stderr, exitCode] = await Promise.all([stdout.rest(), proc.stderr.text(), proc.exited]);
+
+            expect({ rejection: stdout.line, stdin: rest.trim(), stderr, exitCode }).toEqual({
+              rejection: builtin,
+              stdin: JSON.stringify("after\n"),
+              stderr: "",
+              exitCode: 0,
+            });
+          });
+
+          // Two `cat`s read the script's stdin, each in a command substitution.
+          // When stdin ends, the reader tells the first one, whose member then
+          // throws, while the reader still has the second one to tell. That one
+          // is stopped in between and gets the end of stdin all the same.
+          test.concurrent("a cat that is stopped while its reader is reporting", async () => {
+            await using proc = Bun.spawn({
+              cmd: settleEach({
+                "both read stdin": `$\`echo $(cat) > \${new Blob(["x"])} | echo $(cat)\`.quiet().nothrow()`,
+                "the shell is usable": "$`echo ok`.quiet()",
+              }),
+              env,
+              stdin: "pipe",
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            await proc.stdin.end();
+
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+            expect({ result: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+              result: { "both read stdin": builtin, "the shell is usable": "resolved 0" },
+              stderr: "",
+              exitCode: 0,
+            });
+          });
+        });
+
+        // `expect().resolves` turns the event loop where it stands, here inside
+        // the catch block. The promise used to be rejected under the shell's
+        // own frames, so that turn ran the exit of the killed member, or the
+        // report of a stopped builtin, under them: the frames then named nodes
+        // that were freed. The rejection now comes from a task of the event
+        // loop. The child reports before its stdin ends (see the next test).
+        test.concurrent("a catch block that turns the event loop", async () => {
+          await using proc = Bun.spawn({
+            cmd: child(`
+              import { expect } from "bun:test";
+              const idle = "setTimeout(() => {}, 100_000)";
+              // The pipeline starts from the exit of the command before it: a callback of the event loop's poll.
+              const scripts = {
+                "a subprocess": () => $\`\${bun} --version; \${bun} -e \${idle} | ${failing}\`.quiet(),
+                "a builtin": () => $\`\${bun} --version; cat | ${failing}\`.quiet(),
+              };
+              const out = {};
+              for (const [name, script] of Object.entries(scripts)) {
+                try {
+                  await script();
+                  out[name] = "resolved";
+                } catch (error) {
+                  // Long enough for the exit of the killed member to be there.
+                  await expect(Bun.sleep(50).then(() => "turned")).resolves.toBe("turned");
+                  out[name] = "rejected " + error.constructor.name + ": " + error.message;
+                }
+              }
+              console.log(JSON.stringify(out));
+            `),
+            env,
+            stdin: "pipe",
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+
+          const stdout = await firstLine(proc.stdout);
+          await proc.stdin.end();
+          const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+          expect({ result: JSON.parse(stdout.line || "null"), stderr, exitCode }).toEqual({
+            result: { "a subprocess": builtin, "a builtin": builtin },
+            stderr: "",
+            exitCode: 0,
+          });
+        });
+
+        // Each failed script has to finish, not only let the process go: the
+        // interpreter of one that does not is never collected. The child
+        // reports before its stdin ends, so this one holds on Windows too.
+        test.concurrent("the failed scripts finish while cat's stdin is still open", async () => {
+          await using proc = Bun.spawn({
+            cmd: child(`
+              let rejected = 0;
+              for (let i = 0; i < 10; i++) {
+                await $\`cat | ${failing}\`.quiet().then(() => {}, () => rejected++);
+              }
+              let live;
+              for (let i = 0; i < 10; i++) {
+                Bun.gc(true);
+                live = heapStats().objectTypeCounts.ShellInterpreter ?? 0;
+                if (live <= 3) break;
+                await new Promise(resolve => setImmediate(resolve));
+              }
+              console.log(JSON.stringify({ rejected, collected: live <= 3 ? true : live }));
+            `),
+            env,
+            stdin: "pipe",
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+
+          const stdout = await firstLine(proc.stdout);
+          await proc.stdin.end();
+          const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+          expect({ result: stdout.line, stderr, exitCode }).toEqual({
+            result: JSON.stringify({ rejected: 10, collected: true }),
+            stderr: "",
+            exitCode: 0,
+          });
+        });
+
+        // Both ends of the FIFO are held open here, so it never reports EOF.
+        test.concurrent.skipIf(isWindows)("cat on a FIFO nobody writes to", async () => {
+          using dir = tempDir("shell-stop-fifo", {});
+          const fifo = join(String(dir), "fifo");
+          await using mkfifo = Bun.spawn({ cmd: [Bun.which("mkfifo")!, fifo], env: bunEnv });
+          expect(await mkfifo.exited).toBe(0);
+          const holder = openSync(fifo, constants.O_RDWR | constants.O_NONBLOCK);
+          try {
+            const shapes = {
+              "as an operand": `$\`cat ${js(fifo)} | ${failing}\`.quiet().nothrow()`,
+              "as a redirect": `$\`cat < ${js(fifo)} | ${failing}\`.quiet().nothrow()`,
+            };
+            await using proc = Bun.spawn({ cmd: settleEach(shapes), env, stdout: "pipe", stderr: "pipe" });
+
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+            expect({ result: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+              result: { "as an operand": builtin, "as a redirect": builtin },
+              stderr: "",
+              exitCode: 0,
+            });
+          } finally {
+            closeSync(holder);
+          }
+        });
+
+        // No flag here: these are builtins on every platform. Nothing ends
+        // `yes`, whose output is captured, so it runs from a task of the event
+        // loop. `ls` has a pool task out per operand, and the output of those
+        // would go to the pipe the failed member closed.
+        //
+        // A `yes` that is not stopped grows without bound, so the child does
+        // not wait for the runner's timeout: it exits when the scripts are
+        // still not collected after a few turns.
+        test.concurrent("yes, and ls with pool tasks out", async () => {
+          using dir = tempDir("shell-stop-ls", { "d1/a": "", "d2/b": "", "d3/c": "", "d4/d": "" });
+          await using proc = Bun.spawn({
+            cmd: child(`
+              let rejected = 0;
+              for (let i = 0; i < 10; i++) {
+                await $\`yes 1>&2 | ${failing}\`.quiet().then(() => {}, () => rejected++);
+              }
+              const ls = await settle($\`ls d1 d2 d3 d4 | ${failing}\`.quiet().nothrow());
+              let live;
+              for (let i = 0; i < 10; i++) {
+                Bun.gc(true);
+                live = heapStats().objectTypeCounts.ShellInterpreter ?? 0;
+                if (live <= 3) break;
+                await new Promise(resolve => setImmediate(resolve));
+              }
+              console.log(JSON.stringify({ rejected, ls, collected: live <= 3 ? true : live }));
+              if (live > 3) process.exit(1);
+            `),
+            env: bunEnv,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+          expect({ result: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+            result: { rejected: 10, ls: builtin, collected: true },
+            stderr: "",
+            exitCode: 0,
+          });
+        });
+
+        // These have pool tasks out too when the script fails, and each one
+        // is over when its tasks are back. `rm -v` hands over, from the pool,
+        // the names of what it removed before the stop. (`env`: `cp` is a
+        // builtin by default on Windows only.)
+        test.concurrent("mkdir, touch, cp and rm -v with pool tasks out", async () => {
+          const files = ["from/x", "from/y", "to/keep", "scratch/a", "scratch/sub/b"];
+          using dir = tempDir("shell-stop-pool", Object.fromEntries(files.map(file => [file, ""])));
+          const shapes = {
+            mkdir: `$\`mkdir -p m1/a m2/b m3/c | ${failing}\`.quiet().nothrow()`,
+            touch: `$\`touch t1 t2 t3 | ${failing}\`.quiet().nothrow()`,
+            cp: `$\`cp from/x from/y to | ${failing}\`.quiet().nothrow()`,
+            "rm -v": `$\`rm -rfv scratch | ${failing}\`.quiet().nothrow()`,
+          };
+          await using proc = Bun.spawn({
+            cmd: settleEach(shapes),
+            env,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+          expect({ result: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+            result: Object.fromEntries(Object.keys(shapes).map(name => [name, builtin])),
+            stderr: "",
+            exitCode: 0,
+          });
+        });
+
+        // The last member throws late: after its command substitution is
+        // back. By then `ls` has an output for each of its 1000 operands, the
+        // pipe has taken the first ones, and the rest is queued behind a
+        // write that never completes. The stop gives the queue up: the
+        // process exits, and under ASAN LeakSanitizer reports what is not
+        // freed (symbolizing that report takes the long timeout).
+        //
+        // Not concurrent, and not on Windows: see the tests above.
+        test.skipIf(isWindows)(
+          "ls with output queued behind a full pipe",
+          async () => {
+            const leakCheck = {
+              BUN_DESTRUCT_VM_ON_EXIT: "1",
+              ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+              LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "../../../leaksan.supp")}`,
+            };
+            await using proc = Bun.spawn({
+              cmd: child(`
+                const operands = Array(1000).fill(${JSON.stringify(import.meta.dir)});
+                console.log(await settle($\`ls \${operands} | echo $(\${bun} --version) > \${new Blob(["x"])}\`.quiet().nothrow()));
+              `),
+              env: isASAN ? { ...bunEnv, ...leakCheck } : bunEnv,
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+            expect({ result: stdout.trim(), stderr, exitCode }).toEqual({ result: builtin, stderr: "", exitCode: 0 });
+          },
+          isASAN ? 90_000 : undefined,
+        );
+
+        // `mv` is still asking the thread pool what its target is when the
+        // script fails. When the answer is back, nothing moves, and the
+        // directory that the answer opened is closed again.
+        test.concurrent("mv moves nothing", async () => {
+          using dir = tempDir("shell-stop-mv", { a: "", b: "", c: "", "dest/keep": "" });
+          await using proc = Bun.spawn({
+            cmd: child(`
+              const openFds = () => (process.platform === "linux" ? readdirSync("/proc/self/fd").length : 0);
+              // What every script opens once is open before the count is taken.
+              await $\`ls . | \${bun} --version\`.quiet();
+              const before = openFds();
+              const mv = await settle($\`mv a b c dest | ${failing}\`.quiet().nothrow());
+              let leaked;
+              for (let i = 0; i < 400; i++) {
+                leaked = Math.max(0, openFds() - before);
+                if (leaked === 0) break;
+                await Bun.sleep(5);
+              }
+              console.log(JSON.stringify({ mv, leaked }));
+            `),
+            env: bunEnv,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+          expect({ result: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+            result: { mv: builtin, leaked: 0 },
+            stderr: "",
+            exitCode: 0,
+          });
+          expect({
+            here: readdirSync(String(dir)).sort(),
+            dest: readdirSync(join(String(dir), "dest")),
+          }).toEqual({ here: ["a", "b", "c", "dest"], dest: ["keep"] });
+        });
+
+        // The builtins below work on the thread pool, and nothing makes that
+        // work wait for the failure. So the child's pool has two threads, and
+        // each one is parked in a read of a FIFO that the child holds open for
+        // writing: what the builtins put on the pool starts after the script
+        // has failed, and has to do nothing. `rm` leaves both operands alone
+        // (the directory and the file), `mkdir`, `touch` and `cp` make
+        // nothing, and neither `ls -R` nor a glob reads a directory. Windows
+        // has no FIFO to park the pool with.
+        test.concurrent.skipIf(isWindows)("pool work that starts after the failure does nothing", async () => {
+          const files = ["tree/f1", "tree/f2", "tree/sub/f3", "lone", "listed/a", "listed/sub/b", "globbed/c"];
+          using dir = tempDir("shell-stop-parked", Object.fromEntries(files.map(file => [file, ""])));
+          await using mkfifo = Bun.spawn({
+            cmd: [Bun.which("mkfifo")!, "park1", "park2"],
+            env: bunEnv,
+            cwd: String(dir),
+          });
+          expect(await mkfifo.exited).toBe(0);
+          const shapes = {
+            rm: `$\`rm -rf tree lone | ${failing}\`.quiet().nothrow()`,
+            ls: `$\`ls -R listed | ${failing}\`.quiet().nothrow()`,
+            mkdir: `$\`mkdir -p made/sub | ${failing}\`.quiet().nothrow()`,
+            touch: `$\`touch touched | ${failing}\`.quiet().nothrow()`,
+            cp: `$\`cp lone copied | ${failing}\`.quiet().nothrow()`,
+            // Not quiet: a glob that was cut short must not report "no matches found".
+            glob: `$\`echo globbed/* | ${failing}\`.nothrow()`,
+          };
+          await using proc = Bun.spawn({
+            cmd: child(`
+              import { closeSync, openSync } from "node:fs";
+              import { readFile } from "node:fs/promises";
+              const parked = ["park1", "park2"].map(fifo => readFile(fifo));
+              // open() for writing returns once a reader is in its own open(): a pool thread, which then waits in read().
+              const writers = ["park1", "park2"].map(fifo => openSync(fifo, "w"));
+              const out = {};
+              ${Object.entries(shapes)
+                .map(([name, shell]) => `out[${JSON.stringify(name)}] = await settle(${shell});`)
+                .join("\n")}
+              writers.forEach(fd => closeSync(fd));
+              await Promise.all(parked);
+              console.log(JSON.stringify(out));
+            `),
+            env: { ...env, UV_THREADPOOL_SIZE: "2" },
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+          expect({ result: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+            result: Object.fromEntries(Object.keys(shapes).map(name => [name, builtin])),
+            stderr: "",
+            exitCode: 0,
+          });
+          // A directory that was read since its entries were made has a later
+          // access time than modification time. Only Linux is asked: elsewhere
+          // an indexer can read the directory too.
+          const unread = (path: string) => {
+            const { atimeMs, mtimeMs } = statSync(join(String(dir), path));
+            return !isLinux || atimeMs <= mtimeMs;
+          };
+          const tree = join(String(dir), "tree");
+          expect({
+            tree: existsSync(tree) ? readdirSync(tree, { recursive: true }).sort() : [],
+            made: ["lone", "made", "touched", "copied"].filter(name => existsSync(join(String(dir), name))),
+            unread: ["listed", "listed/sub", "globbed"].filter(unread),
+          }).toEqual({
+            tree: ["f1", "f2", "sub", "sub/f3"],
+            made: ["lone"],
+            unread: ["listed", "listed/sub", "globbed"],
+          });
+        });
+
+        // The child's stderr is a pipe that nobody reads until the child is
+        // gone (`lazy`). The chunk the builtin has queued on it when the script
+        // fails is given up: `yes` always has one more, and the one of `seq` is
+        // larger than the pipe. Windows: a write that is already out cannot be
+        // taken back there.
+        test.concurrent.skipIf(isWindows)("with a chunk queued on a pipe nobody drains", async () => {
+          const shapes = {
+            yes: `$\`yes 1>&2 | ${failing}\`.nothrow()`,
+            seq: `$\`seq 1 100000 1>&2 | ${failing}\`.nothrow()`,
+          };
+          await using proc = Bun.spawn({
+            cmd: settleEach(shapes),
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+            lazy: true,
+          });
+
+          const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+          const stderr = await proc.stderr.text();
+
+          expect({ result: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+            result: { yes: builtin, seq: builtin },
+            stderr: "",
+            exitCode: 0,
+          });
+        });
+
+        // Here the script is not over with the stop: the member in the middle
+        // is a process, and its exit arrives later. Until then the writer is
+        // still there, so a chunk of the stopped builtin that was left on it
+        // would complete and name a builtin that was reported already. The
+        // pipe stays unread (`lazy`), so a `yes` that is not stopped waits on
+        // it. Windows: see above.
+        test.concurrent.skipIf(isWindows)(
+          "with a chunk queued while another member is still being killed",
+          async () => {
+            const shapes = {
+              yes: `$\`yes 1>&2 | ${sleeper} | ${failing}\`.nothrow()`,
+              seq: `$\`seq 1 1000 1>&2 | ${sleeper} | ${failing}\`.nothrow()`,
+            };
+            await using proc = Bun.spawn({
+              cmd: settleEach(shapes),
+              env: bunEnv,
+              stdout: "pipe",
+              stderr: "pipe",
+              lazy: true,
+            });
+
+            const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+            const stderr = await proc.stderr.text();
+
+            expect({ result: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+              result: { yes: builtin, seq: builtin },
+              stderr: "",
+              exitCode: 0,
+            });
+          },
+        );
+
+        // `Bun.ModuleGraph#dispose()` stops a script from outside too: before,
+        // only the subprocesses of the graph's scripts ended with it. It
+        // settles no promise of the graph, so the scripts report nothing.
+        // The child bounds itself, for its `yes` (see above).
+        test.concurrent("under a Bun.ModuleGraph that is disposed", async () => {
+          using dir = tempDir("shell-stop-dispose", { file: "" });
+          await using proc = Bun.spawn({
+            cmd: child(`
+              const graph = new Bun.ModuleGraph();
+              const settled = () => console.log("settled");
+              graph.run(() => {
+                for (let i = 0; i < 10; i++) $\`yes\`.quiet().then(settled, settled);
+                // A subprocess is killed with the graph, as before.
+                $\`\${bun} -e \${"setInterval(() => {}, 100_000)"}\`.quiet().then(settled, settled);
+                // This command is still expanding its glob on the thread pool. It does not start afterwards.
+                $\`\${bun} -e \${'require("fs").writeFileSync("started", "")'} *\`.quiet().then(settled, settled);
+                // Its stdin stays open and idle (see "cat on a stdin that stays open").
+                if (process.platform !== "win32") $\`cat\`.quiet().then(settled, settled);
+              });
+              graph.dispose();
+              console.log("disposed");
+              let live;
+              for (let i = 0; i < 10; i++) {
+                Bun.gc(true);
+                live = heapStats().objectTypeCounts.ShellInterpreter ?? 0;
+                if (live <= 3) break;
+                await new Promise(resolve => setImmediate(resolve));
+              }
+              if (live > 3) {
+                console.log("still live: " + live);
+                process.exit(1);
+              }
+            `),
+            env,
+            cwd: String(dir),
+            stdin: isWindows ? "ignore" : "pipe",
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+          expect({ stdout, stderr, exitCode, started: existsSync(join(String(dir), "started")) }).toEqual({
+            stdout: "disposed\n",
+            stderr: "",
+            exitCode: 0,
+            started: false,
+          });
+        });
+
+        // A microtask that the graph queued runs once after the dispose. The
+        // script it starts is armed in a graph that is already disposed, so
+        // not even its first command runs.
+        test.concurrent("started by a Bun.ModuleGraph that is already disposed", async () => {
+          using dir = tempDir("shell-stop-disposed", {});
+          await using proc = Bun.spawn({
+            cmd: child(`
+              const graph = new Bun.ModuleGraph();
+              const settled = () => console.log("settled");
+              graph.run(() => {
+                queueMicrotask(() => {
+                  $\`echo x > started\`.quiet().then(settled, settled);
+                });
+              });
+              graph.dispose();
+              console.log("disposed");
+            `),
+            env: bunEnv,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+          expect({ stdout, stderr, exitCode, started: existsSync(join(String(dir), "started")) }).toEqual({
+            stdout: "disposed\n",
+            stderr: "",
+            exitCode: 0,
+            started: false,
+          });
+        });
       });
     });
   });

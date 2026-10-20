@@ -1,8 +1,8 @@
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
-    EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, parse_flags, unsupported_flag,
+    FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, ParseFlagResult,
+    ShellTask, parse_flags, unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -109,11 +109,9 @@ impl Touch {
                     exec.tasks_count = argc - args_start;
                 }
                 let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
-                let evtloop = Builtin::event_loop(interp, cmd);
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 for i in args_start..argc {
                     let path = Builtin::of(interp, cmd).arg_bytes(i).to_vec();
-                    let task = ShellTouchTask::create(cmd, path, cwd.clone(), evtloop, interp_ptr);
+                    let task = ShellTouchTask::create(cmd, path, cwd.clone(), interp);
                     // SAFETY: freshly heap-allocated.
                     unsafe { ShellTask::schedule(task) };
                 }
@@ -142,6 +140,18 @@ impl Touch {
             return unsafe { OutputTask::<Touch>::on_io_writer_chunk(task, interp, written, e) };
         }
         Self::next(interp, cmd)
+    }
+
+    /// `Builtin::after_stop`: as `Ls::after_stop`.
+    pub(crate) fn after_stop(interp: &Interpreter, cmd: NodeId) -> bool {
+        match &mut Self::state_mut(interp, cmd).state {
+            State::Exec(exec) => {
+                OutputTask::release_queued(&mut exec.output_queue);
+                exec.output_done = exec.output_waiting;
+                exec.tasks_done >= exec.tasks_count
+            }
+            State::Idle | State::WaitingWriteErr | State::Done => true,
+        }
     }
 
     /// # Safety
@@ -246,17 +256,15 @@ impl ShellTouchTask {
         cmd: NodeId,
         filepath: Vec<u8>,
         cwd_path: Vec<u8>,
-        evtloop: EventLoopHandle,
-        interp: *mut Interpreter,
+        interp: &Interpreter,
     ) -> *mut ShellTouchTask {
-        let mut task = Box::new(ShellTouchTask {
+        let task = Box::new(ShellTouchTask {
             cmd,
             filepath,
             cwd_path,
             err: None,
-            task: ShellTask::new(evtloop),
+            task: ShellTask::for_builtin(interp, cmd),
         });
-        task.task.interp = interp;
         bun_core::heap::into_raw(task)
     }
 

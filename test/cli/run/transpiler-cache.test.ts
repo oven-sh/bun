@@ -627,7 +627,7 @@ test("rejects a cached entry whose sourcemap section header is corrupt", () => {
   //   then twelve u64 fields; sourcemap_byte_offset @ 54,
   //   sourcemap_byte_length @ 62, sourcemap_hash @ 70.
   // InternalSourceMap header (src/sourcemap/InternalSourceMap.rs):
-  //   0: total_len u64, 8: mapping_count u64, 16: input_line_count u64,
+  //   0: total_len u64, 8: mapping_count u64, 16: unused,
   //   24: sync_count u32, 28: stream_offset u32.
   const SOURCEMAP_BYTE_OFFSET_AT = 54;
   const SOURCEMAP_BYTE_LENGTH_AT = 62;

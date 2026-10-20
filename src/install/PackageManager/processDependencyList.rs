@@ -724,11 +724,14 @@ impl PackageManager {
         index_sort::sort_indices_unstable(batch, &mut |a, b| a.cmp(&b));
 
         let lockfile = &*self.lockfile;
+        let lists = lockfile.packages.items_dependencies();
         let mut owners: Vec<PackageID> = vec![INVALID_PACKAGE_ID; batch.len()];
-        for (owner, slice) in lockfile.packages.items_dependencies().iter().enumerate() {
+        let mut first_of: Vec<u32> = vec![0; lists.len()];
+        for (owner, slice) in lists.iter().enumerate() {
             let first = batch.partition_point(|&id| id < slice.begin());
             let end = first + batch[first..].partition_point(|&id| id < slice.end());
             owners[first..end].fill(owner as PackageID);
+            first_of[owner] = first as u32;
         }
 
         let buf = lockfile.buffers.string_bytes.as_slice();
@@ -749,13 +752,12 @@ impl PackageManager {
             (batch.iter().map(|&id| dependencies[id as usize].name_hash)).collect();
         peers.sort_unstable();
         peers.dedup();
-        let lists = lockfile.packages.items_dependencies();
         let above = DynamicBitSetList::init_empty(names.len(), peers.len()).unwrap_or_oom();
         let mut waits: Vec<bool> = vec![true; batch.len()];
         for package in crate::lockfile::reachable::dependents_first(lockfile) {
             let list = lists[package as usize];
-            let first = batch.partition_point(|&id| id < list.begin());
-            for i in first..first + batch[first..].partition_point(|&id| id < list.end()) {
+            let first = first_of[package as usize] as usize;
+            for i in (first..batch.len()).take_while(|&i| owners[i] == package) {
                 waits[i] = false;
                 if rank(package as usize) == 2
                     && let Ok(peer) =

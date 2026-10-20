@@ -440,7 +440,6 @@ pub fn parse(
     bytes: &[u8],
     estimated_mapping_count: Option<usize>,
     sources_count: i32,
-    input_line_count: usize,
     options: ParseOptions,
 ) -> ParseResult {
     scoped_log!(SourceMap, "parse mappings ({} bytes)", bytes.len());
@@ -726,7 +725,6 @@ pub fn parse(
 
     let mut psm = ParsedSourceMap::default();
     psm.mappings = mapping;
-    psm.input_line_count = input_line_count;
     Ok(psm)
 }
 

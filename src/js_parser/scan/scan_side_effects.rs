@@ -155,10 +155,10 @@ impl SideEffects {
                     return None;
                 }
             }
-            // As removable as the `import.meta.require` that it replaces.
+            // As removable as the `import.meta.require` that it replaces. Its use of the runtime's `__require` goes with it.
             ExprData::ESpecial(E::Special::ImportMetaRequire(_)) => {
-                if p.options.features.auto_polyfill_require {
-                    let runtime_require = p.runtime_identifier_ref(b"__require");
+                let runtime_require = p.runtime_imports.__require;
+                if p.options.features.auto_polyfill_require && !runtime_require.is_empty() {
                     p.ignore_usage(runtime_require);
                 }
                 return None;

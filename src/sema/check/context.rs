@@ -516,13 +516,18 @@ impl<'p, 's> Checker<'p, 's> {
             let root = root_declaration(self.bound(file), pat);
             let ty = match self.quick_type_of_expr(file, default) {
                 Some(quick) => quick,
-                None => self.check_expression_with_contextual_type(
-                    file,
-                    default,
-                    contextual_type,
-                    None,
-                    CheckMode::empty(),
-                ),
+                None => {
+                    if let PatParent::Param(root) = root {
+                        self.note_checked_with_contextual_type(file, root, default);
+                    }
+                    self.check_expression_with_contextual_type(
+                        file,
+                        default,
+                        contextual_type,
+                        None,
+                        CheckMode::empty(),
+                    )
+                }
             };
             let ty = match root {
                 PatParent::Param(_) => self.padded_for_pattern(file, pat, ty),

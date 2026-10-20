@@ -1026,6 +1026,7 @@ impl<'s> Program<'s> {
             reported_unreachable_nodes: Vec::new(),
             renamed_binding_elements_in_types: Vec::new(),
             unvisited_exprs: Vec::new(),
+            checked_with_contextual_type: Vec::new(),
             contextual_signatures_at_check: Vec::new(),
             call_resolution_errors: None,
             is_call_re_resolved: false,
@@ -1984,6 +1985,10 @@ pub struct Checker<'p, 's> {
     /// (`checkVariableLikeDeclaration`), operands of `yield` (`checkYieldExpression`). Such an
     /// expression is checked only if the type of a declaration is computed from it.
     unvisited_exprs: Vec<(u32, ExprId)>,
+    /// The initializers in the parameters of functions without a body that `getTypeFromBindingElement`
+    /// has checked. `checkExpressionWithContextualType` doesn't store a type, and with a type parameter in scope nothing
+    /// else does either.
+    checked_with_contextual_type: Vec<(FileId, ExprId)>,
     /// `getContextualSignature` as `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` got it, before the
     /// inference context instantiates it, for the functions for which `contextual_param_type_at_check` is requested.
     contextual_signatures_at_check: Vec<((FileId, FnId), SigId)>,

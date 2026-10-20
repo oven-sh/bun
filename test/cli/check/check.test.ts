@@ -14221,6 +14221,25 @@ export function m(a = () => { const z = 1; yield z; }) { return a; }
       expect(exitCode).toBe(1);
     });
 
+    // The type of a parameter without an annotation comes from the defaults in its pattern, so they're checked although the
+    // function has no body. With a type parameter in scope their types aren't cached.
+    test("a default in the pattern of a generic function without a body is a reference", async () => {
+      using dir = project({
+        "a.ts": `const x = 1;
+export declare function f<T>({ a = x }): void;
+export function g() { const d = 1; function h<T>({ a = d }): void; function h(p: unknown): void { void p; } return h; }
+export function k<T>() { const d = 1; abstract class C { abstract m({ a = { b: d } }): void; } return C; }
+`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--noUnusedLocals"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(2,32): error TS2371: A parameter initializer is only allowed in a function or constructor implementation.
+        a.ts(3,52): error TS2371: A parameter initializer is only allowed in a function or constructor implementation.
+        a.ts(4,71): error TS2371: A parameter initializer is only allowed in a function or constructor implementation."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS2775 only for the CommonJS-exported assertion functions that tsc rejects", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,

@@ -916,8 +916,7 @@ pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
     }
 }
 
-/// Whether `path`, whose removal just failed with `EROFS`, does not exist.
-/// Linux and FreeBSD check that the mount is writable before they look up the name.
+/// Linux and FreeBSD answer `EROFS` for a missing name: they check the mount before the lookup.
 #[cold]
 pub fn removal_target_is_missing(dir: Fd, path: &[u8]) -> bool {
     #[cfg(not(windows))]

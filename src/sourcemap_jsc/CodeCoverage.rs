@@ -772,9 +772,9 @@ impl ByteRangeMapping {
         })
     }
 
-    /// `line` ran as often as the code at `offset` did, if that is code. A brace is not: the `{`
-    /// of a loop body shares a line with a header that runs once, and after a `return` JSC has
-    /// the `}` in a block of its own that never runs.
+    /// `line` ran as often as the code at `offset` did, if that is code. The `{` of an object
+    /// is. Any other brace is not: the `{` of a loop body shares a line with a header that runs
+    /// once, and after a `return` JSC has the `}` in a block of its own that never runs.
     fn count_line(
         &self,
         counts: &ExecutionCounts,
@@ -833,15 +833,30 @@ fn scan(units: impl ExactSizeIterator<Item = u16>) -> (Vec<u32>, Bitset) {
     let mut starts = vec![0u32];
     let mut executable = bun_core::handle_oom(Bitset::init_empty(units.len()));
     let mut units = units.enumerate().peekable();
+    let mut previous = 0;
     while let Some((i, unit)) = units.next() {
         match unit {
             0x0D if units.peek().is_some_and(|&(_, next)| next == 0x0A) => {}
             0x0A | 0x0D | 0x2028 | 0x2029 => starts.push(u32::try_from(i + 1).expect("int cast")),
             _ => {}
         }
-        if !matches!(unit, 0x09 | 0x0A | 0x0D | 0x20 | 0x7B | 0x7D) {
+        if matches!(unit, 0x09 | 0x0A | 0x0D | 0x20) {
+            continue;
+        }
+        let is_executable = match unit {
+            // After one of these a `{` can only start an object. After a `:` it can also start
+            // the block of a `case` or of a label.
+            0x7B => matches!(
+                u8::try_from(previous),
+                Ok(b'(' | b'[' | b',' | b'=' | b'?' | b'|' | b'&' | b'.')
+            ),
+            0x7D => false,
+            _ => true,
+        };
+        if is_executable {
             executable.set(i);
         }
+        previous = unit;
     }
     (starts, executable)
 }

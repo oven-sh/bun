@@ -169,6 +169,65 @@ export const cases: Record<string, Case> = {
  0|];
 `,
   },
+  // The `{` of an object is code. The `{` of a block or of a body is not, and no `}` is.
+  "braces.ts": {
+    functions: "2/3",
+    lines: `
+ 2|const twice = (
+ 2|  n: number,
+ 2|): { x: number } => ({
+ 2|  x: n,
+ -|});
+ 1|const typed: {
+ -|  v: number;
+ 1|} = {
+ 1|  v: 1,
+ -|};
+ 3|const thrice = () =>
+ 3|  ({
+ 3|    y: typed.v,
+ -|  });
+ 1|export const never = () =>
+ 0|  ({
+ 0|    z: 1,
+ -|  });
+ 1|const list = [
+ 1|  {
+ 1|    one: 1,
+ -|  },
+ 1|  {
+ 1|    two: 2,
+ -|  },
+ 1|];
+ 1|export const chosen = typed.v
+ 1|  ? {
+ 1|      yes: 1,
+ -|    }
+ -|  : {
+ 0|      no: 1,
+ -|    };
+ 1|for (const item of list) {
+ 2|  twice(item.one ?? 0);
+ -|}
+ 1|if (typed.v)
+ -|{
+ 1|  thrice();
+ -|}
+ 1|switch (typed.v) {
+ 1|  case 1:
+ -|  {
+ 1|    thrice();
+ -|  }
+ -|}
+ -|{
+ 1|  thrice();
+ -|}
+ 1|export class Empty
+ -|{
+ -|}
+ 1|export const empty = {};
+`,
+  },
   // Where a constant is inlined, its value has the position of its declaration.
   "inlined.ts": {
     functions: "1/2",

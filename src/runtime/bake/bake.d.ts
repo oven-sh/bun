@@ -304,7 +304,14 @@ declare module "bun" {
        * HTML. Not with `serverComponents`, where the browser gets the client components instead.
        *
        * `serverExports` names the exports of a page that run on the server only, such as data
-       * loaders. The browser build of a page leaves them out, with the imports that only they use.
+       * loaders. The browser build of a page leaves them out, with the top-level variables,
+       * functions, classes and imports that only they use. Such a variable does not run in the
+       * browser, even if creating it has side effects.
+       *
+       * This is best effort and not a security boundary. Bare statements stay, with what they use:
+       * after `const stripe = new Stripe(key); stripe.setTimeout(1);`, `key` is in the browser build.
+       * So do `export * from`, TypeScript enums and namespaces, and all of a module that kept code
+       * imports anything from.
        *
        * @example
        * ```ts

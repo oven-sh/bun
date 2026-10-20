@@ -1276,3 +1276,51 @@ devTest("a route whose import throws on load throws that error again on the next
     await dev.fetch("/sync-import").equals("sync-import: fixed");
   },
 });
+
+devTest("the browser runs a page without the code only its server exports used", {
+  framework: {
+    fileSystemRouterTypes: [
+      {
+        root: "pages",
+        style: "nextjs-pages",
+        serverEntryPoint: "./server.ts",
+        clientEntryPoint: "./client.ts",
+        extensions: [".tsx"],
+        clientPages: { serverExports: ["getServerSideProps"] },
+      },
+    ],
+  },
+  files: {
+    "secret.ts": `
+      console.log("secret module ran");
+      export const readSecret = () => "server-only";
+    `,
+    "server.ts": `
+      export function render(request, meta) {
+        const scripts = meta.modules.map(src => '<script type="module" src="' + src + '"></script>').join("");
+        return new Response("<!doctype html><html><body>" + scripts + "</body></html>", {
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+    `,
+    "client.ts": `
+      import { route } from "bun:bake/client";
+      const page = await route.page();
+      console.log(page.default());
+    `,
+    "pages/index.tsx": `
+      import { readSecret } from "../secret";
+      const secret = readSecret();
+      const loadSecret = () => secret;
+      const shared = "shared";
+      const local = "namespace-local";
+      namespace api { export function getServerSideProps() { return local; } }
+      export const getServerSideProps = () => loadSecret() + shared;
+      export default () => shared + " " + api.getServerSideProps();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("shared namespace-local");
+  },
+});

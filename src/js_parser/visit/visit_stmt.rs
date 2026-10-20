@@ -912,7 +912,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         // We mark it as dead, but the value may not actually be dead
         // We just want to be sure to not increment the usage counts for anything in the function
+        // A function in a namespace is always emitted, so what it uses must be counted.
         let mark_as_dead = p.options.features.dead_code_elimination
+            && p.enclosing_namespace_arg_ref.is_none()
             && data.func.flags.contains(flags::Function::IsExport)
             && p.options.features.replace_exports.count() > 0
             && p.is_export_to_eliminate(data.func.name.expect("infallible: name checked").ref_);
@@ -1075,6 +1077,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::Class,
     ) -> Result<(), Error> {
         let mark_as_dead = p.options.features.dead_code_elimination
+            && p.enclosing_namespace_arg_ref.is_none()
             && data.is_export
             && p.options.features.replace_exports.count() > 0
             && p.is_export_to_eliminate(
@@ -1103,7 +1106,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Lower class field syntax for browsers that don't support it
         let lowered = p.lower_class(js_ast::StmtOrExpr::Stmt(*stmt));
 
-        if !mark_as_dead || was_export_inside_namespace {
+        if !mark_as_dead {
             // Lower class field syntax for browsers that don't support it
             stmts.extend_from_slice(lowered);
         } else {

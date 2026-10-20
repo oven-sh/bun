@@ -1436,10 +1436,10 @@ test.concurrent("the browser build of a page leaves out the top-level code only 
   }
 });
 
-test.concurrent("the browser build of a page removes server-only code of every form", async () => {
+test.concurrent.each([".js", ".tsx"])("a %s page loses server-only code of every form", async extension => {
   const view = (text: string) => `export default () => ${text};`;
   // Each page lists the text its browser bundle must not have, and the text it must have.
-  const pages = {
+  const jsPages = {
     chain: {
       source: `
         import { secret } from "../secret.js";
@@ -1689,6 +1689,28 @@ test.concurrent("the browser build of a page removes server-only code of every f
       kept: ["kept-shown", "kept-item", "kept-required-module"],
     },
   };
+  // A namespace member with the name of a server export is not that export, so it stays.
+  const tsPages = {
+    "namespace-function": {
+      source: `
+        const local = "kept-namespace-function";
+        namespace api { export function getServerSideProps() { return local; } }
+        ${view(`api.getServerSideProps()`)}
+      `,
+      gone: [],
+      kept: ["kept-namespace-function"],
+    },
+    "namespace-class": {
+      source: `
+        const local = "kept-namespace-class";
+        namespace api { export class getStaticProps { value = local; } }
+        ${view(`new api.getStaticProps().value`)}
+      `,
+      gone: [],
+      kept: ["kept-namespace-class"],
+    },
+  };
+  const pages = extension === ".tsx" ? { ...jsPages, ...tsPages } : jsPages;
 
   using dir = tempDir("bake-command-server-only-forms", {
     "app/secret.js": `
@@ -1704,7 +1726,7 @@ test.concurrent("the browser build of a page removes server-only code of every f
     "app/kept-required.js": `console.log("kept-required-module");`,
     "app/db-default.js": `export default { user: { findMany: () => "db-default-secret" } };`,
     "app/named-client.js": `export const client = { table: "named-client-secret" };`,
-    ...Object.fromEntries(Object.entries(pages).map(([name, page]) => [`app/pages/${name}.js`, page.source])),
+    ...Object.fromEntries(Object.entries(pages).map(([name, page]) => [`app/pages/${name}${extension}`, page.source])),
     "render/server.ts": `export function render(request, meta) {
       return new Response(meta.modules[0]);
     }`,
@@ -1718,7 +1740,7 @@ test.concurrent("the browser build of a page removes server-only code of every f
             style: "nextjs-pages",
             serverEntryPoint: "./render/server.ts",
             clientEntryPoint: "./render/client.ts",
-            extensions: [".js"],
+            extensions: ["${extension}"],
             clientPages: { serverExports: ["getServerSideProps", "getStaticProps"] },
           }],
         },

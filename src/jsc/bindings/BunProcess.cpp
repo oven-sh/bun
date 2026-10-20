@@ -1474,10 +1474,11 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
         CLEAR_IF_EXCEPTION(scope);
         if (vm.hasPendingTerminationException()) [[unlikely]]
             return;
-        if (reasonStack.isUndefined())
-            reasonStack = {};
-        else
+        if (reasonStack && !reasonStack.isUndefined())
             warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
+        // Process::emitWarning() takes a string. For any other `stack`, the first warning has the text of the reason.
+        if (!reasonStack || !reasonStack.isString())
+            reasonStack = {};
     }
     if (!reasonStack) {
         reasonStack = JSValue::decode(Bun__noSideEffectsToString(vm, globalObject, reason));

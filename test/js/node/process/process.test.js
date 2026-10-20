@@ -2295,25 +2295,28 @@ console.log(load());
     });
   });
 
-  // The process starts a Worker, so a debug build can need more than the default timeout.
-  it("--unhandled-rejections=throw gives the parent of a Worker the error of the Worker's rejection", async () => {
-    using dir = tempDir("unhandled-rejections-worker", {
-      "worker.cjs": `require("node:fs/promises").readFile(__filename + ".missing");`,
-      "main.cjs": `
+  // Not concurrent: the process starts a Worker, and a debug build needs most of the default timeout for that.
+  it.serial(
+    "--unhandled-rejections=throw gives the parent of a Worker the error of the Worker's rejection",
+    async () => {
+      using dir = tempDir("unhandled-rejections-worker", {
+        "worker.cjs": `require("node:fs/promises").readFile(__filename + ".missing");`,
+        "main.cjs": `
         const { Worker } = require("node:worker_threads");
         new Worker(__dirname + "/worker.cjs").on("error", error => console.log(error.code));
       `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--unhandled-rejections=throw", "main.cjs"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ENOENT\n", stderr: "", exitCode: 0 });
-  }, 20_000);
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--unhandled-rejections=throw", "main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ENOENT\n", stderr: "", exitCode: 0 });
+    },
+  );
 
   // Node does not format the stack to decide what to raise. An Error.prepareStackTrace hook runs when `stack` is
   // read, and the listener gets the text of the hook.
@@ -2371,8 +2374,9 @@ console.log(load());
     },
   );
 
-  // The rejection warning takes `reason.stack` for an error. When that is undefined, it has the text of the reason.
-  it("--unhandled-rejections=warn makes both warnings for an error whose stack is undefined", async () => {
+  // The first warning is `reason.stack` when that is a string, as in Node. For any other `stack` it is the text of
+  // the reason: process.emitWarning() takes only a string.
+  it("--unhandled-rejections=warn makes both warnings when the stack of the error is not a string", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -2382,9 +2386,14 @@ console.log(load());
           const seen = [];
           process.on("warning", warning => seen.push(warning.name));
           process.on("exit", () => console.log(JSON.stringify(seen)));
-          const error = new Error("boom");
-          error.stack = undefined;
-          Promise.reject(error);
+          const noStack = new Error("the stack is undefined");
+          noStack.stack = undefined;
+          Promise.reject(noStack);
+          const numberStack = new Error("the stack is a number");
+          numberStack.stack = 42;
+          Promise.reject(numberStack);
+          // An fs error has no stack of its own, so this one reaches the accessor.
+          Object.defineProperty(Error.prototype, "stack", { configurable: true, get: () => 42 });
           require("node:fs/promises").readFile(__filename + ".missing");
         `,
       ],
@@ -2393,7 +2402,7 @@ console.log(load());
       stderr: "ignore",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(JSON.parse(stdout)).toEqual(Array(4).fill("UnhandledPromiseRejectionWarning"));
+    expect(JSON.parse(stdout)).toEqual(Array(6).fill("UnhandledPromiseRejectionWarning"));
     expect(exitCode).toBe(0);
   });
 

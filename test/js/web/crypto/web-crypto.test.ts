@@ -1368,12 +1368,12 @@ describe("SubtleCrypto.supports", () => {
     getPublicKey: supports("getPublicKey", algorithm),
     wrapKey: supports("wrapKey", "AES-KW", algorithm),
   });
+  const secret = { exportKey: true, getPublicKey: false, wrapKey: true };
+  const keyPair = { exportKey: true, getPublicKey: true, wrapKey: true };
+  const notExportable = { exportKey: false, getPublicKey: false, wrapKey: false };
 
   // The answers are those of Node v26.3.0.
   it("answers exportKey, getPublicKey and the wrapped key of wrapKey by the algorithm name", () => {
-    const secret = { exportKey: true, getPublicKey: false, wrapKey: true };
-    const keyPair = { exportKey: true, getPublicKey: true, wrapKey: true };
-    const notExportable = { exportKey: false, getPublicKey: false, wrapKey: false };
     const expected = {
       "HMAC": secret,
       "AES-CBC": secret,
@@ -1418,14 +1418,21 @@ describe("SubtleCrypto.supports", () => {
     expect({ answers, reads }).toEqual({ answers: [true, true, true], reads: ["name", "name", "name"] });
   });
 
+  it("answers by the name when a member that only an import reads is invalid", () => {
+    expect({
+      hmac: byKeyAlgorithm({ name: "HMAC", hash: "SHA-999", length: -1 }),
+      rsa: byKeyAlgorithm({ name: "RSA-OAEP", hash: null }),
+      ec: byKeyAlgorithm({ name: "ECDSA", namedCurve: undefined }),
+    }).toEqual({ hmac: secret, rsa: keyPair, ec: keyPair });
+  });
+
   it("answers false when the name of the algorithm cannot be read", () => {
     const unreadable = {
       get name(): string {
         throw new Error("unreadable name");
       },
     };
-    const no = { exportKey: false, getPublicKey: false, wrapKey: false };
-    expect([byKeyAlgorithm({}), byKeyAlgorithm(unreadable)]).toEqual([no, no]);
+    expect([byKeyAlgorithm({}), byKeyAlgorithm(unreadable)]).toEqual([notExportable, notExportable]);
   });
 
   it("needs the hash of an HMAC key for the operations that import a key", () => {
@@ -1459,6 +1466,7 @@ describe("SubtleCrypto.supports", () => {
     ["ChaCha20-Poly1305 with a 16-byte iv", { name: "ChaCha20-Poly1305", iv: new Uint8Array(16) }],
     ["ChaCha20-Poly1305 with tagLength 64", { name: "ChaCha20-Poly1305", iv: new Uint8Array(12), tagLength: 64 }],
     ["AES-CBC with an 8-byte iv", { name: "AES-CBC", iv: new Uint8Array(8) }],
+    ["AES-CFB-8 with a 15-byte iv", { name: "AES-CFB-8", iv: new Uint8Array(15) }],
     ["AES-CTR with an 8-byte counter", { name: "AES-CTR", counter: new Uint8Array(8), length: 64 }],
     ["AES-CTR with length 0", { name: "AES-CTR", counter: new Uint8Array(16), length: 0 }],
     ["AES-CTR with length 129", { name: "AES-CTR", counter: new Uint8Array(16), length: 129 }],

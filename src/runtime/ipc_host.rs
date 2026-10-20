@@ -333,7 +333,7 @@ pub(crate) fn emit_handle_ipc_message(
             }
         }
         let vm = global_this.bun_vm().as_mut();
-        let Some(ipc) = get_ipc_instance(vm) else {
+        let Some(ipc) = get_ipc_instance(vm, true) else {
             // Channel already gone: a handle that finished adopting after EOF is still delivered, as in node.
             Process__emitMessageEvent(global_this, message, handle);
             return Ok(JSValue::UNDEFINED);
@@ -367,7 +367,7 @@ fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     let vm = global.bun_vm().as_mut();
     // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance` (or
     // `None`); the instance is heap-allocated, not embedded in `vm`.
-    let ipc = get_ipc_instance(vm).map(|i| unsafe { (*i).data() });
+    let ipc = get_ipc_instance(vm, true).map(|i| unsafe { (*i).data() });
     #[cfg(windows)]
     let peer_pid = {
         let from_pipe = ipc.as_ref().map(|i| i.ipc_peer_pid()).unwrap_or(0);
@@ -472,19 +472,20 @@ impl IPCInstance {
         event_loop.exit();
         // Group is embedded in RareData and shared with subprocess IPC; nothing
         // to free here.
-        vm.channel_ref.disable();
     }
 }
 
 /// Returns the initialized IPC instance, lazily creating it from the VM's
 /// recorded `PendingIpc`.
+/// Without `warn`, a channel that cannot be opened stays recorded for the caller that warns.
 pub(crate) fn get_ipc_instance(
     vm: &mut bun_jsc::virtual_machine::VirtualMachine,
+    warn: bool,
 ) -> Option<*mut IPCInstance> {
     if let Some(inst) = CHANNEL.get() {
         return Some(inst.as_ptr());
     }
-    let pending = vm.pending_ipc.take()?;
+    let pending = vm.pending_ipc?;
     let fd = pending.fd;
     let mode = if pending.advanced {
         IPC::Mode::Advanced
@@ -531,7 +532,10 @@ pub(crate) fn get_ipc_instance(
             // (heap::alloc) above and is not yet aliased.
             unsafe { IPCInstance::deinit(instance) };
             CHANNEL.set(None);
-            bun_core::warn!("Unable to start IPC socket");
+            if warn {
+                vm.pending_ipc = None;
+                bun_core::warn!("Unable to start IPC socket");
+            }
             return None;
         };
         socket.set_timeout(0);
@@ -567,13 +571,17 @@ pub(crate) fn get_ipc_instance(
             // (heap::alloc) above and is not yet aliased.
             unsafe { IPCInstance::deinit(instance) };
             CHANNEL.set(None);
-            bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
+            if warn {
+                vm.pending_ipc = None;
+                bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
+            }
             return None;
         }
 
         instance
     };
 
+    vm.pending_ipc = None;
     // SAFETY: `instance` is the live boxed IPCInstance.
     unsafe { (*instance).data().write_version_packet(vm.global()) };
 
@@ -593,12 +601,4 @@ pub(crate) fn global_object_connected_ipc(global: &JSGlobalObject) -> bool {
 pub(crate) fn global_object_has_ipc(global: &JSGlobalObject) -> bool {
     // JSGlobalObject::bun_vm contract.
     CHANNEL.get().is_some() || global.bun_vm().as_mut().pending_ipc.is_some()
-}
-
-/// When IPC environment variables are passed, the socket is not immediately opened,
-/// but rather we wait for process.on('message') or process.send() to be called, THEN
-/// we open the socket. This is to avoid missing messages at the start of the program.
-// HOST_EXPORT(Bun__ensureProcessIPCInitialized, c)
-pub(crate) fn ensure_process_ipc_initialized(global: &JSGlobalObject) {
-    let _ = get_ipc_instance(global.bun_vm().as_mut());
 }

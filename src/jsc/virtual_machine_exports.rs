@@ -22,6 +22,16 @@ pub fn is_shutting_down(this: &VirtualMachine) -> bool {
     this.is_shutting_down()
 }
 
+// HOST_EXPORT(Bun__VirtualMachine__hasUnhandledError, c)
+pub fn has_unhandled_error(this: &VirtualMachine) -> bool {
+    this.unhandled_error_counter > 0
+        // The entry point's rejection is looked at after the ticks of the turn that rejected it.
+        || (this.pending_internal_promise_reported_at != this.hot_reload_counter
+            && this.pending_internal_promise().is_some_and(|promise| {
+                crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected
+            }))
+}
+
 // HOST_EXPORT(Bun__VM__scriptExecutionStatus, c)
 pub fn script_execution_status(this: &VirtualMachine) -> i32 {
     this.script_execution_status() as i32

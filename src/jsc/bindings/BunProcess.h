@@ -38,6 +38,7 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSObject> m_onWarning;
 
     void installDefaultWarningListener(JSC::VM&);
+    void installPendingMessagesListener(JSC::VM&);
 
 public:
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
@@ -47,6 +48,9 @@ public:
 
     DECLARE_EXPORT_INFO;
     bool m_reportOnUncaughtException = false;
+    // [message, handle, ...] that arrived while 'message' had no listener, like Node's kPendingMessages.
+    WriteBarrier<JSArray> m_pendingMessages;
+    LazyProperty<Process, JSFunction> m_emitPendingMessagesFunction;
 
     static void destroy(JSC::JSCell* cell)
     {
@@ -145,6 +149,7 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 // Routes its argument onto the uncaught-exception path. Used, via $newCppFunction, by the
 // node-style callback shims in src/js.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionHasUnhandledError);
 
 // process.cwd() as a JSString, cached on the process object until it changes.
 JSC::JSValue getCachedCwd(JSC::JSGlobalObject*);

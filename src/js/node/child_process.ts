@@ -1,6 +1,7 @@
 // Hardcoded module "node:child_process"
 const EventEmitter = require("node:events");
 const { kHandle } = require("internal/shared");
+const Control = require("internal/process/channel_control");
 const {
   validateBoolean,
   validateFunction,
@@ -684,6 +685,8 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 }
 const etimedoutErrorCode = $bindgen("node_util_binding.bind.ts", "etimedoutErrorCode");
 const enobufsErrorCode = $bindgen("node_util_binding.bind.ts", "enobufsErrorCode");
+const startChannelWithRef = $bindgen("node_cluster_binding.bind.ts", "startChannelWithRef");
+const hasUnhandledError = $newCppFunction("BunProcess.cpp", "jsFunctionHasUnhandledError", 0);
 
 /**
  * Spawns a file as a shell synchronously.
@@ -1144,6 +1147,7 @@ class ChildProcess extends EventEmitter {
   #handle;
   #closesNeeded = 1;
   #closesGot = 0;
+  #pendingMessages = [];
 
   declare send?: (message, handle?, options?, callback?) => boolean;
   declare disconnect?: () => void;
@@ -1511,7 +1515,11 @@ class ChildProcess extends EventEmitter {
       if (has_ipc) {
         this.send = this.#send;
         this.disconnect = this.#disconnect;
-        this.channel = new Control();
+        this.channel = new Control(this.#handle);
+        startChannelWithRef(this.#handle);
+        this.on("newListener", () => {
+          process.nextTick(() => this.#emitPendingMessages());
+        });
         Object.defineProperty(this, "_channel", {
           get() {
             return this.channel;
@@ -1563,8 +1571,22 @@ class ChildProcess extends EventEmitter {
     }
   }
 
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L954-L964
   #emitIpcMessage(message, _, handle) {
-    this.emit(isInternalIpcMessage(message) ? "internalMessage" : "message", message, handle);
+    if (isInternalIpcMessage(message)) this.emit("internalMessage", message, handle);
+    else if (this.listenerCount("message")) this.emit("message", message, handle);
+    else ArrayPrototypePush.$call(this.#pendingMessages, [message, handle]);
+  }
+
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L726-L742
+  #emitPendingMessages() {
+    // Bun ends the turn of an exception that nobody handles, ticks included. Node is gone by then.
+    if (!this.channel || hasUnhandledError() || !this.listenerCount("message")) return;
+    const messages = this.#pendingMessages;
+    const { length } = messages;
+    if (!length) return;
+    for (let i = 0; i < length; i++) this.emit("message", messages[i][0], messages[i][1]);
+    this.#pendingMessages = [];
   }
 
   #send(message, handle, options, callback) {
@@ -1618,6 +1640,8 @@ class ChildProcess extends EventEmitter {
       return;
     }
     $assert(!this.connected);
+    this.channel = null;
+    this.#pendingMessages = [];
     process.nextTick(() => this.emit("disconnect"));
     process.nextTick(() => this.#maybeClose());
   }
@@ -1918,12 +1942,6 @@ function abortChildProcess(child, killSignal, reason) {
     }
   } catch (err) {
     child.emit("error", err);
-  }
-}
-
-class Control extends EventEmitter {
-  constructor() {
-    super();
   }
 }
 

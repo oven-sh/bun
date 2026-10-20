@@ -7,7 +7,11 @@ export const onInternalMessageChild = b.fn({
   capability: "js",
   throws: true,
 });
-export const setRef = b.fn({ args: { enabled: b.bool } });
+/** The four methods of `Control`. `subprocess` is left out for `process.channel`. */
+export const setChannelRef = b.fn({
+  args: { enabled: b.bool, counted: b.bool, subprocess: b.classRef("Subprocess").optional },
+});
+export const startChannelWithRef = b.fn({ args: { subprocess: b.classRef("Subprocess") } });
 export const channelIgnoreOneDisconnectEventListener = b.fn({});
 export const clusterValidateFd = b.fn({ args: { fd: b.f64 }, returns: b.i32 });
 export const clusterCloseHandle = b.fn({ args: { fd: b.f64 } });

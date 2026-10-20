@@ -4,7 +4,7 @@
 //   at all. It should happen in the protocol before it reaches JS.
 // - We should not be creating JSFunction's in process.nextTick.
 
-use crate::ipc::{IsInternal, SerializeAndSendResult};
+use crate::ipc::{IsInternal, SendQueue, SerializeAndSendResult};
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional};
@@ -268,30 +268,39 @@ pub(crate) fn handle_internal_message_primary(
 //
 //
 
-pub(crate) fn set_ref(enabled: bool) {
-    let vm = VirtualMachine::get().as_mut();
-    vm.channel_ref_overridden = true;
-    if enabled {
-        vm.channel_ref.ref_(bun_io::js_vm_ctx());
-    } else {
-        vm.channel_ref.unref(bun_io::js_vm_ctx());
+/// The channel of `subprocess`, or without one this process's own, which is opened if it was not yet.
+fn with_channel(subprocess: Option<&Subprocess<'_>>, warn: bool, f: impl FnOnce(&SendQueue)) {
+    if let Some(subprocess) = subprocess {
+        if let Some(channel) = subprocess.ipc() {
+            f(channel);
+        }
+    } else if let Some(instance) =
+        crate::ipc_host::get_ipc_instance(VirtualMachine::get().as_mut(), warn)
+    {
+        // SAFETY: `get_ipc_instance` returns the live boxed instance that `CHANNEL` holds.
+        f(unsafe { (*instance).data() });
     }
 }
 
-// HOST_EXPORT(Bun__refChannelUnlessOverridden, c)
-pub(crate) fn ref_channel_unless_overridden(global: &JSGlobalObject) {
-    let vm = global.bun_vm().as_mut();
-    if !vm.channel_ref_overridden {
-        vm.channel_ref.ref_(bun_io::js_vm_ctx());
-    }
+/// The four methods of `Control`, which say nothing in Node where the channel cannot be opened.
+pub(crate) fn set_channel_ref(enabled: bool, counted: bool, subprocess: Option<&Subprocess<'_>>) {
+    with_channel(subprocess, false, |channel| {
+        if counted {
+            channel.ref_counted(if enabled { 1 } else { -1 });
+        } else {
+            channel.set_ref(enabled);
+        }
+    });
 }
 
-// HOST_EXPORT(Bun__unrefChannelUnlessOverridden, c)
-pub(crate) fn unref_channel_unless_overridden(global: &JSGlobalObject) {
-    let vm = global.bun_vm().as_mut();
-    if !vm.channel_ref_overridden {
-        vm.channel_ref.unref(bun_io::js_vm_ctx());
-    }
+/// Node's `Pipe` has a ref from the start, which only the child drops: https://github.com/nodejs/node/blob/v26.3.0/lib/child_process.js#L181
+pub(crate) fn start_channel_with_ref(subprocess: &Subprocess<'_>) {
+    with_channel(Some(subprocess), false, SendQueue::start_with_ref);
+}
+
+// HOST_EXPORT(Bun__setChannelListenerCount, c)
+pub(crate) fn set_channel_listener_count(count: i32) {
+    with_channel(None, true, |channel| channel.set_listener_count(count));
 }
 
 pub(crate) fn channel_ignore_one_disconnect_event_listener() {

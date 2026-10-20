@@ -380,8 +380,6 @@ pub struct VirtualMachine {
     /// reason as [`Self::is_inside_deferred_task_queue`].
     pub(crate) suppress_microtask_drain: core::cell::Cell<bool>,
 
-    pub channel_ref: Async::KeepAlive,
-    pub channel_ref_overridden: bool,
     pub channel_ref_should_ignore_one_disconnect_event_listener: bool,
 
     /// A set of extensions that exist in the require.extensions map.
@@ -3305,7 +3303,6 @@ impl VirtualMachine {
             addr_of_mut!((*vm).macro_event_loop).write(EventLoop::default());
             addr_of_mut!((*vm).proxy_env_storage).write(Default::default());
             addr_of_mut!((*vm).gc_controller).write(Default::default());
-            addr_of_mut!((*vm).channel_ref).write(Default::default());
             if let Some(graph) = opts.graph {
                 let _ = STANDALONE_MODULE_GRAPH.set(graph);
             }
@@ -3982,7 +3979,7 @@ pub struct Options {
 }
 
 /// Inherited IPC channel recorded at env load; consumed by `bun_runtime`'s
-/// `ipc_host::get_ipc_instance` when JS first attaches a listener.
+/// `ipc_host::get_ipc_instance` when JS first uses the channel.
 #[derive(Clone, Copy)]
 pub struct PendingIpc {
     pub fd: bun_sys::Fd,

@@ -282,10 +282,14 @@ describe("css tests", () => {
     minify_test(`a { transform: rotate(atan2(1in, 1em)) }`, `a{transform:rotate(atan2(1in,1em))}`);
     minify_test(`a { rotate: atan2(1px, -1vw) }`, `a{rotate:atan2(1px,-1vw)}`);
     // An at-rule prelude cannot hold an atan2() that is left as written, so the rule is an error.
+    minify_test(
+      `@property --x { syntax: '<angle>'; inherits: false; initial-value: atan2(1in, 10px) }`,
+      `@property --x{syntax:"<angle>";inherits:false;initial-value:1.467rad}`,
+    );
     test.each([
       [`@media (min-width: calc(100px * tan(atan2(1in, 1em)))) { a { color: red } }`, "Invalid media query"],
       [`@container (min-width: calc(100px * tan(atan2(1in, 1em)))) { a { color: red } }`, "Invalid media query"],
-      [`@property --x { syntax: '<angle>'; inherits: false; initial-value: atan2(1in, 1em) }`, "Unexpected token"],
+      [`@property --x { syntax: '<angle>'; inherits: false; initial-value: atan2(1in, 1em) }`, "Unexpected token: atan2("],
     ])("ERROR: %s", (source, message) => {
       expect(() => minify_test_with_options(source, "")).toThrow(message);
     });

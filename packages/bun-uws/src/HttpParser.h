@@ -693,26 +693,27 @@ struct HttpResponseData;
          * The fields of an accepted section go to *records, a field record each (fieldRecordLengths()), and only
          * after every field passed every rule: a rejected section leaves no record. req.rawTrailers is built from
          * the records, so no later step parses the section or decides again what it holds. The section itself
-         * never leaves the parser: it is emptied here, whatever the verdict.
+         * never leaves the parser: it ends here, whatever the verdict.
          *
          * Known bound: parseTrailerFields stops at MAX_TRAILER_FIELDS, so a section with
          * more valid fields than that followed by a malformed line is accepted where node
          * still errors; reaching it requires a deliberately padded (but size-capped)
          * section, and rejecting it would need a second scanning mode. */
         HttpParserError acceptNodeTrailerSection(std::string *records, bool useInsecureHTTPParser, bool useLenientTransferEncoding, uint32_t maxHeadersCount) {
-            struct ClearOnReturn {
-                std::string &section;
-                ~ClearOnReturn() { section.clear(); }
-            } clearOnReturn { fallback };
             if (fallback.size() <= 2) {
+                /* No fields. clear() keeps the block, as the parser does for a head that took several reads. */
+                fallback.clear();
                 return HTTP_PARSER_ERROR_NONE;
             }
+            /* This frame owns a section with fields: a connection holds no block for a section that is over. */
+            std::string section = std::move(fallback);
+            fallback.clear();
             /* A record holds the length of a field in 32 bits. */
-            if (fallback.size() > UINT32_MAX) {
+            if (section.size() > UINT32_MAX) {
                 return HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE;
             }
             std::pair<std::string_view, std::string_view> fields[MAX_TRAILER_FIELDS];
-            unsigned count = parseTrailerFields(fallback, fields, useInsecureHTTPParser);
+            unsigned count = parseTrailerFields(section, fields, useInsecureHTTPParser);
             if (count == 0) {
                 return HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN;
             }

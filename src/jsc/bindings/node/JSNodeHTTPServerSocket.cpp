@@ -256,8 +256,8 @@ extern "C" size_t Bun__NodeHTTP__takeRequestTrailerBytes(bool is_ssl, us_socket_
         return 0;
     }
     static thread_local std::string taken;
-    taken = std::move(*trailers);
-    trailers->clear();
+    // Not `taken = std::move(*trailers)`: libstdc++ hands the old block of `taken` to the string it moves from, and the connection would keep that block.
+    taken = std::exchange(*trailers, std::string());
     *out = taken.data();
     return taken.size();
 }

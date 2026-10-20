@@ -421,9 +421,7 @@ if (harness) {
   const node = harness.nodeExe();
 
   describe("Node.js compatibility", () => {
-    // The timeout is for the first start of Node.js after a build: it reads its binary from the disk again,
-    // and that took up to 14 s here. The tests take 0.3 s.
-    (node ? test : test.skip)("all tests pass in Node.js", { timeout: 60_000 }, async () => {
+    (node ? test : test.skip)("all tests pass in Node.js", async () => {
       // A direct run, not `node --test`: the runner mode forks a second node
       // process per file. node:test still exits non-zero on any failure.
       await using proc = Bun.spawn({

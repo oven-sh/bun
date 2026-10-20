@@ -435,10 +435,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut mark_for_replace: bool = false;
 
         let orig_dead = p.is_control_flow_dead;
+        let orig_in_deleted = p.in_deleted_export;
         if p.options.features.replace_exports.count() > 0 {
             if let Some(entry) = p.options.features.replace_exports.get_ptr(b"default") {
                 p.is_control_flow_dead =
                     p.options.features.dead_code_elimination && !entry.is_replace();
+                p.in_deleted_export = p.is_control_flow_dead;
                 mark_for_replace = true;
             }
         }
@@ -446,6 +448,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         macro_rules! restore_dead {
             () => {
                 p.is_control_flow_dead = orig_dead;
+                p.in_deleted_export = orig_in_deleted;
             };
         }
 
@@ -971,9 +974,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && p.enclosing_namespace_arg_ref.is_none()
             && p.is_export_to_eliminate(data.func.name.expect("infallible: name checked").ref_);
         let original_is_dead = p.is_control_flow_dead;
+        let original_in_deleted = p.in_deleted_export;
 
         if mark_as_dead {
             p.is_control_flow_dead = true;
+            p.in_deleted_export = true;
         }
 
         // Unconditionally point p.react_refresh.hook_ctx_storage at this stack-local
@@ -989,6 +994,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let open_parens_loc = data.func.open_parens_loc;
         let this_expr_count_before = p.this_expr_count;
         data.func = p.visit_func(core::mem::take(&mut data.func), open_parens_loc, false);
+        p.in_deleted_export = original_in_deleted;
         p.react_compiler_candidate_name = None;
 
         let name_ref = data.func.name.expect("infallible: name checked").ref_;
@@ -1135,12 +1141,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .ref_,
             );
         let original_is_dead = p.is_control_flow_dead;
+        let original_in_deleted = p.in_deleted_export;
 
         if mark_as_dead {
             p.is_control_flow_dead = true;
+            p.in_deleted_export = true;
         }
 
         let _ = p.visit_class(stmt.loc, &mut data.class, Ref::NONE, false);
+        p.in_deleted_export = original_in_deleted;
 
         // Remove the export flag inside a namespace
         let was_export_inside_namespace = data.is_export && p.enclosing_namespace_arg_ref.is_some();

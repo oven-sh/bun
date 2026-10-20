@@ -471,10 +471,14 @@ pub mod bv2_impl {
             /// (`js_parser/ast/Parser.rs:1997` resolves `framework.react_fast_refresh
             /// .import_source`) when `features.react_fast_refresh` is on.
             pub(crate) react_fast_refresh: Option<ReactFastRefresh>,
-            /// The absolute folders of the routers with `clientPages`. In the browser build, the
-            /// files under them lose the page data functions (`getServerSideProps`, ...), which
-            /// run on the server only, and the imports that only those use.
-            pub(crate) client_page_dirs: Vec<Box<[u8]>>,
+            /// The routers with `clientPages`. In the browser build, the files under them lose
+            /// their router's `serverExports`, and the imports that only those use.
+            pub(crate) client_page_dirs: Vec<ClientPageDir>,
+        }
+        pub struct ClientPageDir {
+            /// Absolute.
+            pub dir: Box<[u8]>,
+            pub server_exports: Vec<Box<[u8]>>,
         }
         impl Framework {
             /// Construct the bundler-side TYPE_ONLY view. Called from
@@ -485,7 +489,7 @@ pub mod bv2_impl {
                 built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
                 server_components: Option<ServerComponents>,
                 react_fast_refresh: Option<ReactFastRefresh>,
-                client_page_dirs: Vec<Box<[u8]>>,
+                client_page_dirs: Vec<ClientPageDir>,
             ) -> Self {
                 Self {
                     built_in_modules,
@@ -495,13 +499,18 @@ pub mod bv2_impl {
                 }
             }
 
-            /// Whether `path` is under a router folder with `clientPages`.
-            pub(crate) fn is_client_page_file(&self, path: &[u8]) -> bool {
-                self.client_page_dirs.iter().any(|dir| {
-                    path.len() > dir.len()
-                        && path.starts_with(dir)
-                        && bun_core::path_sep::is_sep_any(path[dir.len()])
-                })
+            /// The `serverExports` of the `clientPages` router whose folder holds `path`: the
+            /// deepest, when the folders of routers are nested.
+            pub(crate) fn client_page_server_exports(&self, path: &[u8]) -> Option<&[Box<[u8]>]> {
+                self.client_page_dirs
+                    .iter()
+                    .filter(|cp| {
+                        path.len() > cp.dir.len()
+                            && path.starts_with(&cp.dir)
+                            && bun_core::path_sep::is_sep_any(path[cp.dir.len()])
+                    })
+                    .max_by_key(|cp| cp.dir.len())
+                    .map(|cp| &*cp.server_exports)
             }
         }
         /// `Framework.ServerComponents` — full string

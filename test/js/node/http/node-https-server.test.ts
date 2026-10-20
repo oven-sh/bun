@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tls as validCert } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, tempDir, tls as validCert } from "harness";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
@@ -422,6 +422,73 @@ describe("server.blockList", () => {
     });
     expect(exitCode).toBe(0);
   });
+});
+
+// 'connection' and 'secureConnection' are two callbacks in Node.js. When something handles the error that a
+// 'connection' listener throws, 'secureConnection' is still emitted, and a guard in its listener refuses the peer.
+// The fixture is the server and its peer. It runs unchanged under Node.js.
+describe.concurrent("https.Server whose 'connection' listener throws", () => {
+  const fixture = join(import.meta.dir, "node-https-connection-listener-throw-fixture.js");
+  // CI has its own time for each test. A local debug or ASAN build needs several seconds to start one fixture.
+  const timeout = (isASAN || isDebug) && !isCI ? 90_000 : undefined;
+  const threw = ["connection", "uncaught:connection"];
+  const refused = { marks: [...threw, "secureConnection"], served: false };
+  // What the fixture prints, and the exit code of the process.
+  const expected: Record<string, [object, number]> = {
+    // What Node.js v26.3.0 prints for the same case.
+    "handled": [refused, 0],
+    "captured": [refused, 0],
+    "worker-handled": [refused, 0],
+    "handled-keeps": [{ ...refused, served: true }, 0],
+    // The ticks of the listener that threw run before 'secureConnection'.
+    "handled-ticks": [{ ...refused, marks: [...threw, "tick", "secureConnection"] }, 0],
+    // A listener that the 'connection' listener added hears this 'secureConnection'.
+    "handled-adds": [{ ...refused, marks: [...refused.marks, "secureConnection:added"] }, 0],
+    "captured-monitor": [{ ...refused, marks: ["connection", "monitor:connection", "uncaught:connection", "secureConnection"] }, 0], // prettier-ignore
+    "handled-secureThrows-keeps": [{ marks: [...refused.marks, "uncaught:secureConnection"], served: true }, 0],
+    // 'secureConnection' is emitted once when its own listener throws.
+    "handled-quiet-secureThrows-keeps": [{ marks: ["connection", "connection:second", "secureConnection", "uncaught:secureConnection"], served: true }, 0], // prettier-ignore
+    // No 'secureConnection' for a socket that the 'connection' listener destroyed. With "writes" the close waits.
+    "handled-destroys": [{ marks: threw, served: false }, 0],
+    "handled-writes-destroys": [{ marks: threw, served: false }, 0],
+    // And none after an error that ends the process.
+    "handled-exits": [{ marks: threw, exit: 3 }, 3],
+    "worker-handled-exits": [{ marks: threw, exit: 3 }, 0],
+    "unhandled": [{ marks: ["connection"], exit: 1 }, 1],
+    "monitor": [{ marks: ["connection", "monitor:connection"], exit: 1 }, 1],
+
+    // Not what Node.js prints.
+    // A plain http.Server with a certificate in listen() emits no 'secureConnection', with or without the error.
+    "handled-listenTls": [{ marks: threw, served: true }, 0],
+    // The socket cannot be made, so there is none for 'secureConnection'. The connection callback reports the
+    // error once, and the request does once more. Node.js reports it once and never answers the peer.
+    "handled-fractionalHighWaterMark": [{ marks: ["uncaught:ERR_INVALID_ARG_VALUE", "uncaught:ERR_INVALID_ARG_VALUE"], served: false }, 0], // prettier-ignore
+    // The socket is made, and its constructor throws: server.timeout is not valid. The guard still runs.
+    // Node.js throws from its own 'secureConnection' listener, runs no other, and never answers the peer.
+    "handled-badTimeout": [{ marks: ["uncaught:ERR_OUT_OF_RANGE", "secureConnection"], served: false }, 0],
+  };
+
+  test.each(Object.keys(expected))(
+    "%s",
+    async name => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), fixture, name],
+        env: { ...bunEnv, TLS_FIXTURE: JSON.stringify(validCert) },
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [result, exit] = expected[name];
+      expect({ result: stdout ? JSON.parse(stdout) : undefined, stderr, exitCode }).toEqual({
+        result,
+        // Only an error that nothing handles is printed.
+        stderr: exit === 1 ? expect.stringContaining("error: connection\n") : "",
+        exitCode: exit,
+      });
+    },
+    timeout,
+  );
 });
 
 // A close waits, up to 10 s, for ciphertext that write() reported and the kernel has not taken. closeAllConnections() does not.

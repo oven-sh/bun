@@ -1133,6 +1133,17 @@ extern "C" JSC::EncodedJSValue Bun__getOrCreateNodeHTTPServerSocket(bool isSSL, 
     return JSValue::encode(JSC::jsNull());
 }
 
+// Whether this connection is open and the connection callback of node:http gave it its Duplex.
+// A second call of that callback then finds the Duplex, and makes no other one.
+extern "C" bool Bun__NodeHTTP__hasDuplex(bool isSSL, us_socket_t* socket)
+{
+    if (us_socket_is_closed(socket)) {
+        return false;
+    }
+    auto* serverSocket = isSSL ? getNodeHTTPServerSocket<true>(socket) : getNodeHTTPServerSocket<false>(socket);
+    return serverSocket && serverSocket->m_duplex;
+}
+
 JSC::Structure* createNodeHTTPServerSocketStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     return JSNodeHTTPServerSocket::createStructure(vm, globalObject);

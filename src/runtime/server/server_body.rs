@@ -3301,6 +3301,10 @@ where
     /// its handshake completed). Hands the JSNodeHTTPServerSocket to the JS
     /// `onConnection` callback so `node:http` can emit 'connection' before any
     /// request bytes arrive.
+    ///
+    /// `#[inline(always)]`: the call in `on_connection_threw` must not take this body out of
+    /// `on_connection`, which runs for every connection.
+    #[inline(always)]
     pub(crate) fn on_connection_callback(&self, socket: *mut c_void) -> JsResult<()> {
         if self.js_value_for_dispatch().is_none() {
             return Ok(());
@@ -3321,6 +3325,37 @@ where
             unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
         callback.call(&global, JSValue::UNDEFINED, &[node_socket])?;
         Ok(())
+    }
+
+    /// The landing frame of [`Self::on_connection_callback`].
+    ///
+    /// Out of line: the filter thunk also runs for the accept and the close of every connection,
+    /// and returns at once there without this frame.
+    #[inline(never)]
+    pub(crate) fn on_connection(&self, socket: *mut c_void) {
+        if let Err(err) = self.on_connection_callback(socket) {
+            self.on_connection_threw(socket, err);
+        }
+    }
+
+    /// Node.js emits 'connection' and 'secureConnection' from two callbacks, so an error that a
+    /// 'connection' listener throws, and that something handles, does not stop 'secureConnection':
+    /// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2370
+    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1227-L1231
+    /// `onConnection` emits both. So it is called a second time: it finds the socket that the first
+    /// call made, and emits only a 'secureConnection' that is still due. Not when nothing handled
+    /// the error: Node.js has exited by then.
+    #[cold]
+    #[inline(never)]
+    fn on_connection_threw(&self, socket: *mut c_void, err: JsError) {
+        let unhandled_errors = self.vm().unhandled_error_counter;
+        crate::dispatch::fold(Err(err));
+        if SSL
+            && self.vm().unhandled_error_counter == unhandled_errors
+            && Bun__NodeHTTP__hasDuplex(SSL, socket)
+        {
+            crate::dispatch::fold(self.on_connection_callback(socket));
+        }
     }
 
     // `js_gc_route_list_set` / `ptr_to_js` live on the unbounded
@@ -3472,7 +3507,7 @@ fn server_set_on_connection(
                         // socket is a live uWS socket for this server's group.
                         // Shared — the callback re-enters JS.
                         let this = unsafe { &*user_data.cast::<$T>() };
-                        crate::dispatch::fold(this.on_connection_callback(socket.cast::<c_void>()));
+                        this.on_connection(socket.cast::<c_void>());
                     }
                     if first {
                         // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
@@ -3696,6 +3731,10 @@ unsafe extern "C" {
         socket: *mut c_void,
         global: &JSGlobalObject,
     ) -> JSValue;
+
+    // `socket` is the same `uws::Socket*`. It can be closed: uSockets frees a closed socket only
+    // when the outermost tick ends.
+    safe fn Bun__NodeHTTP__hasDuplex(is_ssl: bool, socket: *mut c_void) -> bool;
 
     // `&JSGlobalObject` / `&mut JSValue` discharge the deref'd-param
     // preconditions; `request_ptr`/`req` are opaque handles that C++ stores or

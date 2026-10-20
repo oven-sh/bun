@@ -1245,7 +1245,7 @@ function defineMaxHeadersCount(server: Server) {
 // net.Server 'connection' / tls.Server 'secureConnection' events.
 function onServerConnection(this: Server, listenerGeneration, socketHandle) {
   if (socketHandle.duplex) {
-    // Already wrapped (shouldn't happen for a brand-new connection).
+    onServerConnectionAgain(this, socketHandle);
     return;
   }
   const isTLS = !!this[tlsSymbol];
@@ -1294,8 +1294,18 @@ function onServerConnection(this: Server, listenerGeneration, socketHandle) {
   // emitting 'connection'; expose the shim here so listeners see it populated.
   socket.parser = createServerParserShim(socket);
   this.emit("connection", socket);
-  if (isTLS && socketHandle.secureEstablished) {
+  if (isTLS && socketHandle.takeSecureConnection) {
     this.emit("secureConnection", socket);
+  }
+}
+
+// The second call for a connection: something handled the error that the first call threw
+// (NewServer::on_connection_threw). Only 'secureConnection' can still be due, with Node's gate:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1227-L1231
+function onServerConnectionAgain(server: Server, socketHandle) {
+  const socket = socketHandle.duplex;
+  if (server[tlsSymbol] && !socket.destroyed && socketHandle.takeSecureConnection) {
+    server.emit("secureConnection", socket);
   }
 }
 

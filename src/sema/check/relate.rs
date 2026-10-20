@@ -4306,7 +4306,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // As in TypeScript 7.1. 7.0 gives up here and reports 2321. Which comparison is the 100th depends on where the
         // outermost one started and on what is cached, so only the last round's task answers. Any other task is
-        // discarded, and ends the comparison right away. The results that follow from the answer stay in the file, like
+        // discarded, and ends the comparison right away. The results that follow from the answer stay in the task, like
         // those of `REC_BOTH` below.
         if r.source_stack.len() == 100 || r.target_stack.len() == 100 {
             self.note_gave_up("the comparison depth limit");
@@ -4389,8 +4389,8 @@ impl<'p, 's> Checker<'p, 's> {
                 // left. Unknown results stay unknown.
                 // Where two types count as deeply nested depends on the comparisons around this one.
                 let is_cut = self.comparisons_of_deeply_nested_types != cuts;
-                let outer_per_file = std::mem::replace(
-                    &mut self.stores_relations_per_file,
+                let outer_per_task = std::mem::replace(
+                    &mut self.stores_relations_per_task,
                     is_cut && self.task.commits(),
                 );
                 let keys = match result == Ternary::TRUE || result == Ternary::MAYBE {
@@ -4399,7 +4399,7 @@ impl<'p, 's> Checker<'p, 's> {
                     false => MaybeKeys::Forgotten,
                 };
                 self.reset_maybe_stack(r, maybe_start, propagating, keys, stored);
-                self.stores_relations_per_file = outer_per_file;
+                self.stores_relations_per_task = outer_per_task;
             }
         } else {
             // A result that's false under assumptions is false without them, and so is one that an overflow cut
@@ -4459,7 +4459,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `relation.set(key, entry)`
     fn set_relation(&mut self, key: Key, entry: u8, stored: Stored) {
-        if self.stores_relations_per_file || self.p.relations.get(&self.task, &key).is_none() {
+        if self.stores_relations_per_task || self.p.relations.get(&self.task, &key).is_none() {
             self.insert_relation(key, entry, stored);
         } else {
             (self.p.relations).rewrite(&self.task, key, entry, stored);
@@ -4469,22 +4469,22 @@ impl<'p, 's> Checker<'p, 's> {
     /// `relation.set(key, entry)` for a key that has no entry.
     fn insert_relation(&mut self, key: Key, entry: u8, stored: Stored) {
         self.relation_sizes[usize::from(key.2 & 0xf)] += 1;
-        if self.stores_relations_per_file {
-            self.relations_of_this_file.entry(key).or_insert(entry);
+        if self.stores_relations_per_task {
+            self.relations_of_this_task.entry(key).or_insert(entry);
             return;
         }
         self.p.relations.insert(&self.task, key, entry, stored);
     }
 
-    /// Returns the entry in `Program::relations`, or else in `relations_of_this_file`. Anything
-    /// computed from the latter is also only valid for this file.
+    /// Returns the entry in `Program::relations`, or else in `relations_of_this_task`. Anything
+    /// computed from the latter is also only valid for this task.
     #[inline]
     fn known_relation(&mut self, key: &Key) -> Option<u8> {
         let known = self.p.relations.get(&self.task, key);
-        if known.is_some() || self.relations_of_this_file.is_empty() {
+        if known.is_some() || self.relations_of_this_task.is_empty() {
             return known;
         }
-        let cached_value = self.relations_of_this_file.get(key).copied()?;
+        let cached_value = self.relations_of_this_task.get(key).copied()?;
         self.comparisons_of_deeply_nested_types += 1;
         self.task.hold_back();
         Some(cached_value)

@@ -7133,17 +7133,17 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `ConstrainedType.resolvedBaseConstraint` of `ty`: the entry in `Program::constraints`, falling back to
-    /// `constraints_of_this_file`. Anything computed from the latter is also valid only for this file.
+    /// `constraints_of_this_task`. Anything computed from the latter is also valid only for this task.
     #[inline(always)]
     pub(super) fn known_constraint(&self, ty: TypeId) -> Option<(Option<TypeId>, bool)> {
         let known = self.p.constraints.get(&self.task, &ty);
-        if known.is_some() || self.constraints_of_this_file.is_empty() {
+        if known.is_some() || self.constraints_of_this_task.is_empty() {
             return known;
         }
-        let file_local = self.constraints_of_this_file.get(&ty).copied()?;
+        let task_local = self.constraints_of_this_task.get(&ty).copied()?;
         self.constraint_cuts.set(self.constraint_cuts.get() + 1);
         self.task.hold_back();
-        Some(file_local)
+        Some(task_local)
     }
 
     /// Records that `getResolvedBaseConstraint` hit its depth limit and stopped recursing.
@@ -7162,7 +7162,7 @@ impl<'p, 's> Checker<'p, 's> {
         stored: Stored,
     ) {
         if self.task.commits() && self.constraint_cuts.get() != cuts {
-            (self.constraints_of_this_file.entry(ty)).or_insert((constraint, false));
+            (self.constraints_of_this_task.entry(ty)).or_insert((constraint, false));
             return;
         }
         // A task that starts from an outer type reaches this one at a greater depth, and may be cut short where this
@@ -7322,8 +7322,8 @@ impl<'p, 's> Checker<'p, 's> {
             // The value of an inner evaluation above a `resolution_start` barrier stays, if one was stored. It gets the flag.
             let known = self.known_constraint(ty);
             let known = known.and_then(|(known, _)| known);
-            match self.constraints_of_this_file.get_mut(&ty) {
-                Some(file_local) => file_local.1 = true,
+            match self.constraints_of_this_task.get_mut(&ty) {
+                Some(task_local) => task_local.1 = true,
                 None => {
                     (self.p.constraints).rewrite(&self.task, ty, (known, true), Stored::new());
                 }

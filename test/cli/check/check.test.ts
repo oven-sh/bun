@@ -1154,6 +1154,51 @@ module.exports = Base;
     },
   );
 
+  // Nothing resolves the inner levels here, so `deep.v` in `a.ts` leaves `T["a"]` without a constraint. A TypeScript
+  // checker keeps that, and everything it derives from it, for as long as it lives. So `b.ts` gets all of these errors
+  // in the same checker and none of them in another one, but never some of them. One task checks both files, because
+  // they're small next to the rest of the program.
+  test("a file finds a base constraint that an earlier file cut short, and everything derived from it", async () => {
+    const deep = "T" + `["a"]`.repeat(11);
+    const body = (first: string) =>
+      `import { fa, C, Z } from "./t";\nconst h: typeof fa = (deep, x) => {\n  ${first};\n` +
+      `  if (!x) { const n: never = x; }\n` +
+      `  if (typeof x !== "object") { const n: never = x; }\n` +
+      `  if (x == null) { const n: never = x; }\n` +
+      `  const c: C<typeof x & Z> = null!;\n  const y: "y" = c;\n` +
+      `  const z: typeof x & Z = null!;\n  z.v;\n};\n`;
+    const filler = (name: string) =>
+      `export {};\n` + Array.from({ length: 2500 }, (_, i) => `const ${name}${i}: number = ${i} + 1;\n`).join("");
+    using dir = project({
+      "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files: ["a.ts", "b.ts", "y.ts", "z.ts"] }),
+      "t.d.ts":
+        `export interface R { v: 1; a: R }\nexport interface Z { z: 1 }\n` +
+        `export type C<X> = X extends { v: 1 } ? "y" : "n";\n` +
+        `export declare function fa<T extends R>(deep: ${deep}, x: T["a"]): void;\n`,
+      "a.ts": body("deep.v"),
+      "b.ts": body("x.v"),
+      "y.ts": filler("y"),
+      "z.ts": filler("z"),
+    });
+    const derived = (file: string) =>
+      [`4,19`, `5,38`, `6,26`]
+        .map(
+          at =>
+            `${file}(${at}): error TS2322: Type 'T["a"]' is not assignable to type 'never'.\n` +
+            `  Type 'R' is not assignable to type 'never'.\n`,
+        )
+        .join("") +
+      `${file}(8,9): error TS2322: Type 'C<T["a"] & Z>' is not assignable to type '"y"'.\n` +
+      `  Type '"n"' is not assignable to type '"y"'.\n` +
+      `${file}(10,5): error TS2339: Property 'v' does not exist on type 'T["a"] & Z'.`;
+    const { stdout, exitCode } = await check(dir, ["--threads", "1"]);
+    expect(stdout).toBe(
+      `a.ts(3,8): error TS2339: Property 'v' does not exist on type '${deep}'.\n${derived("a.ts")}\n` +
+        `b.ts(3,5): error TS2339: Property 'v' does not exist on type 'T["a"]'.\n${derived("b.ts")}`,
+    );
+    expect(exitCode).toBe(1);
+  });
+
   // The annotation of `t` refers to `X`, which contains `B0`, so TypeScript reports a cycle at `t`. It's the only
   // error. The other files come later in program order, and their checks get to `t` too. Only `d.ts`'s check reports
   // the cycle, so it has to walk the whole cycle itself, whichever check runs first.

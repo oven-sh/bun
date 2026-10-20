@@ -897,9 +897,9 @@ impl<'s> Program<'s> {
             instantiation_limit_hits: 0,
             limits_in_earlier_files: 0,
             comparisons_of_deeply_nested_types: 0,
-            relations_of_this_file: Default::default(),
-            stores_relations_per_file: false,
-            constraints_of_this_file: Default::default(),
+            relations_of_this_task: Default::default(),
+            stores_relations_per_task: false,
+            constraints_of_this_task: Default::default(),
             constraint_cuts: Default::default(),
             instantiations_in_progress: Vec::new(),
             keys_of_properties_in_progress: Vec::new(),
@@ -1690,16 +1690,16 @@ pub struct Checker<'p, 's> {
     comparisons_of_deeply_nested_types: u64,
     /// Only in a task that commits. The comparisons that succeed because a nested comparison was `TernaryMaybe`, for
     /// two deeply nested types or at 100 levels. Another task may get a different result, and in `Program::relations`
-    /// the first result would win for every task. See `known_relation`. `check_file` clears it, because which files
-    /// share a task depends on timing, so a file must not see what an earlier file of the task left here.
-    relations_of_this_file: FxHashMap<relate::Key, u8>,
-    /// True if `insert_relation` stores in `relations_of_this_file`.
-    stores_relations_per_file: bool,
+    /// the first result would win for every task. See `known_relation`. It lives as long as the task, like
+    /// everything the task has derived from it.
+    relations_of_this_task: FxHashMap<relate::Key, u8>,
+    /// True if `insert_relation` stores in `relations_of_this_task`.
+    stores_relations_per_task: bool,
     /// The same for base constraints that were cut short, or that follow from one that was. Where
     /// the cut happens depends on how deep the computation was when it reached the type. See
-    /// `known_constraint`. `check_file` clears it too.
-    constraints_of_this_file: FxHashMap<TypeId, (Option<TypeId>, bool)>,
-    /// How many times a base constraint was cut short, or an entry of `constraints_of_this_file` was read.
+    /// `known_constraint`.
+    constraints_of_this_task: FxHashMap<TypeId, (Option<TypeId>, bool)>,
+    /// How many times a base constraint was cut short, or an entry of `constraints_of_this_task` was read.
     constraint_cuts: std::cell::Cell<u64>,
     /// Only in a task that commits. The keys of the `instantiate_cached` calls in progress that missed the
     /// cache, and the types of the `get_literal_type_from_properties` calls in progress. Of two calls with the

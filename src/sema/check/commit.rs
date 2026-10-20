@@ -75,9 +75,10 @@
 //!   something happens that may get it discarded, or it stores the result of a resolution cycle, until its next commit
 //!   (`Task::stop_writing_immediately`).
 //! - **Results that depend on how deep the checker was never leave the task**: a base constraint that was cut short, a
-//!   comparison that succeeded because two types inside it counted as deeply nested, and whatever follows from either
-//!   (`Checker::constraints_of_this_file`, `relations_of_this_file`). In a shared table the first such result would
-//!   stick for every task.
+//!   comparison that succeeded because two types inside it counted as deeply nested, and the constraints and
+//!   comparisons that follow from either (`Checker::constraints_of_this_task`, `relations_of_this_task`). In a shared
+//!   table the first such result would stick for every task. They stay for the rest of the task, because its other
+//!   tables keep what was derived from them for that long.
 //! - Variances don't wait for a commit either. See `Claims`.
 
 use super::task::{Ended, Task, tables_of, tables_written_immediately};

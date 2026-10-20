@@ -96,10 +96,7 @@
 //!   TypeScript has a signature without parameters that returns `any`. That of an optional call
 //!   returns what the function returns, without the `undefined` of the chain.
 //! - A union has one `undefined` where TypeScript 6 can have the missing type beside it.
-//! - [`Types::resolve_name`] and [`Types::get_symbol_in_scope`] start in the scope that the node is in. For a member
-//!   or a property with a function, that is the scope of the function. A statement, a function, a class, a function
-//!   type, a mapped type, a parameter, a type parameter and a `case` are in the scope around them, so what they
-//!   declare themselves is not found from them. TypeScript starts inside the node.
+//! - [`Types::resolve_name`] and [`Types::get_symbol_in_scope`] don't find what the node that is asked about declares.
 //! - [`TsNode`]: tokens, `ParenthesizedType` and `EndOfFileToken` are not nodes.
 //!   [`TsNode::span`] and [`TsNode::get_source_text`] are empty in the default library, whose text
 //!   is not kept.
@@ -461,9 +458,8 @@ impl<'a> Types<'a> {
     }
 
     /// `checker.getSymbolsInScope(node, meaning).find(it => it.name === name)`, which does not make
-    /// the list. It is not [`Types::resolve_name`]: an alias counts for what it is, not for what it
-    /// is an alias of. Both start in
-    /// [the scope that `node` is in](self#where-the-answers-are-not-those-of-typescript-6).
+    /// the list. It is not `checker.resolveName(..)`: an alias counts for what it is, not for what it
+    /// is an alias of.
     pub fn get_symbol_in_scope(
         self,
         node: impl Locate<'a>,
@@ -475,10 +471,7 @@ impl<'a> Types<'a> {
         Some(TsSymbol::new(file, symbol))
     }
 
-    /// `checker.resolveName(name, node, meaning, excludeGlobals)`: what the identifier `name` means as a type, a
-    /// value or a namespace in [the scope that `node` is in](self#where-the-answers-are-not-those-of-typescript-6),
-    /// wherever in the program it is declared. `None` for a qualified name. An import counts for what it is an
-    /// alias of, and is returned as the alias: [`TsSymbol::skip_alias`] leads on.
+    /// `checker.resolveName(name, node, meaning, excludeGlobals)`, for one identifier. An import stays the alias.
     pub fn resolve_name(
         self,
         node: impl Locate<'a>,

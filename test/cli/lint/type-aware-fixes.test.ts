@@ -153,14 +153,31 @@ const besideAStaticMember = (ofTheClass: string, ofAnInstance: string) =>
     "}",
     "",
   ].join("\n");
-// The constructor assigns through a pattern. What the pattern writes is not the value of the default.
-const defaultInAPattern = (declared: string) =>
+// The constructor assigns through `pattern`. What a pattern writes is not the value of the default.
+const defaultInAPattern = (declared: string, options: string, pattern: string) =>
   [
     importsUi.trimEnd(),
     "export class Holder {",
     `  ${declared} = Ui.Range.Low;`,
-    "  constructor(options: { current?: Ui.Range }) {",
-    "    ({ current: this.current = Ui.Range.Low } = options);",
+    `  constructor(options: ${options}) {`,
+    `    (${pattern} = options);`,
+    "  }",
+    "  get value() {",
+    "    return this.current;",
+    "  }",
+    "}",
+    "",
+  ].join("\n");
+const flat = ["{ current?: Ui.Range }", "{ current: this.current = Ui.Range.Low }"] as const;
+const nested = ["{ inner: { current?: Ui.Range } }", "{ inner: { current: this.current = Ui.Range.Low } }"] as const;
+// The constructor copies the member from another instance, whose member is narrowed as well.
+const copiedFromAnInstance = (declared: string) =>
+  [
+    importsUi.trimEnd(),
+    "export class Holder {",
+    `  ${declared} = Ui.Range.Low;`,
+    "  constructor(from?: Holder) {",
+    "    if (from) this.current = from.current;",
     "  }",
     "  get value() {",
     "    return this.current;",
@@ -251,19 +268,19 @@ const written: [file: string, source: string, fixed: string][] = [
     importsUi + holder("Ui.Range.Low", "undefined", "private current?"),
     importsUi + holder("Ui.Range.Low", "undefined", "private readonly current?"),
   ],
-  // No write of the constructor reaches the static member. The member of the instance is held back.
   [
-    "static-member-of-that-name.ts",
-    besideAStaticMember("private static current", "private current"),
-    besideAStaticMember("private static readonly current", "private current"),
+    "copied-from-an-instance.ts",
+    copiedFromAnInstance("private current"),
+    copiedFromAnInstance("private readonly current"),
   ],
 ];
 
 /**
  * The file, its text, and what only `--fix-dangerously` makes of it. No type can be written, and the constructor assigns what
- * the type of the initializer doesn't take, so `readonly` alone breaks the type check.
+ * the type of the initializer doesn't take, so `readonly` alone breaks the type check. `fixed`: what `--fix` makes of the file,
+ * if it changes another member.
  */
-const heldBack: [file: string, source: string, dangerously: string][] = [
+const heldBack: [file: string, source: string, dangerously: string, fixed?: string][] = [
   [
     "held-back-name-that-is-not-in-scope.ts",
     importsUi + holder("Ui.Range.Low", "Ui.Range.High"),
@@ -287,13 +304,31 @@ const heldBack: [file: string, source: string, dangerously: string][] = [
   ],
   [
     "held-back-default-in-a-pattern.ts",
-    defaultInAPattern("private current"),
-    defaultInAPattern("private readonly current"),
+    defaultInAPattern("private current", ...flat),
+    defaultInAPattern("private readonly current", ...flat),
+  ],
+  [
+    "held-back-default-in-a-nested-pattern.ts",
+    defaultInAPattern("private current", ...nested),
+    defaultInAPattern("private readonly current", ...nested),
+  ],
+  // No write of the constructor reaches the static member, so `--fix` makes that one `readonly`.
+  [
+    "held-back-beside-a-static-member.ts",
+    besideAStaticMember("private static current", "private current"),
+    besideAStaticMember("private static readonly current", "private readonly current"),
+    besideAStaticMember("private static readonly current", "private current"),
   ],
 ];
 
 const textsOf = (cwd: string, files: string[]) =>
   Object.fromEntries(files.map(file => [file, readFileSync(join(cwd, file), "utf8")]));
+/** The codes of the errors that `bun check` printed, by file. */
+const errorsOf = (stdout: string) => {
+  const errors: Record<string, string[]> = {};
+  for (const [, file, code] of stdout.matchAll(/^(.+)\(\d+,\d+\): error (TS\d+):/gm)) (errors[file] ??= []).push(code);
+  return errors;
+};
 const timeout = isDebug || isASAN ? 120_000 : 30_000;
 
 test.concurrent.each(configs)(
@@ -307,18 +342,22 @@ test.concurrent.each(configs)(
     const lint = await run(cwd, ["lint", "--fix", ...flags, "."]);
     expect(textsOf(cwd, Object.keys(sources))).toEqual({
       ...Object.fromEntries(written.map(([file, , fixed]) => [file, fixed])),
-      ...Object.fromEntries(heldBack.map(([file, source]) => [file, source])),
+      ...Object.fromEntries(heldBack.map(([file, source, , fixed = source]) => [file, fixed])),
     });
     // `bun check` prints its errors on stdout. The members that are held back are still reported.
     const check = await run(cwd, ["check"]);
     expect(check.stdout).toBe("");
     expect({ lint: lint.exitCode, check: check.exitCode }).toEqual({ lint: 1, check: 0 });
 
-    await run(cwd, ["lint", "--fix-dangerously", ...flags, "."]);
+    // With `readonly` alone, each file that was held back has the error that it was held back for, and no other file has one.
+    const forced = await run(cwd, ["lint", "--fix-dangerously", ...flags, "."]);
     const held = heldBack.map(([file]) => file);
     expect(textsOf(cwd, held)).toEqual(
       Object.fromEntries(heldBack.map(([file, , dangerously]) => [file, dangerously])),
     );
+    const broken = await run(cwd, ["check"]);
+    expect(errorsOf(broken.stdout)).toEqual(Object.fromEntries(held.map(file => [file, ["TS2322"]])));
+    expect({ lint: forced.exitCode, check: broken.exitCode }).toEqual({ lint: 0, check: 1 });
   },
   timeout,
 );

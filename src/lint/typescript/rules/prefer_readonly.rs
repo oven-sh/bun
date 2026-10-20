@@ -441,8 +441,7 @@ fn enclosing_class(node: Expr<'_>) -> Option<(Class<'_>, bool)> {
     None
 }
 
-/// What the fix does about the type of a `PropertyDefinition` that becomes `readonly`: from then on the type of a
-/// literal that initializes it is not widened any more.
+/// What the fix does about the type of a member, which `readonly` would narrow to the type of its initializer.
 enum Annotation<'a> {
     /// `readonly` leaves the type of the member as it is.
     NotNeeded,
@@ -452,9 +451,7 @@ enum Annotation<'a> {
     Narrows(Type<'a>),
 }
 
-/// Whether `name`, written as a type where the member is, is `ty`. Only the checker knows: the scopes of the file,
-/// which typescript-eslint asks, have no global and not what an import leads to. tsgolint also says no where the name
-/// is another value, which has no say about a type.
+/// Whether `name`, written as a type where the member is, is `ty`.
 fn names<'a>(member: Member<'a>, name: &[u8], ty: Type<'a>) -> bool {
     let types = member.file().type_checker();
     let Some(named) = types.resolve_name(member, name, SymbolFlags::TYPE, false) else {
@@ -474,8 +471,7 @@ fn get_type_annotation<'a>(member: Member<'a>, key: Key<'a>) -> Annotation<'a> {
         return Annotation::NotNeeded;
     };
     let (violating_type, initializer_type) = (member.type_at_location(), initializer.ty());
-    // What is widened is a literal, a member of an enum, and a union with one of them. typescript-eslint and tsgolint
-    // leave out a member whose value is not known, like the `E.A` of `declare enum E { A, B }`.
+    // Both tools leave out an enum member whose value is not known, like the `E.A` of `declare enum E { A, B }`.
     let widened = TypeFlags::LITERAL | TypeFlags::ENUM_LIKE;
     if initializer_type == violating_type || !get_type_flags(initializer_type).intersects(widened) {
         return Annotation::NotNeeded;
@@ -494,8 +490,7 @@ fn get_type_annotation<'a>(member: Member<'a>, key: Key<'a>) -> Annotation<'a> {
     }
 }
 
-/// Whether the `Assign` is an element of an array or the value of a property. There it can be the default of a pattern,
-/// as in `[this.a = 1] = b`, and what the pattern writes is then not its value.
+/// Whether the `Assign` can be the default of a pattern, as in `[this.a = 1] = b`, which writes another value.
 fn may_be_default_in_pattern(assign: Expr<'_>) -> bool {
     match assign.parent() {
         Node::Prop(_) => true,
@@ -504,8 +499,7 @@ fn may_be_default_in_pattern(assign: Expr<'_>) -> bool {
     }
 }
 
-/// Whether the constructor still type checks once `readonly` narrows `member`, whose name is `name`, to `narrowed`: all
-/// that it writes to the member is assigned with `=` and has that type.
+/// Whether all that the constructor writes to `member` still type checks once `readonly` narrows it to `narrowed`.
 fn constructor_writes_fit<'a>(
     class_scope: &ClassScope<'a>,
     member: Member<'a>,
@@ -519,29 +513,46 @@ fn constructor_writes_fit<'a>(
     let (class, Some(class_type)) = (class_scope.class, class_scope.class_type) else {
         return false;
     };
+    let is_of_instance = |object: Expr<'a>| {
+        let object_type = object.ty();
+        !object_type.is_unresolved()
+            && get_type_to_class_relation(object_type, class_type) == TypeToClassRelation::Instance
+    };
     let is_write = |node: &Expr<'a>| {
         is_modification(*node)
             && accessed_member(*node).is_some_and(|(object, member_name)| {
-                *member_name == *name && enclosing_class(*node) == Some((class, true)) && {
-                    let object_type = object.ty();
-                    !object_type.is_unresolved()
-                        && get_type_to_class_relation(object_type, class_type)
-                            == TypeToClassRelation::Instance
-                }
+                *member_name == *name
+                    && enclosing_class(*node) == Some((class, true))
+                    && is_of_instance(object)
             })
+    };
+    // What is read from the member, as in `this.a = other.a`, is narrowed with it.
+    let is_same_member = |value: Expr<'a>| {
+        accessed_member(value)
+            .is_some_and(|(object, member_name)| *member_name == *name && is_of_instance(object))
     };
     // An optional member still takes `undefined`.
     let is_optional = member.flags().contains(Flags::OPTIONAL);
     let takes = |ty: Type<'a>| {
         ty.is_assignable_to(narrowed) || (is_optional && is_type_flag_set(ty, TypeFlags::UNDEFINED))
     };
+    let has_value_that_fits = |assign: Expr<'a>, node: Expr<'a>| match assign.kind() {
+        ExprKind::Assign {
+            op: None,
+            target,
+            value,
+        } => {
+            target == node
+                && (is_same_member(value) || union_constituents(value.ty()).iter().all(&takes))
+        }
+        _ => false,
+    };
     let fits = |node: Expr<'a>| {
         !node.is_parenthesized()
-            && matches!(node.parent(), Node::Expr(assign) if !may_be_default_in_pattern(assign) && matches!(
-                assign.kind(),
-                ExprKind::Assign { op: None, target, value }
-                    if target == node && union_constituents(value.ty()).iter().all(&takes)
-            ))
+            && matches!(
+                node.parent(),
+                Node::Expr(assign) if !may_be_default_in_pattern(assign) && has_value_that_fits(assign, node)
+            )
     };
     let file = class.file();
     let mut writes = [ExprTag::Dot, ExprTag::Index]

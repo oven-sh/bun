@@ -155,8 +155,12 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         JSC::UnlinkedProgramCodeBlock* unlinkedBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, WTF::move(cachedBytecode));
 
         bool accepted = unlinkedBlock && unlinkedBlock->codeGenerationMode() == globalObject->defaultCodeGenerationMode();
-        if (accepted)
+        if (accepted) {
+            // A parse records the //# directives on the provider; a decode only keeps them on the block.
+            script->source().provider()->setSourceURLDirective(unlinkedBlock->sourceURLDirective());
+            script->source().provider()->setSourceMappingURLDirective(unlinkedBlock->sourceMappingURLDirective());
             script->adoptUnlinkedCodeBlock(unlinkedBlock);
+        }
         script->cachedDataRejected(accepted ? TriState::False : TriState::True);
     }
 

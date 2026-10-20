@@ -1035,6 +1035,15 @@ test("a Script built from accepted cachedData keeps filename and lineOffset", ()
   expect(script.runInThisContext()).toBe("at cached.js:103:10");
 });
 
+test("a Script built from accepted cachedData keeps its sourceMappingURL and sourceURL directives", () => {
+  const source = "//# sourceURL=named.js\nnew Error('x').stack.split('\\n')[1].trim();\n//# sourceMappingURL=foo.map";
+  const cachedData = new Script(source, { filename: "cached.js" }).createCachedData();
+  const script = new Script(source, { filename: "cached.js", cachedData });
+  expect(script.cachedDataRejected).toBeFalse();
+  expect(script.sourceMapURL).toBe("foo.map");
+  expect(script.runInThisContext()).toBe("at named.js:2:10");
+});
+
 test("a SyntaxError is still thrown at construction when cachedData is passed", () => {
   const cachedData = new Script("1 + 1;").createCachedData();
   expect(() => new Script("(function (", { cachedData })).toThrow("Unexpected end of script");

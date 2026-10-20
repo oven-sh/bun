@@ -2606,40 +2606,6 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     pub fn compare_types(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         match (self.data(a), self.data(b)) {
-            // FOR SPEED: the members of `keyof` of a large type, and of a template literal type. They have the same
-            // flags and no name, so the text decides, then the freshness.
-            (
-                &TypeData::StringLit { value: x, fresh: f },
-                &TypeData::StringLit { value: y, fresh: g },
-            ) if x != y || f != g => {
-                let atoms = &self.atoms();
-                match atoms.bytes(x).cmp(atoms.bytes(y)).then_with(|| f.cmp(&g)) {
-                    std::cmp::Ordering::Equal => self.compare_types_ordered_by(a, b),
-                    order => order,
-                }
-            }
-            // Likewise, the value decides (`cmp.Compare`: NaN first), then the freshness.
-            (
-                &TypeData::NumberLit { bits: x, fresh: f },
-                &TypeData::NumberLit { bits: y, fresh: g },
-            ) if x != y || f != g => {
-                let (x, y) = (f64::from_bits(x), f64::from_bits(y));
-                let by_value = (y.is_nan().cmp(&x.is_nan()))
-                    .then_with(|| x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal));
-                match by_value.then_with(|| f.cmp(&g)) {
-                    std::cmp::Ordering::Equal => self.compare_types_ordered_by(a, b),
-                    order => order,
-                }
-            }
-            // The members of an enum. They have the same flags, no alias and no name, so the declarations decide.
-            (&TypeData::EnumLit { member: s, .. }, &TypeData::EnumLit { member: t, .. })
-                if s != t =>
-            {
-                match self.compare_symbols(s, t) {
-                    std::cmp::Ordering::Equal => self.compare_types_ordered_by(a, b),
-                    order => order,
-                }
-            }
             (TypeData::Intersection(_), TypeData::Intersection(_)) => {
                 let (s, t) = self.members_that_order_intersections(a, b);
                 self.compare_types_ordered_by(s, t)

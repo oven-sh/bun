@@ -130,9 +130,6 @@ pub struct Module<'s> {
     pub path: Path<'s>,
     pub hir: hir::File<'s>,
     pub bound: Bound<'s>,
-    /// Nonzero: `hir` and `bound` are shared with the other programs of the `Run`, and this number
-    /// identifies them there. 0: they belong only to this program.
-    pub shared_id: u32,
     /// Lives as long as `bound`. Whether an alias resolves to the symbol synthesized for it can
     /// only be decided from types.
     transient_symbols: ArenaVec<'s, TransientSymbol>,
@@ -392,13 +389,8 @@ pub enum SymbolTable {
 /// The lookups `resolveEntityName` needs for the symbols it visits. The symbol tables implement
 /// them as far as they can, and the checker implements them where the answer depends on types.
 pub trait EntityNameLookup {
-    /// `getSymbol`, as `lookup` of `Files::resolve_with`.
-    fn get_symbol(
-        &mut self,
-        table: SymbolTable,
-        table_entry: Option<Sym>,
-        meaning: SymFlags,
-    ) -> Option<Sym>;
+    /// `getSymbol`, given the table's entry.
+    fn get_symbol(&mut self, table_entry: Option<Sym>, meaning: SymFlags) -> Option<Sym>;
 
     /// `resolveAlias`. `None`: `unknownSymbol`.
     fn resolve_alias(&mut self, alias: Sym) -> Option<Sym>;
@@ -775,8 +767,8 @@ struct UnsupportedExtension {
 struct Parse<'s> {
     hir: hir::File<'s>,
     bound: Bound<'s>,
-    /// `Module::shared_id`. If it isn't 0, `rename_private_names` has already run.
-    shared_id: u32,
+    /// It's shared with the other programs of the `Run`, and `rename_private_names` has already run.
+    is_shared: bool,
 }
 
 /// Everything `parse_and_bind` takes for a file besides its path and its text.
@@ -882,7 +874,7 @@ impl<'u> Run<'u> {
             }
             return found.1;
         }
-        let shared_id = self.parses.fetch_add(1, Ordering::Relaxed) as u32 + 1;
+        self.parses.fetch_add(1, Ordering::Relaxed);
         let arena = self.session.arena();
         // Only this thread allocates in it.
         let before = arena.allocated_bytes();
@@ -907,7 +899,7 @@ impl<'u> Run<'u> {
         let parse: &'u Parse<'u> = arena.alloc(Parse {
             hir,
             bound,
-            shared_id,
+            is_shared: true,
         });
         path_parses.push((key, parse, is_unreadable));
         let more = arena.allocated_bytes().saturating_sub(before);
@@ -1455,8 +1447,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
     fn module_value(&self, module: Sym) -> Sym {
         self.canonical(match self.export(module, known::export_equals) {
             // `resolveSymbolEx`
-            Some(equals) if !self.is_non_local_alias(equals) => equals,
-            Some(equals) => self.resolve_alias(equals).unwrap_or(equals),
+            Some(equals) => self.resolve_symbol(equals).unwrap_or(equals),
             None => module,
         })
     }
@@ -1770,20 +1761,19 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         reports_errors: bool,
         symbols: &mut dyn EntityNameLookup,
     ) -> Option<Sym> {
-        let (&last, qualifiers) = names.split_last()?;
+        let (&last, mut qualifiers) = names.split_last()?;
         // `NodeIsMissing(name)`: a declaration whose name is missing is named "".
         if names[0] == known::empty {
             return None;
         }
         let scope = self.bound(file).scope_to_resolve_from(scope, names[0]);
-        let lookup = &mut |table: SymbolTable, table_entry: Option<Sym>, meaning: SymFlags| {
-            symbols.get_symbol(table, table_entry, meaning)
+        let lookup = &mut |_: SymbolTable, table_entry: Option<Sym>, meaning: SymFlags| {
+            symbols.get_symbol(table_entry, meaning)
         };
         if qualifiers.is_empty() {
             let found = self.resolve_with(file, scope, last, meaning, reports_errors, lookup);
             return found.unwrap_or(None);
         }
-        let mut qualifiers = qualifiers;
         let namespace = SymFlags::NAMESPACE;
         let first = self.resolve_with(
             file,
@@ -1796,17 +1786,16 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         let first = match first.unwrap_or(None) {
             Some(found) => found,
             // `globalThis.A.B`
-            None if qualifiers[0] == known::globalThis => match qualifiers {
-                [_] => {
+            None if qualifiers[0] == known::globalThis => match qualifiers.get(1) {
+                None => {
                     let table_entry = self.globals.get(last).copied();
                     return lookup(SymbolTable::Globals, table_entry, meaning);
                 }
-                [_, next, ..] => {
+                Some(&next) => {
                     qualifiers = &qualifiers[1..];
-                    let table_entry = self.globals.get(*next).copied();
+                    let table_entry = self.globals.get(next).copied();
                     lookup(SymbolTable::Globals, table_entry, namespace)?
                 }
-                [] => return None,
             },
             None => return None,
         };
@@ -1832,14 +1821,14 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
             return None;
         }
         let table_entry = self.namespace_member(namespace, name);
-        let found = symbols.get_symbol(SymbolTable::Exports(namespace), table_entry, meaning);
+        let found = symbols.get_symbol(table_entry, meaning);
         // A namespace that is merged with a re-export can be resolved further.
         if found.is_some() || !self.flags(namespace).contains(SymFlags::ALIAS) {
             return found;
         }
         let target = symbols.resolve_alias(namespace)?;
         let table_entry = self.namespace_member(target, name);
-        symbols.get_symbol(SymbolTable::Exports(target), table_entry, meaning)
+        symbols.get_symbol(table_entry, meaning)
     }
 
     /// A member of a namespace, a module or an enum.
@@ -1904,15 +1893,9 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
             let found = self.resolve_name(file, scope, name, meaning)?;
             Some(self.symbol_flags(found)).filter(|&flags| flags != SymFlags::all())
         };
-        // `checkAndReportErrorForUsingNamespaceAsTypeOrValue`
-        let namespace = if meaning.intersects(SymFlags::VALUE.difference(SymFlags::TYPE)) {
-            SymFlags::NAMESPACE_MODULE
-        } else if meaning.intersects(SymFlags::TYPE.difference(SymFlags::VALUE)) {
-            SymFlags::MODULE
-        } else {
-            SymFlags::empty()
-        };
-        if !namespace.is_empty() && flags_as(namespace).is_some_and(|it| it.intersects(namespace)) {
+        // `checkAndReportErrorForUsingNamespaceAsTypeOrValue`, for a `meaning` that includes values.
+        let namespace = SymFlags::NAMESPACE_MODULE;
+        if flags_as(namespace).is_some_and(|it| it.intersects(namespace)) {
             return;
         }
         // `checkAndReportErrorForExportingPrimitiveType`, `checkAndReportErrorForUsingTypeAsValue`
@@ -1924,9 +1907,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         }
         let is_type_only =
             |it: SymFlags| it.intersects(SymFlags::TYPE) && !it.intersects(SymFlags::VALUE);
-        if meaning.intersects(SymFlags::VALUE)
-            && flags_as(SymFlags::TYPE.difference(SymFlags::VALUE)).is_some_and(is_type_only)
-        {
+        if flags_as(SymFlags::TYPE.difference(SymFlags::VALUE)).is_some_and(is_type_only) {
             return;
         }
         // `checkAndReportErrorForUsingValueAsType`
@@ -2073,11 +2054,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
     /// type are resolved and are the exports of `symbol`.
     fn type_of_symbol_has_property(&self, symbol: Sym, name: Atom) -> bool {
         // `getExportsOfSymbol`
-        let member = if self.flags(symbol).intersects(SymFlags::MODULE) {
-            self.module_export(symbol, name)
-        } else {
-            self.export(symbol, name)
-        };
+        let member = self.namespace_member(symbol, name);
         // `symbolIsValueEx`
         member.is_some_and(|member| {
             let value = SymFlags::VALUE;
@@ -2241,9 +2218,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                         self.mark_symbol_of_alias_declaration_if_type_only(node, None, type_only);
                     }
                     let target = self.resolve_entity(file, scope, &names, meaning);
-                    // `globalThisSymbol` is found, and has no `Sym`.
                     if target.is_none()
-                        && names[0] != known::globalThis
                         && self
                             .resolve_name(file, scope, names[0], SymFlags::NAMESPACE)
                             .is_none()
@@ -2314,52 +2289,34 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         let all = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
         let hir = self.hir(file);
         let bound = self.bound(file);
-        match decl {
-            Decl::ExportExpr(_) | Decl::ModuleExports(_) | Decl::ExportsProperty(_) => {
-                let e = match decl {
-                    Decl::ExportExpr(stmt) => match hir[stmt].kind {
-                        StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => e,
-                        _ => return None,
-                    },
-                    // `getTargetOfBinaryExpression`
-                    Decl::ModuleExports(assignment) | Decl::ExportsProperty(assignment) => {
-                        match hir[assignment].kind {
-                            ExprKind::Assign { value, .. } => value,
-                            _ => return None,
-                        }
-                    }
-                    _ => return None,
-                };
-                // `getTargetOfAliasLikeExpression`: a class expression is its own symbol.
-                if let ExprKind::Class(c) = hir[e].kind {
-                    return Some(self.sym(file, bound.class_symbol[c.idx()]));
-                }
-                let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
-                let mut at = e;
-                loop {
-                    match hir[at].kind {
-                        ExprKind::Ident(name) => {
-                            names.push(name);
-                            break;
-                        }
-                        ExprKind::Dot { obj, name, .. } => {
-                            names.push(name);
-                            at = obj;
-                        }
-                        _ => return None,
-                    }
-                }
-                names.reverse();
-                let scope = *bound.expr_scope.get(&e)?;
-                let target = self.resolve_entity(file, scope, &names, all);
-                // `checkExpressionCached(expression)`
-                if target.is_none() {
-                    self.get_resolved_symbol(file, at, scope, names[0]);
-                }
-                target
-            }
-            _ => None,
+        let e = alias_like_expression(hir, decl)?;
+        // `getTargetOfAliasLikeExpression`: a class expression is its own symbol.
+        if let ExprKind::Class(c) = hir[e].kind {
+            return Some(self.sym(file, bound.class_symbol[c.idx()]));
         }
+        let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
+        let mut at = e;
+        loop {
+            match hir[at].kind {
+                ExprKind::Ident(name) => {
+                    names.push(name);
+                    break;
+                }
+                ExprKind::Dot { obj, name, .. } => {
+                    names.push(name);
+                    at = obj;
+                }
+                _ => return None,
+            }
+        }
+        names.reverse();
+        let scope = *bound.expr_scope.get(&e)?;
+        let target = self.resolve_entity(file, scope, &names, all);
+        // `checkExpressionCached(expression)`
+        if target.is_none() {
+            self.get_resolved_symbol(file, at, scope, names[0]);
+        }
+        target
     }
 
     /// `checkExportAssignment` of the statement `stmt`, limited to its side effects on aliases.
@@ -2381,12 +2338,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
 struct InTables<'a, R: ?Sized>(&'a R);
 
 impl<'s, R: Resolve<'s> + ?Sized> EntityNameLookup for InTables<'_, R> {
-    fn get_symbol(
-        &mut self,
-        _: SymbolTable,
-        table_entry: Option<Sym>,
-        meaning: SymFlags,
-    ) -> Option<Sym> {
+    fn get_symbol(&mut self, table_entry: Option<Sym>, meaning: SymFlags) -> Option<Sym> {
         table_entry.filter(|&sym| self.0.means(sym, meaning))
     }
 
@@ -2396,10 +2348,6 @@ impl<'s, R: Resolve<'s> + ?Sized> EntityNameLookup for InTables<'_, R> {
 }
 
 impl<'s, R: Resolve<'s> + ?Sized> SuggestionLookup for InTables<'_, R> {
-    fn get_symbol(&mut self, table_entry: Option<Sym>, meaning: SymFlags) -> Option<Sym> {
-        table_entry.filter(|&sym| self.0.means(sym, meaning))
-    }
-
     fn try_resolve_alias(&mut self, candidate: Sym) -> Option<SymFlags> {
         let target = self.0.try_resolve_alias(candidate)?.alias_target;
         // `unknownSymbol`
@@ -2697,22 +2645,7 @@ fn dynamic_imports<'a>(hir: &'a hir::File) -> Vec<&'a SpecifierUse> {
     let uses = hir.specifier_uses.iter().filter(|u| u.kind.is_dynamic());
     let mut uses: Vec<&SpecifierUse> = uses.collect();
     uses.shared_sort_by_key(|u| u.pos);
-    // `findImportOrRequire`: the start and end of each word.
-    let mut words: Vec<(usize, usize)> = Vec::new();
-    let mut index = 0;
-    while let Some(at) = strings::index_of_any(&text[index..], b"ir").map(|at| index + at) {
-        let word: &[u8] = if text[at] == b'i' {
-            b"import"
-        } else {
-            b"require"
-        };
-        index = if text[at..].starts_with(word) {
-            words.push((at, at + word.len()));
-            at + word.len()
-        } else {
-            at + 1
-        };
-    }
+    let words = find_import_or_require(text);
     // From `node.Pos()` to the first child that isn't a token. A call has none before the token
     // after its specifier. In an import type the specifier is in a `LiteralType`.
     let mut ranges: Vec<(usize, usize, &SpecifierUse)> = Vec::new();
@@ -3264,13 +3197,13 @@ fn times_among_imports(hir: &File, calls: &ExprsByKind, text: &[u8], u: &Specifi
         at = start as usize;
     }
     for (from, to) in hir.ids(args).filter(|e| !is_token(e)).map(range) {
-        times += count_import_or_require(&text[at..from.max(at)]);
+        times += find_import_or_require(&text[at..from.max(at)]).len();
         at = to.max(at);
     }
-    (times + count_import_or_require(&text[at..end.max(at)])).max(1)
+    (times + find_import_or_require(&text[at..end.max(at)]).len()).max(1)
 }
 
-/// `count_import_or_require` in `trivia`, after the last `/** */` in it. `withJSDoc`: a `JSDoc`
+/// Counts `find_import_or_require` in `trivia`, after the last `/** */` in it. `withJSDoc`: a `JSDoc`
 /// begins where the one before it ends, and the first one where its host begins.
 fn count_after_jsdoc(trivia: &[u8]) -> usize {
     // `isShebangTrivia`
@@ -3294,24 +3227,27 @@ fn count_after_jsdoc(trivia: &[u8]) -> usize {
             end_of_jsdoc = at;
         }
     }
-    count_import_or_require(&trivia[end_of_jsdoc..])
+    find_import_or_require(&trivia[end_of_jsdoc..]).len()
 }
 
-/// Counts the matches of `findImportOrRequire` in `text`.
-fn count_import_or_require(text: &[u8]) -> usize {
-    let (mut at, mut count) = (0, 0);
-    while let Some(next) = strings::index_of_any(&text[at..], b"ir") {
-        at += next;
+/// The matches of `findImportOrRequire` in `text`: the start and end of each word.
+fn find_import_or_require(text: &[u8]) -> Vec<(usize, usize)> {
+    let mut words: Vec<(usize, usize)> = Vec::new();
+    let mut index = 0;
+    while let Some(at) = strings::index_of_any(&text[index..], b"ir").map(|at| index + at) {
         let word: &[u8] = if text[at] == b'i' {
             b"import"
         } else {
             b"require"
         };
-        let is_word = text[at..].starts_with(word);
-        count += usize::from(is_word);
-        at += if is_word { word.len() } else { 1 };
+        index = if text[at..].starts_with(word) {
+            words.push((at, at + word.len()));
+            at + word.len()
+        } else {
+            at + 1
+        };
     }
-    count
+    words
 }
 
 /// The end of the string literal that starts at `start`.
@@ -3791,13 +3727,9 @@ impl Included<'_, '_> {
             (code + u32::from(id.is_some()), args)
         };
         match &visit.reason {
-            &IncludeReason::RootFile(index) => root_file_reason(
-                options,
-                &self.roots[index],
-                self.host.is_case_sensitive(),
-                self.matched_file_spec(&self.roots[index]),
-                to_file_name,
-            ),
+            &IncludeReason::RootFile(index) => {
+                root_file_reason(self, &self.roots[index], to_file_name)
+            }
             IncludeReason::LibFile(Some(entry)) => (1422, vec![entry.clone()]),
             IncludeReason::LibFile(None) => (1425, vec![self.emit_script_target()]),
             IncludeReason::AutomaticTypeDirectiveFile(name, id) => {
@@ -3886,11 +3818,7 @@ impl Included<'_, '_> {
             }
             _ if options.config_path.is_empty() => None,
             &IncludeReason::RootFile(index) => {
-                let is_case_sensitive = self.host.is_case_sensitive();
-                let root = &self.roots[index];
-                let file_spec = self.matched_file_spec(root);
-                let to_file_name = &displayed_file_name;
-                match root_file_reason(options, root, is_case_sensitive, file_spec, to_file_name) {
+                match root_file_reason(self, &self.roots[index], &displayed_file_name) {
                     (1409, args) => top_element(0, &args[0], 1410),
                     (1407, args) => top_element(1, &args[0], 1408),
                     _ => None,
@@ -4192,16 +4120,15 @@ fn displayed_file_name(file_name: &[u8]) -> Vec<u8> {
 /// `computeDiagnostic` of `fileIncludeKindRootFile`: the code and the arguments of the message that
 /// explains why the file at `path` is a root file.
 fn root_file_reason(
-    options: &Options,
+    included: &Included,
     path: &[u8],
-    is_case_sensitive: bool,
-    matched_file_spec: Option<&[u8]>,
     to_file_name: ToFileName<'_>,
 ) -> (u32, Vec<Vec<u8>>) {
+    let options = included.options;
     if options.config_path.is_empty() {
         return (1427, Vec::new());
     }
-    if let Some(spec) = matched_file_spec {
+    if let Some(spec) = included.matched_file_spec(path) {
         return (1409, vec![spec.to_vec(), to_file_name(path)]);
     }
     if options.is_default_include_spec {
@@ -4211,7 +4138,7 @@ fn root_file_reason(
         &options.include_specs,
         &options.base_dir,
         path,
-        is_case_sensitive,
+        included.host.is_case_sensitive(),
     ) {
         Some(spec) => (
             1407,
@@ -4295,8 +4222,7 @@ fn source_file_path_in_new_dir(
     is_case_sensitive: bool,
 ) -> Vec<u8> {
     match common {
-        _ if dir.is_empty() => path.to_vec(),
-        Some(common) if contains_path(common, path, is_case_sensitive) => join(
+        Some(common) if !dir.is_empty() && contains_path(common, path, is_case_sensitive) => join(
             dir,
             path.get(common.len()..)
                 .unwrap_or(b"")
@@ -4505,15 +4431,12 @@ fn output_path_errors(
                 problem.with(1, 5068, &[])
             });
         }
-        let key = to_path(&output, is_case_sensitive).into_owned();
-        if seen.contains(&key) {
+        if !seen.insert(to_path(&output, is_case_sensitive).into_owned()) {
             errors.push(Problem::new(
                 5056,
                 &[&displayed_path(&output)],
                 ConfigLocation::Nowhere,
             ));
-        } else {
-            seen.insert(key);
         }
     };
     for module in sources {
@@ -4586,6 +4509,24 @@ fn rename_private_names(hir: &mut hir::File, bound: &Bound, atoms: &Interner, pa
         {
             *name = renamed(class.0, *name);
         }
+    }
+}
+
+/// The `e` of `export default e`, `export = e`, `module.exports = e` or `exports.x = e`, if `decl` is one of them.
+pub(crate) fn alias_like_expression(hir: &File, decl: Decl) -> Option<ExprId> {
+    match decl {
+        Decl::ExportExpr(stmt) => match hir[stmt].kind {
+            StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => Some(e),
+            _ => None,
+        },
+        // `getTargetOfBinaryExpression`
+        Decl::ModuleExports(assignment) | Decl::ExportsProperty(assignment) => {
+            match hir[assignment].kind {
+                ExprKind::Assign { value, .. } => Some(value),
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }
 
@@ -4872,7 +4813,6 @@ impl<'s> Files<'s> {
         let mut is_parse_taken: Vec<bool> = Vec::new();
         // `Module::edges` of one file. Reused for the next.
         let mut edges: Vec<FileId> = Vec::new();
-        // `Loaded::traces`, indexed by `FileId`.
         let mut traces: Vec<Vec<DiagAndArgs>> = Vec::new();
         // `rootTasks`: the root files, the libraries, the automatic type directives (`None`) and
         // what they resolve to.
@@ -5679,6 +5619,10 @@ impl<'s> Files<'s> {
             Some(_) => Interner::over(session, atoms),
             None => atoms,
         };
+        let no_symbol = Sym {
+            file: FileId(0),
+            id: SymbolId::NONE,
+        };
         let mut files = Files {
             session,
             arena,
@@ -5687,25 +5631,13 @@ impl<'s> Files<'s> {
             modules,
             by_path,
             globals: SymbolMap::new_in(arena),
-            global_this_symbol: Sym {
-                file: FileId(0),
-                id: SymbolId::NONE,
-            },
-            undefined_symbol: Sym {
-                file: FileId(0),
-                id: SymbolId::NONE,
-            },
-            unknown_symbol: Sym {
-                file: FileId(0),
-                id: SymbolId::NONE,
-            },
+            global_this_symbol: no_symbol,
+            undefined_symbol: no_symbol,
+            unknown_symbol: no_symbol,
             common_source_directory: common_source_directory
                 .map(|it| &*arena.alloc_slice_copy(&it)),
             is_case_sensitive: host.is_case_sensitive(),
-            prototype_symbol: Sym {
-                file: FileId(0),
-                id: SymbolId::NONE,
-            },
+            prototype_symbol: no_symbol,
             ambient_modules: map_in(arena),
             ambient_patterns: ArenaVec::new_in(arena),
             ambient_patterns_by_end: &[],
@@ -5758,13 +5690,12 @@ impl<'s> Files<'s> {
         let order: &'s [FileId] = slice_in(&files.declaration_order(&starts, &summaries), arena);
         files.order = order;
         if options.trace_resolution {
-            let mut all = log;
-            all.extend(
+            log.extend(
                 lib_resolutions
                     .into_iter()
                     .flat_map(|resolution| resolution.1),
             );
-            files.resolution_trace = session.keep(all);
+            files.resolution_trace = session.keep(log);
         }
         let ranks = arena.alloc_slice_fill_copy(files.modules.len(), u32::MAX);
         for (rank, &file) in files.order.iter().enumerate() {
@@ -5821,11 +5752,10 @@ impl<'s> Files<'s> {
             let name = files.atoms.bytes(member.0);
             name.first().is_some_and(u8::is_ascii_digit)
         };
-        let arrays_have_numeric_members = [known::Array, known::ReadonlyArray]
+        files.arrays_have_numeric_members = [known::Array, known::ReadonlyArray]
             .into_iter()
             .filter_map(|name| files.global_type_symbol(name))
             .any(|array| files.members_in_table(array).iter().any(begins_with_digit));
-        files.arrays_have_numeric_members = arrays_have_numeric_members;
         files
     }
 
@@ -5995,7 +5925,7 @@ impl<'s> Files<'s> {
                                     Parse {
                                         hir: parse.hir.share(arena, session),
                                         bound: parse.bound.share(arena),
-                                        shared_id: parse.shared_id,
+                                        is_shared: true,
                                     }
                                 }
                                 None => {
@@ -6012,7 +5942,7 @@ impl<'s> Files<'s> {
                                     Parse {
                                         hir,
                                         bound,
-                                        shared_id: 0,
+                                        is_shared: false,
                                     }
                                 }
                             };
@@ -6240,14 +6170,13 @@ impl<'s> Files<'s> {
             Parse {
                 hir,
                 bound,
-                shared_id: 0,
+                is_shared: false,
             }
         });
         (module.hir, module.bound) = (parse.hir, parse.bound);
-        module.shared_id = parse.shared_id;
         // A parse from the run already went through `rename_private_names`, with the path of the copy that was parsed.
         // No other module has that path.
-        if parse.shared_id == 0 {
+        if !parse.is_shared {
             rename_private_names(&mut module.hir, &module.bound, atoms, path);
         }
     }
@@ -6348,7 +6277,7 @@ impl<'s> Files<'s> {
                 Parse {
                     hir: parse.hir.share(arena, session),
                     bound: parse.bound.share(arena),
-                    shared_id: parse.shared_id,
+                    is_shared: true,
                 }
             }
             None => {
@@ -6366,7 +6295,7 @@ impl<'s> Files<'s> {
                 Parse {
                     hir,
                     bound,
-                    shared_id: 0,
+                    is_shared: false,
                 }
             }
         };
@@ -6649,9 +6578,7 @@ impl<'s> Files<'s> {
                 None
             };
             let unsupported_extension = unsupported_extension.map(|code| {
-                let file_options = redirect_for_resolution.unwrap_or(program_options);
-                let mode_of =
-                    |u: &SpecifierUse| mode_for_usage_location(file_options, default_mode, u);
+                let mode_of = |u: &SpecifierUse| mode_for_usage_location(options, default_mode, u);
                 let uses = hir.specifier_uses.iter();
                 let uses = uses.filter(|u| u.spec == spec && mode_of(u) == mode);
                 let first = uses.min_by_key(|u| u.pos);
@@ -6764,12 +6691,11 @@ impl<'s> Files<'s> {
         let parse = parsed.unwrap_or_else(|parse| Parse {
             hir: hir::File::empty_in(arena, parse.hir.lazy.session),
             bound: Bound::empty_in(arena),
-            shared_id: 0,
+            is_shared: false,
         });
         let module = Module {
             hir: parse.hir,
             bound: parse.bound,
-            shared_id: parse.shared_id,
             is_lib,
             // `load` fills `path`, `imports` and `edges`.
             path: Path::init(b""),
@@ -6941,16 +6867,9 @@ impl<'s> Files<'s> {
         for (id, augmentations) in passes {
             let file = id.idx();
             let module = &self.modules[file];
-            let mut additions: Vec<(Atom, Sym)> = Vec::new();
+            let mut additions: Vec<(Atom, SymbolId)> = Vec::new();
             if !augmentations && !module.is_module() {
-                let locals = module.bound.scopes[0].locals;
-                additions.extend(
-                    module
-                        .bound
-                        .table(locals)
-                        .iter()
-                        .map(|&(name, s)| (name, Sym { file: id, id: s })),
-                );
+                additions.extend(module.bound.table(module.bound.scopes[0].locals));
             }
             if augmentations && !module.bound.global_augmentations.is_empty() {
                 let collected = module_augmentations(&module.hir, &self.atoms);
@@ -6959,16 +6878,11 @@ impl<'s> Files<'s> {
                         continue;
                     }
                     let exports = module.bound.symbol(augmentation).exports;
-                    additions.extend(
-                        module
-                            .bound
-                            .table(exports)
-                            .iter()
-                            .map(|&(name, s)| (name, Sym { file: id, id: s })),
-                    );
+                    additions.extend(module.bound.table(exports));
                 }
             }
-            for (name, sym) in additions {
+            for (name, s) in additions {
+                let sym = Sym { file: id, id: s };
                 // `mergeGlobalSymbol`
                 let merged = match self.globals.get(name).copied() {
                     Some(existing) => self.merge_symbol(existing, sym, false),
@@ -7624,18 +7538,7 @@ impl<'s> Files<'s> {
 
     /// `symbol.Exports`
     fn exports_in_table(&self, sym: Sym) -> Vec<(Atom, Sym)> {
-        let sym = self.holder_of_exports(sym);
-        match self.merged_exports_of(sym) {
-            Some(table) => table.to_vec(),
-            None => {
-                let (file, bound) = (sym.file, self.bound(sym.file));
-                bound
-                    .table(bound.symbol(sym.id).exports)
-                    .iter()
-                    .map(|&(n, id)| (n, Sym { file, id }))
-                    .collect()
-            }
-        }
+        self.each_export_in_table(sym).collect()
     }
 
     /// `mergeSymbol`. Returns the symbol that the table containing `target` holds from then on.
@@ -7823,8 +7726,7 @@ impl<'s> Files<'s> {
     /// The calling thread's arena, for what a `&self` method stores. Finding it takes a lookup, so
     /// a caller that allocates more than once should keep the result.
     fn thread_arena(&self) -> &'s Arena {
-        let session: &'s Session = self.session;
-        session.arena()
+        self.session.arena()
     }
 
     #[inline]
@@ -9484,7 +9386,7 @@ impl<'s> Files<'s> {
     /// `IsAliasSymbolDeclaration`
     pub fn is_alias_symbol_declaration(&self, file: FileId, decl: Decl) -> bool {
         let hir = self.hir(file);
-        let e = match decl {
+        match decl {
             Decl::ImportDefault(_)
             | Decl::ImportNamespace(_)
             | Decl::ImportSpec(_)
@@ -9492,20 +9394,9 @@ impl<'s> Files<'s> {
             | Decl::ExportSpec(_)
             | Decl::ExportStarAs(_)
             | Decl::UmdGlobal(_)
-            | Decl::Require(_) => return true,
-            Decl::ExportExpr(stmt) => match hir[stmt].kind {
-                StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => e,
-                _ => return false,
-            },
-            Decl::ModuleExports(assignment) | Decl::ExportsProperty(assignment) => {
-                match hir[assignment].kind {
-                    ExprKind::Assign { value, .. } => value,
-                    _ => return false,
-                }
-            }
-            _ => return false,
-        };
-        expression_is_alias(hir, e)
+            | Decl::Require(_) => true,
+            _ => alias_like_expression(hir, decl).is_some_and(|e| expression_is_alias(hir, e)),
+        }
     }
 
     /// `getDeclarationOfAliasSymbol`: the last alias declaration of `sym`, in whichever file it is.

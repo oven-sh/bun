@@ -122,7 +122,7 @@ use spans::{is_word_at, word_at, word_end, word_start};
 use spans::{skip_trivia_back, trim_trivia_end};
 use std::hash::{Hash, Hasher};
 use std::hint::cold_path;
-use symbols::{AliasTarget, ExcludedMeanings};
+use symbols::AliasTarget;
 use task::{Open, OrderDependent, Stored, Task};
 
 pub use call::ResolvedCall;

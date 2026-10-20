@@ -4383,11 +4383,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// type-only step before it (`getSymbolFlagsEx`, `excludeTypeOnlyMeanings`). An alias that
     /// doesn't resolve is an error, and an error symbol has every meaning, including value.
     pub(super) fn symbol_is_value(&mut self, sym: Sym) -> bool {
-        let excluded = ExcludedMeanings {
-            type_only: true,
-            local: false,
-        };
-        let flags = self.get_symbol_flags_ex(sym, excluded);
+        let flags = self.get_symbol_flags_ex(sym);
         // `resolveAlias` reports why it finds no target.
         if flags == SymFlags::all() {
             self.check_target_of_alias_symbol(sym);

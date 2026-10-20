@@ -288,7 +288,7 @@ impl Checker<'_, '_> {
                     name.extend_from_slice(name_text.unwrap_or_default());
                 }
             }
-            _ => self.write_symbol(&mut name, named),
+            _ => name.append(&mut self.symbol_to_string(named)),
         }
         // A missing name has an empty range.
         let end = match self.files().symbol(named).name {

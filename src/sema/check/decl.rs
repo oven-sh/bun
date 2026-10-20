@@ -4218,11 +4218,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if self.is_declared_intrinsic(sym)
                     && self.atoms().bytes(self.files().symbol(sym).name) == b"BuiltinIteratorReturn"
                 {
-                    return if self.files().options.strict_builtin_iterator_return {
-                        TypeId::UNDEFINED
-                    } else {
-                        TypeId::ANY
-                    };
+                    return self.builtin_iterator_return();
                 }
                 return declared;
             }

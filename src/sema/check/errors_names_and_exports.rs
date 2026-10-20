@@ -423,7 +423,7 @@ fn fully_qualified_name_of_property(
         _ => Vec::new(),
     };
     let has_parent = !qualified.is_empty();
-    c.write_prop(&mut qualified, prop);
+    qualified.append(&mut c.prop_to_string(prop));
     (qualified, has_parent)
 }
 

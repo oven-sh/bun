@@ -437,9 +437,9 @@ impl Checker<'_, '_> {
             .map(|arg| {
                 let mut out = Vec::new();
                 match *arg {
-                    Arg::Type(ty) => self.write_type(&mut out, ty, super::print::TYPE_TO_STRING),
-                    Arg::Sym(symbol) => self.write_symbol(&mut out, symbol),
-                    Arg::Prop(prop) => self.write_prop(&mut out, prop),
+                    Arg::Type(ty) => out.append(&mut self.type_to_string(ty)),
+                    Arg::Sym(symbol) => out.append(&mut self.symbol_to_string(symbol)),
+                    Arg::Prop(prop) => out.append(&mut self.prop_to_string(prop)),
                     Arg::Sig(signature) => self.write_signature(&mut out, signature),
                     Arg::Atom(name) => out.extend_from_slice(self.atoms().bytes(name)),
                     Arg::Number(number) => out.extend_from_slice(bun_core::fmt::itoa(

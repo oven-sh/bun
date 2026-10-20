@@ -2220,19 +2220,12 @@ fn spelling_suggestion_in_scope(
 }
 
 /// The queries `getSuggestionForSymbolNameLookup` makes about a table's symbols.
-pub(crate) trait SuggestionLookup {
-    /// `getSymbol`, given the table's entry.
-    fn get_symbol(&mut self, table_entry: Option<Sym>, meaning: SymFlags) -> Option<Sym>;
-
+pub(crate) trait SuggestionLookup: crate::program::EntityNameLookup {
     /// `tryResolveAlias(candidate).Flags`, or `None` for nil.
     fn try_resolve_alias(&mut self, candidate: Sym) -> Option<SymFlags>;
 }
 
 impl SuggestionLookup for Checker<'_, '_> {
-    fn get_symbol(&mut self, table_entry: Option<Sym>, meaning: SymFlags) -> Option<Sym> {
-        Checker::get_symbol(self, table_entry, meaning)
-    }
-
     fn try_resolve_alias(&mut self, candidate: Sym) -> Option<SymFlags> {
         let files = self.files();
         // `findResolutionCycleStartIndex(symbol, TypeSystemPropertyNameAliasTarget) >= 0`

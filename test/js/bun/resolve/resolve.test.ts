@@ -3030,28 +3030,45 @@ describe.concurrent("a directory that does not open", () => {
       await Bun.sleep(5);
       out.file = await build();
     }
-    // The runtime resolver stays in the first generation and reads nothing
-    // again. It takes the answer from what the build left in the cache.
-    try {
-      out.runtime = Bun.resolveSync("./sub/mod.js", import.meta.dir);
-    } catch (e) {
-      out.runtime = { error: e.message };
+    if (process.argv[2] === "resolve") {
+      // The runtime resolver stays in the first generation and reads nothing
+      // again. It takes the answer from what the build left in the cache.
+      try {
+        out.runtime = Bun.resolveSync("./sub/mod.js", import.meta.dir);
+      } catch (e) {
+        out.runtime = { error: e.message };
+      }
+    } else {
+      rmSync("sub");
+      mkdirSync("sub");
+      writeFileSync("sub/mod.js", "export default 2;\\n");
+      out.directoryAgain = await build();
     }
-    rmSync("sub");
-    mkdirSync("sub");
-    writeFileSync("sub/mod.js", "export default 2;\\n");
-    out.directoryAgain = await build();
     console.log(JSON.stringify(out));
   `;
 
-  it("Bun.build reads a directory again after a build that found a file in its place", async () => {
-    using dir = tempDir("resolver-open-enotdir-rebuild", {
-      "build.js": buildAroundAFile,
-      "entry.js": `import value from "./sub/mod.js";\nconsole.log(value);\n`,
-      "sub/mod.js": `export default 1;\n`,
-    });
+  const aroundAFile = {
+    "build.js": buildAroundAFile,
+    "entry.js": `import value from "./sub/mod.js";\nconsole.log(value);\n`,
+    "sub/mod.js": `export default 1;\n`,
+  };
+
+  it.each([
+    {
+      name: "Bun.build reads a directory again after a build that found a file in its place",
+      args: [],
+      then: { directoryAgain: "built" },
+    },
+    {
+      // The same on main: the build that finds the file drops the names.
+      name: "the runtime does not resolve into a directory after a build found a file in its place",
+      args: ["resolve"],
+      then: { runtime: { error: expect.stringContaining("Cannot find module") } },
+    },
+  ])("$name", async ({ args, then }) => {
+    using dir = tempDir("resolver-open-enotdir-rebuild", aroundAFile);
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "build.js"],
+      cmd: [bunExe(), "build.js", ...args],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -3059,12 +3076,7 @@ describe.concurrent("a directory that does not open", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-      stdout: {
-        directory: "built",
-        file: ['Could not resolve: "./sub/mod.js"'],
-        runtime: { error: expect.stringContaining("Cannot find module") },
-        directoryAgain: "built",
-      },
+      stdout: { directory: "built", file: ['Could not resolve: "./sub/mod.js"'], ...then },
       stderr: "",
       exitCode: 0,
     });

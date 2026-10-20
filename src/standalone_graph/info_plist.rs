@@ -2,14 +2,15 @@
 
 use bun_ast::E;
 use bun_ast::expr::Data;
+use bun_exe_format::macho::INFO_PLIST_MAX_LEN;
 use bun_parsers::xml::{self, XML};
-use bun_sys::Fd;
+use bun_sys::{Fd, File, O};
 
 use crate::StandaloneModuleGraph::CompileError;
 
 /// `codesign` refuses an executable whose `__TEXT,__info_plist` is not a property list with a dictionary at its root.
 pub fn load(path: &[u8]) -> Result<Box<[u8]>, CompileError> {
-    let bytes = match bun_sys::File::read_from(Fd::cwd(), path) {
+    let bytes = match read(path) {
         Ok(bytes) => bytes,
         Err(err) => {
             return Err(CompileError::fmt(format_args!(
@@ -19,6 +20,13 @@ pub fn load(path: &[u8]) -> Result<Box<[u8]>, CompileError> {
             )));
         }
     };
+    if bytes.len() > INFO_PLIST_MAX_LEN {
+        return Err(CompileError::fmt(format_args!(
+            "{} is too large to embed: an Info.plist can be at most {} bytes",
+            bun_core::fmt::quote(path),
+            INFO_PLIST_MAX_LEN
+        )));
+    }
     let checked = if bytes.starts_with(b"bplist0") {
         check_binary(&bytes)
     } else {
@@ -32,6 +40,15 @@ pub fn load(path: &[u8]) -> Result<Box<[u8]>, CompileError> {
             bstr::BStr::new(&reason)
         ))),
     }
+}
+
+/// Stops one byte past the limit, which is enough to tell that the file is too large.
+fn read(path: &[u8]) -> bun_sys::Maybe<Vec<u8>> {
+    let file = File::openat(Fd::cwd(), path, O::RDONLY, 0)?;
+    let mut bytes = vec![0; INFO_PLIST_MAX_LEN + 1];
+    let len = file.read_all(&mut bytes)?;
+    bytes.truncate(len);
+    Ok(bytes)
 }
 
 const NOT_A_DICTIONARY: &[u8] = b"the root of the property list is not a dictionary";

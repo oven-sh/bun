@@ -15,6 +15,8 @@ const SEG_TEXT: &[u8] = b"__TEXT";
 const SECT_INFO_PLIST: &[u8] = b"__info_plist";
 /// Zero-filled `__TEXT` section a darwin bun reserves for an Info.plist (c-bindings.cpp). Its `size` is the capacity.
 const SECT_INFO_PLIST_SLOT: &[u8] = b"__bun_plist";
+/// The `size` c-bindings.cpp gives that section in this bun: a larger Info.plist is refused before a base is read.
+pub const INFO_PLIST_MAX_LEN: usize = 4096;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
 pub enum MachoError {

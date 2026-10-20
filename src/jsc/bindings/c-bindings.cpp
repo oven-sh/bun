@@ -1189,7 +1189,7 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength()
     return &BUN_COMPILED.size;
 }
 
-// Room for --macos-info-plist (exe_format/macho.rs set_info_plist). Assembly: no ASan redzone, -dead_strip keeps it.
+// Room for --macos-info-plist: INFO_PLIST_MAX_LEN in exe_format/macho.rs is this size. Assembly: no ASan redzone, -dead_strip keeps it.
 __asm__(".section __TEXT,__bun_plist,regular,no_dead_strip\n"
         ".space 4096\n"
         ".text\n");

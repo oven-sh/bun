@@ -330,6 +330,10 @@ describe("--macos-info-plist", () => {
     { name: "__bun_plist", offset: SLOT_OFFSET, size: SLOT_SIZE, fill: 0 },
     { name: "__const", offset: SLOT_OFFSET + SLOT_SIZE, size: 0x100 },
   ];
+  // A base executable that reserves half as much. The file has to fit the section of the base it goes into.
+  const textWithHalfSlot: TextSection[] = textWithSlot.map(s =>
+    s.name === "__bun_plist" ? { ...s, size: SLOT_SIZE / 2 } : s,
+  );
 
   const infoPlist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -513,15 +517,16 @@ describe("--macos-info-plist", () => {
     expectEmbedded(readFileSync(out), template, plist);
   });
 
-  test.concurrent("the reserved section's size is the limit", async () => {
+  test.concurrent("the reserved section of the base executable is the limit", async () => {
     using dir = tempDir("compile-macos-info-plist-limit", {
       "entry.ts": `console.log("hi");`,
       "fits.plist": infoPlistOfSize(SLOT_SIZE),
-      "too-large.plist": infoPlistOfSize(SLOT_SIZE + 1),
+      "too-large.plist": infoPlistOfSize(SLOT_SIZE / 2 + 1),
     });
     const cwd = String(dir);
     const template = machoTemplate({ textSections: textWithSlot });
     await Bun.write(join(cwd, "template"), template);
+    await Bun.write(join(cwd, "smaller"), machoTemplate({ textSections: textWithHalfSlot }));
 
     const fits = await build(cwd, [
       ...darwin("arm64", join(cwd, "template"), join(cwd, "fits")),
@@ -533,16 +538,23 @@ describe("--macos-info-plist", () => {
     expectEmbedded(readFileSync(join(cwd, "fits")), template, Buffer.from(infoPlistOfSize(SLOT_SIZE)));
 
     const tooLarge = await build(cwd, [
-      ...darwin("arm64", join(cwd, "template"), join(cwd, "too-large")),
+      ...darwin("arm64", join(cwd, "smaller"), join(cwd, "too-large")),
       "--macos-info-plist",
       "too-large.plist",
     ]);
     expect(tooLarge.stderr).toMatch(
-      /failed to embed the Info\.plist in ".*template": the Info\.plist is 4097 bytes and the section reserved for it holds 4096\n/,
+      /failed to embed the Info\.plist in ".*smaller": the Info\.plist is 2049 bytes and the section reserved for it holds 2048\n/,
     );
     expect(tooLarge.exitCode).toBe(1);
     // No executable, and no copy of the base left behind.
-    expect(readdirSync(cwd).sort()).toEqual(["entry.ts", "fits", "fits.plist", "template", "too-large.plist"]);
+    expect(readdirSync(cwd).sort()).toEqual([
+      "entry.ts",
+      "fits",
+      "fits.plist",
+      "smaller",
+      "template",
+      "too-large.plist",
+    ]);
   });
 
   // File offset of the `section_64` called `name` in the template's `__TEXT` command, which is its first.
@@ -738,12 +750,19 @@ describe("--macos-info-plist", () => {
       ["--macos-info-plist", "array.plist"],
       '"array.plist" is not an Info.plist: the root of the property list is not a dictionary',
     ],
+    [
+      "with a file that is larger than the section a macOS bun reserves",
+      ["--compile", "--target=bun-darwin-arm64"],
+      ["--macos-info-plist", "too-large.plist"],
+      '"too-large.plist" is too large to embed: an Info.plist can be at most 4096 bytes',
+    ],
   ])("the flag is refused %s", async (_, compile, flag, message) => {
     using dir = tempDir("compile-macos-info-plist-refused", {
       "entry.ts": `console.log("hi");`,
       "Info.plist": infoPlist,
       "Info.json": JSON.stringify({ CFBundleIdentifier: "com.example.myapp" }),
       "array.plist": `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0">\n<array/>\n</plist>\n`,
+      "too-large.plist": infoPlistOfSize(SLOT_SIZE + 1),
     });
     const cwd = String(dir);
     await Bun.write(join(cwd, "template"), machoTemplate({ textSections: textWithSlot }));
@@ -797,10 +816,10 @@ describe("--macos-info-plist", () => {
     test.concurrent("the reason an Info.plist cannot be embedded reaches the rejection", async () => {
       using dir = tempDir("compile-macos-info-plist-api-reject", {
         "entry.ts": `console.log("hi");`,
-        "Info.plist": infoPlistOfSize(SLOT_SIZE + 1),
+        "Info.plist": infoPlistOfSize(SLOT_SIZE / 2 + 1),
       });
       const cwd = String(dir);
-      await Bun.write(join(cwd, "template"), machoTemplate({ textSections: textWithSlot }));
+      await Bun.write(join(cwd, "template"), machoTemplate({ textSections: textWithHalfSlot }));
       const out = join(cwd, "out");
 
       const result = await Bun.build({
@@ -815,7 +834,7 @@ describe("--macos-info-plist", () => {
       });
       expect(result.logs.map(log => log.message)).toEqual([
         expect.stringMatching(
-          /^failed to embed the Info\.plist in ".*template": the Info\.plist is 4097 bytes and the section reserved for it holds 4096$/,
+          /^failed to embed the Info\.plist in ".*template": the Info\.plist is 2049 bytes and the section reserved for it holds 2048$/,
         ),
       ]);
       expect(result.success).toBe(false);
@@ -823,16 +842,28 @@ describe("--macos-info-plist", () => {
     });
 
     test.concurrent("compile.macos is checked before the build starts", async () => {
-      using dir = tempDir("compile-macos-info-plist-api-invalid", { "Info.plist": infoPlist });
+      using dir = tempDir("compile-macos-info-plist-api-invalid", {
+        "Info.plist": infoPlist,
+        "too-large.plist": infoPlistOfSize(SLOT_SIZE + 1),
+      });
       const cwd = String(dir);
       const infoPlistPath = join(cwd, "Info.plist");
 
       expect(() => check(cwd, "bun-darwin-arm64", 1)).toThrow("macos must be an object");
-      expect(() => check(cwd, "bun-darwin-arm64", { infoPlist: 1 })).toThrow(
-        'The "compile.macos.infoPlist" property must be of type string. Received number',
+      // Only `undefined` means that the option is absent.
+      for (const infoPlist of [1, 0, false, null]) {
+        expect(() => check(cwd, "bun-darwin-arm64", { infoPlist })).toThrow(
+          'The "compile.macos.infoPlist" property must be of type string. Received ',
+        );
+      }
+      expect(() => check(cwd, "bun-darwin-arm64", { infoPlist: "" })).toThrow(
+        'compile.macos.infoPlist: failed to read the Info.plist ""',
       );
       expect(() => check(cwd, "bun-darwin-arm64", { infoPlist: join(cwd, "missing.plist") })).toThrow(
         "compile.macos.infoPlist: failed to read the Info.plist",
+      );
+      expect(() => check(cwd, "bun-darwin-arm64", { infoPlist: join(cwd, "too-large.plist") })).toThrow(
+        'too-large.plist" is too large to embed: an Info.plist can be at most 4096 bytes',
       );
       // The path is the one that was given: it does not end at a NUL.
       expect(() => check(cwd, "bun-darwin-arm64", { infoPlist: infoPlistPath + "\0.json" })).toThrow(
@@ -849,7 +880,10 @@ describe("--macos-info-plist", () => {
     // A build script can hand the same `compile` options to every target. `compile.macos` is read and checked for
     // each of them, like `compile.windows.icon`, and goes into the executable only when the target is macOS.
     test.concurrent("compile.macos is checked for a target that is not macOS too", async () => {
-      using dir = tempDir("compile-macos-info-plist-api-other-target", { "Info.plist": infoPlist });
+      using dir = tempDir("compile-macos-info-plist-api-other-target", {
+        "Info.plist": infoPlist,
+        "too-large.plist": infoPlistOfSize(SLOT_SIZE + 1),
+      });
       const cwd = String(dir);
 
       expect(() => check(cwd, "bun-linux-x64", 1)).toThrow("macos must be an object");
@@ -858,6 +892,9 @@ describe("--macos-info-plist", () => {
       );
       expect(() => check(cwd, "bun-linux-x64", { infoPlist: join(cwd, "missing.plist") })).toThrow(
         "compile.macos.infoPlist: failed to read the Info.plist",
+      );
+      expect(() => check(cwd, "bun-linux-x64", { infoPlist: join(cwd, "too-large.plist") })).toThrow(
+        'too-large.plist" is too large to embed: an Info.plist can be at most 4096 bytes',
       );
       expect(
         (await check(cwd, "bun-linux-x64", { infoPlist: join(cwd, "Info.plist") })).logs.map(l => l.message),

@@ -116,6 +116,8 @@ pub struct ParseTask {
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
     pub(crate) is_entry_point: bool,
+    /// The source was read from the file at `path`. See `WatcherData::watch`.
+    pub(crate) read_from_file: bool,
 }
 
 pub enum ParseTaskStage {
@@ -178,6 +180,8 @@ impl ResultValue {
 pub(crate) struct WatcherData {
     pub(crate) fd: Fd,
     pub(crate) dir_fd: Fd,
+    /// The source was read from a file. `fd` is not valid when the reader closed it.
+    pub(crate) watch: bool,
 }
 
 impl WatcherData {
@@ -185,6 +189,7 @@ impl WatcherData {
     pub(crate) const NONE: WatcherData = WatcherData {
         fd: Fd::INVALID,
         dir_fd: Fd::INVALID,
+        watch: false,
     };
 }
 
@@ -307,6 +312,7 @@ impl ParseTask {
             },
             stage: ParseTaskStage::NeedsSourceCode,
             is_entry_point: false,
+            read_from_file: false,
         }
     }
 
@@ -347,6 +353,7 @@ impl Default for ParseTask {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            read_from_file: false,
         }
     }
 }
@@ -626,6 +633,7 @@ pub mod parse_worker {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            read_from_file: false,
         };
         let source = Source {
             // `bun_ast::Source.path` is `bun_paths::fs::Path<'static>`, distinct
@@ -1530,6 +1538,7 @@ pub mod parse_worker {
                     read_arena,
                 ) {
                     Ok(e) => {
+                        task.read_from_file = true;
                         // `bun_resolver::cache::Entry` ↔ `crate::cache::Entry`
                         // are structurally identical twins; convert
                         // by-variant so ownership of `Owned(Vec<u8>)` transfers.
@@ -2908,6 +2917,7 @@ pub mod parse_worker {
                 ContentsOrFd::Fd { file, dir } => WatcherData {
                     fd: file,
                     dir_fd: dir,
+                    watch: this.read_from_file,
                 },
                 ContentsOrFd::Contents(_) => WatcherData::NONE,
             },

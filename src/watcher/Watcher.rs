@@ -300,7 +300,9 @@ impl Watcher {
                 if close_descriptors && me.running.load() {
                     let fds = me.watchlist.items_fd();
                     for &fd in fds {
-                        let _ = bun_sys::close(fd);
+                        if fd.is_valid() {
+                            let _ = bun_sys::close(fd);
+                        }
                     }
                 }
                 true
@@ -371,7 +373,9 @@ impl Watcher {
         if self.close_descriptors.load() {
             let fds = self.watchlist.items_fd();
             for &fd in fds {
-                let _ = bun_sys::close(fd);
+                if fd.is_valid() {
+                    let _ = bun_sys::close(fd);
+                }
             }
         }
         owner_still_alive
@@ -587,6 +591,7 @@ impl Watcher {
     fn append_directory_assume_capacity<const CLONE_FILE_PATH: bool>(
         &mut self,
         stored_fd: Fd,
+        open_missing_fd: bool,
         file_path: &[u8],
         hash: HashType,
     ) -> sys::Result<WatchItemIndex> {
@@ -602,7 +607,7 @@ impl Watcher {
             }
         }
 
-        let fd = if stored_fd.is_valid() {
+        let fd = if stored_fd.is_valid() || !open_missing_fd {
             stored_fd
         } else {
             bun_sys::open_a(file_path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?
@@ -722,6 +727,8 @@ impl Watcher {
                 Some(v) => v,
                 None => match self.append_directory_assume_capacity::<CLONE_FILE_PATH>(
                     dir_fd,
+                    // On inotify, a file that brought no descriptor costs none for its directory.
+                    fd.is_valid() || !cfg!(any(target_os = "linux", target_os = "android")),
                     parent_dir,
                     parent_dir_hash,
                 ) {
@@ -793,7 +800,7 @@ impl Watcher {
         self.watchlist
             .ensure_unused_capacity(1)
             .unwrap_or_else(|_| bun_core::out_of_memory());
-        self.append_directory_assume_capacity::<CLONE_FILE_PATH>(fd, file_path, hash)
+        self.append_directory_assume_capacity::<CLONE_FILE_PATH>(fd, true, file_path, hash)
     }
 
     /// Lazily watch a file by path (slow path).
@@ -863,6 +870,7 @@ impl Watcher {
         }
     }
 
+    /// `fd` can be `Fd::INVALID`: inotify and Windows watch the path, kqueue declines the file.
     pub fn add_file<const CLONE_FILE_PATH: bool>(
         &mut self,
         fd: Fd,
@@ -871,6 +879,10 @@ impl Watcher {
         dir_fd: Fd,
         package_json: Option<&'static PackageJSON>,
     ) -> sys::Result<FdOwnership> {
+        if REQUIRES_FILE_DESCRIPTORS && !fd.is_valid() {
+            return Ok(FdOwnership::Caller);
+        }
+
         // This must lock due to concurrent transpiler
         self.mutex.lock();
 

@@ -2448,7 +2448,8 @@ fn transpile_source_code_of_any_provenance(
                 _ => ModuleType::Unknown,
             };
 
-            let mut input_file_fd = bun_sys::Fd::INVALID;
+            // `Some` once the parse has read `path` from disk.
+            let mut input_file_fd: Option<bun_sys::Fd> = None;
             // The deferred fd close is independent of `give_back_arena`
             // and must fire on every exit path: parse failure, JSON early
             // return, `disable_transpilying`, already_bundled, empty `.cjs`,
@@ -2461,7 +2462,7 @@ fn transpile_source_code_of_any_provenance(
             // invalidate the guard's tag under Stacked Borrows, making the
             // deferred `.close()` (which the parse path always reaches) UB.
             let should_close_ptr: *mut bool = &raw mut should_close_input_file_fd;
-            let input_file_fd_ptr: *mut bun_sys::Fd = &raw mut input_file_fd;
+            let input_file_fd_ptr: *mut Option<bun_sys::Fd> = &raw mut input_file_fd;
             // Note: `scopeguard::defer!` would capture the two `*mut`
             // locals by-ref in its non-`move` closure, which borrowck then
             // treats as conflicting with the later `&mut *ptr` reborrows below
@@ -2476,10 +2477,13 @@ fn transpile_source_code_of_any_provenance(
                     // the guard runs on the same thread before either is
                     // destroyed.
                     unsafe {
-                        if *should_close_ptr && (*input_file_fd_ptr).is_valid() {
+                        if *should_close_ptr
+                            && let Some(fd) = *input_file_fd_ptr
+                            && fd.is_valid()
+                        {
                             use bun_sys::FdExt as _;
-                            (*input_file_fd_ptr).close();
-                            *input_file_fd_ptr = bun_sys::Fd::INVALID;
+                            fd.close();
+                            *input_file_fd_ptr = None;
                         }
                     }
                 },
@@ -3475,14 +3479,12 @@ fn transpile_source_code_of_any_provenance(
     }
 }
 
-/// Register the just-opened file
-/// with the dev-server watcher (if enabled, absolute, and not in
-/// `node_modules`). Factored out of the two call sites.
+/// Watch the file that the parse read, if it read one.
 #[inline]
 fn maybe_watch_file(
     jsc_vm: *mut VirtualMachine,
     should_close_input_file_fd: &mut bool,
-    input_file_fd: bun_sys::Fd,
+    input_file_fd: Option<bun_sys::Fd>,
     is_node_override: bool,
     path: &Fs::Path,
     hash: u32,
@@ -3492,28 +3494,17 @@ fn maybe_watch_file(
     if !unsafe { &*jsc_vm }.is_watcher_enabled() {
         return;
     }
-    if !input_file_fd.is_valid() {
-        return;
-    }
-    if is_node_override
-        || !bun_paths::is_absolute(path.text)
-        || bun_core::strings::contains(path.text, b"node_modules")
-    {
-        return;
-    }
     // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
     // `is_watcher_enabled()`; cast recovers the concrete type.
     let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
-    if matches!(
-        watcher.add_file::<true>(
-            input_file_fd,
-            path.text,
-            hash,
-            bun_sys::Fd::INVALID,
-            package_json,
-        ),
-        Ok(bun_watcher::FdOwnership::Watcher)
-    ) {
+    if watcher.add_module(
+        input_file_fd,
+        path.text,
+        hash,
+        is_node_override,
+        package_json,
+    ) == bun_watcher::FdOwnership::Watcher
+    {
         *should_close_input_file_fd = false;
     }
 }

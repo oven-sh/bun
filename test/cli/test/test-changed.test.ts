@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync } from "harness";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
+import { appendFileSync, readdirSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 // Each case spawns a full `bun test` process; give the concurrent group
@@ -438,6 +438,21 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
     await waitFor("Ran 0 tests");
     expect(buf).not.toContain("wa.test.ts:");
     expect(buf).not.toContain("wb.test.ts:");
+
+    // No module was loaded, so every file is watched by path. On inotify
+    // that costs no descriptor, for the file or for its directory.
+    if (isLinux) {
+      const cwd = realpathSync(String(dir));
+      const held = readdirSync(`/proc/${proc.pid}/fd`).flatMap(fd => {
+        try {
+          return [readlinkSync(`/proc/${proc.pid}/fd/${fd}`)];
+        } catch {
+          return [];
+        }
+      });
+      expect(held.length).toBeGreaterThan(0);
+      expect(held.filter(path => path === cwd || path.startsWith(cwd + "/"))).toEqual([]);
+    }
 
     // Touch dep-a.ts: watcher restarts, --changed now sees an uncommitted
     // change to dep-a.ts and should run only wa.test.ts. Sync on the

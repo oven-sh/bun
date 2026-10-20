@@ -1,8 +1,21 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
-import { afterEach, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
-import { readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { join } from "node:path";
 
 let watchee: Subprocess;
@@ -649,4 +662,296 @@ it.skipIf(!isLinux)("watcher opens the watched directory and files with O_CLOEXE
     "/dep.ts": [O_CLOEXEC],
     "/main.ts": [O_CLOEXEC],
   });
+});
+
+// The reader closes a source file right after the read when the open-file limit is 254 or less, or
+// once it has seen a descriptor number at half of the limit. The module loader and the bundler used
+// to watch a file only through that descriptor, so they did not watch such a file at all.
+// kqueue needs a descriptor for each watch, so there such a file stays unwatched. Windows never
+// closes a source file early.
+describe.skipIf(isWindows)("a file that was read near the open-file limit", () => {
+  // Resolves when `needle` shows up after the text that earlier calls consumed.
+  function reader(stream: ReadableStream<Uint8Array>) {
+    const source = stream.getReader();
+    const decoder = new TextDecoder();
+    let output = "";
+    let consumed = 0;
+    return async (needle: string) => {
+      for (;;) {
+        const at = output.indexOf(needle, consumed);
+        if (at !== -1) {
+          consumed = at + needle.length;
+          return;
+        }
+        const { value, done } = await source.read();
+        if (done) throw new Error(`stream closed before ${JSON.stringify(needle)}: ${JSON.stringify(output)}`);
+        output += decoder.decode(value, { stream: true });
+      }
+    };
+  }
+
+  function run(limit: number, cwd: string, args: string[], stderr: "inherit" | "pipe" = "inherit") {
+    const proc = spawn({
+      // `sh` sets the soft and the hard limit, so bun cannot raise it again.
+      cmd: ["sh", "-c", `ulimit -n ${limit} && exec "$0" "$@"`, bunExe(), ...args],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr,
+      stdin: "ignore",
+    });
+    return {
+      stdout: reader(proc.stdout),
+      stderr: stderr === "pipe" ? reader(proc.stderr as ReadableStream<Uint8Array>) : undefined,
+      async [Symbol.asyncDispose]() {
+        proc.kill("SIGKILL");
+        await proc.exited;
+      },
+    };
+  }
+
+  // One write, same length, no truncate: a single watcher event, and a reload never reads a partial file.
+  function overwrite(path: string, contents: string) {
+    const fd = openSync(path, "r+");
+    try {
+      writeSync(fd, contents, 0);
+    } finally {
+      closeSync(fd);
+    }
+  }
+
+  // These cases are not concurrent. With eleven debug builds started together, a case that takes
+  // 1.2 s alone took up to 3.6 s, which is too near the default timeout.
+  it("--hot reloads import, import() and require() at an open-file limit of 200", async () => {
+    using dir = tempDir("hot-closed-early", {
+      "static.js": `export const a = 1;`,
+      "dynamic.js": `export const b = 1;`,
+      "required.cjs": `exports.c = 1;`,
+      "entry.js": `
+        import { a } from "./static.js";
+        const { b } = await import("./dynamic.js");
+        const { c } = require("./required.cjs");
+        console.log("values", a, b, c);
+        setInterval(() => {}, 1 << 30);
+      `,
+    });
+    const cwd = String(dir);
+    await using proc = run(200, cwd, ["--hot", "--no-clear-screen", "entry.js"]);
+    await proc.stdout("values 1 1 1\n");
+    // On kqueue the three modules stay unwatched. They still have to load.
+    if (!isLinux) return;
+    // The second round saves each module again after its first reload.
+    for (const round of [2, 3]) {
+      overwrite(join(cwd, "static.js"), `export const a = ${round};`);
+      await proc.stdout(`values ${round} ${round - 1} ${round - 1}\n`);
+      overwrite(join(cwd, "dynamic.js"), `export const b = ${round};`);
+      await proc.stdout(`values ${round} ${round} ${round - 1}\n`);
+      overwrite(join(cwd, "required.cjs"), `exports.c = ${round};`);
+      await proc.stdout(`values ${round} ${round} ${round}\n`);
+    }
+  });
+
+  // Each save under --watch starts a new process, so the cases that restart save one file.
+  it("--watch restarts on a save of an import at an open-file limit of 200", async () => {
+    using dir = tempDir("watch-closed-early", {
+      "dep.js": `export const value = 1;`,
+      "entry.js": `
+        import { value } from "./dep.js";
+        console.log("value", value);
+        setInterval(() => {}, 1 << 30);
+      `,
+    });
+    const cwd = String(dir);
+    await using proc = run(200, cwd, ["--watch", "--no-clear-screen", "entry.js"]);
+    await proc.stdout("value 1\n");
+    // On kqueue the module stays unwatched. It still has to load.
+    if (!isLinux) return;
+    overwrite(join(cwd, "dep.js"), `export const value = 2;`);
+    await proc.stdout("value 2\n");
+  });
+
+  for (const mode of ["--watch", "--hot"]) {
+    it.skipIf(!isLinux)(`${mode} reloads a module loaded while 600 of 1024 descriptors are held`, async () => {
+      using dir = tempDir("watch-closed-early-held", {
+        "first.js": `export const z = 0;`,
+        "late.js": `export const value = 1;`,
+        // Which read first meets the limit differs by build, so the module under test comes second.
+        "entry.js": `
+          import { openSync } from "node:fs";
+          globalThis.held ??= [];
+          while (globalThis.held.length < 600) globalThis.held.push(openSync("entry.js", "r"));
+          await import("./first.js");
+          const { value } = await import("./late.js");
+          console.log("value", value);
+          setInterval(() => {}, 1 << 30);
+        `,
+      });
+      const cwd = String(dir);
+      await using proc = run(1024, cwd, [mode, "--no-clear-screen", "entry.js"]);
+      await proc.stdout("value 1\n");
+      overwrite(join(cwd, "late.js"), `export const value = 2;`);
+      await proc.stdout("value 2\n");
+    });
+  }
+
+  it.skipIf(!isLinux)("--hot reloads a module that failed to parse at an open-file limit of 200", async () => {
+    using dir = tempDir("hot-closed-early-parse-error", {
+      "static.js": `export const a = ];`,
+      "required.cjs": `exports.c = ];`,
+      "entry.js": `
+        import { a } from "./static.js";
+        const { c } = require("./required.cjs");
+        console.log("values", a, c);
+        setInterval(() => {}, 1 << 30);
+      `,
+    });
+    const cwd = String(dir);
+    await using proc = run(200, cwd, ["--hot", "--no-clear-screen", "entry.js"], "pipe");
+    await proc.stderr!("static.js");
+    overwrite(join(cwd, "static.js"), `export const a = 1;`);
+    await proc.stderr!("required.cjs");
+    overwrite(join(cwd, "required.cjs"), `exports.c = 1;`);
+    await proc.stdout("values 1 1\n");
+  });
+
+  // The run counter shows a save that reloads twice: the line of the next save is then one run ahead.
+  it.skipIf(!isLinux)("--hot reloads once for each save by rename at an open-file limit of 200", async () => {
+    using dir = tempDir("hot-closed-early-rename", {
+      "dep.js": `export const value = 1;`,
+      "entry.js": `
+        import { value } from "./dep.js";
+        globalThis.runs = (globalThis.runs ?? 0) + 1;
+        console.log("run", globalThis.runs, "value", value);
+        setInterval(() => {}, 1 << 30);
+      `,
+    });
+    const cwd = String(dir);
+    const dep = join(cwd, "dep.js");
+    await using proc = run(200, cwd, ["--hot", "--no-clear-screen", "entry.js"]);
+    await proc.stdout("run 1 value 1\n");
+    for (const round of [2, 3, 4]) {
+      writeFileSync(dep + ".tmp", `export const value = ${round};`);
+      renameSync(dep + ".tmp", dep);
+      await proc.stdout(`run ${round} value ${round}\n`);
+    }
+  });
+
+  // A directory event must not end the watch of a file that has no stored descriptor: nothing adds
+  // this module again.
+  it.skipIf(!isLinux)(
+    "--hot reloads on each save of a module that is imported once, at an open-file limit of 200",
+    async () => {
+      using dir = tempDir("hot-closed-early-import-once", {
+        "once.js": `export const value = 1;`,
+        "entry.js": `
+          import { readFileSync } from "node:fs";
+          globalThis.once ??= await import("./once.js");
+          console.log(readFileSync("once.js", "utf8"));
+          setInterval(() => {}, 1 << 30);
+        `,
+      });
+      const cwd = String(dir);
+      await using proc = run(200, cwd, ["--hot", "--no-clear-screen", "entry.js"]);
+      await proc.stdout("value = 1;\n");
+      for (const round of [2, 3, 4]) {
+        overwrite(join(cwd, "once.js"), `export const value = ${round};`);
+        await proc.stdout(`value = ${round};\n`);
+      }
+    },
+  );
+
+  // A watch must not cost a descriptor for each directory either, or this program does not start.
+  it.skipIf(!isLinux)("--hot reloads with more module directories than the open-file limit", async () => {
+    const count = 120;
+    using dir = tempDir("hot-closed-early-directories", {
+      "entry.js":
+        Array.from({ length: count }, (_, i) => `import { value as v${i} } from "./d${i}/m.js";`).join("\n") +
+        `\nconsole.log("value", v${count - 1});\nsetInterval(() => {}, 1 << 30);\n`,
+    });
+    const cwd = String(dir);
+    for (let i = 0; i < count; i++) {
+      mkdirSync(join(cwd, `d${i}`));
+      writeFileSync(join(cwd, `d${i}`, "m.js"), `export const value = 1;`);
+    }
+    await using proc = run(100, cwd, ["--hot", "--no-clear-screen", "entry.js"]);
+    await proc.stdout("value 1\n");
+    overwrite(join(cwd, `d${count - 1}`, "m.js"), `export const value = 2;`);
+    await proc.stdout("value 2\n");
+  });
+
+  it.skipIf(!isLinux)("test --watch runs again at an open-file limit of 200", async () => {
+    using dir = tempDir("test-watch-closed-early", {
+      "dep.js": `export const value = 1;`,
+      "a.test.js": `
+        import { test } from "bun:test";
+        import { value } from "./dep.js";
+        test("t", () => console.log("value", value));
+      `,
+    });
+    const cwd = String(dir);
+    await using proc = run(200, cwd, ["test", "--watch", "--no-clear-screen"]);
+    await proc.stdout("value 1\n");
+    overwrite(join(cwd, "dep.js"), `export const value = 2;`);
+    await proc.stdout("value 2\n");
+  });
+
+  it.skipIf(!isLinux)("build --watch builds again at an open-file limit of 200", async () => {
+    using dir = tempDir("build-watch-closed-early", {
+      "dep.js": `export const value = "dep-1";`,
+      "entry.js": `import { value } from "./dep.js";\nconsole.log(value, "entry-1");\n`,
+    });
+    const cwd = String(dir);
+    await using proc = run(200, cwd, ["build", "--watch", "--no-clear-screen", "entry.js", "--outdir", "out"]);
+    // Each build prints one "(entry point)" line after it wrote the output.
+    const built = async (needle: string) => {
+      do await proc.stdout("(entry point)");
+      while (!readFileSync(join(cwd, "out", "entry.js"), "utf8").includes(needle));
+    };
+    await built("dep-1");
+    overwrite(join(cwd, "dep.js"), `export const value = "dep-2";`);
+    await built("dep-2");
+  });
+
+  // The dev server of an HTML route has its own watcher, which registers the files of the bundle.
+  it.skipIf(!isLinux)(
+    "--hot with an HTML route serves a page edit and reloads a server module at an open-file limit of 200",
+    async () => {
+      using dir = tempDir("hot-html-closed-early", {
+        "index.html": `<!doctype html><html><body><script type="module" src="./app.js"></script></body></html>`,
+        "app.js": `import { value } from "./web/dep.js";\nconsole.log(value);\n`,
+        "web/dep.js": `export const value = "dep-1";`,
+        "api.js": `export const api = 1;`,
+        "server.js": `
+          import { writeFileSync } from "node:fs";
+          import home from "./index.html";
+          import { api } from "./api.js";
+          globalThis.server ??= Bun.serve({ port: 0, development: true, routes: { "/": home } });
+          writeFileSync("port", String(globalThis.server.port));
+          console.log("api", api);
+        `,
+      });
+      const cwd = String(dir);
+      await using proc = run(200, cwd, ["--hot", "--no-clear-screen", "server.js"]);
+      await proc.stdout("api 1\n");
+      const origin = `http://127.0.0.1:${readFileSync(join(cwd, "port"), "utf8")}/`;
+      // One save can reach the dev server as two builds, so this waits for the value and not for a log line.
+      const bundled = async (needle: string) => {
+        for (;;) {
+          const html = await (await fetch(origin)).text();
+          const script = await (await fetch(new URL(/src="([^"]+)"/.exec(html)![1], origin))).text();
+          if (script.includes(needle)) return;
+        }
+      };
+      await bundled("dep-1");
+      overwrite(join(cwd, "web", "dep.js"), `export const value = "dep-2";`);
+      await bundled("dep-2");
+      // The second save reloads the server module again.
+      for (const round of [2, 3]) {
+        overwrite(join(cwd, "api.js"), `export const api = ${round};`);
+        await proc.stdout(`api ${round}\n`);
+      }
+      overwrite(join(cwd, "web", "dep.js"), `export const value = "dep-3";`);
+      await bundled("dep-3");
+    },
+  );
 });

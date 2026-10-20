@@ -7651,7 +7651,7 @@ pub mod bv2_impl {
 
             // To minimize contention, watchers are appended on the bundle thread.
             if this.bun_watcher.is_some() {
-                if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
+                if parse_result.watcher_data.watch {
                     let source_index = parse_result.value.source_index();
                     // borrowck — read the source path before
                     // `should_add_watcher(&self)` so the column borrow is released.

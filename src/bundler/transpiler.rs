@@ -865,8 +865,8 @@ pub struct ParseOptions<'a, 'b> {
     pub dirname_fd: FD,
     pub file_descriptor: Option<FD>,
 
-    /// On exception, we might still want to watch the file.
-    pub file_fd_ptr: Option<&'b mut FD>,
+    /// `Some` once the source was read from a file, whether or not the parse then fails.
+    pub file_fd_ptr: Option<&'b mut Option<FD>>,
 
     pub path: bun_paths::fs::Path<'static>,
     pub loader: options::Loader,
@@ -1379,7 +1379,7 @@ impl<'a> Transpiler<'a> {
                 }
             };
             if let Some(file_fd_ptr) = this_parse.file_fd_ptr {
-                *file_fd_ptr = entry.fd;
+                *file_fd_ptr = Some(entry.fd);
             }
             // `Source.contents: &'static [u8]` (the AST crate's `Str`
             // convention). The bytes live either in the per-thread shared

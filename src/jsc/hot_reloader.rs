@@ -80,6 +80,28 @@ impl ImportWatcher {
             ImportWatcher::None => Ok(bun_watcher::FdOwnership::Caller),
         }
     }
+
+    /// Watches a module the runtime loaded. `read_fd`: see `ParseOptions::file_fd_ptr`.
+    pub fn add_module(
+        &mut self,
+        read_fd: Option<Fd>,
+        path: &[u8],
+        hash: bun_watcher::HashType,
+        is_node_override: bool,
+        package_json: Option<&'static bun_watcher::PackageJSON>,
+    ) -> bun_watcher::FdOwnership {
+        let Some(fd) = read_fd else {
+            return bun_watcher::FdOwnership::Caller;
+        };
+        if is_node_override
+            || !bun_paths::is_absolute(path)
+            || strings::contains(path, b"node_modules")
+        {
+            return bun_watcher::FdOwnership::Caller;
+        }
+        self.add_file::<true>(fd, path, hash, Fd::INVALID, package_json)
+            .unwrap_or(bun_watcher::FdOwnership::Caller)
+    }
 }
 
 pub type HotReloader = NewHotReloader<VirtualMachine, EventLoop, false>;

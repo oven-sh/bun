@@ -1036,6 +1036,25 @@ describe("performance.now() mocking", () => {
       expect(performance).toBe(real);
     });
 
+    test("useFakeTimers() changes nothing if it throws while it copies the object", () => {
+      const throwing = new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            throw new Error("from the trap");
+          },
+        },
+      );
+      vi.stubGlobal("performance", throwing);
+      expect(() => vi.useFakeTimers()).toThrow("from the trap");
+      expect([vi.isFakeTimers(), setTimeout === saved.setTimeout, performance === throwing]).toEqual([
+        false,
+        true,
+        true,
+      ]);
+      vi.unstubAllGlobals();
+    });
+
     test.each([
       [`if "performance" isn't faked`, vi, { toFake: ["setTimeout"] }],
       [`for vi of "bun:test"`, bunVi, {}],
@@ -2317,6 +2336,23 @@ describe('toFake: ["performance"] in a beforeEach', () => {
     expect(Math.abs(performance.timeOrigin - Date.now())).toBeLessThan(60_000);
   });
 });
+
+test.each(["setTimeout", "setInterval"] as const)(
+  "%s makes a real timer if converting its delay calls useRealTimers()",
+  async name => {
+    vi.useFakeTimers();
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const delay = {
+      valueOf() {
+        vi.useRealTimers();
+        return 1;
+      },
+    };
+    const timer = globalThis[name](resolve, delay as unknown as number);
+    await promise;
+    clearInterval(timer);
+  },
+);
 
 describe("a faked setImmediate", () => {
   test("runs before timeouts due at the same time, in order, with its arguments", () => {

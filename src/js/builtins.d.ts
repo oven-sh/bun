@@ -614,6 +614,8 @@ declare var $Object: ObjectConstructor;
 /** gets a property on an object */
 declare function $getByIdDirect<T, K extends keyof T>(obj: T, key: K): T[K];
 
+declare function $getPrototypeOf(value: unknown): object | null;
+
 /**
  * Gets a private property on an object.
  * Translates to the `op_get_by_id_direct` bytecode.

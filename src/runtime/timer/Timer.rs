@@ -254,16 +254,17 @@ impl All {
         all.last_id = all.last_id.wrapping_add(1);
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
-        let clock = all.fake_timers.clock_while_active(clock);
-        // As in @sinonjs/fake-timers, a fake timer without a delay is due now. See `FakeTimers::min_delay_ms()`.
-        let may_be_zero = clock == Clock::Fake || all.zero_delay_is_due_when_idle;
         let countdown_int = all.js_value_to_countdown(
             cx.global(),
             countdown,
             CountdownOverflowBehavior::OneMs,
-            if may_be_zero { 0 } else { 1 },
+            0,
             true,
         )?;
+        let clock = all.fake_timers.clock_while_active(clock);
+        // As in @sinonjs/fake-timers, a fake timer without a delay is due now. See `FakeTimers::min_delay_ms()`.
+        let may_be_zero = clock == Clock::Fake || all.zero_delay_is_due_when_idle;
+        let countdown_int = countdown_int.max(u32::from(!may_be_zero));
         let is_due_when_idle = clock == Clock::Real && countdown_int == 0;
         let timeout = TimeoutObject::init(
             cx,

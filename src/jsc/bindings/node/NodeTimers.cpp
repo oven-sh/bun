@@ -388,12 +388,15 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] __attribute__((minsize)) JSC::EncodedJS
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] __attribute__((minsize)) JSC::EncodedJSValue Bun__FakeTimers__createPerformance(Zig::GlobalObject* globalObject, JSC::EncodedJSValue original, double timeOrigin)
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* create = JSFunction::create(vm, globalObject, fakeTimersCreatePerformanceCodeGenerator(vm), globalObject);
     MarkedArgumentBuffer args;
     args.append(JSValue::decode(original));
     args.append(JSFunction::create(vm, globalObject, 0, "now"_s, functionFakePerformanceNow, ImplementationVisibility::Public));
     args.append(jsNumber(timeOrigin));
-    return JSValue::encode(JSC::profiledCall(globalObject, ProfilingReason::API, create, JSC::getCallData(create), jsUndefined(), args));
+    JSValue fake = JSC::profiledCall(globalObject, ProfilingReason::API, create, JSC::getCallData(create), jsUndefined(), args);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(fake);
 }
 
 // Maps each fake to the function it replaced, for when a jest.spyOn() restored after jest.useRealTimers() puts a fake back.

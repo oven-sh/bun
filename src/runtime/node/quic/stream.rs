@@ -121,6 +121,8 @@ pub(crate) struct QuicStream {
     peer_stop_sending_code: Cell<Option<u64>>,
     wrote_to_lsquic: Cell<bool>,
     headers_received: Cell<bool>,
+    /// lsquic took a header block for this stream.
+    headers_sent: Cell<bool>,
     /// RFC 9218 (urgency, incremental).
     priority: Cell<(u8, bool)>,
     /// (nul-joined pairs, pair count, eos, frameless); see `send_headers`.
@@ -154,6 +156,7 @@ impl QuicStream {
             peer_stop_sending_code: Cell::new(None),
             wrote_to_lsquic: Cell::new(false),
             headers_received: Cell::new(false),
+            headers_sent: Cell::new(false),
             priority: Cell::new(DEFAULT_PRIORITY),
             pending_headers: JsCell::new(Vec::new()),
             trailers_requested: Cell::new(false),
@@ -239,7 +242,7 @@ impl QuicStream {
         let mut want_write = false;
         for (bytes, count, eos, frameless) in self.pending_headers.with_mut(core::mem::take) {
             self.wrote_to_lsquic.set(true);
-            if (frameless && self.takes_header_block()) || s.send_headers(&bytes, count, eos) == 0 {
+            if self.put_header_block(s, &bytes, count, eos, frameless) {
                 if eos {
                     self.with_state(|st| {
                         st.fin_sent = 1;
@@ -288,13 +291,34 @@ impl QuicStream {
         unsafe { lsquic::Stream::from_raw(self.raw.get()) }
     }
 
-    /// True on a request stream (bidirectional, on an HTTP/3 session) whose
-    /// send side is open: the one place lsquic is sure to take a header block.
-    /// Anywhere else the call to lsquic decides.
-    fn takes_header_block(&self) -> bool {
-        self.stream_id() & STREAM_ID_UNI_BIT == 0
+    /// Sends one header block and returns whether the stream took it.
+    ///
+    /// A `frameless` block (see `send_headers`) is not handed to lsquic on a
+    /// request stream (bidirectional, on an HTTP/3 session) whose send side is
+    /// open: the one place lsquic is sure to take a header block. With `eos`
+    /// it also needs an earlier block, because lsquic resets a request stream
+    /// whose FIN comes before one. Anywhere else the call to lsquic decides.
+    fn put_header_block(
+        &self,
+        s: lsquic::Stream,
+        bytes: &[u8],
+        count: c_int,
+        eos: bool,
+        frameless: bool,
+    ) -> bool {
+        if frameless
+            && (!eos || self.headers_sent.get())
+            && self.stream_id() & STREAM_ID_UNI_BIT == 0
             && self.session_ref().is_some_and(QuicSession::is_http)
             && self.with_state(|s| s.fin_sent == 0 && s.write_ended == 0)
+        {
+            return true;
+        }
+        let taken = s.send_headers(bytes, count, eos) == 0;
+        if taken {
+            self.headers_sent.set(true);
+        }
+        taken
     }
 
     fn state_mut(&self) -> *mut StreamState {
@@ -969,12 +993,7 @@ impl QuicStream {
             self.with_state(|s| s.has_outbound = 1);
             return Ok(JSValue::js_boolean(true));
         };
-        let rv = if frameless && self.takes_header_block() {
-            0
-        } else {
-            s.send_headers(&bytes, header_count, eos)
-        };
-        if rv == 0 {
+        if self.put_header_block(s, &bytes, header_count, eos, frameless) {
             self.wrote_to_lsquic.set(true);
             self.with_state(|s| s.has_outbound = 1);
             if eos {

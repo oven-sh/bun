@@ -314,6 +314,8 @@ describe("HTTP/3 header blocks with no field lines", () => {
   }
   const getSubject = (client: any) => streamEvents(client, request("/subject"));
   const helloOnly = { events: ["headers 200", "data hello", "end"], trailers: [] };
+  // A first block with no field lines: headers that have no ":status".
+  const emptyResponse = { events: ["headers undefined", "end"], trailers: [] };
 
   describe("are not sent for trailers or hints", () => {
     test.each([
@@ -422,6 +424,39 @@ describe("HTTP/3 header blocks with no field lines", () => {
       });
       const { held } = await besideHeldStream(origin, getSubject);
       expect({ sent, held }).toEqual({ sent: [true, false], held: "first,second" });
+    });
+
+    // lsquic resets a request stream whose FIN comes before a header block. So
+    // trailers that are the first block of a stream keep their HEADERS frame.
+    test("sendTrailers({}) as the first block of a response still sends the block", async () => {
+      const sent: boolean[] = [];
+      await using origin = await listenHolding(stream => {
+        sent.push(stream.sendTrailers({}), stream.sendHeaders({ ":status": "200" }));
+      });
+      const outcome = await besideHeldStream(origin, getSubject);
+      expect({ sent, ...outcome }).toEqual({ sent: [true, false], subject: emptyResponse, held: "first,second" });
+    });
+
+    test("sendTrailers({}) queued as the first block of a request still sends the block", async () => {
+      const requests: object[] = [];
+      await using server = await listen(ignoreStreams, {
+        sni,
+        transportParams,
+        onheaders(this: any, headers: Record<string, any>) {
+          requests.push({ ...headers });
+          this.sendHeaders({ ":status": "400" }, { terminal: true });
+        },
+      });
+      await using client: any = await connect(server.address!, clientOptions);
+      let queued: unknown[] = [];
+      const response = await streamEvents(client, undefined, stream => {
+        queued = [stream.pending, stream.sendTrailers({})];
+      });
+      expect({ queued, requests, response }).toEqual({
+        queued: [true, true],
+        requests: [{}],
+        response: { events: ["headers 400", "end"], trailers: [] },
+      });
     });
 
     // `opened` is not awaited: the stream is created before the handshake
@@ -545,17 +580,21 @@ describe("HTTP/3 header blocks with no field lines", () => {
     });
 
     // A message whose first block has no pseudo-header fields is malformed.
-    // What its own stream reports is not asserted here, only the connection.
+    // node:quic hands the block to the application as it is.
     test("by a client, as the first block of the response", async () => {
       await using origin = await listenHolding(emptyBlock);
-      const { held } = await besideHeldStream(origin, getSubject);
-      expect(held).toBe("first,second");
+      expect(await besideHeldStream(origin, getSubject)).toEqual({ subject: emptyResponse, held: "first,second" });
     });
 
     test("by a server, as the first block of the request", async () => {
       await using origin = await listenHolding(stream => stream.sendHeaders({ ":status": "400" }, { terminal: true }));
-      const { held } = await besideHeldStream(origin, client => streamEvents(client, undefined, emptyBlock));
-      expect(held).toBe("first,second");
+      const outcome = await besideHeldStream(origin, client => streamEvents(client, undefined, emptyBlock));
+      expect({ requests: origin.requests(), ...outcome }).toEqual({
+        // The request has no ":path".
+        requests: [["/held", undefined]],
+        subject: { events: ["headers 400", "end"], trailers: [] },
+        held: "first,second",
+      });
     });
 
     test.each([

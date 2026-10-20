@@ -1,6 +1,5 @@
 // Prints what each writeFile and appendFile form does with each `flag` value.
 // fs.test.ts runs this file under Node.js and under Bun. The output must be the same.
-// Not covered: an fd or a FileHandle with a flag that is not falsy. Node ignores that flag.
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -64,8 +63,9 @@ async function print(title, flags, run) {
   for (const [name, write] of forms) {
     await print(`${name}(path, { flag })`, [...falsy, ...notFalsy], flag => write(file, { flag }));
   }
+  // Node opens nothing for an fd or a FileHandle, so it takes every flag there.
   for (const [name, write] of forms.slice(0, 4)) {
-    await print(`${name}(fd, { flag })`, falsy, async flag => {
+    await print(`${name}(fd, { flag })`, [...falsy, ...notFalsy], async flag => {
       const fd = fs.openSync(file, name.includes("append") ? "a" : "r+");
       try {
         await write(fd, { flag });
@@ -75,7 +75,7 @@ async function print(title, flags, run) {
     });
   }
   for (const [name, write] of forms.slice(4)) {
-    await print(`${name}(FileHandle, { flag })`, falsy, async flag => {
+    await print(`${name}(FileHandle, { flag })`, [...falsy, ...notFalsy], async flag => {
       const handle = await fs.promises.open(file, name.includes("append") ? "a" : "r+");
       try {
         await write(handle, { flag });

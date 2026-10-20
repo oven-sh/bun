@@ -3300,6 +3300,34 @@ pub(crate) mod args {
         Ok(default)
     }
 
+    /// `options.encoding` of readFile, writeFile and appendFile, and whether Node converts
+    /// `options.flag` and `options.mode` for this call. Node converts them where it opens
+    /// the file. It opens nothing for an fd, so there it converts them only in the sync
+    /// UTF-8 fast paths, which hand both to C++ for any target:
+    /// https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L432-L437 (readFileSync)
+    /// https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2398-L2411 (writeFileSync)
+    fn get_encoding_and_converts_open_options(
+        object: JSValue,
+        global_object: &JSGlobalObject,
+        default: Encoding,
+        target: &PathOrFileDescriptor,
+        // A sync call, and string data when it writes.
+        may_take_utf8_fast_path: bool,
+    ) -> JsResult<(Encoding, bool)> {
+        let opens = matches!(target, PathOrFileDescriptor::Path(_));
+        let Some(value) = object.fast_get(global_object, bun_jsc::BuiltinName::Encoding)? else {
+            return Ok((default, opens));
+        };
+        // Node tests `options.encoding === 'utf8' || options.encoding === 'utf-8'`.
+        if !opens && may_take_utf8_fast_path && value.is_string_literal() {
+            let spelling = value.to_js_string_view(global_object)?;
+            if spelling.eq_ascii(b"utf8") || spelling.eq_ascii(b"utf-8") {
+                return Ok((Encoding::Utf8, true));
+            }
+        }
+        Ok((Encoding::assert(value, global_object, default)?, opens))
+    }
+
     /// Consume the next positional argument as a Node.js fs `encoding` option.
     /// Accepts either an encoding string (`"utf8"`, `"buffer"`, ...) or an options
     /// object with an `.encoding` property. Any other value (including `undefined`
@@ -4162,10 +4190,14 @@ pub(crate) mod args {
                 if arg.is_string() {
                     encoding = Encoding::assert(arg, ctx, encoding)?;
                 } else if arg.is_object() {
-                    encoding = get_encoding(arg, ctx, encoding)?;
-                    if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
-                        flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
-                    }
+                    let converts_flag;
+                    (encoding, converts_flag) = get_encoding_and_converts_open_options(
+                        arg,
+                        ctx,
+                        encoding,
+                        &path,
+                        !arguments.will_be_async,
+                    )?;
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
                         if let Some(signal) = AbortSignal::ref_from_js(value) {
                             signal.pending_activity_ref();
@@ -4177,6 +4209,9 @@ pub(crate) mod args {
                                 value,
                             ));
                         }
+                    }
+                    if converts_flag && let Some(flag_) = arg.get_truthy(ctx, "flag")? {
+                        flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
                     }
                 }
             }
@@ -4257,14 +4292,14 @@ pub(crate) mod args {
                 if arg.is_string() {
                     encoding = Encoding::assert(arg, ctx, encoding)?;
                 } else if arg.is_object() {
-                    encoding = get_encoding(arg, ctx, encoding)?;
-                    // Node: `options.flag || default` https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2343
-                    if let Some(flag_) = arg.get(ctx, "flag")?.filter(|flag| flag.is_truthy()) {
-                        flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
-                    }
-                    if let Some(mode_) = arg.get_truthy(ctx, "mode")? {
-                        mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
-                    }
+                    let converts;
+                    (encoding, converts) = get_encoding_and_converts_open_options(
+                        arg,
+                        ctx,
+                        encoding,
+                        &path,
+                        !arguments.will_be_async && data_value.is_string_literal(),
+                    )?;
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
                         if let Some(signal) = AbortSignal::ref_from_js(value) {
                             signal.pending_activity_ref();
@@ -4285,6 +4320,25 @@ pub(crate) mod args {
                                 ctx.throw_invalid_argument_type_value(b"flush", b"boolean", flush_)
                             );
                         }
+                    }
+                    // For an fd, appendFile forces the flag to 'a'. It copies the options
+                    // first, which reads each of them:
+                    // https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2458-L2462
+                    let appends_to_fd = default_flag == FileSystemFlags::A
+                        && matches!(path, PathOrFileDescriptor::Fd(_));
+                    // Node: `options.flag || default`, for every target https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2343
+                    if let Some(flag_) = arg.get(ctx, "flag")?.filter(|flag| flag.is_truthy())
+                        && converts
+                        && !appends_to_fd
+                    {
+                        flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
+                    }
+                    if converts {
+                        if let Some(mode_) = arg.get(ctx, "mode")? {
+                            mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
+                        }
+                    } else if appends_to_fd {
+                        arg.get(ctx, "mode")?;
                     }
                 }
             }

@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles, writeBinCommand } from "harness";
 import { join } from "node:path";
 
 describe.concurrent("bun pm version", () => {
@@ -20,9 +20,7 @@ describe.concurrent("bun pm version", () => {
     return testDir;
   }
 
-  async function setupGitTest() {
-    const testDir = setupTest();
-
+  async function setupGitTest(testDir = setupTest()) {
     await Bun.spawn({
       cmd: ["git", "init"],
       cwd: testDir,
@@ -37,6 +35,19 @@ describe.concurrent("bun pm version", () => {
 
     await Bun.spawn({
       cmd: ["git", "config", "user.email", "test@example.com"],
+      cwd: testDir,
+      env: bunEnv,
+    }).exited;
+
+    // Signing needs a key that the machine running the test may not have.
+    await Bun.spawn({
+      cmd: ["git", "config", "commit.gpgsign", "false"],
+      cwd: testDir,
+      env: bunEnv,
+    }).exited;
+
+    await Bun.spawn({
+      cmd: ["git", "config", "tag.gpgsign", "false"],
       cwd: testDir,
       env: bunEnv,
     }).exited;
@@ -144,9 +155,9 @@ describe.concurrent("bun pm version", () => {
       expect(output2).toContain("prepatch");
       expect(output2).toContain("preminor");
       expect(output2).toContain("premajor");
-      expect(output2).toContain("1.0.1-alpha.0");
-      expect(output2).toContain("1.1.0-alpha.0");
-      expect(output2).toContain("2.0.0-alpha.0");
+      expect(output2).toContain("prepatch   1.0.0-alpha.0 → 1.0.1-0");
+      expect(output2).toContain("preminor   1.0.0-alpha.0 → 1.1.0-0");
+      expect(output2).toContain("premajor   1.0.0-alpha.0 → 2.0.0-0");
 
       await using testDir3 = tempDir(`version-${i++}`, {
         "package.json": JSON.stringify({ name: "test", version: "1.0.0" }, null, 2),
@@ -205,6 +216,20 @@ describe.concurrent("bun pm version", () => {
       expect(packageJson.version).toBe("2.0.0");
     });
 
+    // `npm version patch` writes the same version, although both tools then refuse to increment it again.
+    it("increments a number equal to Number.MAX_SAFE_INTEGER", async () => {
+      await using testDir = tempDir(`version-${i++}`, {
+        "package.json": JSON.stringify({ name: "test", version: "1.0.9007199254740991" }, null, 2),
+      });
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", "patch", "--no-git-tag-version"],
+        testDir,
+      );
+
+      expect({ output, error, code }).toEqual({ output: "v1.0.9007199254740992\n", error: "", code: 0 });
+    });
+
     it("should set specific version", async () => {
       const testDir = setupTest();
 
@@ -215,6 +240,29 @@ describe.concurrent("bun pm version", () => {
 
       const packageJson = await Bun.file(`${testDir}/package.json`).json();
       expect(packageJson.version).toBe("3.2.1");
+    });
+
+    // Like `npm version`, which writes `semver.clean(version)`.
+    it.each([
+      ["v2.0.0", "2.0.0"],
+      ["=2.0.0", "2.0.0"],
+      ["2.0.0+build.7", "2.0.0"],
+      ["v2.0.0-rc.1+build.7", "2.0.0-rc.1"],
+    ])("writes the specific version %s as %s", async (arg, expected) => {
+      const testDir = setupTest();
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", arg, "--no-git-tag-version"],
+        testDir,
+      );
+      const packageJson = await Bun.file(join(testDir, "package.json")).json();
+
+      expect({ output, error, code, version: packageJson.version }).toEqual({
+        output: `v${expected}\n`,
+        error: "",
+        code: 0,
+        version: expected,
+      });
     });
 
     it("handles empty package.json", async () => {
@@ -272,6 +320,92 @@ describe.concurrent("bun pm version", () => {
       );
       expect(output5.trim()).toBe("v1.0.0");
       expect(code5).toBe(0);
+    });
+
+    // `npm version` rejects these too (node-semver: "Invalid patch version"). The number used to wrap:
+    // the first three wrote 1.0.0, 1.0.0 and 0.0.0, and the `+ 1` aborted a debug build.
+    it.each([
+      ["1.0.18446744073709551615", "patch"],
+      ["1.18446744073709551615.0", "minor"],
+      ["18446744073709551615.0.0", "major"],
+      ["1.0.18446744073709551615", "prerelease"],
+      ["1.0.9007199254740992", "patch"],
+    ])("rejects %s as the version to increment with %s", async (version, increment) => {
+      await using testDir = tempDir(`version-${i++}`, {
+        "package.json": JSON.stringify({ name: "test", version }, null, 2),
+      });
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", increment, "--no-git-tag-version"],
+        testDir,
+        false,
+      );
+      const packageJson = await Bun.file(join(String(testDir), "package.json")).json();
+
+      expect({ output, error, code, version: packageJson.version }).toEqual({
+        output: "",
+        error: `error: Current version "${version}" is not a valid semver\n`,
+        code: 1,
+        version,
+      });
+    });
+
+    // The same limit applies to a version given as the argument. `npm version` prints "Invalid version".
+    it("rejects a specific version with a number above Number.MAX_SAFE_INTEGER", async () => {
+      const testDir = setupTest();
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", "1.0.9007199254740992", "--no-git-tag-version"],
+        testDir,
+        false,
+      );
+      const packageJson = await Bun.file(join(testDir, "package.json")).json();
+
+      expect({ output, error: error.split("\n")[0], code, version: packageJson.version }).toEqual({
+        output: "",
+        error: 'error: Invalid version argument: "1.0.9007199254740992"',
+        code: 1,
+        version: "1.0.0",
+      });
+    });
+
+    it.each(["2", "2.0", "x", "2.x", "^2.0.0", "2.0.0 || 3.0.0", "2.0.0.0", "2.0.0-a..b"])(
+      "rejects %s as the specific version",
+      async arg => {
+        const testDir = setupTest();
+
+        const { output, error, code } = await runCommand(
+          [bunExe(), "pm", "version", arg, "--no-git-tag-version"],
+          testDir,
+          false,
+        );
+        const packageJson = await Bun.file(join(testDir, "package.json")).json();
+
+        expect({ output, error: error.split("\n")[0], code, version: packageJson.version }).toEqual({
+          output: "",
+          error: `error: Invalid version argument: "${arg}"`,
+          code: 1,
+          version: "1.0.0",
+        });
+      },
+    );
+
+    it.each(["be ta", "beta!", "a..b", ".a", "01", "00", "beta.007"])("rejects %j as the --preid", async preid => {
+      const testDir = setupTest();
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", "prerelease", "--preid", preid, "--no-git-tag-version"],
+        testDir,
+        false,
+      );
+      const packageJson = await Bun.file(join(testDir, "package.json")).json();
+
+      expect({ output, error, code, version: packageJson.version }).toEqual({
+        output: "",
+        error: `error: Invalid --preid: "${preid}"\n`,
+        code: 1,
+        version: "1.0.0",
+      });
     });
 
     it("handles missing package.json like npm", async () => {
@@ -338,6 +472,58 @@ describe.concurrent("bun pm version", () => {
 
       const { output: logOutput } = await runCommand(["git", "log", "--oneline"], testDir1);
       expect(logOutput).toContain("v1.0.1");
+    });
+
+    it("creates git commits and tags inside a linked worktree", async () => {
+      const mainDir = await setupGitTest();
+      const worktreeDir = join(tempDirWithFiles(`version-${i++}`, { ".keep": "" }), "worktree");
+
+      const { code: addCode } = await runCommand(["git", "worktree", "add", worktreeDir, "-b", "release"], mainDir);
+      expect(addCode).toBe(0);
+
+      // A linked worktree has a `.git` file, not a `.git` directory.
+      expect(await Bun.file(join(worktreeDir, ".git")).text()).toStartWith("gitdir:");
+
+      const { output, error, code } = await runCommand([bunExe(), "pm", "version", "patch"], worktreeDir);
+
+      expect(error.trim()).toBe("");
+      expect(output.trim()).toBe("v1.0.1");
+      expect(code).toBe(0);
+
+      const { output: tagOutput } = await runCommand(["git", "tag", "-l"], worktreeDir);
+      expect(tagOutput).toContain("v1.0.1");
+
+      const { output: logOutput } = await runCommand(["git", "log", "--oneline"], worktreeDir);
+      expect(logOutput).toContain("v1.0.1");
+    });
+
+    // One commit per tag, oldest first. `null`: no version to take, as for `npm version from-git`.
+    it.each([
+      [["v9.9.9"], "9.9.9"],
+      [["other-9.9.9"], "9.9.9"],
+      [["pkg@2.0.0-beta.1"], "2.0.0-beta.1"],
+      [["v3.0.0", "nightly"], "3.0.0"],
+      [["nightly"], null],
+      [["a.b.c"], null],
+    ] as const)("from-git with the tags %j writes %j", async (tags, expected) => {
+      const testDir = await setupGitTest();
+      for (const tag of tags) {
+        await runCommand(["git", "commit", "--allow-empty", "-m", tag], testDir);
+        await runCommand(["git", "tag", "-a", tag, "-m", tag], testDir);
+      }
+
+      const { output, code } = await runCommand(
+        [bunExe(), "pm", "version", "from-git", "--no-git-tag-version"],
+        testDir,
+        expected !== null,
+      );
+      const packageJson = await Bun.file(join(testDir, "package.json")).json();
+
+      expect({ output, code, version: packageJson.version }).toEqual(
+        expected === null
+          ? { output: "", code: 1, version: "1.0.0" }
+          : { output: `v${expected}\n`, code: 0, version: expected },
+      );
     });
 
     it("supports custom commit messages", async () => {
@@ -487,6 +673,58 @@ describe.concurrent("bun pm version", () => {
     });
   });
 
+  describe("--dry-run", () => {
+    it("prints the new version without writing package.json or running scripts", async () => {
+      using testDir = tempDir(`version-${i++}`, {
+        "package.json": JSON.stringify(
+          {
+            name: "test",
+            version: "1.0.0",
+            scripts: {
+              preversion: "echo 'step1' >> lifecycle.log",
+              version: "echo 'step2' >> lifecycle.log",
+              postversion: "echo 'step3' >> lifecycle.log",
+            },
+          },
+          null,
+          2,
+        ),
+      });
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", "minor", "--dry-run", "--no-git-tag-version"],
+        String(testDir),
+      );
+
+      expect(error).toBe("");
+      expect(output).toBe("v1.1.0\n");
+      expect(code).toBe(0);
+
+      const pkg = await Bun.file(join(String(testDir), "package.json")).json();
+      expect(pkg.version).toBe("1.0.0");
+      expect(await Bun.file(join(String(testDir), "lifecycle.log")).exists()).toBe(false);
+    });
+
+    it("does not commit or tag in a git repository", async () => {
+      const testDir = await setupGitTest();
+
+      const { output, error, code } = await runCommand([bunExe(), "pm", "version", "patch", "--dry-run"], testDir);
+
+      expect(error).toBe("");
+      expect(output).toBe("v1.0.1\n");
+      expect(code).toBe(0);
+
+      const pkg = await Bun.file(join(testDir, "package.json")).json();
+      expect(pkg.version).toBe("1.0.0");
+
+      const { output: tagOutput } = await runCommand(["git", "tag", "-l"], testDir);
+      expect(tagOutput).toBe("");
+
+      const { output: logOutput } = await runCommand(["git", "log", "--format=%s"], testDir);
+      expect(logOutput).toBe("Initial commit\n");
+    });
+  });
+
   describe("JSON formatting preservation", () => {
     it("preserves JSON formatting correctly", async () => {
       const originalJson1 = `{
@@ -524,6 +762,30 @@ describe.concurrent("bun pm version", () => {
         scripts: {
           test: "echo test",
         },
+      });
+    });
+
+    it("keeps the file valid JSON when a number literal overflows to Infinity", async () => {
+      await using testDir = tempDir(`version-${i++}`, {
+        "package.json": `{
+  "name": "test",
+  "version": "1.0.0",
+  "config": { "max": 1e400, "min": -1e400 }
+}`,
+      });
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", "patch", "--no-git-tag-version"],
+        String(testDir),
+      );
+      expect(error).toBe("");
+      expect(output.trim()).toBe("v1.0.1");
+      expect(code).toBe(0);
+
+      expect(JSON.parse(await Bun.file(join(String(testDir), "package.json")).text())).toEqual({
+        name: "test",
+        version: "1.0.1",
+        config: { max: null, min: null },
       });
     });
   });
@@ -564,7 +826,7 @@ describe.concurrent("bun pm version", () => {
       );
 
       expect(code5).toBe(0);
-      expect(output5.trim()).toBe("v1.0.0-alpha.1");
+      expect(output5.trim()).toBe("v1.0.0-alpha.0");
 
       await using testDir6 = tempDir(`version-${i++}`, {
         "package.json": JSON.stringify({ name: "test", version: "1.0.0-3" }, null, 2),
@@ -579,16 +841,93 @@ describe.concurrent("bun pm version", () => {
       expect(output6.trim()).toBe("v1.0.0-4");
     });
 
-    it("should preserve prerelease identifiers correctly", async () => {
+    // The last column is `semver.inc(version, increment, preid)` of node-semver 7.8.1, which is what `npm version` writes.
+    it.each([
+      // A prerelease of x.0.0, x.y.0 or x.y.z becomes that release, not the one after it.
+      ["1.0.0-rc.1", "major", "1.0.0"],
+      ["1.2.0-rc.1", "major", "2.0.0"],
+      ["1.2.0-rc.1", "minor", "1.2.0"],
+      ["1.2.3-rc.1", "minor", "1.3.0"],
+      ["1.2.3-beta.1", "patch", "1.2.3"],
+      ["1.2.3", "major", "2.0.0"],
+      ["1.2.3", "minor", "1.3.0"],
+      ["1.2.3", "patch", "1.2.4"],
+      ["1.2.3", "premajor", "2.0.0-0"],
+      ["1.2.3", "preminor", "1.3.0-0"],
+      ["1.2.3", "prepatch", "1.2.4-0"],
+      ["1.2.3", "prerelease", "1.2.4-0"],
+      ["1.2.3", "premajor --preid beta", "2.0.0-beta.0"],
+      ["1.2.3", "preminor --preid beta", "1.3.0-beta.0"],
+      ["1.2.3", "prepatch --preid beta", "1.2.4-beta.0"],
+      ["1.2.3", "prerelease --preid beta", "1.2.4-beta.0"],
+      // Only --preid names the new prerelease: the current one is not carried over.
+      ["1.2.3-beta.1", "premajor", "2.0.0-0"],
+      ["1.2.3-beta.1", "preminor", "1.3.0-0"],
+      ["1.2.3-beta.1", "prepatch", "1.2.4-0"],
+      ["1.2.3-beta.1", "prepatch --preid rc", "1.2.4-rc.0"],
+      ["1.2.3-beta.1", "prerelease", "1.2.3-beta.2"],
+      ["1.2.3-beta.1", "prerelease --preid beta", "1.2.3-beta.2"],
+      // Another name starts to count from 0.
+      ["1.2.3-beta.1", "prerelease --preid rc", "1.2.3-rc.0"],
+      ["1.0.0-4294967295", "prerelease --preid rc", "1.0.0-rc.0"],
+      ["1.2.3-0", "prerelease --preid beta", "1.2.3-beta.0"],
+      ["1.2.3-0", "prerelease", "1.2.3-1"],
+      ["1.2.3-beta", "prerelease", "1.2.3-beta.0"],
+      ["1.2.3-beta", "prerelease --preid beta", "1.2.3-beta.0"],
+      ["1.0.0-beta.x", "prerelease --preid beta", "1.0.0-beta.0"],
+      ["1.0.0-5", "prerelease --preid 5", "1.0.0-5.0"],
+      ["1.0.0", "prerelease --preid 0", "1.0.1-0.0"],
+      ["1.0.0", "prerelease --preid 01a", "1.0.1-01a.0"],
+      ["1.0.0", "prerelease --preid 0-1", "1.0.1-0-1.0"],
+      ["1.2.3", "prerelease --preid a.b", "1.2.4-a.b.0"],
+      // The last number is the one that's incremented, wherever it is, and the other fields are kept.
+      ["1.0.0-x.7.z.92", "prerelease", "1.0.0-x.7.z.93"],
+      ["1.0.0-alpha.1.beta", "prerelease", "1.0.0-alpha.2.beta"],
+      ["1.0.0-alpha.beta", "prerelease", "1.0.0-alpha.beta.0"],
+      ["1.0.0-beta.1.2", "prerelease --preid beta", "1.0.0-beta.1.3"],
+      ["1.2.3+build.5", "patch", "1.2.4"],
+      ["1.2.3-beta.1+build.5", "prerelease", "1.2.3-beta.2"],
+      ["v1.2.3", "patch", "1.2.4"],
+      // The number used to be read as a u32: 4294967295 wrapped to 0 and a build timestamp counted as 0.
+      ["1.0.0-beta.4294967295", "prerelease", "1.0.0-beta.4294967296"],
+      ["1.0.0-4294967295", "prerelease", "1.0.0-4294967296"],
+      ["1.0.0-canary.20250101123456", "prerelease", "1.0.0-canary.20250101123457"],
+      ["1.0.0-20250101123456", "prerelease", "1.0.0-20250101123457"],
+      ["1.0.0-beta.9007199254740990", "prerelease", "1.0.0-beta.9007199254740991"],
+      // Digits from Number.MAX_SAFE_INTEGER up count as a name, so a new field is added.
+      ["1.0.0-beta.9007199254740991", "prerelease", "1.0.0-beta.9007199254740991.0"],
+      ["1.0.0-beta.18446744073709551614", "prerelease", "1.0.0-beta.18446744073709551614.0"],
+      ["1.0.0-18446744073709551615", "prerelease", "1.0.0-18446744073709551615.0"],
+      ["1.0.9007199254740991-0", "prerelease", "1.0.9007199254740991-1"],
+    ])("%s + %s is %s", async (version, increment, expected) => {
+      await using testDir = tempDir(`version-${i++}`, {
+        "package.json": JSON.stringify({ name: "test", version }, null, 2),
+      });
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", ...increment.split(" "), "--no-git-tag-version"],
+        testDir,
+      );
+      const packageJson = await Bun.file(join(String(testDir), "package.json")).json();
+
+      expect({ output, error, code, version: packageJson.version }).toEqual({
+        output: `v${expected}\n`,
+        error: "",
+        code: 0,
+        version: expected,
+      });
+    });
+
+    it("previews what each increment of a prerelease would write", async () => {
       const scenarios = [
         {
           version: "1.0.3-alpha.1",
           preid: "beta",
           expected: {
-            patch: "1.0.3-alpha.1 → 1.0.4",
+            patch: "1.0.3-alpha.1 → 1.0.3",
             minor: "1.0.3-alpha.1 → 1.1.0",
             major: "1.0.3-alpha.1 → 2.0.0",
-            prerelease: "1.0.3-alpha.1 → 1.0.3-beta.2",
+            prerelease: "1.0.3-alpha.1 → 1.0.3-beta.0",
             prepatch: "1.0.3-alpha.1 → 1.0.4-beta.0",
             preminor: "1.0.3-alpha.1 → 1.1.0-beta.0",
             premajor: "1.0.3-alpha.1 → 2.0.0-beta.0",
@@ -598,10 +937,10 @@ describe.concurrent("bun pm version", () => {
           version: "1.0.3-1",
           preid: "abcd",
           expected: {
-            patch: "1.0.3-1 → 1.0.4",
+            patch: "1.0.3-1 → 1.0.3",
             minor: "1.0.3-1 → 1.1.0",
             major: "1.0.3-1 → 2.0.0",
-            prerelease: "1.0.3-1 → 1.0.3-abcd.2",
+            prerelease: "1.0.3-1 → 1.0.3-abcd.0",
             prepatch: "1.0.3-1 → 1.0.4-abcd.0",
             preminor: "1.0.3-1 → 1.1.0-abcd.0",
             premajor: "1.0.3-1 → 2.0.0-abcd.0",
@@ -611,10 +950,10 @@ describe.concurrent("bun pm version", () => {
           version: "2.5.0-rc.3",
           preid: "next",
           expected: {
-            patch: "2.5.0-rc.3 → 2.5.1",
-            minor: "2.5.0-rc.3 → 2.6.0",
+            patch: "2.5.0-rc.3 → 2.5.0",
+            minor: "2.5.0-rc.3 → 2.5.0",
             major: "2.5.0-rc.3 → 3.0.0",
-            prerelease: "2.5.0-rc.3 → 2.5.0-next.4",
+            prerelease: "2.5.0-rc.3 → 2.5.0-next.0",
             prepatch: "2.5.0-rc.3 → 2.5.1-next.0",
             preminor: "2.5.0-rc.3 → 2.6.0-next.0",
             premajor: "2.5.0-rc.3 → 3.0.0-next.0",
@@ -624,10 +963,10 @@ describe.concurrent("bun pm version", () => {
           version: "1.0.0-a",
           preid: "b",
           expected: {
-            patch: "1.0.0-a → 1.0.1",
-            minor: "1.0.0-a → 1.1.0",
-            major: "1.0.0-a → 2.0.0",
-            prerelease: "1.0.0-a → 1.0.0-b.1",
+            patch: "1.0.0-a → 1.0.0",
+            minor: "1.0.0-a → 1.0.0",
+            major: "1.0.0-a → 1.0.0",
+            prerelease: "1.0.0-a → 1.0.0-b.0",
             prepatch: "1.0.0-a → 1.0.1-b.0",
             preminor: "1.0.0-a → 1.1.0-b.0",
             premajor: "1.0.0-a → 2.0.0-b.0",
@@ -649,7 +988,7 @@ describe.concurrent("bun pm version", () => {
         expect(output).toContain(`Current package version: v${scenario.version}`);
 
         for (const [incrementType, expectedTransformation] of Object.entries(scenario.expected)) {
-          expect(output).toContain(`${incrementType.padEnd(10)} ${expectedTransformation}`);
+          expect(output).toContain(`${incrementType.padEnd(10)} ${expectedTransformation}\n`);
         }
       }
 
@@ -668,6 +1007,95 @@ describe.concurrent("bun pm version", () => {
   });
 
   describe("lifecycle scripts", () => {
+    it("run the commands in node_modules/.bin", async () => {
+      using dir = tempDir(`version-${i++}`, {
+        "package.json": JSON.stringify({
+          name: "test",
+          version: "1.0.0",
+          scripts: { preversion: "tool", version: "tool", postversion: "tool" },
+        }),
+      });
+      writeBinCommand(String(dir), "tool", "tool of the package");
+
+      await using proc = Bun.spawn([bunExe(), "pm", "version", "patch", "--no-git-tag-version"], {
+        cwd: String(dir),
+        env: bunEnv,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).toBe("$ tool\n$ tool\n$ tool\n");
+      expect(out.match(/^tool of .*$/gm)).toEqual(Array(3).fill("tool of the package"));
+      expect(exitCode).toBe(0);
+    });
+
+    it("see the versions in the variables npm sets", async () => {
+      const script =
+        'echo "$npm_lifecycle_event: $npm_command $npm_package_name@$npm_package_version, $npm_old_version to $npm_new_version" >> seen.txt';
+      using dir = tempDir(`version-${i++}`, {
+        "package.json": JSON.stringify({
+          name: "test",
+          version: "1.0.0",
+          scripts: { preversion: script, version: script, postversion: script },
+        }),
+      });
+
+      const { output, code } = await runCommand(
+        [bunExe(), "pm", "version", "patch", "--no-git-tag-version"],
+        String(dir),
+      );
+
+      expect((await Bun.file(join(String(dir), "seen.txt")).text()).split("\n")).toEqual([
+        "preversion: version test@1.0.0, 1.0.0 to 1.0.1",
+        "version: version test@1.0.1, 1.0.0 to 1.0.1",
+        "postversion: version test@1.0.1, 1.0.0 to 1.0.1",
+        "",
+      ]);
+      expect(output).toBe("v1.0.1\n");
+      expect(code).toBe(0);
+    });
+
+    // The default case: git runs before the first script and between the scripts.
+    it.each([
+      ["default", ""],
+      ["bun", '[run]\nshell = "bun"\n'],
+    ])("have their whole environment in a clean git repository, with the %s shell", async (_, bunfig) => {
+      const script =
+        'echo "$npm_lifecycle_event: $npm_command $npm_package_name@$npm_package_version, $npm_old_version to $npm_new_version, $MARK" && tool';
+      using dir = tempDir(`version-${i++}`, {
+        "package.json": JSON.stringify({
+          name: "test",
+          version: "1.0.0",
+          scripts: { preversion: script, version: script, postversion: script },
+        }),
+        "bunfig.toml": bunfig,
+      });
+      await setupGitTest(String(dir));
+      await Bun.write(join(String(dir), ".git", "info", "exclude"), "node_modules\nbunfig.toml\n");
+      writeBinCommand(String(dir), "tool", "tool of the package");
+
+      await using proc = Bun.spawn([bunExe(), "pm", "version", "patch"], {
+        cwd: String(dir),
+        env: { ...bunEnv, MARK: "from-parent" },
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [out, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(out.split(/\r?\n/)).toEqual([
+        "preversion: version test@1.0.0, 1.0.0 to 1.0.1, from-parent",
+        "tool of the package",
+        "version: version test@1.0.1, 1.0.0 to 1.0.1, from-parent",
+        "tool of the package",
+        "postversion: version test@1.0.1, 1.0.0 to 1.0.1, from-parent",
+        "tool of the package",
+        "v1.0.1",
+        "",
+      ]);
+      expect((await runCommand(["git", "tag", "-l"], String(dir))).output).toBe("v1.0.1\n");
+      expect(exitCode).toBe(0);
+    });
+
     it("runs lifecycle scripts in correct order and handles failures", async () => {
       await using testDir1 = tempDir(`version-${i++}`, {
         "package.json": JSON.stringify(
@@ -717,8 +1145,8 @@ describe.concurrent("bun pm version", () => {
         stdout: "ignore",
       }).exited;
 
-      expect(Bun.file(join(testDir2, "event.log")).exists()).resolves.toBe(true);
-      expect(Bun.file(join(testDir2, "script.log")).exists()).resolves.toBe(true);
+      await expect(Bun.file(join(testDir2, "event.log")).exists()).resolves.toBe(true);
+      await expect(Bun.file(join(testDir2, "script.log")).exists()).resolves.toBe(true);
 
       const eventContent = await Bun.file(join(testDir2, "event.log")).text();
       const scriptContent = await Bun.file(join(testDir2, "script.log")).text();
@@ -777,8 +1205,8 @@ describe.concurrent("bun pm version", () => {
         stdout: "ignore",
       }).exited;
 
-      expect(Bun.file(join(testDir4, "version-output.txt")).exists()).resolves.toBe(true);
-      expect(Bun.file(join(testDir4, "build")).exists()).resolves.toBe(false);
+      await expect(Bun.file(join(testDir4, "version-output.txt")).exists()).resolves.toBe(true);
+      await expect(Bun.file(join(testDir4, "build")).exists()).resolves.toBe(false);
 
       const content = await Bun.file(join(testDir4, "version-output.txt")).text();
       expect(content.trim()).toBe("built");

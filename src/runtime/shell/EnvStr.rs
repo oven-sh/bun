@@ -17,11 +17,11 @@ use super::ref_counted_str::RefCountedStr;
 /// - bits 64..128 : `len` (usize)
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct EnvStr(u128);
+pub(crate) struct EnvStr(u128);
 
 #[repr(u16)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Tag {
+pub(crate) enum Tag {
     /// no value
     Empty = 0,
 
@@ -146,13 +146,13 @@ impl EnvStr {
         self.len() / divisor
     }
 
-    pub fn ref_(self) {
+    pub(crate) fn ref_(self) {
         if let Some(refc) = self.as_ref_counted() {
             refc.ref_();
         }
     }
 
-    pub fn deref(self) {
+    pub(crate) fn deref(self) {
         if self.tag() == Tag::Refcounted {
             // SAFETY: tag == Refcounted guarantees a live *mut RefCountedStr;
             // `deref` may free it, so this stays raw-ptr (not `as_ref_counted`).

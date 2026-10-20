@@ -1,7 +1,7 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isRoot, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -899,6 +899,141 @@ describe.if(isWindows)("#30839 - imports entry pointing at a scoped package", ()
   });
 });
 
+// A symlink in node_modules whose target no longer exists (for example an
+// optional dependency that was removed after its install script failed) is
+// not a module. Like Node, the resolver treats it as if the entry did not
+// exist and keeps looking, instead of resolving to it and failing to read it.
+describe("dangling symlinks in node_modules", () => {
+  const codeOf = (fn: () => unknown) => {
+    try {
+      fn();
+      return "resolved";
+    } catch (e: any) {
+      return { name: e.name, code: e.code };
+    }
+  };
+
+  it.concurrent("are reported as a missing module", async () => {
+    using dir = tempDir("resolver-dangling-node-modules-link", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/.keep": "",
+      "index.js": `
+        const codes = { require: null, import: null, resolve: null };
+        try {
+          require("dangling-pkg");
+        } catch (e) {
+          codes.require = e.code;
+        }
+        try {
+          require.resolve("dangling-pkg");
+        } catch (e) {
+          codes.resolve = e.code;
+        }
+        try {
+          await import("dangling-pkg");
+        } catch (e) {
+          codes.import = e.code;
+        }
+        console.log(JSON.stringify(codes));
+      `,
+    });
+    const root = String(dir);
+    symlinkSync(join("..", "does-not-exist"), join(root, "node_modules", "dangling-pkg"));
+
+    expect(codeOf(() => Bun.resolveSync("dangling-pkg", root))).toEqual({
+      name: "ResolveMessage",
+      code: "ERR_MODULE_NOT_FOUND",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      require: "MODULE_NOT_FOUND",
+      resolve: "MODULE_NOT_FOUND",
+      import: "ERR_MODULE_NOT_FOUND",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("are reported as a missing module when a package.json exports target points at one", async () => {
+    using dir = tempDir("resolver-dangling-exports-target", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/exports-pkg/package.json": JSON.stringify({
+        name: "exports-pkg",
+        version: "1.0.0",
+        exports: { ".": "./index.js", "./sub": "./sub.js" },
+      }),
+      "node_modules/exports-pkg/sub.js": `module.exports = "sub";`,
+      "index.js": `
+        try {
+          require("exports-pkg");
+        } catch (e) {
+          console.log(e.code);
+        }
+        console.log(require("exports-pkg/sub"));
+      `,
+    });
+    const root = String(dir);
+    symlinkSync("removed.js", join(root, "node_modules", "exports-pkg", "index.js"));
+
+    expect(codeOf(() => Bun.resolveSync("exports-pkg", root))).toEqual({
+      name: "ResolveMessage",
+      code: "ERR_MODULE_NOT_FOUND",
+    });
+    expect(Bun.resolveSync("exports-pkg/sub", root)).toBe(join(root, "node_modules", "exports-pkg", "sub.js"));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("MODULE_NOT_FOUND\nsub\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("do not shadow the same package in a parent node_modules", async () => {
+    using dir = tempDir("resolver-dangling-node-modules-link-shadow", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/shadowed-pkg/package.json": JSON.stringify({ name: "shadowed-pkg", version: "1.0.0" }),
+      "node_modules/shadowed-pkg/index.js": `module.exports = "from the parent node_modules";`,
+      "app/node_modules/.keep": "",
+      "app/index.js": `console.log(require("shadowed-pkg"));`,
+    });
+    const root = String(dir);
+    symlinkSync(join("..", "..", "removed-pkg"), join(root, "app", "node_modules", "shadowed-pkg"));
+
+    expect(Bun.resolveSync("shadowed-pkg", join(root, "app"))).toBe(
+      join(root, "node_modules", "shadowed-pkg", "index.js"),
+    );
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: join(root, "app"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("from the parent node_modules\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // dirInfoCachedMaybeLog reads the rfs.entries cache without checking the union
 // tag. If readDirectory() previously failed with a non-ENOENT error (e.g.
 // EACCES), a `.err` variant is stored there; re-resolving the directory after
@@ -908,7 +1043,6 @@ describe.if(isWindows)("#30839 - imports entry pointing at a scoped package", ()
   // Root bypasses DAC, so chmod 0 won't yield EACCES. When running as root on
   // Linux we drop to `nobody` via runuser (and chown the temp dir so the
   // fixture can chmod it back). Otherwise we run the fixture directly.
-  const isRoot = !isWindows && process.getuid?.() === 0;
   const nobody = (() => {
     try {
       // /etc/passwd format: name:x:uid:gid:gecos:home:shell
@@ -1941,4 +2075,49 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     expect(stdout).toBe("index\n");
     expect(exitCode).toBe(0);
   });
+
+  it('".." segments that reach the filesystem root are a resolve error in a browser build', async () => {
+    // More ".." segments than any temp directory is deep, so the specifier names the root on every platform.
+    const specifier = Buffer.alloc(64 * 3, "../").toString() + "..";
+    using dir = tempDir("resolve-dotdot-root", {
+      "run.ts": `import ${JSON.stringify(specifier)};`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "run.ts", "--target=browser"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`error: Could not resolve: ${JSON.stringify(specifier)}`);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
 });
+
+// On Windows these are not how the resolver spells the path, and it was asked again about its own spelling.
+test.concurrent.each(["import", "require"])(
+  "%s() of a file written after its directory was read, by an absolute path with forward slashes",
+  async load => {
+    using dir = tempDir("resolve-written-later", {
+      "src/entry.mjs": `
+        import { writeFileSync } from "node:fs";
+        import { basename, dirname, join } from "node:path";
+        writeFileSync(join(import.meta.dir, "later.mjs"), "export default import.meta.path;");
+        const root = dirname(import.meta.dir);
+        for (const path of [root + "/src/later.mjs", (root + "/src/later.mjs").replaceAll("\\\\", "/")])
+          console.log(basename((await ${load}(path)).default));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "src/entry.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "later.mjs\nlater.mjs\n", stderr: "", exitCode: 0 });
+  },
+);

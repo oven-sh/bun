@@ -1065,8 +1065,7 @@ pub enum PartTag {
     DeadDueToInlining,
     CommonjsNamedExport,
     ImportToConvertFromRequire,
-    /// Set by the linker: each statement destructures plain keys out of an
-    /// import namespace, which runs nothing.
+    /// Set by the linker: each statement destructures plain keys out of an import namespace, which runs no code.
     NamespaceDestructuring,
 }
 

@@ -2800,7 +2800,7 @@ describe("bundler", () => {
   });
   // Live code that holds the namespace object can change the object and not
   // the export: `Object.defineProperty` here. The declaration then reads the
-  // object, as written. Node prints the same.
+  // object, as it does in Node.
   itBundled("cjs2esm/NamespaceDestructuringReadsAnObjectThatOtherCodeHolds", {
     files: {
       "/entry.js": /* js */ `
@@ -2897,6 +2897,108 @@ describe("bundler", () => {
     },
     run: {
       stdout: "0 1 0 1",
+    },
+  });
+  // A local that is assigned again does not hold the namespace any more. The
+  // declaration reads what the local holds, also through an export of it.
+  itBundled("cjs2esm/NamespaceDestructuringOfAReassignedLocal", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Exported } from "./reassigned.js";
+        let Reassigned = require("react-is");
+        Reassigned = { count: 42 };
+        const { count } = Reassigned;
+        const { count: fromExport } = Exported;
+        console.log(count, fromExport);
+      `,
+      "/reassigned.js": /* js */ `
+        let Exported = require("scheduler");
+        Exported = { count: 43 };
+        export { Exported };
+      `,
+      ...counterPackage("react-is"),
+      ...counterPackage("scheduler"),
+    },
+    run: {
+      stdout: "42 43",
+    },
+  });
+  // A \`require()\` of an ES module, or of a package that is not on the list,
+  // gives an object and not a namespace of the bundle. CommonJS output does
+  // not lift a package at all. These declarations print as written.
+  itBundled("cjs2esm/NamespaceDestructuringOfOtherRequires", {
+    files: {
+      "/entry.js": /* js */ `
+        const Esm = require("./esm.js");
+        const Unlisted = require("unlisted");
+        const { count } = Esm;
+        const { count: second } = Unlisted;
+        Esm.inc();
+        Unlisted.inc();
+        console.log(count, Esm.count, second, Unlisted.count);
+      `,
+      "/esm.js": /* js */ `
+        export let count = 0;
+        export function inc() { count++; }
+      `,
+      ...counterPackage("unlisted"),
+    },
+    cjs2esm: { unhandled: ["/entry.js", "/node_modules/unlisted/index.js"] },
+    run: {
+      stdout: "0 1 0 1",
+    },
+  });
+  itBundled("cjs2esm/NamespaceDestructuringInCommonJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as React from "react";
+        const { count, inc } = React;
+        inc();
+        console.log(count, React.count);
+      `,
+      ...counterPackage("react"),
+    },
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__commonJS(");
+    },
+    run: {
+      stdout: "0 1",
+    },
+  });
+  // A CommonJS file keeps its wrapper, and its `require()` of a lifted
+  // package is an import of the bundle. The declaration takes its copy where
+  // it runs, inside the wrapper.
+  itBundled("cjs2esm/NamespaceDestructuringInACommonJSImporter", {
+    files: {
+      "/entry.js": /* js */ `
+        import read from "./consumer.cjs";
+        console.log("entry runs");
+        console.log(read());
+      `,
+      "/consumer.cjs": /* js */ `
+        console.log("consumer runs");
+        const Required = require("react");
+        Required.inc();
+        const { count } = Required;
+        Required.inc();
+        module.exports = () => count + " " + Required.count;
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        console.log("react runs");
+        exports.count = 0;
+        exports.inc = function () { exports.count++; };
+        exports.removeThisExport = "REMOVE_react";
+      `,
+    },
+    dce: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("__commonJS(");
+      expect(code).not.toContain("exports_react");
+    },
+    run: {
+      stdout: "react runs\nconsumer runs\nentry runs\n1 2",
     },
   });
 });

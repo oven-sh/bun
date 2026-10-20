@@ -2263,7 +2263,8 @@ describe("bundler", () => {
   // A used top-level destructuring of a module namespace reads each key once,
   // where it runs. The bundle takes one copy per key and does not create the
   // namespace object, so the exports that nothing reads are dropped. The
-  // namespace can be a star import, or an import that resolves to one.
+  // namespace can be a star import, or an import that resolves to one. A
+  // write to a local does not reach the export: the local is a copy.
   for (const format of ["esm", "cjs", "iife"] as const) {
     itBundled(`dce/DestructuringOfImportNamespaceTakesCopies_${format}`, {
       files: {
@@ -2272,11 +2273,16 @@ describe("bundler", () => {
           import { sub } from './reexport.js'
           import viaDefault from './default.js'
           ns.inc()
-          const { count, inc } = ns
+          let { count, inc } = ns
           inc()
           let { inner: first } = sub
           var { inner: second } = viaDefault
           console.log(count, ns.count, first, second)
+          count += 10
+          first = 'local'
+          bump()
+          function bump() { second += 5 }
+          console.log(count, ns.count, first, sub.inner, second, viaDefault.inner)
         `,
         "/lib.js": /* js */ `
           export let count = 0
@@ -2302,7 +2308,7 @@ describe("bundler", () => {
       format,
       dce: true,
       run: {
-        stdout: "1 2 7 8",
+        stdout: "1 2 7 8\n11 2 local 7 13 8",
       },
     });
   }
@@ -2423,6 +2429,491 @@ describe("bundler", () => {
       { file: "/out/e1.js", stdout: "e1 0" },
       { file: "/out/e2.js", stdout: "e2 count,inc" },
     ],
+  });
+  // m2.js, m5.js and m6.js import each other, in a chunk that worker.js and
+  // the import() in index.js share. m5.js reads v6 at load, through the
+  // declaration. The chunk follows the order of the import(), which runs
+  // m6.js first, as it does for a named import of v6
+  // (splitting/SharedChunkOwnerLoadTimeRead).
+  const cycleInSharedChunk = {
+    "/index.js": `import("./m5.js").then(m => console.log("ok", m.w5));`,
+    "/worker.js": `import "./m6.js"; console.log("worker");`,
+    "/m2.js": `export { v5 as x } from "./m5.js"; export function v2() { return 2 }`,
+    "/m5.js": /* js */ `
+      import { v2 } from "./m2.js"; import * as six from "./m6.js";
+      export function v5() { return v2 }
+      export const { v6: w5 } = six;
+    `,
+    "/m6.js": `import { v2 } from "./m2.js"; export const w6 = typeof v2; export var v6 = "six";`,
+  };
+  itBundled("dce/DestructuringOfImportNamespaceSplittingCycle", {
+    files: cycleInSharedChunk,
+    entryPoints: ["/index.js", "/worker.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      for (const file of readdirSync(api.outdir)) {
+        expect(api.readFile("/out/" + file)).not.toContain("exports_m6");
+      }
+    },
+    run: [
+      { file: "/out/index.js", stdout: "ok six" },
+      { file: "/out/worker.js", stdout: "worker" },
+    ],
+  });
+  // keys() holds the namespace object of m6.js, so the declaration reads it.
+  itBundled("dce/DestructuringOfImportNamespaceSplittingCycleHolder", {
+    files: {
+      ...cycleInSharedChunk,
+      "/index.js": `import("./m5.js").then(m => console.log("ok", m.w5, m.keys()));`,
+      "/m5.js": /* js */ `
+        import { v2 } from "./m2.js"; import * as six from "./m6.js";
+        export function v5() { return v2 }
+        export const { v6: w5 } = six;
+        export function keys() { return Object.keys(six).join(); }
+      `,
+    },
+    entryPoints: ["/index.js", "/worker.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/index.js", stdout: "ok six v6,w6" },
+      { file: "/out/worker.js", stdout: "worker" },
+    ],
+  });
+  // The keys of a barrel live in other files. The copies read those files,
+  // and nothing of the barrel itself is in the bundle.
+  itBundled("dce/DestructuringOfImportNamespaceBarrel", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from 'pkg'
+        const { a, deep, renamed, setA } = ns
+        setA('changed')
+        console.log(a, deep, renamed, ns.a)
+      `,
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "type": "module", "sideEffects": false }`,
+      "/node_modules/pkg/index.js": /* js */ `
+        export * from './a.js'
+        export * from './b/index.js'
+        export { source as renamed } from './c.js'
+      `,
+      "/node_modules/pkg/a.js": /* js */ `
+        export let a = 'a'
+        export function setA(value) { a = value }
+        export const REMOVE_a = 'unused'
+      `,
+      "/node_modules/pkg/b/index.js": /* js */ `
+        export * from './deep.js'
+        export const REMOVE_b = 'unused'
+      `,
+      "/node_modules/pkg/b/deep.js": /* js */ `
+        export const deep = 'deep'
+        export const REMOVE_deep = 'unused'
+      `,
+      "/node_modules/pkg/c.js": /* js */ `
+        export const source = 'renamed'
+        export const REMOVE_c = 'unused'
+      `,
+    },
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("exports_pkg");
+    },
+    run: {
+      stdout: "a deep renamed changed",
+    },
+  });
+  // `pkg` has no side effects and its index only re-exports, so index.js is
+  // in an output only for its namespace object. When other code holds that
+  // object, the declaration reads it, and each output still runs by itself:
+  // the reader declares or imports the object and does not run the holder.
+  const barrelWithLeaf = {
+    "/node_modules/pkg/package.json": `{ "name": "pkg", "type": "module", "sideEffects": false }`,
+    "/node_modules/pkg/index.js": `export * from './leaf.js'`,
+    "/node_modules/pkg/leaf.js": /* js */ `
+      export let count = start()
+      function start() { return 0 }
+      export function inc() { count++ }
+    `,
+    "/reader.js": /* js */ `
+      import * as ns from 'pkg'
+      const { count, inc } = ns
+      inc()
+      console.log('reader', count)
+    `,
+    "/holder.js": /* js */ `
+      import * as held from 'pkg'
+      console.log('holder', Object.keys(held).join())
+    `,
+  };
+  for (const [name, options] of Object.entries<Partial<Parameters<typeof itBundled>[1]>>({
+    "InAnotherEntry": {
+      entryPoints: ["/reader.js", "/holder.js"],
+      run: [
+        { file: "/out/reader.js", stdout: "reader 0" },
+        { file: "/out/holder.js", stdout: "holder count,inc" },
+      ],
+    },
+    "InAnotherEntrySplitting": {
+      entryPoints: ["/reader.js", "/holder.js"],
+      splitting: true,
+      run: [
+        { file: "/out/reader.js", stdout: "reader 0" },
+        { file: "/out/holder.js", stdout: "holder count,inc" },
+      ],
+    },
+    "BehindImport": {
+      files: {
+        ...barrelWithLeaf,
+        "/entry.js": `import './reader.js'; if (globalThis.never) import('./holder.js')`,
+      },
+      entryPoints: ["/entry.js"],
+      splitting: true,
+      run: { file: "/out/entry.js", stdout: "reader 0" },
+    },
+    "ThatReexportsIt": {
+      files: {
+        ...barrelWithLeaf,
+        "/holder.js": `export * as held from 'pkg'`,
+      },
+      entryPoints: ["/reader.js", "/holder.js"],
+      runtimeFiles: {
+        "/out/keys.js": `import { held } from './holder.js'; console.log('holder', Object.keys(held).join())`,
+      },
+      run: [
+        { file: "/out/reader.js", stdout: "reader 0" },
+        { file: "/out/keys.js", stdout: "holder count,inc" },
+      ],
+    },
+  })) {
+    itBundled("dce/DestructuringOfImportNamespaceBarrelHolder" + name, {
+      files: barrelWithLeaf,
+      outdir: "/out",
+      format: "esm",
+      ...options,
+    });
+  }
+  // leaf.js is wrapped in `__esm` because an `import()` can load it. Only
+  // the `export *` statement of index.js runs that wrapper before the read,
+  // and only the namespace object keeps that statement.
+  itBundled("dce/DestructuringOfImportNamespaceBarrelOverWrappedLeaf", {
+    files: {
+      ...barrelWithLeaf,
+      "/entry.js": `import './reader.js'; globalThis.lazy = () => import('pkg/leaf.js')`,
+    },
+    entryPoints: ["/entry.js"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__esm(");
+    },
+    run: {
+      stdout: "reader 0",
+    },
+  });
+  // The same read of a wrapped module that is the namespace itself: the
+  // import statement runs the wrapper, and the copies follow it.
+  itBundled("dce/DestructuringOfImportNamespaceOfWrappedModule", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './lib.js'
+        const { value } = ns
+        console.log('entry', value)
+        const page = await import('./page.js')
+        page.render()
+      `,
+      "/page.js": /* js */ `
+        import { value } from './lib.js'
+        export function render() { console.log('page', value) }
+      `,
+      "/lib.js": /* js */ `
+        export const value = compute()
+        function compute() { return 'computed' }
+        export const REMOVE_lib = 'unused'
+      `,
+    },
+    format: "esm",
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__esm(");
+    },
+    run: {
+      stdout: "entry computed\npage computed",
+    },
+  });
+  // `dynamicName` is an export of `pkg` only at run time, so each read of it
+  // is a property of the namespace object of `pkg`. A declaration over that
+  // namespace keeps the object for those reads.
+  itBundled("dce/DestructuringOfImportNamespaceWithDynamicExports", {
+    files: {
+      "/named.js": /* js */ `
+        import * as ns from 'pkg'
+        import { dynamicName } from 'pkg'
+        const { staticName } = ns
+        console.log(staticName, dynamicName)
+      `,
+      "/member.js": /* js */ `
+        import * as ns from 'pkg'
+        const { staticName } = ns
+        console.log(staticName, ns.dynamicName)
+      `,
+      "/other.js": /* js */ `
+        import * as ns from 'pkg'
+        import { read } from './read.js'
+        const { staticName } = ns
+        console.log(staticName, read())
+      `,
+      "/read.js": /* js */ `
+        import { dynamicName } from 'pkg'
+        export function read() { return dynamicName }
+      `,
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "sideEffects": false }`,
+      "/node_modules/pkg/index.js": /* js */ `
+        export * from './impl.cjs'
+        export const staticName = 'static'
+      `,
+      "/node_modules/pkg/impl.cjs": `exports['dynamic' + 'Name'] = 'dynamic'`,
+    },
+    entryPoints: ["/named.js", "/member.js", "/other.js"],
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/named.js", stdout: "static dynamic" },
+      { file: "/out/member.js", stdout: "static dynamic" },
+      { file: "/out/other.js", stdout: "static dynamic" },
+    ],
+  });
+  itBundled("dce/DestructuringOfImportNamespaceWithExternalExports", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from 'pkg'
+        import { sep } from 'pkg'
+        const { staticName } = ns
+        console.log(staticName, typeof sep, typeof ns.join)
+      `,
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "type": "module", "sideEffects": false }`,
+      "/node_modules/pkg/index.js": /* js */ `
+        export * from 'node:path'
+        export const staticName = 'static'
+      `,
+    },
+    format: "cjs",
+    target: "node",
+    run: {
+      stdout: "static string function",
+    },
+  });
+  // entry.js and b.js import each other. A function of b.js holds the
+  // namespace object of entry.js, so the declaration over `self` reads that
+  // object. Nothing holds the namespace object of b.js.
+  itBundled("dce/DestructuringOfImportNamespaceInACycle", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as self from './entry.js'
+        import * as b from './b.js'
+        export const fromEntry = 'entry'
+        const { fromEntry: own } = self
+        const { fromB, readEntry } = b
+        console.log(own, fromB, readEntry())
+      `,
+      "/b.js": /* js */ `
+        import * as entry from './entry.js'
+        export const fromB = 'b'
+        export function readEntry() {
+          const { fromEntry } = entry
+          return fromEntry
+        }
+        export const REMOVE_b = 'unused'
+      `,
+    },
+    format: "esm",
+    dce: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("{ fromEntry: own } = exports_entry");
+      expect(code).not.toContain("exports_b");
+    },
+    run: {
+      stdout: "entry b entry",
+    },
+  });
+  // A key that is itself a namespace: the copy holds the namespace object of
+  // inner.js, so a declaration over inner.js reads that object. Nothing holds
+  // the namespace object of outer.js.
+  itBundled("dce/DestructuringOfImportNamespaceKeyIsANamespace", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as outer from './outer.js'
+        import * as inner from './inner.js'
+        const { sub, own } = outer
+        const { one } = inner
+        console.log(Object.keys(sub).join(), own, one)
+      `,
+      "/outer.js": /* js */ `
+        export * as sub from './inner.js'
+        export const own = 'own'
+        export const REMOVE_outer = 'unused'
+      `,
+      "/inner.js": /* js */ `
+        export const one = 1
+        export const two = 2
+      `,
+    },
+    dce: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("sub = exports_inner");
+      expect(code).toMatch(/\{ one(: \w+)? \} = exports_inner/);
+      expect(code).not.toContain("exports_outer");
+    },
+    run: {
+      stdout: "one,two own 1",
+    },
+  });
+  // The same with the copy in the output of one entry point and the
+  // declaration over inner.js in the output of another.
+  itBundled("dce/DestructuringOfImportNamespaceKeyIsANamespaceSplitting", {
+    files: {
+      "/e1.js": /* js */ `
+        import * as outer from './outer.js'
+        const { sub } = outer
+        console.log('e1', Object.keys(sub).join())
+      `,
+      "/e2.js": /* js */ `
+        import * as inner from './inner.js'
+        const { one } = inner
+        console.log('e2', one)
+      `,
+      "/outer.js": /* js */ `
+        export * as sub from './inner.js'
+        export const unused = 'unused'
+      `,
+      "/inner.js": /* js */ `
+        export const one = 1
+        export const two = 2
+      `,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/e1.js", stdout: "e1 one,two" },
+      { file: "/out/e2.js", stdout: "e2 1" },
+    ],
+  });
+  // A file with `import` and `module.exports` keeps a CommonJS wrapper. The
+  // declaration takes its copy where it runs, inside the wrapper.
+  for (const format of ["esm", "cjs", "iife"] as const) {
+    itBundled(`dce/DestructuringOfImportNamespaceInMixedSyntaxImporter_${format}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import read from './mixed.js'
+          console.log(read())
+        `,
+        "/mixed.js": /* js */ `
+          import * as ns from './lib.js'
+          ns.inc()
+          const { count } = ns
+          ns.inc()
+          module.exports = () => count + ' ' + ns.count
+        `,
+        "/lib.js": /* js */ `
+          export let count = 0
+          export function inc() { count++ }
+          export const REMOVE_lib = 'unused'
+        `,
+      },
+      format,
+      dce: true,
+      onAfterBundle(api) {
+        const code = api.readFile("/out.js");
+        expect(code).toContain("__commonJS(");
+        expect(code).not.toContain("exports_lib");
+      },
+      run: {
+        stdout: "1 2",
+      },
+    });
+  }
+  // One statement with several declarators is one part per declarator.
+  const manyDeclarators = {
+    "/entry.js": /* js */ `
+      import * as ns from './lib.js'
+      import * as ns2 from './lib2.js'
+      const { count } = ns, { inner } = ns2, plain = 5, { count: again, inc } = ns
+      inc()
+      console.log(count, inner, plain, again, ns.count)
+    `,
+    "/lib.js": /* js */ `
+      export let count = 0
+      export function inc() { count++ }
+      export const REMOVE_lib = 'unused'
+    `,
+    "/lib2.js": /* js */ `
+      export const inner = 7
+      export const REMOVE_lib2 = 'unused'
+    `,
+  };
+  itBundled("dce/DestructuringOfImportNamespaceManyDeclarators", {
+    files: manyDeclarators,
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("exports_");
+    },
+    run: {
+      stdout: "0 7 5 0 1",
+    },
+  });
+  // With tree shaking off a module is one part, and the statement prints as
+  // written.
+  itBundled("dce/DestructuringOfImportNamespaceTreeShakingOff", {
+    files: manyDeclarators,
+    treeShaking: false,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("{ count: count2 } = exports_lib, { inner: inner2 } = exports_lib2");
+    },
+    run: {
+      stdout: "0 7 5 0 1",
+    },
+  });
+  // The keys of one declaration bind together. Each of them keeps its
+  // export, also a key that nothing reads: `neverRead` here, and `second`
+  // of a declaration whose other key has a reader.
+  itBundled("dce/DestructuringOfImportNamespaceKeepsTheExportOfEveryKey", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './lib.js'
+        import { first } from './mid.js'
+        const { used, neverRead } = ns
+        console.log(used, first)
+      `,
+      "/lib.js": /* js */ `
+        export const used = 'used'
+        export const neverRead = 'never read'
+        export const REMOVE_lib = 'unused'
+      `,
+      "/mid.js": /* js */ `
+        import * as ns from './lib2.js'
+        export const { first, second } = ns
+      `,
+      "/lib2.js": /* js */ `
+        export const first = 'first'
+        export const second = 'second of mid'
+        export const REMOVE_lib2 = 'unused'
+      `,
+    },
+    dce: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("never read");
+      expect(code).toContain("second of mid");
+    },
+    run: {
+      stdout: "used first",
+    },
   });
   itBundled("dce/DCEOfDestructuringOfUnwrappedRequire", {
     files: {

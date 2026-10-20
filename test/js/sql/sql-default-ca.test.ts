@@ -1,6 +1,6 @@
 // tls: true and tls: {} carry no options of their own, so tls.setDefaultCACertificates() has to reach them directly.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tls as serverCert } from "harness";
+import { bunEnv, bunExe, tls as serverCert, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 

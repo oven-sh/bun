@@ -383,6 +383,12 @@ static JSValue createSQLiteErrorFromCode(JSC::JSGlobalObject* globalObject, int 
     return createSQLiteError(globalObject, rc, sqlite3_errstr(rc), -1);
 }
 
+// A call that records nothing leaves the error of an earlier call on the connection. `rc` has an extended part only after sqlite3_extended_result_codes().
+static bool isErrorOfCall(int connectionCode, int rc)
+{
+    return (connectionCode & 0xff) == (rc & 0xff);
+}
+
 // The error of a call that compiles no SQL names no token. SQLite still has the offset of an earlier error then.
 static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db)
 {
@@ -393,11 +399,10 @@ static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db)
 static JSValue createSQLiteErrorWithOffset(JSC::JSGlobalObject* globalObject, sqlite3* db, int rc, int64_t byteOffsetBase = 0)
 {
     int code = sqlite3_extended_errcode(db);
-    int primaryCode = code & 0xff;
-    // A call that records nothing leaves the error of an earlier call on the connection. `rc` has an extended part only after sqlite3_extended_result_codes().
-    if (primaryCode != (rc & 0xff))
+    if (!isErrorOfCall(code, rc))
         return createSQLiteErrorFromCode(globalObject, rc);
     const char* message = sqlite3_errmsg(db);
+    int primaryCode = code & 0xff;
     // SQLite sets the offset only for an error that its parser reports: SQLITE_ERROR, or SQLITE_SCHEMA when the schema changed meanwhile, with a message of its own.
     bool parserReported = (primaryCode == SQLITE_ERROR || primaryCode == SQLITE_SCHEMA) && strcmp(message, sqlite3_errstr(code)) != 0;
     int64_t byteOffset = parserReported ? sqlite3_error_offset(db) : -1;
@@ -1786,7 +1791,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDefineFunction, (JSC::JSGlobalObject * le
 
     if (rc != SQLITE_OK) [[unlikely]] {
         // A name or an argument count that SQLite refuses is SQLITE_MISUSE, which leaves no message on the connection.
-        bool hasMessage = (sqlite3_errcode(db) & 0xff) == (rc & 0xff);
+        bool hasMessage = isErrorOfCall(sqlite3_errcode(db), rc);
         throwException(lexicalGlobalObject, scope, hasMessage ? createSQLiteError(lexicalGlobalObject, db) : createSQLiteErrorFromCode(lexicalGlobalObject, rc));
         return {};
     }

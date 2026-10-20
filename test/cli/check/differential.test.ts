@@ -85,7 +85,8 @@ test.concurrent.skipIf(!tsc || !hasRunner)("reports the same whichever files sha
   );
   expect(lines).toEqual([]);
   expect(counts["by cost"].tasks).toBeGreaterThan(2 * cases.length);
-  expect(counts["one task"].tasks).toBeLessThanOrEqual(cases.length);
+  // A program needs more than one task if a task is discarded, because another one rechecks its files.
+  expect(counts["one task"].tasks).toBeLessThan(counts["by cost"].tasks / 4);
   expect(counts["last file first"].tasks).toBeGreaterThanOrEqual(counts["last file first"].files);
   expect(counts["each file twice"].tasks).toBeGreaterThan(counts["each file twice"].files);
   expect(exitCode).toBe(0);

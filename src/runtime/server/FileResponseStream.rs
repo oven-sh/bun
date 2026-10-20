@@ -19,6 +19,8 @@ use bun_io::{BufferedReader, FileType, ReadState};
 use bun_io::{FilePollFlag, PosixFlags as ReaderFlags};
 use bun_jsc::JsCell;
 use bun_ptr::RefPtr;
+#[cfg(windows)]
+use bun_sys::FdExt as _;
 use bun_sys::{self as sys, Fd};
 use bun_uws::{AnyResponse, WriteResult};
 
@@ -106,11 +108,44 @@ pub(crate) struct StartOptions {
     pub pollable: bool,
     /// Byte offset into the file to begin reading from.
     pub offset: u64,
+    /// Read at `offset` even when it is 0: the position of a caller's `fd` can be anywhere.
+    pub positional: bool,
     /// Maximum bytes to send; `None` reads to EOF. For regular files this
     /// should be `stat.size - offset` (after Range/slice clamping).
     pub length: Option<u64>,
     pub idle_timeout: u8,
     pub owner: StreamOwner,
+}
+
+#[cfg(windows)]
+impl StartOptions {
+    /// libuv moves the position of a handle to read at an offset, so read through a second one.
+    fn with_own_handle(mut self) -> Self {
+        if !self.positional || self.auto_close {
+            return self;
+        }
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let Ok(path) = sys::get_fd_path_z(self.fd, &mut path_buf) else {
+            return self;
+        };
+        let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::CLOEXEC;
+        let Ok(own) = sys::open(path, flags, 0) else {
+            return self;
+        };
+        // The path can name another file by now.
+        let same_file = matches!(
+            (sys::fstat(self.fd), sys::fstat(own)),
+            (Ok(theirs), Ok(ours)) if theirs.st_dev == ours.st_dev && theirs.st_ino == ours.st_ino
+        );
+        if !same_file {
+            own.close();
+            return self;
+        }
+        self.fd = own;
+        self.auto_close = true;
+        self.positional = false;
+        self
+    }
 }
 
 /// Who hears about the end of the stream. Exactly one of complete / abort /
@@ -157,6 +192,8 @@ impl StreamOwner {
 
 impl FileResponseStream {
     pub(crate) fn start(opts: StartOptions) {
+        #[cfg(windows)]
+        let opts = opts.with_own_handle();
         let use_sendfile = can_sendfile(opts.resp, opts.file_type, opts.length);
 
         // Heap-allocate; the raw pointer is handed to uWS callbacks and freed
@@ -242,7 +279,7 @@ impl FileResponseStream {
         // SAFETY: `start()`/`start_file_offset()` re-enter this object through
         // the parent pointer (`loop_`/`event_loop`), so no cell borrow spans them.
         let reader = this_ref.reader_mut();
-        let start_result = if opts.offset > 0 {
+        let start_result = if opts.positional || opts.offset > 0 {
             reader.start_file_offset(opts.fd, opts.pollable, opts.offset as usize)
         } else {
             reader.start(opts.fd, opts.pollable)

@@ -309,6 +309,7 @@ impl FileRoute {
                     file_type,
                     pollable,
                     offset,
+                    positional: false,
                     length,
                     idle_timeout: server.config().idle_timeout,
                     owner: StreamOwner::FileRoute(route),

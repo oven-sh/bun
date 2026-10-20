@@ -2088,6 +2088,8 @@ where
             file_type,
             pollable,
             offset: sendfile.offset as u64,
+            // `!auto_close` is `Bun.file(fd)`: the caller opened the descriptor.
+            positional: is_regular && !auto_close,
             length: if is_regular {
                 Some(sendfile.remain as u64)
             } else {

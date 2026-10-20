@@ -4727,6 +4727,30 @@ impl<'a> Resolver<'a> {
                     rfs!().commit_listing(&mut cached_dir_entry_result, in_place, listing)?;
             }
 
+            // SAFETY: `top_parent.index` is a sentinel or a slot assigned by
+            // `put`; resolver mutex held.
+            let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
+                .map(|p| unsafe { DirInfoRef::from_raw(p) });
+
+            // The listing of the parent says whether this directory is a
+            // symlink. The nearest cached ancestor can hold a listing from an
+            // earlier generation, so read it before this walk interns its
+            // path and before this directory gets a slot: a read that fails
+            // then leaves nothing behind for this directory.
+            // `entries_mutex` is held and is not recursive, hence `_locked`.
+            let parent_entries = match parent_dir_ptr {
+                Some(parent) if !self.opts.preserve_symlinks => {
+                    match parent.get_entries_ref_locked(self.generation) {
+                        Ok(parent_entries) => parent_entries,
+                        Err(err) => {
+                            self.dir_read_failure = Some(Fs::DirReadFailure::of(&parent, err));
+                            return Err(err);
+                        }
+                    }
+                }
+                _ => None,
+            };
+
             let dir_path: &'static [u8] = if !queue_top_safe_path.is_empty() {
                 // SAFETY: non-empty `safe_path` is always a dirname_store-backed
                 // `&'static [u8]` (set from `entries.dir` above); widen the
@@ -4771,29 +4795,6 @@ impl<'a> Resolver<'a> {
                         && safe_path[end] == SEP,
                 );
                 &safe_path[dir_path_i..end]
-            };
-
-            // SAFETY: `top_parent.index` is a sentinel or a slot assigned by
-            // `put`; resolver mutex held.
-            let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
-                .map(|p| unsafe { DirInfoRef::from_raw(p) });
-
-            // The listing of the parent says whether this directory is a
-            // symlink. The nearest cached ancestor can hold a listing from an
-            // earlier generation, so read it before this directory gets a
-            // slot: a read that fails then caches nothing for this directory.
-            // `entries_mutex` is held and is not recursive, hence `_locked`.
-            let parent_entries = match parent_dir_ptr {
-                Some(parent) if !self.opts.preserve_symlinks => {
-                    match parent.get_entries_ref_locked(self.generation) {
-                        Ok(parent_entries) => parent_entries,
-                        Err(err) => {
-                            self.dir_read_failure = Some(Fs::DirReadFailure::of(&parent, err));
-                            return Err(err);
-                        }
-                    }
-                }
-                _ => None,
             };
 
             // We must initialize it as empty so that the result index is correct.

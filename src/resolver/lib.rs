@@ -1025,8 +1025,8 @@ pub mod fs {
         /// this directly (`rfs.entries.get_or_put(..)`); modeled as the wrapper
         /// `EntriesMap` (bun_alloc has no BSSMap equivalent).
         pub entries: EntriesMap,
-        /// What the failed reads of a directory interned, until a read of it
-        /// succeeds or an open finds it gone or denied. `EntryStore`,
+        /// What the failed reads of a directory interned, for as long as
+        /// the cache has nothing that stops the next read of it. `EntryStore`,
         /// `FilenameStore` and `DirnameStore` only grow, so `read_listing`
         /// uses these entries and this path again when it reads the
         /// directory. Guarded by `entries_mutex`.
@@ -1253,20 +1253,26 @@ pub mod fs {
                 }
                 why @ (Unlisted::Denied(_) | Unlisted::Failed(_)) => why,
             };
-            // Nothing in the cache stops the next lookup from reading this
-            // directory again. `partial.data` collects every entry interned
-            // for it, so that the next read interns only the names it has
-            // not seen.
-            if matches!(why, Unlisted::Failed(_)) || in_place.is_some() {
-                match (interned, in_place.as_mut()) {
-                    (Some(earlier), _) => Self::keep_entries(&mut partial.data, &earlier.data),
-                    (None, Some(stale)) => Self::keep_entries(&mut partial.data, stale.data()),
-                    (None, None) => {}
-                }
-                partial.fd = Fd::INVALID;
-                bun_core::handle_oom(self.failed_listings.put(dir, partial));
+            // `partial.data` collects every entry interned for this
+            // directory, so that the next read of it interns only the names
+            // it has not seen. A caller that caches `why` drops it again.
+            match (interned, in_place.as_mut()) {
+                (Some(earlier), _) => Self::keep_entries(&mut partial.data, &earlier.data),
+                (None, Some(stale)) => Self::keep_entries(&mut partial.data, stale.data()),
+                (None, None) => {}
             }
+            partial.fd = Fd::INVALID;
+            bun_core::handle_oom(self.failed_listings.put(dir, partial));
             why
+        }
+
+        /// Drop what the failed reads of `dir` left: no read of it follows.
+        #[inline]
+        fn forget_failed_listing(&mut self, dir: &[u8]) {
+            if !self.failed_listings.is_empty() {
+                self.failed_listings
+                    .remove(strings::paths::without_trailing_slash_windows_path(dir));
+            }
         }
 
         /// What `err` from the open of `dir_path` means. For
@@ -1283,15 +1289,7 @@ pub mod fs {
             err: crate::Error,
         ) -> Unlisted {
             if let why @ (Unlisted::Gone(_) | Unlisted::Denied(_)) = Unlisted::of(err, b"") {
-                // No read follows, so what earlier failed reads of this
-                // directory left is of no use.
-                if !self.failed_listings.is_empty() {
-                    self.failed_listings.remove(
-                        strings::paths::without_trailing_slash_windows_path(
-                            in_place.map(StaleListing::dir).unwrap_or(dir_path),
-                        ),
-                    );
-                }
+                self.forget_failed_listing(in_place.map(StaleListing::dir).unwrap_or(dir_path));
                 return why;
             }
             let Ok((dir, interned)) = self.listing_dir(in_place, dir_path, dir_needs_sep) else {
@@ -1375,6 +1373,7 @@ pub mod fs {
 
         /// Cache that `dir` does not exist.
         pub(crate) fn mark_dir_not_found(&mut self, dir: &[u8]) -> crate::CrateResult<()> {
+            self.forget_failed_listing(dir);
             let result = self.entries.get_or_put(dir)?;
             self.entries.mark_not_found(result);
             Ok(())
@@ -1387,6 +1386,7 @@ pub mod fs {
             dir: &[u8],
             err: crate::Error,
         ) -> crate::CrateResult<&'static mut EntriesOption> {
+            self.forget_failed_listing(dir);
             let mut get_or_put_result = self.entries.get_or_put(dir)?;
             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                 self.entries.mark_not_found(get_or_put_result);

@@ -349,6 +349,36 @@ console.log("ran");`,
     });
   }
 
+  // Only the hashbang comment of the banner is left out. As in the parser, that comment ends at the first line break,
+  // and a lone CR, U+2028 and U+2029 are line breaks too. The text after it is code, and it stays.
+  test("banner/SourceHashbangWithHashbangBannerKeepsTheRestOfTheBanner", async () => {
+    using dir = tempDir("banner-source-hashbang", { "a.js": `#!/usr/bin/env node\nconsole.log("ran");` });
+    // Each banner, and what it leaves between the entry point's hashbang line and its code.
+    const cases = [
+      ["#!/usr/bin/env bun", ""],
+      ["#!/usr/bin/env bun\n", ""],
+      ["#!/usr/bin/env bun\n\n// rest", "// rest\n"],
+      ["#!/usr/bin/env bun\r\n// rest", "// rest\n"],
+      ["#!/usr/bin/env bun\rrest();", "rest();\n"],
+      ["#!/usr/bin/env bun\u2028rest();", "rest();\n"],
+      ["#!/usr/bin/env bun\u2029rest();", "rest();\n"],
+      // U+20AC starts with the same byte as U+2028 and U+2029. It is not a line break.
+      ["#!/usr/bin/env \u20AC\nrest();", "rest();\n"],
+      ["// no hashbang\nrest();", "// no hashbang\nrest();\n"],
+    ];
+    const outputs: string[] = [];
+    for (const [banner] of cases) {
+      const build = await Bun.build({
+        entrypoints: [join(String(dir), "a.js")],
+        target: "node",
+        minify: { whitespace: true },
+        banner,
+      });
+      outputs.push(await build.outputs[0].text());
+    }
+    expect(outputs).toEqual(cases.map(([, rest]) => `#!/usr/bin/env node\n${rest}console.log("ran");\n`));
+  });
+
   // The target of a dynamic import is an entry point chunk, so it also keeps its own hashbang.
   itBundled("banner/DynamicImportSourceHashbangWithHashbangBannerAndTargetBun", {
     banner: "#!/usr/bin/env bun\n// Additional banner content",

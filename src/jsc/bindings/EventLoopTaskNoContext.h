@@ -1,5 +1,6 @@
 #pragma once
 
+#include "EventLoopTask.h"
 #include "ZigGlobalObject.h"
 #include "root.h"
 
@@ -23,10 +24,19 @@ public:
         delete this;
     }
 
+    // The closure is not run. The returned task only destroys it, on the JS thread that owns what it captured.
+    WebCore::EventLoopTask* intoUnrunTask()
+    {
+        auto* unrun = new WebCore::EventLoopTask([task = WTF::move(m_task)](WebCore::ScriptExecutionContext&) {});
+        delete this;
+        return unrun;
+    }
+
 private:
     Function<void()> m_task;
 };
 
 extern "C" void Bun__EventLoopTaskNoContext__performTask(EventLoopTaskNoContext* task);
+extern "C" WebCore::EventLoopTask* Bun__EventLoopTaskNoContext__intoUnrunTask(EventLoopTaskNoContext* task);
 
 } // namespace Bun

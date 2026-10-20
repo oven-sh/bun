@@ -69,6 +69,7 @@ enum Serve {
         pollable: bool,
         offset: u64,
         length: Option<u64>,
+        unpollable_length: Option<u64>,
     },
 }
 
@@ -299,6 +300,7 @@ impl FileRoute {
                 pollable,
                 offset,
                 length,
+                unpollable_length,
             } => {
                 let server = route.server.get().unwrap();
                 FileResponseStream::start(FileResponseStreamOptions {
@@ -310,6 +312,7 @@ impl FileRoute {
                     pollable,
                     offset,
                     length,
+                    unpollable_length,
                     idle_timeout: server.config().idle_timeout,
                     owner: StreamOwner::FileRoute(route),
                 });
@@ -457,6 +460,15 @@ impl FileRoute {
             pollable,
             offset: body_offset,
             length: body_len,
+            // A device's stat size is 0, so `size` above is 0 too. The slice
+            // the route was built from is the only bound it has.
+            unpollable_length: if file_type == FileType::File
+                || self.blob.size.get() == crate::webcore::blob::MAX_SIZE
+            {
+                None
+            } else {
+                Some(self.blob.size.get() as u64)
+            },
         }
     }
 

@@ -5,7 +5,7 @@ use super::relate::Ternary;
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, SymbolId};
 use crate::table::Handle;
-use crate::util::{PositionSet, SharedSort};
+use crate::util::{PositionSet, SharedSort, in_order_of_decimal_text};
 use smallvec::{SmallVec, smallvec};
 
 #[path = "unlisted_intersections.rs"]
@@ -4526,15 +4526,22 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Shape<'s> {
         let mut b = Builder::new_in(self.arena);
         let fixed = Self::fixed_length(flags);
+        let is_optional = |i: usize| flags[i].contains(ElemFlags::OPTIONAL);
+        let mut elements: SmallVec<[(TypeId, Atom); 8]> = SmallVec::with_capacity(fixed);
         for i in 0..fixed {
-            let optional = flags[i].contains(ElemFlags::OPTIONAL);
-            let ty = if optional {
+            let ty = if is_optional(i) {
                 self.optional_property(elems[i])
             } else {
                 elems[i]
             };
+            elements.push((ty, self.number_name(i as f64)));
+        }
+        // `getNamedMembers` sorts the members without a declaration by name: "0", "1", "10", "2", .., "length".
+        for i in in_order_of_decimal_text(fixed) {
+            let optional = is_optional(i);
+            let (ty, name) = elements[i];
             b.add(Prop {
-                name: self.number_name(i as f64),
+                name,
                 // `getLiteralTypeFromProperty`: synthesized without a declaration or a `nameType`,
                 // it is keyed by the string "0".
                 flags: PropFlags::STRING_NAME
@@ -4582,9 +4589,7 @@ impl<'p, 's> Checker<'p, 's> {
         let heir = matches!(self.data(array), TypeData::Ref { .. }).then_some(this);
         let own = b.shape.props.len();
         self.inherit(&mut b, array, heir);
-        // `getNamedMembers`: members without a declaration come last, sorted by name. The inherited ones are in order.
-        let atoms = &self.atoms();
-        b.shape.props[..own].shared_sort_unstable_by_key(|prop| atoms.bytes(prop.name));
+        // `getNamedMembers`: members without a declaration come last. The inherited ones are in order.
         b.shape.props.rotate_left(own);
         b.shape
     }

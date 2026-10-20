@@ -85,6 +85,28 @@ pub fn fx_hash<T: std::hash::Hash + ?Sized>(value: &T) -> u64 {
     h.finish()
 }
 
+/// Returns the numbers below `count` in the order of their decimal text: 0, 1, 10, 100, 11, .., 2, 20, ..
+/// It compares no strings, so it's linear.
+pub fn in_order_of_decimal_text(count: usize) -> impl Iterator<Item = usize> {
+    let mut next = (count > 0).then_some(0);
+    std::iter::from_fn(move || {
+        let current = next?;
+        next = if current == 0 {
+            (count > 1).then_some(1)
+        } else if current * 10 < count {
+            Some(current * 10)
+        } else {
+            // The next number with the same digits in front, or with fewer of them.
+            let mut prefix = current;
+            while prefix % 10 == 9 || prefix + 1 >= count {
+                prefix /= 10;
+            }
+            (prefix > 0).then_some(prefix + 1)
+        };
+        Some(current)
+    })
+}
+
 /// Numbers each key that occurs more than once: 0, 1, .. in order of first occurrence.
 pub fn number_repeated<K: Copy + Eq + std::hash::Hash>(keys: &[K]) -> FxHashMap<K, usize> {
     let mut numbers: FxHashMap<K, usize> = FxHashMap::default();
@@ -796,5 +818,19 @@ impl<K: Eq, V, A: Allocator + Clone> WindowedMap<K, V, A> {
             || list.push((key.clone(), value.take().unwrap())),
         );
         value.is_none()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::in_order_of_decimal_text;
+
+    #[test]
+    fn decimal_text_order_matches_a_sort_of_the_strings() {
+        for count in (0..=130).chain([999, 1000, 1001, 1234]) {
+            let mut sorted: Vec<usize> = (0..count).collect();
+            sorted.sort_by_key(usize::to_string);
+            assert_eq!(in_order_of_decimal_text(count).collect::<Vec<_>>(), sorted);
+        }
     }
 }

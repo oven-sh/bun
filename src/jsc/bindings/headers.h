@@ -44,10 +44,8 @@ class DOMURL;
 
 #pragma mark - JSC::JSObject
 
-CPP_DECL JSC::EncodedJSValue JSC__JSObject__create(JSC::JSGlobalObject* arg0, size_t arg1, void* arg2, void(* ArgFn3)(void* arg0, JSC::JSObject* arg1, JSC::JSGlobalObject* arg2));
 CPP_DECL size_t JSC__JSObject__getArrayLength(JSC::JSObject* arg0);
 CPP_DECL JSC::EncodedJSValue JSC__JSObject__getIndex(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, uint32_t arg2);
-CPP_DECL void JSC__JSObject__putRecord(JSC::JSObject* arg0, JSC::JSGlobalObject* arg1, EncodedSlice* arg2, EncodedSlice* arg3, size_t arg4);
 CPP_DECL JSC::EncodedJSValue EncodedSlice__external(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(void* arg0, void* arg1, size_t arg2));
 CPP_DECL JSC::EncodedJSValue EncodedSlice__toExternalValue(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL JSC::EncodedJSValue EncodedSlice__toValueGC(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1);
@@ -199,12 +197,9 @@ CPP_DECL JSC::EncodedJSValue JSC__JSValue__fastGetDirect_(JSC::EncodedJSValue JS
 CPP_DECL void JSC__JSValue__forEach(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC::VM* arg0, JSC::JSGlobalObject* arg1, void* arg2, JSC::EncodedJSValue JSValue3));
 CPP_DECL void JSC__JSValue__forEachProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC::JSGlobalObject* arg0, void* arg1, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool arg4, bool arg5));
 CPP_DECL void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC::JSGlobalObject* arg0, void* arg1, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool arg4, bool arg5));
-CPP_DECL JSC::EncodedJSValue JSC__JSValue__fromEntries(JSC::JSGlobalObject* arg0, EncodedSlice* arg1, EncodedSlice* arg2, size_t arg3, bool arg4);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__fromInt64NoTruncate(JSC::JSGlobalObject* arg0, int64_t arg1);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__fromUInt64NoTruncate(JSC::JSGlobalObject* arg0, uint64_t arg1);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__bigIntFromLatin1(JSC::JSGlobalObject* arg0, const uint8_t* arg1, size_t arg2);
-CPP_DECL JSC::EncodedJSValue JSC__JSValue__fromTimevalNoTruncate(JSC::JSGlobalObject* arg0, int64_t nsec, int64_t sec);
-CPP_DECL JSC::EncodedJSValue JSC__JSValue__bigIntSum(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1);
 CPP_DECL BunString JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);

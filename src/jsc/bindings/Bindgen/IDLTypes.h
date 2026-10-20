@@ -114,7 +114,7 @@ struct BytesOptions {
     bool refuseStringObject { false };
 };
 
-// `Sink` is JSBytesView, where a string is its UTF-8, or JSBlobOrStringOrBuffer, where it is the WTF::String.
+// `Sink` is JSBytesView, where a string is its UTF-8, JSBlobOrBufferView, which takes none, or JSBlobOrStringOrBuffer, where it is the WTF::String.
 template<typename Sink, BytesOptions>
 struct IDLBytes : WebCore::IDLType<Sink> {
     using SequenceStorageType = void;

@@ -34,6 +34,12 @@ export const expectedByNode = b.fn({
   expected: { text: ["string"], data: ["Buffer", "TypedArray", "DataView", "string"] },
   returns: b.usize,
 });
+export const TestFlag = b.dictionary({ flag: b.bool.loose.default(false) });
+export const expectedMessage = b.fn({
+  args: { data: b.bytes({ from: ["buffer"] }), options: TestFlag.nullable.default({}), more: TestFlag.default({}) },
+  expected: { data: "data is not a buffer.", options: ["object"] },
+  returns: b.usize,
+});
 
 export const TestColor = b.enumeration(["red", ["green", "lime"], "blue"]);
 export const nextColor = b.fn({ args: { color: TestColor }, returns: TestColor });
@@ -64,6 +70,24 @@ export const TestNames = b.dictionary({
   all: b.array(b.string.utf8),
 });
 export const names = b.fn({ args: { text: b.string.utf8 }, returns: TestNames });
+
+export const TestBare = b.dictionary({ id: b.u32, label: b.string.utf8.optional }, { nullPrototype: true });
+export const bare = b.fn({ args: { id: b.u32 }, returns: TestBare });
+
+export const dateOf = b.fn({ args: { time: b.f64 }, returns: b.f64.asDate });
+export const latin1 = b.fn({
+  args: { bytes: b.bytes({ from: ["buffer"] }) },
+  returns: b.string.local,
+  capability: "heap",
+});
+export const TestTextOrBytes = b.union({ text: b.string.utf8, bytes: b.bufferSource, nothing: b.null });
+export const textOrBytes = b.fn({
+  args: { text: b.string.utf8, as: b.u8 },
+  returns: TestTextOrBytes,
+  capability: "heap",
+  throws: true,
+});
+export const positions = b.fn({ args: { text: b.string.utf8 }, returns: b.record(b.usize) });
 
 export const TestValue = b.union({
   number: b.f64,
@@ -179,12 +203,14 @@ export const TestCounter = b.class({
     count: { getter: b.i32 },
     label: { getter: b.string.utf8, setter: true },
     tag: { getter: b.any, capability: "heap", cache: true, throws: true },
+    sameTag: { getter: b.any, capability: "heap", cache: "tag", throws: true },
     increment: { args: { by: b.i32.default(1) }, returns: b.i32, mutates: true },
     /** By a number, or by the length of a string, as many times. */
     add: [
       { rustName: "add_length", args: { text: b.string.utf8, times: b.i32.default(1) }, returns: b.i32, mutates: true },
       { rustName: "add_number", args: { by: b.i32 }, returns: b.i32, mutates: true },
     ],
+    forgetTag: { capability: "heap", passThis: true },
     listen: { args: { listener: b.any }, capability: "heap", passThis: true },
     /** Calls the listener, which may call back into this object, then returns the count. */
     notify: { returns: b.i32, capability: "js", throws: true },

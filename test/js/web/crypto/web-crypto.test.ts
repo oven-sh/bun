@@ -16,6 +16,11 @@ it("crypto.subtle setter should not throw", () => {
   expect(globalThis.crypto.subtle).toBe(subtle);
 });
 
+it("getRandomValues and randomUUID have the lengths of the IDL", () => {
+  expect(crypto.getRandomValues.length).toBe(1);
+  expect(crypto.randomUUID.length).toBe(0);
+});
+
 describe("Web Crypto", () => {
   // https://github.com/oven-sh/bun/issues/3795
   it("keeps event loop alive", () => {

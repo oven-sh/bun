@@ -2402,7 +2402,7 @@ impl NodeHTTPResponse {
     pub(crate) fn take_request_trailers(
         &self,
         global_object: &JSGlobalObject,
-        use_insecure_http_parser: JSValue,
+        use_insecure_http_parser: bool,
     ) -> JsResult<JSValue> {
         let section = self.request_trailers.replace(Vec::new());
         if section.is_empty() {
@@ -2410,7 +2410,6 @@ impl NodeHTTPResponse {
         }
         // Lenient (insecureHTTPParser) servers accept CTL bytes in trailer values on
         // the wire; parse them with the same leniency so they surface on req.trailers.
-        let use_insecure_http_parser = use_insecure_http_parser.to_boolean();
         bun_jsc::call_zero_is_throw(global_object, || {
             Bun__NodeHTTP__parseRequestTrailers(
                 global_object,

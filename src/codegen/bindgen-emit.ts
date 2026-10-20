@@ -942,7 +942,9 @@ ${
 
 extern "C" void* ${symbolName(type, "fromJS")}(JSC::EncodedJSValue value)
 {
-    auto* object = dynamicDowncast<${type.cpp}>(JSC::JSValue::decode(value));
+    auto decodedValue = JSC::JSValue::decode(value);
+    // isCell() is true of the empty value.
+    auto* object = decodedValue ? dynamicDowncast<${type.cpp}>(decodedValue) : nullptr;
     return object ? object->wrapped() : nullptr;
 }`
     : `extern "C" JSC::JSCell* ${symbolName(type, "create")}(JSC::JSGlobalObject* globalObject, JSC::Structure* structure)

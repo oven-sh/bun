@@ -34,7 +34,7 @@ export const NodeHTTPResponse = b.class({
     ref: { passGlobal: true, rustName: "js_ref" },
     resume: { returns: b.bool, rustName: "do_resume" },
     takeRawHeaders: { ...method, args: { headers: b.any } },
-    takeRequestTrailers: { ...method, args: { useInsecureHTTPParser: b.any }, length: 0 },
+    takeRequestTrailers: { ...method, args: { useInsecureHTTPParser: b.bool.loose }, length: 0 },
     unref: { passGlobal: true, rustName: "js_unref" },
     upgraded: { getter: b.bool },
     write: { ...method, args: body, length: 3 },

@@ -1752,7 +1752,7 @@ function assertCapabilityKey(
   assert(!refCounted || options.capability === undefined, `${at}a refCounted class has passGlobal, not capability`);
   assert(
     refCounted || options.passGlobal === undefined,
-    `${at}passGlobal is only for a refCounted class: otherwise capability: "js" has cx.global()`,
+    `${at}passGlobal is only for a refCounted class; a function with capability: "js" has cx.global()`,
   );
 }
 

@@ -119,7 +119,7 @@ public:
     static JSWrapper* create(JSC::VM& vm, JSC::Structure* structure)
     {
         JSWrapper* object;
-        // Otherwise LLVM calls allocateCell out of line for Timeout, Immediate and DNSResolver.
+        // Otherwise LLVM calls allocateCell out of line for some classes.
         [[clang::always_inline]] object = new (NotNull, JSC::allocateCell<JSWrapper>(vm, allocationSize())) JSWrapper(vm, structure);
         object->finishCreation(vm);
         return object;

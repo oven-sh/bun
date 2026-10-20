@@ -549,7 +549,11 @@ test.concurrent("bun bake serves a page added to app/pages/, at the next reload"
     join(String(dir), "app/server.ts"),
     `export default { fetch: () => new Response("v2", { status: 404 }) };`,
   );
-  const [, reloaded] = await output.waitFor(new RegExp(`^[\\s\\S]{${before}}[\\s\\S]*?(url: http|error: [^\\n]*)`));
+  // While the edit is written, app/server.ts can be empty for a moment: that reload prints another
+  // error, and the reload for the whole file follows it.
+  const [, reloaded] = await output.waitFor(
+    new RegExp(`^[\\s\\S]{${before}}[\\s\\S]*?(url: http|error: Cannot find module[^\\n]*)`),
+  );
   expect(reloaded).toBe("url: http");
 
   expect(await get(url, "/late")).toContain("<h1>late</h1>");

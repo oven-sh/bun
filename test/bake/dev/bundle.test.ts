@@ -374,6 +374,38 @@ devTest("directory cache bust case #17576", {
     await c.expectMessage(456);
   },
 });
+// The same through a tsconfig "paths" alias: the alias stayed unresolved until
+// a restart, or until a relative import of the new file (#43391).
+devTest("importing a new file through a tsconfig paths alias", {
+  files: {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@/*": ["./*"] } } }),
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "base.ts": `export const base = "base";`,
+    "index.ts": `
+      import { base } from "@/base";
+      console.log("value: " + base);
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("value: base");
+    await c.expectNoWebSocketActivity(async () => {
+      await dev.write("fresh.ts", `export const fresh = "fresh";`);
+    });
+    await dev.write(
+      "index.ts",
+      `
+        import { fresh } from "@/fresh";
+        console.log("value: " + fresh);
+      `,
+    );
+    await c.expectMessage("value: fresh");
+  },
+});
 devTest("deleting imported file shows error then recovers", {
   skip: [
     "win32", // unlinkSync is having weird behavior

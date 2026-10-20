@@ -320,11 +320,19 @@ macro_rules! node_vectors {
         #[derive(Copy, Clone, Default, Debug)]
         pub struct NodeBases([u32; VECTORS + 1]);
 
+        impl<S: Storage> FileIn<S> {
+            /// True if every node fits in a handle and every id fits in `ROW_BITS` bits.
+            pub(crate) fn has_room_for_handles(&self) -> bool {
+                let rows = 1 $(+ self.$field.len())*;
+                rows + self.fns.len() + self.classes.len() + self.modules.len() < 1 << ROW_BITS
+            }
+        }
+
         impl File<'_> {
             fn node_bases(&self) -> NodeBases {
+                assert!(self.has_room_for_handles());
                 let mut bases = [1u32; VECTORS + 1];
                 $(bases[$index + 1] = bases[$index] + self.$field.len() as u32;)*
-                assert!(bases[VECTORS] < 1 << ROW_BITS);
                 NodeBases(bases)
             }
 
@@ -587,22 +595,18 @@ impl ToNode for Parent {
             Parent::Expr(e) => file.node(e),
             Parent::Stmt(s) => file.node(s),
             Parent::VarInit(d) => file.node(d),
-            Parent::ParamDefault(p) | Parent::Decorator(_, DecoratorOwner::Param(p)) => {
-                file.node(p)
-            }
+            Parent::ParamDefault(p) | Parent::ParamDecorator(p) => file.node(p),
             Parent::PatPropDefault(p) => file.node(p),
             Parent::PatElemDefault(e) => file.node(e),
             Parent::Prop(p) => file.node(p),
-            Parent::PropKey(_, p) | Parent::MethodKey(p) => file.node(p).with(Part::Name),
+            Parent::PropKey(p) | Parent::MethodKey(p) => file.node(p).with(Part::Name),
             Parent::PatKey(p) => file.node(p).with(Part::PropertyName),
             Parent::MemberKey(m) => file.node(m).with(Part::Name),
-            Parent::MemberInit(m) | Parent::Decorator(_, DecoratorOwner::Member(m)) => file.node(m),
+            Parent::MemberInit(m) | Parent::MemberDecorator(m) => file.node(m),
             Parent::FnBody(f) => file.node(f),
             Parent::EnumInit(m) => file.node(m),
             Parent::Case(c) => file.node(c),
-            Parent::ClassExtends(c) | Parent::Decorator(_, DecoratorOwner::Class(c)) => {
-                file.node(c)
-            }
+            Parent::ClassExtends(c) | Parent::ClassDecorator(c) => file.node(c),
             Parent::Module(m) => file.node(m),
             Parent::File => Node::FILE,
         }
@@ -629,7 +633,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
             NodeData::File => self.list(file.body),
             NodeData::Part(part, row) => self.part_of(part, row),
             NodeData::Expr(e) => self.expr(e, node),
-            NodeData::Stmt(s) => self.span(file[s].modifiers) || self.stmt(s, node),
+            NodeData::Stmt(s) => self.span(file.stmt_modifiers(s)) || self.stmt(s, node),
             NodeData::Type(t) => self.ty(t, node),
             NodeData::Pat(p) => match file[p].kind {
                 PatKind::Missing | PatKind::Ident(_) => false,
@@ -816,7 +820,9 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
 
     fn call(&mut self, c: CallId) -> bool {
         let call = &self.file[c];
-        self.one(call.callee) || self.list(call.type_args) || self.list(call.args)
+        self.one(call.callee)
+            || self.list(self.file.list_at(call.type_args))
+            || self.list(call.args)
     }
 
     fn expr(&mut self, e: ExprId, node: Node) -> bool {
@@ -845,7 +851,9 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
             }
             ExprKind::TaggedTemplate(c) => {
                 let call = &file[c];
-                self.one(call.callee) || self.list(call.type_args) || self.one(call.template)
+                self.one(call.callee)
+                    || self.list(file.list_at(call.type_args))
+                    || self.one(file.template_of(c))
             }
             ExprKind::Array(elements) => self.list(elements),
             ExprKind::Object(properties) => self.span(properties),
@@ -863,7 +871,10 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
                     || self.one(file.jsdoc_type(JsDocTypeOwner::Assign(e)))
                     || self.one(value)
             }
-            ExprKind::Cond { test, yes, no } => self.one(test) || self.one(yes) || self.one(no),
+            ExprKind::Cond { test, branches } => {
+                let Branches { yes, no } = self.file.branches(branches);
+                self.one(test) || self.one(yes) || self.one(no)
+            }
             ExprKind::Spread(e) | ExprKind::Await(e) | ExprKind::NonNull(e) => self.one(e),
             // `<const>e` has its type first.
             ExprKind::AsConst(operand) if file.is_type_assertion(e, operand) => {
@@ -881,7 +892,9 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
             ExprKind::As { expr, ty } | ExprKind::Satisfies { expr, ty } => {
                 self.one(expr) || self.one(ty)
             }
-            ExprKind::Instantiation { expr, type_args } => self.one(expr) || self.list(type_args),
+            ExprKind::Instantiation { expr, type_args } => {
+                self.one(expr) || self.list(self.file.list_at(type_args))
+            }
             ExprKind::Jsx(j) if file.is_self_closing(j) => {
                 self.one(file[j].tag)
                     || self.list(file[j].type_args)
@@ -2013,7 +2026,7 @@ impl<'s> File<'s> {
     fn kind_of_name(&self, part: Part, row: Node) -> Kind {
         match self.data(row) {
             NodeData::Expr(e) => match self[e].kind {
-                ExprKind::Dot { name_pos, .. } if is_private_name_at(self, name_pos) => {
+                ExprKind::Dot { .. } if is_private_name_at(self, self.name_pos(e)) => {
                     Kind::PrivateIdentifier
                 }
                 _ => Kind::Identifier,
@@ -2397,7 +2410,7 @@ impl<'s> File<'s> {
                 if rest.starts_with(b"const") { start } else { 0 }
             }
             (Part::Name, NodeData::Expr(e)) => match self[e].kind {
-                ExprKind::Dot { name_pos, .. } => name_pos,
+                ExprKind::Dot { .. } => self.name_pos(e),
                 ExprKind::ImportMeta | ExprKind::ImportCall { .. } => {
                     self.token_after_dot(self[e].pos + b"import".len() as u32)
                 }
@@ -2416,12 +2429,13 @@ impl<'s> File<'s> {
                 (Part::Name, StmtKind::ImportEquals(i)) => self[i].name_pos,
                 (Part::Name, StmtKind::Import(i)) => self[i].default_pos,
                 // `export as namespace N`
-                (Part::Name, StmtKind::ExportAsNamespace(_)) => (0..self[s].modifiers.len() + 3)
-                    .fold(self[s].start, |at, _| {
+                (Part::Name, StmtKind::ExportAsNamespace(_)) => {
+                    (0..self.stmt_modifiers(s).len() + 3).fold(self[s].start, |at, _| {
                         let rest = self.text.get(at as usize..).unwrap_or_default();
                         let word = rest.iter().take_while(|b| b.is_ascii_alphabetic()).count();
                         self.token_after(at + word as u32)
-                    }),
+                    })
+                }
                 (Part::ImportClause, StmtKind::Import(i)) => self[i].clause_start,
                 (Part::NamedBindings, StmtKind::Import(i)) if self[i].namespace.is_some() => {
                     self[i].namespace_start
@@ -2649,7 +2663,7 @@ impl File<'_> {
                 StmtKind::Enum(e) => self[e].flags,
                 StmtKind::Module(m) => self[m].flags,
                 StmtKind::ImportEquals(i) => self[i].flags,
-                _ => self.modifiers_to_flags(self[s].modifiers),
+                _ => self.modifiers_to_flags(self.stmt_modifiers(s)),
             },
             NodeData::VarDecl(d) => self[d].flags,
             NodeData::Param(p) => self[p].flags,
@@ -2965,7 +2979,7 @@ impl File<'_> {
             CallExpression | NewExpression | TaggedTemplateExpression => match self.data(parent) {
                 NodeData::Expr(e) => match self[e].kind {
                     ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c) => self
-                        .ids(self[c].type_args)
+                        .ids(self.list_at(self[c].type_args))
                         .any(|argument| self.node(argument) == node),
                     _ => false,
                 },

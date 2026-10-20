@@ -856,8 +856,9 @@ private:
 
             /* Frames that a client sent without waiting for the 101 (RFC 6455 4.1) follow the
              * request head in this read, and the HTTP parser stopped there. Give them to the
-             * WebSocket now, as the loop would have for a read of its own. The parser counts a
-             * body that the request declared as consumed, so that is never taken for frames.
+             * WebSocket now, as the loop would have for a read of its own. If the request declared
+             * a body, the parser counts the whole read as consumed, so what this read holds of the
+             * body is not taken for frames. Nothing remembers the rest: a later read is all frames.
              * Not when upgradedWebSocket names another connection (upgrade() adopts in place,
              * so ours is s): the field is per context, and a microtask of this dispatch, or an
              * earlier upgrade from a request body handler, can set it. */

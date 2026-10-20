@@ -33,7 +33,8 @@ const tsconfig = JSON.stringify({
 test.concurrent.skipIf(!tsc)("one thread enters every cycle where `tsc --singleThreaded` does", async () => {
   using dir = tempDir("bun-check-differential", {
     "tsconfig.json": tsconfig,
-    ...modulesInRings(isDebug || isASAN ? 24 : 60),
+    // With 52 or 60 modules TypeScript 7.0 reports TS2321 in every file and 7.1 in none. Up to 48 they agree.
+    ...modulesInRings(isDebug || isASAN ? 24 : 48),
   });
   const root = String(dir);
   const [theirs, ours] = await Promise.all([
@@ -42,6 +43,576 @@ test.concurrent.skipIf(!tsc)("one thread enters every cycle where `tsc --singleT
   ]);
   expect(theirs.length).toBeGreaterThan(100);
   expect(ours).toEqual(theirs);
+});
+
+/**
+ * In each group a ring: the property `span` has no annotation, the call in its initializer asks for the constraint of
+ * `K`, that for the members of `Tags`, one of which has a name that is a `string`, so they have an index signature,
+ * whose type is a union that is reduced, which compares the classes, and so asks for the type of `span`. TypeScript finds a
+ * circular reference if it comes to the property, the constraint or the return type first, and none if it comes to
+ * the interface first: a request for members that are being resolved gets those that are in place. A group has three
+ * files, which declare the interface, declare the property, and only call the function, in one of the six orders.
+ */
+function ringsEnteredFromThreeSides(groups: number) {
+  const files: Record<string, string> = {};
+  const orders = ["abc", "bac", "cab", "bca", "acb", "cba"];
+  for (let g = 0; g < groups; g++) {
+    const [tags, time, use] = [...orders[g % 6]].map(it => `g${g}${it}.ts`);
+    files[tags] = `export class Popover${g} { static readonly tag: string = "popover"; }
+declare global {
+  interface Span${g} { hidden: boolean }
+  interface Tags${g} { span: Span${g}; [Popover${g}.tag]: Popover${g} }
+  function create${g}<K extends keyof Tags${g}>(tag: K): Tags${g}[K];
+}
+`;
+    files[time] = `export class Time${g} { static readonly tag = "time"; readonly span = create${g}("span"); }
+declare global { interface Tags${g} { [Time${g}.tag]: Time${g} } }
+`;
+    // `never` puts the types in the messages.
+    files[use] = `const other${g}: never = create${g}("other" as string);
+const key${g}: never = null! as keyof Tags${g};
+export {};
+`;
+  }
+  return files;
+}
+
+// What the members of a ring get depends on where it is entered. That is the first file of the program that leads there,
+// whichever thread gets there first.
+test.concurrent.skipIf(!tsc)("every thread enters a ring where `tsc --singleThreaded` does", async () => {
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": tsconfig,
+    ...ringsEnteredFromThreeSides(isDebug || isASAN ? 6 : 24),
+  });
+  const root = String(dir);
+  const [theirs, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false", "--singleThreaded"], root, root),
+    ...[1, 2, 3, 8, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  ]);
+  for (const code of ["TS2313", "TS2345", "TS2577", "TS7022"]) expect(theirs.join("\n")).toContain(code);
+  for (const lines of ours) expect(lines).toEqual(theirs);
+});
+
+// The base type of `Box` is a mapped type over `Box`: its members are resolved once without the base type and once with it.
+// Whoever asks in between gets the first round.
+test.concurrent.skipIf(!tsc)(
+  "an interface whose base type maps over the interface, on any number of threads",
+  async () => {
+    const files: Record<string, string> = {
+      "tsconfig.json": tsconfig,
+      "box.d.ts": `type WithIntrinsics<T> = { [K in keyof T as T[K] extends Function ? \`$\${K & string}\` : never]: T[K] };
+declare interface Box<T> { then(x: T): T; catch(): void; finally(): void; value: T }
+declare interface Box<T> extends WithIntrinsics<Box<T>> {}
+declare function makeBox<T>(): { box: Box<T>; done: (v: T) => void };
+`,
+    };
+    for (let i = 0; i < (isDebug || isASAN ? 16 : 64); i++) {
+      const use = `declare const q${i}: Box<R${i}>; q${i}.$then;\n`;
+      const body = `interface W${i} { box: Box<R${i}> & { child?: number }; done: (v: R${i}) => void }
+const { box: c${i}, done: a${i} }: W${i} = makeBox();\n`;
+      files[`f${i}.ts`] =
+        `interface R${i} { n${i}: ${i} }\n${[body, use + body, body + use][i % 3]}const planted${i}: 1 = 2;\nexport {};\n`;
+    }
+    using dir = tempDir("bun-check-differential", files);
+    const root = String(dir);
+    const [theirs, ...ours] = await Promise.all([
+      linesOf([tsc!, "-p", ".", "--pretty", "false", "--singleThreaded"], root, root),
+      ...[1, 8, 32].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+    ]);
+    expect(theirs.length).toBe(isDebug || isASAN ? 16 : 64);
+    for (const lines of ours) expect(lines).toEqual(theirs);
+  },
+);
+
+// `b.ts` comes to a ring while `a.ts` is being checked, so it is checked again later. By then it has shared what it has
+// found out about its first lines. The names there that do not resolve are reported all the same.
+test.concurrent.skipIf(!tsc)("a file that is checked again reports what it has reported the first time", async () => {
+  const lines = (count: number, line: (i: number) => string) => Array.from({ length: count }, (_, i) => line(i) + "\n");
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": tsconfig,
+    "a.ts": lines(300, i => `export const a${i} = [${i}, "${i}"].map(it => [it]);`).join(""),
+    "b.ts": [
+      ...lines(300, i => `const b${i} = missing${i}.alloc(0);`),
+      `export const ring = turn();\nexport function turn() { return [ring]; }\n`,
+    ].join(""),
+    "c.ts": `import { ring } from "./b";\nexport const c: never = ring;\n`,
+  });
+  const root = String(dir);
+  const [theirs, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false", "--singleThreaded"], root, root),
+    ...[1, 2, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  ]);
+  expect(theirs.filter(line => line.includes("TS2304")).length).toBe(300);
+  for (const lines of ours) expect(lines).toEqual(theirs);
+});
+
+// The same for names in types, heritage clauses, initializers of properties and of enum members, and for what is unused.
+test.concurrent.skipIf(!tsc)("a file that is checked again reports the same about its declarations", async () => {
+  const count = 300;
+  const numbers = Array.from({ length: count }, (_, i) => i);
+  const kinds: ((i: number) => string)[] = [
+    i => `const b${i}: Missing${i} = null!;`,
+    i => `type L${i} = A${i}; function f${i}(x: L${i}): Gone${i} { return x; }`,
+    i => `interface I${i} extends Absent${i} { a: A${i} }`,
+    i => `class C${i}<T extends A${i}> { p!: T; q = lost${i}; }`,
+    i => `enum E${i} { X = nowhere${i}, Y = 1 } let e${i}: E${i}.Z;`,
+    i => `let g${i} = (y: A${i}) => y.b; namespace N${i} { export type Q = Void${i}; }`,
+  ];
+  const options = { ...JSON.parse(tsconfig).compilerOptions, noUnusedLocals: true, noUnusedParameters: true };
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: options }),
+    "a.ts": numbers
+      .map(i => `export const a${i} = [${i}, "${i}"].map(it => [it]);\nexport interface A${i} { a: ${i} }\n`)
+      .join(""),
+    "b.ts": [
+      `import type { ${numbers.map(i => `A${i}`).join(", ")} } from "./a";`,
+      ...numbers.map(i => kinds[i % kinds.length](i)),
+      `export const ring = turn();\nexport function turn() { return [ring]; }\n`,
+    ].join("\n"),
+    "c.ts": `import { ring } from "./b";\nexport const c: never = ring;\n`,
+  });
+  const root = String(dir);
+  const [theirs, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false", "--singleThreaded"], root, root),
+    ...[1, 2, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  ]);
+  for (const code of ["TS2304", "TS2339", "TS2694", "TS6133", "TS6196"]) expect(theirs.join("\n")).toContain(code);
+  for (const lines of ours) expect(lines).toEqual(theirs);
+});
+
+/**
+ * `depth` layers of `width` modules. Each re-exports two modules of the layer below with `export *`, and imports a name
+ * and a namespace from them. The first 8 of a layer are rings of two, with an alias that goes round. Some export a
+ * default that does not exist, which the module above imports. The lowest layer imports from an ambient module.
+ */
+function modulesInLayers(width: number, depth: number) {
+  const files: Record<string, string> = {
+    "ambient.d.ts": `declare module "hub" { export { spoke as viaHub } from "spoke"; export * from "spoke"; }\ndeclare module "spoke" { export const spoke: "spoke"; export default missingInSpoke; }\n`,
+  };
+  for (let level = 0; level < depth; level++) {
+    for (let i = 0; i < width; i++) {
+      const name = `l${level}_${i}`;
+      const [below, other, partner] = [`l${level - 1}_${i}`, `l${level - 1}_${(i * 7 + level) % width}`, i ^ 1];
+      const lines = [`export const ${name} = "${name}" as const;`, `export type L${level}_${i} = ${level};`];
+      const read = [name];
+      // Every other layer has a `shared` of its own, which hides those of the two modules below.
+      if (level % 2 === 0) lines.push(`export const shared = "shared by ${name}" as const;`);
+      if (level > 0) {
+        lines.push(`export * from "./${below}";`, `export * from "./${other}";`);
+        lines.push(`import { ${below} as below, l0_${i} as lowest, type L0_${i} } from "./${below}";`);
+        lines.push(`import * as ns from "./${other}";`);
+        read.push("below", "lowest", `null! as L0_${i}`, "ns.shared", `ns.${other}`);
+      } else {
+        lines.push(`import { viaHub, spoke } from "hub";`);
+        read.push("viaHub", "spoke");
+      }
+      if (i < 8) {
+        lines.push(`import { l${level}_${partner} as partner } from "./l${level}_${partner}";`);
+        lines.push(`export { ring${level}_${partner} as ring${level}_${i} } from "./l${level}_${partner}";`);
+        read.push("partner");
+      }
+      if (i % 9 === 4) lines.push(`export default missing${level}_${i};`);
+      if (i % 9 === 4 && level > 0) {
+        lines.push(`import fromBelow from "./${below}";`);
+        read.push("fromBelow");
+      }
+      // `never` puts the types in the messages.
+      lines.push(`export const read${level}_${i}: never[] = [${read.join(", ")}];`);
+      files[`${name}.ts`] = lines.join("\n") + "\n";
+    }
+  }
+  return files;
+}
+
+// What an alias and an `export *` lead to is found before the first file is checked, on all threads: for a ring of
+// modules when it is found for what the ring imports. A layer here has 68 rings.
+test.concurrent.skipIf(!tsc)("aliases through layers of modules, on any number of threads", async () => {
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": tsconfig,
+    ...modulesInLayers(72, isDebug || isASAN ? 3 : 5),
+  });
+  const root = String(dir);
+  const [theirs, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+    ...[1, 2, 3, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  ]);
+  for (const code of ["TS2303", "TS2304", "TS2308", "TS2322"]) expect(theirs.join("\n")).toContain(code);
+  for (const lines of ours) expect(lines).toEqual(theirs);
+});
+
+/**
+ * `chains` chains of modules, each one longer than the one before. A module re-exports the one before it in its chain.
+ * What else it reads, it does not import from a file: ambient modules that lead to each other, round in a ring, and to a
+ * package and back, a UMD global, `import a = b.c` in scripts, what another module adds to a module and to the globals.
+ */
+function modulesThatDependOnFilesTheyDoNotImport(chains: number, length: number) {
+  const files: Record<string, string> = {
+    "globals.ts": `declare namespace G { const g: "g"; namespace Inner { type T = "T of Inner"; const v: "v of Inner"; } }
+import GI = G.Inner;
+import Ring1 = Ring2;
+declare module "amb-a" { export { b as a } from "amb-b"; export import I = G.Inner; export default GI; export { u as viaUmd } from "./umd"; }
+`,
+    "other.ts": `import Ring2 = Ring1;
+declare module "amb-b" { export const b: "b"; export { a as back } from "amb-a"; export * from "amb-c"; }
+declare module "amb-c" { import { back } from "amb-b"; export const c: typeof back; export { round } from "amb-d"; export default missingInC; }
+declare module "amb-d" { export { round } from "amb-c"; export { t as viaFile } from "pkg"; }
+`,
+    "node_modules/pkg/package.json": `{ "name": "pkg", "version": "1.0.0", "types": "index.d.ts" }`,
+    "node_modules/pkg/index.d.ts": `export declare const t: "t of pkg";\nexport { c as fromAmbient, viaFile as roundTrip } from "amb-all";\n`,
+    "all.ts": `declare module "amb-all" { export * from "amb-a"; export * from "amb-b"; export * from "amb-d"; }\n`,
+    "umd.d.ts": `export as namespace Umd;\nexport declare const u: "u";\nexport { a as viaAmbient } from "amb-a";\n`,
+    "target.ts": `export const t = "t" as const;\nexport { b } from "amb-b";\n`,
+    "aug.ts": `import { t } from "./target";
+declare module "./target" { export const added: typeof import("amb-a").a; }
+declare module "amb-b" { export const addedToB: typeof t; }
+declare global { const fromAug: "fromAug"; namespace G { const more: "more"; } }
+`,
+  };
+  for (let chain = 0; chain < chains; chain++) {
+    for (let i = 0; i < length + chain; i++) {
+      const name = `c${chain}_${i}`;
+      const lines = [`export const ${name} = "${name}" as const;`];
+      const read = [name];
+      if (i > 0) {
+        lines.push(`export * from "./c${chain}_${i - 1}";`);
+        lines.push(`import { c${chain}_0 as first } from "./c${chain}_${i - 1}";`);
+        read.push("first");
+      }
+      switch ((chain + i) % 5) {
+        case 0:
+          lines.push(`import def, { a, I, viaUmd } from "amb-a";`);
+          read.push("def.v", "a", "I.v", "null! as I.T", "viaUmd");
+          break;
+        case 1:
+          lines.push(`import { b, back, c, round, addedToB } from "amb-b";`, `import defaultOfC from "amb-c";`);
+          read.push("b", "back", "c", "round", "addedToB", "defaultOfC");
+          break;
+        case 2:
+          lines.push(`import * as all from "amb-all";`, `import { fromAmbient, roundTrip } from "pkg";`);
+          read.push("all.a", "all.b", "all.viaFile", "all.c", "fromAmbient", "roundTrip");
+          break;
+        case 3:
+          lines.push(`import { added, b as viaTarget } from "./target";`);
+          read.push("added", "viaTarget", "Umd.u", "Umd.viaAmbient", "fromAug", "G.more");
+          break;
+        default:
+          lines.push(`import Local = G.Inner;`, `export import Again = GI;`);
+          read.push("Local.v", "Again.v", "GI.v", "null! as Ring1");
+      }
+      // `never` puts the types in the messages.
+      lines.push(`export const read${chain}_${i}: never[] = [${read.join(", ")}];`);
+      files[`${name}.ts`] = lines.join("\n") + "\n";
+    }
+  }
+  return files;
+}
+
+// A module is linked as soon as what it imports is. What it reads of a file that it does not import must not depend on
+// how far the link of that file has come.
+test.concurrent.skipIf(!tsc)(
+  "aliases that lead to files their file does not import, on any number of threads",
+  async () => {
+    using dir = tempDir("bun-check-differential", {
+      "tsconfig.json": tsconfig,
+      ...modulesThatDependOnFilesTheyDoNotImport(6, isDebug || isASAN ? 2 : 4),
+    });
+    const root = String(dir);
+    const [theirs, ...ours] = await Promise.all([
+      linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+      ...[1, 2, 3, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+    ]);
+    for (const code of ["TS2303", "TS2304", "TS2322", "TS2439", "TS2686"]) expect(theirs.join("\n")).toContain(code);
+    for (const lines of ours) expect(lines).toEqual(theirs);
+  },
+);
+
+/** Rings of aliases with a link that is no import: it names the UMD global of a module. */
+function ringsOfAliasesThroughGlobals() {
+  const files: Record<string, string> = {};
+  for (const n of [2, 3, 5]) {
+    for (let i = 0; i < n; i++) {
+      const next = (i + 1) % n;
+      // Every other link is an import.
+      files[`half${n}/u${i}.d.ts`] =
+        `export as namespace Half${n}U${i};\n` +
+        (i % 2 ? `export { a } from "./u${next}";\n` : `export import a = Half${n}U${next}.a;\n`);
+      // Ambient modules, the last of which names the global of the module that imports the first.
+      const link = i === n - 1 ? `export import a = Ambient${n}U.a;` : `export { a } from "ambient${n}v${i + 1}";`;
+      files[`ambient${n}/d${i}.d.ts`] = `declare module "ambient${n}v${i}" { ${link} }\n`;
+    }
+    files[`half${n}/main.ts`] =
+      `import { a } from "./u0";\nimport { a as b } from "./u1";\nexport const read: never[] = [a, b];\n`;
+    files[`ambient${n}/u.d.ts`] = `export as namespace Ambient${n}U;\nexport { a } from "ambient${n}v0";\n`;
+    files[`ambient${n}/main.ts`] = `import { a } from "./u";\nexport const read: never[] = [a];\n`;
+  }
+  // The lowest module names the global of the highest.
+  files["levels/l0.d.ts"] = `export import a = Levels.a;\nexport declare const real: 1;\n`;
+  files["levels/l1.d.ts"] = `export { a, real } from "./l0";\n`;
+  files["levels/l2.d.ts"] = `export as namespace Levels;\nexport { a, real } from "./l1";\n`;
+  files["levels/main.ts"] =
+    `import { a, real } from "./l2";\nimport { a as b } from "./l0";\nexport const read: never[] = [a, b, real];\n`;
+  return files;
+}
+
+// Every alias of a ring is circular (TS2303), also one in a module that is linked after another part of the ring.
+test.concurrent.skipIf(!tsc)("rings of aliases through UMD globals, on any number of threads", async () => {
+  const options = { ...JSON.parse(tsconfig).compilerOptions, lib: ["es5"], skipLibCheck: false };
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: options }),
+    ...ringsOfAliasesThroughGlobals(),
+  });
+  const root = String(dir);
+  const [theirs, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+    ...[1, 2, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  ]);
+  expect(theirs.filter(line => line.includes("TS2303")).length).toBe(26);
+  for (const lines of ours) expect(lines).toEqual(theirs);
+});
+
+/**
+ * A chain of `length` modules, each of which imports from the one before it and passes a name on. Some export a default
+ * that does not exist, which the next one imports. Beside it `beside` modules, in rings of two with an alias that goes
+ * round, each of which imports from somewhere in the chain.
+ */
+function aChainAndModulesBesideIt(length: number, beside: number) {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < length; i++) {
+    const lines = [`export const c${i} = "c${i}" as const;`];
+    const read = [`c${i}`];
+    if (i > 0) {
+      lines.push(`export { first } from "./c${i - 1}";`, `import { first, c${i - 1} as below } from "./c${i - 1}";`);
+      read.push("first", "below");
+    } else {
+      lines.push(`export const first = "first" as const;`);
+    }
+    if (i % 100 === 50) lines.push(`export default missing${i};`);
+    if (i % 100 === 51) {
+      lines.push(`import fromBelow from "./c${i - 1}";`);
+      read.push("fromBelow");
+    }
+    // `never` puts the types in the messages.
+    lines.push(`export const read${i}: never[] = [${read.join(", ")}];`);
+    files[`c${i}.ts`] = lines.join("\n") + "\n";
+  }
+  for (let i = 0; i < beside; i++) {
+    const [at, partner] = [(i * 37) % length, i ^ 1];
+    files[`w${i}.ts`] = [
+      `import { first, c${at} as fromTheChain } from "./c${at}";`,
+      `import { w${partner} as partner } from "./w${partner}";`,
+      `export { ring${partner} as ring${i} } from "./w${partner}";`,
+      `export const w${i} = "w${i}" as const;`,
+      `export const read: never[] = [first, fromTheChain, partner];`,
+      ``,
+    ].join("\n");
+  }
+  return files;
+}
+
+// In a chain one module can be linked at a time, so all threads but one have nothing to do: they leave or sleep, and are
+// there again for what is beside the chain.
+test.concurrent.skipIf(!tsc)("a long chain of modules and many beside it, on any number of threads", async () => {
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": tsconfig,
+    ...(isDebug || isASAN ? aChainAndModulesBesideIt(152, 40) : aChainAndModulesBesideIt(1000, 200)),
+  });
+  const root = String(dir);
+  const [theirs, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+    ...[1, 2, 8, 64].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  ]);
+  for (const code of ["TS2303", "TS2304", "TS2322"]) expect(theirs.join("\n")).toContain(code);
+  for (const lines of ours) expect(lines).toEqual(theirs);
+});
+
+/**
+ * `n` modules of components. Each calls and renders the component `Outer` of three modules before it, so the check of a
+ * module evaluates part of those. The tag that the check of a module comes to first is not the first one in its text.
+ */
+function modulesOfComponents(n: number) {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < n; i++) {
+    const used = [i - 1, i - 5, i - 11].filter(j => j >= 0);
+    const own = [
+      // The bodies of both are deferred.
+      [`const Inner = () => <i>inner</i>;`, `export const Outer${i} = () => <b><Inner /></b>;`],
+      // The body of a declaration is not.
+      [`const Inner = () => <i>inner</i>;`, `export function Outer${i}() { return <b><Inner /></b>; }`],
+      [`const Inner = () => <>inner</>;`, `export const Outer${i} = () => <><Inner /></>;`],
+      [
+        `const inner = { get a() { return <i>a</i>; }, b() { return <i>b</i>; } };`,
+        `export class Outer${i} { render() { return <b>{inner.a}{inner.b()}</b>; } }`,
+      ],
+      // What is in an element is deferred, what is in a fragment is not.
+      [
+        `export function Outer${i}() {`,
+        `  const item = () => <li>item</li>;`,
+        `  return <ul><>{item}</></ul>;`,
+        `}`,
+        `export const last = <></>;`,
+      ],
+      [
+        `const Inner = class { render() { return <i>inner</i>; } };`,
+        `export const Outer${i} = function () { return <b><Inner /></b>; };`,
+      ],
+      // What a function expression returns is asked for before its body is checked.
+      [`export const Outer${i} = () => {`, `  const a = <a>a</a>;`, `  return <b>{a}</b>;`, `};`],
+      // And what a declaration returns, at its first `return`.
+      [
+        `export function Outer${i}(x?: number) {`,
+        `  if (x) return null;`,
+        `  const a = <a>a</a>;`,
+        `  return <b>{a}</b>;`,
+        `}`,
+      ],
+      // At once, if a signature is expected of the function.
+      [
+        `const table: { render: () => unknown }[] = [{ render: () => <i>i</i> }];`,
+        `export function Outer${i}() { return <b>{table.length}</b>; }`,
+      ],
+      [
+        `export function Outer${i}() {`,
+        `  const items = [1].map(n => <li>{n}</li>);`,
+        `  return <ul>{items}</ul>;`,
+        `}`,
+      ],
+      [
+        `declare const memo: any;`,
+        `const Inner = memo(() => <i>i</i>);`,
+        `export function Outer${i}() { return <b><Inner /></b>; }`,
+      ],
+      // Its parameters are not deferred.
+      [`export const Outer${i} = ({ icon = <i>i</i> }: { icon?: unknown } = {}) => <b>{icon}</b>;`],
+      // A call asks for what the function returns, and a name for what the variable is initialized with.
+      [
+        `export function Outer${i}() {`,
+        `  const inner = content();`,
+        `  return <b>{inner}</b>;`,
+        `}`,
+        `function content() { return <i>i</i>; }`,
+      ],
+      [
+        `export const Outer${i} = (x?: number) => {`,
+        `  const a = <a>a</a>;`,
+        `  if (x) return a;`,
+        `  return <b>b</b>;`,
+        `};`,
+      ],
+    ];
+    const isClass = (j: number) => j % own.length === 3;
+    files[`c${i}.tsx`] = [
+      ...used.map(j => `import { Outer${j} } from "./c${j}";`),
+      ...own[i % own.length],
+      ...used.map(j => `export const used${j} = ${isClass(j) ? `new Outer${j}().render()` : `Outer${j}()`};`),
+      `export const Last = () => <p>${used.map(j => `<Outer${j} />`).join("")}</p>;`,
+      ``,
+    ].join("\n");
+  }
+  return files;
+}
+
+// Without React in scope, a file with a fragment gets one TS2879: at the fragment that its check comes to first. What the
+// check of another file has evaluated in it before does not move the error.
+test.concurrent.skipIf(!tsc)("TS2879 is at the first fragment that is checked, on any number of threads", async () => {
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, jsx: "react" } }),
+    ...modulesOfComponents(isDebug || isASAN ? 28 : 56),
+  });
+  const root = String(dir);
+  const [theirs, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+    ...[1, 2, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  ]);
+  expect(theirs.join("\n")).toContain("TS2879");
+  for (const lines of ours) expect(lines).toEqual(theirs);
+});
+
+// Without the types of react, a file gets one TS2875. TypeScript 7.0 has it at the tag that a checker comes to first, which
+// depends on what else that checker has checked. TypeScript 7.1 has it at the first tag in the text, and so does
+// `bun check`. These are the places that TypeScript 7.1 reports for `modulesOfComponents(56)`, module by module.
+const firstTags = `
+  c0.tsx(1,21) c1.tsx(2,21) c2.tsx(2,21) c3.tsx(2,34) c4.tsx(3,22) c5.tsx(3,41) c6.tsx(4,13)
+  c7.tsx(5,13) c8.tsx(3,61) c9.tsx(4,30) c10.tsx(4,26) c11.tsx(4,34) c12.tsx(6,10) c13.tsx(5,13)
+  c14.tsx(4,21) c15.tsx(4,21) c16.tsx(4,21) c17.tsx(4,34) c18.tsx(5,22) c19.tsx(4,41) c20.tsx(5,13)
+  c21.tsx(6,13) c22.tsx(4,61) c23.tsx(5,30) c24.tsx(5,26) c25.tsx(4,34) c26.tsx(6,10) c27.tsx(5,13)
+  c28.tsx(4,21) c29.tsx(4,21) c30.tsx(4,21) c31.tsx(4,34) c32.tsx(5,22) c33.tsx(4,41) c34.tsx(5,13)
+  c35.tsx(6,13) c36.tsx(4,61) c37.tsx(5,30) c38.tsx(5,26) c39.tsx(4,34) c40.tsx(6,10) c41.tsx(5,13)
+  c42.tsx(4,21) c43.tsx(4,21) c44.tsx(4,21) c45.tsx(4,34) c46.tsx(5,22) c47.tsx(4,41) c48.tsx(5,13)
+  c49.tsx(6,13) c50.tsx(4,61) c51.tsx(5,30) c52.tsx(5,26) c53.tsx(4,34) c54.tsx(6,10) c55.tsx(5,13)
+`
+  .trim()
+  .split(/\s+/);
+const isAboutTheRuntime = (line: string) => line.includes("error TS2875:");
+const placesOfTheRuntimeError = (lines: string[]) => lines.filter(isAboutTheRuntime).map(line => line.split(":")[0]);
+
+test.concurrent.skipIf(!tsc)("TS2875 is at the first tag of the file, on any number of threads", async () => {
+  const modules = isDebug || isASAN ? 28 : 56;
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, jsx: "react-jsx" } }),
+    ...modulesOfComponents(modules),
+  });
+  const root = String(dir);
+  const [theirs, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+    ...[1, 2, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  ]);
+  for (const lines of ours) {
+    expect(placesOfTheRuntimeError(lines).sort()).toEqual(firstTags.slice(0, modules).sort());
+    expect(lines.filter(line => !isAboutTheRuntime(line))).toEqual(theirs.filter(line => !isAboutTheRuntime(line)));
+  }
+});
+
+// The first tag counts even if nothing checks it: the second class in `extends`, the body of `with`. A file in which
+// no tag is checked has no error. The places are those of TypeScript 7.1.
+test.concurrent("TS2875 is at the first tag of the file, checked or not", async () => {
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, jsx: "react-jsx" } }),
+    "deferred.tsx": `const later = () => <b />;\nexport function f() { return <i />; }\n`,
+    "fragment.tsx": `const later = () => <><b /></>;\nexport function f() { return <i />; }\n`,
+    "extends.tsx": `class A extends Object, (<a />) {}\nexport const x = <b />;\n`,
+    "extends-only.tsx": `export class A extends Object, (<a />) {}\n`,
+    "with.tsx": `declare const o: any;\nwith (o) { <a />; }\nconst x = <b />;\n`,
+    "with-only.tsx": `declare const o: any;\nwith (o) { <a />; }\n`,
+  });
+  const root = String(dir);
+  const ours = await Promise.all(
+    [1, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  );
+  for (const lines of ours) {
+    expect(placesOfTheRuntimeError(lines)).toEqual([
+      "deferred.tsx(1,21)",
+      "extends.tsx(1,26)",
+      "fragment.tsx(1,21)",
+      "with.tsx(2,12)",
+    ]);
+  }
+});
+
+// Likewise TS2354, where `tslib` is missing: here the first syntax that needs a helper is `this.#x`, which the `return`
+// in the first line leads to. The modules that import `first` ask for the same.
+test.concurrent.skipIf(!tsc)("TS2354 is at the first syntax that is checked, on any number of threads", async () => {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < (isDebug || isASAN ? 16 : 48); i++) {
+    const used = [i - 1, i - 5, i - 11].filter(j => j >= 0);
+    files[`m${i}.ts`] = [
+      ...used.map(j => `import { first${j} } from "./m${j}";`),
+      `export function first${i}() { return make().get(); }`,
+      `export async function next() {}`,
+      `function make() { return new C(); }`,
+      `class C { #x = 1; get() { return this.#x; } }`,
+      ...used.map(j => `export const used${j} = first${j}();`),
+      ``,
+    ].join("\n");
+  }
+  const compilerOptions = { ...JSON.parse(tsconfig).compilerOptions, target: "es2015", importHelpers: true };
+  using dir = tempDir("bun-check-differential", { "tsconfig.json": JSON.stringify({ compilerOptions }), ...files });
+  const root = String(dir);
+  const [theirs, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+    ...[1, 2, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
+  ]);
+  expect(theirs.join("\n")).toContain("TS2354");
+  for (const lines of ours) expect(lines).toEqual(theirs);
 });
 
 /** The error lines of `cmd`, which are in the format of `tsc --pretty false`, by line of `a.ts`. */
@@ -2392,4 +2963,127 @@ differential("the files that are checked, by layout of the project and by comman
   expect(different).toEqual({});
   // Most of them are about something.
   expect(compared).toBeGreaterThan(cells.length / 2);
+});
+
+/** What the two print about a project in which each of `cases` is a module of its own. */
+async function modulesChecked(cases: string[]) {
+  const name = (index: number) => `c${String(index).padStart(2, "0")}.ts`;
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": tsconfig,
+    ...Object.fromEntries(cases.map((text, index) => [name(index), `${text}\nexport {};\n`])),
+  });
+  const root = String(dir);
+  const [theirs, ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
+    linesOf([bunExe(), "check"], root, root),
+  ]);
+  return { theirs, ours };
+}
+
+// TypeScript first parses a top-level statement of a module with `await` as a name. It parses the statement again, with
+// `await` as the operator, only if the first parse found a reference to `await`. The name of a parameter, of a property
+// or of a declaration isn't one, and neither is anything in the body of a function.
+differential("a top-level arrow function whose first parameter is `await`, parsed once", async () => {
+  const { theirs, ours } = await modulesChecked([
+    "var f = (await) => {};",
+    "var f = (await: number) => {};",
+    "declare function g(x: unknown): void; g((await: number) => {});",
+    "var f = (await, b) => {};",
+    "var f = (await?) => {};",
+    "var f = (await?: number) => {};",
+    "var f = (await = 1) => {};",
+    "var f = (await): void => {};",
+    "var f = async (await) => {};",
+    "var f = async (await: number) => {};",
+    "var f = { a: (await: number) => {} };",
+    "var f = (await: number) => { return await; };",
+    "var f = (await: number) => {}, g = await 1;",
+    "var f = (await: number) => (await: number) => {};",
+    "var f = (await: number, b = await 1) => {};",
+    "(await) => {};",
+    "(await: number) => {};",
+    "var f = true ? (await) => {} : 1;",
+    "for (const x of [(await: number) => {}]) {}",
+    "if (true) { var f = (await: number) => {}; }",
+    "export const f = (await: number) => {};",
+    "var f = (public await: number) => {};",
+    "var f = (await\n) => {};",
+    "var f = (await)\n=> {};",
+    "var f = (await) => {}, { [await]: x } = {};",
+    "var f = (await, ...b) => {};",
+    "var f = (await, { b }) => {};",
+    "@((await: number) => {}) class C {}",
+    "class C extends ((await: number) => {}) {}",
+    "var f = (await: number) => {}, g = { await: 1 };",
+    "var f = (await: number) => {}, g = function await() {};",
+    "var f = (await: number) => {}, g = class await {};",
+    "var f = (await: number) => {}, g = (x: { await: 1 }) => {};",
+    "var f = { await }, g = function () { return await; };",
+  ]);
+  // After a syntax error nothing is checked.
+  expect(theirs.join("\n")).toContain("error TS7006");
+  expect(ours).toEqual(theirs);
+});
+
+// In the second parse `(await` starts no arrow function and `{ await }` is no shorthand. What is exported by default,
+// `export =` and an exported class are parsed that way the first time.
+differential("a name `await` in a top-level statement that is parsed with `await` as the operator", async () => {
+  const { theirs, ours } = await modulesChecked([
+    "var f = (await: number) => await + 1;",
+    "var g = await (1), f = (await: number) => {};",
+    "var f = (await: number, b = await) => {};",
+    "var f = (await: number, b = () => await) => {};",
+    "var f = (await: await) => {};",
+    "export default (await: number) => {};",
+    "export = (await: number) => {};",
+    "export class C extends ((await: number) => {}) {}",
+    "export default class C extends ((await: number) => {}) {}",
+    "var f = (await);",
+    "var f = (await, 1);",
+    "var f = (await = 1);",
+    "var f = true ? (await) : 1;",
+    "var f = true ? (await) : (await) => {};",
+    "var f = (await.x) => {};",
+    "var f = (await x) => {};",
+    "var f = (await) { };",
+    "var f = (await): number { return 1 };",
+    "var f = { await }, g = (x: number) => await;",
+    "var f = { await }, g = (x = await) => 1;",
+    "var f = { await }, g: await = 1;",
+    "var f = { await }, g = class { x = await };",
+    "var f = { await }, g = f.await;",
+    "export default { await };",
+    "export default { [await]: 1 };",
+    "export class C { [await] = 1 }",
+    "export default class C { [await] = 1 }",
+  ]);
+  expect(theirs.length).toBeGreaterThan(27);
+  expect(ours).toEqual(theirs);
+});
+
+differential("an initializer in an interface or a type literal", async () => {
+  const { theirs, ours } = await modulesChecked([
+    "declare const e: unique symbol; interface C { [e] = 1 }",
+    "declare const e: unique symbol; interface C { readonly [e] = 1 }",
+    "declare const e: unique symbol; interface C { [e]? = 1 }",
+    "declare const e: unique symbol; type C = { [e] = 1 };",
+    'interface C { ["x"] = 1; b: string }',
+    "interface C { get = 1 }",
+    "interface C { set = 1 }",
+    "interface C { a: number = 1 }",
+    '{ interface C { static ["x"] = @dec class {} } }',
+  ]);
+  expect(theirs.join("\n")).toContain("error TS1246");
+  expect(ours).toEqual(theirs);
+});
+
+// A build that isn't optimized runs out of stack at a smaller depth.
+test.concurrent.skipIf(!tsc || isDebug || isASAN)("expressions nested more than 1,000 deep", async () => {
+  const { theirs, ours } = await modulesChecked([
+    `declare const c: boolean; export const x: string = ${"c ? 1 : ".repeat(1_200)}2;`,
+    `declare const c: boolean; export const x: string = ${"c || (".repeat(1_500)}1${")".repeat(1_500)};`,
+    `export const x: string = ${"!".repeat(1_200)}1;`,
+  ]);
+  expect(theirs.filter(line => line.includes("error TS2322"))).toHaveLength(3);
+  expect(ours).toEqual(theirs);
 });

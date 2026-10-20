@@ -1519,18 +1519,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                     ssl_ptr,
                 )) == 0
                 {
-                    if let Some(server_name) = this.server_name.get() {
-                        let host: &[u8] = server_name.as_ref();
-                        if !host.is_empty() {
-                            let host_z = bun_core::ZBox::from_bytes(host);
-                            // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
-                            unsafe {
-                                boringssl_sys::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr())
-                            };
-                        }
-                    } else if let Some(connection) = this.connection.get() {
-                        if let super::listener::UnixOrHost::Host { host, .. } = connection {
-                            let host = bun_core::ip_address::strip_ipv6_brackets(host.as_ref());
+                    // Only a client sends a server name: a server's `SSL` keeps the ClientHello's.
+                    if !this.acts_as_tls_server() {
+                        if let Some(server_name) = this.server_name.get() {
+                            let host: &[u8] = server_name.as_ref();
                             if !host.is_empty() {
                                 let host_z = bun_core::ZBox::from_bytes(host);
                                 // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
@@ -1540,6 +1532,20 @@ impl<const SSL: bool> NewSocket<SSL> {
                                         host_z.as_ptr(),
                                     )
                                 };
+                            }
+                        } else if let Some(connection) = this.connection.get() {
+                            if let super::listener::UnixOrHost::Host { host, .. } = connection {
+                                let host = bun_core::ip_address::strip_ipv6_brackets(host.as_ref());
+                                if !host.is_empty() {
+                                    let host_z = bun_core::ZBox::from_bytes(host);
+                                    // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
+                                    unsafe {
+                                        boringssl_sys::SSL_set_tlsext_host_name(
+                                            ssl_ptr,
+                                            host_z.as_ptr(),
+                                        )
+                                    };
+                                }
                             }
                         }
                     }
@@ -4372,6 +4378,28 @@ pub(super) enum EventState {
     Close,
 }
 
+impl TLSSocket {
+    /// The stream engine asks outside BoringSSL, so this takes the handler scope.
+    fn on_server_name(
+        this: bun_ptr::ThisPtr<Self>,
+        name: &core::ffi::CStr,
+    ) -> super::listener::ServerNameAnswer {
+        use super::listener::ServerNameAnswer;
+        if this.socket.get().is_detached() || !this.has_handlers() {
+            return ServerNameAnswer::Default;
+        }
+        let handlers = this.get_handlers();
+        if handlers.vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
+            return ServerNameAnswer::Default;
+        }
+        let _scope = ScopeExit {
+            socket: this,
+            scope: Some(handlers.enter()),
+        };
+        super::listener::ask_server_name(this, name)
+    }
+}
+
 impl DuplexUpgradeContext {
     #[inline(always)]
     // The `on_*` callbacks take `ThisPtr<Self>`, not `&mut self`: they are
@@ -4423,6 +4451,22 @@ impl DuplexUpgradeContext {
             .map_or(bun_boringssl::ServerIdentity::Unchecked, |tls| {
                 tls.server_identity(ssl)
             })
+    }
+
+    /// Asks the socket's `serverName` handler. `handle.resumeSNI(...)` answers a `Pending` one.
+    fn on_server_name(this: bun_ptr::ThisPtr<Self>, name: &core::ffi::CStr) {
+        use super::listener::ServerNameAnswer;
+        let answer = this
+            .tls_this_ptr()
+            .map_or(ServerNameAnswer::Default, |tls| {
+                TLSSocket::on_server_name(tls, name)
+            });
+        match answer {
+            ServerNameAnswer::Pending => {}
+            ServerNameAnswer::Default => this.upgrade.resolve_server_name(Ok(None)),
+            ServerNameAnswer::Context(ctx) => this.upgrade.resolve_server_name(Ok(Some(ctx))),
+            ServerNameAnswer::Refused => this.upgrade.resolve_server_name(Err(())),
+        }
     }
 
     fn on_handshake(
@@ -4753,6 +4797,7 @@ pub(crate) fn js_upgrade_duplex_to_tls(
     )?;
     // Nothing holds the callback cell until the TLS wrapper below does.
     let _cell_root = handlers.root_cell(global);
+    let resolves_server_name = is_server && !handlers.on_server_name().is_empty();
 
     // Resolve the `SSL_CTX*`. Prefer a passed `SecureContext` (the memoised
     // `tls.createSecureContext` path — what `[buntls]` now returns) so the
@@ -4948,6 +4993,14 @@ pub(crate) fn js_upgrade_duplex_to_tls(
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 server_identity: |c: *mut (), ssl| {
                     DuplexUpgradeContext::server_identity(bun_ptr::ThisPtr::new(c.cast()), ssl)
+                },
+                on_server_name: if resolves_server_name {
+                    // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
+                    Some(|c: *mut (), name: &core::ffi::CStr| {
+                        DuplexUpgradeContext::on_server_name(bun_ptr::ThisPtr::new(c.cast()), name)
+                    })
+                } else {
+                    None
                 },
                 ctx: duplex_context.cast::<()>(),
             },

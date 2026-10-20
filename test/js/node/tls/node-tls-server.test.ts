@@ -8,7 +8,7 @@ import https from "https";
 import net, { AddressInfo } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
-import { Duplex } from "node:stream";
+import { Duplex, duplexPair } from "node:stream";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { PeerCertificate } from "tls";
@@ -755,6 +755,42 @@ describe.each(["TLSv1.3", "TLSv1.2"])("an ALPNCallback over a Duplex can drop it
           ? ["client error ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL", "server error boom"]
           : ["server error boom", "client error ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL"],
       "select": ["client secureConnect h2"],
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
+// One process at a time: 14 handshakes in a debug build take most of the default timeout when several run at once.
+describe("an SNICallback over a Duplex can drop its connection", () => {
+  it.each([
+    ["emit", "TLSv1.3", 'server.emit("connection", duplex)'],
+    ["emit", "TLSv1.2", 'server.emit("connection", duplex)'],
+    ["staged", "TLSv1.3", "new TLSSocket(duplex, { isServer: true }) after the ClientHello"],
+  ])("%s, %s: %s", async (door, maxVersion) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "tls-sni-callback-over-duplex-fixture.mjs"), door, maxVersion],
+      env: { ...bunEnv, TLS_KEY: cert1.key, TLS_CERT: cert1.cert },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "answer": ["client secureConnect"],
+      // The first answer counts. Node v26.3.0 destroys the socket: "Callback called multiple times".
+      "answer twice": ["client secureConnect"],
+      "answer, then fail": ["client secureConnect"],
+      "destroy(), then answer": ["client error ECONNRESET"],
+      "destroy(err), then answer": ["server error boom", "client error ECONNRESET"],
+      "destroy() the transport, then answer": ["client error ECONNRESET"],
+      "destroy() the client, then answer": [],
+      "throw": ["server error boom", "client error ECONNRESET"],
+      "answer later": ["client secureConnect"],
+      "answer later, twice": ["client secureConnect"],
+      "destroy(), then answer later": ["client error ECONNRESET"],
+      "destroy() later, then answer": ["client error ECONNRESET"],
+      "destroy() the client, then answer later": [],
+      "end(), then answer later": ["client error ECONNRESET"],
     });
     expect(exitCode).toBe(0);
   });
@@ -5343,5 +5379,945 @@ describe("a send that the kernel rejects", () => {
     expect(error.code).toBe("ECONNRESET");
     // The connection is over for the server too.
     await new Promise(resolve => server.close(resolve));
+  });
+});
+
+describe("server names for a connection handed in with server.emit('connection')", () => {
+  const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
+  const agent1 = { key: fixture("agent1-key.pem"), cert: fixture("agent1-cert.pem") }; // issued by ca1
+  const agent2 = { key: fixture("agent2-key.pem"), cert: fixture("agent2-cert.pem") }; // self-signed
+  const agent3 = { key: fixture("agent3-key.pem"), cert: fixture("agent3-cert.pem") }; // issued by ca2
+  const ca1 = fixture("ca1-cert.pem");
+  const ca2 = fixture("ca2-cert.pem");
+
+  // A stream that is not a net.Socket: the server wrap runs its TLS engine over the stream's events.
+  function asDuplex(raw: net.Socket) {
+    const duplex = new Duplex({
+      read() {},
+      write(chunk, _encoding, callback) {
+        raw.write(chunk, callback);
+      },
+      final(callback) {
+        raw.end();
+        callback();
+      },
+      destroy(err, callback) {
+        raw.destroy();
+        callback(err);
+      },
+    });
+    raw.on("data", chunk => duplex.push(chunk));
+    raw.on("end", () => duplex.push(null));
+    raw.on("error", () => duplex.destroy());
+    return duplex;
+  }
+
+  // "listen" is the control: the server's own listener accepts the client.
+  type Door = "listen" | "net.Socket" | "Duplex" | "net.Socket with unflushed writes";
+  const emitDoors: Door[] = ["net.Socket", "Duplex", "net.Socket with unflushed writes"];
+  // STARTTLS: the socket still holds a plaintext answer when the TLS wrap starts, so the wrap cannot take over the fd.
+  const greeting = "220 ready\r\n";
+
+  // A front that hands each connection to `server` through `door`.
+  function openDoor(server: Server, door: Door, afterWrap?: () => void) {
+    const wrapped = Promise.withResolvers<void>();
+    let unflushed = 0;
+    let accepted: net.Socket | undefined;
+    const front =
+      door === "listen"
+        ? server
+        : net.createServer(raw => {
+            accepted = raw;
+            raw.on("error", () => {});
+            if (door === "Duplex") {
+              server.emit("connection", asDuplex(raw));
+            } else if (door === "net.Socket with unflushed writes") {
+              raw.cork();
+              raw.write(greeting);
+              unflushed = raw.writableLength;
+              server.emit("connection", raw);
+              raw.uncork();
+            } else {
+              server.emit("connection", raw);
+            }
+            afterWrap?.();
+            wrapped.resolve();
+          });
+    if (door === "listen") wrapped.resolve();
+    return {
+      async port() {
+        if (!front.listening) {
+          front.listen(0, "127.0.0.1");
+          await once(front, "listening");
+        }
+        return (front.address() as AddressInfo).port;
+      },
+      // The raw connection of one client, past the plaintext of the door and after the server wrapped it.
+      async dial() {
+        const raw = net.connect(await this.port(), "127.0.0.1");
+        raw.on("error", () => {});
+        if (door === "net.Socket with unflushed writes") {
+          let left = greeting.length;
+          const { promise: greeted, resolve } = Promise.withResolvers<void>();
+          const onData = (chunk: Buffer) => {
+            if ((left -= chunk.length) > 0) return;
+            raw.off("data", onData);
+            resolve();
+          };
+          raw.on("data", onData);
+          await greeted;
+          expect(unflushed).toBe(greeting.length);
+        } else {
+          await once(raw, "connect");
+        }
+        await wrapped.promise;
+        return raw;
+      },
+      // The server's side of the last connection.
+      accepted: () => accepted!,
+      async close() {
+        front.close();
+        if (door === "listen") await once(front, "close");
+      },
+    };
+  }
+
+  type Verdict = {
+    cn: string;
+    servername?: string | false | null;
+    authorized?: boolean;
+    authorizationError?: string;
+    alpnProtocol?: string | false | null;
+    refused?: string;
+    reused?: boolean;
+    session?: Buffer;
+  };
+
+  // One client through `door`: the certificate it was served, and how the server judged it.
+  async function connectThrough(
+    server: Server,
+    door: Door,
+    options: tls.ConnectionOptions,
+    afterWrap?: () => void,
+  ): Promise<Verdict> {
+    const verdict = Promise.withResolvers<Omit<Verdict, "cn">>();
+    const onSecure = (socket: TLSSocket) => {
+      verdict.resolve({
+        servername: socket.servername,
+        authorized: socket.authorized,
+        alpnProtocol: socket.alpnProtocol,
+      });
+      socket.on("error", () => {});
+      socket.end();
+    };
+    const onRefused = (err: Error & { code?: string }, socket: TLSSocket) => {
+      const authorizationError = socket.authorizationError as unknown as string | undefined;
+      verdict.resolve({ refused: err.code ?? err.message, ...(authorizationError && { authorizationError }) });
+      socket.destroy();
+    };
+    server.on("secureConnection", onSecure);
+    server.on("tlsClientError", onRefused);
+    const front = openDoor(server, door, afterWrap);
+    let raw: net.Socket | undefined;
+    let client: TLSSocket | undefined;
+    try {
+      raw = await front.dial();
+      const served = Promise.withResolvers<string>();
+      const closed = Promise.withResolvers<void>();
+      let reused: boolean | undefined;
+      let session: Buffer | undefined;
+      client = connect({ socket: raw, rejectUnauthorized: false, ...options });
+      client.on("session", saved => (session = saved));
+      client.on("secureConnect", () => {
+        reused = client!.isSessionReused();
+        served.resolve(String(client!.getPeerCertificate().subject?.CN));
+      });
+      client.on("error", err => served.resolve(`error ${(err as Error & { code?: string }).code}`));
+      client.on("close", () => {
+        served.resolve("closed");
+        closed.resolve();
+      });
+      client.resume();
+      const [cn, judged] = await Promise.all([served.promise, verdict.promise]);
+      // A session ticket arrives after the handshake, and before the server's end().
+      await closed.promise;
+      return { cn, ...judged, ...(reused !== undefined && { reused }), ...(session && { session }) };
+    } finally {
+      server.off("secureConnection", onSecure);
+      server.off("tlsClientError", onRefused);
+      client?.destroy();
+      raw?.destroy();
+      await front.close();
+    }
+  }
+
+  const noHandshake = expect.stringMatching(/^(error|closed)/);
+  // What a server reports for a client certificate that the ca in force did not issue.
+  const refusedByCa = {
+    refused: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    authorizationError: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  };
+
+  describe.each(emitDoors)("over a %s", door => {
+    it.each(["TLSv1.2", "TLSv1.3"] as const)(
+      "addContext(): the name's certificate is served and its ca judges the client (%s)",
+      async maxVersion => {
+        // The default name trusts clients of ca1. tenant.test trusts only clients of ca2.
+        const server = createServer({ ...agent2, ca: ca1, requestCert: true, rejectUnauthorized: true });
+        server.addContext("tenant.test", { ...agent3, ca: ca2 });
+        const tenant = { servername: "tenant.test", maxVersion };
+        expect(await connectThrough(server, door, { ...tenant, ...agent3 })).toMatchObject({
+          cn: "agent3",
+          servername: "tenant.test",
+          authorized: true,
+        });
+        expect(await connectThrough(server, door, { ...tenant, ...agent1 })).toMatchObject(refusedByCa);
+        expect(await connectThrough(server, door, { servername: "other.test", maxVersion, ...agent1 })).toMatchObject({
+          cn: "agent2",
+          servername: "other.test",
+          authorized: true,
+        });
+      },
+    );
+
+    it("addContext(): a wildcard stands for one label, an exact name wins, and a name added again replaces its entry", async () => {
+      const server = createServer({ ...agent2 });
+      server.addContext("*.wild.test", { ...agent1 });
+      server.addContext("*.over.test", { ...agent1 });
+      server.addContext("a.over.test", { ...agent3 });
+      const cn = async (servername: string) => (await connectThrough(server, door, { servername })).cn;
+      expect({
+        "a.wild.test": await cn("a.wild.test"),
+        "wild.test": await cn("wild.test"),
+        "a.b.wild.test": await cn("a.b.wild.test"),
+        "a.over.test": await cn("a.over.test"),
+        "b.over.test": await cn("b.over.test"),
+      }).toEqual({
+        "a.wild.test": "agent1",
+        "wild.test": "agent2",
+        "a.b.wild.test": "agent2",
+        "a.over.test": "agent3",
+        "b.over.test": "agent1",
+      });
+      server.addContext("a.over.test", { ...agent1 });
+      expect(await cn("a.over.test")).toBe("agent1");
+    });
+
+    it("addContext(): entries hold while the server listens and after it closed", async () => {
+      const server = createServer({ ...agent2 });
+      server.addContext("before.test", { ...agent1 });
+      const cn = async (servername: string) => (await connectThrough(server, door, { servername })).cn;
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      try {
+        server.addContext("during.test", { ...agent3 });
+        expect([await cn("before.test"), await cn("during.test")]).toEqual(["agent1", "agent3"]);
+      } finally {
+        server.close();
+        await once(server, "close");
+      }
+      expect([await cn("before.test"), await cn("during.test")]).toEqual(["agent1", "agent3"]);
+    });
+
+    it("addContext(): a connection asks for names when the server had an entry at the time it was wrapped", async () => {
+      // Node takes the decision in the TLSSocket constructor:
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L929-L935
+      const server = createServer({ ...agent2 });
+      const late = await connectThrough(server, door, { servername: "late.test" }, () =>
+        server.addContext("late.test", { ...agent1 }),
+      );
+      // The server has an entry now: one more, added after the wrap, is seen at the ClientHello.
+      const later = await connectThrough(server, door, { servername: "later.test" }, () =>
+        server.addContext("later.test", { ...agent3 }),
+      );
+      expect([late.cn, later.cn]).toEqual(["agent2", "agent3"]);
+    });
+
+    describe("SNICallback", () => {
+      type Answer = (this: TLSSocket, name: string, cb: (err: Error | null, ctx?: any) => void) => void;
+      const tenant = tls.createSecureContext({ ...agent3, ca: ca2 });
+      // The server's default name trusts clients of ca1, `tenant` trusts clients of ca2.
+      function serverWith(answer: Answer, calls: string[]) {
+        const server = createServer({
+          ...agent2,
+          ca: ca1,
+          requestCert: true,
+          rejectUnauthorized: true,
+          SNICallback(name, cb) {
+            calls.push(name);
+            answer.call(this as unknown as TLSSocket, name, cb);
+          },
+        });
+        // A server with an SNICallback never consults its addContext() entries.
+        server.addContext("entry.test", { ...agent1 });
+        return server;
+      }
+
+      it.each([
+        [
+          "a context: its certificate, and its ca trusts the client",
+          (_, cb) => cb(null, tenant),
+          agent3,
+          { cn: "agent3", authorized: true },
+        ],
+        ["a context: its ca refuses a client of the default ca", (_, cb) => cb(null, tenant), agent1, refusedByCa],
+        [
+          "a context, later",
+          (_, cb) => void setImmediate(cb, null, tenant),
+          agent3,
+          { cn: "agent3", authorized: true },
+        ],
+        [
+          "the native context of a SecureContext",
+          (_, cb) => cb(null, tenant.context),
+          agent3,
+          { cn: "agent3", authorized: true },
+        ],
+        [
+          "nothing: the default context, not an addContext() entry",
+          (_, cb) => cb(null, undefined),
+          agent1,
+          { cn: "agent2", authorized: true },
+        ],
+        [
+          "nothing, later: the default context",
+          (_, cb) => void setImmediate(cb, null, undefined),
+          agent1,
+          { cn: "agent2", authorized: true },
+        ],
+        ["false: the default context", (_, cb) => cb(null, false), agent1, { cn: "agent2", authorized: true }],
+        ["a number: the default context", (_, cb) => cb(null, 1), agent1, { cn: "agent2", authorized: true }],
+        [
+          "a wrapper of a value that is no object: the default context",
+          (_, cb) => cb(null, { context: 5 }),
+          agent1,
+          { cn: "agent2", authorized: true },
+        ],
+        ["an error", (name, cb) => cb(new Error(`no ${name}`)), agent1, { cn: noHandshake, refused: "no entry.test" }],
+        [
+          "an error, later",
+          (name, cb) => void setImmediate(cb, new Error(`no ${name}`)),
+          agent1,
+          { cn: noHandshake, refused: "no entry.test" },
+        ],
+        [
+          "a throw",
+          name => {
+            throw new Error(`no ${name}`);
+          },
+          agent1,
+          { cn: noHandshake, refused: "no entry.test" },
+        ],
+        [
+          "an object that is no context",
+          (_, cb) => cb(null, {}),
+          agent1,
+          { cn: noHandshake, refused: "Invalid SNI context" },
+        ],
+        [
+          "a wrapper of an object that is no context",
+          (_, cb) => cb(null, { context: {} }),
+          agent1,
+          { cn: noHandshake, refused: "Invalid SNI context" },
+        ],
+      ] as [string, Answer, typeof agent1, object][])("answers with %s", async (_what, answer, identity, expected) => {
+        const calls: string[] = [];
+        const server = serverWith(answer, calls);
+        expect(await connectThrough(server, door, { servername: "entry.test", ...identity })).toMatchObject(expected);
+        expect(calls).toEqual(["entry.test"]);
+      });
+
+      it("is not asked for a ClientHello with no server name", async () => {
+        const calls: string[] = [];
+        const server = serverWith((_name, cb) => cb(null, tenant), calls);
+        expect(await connectThrough(server, door, { ...agent1 })).toMatchObject({ cn: "agent2", authorized: true });
+        expect(calls).toEqual([]);
+      });
+
+      it("leaves the connection to handshakeTimeout when it never answers", async () => {
+        const calls: string[] = [];
+        // The deadline of handshakeTimeout is the 'timeout' event of the socket. It comes here once the
+        // callback was asked, so the test waits for no time to pass.
+        const server = serverWith(function () {
+          setImmediate(() => this.emit("timeout"));
+        }, calls);
+        expect(await connectThrough(server, door, { servername: "never.test", ...agent1 })).toEqual({
+          cn: noHandshake,
+          refused: "ERR_TLS_HANDSHAKE_TIMEOUT",
+        });
+        expect(calls).toEqual(["never.test"]);
+      });
+    });
+
+    it.each(["TLSv1.2", "TLSv1.3"] as const)(
+      "a session of one name is resumed under that name only (%s)",
+      async maxVersion => {
+        const server = createServer({ ...agent2, ca: ca1, requestCert: true, rejectUnauthorized: true });
+        server.addContext("tenant.test", { ...agent3, ca: ca2 });
+        // A resumed handshake checks no client certificate. Under another name it must be a full one,
+        // so that the ca of that name judges the client. Node resumes there.
+        for (const [name, identity, cn, other] of [
+          ["default.test", agent1, "agent2", "tenant.test"],
+          ["tenant.test", agent3, "agent3", "default.test"],
+        ] as const) {
+          const client = { ...identity, maxVersion };
+          const first = await connectThrough(server, door, { servername: name, ...client });
+          expect(first).toMatchObject({ cn, authorized: true, reused: false });
+          expect(first.session).toBeInstanceOf(Buffer);
+          const session = first.session;
+          expect(await connectThrough(server, door, { servername: name, ...client, session })).toMatchObject({
+            cn,
+            authorized: true,
+            reused: true,
+          });
+          const elsewhere = await connectThrough(server, door, { servername: other, ...client, session });
+          expect(elsewhere).toMatchObject(refusedByCa);
+          expect(elsewhere.reused).not.toBe(true);
+        }
+      },
+    );
+  });
+
+  // Only tls.connect() reads the option in Node: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1803-L1805
+  describe.each(["listen", ...emitDoors] as Door[])("a server that was given a servername option, %s", door => {
+    it("asks for the name the client sent, and reports that name", async () => {
+      const calls: string[] = [];
+      const server = createServer({
+        ...agent2,
+        servername: "configured.test",
+        SNICallback(name, cb) {
+          calls.push(name);
+          cb(null, undefined);
+        },
+      } as tls.TlsOptions);
+      const named = await connectThrough(server, door, { servername: "client.test" });
+      const unnamed = await connectThrough(server, door, {});
+      expect({ calls, named: named.servername, unnamed: unnamed.servername }).toEqual({
+        calls: ["client.test"],
+        named: "client.test",
+        unnamed: false,
+      });
+    });
+  });
+
+  // A client can send early data behind its ClientHello. BoringSSL skips it when the server takes none, up to 16384 bytes.
+  describe.each(["Duplex", "net.Socket with unflushed writes"] as Door[])(
+    "over a %s, what the peer sends before the SNICallback answered",
+    door => {
+      type Suspended = {
+        events: string[];
+        raw: net.Socket;
+        asked: Promise<void>;
+        refused: Promise<void>;
+        taken(count: number): Promise<void>;
+        answer(): void;
+      };
+
+      // Runs `peer` against a server whose SNICallback waits for answer(). Resolves with what the server reported.
+      async function againstSuspendedServer(peer: (suspended: Suspended) => Promise<void>) {
+        const events: string[] = [];
+        const asked = Promise.withResolvers<void>();
+        const refused = Promise.withResolvers<void>();
+        let callback: ((err: Error | null, ctx?: tls.SecureContext) => void) | undefined;
+        const server = createServer({
+          ...agent2,
+          SNICallback(name, cb) {
+            events.push(`SNICallback ${name}`);
+            callback = cb;
+            asked.resolve();
+          },
+        });
+        server.on("secureConnection", () => events.push("secureConnection"));
+        server.on("tlsClientError", err => {
+          events.push(`tlsClientError ${(err as NodeJS.ErrnoException).code}`);
+          refused.resolve();
+        });
+        const front = openDoor(server, door);
+        let raw: net.Socket | undefined;
+        try {
+          raw = await front.dial();
+          await peer({
+            events,
+            raw,
+            asked: asked.promise,
+            refused: refused.promise,
+            // The engine takes the bytes from the 'data' listener it registered before this one.
+            async taken(count) {
+              const accepted = front.accepted();
+              while (accepted.bytesRead < count) await once(accepted, "data");
+            },
+            answer() {
+              events.push("answer");
+              callback!(null, undefined);
+            },
+          });
+          return events;
+        } finally {
+          raw?.destroy();
+          await front.close();
+        }
+      }
+
+      // One TLS record of `length` bytes that no key opens.
+      function record(length: number) {
+        const bytes = Buffer.alloc(5 + length, 0);
+        bytes.set([0x17, 0x03, 0x03, length >> 8, length & 0xff]);
+        return bytes;
+      }
+
+      // `record(length)` behind the ClientHello of a client that offers no early data, while the answer is pending.
+      async function sendBehindClientHello(length: number, untilDropped: boolean) {
+        let client: TLSSocket | undefined;
+        try {
+          return await againstSuspendedServer(async ({ raw, asked, refused, taken, answer }) => {
+            // The client's records go out as they are, so the test can add one of its own.
+            let sent = 0;
+            const transport = new Duplex({
+              read() {},
+              write(chunk, _encoding, callback) {
+                sent += chunk.length;
+                raw.write(chunk);
+                callback();
+              },
+            });
+            raw.on("data", chunk => transport.push(chunk));
+            client = connect({ socket: transport, servername: "pending.test", rejectUnauthorized: false });
+            client.on("error", () => {});
+            await asked;
+            raw.write(record(length));
+            if (untilDropped) {
+              await refused;
+              answer();
+            } else {
+              await taken(sent + 5 + length);
+              answer();
+              await refused;
+            }
+          });
+        } finally {
+          client?.destroy();
+        }
+      }
+
+      it("is kept for the handshake when it is no more than the 16384 bytes BoringSSL skips", async () => {
+        // This record is no early data of a session, so BoringSSL fails the handshake on it after the answer.
+        expect(await sendBehindClientHello(16384 - 5, false)).toEqual([
+          "SNICallback pending.test",
+          "answer",
+          expect.stringMatching(/^tlsClientError ERR_SSL_/),
+        ]);
+      });
+
+      it("drops the connection when it is one byte more", async () => {
+        expect(await sendBehindClientHello(16385 - 5, true)).toEqual([
+          "SNICallback pending.test",
+          "tlsClientError ECONNRESET",
+          "answer",
+        ]);
+      });
+
+      // What `openssl s_client -tls1_3 -servername tenant.test -sess_in <ticket> -early_data <file>` (OpenSSL 3.5.7)
+      // sends first, with the ticket of another server: a ClientHello that offers early data, a ChangeCipherSpec,
+      // and one record of early data. Neither bun nor node sends early data.
+      const earlyDataFlight = Buffer.from(
+        "FgMBARoBAAEWAwMp/weGICAnVv6gna1l+hYJJDOR/uveVHfyZMyACByW+SDukwa2UAhxzUMX/p4+BpXCVKPwDpOLt3RL0hiC" +
+          "VjNvfgACEwEBAADLAAAAEAAOAAALdGVuYW50LnRlc3QACwAEAwABAgAKAAQAAgAdACMAAAAWAAAAFwAAAA0ABAACCAQAKwAD" +
+          "AgMEAC0AAgEBADMAJgAkAB0AIG764hLgXSrMocOZIRBBSk9FIlSy0FEMKRF8e1CcLPR7ABsABQQAAQADACoAAAApAEsAJgAg" +
+          "rv5EtHqOrOlVIMYna7UDgQ+pTU5eLNBffIHaxG8v5bJA3WbjACEgAN9iwNXMohPDEizBBbsalVq2bV786wKfvZM5Dqa0nc8U" +
+          "AwMAAQEXAwMAFquXcyETB0c8UhVSieBFIYMrt1pVWyA=",
+        "base64",
+      );
+
+      it("is skipped when the ClientHello offered early data, and the handshake goes on", async () => {
+        const events = await againstSuspendedServer(async ({ events, raw, asked, refused, taken, answer }) => {
+          raw.write(earlyDataFlight);
+          await asked;
+          await taken(earlyDataFlight.length);
+          answer();
+          let flight = Buffer.alloc(0);
+          while (flight.length < 6) flight = Buffer.concat([flight, (await once(raw, "data"))[0]]);
+          events.push(flight[0] === 0x16 && flight[5] === 0x02 ? "ServerHello" : `record ${flight[0]}`);
+          // The handshake is still open: BoringSSL ends it when it has skipped more than 16384 bytes.
+          raw.write(record(16384));
+          await refused;
+        });
+        expect(events).toEqual([
+          "SNICallback tenant.test",
+          "answer",
+          "ServerHello",
+          "tlsClientError ERR_SSL_TOO_MUCH_SKIPPED_EARLY_DATA",
+        ]);
+      });
+    },
+  );
+
+  describe.each(["listen", ...emitDoors] as Door[])("the server's own options after a name was selected, %s", door => {
+    const client = { servername: "tenant.test", ALPNProtocols: ["h2"] };
+
+    it.each(["addContext", "SNICallback"])("%s keeps ALPNProtocols", async how => {
+      const server = createServer({
+        ...agent2,
+        ALPNProtocols: ["h2", "http/1.1"],
+        SNICallback: how === "SNICallback" ? (_name, cb) => cb(null, tls.createSecureContext(agent3)) : undefined,
+      });
+      if (how === "addContext") server.addContext("tenant.test", agent3);
+      expect(await connectThrough(server, door, client)).toMatchObject({ cn: "agent3", alpnProtocol: "h2" });
+    });
+
+    it.each([
+      ["addContext", "agent3"],
+      ["SNICallback", "agent3"],
+      ["an SNICallback that selects nothing", "agent2"],
+    ])("%s keeps ALPNCallback", async (how, cn) => {
+      const offered: string[][] = [];
+      const server = createServer({
+        ...agent2,
+        ALPNCallback({ protocols }) {
+          offered.push(protocols);
+          return protocols[0];
+        },
+        SNICallback:
+          how === "addContext"
+            ? undefined
+            : (_name, cb) => cb(null, how === "SNICallback" ? tls.createSecureContext(agent3) : undefined),
+      });
+      if (how === "addContext") server.addContext("tenant.test", agent3);
+      expect(await connectThrough(server, door, client)).toMatchObject({ cn, alpnProtocol: "h2" });
+      expect(offered).toEqual([["h2"]]);
+    });
+  });
+
+  // One server-side TLSSocket made by hand: resolves with the certificate the client was served, and what it read.
+  async function wrapByHand(
+    makeStream: (raw: net.Socket) => Duplex,
+    options: tls.TLSSocketOptions,
+    onWrap?: (socket: TLSSocket) => void,
+  ) {
+    const front = net.createServer(raw => {
+      raw.on("error", () => {});
+      const socket = new TLSSocket(makeStream(raw), { isServer: true, ...options });
+      socket.on("error", () => {});
+      socket.on("secure", () => socket.end());
+      onWrap?.(socket);
+    });
+    let client: TLSSocket | undefined;
+    try {
+      front.listen(0, "127.0.0.1");
+      await once(front, "listening");
+      client = connect({
+        port: (front.address() as AddressInfo).port,
+        host: "127.0.0.1",
+        servername: "tenant.test",
+        rejectUnauthorized: false,
+      });
+      let read = "";
+      client.on("data", chunk => (read += chunk));
+      await once(client, "secureConnect");
+      const cn = client.getPeerCertificate().subject.CN;
+      await once(client, "end");
+      return { cn, read };
+    } finally {
+      client?.destroy();
+      front.close();
+    }
+  }
+
+  it("new TLSSocket(stream, { isServer, SNICallback }) asks over a Duplex; a wrap with no SNICallback asks nobody", async () => {
+    const secureContext = tls.createSecureContext({ ...agent2 });
+    const tenant = tls.createSecureContext({ ...agent3 });
+    const calls: string[] = [];
+    const SNICallback = (name: string, cb: (err: Error | null, ctx?: tls.SecureContext) => void) => {
+      calls.push(name);
+      cb(null, tenant);
+    };
+    // The three wraps share one SecureContext. Only the first and the last have a resolver.
+    expect({
+      "net.Socket, SNICallback": (await wrapByHand(raw => raw, { secureContext, SNICallback })).cn,
+      "Duplex, no SNICallback": (await wrapByHand(asDuplex, { secureContext })).cn,
+      "Duplex, SNICallback": (await wrapByHand(asDuplex, { secureContext, SNICallback })).cn,
+    }).toEqual({
+      "net.Socket, SNICallback": "agent3",
+      "Duplex, no SNICallback": "agent2",
+      "Duplex, SNICallback": "agent3",
+    });
+    expect(calls).toEqual(["tenant.test", "tenant.test"]);
+  });
+
+  it("over a Duplex, what the server writes before the SNICallback answered arrives after the handshake", async () => {
+    const secureContext = tls.createSecureContext({ ...agent2 });
+    const tenant = tls.createSecureContext({ ...agent3 });
+    let wrap: TLSSocket | undefined;
+    const SNICallback = (_name: string, cb: (err: Error | null, ctx?: tls.SecureContext) => void) => {
+      // The write drives the engine while it waits for this answer.
+      wrap!.write("early");
+      setImmediate(cb, null, tenant);
+    };
+    expect(await wrapByHand(asDuplex, { secureContext, SNICallback }, socket => (wrap = socket))).toEqual({
+      cn: "agent3",
+      read: "early",
+    });
+  });
+
+  it.each(["TLSv1.2", "TLSv1.3"] as const)(
+    "over a Duplex, the server writes nothing before the answer, and nothing when the answer is an error (%s)",
+    async version => {
+      const [serverSide, clientSide] = duplexPair();
+      let wrote = 0;
+      const write = serverSide.write;
+      serverSide.write = function (this: Duplex, chunk: any, ...rest: any[]) {
+        wrote += chunk.length;
+        return Reflect.apply(write, this, [chunk, ...rest]);
+      } as typeof write;
+      let beforeAnswer: number | undefined;
+      const socket = new TLSSocket(serverSide, {
+        isServer: true,
+        ...agent2,
+        SNICallback(_name, cb) {
+          // Three turns of the event loop: a flight that the engine had ready would be out by now.
+          setImmediate(() =>
+            setImmediate(() =>
+              setImmediate(() => {
+                beforeAnswer = wrote;
+                cb(new Error("boom"));
+              }),
+            ),
+          );
+        },
+      });
+      // How the server side ends: with its error, or with a close that no error came before.
+      const refused = new Promise<string>(resolve => {
+        socket.on("error", err => resolve(err.message));
+        socket.on("close", () => resolve("closed with no error"));
+      });
+      const client = connect({
+        socket: clientSide,
+        servername: "tenant.test",
+        rejectUnauthorized: false,
+        minVersion: version,
+        maxVersion: version,
+      });
+      try {
+        const outcome = await new Promise<string>(resolve => {
+          client.on("secureConnect", () => resolve("connected"));
+          client.on("error", err => resolve(String((err as NodeJS.ErrnoException).code)));
+          client.on("close", () => resolve("closed"));
+        });
+        // The refusal reaches the listeners of the server side after the client sees the reset.
+        const server = beforeAnswer === undefined ? "not asked" : await refused;
+        expect({ beforeAnswer, afterRefusal: wrote, client: outcome, server }).toEqual({
+          beforeAnswer: 0,
+          afterRefusal: 0,
+          client: "ECONNRESET",
+          server: "boom",
+        });
+      } finally {
+        client.destroy();
+        socket.destroy();
+      }
+    },
+  );
+
+  it("over a Duplex, two handshakes that wait at once get their own answers", async () => {
+    type Answer = (err: Error | null, ctx?: tls.SecureContext) => void;
+    const pending = new Map<string, Answer>();
+    const bothAsked = Promise.withResolvers<void>();
+    const SNICallback = (name: string, cb: Answer) => {
+      pending.set(name, cb);
+      if (pending.size === 2) bothAsked.resolve();
+    };
+    const sockets: TLSSocket[] = [];
+    const clients = ["one.test", "two.test"].map(servername => {
+      const [serverSide, clientSide] = duplexPair();
+      const socket = new TLSSocket(serverSide, { isServer: true, ...agent2, SNICallback });
+      socket.on("error", () => {});
+      const client = connect({ socket: clientSide, servername, rejectUnauthorized: false });
+      sockets.push(socket, client);
+      return client;
+    });
+    try {
+      const connected = clients.map(client => once(client, "secureConnect"));
+      // A handshake that does not ask its callback completes with the default context.
+      await Promise.race([bothAsked.promise, Promise.all(connected)]);
+      pending.get("two.test")?.(null, tls.createSecureContext(agent3));
+      await connected[1];
+      pending.get("one.test")?.(null, tls.createSecureContext(agent1));
+      await connected[0];
+      expect(clients.map(client => client.getPeerCertificate().subject.CN)).toEqual(["agent1", "agent3"]);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+    }
+  });
+
+  // In a process of its own: a count taken here would include what earlier tests left for the GC.
+  it("over a Duplex, no SecureContext that answered is kept once its socket is gone", async () => {
+    const script = `
+      const { sslCtxLiveCount } = require("bun:internal-for-testing");
+      const { duplexPair } = require("node:stream");
+      const tls = require("node:tls");
+      const [defaults, selected] = ${JSON.stringify([agent2, agent3])};
+      // The two contexts that every connection shares stay alive to the end, so the count is of the answers.
+      const serverContext = tls.createSecureContext(defaults);
+      const clientContext = tls.createSecureContext({});
+      const before = sslCtxLiveCount();
+
+      // One handshake whose callback answers with a context of its own. Nothing of it outlives the call.
+      async function answered(when, id) {
+        const [serverSide, clientSide] = duplexPair();
+        const given = Promise.withResolvers();
+        let asked = false;
+        const socket = new tls.TLSSocket(serverSide, {
+          isServer: true,
+          secureContext: serverContext,
+          SNICallback(_, cb) {
+            asked = true;
+            const context = tls.createSecureContext({ ...selected, sessionTimeout: 7000 + id });
+            const answer = () => (cb(null, context), given.resolve());
+            if (when === "at once") answer();
+            else if (when === "later") setImmediate(answer);
+            else if (when === "after it destroyed the socket") (socket.destroy(), answer());
+            else setImmediate(() => (socket.destroy(), setImmediate(answer)));
+          },
+        });
+        socket.on("error", () => {});
+        const client = tls.connect({
+          socket: clientSide,
+          servername: "tenant.test",
+          rejectUnauthorized: false,
+          secureContext: clientContext,
+        });
+        const outcome = await new Promise(resolve => {
+          client.on("secureConnect", () => resolve(client.getPeerCertificate().subject.CN));
+          client.on("error", err => resolve(err.code));
+          client.on("close", () => resolve("closed"));
+        });
+        if (asked) await given.promise;
+        client.destroy();
+        socket.destroy();
+        return outcome;
+      }
+
+      const outcomes = [];
+      for (const when of ["at once", "later", "after it destroyed the socket", "after the socket is gone"]) {
+        outcomes.push(await answered(when, outcomes.length));
+      }
+      // Finalizers run on GC, so wait for the condition.
+      const deadline = performance.now() + 3000;
+      while (sslCtxLiveCount() !== before && performance.now() < deadline) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      console.log(JSON.stringify({ outcomes, left: sslCtxLiveCount() - before }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, result: JSON.parse(stdout || "null"), exitCode }).toEqual({
+      stderr: "",
+      result: { outcomes: ["agent3", "agent3", "ECONNRESET", "ECONNRESET"], left: 0 },
+      exitCode: 0,
+    });
+  });
+
+  // A CONNECT proxy that ends TLS itself. This socket has no handle to adopt.
+  it.each(["addContext", "SNICallback"])("%s over the socket of an http 'connect' event", async how => {
+    const server = createServer(
+      {
+        ...agent2,
+        SNICallback: how === "SNICallback" ? (_name, cb) => cb(null, tls.createSecureContext(agent3)) : undefined,
+      },
+      socket => socket.end(),
+    );
+    if (how === "addContext") server.addContext("tenant.test", { ...agent3 });
+    const proxy = http.createServer();
+    proxy.on("connect", (_req, socket) => {
+      socket.on("error", () => {});
+      socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      server.emit("connection", socket);
+    });
+    let client: TLSSocket | undefined;
+    try {
+      proxy.listen(0, "127.0.0.1");
+      await once(proxy, "listening");
+      const req = http.request({
+        port: (proxy.address() as AddressInfo).port,
+        host: "127.0.0.1",
+        method: "CONNECT",
+        path: "tenant.test:443",
+      });
+      req.end();
+      const [, socket] = await once(req, "connect");
+      client = connect({ socket, servername: "tenant.test", rejectUnauthorized: false });
+      await once(client, "secureConnect");
+      expect(client.getPeerCertificate().subject.CN).toBe("agent3");
+    } finally {
+      client?.destroy();
+      proxy.close();
+    }
+  });
+
+  it.each(["addContext", "SNICallback"])("%s over a TLS socket of another server (TLS in TLS)", async how => {
+    const inner = createServer(
+      {
+        ...agent2,
+        SNICallback: how === "SNICallback" ? (_name, cb) => cb(null, tls.createSecureContext(agent3)) : undefined,
+      },
+      socket => socket.end(),
+    );
+    if (how === "addContext") inner.addContext("tenant.test", { ...agent3 });
+    const outer = createServer({ ...agent1 }, socket => {
+      socket.on("error", () => {});
+      inner.emit("connection", socket);
+    });
+    let tunnel: TLSSocket | undefined;
+    let client: TLSSocket | undefined;
+    try {
+      outer.listen(0, "127.0.0.1");
+      await once(outer, "listening");
+      tunnel = connect({ port: (outer.address() as AddressInfo).port, host: "127.0.0.1", rejectUnauthorized: false });
+      await once(tunnel, "secureConnect");
+      client = connect({ socket: tunnel, servername: "tenant.test", rejectUnauthorized: false });
+      await once(client, "secureConnect");
+      expect(client.getPeerCertificate().subject.CN).toBe("agent3");
+    } finally {
+      client?.destroy();
+      tunnel?.destroy();
+      outer.close();
+    }
+  });
+
+  // A pipe socket has no fd that usockets can adopt, so its server wrap runs over the stream.
+  it.skipIf(!isWindows)("addContext() and SNICallback over a named pipe", async () => {
+    const path = `\\\\.\\pipe\\bun-tls-server-name-${process.pid}-${crypto.randomUUID()}`;
+    const served: string[] = [];
+    for (const how of ["addContext", "SNICallback"]) {
+      const server = createServer(
+        {
+          ...agent2,
+          SNICallback: how === "SNICallback" ? (_name, cb) => cb(null, tls.createSecureContext(agent3)) : undefined,
+        },
+        socket => socket.end(),
+      );
+      if (how === "addContext") server.addContext("tenant.test", agent3);
+      const front = net.createServer(raw => {
+        raw.on("error", () => {});
+        server.emit("connection", raw);
+      });
+      let raw: net.Socket | undefined;
+      let client: TLSSocket | undefined;
+      try {
+        front.listen(path);
+        await once(front, "listening");
+        raw = net.connect(path);
+        await once(raw, "connect");
+        client = connect({ socket: raw, servername: "tenant.test", rejectUnauthorized: false });
+        await once(client, "secureConnect");
+        served.push(String(client.getPeerCertificate().subject.CN));
+      } finally {
+        client?.destroy();
+        raw?.destroy();
+        front.close();
+        await once(front, "close");
+      }
+    }
+    expect(served).toEqual(["agent3", "agent3"]);
   });
 });

@@ -1100,7 +1100,7 @@ function toSNIError(err) {
 
 // Applies one SNICallback resolution to the dispatch state. Node assigns
 // `sni_context = context.context || context`: both the SecureContext wrapper
-// and a raw native context are accepted, null/undefined falls through to the
+// and a raw native context are accepted, a falsy or primitive value keeps the
 // default context, and anything else is an invalid SNI context that drops the
 // connection before the handshake completes.
 function consumeSNIResult(state, err, context) {
@@ -1108,14 +1108,13 @@ function consumeSNIResult(state, err, context) {
     state.failed = toSNIError(err);
     return;
   }
-  if (context == null) return;
-  const innerContext = typeof context === "object" ? context.context : undefined;
-  if (innerContext) {
-    state.selected = innerContext;
-  } else if (state.server?.[kNativeSecureContextCtor] && context instanceof state.server[kNativeSecureContextCtor]) {
-    state.selected = context;
-  } else {
-    state.failed = new Error("Invalid SNI context");
+  if (!context) return;
+  const selected = context.context || context;
+  const NativeSecureContext = state.server?.[kNativeSecureContextCtor];
+  if (NativeSecureContext && selected instanceof NativeSecureContext) {
+    state.selected = selected;
+  } else if (typeof selected === "object" || typeof selected === "function") {
+    state.failed = new TypeError("Invalid SNI context");
   }
 }
 

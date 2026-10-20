@@ -1490,7 +1490,7 @@ impl TranspilerClass for JSTranspiler {
             Some(loader) => loader_from_utf8(cx.global(), loader)?,
             None => None,
         }
-        .unwrap_or(self.config.get().default_loader);
+        .unwrap_or_else(|| self.config.get().default_loader);
 
         if !loader.is_java_script_like() {
             return Err(cx.heap.invalid_arguments(format_args!(

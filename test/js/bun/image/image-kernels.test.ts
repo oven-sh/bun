@@ -1021,6 +1021,34 @@ describe("Floyd–Steinberg dither", () => {
     expect(ratio).toBeLessThan(1.25);
   });
 
+  // A fully transparent pixel takes no error. The error of a soft edge beside
+  // it put faint entries on the background.
+  test.each([16, 32, 64])(
+    "fully transparent pixels beside a soft edge stay fully transparent, colors:%d",
+    async colors => {
+      // A disc with a gradient, an antialiased edge and a soft shadow.
+      const sprite = (x: number, y: number): Px => {
+        const cover = Math.min(1, Math.max(0, 28.5 - Math.hypot(x - 48, y - 45)));
+        const shadow = 0.5 * Math.exp(-(((x - 48) / 31) ** 2 + ((y - 79) / 3.75) ** 2));
+        const a = cover + (1 - cover) * shadow;
+        if (a < 1 / 510) return [0, 0, 0, 0];
+        const t = (y - 17) / 56;
+        const k = cover / a;
+        return [k * (250 - 60 * t), k * (190 - 90 * t), k * (60 + 40 * t), 255 * a].map(Math.floor) as Px;
+      };
+      const src = decodePng(makePng(96, 96, sprite)).data;
+      const out = await ditherBack(96, 96, sprite, colors);
+      let background = 0;
+      let visible = 0;
+      for (let i = 3; i < src.length; i += 4) {
+        if (src[i] !== 0) continue;
+        background++;
+        if (out[i] !== 0) visible++;
+      }
+      expect({ background, visible }).toEqual({ background: 5254, visible: 0 });
+    },
+  );
+
   // 1×N and N×1 are the edge cases where FS has no "below" or no "right".
   test("1-pixel-wide and 1-pixel-tall sources", async () => {
     for (const [w, h] of [

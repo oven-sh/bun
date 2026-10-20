@@ -491,7 +491,9 @@ fn map_floyd_steinberg(
             let mut wanted: [i32; 4] = [0; 4];
             let mut cand: [i32; 4] = [0; 4];
             for c in 0..4usize {
-                wanted[c] = (16 * i32::from(source[c]) + cur[off + c]).clamp(0, 16 * 255);
+                // A fully transparent pixel takes no error: a soft edge beside it would tint it.
+                let carried = if source[3] == 0 { 0 } else { cur[off + c] };
+                wanted[c] = (16 * i32::from(source[c]) + carried).clamp(0, 16 * 255);
                 cand[c] = (wanted[c] + 8) >> 4;
             }
 

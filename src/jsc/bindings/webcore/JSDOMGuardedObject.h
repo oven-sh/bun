@@ -35,6 +35,7 @@
 namespace WebCore {
 
 class WEBCORE_EXPORT DOMGuardedObject : public RefCounted<DOMGuardedObject>, public ActiveDOMCallback {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(DOMGuardedObject); // both bases declare allocators
 public:
     // ActiveDOMCallback.
     void ref() const final { RefCounted::ref(); }

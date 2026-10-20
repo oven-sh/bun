@@ -328,10 +328,8 @@ TransferredMessagePort MessagePort::disentangle()
     m_started = false;
 
     // We can't receive any messages or generate any events after this, so remove ourselves from the list of active ports.
-    if (auto* context = scriptExecutionContext()) {
+    if (auto* context = scriptExecutionContext())
         context->willDestroyActiveDOMObject(*this);
-        context->willDestroyDestructionObserver(*this);
-    }
     observeContext(nullptr);
 
     return TransferredMessagePort { m_pipe.copyRef(), m_side };
@@ -407,6 +405,8 @@ void MessagePort::contextDestroyed()
 {
     ASSERT(scriptExecutionContext());
 
+    // close() releases the jsRef() self-reference, which can be the last one.
+    Ref protectedThis { *this };
     close();
     ActiveDOMObject::contextDestroyed();
 }

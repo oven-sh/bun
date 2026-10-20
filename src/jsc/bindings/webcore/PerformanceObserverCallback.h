@@ -35,6 +35,7 @@ class PerformanceObserver;
 class PerformanceObserverEntryList;
 
 class PerformanceObserverCallback : public RefCounted<PerformanceObserverCallback>, public ActiveDOMCallback {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(PerformanceObserverCallback); // both bases declare allocators
 public:
     using ActiveDOMCallback::ActiveDOMCallback;
 

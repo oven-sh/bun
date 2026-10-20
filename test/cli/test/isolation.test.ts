@@ -1455,6 +1455,94 @@ test.concurrent("--isolate: leaked AbortSignal.timeout does not fire in next fil
   expect(exitCode).toBe(0);
 });
 
+// A retired global is destroyed by a later GC, usually before the wrappers of
+// the AbortSignals, EventTargets and ports its file left alive are swept. Each
+// of those is still registered with the global's ScriptExecutionContext, and
+// the context's destructor tells every one of them. That loop was quadratic in
+// the count: 100k leaked AbortControllers made the first full GC after the
+// global died take 20x the time it took to create them, on release and debug
+// builds alike.
+test.concurrent("--isolate: destroying a global with many leaked AbortControllers is not quadratic", async () => {
+  const count = 100_000;
+  // The first global of a run is not the one measured: on a debug build
+  // TestCommand::exec's frame holds its address in stale spill slots, so it
+  // survives every GC. Which of the following files' collections destroys the
+  // retired second global varies by build and platform (one release aarch64
+  // lane kept it through the next file), so three files collect in turn and
+  // every collection must be linear: wherever the drain ran, it was cheap.
+  const collectFile = `
+    import { test, expect } from "bun:test";
+    import { heapStats } from "bun:jsc";
+    test("collect the leaked global", () => {
+      const start = performance.now();
+      Bun.gc(true);
+      const ms = (performance.now() - start).toFixed(0);
+      console.log("GC_MS=" + ms + " LIVE=" + (heapStats().objectTypeCounts.AbortController ?? 0));
+      expect(1).toBe(1);
+    });
+  `;
+  using dir = tempDir("isolate-many-observers", {
+    "a-first.test.ts": `
+      import { test, expect } from "bun:test";
+      test("first file", () => {
+        expect(1).toBe(1);
+      });
+    `,
+    "b-leak.test.ts": `
+      import { test, expect } from "bun:test";
+      test("keep ${count} AbortControllers alive", () => {
+        const start = performance.now();
+        const keep = [];
+        for (let i = 0; i < ${count}; i++) keep.push(new AbortController());
+        (globalThis as any).keep = keep;
+        console.log("ALLOC_MS=" + (performance.now() - start).toFixed(0));
+        expect(keep.length).toBe(${count});
+      });
+    `,
+    "c-collect.test.ts": collectFile,
+    "d-collect.test.ts": collectFile,
+    "e-collect.test.ts": collectFile,
+  });
+  // The child's 5 s default per-test timeout would turn a slow but linear
+  // collection on a loaded debug runner into a failure. The ratio below is
+  // the assertion, the outer timeout bounds the run.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "test",
+      "--parallel=1",
+      "--timeout=60000",
+      "./a-first.test.ts",
+      "./b-leak.test.ts",
+      "./c-collect.test.ts",
+      "./d-collect.test.ts",
+      "./e-collect.test.ts",
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("5 pass");
+  expect(exitCode).toBe(0);
+  expect(stdout).toMatch(/ALLOC_MS=\d+/);
+  const allocMs = Number(stdout.match(/ALLOC_MS=(\d+)/)![1]);
+  const collections = [...stdout.matchAll(/GC_MS=(\d+) LIVE=(\d+)/g)].map(m => ({
+    ms: Number(m[1]),
+    live: Number(m[2]),
+  }));
+  expect(collections).toHaveLength(3);
+  // The leaked global and its controllers are gone by the end, so one of the
+  // timed collections ran the observer drain.
+  expect(collections[2].live, `the leaked global survived: ${JSON.stringify(collections)}`).toBeLessThan(count / 10);
+  // Creating the controllers and collecting them are both linear in count
+  // (1.2x to 1.8x each other on a debug build, under load). Before the fix
+  // the draining collection took 20x the creation on release and debug alike.
+  const slowest = Math.max(...collections.map(c => c.ms));
+  expect(slowest, `alloc ${allocMs}ms, collections ${JSON.stringify(collections)}`).toBeLessThan(allocMs * 8);
+});
+
 // The swap sweeps what exists AT the file boundary. Work a finished file left
 // in flight lands later, while the next file runs: a thread-pool job settles a
 // promise of the retired realm, a child the swap killed reports its exit. The

@@ -8,6 +8,7 @@ struct BunVmHandleRef;
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
 #include <wtf/ObjectIdentifier.h>
+#include <wtf/SentinelLinkedList.h>
 #include <wtf/WeakHashSet.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
@@ -208,9 +209,8 @@ private:
 
     WeakHashSet<ActiveDOMObject> m_activeDOMObjects;
     WeakHashSet<ScriptExecutionContext> m_ownedGraphContexts;
-    // Registered in the observer's constructor, removed in its destructor, both
-    // on this context's thread: plain pointers, nothing allocated per observer.
-    HashSet<ContextDestructionObserver*> m_destructionObservers;
+    // Context thread only. Intrusive: nothing allocated per observer.
+    SentinelLinkedList<ContextDestructionObserver, BasicRawSentinelNode<ContextDestructionObserver>> m_destructionObservers;
 
     std::atomic<bool> m_activeDOMObjectsAreStopped { false };
     // A graph's context: stop() ran (its ActiveDOMObjects are stopped one task later).

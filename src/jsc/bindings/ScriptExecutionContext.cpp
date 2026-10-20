@@ -217,8 +217,12 @@ ScriptExecutionContext::~ScriptExecutionContext()
     m_inScriptExecutionContextDestructor = true;
 #endif // ASSERT_ENABLED
 
-    while (auto* destructionObserver = m_destructionObservers.takeAny())
+    // Unlink first: contextDestroyed() can destroy another observer, which then unlinks itself.
+    while (!m_destructionObservers.isEmpty()) {
+        auto* destructionObserver = &*m_destructionObservers.begin();
+        destructionObserver->remove();
         destructionObserver->contextDestroyed();
+    }
 
 #if ASSERT_ENABLED
     m_inScriptExecutionContextDestructor = false;
@@ -308,12 +312,15 @@ void ScriptExecutionContext::didCreateDestructionObserver(ContextDestructionObse
 #if ASSERT_ENABLED
     ASSERT(!m_inScriptExecutionContextDestructor);
 #endif // ASSERT_ENABLED
-    m_destructionObservers.add(&observer);
+    ASSERT(!observer.isOnList());
+    m_destructionObservers.append(&observer);
 }
 
 void ScriptExecutionContext::willDestroyDestructionObserver(ContextDestructionObserver& observer)
 {
-    m_destructionObservers.remove(&observer);
+    // Already unlinked when the destructor's drain told it contextDestroyed().
+    if (observer.isOnList())
+        observer.remove();
 }
 
 bool ScriptExecutionContext::isJSExecutionForbidden()
@@ -397,8 +404,8 @@ ScriptExecutionContext* ScriptExecutionContext::getMainThreadScriptExecutionCont
 void ScriptExecutionContext::checkConsistency() const
 {
 #if ASSERT_ENABLED
-    for (auto* destructionObserver : m_destructionObservers)
-        ASSERT(destructionObserver->scriptExecutionContext() == this);
+    for (auto& destructionObserver : m_destructionObservers)
+        ASSERT(destructionObserver.scriptExecutionContext() == this);
 
     // This can run on a GC thread.
     for (SUPPRESS_UNCOUNTED_LOCAL auto& activeDOMObject : m_activeDOMObjects) {

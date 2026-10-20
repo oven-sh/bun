@@ -1033,6 +1033,8 @@ pub mod fs {
                     &iterator,
                 )?;
             }
+            // A directory that was removed is not found, as when its open fails.
+            iter.fail_if_removed()?;
 
             // debug("readdir({}, {}) = {}", handle, dir_, dir.data.count());
 

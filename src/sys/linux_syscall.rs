@@ -548,6 +548,7 @@ pub(crate) unsafe fn getdents64(fd: i32, buf: *mut u8, len: usize) -> isize {
     // errno-on-return mangling beyond the standard `-1`/errno convention).
     // PERF: switch to `rustix::fs::RawDir` once `WrappedIterator` is
     // reworked to consume `RawDirEntry` instead of hand-parsing bytes.
+    // Tests interpose this libc call (test/fixtures/*-readdir-shim.c, bun-pack.test.ts): port them before that.
     // SAFETY: raw `getdents64(2)`; caller guarantees `buf[..len]` is writable;
     // kernel validates `fd`.
     unsafe { libc::syscall(libc::SYS_getdents64, fd as libc::c_long, buf, len) as isize }

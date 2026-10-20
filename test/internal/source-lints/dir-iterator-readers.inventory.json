@@ -1,0 +1,116 @@
+{
+  "src/glob/GlobWalker.rs": {
+    "iterate": "removed-is-end"
+  },
+  "src/install/PackageInstall.rs": {
+    "lay_links_below": "ends-on-any-error",
+    "list": "asks"
+  },
+  "src/install/PackageManager/patchPackage.rs": {
+    "hide": "removed-is-end",
+    "link_entries": "asks",
+    "move_entries": "removed-is-end",
+    "move_entries_absent_from": "removed-is-end"
+  },
+  "src/install/bin.rs": {
+    "link": "ends-on-any-error",
+    "next_in_dir": "ends-on-any-error",
+    "see_names_in": "ends-on-any-error",
+    "unlink": "ends-on-any-error"
+  },
+  "src/install/git_runner.rs": {
+    "has_no_links": "removed-is-end"
+  },
+  "src/install/isolated_install.rs": {
+    "holds_a_tree": "ends-on-any-error",
+    "move_entries_aside": "ends-on-any-error"
+  },
+  "src/install/prune.rs": {
+    "list": "asks",
+    "read_entries_and_leftovers": "ends-on-any-error",
+    "remove_dangling_bins": "ends-on-any-error"
+  },
+  "src/io/ParentDeathWatchdog.rs": {
+    "list_child_pids_linux": "ends-on-any-error"
+  },
+  "src/lint/driver/fs.rs": {
+    "list": "ends-on-any-error"
+  },
+  "src/resolver/lib.rs": {
+    "readdir": "asks"
+  },
+  "src/resolver/resolver.rs": {
+    "dir_info_cached_miss": "ends-on-any-error",
+    "dir_info_for_resolution": "ends-on-any-error"
+  },
+  "src/runtime/cli/bunx_command.rs": {
+    "count_cached_packages": "ends-on-any-error",
+    "get_bin_from_subpath": "ends-on-any-error"
+  },
+  "src/runtime/cli/create_command.rs": {
+    "fetch_all_local_and_remote": "ends-on-any-error"
+  },
+  "src/runtime/cli/init_command.rs": {
+    "exec": "removed-is-end"
+  },
+  "src/runtime/cli/pack_command.rs": {
+    "add_bundled_dep": "removed-is-end",
+    "iterate_included_project_tree": "removed-is-end",
+    "iterate_project_tree": "removed-is-end"
+  },
+  "src/runtime/cli/package_manager_command.rs": {
+    "exec": "removed-is-end"
+  },
+  "src/runtime/cli/pm_cache_prune_command.rs": {
+    "read_entries": "removed-is-end"
+  },
+  "src/runtime/cli/pm_diff_command.rs": {
+    "read_dir_tree": "asks"
+  },
+  "src/runtime/cli/pm_licenses_command.rs": {
+    "list_dir": "ends-on-any-error"
+  },
+  "src/runtime/cli/publish_command.rs": {
+    "find_workspace_readme": "removed-is-end",
+    "normalize_bin": "removed-is-end"
+  },
+  "src/runtime/node/node_fs.rs": {
+    "cp_async_directory": "removed-is-end",
+    "cp_sync_inner": "removed-is-end",
+    "readdir_with_entries": "removed-is-end",
+    "readdir_with_entries_recursive_async": "removed-is-end",
+    "readdir_with_entries_recursive_sync": "removed-is-end",
+    "readdir_with_entries_u16": "removed-is-end",
+    "zig_delete_tree": "removed-is-end",
+    "zig_delete_tree_min_stack_size_with_kind_hint": "removed-is-end"
+  },
+  "src/runtime/node/path_watcher.rs": {
+    "walk_subtree": "ends-on-any-error"
+  },
+  "src/runtime/shell/builtin/ls.rs": {
+    "run_from_thread_pool": "removed-is-end"
+  },
+  "src/runtime/shell/builtin/mv.rs": {
+    "move_across_devices": "removed-is-end"
+  },
+  "src/runtime/shell/builtin/rm.rs": {
+    "remove_entry_dir": "removed-is-end"
+  },
+  "src/runtime/socket/system_certs.rs": {
+    "load_directory": "ends-on-any-error"
+  },
+  "src/runtime/webview/ChromeProcess.rs": {
+    "find_playwright_shell": "removed-is-end"
+  },
+  "src/sema/driver/host.rs": {
+    "list": "ends-on-any-error"
+  },
+  "src/sys/dir.rs": {
+    "delete_children": "asks",
+    "delete_tree": "removed-is-end"
+  },
+  "src/sys/walker_skippable.rs": {
+    "next": "asks",
+    "walk_root": "asks in next"
+  }
+}

@@ -9,7 +9,7 @@
 use core::mem::offset_of;
 
 use bun_core::RawSlice;
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
 use bun_sys::Tag;
 use bun_sys::{self as sys, Fd};
 
@@ -213,14 +213,6 @@ mod platform {
     use super::*;
     use core::ptr::addr_of;
 
-    // The `libc` crate binds neither `getdents` nor `getdirentries` on
-    // FreeBSD, so declare the former here.
-    unsafe extern "C" {
-        // SAFETY precondition: `buf` must be writable for `nbytes` bytes and
-        // dirent-aligned — raw-pointer contract, cannot be `safe fn`.
-        fn getdents(fd: core::ffi::c_int, buf: *mut core::ffi::c_char, nbytes: usize) -> isize;
-    }
-
     /// FreeBSD's `struct dirent` leads with `ino_t` (u64, align 8); a bare
     /// `[u8; N]` field has alignment 1, so wrap it to force 8-byte alignment.
     #[repr(C, align(8))]
@@ -231,6 +223,8 @@ mod platform {
         pub(crate) buf: DirentBuf,
         pub(crate) index: usize,
         pub(crate) end_index: usize,
+        /// The listing ended because the directory was removed.
+        pub(crate) removed: bool,
     }
 
     impl<const USE_WINDOWS_OSPATH: bool> NewIterator<USE_WINDOWS_OSPATH> {
@@ -238,27 +232,18 @@ mod platform {
             'start_over: loop {
                 if self.index >= self.end_index {
                     // SAFETY: dir is a valid open fd; buf is dirent-aligned scratch.
-                    let rc = unsafe {
-                        getdents(
-                            self.dir.native(),
-                            self.buf.0.as_mut_ptr().cast::<libc::c_char>(),
-                            self.buf.0.len(),
-                        )
+                    let read = unsafe {
+                        sys::getdents64(self.dir, self.buf.0.as_mut_ptr(), self.buf.0.len())
+                    }?;
+                    let Some(n) = read else {
+                        self.removed = true;
+                        return Ok(None);
                     };
-                    if rc < 0 {
-                        let e = sys::last_errno();
-                        // FreeBSD reports ENOENT when iterating an unlinked
-                        // but still-open directory.
-                        if e == libc::ENOENT {
-                            return Ok(None);
-                        }
-                        return Err(sys::Error::from_code_int(e, Tag::getdents64));
-                    }
-                    if rc == 0 {
+                    if n == 0 {
                         return Ok(None);
                     }
                     self.index = 0;
-                    self.end_index = usize::try_from(rc).expect("int cast");
+                    self.end_index = n;
                 }
                 // Records are variable-length; subsequent entries may not be
                 // 8-byte aligned. Never
@@ -324,6 +309,8 @@ mod platform {
         pub(crate) buf: DirentBuf,
         pub(crate) index: usize,
         pub(crate) end_index: usize,
+        /// The listing ended because the directory was removed.
+        pub(crate) removed: bool,
     }
 
     impl<const USE_WINDOWS_OSPATH: bool> NewIterator<USE_WINDOWS_OSPATH> {
@@ -332,28 +319,19 @@ mod platform {
         pub(crate) fn next(&mut self) -> Result {
             'start_over: loop {
                 if self.index >= self.end_index {
-                    // glibc doesn't expose getdents64; go straight to the
-                    // raw syscall.
-                    // SAFETY: buf is valid for 8192 bytes; fd is a plain c_int.
-                    let rc = unsafe {
-                        libc::syscall(
-                            libc::SYS_getdents64,
-                            self.dir.native() as libc::c_long,
-                            self.buf.0.as_mut_ptr(),
-                            self.buf.0.len(),
-                        )
+                    // SAFETY: buf is valid for 8192 bytes.
+                    let read = unsafe {
+                        sys::getdents64(self.dir, self.buf.0.as_mut_ptr(), self.buf.0.len())
+                    }?;
+                    let Some(n) = read else {
+                        self.removed = true;
+                        return Ok(None);
                     };
-                    if rc < 0 {
-                        return Err(sys::Error::from_code_int(
-                            sys::last_errno(),
-                            Tag::getdents64,
-                        ));
-                    }
-                    if rc == 0 {
+                    if n == 0 {
                         return Ok(None);
                     }
                     self.index = 0;
-                    self.end_index = rc as usize;
+                    self.end_index = n;
                 }
                 // Records are variable-length; `libc::dirent64` declares
                 // `d_name: [c_char; 256]` but the kernel only writes up to
@@ -751,6 +729,19 @@ impl<const IS_U16: bool> NewWrappedIterator<IS_U16>
 where
     (): WrappedSelect<IS_U16>,
 {
+    /// The listing ended because the directory was removed after it was opened. Always false on macOS and Windows.
+    #[inline]
+    pub(crate) fn dir_was_removed(&self) -> bool {
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        {
+            self.iter.removed
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
+        {
+            false
+        }
+    }
+
     pub(crate) fn init(dir: Fd) -> Self {
         #[cfg(target_os = "macos")]
         {
@@ -775,6 +766,7 @@ where
                     end_index: 0,
                     // zero-init avoids the invalid_value lint on [u8; N]
                     buf: platform::DirentBuf([0u8; 8192]),
+                    removed: false,
                 },
             };
         }
@@ -787,6 +779,7 @@ where
                     end_index: 0,
                     // zero-init avoids the invalid_value lint on [u8; N]
                     buf: platform::DirentBuf([0u8; 8192]),
+                    removed: false,
                 },
             };
         }

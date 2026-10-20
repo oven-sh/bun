@@ -6438,7 +6438,7 @@ impl NodeFS {
         Ok(())
     }
 
-    /// Gone or not enterable since the parent listed it. Reading a gone directory gives ENOENT too.
+    /// Gone or not enterable since the parent listed it. (The Linux and FreeBSD iterators end a gone directory's listing.)
     fn readdir_skips_subdir(errno: E) -> bool {
         matches!(errno, E::ENOENT | E::ENOTDIR | E::EPERM)
     }
@@ -9787,6 +9787,8 @@ pub(crate) fn zig_delete_tree(
         // close it before we try to delete.
         let top = stack.pop().unwrap();
         top.iter.iter.dir.close();
+        // A directory that read as removed and still holds entries could read that way on every retry.
+        let read_as_removed = top.iter.dir_was_removed();
 
         // In order to avoid double-closing the directory when cleaning up
         // the stack in the case of an error, we save the relevant portions and
@@ -9802,6 +9804,7 @@ pub(crate) fn zig_delete_tree(
         match dt_delete_dir(sys::Dir::borrow(&parent_dir), name) {
             Ok(()) => {}
             Err(E::ENOENT) => {}
+            Err(E::ENOTEMPTY | E::EEXIST) if read_as_removed => return Err(dt_err(E::ENOTEMPTY)),
             Err(E::ENOTEMPTY) => need_to_retry = true,
             // Some OSes report EEXIST instead of ENOTEMPTY for a non-empty
             // directory; treat it the same.
@@ -9991,6 +9994,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
             }
             // Reached the end of the directory entries, which means we successfully deleted all of them.
             // Now to remove the directory itself.
+            let read_as_removed = dir_it.dir_was_removed();
             dir.close();
 
             let dir_name: &[u8] = if dir_name_is_sub_path {
@@ -10000,6 +10004,9 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
             };
             if let Some(d) = cleanup_dir_parent {
                 match dt_delete_dir(&d, dir_name) {
+                    Err(E::ENOTEMPTY | E::EEXIST) if read_as_removed => {
+                        return Err(dt_err(E::ENOTEMPTY));
+                    }
                     Ok(()) | Err(E::ENOENT) | Err(E::ENOTEMPTY) | Err(E::EEXIST) => {
                         // These two things can happen due to file system race conditions.
                         continue 'start_over;
@@ -10011,6 +10018,9 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
             } else {
                 match dt_delete_dir(self_, sub_path) {
                     Ok(()) | Err(E::ENOENT) => return Ok(()),
+                    Err(E::ENOTEMPTY | E::EEXIST) if read_as_removed => {
+                        return Err(dt_err(E::ENOTEMPTY));
+                    }
                     Err(E::ENOTEMPTY) | Err(E::EEXIST) => continue 'start_over,
                     Err(e) => return Err(dt_err(e)),
                 }

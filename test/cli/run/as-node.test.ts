@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { join } from "path";
+import { join, sep } from "path";
 import { bunEnv, bunExe, fakeNodeRun, tempDir } from "../../harness";
 
 describe("fake node cli", () => {
@@ -95,6 +95,56 @@ describe("fake node cli", () => {
       // note: no extension here is INTENTIONAL
       JSON.stringify([join(temp, "index"), "a", "b", "c"]),
     );
+  });
+
+  // Node sets `process.argv[1]` to `path.resolve()` of the script argument.
+  describe("process.argv[1] is the normalized path of the script", () => {
+    const scripts: [name: string, script: (temp: string) => string, normalized: (temp: string) => string][] = [
+      ["an absolute path with `.` and `..`", temp => `${temp}/./pkg/../index.js`, temp => join(temp, "index.js")],
+      ["an absolute path with a repeated separator", temp => `${temp}//index.js`, temp => join(temp, "index.js")],
+      [
+        "an absolute path with `/` separators",
+        temp => join(temp, "index.js").replaceAll("\\", "/"),
+        temp => join(temp, "index.js"),
+      ],
+      // Unlike `path.resolve()`, a trailing separator stays: see the directory test below.
+      ["a directory with a trailing separator", temp => `${temp}//pkg/`, temp => join(temp, "pkg") + sep],
+    ];
+    test.each(scripts)("%s", (_, script, normalized) => {
+      using temp = tempDir("fake-node", {
+        "index.js": "console.log(process.argv[1])",
+        "pkg/index.js": "console.log(process.argv[1])",
+      });
+      expect(fakeNodeRun(temp, script(String(temp))).stdout).toBe(normalized(String(temp)));
+    });
+
+    const mainModules: [name: string, script: (temp: string) => string][] = [
+      // The launcher that pnpm writes to `node_modules/.bin` runs `node "$basedir/../pkg/cli.mjs"`.
+      ["through `node_modules/.bin/..`", temp => `${temp}/node_modules/.bin/../pkg/cli.mjs`],
+      // Git Bash and MSYS2 pass a Windows path with `/` separators.
+      ["with `/` separators", temp => join(temp, "node_modules", "pkg", "cli.mjs").replaceAll("\\", "/")],
+    ];
+    test.each(mainModules)("an ES module that runs %s finds that it is the main module", (_, script) => {
+      using temp = tempDir("fake-node", {
+        "node_modules/.bin/pkg": "",
+        "node_modules/pkg/cli.mjs": `
+          import { fileURLToPath } from "node:url";
+          console.log(process.argv[1] === fileURLToPath(import.meta.url));
+        `,
+      });
+      expect(fakeNodeRun(temp, script(String(temp))).stdout).toBe("true");
+    });
+
+    // The module loader resolves the entry from the same path. Bun tries `pkg.ts` before the directory
+    // `pkg` (see "entrypoint file extension picking"), so only the separator keeps `node ./pkg/` on
+    // `pkg/index.js`, which is what Node runs beside a `pkg.ts`.
+    test.each(["pkg.js", "pkg.ts"])("a trailing separator selects the directory over %s", sibling => {
+      using temp = tempDir("fake-node", {
+        [sibling]: "console.log('sibling')",
+        "pkg/index.js": "console.log('directory')",
+      });
+      expect([fakeNodeRun(temp, "./pkg").stdout, fakeNodeRun(temp, "./pkg/").stdout]).toEqual(["sibling", "directory"]);
+    });
   });
 
   // Bare `node` now matches Node.js: a TTY stdin enters the REPL, a

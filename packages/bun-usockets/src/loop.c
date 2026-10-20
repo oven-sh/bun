@@ -242,6 +242,10 @@ static unsigned char us_internal_next_timeout_stamp(unsigned char stamp) {
     return stamp == 255 ? 255 : (stamp + 1) % 240;
 }
 
+/* How long the low-priority queue holds the timeouts of a socket back: 120 s, which is what
+ * node gives a TLS handshake (handshakeTimeout). Past that the socket's peer has given up. */
+static const int MAX_LOW_PRIO_TICKS = 120 / LIBUS_TIMEOUT_GRANULARITY;
+
 /* This functions should never run recursively */
 void us_internal_timer_sweep(struct us_loop_t *loop) {
     struct us_internal_loop_data_t *loop_data = &loop->data;
@@ -310,22 +314,28 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
     /* Sockets parked in the low-priority queue are unlinked from head_sockets
      * (the queue reuses prev/next), so the walk above never visits them. This
      * loop switched their reads off, so the time in the queue does not count
-     * against an owner's timeout: each stamp moves on with the tick. Only this
-     * library's own wait for a spilled close comes due here. low_prio_iterator
-     * lets close_raw advance the walk past a socket it unlinks, same as
-     * group->iterator does for head_sockets. */
+     * against an owner's timeout: each stamp moves on with the tick, for at
+     * most MAX_LOW_PRIO_TICKS. This library's own wait for a spilled close is
+     * not held back. low_prio_iterator lets close_raw advance the walk past a
+     * socket it unlinks, same as group->iterator does for head_sockets. */
     for (loop_data->low_prio_iterator = loop_data->low_prio_head; loop_data->low_prio_iterator; ) {
         struct us_socket_t *s = loop_data->low_prio_iterator;
-        if (s->ssl_close_after_spill) {
+        if (!s->ssl_close_after_spill && s->low_prio_ticks < MAX_LOW_PRIO_TICKS) {
+            s->low_prio_ticks++;
+            s->timeout = us_internal_next_timeout_stamp(s->timeout);
+            if (s->group->global_tick % 15 == 0) {
+                s->long_timeout = us_internal_next_timeout_stamp(s->long_timeout);
+            }
+        } else {
             if (s->group->timestamp == s->timeout) {
                 s->timeout = 255;
                 us_internal_ssl_on_timeout(s);
                 if (loop_data->low_prio_iterator != s) continue;
             }
-        } else {
-            s->timeout = us_internal_next_timeout_stamp(s->timeout);
-            if (s->group->global_tick % 15 == 0) {
-                s->long_timeout = us_internal_next_timeout_stamp(s->long_timeout);
+            if (s->group->long_timestamp == s->long_timeout) {
+                s->long_timeout = 255;
+                us_dispatch_long_timeout(s);
+                if (loop_data->low_prio_iterator != s) continue;
             }
         }
         loop_data->low_prio_iterator = s->next;
@@ -339,7 +349,7 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
  * A socket over the budget is parked in the low-priority queue: unlinked from its group, reads
  * off. Only a socket with input is parked, and nothing acts on it over that unread input: a FIN
  * does not end it (the EOF arm of us_internal_dispatch_ready_poll) and no timeout of its owner
- * runs (us_internal_timer_sweep). */
+ * runs for MAX_LOW_PRIO_TICKS (us_internal_timer_sweep). */
 static const int MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION = 5;
 
 void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
@@ -703,6 +713,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         loop->data.low_prio_head = s;
 
                         flags->low_prio_state = 1;
+                        s->low_prio_ticks = 0;
 
                         break;
                     }

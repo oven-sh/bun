@@ -2370,14 +2370,14 @@ impl TestCommand {
         };
         if has_type_errors {
             // No test is run.
-            if !vm.is_watcher_enabled() {
-                Global::exit(1);
+            if vm.is_watcher_enabled() {
+                let vm_ptr: *mut VirtualMachine = vm;
+                // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+                // `run_with_api_lock` takes `&self` only, so the closure holds the
+                // unique mutable access on this single-threaded path.
+                vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
             }
-            let vm_ptr: *mut VirtualMachine = vm;
-            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-            // `run_with_api_lock` takes `&self` only, so the closure holds the
-            // unique mutable access on this single-threaded path.
-            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
+            Global::exit(1);
         }
 
         let mut coverage_options: CodeCoverageOptions = ctx.test_options.coverage.clone();
@@ -2768,16 +2768,22 @@ impl TestCommand {
         Ok(())
     }
 
+    /// Waits for a change, which starts the process again. Returns only when asked to stop and nothing is pending.
     fn run_event_loop_for_watch(vm: &mut VirtualMachine) {
-        vm.event_loop_ref().tick_possibly_forever();
-
         loop {
+            if jsc::posix_signal_handle::stop_requested() {
+                // The last rejection of a listener is reported before the exit code is read.
+                let _ = vm.global().handle_rejected_promises();
+                if !vm.has_pending_event_loop_work() {
+                    return;
+                }
+            }
+            vm.event_loop_ref().tick_possibly_forever();
+
             while vm.is_event_loop_alive() {
                 vm.tick();
                 vm.event_loop_ref().auto_tick_active();
             }
-
-            vm.event_loop_ref().tick_possibly_forever();
         }
     }
 

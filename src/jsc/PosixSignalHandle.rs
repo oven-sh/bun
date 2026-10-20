@@ -139,11 +139,15 @@ static WATCH_SIGINT_LISTENERS: AtomicU32 = AtomicU32::new(0);
 /// count change here (main-thread VM only, platform signal numbers).
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__onSignalListenerCountChanged(number: i32, count: i32) {
+    let count = count.max(0) as u32;
+    #[cfg(unix)]
+    if let Some(slot) = stop_signal_slot(number) {
+        STOP_SIGNAL_LISTENERS[slot].store(count, Ordering::SeqCst);
+    }
     let watch_signal = i32::from(WATCH_MODE_KILL_SIGNAL.load(Ordering::Relaxed));
     if watch_signal == 0 {
         return;
     }
-    let count = count.max(0) as u32;
     // Uncatchable kill signals never emit, so their listeners must not divert
     // the reload off the immediate execve path.
     if number == watch_signal && !is_uncatchable_signal(number) {
@@ -203,8 +207,64 @@ pub(crate) fn emit_watch_kill_signal_before_reload(global_object: &JSGlobalObjec
     let _ = Bun__onSignalForJS(i32::from(sig), global_object);
 }
 
+/// A SIGINT or SIGTERM from outside the process was dispatched: the watcher starts nothing again and leaves once nothing is pending.
+#[cfg(unix)]
+static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// Per stop signal: its `process.on` listeners (main thread VM).
+#[cfg(unix)]
+static STOP_SIGNAL_LISTENERS: [AtomicU32; 2] = [const { AtomicU32::new(0) }; 2];
+
+/// Per stop signal: `process.kill(process.pid, ..)` calls whose delivery is not dispatched yet.
+#[cfg(unix)]
+static SELF_SENT_STOP_SIGNALS: [AtomicU32; 2] = [const { AtomicU32::new(0) }; 2];
+
+/// The signals that node's watcher takes as a request to stop.
+#[cfg(unix)]
+fn stop_signal_slot(number: i32) -> Option<usize> {
+    match number {
+        libc::SIGINT => Some(0),
+        libc::SIGTERM => Some(1),
+        _ => None,
+    }
+}
+
+/// `process.kill(process.pid, number)` is about to send. With no listener the signal is not dispatched.
+#[cfg(unix)]
+#[unsafe(no_mangle)]
+extern "C" fn Bun__onSelfSentSignal(number: i32) {
+    if let Some(slot) = stop_signal_slot(number)
+        && STOP_SIGNAL_LISTENERS[slot].load(Ordering::SeqCst) > 0
+    {
+        SELF_SENT_STOP_SIGNALS[slot].fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// Whether the watcher was asked to stop. Always false on Windows, where the keep-alive loop never runs dry.
+pub fn stop_requested() -> bool {
+    #[cfg(unix)]
+    return STOP_REQUESTED.load(Ordering::SeqCst);
+    #[cfg(not(unix))]
+    false
+}
+
 impl PosixSignalTask {
     pub fn run_from_js_thread(number: u8, global_object: &JSGlobalObject) {
+        // Before the listeners: one of them can send the signal again.
+        #[cfg(unix)]
+        if let Some(slot) = stop_signal_slot(i32::from(number)) {
+            let self_sent = SELF_SENT_STOP_SIGNALS[slot]
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |pending| {
+                    pending.checked_sub(1)
+                })
+                .is_ok();
+            let vm = global_object.bun_vm().as_mut();
+            if !self_sent && vm.is_watcher_enabled() {
+                STOP_REQUESTED.store(true, Ordering::SeqCst);
+                // No save starts the script again now, so an uncaught error ends the process, as without a watcher.
+                vm.exit_on_uncaught_exception = true;
+            }
+        }
         let fired = Bun__onSignalForJS(i32::from(number), global_object);
         // Node parity: in watch mode the watcher exits 0 on SIGINT when the
         // script has no handler for it (see `enable_watch_mode_signals`).

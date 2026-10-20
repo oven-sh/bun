@@ -1643,6 +1643,11 @@ impl Run<'_> {
                 }
                 vm.on_before_exit();
                 vm.report_exception_in_hot_reloaded_module_if_needed();
+                if bun_jsc::posix_signal_handle::stop_requested()
+                    && !vm.has_pending_event_loop_work()
+                {
+                    break;
+                }
                 // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
                 // accessed here. Watcher arm keeps the process alive across
                 // reloads.

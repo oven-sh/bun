@@ -1835,6 +1835,24 @@ impl VirtualMachine {
             || !el.next_immediate_tasks.is_empty()
     }
 
+    /// The terms of `is_event_loop_alive`, without its rule that an uncaught error ends the loop: a watcher outlives the error.
+    pub fn has_pending_event_loop_work(&self) -> bool {
+        let el = self.event_loop_shared();
+        let active = self
+            .platform_loop_opt()
+            .map(|h| h.is_active())
+            .unwrap_or(false);
+        (active as usize)
+            + self.active_tasks
+            + el.tasks.readable_length()
+            + el.yield_tasks.len()
+            + (el.has_concurrent_tasks() as usize)
+            + (el.has_pending_refs() as usize)
+            > 0
+            || !el.immediate_tasks.is_empty()
+            || !el.next_immediate_tasks.is_empty()
+    }
+
     pub fn wakeup(&mut self) {
         self.event_loop_mut().wakeup();
     }
@@ -2196,10 +2214,10 @@ impl VirtualMachine {
             // and exit, like node's fatal-exception path. Main thread only:
             // process_exit() RETURNS on a worker, so the panic would fire; a
             // worker falls through and exits 1 below (e.g. a beforeExit throw).
-            // `--hot` and `--watch` stay to wait for the next save.
+            // `--hot` and `--watch` stay to wait for the next save, unless they were asked to stop.
             if self.exit_on_uncaught_exception
                 && self.is_main_thread()
-                && !self.is_watcher_enabled()
+                && (!self.is_watcher_enabled() || crate::posix_signal_handle::stop_requested())
             {
                 self.run_error_handler(err, None);
                 // `process_exit` emits `exit`, re-entering here if a listener
@@ -4738,6 +4756,11 @@ impl VirtualMachine {
 
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
     pub(crate) fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
+        // Asked to stop, the watcher starts nothing again.
+        if crate::posix_signal_handle::stop_requested() {
+            self.hot_reload_deferred = false;
+            return;
+        }
         if self.hot_reload == HotReload::Watch {
             // Watch reload replaces the process: never defer on a pending
             // entry promise (node restarts regardless of child state).

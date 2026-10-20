@@ -565,6 +565,11 @@ where
         if self.count == 0 {
             return;
         }
+        // Asked to stop, the watcher starts nothing again: node's watcher drops its file watcher first.
+        if crate::posix_signal_handle::stop_requested() {
+            self.count = 0;
+            return;
+        }
 
         // With --watch-kill-signal listeners registered, reload via the event
         // loop so the JS thread emits them before execve (node runs the child's
@@ -672,6 +677,9 @@ fn arm_watch_reload_grace_timer() {
                 }
                 std::thread::sleep(std::time::Duration::from_millis(STEP_MS));
                 waited += STEP_MS;
+            }
+            if crate::posix_signal_handle::stop_requested() {
+                return;
             }
             // Deadline hit without reload_process starting: either the task
             // never drained, or the handler itself is wedged. Force it (node

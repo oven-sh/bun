@@ -88,6 +88,12 @@ bun --watch test
   signal, e.g. `bun --watch --watch-kill-signal SIGINT index.ts`.
 </Note>
 
+<Note>
+  On macOS and Linux, a `SIGINT` or `SIGTERM` that your code handles with `process.on` also ends watch mode. Bun runs
+  your handlers and stops restarting your code. Bun then exits as soon as nothing keeps the process alive, such as an
+  open server or a pending timer. `--watch`, `--hot`, and `bun --watch test` all work this way.
+</Note>
+
 ---
 
 ## `--hot` mode

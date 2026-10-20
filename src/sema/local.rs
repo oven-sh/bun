@@ -17,7 +17,7 @@
 //! `crate::check::task` the task. Their memory is on the regular heap, and the thread that runs the task frees it when
 //! the task ends.
 
-use crate::util::{LocalVec, Placement, free_slot, is_too_full, search, slot_value, slots_for};
+use crate::util::{LocalVec, Placement, free_slot, is_too_full, slot_value, slots_for};
 use std::cell::{Cell, RefCell};
 use std::hint::cold_path;
 use std::marker::PhantomData;
@@ -91,13 +91,66 @@ impl Placement for TaskPlacement {
     }
 }
 
+/// The slots of a `HashIndex`, and a mark for each slot.
+#[derive(Default)]
+struct Marked {
+    /// See `slot_value`. A slot whose mark is 0 is free, whatever it contains.
+    slots: Box<[u64]>,
+    /// 0 for a free slot, otherwise `mark_of` the slot's tag. Both lists have the same length: 0 or a power of two.
+    ///
+    /// Most searches are for a key that isn't there yet, and they read only marks. The marks take an eighth of the
+    /// memory of the slots, so they stay in the cache where the slots of a large table don't.
+    marks: Box<[u8]>,
+}
+
+/// Returns the mark of an occupied slot with `tag`. It's never 0. `TaskPlacement::start` mixes all bits of the tag, so
+/// neighboring slots rarely have the same mark.
+#[inline]
+fn mark_of(tag: u32) -> u8 {
+    0x80 | (tag >> 25) as u8
+}
+
+impl Marked {
+    /// Returns the free slot for a new entry with `tag`.
+    #[inline]
+    fn free_slot(&self, tag: u32) -> usize {
+        free_slot::<TaskPlacement>(self.marks.len(), tag, |at| u64::from(self.marks[at]))
+    }
+
+    #[inline]
+    fn put(&mut self, at: usize, packed: u64) {
+        self.marks[at] = mark_of((packed >> 32) as u32);
+        self.slots[at] = packed;
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow(&mut self, count: usize) {
+        let len = slots_for::<TaskPlacement>(count, self.marks.len());
+        let mut bigger = Marked {
+            slots: vec![0; len].into_boxed_slice(),
+            marks: vec![0; len].into_boxed_slice(),
+        };
+        // If a zeroed page from the operating system is read before it's written, its first write takes a second page
+        // fault, which interrupts every other thread. So write to each page first. A slot is only read after it's
+        // written.
+        for page in bigger.marks.chunks_mut(4 << 10) {
+            *std::hint::black_box(&mut page[0]) = 0;
+        }
+        for (&packed, _) in (self.slots.iter().zip(&self.marks)).filter(|it| *it.1 != 0) {
+            bigger.put(bigger.free_slot((packed >> 32) as u32), packed);
+        }
+        *self = bigger;
+    }
+}
+
 /// A hash index: finds a value's index by the value's hash. The one thread that owns it adds entries through a shared
 /// reference.
 #[derive(Default)]
 pub struct HashIndex {
-    /// Empty, or a power-of-two number of slots. See `slot_value`. No other thread reads them, so the pointer and
-    /// length are stored right here, and a table is freed as soon as a bigger one replaces it.
-    slots: RefCell<Box<[u64]>>,
+    /// No other thread reads them, so the pointers and the length are stored right here, and a table is freed as soon
+    /// as a bigger one replaces it.
+    table: RefCell<Marked>,
     count: Cell<usize>,
 }
 
@@ -130,16 +183,29 @@ impl HashIndex {
     pub fn find_or_vacancy(
         &self,
         spread: u64,
-        is_match: impl FnMut(u32) -> bool,
+        mut is_match: impl FnMut(u32) -> bool,
     ) -> Result<u32, Vacancy> {
-        let borrowed = self.slots.borrow();
-        let slots: &[u64] = &borrowed;
-        let table_len = slots.len();
+        let table = self.table.borrow();
+        let (slots, marks): (&[u64], &[u8]) = (&table.slots, &table.marks);
+        let table_len = marks.len();
         if table_len == 0 {
             return Err(Vacancy::UNKNOWN);
         }
-        search::<TaskPlacement>(table_len, spread, |at| slots[at], is_match)
-            .map_err(|at| Vacancy { at, table_len })
+        let (tag, mask) = (spread as u32, table_len - 1);
+        let mut at = TaskPlacement::start(tag) & mask;
+        loop {
+            let mark = marks[at];
+            if mark == 0 {
+                return Err(Vacancy { at, table_len });
+            }
+            if mark == mark_of(tag) {
+                let packed = slots[at];
+                if (packed >> 32) as u32 == tag && is_match(packed as u32 - 1) {
+                    return Ok(packed as u32 - 1);
+                }
+            }
+            at = (at + 1) & mask;
+        }
     }
 
     #[inline]
@@ -154,51 +220,33 @@ impl HashIndex {
     pub fn fill(&self, vacancy: Vacancy, spread: u64, number: u32) {
         let count = self.count.get() + 1;
         self.count.set(count);
-        let mut borrowed = self.slots.borrow_mut();
-        if is_too_full(count, borrowed.len()) {
-            Self::grow(&mut borrowed, count);
+        let mut table = self.table.borrow_mut();
+        if is_too_full(count, table.marks.len()) {
+            table.grow(count);
         }
-        let slots: &mut [u64] = &mut borrowed;
-        let at = match slots.get(vacancy.at) {
-            Some(0) if vacancy.table_len == slots.len() => vacancy.at,
-            _ => free_slot::<TaskPlacement>(slots.len(), spread as u32, |at| slots[at]),
+        let at = match table.marks.get(vacancy.at) {
+            Some(0) if vacancy.table_len == table.marks.len() => vacancy.at,
+            _ => table.free_slot(spread as u32),
         };
-        slots[at] = slot_value(spread, number);
+        table.put(at, slot_value(spread, number));
     }
 
-    #[cold]
-    #[inline(never)]
-    fn grow(slots: &mut Box<[u64]>, count: usize) {
-        let mut bigger = vec![0; slots_for::<TaskPlacement>(count, slots.len())].into_boxed_slice();
-        // If a zeroed page from the operating system is read before it's written, its first write takes a second page
-        // fault, which interrupts every other thread. So write to each page first.
-        for page in bigger.chunks_mut((4 << 10) / size_of::<u64>()) {
-            *std::hint::black_box(&mut page[0]) = 0;
-        }
-        for &packed in slots.iter().filter(|&&packed| packed != 0) {
-            let at =
-                free_slot::<TaskPlacement>(bigger.len(), (packed >> 32) as u32, |at| bigger[at]);
-            bigger[at] = packed;
-        }
-        *slots = bigger;
-    }
-
-    /// Keeps the slots for the next task, so it doesn't have to regrow the table step by step or allocate fresh memory.
+    /// Keeps the table for the next task, so it doesn't have to regrow the table step by step or allocate fresh memory.
     /// A table that this task barely used is freed instead, so clearing takes time proportional to what was added.
     pub fn clear(&mut self) {
         let count = self.count.replace(0);
-        let slots = self.slots.get_mut();
-        if count != 0 && slots.len() <= 4 * slots_for::<TaskPlacement>(count, 0) {
-            slots.fill(0);
+        let table = self.table.get_mut();
+        if count != 0 && table.marks.len() <= 4 * slots_for::<TaskPlacement>(count, 0) {
+            table.marks.fill(0);
         } else if count != 0 {
-            *slots = Box::default();
+            *table = Marked::default();
         }
     }
 
     /// True if nothing can be found. The number of free slots doesn't count.
     #[cfg(test)]
     pub(crate) fn is_like_new(&self) -> bool {
-        self.count.get() == 0 && self.slots.borrow().iter().all(|&slot| slot == 0)
+        self.count.get() == 0 && self.table.borrow().marks.iter().all(|&mark| mark == 0)
     }
 }
 

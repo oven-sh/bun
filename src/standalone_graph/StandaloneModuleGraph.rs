@@ -2858,7 +2858,7 @@ pub fn to_executable(
     let _ = (root_dir, wait_for_reader);
     // Decided before the executable is staged, so a destination that cannot take it costs no copy.
     #[cfg(not(windows))]
-    let delivery = match Delivery::plan(root_dir, outfile) {
+    let delivery = match Delivery::plan(root_dir, outfile, wait_for_reader) {
         Ok(delivery) => delivery,
         Err(e) => return Ok(CompileResult::Err(e)),
     };
@@ -3066,13 +3066,12 @@ pub fn to_executable(
     }
 }
 
-/// Whether the open of a FIFO at the outfile waits for a reader.
+/// Whether `to_executable` waits for a process to open a FIFO at the outfile for reading.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum WaitForReader {
     /// As every writer of a FIFO does.
     Yes,
-    /// The build fails when the FIFO has no reader. For the JS thread: while it waits, the
-    /// program cannot start one.
+    /// For the JS thread. It writes into a FIFO only through a path to a descriptor of the process.
     No,
 }
 
@@ -3081,8 +3080,7 @@ pub enum WaitForReader {
 enum Delivery {
     /// The staged copy is renamed over the name.
     Replace,
-    /// The name is this character device or FIFO. A rename would leave a regular file under
-    /// that name, so the staged copy is written into it.
+    /// The staged copy is written into this character device or FIFO, which a rename would replace.
     InPlace(Node),
 }
 
@@ -3092,7 +3090,6 @@ enum Delivery {
 struct Node {
     dev: libc::dev_t,
     ino: libc::ino_t,
-    is_fifo: bool,
 }
 
 #[cfg(not(windows))]
@@ -3101,15 +3098,17 @@ impl Node {
         Node {
             dev: stat.st_dev,
             ino: stat.st_ino,
-            is_fifo: bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode)
-                == bun_sys::FileKind::NamedPipe,
         }
     }
 }
 
 #[cfg(not(windows))]
 impl Delivery {
-    fn plan(root_dir: Fd, outfile: &[u8]) -> Result<Delivery, CompileError> {
+    fn plan(
+        root_dir: Fd,
+        outfile: &[u8],
+        wait_for_reader: WaitForReader,
+    ) -> Result<Delivery, CompileError> {
         use bun_sys::{FileKind, S};
 
         let mut basename_buf = bun_paths::path_buffer_pool::get();
@@ -3139,34 +3138,41 @@ impl Delivery {
             return Ok(Delivery::Replace);
         }
 
-        // In a group- or world-writable directory, like `/tmp`, another user can put a name. A
-        // write into it would hand that user the executable.
         let Ok(dir) = bun_sys::fstatat(root_dir, bun_core::zstr!(".")) else {
             return Ok(Delivery::Replace);
         };
         let dir_mode = dir.st_mode as bun_sys::Mode;
         let euid = bun_sys::c::geteuid();
+        // In a directory like `/tmp`, a write into another user's name hands them the executable.
         if dir_mode & (S::IWGRP | S::IWOTH) != 0 && entry.st_uid != euid {
-            // The rename replaces the name when the kernel lets the builder do that. When it does
-            // not, the rename fails, or becomes a write into the name across filesystems.
-            if dir_mode & S::ISVTX == 0 || euid == 0 || dir.st_uid == euid {
+            let can_replace = dir_mode & S::ISVTX == 0 || euid == 0 || dir.st_uid == euid;
+            if can_replace {
                 return Ok(Delivery::Replace);
             }
+            // Across filesystems, the rename path would write into the name.
             return Err(write_failed(outfile, "it belongs to another user"));
         }
 
-        // A link leads the write to a node that its owner chose. It is followed when the link
-        // and the node are the builder's or root's, or the node is a descriptor that the process
-        // already has, as behind `/dev/stdout`. Any other link is replaced, like a link to a file.
+        let own = || is_own_descriptor(&node, basename);
+        // A link leads the write to a node that the owner of the link chose.
         let trusted = |stat: &Stat| stat.st_uid == euid || stat.st_uid == 0;
-        if is_link && !(trusted(&entry) && (trusted(&node) || is_own_descriptor(&node, basename))) {
+        let follows = trusted(&entry) && (trusted(&node) || own());
+        if is_link && !follows {
             return Ok(Delivery::Replace);
         }
 
+        // A path to a descriptor (`/dev/stdout`): the node is not on the device of the directory.
+        let by_descriptor = || node.st_dev != dir.st_dev && own();
         match kind {
-            FileKind::CharacterDevice | FileKind::NamedPipe => {
+            FileKind::CharacterDevice => Ok(Delivery::InPlace(Node::of(&node))),
+            FileKind::NamedPipe if wait_for_reader == WaitForReader::Yes || by_descriptor() => {
                 Ok(Delivery::InPlace(Node::of(&node)))
             }
+            // A reader in this process needs the JS thread, which the write would hold.
+            FileKind::NamedPipe => Err(write_failed(
+                outfile,
+                "it is a FIFO, which only \"bun build --compile\" writes to",
+            )),
             FileKind::UnixDomainSocket => Err(write_failed(outfile, "it is a socket")),
             // A write into it would overwrite the start of a disk.
             _ => Err(write_failed(outfile, "it is a block device")),
@@ -3174,8 +3180,7 @@ impl Delivery {
     }
 }
 
-/// Whether `node` is what descriptor 1 or 2 is open on, or the descriptor that `name` numbers
-/// (`/proc/self/fd/3`).
+/// Whether descriptor 1, 2 or the one that `name` numbers (`/proc/self/fd/3`) is open on `node`.
 #[cfg(not(windows))]
 fn is_own_descriptor(node: &Stat, name: &ZStr) -> bool {
     let is_node = |fd: Fd| {
@@ -3184,8 +3189,8 @@ fn is_own_descriptor(node: &Stat, name: &ZStr) -> bool {
     };
     is_node(Fd::stdout())
         || is_node(Fd::stderr())
-        || bun_core::fmt::parse_decimal::<u16>(name.as_bytes())
-            .is_some_and(|number| is_node(Fd::from_native(number.into())))
+        || bun_core::fmt::parse_unsigned::<i32>(name.as_bytes(), 10)
+            .is_ok_and(|number| is_node(Fd::from_native(number)))
 }
 
 #[cfg(not(windows))]
@@ -3215,33 +3220,14 @@ fn write_in_place(
         WaitForReader::Yes => 0,
         WaitForReader::No => O::NONBLOCK,
     };
-    let node = match bun_sys::openat(
-        root_dir,
-        basename,
-        O::WRONLY | O::NOCTTY | O::CLOEXEC | nonblocking,
-        0,
-    ) {
-        Ok(node) => node,
-        Err(e) if nonblocking != 0 && planned.is_fifo && e.get_errno() == E::ENXIO => {
-            return Err(write_failed(
-                outfile,
-                "it is a FIFO that no process is reading",
-            ));
-        }
-        Err(e) => return Err(failed(e)),
-    };
-    // Not `File`, which leaves descriptors 0 to 2 open: the open returns one when the process
-    // closed its own.
+    let flags = O::WRONLY | O::NOCTTY | O::CLOEXEC | nonblocking;
+    let node = bun_sys::openat(root_dir, basename, flags, 0).map_err(failed)?;
+    // Not `File`: it never closes descriptors 0 to 2, and a process that closed its own gets one.
     let _close = bun_sys::CloseOnDrop::new(node);
-    let node = bun_sys::File::borrow(&node);
 
     // The name can lead somewhere else since the plan.
-    if Node::of(&node.stat().map_err(failed)?) != planned {
+    if Node::of(&bun_sys::fstat(node).map_err(failed)?) != planned {
         return Err(write_failed(outfile, "it changed during the build"));
-    }
-    if nonblocking != 0 {
-        // Only the open must not wait. A write that cannot wait fails when the FIFO is full.
-        bun_sys::update_nonblocking(node.handle(), false).map_err(failed)?;
     }
 
     bun_sys::set_file_offset(staged, 0).map_err(failed)?;
@@ -3251,7 +3237,8 @@ fn write_in_place(
         if len == 0 {
             return Ok(());
         }
-        node.write_all(&buf[..len]).map_err(failed)?;
+        // It waits while the node takes no bytes, also when the open above did not wait.
+        bun_sys::write_all_to_stdio(node, &buf[..len]).map_err(failed)?;
     }
 }
 

@@ -1334,7 +1334,7 @@ compile: {
 
 Without `outfile`, the executable is named after the entrypoint and written to `outdir`, or to the current working directory when there is no `outdir`. This matches `bun build --compile`.
 
-On Linux and macOS, Bun writes the executable into a character device or a FIFO at the output path, such as `/dev/null`, and leaves it in place.
+On Linux and macOS, Bun writes the executable into a character device at the output path, such as `/dev/null`, and leaves the device in place. `bun build --compile` does the same for a FIFO, and `Bun.build` reports an error for one.
 
 ### Supported targets
 

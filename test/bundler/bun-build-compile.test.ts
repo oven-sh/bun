@@ -2835,19 +2835,21 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
     `,
   };
 
-  async function run(cmd: string[], cwd: string, user: { uid?: number; gid?: number } = {}) {
-    await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stdout: "pipe", stderr: "pipe", ...user });
+  type User = { uid?: number; gid?: number };
+  // `passed` become the descriptors 3 and up of the command.
+  async function run(cmd: string[], cwd: string, user: User = {}, passed: number[] = []) {
+    await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stdio: ["ignore", "pipe", "pipe", ...passed], ...user });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout, stderr, exitCode };
   }
   const surfaces = {
-    async "bun build --compile"(cwd: string, outfile: string, user?: { uid?: number; gid?: number }) {
+    async "bun build --compile"(cwd: string, outfile: string, user?: User, passed?: number[]) {
       const cmd = [bunExe(), "build", "--compile", "./app.js", "--outfile", outfile];
-      const { stderr, exitCode } = await run(cmd, cwd, user);
+      const { stderr, exitCode } = await run(cmd, cwd, user, passed);
       return { ok: exitCode === 0, output: stderr.trim() };
     },
-    async "Bun.build"(cwd: string, outfile: string, user?: { uid?: number; gid?: number }) {
-      const { stdout, stderr, exitCode } = await run([bunExe(), "build.ts", outfile], cwd, user);
+    async "Bun.build"(cwd: string, outfile: string, user?: User, passed?: number[]) {
+      const { stdout, stderr, exitCode } = await run([bunExe(), "build.ts", outfile], cwd, user, passed);
       expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
       return JSON.parse(stdout) as { ok: boolean; output: string };
     },
@@ -2909,44 +2911,38 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
     };
   })();
 
+  // A path to descriptor 3 of the build. macOS has no /proc: its path is in /dev, and leads to the
+  // scratch FIFO that the test passes as descriptor 3.
+  const descriptor3 = isLinux ? "/proc/self/fd/3" : "/dev/fd/3";
+  // `>(command)` in a shell gives the build such a path. The build already has the pipe open, so
+  // it writes into it whoever owns it: under `sudo`, the pipe is the calling user's.
+  async function intoItsDescriptor(surface: keyof typeof surfaces, owner?: number) {
+    using dir = tempDir("compile-outfile-pipe", files);
+    const cwd = String(dir);
+    const [fifo, received] = [join(cwd, "fifo"), join(cwd, "received")];
+    mkfifo(fifo);
+    if (owner !== undefined) {
+      chmodSync(fifo, 0o666);
+      chownSync(fifo, owner, owner);
+    }
+    const before = node(fifo);
+
+    await using reader = Bun.spawn({ cmd: ["cat", fifo], stdout: Bun.file(received), stderr: "inherit" });
+    let result;
+    {
+      using held = hold(fifo);
+      using writeEnd = opened(fifo, constants.O_WRONLY);
+      result = await surfaces[surface](cwd, descriptor3, undefined, [writeEnd.fd]);
+    }
+
+    expect({ result, fifo: node(fifo) }).toEqual({ result: built, fifo: before });
+    expect(await reader.exited).toBe(0);
+    chmodSync(received, 0o755);
+    expect(await run([received], cwd)).toEqual(ranTheApp);
+  }
+
   describe.each(Object.keys(surfaces) as (keyof typeof surfaces)[])("%s", surface => {
     const build = surfaces[surface];
-
-    // `ro` stands for /dev: the builder can write to the node, and cannot create a file next to it.
-    test("writes the executable into a FIFO behind a symlink, in a directory it cannot write to", async () => {
-      using dir = tempDir("compile-outfile-fifo", files);
-      const cwd = String(dir);
-      const ro = join(cwd, "ro");
-      const [out, fifo, received] = [join(ro, "out"), join(ro, "fifo"), join(cwd, "received")];
-      mkdirSync(ro);
-      mkfifo(fifo);
-      symlinkSync("fifo", out);
-      chmodSync(ro, 0o555);
-      using removable = { [Symbol.dispose]: () => chmodSync(ro, 0o755) };
-      // Root ignores the mode of `ro`.
-      using unprivileged = unprivilegedSpawnOptions(cwd);
-      const before = { out: node(out), fifo: node(fifo), ro: ["fifo", "out"] };
-      expect(before).toMatchObject({ out: { kind: "symlink" }, fifo: { kind: "FIFO" } });
-
-      await using reader = Bun.spawn({ cmd: ["cat", fifo], stdout: Bun.file(received), stderr: "inherit" });
-      let result;
-      {
-        // The FIFO has a reader from now on, whenever `cat` opens it.
-        using held = hold(fifo);
-        result = await build(cwd, "ro/out", unprivileged);
-      }
-
-      expect({ result, out: node(out), fifo: node(fifo), ro: readdirSync(ro).sort() }).toEqual({
-        result: built,
-        ...before,
-      });
-      expect(await reader.exited).toBe(0);
-      // The staged copy is gone.
-      expect(readdirSync(cwd).sort()).toEqual(["app.js", "build.ts", "received", "ro"]);
-
-      chmodSync(received, 0o755);
-      expect(await run([received], cwd)).toEqual(ranTheApp);
-    }, 60_000);
 
     test("refuses a socket, and leaves it in place", async () => {
       using dir = tempDir("compile-outfile-socket", files);
@@ -3025,51 +3021,55 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
         entries: ["app.js", "build.ts", "out"],
       });
     });
+
+    test.skipIf(!isLinux && !isMacOS)(
+      "writes the executable into a pipe that a descriptor path names",
+      () => intoItsDescriptor(surface),
+      60_000,
+    );
   });
 
-  // `>(command)` in a shell gives the build such a path. The build already has the pipe open, so
-  // it writes into it whoever owns it: under `sudo`, the pipe is the calling user's.
-  async function intoItsDescriptor(owner?: number) {
-    using dir = tempDir("compile-outfile-pipe", files);
+  test.skipIf(!isLinux || !isRoot)(
+    "bun build --compile writes into a pipe of another user that a descriptor path names",
+    () => intoItsDescriptor("bun build --compile", 1),
+    60_000,
+  );
+
+  // `ro` stands for /dev: the builder can write to the node, and cannot create a file next to it.
+  test("bun build --compile writes into a FIFO behind a symlink, in a directory it cannot write to", async () => {
+    using dir = tempDir("compile-outfile-fifo", files);
     const cwd = String(dir);
-    const [fifo, received] = [join(cwd, "fifo"), join(cwd, "received")];
+    const ro = join(cwd, "ro");
+    const [out, fifo, received] = [join(ro, "out"), join(ro, "fifo"), join(cwd, "received")];
+    mkdirSync(ro);
     mkfifo(fifo);
-    if (owner !== undefined) {
-      chmodSync(fifo, 0o666);
-      chownSync(fifo, owner, owner);
-    }
-    const before = node(fifo);
+    symlinkSync("fifo", out);
+    chmodSync(ro, 0o555);
+    using removable = { [Symbol.dispose]: () => chmodSync(ro, 0o755) };
+    // Root ignores the mode of `ro`.
+    using unprivileged = unprivilegedSpawnOptions(cwd);
+    const before = { out: node(out), fifo: node(fifo), ro: ["fifo", "out"] };
+    expect(before).toMatchObject({ out: { kind: "symlink" }, fifo: { kind: "FIFO" } });
 
     await using reader = Bun.spawn({ cmd: ["cat", fifo], stdout: Bun.file(received), stderr: "inherit" });
     let result;
     {
+      // The FIFO has a reader from now on, whenever `cat` opens it.
       using held = hold(fifo);
-      using writeEnd = opened(fifo, constants.O_WRONLY);
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", "./app.js", "--outfile", "/proc/self/fd/3"],
-        env: bunEnv,
-        cwd,
-        stdio: ["ignore", "pipe", "pipe", writeEnd.fd],
-      });
-      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      result = { stderr, exitCode };
+      result = await surfaces["bun build --compile"](cwd, "ro/out", unprivileged);
     }
 
-    expect({ result, fifo: node(fifo) }).toEqual({ result: { stderr: "", exitCode: 0 }, fifo: before });
+    expect({ result, out: node(out), fifo: node(fifo), ro: readdirSync(ro).sort() }).toEqual({
+      result: built,
+      ...before,
+    });
     expect(await reader.exited).toBe(0);
+    // The staged copy is gone.
+    expect(readdirSync(cwd).sort()).toEqual(["app.js", "build.ts", "received", "ro"]);
+
     chmodSync(received, 0o755);
     expect(await run([received], cwd)).toEqual(ranTheApp);
-  }
-  test.skipIf(!isLinux)(
-    "writes the executable into a pipe that a descriptor path names",
-    () => intoItsDescriptor(),
-    60_000,
-  );
-  test.skipIf(!isLinux || !isRoot)(
-    "writes the executable into a pipe of another user that a descriptor path names",
-    () => intoItsDescriptor(1),
-    60_000,
-  );
+  }, 60_000);
 
   // `bun build` waits for a reader, as every writer of a FIFO does.
   test("bun build --compile waits for the reader of a FIFO, and reports a reader that leaves", async () => {
@@ -3124,22 +3124,32 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
     });
   }, 60_000);
 
-  // `Bun.build` makes the executable on the JS thread. A wait there stops the whole process.
-  test("Bun.build fails when no process reads the FIFO, and leaves it in place", async () => {
-    using dir = tempDir("compile-outfile-fifo-unread", files);
+  // `Bun.build` makes the executable on the JS thread, and a reader in the same program needs that
+  // thread. It writes into a FIFO only through a path to a descriptor of the process, as above.
+  // In each case, descriptor 3 of the build is the FIFO, and the outfile is not a path to it.
+  test.each([
+    ["a FIFO", "out", "out"],
+    ["a link to a FIFO", "link", "out"],
+    ["a FIFO that is one of its descriptors, under the FIFO's own name", "3", "3"],
+  ])("Bun.build refuses %s, and leaves it in place", async (_, outfile, name) => {
+    using dir = tempDir("compile-outfile-fifo-api", files);
     const cwd = String(dir);
-    const out = join(cwd, "out");
-    mkfifo(out);
-    const before = node(out);
+    const [out, fifo] = [join(cwd, outfile), join(cwd, name)];
+    mkfifo(fifo);
+    if (out !== fifo) symlinkSync(name, out);
+    const before = { out: node(out), fifo: node(fifo), entries: readdirSync(cwd).sort() };
+    // With this reader, a write into the FIFO does not have to wait for one.
+    using held = hold(fifo);
+    using writeEnd = opened(fifo, constants.O_WRONLY);
 
-    const result = await surfaces["Bun.build"](cwd, "out");
+    const result = await surfaces["Bun.build"](cwd, outfile, undefined, [writeEnd.fd]);
 
-    expect({ result, out: node(out), entries: readdirSync(cwd).sort() }).toEqual({
-      result: { ok: false, output: `failed to write executable to "out": it is a FIFO that no process is reading` },
-      out: before,
-      entries: ["app.js", "build.ts", "out"],
+    const refused = `failed to write executable to "${outfile}": it is a FIFO, which only "bun build --compile" writes to`;
+    expect({ result, out: node(out), fifo: node(fifo), entries: readdirSync(cwd).sort() }).toEqual({
+      result: { ok: false, output: refused },
+      ...before,
     });
-  }, 60_000);
+  });
 
   // Another user can put a FIFO under a name in a directory like /tmp, and read what is written
   // to it. A link leads the write to a node that its owner chose.

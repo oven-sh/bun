@@ -284,7 +284,6 @@ impl<'p, 's> Checker<'p, 's> {
         sym: Sym,
     ) -> bool {
         !self.contextual_binding_patterns.is_empty()
-            && sym.file == file
             && self.is_reference_within_one_of_the_patterns(file, e, sym)
     }
 
@@ -294,12 +293,17 @@ impl<'p, 's> Checker<'p, 's> {
         e: ExprId,
         sym: Sym,
     ) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let Some(&(crate::bind::Decl::Var(declared) | crate::bind::Decl::Param(declared))) =
-            bound.symbol(sym.id).decls.first()
+        // `localOrExportSymbol.ValueDeclaration`. A type of the same name can be the first
+        // declaration of the symbol, in this file or in an earlier one.
+        let Some((of, crate::bind::Decl::Var(declared) | crate::bind::Decl::Param(declared))) =
+            self.files().value_declaration(sym)
         else {
             return false;
         };
+        if of != file {
+            return false;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
         let (PatParent::Prop(pattern, _) | PatParent::Elem(pattern, _)) =
             bound.pat_parent[declared.idx()]
         else {

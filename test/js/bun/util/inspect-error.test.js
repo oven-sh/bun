@@ -510,3 +510,97 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+const madeAtTopLevel = new Error("m\n    at fake (/nonexistent/fake.js:1:5)");
+madeAtTopLevel.stack;
+
+describe("lines of the name and the message that look like stack frames are not printed as stack frames", () => {
+  const at = "\n    at ";
+  const fake = at + "fake (/nonexistent/fake.js:1:5)";
+  const printedFrames = err =>
+    Bun.inspect(err)
+      .replaceAll("\\", "/")
+      .replaceAll(import.meta.dir.replaceAll("\\", "/") + "/", "")
+      .split("\n")
+      .filter(line => line.startsWith("      at "))
+      .map(line =>
+        line
+          .trim()
+          .replace(/inspect-error\.test\.js:\d+:\d+/, "this file")
+          .replace(/\((native|unknown):\d+:\d+\)$/, "($1)"),
+      );
+  // Two frames: a single lost frame would be made up again from `line` and `column`.
+  function make(message, { beforeRead, afterRead }) {
+    const err = new Error(message);
+    beforeRead?.(err);
+    // Once the stack is a string, the frames to print are parsed out of it.
+    err.stack;
+    afterRead?.(err);
+    return err;
+  }
+
+  test.each([
+    ["in the message", "m" + fake, {}],
+    ["in the message, without a name", "m" + fake, { beforeRead: e => (e.name = "") }],
+    ["in the name", "m", { beforeRead: e => (e.name = "N" + fake) }],
+    ["in the name, without a message", "", { beforeRead: e => (e.name = "N" + fake) }],
+    ["in a message that is not Latin-1", "😀" + fake, {}],
+    ["in the message, with another name since", "m" + fake, { afterRead: e => (e.name = "Other") }],
+    ["in the message, with another message since", "m" + fake, { afterRead: e => (e.message = "other") }],
+  ])("%s", (_, message, changes) => {
+    expect(printedFrames(make(message, changes))).toEqual(["at make (this file)", "at this file"]);
+  });
+
+  test("in the message of an error made at the top level, whose frame has no parentheses", () => {
+    expect(printedFrames(madeAtTopLevel)).toEqual(["at this file"]);
+  });
+
+  test("in the message of an error whose first frame is of a native function", () => {
+    function make() {
+      return ["m" + fake].map(Error)[0];
+    }
+    const err = make();
+    err.stack;
+    expect(printedFrames(err)).toEqual(["at map (native)", "at make (this file)", "at this file"]);
+  });
+
+  test("none, the message of an error from a native function has got the first frame since", () => {
+    function make() {
+      try {
+        "".repeat(-1);
+      } catch (err) {
+        return err;
+      }
+    }
+    const err = make();
+    err.message += at + err.stack.split(at)[1];
+    expect(printedFrames(err)).toEqual(["at repeat (unknown)", "at make (this file)", "at this file"]);
+  });
+
+  test("in the message that an error has when Error.captureStackTrace() makes it another stack", () => {
+    function capture(err) {
+      err.message = "a longer message" + fake;
+      Error.captureStackTrace(err);
+      err.stack;
+    }
+    expect(printedFrames(make("m" + fake, { afterRead: capture }))).toEqual([
+      "at capture (this file)",
+      "at make (this file)",
+      "at this file",
+    ]);
+  });
+
+  test("what is kept of the stack for this is not compared by toMatchObject()", () => {
+    const [a, b] = [make("m", {}), make("m", {})];
+    expect(a.stack).not.toBe(b.stack);
+    expect(a).toMatchObject(b);
+  });
+
+  test("a stack that was assigned is parsed from its start", () => {
+    const { stack } = make("m", {});
+    expect(printedFrames(make(stack, { afterRead: e => (e.stack = stack) }))).toEqual([
+      "at make (this file)",
+      "at this file",
+    ]);
+  });
+});

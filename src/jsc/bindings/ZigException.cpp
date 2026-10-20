@@ -595,6 +595,9 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
                 if (!stack.isEmpty()) {
 
                     V8StackTraceIterator iterator(stack);
+                    // The name and the message can have lines that look like frames.
+                    if (stackValue == obj->getDirect(vm, names.formattedStackPrivateName()))
+                        iterator.offset = obj->getDirect(vm, names.formattedStackHeaderLengthPrivateName()).asUInt32();
                     const uint8_t frame_count = except.stack.frames_cap;
 
                     except.stack.frames_len = 0;

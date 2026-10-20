@@ -29,8 +29,28 @@ const VISITED_INDEX_FROM: usize = 16;
 const REPEATS_FROM: u32 = 256;
 
 /// What a walk between the type arguments of two types reads from the `Inference`, apart from `visited` and the infos:
-/// the source, the target, `priority`, `depth`, `propagated`, and `contra` and `bivariant` as bits.
+/// the source, the target, `priority`, `depth`, `propagated`, and as bits `contra`, `bivariant` and which type
+/// arguments they are (`ArgumentsOf`).
 type ArgumentWalk = (TypeId, TypeId, u32, u32, Option<TypeId>, u8);
+
+/// `inferFromTypes` looks for a common alias before anything else, but it reaches the other two with a source and a
+/// target that it has reduced since. So one pair of types can arrive as two of these.
+#[derive(Copy, Clone)]
+enum ArgumentsOf {
+    Alias,
+    Reference,
+    Tuple,
+}
+
+/// See `Checker::infer_from_type_arguments_once`.
+#[derive(Clone, Default)]
+struct RepeatedArgumentWalks {
+    /// The walks that changed nothing, each with the `inference_priority` it produced.
+    priorities: FxHashMap<ArgumentWalk, i32>,
+    /// `Checker::inference_disturbances` when they ran. A lookup that misses without starting an evaluation can get
+    /// another answer after a cycle or a limit, as for a whole walk (`infer_memo`).
+    disturbances: memo::Disturbances,
+}
 
 /// The priority in `Inference::visited` of a pair whose action hasn't returned. It reads as `PRIORITY_CIRCULARITY`.
 const PRIORITY_IN_PROGRESS: i32 = i32::MIN;
@@ -93,8 +113,8 @@ pub(super) struct Inference {
     visited_index: FxHashMap<(TypeId, TypeId), u32>,
     /// Number of `invoke_once` calls that found their pair in progress.
     unfinished_hits: u32,
-    /// The walks between type arguments that changed nothing, each with the `inference_priority` it produced.
-    repeated_argument_walks: FxHashMap<ArgumentWalk, i32>,
+    /// `None` outside a walk and in a short one.
+    repeated_argument_walks: Option<Box<RepeatedArgumentWalks>>,
     /// Each type with its push number. See `is_at_least_as_new`.
     source_stack: SmallVec<[(TypeId, u32); 8]>,
     target_stack: SmallVec<[(TypeId, u32); 8]>,
@@ -147,7 +167,7 @@ impl Inference {
             visited: SmallVec::new(),
             visited_index: FxHashMap::default(),
             unfinished_hits: 0,
-            repeated_argument_walks: FxHashMap::default(),
+            repeated_argument_walks: None,
             source_stack: SmallVec::new(),
             target_stack: SmallVec::new(),
             expanding: 0,
@@ -212,7 +232,7 @@ impl Inference {
         candidates.clear();
         visited.clear();
         visited_index.clear();
-        repeated_argument_walks.clear();
+        *repeated_argument_walks = None;
         *unfinished_hits = 0;
         source_stack.clear();
         target_stack.clear();
@@ -310,6 +330,7 @@ impl<'p, 's> Checker<'p, 's> {
             n.visited_index.clear();
         }
         n.unfinished_hits = 0;
+        n.repeated_argument_walks = None;
         n.source_stack.clear();
         n.target_stack.clear();
         n.expanding = 0;
@@ -336,10 +357,8 @@ impl<'p, 's> Checker<'p, 's> {
         if n.calls >= memo::LONG_WALK {
             self.inference_memo.note_long_walk_to(target);
         }
-        if !n.repeated_argument_walks.is_empty() {
-            // Not `clear`, which keeps the memory: every clone of the context would copy it.
-            n.repeated_argument_walks = FxHashMap::default();
-        }
+        // Every clone of the context would copy it.
+        n.repeated_argument_walks = None;
     }
 
     /// `inferFromTypes`
@@ -367,9 +386,13 @@ impl<'p, 's> Checker<'p, 's> {
         // Two instantiations of one alias: infer between the type arguments only. Without type arguments there is nothing to infer.
         if let Some((alias, sources, targets, _)) = self.same_alias(source, target) {
             if !sources.is_empty() {
-                self.infer_from_type_arguments_once(n, source, target, |c, n| {
-                    c.infer_from_type_arguments_of(n, alias, &sources, &targets)
-                });
+                self.infer_from_type_arguments_once(
+                    n,
+                    source,
+                    target,
+                    ArgumentsOf::Alias,
+                    |c, n| c.infer_from_type_arguments_of(n, alias, &sources, &targets),
+                );
             }
             return;
         }
@@ -485,10 +508,16 @@ impl<'p, 's> Checker<'p, 's> {
                     && !are_both_deferred =>
             {
                 let st = *st;
-                self.infer_from_type_arguments_once(n, source, target, |c, n| {
-                    let (sa, ta) = (c.type_arguments(source), c.type_arguments(target));
-                    c.infer_from_type_arguments_of(n, st, sa, ta)
-                });
+                self.infer_from_type_arguments_once(
+                    n,
+                    source,
+                    target,
+                    ArgumentsOf::Reference,
+                    |c, n| {
+                        let (sa, ta) = (c.type_arguments(source), c.type_arguments(target));
+                        c.infer_from_type_arguments_of(n, st, sa, ta)
+                    },
+                );
             }
             (
                 TypeData::Tuple {
@@ -502,10 +531,16 @@ impl<'p, 's> Checker<'p, 's> {
                     ..
                 },
             ) if sf == tf && sr == tr && !are_both_deferred => {
-                self.infer_from_type_arguments_once(n, source, target, |c, n| {
-                    let (se, te) = (c.type_arguments(source), c.type_arguments(target));
-                    c.infer_from_type_arguments(n, se, te, &[])
-                });
+                self.infer_from_type_arguments_once(
+                    n,
+                    source,
+                    target,
+                    ArgumentsOf::Tuple,
+                    |c, n| {
+                        let (se, te) = (c.type_arguments(source), c.type_arguments(target));
+                        c.infer_from_type_arguments(n, se, te, &[])
+                    },
+                );
             }
             (TypeData::Keyof(s), TypeData::Keyof(t)) => {
                 self.infer_from_contravariant_types(n, *s, *t)
@@ -673,12 +708,13 @@ impl<'p, 's> Checker<'p, 's> {
         n: &mut Inference,
         source: TypeId,
         target: TypeId,
+        of: ArgumentsOf,
         walk: impl FnOnce(&mut Self, &mut Inference),
     ) {
         if n.calls < REPEATS_FROM {
             return walk(self, n);
         }
-        self.infer_from_type_arguments_in_long_walk(n, source, target, walk)
+        self.infer_from_type_arguments_in_long_walk(n, source, target, of, walk)
     }
 
     #[inline(never)]
@@ -687,11 +723,18 @@ impl<'p, 's> Checker<'p, 's> {
         n: &mut Inference,
         source: TypeId,
         target: TypeId,
+        of: ArgumentsOf,
         walk: impl FnOnce(&mut Self, &mut Inference),
     ) {
-        let flags = u8::from(n.contra) | u8::from(n.bivariant) << 1;
+        let flags = u8::from(n.contra) | u8::from(n.bivariant) << 1 | (of as u8) << 2;
         let key = (source, target, n.priority, n.depth, n.propagated, flags);
-        if let Some(&priority) = n.repeated_argument_walks.get(&key) {
+        let disturbances = self.inference_disturbances();
+        let repeated = n.repeated_argument_walks.get_or_insert_default();
+        if repeated.disturbances != disturbances {
+            repeated.priorities.clear();
+            repeated.disturbances = disturbances;
+        }
+        if let Some(&priority) = repeated.priorities.get(&key) {
             n.inference_priority = n.inference_priority.min(priority);
             self.inference_memo.count(memo::Count::ArgumentWalksSkipped);
             return;
@@ -702,8 +745,11 @@ impl<'p, 's> Checker<'p, 's> {
         walk(self, n);
         let priority = n.inference_priority;
         n.inference_priority = priority.min(outer);
-        if self.marks_of_argument_walk(n) == before {
-            n.repeated_argument_walks.insert(key, priority);
+        // The marks include the disturbances, so the record is still the one for `disturbances`.
+        if self.marks_of_argument_walk(n) == before
+            && let Some(repeated) = &mut n.repeated_argument_walks
+        {
+            repeated.priorities.insert(key, priority);
         }
     }
 

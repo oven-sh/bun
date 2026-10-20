@@ -7209,7 +7209,7 @@ impl<'p, 's> Checker<'p, 's> {
         // Comparing two unit types resolves nothing, so when `m` is among the assigned types, the comparisons that come
         // before the one of `m` with itself can be skipped. And a literal that isn't an enum member is only assignable
         // to another one if they're the same type.
-        const PLAIN_LITERAL: u32 = tf::LITERAL | tf::UNIQUE_ES_SYMBOL;
+        const PLAIN_LITERAL: u32 = tf::LITERAL;
         let is_all_units = self.is_every_type_unit(assigned);
         let is_all_plain =
             is_all_units && self.types().member_flags(assigned) & !PLAIN_LITERAL == 0;

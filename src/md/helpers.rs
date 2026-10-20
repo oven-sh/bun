@@ -233,6 +233,16 @@ pub(crate) fn skip_utf8_bom(text: &[u8]) -> &[u8] {
     text
 }
 
+/// `bytes` with `nul` in the place of each NUL.
+pub fn push_without_nul(bytes: &[u8], nul: &[u8], out: &mut Vec<u8>) {
+    for (index, part) in bun_core::strings::split(bytes, b"\0").enumerate() {
+        if index > 0 {
+            out.extend_from_slice(nul);
+        }
+        out.extend_from_slice(part);
+    }
+}
+
 /// Case-insensitive ASCII comparison.
 pub use bun_core::strings::eql_case_insensitive_ascii_check_length as ascii_case_eql;
 

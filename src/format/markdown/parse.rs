@@ -5,8 +5,9 @@
 //! space at the ends of containers.
 
 use super::ast::{Align, Kind, NONE, Node, NodeId, ReferenceType, Str, Tree};
-use super::spans::{self, push_without_nul};
+use super::spans;
 use super::strings::{normalize_identifier, push_lowercase, unescape};
+use bun_md::helpers::push_without_nul;
 use bun_md::root::{Options, render_with_extensions};
 use bun_md::types::{
     BLOCK_CLOSED, BLOCK_DIRECTIVE, BLOCK_EXTENSION, BLOCK_FENCED_CODE, BLOCK_FOOTNOTE,

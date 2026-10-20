@@ -2844,8 +2844,9 @@ pub fn render_to_ansi<'a>(
     // an input the parser cannot address has to be rejected before it is
     // allocated for, not only when `Parser::init` sees it.
     crate::parser::input_size(text)?;
-    let mut renderer = AnsiRenderer::init(text, theme);
-    match root::render_with_renderer(text, options, renderer.renderer()) {
+    let readable = root::Readable::new(text)?;
+    let mut renderer = AnsiRenderer::init(readable.bytes(), theme);
+    match root::render_with_renderer(&readable, options, renderer.renderer()) {
         Ok(()) => {}
         Err(ParserError::JSError) => return Ok(None),
         Err(e) => return Err(e),

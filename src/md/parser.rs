@@ -3,6 +3,7 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicUsize, Ordering};
+use std::borrow::Cow;
 use std::collections::VecDeque;
 
 // What a byte can mean in inline content: `MARK_*`. 0: nothing, and the scans
@@ -19,7 +20,7 @@ pub(crate) const MARK_HIDES: u8 = 1 << 3;
 /// One of `Extensions::span_bytes`.
 pub(crate) const MARK_EXTENSION: u8 = 1 << 4;
 pub(crate) const MARK_OTHER: u8 = 1 << 5;
-use bun_core::StackCheck;
+use bun_core::{StackCheck, strings};
 
 use super::helpers;
 use super::html_renderer::HtmlRenderer;
@@ -253,6 +254,63 @@ pub(crate) fn input_size(text: &[u8]) -> Result<OFF, ParserError> {
     Ok(text.len() as OFF)
 }
 
+/// A document as the parser reads it for a consumer that does not want source: behind a UTF-8 BOM, and with
+/// U+FFFD in the place of each U+0000 (CommonMark 2.3). The offsets that a renderer is told are into `bytes()`.
+pub struct Readable<'a> {
+    bytes: Cow<'a, [u8]>,
+    has_carriage_return: bool,
+}
+
+impl<'a> Readable<'a> {
+    /// Reads `text` once. It is copied only if it has a NUL in it.
+    #[inline]
+    pub fn new(text: &'a [u8]) -> Result<Readable<'a>, ParserError> {
+        let text = helpers::skip_utf8_bom(text);
+        input_size(text)?;
+        let as_written = |has_carriage_return| Readable {
+            bytes: Cow::Borrowed(text),
+            has_carriage_return,
+        };
+        let Some(first) = strings::index_of_any(text, b"\r\0") else {
+            return Ok(as_written(false));
+        };
+        let rest = &text[first..];
+        match rest {
+            [0, ..] => Readable::with_nul_replaced(text, rest, strings::contains_char(rest, b'\r')),
+            _ => match strings::index_of_char_usize(rest, 0) {
+                Some(at) => Readable::with_nul_replaced(text, &rest[at..], true),
+                None => Ok(as_written(true)),
+            },
+        }
+    }
+
+    /// A copy of `text`. `from_first_nul` is the rest of it from its first NUL on.
+    #[cold]
+    fn with_nul_replaced(
+        text: &'a [u8],
+        from_first_nul: &[u8],
+        has_carriage_return: bool,
+    ) -> Result<Readable<'a>, ParserError> {
+        let len = text.len() + 2 * strings::count_char(from_first_nul, 0);
+        if len > MAX_INPUT_LEN {
+            return Err(ParserError::InputTooLarge);
+        }
+        let mut replaced = Vec::new();
+        if replaced.try_reserve_exact(len).is_err() {
+            return Err(ParserError::OutOfMemory);
+        }
+        helpers::push_without_nul(text, "\u{FFFD}".as_bytes(), &mut replaced);
+        Ok(Readable {
+            bytes: Cow::Owned(replaced),
+            has_carriage_return,
+        })
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
 impl<'a> Parser<'a> {
     pub(crate) fn get_block_header_at(&mut self, off: usize) -> &mut BlockHeader {
         // SAFETY: `off` is produced by start_new_block / push_container_bytes which pad it
@@ -312,13 +370,18 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Result<Parser<'a>, ParserError> {
+    fn init(
+        text: &'a [u8],
+        has_carriage_return: bool,
+        flags: Flags,
+        rend: Renderer<'a>,
+    ) -> Result<Parser<'a>, ParserError> {
         let size = input_size(text)?;
         let track = rend.ptr.wants_source();
         let mut p = Parser {
             text,
             size,
-            has_carriage_return: bun_core::strings::contains_char(text, b'\r'),
+            has_carriage_return,
             flags,
             renderer: rend,
             image_nesting_level: 0,
@@ -494,12 +557,16 @@ pub(crate) fn render_to_html(
     flags: Flags,
     render_opts: RenderOptions,
 ) -> Result<Box<[u8]>, ParserError> {
-    // Skip UTF-8 BOM
-    let input = helpers::skip_utf8_bom(text);
+    let readable = Readable::new(text)?;
 
-    let mut html_renderer = HtmlRenderer::init(input, render_opts);
+    let mut html_renderer = HtmlRenderer::init(readable.bytes(), render_opts);
 
-    let mut parser = Parser::init(input, flags, html_renderer.renderer())?;
+    let mut parser = Parser::init(
+        readable.bytes(),
+        readable.has_carriage_return,
+        flags,
+        html_renderer.renderer(),
+    )?;
 
     parser.process_doc()?;
     drop(parser);
@@ -512,23 +579,32 @@ pub(crate) fn render_to_html(
 /// `render_options` carries render-only flags (tag_filter, heading_ids,
 /// autolink_headings) so they are not silently dropped by the API.
 pub(crate) fn render_with_renderer<'a>(
-    text: &'a [u8],
+    text: &'a Readable<'_>,
     flags: Flags,
     render_options: RenderOptions,
     rend: Renderer<'a>,
-    extensions: Option<Extensions<'a>>,
 ) -> Result<(), ParserError> {
     let _ = render_options; // Available for renderer implementations; parse layer does not use these.
+    Parser::init(text.bytes(), text.has_carriage_return, flags, rend)?.process_doc()
+}
+
+/// See `root::render_with_extensions`.
+pub(crate) fn render_with_extensions<'a>(
+    text: &'a [u8],
+    flags: Flags,
+    rend: Renderer<'a>,
+    extensions: Extensions<'a>,
+) -> Result<(), ParserError> {
     // Who wants to know where things are is told places in `text`.
     let input = match rend.ptr.wants_source() {
         true => text,
         false => helpers::skip_utf8_bom(text),
     };
+    input_size(input)?;
 
-    let mut p = Parser::init(input, flags, rend)?;
-    if let Some(extensions) = extensions {
-        p.set_extensions(extensions);
-    }
+    let has_carriage_return = strings::contains_char(input, b'\r');
+    let mut p = Parser::init(input, has_carriage_return, flags, rend)?;
+    p.set_extensions(extensions);
 
     p.process_doc()
 }

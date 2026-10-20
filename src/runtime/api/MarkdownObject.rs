@@ -309,7 +309,7 @@ fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
     let options = parse_options(global_this, opts_value)?;
 
     // Create JS callback renderer
-    let mut js_renderer = match JsCallbackRenderer::init(global_this, input, options.heading_ids) {
+    let mut js_renderer = match JsCallbackRenderer::init(global_this, options.heading_ids) {
         Ok(r) => r,
         Err(_) => return Err(global_this.throw_out_of_memory()),
     };
@@ -321,8 +321,15 @@ fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
         JSValue::UNDEFINED
     })?;
 
+    // The getters of the options and of the callbacks can write to a buffer: the text is read behind them.
+    let readable = match md::Readable::new(input) {
+        Ok(readable) => readable,
+        Err(err) => return Err(parser_err_to_js(global_this, err, input.len())),
+    };
+    js_renderer.src_text = readable.bytes();
+
     // Run parser with the JS callback renderer
-    if let Err(err) = md::render_with_renderer(input, options, js_renderer.renderer()) {
+    if let Err(err) = md::render_with_renderer(&readable, options, js_renderer.renderer()) {
         return Err(parser_err_to_js(global_this, err, input.len()));
     }
 
@@ -401,16 +408,11 @@ fn render_ast(
     // Parse parser options from 3rd argument
     let options = parse_options(global_this, opts_value)?;
 
-    let mut renderer = match ParseRenderer::init(
-        global_this,
-        input,
-        marked_args,
-        options.heading_ids,
-        react_version,
-    ) {
-        Ok(r) => r,
-        Err(_) => return Err(global_this.throw_out_of_memory()),
-    };
+    let mut renderer =
+        match ParseRenderer::init(global_this, marked_args, options.heading_ids, react_version) {
+            Ok(r) => r,
+            Err(_) => return Err(global_this.throw_out_of_memory()),
+        };
 
     // Extract component overrides from 2nd argument
     renderer.extract_components(if components_value.is_object() {
@@ -419,7 +421,14 @@ fn render_ast(
         JSValue::UNDEFINED
     })?;
 
-    if let Err(err) = md::render_with_renderer(input, options, renderer.renderer()) {
+    // The getters of the options and of the components can write to a buffer: the text is read behind them.
+    let readable = match md::Readable::new(input) {
+        Ok(readable) => readable,
+        Err(err) => return Err(parser_err_to_js(global_this, err, input.len())),
+    };
+    renderer.src_text = readable.bytes();
+
+    if let Err(err) = md::render_with_renderer(&readable, options, renderer.renderer()) {
         return Err(parser_err_to_js(global_this, err, input.len()));
     }
 
@@ -552,7 +561,6 @@ impl<'a> md::types::RendererImpl for ParseRenderer<'a> {
 impl<'a> ParseRenderer<'a> {
     fn init(
         global_object: &'a JSGlobalObject,
-        src_text: &'a [u8],
         marked_args: &'a mut MarkedArgumentBuffer,
         heading_ids: bool,
         react_version: Option<u8>,
@@ -562,7 +570,7 @@ impl<'a> ParseRenderer<'a> {
             marked_args,
             stack: Vec::new(),
             stack_check: StackCheck::init(),
-            src_text,
+            src_text: b"",
             heading_tracker: md::helpers::HeadingIdTracker::init(heading_ids),
             components: Components::default(),
             react_version,
@@ -1140,12 +1148,11 @@ impl<'a> md::types::RendererImpl for JsCallbackRenderer<'a> {
 impl<'a> JsCallbackRenderer<'a> {
     fn init(
         global_object: &'a JSGlobalObject,
-        src_text: &'a [u8],
         heading_ids: bool,
     ) -> Result<JsCallbackRenderer<'a>, bun_alloc::AllocError> {
         let mut self_ = JsCallbackRenderer {
             global_object,
-            src_text,
+            src_text: b"",
             stack: Vec::new(),
             collecting: Vec::new(),
             list_depth: 0,

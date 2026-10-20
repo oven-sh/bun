@@ -1,5 +1,5 @@
 //! What is in a paragraph and is not CommonMark's or GFM's as `bun_md` reads them: links that are not marked as such as micromark finds
-//! them, math. And how micromark and mdast write down a title and a text with NUL in it.
+//! them, math. And how micromark and mdast write down a title.
 
 use super::strings::{CharacterClass, classify, unescape};
 use crate::text::first_char;
@@ -199,16 +199,6 @@ pub(crate) fn parse_protocol_literal(bytes: &[u8], start: usize) -> Option<usize
         return None;
     }
     Some(parse_path(bytes, parse_domain(bytes, after)?))
-}
-
-/// `bytes` with `nul` in the place of each NUL.
-pub(crate) fn push_without_nul(bytes: &[u8], nul: &[u8], out: &mut Vec<u8>) {
-    for (index, part) in bun_core::strings::split(bytes, b"\0").enumerate() {
-        if index > 0 {
-            out.extend_from_slice(nul);
-        }
-        out.extend_from_slice(part);
-    }
 }
 
 /// Prettier's `COMMENT_REGEX`, anywhere in `html`: `<!---->|<!---?[^>-](?:-?[^-])*-->`

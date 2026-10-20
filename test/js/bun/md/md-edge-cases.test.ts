@@ -59,6 +59,185 @@ describe("fuzzer-like edge cases", () => {
     Markdown.react(input, undefined, { reactVersion: 18 });
   });
 
+  // CommonMark 2.3: U+0000 is replaced with U+FFFD. The document is read that way before it is parsed, so a NUL is
+  // U+FFFD wherever it is written, and for the parser too: what it gives is what the same document gives with
+  // U+FFFD written in it.
+  describe("a null byte is U+FFFD wherever it is written", () => {
+    test.each([
+      ["backtick fence", "```\na\0b\n```\n", "<pre><code>a\uFFFDb\n</code></pre>\n"],
+      ["tilde fence", "~~~\na\0b\n~~~\n", "<pre><code>a\uFFFDb\n</code></pre>\n"],
+      ["indented code", "    a\0b\n", "<pre><code>a\uFFFDb\n</code></pre>\n"],
+      [
+        "first, last, two in a row, alone on a line",
+        "```\n\0a\0\0b\0\n\0\n```\n",
+        "<pre><code>\uFFFDa\uFFFD\uFFFDb\uFFFD\n\uFFFD\n</code></pre>\n",
+      ],
+      [
+        "next to what is escaped",
+        '```\n<\0&\0"\0>\n```\n',
+        "<pre><code>&lt;\uFFFD&amp;\uFFFD&quot;\uFFFD&gt;\n</code></pre>\n",
+      ],
+      [
+        "fence in a block quote",
+        "> ```\n> a\0b\n> ```\n",
+        "<blockquote>\n<pre><code>a\uFFFDb\n</code></pre>\n</blockquote>\n",
+      ],
+      [
+        "fence in a list item",
+        "- ```\n  a\0b\n  ```\n",
+        "<ul>\n<li>\n<pre><code>a\uFFFDb\n</code></pre>\n</li>\n</ul>\n",
+      ],
+      [
+        "indented code in a list item",
+        "1.     a\0b\n",
+        "<ol>\n<li>\n<pre><code>a\uFFFDb\n</code></pre>\n</li>\n</ol>\n",
+      ],
+      ["more indentation than the block takes", "      a\0b\n", "<pre><code>  a\uFFFDb\n</code></pre>\n"],
+      ["a line of indented code that is one NUL", "    a\n\n    \0\n\n", "<pre><code>a\n\n\uFFFD\n</code></pre>\n"],
+      ["CRLF", "```\r\na\0b\r\n```\r\n", "<pre><code>a\uFFFDb\n</code></pre>\n"],
+      ["CR", "```\ra\0b\r```\r", "<pre><code>a\uFFFDb\n</code></pre>\n"],
+      ["behind the first CR", "a\r\n\r\n    b\0c\r\n", "<p>a</p>\n<pre><code>b\uFFFDc\n</code></pre>\n"],
+      ["before the first CR", "    \0\r\n\r\nx\r\n", "<pre><code>\uFFFD\n</code></pre>\n<p>x</p>\n"],
+      [
+        "behind a byte order mark",
+        "\uFEFF```js\na\0b\n```\n",
+        '<pre><code class="language-js">a\uFFFDb\n</code></pre>\n',
+      ],
+      ["HTML block", "<div>\na\0b\n</div>\n", "<div>\na\uFFFDb\n</div>\n"],
+      ["<pre>", "<pre>\na\0b\n</pre>\n", "<pre>\na\uFFFDb\n</pre>\n"],
+      ["comment", "<!--\na\0b\n-->\n", "<!--\na\uFFFDb\n-->\n"],
+      ["processing instruction", "<?php\n\0\n?>\n", "<?php\n\uFFFD\n?>\n"],
+      ["declaration", "<!DOCTYPE \0>\n", "<!DOCTYPE \uFFFD>\n"],
+      ["CDATA", "<![CDATA[\n\0\n]]>\n", "<![CDATA[\n\uFFFD\n]]>\n"],
+      ["a tag that is not a block by its name", "<x-a>\na\0b\n", "<x-a>\na\uFFFDb\n"],
+      ["the line that starts the HTML block", '<div title="a\0b">\n', '<div title="a\uFFFDb">\n'],
+      ["indented HTML", "  <div>\n  \0\n", "  <div>\n  \uFFFD\n"],
+      ["code span", "`a\0b`\n", "<p><code>a\uFFFDb</code></p>\n"],
+      [
+        "code span in a cell",
+        "| `a\0b` |\n| - |\n",
+        "<table>\n<thead>\n<tr><th><code>a\uFFFDb</code></th></tr>\n</thead>\n</table>\n",
+      ],
+      ["inline HTML", 'x <b title="a\0b">y</b>\n', '<p>x <b title="a\uFFFDb">y</b></p>\n'],
+      ["inline comment", "x <!-- a\0b --> y\n", "<p>x <!-- a\uFFFDb --> y</p>\n"],
+      ["autolink", "<http://a\0b>\n", '<p><a href="http://a%EF%BF%BDb">http://a\uFFFDb</a></p>\n'],
+      ["title of a link", '[x](y "a\0b")\n', '<p><a href="y" title="a\uFFFDb">x</a></p>\n'],
+      ["title of an image", '![x](y "a\0b")\n', '<p><img src="y" alt="x" title="a\uFFFDb" /></p>\n'],
+      ["destination", "[x](a\0b)\n", '<p><a href="a%EF%BF%BDb">x</a></p>\n'],
+      ["destination in angle brackets", "[x](<a\0b>)\n", '<p><a href="a%EF%BF%BDb">x</a></p>\n'],
+      ["reference definition", '[x][r]\n\n[r]: a\0b "t\0t"\n', '<p><a href="a%EF%BF%BDb" title="t\uFFFDt">x</a></p>\n'],
+      ["info string", "```a\0b c\nx\n```\n", '<pre><code class="language-a\uFFFDb">x\n</code></pre>\n'],
+      ["what is punctuation to emphasis", "a*\0b*\n", "<p>a*\uFFFDb*</p>\n"],
+      [
+        "lines without one, in a document with one",
+        "a\0b\n\n```\nc\n\n d\n```\n\n    e\n\n<div>\nf\n</div>\n",
+        "<p>a\uFFFDb</p>\n<pre><code>c\n\n d\n</code></pre>\n<pre><code>e\n</code></pre>\n<div>\nf\n</div>\n",
+      ],
+    ])("html(): %s", (_, markdown, html) => {
+      expect(Markdown.html(markdown)).toBe(html);
+      expect(Markdown.html(Buffer.from(markdown))).toBe(html);
+    });
+
+    test("html(): target of a wiki link", () => {
+      expect(Markdown.html("[[a\0b]]\n", { wikiLinks: true })).toBe(
+        '<p><x-wikilink data-target="a\uFFFDb">a\uFFFDb</x-wikilink></p>\n',
+      );
+    });
+
+    test("ansi() shows it", () => {
+      const plain = (markdown: string) => Markdown.ansi(markdown, { colors: false });
+      expect(plain("```\na\0b\n```\n")).toBe("+-\n| a\uFFFDb\n+-\n");
+      expect(plain("    a\0b\n")).toBe("+-\n| a\uFFFDb\n+-\n");
+      expect(plain("<div>\n<scr\0ipt>\n</div>\n")).toBe("<div>\n<scr\uFFFDipt>\n</div>\n");
+      expect(plain("`a\0b`\n")).toBe("a\uFFFDb\n");
+      expect(plain("\uFEFF```js\n\0\n```\n")).toBe("+- js\n| \uFFFD\n+-\n");
+    });
+
+    // A getter of the second or third argument can write to the buffer that is the first.
+    test("a buffer is read behind the getters of the other arguments", () => {
+      const fence = () => Buffer.from("```\na-b\n```\n");
+      // An object whose `key` puts a NUL in the place of the "-" when it is read.
+      const writing = (buffer: Buffer, key: string, value?: unknown): any => ({
+        get [key]() {
+          buffer[5] = 0;
+          return value;
+        },
+      });
+
+      let buffer = fence();
+      expect(Markdown.html(buffer, writing(buffer, "tables", true))).toBe("<pre><code>a\uFFFDb\n</code></pre>\n");
+
+      buffer = fence();
+      expect(Markdown.ansi(buffer, writing(buffer, "colors", false))).toBe("+-\n| a\uFFFDb\n+-\n");
+
+      buffer = fence();
+      expect(Markdown.render(buffer, writing(buffer, "code"))).toBe("a\uFFFDb\n");
+
+      buffer = fence();
+      expect(Markdown.render(buffer, {}, writing(buffer, "tables", true))).toBe("a\uFFFDb\n");
+
+      buffer = fence();
+      const tree = Markdown.react(buffer, writing(buffer, "pre"), { reactVersion: 18 });
+      expect(tree.props.children[0].props.children).toEqual(["a\uFFFDb", "\n"]);
+    });
+
+    test("a long line of them, and many lines with one", () => {
+      const count = 100_000;
+      expect(Markdown.html("```\n" + Buffer.alloc(count, "\0").toString() + "\n```\n")).toBe(
+        "<pre><code>" + Buffer.alloc(count * 3, "\uFFFD").toString() + "\n</code></pre>\n",
+      );
+      const lines = 20_000;
+      expect(Markdown.html("```\n" + Buffer.alloc(lines * 4, "a\0b\n").toString() + "```\n")).toBe(
+        "<pre><code>" + Buffer.alloc(lines * 6, "a\uFFFDb\n").toString() + "</code></pre>\n",
+      );
+    });
+
+    test("every entry point gives what it gives for U+FFFD written there", () => {
+      let seed = 0x2f6e2b1;
+      const next = (below: number) => {
+        seed = (Math.imul(seed, 1103515245) + 12345) >>> 0;
+        return (seed >>> 8) % below;
+      };
+      // prettier-ignore
+      const pieces = [
+        "\0", "\0", "\0", "\0\0", "a", "b c", " ", "\t", "\n", "\n\n", "\r\n", "    ", "```", "~~~", "`", "*", "_", "~",
+        "[", "]", "(", ")", "<", ">", "/", "!", "#", "-", "> ", "|", "&", '"', ":", "=", "<script", "</xmp", "<div>",
+        "<!--", "-->", "http://a", "www.a.b", "é", "\uFFFD", "[r]: ", "1. ", "\\",
+      ];
+      const options = {
+        tagFilter: true,
+        autolinks: true,
+        wikiLinks: true,
+        latexMath: true,
+        underline: true,
+        headings: true,
+      };
+      const all = (markdown: string) => {
+        const seen: string[] = [];
+        return {
+          html: Markdown.html(markdown),
+          extended: Markdown.html(markdown, options),
+          render: Markdown.render(markdown, { text: text => (seen.push(text), text) }, options),
+          seen,
+          react: JSON.stringify(Markdown.react(markdown, undefined, { ...options, reactVersion: 18 })),
+          ansi: Markdown.ansi(markdown, { colors: false }),
+          wrapped: Markdown.ansi(markdown, { colors: false, columns: 20 }),
+        };
+      };
+      let withNul = 0;
+      for (let round = 0; round < 250; round++) {
+        let markdown = "";
+        for (let count = 1 + next(24); count > 0; count--) markdown += pieces[next(pieces.length)];
+        if (!markdown.includes("\0")) continue;
+        withNul++;
+        const got = all(markdown);
+        expect({ markdown, ...got }).toEqual({ markdown, ...all(markdown.replaceAll("\0", "\uFFFD")) });
+        expect(JSON.stringify(got)).not.toContain("\\u0000");
+      }
+      expect(withNul).toBeGreaterThan(150);
+    });
+  });
+
   test("control characters in input", () => {
     const ctrl =
       "\x01\x02\x03\x04\x05\x06\x07\x08\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f";
@@ -1822,6 +2001,28 @@ describe.concurrent("importing .md modules", () => {
     expect(stderr).toBe("");
     const rendered = "<h1>Hello</h1>\n<p>Some <em>text</em>.</p>\n";
     expect(JSON.parse(stdout)).toEqual([rendered, rendered]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a NUL in the file is U+FFFD in the HTML", async () => {
+    using dir = tempDir("md-import-nul", {
+      "doc.md": "```a\0b\nc\0d\n```\n\n`e\0f`\n",
+      "entry.ts": `
+        import html from "./doc.md";
+        console.log(JSON.stringify(html));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toBe(
+      '<pre><code class="language-a\uFFFDb">c\uFFFDd\n</code></pre>\n<p><code>e\uFFFDf</code></p>\n',
+    );
     expect(exitCode).toBe(0);
   });
 

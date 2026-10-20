@@ -235,6 +235,26 @@ describe("bun <file.md>", () => {
     expect(exitCode).toBe(0);
   });
 
+  // CommonMark 2.3: a NUL in the file is shown as U+FFFD, in code too.
+  test("shows U+FFFD for a NUL in the file", async () => {
+    using dir = tempDir("md-nul-", {
+      "doc.md": "```\na\0b\n```\n\n`c\0d`\n",
+    });
+    const env: NodeJS.Dict<string> = { ...bunEnv, NO_COLOR: "1" };
+    delete env.FORCE_COLOR;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "./doc.md"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("a\uFFFDb");
+    expect(stdout).toContain("c\uFFFDd");
+    expect(exitCode).toBe(0);
+  });
+
   test("renders via `bun run ./file.md`", async () => {
     using dir = tempDir("md-run-", { "doc.md": "# Title\n\nbody\n" });
     await using proc = Bun.spawn({

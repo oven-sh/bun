@@ -3328,7 +3328,10 @@ impl RunCommand {
         out_map: &mut StringHashMap<Box<[u8]>>,
     ) {
         let mut collector = md::ImageUrlCollector::init();
-        if md::render_with_renderer(contents, md_opts, collector.renderer()).is_err() {
+        let Ok(readable) = md::Readable::new(contents) else {
+            return;
+        };
+        if md::render_with_renderer(&readable, md_opts, collector.renderer()).is_err() {
             return;
         }
         if collector.urls.is_empty() {

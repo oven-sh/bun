@@ -456,6 +456,25 @@ describe("disallowed raw HTML (tagfilter)", () => {
     const expected = `<p><scripting>not filtered</scripting></p>`;
     expect(renderGFM(md).trim()).toBe(expected);
   });
+
+  // A NUL is U+FFFD before the document is parsed (CommonMark 2.3), so the filter sees U+FFFD: a name with it in
+  // or behind it is not the name of a filtered tag, as in cmark-gfm, and a tag before or behind it is filtered.
+  test.each([
+    ["<script\0>", "<script\uFFFD>"],
+    ["</script\0>", "</script\uFFFD>"],
+    ["<script\0", "<script\uFFFD"],
+    ["<title\0>", "<title\uFFFD>"],
+    ["<scr\0ipt>", "<scr\uFFFDipt>"],
+    ["<\0script>", "<\uFFFDscript>"],
+    ["<script>\0", "&lt;script>\uFFFD"],
+    ["\0<script>", "\uFFFD&lt;script>"],
+    ["<script \0>", "&lt;script \uFFFD>"],
+    ["<script/\0>", "&lt;script/\uFFFD>"],
+    ["<script\n\0>", "&lt;script\n\uFFFD>"],
+    ["\0<script", "\uFFFD&lt;script"],
+  ])("a NUL in an HTML block is U+FFFD to the filter: %j", (line, filtered) => {
+    expect(markdown.html(`<div>\n${line}\n</div>\n`, { tagFilter: true })).toBe(`<div>\n${filtered}\n</div>\n`);
+  });
 });
 
 // ============================================================================

@@ -406,6 +406,38 @@ describe("Bun.markdown.render", () => {
     });
     expect(result).toBe("&");
   });
+
+  // CommonMark 2.3: a NUL is U+FFFD. The document is read that way, so every callback gets it in its text.
+  test("a NUL is U+FFFD in what the callbacks get", () => {
+    const seen = (markdown: string) => {
+      const texts: string[] = [];
+      return { out: Markdown.render(markdown, { text: (text: string) => (texts.push(text), text) }), texts };
+    };
+    expect(seen("```\na\0b\n```\n")).toEqual({ out: "a\uFFFDb\n", texts: ["a\uFFFDb", "\n"] });
+    expect(seen("    \0\0\n")).toEqual({ out: "\uFFFD\uFFFD\n", texts: ["\uFFFD\uFFFD", "\n"] });
+    expect(seen("<div>\na\0b\n</div>\n")).toEqual({
+      out: "<div>\na\uFFFDb\n</div>\n",
+      texts: ["<div>", "\n", "a\uFFFDb", "\n", "</div>", "\n"],
+    });
+    expect(seen("a\0b\n")).toEqual({ out: "a\uFFFDb", texts: ["a\uFFFDb"] });
+    expect(seen("x `a\0b` y\n")).toEqual({ out: "x a\uFFFDb y", texts: ["x ", "a\uFFFDb", " y"] });
+
+    const metas: unknown[] = [];
+    const withMeta = (children: string, meta: unknown) => (metas.push(meta), `[${children}]`);
+    expect(Markdown.render("```a\0b c\nx\0\n```\n", { code: withMeta })).toBe("[x\uFFFD\n]");
+    expect(Markdown.render('[x](<a\0b> "t\0t")\n', { link: withMeta })).toBe("[x]");
+    expect(Markdown.render("<div>\na\0b\n</div>\n", { html: withMeta })).toBe("[<div>\na\uFFFDb\n</div>\n]");
+    // The language is read where the parser reads it: behind a byte order mark.
+    expect(Markdown.render("\uFEFF```js\n\0\n```\n", { code: withMeta })).toBe("[\uFFFD\n]");
+    expect(Markdown.render("\uFEFF~~~ts\nx\n~~~\n", { code: withMeta })).toBe("[x\n]");
+    expect(metas).toEqual([
+      { language: "a\uFFFDb" },
+      { href: "a\uFFFDb", title: "t\uFFFDt" },
+      undefined,
+      { language: "js" },
+      { language: "ts" },
+    ]);
+  });
 });
 
 describe("Bun.markdown buffer input", () => {

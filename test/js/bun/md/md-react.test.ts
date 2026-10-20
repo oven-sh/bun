@@ -373,6 +373,30 @@ This is **bold** and *italic*.
     const pChildren = children("line1\nline2\n")[0].props.children;
     expect(pChildren).toContain("\n");
   });
+
+  // CommonMark 2.3: a NUL is U+FFFD. The document is read that way, so it is in the string around it and in props.
+  test("a NUL is U+FFFD in the strings and in props", () => {
+    expect(children("```\na\0b\n\0\n```\n")[0].props.children).toEqual(["a\uFFFDb", "\n", "\uFFFD", "\n"]);
+    expect(children("<div>\na\0b\n</div>\n")[0].props.children).toEqual([
+      "<div>",
+      "\n",
+      "a\uFFFDb",
+      "\n",
+      "</div>",
+      "\n",
+    ]);
+    expect(children("a\0b\n")[0].props.children).toEqual(["a\uFFFDb"]);
+    expect(children("`a\0b`\n")[0].props.children[0].props.children).toEqual(["a\uFFFDb"]);
+    expect(children('[x](y "a\0b")\n')[0].props.children[0].props).toEqual({
+      href: "y",
+      title: "a\uFFFDb",
+      children: ["x"],
+    });
+    expect(children("```a\0b c\nx\n```\n")[0].props).toEqual({ language: "a\uFFFDb", children: ["x", "\n"] });
+    // The language is read where the parser reads it: behind a byte order mark.
+    expect(children("\uFEFF```js\n\0\n```\n")[0].props).toEqual({ language: "js", children: ["\uFFFD", "\n"] });
+    expect(children("\uFEFF~~~ts\nx\n~~~\n")[0].props).toEqual({ language: "ts", children: ["x", "\n"] });
+  });
 });
 
 // ============================================================================

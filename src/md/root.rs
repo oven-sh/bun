@@ -2,6 +2,7 @@ use crate::parser;
 use crate::types::Flags;
 
 // Re-export types needed by external renderers (e.g. JS callback renderer).
+pub use crate::parser::Readable;
 pub use crate::types::BLOCK_FENCED_CODE;
 pub use crate::types::BlockType;
 pub use crate::types::Renderer;
@@ -233,9 +234,9 @@ pub fn render_to_html_with_options(
     parser::render_to_html(text, options.to_flags(), options.to_render_options())
 }
 
-/// Parse and render using a custom renderer implementation.
+/// Parse and render using a custom renderer implementation. A renderer that keeps the text keeps `text.bytes()`.
 pub fn render_with_renderer<'a>(
-    text: &'a [u8],
+    text: &'a Readable<'_>,
     options: Options,
     renderer: Renderer<'a>,
 ) -> Result<(), parser::ParserError> {
@@ -244,24 +245,17 @@ pub fn render_with_renderer<'a>(
         options.to_flags(),
         options.to_render_options(),
         renderer,
-        None,
     )
 }
 
-/// The same with syntax of the consumer's own.
+/// The same with syntax of the consumer's own, for the text as it is written: a NUL in it is left to the consumer.
 pub fn render_with_extensions<'a>(
     text: &'a [u8],
     options: Options,
     renderer: Renderer<'a>,
     extensions: crate::types::Extensions<'a>,
 ) -> Result<(), parser::ParserError> {
-    parser::render_with_renderer(
-        text,
-        options.to_flags(),
-        options.to_render_options(),
-        renderer,
-        Some(extensions),
-    )
+    parser::render_with_extensions(text, options.to_flags(), renderer, extensions)
 }
 
 pub use crate::types;

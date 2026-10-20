@@ -1840,6 +1840,10 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
                 if comb.is_tree_combinator() {
                     return true;
                 }
+            } else if let Some(argument) = c.scope_argument() {
+                if scope_argument_has_combinator(argument) {
+                    return true;
+                }
             }
         }
         false
@@ -1902,6 +1906,12 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
             c.hash(hasher);
         }
     }
+}
+
+/// Out of line, so that `has_combinator` does not call itself and still inlines.
+#[inline(never)]
+fn scope_argument_has_combinator(argument: &Selector) -> bool {
+    argument.has_combinator()
 }
 
 impl<Impl: BunSelectorImpl> CssEql for GenericSelector<Impl> {
@@ -2246,6 +2256,18 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
     /// Returns true if this is a combinator.
     pub(crate) fn is_combinator(&self) -> bool {
         matches!(self, Self::Combinator(_))
+    }
+
+    /// The argument of `:local()` or `:global()`. The wrapper prints as its argument and
+    /// nothing else, so the selector that holds the wrapper has what the argument has.
+    /// lightningcss does not look through the wrapper. The readers that call this do.
+    pub(crate) fn scope_argument(&self) -> Option<&Selector> {
+        match self {
+            Self::NonTsPseudoClass(
+                PseudoClass::Local { selector } | PseudoClass::Global { selector },
+            ) => Some(selector),
+            _ => None,
+        }
     }
 
     pub(crate) fn hash(&self, hasher: &mut Wyhash) {

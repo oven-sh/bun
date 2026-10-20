@@ -1317,7 +1317,12 @@ pub(crate) mod serialize {
             if ctx.selectors.v.len() == 1
                 && (first
                     || (!has_type_selector(ctx.selectors.v.at(0))
-                        && is_simple(ctx.selectors.v.at(0))))
+                        && is_simple(ctx.selectors.v.at(0))
+                        // `:is()` cannot match a pseudo-element. A parent that has one stays
+                        // as written when only the argument of `:local()` or `:global()`
+                        // asks for `:is()`.
+                        && (!scope_argument_needs_is(ctx.selectors.v.at(0), true)
+                            || has_pseudo_element(ctx.selectors.v.at(0)))))
             {
                 serialize_selector(ctx.selectors.v.at(0), dest, ctx.parent, false)?;
             } else {
@@ -1664,10 +1669,11 @@ pub(crate) mod tocss_servo {
     }
 }
 
+#[inline]
 pub(crate) fn should_unwrap_is(selectors: &[parser::Selector]) -> bool {
     if selectors.len() == 1 {
         let first = &selectors[0];
-        if !has_type_selector(first) && is_simple(first) {
+        if !has_type_selector(first) && is_simple(first) && !scope_argument_needs_is(first, true) {
             return true;
         }
     }
@@ -1709,6 +1715,17 @@ fn is_type_selector(component: Option<&parser::Component>) -> bool {
     false
 }
 
+fn has_pseudo_element(selector: &parser::Selector) -> bool {
+    selector.components.iter().any(|component| match component {
+        Component::PseudoElement(_) | Component::Part(_) | Component::Slotted(_) => true,
+        // Prints as its argument.
+        Component::NonTsPseudoClass(
+            PseudoClass::Local { selector } | PseudoClass::Global { selector },
+        ) => has_pseudo_element(selector),
+        _ => false,
+    })
+}
+
 fn is_simple(selector: &parser::Selector) -> bool {
     let mut iter = selector.iter_raw_parse_order_from(0);
     let any_is_combinator = 'any_is_combinator: {
@@ -1720,6 +1737,31 @@ fn is_simple(selector: &parser::Selector) -> bool {
         break 'any_is_combinator false;
     };
     !any_is_combinator
+}
+
+/// `:local()` and `:global()` print as their argument. Whether one of them makes `selector`
+/// need `:is()` where the same selector with no wrapper needs it: the argument has a
+/// combinator, or it starts the compound selector with a type selector. `leads`: `selector`
+/// starts that compound selector.
+fn scope_argument_needs_is(selector: &parser::Selector, mut leads: bool) -> bool {
+    let mut iter = selector.iter_raw_match_order();
+    while let Some(component) = iter.next() {
+        if let Some(argument) = component.scope_argument() {
+            if argument_needs_is(argument, leads) {
+                return true;
+            }
+        }
+        leads = false;
+    }
+    false
+}
+
+/// Out of line, so that `scope_argument_needs_is` does not call itself and still inlines.
+#[inline(never)]
+fn argument_needs_is(argument: &parser::Selector, leads: bool) -> bool {
+    !is_simple(argument)
+        || (leads && has_type_selector(argument))
+        || scope_argument_needs_is(argument, leads)
 }
 
 struct CombinatorIter<'a> {

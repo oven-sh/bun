@@ -3,6 +3,17 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
+// Each run of white space becomes one space, so `.a .b` and `.a.b` stay different.
+const oneLine = (text: string) => text.trim().replace(/\s+/g, " ");
+
+// A stylesheet on one line, with the module hash written as `HASH`. `local` is
+// a class that the stylesheet scopes.
+function scopedOnOneLine(css: string, local: string) {
+  const hash = css.match(new RegExp(`\\.${local}_([A-Za-z0-9_-]+)`))?.[1];
+  expect(hash, `.${local} should be scoped`).toBeString();
+  return oneLine(css.replaceAll(`_${hash}`, "_HASH"));
+}
+
 describe("css", () => {
   itBundled("css-module/GlobalPseudoFunction", {
     files: {
@@ -586,6 +597,191 @@ describe("css", () => {
       expect(css).toContain(`.${betaOwn}`);
     },
   });
+
+  // `:global(...)` and `:local(...)` print as their argument. When the wrapper
+  // is the parent of a `&`, or the only argument of a `:is()`, the printer
+  // chooses between the selector as written and `:is(selector)`. It chooses by
+  // the argument, as for the same selector with no wrapper: `:is()` when the
+  // argument has a combinator or starts with a type selector. The expected
+  // lines select what the same rule selects with nesting kept.
+  for (const backend of ["api", "cli"] as const) {
+    itBundled(`css-module/ParentWrittenWithGlobalOrLocal/${backend}`, {
+      backend,
+      files: {
+        "/entry.js": `
+          import styles from './styles.module.css';
+          console.log(JSON.stringify(styles));
+        `,
+        "/styles.module.css": `
+          :global(.a .b) { .q1& { z-index: 1 } }
+          :global(.a .b) { .q2 & { z-index: 2 } }
+          :global(.a > .b) { .q3& { z-index: 3 } }
+          :global(.a + .b) { .q4 & { z-index: 4 } }
+          :global(.a > .b) { :not(.q5&) { z-index: 5 } }
+          :global(div) { .q6& { z-index: 6 } }
+          :global(div) { .q7 & { z-index: 7 } }
+          :global(*) { .q8& { z-index: 8 } }
+          :local(.c .d) { .q9& { z-index: 9 } }
+          :global(:global(.e .f)) { .q10& { z-index: 10 } }
+          :global(:global(span)) { .q11& { z-index: 11 } }
+          .p:global(.a .b) { .q12& { z-index: 12 } }
+          :global(.a .b) { @media print { .q13& { z-index: 13 } } }
+          :global(.g) { .q14& { z-index: 14 } .q15 & { z-index: 15 } }
+          .w1:is(:global(.a .b)) { z-index: 16 }
+          .w2:is(:global(.a ~ .b)) { z-index: 17 }
+          .w3:is(:global(:global(.e .f))) { z-index: 18 }
+          .w4:is(:global(.g)) { z-index: 19 }
+          .w5:is(:global(input:checked)) { z-index: 20 }
+          :is(:global(div)).w6 { z-index: 21 }
+          .w7:is(:global(.g), :global(.h)) { z-index: 22 }
+        `,
+      },
+      entryPoints: ["/entry.js"],
+      outdir: "/out",
+      onAfterBundle(api) {
+        expect(scopedOnOneLine(api.readFile("/out/entry.css"), "q1")).toBe(
+          oneLine(`
+            /* styles.module.css */
+            .q1_HASH:is(.a .b) { z-index: 1; }
+            .q2_HASH :is(.a .b) { z-index: 2; }
+            .q3_HASH:is(.a > .b) { z-index: 3; }
+            .q4_HASH :is(.a + .b) { z-index: 4; }
+            :not(.q5_HASH:is(.a > .b)) { z-index: 5; }
+            .q6_HASH:is(div) { z-index: 6; }
+            .q7_HASH :is(div) { z-index: 7; }
+            .q8_HASH:is(*) { z-index: 8; }
+            .q9_HASH:is(.c_HASH .d_HASH) { z-index: 9; }
+            .q10_HASH:is(.e .f) { z-index: 10; }
+            .q11_HASH:is(span) { z-index: 11; }
+            .q12_HASH:is(.p_HASH.a .b) { z-index: 12; }
+            @media print {
+              .q13_HASH:is(.a .b) { z-index: 13; }
+            }
+            .q14_HASH.g { z-index: 14; }
+            .q15_HASH .g { z-index: 15; }
+            .w1_HASH:is(.a .b) { z-index: 16; }
+            .w2_HASH:is(.a ~ .b) { z-index: 17; }
+            .w3_HASH:is(.e .f) { z-index: 18; }
+            .w4_HASH.g { z-index: 19; }
+            .w5_HASH:-webkit-any(input:checked) { z-index: 20; }
+            .w5_HASH:-moz-any(input:checked) { z-index: 20; }
+            .w5_HASH:is(input:checked) { z-index: 20; }
+            :-webkit-any(div).w6_HASH { z-index: 21; }
+            :-moz-any(div).w6_HASH { z-index: 21; }
+            :is(div).w6_HASH { z-index: 21; }
+            .w7_HASH:-webkit-any(.g, .h) { z-index: 22; }
+            .w7_HASH:-moz-any(.g, .h) { z-index: 22; }
+            .w7_HASH:is(.g, .h) { z-index: 22; }
+          `),
+        );
+      },
+    });
+  }
+
+  // `:is()` cannot match a pseudo-element. So a parent that has one inside the
+  // wrapper still replaces `&` as written. A `:is()` that the stylesheet has
+  // around such an argument stays.
+  itBundled("css-module/ParentWithPseudoElementInsideGlobal", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(JSON.stringify(styles));
+      `,
+      "/styles.module.css": `
+        :global(.btn::before) { .d1 & { z-index: 1 } }
+        :global(.a::part(x)) { .d2 & { z-index: 2 } }
+        :global(::slotted(.a)) { .d3 & { z-index: 3 } }
+        :global(button::-moz-focus-inner) { .d4 & { z-index: 4 } }
+        :global(.a :global(.btn::before)) { .d5 & { z-index: 5 } }
+        .w1:is(:global(.a .btn::before)) { z-index: 6 }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(scopedOnOneLine(api.readFile("/out/entry.css"), "d1")).toBe(
+        oneLine(`
+          /* styles.module.css */
+          .d1_HASH .btn:before { z-index: 1; }
+          .d2_HASH .a::part(x) { z-index: 2; }
+          .d3_HASH ::slotted(.a) { z-index: 3; }
+          .d4_HASH button::-moz-focus-inner { z-index: 4; }
+          .d5_HASH .a .btn:before { z-index: 5; }
+          .w1_HASH:is(.a .btn:before) { z-index: 6; }
+        `),
+      );
+    },
+  });
+
+  // The same with nesting kept. `:is()` stays around an argument that has a
+  // combinator or starts with a type selector, and goes when it is simple.
+  itBundled("css-module/ParentWrittenWithGlobalNestingKept", {
+    target: "bun",
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(JSON.stringify(styles));
+      `,
+      "/styles.module.css": `
+        :global(.a .b) { .q1& { z-index: 1 } }
+        .w1:is(:global(.a .b)) { z-index: 2 }
+        .w2:is(:global(input:checked)) { z-index: 3 }
+        .w3:is(:global(.g)) { z-index: 4 }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(scopedOnOneLine(api.readFile("/out/entry.css"), "q1")).toBe(
+        oneLine(`
+          /* styles.module.css */
+          .a .b {
+            .q1_HASH& { z-index: 1; }
+          }
+          .w1_HASH:is(.a .b) { z-index: 2; }
+          .w2_HASH:is(input:checked) { z-index: 3; }
+          .w3_HASH.g { z-index: 4; }
+        `),
+      );
+    },
+  });
+
+  // `:local(X)` names the same elements as `X`. So where the wrapper is the
+  // parent of a `&`, or the only argument of a `:is()`, the two print the same
+  // bytes, for each shape of `X`.
+  const wrapperShapes = [".a .b", ".a > .b", ".a + .b", ".a ~ .b", "div", "div.a", "*", ".a", ".a.b", ".a:hover"];
+  const wrapperContexts = [
+    (x: string, n: number) => `${x} { .q${n}& { z-index: ${n} } }`,
+    (x: string, n: number) => `${x} { .q${n} & { z-index: ${n} } }`,
+    (x: string, n: number) => `${x} { :not(.q${n}&) { z-index: ${n} } }`,
+    (x: string, n: number) => `${x} { @media print { .q${n}& { z-index: ${n} } } }`,
+    (x: string, n: number) => `.q${n}:is(${x}) { z-index: ${n} }`,
+    (x: string, n: number) => `.q${n} :is(${x}) { z-index: ${n} }`,
+  ];
+  const wrapperCells = (spell: (x: string) => string) =>
+    wrapperContexts
+      .flatMap((context, c) => wrapperShapes.map((x, s) => context(spell(x), c * wrapperShapes.length + s)))
+      .join("\n");
+  for (const target of ["browser", "bun"] as const) {
+    itBundled(`css-module/LocalWrapperPrintsLikeNoWrapper/${target}`, {
+      target,
+      files: {
+        "/entry.js": `
+          import plain from './plain.module.css';
+          import wrapped from './wrapped.module.css';
+          console.log(JSON.stringify([plain, wrapped]));
+        `,
+        "/plain.module.css": wrapperCells(x => x),
+        "/wrapped.module.css": wrapperCells(x => `:local(${x})`),
+      },
+      entryPoints: ["/entry.js"],
+      outdir: "/out",
+      onAfterBundle(api) {
+        const [, plain, wrapped] = api.readFile("/out/entry.css").split(/\/\* \w+\.module\.css \*\//);
+        expect(scopedOnOneLine(wrapped, "q0").split(" } ")).toEqual(scopedOnOneLine(plain, "q0").split(" } "));
+      },
+    });
+  }
 });
 
 // `bun build --no-bundle` prints a module file with no link step. Class
@@ -626,6 +822,35 @@ test("css-module/NoBundleHashesClassSymbols", async () => {
       opacity: 0;
     }
   `);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// With no link step a parent written with `:global(...)` still gets `:is()`
+// when its argument has a combinator.
+test("css-module/NoBundleParentWrittenWithGlobal", async () => {
+  using dir = tempDir("css-module-no-bundle-global-parent", {
+    "styles.module.css": `
+      :global(.a .b) { .q& { color: green } }
+      .w:is(:global(.a .b)) { color: blue }
+      :global(div) { .x& { color: pink } }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--no-bundle", "styles.module.css"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(scopedOnOneLine(stdout, "q")).toBe(
+    oneLine(`
+      .q_HASH:is(.a .b) { color: green; }
+      .w_HASH:is(.a .b) { color: #00f; }
+      .x_HASH:is(div) { color: pink; }
+    `),
+  );
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

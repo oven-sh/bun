@@ -2852,9 +2852,10 @@ pub fn to_executable(
     self_exe_path: Option<&[u8]>,
     flags: Flags,
     runtime_options: RuntimeOptions,
+    wait_for_reader: WaitForReader,
 ) -> crate::Result<CompileResult> {
     #[cfg(windows)]
-    let _ = root_dir;
+    let _ = (root_dir, wait_for_reader);
     // Decided before the executable is staged, so a destination that cannot take it costs no copy.
     #[cfg(not(windows))]
     let delivery = match Delivery::plan(root_dir, outfile) {
@@ -3020,10 +3021,11 @@ pub fn to_executable(
         let mut outfile_posix_buf = bun_paths::path_buffer_pool::get();
         let outfile_posix = path::resolve_path::z(outfile_basename, &mut outfile_posix_buf);
 
-        if delivery == Delivery::InPlace {
+        if let Delivery::InPlace(kind) = delivery {
             // The write can wait for a reader. A build that is stopped then leaves no staged copy.
             let _ = Syscall::unlink(temp_posix);
-            let written = write_in_place(fd, root_dir, outfile_posix, outfile);
+            let written =
+                write_in_place(fd, root_dir, outfile_posix, outfile, kind, wait_for_reader);
             fd.close();
             return Ok(match written {
                 Ok(()) => CompileResult::Success,
@@ -3058,15 +3060,23 @@ pub fn to_executable(
     }
 }
 
+/// Whether `to_executable` waits for a reader when the outfile is a FIFO that has none.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum WaitForReader {
+    /// As every writer of a FIFO does.
+    Yes,
+    /// The build fails instead. For a thread that must not wait, such as the JS thread.
+    No,
+}
+
 /// How `to_executable` puts the finished executable at the outfile.
 #[cfg(not(windows))]
-#[derive(Clone, Copy, PartialEq, Eq)]
 enum Delivery {
     /// The staged copy is renamed over the name.
     Replace,
     /// The name is a character device or a FIFO. A rename would leave a regular file under that
     /// name, so the staged copy is written into it.
-    InPlace,
+    InPlace(bun_sys::FileKind),
 }
 
 #[cfg(not(windows))]
@@ -3099,24 +3109,24 @@ impl Delivery {
             return Ok(Delivery::Replace);
         }
 
-        // Sticky and group- or world-writable, like `/tmp`: another user can own the name there.
-        // The rename refuses to replace it; a write would hand that user the executable.
+        // In a group- or world-writable directory, like `/tmp`, another user can put a name. A
+        // write into it would hand that user the executable.
         let Ok(dir) = bun_sys::fstatat(root_dir, bun_core::zstr!(".")) else {
             return Ok(Delivery::Replace);
         };
         let dir_mode = dir.st_mode as bun_sys::Mode;
-        // SAFETY: `geteuid` takes no arguments and cannot fail.
-        let euid = unsafe { libc::geteuid() };
-        if dir_mode & S::ISVTX != 0
-            && dir_mode & (S::IWGRP | S::IWOTH) != 0
-            && entry.st_uid != euid
-            && entry.st_uid != dir.st_uid
-        {
-            return Ok(Delivery::Replace);
+        let euid = bun_sys::c::geteuid();
+        if dir_mode & (S::IWGRP | S::IWOTH) != 0 && entry.st_uid != euid {
+            // The rename replaces the name when the kernel lets the builder do that. When it does
+            // not, the rename fails, or becomes a write into the name across filesystems.
+            if dir_mode & S::ISVTX == 0 || euid == 0 || dir.st_uid == euid {
+                return Ok(Delivery::Replace);
+            }
+            return Err(write_failed(outfile, "it belongs to another user"));
         }
 
         match kind {
-            FileKind::CharacterDevice | FileKind::NamedPipe => Ok(Delivery::InPlace),
+            FileKind::CharacterDevice | FileKind::NamedPipe => Ok(Delivery::InPlace(kind)),
             FileKind::UnixDomainSocket => Err(write_failed(outfile, "it is a socket")),
             // A write into it would overwrite the start of a disk.
             _ => Err(write_failed(outfile, "it is a block device")),
@@ -3140,14 +3150,37 @@ fn write_in_place(
     root_dir: Fd,
     basename: &ZStr,
     outfile: &[u8],
+    kind: bun_sys::FileKind,
+    wait_for_reader: WaitForReader,
 ) -> Result<(), CompileError> {
     use bun_sys::{FileKind, O};
 
     let failed = |e: bun_sys::Error| write_failed(outfile, bstr::BStr::new(e.name()));
 
-    let node = bun_sys::openat(root_dir, basename, O::WRONLY | O::NOCTTY | O::CLOEXEC, 0)
-        .map(bun_sys::File::from_fd)
-        .map_err(failed)?;
+    let nonblocking = match wait_for_reader {
+        WaitForReader::Yes => 0,
+        WaitForReader::No => O::NONBLOCK,
+    };
+    let node = match bun_sys::openat(
+        root_dir,
+        basename,
+        O::WRONLY | O::NOCTTY | O::CLOEXEC | nonblocking,
+        0,
+    ) {
+        Ok(node) => node,
+        Err(e) if nonblocking != 0 && kind == FileKind::NamedPipe && e.get_errno() == E::ENXIO => {
+            return Err(write_failed(
+                outfile,
+                "it is a FIFO that no process is reading",
+            ));
+        }
+        Err(e) => return Err(failed(e)),
+    };
+    // Not `File`, which leaves descriptors 0 to 2 open: the open returns one when the process
+    // closed its own.
+    let _close = bun_sys::CloseOnDrop::new(node);
+    let node = bun_sys::File::borrow(&node);
+
     // The name can point somewhere else since the plan.
     let stat = node.stat().map_err(failed)?;
     if !matches!(
@@ -3159,17 +3192,20 @@ fn write_in_place(
             "it is no longer a character device or a FIFO",
         ));
     }
+    if nonblocking != 0 {
+        // Only the open must not wait. A write that cannot wait fails when the FIFO is full.
+        bun_sys::update_nonblocking(node.handle(), false).map_err(failed)?;
+    }
 
     bun_sys::set_file_offset(staged, 0).map_err(failed)?;
     let mut buf = vec![0u8; 256 * 1024];
     loop {
         let len = bun_sys::read(staged, &mut buf).map_err(failed)?;
         if len == 0 {
-            break;
+            return Ok(());
         }
         node.write_all(&buf[..len]).map_err(failed)?;
     }
-    node.close().map_err(failed)
 }
 
 impl StandaloneModuleGraph {

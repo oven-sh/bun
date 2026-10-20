@@ -2953,7 +2953,7 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
         out: before,
         entries: ["app.js", "build.ts", "out"],
       });
-    }, 60_000);
+    });
 
     test.skipIf(!scratchDevice.whiteout)(
       "fails on a character device that cannot be opened, and leaves it in place",
@@ -2967,9 +2967,9 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
 
         const result = await build(cwd, "out");
 
-        // ENXIO, or EACCES when the temp directory is on a `nodev` mount.
+        // EACCES when the temp directory is on a `nodev` mount.
         expect({ result, out: node(out), entries: readdirSync(cwd).sort() }).toEqual({
-          result: { ok: false, output: expect.stringMatching(/^failed to write executable to "out": E[A-Z]+$/) },
+          result: { ok: false, output: expect.stringMatching(/^failed to write executable to "out": (ENXIO|EACCES)$/) },
           out: before,
           entries: ["app.js", "build.ts", "out"],
         });
@@ -2999,27 +2999,23 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
       60_000,
     );
 
-    test.skipIf(!isLinux || !isRoot)(
-      "refuses a block device, and leaves it in place",
-      async () => {
-        using dir = tempDir("compile-outfile-block", files);
-        const cwd = String(dir);
-        const out = join(cwd, "out");
-        // No disk has the number (0, 0).
-        expect(mknod(out, "b", 0, 0)).toBe(true);
-        const before = node(out);
-        expect(before.kind).toBe("block device");
+    test.skipIf(!isLinux || !isRoot)("refuses a block device, and leaves it in place", async () => {
+      using dir = tempDir("compile-outfile-block", files);
+      const cwd = String(dir);
+      const out = join(cwd, "out");
+      // No disk has the number (0, 0).
+      expect(mknod(out, "b", 0, 0)).toBe(true);
+      const before = node(out);
+      expect(before.kind).toBe("block device");
 
-        const result = await build(cwd, "out");
+      const result = await build(cwd, "out");
 
-        expect({ result, out: node(out), entries: readdirSync(cwd).sort() }).toEqual({
-          result: { ok: false, output: `failed to write executable to "out": it is a block device` },
-          out: before,
-          entries: ["app.js", "build.ts", "out"],
-        });
-      },
-      60_000,
-    );
+      expect({ result, out: node(out), entries: readdirSync(cwd).sort() }).toEqual({
+        result: { ok: false, output: `failed to write executable to "out": it is a block device` },
+        out: before,
+        entries: ["app.js", "build.ts", "out"],
+      });
+    });
   });
 
   // `>(command)` in a shell gives the build such a path.
@@ -3058,83 +3054,126 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
     60_000,
   );
 
-  test("unlinks the staged copy before it writes, and reports a reader that leaves", async () => {
-    using dir = tempDir("compile-outfile-fifo-closed", files);
+  // `bun build` waits for a reader, as every writer of a FIFO does.
+  test("bun build --compile waits for the reader of a FIFO, and reports a reader that leaves", async () => {
+    using dir = tempDir("compile-outfile-fifo-wait", files);
     const cwd = String(dir);
     const out = join(cwd, "out");
     mkfifo(out);
     const before = node(out);
 
-    let held: number | undefined = hold(out);
-    try {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", "./app.js", "--outfile", "out"],
-        env: bunEnv,
-        cwd,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const finished = Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "./app.js", "--outfile", "out"],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const finished = Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      // The first bytes of the executable: the build is inside the write, which now waits.
-      const chunk = Buffer.alloc(4);
-      let arrived = 0;
+    // A reader that comes for an instant, again and again. A build that does not wait for a visit
+    // finds no reader, except when its open falls into one.
+    const chunk = Buffer.alloc(4);
+    let reader: number | undefined;
+    let arrived = 0;
+    try {
       while (arrived === 0 && proc.exitCode === null) {
+        reader ??= hold(out);
         try {
-          arrived = readSync(held, chunk);
+          arrived = readSync(reader, chunk);
+          if (arrived === 0) {
+            // No writer has the FIFO open.
+            closeSync(reader);
+            reader = undefined;
+          }
         } catch (e: any) {
+          // A writer has it open and has written nothing yet.
           if (e.code !== "EAGAIN") throw e;
         }
-        if (arrived === 0) await Bun.sleep(1);
+        if (arrived === 0) await Bun.sleep(10);
       }
+      // The build is inside the write, and its staged copy is already gone.
       expect({ arrived, staged: readdirSync(cwd).filter(name => name.endsWith(".bun-build")) }).toEqual({
         arrived: 4,
         staged: [],
       });
-
-      closeSync(held);
-      held = undefined;
-      const [, stderr, exitCode] = await finished;
-      expect({ stderr, exitCode, out: node(out), entries: readdirSync(cwd).sort() }).toEqual({
-        stderr: `failed to write executable to "out": EPIPE\n`,
-        exitCode: 1,
-        out: before,
-        entries: ["app.js", "build.ts", "out"],
-      });
     } finally {
-      if (held !== undefined) closeSync(held);
+      if (reader !== undefined) closeSync(reader);
     }
+
+    const [, stderr, exitCode] = await finished;
+    expect({ stderr, exitCode, out: node(out), entries: readdirSync(cwd).sort() }).toEqual({
+      stderr: `failed to write executable to "out": EPIPE\n`,
+      exitCode: 1,
+      out: before,
+      entries: ["app.js", "build.ts", "out"],
+    });
+  }, 60_000);
+
+  // `Bun.build` makes the executable on the JS thread. A wait there stops the whole process.
+  test("Bun.build fails when no process reads the FIFO, and leaves it in place", async () => {
+    using dir = tempDir("compile-outfile-fifo-unread", files);
+    const cwd = String(dir);
+    const out = join(cwd, "out");
+    mkfifo(out);
+    const before = node(out);
+
+    const result = await surfaces["Bun.build"](cwd, "out");
+
+    expect({ result, out: node(out), entries: readdirSync(cwd).sort() }).toEqual({
+      result: { ok: false, output: `failed to write executable to "out": it is a FIFO that no process is reading` },
+      out: before,
+      entries: ["app.js", "build.ts", "out"],
+    });
   }, 60_000);
 
   // Any user can put a FIFO under a name in a directory like /tmp, and read what is written to it.
-  test.skipIf(!isRoot)(
-    "does not write into a FIFO that another user owns in a shared directory",
-    async () => {
-      using dir = tempDir("compile-outfile-shared", files);
-      const cwd = String(dir);
-      using unprivileged = unprivilegedSpawnOptions(cwd);
+  describe.skipIf(!isRoot)("in a directory that other users can write", () => {
+    function fifoOf(owner: number, cwd: string) {
       const shared = join(cwd, "shared");
       const out = join(shared, "out");
       mkdirSync(shared);
       chmodSync(shared, 0o1777);
       mkfifo(out);
       chmodSync(out, 0o666);
-      chownSync(out, 1, 1);
+      chownSync(out, owner, owner);
+      expect(node(out)).toMatchObject({ kind: "FIFO", mode: "666", uid: owner });
+      return out;
+    }
+
+    test.each([
+      [1, "another user"],
+      [0, "the owner of the directory"],
+    ])("does not write into a FIFO of uid %d, %s", async owner => {
+      using dir = tempDir("compile-outfile-shared", files);
+      const cwd = String(dir);
+      using unprivileged = unprivilegedSpawnOptions(cwd);
+      const out = fifoOf(owner, cwd);
       const before = node(out);
-      expect(before).toMatchObject({ kind: "FIFO", mode: "666", uid: 1 });
 
       // With this reader, a build that writes into the FIFO succeeds.
       await using reader = Bun.spawn({ cmd: ["cat", out], stdout: "ignore", stderr: "inherit" });
       const result = await surfaces["bun build --compile"](cwd, "shared/out", unprivileged);
 
-      // The rename that every other outfile gets. The kernel refuses it: the name is not the builder's.
       expect({ result, out: node(out) }).toEqual({
-        result: { ok: false, output: expect.stringMatching(/^failed to rename .+ to shared\/out: EPERM$/) },
+        result: { ok: false, output: `failed to write executable to "shared/out": it belongs to another user` },
         out: before,
       });
-    },
-    60_000,
-  );
+    });
+
+    // Root can rename over the name, so it gets the rename that every other outfile gets.
+    test("root replaces a FIFO of another user", async () => {
+      using dir = tempDir("compile-outfile-shared-root", files);
+      const cwd = String(dir);
+      const out = fifoOf(1, cwd);
+
+      await using reader = Bun.spawn({ cmd: ["cat", out], stdout: "ignore", stderr: "inherit" });
+      const result = await surfaces["bun build --compile"](cwd, "shared/out");
+
+      expect({ result, out: node(out).kind }).toEqual({ result: built, out: "regular file" });
+      expect(await run([out], cwd)).toEqual(ranTheApp);
+    }, 60_000);
+  });
 
   test("a symlink to a regular file is still replaced, not written through", async () => {
     using dir = tempDir("compile-outfile-symlink", { ...files, "target": "not the executable" });

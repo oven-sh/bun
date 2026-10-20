@@ -104,7 +104,7 @@ impl Checker<'_, '_> {
             let ExprKind::Spread(inner) = hir[e].kind else {
                 continue;
             };
-            if matches!(bound.expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Call(_) | ExprKind::New(_) | ExprKind::ImportCall { .. }))
+            if matches!(bound.parent_of_expr(e), Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Call(_) | ExprKind::New(_) | ExprKind::ImportCall { .. }))
                 && !self.is_definite_assignment_target(file, e)
                 && !self.is_never_checked(hir[e].pos)
             {
@@ -163,7 +163,7 @@ impl Checker<'_, '_> {
     /// and is not iterable.
     /// `reported`: the errors of the file so far.
     fn is_spread_of_array_like(&mut self, file: FileId, spread: ExprId, actual: TypeId) -> bool {
-        let Parent::Expr(parent) = self.bound(file).expr_parent[spread.idx()] else {
+        let Parent::Expr(parent) = self.bound(file).parent_of_expr(spread) else {
             return false;
         };
         // `checkArrayLiteral`, `getSpreadArgumentType`
@@ -251,7 +251,7 @@ impl Checker<'_, '_> {
             // operators.
             let initializer = self.type_of_expr(file, value);
             // `{ a = d }` is no `BinaryExpression`.
-            let (holder, is_shorthand) = match self.bound(file).expr_parent[node.idx()] {
+            let (holder, is_shorthand) = match self.bound(file).parent_of_expr(node) {
                 Parent::Expr(array) => (array, false),
                 Parent::Prop(p) => (
                     self.bound(file).prop_owner[p.idx()],
@@ -362,7 +362,6 @@ impl Checker<'_, '_> {
                 self.error_at((file, start, self.end_of_prop(file, p)), 2462, &[]);
                 return;
             }
-            self.note_external_emit_helpers_check(file, node);
             // A name that is not numeric omits the property of that name and no other. Any other
             // name omits by its type.
             let (mut names, mut keys) = (Vec::new(), Vec::new());
@@ -567,7 +566,7 @@ impl Checker<'_, '_> {
     fn check_reference_assignment(&mut self, file: FileId, target: ExprId, source_type: TypeId) {
         let target_type = self.type_of_expr(file, target);
         // `IsSpreadAssignment(target.Parent)`
-        let is_rest = matches!(self.bound(file).expr_parent[target.idx()], Parent::Prop(p) if self.hir(file)[p].kind == PropKind::Spread);
+        let is_rest = matches!(self.bound(file).parent_of_expr(target), Parent::Prop(p) if self.hir(file)[p].kind == PropKind::Spread);
         let (message, optional_message) = if is_rest { (2701, 2778) } else { (2364, 2779) };
         if self.check_reference_expression(file, target, message, optional_message) {
             let error_node = Some(self.error_range_of(file, target));

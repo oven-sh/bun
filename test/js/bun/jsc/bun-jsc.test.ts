@@ -282,8 +282,20 @@ describe("bun:jsc", () => {
       return acc;
     };
 
+    // On a busy machine the sampler thread may still not get to run in that
+    // window, so profile again until it has. A profiler that no longer samples
+    // uses up the time limit, which has to be here: this never yields.
+    const deadline = performance.now() + 5000;
+    const profileUntilSampled = () => {
+      let result;
+      do {
+        result = profile(work, sampleInterval);
+      } while (result.stackTraces.traces.length === 0 && performance.now() < deadline);
+      return result;
+    };
+
     // First profile call
-    const result1 = profile(work, sampleInterval);
+    const result1 = profileUntilSampled();
     expect(result1).toBeDefined();
     expect(result1.functions).toBeDefined();
     expect(result1.stackTraces).toBeDefined();
@@ -291,14 +303,14 @@ describe("bun:jsc", () => {
 
     // Second profile call - should work after first one completed
     // This verifies that shutdown() -> pause() fix works
-    const result2 = profile(work, sampleInterval);
+    const result2 = profileUntilSampled();
     expect(result2).toBeDefined();
     expect(result2.functions).toBeDefined();
     expect(result2.stackTraces).toBeDefined();
     expect(result2.stackTraces.traces.length).toBeGreaterThan(0);
 
     // Third profile call - verify profiler can be reused multiple times
-    const result3 = profile(work, sampleInterval);
+    const result3 = profileUntilSampled();
     expect(result3).toBeDefined();
     expect(result3.functions).toBeDefined();
     expect(result3.stackTraces).toBeDefined();

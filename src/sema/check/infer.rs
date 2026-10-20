@@ -9,8 +9,17 @@ use super::*;
 use crate::bind::{Decl, ScopeKind};
 use smallvec::{SmallVec, smallvec};
 
+#[path = "infer_memo.rs"]
+mod memo;
+pub use memo::INFERENCE_WALK_COUNTS;
+pub(super) use memo::InferenceMemo;
+
 /// The members of a union or an intersection during iteration.
 pub(super) type Parts = SmallVec<[TypeId; 8]>;
+
+/// The members of a union or an intersection that `inferFromMatchingTypes` has left. They are those in the type until
+/// one is matched.
+type Unmatched<'a> = std::borrow::Cow<'a, [TypeId]>;
 
 /// From this many pairs on, `Inference::visited` is searched through `Inference::visited_index`.
 const VISITED_INDEX_FROM: usize = 16;
@@ -71,11 +80,15 @@ pub(super) struct Inference {
     visited: SmallVec<[(TypeId, TypeId, i32); 8]>,
     /// The index of each pair in `visited`, once there are `VISITED_INDEX_FROM` of them.
     visited_index: FxHashMap<(TypeId, TypeId), u32>,
-    source_stack: SmallVec<[TypeId; 8]>,
-    target_stack: SmallVec<[TypeId; 8]>,
+    /// Each type with its push number. See `is_created_no_earlier`.
+    source_stack: SmallVec<[(TypeId, u32); 8]>,
+    target_stack: SmallVec<[(TypeId, u32); 8]>,
     expanding: u8,
     depth: u32,
+    /// How often `infer_types` was called for the walk, for `memo`. It ends no walk: tsgo has no such limit.
     calls: u32,
+    /// The walk has come to a signature for which `is_sig_of_context_sensitive_function` holds.
+    has_met_contextual_function: bool,
     /// The parameter type an inference started from.
     original_target: TypeId,
     /// `InferenceFlagsAnyDefault`: the call is in a JavaScript file, where a parameter without
@@ -107,17 +120,9 @@ pub(super) struct Inference {
 
 impl Inference {
     pub(super) fn for_params(params: &[TypeId], sig: Option<SigId>) -> Inference {
-        let candidates = params
-            .iter()
-            .map(|_| Candidate {
-                priority: PRIORITY_MAX as u32,
-                top_level: true,
-                ..Default::default()
-            })
-            .collect();
-        Inference {
+        let mut inference = Inference {
             params: SmallVec::from_slice(params),
-            candidates,
+            candidates: SmallVec::new(),
             sig,
             contra: false,
             bivariant: false,
@@ -130,6 +135,7 @@ impl Inference {
             expanding: 0,
             depth: 0,
             calls: 0,
+            has_met_contextual_function: false,
             original_target: TypeId::NEVER,
             any_default: false,
             around_source: MapperId::IDENTITY,
@@ -141,7 +147,61 @@ impl Inference {
             skipped_generic_function: false,
             inferred_type_params: Vec::new(),
             intra_expression_inference_sites: Vec::new(),
-        }
+        };
+        // In place: a list of two candidates is 232 bytes.
+        (inference.candidates).extend(params.iter().map(|_| Candidate {
+            priority: PRIORITY_MAX as u32,
+            top_level: true,
+            ..Default::default()
+        }));
+        inference
+    }
+
+    /// Afterwards it is as `for_params(&[], None)` makes it. Every field is named, so that a new one is a compile error.
+    pub(super) fn become_empty(&mut self) {
+        let Inference {
+            params,
+            candidates,
+            sig,
+            contra,
+            bivariant,
+            priority,
+            inference_priority,
+            visited,
+            visited_index,
+            source_stack,
+            target_stack,
+            expanding,
+            depth,
+            calls,
+            has_met_contextual_function,
+            original_target,
+            any_default,
+            around_source,
+            around,
+            propagated,
+            return_context,
+            outer_return_context,
+            no_default,
+            skipped_generic_function,
+            inferred_type_params,
+            intra_expression_inference_sites,
+        } = self;
+        params.clear();
+        candidates.clear();
+        visited.clear();
+        visited_index.clear();
+        source_stack.clear();
+        target_stack.clear();
+        inferred_type_params.clear();
+        intra_expression_inference_sites.clear();
+        (*sig, *propagated, *return_context, *outer_return_context) = (None, None, None, None);
+        (*contra, *bivariant, *has_met_contextual_function) = (false, false, false);
+        (*any_default, *no_default, *skipped_generic_function) = (false, false, false);
+        (*priority, *inference_priority) = (0, PRIORITY_MAX);
+        (*expanding, *depth, *calls) = (0, 0, 0);
+        *original_target = TypeId::NEVER;
+        (*around_source, *around) = (MapperId::IDENTITY, MapperId::IDENTITY);
     }
 
     /// `clearCachedInferences`
@@ -226,6 +286,7 @@ impl<'p, 's> Checker<'p, 's> {
         n.expanding = 0;
         n.depth = 0;
         n.calls = 0;
+        n.has_met_contextual_function = false;
         n.original_target = target;
         // Fast path: `n.priority` only grows during inference and a candidate with a worse priority than the existing inference is
         // discarded, so nothing can be recorded. Limited to `InferencePriorityReturnType`: at other priorities inference can still
@@ -237,7 +298,15 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return;
         }
-        self.infer_types(n, source, target);
+        self.inference_memo.count(memo::Count::Walks);
+        if self.inference_memo.has_long_walk_to(target) {
+            self.infer_types_with_memo(n, source, target);
+        } else {
+            self.infer_types(n, source, target);
+        }
+        if n.calls >= memo::LONG_WALK {
+            self.inference_memo.note_long_walk_to(target);
+        }
     }
 
     /// `inferFromTypes`
@@ -258,8 +327,8 @@ impl<'p, 's> Checker<'p, 's> {
         if source == TypeId::UNRESOLVED && n.priority & PRIORITY_RETURN != 0 {
             return;
         }
-        n.calls += 1;
-        if n.calls > 200_000 || self.is_stack_low() {
+        n.calls = n.calls.saturating_add(1);
+        if self.is_stack_low() {
             return;
         }
         // Two instantiations of one alias: infer between the type arguments only. Without type arguments there is nothing to infer.
@@ -272,7 +341,7 @@ impl<'p, 's> Checker<'p, 's> {
         if source == target {
             match self.data(source) {
                 TypeData::Union(_) => {
-                    for t in self.sorted_parts(source) {
+                    for &t in self.parts(source) {
                         self.infer_types(n, t, t);
                     }
                     return;
@@ -286,21 +355,15 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => {}
             }
         }
-        // The members of `source` and of `target` in order, if they are unions none of whose
-        // members were matched.
-        let (mut source_in_order, mut target_in_order): (Option<Parts>, Option<Parts>) =
-            (None, None);
         match self.data(target) {
             TypeData::Union(_) => {
                 // `never` is a source like any other, not an empty union.
-                let mut sources: Parts = if source.is_never() {
-                    smallvec![source]
-                } else {
-                    self.sorted_parts(source)
-                };
-                let mut targets = self.sorted_parts(target);
-                let (whole_source, whole_target) = (source, target);
-                let (source_count, target_count) = (sources.len(), targets.len());
+                let never = [source];
+                let mut sources = Unmatched::Borrowed(match source.is_never() {
+                    true => &never[..],
+                    false => self.parts(source),
+                });
+                let mut targets = Unmatched::Borrowed(self.parts(target));
                 // Identical members on both sides are matched, then those instantiated from the
                 // same generic type or alias.
                 self.infer_from_matching(
@@ -309,12 +372,7 @@ impl<'p, 's> Checker<'p, 's> {
                     &mut targets,
                     Self::is_type_or_base_identical_to,
                 );
-                self.infer_from_matching(
-                    n,
-                    &mut sources,
-                    &mut targets,
-                    Self::is_type_closely_matched_by,
-                );
+                self.infer_from_closely_matching(n, &mut sources, &mut targets);
                 if targets.is_empty() {
                     return;
                 }
@@ -326,12 +384,6 @@ impl<'p, 's> Checker<'p, 's> {
                     return;
                 }
                 source = self.union(&sources);
-                if source == whole_source && sources.len() == source_count {
-                    source_in_order = Some(sources);
-                }
-                if target == whole_target && targets.len() == target_count {
-                    target_in_order = Some(targets);
-                }
             }
             TypeData::Intersection(target_parts)
                 if !target_parts
@@ -341,11 +393,12 @@ impl<'p, 's> Checker<'p, 's> {
                 // to `string[] & Iterable<T>` the `string[]` stays, and yields `string` for `T`.
                 && !self.is_union(source) =>
             {
-                let mut sources: Parts = match self.data(source) {
-                    TypeData::Intersection(parts) => SmallVec::from_slice(parts),
-                    _ => smallvec![source],
-                };
-                let mut targets: Parts = SmallVec::from_slice(target_parts);
+                let alone = [source];
+                let mut sources = Unmatched::Borrowed(match self.data(source) {
+                    TypeData::Intersection(parts) => &parts[..],
+                    _ => &alone[..],
+                });
+                let mut targets = Unmatched::Borrowed(&target_parts[..]);
                 self.infer_from_matching(n, &mut sources, &mut targets, |c, s, t| {
                     s == t || c.is_identical(s, t)
                 });
@@ -424,7 +477,7 @@ impl<'p, 's> Checker<'p, 's> {
             (_, TypeData::Keyof(t))
                 if source == TypeId::STRING
                     || self.is_boolean(source)
-                    || !source.is_never() && self.every_type(source, |c, m| c.is_unit(m)) =>
+                    || !source.is_never() && self.is_every_type_unit(source) =>
             {
                 let empty = self.empty_object_type_from_string_literal(source);
                 let saved = n.priority;
@@ -460,17 +513,13 @@ impl<'p, 's> Checker<'p, 's> {
                 self.invoke_once(n, source, target, Self::infer_to_conditional_type)
             }
             (_, TypeData::Union(_)) => {
-                let parts = match target_in_order {
-                    Some(parts) => parts,
-                    None => self.sorted_parts(target),
-                };
-                self.infer_to_multiple_types(n, source, source_in_order, &parts, Multiple::Union)
+                self.infer_to_multiple_types(n, source, self.parts(target), Multiple::Union)
             }
             (_, TypeData::Intersection(parts)) => {
-                self.infer_to_multiple_types(n, source, None, parts, Multiple::Intersection)
+                self.infer_to_multiple_types(n, source, parts, Multiple::Intersection)
             }
             (TypeData::Union(_), _) => {
-                for s in self.sorted_parts(source) {
+                for &s in self.parts(source) {
                     self.infer_types(n, s, target);
                 }
             }
@@ -566,12 +615,6 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         n.inference_priority = n.inference_priority.min(n.priority as i32);
-    }
-
-    /// The members of a union in the order TypeScript iterates over them, as `parts_in_order`
-    /// returns them.
-    pub(super) fn sorted_parts(&self, ty: TypeId) -> Parts {
-        Parts::from_slice(self.parts(ty))
     }
 
     /// `inferFromTypeArguments`, between two instantiations of `of`. Cached variances are read in
@@ -674,12 +717,13 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let saved_priority = std::mem::replace(&mut n.inference_priority, PRIORITY_MAX);
         let saved_expanding = n.expanding;
-        n.source_stack.push(source);
-        n.target_stack.push(target);
-        if self.is_deeply_nested_type(source, &n.source_stack, 2) {
+        let push = 2 * n.source_stack.len() as u32;
+        n.source_stack.push((source, push + 1));
+        n.target_stack.push((target, push));
+        if self.is_deeply_nested_type(source, [&n.source_stack, &n.target_stack], true, 2) {
             n.expanding |= 1;
         }
-        if self.is_deeply_nested_type(target, &n.target_stack, 2) {
+        if self.is_deeply_nested_type(target, [&n.source_stack, &n.target_stack], false, 2) {
             n.expanding |= 2;
         }
         if n.expanding != 3 {
@@ -699,54 +743,78 @@ impl<'p, 's> Checker<'p, 's> {
     fn infer_from_matching(
         &mut self,
         n: &mut Inference,
-        sources: &mut Parts,
-        targets: &mut Parts,
+        sources: &mut Unmatched<'_>,
+        targets: &mut Unmatched<'_>,
         matches: impl Fn(&mut Self, TypeId, TypeId) -> bool,
     ) {
-        let mut matched_sources: SmallVec<[bool; 8]> = smallvec![false; sources.len()];
-        let mut matched_targets: SmallVec<[bool; 8]> = smallvec![false; targets.len()];
-        let mut any_matched = false;
+        let mut matched = Matched::default();
         for (j, &t) in targets.iter().enumerate() {
             for (i, &s) in sources.iter().enumerate() {
                 if matches(self, s, t) {
                     self.infer_types(n, s, t);
-                    matched_sources[i] = true;
-                    matched_targets[j] = true;
-                    any_matched = true;
+                    matched.add(i, j, (sources.len(), targets.len()));
                 }
             }
         }
-        if !any_matched {
-            return;
-        }
-        let retain_unmatched = |list: &mut Parts, matched: &[bool]| {
-            let mut next = 0;
-            list.retain(|_| {
-                next += 1;
-                !matched[next - 1]
-            });
-        };
-        retain_unmatched(sources, &matched_sources[..]);
-        retain_unmatched(targets, &matched_targets[..]);
+        matched.remove_from(sources, targets);
     }
 
-    /// `inferToMultipleTypes`. `sources_in_order`: the members of `source` in order, or `source`
-    /// alone if it is not a union, if already available.
+    /// `inferFromMatchingTypes` with `isTypeCloselyMatchedBy`.
+    fn infer_from_closely_matching(
+        &mut self,
+        n: &mut Inference,
+        sources: &mut Unmatched<'_>,
+        targets: &mut Unmatched<'_>,
+    ) {
+        // `t.symbol` of an object type, and `t.alias.symbol`. Both are read from the type and from what the binder made.
+        let symbols_of = |c: &Self, ty: TypeId| {
+            let symbol = c.is_object_type(ty).then(|| c.symbol_of_type(ty));
+            (symbol.flatten(), c.alias_symbol_of_type(ty))
+        };
+        let mut of_sources: SmallVec<[_; 8]> = SmallVec::new();
+        let mut matched = Matched::default();
+        for (j, &t) in targets.iter().enumerate() {
+            let (symbol, alias) = symbols_of(self, t);
+            if symbol.is_none() && alias.is_none() {
+                continue;
+            }
+            if of_sources.is_empty() {
+                of_sources.extend(sources.iter().map(|&s| symbols_of(self, s)));
+            }
+            for (i, &s) in sources.iter().enumerate() {
+                let has_symbol = symbol.is_some() && of_sources[i].0 == symbol;
+                // `same_alias` returns `None` unless `alias_symbol_of_type` is `Some` for both types and the same, and up
+                // to that test it calls only what takes `&self`. So where the test fails the call can be left out.
+                let may_have_alias = alias.is_some() && of_sources[i].1 == alias;
+
+                if has_symbol
+                    || may_have_alias
+                        && (self.same_alias(s, t))
+                            .is_some_and(|(.., has_type_arguments)| has_type_arguments)
+                {
+                    self.infer_types(n, s, t);
+                    matched.add(i, j, (sources.len(), targets.len()));
+                }
+            }
+        }
+        matched.remove_from(sources, targets);
+    }
+
+    /// `inferToMultipleTypes`
     fn infer_to_multiple_types(
         &mut self,
         n: &mut Inference,
         source: TypeId,
-        sources_in_order: Option<Parts>,
         targets: &[TypeId],
         kind: Multiple,
     ) {
         let mut type_variable_count = 0;
         if kind == Multiple::Union {
             let mut naked = TypeId::NEVER;
-            let sources: Parts = match sources_in_order {
-                Some(sources) => sources,
-                None if self.is_union(source) => self.sorted_parts(source),
-                None => smallvec![source],
+            let alone = [source];
+            let sources: &[TypeId] = match self.is_union(source) {
+                true => self.parts(source),
+                false => &alone,
             };
             let mut matched: SmallVec<[bool; 8]> = smallvec![false; sources.len()];
             let mut circularity = false;
@@ -872,9 +940,9 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // `infer_types` goes on to each part of such an intersection, and none is a naked
             // type parameter.
-            let parts: Parts = match self.data(branch) {
-                TypeData::Intersection(parts) => SmallVec::from_slice(parts),
-                _ => SmallVec::new(),
+            let parts = match self.data(branch) {
+                TypeData::Intersection(parts) => &parts[..],
+                _ => &[],
             };
             if !parts.is_empty()
                 && self.alias_symbol_of_type(branch).is_none()
@@ -882,11 +950,8 @@ impl<'p, 's> Checker<'p, 's> {
                 && (parts.iter())
                     .all(|&t| self.is_object_type(t) && !self.is_generic_mapped_type(t))
             {
-                generic.extend(
-                    parts
-                        .into_iter()
-                        .filter(|&t| self.could_contain_type_variables(t)),
-                );
+                let parts = parts.iter().copied();
+                generic.extend(parts.filter(|&t| self.could_contain_type_variables(t)));
             } else {
                 generic.push(branch);
             }
@@ -911,7 +976,7 @@ impl<'p, 's> Checker<'p, 's> {
         if n.contra {
             n.priority |= PRIORITY_CONTRAVARIANT_CONDITIONAL;
         }
-        self.infer_to_multiple_types(n, source, None, &targets, Multiple::Branches);
+        self.infer_to_multiple_types(n, source, &targets, Multiple::Branches);
         n.priority = saved;
     }
 
@@ -1128,7 +1193,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `members[name] = literalProp`: a string enum member can have the value of a member of
         // another enum or of a string literal. The last one replaces the others.
         let mut index_of_name = crate::util::FxHashMap::default();
-        for t in self.sorted_parts(ty) {
+        for &t in self.parts(ty) {
             let Some(value) = self.string_literal_value(t) else {
                 continue;
             };
@@ -1169,6 +1234,8 @@ impl<'p, 's> Checker<'p, 's> {
                 .push(IndexInfo::new(TypeId::STRING, TypeId::EMPTY_OBJECT, false));
         }
         shape.literal = Literalness::OfLiteralKeyof;
+        // A conditional type that distributes over literals makes one after the other.
+        shape.created_from = Some((ty, TypeId::NEVER));
         self.synth(shape)
     }
 
@@ -1588,18 +1655,6 @@ impl<'p, 's> Checker<'p, 's> {
             || self.flags(t) & tf::NUMBER != 0 && self.flags(s) & tf::NUMBER_LITERAL != 0
     }
 
-    /// `isTypeCloselyMatchedBy`
-    fn is_type_closely_matched_by(&mut self, s: TypeId, t: TypeId) -> bool {
-        self.is_object_type(s)
-            && self.is_object_type(t)
-            && self
-                .symbol_of_type(s)
-                .is_some_and(|symbol| self.symbol_of_type(t) == Some(symbol))
-            || self
-                .same_alias(s, t)
-                .is_some_and(|(.., has_type_arguments)| has_type_arguments)
-    }
-
     /// `inferFromProperties`
     fn infer_from_properties(&mut self, n: &mut Inference, source: TypeId, target: TypeId) {
         // `getPropertiesOfObjectType`
@@ -1732,6 +1787,8 @@ impl<'p, 's> Checker<'p, 's> {
         target: SigId,
         return_only: bool,
     ) {
+        n.has_met_contextual_function |= self.is_sig_of_context_sensitive_function(source)
+            || self.is_sig_of_context_sensitive_function(target);
         let source = self.base_sig(source);
         let declared = self.declared_sig(target);
         let is_method = match self.sig_decl(declared) {
@@ -1762,6 +1819,15 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(ReturnTypePair { s, t }) = self.return_type_pair(source, target) {
             self.infer_types(n, s, t);
         }
+    }
+
+    /// Whether the type parameters, the `this` type and the parameter types of `sig` are those of a contextual signature:
+    /// `assigned_signature`, which can be that of a check in progress, and has another one before and after it.
+    fn is_sig_of_context_sensitive_function(&self, sig: SigId) -> bool {
+        self.sig_decl(sig).is_some_and(|(file, func, _)| {
+            let owner = self.takes_context(file, func);
+            owner.is_some_and(|owner| self.is_context_sensitive(file, owner))
+        })
     }
 
     /// `applyToParameterTypes`: the pairs it visits.
@@ -1934,11 +2000,11 @@ impl<'p, 's> Checker<'p, 's> {
         match *self.data(constraint) {
             TypeData::Union(_) | TypeData::Intersection(_) => {
                 let parts = match self.data(constraint) {
-                    TypeData::Intersection(parts) => Parts::from_slice(parts),
-                    _ => self.sorted_parts(constraint),
+                    TypeData::Intersection(parts) => &parts[..],
+                    _ => self.parts(constraint),
                 };
                 let mut result = false;
-                for t in parts {
+                for &t in parts {
                     result |= self.infer_to_mapped_type(n, source, target, t);
                 }
                 result
@@ -2093,9 +2159,10 @@ impl<'p, 's> Checker<'p, 's> {
             | TypeData::Ref {
                 args: TypeArguments::Given(list),
                 ..
+            } => list.iter().any(|&m| self.is_non_inferrable(m)),
+            TypeData::Union(list) | TypeData::Intersection(list) => {
+                list.iter().any(|&m| self.is_non_inferrable(m))
             }
-            | TypeData::Union(list)
-            | TypeData::Intersection(list) => list.iter().any(|&m| self.is_non_inferrable(m)),
             // `instantiateAnonymousType`: `objectFlags |=
             // getPropagatingFlagsOfTypes(aliasTypeArguments)`. A type substituted for a type
             // parameter in an anonymous type does not mark it, unless the anonymous type has an
@@ -2258,17 +2325,18 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(cached.unwrap_or(TypeId::UNKNOWN));
         }
         let scope = self.begin_scope();
-        self.reverse_mapped_source_stack.push(source);
-        self.reverse_mapped_target_stack.push(target);
+        let push = 2 * self.reverse_mapped_source_stack.len() as u32;
+        self.reverse_mapped_source_stack.push((source, push + 1));
+        self.reverse_mapped_target_stack.push((target, push));
         let saved = self.reverse_expanding;
         let (sources, targets) = (
             std::mem::take(&mut self.reverse_mapped_source_stack),
             std::mem::take(&mut self.reverse_mapped_target_stack),
         );
-        if self.is_deeply_nested_type(source, &sources, 2) {
+        if self.is_deeply_nested_type(source, [&sources, &targets], true, 2) {
             self.reverse_expanding |= 1;
         }
-        if self.is_deeply_nested_type(target, &targets, 2) {
+        if self.is_deeply_nested_type(target, [&sources, &targets], false, 2) {
             self.reverse_expanding |= 2;
         }
         (
@@ -2300,6 +2368,8 @@ impl<'p, 's> Checker<'p, 's> {
         // for a key assigns last. Not a result cut short by a request or a limit that tsgo has not.
         let is_cut_short = before != self.interruptions();
         let stored = match self.end_scope_by_counters(scope) {
+            // Inside another one the result follows from the two stacks, and the other one may have the same key.
+            Ok(stored) if !self.reverse_mapped_source_stack.is_empty() => Some(stored.held_back()),
             Ok(stored) => Some(stored),
             Err(_) => (!is_cut_short).then(Stored::new),
         };
@@ -2383,6 +2453,12 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getBaseSignature`: `sig` with each of its type parameters replaced by its base constraint.
     pub fn base_sig(&mut self, sig: SigId) -> SigId {
+        self.derived_sig(sig, super::relate::DerivedSig::Base, |c| {
+            c.derive_base_sig(sig)
+        })
+    }
+
+    fn derive_base_sig(&mut self, sig: SigId) -> SigId {
         let params = self.sig_type_params(sig);
         if params.is_empty() {
             return sig;
@@ -2476,9 +2552,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `maybeTypeOfKind(t, Primitive | Index | TemplateLiteral | StringMapping)`
     pub(super) fn may_be_primitive_or_key(&self, ty: TypeId) -> bool {
-        self.maybe_type_of_kind(ty, |c, t| {
-            matches!(c.data(t), TypeData::Keyof(_)) || c.is_primitive(t)
-        })
+        self.maybe_type_of_kind(ty, tf::PRIMITIVE | tf::INDEX)
     }
 
     /// `isTypeParameterAtTopLevel`
@@ -2957,19 +3031,22 @@ impl<'p, 's> Checker<'p, 's> {
     /// and for every type that the original does not look into. Inference to such a type finds no
     /// candidate, but resolves the parts of the source that it visits.
     pub(super) fn could_contain_type_variables(&self, ty: TypeId) -> bool {
-        if self.has_type_variables(ty) || self.is_instantiable(ty) {
+        let flags = self.flags(ty);
+        if self.has_type_variables(ty) || flags & tf::INSTANTIABLE != 0 {
             return true;
         }
-        if self.flags(ty) & (tf::OBJECT | tf::UNION_OR_INTERSECTION) == 0 {
+        if flags & (tf::OBJECT | tf::UNION_OR_INTERSECTION) == 0 {
             return false;
         }
+
         // `ObjectFlagsCouldContainTypeVariablesComputed`. Types share their parts: without it a part is visited once for each
         // path to it, 2^n times in `type P1 = Pair<P0, P0>` .. `type Pn = Pair<Pn-1, Pn-1>`.
-        if let Some(&known) = self.could_contain_type_variables.borrow().get(&ty) {
+        if let Some(known) = self.types().could_contain_type_variables(ty) {
             return known;
         }
+        // The worker reads the type, its mapper, its alias, and the flags and the declarations of symbols.
         let could_contain = self.could_contain_type_variables_worker(ty);
-        (self.could_contain_type_variables.borrow_mut()).insert(ty, could_contain);
+        (self.types()).set_could_contain_type_variables(ty, could_contain);
         could_contain
     }
 
@@ -3126,7 +3203,10 @@ impl<'p, 's> Checker<'p, 's> {
                             PropSource::Type(t)
                             | PropSource::Copy(t, ..)
                             | PropSource::ReverseMapped(t, _) => left.push(t),
-                            _ => left.extend(values(p.mapper)),
+                            _ => {
+                                left.extend(values(p.mapper));
+                                left.extend(self.types().key_apart(p));
+                            }
                         }
                     }
                     left.extend(shape.index.iter().map(|i| i.value));
@@ -3175,6 +3255,36 @@ impl<'p, 's> Checker<'p, 's> {
 struct ReturnTypePair {
     s: TypeId,
     t: TypeId,
+}
+
+/// Which members of two lists `inferFromMatchingTypes` has matched. Empty until one is.
+#[derive(Default)]
+struct Matched {
+    sources: SmallVec<[bool; 8]>,
+    targets: SmallVec<[bool; 8]>,
+}
+
+impl Matched {
+    /// The source and the target at these indices. `lengths`: of the two lists.
+    fn add(&mut self, source: usize, target: usize, lengths: (usize, usize)) {
+        if self.sources.is_empty() {
+            self.sources.resize(lengths.0, false);
+            self.targets.resize(lengths.1, false);
+        }
+        (self.sources[source], self.targets[target]) = (true, true);
+    }
+
+    fn remove_from(&self, sources: &mut Unmatched<'_>, targets: &mut Unmatched<'_>) {
+        if self.sources.is_empty() {
+            return;
+        }
+        fn left(list: &[TypeId], matched: &[bool]) -> Unmatched<'static> {
+            let left = list.iter().zip(matched).filter(|it| !*it.1);
+            Unmatched::Owned(left.map(|it| *it.0).collect())
+        }
+        *sources = left(sources, &self.sources);
+        *targets = left(targets, &self.targets);
+    }
 }
 
 /// What `inferToMultipleTypes` infers to.

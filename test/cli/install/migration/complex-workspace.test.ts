@@ -213,8 +213,8 @@ beforeAll(async () => {
           "node_modules/is-number": {
             ...registryEntry("is-number", "1.0.0"),
           },
-          // Not trusted, so its postinstall script is blocked. The install counts it as blocked only because
-          // the migrated entry says it has an install script.
+          // It isn't trusted, so its postinstall script is blocked. The install only counts it as blocked because the
+          // migrated entry says that it has an install script.
           "node_modules/lifecycle-postinstall": {
             ...registryEntry("lifecycle-postinstall", "1.0.0"),
             hasInstallScript: true,

@@ -189,12 +189,17 @@ test.concurrent("the note for no test files found names suffixes that make a fil
 });
 
 // The glob comes from the loaders that the scanner looks up, so a `[loader]`
-// entry in bunfig.toml changes both.
+// entry in bunfig.toml changes both. An extension is literal text in the glob.
 const defaultExtensions = ["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"];
+const customExtensions = ["foo", "foo[1]", "b{c},d", "e+(f)"];
 
 test.concurrent.each([
   ["default loaders", "", defaultExtensions],
-  ["a [loader] entry in bunfig.toml", `[loader]\n".foo" = "ts"\n".d.ts" = "ts"\n`, [...defaultExtensions, "foo"]],
+  [
+    "[loader] entries in bunfig.toml",
+    `[loader]\n".d.ts" = "ts"\n` + customExtensions.map(ext => `".${ext}" = "ts"\n`).join(""),
+    [...defaultExtensions, ...customExtensions],
+  ],
 ])(
   "CLAUDECODE=1 error for no test files found prints a glob that matches the file names the scanner takes (%s)",
   async (_, bunfig, extensions) => {
@@ -211,6 +216,11 @@ test.concurrent.each([
       "testMyApp.ts",
       "MyApp.test.json",
       "MyApp.test.d.ts",
+      // What `foo[1]`, `b{c},d` and `e+(f)` select when the glob does not escape them.
+      "MyApp.test.foo1",
+      "MyApp.test.bc",
+      "MyApp.test.d",
+      "MyApp.test.ef",
     ];
     // Each file prints its own name when the scanner takes it.
     const printsName = (name: string) =>

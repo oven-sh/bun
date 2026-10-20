@@ -464,7 +464,14 @@ impl fmt::Display for TestFileRule<'_> {
                         continue;
                     };
                     if loader.is_javascript_like() && !strings::contains_char(name, b'.') {
-                        write!(f, "{separator}{}", BStr::new(name))?;
+                        f.write_str(separator)?;
+                        let mut literal = name;
+                        while let Some(at) = strings::index_of_any(literal, b"\\*?[]{},(") {
+                            let syntax = char::from(literal[at]);
+                            write!(f, "{}\\{syntax}", BStr::new(&literal[..at]))?;
+                            literal = &literal[at + 1..];
+                        }
+                        write!(f, "{}", BStr::new(literal))?;
                         separator = ",";
                     }
                 }

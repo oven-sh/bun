@@ -142,8 +142,6 @@ pub struct LinkerContext<'a> {
     pub(crate) inits_already_done: Option<AutoBitSet>,
     /// The part `scan_imports_and_exports` adds to each entry point file (`u32::MAX` elsewhere).
     pub(crate) entry_point_part_indices: Vec<u32>,
-    /// Filled by step 4 of `scan_imports_and_exports`, drained by tree shaking.
-    pub(crate) namespace_patterns: Vec<NamespacePattern>,
 }
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
@@ -184,7 +182,6 @@ impl<'a> Default for LinkerContext<'a> {
             preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             inits_already_done: None,
             entry_point_part_indices: Vec::new(),
-            namespace_patterns: Vec::new(),
         }
     }
 }
@@ -1077,9 +1074,6 @@ impl<'a> LinkerContext<'a> {
             if self.module_preload() {
                 self.mark_preload_entries(&mut ctx, entry_points)?;
             }
-
-            // Before the reachability pass below reads the dependencies of each live part.
-            self.settle_namespace_patterns(&mut ctx);
         }
 
         {
@@ -1785,23 +1779,20 @@ pub(crate) struct ImportMemberResolution {
     source_index: u32,
     r#ref: Ref,
     re_exports: Vec<Dependency>,
+    /// The match is `NormalAndNamespace`: `ref` prints as a property of another namespace object.
+    through_namespace: bool,
 }
 pub(crate) type ImportMemberResolutions =
     bun_collections::HashMap<(crate::IndexInt, bun_ast::StoreStr), Option<ImportMemberResolution>>;
 
-/// A part that `LinkerContext::bind_namespace_pattern` bound, until `settle_namespace_patterns` picks what it prints.
-pub(crate) struct NamespacePattern {
-    source_index: crate::IndexInt,
+/// A tagged part `const { a, b: c } = X` whose keys can each be a copy of an export, made by `LinkerContext::plan_namespace_pattern`.
+pub(crate) struct NamespacePatternPlan {
     part_index: u32,
     base: Ref,
-    /// The part's one symbol use, of `base`, which step 4 took away.
-    base_use: SymbolUse,
-    /// The module `base` is the namespace of, and its `exports` symbol.
     target_source: crate::IndexInt,
-    namespace_ref: Ref,
-    /// How many dependencies the part had before step 4 added the ones of the keys.
-    dependencies_len: usize,
-    /// `var a = <export a>, c = <export b>`, for when no live code holds the namespace object.
+    /// The keys, in pattern order, as they are spelled in `resolved_exports` of the target.
+    names: Vec<bun_ast::StoreStr>,
+    /// `var a = <export a>, c = <export b>`.
     copies: bun_ast::StoreSlice<Stmt>,
 }
 
@@ -4755,7 +4746,7 @@ impl<'a> LinkerContext<'a> {
     /// tree-shake. The parser recorded these accesses per part in
     /// `import_symbol_property_uses`; `do_step5` moves their use counts from
     /// `X` to the new symbol and the printer substitutes it at the `E::Dot`.
-    /// A part that only destructures `X` is tagged here and goes to `bind_namespace_pattern`.
+    /// A part that only destructures `X` is tagged here and goes to `bind_namespace_patterns`.
     fn bind_import_property_accesses(
         &mut self,
         source_index: crate::IndexInt,
@@ -4837,6 +4828,7 @@ impl<'a> LinkerContext<'a> {
                                     source_index: target_source,
                                     r#ref: target.import_ref,
                                     re_exports: Vec::new(),
+                                    through_namespace: false,
                                 })
                             });
                         name
@@ -4921,10 +4913,10 @@ impl<'a> LinkerContext<'a> {
             }
         }
 
-        for &part_index in &pattern_parts {
-            self.bind_namespace_pattern(
+        if !pattern_parts.is_empty() {
+            self.bind_namespace_patterns(
                 source_index,
-                part_index,
+                &pattern_parts,
                 imports_to_bind,
                 member_resolutions,
             );
@@ -4956,6 +4948,7 @@ impl<'a> LinkerContext<'a> {
                     source_index: result.source_index,
                     r#ref: result.r#ref,
                     re_exports: re_exports.to_vec(),
+                    through_namespace: result.kind == MatchImportKind::NormalAndNamespace,
                 })
             }
             _ => None,
@@ -5017,107 +5010,171 @@ impl<'a> LinkerContext<'a> {
         dependencies.extend_from_slice(&member.re_exports);
     }
 
-    /// Binds each key of a tagged part `const { a, b: c } = X` to the export it names, so the part stops keeping the namespace object of `X` alive.
-    fn bind_namespace_pattern(
+    /// Each tagged part `const { a, b: c } = X` takes one copy per key, as `X.a` binds, unless this file uses `X` as a value somewhere else.
+    fn bind_namespace_patterns(
         &mut self,
         source_index: crate::IndexInt,
-        part_index: u32,
+        pattern_parts: &[u32],
         imports_to_bind: &mut crate::RefImportData,
         member_resolutions: &mut ImportMemberResolutions,
     ) {
+        let mut plans: Vec<NamespacePatternPlan> = Vec::new();
+        for &part_index in pattern_parts {
+            if let Some(plan) = self.plan_namespace_pattern(
+                source_index,
+                part_index,
+                imports_to_bind,
+                member_resolutions,
+            ) {
+                plans.push(plan);
+            }
+        }
+        let mut held: Vec<Ref> = Vec::new();
+        for plan in &plans {
+            if !held.contains(&plan.base)
+                && self.namespace_is_held(source_index, plan.base, &plans, imports_to_bind)
+            {
+                held.push(plan.base);
+            }
+        }
+
+        let id = source_index as usize;
+        let mut dependencies: Vec<Dependency> = Vec::new();
+        let mut bound_bases: Vec<Ref> = Vec::new();
+        for plan in &plans {
+            if held.contains(&plan.base) {
+                continue;
+            }
+            dependencies.clear();
+            bound_bases.clear();
+            for &name in &plan.names {
+                let member = member_resolutions
+                    .get(&(plan.target_source, name))
+                    .unwrap()
+                    .as_ref()
+                    .unwrap();
+                self.use_import_member(
+                    source_index,
+                    plan.part_index as usize,
+                    plan.base,
+                    member,
+                    1,
+                    imports_to_bind,
+                    &mut bound_bases,
+                    &mut dependencies,
+                );
+            }
+            let part =
+                &mut self.graph.ast.items_parts_mut()[id].as_mut_slice()[plan.part_index as usize];
+            part.stmts = plan.copies;
+            let _ = part.symbol_uses.swap_remove(&plan.base);
+            part.dependencies.extend_from_slice(&dependencies);
+        }
+    }
+
+    /// Checks that each key of the part's one declarator is a static export to copy. Changes nothing but the memo.
+    fn plan_namespace_pattern(
+        &mut self,
+        source_index: crate::IndexInt,
+        part_index: u32,
+        imports_to_bind: &crate::RefImportData,
+        member_resolutions: &mut ImportMemberResolutions,
+    ) -> Option<NamespacePatternPlan> {
         let id = source_index as usize;
         let part = &self.graph.ast.items_parts()[id].as_slice()[part_index as usize];
         // One declarator is one part when tree shaking is on.
         let [stmt] = part.stmts.slice() else {
-            return;
+            return None;
         };
         let stmt = *stmt;
         let bun_ast::StmtData::SLocal(local) = stmt.data else {
-            return;
+            return None;
         };
         let [decl] = local.decls.slice() else {
-            return;
+            return None;
         };
         let bun_ast::b::B::BObject(pattern) = decl.binding.data else {
-            return;
+            return None;
         };
         let base = match decl.value.map(|value| value.data) {
             Some(bun_ast::ExprData::EIdentifier(identifier)) => identifier.ref_,
             Some(bun_ast::ExprData::EImportIdentifier(identifier)) => identifier.ref_,
-            _ => return,
+            _ => return None,
         };
         // The read of `base` is the part's one symbol use. Dead code records none.
         let (&[used], &[base_use]) = (part.symbol_uses.keys(), part.symbol_uses.values()) else {
-            return;
+            return None;
         };
         if used != base || base_use.count_estimate() != 1 {
-            return;
+            return None;
         }
-        let Some(import_data) = imports_to_bind.get(&base) else {
-            return;
-        };
+        let import_data = imports_to_bind.get(&base)?;
         let target = import_data.data;
         let target_source = target.source_index.get();
         if !self.is_esm_namespace_ref(target_source, target.import_ref) {
-            return;
+            return None;
         }
+        // A `require()` local of another file on the way to the namespace is a variable that file can assign again.
+        let parts = self.graph.ast.items_parts();
+        if import_data.re_exports.slice().iter().any(|dependency| {
+            let dependency_source = dependency.source_index.get();
+            dependency_source != source_index
+                && parts[dependency_source as usize].as_slice()[dependency.part_index as usize].tag
+                    == bun_ast::PartTag::ImportToConvertFromRequire
+        }) {
+            return None;
+        }
+        let target_flags = self.graph.ast.items_flags()[target_source as usize];
         // #18008: a name this target exports only at run time prints as `exports_x.name`, with no dependency on the namespace part.
         if self.graph.ast.items_exports_kind()[target_source as usize]
             .is_esm_with_dynamic_fallback()
-            && !self.graph.ast.items_flags()[target_source as usize]
-                .contains(AstFlags::FORCE_CJS_TO_ESM)
+            && !target_flags.contains(AstFlags::FORCE_CJS_TO_ESM)
         {
-            return;
+            return None;
+        }
+        // A lifted file that reads `module.exports` as a value prints `exports_x` there, and records no use of it.
+        if target_flags.contains(AstFlags::USES_MODULE_REF) {
+            return None;
         }
         let resolved_exports = &self.graph.meta.items_resolved_exports()[target_source as usize];
         let properties = pattern.properties();
         let mut names: Vec<bun_ast::StoreStr> = Vec::with_capacity(properties.len());
         for property in properties {
             let bun_ast::ExprData::EString(key) = &property.key.data else {
-                return;
+                return None;
             };
             if !key.is_utf8() || key.next.is_some() {
-                return;
+                return None;
             }
             let name = key.slice8();
             // The CommonJS interop rules decide these two (`lifted_default_import_needs_wrapper`).
             if name == b"default" || name == b"__esModule" {
-                return;
+                return None;
             }
             // An inherited key (`hasOwnProperty`) or a missing one reads off the object.
-            let Some(index) = resolved_exports.get_index(name) else {
-                return;
-            };
+            let index = resolved_exports.get_index(name)?;
             names.push(bun_ast::StoreStr::new(&resolved_exports.keys()[index]));
         }
         if names.is_empty() {
-            return;
+            return None;
         }
 
-        // All or nothing: one key that does not bind keeps the pattern.
-        for &name in &names {
-            self.resolve_import_member((target_source, name), member_resolutions);
-            let Some(member) = member_resolutions.get(&(target_source, name)).unwrap() else {
-                return;
-            };
-            // Only the namespace part keeps the `export *` statements that run a wrapped file on the way to `member`.
-            if member.source_index != target_source
-                && self.graph.meta.items_flags()[member.source_index as usize].wrap
-                    != WrapKind::None
-            {
-                return;
-            }
-        }
-
+        // All or nothing: one key that is not a binding to copy keeps the pattern.
         let mut decls = G::DeclList::init_capacity(names.len());
-        let mut dependencies: Vec<Dependency> = Vec::new();
-        let mut bound_bases: Vec<Ref> = Vec::new();
         for (property, &name) in properties.iter().zip(&names) {
+            self.resolve_import_member((target_source, name), member_resolutions);
             let member = member_resolutions
                 .get(&(target_source, name))
                 .unwrap()
-                .as_ref()
-                .unwrap();
+                .as_ref()?;
+            // Only the namespace part keeps the `export *` statements that run a wrapped file on the way to `member`.
+            if member.through_namespace
+                || (member.source_index != target_source
+                    && self.graph.meta.items_flags()[member.source_index as usize].wrap
+                        != WrapKind::None)
+            {
+                return None;
+            }
             decls.append_assume_capacity(G::Decl {
                 binding: property.value,
                 value: Some(Expr::init(
@@ -5125,16 +5182,6 @@ impl<'a> LinkerContext<'a> {
                     property.key.loc,
                 )),
             });
-            self.use_import_member(
-                source_index,
-                part_index as usize,
-                base,
-                member,
-                1,
-                imports_to_bind,
-                &mut bound_bases,
-                &mut dependencies,
-            );
         }
         let copies = Stmt::alloc(
             S::Local {
@@ -5145,71 +5192,64 @@ impl<'a> LinkerContext<'a> {
             },
             stmt.loc,
         );
-        let copies = bun_ast::StoreSlice::new_mut(
-            self.arena().alloc_slice_fill_iter(core::iter::once(copies)),
-        );
-
-        let part = &mut self.graph.ast.items_parts_mut()[id].as_mut_slice()[part_index as usize];
-        let _ = part.symbol_uses.swap_remove(&base);
-        let dependencies_len = part.dependencies.len();
-        part.dependencies.extend_from_slice(&dependencies);
-        self.namespace_patterns.push(NamespacePattern {
-            source_index,
+        Some(NamespacePatternPlan {
             part_index,
             base,
-            base_use,
             target_source,
-            namespace_ref: target.import_ref,
-            dependencies_len,
-            copies,
-        });
+            names,
+            copies: bun_ast::StoreSlice::new_mut(
+                self.arena().alloc_slice_fill_iter(core::iter::once(copies)),
+            ),
+        })
     }
 
-    /// With liveness known, a bound pattern prints its copies. If the namespace object is live anyway, the part reads it, as before step 4.
-    fn settle_namespace_patterns(&mut self, ctx: &mut TreeShakeCtx<'a, '_>) {
-        for pattern in core::mem::take(&mut self.namespace_patterns) {
-            let id = pattern.source_index as usize;
-            let part_index = pattern.part_index as usize;
-            if !ctx.parts_live[id].is_set(part_index) {
+    /// Does this file use the namespace that `base` holds as a value, anywhere but in the `planned` declarations?
+    fn namespace_is_held(
+        &self,
+        source_index: crate::IndexInt,
+        base: Ref,
+        planned: &[NamespacePatternPlan],
+        imports_to_bind: &crate::RefImportData,
+    ) -> bool {
+        let id = source_index as usize;
+        let named_imports = &self.graph.ast.items_named_imports()[id];
+        for (&item, named_import) in named_imports.keys().iter().zip(named_imports.values()) {
+            if item == base {
+                if named_import.is_exported {
+                    return true;
+                }
                 continue;
             }
-            let namespace_parts =
-                self.top_level_symbols_to_parts(pattern.target_source, pattern.namespace_ref);
-            let target_parts_live = &ctx.parts_live[pattern.target_source as usize];
-            let namespace_is_live = namespace_parts
-                .iter()
-                .any(|&part| target_parts_live.is_set(part as usize));
-            let part = &mut ctx.parts[id].as_mut_slice()[part_index];
-            if !namespace_is_live {
-                part.stmts = pattern.copies;
-                continue;
-            }
-            part.symbol_uses.clear_retaining_capacity();
-            part.symbol_uses
-                .put(pattern.base, pattern.base_use)
-                .expect("OOM");
-            // What steps 5 and 6 add for a use of `base`, in their order: code splitting reads these.
-            part.dependencies.truncate(pattern.dependencies_len);
-            for &declaring_part in
-                self.top_level_symbols_to_parts(pattern.source_index, pattern.base)
+            // An item `base.name` that is not bound to an export prints as a property of the namespace object.
+            if named_import.namespace_ref == base
+                && !imports_to_bind.contains(&item)
+                && self
+                    .graph
+                    .symbols
+                    .get_const(item)
+                    .is_none_or(|symbol| symbol.import_item_status != ImportItemStatus::Missing)
             {
-                part.dependencies.push(Dependency {
-                    source_index: bun_ast::Index::source(id),
-                    part_index: declaring_part,
-                });
+                return true;
             }
-            for &namespace_part in namespace_parts {
-                part.dependencies.push(Dependency {
-                    source_index: bun_ast::Index::source(pattern.target_source as usize),
-                    part_index: namespace_part,
-                });
-            }
-            let import_data = self.graph.meta.items_imports_to_bind()[id]
-                .get(&pattern.base)
-                .unwrap();
-            part.dependencies
-                .extend_from_slice(import_data.re_exports.slice());
         }
+        self.graph.ast.items_parts()[id]
+            .as_slice()
+            .iter()
+            .enumerate()
+            .any(|(part_index, part)| {
+                !planned
+                    .iter()
+                    .any(|plan| plan.part_index as usize == part_index)
+                    && (part
+                        .symbol_uses
+                        .get(&base)
+                        .is_some_and(|base_use| base_use.count_estimate() > 0)
+                        || part
+                            .import_symbol_property_uses
+                            .as_ref()
+                            .and_then(|uses| uses.get(&base))
+                            .is_some_and(|properties| properties.count() > 0))
+            })
     }
 
     /// Records a `Normal`/`NormalAndNamespace` match for `import_ref`.

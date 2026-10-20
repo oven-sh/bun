@@ -448,6 +448,7 @@ pub(crate) fn install_hoisted_packages(
                             replaced: Vec::new(),
                             inside_replaced_folder: false,
                             outlived_root: false,
+                            outgoing_bins: Vec::new(),
                         });
                     }
                     break 'trees trees.into_boxed_slice();

@@ -18,6 +18,8 @@ pub(crate) struct Symlinker {
     pub(crate) is_absolute: bool,
     #[cfg(windows)]
     pub(crate) fallback_junction_target: bun_paths::AbsPath,
+    /// If `Some`, `ensure_symlink` appends the target of a symlink that it replaces.
+    pub(crate) replaced: Option<Vec<u8>>,
 }
 
 impl Symlinker {
@@ -167,6 +169,10 @@ impl Symlinker {
 
                 if self.remove_planted_parents()? {
                     return self.ensure(strategy, may_retry);
+                }
+
+                if let Some(replaced) = &mut self.replaced {
+                    replaced.extend_from_slice(current_link);
                 }
 
                 // The wrong package. On Windows a directory link, dangling or not, needs rmdir.

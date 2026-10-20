@@ -1763,7 +1763,11 @@ impl SourceMapData {
         );
         buf.push(b'"');
         js_printer::write_pre_quoted_string_inner::<_, { js_printer::Encoding::Utf8 }>(
-            contents, &mut buf, b'"', false, true,
+            contents,
+            &mut buf,
+            b'"',
+            false,
+            js_printer::Escapes::Json,
         )
         .expect("OOM");
         buf.push(b'"');

@@ -57,6 +57,53 @@ export class Y {
   );
 });
 
+// Latin-1 from an old editor: in UTF-8, 0xE9 starts a sequence of three bytes. Counted as three bytes, the line
+// break after it was stepped over, and each line below it was reported as the line above.
+test("a file that is not UTF-8 has the lines of the same file in UTF-8", async () => {
+  const lib = `// caf\xE9
+export function used(x: number) {
+  // caf\xE9
+  return x + 1;
+}
+/* \xE9 */
+export function unused() {
+  return 0;
+}
+`;
+  using dir = tempDir("cov-not-utf8", {
+    "latin1.ts": Buffer.from(lib, "latin1"),
+    "utf8.ts": lib,
+    "lines.test.ts": `import { expect, test } from "bun:test";
+import { used as latin1 } from "./latin1";
+import { used as utf8 } from "./utf8";
+test("used", () => {
+  expect(latin1(1) + utf8(1)).toBe(4);
+});
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov", "--coverage-reporter=text"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const lcov = await Bun.file(path.join(String(dir), "coverage", "lcov.info")).text();
+  const lines = (file: string) => ({
+    lcov: [
+      ...lcov
+        .split("end_of_record")
+        .find(it => it.includes(`SF:${file}`))!
+        .matchAll(/^DA:.*$/gm),
+    ].join(" "),
+    uncovered: new RegExp(` ${file.replace(".", "\\.")} .*\\| ([^|]*)$`, "m").exec(stderr)?.[1].trim(),
+  });
+  expect(lines("latin1.ts")).toEqual({ lcov: "DA:2,1 DA:4,1 DA:7,0 DA:8,0", uncovered: "7-8" });
+  expect(lines("latin1.ts")).toEqual(lines("utf8.ts"));
+  expect(exitCode).toBe(0);
+});
+
 // https://github.com/oven-sh/bun/issues/17502
 describe("--coverage-reporter without --coverage turns coverage on", () => {
   const files = {

@@ -685,6 +685,7 @@ impl TrustCommand {
             &package_json_source,
             bun_js_printer::PrintJsonOptions {
                 mangled_props: None,
+                ill_formed_bytes: bun_js_printer::IllFormedBytes::Keep,
                 ..Default::default()
             },
         ) {

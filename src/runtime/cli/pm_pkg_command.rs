@@ -729,6 +729,7 @@ impl PmPkgCommand {
             js_printer::PrintJsonOptions {
                 indent: pkg.indentation,
                 mangled_props: None,
+                ill_formed_bytes: js_printer::IllFormedBytes::Keep,
                 ..Default::default()
             },
         ) {

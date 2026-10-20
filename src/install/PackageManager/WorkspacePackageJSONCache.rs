@@ -52,6 +52,7 @@ impl MapEntry {
             js_printer::PrintJsonOptions {
                 indent: self.indentation,
                 mangled_props: None,
+                ill_formed_bytes: js_printer::IllFormedBytes::Keep,
                 ..Default::default()
             },
         )?;

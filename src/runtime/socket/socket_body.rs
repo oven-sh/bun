@@ -2903,9 +2903,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             let _ = self
                 .buffered_data_for_node_net
                 .with_mut(|b| b.append_slice(buffer.slice()));
-            // R-2: `write_maybe_corked` takes `&self` and does not touch
-            // `buffered_data_for_node_net`, so a `JsCell::get()` projection
-            // is valid for the duration of the call.
+            // R-2: the projection is valid unless JS that the call runs (a Duplex's `write()`) reaches the queue.
             let rc = self.write_maybe_corked(self.buffered_data_for_node_net.get().slice());
             if rc < 0 {
                 // Fatal write error (or the socket is already shut down/closed):
@@ -3185,8 +3183,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `bytes_written`/`flags`/`buffered_data_for_node_net` across the
         // re-entrant `do_socket_write`) is no longer needed.
         if self.buffered_data_for_node_net.get().len() > 0 {
-            // Neither write call touches `buffered_data_for_node_net`, so a
-            // `JsCell::get()` projection is valid for the duration of the call.
+            // The projections are valid unless JS that a call runs (a Duplex's `write()`) reaches the queue.
             // The drain-driven retry must detect a fatal send error the same way
             // the initial write does: once the peer is gone the kernel rejects
             // every retry (EPIPE/ECONNRESET), and treating that as would-block
@@ -5086,7 +5083,7 @@ pub(crate) fn js_upgrade_duplex_to_tls(
 
     let array = JSValue::create_empty_array(global, 2)?;
     array.put_index(global, 0, tls_js_value)?;
-    // data, end, drain and close events must be reported
+    // data, end and close events must be reported
     array.put_index(
         global,
         1,

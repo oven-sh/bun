@@ -1,8 +1,11 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { spawn } from "child_process";
 import { once } from "events";
-import { bunEnv, bunExe, tls as certs } from "harness";
+import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
+import http2 from "http2";
+import https from "https";
 import net from "net";
+import { join } from "path";
 import { Duplex } from "stream";
 import tls from "tls";
 
@@ -453,4 +456,309 @@ test("_parent is the wrapped net.Socket", async () => {
   } finally {
     closeAll(server, sockets);
   }
+});
+
+// Whether a process here can reserve one buffer of 2^31 bytes. The probe is a process of its own: a failed
+// allocation ends an ASAN build.
+const canReserve2GiB = await (async () => {
+  await using probe = Bun.spawn({
+    cmd: [bunExe(), "-e", "Buffer.alloc(2 ** 31)"],
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  return (await probe.exited) === 0;
+})();
+
+// Node's JSStreamSocket has no 'drain' listener on the stream it wraps:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L64-L92
+describe("a TLS socket does not listen for 'drain' on the stream it wraps", () => {
+  const serverOptions = { isServer: true, ...certs };
+  const clientWraps = {
+    "tls.connect({ socket })": (socket: Duplex) => tls.connect({ socket, rejectUnauthorized: false }),
+    "new TLSSocket(socket)": (socket: Duplex) => new tls.TLSSocket(socket as net.Socket, { rejectUnauthorized: false }),
+  };
+  // An in-memory pair. `inWrite` runs inside that side's write(), once the peer has the chunk.
+  function pairOf(inWrite: { client?: () => void; server?: () => void } = {}) {
+    const side = (peer: () => Duplex, hook = () => {}) =>
+      new Duplex({
+        read() {},
+        write(chunk, _encoding, callback) {
+          peer().push(chunk);
+          hook();
+          callback();
+        },
+        final(callback) {
+          peer().push(null);
+          callback();
+        },
+      });
+    const clientSide: Duplex = side(() => serverSide, inWrite.client);
+    const serverSide: Duplex = side(() => clientSide, inWrite.server);
+    return { clientSide, serverSide };
+  }
+  const closeOf = (socket: tls.TLSSocket) => new Promise<void>(resolve => socket.on("close", () => resolve()));
+  // `client` writes "parked" before its handshake and ends. Resolves once it closed, with what the server got.
+  async function parkedWrite(client: tls.TLSSocket, serverSide: Duplex) {
+    const received: Buffer[] = [];
+    const errors: unknown[] = [];
+    let callbacks = 0;
+    const server = new tls.TLSSocket(serverSide as net.Socket, serverOptions);
+    server.on("data", (chunk: Buffer) => received.push(chunk));
+    server.on("end", () => server.end());
+    server.on("error", (err: NodeJS.ErrnoException) => errors.push(err.code));
+    client.on("data", () => {});
+    client.on("error", (err: NodeJS.ErrnoException) => errors.push(err.code));
+    const closed = closeOf(client);
+    client.write("parked", () => callbacks++);
+    client.end();
+    await closed;
+    return { received: Buffer.concat(received).toString(), errors, callbacks, bytesWritten: client.bytesWritten };
+  }
+
+  describe("a stream that emits 'drain' inside its own write()", () => {
+    test.each(Object.keys(clientWraps) as (keyof typeof clientWraps)[])(
+      "%s sends a write made before the handshake once",
+      async wrap => {
+        const { clientSide, serverSide } = pairOf({ client: () => void clientSide.emit("drain") });
+        const client = clientWraps[wrap](clientSide);
+        const drainListeners = [clientSide.listenerCount("drain")];
+        const result = await parkedWrite(client, serverSide);
+        drainListeners.push(clientSide.listenerCount("drain"));
+        expect({ ...result, drainListeners }).toEqual({
+          received: "parked",
+          errors: [],
+          callbacks: 1,
+          bytesWritten: 6,
+          drainListeners: [0, 0],
+        });
+      },
+    );
+
+    test("new TLSSocket(socket, { isServer: true }) sends a write made before the handshake once", async () => {
+      const { clientSide, serverSide } = pairOf({ server: () => void serverSide.emit("drain") });
+      const received: Buffer[] = [];
+      const errors: unknown[] = [];
+      const server = new tls.TLSSocket(serverSide as net.Socket, serverOptions);
+      server.on("data", () => {});
+      server.on("error", (err: NodeJS.ErrnoException) => errors.push(err.code));
+      server.write("banner");
+      server.end();
+      const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
+      client.on("data", (chunk: Buffer) => received.push(chunk));
+      client.on("end", () => client.end());
+      client.on("error", (err: NodeJS.ErrnoException) => errors.push(err.code));
+      await closeOf(client);
+      expect({
+        received: Buffer.concat(received).toString(),
+        errors,
+        bytesWritten: server.bytesWritten,
+        drainListeners: serverSide.listenerCount("drain"),
+      }).toEqual({ received: "banner", errors: [], bytesWritten: 6, drainListeners: 0 });
+    });
+
+    test("a write() override that emits 'drain' does not nest the stream's writes", async () => {
+      const { clientSide, serverSide } = pairOf();
+      let depth = 0;
+      let deepest = 0;
+      const write = clientSide.write;
+      clientSide.write = function (this: Duplex, ...args: any[]) {
+        deepest = Math.max(deepest, ++depth);
+        // Bounded, so a nested write shows as a depth and not as a stack overflow.
+        if (depth < 3) this.emit("drain");
+        try {
+          return write.apply(this, args);
+        } finally {
+          depth--;
+        }
+      } as typeof write;
+      const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
+      const { received, errors } = await parkedWrite(client, serverSide);
+      expect({ received, errors, deepest }).toEqual({ received: "parked", errors: [], deepest: 1 });
+    });
+
+    // What a user sees of it: an https.Server handles the one request twice.
+    test("https.request() through createConnection sends its request once", async () => {
+      const { clientSide, serverSide } = pairOf({ client: () => void clientSide.emit("drain") });
+      let requests = "";
+      const server = new tls.TLSSocket(serverSide as net.Socket, serverOptions);
+      server.setEncoding("latin1");
+      server.on("error", () => {});
+      server.on("data", (chunk: string) => {
+        requests += chunk;
+        if (requests.endsWith("body")) server.end("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+      });
+      const request = https.request({
+        method: "POST",
+        path: "/once",
+        headers: { "Content-Length": "4" },
+        createConnection: () => tls.connect({ socket: clientSide, rejectUnauthorized: false }),
+      });
+      request.end("body");
+      const [response] = await once(request, "response");
+      response.resume();
+      await once(response, "end");
+      expect({ status: response.statusCode, requestLines: requests.split("POST /once HTTP/1.1").length - 1 }).toEqual({
+        status: 200,
+        requestLines: 1,
+      });
+    });
+
+    test("an HTTP/2 request body arrives intact", async () => {
+      const body = Buffer.alloc(512 * 1024, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
+      const { promise, resolve, reject } = Promise.withResolvers<{
+        status: unknown;
+        received: number;
+        intact: boolean;
+      }>();
+      const server = http2.createSecureServer(certs);
+      server.on("sessionError", reject);
+      server.on("stream", (stream: http2.ServerHttp2Stream) => {
+        const chunks: Buffer[] = [];
+        stream.on("error", reject);
+        stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+        stream.on("end", () => {
+          const all = Buffer.concat(chunks);
+          stream.respond({ ":status": 200, "x-received": String(all.length), "x-intact": String(all.equals(body)) });
+          stream.end();
+        });
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const raw = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+      await once(raw, "connect");
+      // Hands each chunk to the socket inside write(), with no queue of its own.
+      class Direct extends Duplex {
+        _read() {}
+        write(chunk: any, encoding?: any, callback?: any) {
+          this.emit("drain");
+          raw.write(chunk, typeof encoding === "function" ? encoding : callback);
+          return true;
+        }
+        end() {
+          raw.end();
+          return this;
+        }
+      }
+      const transport = new Direct();
+      raw.on("data", chunk => transport.push(chunk));
+      raw.on("error", reject);
+      raw.on("close", () => reject(new Error("the connection closed before the response ended")));
+      const session = http2.connect("https://localhost", {
+        createConnection: () => tls.connect({ socket: transport, ALPNProtocols: ["h2"], rejectUnauthorized: false }),
+      });
+      try {
+        session.on("error", reject);
+        const request = session.request({ ":path": "/", ":method": "POST" });
+        request.on("error", reject);
+        request.on("close", () => reject(new Error("the request closed before its response ended")));
+        request.on("response", headers => {
+          request.resume();
+          request.on("end", () =>
+            resolve({
+              status: headers[":status"],
+              received: Number(headers["x-received"]),
+              intact: headers["x-intact"] === "true",
+            }),
+          );
+        });
+        request.end(body);
+        expect(await promise).toEqual({ status: 200, received: body.length, intact: true });
+      } finally {
+        session.destroy();
+        raw.destroy();
+        server.close();
+      }
+    });
+  });
+
+  // The dialing socket sends its own backlog at 'connect' and emits 'drain' for it, before that 'connect' reaches
+  // the TLS socket over it. The backlog also puts the TLS socket on the engine that runs over a stream.
+  test("a write made before the TCP connect of the wrapped net.Socket is sent once", async () => {
+    const { promise: received, resolve, reject } = Promise.withResolvers<string>();
+    let backlog = 0;
+    const server = net.createServer(accepted => {
+      let seen = 0;
+      accepted.on("error", reject);
+      accepted.on("data", function onBacklog(chunk: Buffer) {
+        if ((seen += chunk.length) < backlog) return;
+        accepted.removeListener("data", onBacklog);
+        const secure = tls.connect({ socket: accepted, rejectUnauthorized: false });
+        let text = "";
+        secure.setEncoding("utf8");
+        secure.on("error", reject);
+        secure.on("data", chunk => (text += chunk));
+        secure.on("end", () => resolve(text));
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const raw = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+    try {
+      const events: string[] = [];
+      raw.on("error", reject);
+      // The least that makes the socket emit 'drain' once it is sent.
+      raw.write(Buffer.alloc((backlog = raw.writableHighWaterMark), "p"));
+      raw.once("drain", () => events.push("transport drain"));
+      const socket = new tls.TLSSocket(raw, serverOptions);
+      socket.once("connect", () => events.push("connect"));
+      socket.on("error", reject);
+      socket.write("hello", () => socket.end());
+      expect({ received: await received, bytesWritten: socket.bytesWritten, events }).toEqual({
+        received: "hello",
+        bytesWritten: 5,
+        events: ["transport drain", "connect"],
+      });
+    } finally {
+      raw.destroy();
+      server.close();
+    }
+  });
+
+  // One SSL_write takes at most 2^31 - 1 bytes, and the listener was what sent the rest of a longer chunk. Node fails
+  // such a write and hands the stream nothing:
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1105-L1126
+  // Skipped where a process cannot reserve a buffer of 2^31 bytes, which the fixture needs.
+  test.skipIf(!canReserve2GiB)(
+    "one write above 2^31 - 1 bytes fails with EPROTO",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dirname, "node-tls-write-limit.fixture.ts")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const refused = { code: "EPROTO", syscall: "write", callbacks: 1, errors: ["EPROTO"] };
+      const closedHandle = isWindows ? "EPIPE" : "EBADF";
+      expect(JSON.parse(stdout.trim() || '"NO_OUTPUT"')).toEqual({
+        aboveAsBuffer: { ...refused, transportWrites: 0 },
+        aboveAsString: { ...refused, transportWrites: 0 },
+        aboveBeforeTheTransportConnects: refused,
+        atTheLimit: { code: closedHandle, syscall: "write", callbacks: 1, errors: [closedHandle] },
+        aboveOnATCPSocket: { code: closedHandle, syscall: "write", callbacks: 1, errors: [closedHandle] },
+      });
+      expect(exitCode).toBe(0);
+    },
+    // A build that does not refuse the chunk seals 2 GiB before the fixture can say so.
+    30_000,
+  );
+
+  // That limit is a branch of Socket.prototype._write, which a subclass overrides as in Node.
+  test("a subclass's _write() runs for each write", async () => {
+    let subclassWrites = 0;
+    class Counting extends tls.TLSSocket {
+      _write(chunk: any, encoding: BufferEncoding, callback: (error?: Error | null) => void) {
+        subclassWrites++;
+        return super._write(chunk, encoding, callback);
+      }
+    }
+    const { clientSide, serverSide } = pairOf();
+    const client = new Counting(clientSide as net.Socket, { rejectUnauthorized: false });
+    expect({ ...(await parkedWrite(client, serverSide)), subclassWrites }).toEqual({
+      received: "parked",
+      errors: [],
+      callbacks: 1,
+      bytesWritten: 6,
+      subclassWrites: 1,
+    });
+  });
 });

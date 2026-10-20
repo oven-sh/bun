@@ -63,7 +63,7 @@
 //! ```text
 //!     [ 0.. 8]  total_len:         u64   -- written by Chunk.Builder.generateChunk
 //!     [ 8..16]  mapping_count:     u64   -- written by Chunk.Builder.generateChunk
-//!     [16..24]  input_line_count:  u64   -- written by Chunk.Builder.generateChunk
+//!     [16..24]  unused                   -- `--compile` embeds a blob for the Bun of another version to read
 //!     [24..28]  sync_count:        u32
 //!     [28..32]  stream_offset:     u32   -- byte offset from blob start to stream
 //!     [32..  ]  SyncEntry[sync_count]    -- 24 bytes each
@@ -167,12 +167,6 @@ impl InternalSourceMap {
     }
 
     #[inline]
-    pub(crate) fn input_line_count(self) -> usize {
-        // SAFETY: blob is at least HEADER_SIZE bytes.
-        unsafe { u64::from_ne_bytes(*self.data.add(16).cast::<[u8; 8]>()) as usize }
-    }
-
-    #[inline]
     pub(crate) fn sync_count(self) -> u32 {
         // SAFETY: blob is at least HEADER_SIZE bytes.
         unsafe { u32::from_ne_bytes(*self.data.add(24).cast::<[u8; 4]>()) }
@@ -242,8 +236,8 @@ impl InternalSourceMap {
     ///
     /// Associated-fn alias so callers can write `InternalSourceMap::from_vlq(..)`.
     #[inline]
-    pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, FromVlqError> {
-        from_vlq(vlq, input_line_count_hint)
+    pub fn from_vlq(vlq: &[u8]) -> Result<Box<[u8]>, FromVlqError> {
+        from_vlq(vlq)
     }
 }
 
@@ -398,8 +392,8 @@ mod win_hdr {
 /// streams are consumed in order, so a reader is forward-only.
 // Invariant: `bytes`/`base`/`src_idx_mask` point into the blob and are only
 // valid while the blob is live. They are raw pointers (not lifetimes) because
-// readers are stored in lifetime-less caches (`FindCacheSlot`, `Cursor`) that
-// follow `InternalSourceMap`'s Copy-view design.
+// readers are stored in a lifetime-less cache (`FindCacheSlot`) that
+// follows `InternalSourceMap`'s Copy-view design.
 #[derive(Copy, Clone)]
 struct WindowReader {
     bytes: *const [u8],
@@ -637,99 +631,19 @@ impl InternalSourceMap {
     }
 }
 
-/// Stateful forward cursor. `move_to` is cheap when successive targets are
-/// monotonically non-decreasing in generated position; otherwise it reseeks via
-/// the sync index.
-///
-/// Invariant: when `has_state`, `reader` is positioned such that calling
-/// `advance_one()` produces the mapping immediately after `peek orelse state`.
-pub struct Cursor {
-    map: InternalSourceMap,
-    state: State,
-    peek: Option<State>,
-    reader: WindowReader,
-    sync_idx: u32,
-    has_state: bool,
-}
-
-impl Cursor {
-    pub(crate) fn init(map: InternalSourceMap) -> Cursor {
-        Cursor {
-            map,
-            state: State::default(),
-            peek: None,
-            reader: WindowReader::DANGLING,
-            sync_idx: 0,
-            has_state: false,
-        }
-    }
-
-    pub fn move_to(&mut self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
-        let target_line = line.zero_based();
-        let target_col = column.zero_based();
-
-        if !self.has_state || !self.state.less_or_equal(target_line, target_col) {
-            if !self.reseek(target_line, target_col) {
-                return None;
-            }
-        }
-
-        loop {
-            if let Some(p) = self.peek {
-                if !p.less_or_equal(target_line, target_col) {
-                    break;
-                }
-                self.state = p;
-                self.peek = None;
-            }
-            let Some(nxt) = self.advance_one() else { break };
-            if nxt.less_or_equal(target_line, target_col) {
-                self.state = nxt;
-            } else {
-                self.peek = Some(nxt);
-                break;
-            }
-        }
-
-        if self.state.generated_line != target_line {
-            return None;
-        }
-        Some(self.state.to_mapping())
-    }
-
-    fn advance_one(&mut self) -> Option<State> {
-        if self.reader.done() {
-            let n_sync = self.map.sync_count();
-            if self.sync_idx + 1 >= n_sync {
-                return None;
-            }
-            self.sync_idx += 1;
-            let mut seed = State::default();
-            self.map
-                .seed_window(self.sync_idx, &mut seed, &mut self.reader);
-            return Some(seed);
-        }
-        let mut nxt = self.peek.unwrap_or(self.state);
-        self.reader.next(&mut nxt);
-        Some(nxt)
-    }
-
-    fn reseek(&mut self, target_line: i32, target_col: i32) -> bool {
-        let Some(idx) = self.map.locate_window(target_line, target_col) else {
-            self.has_state = false;
-            return false;
-        };
-        self.sync_idx = idx;
-        self.map.seed_window(idx, &mut self.state, &mut self.reader);
-        self.peek = None;
-        self.has_state = true;
-        true
-    }
-}
-
 impl InternalSourceMap {
-    pub(crate) fn cursor(self) -> Cursor {
-        Cursor::init(self)
+    /// Every mapping, in generated order.
+    pub(crate) fn for_each(self, mut each: impl FnMut(Mapping)) {
+        for idx in 0..self.sync_count() {
+            let mut state = State::default();
+            let mut reader = WindowReader::DANGLING;
+            self.seed_window(idx, &mut state, &mut reader);
+            each(state.to_mapping());
+            while !reader.done() {
+                reader.next(&mut state);
+                each(state.to_mapping());
+            }
+        }
     }
 
     /// Re-encode the full mapping stream as a standard VLQ "mappings" string. Only
@@ -1086,9 +1000,9 @@ impl Builder {
         self.pending_n = 0;
     }
 
-    /// Serialize into the single-allocation blob layout. The first 24 header
+    /// Serialize into the single-allocation blob layout. The first 16 header
     /// bytes are left for `Chunk.Builder.generateChunk` to fill in (length,
-    /// count, input line count) so this path flows through the existing
+    /// count) so this path flows through the existing
     /// `Chunk.buffer` plumbing unchanged.
     pub(crate) fn finalize(&mut self) -> &mut MutableString {
         if self.finalized.is_none() {
@@ -1155,7 +1069,7 @@ pub enum FromVlqError {
 /// 1-field segments are skipped (no original location). The 5th field
 /// (`name_index`) is decoded but discarded; nothing in the stack-trace remap
 /// path reads it.
-pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, FromVlqError> {
+pub fn from_vlq(vlq: &[u8]) -> Result<Box<[u8]>, FromVlqError> {
     /// Accumulate a VLQ delta into an absolute value. Like `Mapping::parse`,
     /// reject streams whose absolute value overflows `i32` or goes negative —
     /// both make the mapping meaningless, and unchecked garbage here would
@@ -1174,7 +1088,6 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
     let mut source_index: i32 = 0;
     let mut original_line: i32 = 0;
     let mut original_column: i32 = 0;
-    let mut max_original_line: i32 = 0;
 
     let mut remain = vlq;
     while !remain.is_empty() {
@@ -1235,7 +1148,6 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
             remain = &remain[1..];
         }
 
-        max_original_line = max_original_line.max(original_line);
         builder.append_mapping(&SourceMapState {
             generated_column,
             source_index,
@@ -1251,11 +1163,8 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
     let out = builder.finalize();
     let blob = out.list.as_mut_slice();
     let total_len: u64 = blob.len() as u64;
-    let input_lines: u64 =
-        (input_line_count_hint as u64).max(u64::try_from(max_original_line).expect("int cast") + 1);
     blob[0..8].copy_from_slice(&total_len.to_ne_bytes());
     blob[8..16].copy_from_slice(&mapping_count.to_ne_bytes());
-    blob[16..24].copy_from_slice(&input_lines.to_ne_bytes());
 
     let owned = core::mem::take(&mut out.list).into_boxed_slice();
     builder.finalized = None;

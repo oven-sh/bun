@@ -369,8 +369,8 @@ function emitErrorNt(msg, err, callback) {
     msg.emit("error", err);
   }
 }
-const setMaxHTTPHeaderSize = $newRustFunction("node_http_binding.rs", "setMaxHTTPHeaderSize", 1);
-const getMaxHTTPHeaderSize = $newRustFunction("node_http_binding.rs", "getMaxHTTPHeaderSize", 0);
+const setMaxHTTPHeaderSize = $bindgen("node_http_binding.bind.ts", "setMaxHTTPHeaderSize");
+const getMaxHTTPHeaderSize = $bindgen("node_http_binding.bind.ts", "getMaxHTTPHeaderSize");
 const kOutHeaders = Symbol("kOutHeaders");
 const kNeedDrain = Symbol("kNeedDrain");
 const kProxyConfig = Symbol("kProxyConfig");

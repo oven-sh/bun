@@ -2,14 +2,15 @@
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::JSString;
 use crate::bindgen::{
     self, BufferSource, IntoError as _, JsBytes, JsHeap, JsLocal, JsPayload as _, JsScope,
     JsWrapper, JsWrapperStrong, PinnedBytes, StringOrJsBytes,
 };
 use crate::generated_bindgen::bindgen_test::{
-    TestAnything, TestChoice, TestColor, TestColorOrRest, TestCounterClass,
-    TestCounterInternalFields as _, TestFailure, TestHolderClass, TestNames, TestOptions,
-    TestOptionsEcho, TestOuter, TestTokenClass, TestValue,
+    TestAnything, TestBare, TestChoice, TestColor, TestColorOrRest, TestCounterClass,
+    TestCounterInternalFields as _, TestFailure, TestFlag, TestHolderClass, TestNames, TestOptions,
+    TestOptionsEcho, TestOuter, TestTextOrBytes, TestTokenClass, TestValue,
 };
 
 // This example should be kept in sync with bindgen's documentation
@@ -52,8 +53,20 @@ pub(crate) fn utf8_owned(text: bun_core::Utf8Bytes<'static>) -> bun_core::Utf8By
     text
 }
 
-pub(crate) fn string_echo(text: bun_core::String) -> bun_core::String {
-    text
+pub(crate) fn string_echo(text: &bun_core::String) -> bun_core::String {
+    text.clone()
+}
+
+pub(crate) fn string_length(text: &bun_core::String) -> usize {
+    text.length()
+}
+
+pub(crate) fn expected_by_node(text: &bun_core::String, data: Option<&[u8]>, flag: bool) -> usize {
+    text.length() + data.map_or(0, <[u8]>::len) + usize::from(flag)
+}
+
+pub(crate) fn expected_message(data: &[u8], options: &TestFlag, more: &TestFlag) -> usize {
+    data.len() + usize::from(options.flag) + usize::from(more.flag)
 }
 
 pub(crate) fn next_color(color: TestColor) -> TestColor {
@@ -190,6 +203,34 @@ pub(crate) fn names(text: &[u8]) -> TestNames {
     }
 }
 
+pub(crate) fn bare(id: u32) -> TestBare {
+    TestBare { id, label: None }
+}
+
+pub(crate) fn date_of(time: f64) -> f64 {
+    time
+}
+
+pub(crate) fn latin1<'a>(heap: &JsHeap<'a>, bytes: &[u8]) -> JsLocal<'a, JSString> {
+    heap.create_latin1_string(bytes)
+}
+
+pub(crate) fn text_or_bytes<'a>(
+    heap: &JsHeap<'a>,
+    text: &[u8],
+    r#as: u8,
+) -> bindgen::Result<'a, TestTextOrBytes<'a>> {
+    Ok(match r#as {
+        0 => TestTextOrBytes::Text(text.to_vec()),
+        1 => TestTextOrBytes::Bytes(heap.create_uint8_array(text)?),
+        _ => TestTextOrBytes::Nothing,
+    })
+}
+
+pub(crate) fn positions(text: &[u8]) -> impl Iterator<Item = (&[u8], usize)> {
+    words(text).zip(0..)
+}
+
 pub(crate) fn words(text: &[u8]) -> impl Iterator<Item = &[u8]> {
     bun_core::strings::tokenize(text, b" ")
 }
@@ -224,8 +265,8 @@ pub(crate) fn sum_bytes_if_any(bytes: Option<&[u8]>, _: &[u8]) -> i32 {
     bytes.map_or(-1, |bytes| sum(bytes) as i32)
 }
 
-pub(crate) fn string_or_object_echo(text: bun_core::String) -> bun_core::String {
-    text
+pub(crate) fn string_or_object_echo(text: &bun_core::String) -> bun_core::String {
+    text.clone()
 }
 
 pub(crate) fn sum_before_and_after_callback<'a>(
@@ -372,6 +413,10 @@ impl TestCounterClass for TestCounter {
         bindgen::to_js::array(heap, [self.count], bindgen::to_js::i32)
     }
 
+    fn same_tag<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
+        self.tag(heap)
+    }
+
     fn increment(&mut self, by: i32) -> i32 {
         self.count = self.count.wrapping_add(by);
         self.count
@@ -383,6 +428,10 @@ impl TestCounterClass for TestCounter {
 
     fn add_number(&mut self, by: i32) -> i32 {
         self.increment(by)
+    }
+
+    fn forget_tag<'a>(&self, this: JsWrapper<'a, Self>, heap: &JsHeap<'a>) {
+        this.set_tag_field(heap, JsLocal::UNDEFINED);
     }
 
     fn listen<'a>(&self, this: JsWrapper<'a, Self>, heap: &JsHeap<'a>, listener: JsLocal<'a>) {

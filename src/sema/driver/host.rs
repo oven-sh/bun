@@ -265,6 +265,8 @@ pub struct Disk {
     in_memory: FxHashMap<Vec<u8>, InMemory>,
     /// `Provided::keeps_byte_order_marks`
     pub(crate) keeps_byte_order_marks: bool,
+    /// `Provided::ends_the_process`
+    pub(crate) ends_the_process: bool,
     /// `Host::times`, in nanoseconds.
     times: [AtomicU64; Phase::ALL.len()],
     /// What is in `BUNDLED_LIBS`.
@@ -303,6 +305,10 @@ pub struct Provided {
     /// The text of a script keeps the UTF-8 byte order mark that the file starts with, which TypeScript drops. The parser
     /// takes it for a blank. `bun lint` has a rule about it, and writes the text back.
     pub keeps_byte_order_marks: bool,
+    /// The caller ends the process when it has the report, as `bun check` does. Never in a process that goes on, like one
+    /// that calls `Bun.build`, watches files or runs a program or tests after the check: see
+    /// `Session::drop_before_the_process_ends`.
+    pub ends_the_process: bool,
 }
 
 /// The names in one directory of the files of `AlreadyRead` and of the directories that lead to
@@ -414,6 +420,12 @@ fn decoded(mut bytes: Vec<u8>, keeps_mark: bool) -> Cow<'static, [u8]> {
     })
 }
 
+/// What a [`Disk`] makes of the bytes of the file at `path`, which is how [`AlreadyRead`] has a text.
+pub fn as_read(path: &[u8], bytes: Vec<u8>, keeps_byte_order_marks: bool) -> Vec<u8> {
+    let keeps_mark = keeps_byte_order_marks && ScriptKind::from_file_name(path).is_some();
+    decoded(bytes, keeps_mark).into_owned()
+}
+
 /// `vfs.FS.ReadFile` of the file at `path`, by that path alone.
 pub(crate) fn read_at(path: &[u8], keeps_mark: bool) -> Option<Cow<'static, [u8]>> {
     let bytes = bun_sys::File::read_from(Fd::cwd(), for_the_system(path)?);
@@ -485,6 +497,7 @@ impl Disk {
                     .collect(),
             },
             keeps_byte_order_marks: false,
+            ends_the_process: false,
             extended_configs: Default::default(),
             paths: Default::default(),
             caches: Default::default(),
@@ -1491,6 +1504,9 @@ impl Host for Disk {
     fn threads(&self) -> usize {
         self.threads
     }
+    fn ends_the_process(&self, has_a_run: bool) -> bool {
+        self.ends_the_process && !has_a_run
+    }
     fn io_pool(&self) -> Option<&bun_threading::ThreadPool> {
         // The threads that only read serve one load at a time.
         match *self.shares.lock() {
@@ -1511,5 +1527,19 @@ impl Host for Disk {
             Some(shares) => crate::for_each_with_a_share(&self.caches, &shares, count, run, work),
             None => crate::for_each_parallel_in_runs(&self.caches, self.threads, count, run, work),
         }
+    }
+    fn parallel_while(
+        &self,
+        count: usize,
+        work: &(dyn Fn(usize) + Sync),
+        meanwhile: &mut dyn FnMut(),
+    ) {
+        // There the calling thread is one of those that work.
+        if self.is_of_a_thread_of_the_pool || self.shares.lock().is_some() {
+            self.parallel(count, work);
+            return meanwhile();
+        }
+        let run = run_of(count);
+        crate::for_each_parallel_while(&self.caches, self.threads, count, run, work, meanwhile);
     }
 }

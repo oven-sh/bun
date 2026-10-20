@@ -33,8 +33,9 @@ async function run(dir: string, ...cmd: string[]) {
 const install = (dir: string, ...args: string[]) => run(dir, "install", ...args);
 const migrate = (dir: string) => run(dir, "pm", "migrate");
 
-// stderr lines that say how far a command got rather than what it found: install progress, "Saved lockfile" (the cases
-// that care assert it on `err` directly) and the package.json excerpt printed under a located warning.
+// Filters out the stderr lines about a command's progress, as opposed to its findings: install progress, "Saved
+// lockfile" (the cases that care assert it on `err` directly), and the package.json excerpt printed under a located
+// warning.
 const stderrNoise =
   /^(?:Resolving dependencies|Resolved, downloaded and extracted \[\d+\]|Saved lockfile|\s*\d+ \| .*|\s*\^|\s+at .*)$/;
 
@@ -46,8 +47,8 @@ function diagnostics(err: string): string[] {
     .map(line => line.replace(/^\[[\d.]+m?s\] /, ""));
 }
 
-// What a successful install prints after its last blank line. A direct dependency that went away adds the "Removed: N"
-// line, or takes the place of the summary when nothing had to be linked.
+// Returns what a successful install prints after its last blank line. A direct dependency that was removed adds the
+// "Removed: N" line, which replaces the summary if nothing had to be linked.
 const installSummary =
   /^(?:\d+ packages? installed(?:\nRemoved: \d+)?|\d+ packages? removed|Checked \d+ installs? across \d+ packages? \(no changes\)|Done! Checked \d+ packages? \(no changes\)|Saved bun\.lock \(\d+ packages?\))$/;
 
@@ -756,8 +757,8 @@ describe.concurrent("version-scoped targets", () => {
     });
   });
 
-  // `intersects` is what npm's semver 7.7.4 answers, and npm applies a rule on that answer. Every rule sets 1.0.0.
-  // `untouched` is what the declared range resolves to without it.
+  // `intersects` is what npm's semver 7.7.4 returns, and npm applies a rule based on that. Every rule sets 1.0.0.
+  // `untouched` is what the declared range resolves to without the rule.
   describe.concurrent.each([
     // #41371. `^1.0.0` ends at `<2.0.0-0`, so a selector that starts at a 2.0.0 prerelease does not intersect it.
     { declared: "^1.0.0", selector: ">=2.0.0-alpha.0 <3", intersects: false, untouched: "1.1.0" },
@@ -842,7 +843,7 @@ describe.concurrent("version-scoped targets", () => {
     { rule: { "no-deps@>=2.0.0-alpha.0 <3": "1.0.0" } },
     { rule: { "no-deps@>=2.0.0-0": "1.0.0" } },
   ])("a selector that starts at the next major %j", ({ rule }) => {
-    test("leaves a transitive ^ edge alone", async () => {
+    test("doesn't change a transitive ^ dependency", async () => {
       const dir = await project({ dependencies: { "one-range-dep": "1.0.0" }, overrides: rule });
       await installOk(dir);
       expect(await versionSeenBy(dir, "one-range-dep", "no-deps")).toBe("1.1.0");
@@ -850,7 +851,7 @@ describe.concurrent("version-scoped targets", () => {
     });
   });
 
-  test("a selector that no version satisfies leaves a * edge alone", async () => {
+  test("a selector that no version satisfies doesn't change a * dependency", async () => {
     // npm applies the rule here: its `*` comparator intersects every comparator, `<0.0.0-0` included.
     // Bun does not, because no version satisfies the selector.
     const dir = await project({ dependencies: { "no-deps": "*" }, overrides: { "no-deps@<x": "1.0.0" } });
@@ -1215,7 +1216,7 @@ describe.concurrent("version-scoped targets", () => {
       expect(await packageSeenBy(dir, ".", "my-alias")).toBe("no-deps@1.1.0");
     });
 
-    test("an alias key leaves a plain dependency of that name alone", async () => {
+    test("an alias key doesn't change a plain dependency with that name", async () => {
       const dir = await project({
         dependencies: { "no-deps": "^1.0.0" },
         [field]: { "no-deps@npm:no-deps@^1.0.0": "1.0.0" },
@@ -1244,7 +1245,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("linker=%s", linker =
     await expectVersionsSeenBy(dir, "no-deps", { "one-dep": "2.0.0", "one-range-dep": "1.1.0" });
   });
 
-  test("a rule stays recorded while its parent is removed and applies again when the parent comes back", async () => {
+  test("a rule stays recorded while its parent is removed, and applies again when the parent comes back", async () => {
     const dir = await project(npmObjectProject, linker);
     await installOk(dir, "--linker", linker);
     await write(
@@ -2210,7 +2211,7 @@ no-deps@^1.0.0:
     expect(await versionSeenBy(dir, undefined, "no-deps")).toBe("1.0.0");
   });
 
-  // Neither file records the rules: one that was added since shows only in what the file pins.
+  // Neither file records the rules, so a rule that was added since is only visible in what the file pins.
   test.each(["yarn.lock", "package-lock.json"] as const)(
     "a rule that %s does not reflect yet is applied",
     async name => {

@@ -623,6 +623,68 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       const result = await checkSameOutput("test_ungated_calls_worker_terminate", []);
       expect(result.split(/\r?\n/)).toEqual([...Array(2).fill("terminate() resolved with 1"), "resolved to undefined"]);
     }, 30_000);
+
+    // A terminate() that lands while the addon is inside a gated call (sharp's
+    // module Init, #45252) must not put the termination where the addon can read
+    // it: node-addon-api escalates a refused call with an unexplained pending
+    // exception to napi_fatal_error, which aborts the whole process.
+    const refusedV9 =
+      "refused: status=10 entry_status=10 pending=0 napi_throw=10 pending_after_throw=0 get_and_clear=0 exception_type=0";
+    const refusedV10 =
+      "refused: status=23 entry_status=23 pending=0 napi_throw=23 pending_after_throw=0 get_and_clear=0 exception_type=0";
+    // The fixture leaves its probe line in the test's directory: what the addon
+    // saw is in the failure when the process did not live to print it.
+    async function terminateProbe(version: number, frame: string, run: (dir: string) => Promise<string>) {
+      await using dir = tempDir("terminate-probe", {});
+      try {
+        return await run(String(dir));
+      } catch (error) {
+        const probe = join(String(dir), "bun", "probe");
+        if (existsSync(probe)) (error as Error).message += `\nbun probe file: ${readFileSync(probe, "utf8")}`;
+        throw error;
+      }
+    }
+    // node-addon-api's Error::New(env).ThrowAsJavaScriptException() sequence, made raw by the v9 fixture.
+    const replayV9 =
+      "replay: last_error_info=0 is_pending=0 create_string=0 create_error=0 create_reference=0 open_handle_scope=0" +
+      " get_reference_value=0 typeof=0 create_key=0 has_property=10 is_pending_again=0 pending=0,0 throw=10" +
+      " close_handle_scope=0 delete_reference=0; node-addon-api returned";
+    describe.each([
+      [9, "init", [refusedV9, replayV9]],
+      [9, "method", [refusedV9, replayV9]],
+      [10, "init", [refusedV10]],
+      [10, "method", [refusedV10]],
+    ])("worker.terminate() during gated calls (NAPI_VERSION=%i, %s frame)", (version, frame, probe) => {
+      it("refuses the calls as Node does and the process survives", async () => {
+        const result = await terminateProbe(version, frame, dir =>
+          checkSameOutput("test_terminate_during_gated_calls", [version, frame, dir]),
+        );
+        expect(result.split(/\r?\n/)).toEqual(["terminate() resolved with 1", ...probe, "resolved to undefined"]);
+      }, 30_000);
+    });
+
+    // The stop lands inside script the addon entered, so JSC throws the
+    // termination there and it is pending on the VM when napi_call_function
+    // returns. The readers never hand it out, and napi_throw answers as the
+    // closed gate does. Bun only: Node stores null as its last exception for a
+    // termination and reports it pending.
+    it.each([
+      [9, 10],
+      [10, 23],
+    ])(
+      "worker.terminate() inside script entered from an addon (NAPI_VERSION=%i) is not a readable exception",
+      async (version, gateStatus) => {
+        const result = await terminateProbe(version, "script", dir =>
+          runOn(bunExe(), "test_terminate_during_gated_calls", [version, "script", dir]),
+        );
+        expect(result.trim().split(/\r?\n/)).toEqual([
+          "terminate() resolved with 1",
+          `call_function=10 pending=0 get_and_clear=0 exception_type=0 pending_after_clear=0 napi_throw=${gateStatus}`,
+          "resolved to undefined",
+        ]);
+      },
+      30_000,
+    );
   });
 
   describe("status code alignment with Node.js", () => {

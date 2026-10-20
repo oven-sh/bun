@@ -101,8 +101,6 @@ impl IntoIterObject for &mut JSObject {
 
 pub struct JSPropertyIterator<'a> {
     pub len: usize,
-    /// Index of the property last yielded by `next()`.
-    pub(crate) i: Cell<u32>,
     iter_i: Cell<u32>,
     /// null if and only if `object` has no properties (i.e. `len == 0`)
     pub(crate) impl_: Option<NonNull<JSPropertyIteratorImpl>>,
@@ -155,7 +153,6 @@ impl<'a> JSPropertyIterator<'a> {
 
         Ok(Self {
             len,
-            i: Cell::new(0),
             iter_i: Cell::new(0),
             impl_,
             global_object,
@@ -171,11 +168,9 @@ impl<'a> JSPropertyIterator<'a> {
         loop {
             let i: usize = self.iter_i.get() as usize;
             if i >= self.len {
-                self.i.set(self.iter_i.get());
                 return Ok(None);
             }
 
-            self.i.set(self.iter_i.get());
             self.iter_i.set(self.iter_i.get() + 1);
             let mut name = bun_core::StringView::DEAD;
             let mut value = JSValue::ZERO;

@@ -250,8 +250,7 @@ static bool usesLenientHeaders(us_socket_t* socket)
 /* Move the connection's captured trailer section out, returning its (ptr, length)
  * through a thread-local buffer that stays valid until the next call on this
  * thread. Called by NodeHTTPResponse at the request's body fin, still inside the
- * parser, so a pipelined request cannot overwrite or inherit another's trailers.
- * *lenientHeaders: whether the parser accepted the section with LENIENT_HEADERS. */
+ * parser, so a pipelined request cannot overwrite or inherit another's trailers. */
 extern "C" size_t Bun__NodeHTTP__takeRequestTrailerBytes(bool is_ssl, us_socket_t* socket, const char** out, bool* lenientHeaders)
 {
     *out = nullptr;

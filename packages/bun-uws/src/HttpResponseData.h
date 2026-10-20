@@ -298,15 +298,13 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
      * the request reaches EOF (req.trailers/rawTrailers). The parser gets it
      * as a nullable pointer (see HttpParser::consumePostPadded). */
     std::string nodeHttpRequestTrailers;
-    /* The parser options of this connection, set once through JSNodeHTTPServerSocket::setParserOptions().
-     * maxHeaderSize bounds what llhttp counts; maxHeadersCount is a field count, 0 when the server has none. */
+    /* Set once through JSNodeHTTPServerSocket::setParserOptions(). maxHeadersCount is a field count, 0 for none. */
     uint64_t maxHeaderSize = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
     uint32_t maxHeadersCount = 0;
     bool headersCompleted = false;
     /* Timeout sweep already reported this message; reset when it completes. */
     bool requestTimeoutReported = false;
-    /* llhttp's LENIENT_HEADERS ("relaxed" and "insecure") and LENIENT_TRANSFER_ENCODING ("insecure" only).
-     * TE+CL conflict, chunked-size/CRLF, version and header-token checks stay enforced with both. */
+    /* llhttp's LENIENT_HEADERS ("relaxed" and "insecure") and LENIENT_TRANSFER_ENCODING ("insecure" only). */
     bool useInsecureHTTPParser = false;
     bool useLenientTransferEncoding = false;
 };

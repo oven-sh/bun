@@ -278,9 +278,7 @@ function normalizeServerTls(tls) {
   return tls;
 }
 
-// Node registers connectionListener on every http.Server: it sets up the parser of each connection, also of a
-// foreign Duplex from `server.emit("connection", socket)`. The native listener parses its own sockets, so those
-// only get their parser options here. https://github.com/nodejs/node/blob/v26.12.0/lib/_http_server.js#L789-L823
+// Node's own listener sets up the parser: https://github.com/nodejs/node/blob/v26.12.0/lib/_http_server.js#L789-L823
 function connectionListener(this: Server, socket) {
   if (socket != null && typeof socket === "object") socket.server = this;
   // A tunnel socket that was handed to 'connect'/'upgrade' has left the native listener: re-emitted, it is a connection like any other.
@@ -304,8 +302,7 @@ function setAwaitedParserOptions(server: Server, socket) {
   socket[kAwaitsParserOptions] = undefined;
 }
 
-// The connection keeps these values. It starts with the header limit of the process, strict and with no field
-// count, so a server that resolves to that makes no call.
+// A connection starts with the header limit of the process, strict, with no field count: that needs no call.
 function setNativeParserOptions(server: Server, handle) {
   const maxHeaderSize = server.maxHeaderSize || 0;
   const lenientFlags = serverLenientFlags(server);
@@ -1247,9 +1244,7 @@ function onServerConnection(this: Server, listenerGeneration, socketHandle) {
     socket = new (getNodeHTTPServerSocket())(this, socketHandle, isTLS, listenerGeneration);
     socket[kAwaitsParserOptions] = this;
 
-    // Node's net.Server accept path refuses at maxConnections and emits 'drop'; the native
-    // listener bypasses that, so gate it here. `>` (not Node's `>=`) because the constructor
-    // above already tracked this socket in the count.
+    // Node's net.Server refuses at maxConnections and emits 'drop'. `>`, not its `>=`: the constructor counted this socket.
     const maxConnections = this.maxConnections;
     const tracked = this[kTrackedConnections];
     if (maxConnections != null && (tracked?.size ?? 0) > maxConnections) {
@@ -1286,8 +1281,7 @@ function onServerConnection(this: Server, listenerGeneration, socketHandle) {
       }
     }
 
-    // Node's connectionListener attaches the HTTPParser (socket.parser) before
-    // emitting 'connection'; expose the shim here so listeners see it populated.
+    // Node's listeners of 'connection' see socket.parser populated.
     socket.parser = createServerParserShim(socket);
     this.emit("connection", socket);
   } finally {

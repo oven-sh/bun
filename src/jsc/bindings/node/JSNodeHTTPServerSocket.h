@@ -102,8 +102,7 @@ public:
      * (ms; 0 disables a check). Reports a given message at most once. */
     bool isRequestTimedOut(uint64_t headersTimeoutMs, uint64_t requestTimeoutMs);
 
-    /* node:http server compat: the parser options of this connection, set before its first byte is parsed.
-     * maxHeaderSize 0 selects the limit of the process. lenientFlags: bit 0 = llhttp LENIENT_HEADERS, bit 1 = LENIENT_TRANSFER_ENCODING. */
+    /* maxHeaderSize 0 selects the limit of the process. lenientFlags: bit 0 = llhttp LENIENT_HEADERS, bit 1 = LENIENT_TRANSFER_ENCODING. */
     void setParserOptions(uint64_t maxHeaderSize, uint8_t lenientFlags, uint32_t maxHeadersCount);
 
     /* node:http server compat - HTTP/1.1 pipelining. Responses for requests

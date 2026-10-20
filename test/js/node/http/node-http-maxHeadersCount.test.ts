@@ -587,16 +587,9 @@ async function withServer(
   }
 }
 
-// Outside CI the default timeout of bun test is 5 s, and a debug build takes seconds to start a process.
-const spawns = typeof Bun !== "undefined" && !(await import("harness")).isCI ? { timeout: 90_000 } : {};
-
-// Runs `script` with this runtime and resolves with what it printed. A child that hangs ends before the
-// timeout of its test.
+// Runs `script` with this runtime and resolves with what it printed.
 async function run(args: string[], script: string) {
-  const child = spawn(process.execPath, [...args, "-e", script], {
-    stdio: ["ignore", "pipe", "inherit"],
-    timeout: 80_000,
-  });
+  const child = spawn(process.execPath, [...args, "-e", script], { stdio: ["ignore", "pipe", "inherit"] });
   let stdout = "";
   child.stdout.setEncoding("utf8").on("data", chunk => (stdout += chunk));
   const [exitCode] = await once(child, "close");
@@ -831,7 +824,7 @@ describe("a connection keeps the parser options that its server had when it open
   });
 
   // With --insecure-http-parser a server that sets no option is lenient, for each connection that opens under the flag.
-  test("--insecure-http-parser is the default of each connection", spawns, async () => {
+  test("--insecure-http-parser is the default of each connection", async () => {
     const { stdout, exitCode } = await run(
       ["--insecure-http-parser"],
       `
@@ -1038,7 +1031,7 @@ if (typeof Bun !== "undefined") {
       });
     }
 
-    test("something throws before the options of the connection are set", spawns, async () => {
+    test("something throws before the options of the connection are set", async () => {
       const { stdout, exitCode } = await run(
         [],
         `
@@ -1179,7 +1172,7 @@ if (typeof Bun !== "undefined") {
     }
 
     // A reload keeps the native listener and its connections. The next module is a new http.Server.
-    test("a connection keeps the parser options of the module that it opened under", spawns, async () => {
+    test("a connection keeps the parser options of the module that it opened under", async () => {
       using dir = tempDir("hot-node-http-parser-options", {
         "server.mjs": `
           import { createServer } from "node:http";
@@ -1225,7 +1218,8 @@ if (typeof Bun !== "undefined") {
   });
 
   describe("Node.js compatibility", () => {
-    (node ? test : test.skip)("all tests pass in Node.js", spawns, async () => {
+    // The first start of Node after a build reads its binary from the disk: up to 14 s on a slow machine.
+    (node ? test : test.skip)("all tests pass in Node.js", { timeout: 60_000 }, async () => {
       // A direct run, not `node --test`: the runner mode forks a second node
       // process per file. node:test still exits non-zero on any failure.
       await using proc = Bun.spawn({

@@ -2489,8 +2489,7 @@ impl NodeHTTPResponse {
         if section.is_empty() {
             return Ok(JSValue::UNDEFINED);
         }
-        // A lenient connection accepts CTL bytes in trailer values on the wire;
-        // parse them with the same leniency so they surface on req.trailers.
+        // A lenient connection accepted CTL bytes in trailer values: parse them the same way.
         let use_insecure_http_parser = self.flags.get().contains(Flags::LENIENT_REQUEST_TRAILERS);
         bun_jsc::call_zero_is_throw(global_object, || {
             Bun__NodeHTTP__parseRequestTrailers(

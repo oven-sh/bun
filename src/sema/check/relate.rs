@@ -2822,7 +2822,6 @@ impl<'p, 's> Checker<'p, 's> {
             }
             let at = self.task.order_dependent_variances.len() as u32;
             self.order_dependent.insert(sym, at);
-            self.order_dependent_filter |= Self::order_dependent_bit(sym);
             self.task.order_dependent_variances.push(OrderDependent {
                 sym,
                 variances,
@@ -2832,11 +2831,6 @@ impl<'p, 's> Checker<'p, 's> {
                 inferred: 0,
             });
         }
-    }
-
-    #[inline]
-    fn order_dependent_bit(sym: Sym) -> u64 {
-        1 << ((sym.id.0 ^ sym.file.0) & 63)
     }
 
     /// Call right after `relate_variances` on the type arguments `sources` and `targets` of `sym`.
@@ -2849,9 +2843,7 @@ impl<'p, 's> Checker<'p, 's> {
         targets: &[TypeId],
         holds: bool,
     ) {
-        if self.order_dependent_filter & Self::order_dependent_bit(sym) != 0
-            && let Some(&at) = self.order_dependent.get(&sym)
-        {
+        if let Some(&at) = self.order_dependent.get(&sym) {
             self.order_dependent_uses += 1;
             self.task.hold_back();
             self.task.stop_writing_immediately();
@@ -2883,9 +2875,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Call when `infer_from_type_arguments` has read the variances of the first `count` type parameters of `sym`.
     #[inline]
     pub(super) fn note_inferred_by_variances(&mut self, sym: Sym, count: usize) {
-        if self.order_dependent_filter & Self::order_dependent_bit(sym) != 0
-            && let Some(&at) = self.order_dependent.get(&sym)
-        {
+        if let Some(&at) = self.order_dependent.get(&sym) {
             self.order_dependent_uses += 1;
             self.task.hold_back();
             self.task.stop_writing_immediately();

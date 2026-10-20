@@ -43,7 +43,6 @@ impl<'s> Checker<'_, 's> {
         self.task.own.set_sharing(Sharing::Publishes);
 
         self.order_dependent.clear();
-        self.order_dependent_filter = 0;
     }
 
     /// Call after `check_file`. Returns true if the native stack ran out in that file, and resets

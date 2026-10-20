@@ -896,7 +896,6 @@ impl<'s> Program<'s> {
             variances_measured: Vec::new(),
             failed_type_argument: 0,
             order_dependent: Default::default(),
-            order_dependent_filter: 0,
             order_dependent_uses: 0,
             simplified: spare.simplified,
             inherited_names: [0; 4],
@@ -1717,8 +1716,6 @@ pub struct Checker<'p, 's> {
     failed_type_argument: u32,
     /// The index of each symbol in `Task::order_dependent_variances`.
     order_dependent: FxHashMap<Sym, u32>,
-    /// A 64-bit Bloom filter for the keys of `order_dependent`.
-    order_dependent_filter: u64,
     /// How many times variances in `order_dependent` were used.
     order_dependent_uses: u64,
     /// `simplifiedForReading` and `simplifiedForWriting`.

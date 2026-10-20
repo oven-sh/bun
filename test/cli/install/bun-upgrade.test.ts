@@ -384,6 +384,39 @@ it.concurrent(
   },
 );
 
+// On Windows the staged executable is the real bun.exe, which does not report the served version.
+it.concurrent.skipIf(isWindows)(
+  "moves the new executable out of the staging directory and leaves no executable there",
+  async () => {
+    const version = "9.9.9";
+    using installDir = tempDir("bun-upgrade-exe", {});
+    using zipDir = tempDir("bun-upgrade-exe-zip", {});
+    const zipPath = join(String(zipDir), "release.zip");
+    const [execPath] = await Promise.all([installStandIn(String(installDir)), writeFakeReleaseZip(zipPath, version)]);
+    using stagingRoot = tempDir("bun-upgrade-staging-exe", {});
+
+    using server = startReleaseServer({ tagName: `bun-v${version}`, zipPath });
+
+    await using proc = Bun.spawn({
+      cmd: [execPath, "upgrade", "--stable"],
+      cwd: String(installDir),
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: { ...server.env, BUN_TMPDIR: String(stagingRoot) },
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expectTargetsRelease(stderr, version);
+    expect(stderr).toContain("Upgraded.");
+    expect(await Bun.file(execPath).text()).toBe(fakeReleaseScript(version));
+    // The release was unpacked under BUN_TMPDIR, and the move left nothing in its folder.
+    expect(readdirSync(join(String(stagingRoot), version, releaseFolder))).toEqual([]);
+    expect(exitCode).toBe(0);
+  },
+);
+
 it.concurrent("recreates the staging directory in the temp dir instead of reusing a pre-existing one", async () => {
   const tagName = "bun-v9.9.9";
   // Simulate a directory that already exists at the predictable staging path

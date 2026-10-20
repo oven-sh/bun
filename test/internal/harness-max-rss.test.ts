@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunExe, runCommandMaxRSS } from "harness";
+import { bunExe, isLinux, runCommandMaxRSS } from "harness";
 
 const MiB = 1024 * 1024;
 
@@ -9,11 +9,13 @@ test("runCommandMaxRSS measures the command, not the test runner", async () => {
   // stays that high even if the buffer is collected.
   const ballast = Buffer.alloc(256 * MiB, 1);
   const runnerRSS = process.memoryUsage.rss();
-  expect(runnerRSS).toBeGreaterThan(ballast.length);
+  // Elsewhere a child inherits nothing, and a busy macOS machine no longer
+  // keeps all of the buffer resident by now.
+  if (isLinux) expect(runnerRSS).toBeGreaterThan(ballast.length);
 
   const idle = await runCommandMaxRSS({ cmd: [bunExe(), "-e", "0"] });
   expect(idle).toMatchObject({ stdout: "", stderr: "", exitCode: 0, signalCode: null });
-  expect(idle.maxRSS).toBeLessThan(runnerRSS);
+  if (isLinux) expect(idle.maxRSS).toBeLessThan(runnerRSS);
 
   const busy = await runCommandMaxRSS({
     cmd: [bunExe(), "-e", `console.log(Buffer.alloc(${256 * MiB}, 1).length)`],

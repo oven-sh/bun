@@ -7131,15 +7131,17 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `ConstrainedType.resolvedBaseConstraint` of `ty`: the entry in `Program::constraints`, falling back to
-    /// `constraints_of_this_task`. Anything computed from the latter is also valid only for this task.
+    /// `ConstrainedType.resolvedBaseConstraint` of `ty`: the entry in `constraints_of_this_task`, falling back to
+    /// `Program::constraints`. Anything computed from the former is also valid only for this task. It comes first so
+    /// that the answer doesn't change in the middle of a file when another task publishes its own.
     #[inline(always)]
     pub(super) fn known_constraint(&self, ty: TypeId) -> Option<(Option<TypeId>, bool)> {
-        let known = self.p.constraints.get(&self.task, &ty);
-        if known.is_some() || self.constraints_of_this_task.is_empty() {
-            return known;
+        if self.constraints_of_this_task.is_empty() {
+            return self.p.constraints.get(&self.task, &ty);
         }
-        let task_local = self.constraints_of_this_task.get(&ty).copied()?;
+        let Some(&task_local) = self.constraints_of_this_task.get(&ty) else {
+            return self.p.constraints.get(&self.task, &ty);
+        };
         self.constraint_cuts.set(self.constraint_cuts.get() + 1);
         self.task.hold_back();
         Some(task_local)

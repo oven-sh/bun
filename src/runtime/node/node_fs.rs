@@ -3300,53 +3300,31 @@ pub(crate) mod args {
         Ok(default)
     }
 
-    /// `options.encoding` of readFile, writeFile and appendFile, and whether Node converts
-    /// `options.flag` and `options.mode` for this call. Node converts them where it opens
-    /// the file. It opens nothing for an fd, so there it converts them only in the sync
-    /// UTF-8 fast paths, which hand both to C++ for any target:
-    /// https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L432-L437 (readFileSync)
-    /// https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2398-L2411 (writeFileSync)
-    #[inline(always)]
-    fn get_encoding_and_converts_open_options(
-        object: JSValue,
+    /// Node converts `options.flag` where it opens the file, and for any target in its sync UTF-8 fast paths: https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L432-L440
+    fn converts_flag(
+        options: JSValue,
         global_object: &JSGlobalObject,
-        default: Encoding,
         target: &PathOrFileDescriptor,
-        // A sync call, and string data when it writes.
-        may_take_utf8_fast_path: bool,
-    ) -> JsResult<(Encoding, bool)> {
-        let opens = matches!(target, PathOrFileDescriptor::Path(_));
-        if opens || !may_take_utf8_fast_path {
-            return Ok((get_encoding(object, global_object, default)?, opens));
+        will_be_async: bool,
+        signal: Option<&AbortSignalRef>,
+        fast_path_takes_flag: bool,
+    ) -> JsResult<bool> {
+        if matches!(target, PathOrFileDescriptor::Path(_)) {
+            // An async call that is already aborted opens nothing.
+            return Ok(!(will_be_async && signal.is_some_and(|signal| signal.aborted())));
         }
-        get_encoding_and_takes_utf8_fast_path(object, global_object, default)
-    }
-
-    /// Node tests `options.encoding === 'utf8' || options.encoding === 'utf-8'`.
-    #[inline(never)]
-    fn get_encoding_and_takes_utf8_fast_path(
-        object: JSValue,
-        global_object: &JSGlobalObject,
-        default: Encoding,
-    ) -> JsResult<(Encoding, bool)> {
-        let Some(value) = object.fast_get(global_object, bun_jsc::BuiltinName::Encoding)? else {
-            return Ok((default, false));
+        if will_be_async || !fast_path_takes_flag {
+            return Ok(false);
+        }
+        let Some(encoding) = options.fast_get(global_object, bun_jsc::BuiltinName::Encoding)?
+        else {
+            return Ok(false);
         };
-        if !value.is_string_literal() {
-            return Ok((Encoding::assert(value, global_object, default)?, false));
+        if !encoding.is_string_literal() {
+            return Ok(false);
         }
-        // The string is read once, for the comparison and for the encoding.
-        let spelling = value.to_js_string_view(global_object)?;
-        if spelling.eq_ascii(b"utf8") || spelling.eq_ascii(b"utf-8") {
-            return Ok((Encoding::Utf8, true));
-        }
-        if spelling.is_empty() {
-            return Ok((default, false));
-        }
-        match Encoding::from_bun_string(&spelling) {
-            Some(encoding) => Ok((encoding, false)),
-            None => Err(Encoding::throw_encoding_error(global_object, value)),
-        }
+        let spelling = encoding.to_js_string_view(global_object)?;
+        Ok(spelling.eq_ascii(b"utf8") || spelling.eq_ascii(b"utf-8"))
     }
 
     /// Consume the next positional argument as a Node.js fs `encoding` option.
@@ -4211,14 +4189,13 @@ pub(crate) mod args {
                 if arg.is_string() {
                     encoding = Encoding::assert(arg, ctx, encoding)?;
                 } else if arg.is_object() {
-                    let converts_flag;
-                    (encoding, converts_flag) = get_encoding_and_converts_open_options(
-                        arg,
-                        ctx,
-                        encoding,
-                        &path,
-                        !arguments.will_be_async,
-                    )?;
+                    encoding = get_encoding(arg, ctx, encoding)?;
+                    // `fs.promises.readFile` reads `options.flag || 'r'`. `fs.readFileSync` converts `''`, which throws.
+                    let flag_value = if arguments.will_be_async {
+                        arg.get_truthy(ctx, "flag")?
+                    } else {
+                        arg.get(ctx, "flag")?
+                    };
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
                         if let Some(signal) = AbortSignal::ref_from_js(value) {
                             signal.pending_activity_ref();
@@ -4231,7 +4208,16 @@ pub(crate) mod args {
                             ));
                         }
                     }
-                    if converts_flag && let Some(flag_) = arg.get_truthy(ctx, "flag")? {
+                    if let Some(flag_) = flag_value
+                        && converts_flag(
+                            arg,
+                            ctx,
+                            &path,
+                            arguments.will_be_async,
+                            abort_signal.as_ref(),
+                            true,
+                        )?
+                    {
                         flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
                     }
                 }
@@ -4313,14 +4299,10 @@ pub(crate) mod args {
                 if arg.is_string() {
                     encoding = Encoding::assert(arg, ctx, encoding)?;
                 } else if arg.is_object() {
-                    let converts;
-                    (encoding, converts) = get_encoding_and_converts_open_options(
-                        arg,
-                        ctx,
-                        encoding,
-                        &path,
-                        !arguments.will_be_async && data_value.is_string_literal(),
-                    )?;
+                    encoding = get_encoding(arg, ctx, encoding)?;
+                    // Node: `options.flag || default` https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2343
+                    let flag_value = arg.get(ctx, "flag")?.filter(|flag| flag.is_truthy());
+                    let mode_value = arg.get(ctx, "mode")?;
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
                         if let Some(signal) = AbortSignal::ref_from_js(value) {
                             signal.pending_activity_ref();
@@ -4342,24 +4324,24 @@ pub(crate) mod args {
                             );
                         }
                     }
-                    // For an fd, appendFile forces the flag to 'a'. It copies the options
-                    // first, which reads each of them:
-                    // https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2458-L2462
-                    let appends_to_fd = default_flag == FileSystemFlags::A
-                        && matches!(path, PathOrFileDescriptor::Fd(_));
-                    // Node: `options.flag || default`, for every target https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2343
-                    if let Some(flag_) = arg.get(ctx, "flag")?.filter(|flag| flag.is_truthy())
-                        && converts
-                        && !appends_to_fd
+                    // Node parses the mode after `flush`, for every target since v26.4.0: https://github.com/nodejs/node/blob/v26.4.0/lib/fs.js#L2839-L2841
+                    if let Some(mode_) = mode_value {
+                        mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
+                    }
+                    // appendFile forces the flag of an fd to 'a': https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2485-L2486
+                    let fast_path_takes_flag =
+                        data_value.is_string_literal() && default_flag != FileSystemFlags::A;
+                    if let Some(flag_) = flag_value
+                        && converts_flag(
+                            arg,
+                            ctx,
+                            &path,
+                            arguments.will_be_async,
+                            abort_signal.as_ref(),
+                            fast_path_takes_flag,
+                        )?
                     {
                         flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
-                    }
-                    if converts {
-                        if let Some(mode_) = arg.get(ctx, "mode")? {
-                            mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
-                        }
-                    } else if appends_to_fd {
-                        arg.get(ctx, "mode")?;
                     }
                 }
             }

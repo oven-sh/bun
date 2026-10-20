@@ -1058,520 +1058,21 @@ describe("a falsy flag option means the default flag in writeFile and appendFile
     });
   });
 
-  // The fixture prints what each writeFile and appendFile form does with each `flag` value.
-  it.skipIf(!nodeExe())("every flag value gives the same output in Node.js and Bun", async () => {
+  // The fixture prints what each readFile, writeFile and appendFile form does with each `flag` value.
+  const targets = ["path", "descriptor"];
+  it.concurrent.skipIf(!nodeExe()).each(targets)("every flag gives the same output as Node.js (%s)", async target => {
     const fixture = join(import.meta.dir, "fs-write-flag-fixture.js");
     async function run(exe: string) {
       using dir = tempDir("fs-write-flag-fixture", {});
-      await using proc = Bun.spawn({ cmd: [exe, fixture, String(dir)], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const cmd = [exe, fixture, String(dir), target];
+      await using proc = Bun.spawn({ cmd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout, stderr, exitCode };
     }
     const [bunRun, nodeRun] = await Promise.all([run(bunExe()), run(nodeExe()!)]);
-    expect(nodeRun.stdout).toContain("fs.writeFileSync(path, { flag })");
+    expect(nodeRun.stdout).toContain("fs.writeFileSync(");
     expect(bunRun.stdout).toBe(nodeRun.stdout);
     expect({ node: nodeRun.exitCode, bun: bunRun.exitCode }).toEqual({ node: 0, bun: 0 });
-  });
-});
-
-// Node converts `flag` and `mode` where it opens the file. It opens nothing for an fd or a
-// FileHandle, so every value is accepted there. The two sync UTF-8 fast paths are the
-// exception: they hand both options to C++ for any target.
-// readFileSync: https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L432-L437
-// writeFileSync: https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2398-L2411
-describe("flag and mode are converted only for a file the call opens", () => {
-  const contents = "0123456789";
-
-  const viaCallback = <T>(run: (callback: (err: NodeJS.ErrnoException | null, value?: T) => void) => void) => {
-    const { promise, resolve, reject } = Promise.withResolvers<T>();
-    run((err, value) => (err ? reject(err) : resolve(value as T)));
-    return promise;
-  };
-  const thrown = (run: () => unknown) => {
-    try {
-      run();
-      return "returns";
-    } catch (e: any) {
-      return `throws ${e.name} ${e.code}`;
-    }
-  };
-  const rejected = (promise: Promise<unknown>) =>
-    promise.then(
-      () => "resolves",
-      (e: any) => `rejects ${e.name} ${e.code}`,
-    );
-  // Opens `file` for each kind of target, runs `body`, then closes.
-  const withTarget = async <T>(kind: "fd" | "FileHandle", file: string, body: (target: any) => T | Promise<T>) => {
-    const handle = kind === "FileHandle" ? await promises.open(file, "r+") : undefined;
-    const fd = handle ? undefined : openSync(file, "r+");
-    try {
-      return await body(handle ?? fd);
-    } finally {
-      if (fd !== undefined) closeSync(fd);
-      await handle?.close();
-    }
-  };
-
-  const invalidFlags: [string, any][] = [
-    ["flag: true", true],
-    ["flag: 'bogus'", "bogus"],
-    ["flag: {}", {}],
-    ["flag: []", []],
-    ["flag: 1.5", 1.5],
-    ["flag: 2 ** 31", 2 ** 31],
-    ["flag: Symbol()", Symbol("flag")],
-    ["flag: new String('w')", new String("w")],
-  ];
-  const invalidModes: [string, any][] = [
-    ["mode: 'bogus'", "bogus"],
-    ["mode: true", true],
-    ["mode: {}", {}],
-    ["mode: -1", -1],
-    ["mode: 2 ** 32", 2 ** 32],
-    ["mode: NaN", NaN],
-    ["mode: 1.5", 1.5],
-  ];
-  const invalidWriteOptions: [string, any][] = [
-    ...invalidFlags.map(([label, flag]): [string, any] => [label, { flag }]),
-    ...invalidModes.map(([label, mode]): [string, any] => [label, { mode }]),
-    ["flag and mode with encoding 'latin1'", { encoding: "latin1", flag: "bogus", mode: "bogus" }],
-  ];
-  const forEvery = (rows: [string, any][], value: string) => Object.fromEntries(rows.map(([label]) => [label, value]));
-
-  type Writer = (target: any, data: string | Buffer, options: any) => unknown;
-  const writers: [string, "fd" | "FileHandle", Writer][] = [
-    ["fs.writeFileSync", "fd", (fd, data, options) => fs.writeFileSync(fd, data, options)],
-    ["fs.appendFileSync", "fd", (fd, data, options) => fs.appendFileSync(fd, data, options)],
-    ["fs.writeFile", "fd", (fd, data, options) => viaCallback(cb => fs.writeFile(fd, data, options, cb))],
-    ["fs.appendFile", "fd", (fd, data, options) => viaCallback(cb => fs.appendFile(fd, data, options, cb))],
-    ["util.promisify(fs.writeFile)", "fd", (fd, data, options) => promisify(fs.writeFile)(fd, data, options)],
-    ["util.promisify(fs.appendFile)", "fd", (fd, data, options) => promisify(fs.appendFile)(fd, data, options)],
-    ["fs.promises.writeFile", "FileHandle", (handle, data, options) => promises.writeFile(handle, data, options)],
-    ["fs.promises.appendFile", "FileHandle", (handle, data, options) => promises.appendFile(handle, data, options)],
-    ["FileHandle.writeFile", "FileHandle", (handle, data, options) => handle.writeFile(data, options)],
-    ["FileHandle.appendFile", "FileHandle", (handle, data, options) => handle.appendFile(data, options)],
-  ];
-
-  // The two writes land one after the other at the position of the descriptor.
-  it.each(writers)("%s writes to an fd or a FileHandle with an invalid flag or mode", async (_name, kind, write) => {
-    using dir = tempDir("fs-fd-open-options-write", {});
-    const file = join(String(dir), "f.txt");
-    const results: Record<string, string> = {};
-    for (const [label, options] of invalidWriteOptions) {
-      writeFileSync(file, contents);
-      try {
-        await withTarget(kind, file, async target => {
-          await write(target, "AB", options);
-          await write(target, Buffer.from("CD"), options);
-        });
-        results[label] = readFileSync(file, "utf8");
-      } catch (e: any) {
-        results[label] = `${e.name} ${e.code}, the file holds ${readFileSync(file, "utf8")}`;
-      }
-    }
-    expect(results).toEqual(forEvery(invalidWriteOptions, "ABCD456789"));
-  });
-
-  type Reader = (target: any, options: any) => unknown;
-  const readers: [string, "fd" | "FileHandle", Reader][] = [
-    ["fs.readFileSync", "fd", (fd, options) => fs.readFileSync(fd, options)],
-    ["fs.readFile", "fd", (fd, options) => viaCallback(cb => fs.readFile(fd, options, cb))],
-    ["util.promisify(fs.readFile)", "fd", (fd, options) => promisify(fs.readFile)(fd, options)],
-    ["fs.promises.readFile", "FileHandle", (handle, options) => promises.readFile(handle, options)],
-    ["FileHandle.readFile", "FileHandle", (handle, options) => handle.readFile(options)],
-  ];
-  // fs.readFileSync and fs.readFile reject these for a path.
-  const strictReadFlags: [string, any][] = [
-    ["flag: false", false],
-    ["flag: NaN", NaN],
-    ["flag: 0n", 0n],
-  ];
-  const invalidReadFlags = [...invalidFlags, ...strictReadFlags];
-
-  // The read starts at the position of the descriptor, after the 4 bytes read first.
-  it.each(readers)("%s reads an fd or a FileHandle with an invalid flag", async (_name, kind, read) => {
-    using dir = tempDir("fs-fd-open-options-read", { "f.txt": contents });
-    const file = join(String(dir), "f.txt");
-    const results: Record<string, string> = {};
-    for (const [label, flag] of invalidReadFlags) {
-      try {
-        results[label] = await withTarget(kind, file, async target => {
-          if (kind === "fd") readSync(target, Buffer.alloc(4), 0, 4, null);
-          else await target.read(Buffer.alloc(4), 0, 4, null);
-          return String(await read(target, { flag }));
-        });
-      } catch (e: any) {
-        results[label] = `${e.name} ${e.code}`;
-      }
-    }
-    expect(results).toEqual(forEvery(invalidReadFlags, "456789"));
-  });
-
-  // Node takes a path or a FileHandle in fs.promises. Bun also takes a numeric fd there.
-  it("fs.promises with a numeric fd and an invalid flag or mode", async () => {
-    using dir = tempDir("fs-fd-open-options-numeric", {});
-    const file = join(String(dir), "f.txt");
-    const results: Record<string, string> = {};
-    const forms: [string, (fd: any, options: any) => Promise<unknown>][] = [
-      ["fs.promises.writeFile", (fd, options) => promises.writeFile(fd, "AB", options)],
-      ["fs.promises.appendFile", (fd, options) => promises.appendFile(fd, "AB", options)],
-      ["fs.promises.readFile", (fd, options) => promises.readFile(fd, options)],
-    ];
-    for (const [name, run] of forms) {
-      for (const [label, options] of invalidWriteOptions) {
-        writeFileSync(file, contents);
-        try {
-          await withTarget("fd", file, fd => run(fd, options));
-          results[`${name} ${label}`] = readFileSync(file, "utf8");
-        } catch (e: any) {
-          results[`${name} ${label}`] = `${e.name} ${e.code}`;
-        }
-      }
-    }
-    expect(results).toEqual(
-      Object.fromEntries(
-        forms.flatMap(([name]) =>
-          invalidWriteOptions.map(([label]) => [
-            `${name} ${label}`,
-            name === "fs.promises.readFile" ? contents : "AB23456789",
-          ]),
-        ),
-      ),
-    );
-  });
-
-  it("the sync UTF-8 fast paths convert flag and mode for an fd", async () => {
-    using dir = tempDir("fs-fd-open-options-fast-path", { "f.txt": contents });
-    const file = join(String(dir), "f.txt");
-    const invalidArgValue = "throws TypeError ERR_INVALID_ARG_VALUE";
-    const invalidArgType = "throws TypeError ERR_INVALID_ARG_TYPE";
-    const outOfRange = "throws RangeError ERR_OUT_OF_RANGE";
-    await withTarget("fd", file, fd => {
-      const options = (encoding: string, rest: object): any => ({ encoding, ...rest });
-      expect({
-        "writeFileSync utf8 flag 'bogus'": thrown(() => fs.writeFileSync(fd, "x", options("utf8", { flag: "bogus" }))),
-        "writeFileSync utf-8 flag true": thrown(() => fs.writeFileSync(fd, "x", options("utf-8", { flag: true }))),
-        "writeFileSync utf8 flag 1.5": thrown(() => fs.writeFileSync(fd, "x", options("utf8", { flag: 1.5 }))),
-        "writeFileSync utf8 mode 'bogus'": thrown(() => fs.writeFileSync(fd, "x", options("utf8", { mode: "bogus" }))),
-        "writeFileSync utf-8 mode true": thrown(() => fs.writeFileSync(fd, "x", options("utf-8", { mode: true }))),
-        "writeFileSync utf8 mode -1": thrown(() => fs.writeFileSync(fd, "x", options("utf8", { mode: -1 }))),
-        "appendFileSync utf8 mode 'bogus'": thrown(() =>
-          fs.appendFileSync(fd, "x", options("utf8", { mode: "bogus" })),
-        ),
-        "appendFileSync utf-8 mode {}": thrown(() => fs.appendFileSync(fd, "x", options("utf-8", { mode: {} }))),
-        "readFileSync utf8 flag 'bogus'": thrown(() => fs.readFileSync(fd, options("utf8", { flag: "bogus" }))),
-        "readFileSync utf-8 flag false": thrown(() => fs.readFileSync(fd, options("utf-8", { flag: false }))),
-        "readFileSync utf8 flag NaN": thrown(() => fs.readFileSync(fd, options("utf8", { flag: NaN }))),
-      }).toEqual({
-        "writeFileSync utf8 flag 'bogus'": invalidArgValue,
-        "writeFileSync utf-8 flag true": invalidArgValue,
-        "writeFileSync utf8 flag 1.5": outOfRange,
-        "writeFileSync utf8 mode 'bogus'": invalidArgValue,
-        "writeFileSync utf-8 mode true": invalidArgType,
-        "writeFileSync utf8 mode -1": outOfRange,
-        "appendFileSync utf8 mode 'bogus'": invalidArgValue,
-        "appendFileSync utf-8 mode {}": invalidArgType,
-        "readFileSync utf8 flag 'bogus'": invalidArgValue,
-        "readFileSync utf-8 flag false": invalidArgValue,
-        "readFileSync utf8 flag NaN": outOfRange,
-      });
-    });
-    expect(readFileSync(file, "utf8")).toBe(contents);
-  });
-
-  it("a call outside the sync UTF-8 fast paths does not convert them", async () => {
-    using dir = tempDir("fs-fd-open-options-not-fast-path", { "f.txt": contents });
-    const file = join(String(dir), "f.txt");
-    const bogus: any = { flag: "bogus", mode: "bogus" };
-    const results = await withTarget("fd", file, async fd => ({
-      // Node forces the flag of appendFile to 'a' for an fd.
-      "appendFileSync utf8 flag": thrown(() => fs.appendFileSync(fd, "a", { encoding: "utf8", flag: bogus.flag })),
-      "writeFileSync UTF8": thrown(() => fs.writeFileSync(fd, "b", { encoding: "UTF8", ...bogus })),
-      "writeFileSync no encoding": thrown(() => fs.writeFileSync(fd, "c", bogus)),
-      "writeFileSync latin1": thrown(() => fs.writeFileSync(fd, "d", { encoding: "latin1", ...bogus })),
-      "writeFileSync utf8 Buffer": thrown(() => fs.writeFileSync(fd, Buffer.from("e"), { encoding: "utf8", ...bogus })),
-      // A String object is not string data: Node reports the data, not the flag.
-      "writeFileSync utf8 String object": thrown(() =>
-        fs.writeFileSync(fd, new String("x") as any, { encoding: "utf8", ...bogus }),
-      ),
-      "fs.writeFile utf8": await rejected(viaCallback(cb => fs.writeFile(fd, "f", { encoding: "utf8", ...bogus }, cb))),
-      "fs.appendFile utf8": await rejected(
-        viaCallback(cb => fs.appendFile(fd, "g", { encoding: "utf8", ...bogus }, cb)),
-      ),
-    }));
-    expect(results).toEqual({
-      "appendFileSync utf8 flag": "returns",
-      "writeFileSync UTF8": "returns",
-      "writeFileSync no encoding": "returns",
-      "writeFileSync latin1": "returns",
-      "writeFileSync utf8 Buffer": "returns",
-      "writeFileSync utf8 String object": "throws TypeError ERR_INVALID_ARG_TYPE",
-      "fs.writeFile utf8": "resolves",
-      "fs.appendFile utf8": "resolves",
-    });
-    expect(readFileSync(file, "utf8")).toBe("abcdefg789");
-
-    const reads = await withTarget("fd", file, async fd => ({
-      "readFileSync UTF8": thrown(() => fs.readFileSync(fd, { encoding: "UTF8" as any, flag: "bogus" })),
-      "readFileSync latin1": thrown(() => fs.readFileSync(fd, { encoding: "latin1", flag: "bogus" })),
-      "readFileSync no encoding": thrown(() => fs.readFileSync(fd, { flag: "bogus" })),
-      "fs.readFile utf8": await rejected(viaCallback(cb => fs.readFile(fd, { encoding: "utf8", flag: "bogus" }, cb))),
-    }));
-    const handleResults = await withTarget("FileHandle", file, async handle => ({
-      "fs.promises.writeFile utf8": await rejected(promises.writeFile(handle, "h", { encoding: "utf8", ...bogus })),
-      "fs.promises.appendFile utf8": await rejected(promises.appendFile(handle, "i", { encoding: "utf8", ...bogus })),
-      "fs.promises.readFile utf8": await rejected(promises.readFile(handle, { encoding: "utf8", flag: "bogus" })),
-    }));
-    expect({ ...reads, ...handleResults }).toEqual({
-      "readFileSync UTF8": "returns",
-      "readFileSync latin1": "returns",
-      "readFileSync no encoding": "returns",
-      "fs.readFile utf8": "resolves",
-      "fs.promises.writeFile utf8": "resolves",
-      "fs.promises.appendFile utf8": "resolves",
-      "fs.promises.readFile utf8": "resolves",
-    });
-    expect(readFileSync(file, "utf8")).toBe("hicdefg789");
-  });
-
-  it("an empty string mode is invalid where it is converted", async () => {
-    using dir = tempDir("fs-empty-mode", { "f.txt": contents });
-    const file = join(String(dir), "f.txt");
-    const empty: any = { mode: "" };
-    const invalidArgValue = "TypeError ERR_INVALID_ARG_VALUE";
-    const results = {
-      "fs.writeFileSync": thrown(() => fs.writeFileSync(file, "new", empty)),
-      "fs.appendFileSync": thrown(() => fs.appendFileSync(file, "+", empty)),
-      "fs.writeFile": thrown(() => fs.writeFile(file, "new", empty, () => {})),
-      "fs.appendFile": thrown(() => fs.appendFile(file, "+", empty, () => {})),
-      "fs.promises.writeFile": await rejected(promises.writeFile(file, "new", empty)),
-      "fs.promises.appendFile": await rejected(promises.appendFile(file, "+", empty)),
-      ...(await withTarget("fd", file, fd => ({
-        "fs.writeFileSync, fd, utf8": thrown(() => fs.writeFileSync(fd, "new", { encoding: "utf8", ...empty })),
-        "fs.appendFileSync, fd, utf8": thrown(() => fs.appendFileSync(fd, "+", { encoding: "utf8", ...empty })),
-      }))),
-    };
-    expect(results).toEqual({
-      "fs.writeFileSync": `throws ${invalidArgValue}`,
-      "fs.appendFileSync": `throws ${invalidArgValue}`,
-      "fs.writeFile": `throws ${invalidArgValue}`,
-      "fs.appendFile": `throws ${invalidArgValue}`,
-      "fs.promises.writeFile": `rejects ${invalidArgValue}`,
-      "fs.promises.appendFile": `rejects ${invalidArgValue}`,
-      "fs.writeFileSync, fd, utf8": `throws ${invalidArgValue}`,
-      "fs.appendFileSync, fd, utf8": `throws ${invalidArgValue}`,
-    });
-    expect(readFileSync(file, "utf8")).toBe(contents);
-
-    let message: string | undefined;
-    try {
-      fs.writeFileSync(file, "new", empty);
-    } catch (e: any) {
-      message = e.message;
-    }
-    expect(message).toBe("The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received ''");
-  });
-
-  it("a null or undefined flag or mode still means the default", async () => {
-    using dir = tempDir("fs-nullish-open-options", { "f.txt": contents });
-    const file = join(String(dir), "f.txt");
-    const results: Record<string, string> = {};
-    for (const value of [null, undefined]) {
-      const flag: any = { encoding: "utf8", flag: value };
-      const mode: any = { mode: value };
-      results[`fs.readFileSync ${value}`] = fs.readFileSync(file, flag) as any;
-      results[`fs.readFile ${value}`] = await viaCallback<string>(cb => fs.readFile(file, flag, cb as any));
-      fs.writeFileSync(file, contents, mode);
-      await viaCallback(cb => fs.writeFile(file, contents, mode, cb));
-      await promises.writeFile(file, contents, mode);
-      results[`write forms ${value}`] = readFileSync(file, "utf8");
-    }
-    expect(results).toEqual({
-      "fs.readFileSync null": contents,
-      "fs.readFile null": contents,
-      "write forms null": contents,
-      "fs.readFileSync undefined": contents,
-      "fs.readFile undefined": contents,
-      "write forms undefined": contents,
-    });
-  });
-
-  it("reads flag and mode of an fd or a FileHandle as often as Node", async () => {
-    using dir = tempDir("fs-fd-open-options-getters", { "f.txt": contents });
-    const file = join(String(dir), "f.txt");
-    let reads: Record<string, number> = {};
-    // Every option is valid, so a call that converts one still returns.
-    const counting = (encoding?: string): any => ({
-      encoding,
-      get flag() {
-        reads.flag = (reads.flag ?? 0) + 1;
-        return "r+";
-      },
-      get mode() {
-        reads.mode = (reads.mode ?? 0) + 1;
-        return 0o644;
-      },
-    });
-    const count = async (run: (options: any) => unknown, encoding?: string) => {
-      reads = {};
-      await run(counting(encoding));
-      return `flag ${reads.flag ?? 0}, mode ${reads.mode ?? 0}`;
-    };
-    const results = await withTarget("fd", file, async fd => ({
-      "fs.writeFileSync": await count(o => fs.writeFileSync(fd, "x", o)),
-      "fs.writeFileSync, Buffer, utf8": await count(o => fs.writeFileSync(fd, Buffer.from("x"), o), "utf8"),
-      "fs.writeFileSync, utf8": await count(o => fs.writeFileSync(fd, "x", o), "utf8"),
-      "fs.writeFile": await count(o => viaCallback(cb => fs.writeFile(fd, "x", o, cb))),
-      "fs.writeFile, utf8": await count(o => viaCallback(cb => fs.writeFile(fd, "x", o, cb)), "utf8"),
-      // Node copies the options of appendFile, which reads every one of them.
-      "fs.appendFileSync": await count(o => fs.appendFileSync(fd, "x", o)),
-      "fs.appendFileSync, utf8": await count(o => fs.appendFileSync(fd, "x", o), "utf8"),
-      "fs.appendFile": await count(o => viaCallback(cb => fs.appendFile(fd, "x", o, cb))),
-      "fs.readFileSync": await count(o => fs.readFileSync(fd, o)),
-      "fs.readFileSync, UTF8": await count(o => fs.readFileSync(fd, o), "UTF8"),
-      "fs.readFileSync, utf8": await count(o => fs.readFileSync(fd, o), "utf8"),
-      "fs.readFile": await count(o => viaCallback(cb => fs.readFile(fd, o, cb))),
-      "fs.readFile, utf8": await count(o => viaCallback(cb => fs.readFile(fd, o, cb)), "utf8"),
-    }));
-    const handleResults = await withTarget("FileHandle", file, async handle => ({
-      "fs.promises.writeFile": await count(o => promises.writeFile(handle, "x", o)),
-      "fs.promises.appendFile": await count(o => promises.appendFile(handle, "x", o)),
-    }));
-    expect({ ...results, ...handleResults }).toEqual({
-      "fs.writeFileSync": "flag 1, mode 0",
-      "fs.writeFileSync, Buffer, utf8": "flag 1, mode 0",
-      "fs.writeFileSync, utf8": "flag 1, mode 1",
-      "fs.writeFile": "flag 1, mode 0",
-      "fs.writeFile, utf8": "flag 1, mode 0",
-      "fs.appendFileSync": "flag 1, mode 1",
-      "fs.appendFileSync, utf8": "flag 1, mode 1",
-      "fs.appendFile": "flag 1, mode 1",
-      "fs.readFileSync": "flag 0, mode 0",
-      "fs.readFileSync, UTF8": "flag 0, mode 0",
-      "fs.readFileSync, utf8": "flag 1, mode 0",
-      "fs.readFile": "flag 0, mode 0",
-      "fs.readFile, utf8": "flag 0, mode 0",
-      "fs.promises.writeFile": "flag 1, mode 0",
-      "fs.promises.appendFile": "flag 1, mode 1",
-    });
-  });
-
-  it("a descriptor that is not open, an aborted signal and the other arguments are reported for an fd", async () => {
-    using dir = tempDir("fs-fd-open-options-precedence", { "f.txt": contents });
-    const file = join(String(dir), "f.txt");
-    const bogus: any = { flag: "bogus", mode: "bogus" };
-    const notOpen = 2147483647;
-    const fdResults = await withTarget("fd", file, async fd => ({
-      "not open, fs.writeFileSync": thrown(() => fs.writeFileSync(notOpen, Buffer.from("x"), bogus)),
-      "not open, fs.readFileSync": thrown(() => fs.readFileSync(notOpen, bogus)),
-      "not open, fs.writeFile": await rejected(viaCallback(cb => fs.writeFile(notOpen, "x", bogus, cb))),
-      "aborted, fs.writeFile": await rejected(
-        viaCallback(cb => fs.writeFile(fd, "x", { ...bogus, signal: AbortSignal.abort() }, cb)),
-      ),
-      "aborted, fs.appendFile": await rejected(
-        viaCallback(cb => fs.appendFile(fd, "x", { ...bogus, signal: AbortSignal.abort() }, cb)),
-      ),
-      "data, fs.writeFileSync": thrown(() => fs.writeFileSync(fd, 123 as any, bogus)),
-      "data, fs.appendFileSync, utf8": thrown(() => fs.appendFileSync(fd, 123 as any, { encoding: "utf8", ...bogus })),
-      "flush, fs.writeFileSync": thrown(() => fs.writeFileSync(fd, "x", { ...bogus, flush: "yes" })),
-      "signal, fs.writeFileSync": thrown(() => fs.writeFileSync(fd, "x", { ...bogus, signal: "nope" })),
-      "signal, fs.readFileSync": thrown(() => fs.readFileSync(fd, { ...bogus, signal: "nope" })),
-    }));
-    const handleResults = await withTarget("FileHandle", file, async handle => ({
-      "aborted, fs.promises.writeFile": await rejected(
-        promises.writeFile(handle, "x", { ...bogus, signal: AbortSignal.abort() }),
-      ),
-      "aborted, fs.promises.readFile": await rejected(
-        promises.readFile(handle, { ...bogus, signal: AbortSignal.abort() }),
-      ),
-    }));
-    expect({ ...fdResults, ...handleResults }).toEqual({
-      "not open, fs.writeFileSync": "throws Error EBADF",
-      "not open, fs.readFileSync": "throws Error EBADF",
-      "not open, fs.writeFile": "rejects Error EBADF",
-      "aborted, fs.writeFile": "rejects AbortError ABORT_ERR",
-      "aborted, fs.appendFile": "rejects AbortError ABORT_ERR",
-      "data, fs.writeFileSync": "throws TypeError ERR_INVALID_ARG_TYPE",
-      "data, fs.appendFileSync, utf8": "throws TypeError ERR_INVALID_ARG_TYPE",
-      "flush, fs.writeFileSync": "throws TypeError ERR_INVALID_ARG_TYPE",
-      "signal, fs.writeFileSync": "throws TypeError ERR_INVALID_ARG_TYPE",
-      "signal, fs.readFileSync": "throws TypeError ERR_INVALID_ARG_TYPE",
-      "aborted, fs.promises.writeFile": "rejects AbortError ABORT_ERR",
-      "aborted, fs.promises.readFile": "rejects AbortError ABORT_ERR",
-    });
-    expect(readFileSync(file, "utf8")).toBe(contents);
-  });
-
-  it("the sync UTF-8 fast paths report signal, flush, flag and mode in this order", async () => {
-    using dir = tempDir("fs-fd-open-options-order", { "f.txt": contents });
-    const file = join(String(dir), "f.txt");
-    const reported = (run: () => unknown) => {
-      try {
-        run();
-        return "returns";
-      } catch (e: any) {
-        return `${e.code}${e.code === "ERR_INVALID_ARG_VALUE" ? `: ${e.message}` : ""}`;
-      }
-    };
-    const utf8 = (rest: object): any => ({ encoding: "utf8", ...rest });
-    const results = await withTarget("fd", file, fd => ({
-      "write: flush, flag": reported(() => fs.writeFileSync(fd, "x", utf8({ flag: "bogus", flush: "yes" }))),
-      "write: signal, flag": reported(() => fs.writeFileSync(fd, "x", utf8({ flag: "bogus", signal: "nope" }))),
-      "write: flush, mode": reported(() => fs.writeFileSync(fd, "x", utf8({ mode: "bogus", flush: "yes" }))),
-      "write: flag, mode": reported(() => fs.writeFileSync(fd, "x", utf8({ flag: "bogus", mode: "bogus" }))),
-      // A sync call does not look at the state of the signal.
-      "write: aborted signal, flag": reported(() =>
-        fs.writeFileSync(fd, "x", utf8({ flag: "bogus", signal: AbortSignal.abort() })),
-      ),
-      "append: flush, mode": reported(() => fs.appendFileSync(fd, "x", utf8({ mode: "bogus", flush: "yes" }))),
-      "append: flag, mode": reported(() => fs.appendFileSync(fd, "x", utf8({ flag: "bogus", mode: "bogus" }))),
-      "read: signal, flag": reported(() => fs.readFileSync(fd, utf8({ flag: "bogus", signal: "nope" }))),
-    }));
-    const flags = "ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received 'bogus'";
-    const mode =
-      "ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received 'bogus'";
-    expect(results).toEqual({
-      "write: flush, flag": "ERR_INVALID_ARG_TYPE",
-      "write: signal, flag": "ERR_INVALID_ARG_TYPE",
-      "write: flush, mode": "ERR_INVALID_ARG_TYPE",
-      "write: flag, mode": flags,
-      "write: aborted signal, flag": flags,
-      "append: flush, mode": "ERR_INVALID_ARG_TYPE",
-      "append: flag, mode": mode,
-      "read: signal, flag": "ERR_INVALID_ARG_TYPE",
-    });
-    expect(readFileSync(file, "utf8")).toBe(contents);
-  });
-
-  // Node validates the signal and `flush` before it opens the file.
-  it("a path target reports signal and flush before flag and mode", async () => {
-    using dir = tempDir("fs-path-open-options-order", { "f.txt": contents });
-    const file = join(String(dir), "f.txt");
-    const flush: any = { flag: "bogus", mode: "bogus", flush: "yes" };
-    const signal: any = { flag: "bogus", mode: "bogus", signal: "nope" };
-    const invalidArgType = "TypeError ERR_INVALID_ARG_TYPE";
-    expect({
-      "fs.writeFileSync, flush": thrown(() => fs.writeFileSync(file, "x", flush)),
-      "fs.writeFileSync, signal": thrown(() => fs.writeFileSync(file, "x", signal)),
-      "fs.appendFileSync, flush": thrown(() => fs.appendFileSync(file, "x", flush)),
-      "fs.writeFile, flush": thrown(() => fs.writeFile(file, "x", flush, () => {})),
-      "fs.appendFile, signal": thrown(() => fs.appendFile(file, "x", signal, () => {})),
-      "fs.promises.writeFile, flush": await rejected(promises.writeFile(file, "x", flush)),
-      "fs.promises.appendFile, signal": await rejected(promises.appendFile(file, "x", signal)),
-      "fs.readFileSync, signal": thrown(() => fs.readFileSync(file, signal)),
-      "fs.readFile, signal": thrown(() => fs.readFile(file, signal, () => {})),
-    }).toEqual({
-      "fs.writeFileSync, flush": `throws ${invalidArgType}`,
-      "fs.writeFileSync, signal": `throws ${invalidArgType}`,
-      "fs.appendFileSync, flush": `throws ${invalidArgType}`,
-      "fs.writeFile, flush": `throws ${invalidArgType}`,
-      "fs.appendFile, signal": `throws ${invalidArgType}`,
-      "fs.promises.writeFile, flush": `rejects ${invalidArgType}`,
-      "fs.promises.appendFile, signal": `rejects ${invalidArgType}`,
-      "fs.readFileSync, signal": `throws ${invalidArgType}`,
-      "fs.readFile, signal": `throws ${invalidArgType}`,
-    });
-    expect(readFileSync(file, "utf8")).toBe(contents);
   });
 });
 
@@ -3836,6 +3337,91 @@ describe("open/mkdir mode string validation matches node", () => {
     mkdirSync(wrapped, new String("700") as any);
     mkdirSync(plain);
     expect(statSync(wrapped).mode).toBe(statSync(plain).mode);
+  });
+});
+
+// Node parses `options.mode` at the top of writeFile and appendFile since v26.4.0, so for an fd
+// and a FileHandle too. Node v26.3.0 parses it only where it opens the file.
+// https://github.com/nodejs/node/blob/v26.4.0/lib/fs.js#L2841
+describe("writeFile and appendFile parse options.mode for every target", () => {
+  const thrown = (run: () => unknown) => {
+    try {
+      run();
+      return "returns";
+    } catch (e: any) {
+      return `throws ${e.name} ${e.code}`;
+    }
+  };
+  // What the call threw, or what the callback received.
+  const viaCallback = (run: (callback: (err: NodeJS.ErrnoException | null) => void) => void) => {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    try {
+      run(err => resolve(err ? `calls back with ${err.name} ${err.code}` : "calls back"));
+    } catch (e: any) {
+      resolve(`throws ${e.name} ${e.code}`);
+    }
+    return promise;
+  };
+  const rejected = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "resolves",
+      (e: any) => `rejects ${e.name} ${e.code}`,
+    );
+
+  it.each(["a path", "an fd or a FileHandle"])("an empty mode string is invalid for %s", async target => {
+    using dir = tempDir("fs-write-mode-empty", { "f.txt": "old" });
+    const file = join(String(dir), "f.txt");
+    const fd = target === "a path" ? undefined : openSync(file, "r+");
+    const handle = target === "a path" ? undefined : await promises.open(file, "r+");
+    const options: any = { mode: "" };
+    try {
+      expect({
+        "fs.writeFileSync": thrown(() => fs.writeFileSync(fd ?? file, "new", options)),
+        "fs.appendFileSync": thrown(() => fs.appendFileSync(fd ?? file, "new", options)),
+        "fs.writeFile": await viaCallback(cb => fs.writeFile(fd ?? file, "new", options, cb)),
+        "fs.appendFile": await viaCallback(cb => fs.appendFile(fd ?? file, "new", options, cb)),
+        "fs.promises.writeFile": await rejected(promises.writeFile(handle ?? file, "new", options)),
+        "fs.promises.appendFile": await rejected(promises.appendFile(handle ?? file, "new", options)),
+      }).toEqual({
+        "fs.writeFileSync": "throws TypeError ERR_INVALID_ARG_VALUE",
+        "fs.appendFileSync": "throws TypeError ERR_INVALID_ARG_VALUE",
+        "fs.writeFile": "throws TypeError ERR_INVALID_ARG_VALUE",
+        "fs.appendFile": "throws TypeError ERR_INVALID_ARG_VALUE",
+        "fs.promises.writeFile": "rejects TypeError ERR_INVALID_ARG_VALUE",
+        "fs.promises.appendFile": "rejects TypeError ERR_INVALID_ARG_VALUE",
+      });
+    } finally {
+      if (fd !== undefined) closeSync(fd);
+      await handle?.close();
+    }
+    expect(readFileSync(file, "utf8")).toBe("old");
+  });
+
+  it("a null or undefined mode is the default mode", () => {
+    using dir = tempDir("fs-write-mode-nullish", {});
+    const file = join(String(dir), "f.txt");
+    fs.writeFileSync(file, "new", { mode: null as any });
+    fs.appendFileSync(file, "+", { mode: undefined });
+    expect(readFileSync(file, "utf8")).toBe("new+");
+  });
+
+  it.each(["", "bogus"])("an invalid signal or flush is reported before the mode %p", async mode => {
+    using dir = tempDir("fs-write-mode-order", { "f.txt": "old" });
+    const file = join(String(dir), "f.txt");
+    const signal: any = "not a signal";
+    const flush: any = "yes";
+    expect({
+      "fs.writeFileSync, signal": thrown(() => fs.writeFileSync(file, "new", { mode, signal })),
+      "fs.appendFileSync, signal": thrown(() => fs.appendFileSync(file, "new", { mode, signal } as any)),
+      "fs.writeFileSync, flush": thrown(() => fs.writeFileSync(file, "new", { mode, flush })),
+      "fs.writeFile, flush": await viaCallback(cb => fs.writeFile(file, "new", { mode, flush }, cb)),
+    }).toEqual({
+      "fs.writeFileSync, signal": "throws TypeError ERR_INVALID_ARG_TYPE",
+      "fs.appendFileSync, signal": "throws TypeError ERR_INVALID_ARG_TYPE",
+      "fs.writeFileSync, flush": "throws TypeError ERR_INVALID_ARG_TYPE",
+      "fs.writeFile, flush": "throws TypeError ERR_INVALID_ARG_TYPE",
+    });
+    expect(readFileSync(file, "utf8")).toBe("old");
   });
 });
 

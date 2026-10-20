@@ -149,6 +149,42 @@ devTest("importing a directory before it is created", {
     await c.expectMessage("value: 456");
   },
 });
+// A dev server asks the resolver for "react" when it starts, to configure Fast
+// Refresh. In a project without React that lookup misses, and the resolver kept
+// the miss for the life of the process: React installed while the server runs
+// stayed `Could not resolve: "react"` until a restart.
+devTest("importing react after it is installed while the server runs", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      console.log('value: none');
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("value: none");
+
+    // The server does not watch these paths, so there is no reload to wait for.
+    await Bun.write(
+      dev.join("node_modules/react/package.json"),
+      JSON.stringify({ name: "react", version: "0.0.0", main: "index.js" }),
+    );
+    await Bun.write(dev.join("node_modules/react/index.js"), `module.exports = { marker: "installed" };`);
+
+    await dev.write(
+      "index.ts",
+      `
+        import react from "react";
+        console.log('value: ' + react.marker);
+      `,
+    );
+    await c.expectMessage("value: installed");
+  },
+});
 devTest("default export same-scope handling", {
   files: {
     "index.html": emptyHtmlFile({

@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir, tempDirWithFiles } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -679,6 +679,7 @@ describe.concurrent("bun pm view (local registry)", () => {
   const shasum = "0123456789abcdef0123456789abcdef01234567";
   const byPublishOrder = (name: string, order: string[]) =>
     Object.fromEntries(order.map(v => [v, { name, version: v, dist: { tarball: tgz(name, v), shasum } }]));
+  const wide = isDebug || isASAN ? 16_000 : 250_000;
   const packuments: Record<string, unknown> = {
     "zz-basic": {
       name: "zz-basic",
@@ -760,6 +761,18 @@ describe.concurrent("bun pm view (local registry)", () => {
       name: "zz-many",
       "dist-tags": { latest: "10.0.0" },
       versions: byPublishOrder("zz-many", ["0.0.0", "1.0.0", "1.0.1", "10.0.0", "2.0.0", "9.0.0", "2.0.0-beta.1"]),
+    },
+    "zz-wide": {
+      name: "zz-wide",
+      "dist-tags": { latest: "1.0.0" },
+      versions: {
+        "1.0.0": {
+          name: "zz-wide",
+          version: "1.0.0",
+          maintainers: Array(wide).fill({ name: "m" }),
+          dist: { tarball: tgz("zz-wide", "1.0.0"), shasum },
+        },
+      },
     },
   };
 
@@ -860,6 +873,21 @@ describe.concurrent("bun pm view (local registry)", () => {
     // There's nothing to expand and only one field left, so it's printed bare.
     expect(await view(["zz-conflict", "maintainers.name", "keywords"])).toEqual({
       out: `["verkw"]\n`,
+      err: "",
+      code: 0,
+    });
+  });
+
+  // The time was quadratic: 108 s for these 250,000 maintainers in a release build, where it now takes 0.4 s.
+  test("a property after a large array prints one member per element with --json", async () => {
+    // `join` writes the indexes: a callback for each element is slow in a debug build.
+    const indexes = Array.from(Array(wide).keys());
+    const expected = `{\n  "maintainers[${indexes.join('].name": "m",\n  "maintainers[')}].name": "m"\n}\n`;
+    const { out, err, code } = await view(["zz-wide", "maintainers.name", "--json"]);
+    // `toBe` on the output would print megabytes when it fails.
+    expect({ same: out === expected, length: out.length, err, code }).toEqual({
+      same: true,
+      length: expected.length,
       err: "",
       code: 0,
     });

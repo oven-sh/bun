@@ -396,10 +396,13 @@ pub(crate) fn view(
                 }
             }
             (labels, values) if json_output => {
-                let mut object = ast::Expr::init(ast::E::Object::default(), bun_ast::Loc::EMPTY);
+                // `found` holds each label once, so the object needs no lookup.
+                let mut object = ast::E::Object::default();
                 for (label, value) in labels.iter().zip(values) {
-                    object.set(&bump, label, *value)?;
+                    let label = ast::Expr::init(ast::E::String::init(label), bun_ast::Loc::EMPTY);
+                    object.append_property(label, *value);
                 }
+                let object = ast::Expr::init(object, bun_ast::Loc::EMPTY);
                 Output::print(format_args!(
                     "{}\n",
                     BStr::new(&to_json_text(object, source)?)

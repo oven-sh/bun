@@ -1411,9 +1411,7 @@ extern "C" bool Bun__promises__isErrorLike(JSC::JSGlobalObject* globalObject, JS
     auto object = obj.getObject();
     if (!object)
         return false;
-    // In Node every error has a `stack` of its own. Here one that was made with no script on the stack (by a
-    // promise job, or by what completes native work) has none, nor has a BuildMessage or a DOMException that script
-    // made, and ResolveMessage has its on the prototype. An error whose `stack` was deleted counts too: Node wraps it.
+    // In V8 every error has a `stack` of its own. Here an error that was made with no script on the stack has none.
     if (object->isErrorInstance() || object->inherits<WebCore::JSDOMException>() || object->inherits<WebCore::JSResolveMessage>() || object->inherits<WebCore::JSBuildMessage>())
         return true;
 

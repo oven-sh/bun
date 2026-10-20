@@ -228,6 +228,28 @@ pub(crate) fn serve_static_env(global: &JSGlobalObject, _frame: &CallFrame) -> J
     bun_jsc::bun_string_jsc::create_utf8_for_js(global, &value)
 }
 
+/// `serveStaticDefine()`: the `define` of `[serve.static]` in bunfig.toml, as an object.
+pub(crate) fn serve_static_define(
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let options = &global
+        .bun_vm()
+        .as_mut()
+        .transpiler
+        .options
+        .transform_options;
+    let Some(define) = &options.serve_define else {
+        return Ok(JSValue::create_empty_object(global, 0));
+    };
+    let object = JSValue::create_empty_object(global, define.keys.len());
+    for (key, value) in define.keys.iter().zip(define.values.iter()) {
+        let value = bun_jsc::bun_string_jsc::create_utf8_for_js(global, value)?;
+        object.put(global, bun_core::String::clone_utf8(key), value);
+    }
+    Ok(object)
+}
+
 /// `productionServerCode()`: the source of `src/runtime/bake/production/server.ts`, which `bun bake
 /// build` bundles into `dist/server.js`.
 pub(crate) fn production_server_code(

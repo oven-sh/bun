@@ -28,10 +28,10 @@ async function get(url: string, path: string) {
   return `${res.status} ${await res.text()}`;
 }
 
-function spawnBake(dir: string, args: string[]) {
+function spawnBake(dir: string, args: string[], extraEnv: Record<string, string> = {}) {
   return Bun.spawn({
     cmd: [bunExe(), ...args],
-    env,
+    env: { ...env, ...extraEnv },
     cwd: dir,
     // Some fixtures catch SIGTERM, so the cleanup of `await using` would wait for an exit that never comes.
     killSignal: "SIGKILL",
@@ -1593,8 +1593,8 @@ test.concurrent("bun bake build builds the pages and app/server.ts into dist/ser
   expect(browserCode).not.toContain("getServerSideProps");
 });
 
-async function buildApp(dir: string, args: string[] = []) {
-  await using build = spawnBake(dir, ["bake", "build", ...args]);
+async function buildApp(dir: string, args: string[] = [], extraEnv: Record<string, string> = {}) {
+  await using build = spawnBake(dir, ["bake", "build", ...args], extraEnv);
   const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
   return { stdout, stderr, exitCode };
 }
@@ -1751,6 +1751,20 @@ test.concurrent("bun bake build only removes a folder that holds a build", async
   expect((await buildApp(root)).exitCode).toBe(0);
   expect(existsSync(join(root, "dist/stale.txt"))).toBe(false);
   expect(existsSync(join(root, "dist/server.js"))).toBe(true);
+});
+
+test.concurrent("bun bake build refuses an outdir that holds a project in a folder named ..name", async () => {
+  using dir = tempDir("bake-build-dotdot", {
+    ".bun-bake-build": "",
+    "..apps/site/app/server.js": `export default { routes: { "/api": () => new Response("api") } };`,
+  });
+  const root = String(dir);
+  const project = join(root, "..apps/site");
+
+  const { stderr, exitCode } = await buildApp(project, ["--outdir", root]);
+  expect(stderr).toContain("holds the project");
+  expect(existsSync(join(project, "app/server.js"))).toBe(true);
+  expect(exitCode).toBe(1);
 });
 
 test.concurrent("bun bake build renders a kept page once for requests at the same time, and not for HEAD", async () => {
@@ -2350,20 +2364,39 @@ const htmlFiles = {
   ".env": `PUBLIC_NAME=from-env\n`,
 };
 
-test.concurrent("bun bake build gives the browser the values of .env.production, not .env.development", async () => {
-  using dir = tempDir("bake-build-env-files", {
-    ...htmlFiles,
-    ".env.development": `PUBLIC_NAME=from-development\n`,
-    ".env.production": `PUBLIC_NAME=from-production\n`,
+test.concurrent.each([{}, { BUN_ENV: "development" }])(
+  "bun bake build gives the browser the values of .env.production, not .env.development, with %j",
+  async extraEnv => {
+    using dir = tempDir("bake-build-env-files", {
+      ...htmlFiles,
+      ".env.development": `PUBLIC_NAME=from-development\n`,
+      ".env.production": `PUBLIC_NAME=from-production\n`,
+    });
+    expect((await buildApp(String(dir), [], extraEnv)).exitCode).toBe(0);
+    const { proc, url } = await startBuild(String(dir));
+    await using _ = proc;
+
+    const [, script] = (await get(url, "/")).match(/<script type="module"[^>]* src="([^"]+)"/)!;
+    const code = await get(url, script);
+    expect(code).toContain("from-production");
+    expect(code).not.toContain("from-development");
+  },
+);
+
+test.concurrent("bun bake build gives pages and .html scripts the define of [serve.static]", async () => {
+  using dir = tempDir("bake-build-define", {
+    "bunfig.toml": `[serve.static]\ndefine = { "DEFINED_NAME" = '"from-bunfig"' }\n`,
+    "app/pages/index.html": `<!doctype html><html><body><script type="module" src="./page.ts"></script></body></html>`,
+    "app/pages/page.ts": `globalThis.seen = DEFINED_NAME;`,
+    "app/server.ts": `export default { routes: { "/define": () => new Response(DEFINED_NAME) } };`,
   });
   expect((await buildApp(String(dir))).exitCode).toBe(0);
   const { proc, url } = await startBuild(String(dir));
   await using _ = proc;
 
+  expect(await get(url, "/define")).toBe("200 from-bunfig");
   const [, script] = (await get(url, "/")).match(/<script type="module"[^>]* src="([^"]+)"/)!;
-  const code = await get(url, script);
-  expect(code).toContain("from-production");
-  expect(code).not.toContain("from-development");
+  expect(await get(url, script)).toContain("from-bunfig");
 });
 
 test.concurrent("bun bake build does not keep a response with Vary or Set-Cookie", async () => {

@@ -16,6 +16,7 @@ const ArrayPrototypeToReversed = Array.prototype.toReversed;
 
 const buildFramework = $newRustFunction("bake/config/plugins.rs", "buildFramework", 1);
 const serveStaticEnv = $newRustFunction("bake/config/plugins.rs", "serveStaticEnv", 0);
+const serveStaticDefine = $newRustFunction("bake/config/plugins.rs", "serveStaticDefine", 0);
 const serveStaticPlugins = $newRustFunction("bake/config/plugins.rs", "serveStaticPlugins", 0);
 const productionServerCode = $newRustFunction("bake/config/plugins.rs", "productionServerCode", 0);
 const { FrameworkRouter } = $rust("FrameworkRouter.rs", "JSFrameworkRouter.getBindings") as {
@@ -58,7 +59,8 @@ const buildMarker = ".bun-bake-build";
 /** Empties `outdir`, which must not hold anything but a build, and marks it as a build. */
 function prepareOutdir(outdir: string, cwd: string, h: Helpers) {
   const fromOutdir = path.relative(outdir, cwd);
-  if (fromOutdir === "" || (!fromOutdir.startsWith("..") && !path.isAbsolute(fromOutdir))) {
+  const outside = fromOutdir === ".." || fromOutdir.startsWith(".." + path.sep) || path.isAbsolute(fromOutdir);
+  if (!outside) {
     throw new h.BakeError(`--outdir "${outdir}" holds the project. Pick another --outdir.`, false);
   }
   const stat = fs.statSync(outdir, { throwIfNoEntry: false });
@@ -332,6 +334,7 @@ async function build(h: Helpers) {
   const plugins = [bakePlugin, ...(await loadServeStaticPlugins(h)), ...config.plugins];
   // As in `bun bake`, which sets these at src/runtime/bake/config/transpiler.rs.
   const defines = (ssr: boolean) => ({
+    ...serveStaticDefine(),
     "process.env.NODE_ENV": '"production"',
     "import.meta.env.DEV": "false",
     "import.meta.env.PROD": "true",

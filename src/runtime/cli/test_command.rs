@@ -3055,6 +3055,14 @@ impl TestCommand {
                 drop(buntest_strong);
             }
 
+            // An exception still pending here would fail the load of the next file.
+            if global.has_exception() {
+                global.clear_termination_exception();
+                if global.has_exception() {
+                    let _ = bun_jsc::task::report_error_or_terminate(global, jsc::JsError::Thrown);
+                }
+            }
+
             let _ = vm.global().handle_rejected_promises();
 
             if Output::is_github_action() && reporter.worker_ipc_file_idx.is_none() {

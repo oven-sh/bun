@@ -1417,6 +1417,8 @@ pub enum Layers {
         path: bun_fs::Path<'static>,
         conditions_len: u32,
     },
+    /// The names of the "@layer" statements of a file ahead of its first "@import".
+    PreImport(bun_ptr::BackRef<Vec<bun_css::LayerName>>),
 }
 
 impl Layers {
@@ -1424,7 +1426,7 @@ impl Layers {
     pub(crate) fn inner(&self) -> &Vec<bun_css::LayerName> {
         const NONE: &Vec<bun_css::LayerName> = &Vec::new();
         match self {
-            Layers::Borrowed(p) => p.get(),
+            Layers::Borrowed(p) | Layers::PreImport(p) => p.get(),
             Layers::Owned(b) => b,
             Layers::Masked { .. } => NONE,
         }
@@ -1454,12 +1456,12 @@ impl Layers {
     /// If borrowed, deep-clone into an owned
     /// list and return `&mut` to it; if already owned, return as-is.
     pub(crate) fn to_owned(&mut self) -> &mut Vec<bun_css::LayerName> {
-        if let Layers::Borrowed(p) = *self {
+        if let Layers::Borrowed(p) | Layers::PreImport(p) = *self {
             *self = Layers::Owned(p.deep_clone_with(|l| l.clone()));
         }
         match self {
             Layers::Owned(b) => b,
-            Layers::Borrowed(_) | Layers::Masked { .. } => unreachable!(),
+            Layers::Borrowed(_) | Layers::Masked { .. } | Layers::PreImport(_) => unreachable!(),
         }
     }
 }
@@ -1480,6 +1482,14 @@ impl CssImportOrder {
             }
             _ => false,
         }
+    }
+
+    /// Whether an "@import ... layer;" wraps this entry. Below one, the import order keeps no layer list.
+    pub(crate) fn has_anonymous_layer(&self) -> bool {
+        self.conditions
+            .slice()
+            .iter()
+            .any(|c| c.has_anonymous_layer())
     }
 
     pub(crate) fn hash<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {

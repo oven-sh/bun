@@ -193,6 +193,30 @@ devTest("asset referenced in css", {
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun2);
   },
 });
+devTest("css @layer statement ahead of @import keeps its place", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `<div class="box">hello</div>`,
+    }),
+    // Layer order in the source: a, b. The green rule is in the last layer.
+    "styles.css": `
+      @layer a, b;
+      @import "./b.css" layer(b);
+      @import "./a.css" layer(a);
+    `,
+    "a.css": `.box { color: red }`,
+    "b.css": `.box { color: green }`,
+  },
+  async test(dev) {
+    const stylesheetHref = (await (await dev.fetch("/")).text()).match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)![1];
+    const stylesheet = await (await dev.fetch(stylesheetHref)).text();
+    // The client of this harness does not order cascade layers, so read the stylesheet.
+    expect(stylesheet.replace(/\s+/g, "")).toBe(
+      "@layera,b;/*b.css*/@layerb{.box{color:green;}}/*a.css*/@layera{.box{color:red;}}/*styles.css*/",
+    );
+  },
+});
 devTest("syntax error crash", {
   files: {
     "styles.css": `

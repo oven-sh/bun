@@ -372,12 +372,30 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         //
                         // Regression: #28914
                         let original_rules = ast.rules.v.as_slice();
+                        // A `Layers::PreImport` entry prints the statements that hold these names.
+                        let mut listed_names: usize = if entry.has_anonymous_layer() {
+                            0
+                        } else {
+                            ast.layers_pre_import.len() as usize
+                        };
+                        let mut listed_statements: usize = 0;
                         let mut layer_count: usize = 0;
                         let mut prefix_end: usize = original_rules.len();
                         'prefix_scan: for (idx, rule) in original_rules.iter().enumerate() {
                             match rule {
                                 BundlerCssRule::Import(_) | BundlerCssRule::Ignored => {}
-                                BundlerCssRule::LayerStatement(_) => layer_count += 1,
+                                BundlerCssRule::LayerStatement(statement) => {
+                                    match listed_names.checked_sub(statement.names.len() as usize) {
+                                        Some(rest) if listed_names > 0 => {
+                                            listed_names = rest;
+                                            listed_statements += 1;
+                                        }
+                                        _ => {
+                                            listed_names = 0;
+                                            layer_count += 1;
+                                        }
+                                    }
+                                }
                                 _ => {
                                     prefix_end = idx;
                                     break 'prefix_scan;
@@ -401,6 +419,10 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                 );
                             for rule in &original_rules[0..prefix_end] {
                                 if matches!(rule, BundlerCssRule::LayerStatement(_)) {
+                                    if listed_statements > 0 {
+                                        listed_statements -= 1;
+                                        continue;
+                                    }
                                     // SAFETY: bitwise duplicate of a rule. The copy goes into
                                     // an `arena_rule_list` slab installed in `css_chunk.asts[i]`,
                                     // whose elements never run `Drop` (see `arena_rule_list` /

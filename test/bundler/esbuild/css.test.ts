@@ -2315,6 +2315,38 @@ c {
       },
       out: String.raw`@import "https://example.com/first.css" layer(first);@import "data:text/css,@import \"https://example.com/x.css\" layer;" layer(a);@import "https://example.com/b.css" layer(b);@import "data:text/css,@import \"https://example.com/x.css\" layer;" layer(a);@layer a;`,
     },
+    // The masked import of "t2.css" declares "x.y" where the first import of "t1.css" declares "x", so each URL prints once.
+    LayeredInsideDuplicateLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/t1.css" layer(x);
+          @import "./one.css" layer(x);
+          @import "https://example.com/t1.css" layer(x);
+          @import "./two.css" layer(x);
+        `,
+        "/one.css": /* css */ `
+          @import "https://example.com/t2.css" layer(y);
+          .one { color: red }
+        `,
+        "/two.css": /* css */ `
+          @import "https://example.com/t2.css" layer(y);
+          .two { color: red }
+        `,
+      },
+      out: String.raw`@import "https://example.com/t1.css" layer(x);@import "data:text/css,@import \"https://example.com/t2.css\" layer(y);" layer(x);@layer x{.one{color:red}}@layer x{.two{color:red}}`,
+    },
+    // Limit: the source declares layer "a" first. The import with no conditions covers the masked one.
+    LayeredAfterPlainImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/first.css";
+          @import "https://example.com/a.css" layer(a);
+          @import "https://example.com/b.css" layer(b);
+          @import "https://example.com/a.css" layer(a);
+        `,
+      },
+      out: `@import "https://example.com/first.css";@import "https://example.com/b.css" layer(b);@import "https://example.com/a.css" layer(a);`,
+    },
   };
 
   // The CSS parser rejects an "@import" that comes after any other rule.
@@ -2373,6 +2405,1192 @@ c {
           `@import "https://example.com/a.css" layer(a) print;@import "https://example.com/b.css" layer(b);@import "https://example.com/a.css" layer(a) print;.one{color:red}.two{color:red}\n`,
         );
       await expectValidImports(api.join("out/entry.css"));
+    },
+  });
+
+  // A cascade layer gets its priority where its name first appears. Two places in
+  // the source can be first and need care in a bundle: an "@layer" statement ahead
+  // of the "@import" rules of a file, and the earlier copy of a duplicate "@import".
+  // Where a case has a green rule, that rule wins in the source.
+  // `layers` is the order in which the bundle first declares its named layers. It is the
+  // order of the source, except in `layerOrderLimits`.
+  type LayerOrderCase = { files: Record<string, string>; out: string; layers?: string };
+
+  // The named cascade layers of a bundle in the order of their first declaration. Each condition counts as true.
+  function layerOrderOf(css: string, parent = "", order: string[] = []): string[] {
+    const declare = (name: string) => {
+      const parts = (parent ? parent + "." : "") + name.trim();
+      for (let end = parts.indexOf("."); ; end = parts.indexOf(".", end + 1)) {
+        const path = end < 0 ? parts : parts.slice(0, end);
+        if (!order.includes(path)) order.push(path);
+        if (end < 0) return parts;
+      }
+    };
+    const string = /"(?:[^"\\]|\\.)*"/y;
+    for (let i = 0; i < css.length;) {
+      const start = i;
+      while (i < css.length && css[i] !== ";" && css[i] !== "{") {
+        string.lastIndex = i;
+        i += string.exec(css)?.[0].length ?? 1;
+      }
+      const prelude = css.slice(start, i).trim();
+      let block: string | undefined;
+      if (css[i++] === "{") {
+        const open = i;
+        for (let depth = 1; depth > 0; i++) depth += css[i] === "{" ? 1 : css[i] === "}" ? -1 : 0;
+        block = css.slice(open, i - 1);
+      }
+      const layer = /^@layer\b(.*)$/s.exec(prelude)?.[1].trim();
+      if (prelude.startsWith("@import")) {
+        const [, url, conditions] = /^@import\s*("(?:[^"\\]|\\.)*")(.*)$/s.exec(prelude)!;
+        if (/\blayer\b(?!\()/.test(conditions)) continue;
+        const named = /\blayer\(([^)]*)\)/.exec(conditions)?.[1];
+        const inner = named === undefined ? parent : declare(named);
+        const text: string = JSON.parse(url);
+        if (text.startsWith("data:text/css,")) layerOrderOf(text.slice(14), inner, order);
+      } else if (layer !== undefined && block === undefined) {
+        layer.split(",").forEach(declare);
+      } else if (layer) {
+        layerOrderOf(block!, declare(layer), order);
+      } else if (layer === undefined && block !== undefined && /^@(media|supports)\b/.test(prelude)) {
+        layerOrderOf(block, parent, order);
+      }
+    }
+    return order;
+  }
+
+  const designSystem = {
+    "/sys/index.css": /* css */ `
+      @layer theme, base, components, utilities;
+      @import "./theme.css" layer(theme);
+      @import "./utilities.css" layer(utilities);
+    `,
+    "/sys/theme.css": /* css */ `:root { --x: 1 }`,
+    "/sys/utilities.css": /* css */ `.box { color: green }`,
+    "/one.css": /* css */ `
+      @import "./sys/index.css";
+      @layer components { .box { color: red } }
+    `,
+    "/two.css": /* css */ `
+      @import "./sys/index.css";
+      @layer components { .two { color: red } }
+    `,
+  };
+
+  // Wrong before: the bundle gave two layers of the source another order, or a rule of another copy won.
+  const layerOrderCases: Record<string, LayerOrderCase> = {
+    // Source layer order: a, b. "reset.css" declares no layer.
+    AfterPlainFile: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./reset.css";
+          @import "./a.css" layer(a);
+          @import "./b.css" layer(b);
+          @import "./a.css" layer(a);
+        `,
+        "/reset.css": /* css */ `* { margin: 0 }`,
+        "/a.css": /* css */ `.box { color: red }`,
+        "/b.css": /* css */ `.box { color: green }`,
+      },
+      out: `*{margin:0}@layer a;@layer b{.box{color:green}}@layer a{.box{color:red}}`,
+      layers: "a, b",
+    },
+    // Source layer order: tokens, components.
+    InTwoImportedFiles: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./reset.css";
+          @import "./one.css";
+          @import "./two.css";
+        `,
+        "/reset.css": /* css */ `* { margin: 0 }`,
+        "/one.css": /* css */ `
+          @import "./tokens.css" layer(tokens);
+          @layer components { .box { color: green } }
+        `,
+        "/two.css": /* css */ `
+          @import "./tokens.css" layer(tokens);
+          @layer components { .two { color: green } }
+        `,
+        "/tokens.css": /* css */ `.box { color: red }`,
+      },
+      out: `*{margin:0}@layer tokens;@layer components{.box{color:green}}@layer tokens{.box{color:red}}@layer components{.two{color:green}}`,
+      layers: "tokens, components",
+    },
+    AfterPlainExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/first.css";
+          @import "./a.css" layer(a);
+          @import "./b.css" layer(b);
+          @import "./a.css" layer(a);
+        `,
+        "/a.css": /* css */ `.box { color: red }`,
+        "/b.css": /* css */ `.box { color: green }`,
+      },
+      out: `@import "https://example.com/first.css";@layer a;@layer b{.box{color:green}}@layer a{.box{color:red}}`,
+      layers: "a, b",
+    },
+    // Source layer order in "outer": inner, other. "x.css" declares "outer" only.
+    Sublayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./x.css" layer(outer);
+          @import "./one.css" layer(outer);
+          @import "./two.css" layer(outer);
+        `,
+        "/x.css": /* css */ `.x { color: red }`,
+        "/one.css": /* css */ `
+          @import "./tokens.css" layer(inner);
+          @layer other { .box { color: green } }
+        `,
+        "/two.css": /* css */ `
+          @import "./tokens.css" layer(inner);
+          @layer other { .two { color: green } }
+        `,
+        "/tokens.css": /* css */ `.box { color: red }`,
+      },
+      out: `@layer outer{.x{color:red}}@layer outer{@layer inner;}@layer outer{@layer other{.box{color:green}}}@layer outer{@layer inner{.box{color:red}}}@layer outer{@layer other{.two{color:green}}}`,
+      layers: "outer, outer.inner, outer.other",
+    },
+    AfterFileWithSameMedia: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./reset.css" screen;
+          @import "./one.css" screen;
+          @import "./two.css" screen;
+        `,
+        "/reset.css": /* css */ `* { margin: 0 }`,
+        "/one.css": /* css */ `
+          @import "./tokens.css" layer(tokens);
+          @layer components { .box { color: green } }
+        `,
+        "/two.css": /* css */ `
+          @import "./tokens.css" layer(tokens);
+          @layer components { .two { color: green } }
+        `,
+        "/tokens.css": /* css */ `.box { color: red }`,
+      },
+      out: `@media screen{*{margin:0}}@media screen{@layer tokens;}@media screen{@layer components{.box{color:green}}}@media screen{@layer tokens{.box{color:red}}}@media screen{@layer components{.two{color:green}}}`,
+      layers: "tokens, components",
+    },
+    // Source layer order: x, a, a.x, b. "reset.css" declares "x", not "a.x".
+    AfterFileWithSameLayerRules: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./reset.css";
+          @import "./a.css" layer(a);
+          @import "./b.css" layer(b);
+          @import "./a.css" layer(a);
+        `,
+        "/reset.css": /* css */ `@layer x { * { margin: 0 } }`,
+        "/a.css": /* css */ `@layer x { .box { color: red } }`,
+        "/b.css": /* css */ `.box { color: green }`,
+      },
+      out: `@layer x{*{margin:0}}@layer a{@layer x;}@layer b{.box{color:green}}@layer a{@layer x{.box{color:red}}}`,
+      layers: "x, a, a.x, b",
+    },
+    // "b.css" declares layer "b" ahead of the earlier copy of "d.css", so that copy prints nothing.
+    CoveredByFileWithSameLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./reset.css";
+          @import "./a.css" layer(a);
+          @import "./b.css" layer(b);
+          @import "./d.css" layer(b);
+          @import "./a.css" layer(a);
+          @import "./d.css" layer(b);
+        `,
+        "/reset.css": /* css */ `* { margin: 0 }`,
+        "/a.css": /* css */ `.box { color: red }`,
+        "/b.css": /* css */ `.box { color: green }`,
+        "/d.css": /* css */ `.d { color: blue }`,
+      },
+      out: `*{margin:0}@layer a;@layer b{.box{color:green}}@layer a{.box{color:red}}@layer b{.d{color:#00f}}`,
+      layers: "a, b",
+    },
+    // "e.css" declares layer "x" with no condition, so the earlier copy of "g.css" prints nothing.
+    CoveredByShorterEntryWithoutLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./reset.css";
+          @import "./a.css" layer(a);
+          @import "./b.css" layer(b);
+          @import "./a.css" layer(a);
+          @import "./e.css";
+          @import "./g.css" screen;
+          @import "./z.css";
+          @import "./g.css" screen;
+        `,
+        "/reset.css": /* css */ `* { margin: 0 }`,
+        "/a.css": /* css */ `.box { color: red }`,
+        "/b.css": /* css */ `.box { color: green }`,
+        "/e.css": /* css */ `@layer x { .e { color: red } }`,
+        "/g.css": /* css */ `@layer x { .g { color: red } }`,
+        "/z.css": /* css */ `.z { color: red }`,
+      },
+      out: `*{margin:0}@layer a;@layer b{.box{color:green}}@layer a{.box{color:red}}@layer x{.e{color:red}}.z{color:red}@media screen{@layer x{.g{color:red}}}`,
+      layers: "a, b, x",
+    },
+    // The "layer(a)" of the earlier copy of "tokens.css" is between two media conditions.
+    LayerBetweenMediaImports: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./reset.css";
+          @import "./outer1.css" screen;
+          @import "./outer2.css" screen;
+        `,
+        "/reset.css": /* css */ `@layer x { * { margin: 0 } }`,
+        "/outer1.css": /* css */ `@import "./one.css" layer(a);`,
+        "/outer2.css": /* css */ `@import "./two.css" layer(a);`,
+        "/one.css": /* css */ `
+          @import "./tokens.css" (min-width: 1px);
+          @layer y { .box { color: green } }
+        `,
+        "/two.css": /* css */ `
+          @import "./tokens.css" (min-width: 1px);
+          @layer y { .two { color: green } }
+        `,
+        "/tokens.css": /* css */ `@layer x { .box { color: red } }`,
+      },
+      out: `@layer x{*{margin:0}}@media screen{@layer a{@media (min-width:1px){@layer x;}}}@media screen{@layer a{@layer y{.box{color:green}}}}@media screen{@layer a{@media (min-width:1px){@layer x{.box{color:red}}}}}@media screen{@layer a{@layer y{.two{color:green}}}}`,
+      layers: "x, a, a.x, a.y",
+    },
+    // Source layer order: first, second.
+    StatementBeforeImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer first;
+          @import "./imported.css" layer(second);
+          @layer first { .box { color: red } }
+        `,
+        "/imported.css": /* css */ `.box { color: green }`,
+      },
+      out: `@layer first;@layer second{.box{color:green}}@layer first{.box{color:red}}`,
+      layers: "first, second",
+    },
+    // Source layer order: default, theme, components.
+    StatementImportStatement: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer default;
+          @import "./theme.css" layer(theme);
+          @layer components;
+          @layer default { .box { color: red } }
+        `,
+        "/theme.css": /* css */ `.box { color: green }`,
+      },
+      out: `@layer default;@layer theme{.box{color:green}}@layer components;@layer default{.box{color:red}}`,
+      layers: "default, theme, components",
+    },
+    // Source layer order: theme, base, components.
+    SeparateStatements: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer theme;
+          @layer base;
+          @layer components;
+          @import "./x.css" layer(base);
+          @layer theme { .box { color: red } }
+        `,
+        "/x.css": /* css */ `.box { color: green }`,
+      },
+      out: `@layer theme,base,components;@layer base{.box{color:green}}@layer theme{.box{color:red}}`,
+      layers: "theme, base, components",
+    },
+    // A statement is valid ahead of an "@import". Source layer order: a, b.
+    StatementBeforeExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer a, b;
+          @import "https://example.com/e.css" layer(b);
+          @layer a { .x { color: red } }
+        `,
+      },
+      out: `@layer a,b;@import "https://example.com/e.css" layer(b);@layer a{.x{color:red}}`,
+      layers: "a, b",
+    },
+    StatementBeforeExternalImportInImportedFile: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./mid.css";
+          .e { color: red }
+        `,
+        "/mid.css": /* css */ `
+          @layer inner, other;
+          @import "https://example.com/e.css" layer(other);
+          .mid { color: red }
+        `,
+      },
+      out: `@layer inner,other;@import "https://example.com/e.css" layer(other);.mid{color:red}.e{color:red}`,
+      layers: "inner, other",
+    },
+    // Source layer order: outer, wrap, wrap.inner, wrap.leafy, wrap.after.
+    StatementUnderSupports: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer outer;
+          @import "./mid.css" layer(wrap) supports(display: flex);
+        `,
+        "/mid.css": /* css */ `
+          @layer inner;
+          @import "./leaf.css" layer(leafy);
+          @layer after;
+          .mid { color: red }
+        `,
+        "/leaf.css": /* css */ `.leaf { color: red }`,
+      },
+      out: `@layer outer;@supports (display:flex){@layer wrap{@layer inner;}}@supports (display:flex){@layer wrap{@layer leafy{.leaf{color:red}}}}@supports (display:flex){@layer wrap{@layer after;.mid{color:red}}}`,
+      layers: "outer, wrap, wrap.inner, wrap.leafy, wrap.after",
+    },
+    // Source layer order: theme, base, components, utilities.
+    DesignSystemOnce: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./sys/index.css";
+          @layer components { .box { color: red } }
+        `,
+        "/sys/index.css": designSystem["/sys/index.css"],
+        "/sys/theme.css": designSystem["/sys/theme.css"],
+        "/sys/utilities.css": designSystem["/sys/utilities.css"],
+      },
+      out: `@layer theme,base,components,utilities;@layer theme{:root{--x:1}}@layer utilities{.box{color:green}}@layer components{.box{color:red}}`,
+      layers: "theme, base, components, utilities",
+    },
+    DesignSystemTwice: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./one.css";
+          @import "./two.css";
+        `,
+        ...designSystem,
+      },
+      out: `@layer theme,base,components,utilities;@layer theme;@layer utilities;@layer components{.box{color:red}}@layer theme{:root{--x:1}}@layer utilities{.box{color:green}}@layer components{.two{color:red}}`,
+      layers: "theme, base, components, utilities",
+    },
+    // Without print media "g.css" declares "b" only. Source layer order: a, b.
+    FirstImportHasSameLayerNames: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer a, b;
+          @import "./g.css";
+          @layer b { .x { color: green } }
+          @layer a { .x { color: red } }
+        `,
+        "/g.css": /* css */ `
+          @media print { @layer a { .p { color: blue } } }
+          @layer b { .q { color: blue } }
+        `,
+      },
+      out: `@layer a,b;@media print{@layer a{.p{color:#00f}}}@layer b{.q{color:#00f}}@layer b{.x{color:green}}@layer a{.x{color:red}}`,
+      layers: "a, b",
+    },
+    // Source layer order: e, m, l, x.
+    StatementsOfThreeFilesBeforeExternalImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer e;
+          @import "./mid.css";
+        `,
+        "/mid.css": /* css */ `
+          @layer m;
+          @import "./leaf.css";
+        `,
+        "/leaf.css": /* css */ `
+          @layer l;
+          @import "https://example.com/x.css" layer(x);
+          .leaf { color: red }
+        `,
+      },
+      out: `@layer e;@layer m;@layer l;@import "https://example.com/x.css" layer(x);.leaf{color:red}`,
+      layers: "e, m, l, x",
+    },
+    // "a.css" and "b.css" import each other. Source layer order: x, y.
+    StatementBeforeImportInCycle: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./reset.css";
+          @import "./a.css";
+          @import "./b.css";
+        `,
+        "/reset.css": /* css */ `* { margin: 0 }`,
+        "/a.css": /* css */ `
+          @layer x, y;
+          @import "./b.css";
+          @layer y { .box { color: green } }
+        `,
+        "/b.css": /* css */ `
+          @layer y, x;
+          @import "./a.css";
+          @layer x { .box { color: red } }
+        `,
+      },
+      out: `*{margin:0}@layer x,y;@layer y,x;@layer x;@layer y{.box{color:green}}@layer x{.box{color:red}}`,
+      layers: "x, y",
+    },
+    // "a.css" and "b.css" import each other. Source layer order: y, x.
+    LayeredImportsInCycle: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./reset.css";
+          @import "./b.css";
+          @import "./c.css";
+        `,
+        "/reset.css": /* css */ `* { margin: 0 }`,
+        "/a.css": /* css */ `
+          @import "./x.css" layer(x);
+          @import "./b.css";
+        `,
+        "/b.css": /* css */ `
+          @import "./y.css" layer(y);
+          @import "./a.css";
+        `,
+        "/c.css": /* css */ `@import "./a.css";`,
+        "/x.css": /* css */ `.box { color: green }`,
+        "/y.css": /* css */ `.box { color: red }`,
+      },
+      out: `*{margin:0}@layer y;@layer x{.box{color:green}}@layer y{.box{color:red}}`,
+      layers: "y, x",
+    },
+    // Without print media "g.css" declares no layer, and it prints in place of the marker of "f.css". Source layer order: a, b.
+    MarkerDoesNotStandForStatement: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./h.css";
+          @import "./f.css";
+        `,
+        "/f.css": /* css */ `
+          @layer a { .x { color: red } }
+          @layer b { .y { color: red } }
+        `,
+        "/h.css": /* css */ `
+          @layer a, b;
+          @import "./g.css";
+          @import "./x.css" layer(b);
+          @layer a { .box { color: red } }
+        `,
+        "/g.css": /* css */ `
+          @media print { @layer a { .p { color: blue } } @layer b { .q { color: blue } } }
+          .g { color: blue }
+        `,
+        "/x.css": /* css */ `.box { color: green }`,
+      },
+      out: `@layer a,b;@layer a,b;@media print{@layer a{.p{color:#00f}}@layer b{.q{color:#00f}}}.g{color:#00f}@layer b{.box{color:green}}@layer a{.box{color:red}}@layer a{.x{color:red}}@layer b{.y{color:red}}`,
+      layers: "a, b",
+    },
+    // Source layer order: components, mid, vendor. The rule of the copy in "vendor" wins.
+    LayeredCopyWinsAfterFileWithSameLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./base.css";
+          @import "./lib.css" layer(vendor);
+          @import "./lib.css";
+        `,
+        "/base.css": /* css */ `
+          @layer components { .c { color: blue } }
+          @layer mid { .box { color: red } }
+        `,
+        "/lib.css": /* css */ `@layer components { .box { color: green } }`,
+      },
+      out: `@layer components{.c{color:#00f}}@layer mid{.box{color:red}}@layer vendor{@layer components{.box{color:green}}}@layer components{.box{color:green}}`,
+      layers: "components, mid, vendor, vendor.components",
+    },
+    // Source layer order: components, mid, vendor. The rule of the copy in "vendor" wins.
+    LayeredCopyWinsAfterImportIntoSameLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./x.css" layer(components);
+          @import "./m.css" layer(mid);
+          @import "./lib.css" layer(vendor);
+          @import "./lib.css";
+        `,
+        "/x.css": /* css */ `.x { color: blue }`,
+        "/m.css": /* css */ `.box { color: red }`,
+        "/lib.css": /* css */ `@layer components { .box { color: green } }`,
+      },
+      out: `@layer components{.x{color:#00f}}@layer mid{.box{color:red}}@layer vendor{@layer components{.box{color:green}}}@layer components{.box{color:green}}`,
+      layers: "components, mid, vendor, vendor.components",
+    },
+  };
+
+  // The winning declarations of these bundles are the same as before. Each has a shape that
+  // one part of the change alone turns wrong, or a statement that has to stay where it was.
+  const layerOrderKeptCases: Record<string, LayerOrderCase> = {
+    // Source layer order: b, a.
+    OrderStatementThenDuplicate: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer b, a;
+          @import "./reset.css";
+          @import "./a.css" layer(a);
+          @import "./b.css" layer(b);
+          @import "./a.css" layer(a);
+        `,
+        "/reset.css": /* css */ `* { margin: 0 }`,
+        "/a.css": /* css */ `.box { color: green }`,
+        "/b.css": /* css */ `.box { color: red }`,
+      },
+      out: `@layer b,a;*{margin:0}@layer a;@layer b{.box{color:red}}@layer a{.box{color:green}}`,
+      layers: "b, a",
+    },
+    // Source layer order: theme, base, components, utilities.
+    DesignSystemTwiceAfterPlainFile: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./reset.css";
+          @import "./one.css";
+          @import "./two.css";
+        `,
+        "/reset.css": /* css */ `* { margin: 0 }`,
+        ...designSystem,
+      },
+      out: `*{margin:0}@layer theme,base,components,utilities;@layer theme;@layer utilities;@layer components{.box{color:red}}@layer theme{:root{--x:1}}@layer utilities{.box{color:green}}@layer components{.two{color:red}}`,
+      layers: "theme, base, components, utilities",
+    },
+    // "lib.css" has no "@import", so its statement stays in its body.
+    StatementInFileWithoutImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./lib.css";
+          @import "./lib.css" layer(wrap);
+          @import "./late.css" layer(wrap);
+        `,
+        "/lib.css": /* css */ `
+          @layer a, b;
+          .lib { color: blue }
+        `,
+        "/late.css": /* css */ `
+          @layer b { .box { color: green } }
+          @layer a { .box { color: red } }
+        `,
+      },
+      out: `@layer a,b;.lib{color:#00f}@layer wrap{@layer a,b;.lib{color:#00f}}@layer wrap{@layer b{.box{color:green}}@layer a{.box{color:red}}}`,
+      layers: "a, b, wrap, wrap.a, wrap.b",
+    },
+    // Source layer order in "wrap": a, b.
+    StatementUnderNamedLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./lib.css";
+          @import "./lib.css" layer(wrap);
+          @import "./late.css" layer(wrap);
+        `,
+        "/lib.css": /* css */ `
+          @layer a, b;
+          @import "./dep.css";
+          .lib { color: blue }
+        `,
+        "/dep.css": /* css */ `.dep { color: blue }`,
+        "/late.css": /* css */ `
+          @layer b { .box { color: green } }
+          @layer a { .box { color: red } }
+        `,
+      },
+      out: `@layer a,b;.dep{color:#00f}.lib{color:#00f}@layer wrap{@layer a,b;}@layer wrap{.dep{color:#00f}}@layer wrap{.lib{color:#00f}}@layer wrap{@layer b{.box{color:green}}@layer a{.box{color:red}}}`,
+      layers: "a, b, wrap, wrap.a, wrap.b",
+    },
+    // No layer list prints below an anonymous layer, so the statement stays in the body.
+    StatementUnderAnonymousLayer: {
+      files: {
+        "/entry.css": /* css */ `@import "./lib.css" layer;`,
+        "/lib.css": /* css */ `
+          @layer p, q;
+          @import "./dep.css";
+          @layer q { .box { color: green } }
+          @layer p { .box { color: red } }
+        `,
+        "/dep.css": /* css */ `.dep { color: blue }`,
+      },
+      out: `@layer{.dep{color:#00f}}@layer{@layer p,q;@layer q{.box{color:green}}@layer p{.box{color:red}}}`,
+    },
+    // "@layer wrap{@layer inner;}" is a block, so it is not valid ahead of the "@import".
+    StatementBeforeExternalImportUnderNamedLayer: {
+      files: {
+        "/entry.css": /* css */ `@import "./mid.css" layer(wrap);`,
+        "/mid.css": /* css */ `
+          @layer inner;
+          @import "https://example.com/e.css";
+          .mid { color: red }
+        `,
+      },
+      out: `@import "https://example.com/e.css" layer(wrap);@layer wrap{@layer inner;}@layer wrap{.mid{color:red}}`,
+      layers: "wrap, wrap.inner",
+    },
+    // "a.css" has no "@import", so the statement stays in both copies.
+    DuplicateOfFileWithStatementOnly: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./reset.css";
+          @import "./a.css" layer(a);
+          @import "./b.css" layer(b);
+          @import "./a.css" layer(a);
+        `,
+        "/reset.css": /* css */ `* { margin: 0 }`,
+        "/a.css": /* css */ `
+          @layer x, y;
+          .box { color: red }
+        `,
+        "/b.css": /* css */ `.box { color: green }`,
+      },
+      out: `*{margin:0}@layer a{@layer x,y;}@layer b{.box{color:green}}@layer a{@layer x,y;.box{color:red}}`,
+      layers: "a, a.x, a.y, b",
+    },
+    // Source layer order: a, b.
+    DuplicateOfFileWithStatementAndImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./lib.css";
+          @import "./mid.css";
+          @import "./lib.css";
+        `,
+        "/lib.css": /* css */ `
+          @layer a, b;
+          @import "./dep.css";
+          .lib { color: blue }
+        `,
+        "/dep.css": /* css */ `.dep { color: blue }`,
+        "/mid.css": /* css */ `
+          @layer b { .x { color: green } }
+          @layer a { .x { color: red } }
+        `,
+      },
+      out: `@layer a,b;@layer b{.x{color:green}}@layer a{.x{color:red}}.dep{color:#00f}.lib{color:#00f}`,
+      layers: "a, b",
+    },
+    // Source layer order: utilities, components, vendor. The rules of the copy in "vendor" win.
+    LayeredThenBareCopyOfFileWithLayers: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer utilities, components;
+          @import "./lib.css" layer(vendor);
+          @import "./lib.css";
+        `,
+        "/lib.css": /* css */ `
+          @layer components { .box { color: red } }
+          @layer utilities { .box { color: green } }
+        `,
+      },
+      out: `@layer utilities,components;@layer vendor{@layer components{.box{color:red}}@layer utilities{.box{color:green}}}@layer components{.box{color:red}}@layer utilities{.box{color:green}}`,
+      layers: "utilities, components, vendor, vendor.components, vendor.utilities",
+    },
+    // Source layer order in "vendor": base, components, utilities.
+    DuplicateInsideLayerAfterOrderStatement: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer base, components, utilities;
+          @import "./a.css" layer(vendor);
+          @import "./b.css" layer(vendor);
+        `,
+        "/a.css": /* css */ `
+          @import "./core.css";
+          @layer utilities { .box { color: green } }
+        `,
+        "/b.css": /* css */ `
+          @import "./core.css";
+          @layer components { .card { padding: 0 } }
+        `,
+        "/core.css": /* css */ `
+          @layer base { * { margin: 0 } }
+          @layer components { .box { color: red } }
+          @layer utilities { .u { padding: 0 } }
+        `,
+      },
+      out: `@layer base,components,utilities;@layer vendor{@layer base,components,utilities;}@layer vendor{@layer utilities{.box{color:green}}}@layer vendor{@layer base{*{margin:0}}@layer components{.box{color:red}}@layer utilities{.u{padding:0}}}@layer vendor{@layer components{.card{padding:0}}}`,
+      layers: "base, components, utilities, vendor, vendor.base, vendor.components, vendor.utilities",
+    },
+    // Without print media "g.css" declares no layer. Source layer order: b, a.
+    FileWithSameNamesUnderMedia: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./g.css";
+          @import "./reset.css";
+          @import "./f.css";
+        `,
+        "/g.css": /* css */ `@media print { @layer b { .p { color: blue } } @layer a { .q { color: blue } } }`,
+        "/reset.css": /* css */ `* { margin: 0 }`,
+        "/f.css": /* css */ `
+          @layer b, a;
+          @import "./a.css" layer(a);
+          @import "./b.css" layer(b);
+          @import "./a.css" layer(a);
+        `,
+        "/a.css": /* css */ `.box { color: green }`,
+        "/b.css": /* css */ `.box { color: red }`,
+      },
+      out: `@media print{@layer b{.p{color:#00f}}@layer a{.q{color:#00f}}}*{margin:0}@layer b,a;@layer a;@layer b{.box{color:red}}@layer a{.box{color:green}}`,
+      layers: "b, a",
+    },
+    // Source layer order: a, b, c.
+    DuplicateAfterFileWithSameNamesUnderMedia: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./g.css";
+          @import "./f.css";
+          @import "./x.css";
+          @import "./f.css";
+        `,
+        "/g.css": /* css */ `@media print { @layer a { .p { color: blue } } @layer b { .q { color: blue } } }`,
+        "/f.css": /* css */ `
+          @layer a, b;
+          @import "./dep.css";
+          @layer c { .c { color: blue } }
+        `,
+        "/dep.css": /* css */ `.dep { color: blue }`,
+        "/x.css": /* css */ `
+          @layer b { .x { color: green } }
+          @layer a { .x { color: red } }
+        `,
+      },
+      out: `@media print{@layer a{.p{color:#00f}}@layer b{.q{color:#00f}}}@layer a,b;@layer c;@layer b{.x{color:green}}@layer a{.x{color:red}}.dep{color:#00f}@layer c{.c{color:#00f}}`,
+      layers: "a, b, c",
+    },
+    // Minify removes the empty blocks of "g.css". Source layer order: a, b.
+    FirstImportHasSameNamesInEmptyBlocks: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer a, b;
+          @import "./g.css";
+          @layer b { .x { color: green } }
+          @layer a { .x { color: red } }
+        `,
+        "/g.css": /* css */ `
+          @layer a {}
+          @layer b {}
+          .g { color: blue }
+        `,
+      },
+      out: `@layer a,b;.g{color:#00f}@layer b{.x{color:green}}@layer a{.x{color:red}}`,
+      layers: "a, b",
+    },
+    // Source layer order: a, b.
+    AfterFileWithSameNamesUnderMedia: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./g.css";
+          @import "./f.css";
+        `,
+        "/g.css": /* css */ `@media print { @layer a { .p { color: blue } } @layer b { .q { color: blue } } }`,
+        "/f.css": /* css */ `
+          @layer a, b;
+          @import "./h.css";
+          @layer b { .x { color: green } }
+          @layer a { .x { color: red } }
+        `,
+        "/h.css": /* css */ `.h { color: blue }`,
+      },
+      out: `@media print{@layer a{.p{color:#00f}}@layer b{.q{color:#00f}}}@layer a,b;.h{color:#00f}@layer b{.x{color:green}}@layer a{.x{color:red}}`,
+      layers: "a, b",
+    },
+    // The marker of "f.css" and the statement of "h.css" both print. Source layer order: a, b.
+    MarkerBeforeFileWithSameNamesInEmptyBlocks: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f.css";
+          @import "./h.css";
+          @import "./f.css";
+        `,
+        "/f.css": /* css */ `
+          @layer a { .x { color: red } }
+          @layer b { .y { color: red } }
+        `,
+        "/h.css": /* css */ `
+          @layer a, b;
+          @import "./g.css";
+          @layer b { .box { color: green } }
+          @layer a { .box { color: red } }
+        `,
+        "/g.css": /* css */ `
+          @layer a {}
+          @layer b {}
+          .g { color: blue }
+        `,
+      },
+      out: `@layer a,b;@layer a,b;.g{color:#00f}@layer b{.box{color:green}}@layer a{.box{color:red}}@layer a{.x{color:red}}@layer b{.y{color:red}}`,
+      layers: "a, b",
+    },
+    // "t.css" has no layer of its own, so one copy is enough.
+    LayeredThenBareCopyOfFileWithoutLayers: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer x, y;
+          @import "./t.css" layer(x);
+          @import "./t.css";
+          @layer y { .box { color: red } }
+        `,
+        "/t.css": /* css */ `.box { color: green }`,
+      },
+      out: `@layer x,y;@layer x;.box{color:green}@layer y{.box{color:red}}`,
+      layers: "x, y",
+    },
+    // The import of "x.css" declares layer "a" ahead of the earlier copy of "a.css".
+    CoveredByExternalImportWithSameLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/first.css";
+          @import "https://example.com/x.css" layer(a);
+          @import "./a.css" layer(a);
+          @import "./b.css" layer(b);
+          @import "./a.css" layer(a);
+        `,
+        "/a.css": /* css */ `.box { color: red }`,
+        "/b.css": /* css */ `.box { color: green }`,
+      },
+      out: `@import "https://example.com/first.css";@import "https://example.com/x.css" layer(a);@layer b{.box{color:green}}@layer a{.box{color:red}}`,
+      layers: "a, b",
+    },
+    // "c.css" declares layer "a" ahead of the earlier copy of "a.css".
+    CoveredByFileWithSameLayerAfterPlainFile: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./reset.css";
+          @import "./c.css" layer(a);
+          @import "./a.css" layer(a);
+          @import "./b.css" layer(b);
+          @import "./a.css" layer(a);
+        `,
+        "/reset.css": /* css */ `* { margin: 0 }`,
+        "/c.css": /* css */ `.c { color: red }`,
+        "/a.css": /* css */ `.box { color: red }`,
+        "/b.css": /* css */ `.box { color: green }`,
+      },
+      out: `*{margin:0}@layer a{.c{color:red}}@layer b{.box{color:green}}@layer a{.box{color:red}}`,
+      layers: "a, b",
+    },
+    // No entry ahead of the copy in "vendor" declares a layer of "lib.css", so the later copy wins and one copy is enough.
+    LayeredThenBareCopyWithNoLayerAhead: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./lib.css" layer(vendor);
+          @import "./lib.css";
+        `,
+        "/lib.css": /* css */ `
+          @layer components { .box { color: red } }
+          @layer utilities { .box { color: green } }
+        `,
+      },
+      out: `@layer vendor{@layer components,utilities;}@layer components{.box{color:red}}@layer utilities{.box{color:green}}`,
+      layers: "vendor, vendor.components, vendor.utilities, components, utilities",
+    },
+    // Source layer order in "vendor": components, other, kit. The rule of the copy in "vendor.kit" wins.
+    LessLayeredCopyAfterDottedOrderStatement: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer vendor.components, vendor.other;
+          @import "./other.css" layer(vendor.other);
+          @import "./wrap.css" layer(vendor);
+          @import "./lib.css" layer(vendor);
+        `,
+        "/other.css": /* css */ `.box { color: red }`,
+        "/wrap.css": /* css */ `@import "./lib.css" layer(kit);`,
+        "/lib.css": /* css */ `@layer components { .box { color: green } }`,
+      },
+      out: `@layer vendor.components,vendor.other;@layer vendor.other{.box{color:red}}@layer vendor{@layer kit{@layer components{.box{color:green}}}}@layer vendor;@layer vendor{@layer components{.box{color:green}}}`,
+      layers: "vendor, vendor.components, vendor.other, vendor.kit, vendor.kit.components",
+    },
+    // The statement names no layer of "lib.css", so the later copy wins and one copy is enough.
+    LayeredThenBareCopyAfterStatementOfOtherLayers: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer reset, base;
+          @import "./lib.css" layer(vendor);
+          @import "./lib.css";
+        `,
+        "/lib.css": /* css */ `@layer components { .box { color: green } }`,
+      },
+      out: `@layer reset,base;@layer vendor{@layer components;}@layer components{.box{color:green}}`,
+      layers: "reset, base, vendor, vendor.components, components",
+    },
+    // "x.css" declares "other.components", which is not the layer "components" of the later copy.
+    LayeredThenBareCopyAfterSameLayerNameInOtherLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./x.css" layer(other);
+          @import "./lib.css" layer(vendor);
+          @import "./lib.css";
+        `,
+        "/x.css": /* css */ `@layer components { .box { color: red } }`,
+        "/lib.css": /* css */ `@layer components { .box { color: green } }`,
+      },
+      out: `@layer other{@layer components{.box{color:red}}}@layer vendor{@layer components;}@layer components{.box{color:green}}`,
+      layers: "other, other.components, vendor, vendor.components, components",
+    },
+    // The statement can name a layer of the external file, so both imports stay.
+    LayeredThenBareExternalImportAfterOrderStatement: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer utilities, components;
+          @import "https://example.com/lib.css" layer(vendor);
+          @import "https://example.com/lib.css";
+        `,
+      },
+      out: `@layer utilities,components;@import "https://example.com/lib.css" layer(vendor);@import "https://example.com/lib.css";`,
+      layers: "utilities, components, vendor",
+    },
+    // Source layer order: o, t.
+    StatementOfLaterFileStaysBehindEarlierFile: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./one.css";
+          @import "./two.css";
+        `,
+        "/one.css": /* css */ `@layer o { .box { color: red } }`,
+        "/two.css": /* css */ `
+          @layer t;
+          @import "https://example.com/x.css";
+          @layer t { .box { color: green } }
+        `,
+      },
+      out: `@import "https://example.com/x.css";@layer o{.box{color:red}}@layer t;@layer t{.box{color:green}}`,
+      layers: "o, t",
+    },
+    // Below "@import ... layer;" each file prints its own "@layer{}" block. "f1.css" is not alone there, so that copy stays masked.
+    BareThenAnonymousThenBareCopy: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f1.css";
+          @import "./f1.css" layer;
+          @import "./f1.css";
+        `,
+        "/f1.css": /* css */ `
+          @layer b;
+          @import "./f2.css" layer(c);
+          @layer b { .box { color: red } }
+        `,
+        "/f2.css": /* css */ `.box { color: green }`,
+      },
+      out: `@layer b;@layer c;@layer{@layer c{.box{color:green}}}@layer c{.box{color:green}}@layer b{.box{color:red}}`,
+      layers: "b, c",
+    },
+    // Source layer order: a. The rule of "x.css" is in an anonymous layer behind it.
+    FileSharedBelowAnonymousLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./lib.css";
+          @import "./mid.css" layer;
+          @import "./lib.css";
+        `,
+        "/lib.css": /* css */ `@layer a { .box { color: red } }`,
+        "/mid.css": /* css */ `
+          @layer a, b;
+          @import "./x.css";
+          @import "./lib.css";
+        `,
+        "/x.css": /* css */ `@layer b { .box { color: green } }`,
+      },
+      out: `@layer a;@layer{@layer b{.box{color:green}}}@layer{@layer a,b;}@layer a{.box{color:red}}`,
+      layers: "a",
+    },
+    // The copy below the anonymous layer keeps its statement in its body.
+    BareThenAnonymousCopyOfFileWithStatement: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./lib.css";
+          @import "./lib.css" layer;
+        `,
+        "/lib.css": /* css */ `
+          @layer p, q;
+          @import "./dep.css";
+          @layer q { .box { color: green } }
+          @layer p { .box { color: red } }
+        `,
+        "/dep.css": /* css */ `.dep { color: blue }`,
+      },
+      out: `@layer p,q;.dep{color:#00f}@layer q{.box{color:green}}@layer p{.box{color:red}}@layer{.dep{color:#00f}}@layer{@layer p,q;@layer q{.box{color:green}}@layer p{.box{color:red}}}`,
+      layers: "p, q",
+    },
+    // The copy below "@import ... layer;" is alone in that layer, so it prints in one "@layer{}" block. Its rule wins.
+    AnonymousThenBareCopyAfterOrderStatement: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer utilities, components;
+          @import "./lib.css" layer;
+          @import "./lib.css";
+        `,
+        "/lib.css": /* css */ `
+          @layer components { .box { color: red } }
+          @layer utilities { .box { color: green } }
+        `,
+      },
+      out: `@layer utilities,components;@layer{@layer components{.box{color:red}}@layer utilities{.box{color:green}}}@layer components{.box{color:red}}@layer utilities{.box{color:green}}`,
+      layers: "utilities, components",
+    },
+    // "p.css" imports the entry under "layer(L)". A browser does not load that import, but it declares "L" there. Source layer order: L, M.
+    LayeredImportCutByCycle: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./reset.css";
+          @import "./p.css";
+          @import "./l.css" layer(L);
+          @import "./m.css" layer(M);
+        `,
+        "/reset.css": /* css */ `* { margin: 0 }`,
+        "/p.css": /* css */ `
+          @import "./entry.css" layer(L);
+          @import "./m.css" layer(M);
+          .p { color: blue }
+        `,
+        "/l.css": /* css */ `.box { color: red }`,
+        "/m.css": /* css */ `.box { color: green }`,
+      },
+      out: `*{margin:0}@layer L;@layer M;.p{color:#00f}@layer L{.box{color:red}}@layer M{.box{color:green}}`,
+      layers: "L, M",
+    },
+  };
+
+  // Limits. These bundles do not have the cascade of their source. Each comment names the cause,
+  // and `layers` is the order that the bundle has.
+  const layerOrderLimits: Record<string, LayerOrderCase> = {
+    // External hoist. Source layer order: inner, other. The statement is a block below the media query, and the "@import" goes ahead of it.
+    StatementBeforeExternalImportUnderMedia: {
+      files: {
+        "/entry.css": /* css */ `@import "./mid.css" screen;`,
+        "/mid.css": /* css */ `
+          @layer inner, other;
+          @import "https://example.com/e.css" layer(other);
+          .mid { color: red }
+        `,
+      },
+      out: String.raw`@import "data:text/css,@import \"https://example.com/e.css\" layer(other);" screen;@media screen{@layer inner,other;}@media screen{.mid{color:red}}`,
+      layers: "other, inner",
+    },
+    // A rule with "composes" does not print inside "@layer", so the copy in "vendor" is masked. Its rule wins in the source.
+    ModuleWithComposesImportedWithAndWithoutLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer utilities, components;
+          @import "./lib.module.css" layer(vendor);
+          @import "./lib.module.css";
+        `,
+        "/lib.module.css": /* css */ `
+          .base { font-weight: bold }
+          .btn { composes: base; }
+          @layer components { .box { color: red } }
+          @layer utilities { .box { color: green } }
+        `,
+      },
+      out: `@layer utilities,components;@layer vendor{@layer components,utilities;}.base_9LS-8Q{font-weight:700}.btn_9LS-8Q{}@layer components{.box_9LS-8Q{color:red}}@layer utilities{.box_9LS-8Q{color:green}}`,
+    },
+  };
+
+  for (const [name, { files, out, layers }] of Object.entries({
+    ...layerOrderCases,
+    ...layerOrderKeptCases,
+    ...layerOrderLimits,
+  })) {
+    itBundled(`css/CSSAtLayerOrder${name}`, {
+      files,
+      outfile: "/out.css",
+      minifyWhitespace: true,
+      async onAfterBundle(api) {
+        api.expectFile("/out.css").toBe(out + "\n");
+        if (layers !== undefined) expect(layerOrderOf(api.readFile("/out.css")).join(", ")).toBe(layers);
+        await expectValidImports(api.outfile);
+      },
+    });
+  }
+
+  for (const name of ["AfterPlainFile", "DesignSystemOnce"]) {
+    itBundled(`css/CSSAtLayerOrder${name}CLI`, {
+      files: layerOrderCases[name].files,
+      outfile: "/out.css",
+      minifyWhitespace: true,
+      backend: "cli",
+      onAfterBundle(api) {
+        api.expectFile("/out.css").toBe(layerOrderCases[name].out + "\n");
+      },
+    });
+  }
+
+  // The stylesheets of one JS entry or of one HTML page share a layer order.
+  itBundled("css/CSSAtLayerOrderFromJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./reset.css";
+        import "./one.css";
+        import "./two.css";
+      `,
+      "/reset.css": /* css */ `* { margin: 0 }`,
+      ...designSystem,
+    },
+    outdir: "/out",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toBe(layerOrderKeptCases.DesignSystemTwiceAfterPlainFile.out + "\n");
+    },
+  });
+
+  itBundled("css/CSSAtLayerOrderFromHTML", {
+    files: {
+      "/page.html": /* html */ `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <link rel="stylesheet" href="./reset.css">
+            <link rel="stylesheet" href="./one.css">
+            <link rel="stylesheet" href="./two.css">
+          </head>
+          <body><div class="box"></div></body>
+        </html>
+      `,
+      "/reset.css": /* css */ `* { margin: 0 }`,
+      ...designSystem,
+    },
+    entryPoints: ["/page.html"],
+    outdir: "out/",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const href = api.readFile("out/page.html").match(/href="(.*?\.css)"/)![1];
+      expect(api.readFile("out/" + href)).toBe(layerOrderKeptCases.DesignSystemTwiceAfterPlainFile.out + "\n");
+    },
+  });
+
+  // The import orders of the two pages differ only in the conditions of a layer list, so each page gets its own stylesheet.
+  itBundled("css/CSSAtLayerOrderTwoPages", {
+    files: {
+      "/first.html": /* html */ `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <link rel="stylesheet" href="./r0.css">
+            <link rel="stylesheet" href="./r1.css">
+          </head>
+          <body><div class="x"></div></body>
+        </html>
+      `,
+      "/second.html": /* html */ `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <link rel="stylesheet" href="./f1.css">
+            <link rel="stylesheet" href="./r0.css">
+            <link rel="stylesheet" href="./r1.css">
+          </head>
+          <body><div class="x"></div></body>
+        </html>
+      `,
+      "/r0.css": /* css */ `
+        @import "./f1.css" screen;
+        @layer a { .x { color: green } }
+      `,
+      "/r1.css": /* css */ `
+        @import "./f1.css";
+        .r1 { color: blue }
+      `,
+      "/f1.css": /* css */ `@layer b { .x { color: red } }`,
+    },
+    entryPoints: ["/first.html", "/second.html"],
+    outdir: "out/",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const stylesheetOf = (page: string) =>
+        api.readFile("out/" + api.readFile("out/" + page).match(/href="(.*?\.css)"/)![1]);
+      const rest = `@layer a{.x{color:green}}@layer b{.x{color:red}}.r1{color:#00f}\n`;
+      // Without screen media the layer order is a, b on the first page. It is b, a on the second page.
+      expect({ first: stylesheetOf("first.html"), second: stylesheetOf("second.html") }).toEqual({
+        first: `@media screen{@layer b;}` + rest,
+        second: `@layer b;` + rest,
+      });
     },
   });
 

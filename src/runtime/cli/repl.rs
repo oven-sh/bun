@@ -1132,21 +1132,21 @@ impl<'a> Repl<'a> {
 
         #[cfg(unix)]
         {
-            // Back to raw mode, for a REPL that has a raw-mode prompt (`setup_terminal`)
             if self.drawing.is_some() {
+                // Back to raw mode. Ctrl+C is a key there, so a SIGINT is not the user's: the handler stays.
                 let _ = self
                     .tty_state
                     .set_mode(0, tty::Mode::Raw, tty::SetAttrWhen::Drain);
-            }
-
-            // Restore default SIGINT handling
-            // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; SIG_DFL
-            // restores the default disposition. `act` is valid for the duration of the call.
-            unsafe {
-                let mut act: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
-                act.sa_sigaction = libc::SIG_DFL;
-                act.sa_flags = 0;
-                bun_sys::posix::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
+            } else {
+                // Restore default SIGINT handling
+                // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; SIG_DFL
+                // restores the default disposition. `act` is valid for the duration of the call.
+                unsafe {
+                    let mut act: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
+                    act.sa_sigaction = libc::SIG_DFL;
+                    act.sa_flags = 0;
+                    bun_sys::posix::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
+                }
             }
         }
     }
@@ -2861,7 +2861,7 @@ static SIGINT_DURING_WAIT: core::sync::atomic::AtomicBool =
 #[cfg(unix)]
 static SIGINT_WAKES: bun_uws::LoopWaker = bun_uws::LoopWaker::unset();
 
-/// Async-signal-safe: atomics and the loop's wakeup.
+/// Async-signal-safe: atomics and the loop's wakeup. Outside a wait it drops the signal.
 #[cfg(unix)]
 extern "C" fn sigint_handler(_: c_int) {
     use core::sync::atomic::Ordering;

@@ -331,6 +331,39 @@ async function withTerminalRepl(
   }
 }
 
+// A REPL on pipes that stay open. `waitFor` resolves with the output up to and including
+// `text`, or with all of it when stdout has ended.
+function spawnPipedRepl(home: string, cmd: string[] = [bunExe(), "repl"]) {
+  const proc = Bun.spawn({
+    cmd,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...bunEnv, TERM: "dumb", NO_COLOR: "1", HOME: home, USERPROFILE: home },
+  });
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  return {
+    proc,
+    send(text: string) {
+      proc.stdin.write(text);
+      proc.stdin.flush();
+    },
+    async waitFor(text: string) {
+      while (!output.includes(text)) {
+        const { value, done } = await reader.read();
+        if (done) return output;
+        output += decoder.decode(value, { stream: true });
+      }
+      const end = output.indexOf(text) + text.length;
+      const seen = output.slice(0, end);
+      output = output.slice(end);
+      return seen;
+    },
+  };
+}
+
 // Runs `cmd` on a terminal of its own. An inline `terminal` option makes that terminal the
 // controlling terminal of the child, so the byte 0x03 is a SIGINT for the foreground process
 // group while the terminal is in cooked mode. `withTerminalRepl` passes an existing
@@ -863,6 +896,25 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    // Without a terminal of its own the REPL has no raw mode: Ctrl+C between two inputs is a
+    // SIGINT, and it ends the REPL. An await before it, which installs the REPL's own handler
+    // for the time of the wait, does not change that.
+    test.skipIf(isWindows)("SIGINT between two inputs ends a REPL that reads a pipe, also after an await", async () => {
+      using home = tempDir("repl-home", {});
+      const repl = spawnPipedRepl(String(home));
+      await using proc = repl.proc;
+      // The value is printed when the wait is over.
+      repl.send("await ('after' + 'Await')\n");
+      expect(await repl.waitFor("afterAwait")).toContain("afterAwait");
+
+      proc.kill("SIGINT");
+      await proc.exited;
+      expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+        exitCode: null,
+        signalCode: "SIGINT",
+      });
+    });
   });
 
   describe("TypeScript support", () => {
@@ -1150,6 +1202,44 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       },
       { env: { BUN_GC_TIMER_DISABLE: "1" } },
     );
+  });
+
+  // A parent that forwards signals (`bun run`, a task runner) delivers one Ctrl+C twice: the
+  // terminal signals the foreground process group, and the parent signals its child again. The
+  // second one arrives when the REPL is back at its prompt. There the terminal is in raw mode,
+  // where Ctrl+C is a key: a SIGINT is never the user asking the REPL to end.
+  test.each([
+    [
+      "an await that a SIGINT cut short",
+      "await new Promise(() => { setInterval(() => {}, 1); setTimeout(() => console.log('par' + 'ked'), 1); })",
+    ],
+    [
+      "a .copy that a SIGINT cut short",
+      ".copy await new Promise(() => { setInterval(() => {}, 1); setTimeout(() => console.log('par' + 'ked'), 1); })",
+    ],
+    ["an await that settled", "await ('set' + 'tled')"],
+  ])("a SIGINT at the prompt after %s does not end the REPL", async (name, line) => {
+    await withTerminalRepl(async ({ send, waitFor, proc }) => {
+      send(line + "\n");
+      if (name.includes("cut short")) {
+        // "parked" is printed from inside the wait, when the REPL's SIGINT handler is installed.
+        // The echo of the line does not contain the word. The interval turns the loop, so the
+        // wait sees the SIGINT with no wakeup too.
+        await waitFor("parked");
+        proc.kill("SIGINT");
+        await waitFor(/\u276f|> /);
+      } else {
+        // The value is printed when the wait is over.
+        await waitFor("settled");
+      }
+      proc.kill("SIGINT");
+      send("6 * 7\n");
+      const outcome = await Promise.race([
+        waitFor("42").then(() => "evaluated"),
+        proc.exited.then(() => `ended by ${proc.signalCode}`),
+      ]);
+      expect(outcome).toBe("evaluated");
+    });
   });
 
   // Without a terminal of its own (stdout is a pipe here) the REPL has no raw-mode prompt. The

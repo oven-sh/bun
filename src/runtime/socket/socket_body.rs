@@ -116,7 +116,7 @@ macro_rules! log {
 /// per-connection `*TLSSocket` is a UAF when handshakes overlap. Read the
 /// socket back from the per-SSL ex_data slot set in `onOpen` instead.
 fn alpn_socket(ssl: *mut bun_boringssl_sys::SSL) -> Option<bun_ptr::ThisPtr<TLSSocket>> {
-    // BoringSSL never invokes the ALPN callback with a null `SSL*`; route
+    // BoringSSL never invokes the two callbacks that lead here with a null `SSL*`; route
     // through the const-asserted opaque-ZST accessor so the call is safe.
     let this_ptr =
         tls_socket_functions::ffi::SSL_get_ex_data(boringssl_sys::SSL::opaque_ref(ssl), 0);
@@ -202,8 +202,8 @@ pub(crate) extern "C" fn us_dispatch_alpn_offer(
                 // and `in_` is valid for `inlen` per the callback contract.
                 unsafe { core::ptr::copy_nonoverlapping(in_, ab.ptr, wire_len) };
             }
-            // SAFETY: `ssl` is the live SSL handle passed into this ALPN
-            // callback; SSL_get_servername reads the negotiated SNI name and
+            // SAFETY: `ssl` is the live SSL handle that BoringSSL passed to its
+            // certificate callback; SSL_get_servername reads the negotiated SNI name and
             // returns NULL or a NUL-terminated string owned by the SSL.
             let servername_ptr = unsafe { boringssl_sys::SSL_get_servername(ssl.cast_const(), 0) };
             let servername_js = if servername_ptr.is_null() {

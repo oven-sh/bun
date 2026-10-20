@@ -145,6 +145,8 @@ long us_ssl_ctx_live_count(void) {
  *   - us_ssl_rare_ex_idx (SSL): us_ssl_rare_t.
  *   - us_ssl_wrapper_ex_idx (SSL): the owner of an SSL that no us_socket_t drives.
  *   - us_ssl_alpn_offer_ex_idx (SSL): us_alpn_offer_t.
+ *   - us_ctx_policy_ex_idx (SSL_CTX): us_ssl_ctx_policy_t.
+ *   - us_ssl_kept_ctx_ex_idx (SSL): one reference to an SSL_CTX.
  *
  * SSL_CTX creation runs from both the JS thread (SecureContext, Bun.connect/
  * listen) and the HTTP-client thread (HTTPContext.initWithOpts). A racy `<0`
@@ -164,6 +166,9 @@ static int us_ssl_rare_ex_idx = -1;
 static int us_ssl_wrapper_ex_idx = -1;
 /* (SSL) The ALPN protocols of the ClientHello, from us_select_cert_cb until us_ssl_alpn_offer_cert_cb. */
 static int us_ssl_alpn_offer_ex_idx = -1;
+static int us_ctx_policy_ex_idx = -1;
+/* (SSL) The SSL_CTX that was current at the first us_ssl_set_server_ctx: the connection keeps its ciphers and signing preferences. */
+static int us_ssl_kept_ctx_ex_idx = -1;
 /* BIO type of the loop's shared BIO: tells a us_socket_t's SSL from an SSLWrapper's. */
 static int us_ssl_bio_type = 0;
 /* (SSL_CTX) packed client-certificate policy of a Bun.serve per-serverName
@@ -256,6 +261,28 @@ static void us_ssl_alpn_offer_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
                                    int index, long argl, void *argp) {
   (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
   us_free(ptr);
+}
+
+/* The `ciphers` and `sigalgs` an SSL_CTX was built with. BoringSSL has no getter for the second. */
+struct us_ssl_ctx_policy_t {
+  /* NULL: BoringSSL's default. */
+  char *ciphers, *sigalgs;
+};
+
+static void us_ctx_policy_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                               int index, long argl, void *argp) {
+  (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
+  struct us_ssl_ctx_policy_t *policy = ptr;
+  if (!policy) return;
+  us_free(policy->ciphers);
+  us_free(policy->sigalgs);
+  us_free(policy);
+}
+
+static void us_ssl_kept_ctx_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                                 int index, long argl, void *argp) {
+  (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
+  SSL_CTX_free(ptr);
 }
 
 /* Upper bounds for parked payloads: a serialized SSL_SESSION (i2d) and a
@@ -398,6 +425,8 @@ static void us_ex_idx_init(void) {
   us_ssl_rare_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_rare_free);
   us_ssl_wrapper_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_alpn_offer_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_alpn_offer_free);
+  us_ctx_policy_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, us_ctx_policy_free);
+  us_ssl_kept_ctx_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_kept_ctx_free);
   us_ssl_bio_type = BIO_get_new_index() | BIO_TYPE_SOURCE_SINK;
 }
 
@@ -1431,6 +1460,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
                                     : SSL_VERIFY_PEER,
       us_verify_callback);
 
+  const char *ciphers = NULL;
   if (options.dh_params_file_name) {
     DH *dh_2048 = NULL;
     FILE *paramfile = fopen(options.dh_params_file_name, "r");
@@ -1455,6 +1485,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
       ssl_ctx_build_fail(ssl_context);
       return NULL;
     }
+    ciphers = DEFAULT_CIPHER_LIST;
   }
 
   if (options.ssl_ciphers) {
@@ -1468,6 +1499,8 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
         return NULL;
       }
       ERR_clear_error();
+    } else {
+      ciphers = options.ssl_ciphers;
     }
   }
 
@@ -1532,6 +1565,17 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
                       : !us_ssl_ctx_set_verify_signature_algorithms(ssl_context)) {
     ssl_ctx_build_fail(ssl_context);
     return NULL;
+  }
+
+  if (ciphers || options.sigalgs) {
+    struct us_ssl_ctx_policy_t *policy = us_calloc(1, sizeof(*policy));
+    if (!policy) Bun__outOfMemory();
+    if (ciphers) policy->ciphers = us_strdup(ciphers);
+    if (options.sigalgs) policy->sigalgs = us_strdup(options.sigalgs);
+    if ((ciphers && !policy->ciphers) || (options.sigalgs && !policy->sigalgs) ||
+        !SSL_CTX_set_ex_data(ssl_context, us_ctx_policy_ex_idx, policy)) {
+      Bun__outOfMemory();
+    }
   }
 
   if (options.ecdh_curve) {
@@ -3208,6 +3252,10 @@ void us_ssl_ctx_set_sni_policy(SSL_CTX *ctx, int request_cert, int reject_unauth
   SSL_CTX_set_session_id_context(ctx, (const uint8_t *)&sid, sizeof(sid));
 }
 
+static int us_ssl_can_switch_ctx(const SSL *ssl) {
+  return SSL_in_init(ssl) && !SSL_get_pending_cipher(ssl);
+}
+
 /* BoringSSL's certificate callback runs once the version is negotiated and SNI is resolved, before
  * BoringSSL picks the cipher, the certificate and the session. Its ALPN selection callback runs after
  * the first two, and on TLS 1.2 after all three: too late for the owner to replace the SSL_CTX
@@ -3244,10 +3292,18 @@ static int us_ssl_alpn_offer_cert_cb(SSL *ssl, void *arg) {
  * A later switch would verify the client against `ctx` and leave a session that resumes under the
  * context it replaced. */
 static int us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
-  if (!SSL_in_init(ssl) || SSL_get_pending_cipher(ssl)) return 0;
+  if (!us_ssl_can_switch_ctx(ssl)) return 0;
   SSL_set_SSL_CTX(ssl, ctx);
-  /* The certificate callback lives in the state that SSL_set_SSL_CTX replaces. */
+  /* The certificate callback and the signing preferences live in the state that SSL_set_SSL_CTX replaces. */
   if (us_ssl_alpn_offer(ssl)) SSL_set_cert_cb(ssl, us_ssl_alpn_offer_cert_cb, NULL);
+  SSL_CTX *kept = us_ssl_kept_ctx_ex_idx >= 0 ? SSL_get_ex_data(ssl, us_ssl_kept_ctx_ex_idx) : NULL;
+  if (kept) {
+    const struct us_ssl_ctx_policy_t *kept_policy = SSL_CTX_get_ex_data(kept, us_ctx_policy_ex_idx);
+    if (kept_policy && kept_policy->sigalgs ? !SSL_set1_sigalgs_list(ssl, kept_policy->sigalgs)
+                                            : !SSL_set_signing_algorithm_prefs(ssl, NULL, 0)) {
+      Bun__outOfMemory();
+    }
+  }
   if (us_ctx_sni_policy_ex_idx < 0) return 1;
   uintptr_t policy = (uintptr_t)SSL_CTX_get_ex_data(ctx, us_ctx_sni_policy_ex_idx);
   if (!(policy & US_SNI_POLICY_REQUEST_CERT)) return 1;
@@ -3575,12 +3631,26 @@ void us_ssl_on_alpn_offer(SSL *ssl) {
   SSL_CTX_set_select_certificate_cb(SSL_get_SSL_CTX(ssl), us_select_cert_cb);
 }
 
-/* node:tls setKeyCert() on a server: us_ssl_apply_selected_ctx for the one context switch that can
- * come before the ClientHello. BoringSSL reads the select-certificate callback off the SSL_CTX that is
- * current then, so `ctx` gets it too. It does nothing for a connection with no SNI resolver and no
- * us_ssl_on_alpn_offer. */
+/* node:tls setKeyCert() on a server. As in Node, it replaces the certificate, the key and the CAs
+ * of the connection and nothing else: the cipher list and the signing preferences, which BoringSSL
+ * reads off the SSL_CTX and its credential, stay those of the SSL_CTX that was current at the first
+ * call. The switch can come before the ClientHello, and BoringSSL reads the select-certificate
+ * callback off the SSL_CTX that is current then, so `ctx` gets it too. It does nothing for a
+ * connection with no SNI resolver and no us_ssl_on_alpn_offer. */
 int us_ssl_set_server_ctx(SSL *ssl, SSL_CTX *ctx) {
-  if (!us_ssl_apply_selected_ctx(ssl, ctx)) return 0;
+  if (!us_ssl_can_switch_ctx(ssl)) return 0;
+  us_ex_idx_ensure();
+  if (!SSL_get_ex_data(ssl, us_ssl_kept_ctx_ex_idx)) {
+    SSL_CTX *kept = SSL_get_SSL_CTX(ssl);
+    const struct us_ssl_ctx_policy_t *policy = SSL_CTX_get_ex_data(kept, us_ctx_policy_ex_idx);
+    SSL_CTX_up_ref(kept);
+    /* The cipher list of an SSL comes before the list of its SSL_CTX. */
+    if (!SSL_set_ex_data(ssl, us_ssl_kept_ctx_ex_idx, kept) ||
+        !SSL_set_cipher_list(ssl, policy && policy->ciphers ? policy->ciphers : SSL_DEFAULT_CIPHER_LIST)) {
+      Bun__outOfMemory();
+    }
+  }
+  us_ssl_apply_selected_ctx(ssl, ctx);
   SSL_CTX_set_select_certificate_cb(ctx, us_select_cert_cb);
   return 1;
 }

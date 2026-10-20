@@ -1608,23 +1608,19 @@ describe.each([
     });
   });
 
-  // A context switch is SSL_set_SSL_CTX, and ALPNCallback runs before BoringSSL picks the cipher
-  // and the signature algorithm. So the `ciphers` and `sigalgs` of the selected context apply, as
-  // they do for a context from SNICallback or addContext(). Node keeps the server's: there the
-  // three connections fail alike. A context that repeats the setting of the server keeps it.
+  // As in Node, setKeyCert() replaces the certificate, the key and the CAs of a connection, and the
+  // `ciphers` and `sigalgs` stay those of the server. BoringSSL reads both off the SSL_CTX, which
+  // setKeyCert() replaces before either is used.
   // `ciphers` restricts TLS 1.2 only, and a TLS 1.2 handshake with no common signature algorithm
   // moves to a cipher that needs no signature.
-  it.each([
+  describe.each([
     maxVersion
       ? (["ciphers", "ECDHE-RSA-AES256-GCM-SHA384", "ECDHE-RSA-AES128-GCM-SHA256", "ERR_SSL_NO_SHARED_CIPHER"] as const)
       : (["sigalgs", "rsa_pss_rsae_sha512", "rsa_pss_rsae_sha256", "ERR_SSL_NO_COMMON_SIGNATURE_ALGORITHMS"] as const),
-  ])(
-    "setKeyCert() in ALPNCallback applies the %s of the selected context",
-    async (setting, ofServer, ofClient, code) => {
-      const contexts: Record<string, tls.SecureContext> = {
-        b: tls.createSecureContext({ key: agent3Key, cert: agent3Cert }),
-        c: tls.createSecureContext({ key: agent3Key, cert: agent3Cert, [setting]: ofServer }),
-      };
+  ])("the %s of the server", (setting, ofServer, ofContext, code) => {
+    // Bun hands the TLSSocket to 'connection', before the ClientHello arrives.
+    it.each(["in ALPNCallback", "before the handshake"] as const)("stay after setKeyCert() %s", async when => {
+      const context = tls.createSecureContext({ key: agent3Key, cert: agent3Cert, [setting]: ofContext });
       const events: string[] = [];
       let settle = () => {};
       const server = tls.createServer({
@@ -1633,11 +1629,14 @@ describe.each([
         maxVersion,
         [setting]: ofServer,
         ALPNCallback(this: tls.TLSSocket, { protocols }: { protocols: string[] }) {
-          events.push(`ALPNCallback ${protocols[0]}`);
-          if (protocols[0] in contexts) this.setKeyCert(contexts[protocols[0]]);
+          events.push("ALPNCallback");
+          if (when === "in ALPNCallback") this.setKeyCert(context);
           return protocols[0];
         },
       });
+      if (when === "before the handshake") {
+        server.on("connection", socket => (socket as tls.TLSSocket).setKeyCert(context));
+      }
       server.on("secureConnection", socket => {
         events.push(`served ${(socket.getCertificate() as tls.PeerCertificate).subject.CN}`);
         socket.on("error", () => {});
@@ -1650,20 +1649,22 @@ describe.each([
       });
       try {
         using transport = await transports.listener(server);
-        for (const alpn of ["a", "b", "c"]) {
+        // A client that offers what the server allows, then one that offers what the context allows.
+        for (const ofClient of [ofServer, ofContext]) {
           const settled = Promise.withResolvers<void>();
           settle = settled.resolve;
-          const client = transport.open({ rejectUnauthorized: false, ALPNProtocols: [alpn], [setting]: ofClient });
+          const client = transport.open({ rejectUnauthorized: false, ALPNProtocols: ["a"], [setting]: ofClient });
           client.on("error", () => {});
           await settled.promise;
           client.destroy();
         }
-        expect(events).toEqual(["ALPNCallback a", code, "ALPNCallback b", "served agent3", "ALPNCallback c", code]);
+        // ALPNCallback runs before BoringSSL looks for a common cipher or signature algorithm.
+        expect(events).toEqual(["ALPNCallback", "served agent3", "ALPNCallback", code]);
       } finally {
         server.close();
       }
-    },
-  );
+    });
+  });
 
   // ALPNCallback runs before BoringSSL picks the cipher and the session, so that the context it
   // selects decides both. It sees neither, also on a handshake that then resumes. Node runs it

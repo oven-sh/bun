@@ -1110,7 +1110,7 @@ pub(crate) fn edit(
                                     let in_target_list =
                                         strings::eql_long(list, dependency_list, true);
 
-                                    // `bun update <name>` edits the slot in place; the rebuild below re-sorts the keys.
+                                    // `bun update <name>` edits the slot in place. The rebuild below writes the resolved name over the key.
                                     if request.package_id != INVALID_PACKAGE_ID
                                         && manager.subcommand != Subcommand::Update
                                         && in_target_list
@@ -1257,6 +1257,8 @@ pub(crate) fn edit(
 
     if remaining != 0 {
         changed = true;
+        // The list is sorted only when a request gives it a package name that it did not have.
+        let mut gained_name = false;
         let mut new_dependencies: Vec<G::Property> = {
             let mut dependencies: Vec<G::Property> = Vec::new();
             if let Some(query) = current_package_json.as_property(dependency_list) {
@@ -1280,6 +1282,7 @@ pub(crate) fn edit(
                 continue;
             }
 
+            let mut new_slot = false;
             let mut k: usize = 0;
             while k < new_dependencies.len() {
                 if let Some(key) = &new_dependencies[k].key {
@@ -1301,6 +1304,8 @@ pub(crate) fn edit(
                         let new_len = new_dependencies.len() - 1;
                         new_dependencies.truncate(new_len);
                     }
+                } else {
+                    new_slot = true;
                 }
 
                 new_dependencies[k].key = Some(Expr::allocate(
@@ -1346,7 +1351,9 @@ pub(crate) fn edit(
             // literal, and the slot above was just re-keyed to the resolved package
             // name. If the list already declared this package under the resolved name
             // with a different literal (e.g. a new commit hash), that stale entry is
-            // still present, so drop it or the file ends up with a duplicate key.
+            // still present, so drop it or the file ends up with a duplicate key. The
+            // re-keyed entry takes its place.
+            let mut replaced_declared = false;
             if !request.is_aliased && k < new_dependencies.len() {
                 let resolved_name = request.get_resolved_name(&manager.lockfile);
                 let mut j = new_dependencies.len();
@@ -1362,13 +1369,20 @@ pub(crate) fn edit(
                             .expect("infallible: variant checked")
                             .eql_bytes(resolved_name)
                         {
-                            new_dependencies.remove(j);
-                            if j < k {
-                                k -= 1;
-                            }
+                            new_dependencies.swap(j, k);
+                            new_dependencies.remove(k);
+                            k = if j > k { j - 1 } else { j };
+                            replaced_declared = true;
                         }
                     }
                 }
+            }
+
+            // The literal of a path or URL that is not resolved yet is not a package name.
+            if request.is_aliased {
+                gained_name |= new_slot;
+            } else if request.package_id != INVALID_PACKAGE_ID {
+                gained_name |= !replaced_declared;
             }
 
             // There are no early-exit
@@ -1403,7 +1417,7 @@ pub(crate) fn edit(
                 .e_object_mut()
                 .expect("infallible: variant checked");
             obj.properties = G::PropertyList::move_from_list(new_dependencies);
-            if obj.properties.len_u32() > 1 {
+            if gained_name && obj.properties.len_u32() > 1 {
                 obj.alphabetize_properties();
             }
         }

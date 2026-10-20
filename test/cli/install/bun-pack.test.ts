@@ -3759,6 +3759,29 @@ describe.concurrent("files", () => {
     ]);
   });
 
+  // npm reads the `!` of `!(a).txt` as a negation and the parentheses as plain characters.
+  test.each([[["*.txt", "!(a).txt"]], [["*.txt", "!/(a).txt"]], [["*.txt", "!\\(a).txt"]]])(
+    "an excluded name that begins with `(`: %j",
+    async files => {
+      using dir = tempDir("pack-files-excluded-paren", {
+        "package.json": JSON.stringify({ name: "pack-files-excluded-paren", version: "1.0.0", files }),
+        "(a).txt": "x",
+        "a.txt": "x",
+        "b.txt": "x",
+        "index.js": indexJs,
+      });
+
+      const { err, exitCode } = await runPack(dir);
+      expect(err).toBe("");
+      expect(tarballEntries(join(dir, "pack-files-excluded-paren-1.0.0.tgz"))).toEqual([
+        "package/package.json",
+        "package/a.txt",
+        "package/b.txt",
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test("an entry longer than the path buffer is still matched", async () => {
     // A brace group of 1000 names that do not exist, then "dist". ~100KB, longer
     // than the path buffer on every platform (98302 bytes on Windows).
@@ -4175,6 +4198,32 @@ describe.concurrent(".gitignore/.npmignore", () => {
           "conf/.git/config": "x",
         }),
       ).toEqual(["package.json", "conf/a.json", "index.js"]);
+    });
+
+    // npm and git read the `!` of `!(a).txt` as a negation and the parentheses as plain characters.
+    // Every list is what `npm pack` 11.16.0 packs for the same ignore file.
+    describe.each([".npmignore", ".gitignore"])("a negated name that begins with `(` (%s)", ignoreFile => {
+      const files = {
+        "(a).txt": "x",
+        "(group)/page.js": "x",
+        "a.txt": "x",
+        "b.txt": "x",
+        "index.js": indexJs,
+        "other/page.js": "x",
+      };
+      const all = Object.keys(files);
+
+      test.each([
+        ["*.txt\n!(a).txt\n", ["(a).txt", "(group)/page.js", "index.js", "other/page.js"]],
+        ["*.txt\n!/(a).txt\n", ["(a).txt", "(group)/page.js", "index.js", "other/page.js"]],
+        ["!(a).txt\n", all],
+        ["*\n!(group)/**\n", ["(group)/page.js"]],
+        ["(group)\n!(group)/page.js\n", all],
+        // this spelling packed the same before
+        ["*.txt\n!\\(a).txt\n", ["(a).txt", "(group)/page.js", "index.js", "other/page.js"]],
+      ])("%j", async (ignore, expected) => {
+        expect(await packed(ignoreFile, ignore, files)).toEqual(["package.json", ...expected]);
+      });
     });
   });
 

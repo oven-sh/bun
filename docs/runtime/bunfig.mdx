@@ -194,6 +194,20 @@ Same as the top-level `preload` field, but only applies to `bun test`.
 preload = ["./setup.ts"]
 ```
 
+### `test.projects`
+
+Scope a preload to the test files that match a glob. Each `[[test.projects]]` table needs a unique `name` and a `testMatch` glob (or array of globs), matched against the path relative to the project root. Its `preload` scripts load after `test.preload`, in a global that only the matching files share. See [Projects](/test/configuration#projects).
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+preload = ["./setup.ts"]
+
+[[test.projects]]
+name = "dom"
+testMatch = ["**/*.dom.test.tsx"]
+preload = ["./happydom.ts"]
+```
+
 ### `test.pathIgnorePatterns`
 
 Exclude files and directories from test discovery using glob patterns. The test runner prunes matched directories during scanning, so it never traverses their contents. Use this when your project contains submodules or vendored code with `*.test.ts` files that you don't want `bun test` to pick up.

@@ -2132,6 +2132,271 @@ console.log(load());
     expect(await proc.exited).toBe(42);
   });
 
+  it("gives 'uncaughtException' an unhandled rejection's error as it is when it has no stack of its own", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--unhandled-rejections=throw",
+        "-e",
+        `
+          const { readFile } = require("node:fs/promises");
+          const rejects = [
+            () => void Promise.any([Promise.reject(new Error("an element"))]),
+            () => void readFile(__filename + ".missing"),
+            () => void Promise.reject(new DOMException("aborted", "AbortError")),
+          ];
+          const given = [];
+          process.on("uncaughtException", (error, origin) => {
+            given.push([error.constructor.name, error.code ?? "no code", origin]);
+            if (rejects.length) rejects.shift()();
+            else console.log(JSON.stringify(given));
+          });
+          rejects.shift()();
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual([
+      ["AggregateError", "no code", "unhandledRejection"],
+      ["Error", "ENOENT", "unhandledRejection"],
+      ["DOMException", 20, "unhandledRejection"],
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // What --unhandled-rejections=throw and =strict raise as the uncaught exception: the reason itself when it is an
+  // error, the ERR_UNHANDLED_REJECTION wrapper for every other reason. Node v26.3.0 gives the same rows in both
+  // modes, with its own error classes for the two import() rows, and with one difference that the row names.
+  it.each(["throw", "strict"])(
+    "--unhandled-rejections=%s raises an error as it is and wraps other reasons",
+    async mode => {
+      using dir = tempDir("unhandled-rejections-raised", {
+        "does-not-parse.mjs": "export default (;",
+        "main.cjs": `
+          const { readFile } = require("node:fs/promises");
+          const ordinary = new Error("ordinary");
+          const deleted = new TypeError("deleted");
+          delete deleted.stack;
+          const withStack = { stack: "a stack" };
+          const plain = { a: 1 };
+          function withoutFrames() {
+            const limit = Error.stackTraceLimit;
+            Error.stackTraceLimit = 0;
+            const error = new RangeError("no frames");
+            Error.stackTraceLimit = limit;
+            return error;
+          }
+          // [name, what rejects, the reason if it exists before the rejection]
+          const rejections = [
+            ["an Error", () => void Promise.reject(ordinary), ordinary],
+            ["an fs error, made with no script on the stack", () => void readFile(__filename + ".missing")],
+            ["the AggregateError of Promise.any()", () => void Promise.any([Promise.reject(new Error("an element"))])],
+            ["a DOMException that script made", () => void Promise.reject(new DOMException("aborted", "AbortError"))],
+            ["import() of a module that does not exist", () => void import("./does-not-exist.mjs")],
+            ["import() of a module that does not parse", () => void import("./does-not-parse.mjs")],
+            ["an Error made with Error.stackTraceLimit = 0", () => void Promise.reject(withoutFrames())],
+            ["an Error whose stack was deleted (Node wraps it)", () => void Promise.reject(deleted), deleted],
+            ["an object with a stack of its own", () => void Promise.reject(withStack), withStack],
+            ["an object", () => void Promise.reject(plain), plain],
+            ["null", () => void Promise.reject(null)],
+            ["a string", () => void Promise.reject("text")],
+          ];
+          const raised = [];
+          let monitored;
+          let unhandledRejections = 0;
+          process.on("uncaughtExceptionMonitor", error => void (monitored = error));
+          process.on("uncaughtException", (error, origin) => {
+            const [name, , reason] = rejections[raised.length];
+            const isTheReason = reason === undefined ? "not known" : error === reason;
+            raised.push([name, error.name ?? "no name", error.code ?? "no code", origin, error === monitored, isTheReason]);
+            next();
+          });
+          // In the strict mode, a rejection whose exception is handled goes on to 'unhandledRejection'.
+          if (${mode === "strict"}) process.on("unhandledRejection", () => void unhandledRejections++);
+          function next() {
+            if (raised.length < rejections.length) rejections[raised.length][1]();
+            else setImmediate(() => console.log(JSON.stringify({ raised, unhandledRejections })));
+          }
+          next();
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--unhandled-rejections=" + mode, "main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const asItIs = (name, errorName, code, isTheReason = "not known") => [
+        name,
+        errorName,
+        code,
+        "unhandledRejection",
+        true,
+        isTheReason,
+      ];
+      const wrapped = (name, isTheReason = "not known") =>
+        asItIs(name, "UnhandledPromiseRejection", "ERR_UNHANDLED_REJECTION", isTheReason);
+      expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+        stdout: {
+          raised: [
+            asItIs("an Error", "Error", "no code", true),
+            asItIs("an fs error, made with no script on the stack", "Error", "ENOENT"),
+            asItIs("the AggregateError of Promise.any()", "AggregateError", "no code"),
+            asItIs("a DOMException that script made", "AbortError", 20),
+            asItIs("import() of a module that does not exist", "ResolveMessage", "ERR_MODULE_NOT_FOUND"),
+            asItIs("import() of a module that does not parse", "BuildMessage", "no code"),
+            asItIs("an Error made with Error.stackTraceLimit = 0", "RangeError", "no code"),
+            asItIs("an Error whose stack was deleted (Node wraps it)", "TypeError", "no code", true),
+            asItIs("an object with a stack of its own", "no name", "no code", true),
+            wrapped("an object", false),
+            wrapped("null"),
+            wrapped("a string"),
+          ],
+          unhandledRejections: mode === "strict" ? 12 : 0,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // The capture callback gets the same value. Under strict nothing listens for 'unhandledRejection' here, so the two
+  // warnings follow the handled exception: an error with no stack of its own gets both, like any other reason.
+  it.each([
+    ["throw", []],
+    ["strict", ["UnhandledPromiseRejectionWarning", "UnhandledPromiseRejectionWarning"]],
+  ])("--unhandled-rejections=%s gives the error to the capture callback", async (mode, warnings) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--unhandled-rejections=" + mode,
+        "-e",
+        `
+          const seen = { captured: [], warnings: [] };
+          process.setUncaughtExceptionCaptureCallback(error => void seen.captured.push(error.code));
+          process.on("warning", warning => void seen.warnings.push(warning.name));
+          process.on("exit", () => console.log(JSON.stringify(seen)));
+          require("node:fs/promises").readFile(__filename + ".missing");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout: JSON.parse(stdout), exitCode }).toEqual({
+      stdout: { captured: ["ENOENT"], warnings },
+      exitCode: 0,
+    });
+  });
+
+  // The process starts a Worker, so a debug build can need more than the default timeout.
+  it("--unhandled-rejections=throw gives the parent of a Worker the error of the Worker's rejection", async () => {
+    using dir = tempDir("unhandled-rejections-worker", {
+      "worker.cjs": `require("node:fs/promises").readFile(__filename + ".missing");`,
+      "main.cjs": `
+        const { Worker } = require("node:worker_threads");
+        new Worker(__dirname + "/worker.cjs").on("error", error => console.log(error.code));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--unhandled-rejections=throw", "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ENOENT\n", stderr: "", exitCode: 0 });
+  }, 20_000);
+
+  // Node does not format the stack to decide what to raise. An Error.prepareStackTrace hook runs when `stack` is
+  // read, and the listener gets the text of the hook.
+  it("--unhandled-rejections=throw does not call Error.prepareStackTrace before the 'uncaughtException' listener", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--unhandled-rejections=throw",
+        "-e",
+        `
+          let calls = 0;
+          Error.prepareStackTrace = error => (calls++, "from the hook: " + error.message);
+          process.on("uncaughtException", error => {
+            const before = calls;
+            const stack = error.stack;
+            console.log(JSON.stringify({ before, stack, after: calls }));
+          });
+          Promise.reject(new Error("boom"));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: { before: 0, stack: "from the hook: boom", after: 1 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // With no listener the report names the error. Main printed only the wrapper's "[object Object]" under strict.
+  it.each(["throw", "strict"])(
+    "--unhandled-rejections=%s reports an error with no stack of its own, not a wrapper",
+    async mode => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--unhandled-rejections=" + mode,
+          "-e",
+          `require("node:fs/promises").readFile(__filename + ".missing");`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({
+        stdout,
+        namesTheError: stderr.includes("ENOENT: no such file or directory"),
+        hasTheWrapper: stderr.includes("ERR_UNHANDLED_REJECTION"),
+        exitCode,
+      }).toEqual({ stdout: "", namesTheError: true, hasTheWrapper: false, exitCode: 1 });
+    },
+  );
+
+  // The rejection warning takes `reason.stack` for an error. When that is undefined, it has the text of the reason.
+  it("--unhandled-rejections=warn makes both warnings for an error whose stack is undefined", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--unhandled-rejections=warn",
+        "-e",
+        `
+          const seen = [];
+          process.on("warning", warning => seen.push(warning.name));
+          process.on("exit", () => console.log(JSON.stringify(seen)));
+          const error = new Error("boom");
+          error.stack = undefined;
+          Promise.reject(error);
+          require("node:fs/promises").readFile(__filename + ".missing");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual(Array(4).fill("UnhandledPromiseRejectionWarning"));
+    expect(exitCode).toBe(0);
+  });
+
   it("catches exceptions with process.on('uncaughtException', fn) from setTimeout", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionSetTimeout.js")]);
     expect(await proc.exited).toBe(42);

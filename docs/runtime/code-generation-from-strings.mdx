@@ -91,7 +91,7 @@ These keep working at both levels:
 - `import()` of a `blob:` URL made from `Bun.file()`, which Bun reads from the file.
 - `vm.createContext()` and `new vm.SyntheticModule()`. Neither one compiles a string.
 
-With `{ type: "text" }` or `{ type: "md" }`, Bun makes a module that exports a string. From a `data:` or `blob:` URL, that module is code made at run time, so `=strict` refuses it. Read the text with `await blob.text()` or `await (await fetch(url)).text()` instead. [`Bun.markdown.html()`](/runtime/markdown) renders Markdown to HTML.
+With `{ type: "text" }` or `{ type: "md" }`, Bun makes a module that exports a string. That module is code made at run time for a `data:` URL and for a `blob:` URL that is not made from `Bun.file()`, so `=strict` refuses it. Read the text with `await blob.text()` or `await (await fetch(url)).text()` instead. [`Bun.markdown.html()`](/runtime/markdown) renders Markdown to HTML.
 
 A compiled executable with `=strict` loads modules, Workers and `require()`d files from the executable only. See [Files on disk are not part of the program](#files-on-disk-are-not-part-of-the-program).
 

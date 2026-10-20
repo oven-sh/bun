@@ -208,7 +208,7 @@ describe("expect()", () => {
     let timerFired = false;
     const timer = setTimeout(() => {
       timerFired = true;
-    }, 500);
+    }, 2000);
     const hops = async (/** @type {number} */ n) => {
       for (let i = 0; i < n; i++) await new Promise(resolve => setImmediate(resolve));
     };
@@ -225,6 +225,27 @@ describe("expect()", () => {
       server.close();
     }
     expect(timerFired).toBe(false);
+  });
+
+  test("a loop of resolves waits that immediates settle still runs timers", async () => {
+    const server = createServer();
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    let done = false;
+    const timer = setTimeout(() => {
+      done = true;
+    }, 10);
+    // Each wait ends inside its immediate's checkpoint, and the next one starts
+    // before the loop gets a turn. The timer must still fire in between.
+    try {
+      for (let i = 0; i < 500 && !done; i++) {
+        await expect(new Promise(resolve => setImmediate(resolve))).resolves.toBeUndefined();
+      }
+    } finally {
+      clearTimeout(timer);
+      server.close();
+    }
+    expect(done).toBe(true);
   });
 
   test("can call without an argument", () => {

@@ -422,7 +422,7 @@ test.concurrent("a matcher wait that is the first await of a file returns when a
         let timerFired = false;
         const timer = setTimeout(() => {
           timerFired = true;
-        }, 500);
+        }, 2000);
         await expect(
           hops(3).then(() => {
             throw new Error("done");

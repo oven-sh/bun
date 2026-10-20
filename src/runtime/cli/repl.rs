@@ -1107,18 +1107,13 @@ impl<'a> Repl<'a> {
     fn wait_for_promise_or_sigint(vm: &VirtualMachine, promise: *mut jsc::JSPromise) -> bool {
         use core::sync::atomic::Ordering;
         SIGINT_DURING_WAIT.store(false, Ordering::Release);
-        while jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending {
-            if SIGINT_DURING_WAIT.swap(false, Ordering::AcqRel) {
-                return true;
-            }
-            vm.as_mut().event_loop_mut().tick();
-            if jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending
-                && !SIGINT_DURING_WAIT.load(Ordering::Acquire)
-            {
-                vm.as_mut().event_loop_mut().auto_tick();
-            }
-        }
-        false
+        let waited = vm
+            .as_mut()
+            .event_loop_mut()
+            .wait_for_promise_while(jsc::AnyPromise::Normal(promise), || {
+                !SIGINT_DURING_WAIT.swap(false, Ordering::AcqRel)
+            });
+        matches!(waited, Ok(jsc::event_loop::Waited::GaveUp))
     }
 
     /// Restore raw terminal mode after promise wait

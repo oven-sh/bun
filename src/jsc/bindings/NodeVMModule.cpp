@@ -636,7 +636,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleCreateCachedData, (JSC::JSGlobalObject * 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (auto* thisObject = dynamicDowncast<NodeVMSourceTextModule>(callFrame->thisValue())) {
-        RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->cachedData(globalObject)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->createCachedData(globalObject)));
     }
 
     throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule"_s);

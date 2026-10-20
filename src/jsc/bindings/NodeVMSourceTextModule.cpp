@@ -479,37 +479,17 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
     return jsUndefined();
 }
 
-RefPtr<CachedBytecode> NodeVMSourceTextModule::bytecode(JSGlobalObject* globalObject)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (!m_bytecode) {
-        m_bytecode = getBytecode(globalObject, SourceCodeType::ModuleType, m_sourceCode);
-        if (!m_bytecode) {
-            throwSyntaxError(globalObject, scope, "Failed to create cached data"_s);
-            return nullptr;
-        }
-    }
-
-    return m_bytecode;
-}
-
-JSUint8Array* NodeVMSourceTextModule::cachedData(JSGlobalObject* globalObject)
+JSUint8Array* NodeVMSourceTextModule::createCachedData(JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (!m_cachedBytecodeBuffer) {
-        RefPtr<CachedBytecode> cachedBytecode = bytecode(globalObject);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        std::span<const uint8_t> bytes = cachedBytecode->span();
-        JSUint8Array* buffer = WebCore::createBuffer(globalObject, bytes);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        m_cachedBytecodeBuffer.set(vm, this, buffer);
-    }
+    JSUint8Array* buffer = NodeVM::createCachedData(globalObject, SourceCodeType::ModuleType, m_sourceCode);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (!buffer)
+        throwSyntaxError(globalObject, scope, "Failed to create cached data"_s);
 
-    return m_cachedBytecodeBuffer.get();
+    return buffer;
 }
 
 void NodeVMSourceTextModule::initializeImportMeta(JSGlobalObject* globalObject)
@@ -554,7 +534,6 @@ void NodeVMSourceTextModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     visitor.append(vmModule->m_moduleRecord);
     visitor.append(vmModule->m_moduleRequestsArray);
-    visitor.append(vmModule->m_cachedBytecodeBuffer);
     visitor.append(vmModule->m_initializeImportMeta);
     NodeVMScriptFetcher::visitSource(visitor, vmModule->m_sourceCode);
 }

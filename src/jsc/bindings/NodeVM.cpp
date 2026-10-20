@@ -263,10 +263,9 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
 
     if (bytecodeAccepted == TriState::Indeterminate) {
         if (options.produceCachedData) {
-            RefPtr<JSC::CachedBytecode> producedBytecode = getBytecode(globalObject, JSC::SourceCodeType::ProgramType, sourceCode);
-            if (producedBytecode) {
-                JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, producedBytecode->span());
-                RETURN_IF_EXCEPTION(throwScope, nullptr);
+            JSC::JSUint8Array* buffer = createCachedData(globalObject, JSC::SourceCodeType::ProgramType, sourceCode);
+            RETURN_IF_EXCEPTION(throwScope, nullptr);
+            if (buffer) {
                 Bun::putDirectNamed(vm, function, "cachedData"_s, buffer);
                 Bun::putDirectNamed(vm, function, "cachedDataProduced"_s, jsBoolean(true));
             } else {
@@ -452,48 +451,32 @@ String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& a
 // cachedData is a function of the source alone: every nested function is generated now (not whichever ones this
 // process happens to have run), with the default code-generation mode (no debugger/profiler opcodes), independently of
 // what the VM's CodeCache holds.
-RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC::SourceCodeType type, const JSC::SourceCode& source)
+JSC::JSUint8Array* createCachedData(JSGlobalObject* globalObject, JSC::SourceCodeType type, const JSC::SourceCode& source)
 {
     VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::ParserError parserError;
     JSC::BytecodeCacheError bytecodeCacheError;
     FileSystem::FileHandle fileHandle;
+    RefPtr<JSC::CachedBytecode> bytecode;
     if (type == JSC::SourceCodeType::ModuleType) {
         // What JSC itself keys module code with: always strict, never tainted by a global scope extension.
         JSC::LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
         JSC::UnlinkedModuleProgramCodeBlock* unlinked = JSC::recursivelyGenerateUnlinkedCodeBlockForModuleProgram(vm, source, lexicallyScopedFeatures, JSParserScriptMode::Module, {}, parserError, EvalContextType::None);
         if (!unlinked || parserError.isValid())
             return nullptr;
-        return JSC::serializeBytecode(vm, unlinked, source, JSC::SourceCodeType::ModuleType, lexicallyScopedFeatures, JSParserScriptMode::Module, fileHandle, bytecodeCacheError, {});
+        bytecode = JSC::serializeBytecode(vm, unlinked, source, JSC::SourceCodeType::ModuleType, lexicallyScopedFeatures, JSParserScriptMode::Module, fileHandle, bytecodeCacheError, {});
+    } else {
+        ASSERT(type == JSC::SourceCodeType::ProgramType);
+        JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
+        JSC::UnlinkedProgramCodeBlock* unlinked = JSC::recursivelyGenerateUnlinkedCodeBlockForProgram(vm, source, lexicallyScopedFeatures, JSParserScriptMode::Classic, {}, parserError, EvalContextType::None);
+        if (!unlinked || parserError.isValid())
+            return nullptr;
+        bytecode = JSC::serializeBytecode(vm, unlinked, source, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSParserScriptMode::Classic, fileHandle, bytecodeCacheError, {});
     }
-    ASSERT(type == JSC::SourceCodeType::ProgramType);
-    JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
-    JSC::UnlinkedProgramCodeBlock* unlinked = JSC::recursivelyGenerateUnlinkedCodeBlockForProgram(vm, source, lexicallyScopedFeatures, JSParserScriptMode::Classic, {}, parserError, EvalContextType::None);
-    if (!unlinked || parserError.isValid())
+    if (!bytecode)
         return nullptr;
-    return JSC::serializeBytecode(vm, unlinked, source, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSParserScriptMode::Classic, fileHandle, bytecodeCacheError, {});
-}
-
-JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::SourceCode& source)
-{
-    VM& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    RefPtr<JSC::CachedBytecode> bytecode = getBytecode(globalObject, JSC::SourceCodeType::ProgramType, source);
-
-    if (!bytecode) [[unlikely]] {
-        return throwVMError(globalObject, scope, "createCachedData failed"_s);
-    }
-
-    std::span<const uint8_t> bytes = bytecode->span();
-    JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, bytes);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (!buffer) {
-        return throwVMError(globalObject, scope, "Failed to create buffer"_s);
-    }
-
-    return JSValue::encode(buffer);
+    RELEASE_AND_RETURN(scope, WebCore::createBuffer(globalObject, bytecode->span()));
 }
 
 // AppendExceptionLine helpers shared by the runtime (handleException) and

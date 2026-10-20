@@ -227,9 +227,15 @@ describe("filehandle.write() checks the type of offset before it uses it", () =>
       assert.strictEqual((await handle.write(Buffer.alloc(0), 1n)).bytesWritten, 0);
       // A string takes the (string, position, encoding) form. A bigint position means the current one.
       assert.strictEqual((await handle.write("ab", 1n)).bytesWritten, 2);
-      await assert.rejects(handle.write(123, 1n), { code: "ERR_INVALID_ARG_TYPE", message: /"buffer"/ });
+      await assert.rejects(handle.write(123, 1n), {
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message:
+          'The "buffer" argument must be of type string or an instance of Buffer, TypedArray, or DataView. ' +
+          "Received type number (123)",
+      });
       await handle.close();
-      await assert.rejects(handle.write(abcd, 1n), { code: "EBADF" });
+      await assert.rejects(handle.write(abcd, 1n), { code: "EBADF", syscall: "write" });
     });
     assert.strictEqual(bytes, "ab23456789");
   });
@@ -259,10 +265,21 @@ describe("filehandle.write() checks the type of offset before it uses it", () =>
   });
 
   test("a number that is not a valid offset is still ERR_OUT_OF_RANGE", async () => {
+    function outOfRange(must: string, received: string) {
+      return {
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "offset" is out of range. It must be ${must}. Received ${received}`,
+      };
+    }
     const bytes = await withHandle(async handle => {
-      for (const offset of [-1, 1.5, NaN, Infinity, 5, 2 ** 53]) {
-        await assert.rejects(handle.write(abcd, offset), { name: "RangeError", code: "ERR_OUT_OF_RANGE" });
-      }
+      await assert.rejects(handle.write(abcd, -1), outOfRange(">= 0 && <= 9007199254740991", "-1"));
+      await assert.rejects(handle.write(abcd, 1.5), outOfRange("an integer", "1.5"));
+      await assert.rejects(handle.write(abcd, NaN), outOfRange("an integer", "NaN"));
+      await assert.rejects(handle.write(abcd, Infinity), outOfRange("an integer", "Infinity"));
+      await assert.rejects(handle.write(abcd, 5), offsetOutOfRange(4, 5));
+      // No message for this row: Node prints the received value as 9_007_199_254_740_992 and Bun prints no separators.
+      await assert.rejects(handle.write(abcd, 2 ** 53), { name: "RangeError", code: "ERR_OUT_OF_RANGE" });
     });
     assert.strictEqual(bytes, initial);
   });

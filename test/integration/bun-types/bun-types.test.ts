@@ -318,6 +318,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "Glob.bind.ts": "typeof Bun",
   "HTMLBundle.bind.ts": null,
   "HashObject.bind.ts": "typeof Bun.hash & { wyhash: typeof Bun.hash }",
+  "JSMySQLConnection.bind.ts": null,
   "JSON5Object.bind.ts": "typeof Bun.JSON5",
   "JSONCObject.bind.ts": "typeof Bun.JSONC",
   "Listener.bind.ts": null,

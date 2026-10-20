@@ -829,6 +829,10 @@ impl<T: JsPayload> JsWrapperRef<T> {
             .set_strong(wrapper.as_value().0, heap.global_object());
     }
     #[inline]
+    pub fn upgrade(&mut self, heap: &JsHeap<'_>) {
+        self.0.upgrade(heap.global_object());
+    }
+    #[inline]
     pub fn downgrade(&mut self) {
         self.0.downgrade();
     }
@@ -839,6 +843,14 @@ impl<T: JsPayload> JsWrapperRef<T> {
     #[inline]
     pub fn is_finalized(&self) -> bool {
         self.0.is_finalized()
+    }
+    #[inline]
+    pub fn is_not_empty(&self) -> bool {
+        self.0.is_not_empty()
+    }
+    #[inline]
+    pub fn is_strong(&self) -> bool {
+        self.0.is_strong()
     }
 }
 

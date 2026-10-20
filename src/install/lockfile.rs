@@ -1111,7 +1111,7 @@ impl Lockfile {
         id == 0 || self.tree_owner_tag(id) == Some(ResolutionTag::Workspace)
     }
 
-    fn tree_owner_tag(&self, id: tree::Id) -> Option<ResolutionTag> {
+    pub(crate) fn tree_owner_tag(&self, id: tree::Id) -> Option<ResolutionTag> {
         if id == 0 {
             return None;
         }

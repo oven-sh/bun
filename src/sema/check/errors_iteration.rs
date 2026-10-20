@@ -57,7 +57,7 @@ impl Checker<'_, '_> {
         }
         let left_type = self.type_of_expr(file, var_expr);
         self.check_reference_expression(file, var_expr, 2487, 2781);
-        let error_node = Some(self.error_range_of(file, var_expr));
+        let error_node = Some(self.span_of_parenthesized_expr(file, var_expr));
         self.check_type_assignable_to_and_optionally_elaborate(
             iterated_type,
             left_type,
@@ -80,7 +80,7 @@ impl Checker<'_, '_> {
             let left_type = self.type_of_expr(file, var_expr);
             let keys = self.index_type_or_string(right_type);
             if !self.is_assignable(keys, left_type) {
-                self.error_at(self.error_range_of(file, var_expr), 2405, &[]);
+                self.error_at(self.span_of_parenthesized_expr(file, var_expr), 2405, &[]);
             } else {
                 // "run check only former check succeeded to avoid cascading errors"
                 self.check_reference_expression(file, var_expr, 2406, 2780);
@@ -93,7 +93,7 @@ impl Checker<'_, '_> {
                 || self.is_assignable(right_type, TypeId::OBJECT);
         if right_type.is_never() || !is_object {
             self.error_at(
-                self.error_range_of(file, expr),
+                self.span_of_parenthesized_expr(file, expr),
                 2407,
                 &[Arg::Type(right_type)],
             );
@@ -116,12 +116,7 @@ impl Checker<'_, '_> {
                 let actual = self.type_of_expr(file, inner);
                 if !self.is_spread_of_array_like(file, e, actual) {
                     let error_node = self.span_of_parenthesized_expr(file, inner);
-                    self.check_iterated(
-                        IterationUse::Spread,
-                        actual,
-                        TypeId::UNDEFINED,
-                        error_node,
-                    );
+                    self.check_iterated(IterationUse::Spread, actual, error_node);
                 }
             }
         }
@@ -219,12 +214,12 @@ impl Checker<'_, '_> {
         &mut self,
         usage: IterationUse,
         actual: TypeId,
-        sent: TypeId,
         error_node: (FileId, u32, u32),
     ) -> Option<TypeId> {
         if self.is_any(actual) {
             return Some(actual);
         }
+        let sent = TypeId::UNDEFINED;
         let iterated = self.iterated_type_or_element_type(usage, actual, sent, Some(error_node))?;
         // Without `Iterable` the iterated type isn't inspected.
         (self.global_type_of_arity(known::Iterable, 3).is_some()).then_some(iterated)
@@ -269,7 +264,7 @@ impl Checker<'_, '_> {
                 self.check_destructuring_assignment(file, left, initializer);
             } else if invalid_reference_code(hir, left, 2364, 2779).is_none() {
                 let left_type = self.type_of_expr(file, left);
-                let error_node = Some(self.error_range_of(file, left));
+                let error_node = Some(self.span_of_parenthesized_expr(file, left));
                 let right = Some((file, value));
                 let head_message = self.exact_optional_head_message(file, left, initializer);
                 self.check_type_assignable_to_and_optionally_elaborate(
@@ -301,15 +296,6 @@ impl Checker<'_, '_> {
             }
             _ => self.check_reference_assignment(file, target, source_type),
         }
-    }
-
-    /// `GetErrorRangeForNode`
-    fn error_range_of(&self, file: FileId, e: ExprId) -> (FileId, u32, u32) {
-        (
-            file,
-            self.error_start_of(file, e),
-            self.error_end_of(file, e),
-        )
     }
 
     /// `hasDefaultValue`
@@ -424,7 +410,7 @@ impl Checker<'_, '_> {
         // `getIndexNodeForAccessExpression`: for `[k]`, the expression in the brackets. `["a"]` is stored as the name
         // `a`.
         let name = match property.key {
-            PropKey::Computed(k) => self.error_range_of(file, k),
+            PropKey::Computed(k) => self.span_of_parenthesized_expr(file, k),
             _ => {
                 let mut at = property.pos;
                 if hir.text.get(at as usize) == Some(&b'[') {
@@ -567,7 +553,7 @@ impl Checker<'_, '_> {
         let is_rest = matches!(self.bound(file).parent_of_expr(target), Parent::Prop(p) if self.hir(file)[p].kind == PropKind::Spread);
         let (message, optional_message) = if is_rest { (2701, 2778) } else { (2364, 2779) };
         if self.check_reference_expression(file, target, message, optional_message) {
-            let error_node = Some(self.error_range_of(file, target));
+            let error_node = Some(self.span_of_parenthesized_expr(file, target));
             self.check_type_assignable_to_and_optionally_elaborate(
                 source_type,
                 target_type,
@@ -699,7 +685,7 @@ impl Checker<'_, '_> {
         }
         if matches!(hir[pat].kind, PatKind::Array(_)) {
             let usage = IterationUse::Destructuring;
-            self.check_iterated(usage, widened_type, TypeId::UNDEFINED, error_node);
+            self.check_iterated(usage, widened_type, error_node);
         } else if strict {
             self.check_non_null_non_void_type(widened_type, error_node);
         }

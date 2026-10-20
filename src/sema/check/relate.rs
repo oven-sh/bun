@@ -1251,7 +1251,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.relation_too_complex = true;
             if !is_trial {
                 let types = [Arg::Type(source), Arg::Type(target)];
-                self.error_about_comparison_at_current_node(2859, &types);
+                self.error_about_comparison_at_current_node(&types);
             }
         } else if hit_cached_overflow && !overflow && !result.holds() {
             // `reportRelationError`: the overflow replaces the relation error only if it was
@@ -2236,7 +2236,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let param = self.derive_mapped_type_param(t);
         if self.mapped_origin(t).is_some() {
-            self.cache_interned_part(t, links::Kind::Mapped, part as usize, param);
+            self.cache_interned_part(t, part as usize, param);
         }
         param
     }
@@ -2258,7 +2258,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mapper = self.derive_mapped_mapper(t);
         if self.mapped_origin(t).is_some() {
-            self.cache_interned_part(t, links::Kind::Mapped, part as usize, mapper);
+            self.cache_interned_part(t, part as usize, mapper);
         }
         mapper
     }
@@ -2321,7 +2321,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (file, node, _) = self.mapped_origin(t)?;
         let declared = self.mapped_decl(file, node).name_ty;
         if declared.is_none() {
-            self.cache_interned_part(t, links::Kind::Mapped, part as usize, None::<TypeId>);
+            self.cache_interned_part(t, part as usize, None::<TypeId>);
             return None;
         }
         self.derive_part(
@@ -4320,7 +4320,6 @@ impl<'p, 's> Checker<'p, 's> {
                     [&r.source_stack, &r.target_stack],
                     true,
                     &mut r.source_identities,
-                    3,
                 )
             {
                 r.expanding |= REC_SOURCE;
@@ -4334,7 +4333,6 @@ impl<'p, 's> Checker<'p, 's> {
                     [&r.source_stack, &r.target_stack],
                     false,
                     &mut r.target_identities,
-                    3,
                 )
             {
                 r.expanding |= REC_TARGET;
@@ -4578,16 +4576,15 @@ impl<'p, 's> Checker<'p, 's> {
                 .is_ge()
     }
 
-    /// `is_deeply_nested_type` of the last entry of the stack. `identities` has an `OnStack` for
+    /// `is_deeply_nested_type` of the last entry of the stack, at depth 3. `identities` has an `OnStack` for
     /// each entry of a prefix of the stack. The caller truncates it when it pops.
     fn is_last_deeply_nested(
         &mut self,
         stacks: [&[(TypeId, u32)]; 2],
         is_source: bool,
         identities: &mut Vec<OnStack>,
-        max_depth: usize,
     ) -> bool {
-        let stack = stacks[usize::from(!is_source)];
+        let (stack, max_depth) = (stacks[usize::from(!is_source)], 3);
         if stack.len() < max_depth {
             return false;
         }
@@ -4899,8 +4896,7 @@ impl<'p, 's> Checker<'p, 's> {
                 && state & STATE_REGULAR == 0
                 && self.is_fresh_object_literal_type(source)
             {
-                result &= self
-                    .index_signatures_related_to::<REPORT>(r, source, target, false, STATE_NONE);
+                result &= self.index_signatures_related_to::<REPORT>(r, source, target, STATE_NONE);
             }
         } else if result.holds()
             && is_object_kind(td)
@@ -6275,12 +6271,11 @@ impl<'p, 's> Checker<'p, 's> {
         for t in matching_types {
             result &= self.properties_related_to::<false>(r, source, t, &excluded, false, state);
             if result.holds() {
-                result &= self.signatures_related_to::<false>(r, source, t, false, STATE_NONE);
+                result &= self.signatures_related_to(r, source, t, false);
                 if result.holds() {
-                    result &= self.signatures_related_to::<false>(r, source, t, true, STATE_NONE);
+                    result &= self.signatures_related_to(r, source, t, true);
                     if result.holds() && !(self.is_tuple(source) && self.is_tuple(t)) {
-                        result &=
-                            self.index_signatures_related_to::<false>(r, source, t, false, state);
+                        result &= self.index_signatures_related_to::<false>(r, source, t, state);
                     }
                 }
             }
@@ -6908,17 +6903,16 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `signaturesRelatedTo`
-    pub(super) fn signatures_related_to<const REPORT: bool>(
+    pub(super) fn signatures_related_to(
         &mut self,
         r: &mut Relater,
         source: TypeId,
         target: TypeId,
         construct: bool,
-        state: u8,
     ) -> Ternary {
         let (sd, td) = (self.data(source), self.data(target));
-        self.signatures_related_to_among::<REPORT>(
-            r, source, sd, target, td, construct, state, None,
+        self.signatures_related_to_among::<false>(
+            r, source, sd, target, td, construct, STATE_NONE, None,
         )
     }
 
@@ -7836,17 +7830,9 @@ impl<'p, 's> Checker<'p, 's> {
         r: &mut Relater,
         source: TypeId,
         target: TypeId,
-        source_is_primitive: bool,
         state: u8,
     ) -> Ternary {
-        self.index_signatures_related_to_among::<REPORT>(
-            r,
-            source,
-            target,
-            source_is_primitive,
-            state,
-            None,
-        )
+        self.index_signatures_related_to_among::<REPORT>(r, source, target, false, state, None)
     }
 
     /// `indexSignaturesRelatedTo`. `both` is the `members` of `source` and `target`, if known.

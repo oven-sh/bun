@@ -53,7 +53,8 @@ impl<'s> Checker<'_, 's> {
             left >= TASK_STACK,
             "the thread has too little stack for a task"
         );
-        self.set_stack_limit(TASK_STACK);
+        self.stack_base = stack_pointer();
+        self.stack_limit = TASK_STACK;
     }
 
     /// Call this before `check_file`. `round` counts from 0, and no other task of the round has `index`. Without this

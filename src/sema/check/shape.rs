@@ -5664,7 +5664,7 @@ impl<'p, 's> Checker<'p, 's> {
                     true => None,
                     false => {
                         cold_path();
-                        self.link_of_instantiated_symbol(prop, *sym, outer, false)
+                        self.link_of_instantiated_symbol(prop, *sym, outer)
                     }
                 };
                 has_resolved_type = linked_type.is_some();

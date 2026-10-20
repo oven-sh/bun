@@ -7675,7 +7675,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let iterable = self.type_of_expr(file, expr);
                 self.check_expression_in_flow_loop(file, expr);
                 let iterable = self.non_nullable_type_if_needed(iterable);
-                Some(self.checked_iterated_type(iterable, is_await))
+                Some(self.iterated_type(iterable, is_await))
             }
             _ => None,
         }

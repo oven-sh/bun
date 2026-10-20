@@ -377,15 +377,14 @@ impl<'p, 's> Checker<'p, 's> {
         (raw != 0 && self.index_infos_in_instantiation.is_empty()).then(|| V::unpack(raw))
     }
 
-    /// Caches a part that only needs interning.
+    /// Caches a part of a mapped type that only needs interning.
     pub(super) fn cache_interned_part<V: Packed<Cell = AtomicU32>>(
         &mut self,
         ty: TypeId,
-        kind: Kind,
         at: usize,
         part: V,
     ) {
-        (self.links).set_cell(ty, kind, at, part.pack(), Stored::new());
+        (self.links).set_cell(ty, Kind::Mapped, at, part.pack(), Stored::new());
     }
 
     /// Caches a part. `stored` is the permission that `derive_settled` returned with it.

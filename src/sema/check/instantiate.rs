@@ -736,25 +736,23 @@ impl<'p, 's> Checker<'p, 's> {
         ty
     }
 
-    /// Returns `links.resolvedType` (or `links.writeType` with `is_write_type`) of the symbol that
-    /// `instantiateSymbol` creates from `sym` for `prop`, if `assign_link_of_instantiated_symbol`
-    /// has stored one.
+    /// Returns `links.resolvedType` of the symbol that `instantiateSymbol` creates from `sym` for `prop`, if
+    /// `assign_resolved_type_of_instantiated_symbol` has stored one.
     pub(super) fn link_of_instantiated_symbol(
         &mut self,
         prop: &Prop,
         sym: Sym,
         outer: MapperId,
-        is_write_type: bool,
     ) -> Option<TypeId> {
         if !self.instantiated_symbol_links.contains_key(&sym) {
             return None;
         }
         let mapper = self.compose(prop.mapper, outer);
         let links = self.instantiated_symbol_links.get(&sym)?;
-        let found_link = links
+        links
             .iter()
-            .find(|link| (link.0, link.1) == (mapper, is_write_type));
-        found_link.map(|link| link.2)
+            .find(|link| link.0 == mapper)
+            .map(|link| link.1)
     }
 
     /// The assignment in `getTypeOfInstantiatedSymbol`, after a `getTypeOfSymbol(links.target)`
@@ -787,21 +785,9 @@ impl<'p, 's> Checker<'p, 's> {
             true => Some(self.instantiate(target_type, mapper)),
             false => None,
         };
-        self.assign_link_of_instantiated_symbol(sym, mapper, false, resolved_type);
-    }
-
-    /// Stores `ty` as `links.resolvedType` (or `links.writeType` with `is_write_type`) of the
-    /// instantiated symbol with the target `sym` and `mapper`. `None` removes the stored link.
-    pub(super) fn assign_link_of_instantiated_symbol(
-        &mut self,
-        sym: Sym,
-        mapper: MapperId,
-        is_write_type: bool,
-        ty: Option<TypeId>,
-    ) {
         let links = self.instantiated_symbol_links.entry(sym).or_default();
-        links.retain(|link| (link.0, link.1) != (mapper, is_write_type));
-        links.extend(ty.map(|ty| (mapper, is_write_type, ty)));
+        links.retain(|link| link.0 != mapper);
+        links.extend(resolved_type.map(|ty| (mapper, ty)));
         if links.is_empty() {
             self.instantiated_symbol_links.remove(&sym);
         }

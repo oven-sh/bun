@@ -1763,12 +1763,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The type parameters that the `args` of a `TypeData::Ref` to `sym` correspond to: the outer
     /// ones of the declaration, then its own.
-    pub fn all_type_params_of_symbol(&mut self, sym: Sym) -> List<'p, TypeId> {
-        self.listed_type_params_of_symbol(sym)
-    }
-
-    /// Same, for callers that only read them.
-    pub(super) fn listed_type_params_of_symbol(&mut self, sym: Sym) -> List<'p, TypeId> {
+    pub(super) fn all_type_params_of_symbol(&mut self, sym: Sym) -> List<'p, TypeId> {
         if self
             .files()
             .flags(sym)

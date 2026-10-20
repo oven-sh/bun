@@ -5000,7 +5000,6 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             file,
             f,
             self.enclosing,
-            DECLARATION_EMIT_NODE_BUILDER_FLAGS,
             &mut self.tracker,
         );
         self.tracker.error_name_node = saved.0;
@@ -5642,13 +5641,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
     /// `CreateTypeOfExpression` for the expression the enclosing class extends.
     fn create_type_of_expression(&mut self, e: ExprId) -> Vec<u8> {
         let file = self.file();
-        self.c.serialize_type_for_expression(
-            file,
-            e,
-            self.enclosing,
-            DECLARATION_EMIT_NODE_BUILDER_FLAGS,
-            &mut self.tracker,
-        )
+        self.c
+            .serialize_type_for_expression(file, e, self.enclosing, &mut self.tracker)
     }
 }
 

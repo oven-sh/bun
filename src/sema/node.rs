@@ -1771,19 +1771,10 @@ impl<'s> File<'s> {
 
     /// `node.ForEachChild`: the children in source order, until `visit` returns true.
     pub fn for_each_child(&self, node: Node, visit: &mut dyn FnMut(Node) -> bool) -> bool {
-        self.for_each_child_with(node, true, visit)
-    }
-
-    fn for_each_child_with<V: FnMut(Node) -> bool + ?Sized>(
-        &self,
-        node: Node,
-        with_parentheses: bool,
-        visit: &mut V,
-    ) -> bool {
         let mut v = Children {
             file: self,
             visit,
-            with_parentheses,
+            with_parentheses: true,
         };
         v.children(self.data(node), node)
     }
@@ -3527,15 +3518,14 @@ impl File<'_> {
         }
     }
 
-    /// `getSuperContainer`
-    pub fn get_super_container(&self, mut node: Node, stop_on_functions: bool) -> Node {
+    /// `getSuperContainer` with `stopOnFunctions`
+    pub fn get_super_container(&self, mut node: Node) -> Node {
         use Kind::*;
         loop {
             node = self.parent(node);
             match self.kind(node) {
                 Unknown => return Node::NONE,
                 ComputedPropertyName => node = self.parent(node),
-                FunctionDeclaration | FunctionExpression | ArrowFunction if !stop_on_functions => {}
                 FunctionDeclaration
                 | FunctionExpression
                 | ArrowFunction

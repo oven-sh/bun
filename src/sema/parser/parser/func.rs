@@ -309,7 +309,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 self.missing_name_of_type_parameter(start)
             };
             let constraint = match self.eat(T::Extends) {
-                true if !self.is_start_of_type(false) && self.is_start_of_expression() => {
+                true if !self.is_start_of_type() && self.is_start_of_expression() => {
                     self.expression_in_place_of_constraint();
                     TypeNodeId::NONE
                 }

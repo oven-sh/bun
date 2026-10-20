@@ -977,16 +977,7 @@ impl<'a, 's> Spans<'a, 's> {
 
     /// `e` in the source, including enclosing parentheses.
     pub(crate) fn expr(self, e: ExprId) -> usize {
-        self.expr_from(e, 0)
-    }
-
-    /// `e` including the enclosing parentheses that open at `start` or later.
-    fn expr_from(self, e: ExprId, start: usize) -> usize {
-        let enclosing_parens = crate::hir::parentheses_around(self.hir, e).iter();
-        match enclosing_parens
-            .take_while(|p| p.1 as usize >= start)
-            .last()
-        {
+        match crate::hir::parentheses_around(self.hir, e).last() {
             Some(outermost) => outermost.2 as usize,
             None => self.expr_inside(e),
         }

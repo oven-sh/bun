@@ -273,20 +273,13 @@ pub enum JSDocToken {
     Other,
 }
 
-/// `TokenToString`
+/// `TokenToString`, for the tokens that `parse_expected` is called with.
 fn token_to_string(token: JSDocToken) -> &'static [u8] {
     match token {
-        JSDocToken::At => b"@",
-        JSDocToken::Asterisk => b"*",
         JSDocToken::OpenBrace => b"{",
         JSDocToken::CloseBrace => b"}",
-        JSDocToken::OpenBracket => b"[",
         JSDocToken::CloseBracket => b"]",
-        JSDocToken::LessThan => b"<",
         JSDocToken::Equals => b"=",
-        JSDocToken::Comma => b",",
-        JSDocToken::Dot => b".",
-        JSDocToken::DotDotDot => b"...",
         JSDocToken::Backtick => b"`",
         _ => b"",
     }
@@ -938,13 +931,6 @@ impl<'a, 's> Reader<'a, 's> {
         is_next
     }
 
-    /// `parseExpectedJSDoc`
-    fn parse_expected_jsdoc(&mut self, token: JSDocToken) {
-        if !self.parse_optional_jsdoc(token) {
-            self.error_at_token(1005, &[token_to_string(token)]);
-        }
-    }
-
     /// `parseJSDocCommentWorker` for the comment that starts at `start`. Returns its tags if
     /// there's a `syntax`.
     fn parse_jsdoc_comment_worker(&mut self, start: usize) -> Vec<syntax::Tag<'a>> {
@@ -1299,8 +1285,9 @@ impl<'a, 's> Reader<'a, 's> {
             false => self.parse_expected(JSDocToken::OpenBrace),
         };
         let ty = self.parse_jsdoc_type();
-        if has_brace {
-            self.parse_expected_jsdoc(JSDocToken::CloseBrace);
+        // `parseExpectedJSDoc`
+        if has_brace && !self.parse_optional_jsdoc(JSDocToken::CloseBrace) {
+            self.error_at_token(1005, &[b"}"]);
         }
         ty
     }

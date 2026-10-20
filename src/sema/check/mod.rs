@@ -1446,7 +1446,7 @@ pub struct Checker<'p, 's> {
     thisless_members: FxHashMap<Sym, bool>,
     /// `links.resolvedType` (or `links.writeType` if the flag is true) of instantiated symbols, by target and mapper.
     /// Only contains the ones that differ from what the target's type gives. See `link_of_instantiated_symbol`.
-    instantiated_symbol_links: FxHashMap<Sym, Vec<(MapperId, bool, TypeId)>>,
+    instantiated_symbol_links: FxHashMap<Sym, Vec<(MapperId, TypeId)>>,
     /// The `getResolvedMembersOrExportsOfSymbol` calls that are binding computed names, with `earlySymbols` in
     /// `links[resolutionKind]`. Each entry is the depth of `stack` at that point, the container, and true for
     /// the exports. See `is_late_binding`. If `earlySymbols` is nil, only the outermost call has an entry.
@@ -2302,12 +2302,6 @@ impl<'p, 's> Checker<'p, 's> {
     /// Sets which diagnostics `check_file` computes from now on.
     pub fn set_requested(&mut self, expected: Requested) {
         self.expected = expected;
-    }
-
-    /// Sets how much stack the thread may use from here on. Queries that need more yield "unresolved".
-    pub fn set_stack_limit(&mut self, bytes: usize) {
-        self.stack_base = stack_pointer();
-        self.stack_limit = bytes;
     }
 
     /// True if there's little stack left for recursion.
@@ -3475,17 +3469,17 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `checkTypeRelatedToEx` without an error node: `errorNode = c.currentNode`.
+    /// 2859 in `checkTypeRelatedToEx` without an error node: `errorNode = c.currentNode`.
     #[cold]
-    fn error_about_comparison_at_current_node(&mut self, code: u32, args: &[Arg<'_>]) {
+    fn error_about_comparison_at_current_node(&mut self, args: &[Arg<'_>]) {
         let current = self.current_node().or(self.current_source_element);
         if let (Some(current), true) = (current, self.eager.is_empty()) {
             let at = self.span_of_current_node(current);
-            let diagnostic = self.new_diagnostic(at, code, args);
+            let diagnostic = self.new_diagnostic(at, 2859, args);
             // tsgo caches the overflow in the relation cache, so the next comparison of the two
             // types is a cache hit and reports nothing.
             let mut hasher = crate::util::FxHasher::default();
-            std::hash::Hash::hash(&(code, &diagnostic.args), &mut hasher);
+            std::hash::Hash::hash(&diagnostic.args, &mut hasher);
             let comparison = Query::Comparison(std::hash::Hasher::finish(&hasher));
             self.add_diagnostic_of(Some(comparison), diagnostic);
         }

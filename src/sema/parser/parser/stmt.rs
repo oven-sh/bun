@@ -443,7 +443,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     _ => self.can_follow_export_modifier(),
                 }
             }
-            T::Default => self.next_can_follow_default_keyword_without_consuming(),
+            T::Default => self.next_can_follow_default_keyword(),
             T::Static | T::Get | T::Set => {
                 self.next();
                 self.can_follow_modifier()
@@ -453,11 +453,6 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 !self.newline_before() && self.can_follow_modifier()
             }
         }
-    }
-
-    /// `nextTokenCanFollowDefaultKeyword` only consumes `default`.
-    fn next_can_follow_default_keyword_without_consuming(&mut self) -> bool {
-        self.next_can_follow_default_keyword()
     }
 
     /// `parseModifiers`: pushes the modifiers at the current token on `s.modifiers` and returns

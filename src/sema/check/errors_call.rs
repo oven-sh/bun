@@ -295,7 +295,7 @@ impl Checker<'_, '_> {
             }
             return;
         }
-        let at = self.span_of_callee(file, data.callee);
+        let at = self.span_of_parenthesized_expr(file, data.callee);
         self.invocation_error(at, 2351, data.callee, apparent, (true, false), None);
     }
 
@@ -304,15 +304,6 @@ impl Checker<'_, '_> {
     pub(super) fn is_silent_never_signature(&mut self, file: FileId, e: ExprId) -> bool {
         let resolved = self.resolved_signature(file, e);
         resolved.sig.is_none() && resolved.ret == TypeId::SILENT_NEVER
-    }
-
-    /// A callee's error span: from the start of the (possibly parenthesized) expression to its error end.
-    fn span_of_callee(&self, file: FileId, callee: ExprId) -> (FileId, u32, u32) {
-        (
-            file,
-            self.error_start_of(file, callee),
-            self.error_end_of(file, callee),
-        )
     }
 
     /// `invocationError`. `head` is the head message that `resolveDecorator` chains on top of `invocationErrorDetails`,
@@ -500,7 +491,7 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         // `checkSuperExpression`: anywhere but directly in a constructor, with no function or arrow function in
         // between, `super` is an error, and nothing else is reported.
-        let container = hir.get_super_container(hir.node(e), true);
+        let container = hir.get_super_container(hir.node(e));
         let Some(class) = hir.class_of(hir.parent(container)).some() else {
             return;
         };
@@ -559,7 +550,7 @@ impl Checker<'_, '_> {
             // If it's parenthesized, the parenthesized expression is the array element.
             let is_element = !is_parenthesized(hir, e)
                 && matches!(self.bound(file).parent_of_expr(e), Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Array(_)));
-            let at = self.span_of_callee(file, data.callee);
+            let at = self.span_of_parenthesized_expr(file, data.callee);
             if is_element {
                 self.error_at(at, 2796, &[]);
             } else {
@@ -963,17 +954,14 @@ impl Checker<'_, '_> {
             let actual = self.this_argument_type(file, this_arg);
             if !self.related(actual, expected, relation) {
                 if report {
-                    let (start, end) = match (this_arg, decorator) {
+                    let at = match (this_arg, decorator) {
                         (None, Some(decorator_span)) => {
-                            (decorator_span.at_sign, decorator_span.end)
+                            (file, decorator_span.at_sign, decorator_span.end)
                         }
-                        _ => (
-                            self.error_start_of(file, this_arg.unwrap_or(e)),
-                            self.error_end_of(file, this_arg.unwrap_or(e)),
-                        ),
+                        _ => self.span_of_parenthesized_expr(file, this_arg.unwrap_or(e)),
                     };
                     // 2684, or a more specific error.
-                    self.report_not_assignable_with_end(file, actual, expected, start, end, 2684);
+                    self.report_this_not_assignable(actual, expected, at);
                 }
                 return false;
             }

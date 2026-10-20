@@ -252,9 +252,7 @@ impl Checker<'_, '_> {
     /// `addTypeOnlyDeclarationRelatedInfo` for `getTypeOnlyAliasDeclarationEx(sym, SymbolFlagsValue)`. `name` is the
     /// alias's name at the error location.
     pub(super) fn type_only_declaration_related(&self, sym: Sym, name: Vec<u8>) -> Vec<Reported> {
-        let type_only = self
-            .files()
-            .type_only_alias_declaration_ex(sym, SymFlags::VALUE);
+        let type_only = self.files().type_only_alias_declaration_ex(sym);
         type_only.map_or_else(Vec::new, |type_only| {
             self.aliases_type_only_related(type_only, type_only.is_export(), name)
         })
@@ -285,7 +283,7 @@ impl Checker<'_, '_> {
             // `getSymbol`: it resolves as a value. An unresolved alias matches the value meaning like any other
             // meaning.
             let type_only = files
-                .type_only_alias_declaration_ex(sym, SymFlags::VALUE)
+                .type_only_alias_declaration_ex(sym)
                 .filter(|_| self.get_symbol_flags(sym).intersects(SymFlags::VALUE));
             inspected[local.idx()] = 1 + u8::from(type_only.is_some());
             let Some(type_only) = type_only else {

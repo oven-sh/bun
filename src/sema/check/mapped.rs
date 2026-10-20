@@ -762,7 +762,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Returns `obj[index]` as a type, or `unknown` if there's no such property.
     pub fn indexed_access(&mut self, obj: TypeId, index: TypeId) -> TypeId {
-        self.indexed_access_if_any(obj, index, false)
+        self.indexed_access_if_any(obj, index)
             .unwrap_or(TypeId::UNKNOWN)
     }
 
@@ -828,19 +828,9 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Returns `None` if `obj` has nothing at `index`, or at some member of `index` if it's a
-    /// union. `is_expression` means the access comes from an expression or a pattern, not a type.
-    pub(super) fn indexed_access_if_any(
-        &mut self,
-        obj: TypeId,
-        index: TypeId,
-        is_expression: bool,
-    ) -> Option<TypeId> {
-        let (access_flags, access_node) = if is_expression {
-            (AccessFlags::EXPRESSION_POSITION, AccessNode::Other)
-        } else {
-            (AccessFlags::empty(), AccessNode::None)
-        };
-        self.indexed_access_worker(obj, index, access_flags, access_node, None)
+    /// union.
+    pub(super) fn indexed_access_if_any(&mut self, obj: TypeId, index: TypeId) -> Option<TypeId> {
+        self.indexed_access_worker(obj, index, AccessFlags::empty(), AccessNode::None, None)
     }
 
     /// `getIndexedAccessTypeOrUndefined`
@@ -1075,11 +1065,7 @@ impl<'p, 's> Checker<'p, 's> {
                 || matches!(self.bound(file).parent_of_expr(e), Parent::Expr(p)
                     if matches!(self.hir(file)[p].kind, ExprKind::Unary { op: UnOp::Delete, .. })))
         {
-            self.error_at(
-                self.span_inside_parentheses(file, e),
-                2542,
-                &[Arg::Type(object)],
-            );
+            self.error_at(self.span_of_expr(file, e), 2542, &[Arg::Type(object)]);
         }
     }
 
@@ -1224,7 +1210,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if let Some((file, e)) = access_expression
                         && let ExprKind::Index { obj, .. } = self.hir(file)[e].kind
                     {
-                        let at = self.span_inside_parentheses(file, e);
+                        let at = self.span_of_expr(file, e);
                         // `originalObjectType`
                         let original_object = self.type_of_expr(file, obj);
                         let original_object = self.non_null_type(original_object);
@@ -1280,7 +1266,7 @@ impl<'p, 's> Checker<'p, 's> {
                         && self.flags(index) & (tf::STRING_LITERAL | tf::NUMBER_LITERAL) != 0
                         && let Some(name) = name
                     {
-                        let at = self.span_inside_parentheses(file, e);
+                        let at = self.span_of_expr(file, e);
                         let printed = self.apparent_type_of_intersection(object);
                         self.error_at(at, 2339, &[Arg::Atom(name), Arg::Type(printed)]);
                         return Some(TypeId::UNDEFINED);
@@ -1304,7 +1290,7 @@ impl<'p, 's> Checker<'p, 's> {
                     )
                     && self.is_block_scoped_global(name)
                 {
-                    let at = self.span_inside_parentheses(file, e);
+                    let at = self.span_of_expr(file, e);
                     let printed = self.apparent_type_of_intersection(object);
                     self.error_at(at, 2339, &[Arg::Atom(name), Arg::Type(printed)]);
                 } else if no_implicit_any

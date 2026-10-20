@@ -509,7 +509,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     self.next();
                     if self.eat(T::CloseBracket) {
                         ty = self.finish_type(TypeNodeKind::Array(ty), start);
-                    } else if self.recovers() && !self.is_start_of_type(false) {
+                    } else if self.recovers() && !self.is_start_of_type() {
                         self.expected(T::CloseBracket);
                         ty = self.finish_type(TypeNodeKind::Array(ty), start);
                     } else {
@@ -522,7 +522,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 T::Question => {
                     let is_before_type = self.look_ahead(|p| {
                         p.next();
-                        p.is_start_of_type(false)
+                        p.is_start_of_type()
                     });
                     if is_before_type {
                         return ty;
@@ -556,26 +556,25 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         ty
     }
 
-    /// `isStartOfType`
-    pub(crate) fn is_start_of_type(&mut self, is_in_parameter: bool) -> bool {
+    /// `isStartOfType(false)`
+    pub(crate) fn is_start_of_type(&mut self) -> bool {
         if self.token() != T::OpenParen {
-            return self.is_start_of_type_without_parenthesis(is_in_parameter);
+            return self.is_start_of_type_without_parenthesis(false);
         }
         // "Only consider '(' the start of a type if followed by ')', '...', an identifier, a
         // modifier, or something that starts a type."
         // TypeScript recurses on consecutive `(`. This loops instead.
-        !is_in_parameter
-            && self.look_ahead(|p| {
-                loop {
-                    p.next();
-                    if p.token() == T::CloseParen || p.is_start_of_parameter() {
-                        return true;
-                    }
-                    if p.token() != T::OpenParen {
-                        return p.is_start_of_type_without_parenthesis(false);
-                    }
+        self.look_ahead(|p| {
+            loop {
+                p.next();
+                if p.token() == T::CloseParen || p.is_start_of_parameter() {
+                    return true;
                 }
-            })
+                if p.token() != T::OpenParen {
+                    return p.is_start_of_type_without_parenthesis(false);
+                }
+            }
+        })
     }
 
     /// `isStartOfType`, at any token but a `(`.
@@ -995,7 +994,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let lists = self.enter_list(ListKind::TypeArguments);
         let error = loop {
             if self.token() != T::Comma
-                && !self.is_start_of_type(false)
+                && !self.is_start_of_type()
                 && !self.is_name_in_type_for_oxc()
             {
                 break Some(match self.s.ids.len() == base {
@@ -1018,7 +1017,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// reserved word doesn't start a type, although it can be the name in a type reference.
     fn type_in_list(&mut self) -> TypeNodeId {
         // With recovery, `is_at_element` has already checked, and a comma is an element whose type is missing.
-        if !self.recovers() && !self.is_start_of_type(false) && !self.is_name_in_type_for_oxc() {
+        if !self.recovers() && !self.is_start_of_type() && !self.is_name_in_type_for_oxc() {
             self.fail();
             return TypeNodeId::NONE;
         }
@@ -1662,7 +1661,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 let at = (self.pos(), 0);
                 match self.options.dialect.typescript_5 {
                     true => self.flag(DiagnosticKind::Grammar, 2880, at, &[]),
-                    false => self.error_and_continue(2880, at, &[]),
+                    false => self.error_and_continue(2880, at),
                 }
                 ImportAttributesToken::Assert
             }
@@ -2421,7 +2420,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.next();
         // A line break can only get here after `declare type`, and it's an error.
         if self.newline_before() {
-            self.error_and_continue(1142, self.range_of_token(), &[]);
+            self.error_and_continue(1142, self.range_of_token());
         }
         if self.token() != T::Identifier && self.reports_like_oxc() {
             self.check_type_name_like_oxc(oxc::TypeName::TypeAlias);

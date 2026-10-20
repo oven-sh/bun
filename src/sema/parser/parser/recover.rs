@@ -414,9 +414,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[cold]
     #[inline(never)]
     #[track_caller]
-    pub(crate) fn error_and_continue(&mut self, code: u32, at: (u32, u32), args: &[&[u8]]) {
+    pub(crate) fn error_and_continue(&mut self, code: u32, at: (u32, u32)) {
         match self.recovers() {
-            true => self.error(code, at, args),
+            true => self.error(code, at, &[]),
             false => self.report(),
         }
     }
@@ -999,7 +999,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             ListKind::ArgumentExpressions => token == T::DotDotDot || self.is_start_of_expression(),
             ListKind::Parameters => self.is_start_of_parameter(),
             ListKind::TypeArguments | ListKind::TupleElementTypes => {
-                token == T::Comma || self.is_start_of_type(false) || self.is_name_in_type_for_oxc()
+                token == T::Comma || self.is_start_of_type() || self.is_name_in_type_for_oxc()
             }
             ListKind::HeritageClauses => matches!(token, T::Extends | T::Implements),
             ListKind::ImportOrExportSpecifiers => {

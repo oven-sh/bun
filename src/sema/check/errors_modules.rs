@@ -1548,7 +1548,7 @@ impl Checker<'_, '_> {
             );
         };
         let type_only = files
-            .type_only_alias_declaration_ex(sym, SymFlags::VALUE)
+            .type_only_alias_declaration_ex(sym)
             .map(|type_only| type_only.file());
         let flags = files.symbol_flags(sym);
         if cx.is_verbatim {

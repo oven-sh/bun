@@ -1577,8 +1577,7 @@ impl Checker<'_, '_> {
         if matches!(self.data(target_prop_type), TypeData::IndexedAccess { .. }) {
             return false;
         }
-        let Some(mut source_prop_type) = self.indexed_access_if_any(source, name_type, false)
-        else {
+        let Some(mut source_prop_type) = self.indexed_access_if_any(source, name_type) else {
             return false;
         };
         if self.is_assignable(source_prop_type, target_prop_type) {
@@ -1835,11 +1834,7 @@ impl Checker<'_, '_> {
         if self.elaborate_error(file, body, false, actual, all, None, output) {
             return true;
         }
-        let at = (
-            file,
-            self.error_start_of(file, body),
-            self.error_end_of(file, body),
-        );
+        let at = self.span_of_parenthesized_expr(file, body);
         let mut diags = Vec::new();
         self.check_type_assignable_to_ex(actual, all, Some(at), None, Some(&mut diags));
         let Some(mut diagnostic) = diags.pop() else {
@@ -1886,49 +1881,38 @@ impl Checker<'_, '_> {
 
     // ───────────────────────────── diagnostics ─────────────────────────────
 
-    /// `checkTypeRelatedToEx(source, target, relation, errorNode, headMessage)` for two types that the caller already
-    /// found to be unrelated. Reports the same diagnostic and returns it. `at` and `end` are the span of `errorNode` in
-    /// `file`.
-    pub(super) fn report_not_assignable_with_end(
+    /// `checkTypeRelatedToEx(source, target, assignableRelation, errorNode, headMessage)` with 2684 as the head message,
+    /// for two types that the caller already found to be unrelated. `error_span` is the span of `errorNode`.
+    pub(super) fn report_this_not_assignable(
         &mut self,
-        file: FileId,
         source: TypeId,
         target: TypeId,
-        at: u32,
-        end: u32,
-        head: u32,
-    ) -> Option<(u32, u32)> {
-        // 2678 is what `reportRelationError` reports without a head message under the comparable relation.
-        let relation = if head == 2678 {
-            Relation::Comparable
-        } else {
-            Relation::Assignable
-        };
-        let error_span = (file, at, end);
+        error_span: FileSpan,
+    ) {
+        let relation = Relation::Assignable;
         let (is_related, diagnostic) =
-            self.relation_diagnostic(source, target, relation, error_span, Some(head));
+            self.relation_diagnostic(source, target, relation, error_span, Some(2684));
         let diagnostic = match diagnostic {
             // The caller used a different relation, so there's no elaboration to give.
             None if is_related && self.related(source, target, relation) => {
-                self.relation_error_without_elaboration(source, target, relation, error_span, head)
+                self.relation_error_without_elaboration(source, target, error_span)
             }
-            diagnostic => diagnostic?,
+            Some(diagnostic) => diagnostic,
+            None => return,
         };
         let RelationDiagnostic {
-            at: (_, start, end),
+            at,
             mut lines,
             related,
         } = diagnostic;
         if lines.is_empty() {
-            return None;
+            return;
         }
         let first = lines.remove(0);
-        let code = first.code;
-        let mut diagnostic = Reported::new((file, start, end), code, first.args);
+        let mut diagnostic = Reported::new(at, first.code, first.args);
         super::explain::add_lines(&mut diagnostic.message_chain, lines);
         diagnostic.related_information = related;
         self.add_diagnostic(diagnostic);
-        Some((start, code))
     }
 
     /// True if `getTypeWithThisArgument` changes `ty`: a reference with a `this` type to instantiate, or an

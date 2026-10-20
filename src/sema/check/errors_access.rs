@@ -12,6 +12,7 @@ use super::errors_names_and_exports::fully_qualified_name;
 use super::explain::Line;
 use super::sink::held;
 use super::*;
+use crate::atom::written_name;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId};
 use bun_core::strings;
 use smallvec::SmallVec;
@@ -186,7 +187,7 @@ impl<'p> Checker<'p, '_> {
     fn name_of_unread_property(&self, name: Atom) -> Vec<u8> {
         let bytes = self.atoms().bytes(name);
         let Some(symbol) = bytes.strip_prefix(crate::atom::SYMBOL_NAME_PREFIX) else {
-            return unmangled_name(bytes).to_vec();
+            return written_name(bytes).to_vec();
         };
         match strings::index_of_char_usize(symbol, b'@') {
             Some(at) => cat!(b"[", symbol[..at], b"]"),
@@ -295,11 +296,6 @@ impl<'p> Checker<'p, '_> {
         }
     }
 
-    /// Same as `span_of_expr`.
-    pub(super) fn span_inside_parentheses(&self, file: FileId, e: ExprId) -> (FileId, u32, u32) {
-        self.span_of_expr(file, e)
-    }
-
     /// `getPropertyTypeForIndexType`: the `noImplicitAny` errors for `a[k]` at `e` when the lookup finds nothing: 2576
     /// 7015 2551 7052 7053. `keys` are `indexType` and `fullIndexType`.
     pub(super) fn report_implicit_any_element(
@@ -312,7 +308,7 @@ impl<'p> Checker<'p, '_> {
         let ExprKind::Index { obj, index, .. } = self.hir(file)[e].kind else {
             return;
         };
-        let at_access = self.span_inside_parentheses(file, e);
+        let at_access = self.span_of_expr(file, e);
         let at_index = self.span_of_parenthesized_expr(file, index);
         let is_target = self.is_assignment_target(file, e);
         if let Some(name) = name
@@ -330,8 +326,7 @@ impl<'p> Checker<'p, '_> {
         } else if self.index_type_of_type(object, TypeId::NUMBER).is_some() {
             self.error_at(at_index, 7015, &[]);
         } else if let Some(name) = name
-            && let Some(suggestion) =
-                self.spelling_suggestion_for_property(object, name, None, true)
+            && let Some(suggestion) = self.spelling_suggestion_for_property(object, name, None)
         {
             let suggestion = self.name_of_unread_property(suggestion);
             let args = [Arg::Atom(name), Arg::Type(object), Arg::Bytes(&suggestion)];
@@ -578,16 +573,14 @@ impl<'p> Checker<'p, '_> {
         })
     }
 
-    /// The suggested property. If `closest`, it's the one `GetSpellingSuggestion` selects, otherwise the first
-    /// acceptable candidate.
+    /// The suggested property: the one `GetSpellingSuggestion` selects.
     fn spelling_suggestion_for_property(
         &mut self,
         object: TypeId,
         name: Atom,
         access: Option<(FileId, ExprId)>,
-        closest: bool,
     ) -> Option<Atom> {
-        let text = unmangled_name(self.atoms().bytes(name));
+        let text = written_name(self.atoms().bytes(name));
         let access = access.and_then(|(file, e)| match self.hir(file)[e].kind {
             ExprKind::Dot { obj, chain, .. } => Some((file, e, obj, chain)),
             _ => None,
@@ -602,7 +595,7 @@ impl<'p> Checker<'p, '_> {
                 break;
             };
             for prop in &members.shape().props {
-                let candidate = unmangled_name(self.atoms().bytes(prop.name));
+                let candidate = written_name(self.atoms().bytes(prop.name));
                 if candidate.starts_with(crate::atom::SYMBOL_NAME_PREFIX)
                     || !is_close(text, candidate)
                     || self.is_union(object)
@@ -643,9 +636,6 @@ impl<'p> Checker<'p, '_> {
                 };
                 if !is_within_reach {
                     continue;
-                }
-                if !closest {
-                    return Some(prop.name);
                 }
                 // `compareSymbols` breaks ties between equally close candidates.
                 candidates.push(((self.order_of_property(prop), candidate), prop.name));
@@ -1023,12 +1013,8 @@ impl<'p> Checker<'p, '_> {
         let is_access = matches!(self.hir(file)[e].kind, ExprKind::Dot { .. })
             && !self.bound(file).is_in_type_query(e);
         let inspected = self.reduced(apparent);
-        let suggestion = self.spelling_suggestion_for_property(
-            inspected,
-            name,
-            is_access.then_some((file, e)),
-            true,
-        )?;
+        let suggestion =
+            self.spelling_suggestion_for_property(inspected, name, is_access.then_some((file, e)))?;
         Some((
             suggestion,
             self.span_of_suggested_property(inspected, suggestion),
@@ -1183,10 +1169,10 @@ impl<'p> Checker<'p, '_> {
                 .then_some(first);
         }
         let atoms = &self.atoms();
-        let source_name = unmangled_name(atoms.bytes(name));
+        let source_name = written_name(atoms.bytes(name));
         let members = self.members(ty)?;
         for prop in &members.shape().props {
-            if unmangled_name(atoms.bytes(prop.name)) != source_name {
+            if written_name(atoms.bytes(prop.name)) != source_name {
                 continue;
             }
             let Some((file, Decl::Member(m))) = self.value_declaration_of_prop(prop) else {
@@ -1234,9 +1220,9 @@ impl<'p> Checker<'p, '_> {
         {
             // Private names with the same source text get a distinct name per class.
             let atoms = &self.atoms();
-            let source_name = unmangled_name(atoms.bytes(name));
+            let source_name = written_name(atoms.bytes(name));
             let suggestion = hir[type_class].members.iter().find(|&m| {
-                matches!(hir[m].key, PropKey::Private(key) if unmangled_name(atoms.bytes(key)) == source_name)
+                matches!(hir[m].key, PropKey::Private(key) if written_name(atoms.bytes(key)) == source_name)
             });
             let args = [Arg::Bytes(&diag_name)];
             let shadowing = self.span_of_token(file, hir[shadowing].name_pos);
@@ -1649,9 +1635,4 @@ fn is_node_used_during_class_initialization(hir: &File, node: Node) -> bool {
 fn is_private_constructor_name(text: &[u8], pos: u32) -> bool {
     text.get(pos as usize) == Some(&b'#')
         && *super::spans::unescaped_identifier(word_at(text, pos as usize + 1)) == *b"constructor"
-}
-
-/// `SymbolName`: a `#x` as written in the source, without the part that distinguishes it from another class's `#x`.
-fn unmangled_name(name: &[u8]) -> &[u8] {
-    crate::atom::written_name(name)
 }

@@ -382,12 +382,6 @@ impl Checker<'_, '_> {
         out.append(&mut text);
     }
 
-    /// `t.alias`, as far as it can be determined: the type alias that `type_to_string` prints `ty`
-    /// as. Returns `None` if it expands `ty`.
-    pub fn alias_for_display(&mut self, ty: TypeId) -> Option<Sym> {
-        self.alias_symbol_of_type(ty)
-    }
-
     /// `c.varianceTypeParameter = parameter`: the type parameter that `sub-T` and `super-T` are
     /// named after, while the error for a variance annotation is being formatted.
     pub fn set_variance_type_parameter(&mut self, parameter: Option<TypeId>) {
@@ -462,7 +456,6 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         signature_declaration: FnId,
         enclosing_declaration: Enclosing,
-        flags: u32,
         tracker: &mut dyn SymbolTracker<'p>,
     ) -> Vec<u8> {
         // `getTypeParametersFromDeclaration`
@@ -478,7 +471,7 @@ impl<'p, 's> Checker<'p, 's> {
             self,
             enclosing_declaration,
             Some(tracker),
-            flags,
+            DECLARATION_EMIT_NODE_BUILDER_FLAGS,
             |printer| {
                 let mut declarations = Vec::with_capacity(type_parameters.len());
                 for parameter in type_parameters {
@@ -598,7 +591,6 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         e: ExprId,
         enclosing_declaration: Enclosing,
-        flags: u32,
         tracker: &mut dyn SymbolTracker<'p>,
     ) -> Vec<u8> {
         let ty = self.type_of_expr(file, e);
@@ -609,7 +601,7 @@ impl<'p, 's> Checker<'p, 's> {
             self,
             enclosing_declaration,
             Some(tracker),
-            flags,
+            DECLARATION_EMIT_NODE_BUILDER_FLAGS,
             |printer| printer.type_to_node(ty).text,
         )
     }

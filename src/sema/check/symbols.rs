@@ -5315,11 +5315,6 @@ impl<'p, 's> Checker<'p, 's> {
             .unwrap_or(TypeId::ANY)
     }
 
-    /// `iterated_type`
-    pub(super) fn checked_iterated_type(&mut self, ty: TypeId, is_async: bool) -> TypeId {
-        self.iterated_type(ty, is_async)
-    }
-
     /// `getIteratedTypeOrElementType` without reporting. `None` if `ty` isn't iterable. Only
     /// `for..of` allows strings (`IterationUseAllowsStringInputFlag`), but callers aren't
     /// distinguished here.

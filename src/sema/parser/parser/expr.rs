@@ -1803,7 +1803,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 (self.lx.start, self.lx.end),
                 &[],
             ),
-            false => self.error_and_continue(18030, (self.lx.start, self.lx.end), &[]),
+            false => self.error_and_continue(18030, (self.lx.start, self.lx.end)),
         }
     }
 

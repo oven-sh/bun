@@ -2613,8 +2613,7 @@ impl Checker<'_, '_> {
                     && !self.enclosing_classes(file, left).is_empty()
                 {
                     let start = hir[left].pos;
-                    let is_unchecked_js =
-                        self.is_unchecked_js_suggestion(file, left, right_type, true);
+                    let is_unchecked_js = self.is_unchecked_js_suggestion(file, left, right_type);
                     self.report_nonexistent_property(
                         file,
                         left,
@@ -3065,12 +3064,7 @@ impl Checker<'_, '_> {
             18046..=18050 => Some(entity_name_text(self, file, node)),
             _ => None,
         };
-        let at = (
-            file,
-            self.error_start_of(file, node),
-            self.error_end_of(file, node),
-        );
-        (at, code, name)
+        (self.span_of_parenthesized_expr(file, node), code, name)
     }
 
     /// True for a name short enough to be quoted in the message: `IsEntityNameExpression(node)`,

@@ -3256,31 +3256,8 @@ impl<'h> Resolver<'h> {
 
     /// `ResolveTypeReferenceDirective`: `/// <reference types="name" />` in the file at `from`,
     /// resolved in `mode`. For an entry of `compilerOptions.types`, `from` is a file named
-    /// `INFERRED_TYPES_CONTAINING_FILE`. Returns `ResolvedFileName` and `IsExternalLibraryImport`.
-    pub fn resolve_type_reference(
-        &self,
-        name: &[u8],
-        from: &[u8],
-        mode: ResolutionMode,
-        tracer: Option<&Tracer>,
-    ) -> Option<(Vec<u8>, bool)> {
-        let (found, is_external, _) =
-            self.resolve_type_reference_and_id(name, from, mode, tracer)?;
-        Some((found, is_external))
-    }
-
-    /// Returns `ResolvedFileName` and `PackageId.String()`, which is `None` if `PackageId.Name` is empty.
-    pub fn resolve_type_reference_with_package_id(
-        &self,
-        name: &[u8],
-        from: &[u8],
-        mode: ResolutionMode,
-    ) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
-        let (found, _, id) = self.resolve_type_reference_and_id(name, from, mode, None)?;
-        Some((found, id.map(PackageId::to_bytes)))
-    }
-
-    /// Returns `ResolvedFileName`, `IsExternalLibraryImport` and `PackageId`.
+    /// `INFERRED_TYPES_CONTAINING_FILE`. Returns `ResolvedFileName`, `IsExternalLibraryImport` and `PackageId`, which is
+    /// `None` if `PackageId.Name` is empty.
     pub fn resolve_type_reference_and_id(
         &self,
         name: &[u8],

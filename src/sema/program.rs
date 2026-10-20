@@ -3672,7 +3672,7 @@ impl Included<'_, '_> {
                             ResolutionMode::None => module.implied_format,
                             mode => mode,
                         };
-                        let found = resolver.resolve_type_reference(value, from, mode, None);
+                        let found = resolver.resolve_type_reference_and_id(value, from, mode, None);
                         (found.map(|it| it.0), 1402)
                     }
                     ReferenceKind::Lib if program_options.no_lib => (None, 1405),
@@ -3788,8 +3788,9 @@ impl Included<'_, '_> {
             let found = (automatic_type_directives(host, resolver, options).into_iter())
                 .filter_map(|name| {
                     let mode = ResolutionMode::None;
-                    let found = resolver.resolve_type_reference_with_package_id(&name, &from, mode);
-                    found.map(|(path, id)| {
+                    let found = resolver.resolve_type_reference_and_id(&name, &from, mode, None);
+                    found.map(|(path, _, id)| {
+                        let id = id.map(PackageId::to_bytes);
                         (IncludeReason::AutomaticTypeDirectiveFile(name, id), path)
                     })
                 });
@@ -9424,15 +9425,11 @@ impl<'s> Files<'s> {
         })
     }
 
-    /// `getTypeOnlyAliasDeclarationEx`
-    pub fn type_only_alias_declaration_ex(
-        &self,
-        mut symbol: Sym,
-        meaning: SymFlags,
-    ) -> Option<TypeOnlyDeclaration> {
+    /// `getTypeOnlyAliasDeclarationEx(symbol, SymbolFlagsValue)`
+    pub fn type_only_alias_declaration_ex(&self, mut symbol: Sym) -> Option<TypeOnlyDeclaration> {
         for _ in 0..32 {
             let flags = self.flags(symbol);
-            if !flags.contains(SymFlags::ALIAS) || flags.intersects(meaning) {
+            if !flags.contains(SymFlags::ALIAS) || flags.intersects(SymFlags::VALUE) {
                 return None;
             }
             let links = self.alias_links(symbol);

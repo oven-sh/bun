@@ -1216,7 +1216,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // `isJSLiteralType`. A property missing from a JavaScript object literal's type is
             // `any`.
-            let is_unchecked_js = self.is_unchecked_js_suggestion(file, e, left, true);
+            let is_unchecked_js = self.is_unchecked_js_suggestion(file, e, left);
             if !is_unchecked_js && self.is_js_literal_type(left) {
                 return (TypeId::ANY, may_short_circuit);
             }
@@ -1324,13 +1324,12 @@ impl<'p, 's> Checker<'p, 's> {
         )
     }
 
-    /// `isUncheckedJSSuggestion(node, suggestion, excludeClasses)`, where `suggestion` is `ty.symbol`.
+    /// `isUncheckedJSSuggestion(node, suggestion, true)`, where `suggestion` is `ty.symbol`.
     pub(super) fn is_unchecked_js_suggestion(
         &self,
         file: FileId,
         node: ExprId,
         ty: TypeId,
-        exclude_classes: bool,
     ) -> bool {
         if !self.is_plain_js(file) {
             return false;
@@ -1362,8 +1361,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if matches!(hir[obj].kind, ExprKind::This) && !is_parenthesized(hir, obj));
         !declaration_file
             .is_some_and(|decl_file| decl_file != file && !files.module(decl_file).is_module())
-            && !(exclude_classes && is_class && suggestion_has_no_extends_or_decorators)
-            && !(exclude_classes && is_property_of_this && suggestion_has_no_extends_or_decorators)
+            && !((is_class || is_property_of_this) && suggestion_has_no_extends_or_decorators)
     }
 
     /// `getFlowTypeOfAccessExpression` for a property whose type is `autoType`. `initial` is
@@ -1698,7 +1696,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if !matches!(self.data(ty), TypeData::IndexedAccess { .. }) {
                     return (ty, may_short_circuit);
                 }
-                let access_node = self.span_inside_parentheses(file, e);
+                let access_node = self.span_of_expr(file, e);
                 (
                     self.check_indexed_access_index_type(ty, access_node, Some(e)),
                     may_short_circuit,
@@ -3336,10 +3334,10 @@ impl<'p, 's> Checker<'p, 's> {
         let (sup, node) = (hir.node(e), self.span_of_expr(file, e));
         let is_call_expression = hir.kind(hir.parent(sup)) == Kind::CallExpression
             && hir.expression(hir.parent(sup)) == sup;
-        let immediate_container = hir.get_super_container(sup, true);
+        let immediate_container = hir.get_super_container(sup);
         let mut container = immediate_container;
         while !is_call_expression && hir.kind(container) == Kind::ArrowFunction {
-            container = hir.get_super_container(container, true);
+            container = hir.get_super_container(container);
         }
         let is_constructor = hir.kind(container) == Kind::Constructor;
         let class = hir.class_of(hir.parent(container)).some();
@@ -3524,7 +3522,7 @@ impl<'p, 's> Checker<'p, 's> {
         for (ty, flag) in types.iter_mut().zip(&flags) {
             if flag.contains(ElemFlags::VARIADIC) {
                 *ty = self
-                    .indexed_access_if_any(*ty, TypeId::NUMBER, false)
+                    .indexed_access_if_any(*ty, TypeId::NUMBER)
                     .unwrap_or(TypeId::ANY);
             }
         }

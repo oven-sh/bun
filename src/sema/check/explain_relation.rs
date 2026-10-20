@@ -426,19 +426,16 @@ impl<'p, 's> Checker<'p, 's> {
         (result.holds(), diagnostic)
     }
 
-    /// Returns the message `reportErrorResults` reports for the pair itself, without elaboration.
+    /// Returns the message `reportErrorResults` reports for the pair itself under 2684, without elaboration.
     pub(super) fn relation_error_without_elaboration(
         &mut self,
         source: TypeId,
         target: TypeId,
-        relation: Relation,
         error_node: FileSpan,
-        head: u32,
     ) -> RelationDiagnostic {
-        let mut r = Relater::new(relation, self.cycles);
+        let mut r = Relater::new(Relation::Assignable, self.cycles);
         r.error_node = error_node;
-        let head = Some(head).filter(|&code| code != 2322 && code != 2678);
-        self.report_error_results_for_pair(&mut r, source, target, head);
+        self.report_error_results_for_pair(&mut r, source, target, Some(2684));
         RelationDiagnostic {
             at: error_node,
             lines: lines_of(&r.error_chain, 0),
@@ -460,20 +457,19 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Returns every line of the error that
-    /// `checkTypeRelatedToEx(source, target, relation, node, head)` reports, the first at `level`,
+    /// `checkTypeRelatedToEx(source, target, assignableRelation, node, head)` reports, the first at `level`,
     /// plus its `relatedInfo`. `head` is `headMessage`'s code. Returns nothing if the two are
     /// related or the comparison overflows.
     pub(super) fn relation_lines_with_related(
         &mut self,
         source: TypeId,
         target: TypeId,
-        relation: Relation,
         head: Option<u32>,
         level: u32,
     ) -> (Vec<Line>, Vec<Reported>) {
         // There's no node because the caller only wants the lines.
         let nowhere = (self.task.file.unwrap_or(FileId(0)), 0, 0);
-        match self.relation_diagnostic(source, target, relation, nowhere, head) {
+        match self.relation_diagnostic(source, target, Relation::Assignable, nowhere, head) {
             (_, Some(mut diagnostic)) => {
                 for line in &mut diagnostic.lines {
                     line.level += level;
@@ -708,7 +704,7 @@ impl<'p, 's> Checker<'p, 's> {
 impl<'p, 's> Checker<'p, 's> {
     /// `t.alias != nil`
     pub(super) fn has_alias(&mut self, t: TypeId) -> bool {
-        self.alias_for_display(t).is_some()
+        self.alias_symbol_of_type(t).is_some()
     }
 
     /// `getSingleBaseForNonAugmentingSubtype`

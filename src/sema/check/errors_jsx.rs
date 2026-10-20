@@ -251,7 +251,7 @@ impl Checker<'_, '_> {
         if is_valid_type_only_alias_use_site(hir, hir.node(tag)) {
             return;
         }
-        let type_only = files.type_only_alias_declaration_ex(result, SymFlags::VALUE);
+        let type_only = files.type_only_alias_declaration_ex(result);
         let Some(type_only) = type_only else {
             return;
         };
@@ -1016,7 +1016,7 @@ impl Checker<'_, '_> {
                 (Some(a), None) | (None, Some(a)) => a,
                 (None, None) => continue,
             };
-            let source_prop_type = self.indexed_access_if_any(source, name_type, false);
+            let source_prop_type = self.indexed_access_if_any(source, name_type);
             let Some(source_prop_type) = source_prop_type else {
                 continue;
             };
@@ -1086,14 +1086,14 @@ impl Checker<'_, '_> {
         target: TypeId,
         name_type: TypeId,
     ) -> Option<TypeId> {
-        if let Some(idx) = self.indexed_access_if_any(target, name_type, false) {
+        if let Some(idx) = self.indexed_access_if_any(target, name_type) {
             return Some(idx);
         }
         if !self.is_union(target) {
             return None;
         }
         let best = self.best_matching_type(source, target, &mut |c, s, t| c.is_assignable(s, t))?;
-        self.indexed_access_if_any(best, name_type, false)
+        self.indexed_access_if_any(best, name_type)
     }
 
     /// `checkSpreadPropOverrides`: 2783 for a property that a later spread overwrites.

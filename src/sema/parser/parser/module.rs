@@ -209,7 +209,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     (self.lx.start, self.lx.end),
                     &[],
                 ),
-                false => self.error_and_continue(2880, self.range_of_token(), &[]),
+                false => self.error_and_continue(2880, self.range_of_token()),
             }
             return self.import_attributes_after_specifier(is_export);
         }
@@ -455,7 +455,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             token => !token.is_reserved_word(),
         };
         if !is_identifier {
-            self.error_and_continue(1003, (name.pos, specifier.end), &[]);
+            self.error_and_continue(1003, (name.pos, specifier.end));
         }
         // See `ImportSpec::is_name_missing`.
         if name.token == T::String && specifier.property_name.is_none() {

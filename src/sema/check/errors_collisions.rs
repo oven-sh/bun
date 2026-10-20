@@ -233,9 +233,9 @@ impl Checker<'_, '_> {
         {
             return;
         }
-        let mut container = hir.get_super_container(node, true);
+        let mut container = hir.get_super_container(node);
         while hir.kind(container) == Kind::ArrowFunction {
-            container = hir.get_super_container(container, true);
+            container = hir.get_super_container(container);
         }
         let class = hir.class_of(hir.parent(container));
         if !matches!(

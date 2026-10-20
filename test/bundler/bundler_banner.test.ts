@@ -454,30 +454,36 @@ export const a = "a-value"; console.log("a evaluated");`,
     },
   });
 
-  // The source map of each chunk counts the hashbang line and the pragma line that come before the banner.
-  itBundled("banner/SourceMapWithHashbangBannerAndSplitting", {
-    banner: "#!/usr/bin/env bun\n// Additional banner content",
-    format: "esm",
-    target: "bun",
-    backend: "api",
-    outdir: "/out",
-    splitting: true,
-    chunkNaming: "chunk-[hash].[ext]",
-    sourceMap: "linked",
-    entryPoints: ["/a.js", "/b.js"],
-    files: twoEntryPointsAndSharedModule,
-    onAfterBundle(api) {
-      expect(outputFirstMappedLines(api)).toEqual([
-        { file: "a.js", consoleLogLine: 8, firstMappedLine: 8 },
-        { file: "b.js", consoleLogLine: 8, firstMappedLine: 8 },
-        { file: "chunk-[hash].js", consoleLogLine: 5, firstMappedLine: 5 },
-      ]);
-    },
-    run: {
-      file: "/out/a.js",
-      stdout: "shared evaluated\na ok shared-value",
-    },
-  });
+  // The source map of each chunk counts the hashbang line and the pragma line that come before the banner. The
+  // hashbang line of a CRLF banner keeps its CR. That CR and the line feed written after it are one line break.
+  for (const [name, lineBreak] of [
+    ["", "\n"],
+    ["CRLF", "\r\n"],
+  ]) {
+    itBundled(`banner/SourceMapWithHashbang${name}BannerAndSplitting`, {
+      banner: `#!/usr/bin/env bun${lineBreak}// Additional banner content`,
+      format: "esm",
+      target: "bun",
+      backend: "api",
+      outdir: "/out",
+      splitting: true,
+      chunkNaming: "chunk-[hash].[ext]",
+      sourceMap: "linked",
+      entryPoints: ["/a.js", "/b.js"],
+      files: twoEntryPointsAndSharedModule,
+      onAfterBundle(api) {
+        expect(outputFirstMappedLines(api)).toEqual([
+          { file: "a.js", consoleLogLine: 8, firstMappedLine: 8 },
+          { file: "b.js", consoleLogLine: 8, firstMappedLine: 8 },
+          { file: "chunk-[hash].js", consoleLogLine: 5, firstMappedLine: 5 },
+        ]);
+      },
+      run: {
+        file: "/out/a.js",
+        stdout: "shared evaluated\na ok shared-value",
+      },
+    });
+  }
 
   itBundled("banner/BannerWithBytecodeAndCJSTargetBun", {
     banner: "// Copyright 2024 Example Corp",

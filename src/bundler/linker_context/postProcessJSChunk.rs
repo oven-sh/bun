@@ -446,7 +446,11 @@ pub(crate) fn post_process_js_chunk(
         j.push_static(hashbang);
         j.push_static(b"\n");
         line_offset.advance(hashbang);
-        line_offset.advance(b"\n");
+        // The hashbang line of a CRLF banner keeps its CR, and that CR already
+        // counted as the line break.
+        if !strings::ends_with_char(hashbang, b'\r') {
+            line_offset.advance(b"\n");
+        }
         newline_before_comment = true;
         is_executable = chunk.is_entry_point();
     }

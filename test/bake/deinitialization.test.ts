@@ -141,11 +141,13 @@ test.skipIf(!isASAN)(
   60_000,
 );
 
-test.skipIf(isWindows)("dev server closes the descriptor it opens to bundle an edited file again", async () => {
-  using dir = tempDir("bake-reload-descriptors", {
-    "index.html": `<!DOCTYPE html><html><body><script type="module" src="./entry.ts"></script></body></html>`,
-    "entry.ts": `console.log("v0!");`,
-    "fixture.ts": `
+test.skipIf(isWindows)(
+  "dev server closes the descriptor it opens to bundle an edited file again",
+  async () => {
+    using dir = tempDir("bake-reload-descriptors", {
+      "index.html": `<!DOCTYPE html><html><body><script type="module" src="./entry.ts"></script></body></html>`,
+      "entry.ts": `console.log("v0!");`,
+      "fixture.ts": `
       import { readdirSync, writeFileSync } from "node:fs";
       import html from "./index.html";
 
@@ -168,17 +170,19 @@ test.skipIf(isWindows)("dev server closes the descriptor it opens to bundle an e
       console.log(openDescriptors() - before < 10 ? "closed" : "left open");
       await server.stop(true);
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "fixture.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-  expect(stdout).toEndWith("closed\n");
-  expect(exitCode).toBe(0);
-}, 60_000);
+    expect(stdout).toEndWith("closed\n");
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);

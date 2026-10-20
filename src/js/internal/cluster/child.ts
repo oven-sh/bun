@@ -74,7 +74,13 @@ cluster._setupWorker = function () {
   // before calling, check if the channel is refd. if it isn't, then unref it after calling process.once();
   $bindgen("node_cluster_binding.bind.ts", "channelIgnoreOneDisconnectEventListener")();
   process.once("disconnect", () => {
-    defineBuiltinProperty($cpp("BunClientData.cpp", "processObject"), "channel", { __proto__: null, value: null });
+    defineBuiltinProperty(process, "channel", {
+      __proto__: null,
+      value: null,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
     worker.emit("disconnect");
 
     if (!worker.exitedAfterDisconnect) {

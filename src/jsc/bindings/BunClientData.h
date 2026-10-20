@@ -149,11 +149,6 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionDeleteBuiltinProperty);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetBuiltinPrototype);
 // JSGlobalObject::didCreateBuiltin() for a built-in module.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDidCreateBuiltin);
-// Targets for those three. A program can give the globals `Blob`, `Performance` and `process` other values, so a module does not look there.
-JSC::JSValue blobPrototype(Zig::GlobalObject*);
-JSC::JSValue performancePrototype(Zig::GlobalObject*);
-JSC::JSValue processPrototype(Zig::GlobalObject*);
-JSC::JSValue processObject(Zig::GlobalObject*);
 // `JSC::allocateCell` for a fieldless `JSNonFinalObject` subclass living in `vm.plainObjectSpace()` (prototype objects).
 void* allocatePlainObjectCell(JSC::VM&, size_t);
 // `JSC_TO_STRING_TAG_WITHOUT_TRANSITION()`, out of line.

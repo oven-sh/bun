@@ -301,8 +301,7 @@ if (Performance) {
       value: eventLoopUtilization,
     },
   };
-  const prototype = $cpp("BunClientData.cpp", "performancePrototype");
-  for (const name in additions) defineBuiltinProperty(prototype, name, additions[name]);
+  for (const name in additions) defineBuiltinProperty(Performance.prototype, name, additions[name]);
 }
 
 export default {

@@ -31,8 +31,6 @@
 #include "NativePromiseContext.h"
 #include "ModuleGraph.h"
 #include "StrongRootBlock.h"
-#include "JSPerformance.h"
-#include "BunProcess.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -342,26 +340,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetBuiltinPrototype, (JSC::JSGlobalObject * g
     scope.release();
     builtin->setPrototype(vm, globalObject, prototype, true);
     return JSC::JSValue::encode(JSC::jsUndefined());
-}
-
-JSC::JSValue blobPrototype(Zig::GlobalObject* globalObject)
-{
-    return globalObject->JSBlobPrototype();
-}
-
-JSC::JSValue performancePrototype(Zig::GlobalObject* globalObject)
-{
-    return WebCore::JSPerformance::prototype(JSC::getVM(globalObject), *globalObject);
-}
-
-JSC::JSValue processPrototype(Zig::GlobalObject* globalObject)
-{
-    return globalObject->processObject()->getPrototypeDirect();
-}
-
-JSC::JSValue processObject(Zig::GlobalObject* globalObject)
-{
-    return globalObject->processObject();
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionDidCreateBuiltin, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

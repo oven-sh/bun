@@ -15,13 +15,13 @@ if (isDebug) setDefaultTimeout(120_000);
 type Run = { stdout: string; stderr: string; exitCode: number };
 
 /**
- * Runs `bun lint ...args` in a temp directory containing `files`, or in its subdirectory `cwd`. In what comes back, stdout
- * has `<dir>` for the directory, and the summary on stderr doesn't say how long the run took.
+ * Runs `bun lint ...args` in a temp directory containing `files`, or in its subdirectory `cwd`. The temp directory is
+ * replaced with `<dir>` in stdout, and the elapsed time is removed from the summary line on stderr.
  */
 async function lint(files: Record<string, string>, args: string[] = [], cwd = "."): Promise<Run> {
   using dir = tempDir("bun-lint-native", files);
   await using proc = spawn({
-    // These projects have a few files. The default, a thread for each core, costs more to start than it saves.
+    // These projects only have a few files, so one thread per core (the default) costs more to start than it saves.
     cmd: [bunExe(), "lint", "--threads", "2", ...args],
     env: bunEnv,
     cwd: join(String(dir), cwd),
@@ -54,7 +54,7 @@ const bunfig = (rules: Record<string, Setting>) => ({
     .join("")}`,
 });
 
-/** What a run prints when it refuses line `line` of bunfig.toml: the line, a caret under `column`, and the error. */
+/** The expected output when line `line` of bunfig.toml is rejected: the line, a caret under `column`, and the error. */
 const refused = (line: number, column: number, text: string, message: string): Run => ({
   stdout: "",
   stderr: `${line} | ${text}\n${Buffer.alloc(column + 3, " ").toString()}^\nerror: ${message}\n    at bunfig.toml:${line}:${column}\n`,
@@ -71,15 +71,15 @@ type Message = {
 };
 type Result = { filePath: string; messages: Message[]; output?: string };
 
-/** What a run wrote to stderr before the summary, which is its last line. */
+/** Everything on stderr before the summary, which is always the last line. */
 const warningsOf = ({ stderr }: Run) => stderr.slice(0, stderr.lastIndexOf("\n", stderr.length - 2) + 1);
 
 /**
- * Returns what a `-f json` run printed. Fails unless the run ended the way a run with these results ends: stderr has
- * `warnings` and then the summary, which counts the files, and the exit code is 1 only if there is an error.
+ * Parses the output of a `-f json` run. Also checks that the run ended the way its results imply: stderr is `warnings`
+ * followed by the summary line with the number of files, and the exit code is 1 only if an error was reported.
  */
 function resultsOf({ stdout, stderr, exitCode }: Run, warnings = ""): Result[] {
-  // A run that was refused, or died, printed no results. This shows what it said, not a JSON syntax error.
+  // A run that was rejected or crashed prints no results. Show its stderr instead of a JSON syntax error.
   if (exitCode !== 0 && exitCode !== 1) throw new Error(`bun lint exited with code ${exitCode}\n${stderr}`);
   const results: Result[] = JSON.parse(stdout);
   const found = results.flatMap(file => file.messages);
@@ -94,8 +94,8 @@ function resultsOf({ stdout, stderr, exitCode }: Run, warnings = ""): Result[] {
 const inOrder = new Intl.Collator("en", { numeric: true }).compare;
 
 /**
- * Returns every problem of a `-f json` run as `file:line rule`, sorted. A warning ends with ` (warning)`. The run has to
- * end the way `resultsOf` says.
+ * Returns every problem of a `-f json` run as `file:line rule`, sorted. Warnings end with ` (warning)`. Checks how the
+ * run ended, like `resultsOf`.
  */
 const problems = (run: Run, warnings = "") =>
   resultsOf(run, warnings)
@@ -106,10 +106,10 @@ const problems = (run: Run, warnings = "") =>
     )
     .sort(inOrder);
 
-/** The rule of a problem as `problems` lists it. */
+/** The rule ID in one entry of `problems()`. */
 const ruleOf = (problem: string) => problem.split(" ")[1];
 
-/** The `rules` that `bun lint --print-config file` prints: the severity of each rule, then its options. */
+/** The `rules` from `bun lint --print-config file`: each rule's severity followed by its options. */
 async function configOf(files: Record<string, string>, file: string) {
   const { stdout, stderr, exitCode } = await lint(files, ["--print-config", file]);
   expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
@@ -143,7 +143,7 @@ const setting = (id: string, severity: string): Setting =>
 
 type Listed = { id: string; scope: string; value: string; type_aware: boolean; modes: string[]; fix: string };
 
-/** What `bun lint --rules -f json` prints where there is no config. One run lists it for all the tests that read it. */
+/** The output of `bun lint --rules -f json` without a config. One run is shared by every test that needs the list. */
 let rulesListed: Promise<Listed[]> | undefined;
 const everyRule = () =>
   (rulesListed ??= lint({}, ["--rules", "-f", "json"]).then(({ stdout, stderr, exitCode }) => {
@@ -204,7 +204,7 @@ describe.concurrent("every built-in rule", () => {
     const on = (found: Map<string, number>) =>
       [...found].flatMap(([id, severity]) => (severity === 2 ? [id] : [])).sort();
     const runningOn = (file: string) => {
-      // `resting` goes through every rule, so it is called once for a file, not once for each ID.
+      // `resting` walks every rule, so call it once per file, not once per ID.
       const rest = resting(rules, file);
       return ids.filter(id => !rest.has(id));
     };
@@ -232,7 +232,7 @@ describe.concurrent("every built-in rule", () => {
     ]);
     const linted = resultsOf(run).map(it => basename(it.filePath));
     expect(linted.sort()).toEqual(Object.keys(sources));
-    // Of all the rules, only these two have something to say about a file with one named export.
+    // Of all the rules, only these two report anything in a file with one named export.
     expect(problems(run)).toEqual(
       Object.keys(sources).flatMap(name => [
         `${name}:1 import/no-named-export`,
@@ -258,8 +258,8 @@ describe.concurrent("every built-in rule", () => {
   });
 });
 
-// Early in the file: the ESLint run of the last test here starts a JavaScript engine. Under LeakSanitizer such a run ends
-// seconds later than any other, so it starts while the rest of the file still has work to do.
+// This suite is early in the file because the last test's ESLint run starts a JavaScript VM. Under LeakSanitizer that run
+// takes several seconds longer to exit, so it should start while the rest of the file still has work to do.
 describe.concurrent("[lint.settings]", () => {
   // Rule, code, settings table, lines reported without the settings, lines reported with them.
   const cases: [id: string, code: string, settings: string, without: number[], withIt: number[]][] = [
@@ -1477,7 +1477,7 @@ describe.concurrent(`"plugin/*" = "off" turns off every rule of a plugin`, () =>
   const found = async (bunfig: string, args: string[] = [], files: Record<string, string> = everything) =>
     problems(await lint({ ...files, "bunfig.toml": bunfig }, [...args, "-f", "json"]));
 
-  // First, like `[lint.settings]` is early: each of these runs starts a JavaScript engine.
+  // First in the suite for the same reason `[lint.settings]` is early: each of these runs starts a JavaScript VM.
   test("it covers the rules of a JavaScript plugin", async () => {
     const plugin = `const rule = { create: context => ({ Program: node => context.report({ node, message: "found" }) }) };
 export default { meta: { name: "demo" }, rules: { one: rule, two: rule } };\n`;
@@ -1695,7 +1695,7 @@ export default { meta: { name: "demo" }, rules: { one: rule, two: rule } };\n`;
   });
 
   const legacy = ["b.js:1 no-debugger"];
-  // oxlint's defaults are on in its directory. 15 of them need types, and none of those runs without --type-aware.
+  // oxlint's default rules apply in its directory. 15 of them need types, and none of those run without --type-aware.
   const skipped = "warn: Skipped 15 rules that need type information\n  Use --type-aware to run them.\n";
 
   // The config of packages/legacy, what it reports there, and what the run warns about.

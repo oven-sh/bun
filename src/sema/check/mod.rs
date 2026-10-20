@@ -947,7 +947,6 @@ impl<'s> Program<'s> {
             interface_declarations: Default::default(),
             counted_export_declarations: Default::default(),
             has_class_or_function_declaration: Default::default(),
-            members_by_identity: Default::default(),
             has_identical_type_parameter_lists: Default::default(),
             generic_mapped_types_in_progress: Vec::new(),
             generic_mapped_types_cut_short: Vec::new(),
@@ -1813,8 +1812,6 @@ pub struct Checker<'p, 's> {
     /// `number_name` of each index, or `NONE` if it hasn't been requested.
     names_of_small_numbers: std::cell::RefCell<Vec<Atom>>,
     interface_declarations: FxHashMap<Sym, std::rc::Rc<errors_heritage::InterfaceDeclarations>>,
-    /// See `has_member_with_recursion_identity`.
-    members_by_identity: FxHashMap<TypeId, std::rc::Rc<relate::MembersByIdentity>>,
     /// For `check_namespace_merge_order`: whether a class or a function is among the declarations of a symbol.
     has_class_or_function_declaration: FxHashMap<Sym, bool>,
     /// For `check_external_module_exports`: how many declarations of an exported symbol count as duplicates.

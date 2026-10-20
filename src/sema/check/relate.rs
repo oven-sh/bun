@@ -18,7 +18,6 @@ use crate::util::{FxHashSet, FxHasher, Window, Windowed};
 use smallvec::SmallVec;
 use std::hash::Hasher;
 use std::ops::{BitAnd, BitAndAssign};
-use std::rc::Rc;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum Relation {
@@ -362,22 +361,6 @@ struct OnStack {
     /// `identity_bit` of every identity that `has_matching_recursion_identity` can accept for the type, now or later.
     may_match: u64,
 }
-
-/// An index of an intersection's members by recursion identity. A lookup never misses a member, although identities
-/// change: a reference or a tuple is listed under its identity at the time and under `(0, id, 0)`, the one it may get
-/// later (`current_recursion_identity`). A lookup can find a member that doesn't have the identity anymore, so the
-/// caller asks `has_matching_recursion_identity` about each member it finds.
-#[derive(Default)]
-pub(super) struct MembersByIdentity {
-    by_identity: FxHashMap<RecursionId, SmallVec<[TypeId; 1]>>,
-    /// The mapped types whose target isn't stored. The next request may find another target, so every lookup finds
-    /// them.
-    others: Vec<TypeId>,
-}
-
-/// An intersection with more members than this is compared with a stack through an index. For a shorter one, a search
-/// through the members costs less. Both ways give the same answer.
-const MANY_INTERSECTION_MEMBERS: usize = 32;
 
 /// Returns one of 64 bits for `identity`.
 #[inline]
@@ -4551,12 +4534,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (t, data) = self.mapped_target_with_symbol(t);
         if let TypeData::Intersection(parts) = data
-            && match parts.len() > MANY_INTERSECTION_MEMBERS {
-                true => self.is_any_member_deeply_nested(t, stacks, is_source, max_depth),
-                false => parts
-                    .iter()
-                    .any(|&p| self.is_deeply_nested_among(p, stacks, is_source, known, max_depth)),
-            }
+            && parts
+                .iter()
+                .any(|&p| self.is_deeply_nested_among(p, stacks, is_source, known, max_depth))
         {
             return true;
         }
@@ -4579,108 +4559,6 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         false
-    }
-
-    /// True if `is_deeply_nested_among` is true for a member of the intersection `t`. Makes one pass over the stack.
-    /// Member by member, there's a step for every pair of a member of `t` and a member of an intersection on the stack,
-    /// and `t` itself is usually on the stack.
-    #[cold]
-    fn is_any_member_deeply_nested(
-        &mut self,
-        t: TypeId,
-        stacks: [&[(TypeId, u32)]; 2],
-        is_source: bool,
-        max_depth: usize,
-    ) -> bool {
-        let mut identities = Vec::new();
-        self.add_recursion_identities(t, &mut identities);
-        let mut members = OrderedSet::default();
-        for &identity in &identities {
-            members.insert(identity);
-        }
-        // For each identity: `count` and `last` of `is_deeply_nested_among`, and the last stack entry that matched.
-        let mut states: Vec<(usize, Option<TypeId>, usize)> =
-            vec![(0, None, usize::MAX); identities.len()];
-        for (i, &(on_stack, _)) in stacks[usize::from(!is_source)].iter().enumerate() {
-            identities.clear();
-            self.add_recursion_identities(on_stack, &mut identities);
-            for &identity in &identities {
-                let Some(member) = members.index_of(identity) else {
-                    continue;
-                };
-                let (count, last, matched_at) = &mut states[member];
-                if std::mem::replace(matched_at, i) == i {
-                    continue;
-                }
-                if last.is_none_or(|last| self.is_at_least_as_new(on_stack, last, stacks)) {
-                    *count += 1;
-                    if *count >= max_depth {
-                        return true;
-                    }
-                }
-                *last = Some(on_stack);
-            }
-        }
-        false
-    }
-
-    /// Adds the identities that `has_matching_recursion_identity` accepts for `t`.
-    fn add_recursion_identities(&mut self, t: TypeId, identities: &mut Vec<RecursionId>) {
-        let (t, data) = self.mapped_target_with_symbol(t);
-        match data {
-            TypeData::Intersection(parts) => {
-                for &part in parts.iter() {
-                    self.add_recursion_identities(part, identities);
-                }
-            }
-            data => identities.push(self.recursion_identity_as(t, data)),
-        }
-    }
-
-    /// `has_matching_recursion_identity` for the intersection `t`, which has many members. See `MembersByIdentity`.
-    #[cold]
-    fn has_member_with_recursion_identity(&mut self, t: TypeId, identity: RecursionId) -> bool {
-        let members = match self.members_by_identity.get(&t) {
-            Some(known) => Rc::clone(known),
-            None => {
-                let mut members = MembersByIdentity::default();
-                self.add_members_by_identity(t, &mut members);
-                let members = Rc::new(members);
-                (self.members_by_identity).insert(t, Rc::clone(&members));
-                members
-            }
-        };
-        let with_identity = members.by_identity.get(&identity);
-        let mut candidates = with_identity.into_iter().flatten().chain(&members.others);
-        candidates.any(|&member| self.has_matching_recursion_identity(member, identity))
-    }
-
-    /// Adds the members of `t`, which is an intersection or a member of one, to `members`.
-    fn add_members_by_identity(&mut self, t: TypeId, members: &mut MembersByIdentity) {
-        let is_mapped = is_mapped_kind(self.data(t));
-        let (of, data) = self.mapped_target_with_symbol(t);
-        // As in `identities_that_may_match`.
-        if is_mapped && self.p.mapped_targets.get(&self.task, &t).is_none() {
-            return members.others.push(t);
-        }
-        let mut add = |identity: RecursionId| {
-            let with_identity = members.by_identity.entry(identity).or_default();
-            if with_identity.last() != Some(&t) {
-                with_identity.push(t);
-            }
-        };
-        match data {
-            TypeData::Intersection(parts) => {
-                for &part in parts.iter() {
-                    self.add_members_by_identity(part, members);
-                }
-            }
-            TypeData::Ref { .. } | TypeData::Tuple { .. } => {
-                add(self.recursion_identity_as(of, data));
-                add((0, of.0, 0));
-            }
-            data => add(self.recursion_identity_as(of, data)),
-        }
     }
 
     /// True if `t.id >= last.id` in tsgo, for `isDeeplyNestedType`. Height doesn't order two instantiations with the
@@ -4862,9 +4740,6 @@ impl<'p, 's> Checker<'p, 's> {
     fn has_matching_recursion_identity(&mut self, t: TypeId, identity: RecursionId) -> bool {
         let (t, data) = self.mapped_target_with_symbol(t);
         match data {
-            TypeData::Intersection(parts) if parts.len() > MANY_INTERSECTION_MEMBERS => {
-                self.has_member_with_recursion_identity(t, identity)
-            }
             TypeData::Intersection(parts) => parts
                 .iter()
                 .any(|&p| self.has_matching_recursion_identity(p, identity)),

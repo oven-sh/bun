@@ -1,7 +1,3 @@
-FAIL eslint/no-var#37 messages differ
-FAIL eslint/no-var#75 messages differ
-FAIL eslint/no-var#76 messages differ
-FAIL eslint/no-var#77 messages differ
 FAIL typescript-eslint/prefer-readonly#87 messages differ
 FAIL typescript-eslint/prefer-readonly#144 messages differ
 FAIL react/jsx-newline#60 messages differ
@@ -38,5 +34,5 @@ FAIL markdown/no-space-in-emphasis#205 messages differ
 
 4 cases have a fix that --fix holds back
 
-532 rules, 528 without failures, 0 not implemented
-71344 cases passed, 35 failed, 306 skipped
+532 rules, 529 without failures, 0 not implemented
+71348 cases passed, 31 failed, 306 skipped

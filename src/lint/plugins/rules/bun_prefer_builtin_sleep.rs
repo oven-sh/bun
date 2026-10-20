@@ -2,7 +2,7 @@ use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint_oxlint::ast_util::is_global_reference;
 
-/// Prefer `Bun.sleep()` to a promise that is made by hand and only waits for a timer.
+/// Prefer `Bun.sleep()` to a hand-written promise that only waits for a timer.
 pub struct PreferBuiltinSleep;
 
 const HANDMADE_SLEEP: Message = Message::new(
@@ -11,7 +11,7 @@ const HANDMADE_SLEEP: Message = Message::new(
 );
 const USE_BUN_SLEEP: Message = Message::new("useBunSleep", "Replace it with `Bun.sleep()`.");
 
-/// The one expression that is all that `func` does: its body, or the only statement of its body.
+/// Returns the expression if `func` is just one expression: its body, or the only statement in its body.
 fn only_expression(func: Func<'_>) -> Option<Expr<'_>> {
     match func.body() {
         FnBody::Expr(e) => Some(e),
@@ -41,7 +41,7 @@ fn only_resolves<'a>(callback: Expr<'a>, resolve: Symbol<'a>) -> bool {
     }
 }
 
-/// The `ms` of `new Promise(done => setTimeout(done, ms))`. `Some(None)`: there is none.
+/// Returns the `ms` in `new Promise(done => setTimeout(done, ms))`, or `Some(None)` if there's no delay argument.
 fn delay_of(e: Expr<'_>) -> Option<Option<Expr<'_>>> {
     let ExprKind::New(construction) = e.kind() else {
         return None;

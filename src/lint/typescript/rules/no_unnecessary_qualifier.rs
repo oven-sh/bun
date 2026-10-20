@@ -12,18 +12,18 @@ const UNNECESSARY_QUALIFIER: Message = Message::new(
 
 type Namespaces<'a> = SmallVec<[TsNode<'a>; 4]>;
 
-/// Whether `at` is in one of `declarations`, which are apart from each other and in the order of the text.
+/// True if `at` is in one of `declarations`, which don't overlap and are in source order.
 fn is_in_declaration(declarations: &[Span], at: u32) -> bool {
     let after = declarations.partition_point(|it| it.start <= at);
     after.checked_sub(1).and_then(|last| declarations.get(last)).is_some_and(|it| at < it.end)
 }
 
-/// The declarations of the namespaces and the enums that `node` is in.
+/// Returns the declarations of the namespaces and enums that contain `node`.
 ///
-/// Of `namespace A.B.C {}`, which is three declarations for TypeScript and one for ESLint, that is
-/// the one of `A`, and if it is exported also the one of `C`: typescript-estree maps the
-/// `TSModuleDeclaration` to the former and the `ExportNamedDeclaration` to the latter.
-/// tsgolint has the one of `C` alone, exported or not: the parent of the `ModuleBlock`.
+/// `namespace A.B.C {}` is three declarations for TypeScript and one for ESLint. Here it yields the declaration of `A`,
+/// and if it's exported also the one of `C`, because typescript-estree maps the `TSModuleDeclaration` to the former and
+/// the `ExportNamedDeclaration` to the latter. tsgolint only has the one of `C`, exported or not: the `ModuleBlock`'s
+/// parent.
 fn namespaces_in_scope<'a>(node: Node<'a>, is_oxlint: bool) -> Namespaces<'a> {
     let mut namespaces = Namespaces::new();
     for ancestor in node.ancestors() {
@@ -58,7 +58,7 @@ fn symbol_is_namespace_in_scope<'a>(mut symbol: TsSymbol<'a>, namespaces: &Names
     false
 }
 
-/// `checker.getSymbolsInScope(node, flags).find(it => it.name === name)`. `name`: as it is written.
+/// `checker.getSymbolsInScope(node, flags).find(it => it.name === name)`. `name` is the name as written.
 fn get_symbol_in_scope<'a>(
     types: Types<'a>,
     node: TsNode<'a>,
@@ -72,8 +72,8 @@ fn symbols_are_equal<'a>(accessed: TsSymbol<'a>, in_scope: TsSymbol<'a>) -> bool
     accessed == in_scope.get_export_symbol().get_merged_symbol()
 }
 
-/// `qualifier`, `name`: the two sides of the last dot of `A.B.name`. For the checker the `B` stands
-/// for all of `A.B`.
+/// `qualifier` and `name` are the two sides of the last dot in `A.B.name`. For the checker the `B` represents all of
+/// `A.B`.
 fn qualifier_is_unnecessary<'a>(
     types: Types<'a>,
     qualifier: TsNode<'a>,
@@ -93,7 +93,7 @@ fn qualifier_is_unnecessary<'a>(
         .is_some_and(|from_scope| symbols_are_equal(accessed_symbol, from_scope))
 }
 
-/// An `Identifier`, or a `MemberExpression` that is not computed of one.
+/// An `Identifier`, or a non-computed `MemberExpression` on one.
 fn is_entity_name_expression(mut node: Expr) -> bool {
     loop {
         match node.kind() {
@@ -112,8 +112,8 @@ impl NoUnnecessaryQualifier {
             .fix(|fixer| fixer.remove(Span::new(qualifier.start, name.start)));
     }
 
-    /// `A.B.c`, as an expression or after `typeof` in a type. The qualifiers in a qualifier that is
-    /// reported are not looked at, so all of them are checked from the outermost.
+    /// `A.B.c`, as an expression or after `typeof` in a type. Qualifiers inside a reported qualifier aren't checked, so
+    /// they're all checked starting from the outermost.
     fn check_member<'a>(&self, mut node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Dot { obj, .. } = node.kind() else {
             return;
@@ -145,7 +145,7 @@ impl NoUnnecessaryQualifier {
         }
     }
 
-    /// `owner`: what `name` is part of.
+    /// `owner` is the node `name` is part of.
     fn check_entity_name<'a>(cx: &Cx<'a, Self>, owner: Node<'a>, name: EntityName<'a>) {
         let Some(first) = name.first().filter(|_| name.len() > 1) else {
             return;
@@ -179,7 +179,7 @@ impl Rule for NoUnnecessaryQualifier {
         .exprs(&[ExprTag::Dot])
         .types(&[TypeTag::Ref, TypeTag::Import])
         .stmts(&[StmtTag::ImportEquals]);
-    /// Where the namespaces and the enums are that are in no other, in the order of the text.
+    /// The spans of the outermost namespaces and enums, in source order.
     type State<'a> = Vec<Span>;
 
     fn new(_: &Options) -> Self {
@@ -195,9 +195,9 @@ impl Rule for NoUnnecessaryQualifier {
         utils::sort::sort_unstable_by_key(&mut declarations, |it| (it.start, std::cmp::Reverse(it.end)));
         let mut end = 0;
         declarations.retain(|it| {
-            let is_in_no_other = it.start >= end;
+            let is_outermost = it.start >= end;
             end = end.max(it.end);
-            is_in_no_other
+            is_outermost
         });
         Some(declarations)
     }

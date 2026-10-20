@@ -39,7 +39,7 @@ const errors = [];
 stream.on("error", e => errors.push(code(e)));
 
 if (scenario === "failed-writes") {
-  // The parent closes its end of the stream, then sends one byte on stdin.
+  // The parent closes the only reader of the stream, then sends one byte on stdin.
   fs.readSync(0, Buffer.alloc(1));
   const write = chunk => stream.write(chunk, e => callbacks.push(code(e)));
   // Write again only after the stream has reported the first failure.
@@ -49,7 +49,7 @@ if (scenario === "failed-writes") {
   write("x");
   process.on("exit", () => report({ callbacks, errors, writableLength: stream.writableLength }));
 } else if (scenario === "failed-writes-then-end") {
-  // The parent closes its end of the stream, then sends one byte on stdin.
+  // The parent closes the only reader of the stream, then sends one byte on stdin.
   fs.readSync(0, Buffer.alloc(1));
   const results = { end: "not called", finished: "not called" };
   const write = (chunk, then) =>

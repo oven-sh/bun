@@ -63,6 +63,16 @@ describe("console.Console", () => {
     expect(await outValue()).toBe("hello world!\n");
     expect(await errValue()).toBe("uh oh!\n");
   });
+
+  // dir() prints with the inspect hooks off, and node's util.inspect then prints a URL as its href.
+  test("dir prints a URL as its href", async () => {
+    const [stream, value] = writable();
+    const c = new Console({ stdout: stream, stderr: stream, colorMode: false });
+    c.dir(new URL("http://example.com/a?k=v"));
+    c.dir({ url: new URL("http://example.com/b") });
+    stream.end();
+    expect(await value()).toBe("http://example.com/a?k=v\n{ url: http://example.com/b }\n");
+  });
 });
 
 test("console._stdout", () => {

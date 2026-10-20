@@ -205,10 +205,7 @@ fn render_size(hash: &[u8]) -> Result<(u32, u32), DecodeError> {
     let land = hash[4] & 0x80 != 0;
     let l_max: u32 = if has_alpha { 5 } else { 7 };
     let l_min = (hash[3] & 7) as u32;
-    // `encode` stores at least 1. The reference renders 0 as a zero-sized image.
-    if l_min == 0 {
-        return Err(DecodeError::DecodeFailed);
-    }
+    debug_assert!(l_min != 0, "`encode` stores at least 1");
     let (lx, ly) = if land { (l_max, l_min) } else { (l_min, l_max) };
     let ratio = lx as f32 / ly as f32;
     let w: u32 = if ratio > 1.0 {
@@ -224,7 +221,7 @@ fn render_size(hash: &[u8]) -> Result<(u32, u32), DecodeError> {
     Ok((w, h))
 }
 
-/// Decode `hash` to a ≤32px RGBA image. `DecodeFailed` for a short hash or a stored L count of 0.
+/// Decode `hash` to a ≤32px RGBA image. `DecodeFailed` for a hash that is too short.
 pub(crate) fn decode(hash: &[u8]) -> Result<Decoded, DecodeError> {
     let (w, h) = render_size(hash)?;
     let h24: u32 = hash[0] as u32 | (hash[1] as u32) << 8 | (hash[2] as u32) << 16;

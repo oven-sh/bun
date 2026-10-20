@@ -867,3 +867,21 @@ impl<K: Eq, V, A: Allocator + Clone> WindowedMap<K, V, A> {
         value.is_none()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn distinct_numbers_keys_by_first_occurrence_at_any_length() {
+        let mut keys = Distinct::default();
+        assert_eq!(keys.number_of(0u32), None);
+        for round in 0..2 {
+            for key in 0..40u32 {
+                assert_eq!(keys.add(key * 7), (key as usize, round == 0));
+            }
+        }
+        assert_eq!(keys.number_of(39 * 7), Some(39));
+        assert_eq!(keys.number_of(1), None);
+    }
+}

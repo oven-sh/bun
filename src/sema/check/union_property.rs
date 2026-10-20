@@ -28,7 +28,7 @@
 use super::shape::{LONG_PROP_LIST, MemberCount, PropertyHolder, is_plain_object};
 use super::shortcuts::{TypeNumbers, task_fact};
 use super::*;
-use crate::util::{FxHashSet, PositionSet};
+use crate::util::{FxHashSet, PositionSet, SharedSort};
 use smallvec::SmallVec;
 
 /// Shorter unions don't use `MemberFacts`. Most unions are short, and there's little to save in them.
@@ -188,9 +188,11 @@ struct UnionPropertyBuilder<'p, 's> {
     symbols: SmallVec<[(*const Prop<'p>, MapperId); LONG_PROP_LIST]>,
     /// Everything in `symbols`, plus the symbols added after it filled up.
     more_symbols: FxHashSet<(*const Prop<'p>, MapperId)>,
-    /// `indexTypes`. Each type is paired with the position of the first member that contributes it, and the list is
-    /// sorted by that position.
+    /// `indexTypes`. Each type is paired with the position of the first member that contributes it.
+    /// `finish_union_property` sorts them by that position.
     index_types: SmallVec<[(usize, TypeId); 4]>,
+    /// The types in `index_types`, numbered by their place there.
+    distinct_index_types: Distinct<TypeId>,
     merged_instantiations: bool,
     flags: PropFlags,
     is_public: bool,
@@ -208,6 +210,7 @@ impl<'p, 's> UnionPropertyBuilder<'p, 's> {
             symbols: SmallVec::new(),
             more_symbols: FxHashSet::default(),
             index_types: SmallVec::new(),
+            distinct_index_types: Distinct::default(),
             merged_instantiations: false,
             flags: PropFlags::empty(),
             is_public: false,
@@ -270,15 +273,10 @@ impl<'p, 's> UnionPropertyBuilder<'p, 's> {
     /// `indexTypes` is only passed to `getUnionType`, so duplicates are dropped. Properties are compared by value, so
     /// the order must not depend on how many members were visited.
     fn add_index_type(&mut self, at: usize, ty: TypeId) {
-        if let Some(same) = self.index_types.iter().position(|it| it.1 == ty) {
-            if self.index_types[same].0 <= at {
-                return;
-            }
-            self.index_types.remove(same);
+        match self.distinct_index_types.add(ty) {
+            (_, true) => self.index_types.push((at, ty)),
+            (same, false) => self.index_types[same].0 = self.index_types[same].0.min(at),
         }
-        let before = self.index_types.iter().rposition(|it| it.0 <= at);
-        let insert_at = before.map_or(0, |before| before + 1);
-        self.index_types.insert(insert_at, (at, ty));
     }
 }
 
@@ -935,7 +933,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<Prop<'s>> {
         let UnionPropertyBuilder {
             mut prop_set,
-            index_types,
+            mut index_types,
             merged_instantiations,
             mut flags,
             is_public,
@@ -984,6 +982,9 @@ impl<'p, 's> Checker<'p, 's> {
         // protected.
         if flags.contains(PropFlags::PRIVATE) || is_public {
             flags.remove(PropFlags::PROTECTED);
+        }
+        if !index_types.is_sorted_by_key(|it| it.0) {
+            index_types.shared_sort_by_key(|it| it.0);
         }
         prop_set.extend(index_types.iter().map(|&(_, t)| Prop {
             name,

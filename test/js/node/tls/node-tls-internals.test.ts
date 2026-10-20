@@ -133,19 +133,47 @@ describe("NodeTLS.cpp", () => {
 
   // root_certs.der is binary, so a diff cannot be reviewed; certdata.txt (Mozilla's list) can.
   test("every bundled root is a certificate certdata.txt trusts for server auth", () => {
+    // Mirrors %distrusted_labels in generate-root-certs.pl.
+    const distrusted = new Set([
+      "emSign Root CA - G1",
+      "emSign ECC Root CA - G3",
+      "emSign Root CA - C1",
+      "emSign ECC Root CA - C3",
+    ]);
     const lines = readFileSync(join(import.meta.dir, "../../../../packages/bun-usockets/certdata.txt"), "latin1").split(
       "\n",
     );
     const trusted: string[] = [];
     let sha1 = "";
+    let label = "";
     for (let i = 0; i < lines.length; i++) {
-      if (lines[i] === "CKA_CERT_SHA1_HASH MULTILINE_OCTAL") {
+      if (lines[i].startsWith('CKA_LABEL UTF8 "')) {
+        label = lines[i].slice('CKA_LABEL UTF8 "'.length, -1);
+      } else if (lines[i] === "CKA_CERT_SHA1_HASH MULTILINE_OCTAL") {
         sha1 = "";
         while (lines[++i] !== "END")
           for (const octal of lines[i].split("\\").slice(1)) sha1 += parseInt(octal, 8).toString(16).padStart(2, "0");
-      } else if (lines[i] === "CKA_TRUST_SERVER_AUTH CK_TRUST CKT_NSS_TRUSTED_DELEGATOR") trusted.push(sha1);
+      } else if (lines[i] === "CKA_TRUST_SERVER_AUTH CK_TRUST CKT_NSS_TRUSTED_DELEGATOR" && !distrusted.has(label))
+        trusted.push(sha1);
     }
     const bundled = rootCertificates.map(pem => createHash("sha1").update(new X509Certificate(pem).raw).digest("hex"));
     expect(bundled.toSorted()).toEqual(trusted.toSorted());
+  });
+
+  // By SHA-256 of the DER rather than by label, so a relabel in certdata.txt cannot bring one back.
+  test("the roots generate-root-certs.pl leaves out are not bundled", () => {
+    const distrusted = [
+      "40f6af0346a99aa1cd1d555a4e9cce62c7f9634603ee406615833dc8c8d00367",
+      "86a1ecba089c4a8d3bbe2734c612ba341d813e043cf9e8a862cd5c57a36bbe6b",
+      "125609aa301da0a249b97a8239cb6a34216f44dcac9f3954b14292f2e8c8608f",
+      "bc4d809b15189d78db3e1d8cf4f9726a795da1643ca5f1358e1ddb0edc0d7eb3",
+    ];
+    const bundled = new Set(
+      [...rootCertificates, ...getCACertificates("bundled")].map(pem =>
+        createHash("sha256").update(new X509Certificate(pem).raw).digest("hex"),
+      ),
+    );
+    expect(bundled.size).toBeGreaterThan(100);
+    expect(distrusted.filter(fingerprint => bundled.has(fingerprint))).toEqual([]);
   });
 });

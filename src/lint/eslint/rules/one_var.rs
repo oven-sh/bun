@@ -266,11 +266,10 @@ fn is_for_left(statement: Stmt<'_>) -> bool {
 
 /// What [`join_declarations`] joins `statement` with.
 fn joined_with(statement: Stmt<'_>, kind: VarKind) -> Option<Stmt<'_>> {
-    // oxlint joins nothing with a `declare`, and nothing that is exported.
-    let is_ambient = |it: Stmt| it.flags().contains(Flags::AMBIENT);
+    // Declarations with `declare` are never joined, as in oxlint. ESLint's fix mistakes `declare` for the keyword and
+    // breaks the code.
     let (previous, _) = previous_declaration(statement, kind)?;
-    let is_left = statement.file().language().is_oxlint && (is_ambient(statement) || is_ambient(previous));
-    (!is_left).then_some(previous)
+    (statement.modifiers().is_empty() && previous.modifiers().is_empty()).then_some(previous)
 }
 
 /// oxlint's `help` is what it calls its fix.
@@ -279,15 +278,10 @@ fn name_of_fix(name: &str, is_fixed: bool) -> String {
 }
 
 /// ESLint's `joinDeclarations`: a `,` in the place of the `;` of `previous`, or after it, and no keyword.
-fn join_declarations<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, previous: Stmt<'a>, kind: VarKind) -> Option<Fix> {
+fn join_declarations<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, previous: Stmt<'a>, kind: VarKind) -> Fix {
     let file = fixer.file();
-    let first = match statement.modifiers().is_empty() {
-        true => {
-            let (start, word) = (statement.span().start, if kind == VarKind::AwaitUsing { "await" } else { kind_text(kind) });
-            Span::new(start, start + word.len() as u32)
-        }
-        false => file.first_token(statement)?.span(),
-    };
+    let (start, word) = (statement.span().start, if kind == VarKind::AwaitUsing { "await" } else { kind_text(kind) });
+    let first = Span::new(start, start + word.len() as u32);
     let mut text = b",".to_vec();
     text.extend_from_slice(file.slice(previous.span().between(first)));
     let mut last = first;
@@ -297,7 +291,7 @@ fn join_declarations<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, previous: Stmt<'
         last = Span::new(using, using + "using".len() as u32);
     }
     let start = previous.semicolon().map_or_else(|| previous.span().end, |it| it.start);
-    Some(fixer.replace(Span::new(start, last.end), text))
+    fixer.replace(Span::new(start, last.end), text)
 }
 
 /// ESLint's `splitDeclarations`
@@ -312,7 +306,9 @@ fn split_declarations<'a>(
     }
     let file = fixer.file();
     let export_placement = if statement.is_exported() { "export " } else { "" };
-    let kind = kind_text(kind);
+    // ESLint drops the `declare`, which turns the remaining declarations into real variables.
+    let declare = if statement.flags().contains(Flags::AMBIENT) { "declare " } else { "" };
+    let kind = format!("{declare}{}", kind_text(kind));
     let mut fixes = Vec::new();
     for declaration in declarations {
         let Some(comma) = file.token_after(declaration).filter(|it| it.is(",")) else {
@@ -349,7 +345,7 @@ fn report_combine<'a>(cx: &Cx<'a, OneVar>, statement: Stmt<'a>, kind: VarKind, m
         .data("type", kind_text(kind))
         // oxlint's `help` is what it calls its fix.
         .labels_with(|details| details.help = if previous().is_some() { "Combine variable declarations" } else { "" }.into())
-        .fix(|fixer| join_declarations(fixer, statement, previous()?, kind));
+        .fix(|fixer| Some(join_declarations(fixer, statement, previous()?, kind)));
 }
 
 impl OneVar {

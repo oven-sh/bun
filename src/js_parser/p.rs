@@ -6207,6 +6207,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             | js_ast::ExprData::EArrow(_)
             | js_ast::ExprData::EImportMeta(_) => return true,
 
+            // As removable as the `import.meta.require` that it replaces.
+            js_ast::ExprData::ESpecial(E::Special::ImportMetaRequire(_)) => return true,
+
             js_ast::ExprData::EInlinedEnum(e) => {
                 return self.expr_can_be_removed_if_unused_without_dce_check(&e.value);
             }

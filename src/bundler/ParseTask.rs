@@ -2680,6 +2680,17 @@ pub mod parse_worker {
             opts.lower_import_meta_main_for_node_js = true;
         }
 
+        // Only an ES module that Bun runs has `import.meta.require`. The dev server prints `import.meta` as an object of its own. Iife output and the browser files of a server build have no `require` to take its place.
+        opts.lower_import_meta_require = !task.source_index.is_runtime()
+            && match output_format {
+                options::Format::InternalBakeDev => true,
+                options::Format::Iife => false,
+                options::Format::Cjs => target == worker_ctx.transpiler().options.target,
+                options::Format::Esm => {
+                    target == worker_ctx.transpiler().options.target && !target.is_bun()
+                }
+            };
+
         opts.tree_shaking = if task.source_index.is_runtime() {
             true
         } else {

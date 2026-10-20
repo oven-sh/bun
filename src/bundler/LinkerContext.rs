@@ -2377,6 +2377,7 @@ impl<'a> LinkerContext<'a> {
         to_esm_ref: Ref,
         to_commonjs_ref: Ref,
         runtime_require_ref: Option<Ref>,
+        keep_import_meta_require: bool,
         source_index: Index,
         source: &Source,
         module_info: Option<&mut crate::analyze_transpiled_module::ModuleInfo>,
@@ -2456,6 +2457,7 @@ impl<'a> LinkerContext<'a> {
                 Format::Cjs => None, // use unbounded global
                 _ => runtime_require_ref,
             },
+            keep_import_meta_require,
             require_or_import_meta_for_source_callback:
                 js_printer::RequireOrImportMetaCallback::init(self),
             line_offset_tables: Some(line_offset_table),

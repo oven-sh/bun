@@ -155,6 +155,14 @@ impl SideEffects {
                     return None;
                 }
             }
+            // As removable as the `import.meta.require` that it replaces. Its use of the runtime's `__require` goes with it.
+            ExprData::ESpecial(E::Special::ImportMetaRequire(_)) => {
+                let runtime_require = p.runtime_imports.__require;
+                if p.options.features.auto_polyfill_require && !runtime_require.is_empty() {
+                    p.ignore_usage(runtime_require);
+                }
+                return None;
+            }
             ExprData::EIdentifier(ident) => {
                 if ident.must_keep_due_to_with_stmt() {
                     return Some(expr);
@@ -985,6 +993,7 @@ impl SideEffects {
             ExprData::ESpecial(special) => match special {
                 E::Special::ModuleExports
                 | E::Special::ResolvedSpecifierString(_)
+                | E::Special::ImportMetaRequire(_)
                 | E::Special::HotData => None,
                 E::Special::HotAccept | E::Special::HotAcceptVisited | E::Special::HotEnabled => {
                     Some(Known {

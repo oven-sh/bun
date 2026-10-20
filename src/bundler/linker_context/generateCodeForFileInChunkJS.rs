@@ -37,6 +37,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     module_info: Option<&mut ModuleInfo>,
 ) -> js_printer::PrintResult {
     let source_index = part_range.source_index.get() as usize;
+    // The test that gives the chunk its `// @bun` line, for ES-module output.
+    let keep_import_meta_require = c.options.output_format == OutputFormat::Esm
+        && c.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun();
 
     // Grab raw pointers to the SoA columns up front so
     // subsequent `&mut c` borrows (convert_stmts_for_chunk, print_code_for_file_in_chunk_js)
@@ -226,6 +229,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 Ref::NONE,
                 Ref::NONE,
                 None,
+                false,
                 part_range.source_index,
                 source,
                 module_info,
@@ -987,6 +991,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         to_esm_ref,
         to_common_js_ref,
         runtime_require_ref,
+        keep_import_meta_require,
         part_range.source_index,
         source,
         module_info,

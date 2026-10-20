@@ -1323,6 +1323,8 @@ pub struct Options<'a> {
     /// `__preload`: when set, an `import()` of a chunk is printed as `(__preload(chunkId), import(path))`.
     pub module_preload_ref: Ref,
     pub require_ref: Option<Ref>,
+    /// The chunk is an ES module that Bun runs: `E::Special::ImportMetaRequire` prints as `import.meta.require`.
+    pub keep_import_meta_require: bool,
     pub import_meta_ref: Ref,
     pub hmr_ref: Ref,
     pub indent: Indentation,
@@ -1408,6 +1410,7 @@ impl<'a> Default for Options<'a> {
             to_esm_ref: Ref::NONE,
             module_preload_ref: Ref::NONE,
             require_ref: None,
+            keep_import_meta_require: false,
             import_meta_ref: Ref::NONE,
             hmr_ref: Ref::NONE,
             indent: Indentation::default(),
@@ -3419,6 +3422,28 @@ pub(crate) mod __gated_printer {
                             self.import_record(*index as usize).path.pretty,
                             true,
                         );
+                    }
+                    E::Special::ImportMetaRequire(_) => {
+                        if self.options.keep_import_meta_require {
+                            self.print_expr(
+                                Expr {
+                                    data: ExprData::EImportMeta(E::ImportMeta {}),
+                                    loc: expr.loc,
+                                },
+                                Level::Postfix,
+                                ExprFlagSet::empty(),
+                            );
+                            self.print(b".require");
+                        } else {
+                            self.print_expr(
+                                Expr {
+                                    data: ExprData::ERequireCallTarget,
+                                    loc: expr.loc,
+                                },
+                                level,
+                                in_flags,
+                            );
+                        }
                     }
                 },
                 ExprData::ECommonjsExportIdentifier(id) => {

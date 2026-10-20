@@ -129,27 +129,23 @@ test("Worker on a revoked blob still works", async () => {
 // https://github.com/oven-sh/bun/issues/35284: a Blob's type is its own, and no other thread can write it.
 test("the type of a Blob read through an object URL survives a Response.blob() on another thread", async () => {
   using dir = tempDir("worker-blob-type-race", {
-    "main.mjs": `import { Worker } from "node:worker_threads";
-
-      const rounds = 200;
+    "main.mjs": `const rounds = 200;
       // None of these is in the MIME table, so each one is its own heap allocation.
       const types = Array.from({ length: 8 }, (_, i) => "x-race/t" + i + "-" + Buffer.alloc(1024 + i * 37, "a").toString());
       const blob = new Blob(["hello"]);
       const url = URL.createObjectURL(blob);
       const state = new Int32Array(new SharedArrayBuffer(4)); // [0] the main thread is done
 
-      const worker = new Worker(new URL("./worker.mjs", import.meta.url), {
-        workerData: { url, shared: state.buffer, types },
-      });
-      const ready = new Promise((resolve, reject) => {
-        worker.once("message", resolve);
-        worker.once("error", reject);
-      });
-      const read = await ready;
-      const done = new Promise((resolve, reject) => {
-        worker.once("message", resolve);
-        worker.once("error", reject);
-      });
+      const worker = new Worker(new URL("./worker.mjs", import.meta.url));
+      const ready = Promise.withResolvers();
+      const done = Promise.withResolvers();
+      worker.onmessage = ({ data }) => (data === "ready" ? ready : done).resolve(data);
+      worker.onerror = event => {
+        ready.reject(event.error ?? event.message);
+        done.reject(event.error ?? event.message);
+      };
+      worker.postMessage({ url, shared: state.buffer, types });
+      const read = await ready.promise;
 
       // The Worker reads while this loop writes, and stops when it ends.
       for (let i = 0; i < rounds; i++) {
@@ -157,25 +153,26 @@ test("the type of a Blob read through an object URL survives a Response.blob() o
       }
       Atomics.store(state, 0, 1);
 
-      console.log(JSON.stringify({ ready: read, ...(await done), type: blob.type }));
+      console.log(JSON.stringify({ ready: read, ...(await done.promise), type: blob.type }));
       URL.revokeObjectURL(url);
+      worker.terminate();
       `,
     "worker.mjs": `import { resolveObjectURL } from "node:buffer";
-      import { parentPort, workerData } from "node:worker_threads";
 
-      const { url, shared, types } = workerData;
-      const state = new Int32Array(shared);
-      const expected = new Set(["", ...types]);
-      // A Blob of this thread over the store of the Blob of the main thread.
-      const blob = resolveObjectURL(url);
+      self.onmessage = ({ data: { url, shared, types } }) => {
+        const state = new Int32Array(shared);
+        const expected = new Set(["", ...types]);
+        // A Blob of this thread over the store of the Blob of the main thread.
+        const blob = resolveObjectURL(url);
 
-      // The first read comes before "ready", so the loop of the main thread starts while this one reads.
-      let unexpected = expected.has(blob.type) ? 0 : 1;
-      parentPort.postMessage("ready");
-      while (Atomics.load(state, 0) === 0) {
-        if (!expected.has(blob.type)) unexpected++;
-      }
-      parentPort.postMessage({ unexpected });
+        // The first read comes before "ready", so the loop of the main thread starts while this one reads.
+        let unexpected = expected.has(blob.type) ? 0 : 1;
+        self.postMessage("ready");
+        while (Atomics.load(state, 0) === 0) {
+          if (!expected.has(blob.type)) unexpected++;
+        }
+        self.postMessage({ unexpected });
+      };
       `,
   });
   await using proc = Bun.spawn({ cmd: [bunExe(), "main.mjs"], cwd: String(dir), env: bunEnv, stderr: "pipe" });

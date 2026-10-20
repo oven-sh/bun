@@ -1160,14 +1160,13 @@ impl<'p, 's> Checker<'p, 's> {
         if !is_reduced && keep.iter().all(|&k| k) {
             return union;
         }
-        let mut kept: Flat = members
+        let kept: Flat = members
             .iter()
             .zip(&keep)
             .filter(|(_, k)| **k)
             .map(|(&m, _)| m)
             .collect();
-        self.order_as_in(union, &mut kept);
-        self.union_of_type_set(types, kept, true, FirstRequest::NONE)
+        self.union_of_type_set(types, kept, false, FirstRequest::NONE)
     }
 
     /// `removeSubtypes`, keyProperty: returns the first property of `ty` whose type is a unit type, and that type.
@@ -2810,18 +2809,6 @@ impl<'p, 's> Checker<'p, 's> {
             self.merge_sorted_runs(members, actual);
         }
         true
-    }
-
-    /// FOR SPEED: sorts `kept`, a subset of the members of the union `whole`, into union order.
-    fn order_as_in(&self, whole: TypeId, kept: &mut Flat) {
-        sort_by_id(kept);
-        let is_kept = |member: &TypeId| {
-            kept.binary_search_by_key(&member.arrival_order(), |it| it.arrival_order())
-                .is_ok()
-        };
-        *kept = (self.parts(whole).iter().copied())
-            .filter(is_kept)
-            .collect();
     }
 
     /// FOR SPEED: narrowing removes members from a union, and where the branches join, the remaining members are

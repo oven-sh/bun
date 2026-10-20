@@ -911,7 +911,7 @@ impl FileSink {
         fd
     }
 
-    /// A write to the caller's fd stopped at EAGAIN. A descriptor may be free by now: `setup` again, for a duplicate and a poll.
+    /// A write to the caller's fd met EAGAIN. A descriptor may be free now: `setup` again, for a duplicate and a poll.
     #[cfg(unix)]
     #[cold]
     fn take_poll(&self) -> bool {
@@ -929,7 +929,7 @@ impl FileSink {
             input_path: PathOrFileDescriptor::Fd(borrowed),
             ..Default::default()
         };
-        // `setup` makes the fd of a force_sync sink blocking. This fd stays non-blocking, as it is for a sink that starts with a poll.
+        // `setup` makes the fd of a force_sync sink blocking. This one stays non-blocking, like a sink that starts with a poll.
         let force_sync = self.force_sync.replace(false);
         let result = self.setup(&options, global.bun_vm().context_of_caller_no_frame());
         self.force_sync.set(force_sync);

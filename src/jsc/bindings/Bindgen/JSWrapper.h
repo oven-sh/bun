@@ -190,7 +190,7 @@ void JSInternalFieldsWrapperBase<Traits>::visitChildrenImpl(JSC::JSCell* cell, V
     Base::visitChildren(thisObject, visitor);
     // Hidden: `analyzeHeap` reports them by name.
     // One append for each: LLVM does not unroll the loop of appendValuesHidden.
-    [&]<size_t... index>(std::index_sequence<index...>) {
+    [&]<size_t... index>(std::index_sequence<index...>) ALWAYS_INLINE_LAMBDA {
         (visitor.appendHidden(thisObject->internalField(index)), ...);
     }(std::make_index_sequence<JSWrapper<Traits>::numberOfInternalFields>());
 }

@@ -239,7 +239,7 @@ pub(crate) fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult
 
     let error_message = "Expected a S3 or path to check if it exists";
     let (blob, options) = match parse_s3_path_or_blob(global, &mut args, error_message)? {
-        PathOrBlob::Blob(blob) => return blob.get_exists(global, callframe),
+        PathOrBlob::Blob(blob) => (blob, args.next_eat()),
         path => resolve_s3_blob(global, &mut args, path, error_message)?,
     };
     S3BlobStatTask::exists(

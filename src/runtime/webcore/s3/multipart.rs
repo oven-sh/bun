@@ -390,6 +390,7 @@ impl UploadPart {
                 proxy_url: ctx.proxy_url(),
                 body: self.data(),
                 search_params: Some(search_params),
+                late_abort_fails: false,
                 ..s3_simple_request::S3RequestOptions::new(
                     &ctx.path,
                     bun_http::Method::PUT,
@@ -477,6 +478,7 @@ impl MultiPartUpload {
                             content_encoding: self_.content_encoding.as_deref(),
                             acl: self_.acl,
                             storage_class: self_.storage_class,
+                            late_abort_fails: false,
                             ..s3_simple_request::S3RequestOptions::new(
                                 &self_.path,
                                 bun_http::Method::PUT,
@@ -907,6 +909,7 @@ impl MultiPartUpload {
                 proxy_url: self.proxy_url(),
                 body: self.multipart_upload_list.get().as_slice(),
                 search_params: Some(search_params),
+                late_abort_fails: false,
                 ..s3_simple_request::S3RequestOptions::new(
                     &self.path,
                     bun_http::Method::POST,
@@ -979,6 +982,7 @@ impl MultiPartUpload {
                     content_encoding: self.content_encoding.as_deref(),
                     acl: self.acl,
                     storage_class: self.storage_class,
+                    late_abort_fails: false,
                     ..s3_simple_request::S3RequestOptions::new(
                         &self.path,
                         bun_http::Method::POST,
@@ -1134,6 +1138,7 @@ impl MultiPartUpload {
                     content_encoding: self.content_encoding.as_deref(),
                     acl: self.acl,
                     storage_class: self.storage_class,
+                    late_abort_fails: false,
                     ..s3_simple_request::S3RequestOptions::new(
                         &self.path,
                         bun_http::Method::PUT,

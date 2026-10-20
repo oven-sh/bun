@@ -1752,6 +1752,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             }
         }
+        // One idle timeout for the request(s): fetch's own `timeout` when set, else `s3.timeout`.
+        if idle_timeout_seconds.is_some() || disable_timeout {
+            credentials_with_options.options.idle_timeout_seconds =
+                Some(idle_timeout_seconds.unwrap_or(0));
+        } else if let Some(seconds) = credentials_with_options.options.idle_timeout_seconds {
+            disable_timeout = seconds == 0;
+            idle_timeout_seconds = (seconds != 0).then_some(seconds);
+        }
 
         if matches!(body, HTTPRequestBody::ReadableStream(_)) {
             if let Some(sig) = &signal {
@@ -1773,12 +1781,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     )),
                 )
                 .to_js());
-            }
-            // fetch's own `timeout` is the idle timeout of each request of the upload.
-            if let Some(seconds) = idle_timeout_seconds {
-                credentials_with_options.options.idle_timeout_seconds = Some(seconds);
-            } else if disable_timeout {
-                credentials_with_options.options.idle_timeout_seconds = Some(0);
             }
             let promise = jsc::JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
@@ -1822,6 +1824,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // `dupe()` heap-allocates a fresh intrusive-refcounted copy.
             // `upload_stream` adopts the ref by value (no extra bump) and the
             // MultiPartUpload derefs on completion.
+            let s3_stream = bun_core::heap::into_raw(s3_stream);
             // The upload's own promise settles the same way as `promise`: nobody awaits it.
             let upload = s3::upload_stream(
                 credentials_with_options.credentials.dupe(),
@@ -1838,12 +1841,18 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 credentials_with_options.request_payer,
                 signal,
                 Some(s3_stream_wrapper_resolve),
-                bun_core::heap::into_raw(s3_stream).cast::<libc::c_void>(),
+                s3_stream.cast::<libc::c_void>(),
             )?;
             if let Some(upload) = upload.as_any_promise() {
                 upload.set_handled(global_this.vm());
+                if upload.status() == jsc::js_promise::Status::Rejected {
+                    // Refused before an upload existed: nothing will call the wrapper.
+                    // SAFETY: `s3_stream` is the live box from above; no task holds it.
+                    let mut s3_stream = unsafe { bun_core::heap::take(s3_stream) };
+                    let reason = upload.result(global_this.vm());
+                    s3_stream.promise.reject(global_this, Ok(reason))?;
+                }
             }
-            // url/url_proxy_buffer ownership moved into s3_stream above.
             return Ok(promise_value);
         }
         if method == Method::POST {

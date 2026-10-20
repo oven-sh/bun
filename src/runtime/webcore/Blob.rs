@@ -1402,7 +1402,16 @@ impl BlobExt for Blob {
             };
 
             let path = s3.path();
-            let signal = s3_client::error_jsc::get_signal(extra_options, cx.global())?;
+            let signal = match s3_client::error_jsc::get_signal(extra_options, cx.global()) {
+                Ok(signal) => signal,
+                Err(err) => {
+                    return Ok(JSPromise::rejected_promise_with_caught_exception(
+                        cx.global(),
+                        err,
+                    )?
+                    .to_js());
+                }
+            };
             if let Some(rejected) =
                 s3_client::error_jsc::rejected_if_aborted(signal.as_ref(), cx.global())
             {
@@ -4291,7 +4300,17 @@ fn write_file_with_empty_source_to_destination(
                         .to_js());
                     }
                 };
-            let signal = s3_client::error_jsc::get_signal(options.extra_options, cx.global())?;
+            let signal = match s3_client::error_jsc::get_signal(options.extra_options, cx.global())
+            {
+                Ok(signal) => signal,
+                Err(err) => {
+                    return Ok(JSPromise::rejected_promise_with_caught_exception(
+                        cx.global(),
+                        err,
+                    )?
+                    .to_js());
+                }
+            };
             if let Some(rejected) =
                 s3_client::error_jsc::rejected_if_aborted(signal.as_ref(), cx.global())
             {
@@ -4516,7 +4535,14 @@ pub(crate) fn write_file_with_source_destination(
                 );
             }
         };
-        let signal = s3_client::error_jsc::get_signal(options.extra_options, cx.global())?;
+        let signal = match s3_client::error_jsc::get_signal(options.extra_options, cx.global()) {
+            Ok(signal) => signal,
+            Err(err) => {
+                return Ok(
+                    JSPromise::rejected_promise_with_caught_exception(cx.global(), err)?.to_js(),
+                );
+            }
+        };
         if let Some(rejected) =
             s3_client::error_jsc::rejected_if_aborted(signal.as_ref(), cx.global())
         {

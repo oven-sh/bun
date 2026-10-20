@@ -121,7 +121,7 @@ impl S3HttpDownloadStreamingTask {
             // SAFETY: fn contract.
             if let Some(req_err) = unsafe { (*this).request_error } {
                 code = req_err.name().as_bytes();
-                message = s3_simple_request::http_error_message(&req_err);
+                message = s3_simple_request::http_error_message(req_err);
             } else {
                 // SAFETY: fn contract; the buffer is not touched again before the callback
                 // returns, and `message` is not used after it.

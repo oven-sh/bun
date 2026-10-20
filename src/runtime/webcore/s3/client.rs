@@ -288,6 +288,7 @@ pub(crate) fn list_objects(
         signal_store: Default::default(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
         signal_object: bun_jsc::StrongOptional::empty(),
+        late_abort_fails: true,
         context: Default::default(),
     }));
     // SAFETY: just allocated, non-null

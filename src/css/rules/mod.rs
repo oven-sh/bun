@@ -503,10 +503,17 @@ impl<R> CssRuleList<R> {
 
             'arm: {
                 match rule {
-                    CssRule::Keyframes(_keyframez) => {
+                    CssRule::Keyframes(keyframes) => {
                         // KeyframesRule minify (unused-symbol drop + same-name
                         // merge + vendor-prefix downlevel + fallbacks) is
                         // not implemented; fall through.
+                        for keyframe in keyframes.keyframes.iter_mut() {
+                            // A rule gets `-webkit-mask*` copies, so an animation of that rule needs them too.
+                            css::css_properties::masking::MaskHandler::handle_keyframe(
+                                &mut keyframe.declarations.declarations,
+                                &mut context.handler_context,
+                            );
+                        }
                     }
                     CssRule::CustomMedia(_) => {
                         if context.custom_media.is_some() {

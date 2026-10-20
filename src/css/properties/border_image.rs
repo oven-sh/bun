@@ -319,7 +319,7 @@ impl BorderImageSideWidth {
         }
     }
 
-    fn default() -> BorderImageSideWidth {
+    pub(crate) fn default() -> BorderImageSideWidth {
         BorderImageSideWidth::Number(1.0)
     }
 
@@ -410,7 +410,7 @@ impl BorderImageSlice {
         self.offsets.eql(&other.offsets) && self.fill == other.fill
     }
 
-    fn default() -> BorderImageSlice {
+    pub(crate) fn default() -> BorderImageSlice {
         BorderImageSlice {
             offsets: Rect::<NumberOrPercentage>::all(NumberOrPercentage::Percentage(Percentage {
                 v: 1.0,

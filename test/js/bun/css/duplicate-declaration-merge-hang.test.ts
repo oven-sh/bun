@@ -53,6 +53,9 @@ const script = `
       Array.from({ length: n }, (_, i) => \`.a\${i}{color:red}\`).join(""),
       { chrome: 80 << 16 },
     ],
+    "mask-composite": [repeat(".a{mask-composite:add}"), { chrome: 80 << 16 }],
+    "mask-shorthand": [repeat(".a{mask:url(a.png) exclude}"), { chrome: 80 << 16 }],
+    "mask-var": [repeat(".a{mask-image:var(--x)}"), { chrome: 80 << 16 }],
   };
   for (const [name, [src, targets]] of Object.entries(floods)) {
     const out = targets === undefined ? c.minifyTest(src, "") : c._test(src, "", targets);
@@ -85,6 +88,9 @@ test("duplicate declarations across merged rules minify in linear time instead o
       "OK:clamp",
       "OK:distinct-custom-props",
       "OK:distinct-selectors",
+      "OK:mask-composite",
+      "OK:mask-shorthand",
+      "OK:mask-var",
       "",
     ].join("\n"),
     stderr: "",

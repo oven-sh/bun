@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -15,6 +15,7 @@ import {
   ParserFlags,
   ParserOptions,
   prefix_test,
+  prefixTest as prefix_test_output,
 } from "./util";
 
 function Some(n: number): number {
@@ -7929,6 +7930,1256 @@ describe("css tests", () => {
       "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
       "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
     );
+  });
+
+  describe("mask", () => {
+    // The list that `bun build` uses for `--target=browser`.
+    const defaults = {
+      chrome: Some(80 << 16),
+      edge: Some(80 << 16),
+      firefox: Some(78 << 16),
+      safari: Some(14 << 16),
+      opera: Some(67 << 16),
+    };
+    const chrome90 = { chrome: Some(90 << 16) };
+
+    // The mask cases of `test_svg` in lightningcss 1.32.0. A case that differs from lightningcss says why.
+    minify_test(".foo { mask: url('foo.svg'); }", ".foo{mask:url(foo.svg)}");
+    minify_test(".foo { mask: url(masks.svg#star) luminance }", ".foo{mask:url(masks.svg#star) luminance}");
+    minify_test(".foo { mask: url(masks.svg#star) 40px 20px }", ".foo{mask:url(masks.svg#star) 40px 20px}");
+    minify_test(".foo { mask: url(masks.svg#star) 0 0 / 50px 50px }", ".foo{mask:url(masks.svg#star) 0 0/50px 50px}");
+    minify_test(".foo { mask: url(masks.svg#star) repeat-x }", ".foo{mask:url(masks.svg#star) repeat-x}");
+    minify_test(".foo { mask: url(masks.svg#star) stroke-box }", ".foo{mask:url(masks.svg#star) stroke-box}");
+    minify_test(
+      ".foo { mask: url(masks.svg#star) stroke-box stroke-box }",
+      ".foo{mask:url(masks.svg#star) stroke-box}",
+    );
+    minify_test(".foo { mask: url(masks.svg#star) border-box }", ".foo{mask:url(masks.svg#star)}");
+    // lightningcss prints `100%` for `right`. Bun prints `right center`, as it does for `background`.
+    minify_test(
+      ".foo { mask: url(masks.svg#star) left / 16px repeat-y, url(masks.svg#circle) right / 16px repeat-y }",
+      ".foo{mask:url(masks.svg#star) 0/16px repeat-y,url(masks.svg#circle) right center/16px repeat-y}",
+    );
+    minify_test(".foo { mask-border: url('border-mask.png') 25; }", ".foo{mask-border:url(border-mask.png) 25}");
+    minify_test(
+      ".foo { mask-border: url('border-mask.png') 25 / 35px / 12px space alpha; }",
+      ".foo{mask-border:url(border-mask.png) 25/35px/12px space}",
+    );
+    minify_test(
+      ".foo { mask-border: url('border-mask.png') 25 / 35px / 12px space luminance; }",
+      ".foo{mask-border:url(border-mask.png) 25/35px/12px space luminance}",
+    );
+    minify_test(
+      ".foo { mask-border: url('border-mask.png') luminance 25 / 35px / 12px space; }",
+      ".foo{mask-border:url(border-mask.png) 25/35px/12px space luminance}",
+    );
+
+    // lightningcss prints `-webkit-linear-gradient(top, ...)`. Bun prints no direction, as it does for `background`.
+    prefix_test(
+      ".foo { mask-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) }",
+      indoc`
+        .foo {
+          -webkit-mask-image: -webkit-gradient(linear, 0 0, 0 100%, from(#ff0f0e), to(#7773ff));
+          -webkit-mask-image: -webkit-linear-gradient(#ff0f0e, #7773ff);
+          -webkit-mask-image: linear-gradient(#ff0f0e, #7773ff);
+          mask-image: linear-gradient(#ff0f0e, #7773ff);
+          -webkit-mask-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+          mask-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+        }
+      `,
+      { chrome: Some(8 << 16) },
+    );
+    prefix_test(
+      ".foo { mask-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) }",
+      indoc`
+        .foo {
+          -webkit-mask-image: linear-gradient(#ff0f0e, #7773ff);
+          mask-image: linear-gradient(#ff0f0e, #7773ff);
+          -webkit-mask-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+          mask-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+        }
+      `,
+      { chrome: Some(95 << 16) },
+    );
+    prefix_test(
+      ".foo { mask-image: linear-gradient(red, green) }",
+      indoc`
+        .foo {
+          -webkit-mask-image: linear-gradient(red, green);
+          mask-image: linear-gradient(red, green);
+        }
+      `,
+      { chrome: Some(95 << 16) },
+    );
+    prefix_test(
+      ".foo { -webkit-mask-image: url(x.svg); mask-image: url(x.svg); }",
+      indoc`
+        .foo {
+          -webkit-mask-image: url("x.svg");
+          mask-image: url("x.svg");
+        }
+      `,
+      { chrome: Some(95 << 16) },
+    );
+    // No direction in `-webkit-linear-gradient()`: see above.
+    prefix_test(
+      ".foo { mask: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 40px 20px }",
+      indoc`
+        .foo {
+          -webkit-mask: -webkit-gradient(linear, 0 0, 0 100%, from(#ff0f0e), to(#7773ff)) 40px 20px;
+          -webkit-mask: -webkit-linear-gradient(#ff0f0e, #7773ff) 40px 20px;
+          -webkit-mask: linear-gradient(#ff0f0e, #7773ff) 40px 20px;
+          mask: linear-gradient(#ff0f0e, #7773ff) 40px 20px;
+          -webkit-mask: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 40px 20px;
+          mask: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 40px 20px;
+        }
+      `,
+      { chrome: Some(8 << 16) },
+    );
+    // Unlike lightningcss: the `mask` line stays. A browser that reads only `mask` has no other declaration.
+    prefix_test(
+      ".foo { mask: -webkit-linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 40px 20px }",
+      indoc`
+        .foo {
+          -webkit-mask: -webkit-gradient(linear, 0 0, 0 100%, from(#ff0f0e), to(#7773ff)) 40px 20px;
+          -webkit-mask: -webkit-linear-gradient(#ff0f0e, #7773ff) 40px 20px;
+          mask: -webkit-linear-gradient(#ff0f0e, #7773ff) 40px 20px;
+        }
+      `,
+      { chrome: Some(8 << 16) },
+    );
+    // Unlike lightningcss: no `@supports` rule with the `lab()` colors. Bun would nest one more on each pass.
+    prefix_test(
+      ".foo { mask: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 40px var(--foo) }",
+      indoc`
+        .foo {
+          -webkit-mask: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 40px var(--foo);
+          mask: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 40px var(--foo);
+        }
+      `,
+      chrome90,
+    );
+    prefix_test(
+      `
+        @supports (color: lab(0% 0 0)) {
+          .foo {
+            mask: linear-gradient(lab(56.208% 94.4644 98.8928), lab(51% 70.4544 -115.586)) 40px var(--foo);
+          }
+        }
+      `,
+      indoc`
+        @supports (color: lab(0% 0 0)) {
+          .foo {
+            -webkit-mask: linear-gradient(lab(56.208% 94.4644 98.8928), lab(51% 70.4544 -115.586)) 40px var(--foo);
+            mask: linear-gradient(lab(56.208% 94.4644 98.8928), lab(51% 70.4544 -115.586)) 40px var(--foo);
+          }
+        }
+      `,
+      chrome90,
+    );
+    prefix_test(
+      ".foo { mask: url(masks.svg#star) luminance }",
+      indoc`
+        .foo {
+          -webkit-mask: url("masks.svg#star");
+          -webkit-mask-source-type: luminance;
+          mask: url("masks.svg#star") luminance;
+        }
+      `,
+      chrome90,
+    );
+    prefix_test(
+      ".foo { mask-image: url(masks.svg#star) }",
+      indoc`
+        .foo {
+          -webkit-mask-image: url("masks.svg#star");
+          mask-image: url("masks.svg#star");
+        }
+      `,
+      chrome90,
+    );
+    // Unlike lightningcss: eight longhands are not folded into a `mask`. A `mask` also resets `mask-border`.
+    prefix_test(
+      `
+        .foo {
+          mask-image: url(masks.svg#star);
+          mask-position: 25% 75%;
+          mask-size: cover;
+          mask-repeat: no-repeat;
+          mask-clip: padding-box;
+          mask-origin: content-box;
+          mask-composite: subtract;
+          mask-mode: luminance;
+        }
+      `,
+      indoc`
+        .foo {
+          -webkit-mask-image: url("masks.svg#star");
+          mask-image: url("masks.svg#star");
+          -webkit-mask-position: 25% 75%;
+          mask-position: 25% 75%;
+          -webkit-mask-size: cover;
+          mask-size: cover;
+          -webkit-mask-repeat: no-repeat;
+          mask-repeat: no-repeat;
+          -webkit-mask-clip: padding-box;
+          mask-clip: padding-box;
+          -webkit-mask-origin: content-box;
+          mask-origin: content-box;
+          -webkit-mask-composite: source-out;
+          mask-composite: subtract;
+          -webkit-mask-source-type: luminance;
+          mask-mode: luminance;
+        }
+      `,
+      chrome90,
+    );
+    // Not folded: see above.
+    prefix_test(
+      `
+        .foo {
+          mask-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+          mask-position: 25% 75%;
+          mask-size: cover;
+          mask-repeat: no-repeat;
+          mask-clip: padding-box;
+          mask-origin: content-box;
+          mask-composite: subtract;
+          mask-mode: luminance;
+        }
+      `,
+      indoc`
+        .foo {
+          -webkit-mask-image: linear-gradient(#ff0f0e, #7773ff);
+          mask-image: linear-gradient(#ff0f0e, #7773ff);
+          -webkit-mask-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+          mask-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+          -webkit-mask-position: 25% 75%;
+          mask-position: 25% 75%;
+          -webkit-mask-size: cover;
+          mask-size: cover;
+          -webkit-mask-repeat: no-repeat;
+          mask-repeat: no-repeat;
+          -webkit-mask-clip: padding-box;
+          mask-clip: padding-box;
+          -webkit-mask-origin: content-box;
+          mask-origin: content-box;
+          -webkit-mask-composite: source-out;
+          mask-composite: subtract;
+          -webkit-mask-source-type: luminance;
+          mask-mode: luminance;
+        }
+      `,
+      chrome90,
+    );
+    cssTest(
+      `
+        .foo {
+          mask: none center / 100% no-repeat;
+          mask-image: var(--svg);
+        }
+      `,
+      indoc`
+        .foo {
+          mask: none center / 100% no-repeat;
+          mask-image: var(--svg);
+        }
+      `,
+    );
+    prefix_test(
+      ".foo { mask-composite: subtract; }",
+      indoc`
+        .foo {
+          -webkit-mask-composite: source-out;
+          mask-composite: subtract;
+        }
+      `,
+      chrome90,
+    );
+    prefix_test(
+      ".foo { mask-mode: luminance; }",
+      indoc`
+        .foo {
+          -webkit-mask-source-type: luminance;
+          mask-mode: luminance;
+        }
+      `,
+      chrome90,
+    );
+    // Unlike lightningcss: the slice is stated again. `-webkit-mask-box-image` fills the middle, its slice longhand does not.
+    prefix_test(
+      ".foo { mask-border: url('border-mask.png') 25 / 35px / 12px space luminance; }",
+      indoc`
+        .foo {
+          -webkit-mask-box-image: url("border-mask.png") 25 / 35px / 12px space;
+          -webkit-mask-box-image-slice: 25;
+          mask-border: url("border-mask.png") 25 / 35px / 12px space luminance;
+        }
+      `,
+      chrome90,
+    );
+    // The slice is stated again: see above.
+    prefix_test(
+      ".foo { mask-border: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 25 / 35px / 12px space luminance; }",
+      indoc`
+        .foo {
+          -webkit-mask-box-image: linear-gradient(#ff0f0e, #7773ff) 25 / 35px / 12px space;
+          -webkit-mask-box-image-slice: 25;
+          mask-border: linear-gradient(#ff0f0e, #7773ff) 25 / 35px / 12px space luminance;
+          -webkit-mask-box-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 25 / 35px / 12px space;
+          -webkit-mask-box-image-slice: 25;
+          mask-border: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 25 / 35px / 12px space luminance;
+        }
+      `,
+      chrome90,
+    );
+    prefix_test(
+      ".foo { mask-border-source: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)); }",
+      indoc`
+        .foo {
+          -webkit-mask-box-image-source: linear-gradient(#ff0f0e, #7773ff);
+          mask-border-source: linear-gradient(#ff0f0e, #7773ff);
+          -webkit-mask-box-image-source: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+          mask-border-source: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+        }
+      `,
+      chrome90,
+    );
+    // Unlike lightningcss: the longhands are not folded. The `-webkit-mask-box-image` shorthand would add `fill`.
+    prefix_test(
+      `
+        .foo {
+          mask-border-source: url(foo.png);
+          mask-border-slice: 10 40 10 40;
+          mask-border-width: 10px;
+          mask-border-outset: 0;
+          mask-border-repeat: round round;
+          mask-border-mode: luminance;
+        }
+      `,
+      indoc`
+        .foo {
+          -webkit-mask-box-image-source: url("foo.png");
+          mask-border-source: url("foo.png");
+          -webkit-mask-box-image-slice: 10 40;
+          mask-border-slice: 10 40;
+          -webkit-mask-box-image-width: 10px;
+          mask-border-width: 10px;
+          -webkit-mask-box-image-outset: 0;
+          mask-border-outset: 0;
+          -webkit-mask-box-image-repeat: round;
+          mask-border-repeat: round;
+          mask-border-mode: luminance;
+        }
+      `,
+      chrome90,
+    );
+    // Not folded: see above.
+    prefix_test(
+      `
+        .foo {
+          -webkit-mask-box-image-source: url(foo.png);
+          -webkit-mask-box-image-slice: 10 40 10 40;
+          -webkit-mask-box-image-width: 10px;
+          -webkit-mask-box-image-outset: 0;
+          -webkit-mask-box-image-repeat: round round;
+        }
+      `,
+      indoc`
+        .foo {
+          -webkit-mask-box-image-source: url("foo.png");
+          -webkit-mask-box-image-slice: 10 40;
+          -webkit-mask-box-image-width: 10px;
+          -webkit-mask-box-image-outset: 0;
+          -webkit-mask-box-image-repeat: round;
+        }
+      `,
+      chrome90,
+    );
+    prefix_test(
+      ".foo { mask-border-slice: 10 40 10 40; }",
+      indoc`
+        .foo {
+          -webkit-mask-box-image-slice: 10 40;
+          mask-border-slice: 10 40;
+        }
+      `,
+      chrome90,
+    );
+    prefix_test(
+      ".foo { mask-border-slice: var(--foo); }",
+      indoc`
+        .foo {
+          -webkit-mask-box-image-slice: var(--foo);
+          mask-border-slice: var(--foo);
+        }
+      `,
+      chrome90,
+    );
+    // No `@supports` rule with the `lab()` colors: see above.
+    prefix_test(
+      ".foo { mask-border: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) var(--foo); }",
+      indoc`
+        .foo {
+          -webkit-mask-box-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) var(--foo);
+          mask-border: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) var(--foo);
+        }
+      `,
+      chrome90,
+    );
+    prefix_test(".foo { transition: mask 200ms; }", ".foo { transition: -webkit-mask .2s, mask .2s; }", chrome90);
+    prefix_test(
+      ".foo { transition: mask-border 200ms; }",
+      ".foo { transition: -webkit-mask-box-image .2s, mask-border .2s; }",
+      chrome90,
+    );
+    prefix_test(".foo { transition-property: mask; }", ".foo { transition-property: -webkit-mask, mask; }", chrome90);
+    prefix_test(
+      ".foo { transition-property: mask-border; }",
+      ".foo { transition-property: -webkit-mask-box-image, mask-border; }",
+      chrome90,
+    );
+    prefix_test(
+      ".foo { transition-property: mask-composite, mask-mode; }",
+      ".foo { transition-property: -webkit-mask-composite, mask-composite, -webkit-mask-source-type, mask-mode; }",
+      chrome90,
+    );
+
+    describe("under the default browsers", () => {
+      const line = (declaration: string, expected: string) =>
+        prefix_test(`.foo { ${declaration} }`, `.foo { ${expected} }`, defaults);
+
+      line(
+        "mask-image: linear-gradient(black, transparent)",
+        "-webkit-mask-image: linear-gradient(#000, #0000); mask-image: linear-gradient(#000, #0000);",
+      );
+      line("mask-image: url(a.png)", '-webkit-mask-image: url("a.png"); mask-image: url("a.png");');
+      line("mask-repeat: no-repeat", "-webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;");
+      // A written `mask-position` value stays text. Bun would print `right 40%` as `right top 40%`, which Chrome rejects for this name.
+      line("mask-position: left top", "-webkit-mask-position: left top; mask-position: left top;");
+      line("mask-position: right 40%", "-webkit-mask-position: right 40%; mask-position: right 40%;");
+      line("mask-position: 10px bottom", "-webkit-mask-position: 10px bottom; mask-position: 10px bottom;");
+      line(
+        "mask-position: 10px 20px, center",
+        "-webkit-mask-position: 10px 20px, center; mask-position: 10px 20px, center;",
+      );
+      line("mask-clip: padding-box", "-webkit-mask-clip: padding-box; mask-clip: padding-box;");
+      line("mask-origin: content-box", "-webkit-mask-origin: content-box; mask-origin: content-box;");
+      line("mask-size: cover", "-webkit-mask-size: cover; mask-size: cover;");
+      line("mask: url(a.png)", '-webkit-mask: url("a.png"); mask: url("a.png");');
+      line(
+        "mask: url(a.png) center / contain no-repeat",
+        '-webkit-mask: url("a.png") center / contain no-repeat; mask: url("a.png") center / contain no-repeat;',
+      );
+      line("mask-composite: add", "-webkit-mask-composite: source-over; mask-composite: add;");
+      line(
+        "mask-composite: add, subtract, intersect, exclude",
+        "-webkit-mask-composite: source-over, source-out, source-in, xor; mask-composite: add, subtract, intersect, exclude;",
+      );
+      line("mask-mode: match-source", "-webkit-mask-source-type: auto; mask-mode: match-source;");
+      line(
+        "mask: url(a.png) subtract luminance",
+        '-webkit-mask: url("a.png"); -webkit-mask-composite: source-out; -webkit-mask-source-type: luminance; mask: url("a.png") subtract luminance;',
+      );
+      line(
+        "mask-border-source: url(a.png)",
+        '-webkit-mask-box-image-source: url("a.png"); mask-border-source: url("a.png");',
+      );
+      line("mask-border-slice: 10", "-webkit-mask-box-image-slice: 10; mask-border-slice: 10;");
+      line("mask-border-width: 10px", "-webkit-mask-box-image-width: 10px; mask-border-width: 10px;");
+      line("mask-border-outset: 1", "-webkit-mask-box-image-outset: 1; mask-border-outset: 1;");
+      line("mask-border-repeat: round", "-webkit-mask-box-image-repeat: round; mask-border-repeat: round;");
+      line(
+        "mask-border: url(a.png) 25 fill",
+        '-webkit-mask-box-image: url("a.png") 25 fill; mask-border: url("a.png") 25 fill;',
+      );
+      // A `mask-border` with no slice has the slice 0. Bun holds the `border-image` default for it and prints none.
+      line(
+        "mask-border: url(a.png)",
+        '-webkit-mask-box-image: url("a.png"); -webkit-mask-box-image-slice: 0; mask-border: url("a.png");',
+      );
+      line(
+        "mask-image: image-set(url(a.png) 1x, url(b.png) 2x)",
+        `-webkit-mask-image: -webkit-image-set(url("a.png") 1x, url("b.png") 2x);
+         -webkit-mask-image: image-set("a.png" 1x, "b.png" 2x);
+         mask-image: image-set("a.png" 1x, "b.png" 2x);`,
+      );
+      // These have no prefixed form.
+      line("mask-type: alpha", "mask-type: alpha;");
+      line("mask-border-mode: luminance", "mask-border-mode: luminance;");
+      line("mask-position-x: left", "mask-position-x: left;");
+
+      // A value that did not parse gets the same copies, so that a reset reaches the prefixed name too.
+      line("mask-image: var(--x)", "-webkit-mask-image: var(--x); mask-image: var(--x);");
+      line("mask-size: initial", "-webkit-mask-size: initial; mask-size: initial;");
+      line("mask: var(--x)", "-webkit-mask: var(--x); mask: var(--x);");
+      line("mask: unset", "-webkit-mask: unset; mask: unset;");
+      line("mask-border: var(--x)", "-webkit-mask-box-image: var(--x); mask-border: var(--x);");
+      line("mask-border-slice: inherit", "-webkit-mask-box-image-slice: inherit; mask-border-slice: inherit;");
+      // Unlike lightningcss: also for the composite and the mode, as esbuild and autoprefixer do.
+      line("mask-composite: var(--x)", "-webkit-mask-composite: var(--x); mask-composite: var(--x);");
+      line("mask-composite: initial", "-webkit-mask-composite: initial; mask-composite: initial;");
+      line("mask-mode: var(--x)", "-webkit-mask-source-type: var(--x); mask-mode: var(--x);");
+
+      // Unlike lightningcss: a prefix that the author wrote stays, also when no target needs it.
+      prefix_test(
+        ".foo { -webkit-mask-image: url(x.svg); mask-image: url(x.svg) }",
+        '.foo { -webkit-mask-image: url("x.svg"); mask-image: url("x.svg"); }',
+        { chrome: Some(125 << 16) },
+      );
+      prefix_test(".foo { mask: url(x.svg) exclude }", '.foo { mask: url("x.svg") exclude; }', {
+        chrome: Some(125 << 16),
+      });
+      line("-webkit-mask: url(a.png)", '-webkit-mask: url("a.png");');
+      line("-webkit-mask-clip: text", "-webkit-mask-clip: text;");
+      line("-webkit-mask-composite: xor", "-webkit-mask-composite: xor;");
+      line("-webkit-mask-source-type: luminance", "-webkit-mask-source-type: luminance;");
+      line("-webkit-mask-box-image: url(a.png) 25", '-webkit-mask-box-image: url("a.png") 25;');
+      // Only a browser that reads `-webkit-mask` as `mask` takes a composite keyword in it: it stays as written.
+      line("-webkit-mask: none exclude", "-webkit-mask: none exclude;");
+
+      // Unlike lightningcss: a prefix that the block already wrote for a longhand is not added again.
+      line(
+        "-webkit-mask-image: url(a.png); mask-image: url(b.png)",
+        '-webkit-mask-image: url("a.png"); mask-image: url("b.png");',
+      );
+      line("-webkit-mask-size: cover; mask-size: contain", "-webkit-mask-size: cover; mask-size: contain;");
+      line("-webkit-mask: url(a.png); mask: url(b.png)", '-webkit-mask: url("a.png"); mask: url("b.png");');
+      line(
+        "-webkit-mask-composite: destination-in; mask-composite: intersect",
+        "-webkit-mask-composite: destination-in; mask-composite: intersect;",
+      );
+      line(
+        "-webkit-mask-source-type: alpha; mask-mode: luminance",
+        "-webkit-mask-source-type: alpha; mask-mode: luminance;",
+      );
+      line(
+        "-webkit-mask-box-image: url(a.png) 25; mask-border: url(b.png) 25",
+        '-webkit-mask-box-image: url("a.png") 25; mask-border: url("b.png") 25;',
+      );
+      line(
+        "-webkit-mask-box-image-slice: 10; mask-border-slice: 20",
+        "-webkit-mask-box-image-slice: 10; mask-border-slice: 20;",
+      );
+      line("-webkit-mask-image: var(--a); mask-image: var(--b)", "-webkit-mask-image: var(--a); mask-image: var(--b);");
+      // `-webkit-mask` sets the six longhands and the source type. It never set the composite.
+      line("-webkit-mask: url(a.png); mask-image: url(b.png)", '-webkit-mask: url("a.png"); mask-image: url("b.png");');
+      line("-webkit-mask: url(a.png); mask-mode: luminance", '-webkit-mask: url("a.png"); mask-mode: luminance;');
+      line(
+        "-webkit-mask: url(a.png); mask-composite: exclude",
+        '-webkit-mask: url("a.png"); -webkit-mask-composite: xor; mask-composite: exclude;',
+      );
+      line(
+        "-webkit-mask: url(a.png); mask: url(a.png) exclude",
+        '-webkit-mask: url("a.png"); -webkit-mask-composite: xor; mask: url("a.png") exclude;',
+      );
+      // A prefixed longhand before `mask`: the copy is one longhand for each that the block did not write.
+      line(
+        "-webkit-mask-size: cover; mask: url(a.png)",
+        `-webkit-mask-size: cover;
+         -webkit-mask-image: url("a.png");
+         -webkit-mask-position: 0 0;
+         -webkit-mask-repeat: repeat;
+         -webkit-mask-clip: border-box;
+         -webkit-mask-origin: border-box;
+         -webkit-mask-source-type: auto;
+         mask: url("a.png");`,
+      );
+      // A `var()` cannot be split into longhands.
+      line("-webkit-mask-size: cover; mask: var(--x)", "-webkit-mask-size: cover; mask: var(--x);");
+      line(
+        "-webkit-mask-box-image-slice: 10; mask-border: url(a.png) 25",
+        `-webkit-mask-box-image-slice: 10;
+         -webkit-mask-box-image-source: url("a.png");
+         -webkit-mask-box-image-width: auto;
+         -webkit-mask-box-image-outset: 0;
+         -webkit-mask-box-image-repeat: stretch;
+         mask-border: url("a.png") 25;`,
+      );
+
+      // An equal value merges into the declaration before it. The names of both stay.
+      line("-webkit-mask-size: cover; mask-size: cover", "-webkit-mask-size: cover; mask-size: cover;");
+      line("mask-size: cover; -webkit-mask-size: cover", "-webkit-mask-size: cover; mask-size: cover;");
+      line("mask-size: cover; mask-size: cover", "-webkit-mask-size: cover; mask-size: cover;");
+      line("-webkit-mask: none; mask: none", "-webkit-mask: none; mask: none;");
+      line(
+        "mask: none exclude; mask: none exclude",
+        "-webkit-mask: none; -webkit-mask-composite: xor; mask: none exclude;",
+      );
+      line(
+        "mask-composite: exclude; -webkit-mask-composite: xor",
+        "-webkit-mask-composite: xor; mask-composite: exclude;",
+      );
+      line(
+        "-webkit-mask-composite: xor; mask-composite: exclude",
+        "-webkit-mask-composite: xor; mask-composite: exclude;",
+      );
+      line(
+        "mask-border-slice: 10; -webkit-mask-box-image-slice: 10",
+        "-webkit-mask-box-image-slice: 10; mask-border-slice: 10;",
+      );
+      line("mask-image: var(--x); mask-image: var(--x)", "-webkit-mask-image: var(--x); mask-image: var(--x);");
+      // Each `url()` is its own import, so two of them are never one value. The third line changes no winner.
+      line(
+        "mask-image: url(a.png); -webkit-mask-image: url(a.png)",
+        '-webkit-mask-image: url("a.png"); mask-image: url("a.png"); -webkit-mask-image: url("a.png");',
+      );
+
+      // Unlike lightningcss: a second value is a new declaration. The first one stays for a browser that cannot read the second.
+      line(
+        "mask-size: cover; mask-size: contain",
+        "-webkit-mask-size: cover; mask-size: cover; -webkit-mask-size: contain; mask-size: contain;",
+      );
+      line(
+        "mask: none; mask-image: none, none",
+        "-webkit-mask: none; mask: none; -webkit-mask-image: none, none; mask-image: none, none;",
+      );
+
+      // Unlike lightningcss: nothing moves. These change the winner in lightningcss 1.32.0.
+      line(
+        "-webkit-mask-size: cover; mask-size: cover; -webkit-mask-size: contain",
+        "-webkit-mask-size: cover; mask-size: cover; -webkit-mask-size: contain;",
+      );
+      line(
+        "mask: none exclude; -webkit-mask: none",
+        "-webkit-mask: none; -webkit-mask-composite: xor; mask: none exclude; -webkit-mask: none;",
+      );
+      line("-webkit-mask: none; -webkit-mask-composite: xor", "-webkit-mask: none; -webkit-mask-composite: xor;");
+      line("-webkit-mask-composite: xor; -webkit-mask: none", "-webkit-mask-composite: xor; -webkit-mask: none;");
+      line(
+        "mask-position: 0 0; mask-position-x: 10px",
+        "-webkit-mask-position: 0 0; mask-position: 0 0; mask-position-x: 10px;",
+      );
+      line("mask-size: cover; all: unset", "-webkit-mask-size: cover; mask-size: cover; all: unset;");
+      line(
+        "mask-size: cover; all: unset; mask-size: cover",
+        "-webkit-mask-size: cover; mask-size: cover; all: unset; -webkit-mask-size: cover; mask-size: cover;",
+      );
+      // `all` also resets the prefixed longhand, so the copy is written again.
+      line(
+        "-webkit-mask-size: cover; all: unset; mask-size: contain",
+        "-webkit-mask-size: cover; all: unset; -webkit-mask-size: contain; mask-size: contain;",
+      );
+      // An unknown name can be one more spelling of a mask longhand, so nothing merges across it.
+      line(
+        "mask-size: cover; -webkit-mask-repeat-x: repeat; mask-size: cover",
+        "-webkit-mask-size: cover; mask-size: cover; -webkit-mask-repeat-x: repeat; -webkit-mask-size: cover; mask-size: cover;",
+      );
+      line("mask-size: cover; --x: 1; mask-size: cover", "-webkit-mask-size: cover; mask-size: cover; --x: 1;");
+      line("mask-size: cover; color: red; mask-size: cover", "-webkit-mask-size: cover; mask-size: cover; color: red;");
+      // A longhand between two equal shorthands is overridden by the second one.
+      line(
+        "mask: none; mask-size: cover; mask: none",
+        "-webkit-mask: none; mask: none; -webkit-mask-size: cover; mask-size: cover; -webkit-mask: none; mask: none;",
+      );
+      // A later declaration of a longhand gets its copy too. lightningcss 1.32.0 leaves `none` in force for the prefix.
+      line(
+        "mask-image: none; mask-size: var(--x); mask-image: linear-gradient(red, blue)",
+        `-webkit-mask-image: none;
+         mask-image: none;
+         -webkit-mask-size: var(--x);
+         mask-size: var(--x);
+         -webkit-mask-image: linear-gradient(red, #00f);
+         mask-image: linear-gradient(red, #00f);`,
+      );
+      // The old `-webkit-mask` does not reset the composite: the copy states it when the block has a line for it.
+      line(
+        "mask-composite: exclude; cursor: pointer; mask: none",
+        `-webkit-mask-composite: xor;
+         mask-composite: exclude;
+         cursor: pointer;
+         -webkit-mask: none;
+         -webkit-mask-composite: source-over;
+         mask: none;`,
+      );
+      // `mask` resets `mask-border`, and the old `-webkit-mask` does not reset `-webkit-mask-box-image`.
+      line(
+        "mask-border: url(b.png) 25 fill; mask: url(a.png)",
+        `-webkit-mask-box-image: url("b.png") 25 fill;
+         mask-border: url("b.png") 25 fill;
+         -webkit-mask-box-image: initial;
+         -webkit-mask: url("a.png");
+         mask: url("a.png");`,
+      );
+      line(
+        "mask-border-slice: 10; mask: none",
+        `-webkit-mask-box-image-slice: 10;
+         mask-border-slice: 10;
+         -webkit-mask-box-image-slice: initial;
+         -webkit-mask: none;
+         mask: none;`,
+      );
+      line(
+        "mask: url(a.png); mask-border: url(b.png) 25 fill",
+        `-webkit-mask: url("a.png");
+         mask: url("a.png");
+         -webkit-mask-box-image: url("b.png") 25 fill;
+         mask-border: url("b.png") 25 fill;`,
+      );
+
+      // A fallback is for a browser that can read no earlier declaration. The first value here is one it can read.
+      line(
+        "mask-image: linear-gradient(red, green); mask-image: linear-gradient(lch(50% 132 50), lch(50% 130 150))",
+        `-webkit-mask-image: linear-gradient(red, green);
+         mask-image: linear-gradient(red, green);
+         -webkit-mask-image: linear-gradient(lch(50% 132 50), lch(50% 130 150));
+         mask-image: linear-gradient(lch(50% 132 50), lch(50% 130 150));`,
+      );
+
+      // The `!important` declarations are a list of their own. A prefix in one list counts for the other.
+      line(
+        "-webkit-mask-image: url(a.png); mask-image: url(b.png) !important",
+        '-webkit-mask-image: url("a.png"); mask-image: url("b.png") !important;',
+      );
+      line(
+        "mask-image: url(b.png) !important; -webkit-mask-image: url(a.png)",
+        '-webkit-mask-image: url("a.png"); mask-image: url("b.png") !important;',
+      );
+      line(
+        "mask-size: cover !important; mask-size: contain",
+        "-webkit-mask-size: contain; mask-size: contain; -webkit-mask-size: cover !important; mask-size: cover !important;",
+      );
+      line(
+        "mask-composite: exclude; mask: none !important",
+        `-webkit-mask-composite: xor;
+         mask-composite: exclude;
+         -webkit-mask: none !important;
+         -webkit-mask-composite: source-over !important;
+         mask: none !important;`,
+      );
+
+      // A rule that starts hidden and an animation that reveals it: both need the copy, or the rule stays hidden.
+      prefix_test(
+        `
+          .reveal { mask-size: 0% 100%; animation: reveal 1s forwards; }
+          @keyframes reveal { to { mask-size: 100% 100%; } }
+        `,
+        indoc`
+          .reveal {
+            -webkit-mask-size: 0% 100%;
+            mask-size: 0% 100%;
+            animation: 1s forwards reveal;
+          }
+
+          @keyframes reveal {
+            to {
+              -webkit-mask-size: 100% 100%;
+              mask-size: 100% 100%;
+            }
+          }
+        `,
+        defaults,
+      );
+      prefix_test(
+        "@keyframes k { from { opacity: 0; mask-composite: exclude; } to { mask: var(--m); -webkit-mask-position: 0 0; mask-position: 10px 0; } }",
+        indoc`
+          @keyframes k {
+            from {
+              opacity: 0;
+              -webkit-mask-composite: xor;
+              mask-composite: exclude;
+            }
+
+            to {
+              -webkit-mask: var(--m);
+              mask: var(--m);
+              -webkit-mask-position: 0 0;
+              mask-position: 10px 0;
+            }
+          }
+        `,
+        defaults,
+      );
+
+      // Two rules with one selector are merged and minified again.
+      prefix_test(
+        ".a { mask: none exclude } .a { color: red }",
+        ".a { -webkit-mask: none; -webkit-mask-composite: xor; mask: none exclude; color: red; }",
+        defaults,
+      );
+      // Each rule gets its own copies, as in lightningcss, autoprefixer and esbuild.
+      prefix_test(
+        ".a { -webkit-mask-size: cover } .a { mask-size: contain }",
+        ".a { -webkit-mask-size: cover; -webkit-mask-size: contain; mask-size: contain; }",
+        defaults,
+      );
+
+      // A rule is a duplicate of a later one only when the property names are equal too.
+      minify_test(
+        ".btn{-webkit-mask-image:none;mask-image:none;cursor:pointer}.q{top:0}.btn{mask-image:none;vertical-align:middle}",
+        ".btn{-webkit-mask-image:none;mask-image:none;cursor:pointer}.q{top:0}.btn{mask-image:none;vertical-align:middle}",
+      );
+      minify_test(
+        ".a{-webkit-mask-composite:xor}.q{top:0}.a{-khtml-foo:bar}",
+        ".a{-webkit-mask-composite:xor}.q{top:0}.a{-khtml-foo:bar}",
+      );
+      prefix_test(
+        ".btn { mask-size: cover; cursor: pointer } .q { top: 0 } .btn { mask-size: cover; vertical-align: middle }",
+        indoc`
+          .btn {
+            -webkit-mask-size: cover;
+            mask-size: cover;
+            cursor: pointer;
+          }
+
+          .q {
+            top: 0;
+          }
+
+          .btn {
+            -webkit-mask-size: cover;
+            mask-size: cover;
+            vertical-align: middle;
+          }
+        `,
+        defaults,
+      );
+    });
+
+    // lightningcss 1.32.0 adds one more line on each pass for these. Bun minifies a merged rule again.
+    test("a second pass changes nothing", () => {
+      for (const declarations of [
+        "mask: url(a.png) subtract",
+        "mask: url(a.png) luminance",
+        "mask-composite: subtract",
+        "mask-mode: luminance",
+        "mask-image: var(--x)",
+        "mask: var(--x)",
+        "mask-composite: var(--x)",
+        "mask-border: var(--x)",
+        "mask-border: url(a.png) 25",
+        "mask-image: linear-gradient(lch(50% 132 50), lch(50% 130 150))",
+        "mask-image: image-set(url(a.png) 1x, url(b.png) 2x)",
+        "mask-border: url(b.png) 25; mask: url(a.png)",
+        "mask-composite: exclude; cursor: pointer; mask: none",
+        "-webkit-mask-size: cover; mask: url(a.png)",
+      ]) {
+        const once = prefix_test_output(`.foo { ${declarations} }`, "", defaults);
+        expect(prefix_test_output(once, "", defaults)).toBe(once);
+      }
+    });
+
+    // With no browser list (`--target=bun`) nothing is added and nothing merges.
+    minify_test(".foo { mask-image: none }", ".foo{mask-image:none}");
+    minify_test(".foo { mask: none exclude }", ".foo{mask:none exclude}");
+    minify_test(".foo { mask-composite: exclude }", ".foo{mask-composite:exclude}");
+    minify_test(".foo { mask-border: url(a.png) 25 }", ".foo{mask-border:url(a.png) 25}");
+    minify_test(
+      ".foo { -webkit-mask-size: cover; mask-size: cover; mask-size: cover }",
+      ".foo{-webkit-mask-size:cover;mask-size:cover;mask-size:cover}",
+    );
+    // `mask-position` stays as written (see above). `-webkit-mask-composite` parses as a typed value now.
+    minify_test(".foo { mask-position: right 40% }", ".foo{mask-position:right 40%}");
+    minify_test(".foo { -webkit-mask-position: 10% 20%, left }", ".foo{-webkit-mask-position:10% 20%,left}");
+    minify_test(".foo { mask-position: var(--p) }", ".foo{mask-position:var(--p)}");
+    minify_test(".foo { -WEBKIT-MASK-COMPOSITE: XOR }", ".foo{-webkit-mask-composite:xor}");
+    minify_test(".foo { -webkit-mask-composite: exclude }", ".foo{-webkit-mask-composite:exclude}");
+    minify_test(
+      ".foo { transition-property: -webkit-mask-composite }",
+      ".foo{transition-property:-webkit-mask-composite}",
+    );
+    minify_test(
+      "@supports (-webkit-mask-composite: xor) { .foo { color: red } }",
+      "@supports (-webkit-mask-composite: xor){.foo{color:red}}",
+    );
+
+    type Declaration = { name: string; value: string; important: boolean };
+    // What a browser applies: one value for each longhand that a test follows.
+    type Applied = (string | undefined)[];
+    type Read = Declaration & { sets: Applied[] };
+    type Readers<Browser> = {
+      declaration: (text: string) => Read;
+      applied: (declarations: Read[], browser: Browser) => Applied;
+    };
+    // A debug build runs JavaScript slowly: the helpers below compute a result once for each distinct argument.
+    const memo = <Key, Value>(compute: (key: Key) => Value) => {
+      const results = new Map<Key, Value>();
+      return (key: Key) => {
+        let result = results.get(key);
+        if (result === undefined) results.set(key, (result = compute(key)));
+        return result;
+      };
+    };
+    // A debug build runs this JavaScript about 50 times slower, so it takes the blocks of up to three declarations.
+    const longest = isDebug || isASAN ? 3 : 4;
+    const blocksOf = (atoms: string[], longest: number) => {
+      const blocks: string[][] = [];
+      for (let length = 1, last: string[][] = [[]]; length <= longest; length++) {
+        last = last.flatMap(block => atoms.map(atom => [...block, atom]));
+        blocks.push(...last);
+      }
+      return blocks;
+    };
+    // The declaration lines of each rule of a printed sheet, by the number in the name of the rule.
+    const linesOf = (output: string) => {
+      const rules: string[][] = [];
+      let rule: string[] = [];
+      for (const line of output.split("\n")) {
+        const last = line.charCodeAt(line.length - 1);
+        // `.r1, .r5 {` or `@keyframes r1 {` starts a rule. A declaration ends with `;`.
+        if (last === 123 && line.charCodeAt(0) !== 32) {
+          rule = [];
+          for (const number of line.match(/\d+/g) ?? []) rules[+number] = rule;
+        } else if (last === 59) rule.push(line);
+      }
+      return rules;
+    };
+    // Every block of up to `longest` declarations from `atoms`, under the default browsers. `sets` says what a declaration sets in a browser.
+    const everyBlock = <Browser>(
+      atoms: string[],
+      browsers: Record<string, Browser>,
+      initial: Record<string, string>,
+      sets: (declaration: Declaration, browser: Browser) => Record<string, string>,
+      model: (readers: Readers<Browser>) => (source: Read[], browser: Browser) => Applied,
+    ) => {
+      const names = Object.keys(browsers);
+      const list = Object.values(browsers);
+      const longhands = Object.keys(initial);
+      const declaration = memo((text: string): Read => {
+        const [, name, value, important] = text.match(/^\s*([\w-]+)\s*:\s*(.*?)\s*(!important)?;?$/)!;
+        const parsed = { name, value: value.replaceAll('"', ""), important: !!important };
+        const effects = list.map(browser => sets(parsed, browser));
+        return { ...parsed, sets: effects.map(effect => longhands.map(longhand => effect[longhand])) };
+      });
+      // The last declaration that sets a longhand wins, an `!important` one first.
+      const applied = (declarations: Read[], browser: Browser) => {
+        const b = list.indexOf(browser);
+        const normal: Applied = [];
+        const important: Applied = [];
+        for (let k = 0; k < longhands.length; k++) normal[k] = initial[longhands[k]];
+        for (let i = 0; i < declarations.length; i++) {
+          const effect = declarations[i].sets[b];
+          const layer = declarations[i].important ? important : normal;
+          for (let k = 0; k < effect.length; k++) if (effect[k] !== undefined) layer[k] = effect[k];
+        }
+        for (let k = 0; k < important.length; k++) if (important[k] !== undefined) normal[k] = important[k];
+        return normal;
+      };
+      const expected = model({ declaration, applied });
+
+      const blocks = blocksOf(atoms, longest);
+      const output = prefix_test_output(
+        blocks.map((block, i) => `.r${i}{${block.join(";")}}`).join("\n"),
+        "",
+        defaults,
+      );
+      const printed = linesOf(output);
+      // `wrong` lists the blocks where a browser applies another value for the output than `model` gives for the source.
+      const wrong: string[] = [];
+      for (let i = 0; i < blocks.length; i++) {
+        const source = blocks[i].map(declaration);
+        const lines = (printed[i] ?? []).map(declaration);
+        for (let b = 0; b < list.length; b++) {
+          const [got, want] = [applied(lines, list[b]), expected(source, list[b])];
+          for (let k = 0; k < longhands.length; k++) {
+            if (got[k] !== want[k])
+              wrong.push(`${blocks[i].join(";")} in ${names[b]}: ${longhands[k]} ${got[k]}, not ${want[k]}`);
+          }
+        }
+      }
+      return { blocks, output, wrong };
+    };
+    const OLD: Record<string, string> = {
+      add: "source-over",
+      subtract: "source-out",
+      intersect: "source-in",
+      exclude: "xor",
+    };
+
+    type MaskBrowser = { names: "standard" | "both" | "prefixed"; alias: boolean; composite: boolean };
+    const maskBrowsers: Record<string, MaskBrowser> = {
+      "a browser with only the standard names": { names: "standard", alias: false, composite: false },
+      // `-webkit-mask` is `mask` under another name.
+      "Chrome 120": { names: "both", alias: true, composite: true },
+      // Also an alias, but Firefox does not read `-webkit-mask-composite`.
+      "Firefox": { names: "both", alias: true, composite: false },
+      // `-webkit-mask` is the old shorthand: it sets the image and not the composite, and takes no composite keyword.
+      "Safari 15.4": { names: "both", alias: false, composite: true },
+      "Chrome 119 and Safari 15.3": { names: "prefixed", alias: false, composite: true },
+    };
+    // The image and the composite that one declaration sets in a browser.
+    const maskSets = ({ name, value }: Declaration, { names, alias, composite: oldComposite }: MaskBrowser) => {
+      const standard = names !== "prefixed";
+      const prefixed = names !== "standard";
+      const [image, keyword] = value.split(" ");
+      const shorthand = { image, composite: OLD[keyword ?? "add"] ?? image };
+      if (name === "all") return { image: "none", composite: "source-over" };
+      if (name === "mask-image" && standard) return { image: value };
+      if (name === "-webkit-mask-image" && prefixed) return { image: value };
+      if (name === "mask-composite" && standard) return { composite: OLD[value] ?? value };
+      if (name === "-webkit-mask-composite" && prefixed && oldComposite) return { composite: value };
+      if (name === "mask" && standard) return shorthand;
+      if (name === "-webkit-mask" && prefixed && alias) return shorthand;
+      if (name === "-webkit-mask" && prefixed && !keyword) return { image };
+      return {};
+    };
+    // A prefix-only browser gets a copy of each standard declaration, for each longhand that the block has not written with `-webkit-`.
+    const maskModel = ({ declaration, applied }: Readers<MaskBrowser>) => {
+      const facts = memo(({ name, value, important }: Read) => {
+        const [image, keyword] = value.split(" ");
+        const copy = (name: string, value: string) => declaration(`${name}:${value}${important ? "!important" : ""}`);
+        return {
+          all: name === "all",
+          writesImage: name === "-webkit-mask-image" || name === "-webkit-mask",
+          writesComposite: name === "-webkit-mask-composite",
+          image:
+            name === "mask-image"
+              ? copy("-webkit-mask-image", value)
+              : name === "mask"
+                ? copy("-webkit-mask-image", image)
+                : undefined,
+          // The copy of a `var()` shorthand cannot carry a composite.
+          composite:
+            name === "mask-composite"
+              ? copy("-webkit-mask-composite", OLD[value] ?? value)
+              : name === "mask" && !image.startsWith("var(")
+                ? copy("-webkit-mask-composite", OLD[keyword ?? "add"])
+                : undefined,
+        };
+      });
+      const forPrefixOnly = (source: Read[]) => {
+        const all = source.map(facts);
+        // What each list writes with `-webkit-`: [image, composite] for the declarations that are not `!important`, then for those that are.
+        const anywhere = [false, false, false, false];
+        for (let i = 0; i < all.length; i++) {
+          const list = source[i].important ? 2 : 0;
+          anywhere[list] ||= all[i].writesImage;
+          anywhere[list + 1] ||= all[i].writesComposite;
+        }
+        // What counts as written: the declarations before this one in its own list since `all`, and all of the other list.
+        const before = [false, false, false, false];
+        const out: Read[] = [];
+        for (let i = 0; i < all.length; i++) {
+          const { all: reset, writesImage, writesComposite, image, composite } = all[i];
+          const [list, other] = source[i].important ? [2, 0] : [0, 2];
+          if (image && !before[list] && !anywhere[other]) out.push(image);
+          if (composite && !before[list + 1] && !anywhere[other + 1]) out.push(composite);
+          out.push(source[i]);
+          before[list] = !reset && (before[list] || writesImage);
+          before[list + 1] = !reset && (before[list + 1] || writesComposite);
+        }
+        return out;
+      };
+      return (source: Read[], browser: MaskBrowser) =>
+        applied(browser.names === "prefixed" ? forPrefixOnly(source) : source, browser);
+    };
+    const maskAtoms = {
+      "the image": [
+        "mask-image:url(a.png)",
+        "mask-image:var(--v)",
+        "-webkit-mask-image:url(b.png)",
+        "mask:url(c.png)",
+        "-webkit-mask:url(d.png)",
+        "all:unset",
+      ],
+      "the composite": [
+        "mask-composite:exclude",
+        "-webkit-mask-composite:destination-in",
+        "mask:url(c.png)",
+        "mask:url(c.png) exclude",
+        "-webkit-mask:url(d.png)",
+        "cursor:pointer",
+      ],
+      "`!important`": [
+        "mask-image:url(a.png)",
+        "mask-image:url(b.png)!important",
+        "-webkit-mask-image:url(c.png)",
+        "-webkit-mask-image:url(d.png)!important",
+        "mask:url(e.png)!important",
+        "mask-composite:exclude",
+      ],
+    };
+
+    for (const [part, atoms] of Object.entries(maskAtoms)) {
+      test(`a mask prefix changes no winning declaration: ${part}`, () => {
+        const { blocks, output, wrong } = everyBlock(
+          atoms,
+          maskBrowsers,
+          { image: "none", composite: "source-over" },
+          maskSets,
+          maskModel,
+        );
+        expect(blocks.length).toBe(longest === 4 ? 1554 : 258);
+        expect(wrong).toEqual([]);
+        expect(prefix_test_output(output, "", defaults)).toBe(output);
+      });
+    }
+
+    // Bun minifies a merged rule again, and a keyframe reaches only the mask handler.
+    test("a merged rule, a joined `@media` rule and a keyframe get the declarations of a rule", () => {
+      for (const [part, atoms] of Object.entries(maskAtoms)) {
+        const blocks = blocksOf(atoms, longest - 1);
+        const sheet = (rule: (declarations: string, i: number) => string) =>
+          prefix_test_output(blocks.map((block, i) => rule(block.join(";"), i)).join("\n"), "", defaults);
+        expect(sheet((declarations, i) => `.r${i}{${declarations}}.r${i}{color:red}`)).toBe(
+          sheet((declarations, i) => `.r${i}{${declarations};color:red}`),
+        );
+        // Bun joins two `@media` rules at a time, so this takes the blocks of up to two declarations.
+        const short = blocksOf(atoms, 2).map((block, i) => `.r${i}{${block.join(";")}}`);
+        expect(prefix_test_output(short.map(rule => `@media print{${rule}}`).join("\n"), "", defaults)).toBe(
+          prefix_test_output(`@media print{${short.join("\n")}}`, "", defaults),
+        );
+        // A browser ignores `!important` in a keyframe, so those stay as written.
+        if (part === "`!important`") continue;
+        const frames = linesOf(sheet((declarations, i) => `@keyframes r${i}{to{${declarations}}}`));
+        const printed = linesOf(sheet((declarations, i) => `.r${i}{${declarations}}`));
+        const text = (lines: string[]) => lines.map(line => line.trim()).join(" ");
+        expect(blocks.filter((_, i) => text(frames[i]) !== text(printed[i])).map(block => block.join(";"))).toEqual([]);
+      }
+    });
+
+    test("a mask-border prefix changes no winning declaration", () => {
+      type Browser = "standard" | "chrome" | "safari" | "prefixed";
+      const browsers: Record<string, Browser> = {
+        // Reads `mask-border*` and `mask`. `mask` resets `mask-border`, as the specification says.
+        "a browser with only the standard names": "standard",
+        // Reads `-webkit-mask-box-image*` and both mask names. No mask shorthand resets the border.
+        "Chrome 120": "chrome",
+        // Reads every name. `mask` resets the border, `-webkit-mask` does not.
+        "Safari 17.2": "safari",
+        "Chrome 119": "prefixed",
+      };
+      // The source and the slice of a `mask-border` value.
+      const parts = (value: string) => {
+        if (value.startsWith("var(")) return [value, value];
+        if (value === "initial") return ["none", "0"];
+        const [source, ...slice] = value.split(" ");
+        return [source, slice.join(" ")];
+      };
+      // The border source, the border slice and the mask image that one declaration sets in a browser.
+      const sets = ({ name, value }: Declaration, browser: Browser) => {
+        const standard = browser === "standard" || browser === "safari";
+        const prefixed = browser !== "standard";
+        const [source, slice] = parts(value);
+        if (name === "mask-border" && standard) return { source, slice };
+        if (name === "mask-border-slice" && standard) return { slice: value };
+        // `-webkit-mask-box-image` fills the middle. The other names need `fill` for that.
+        if (name === "-webkit-mask-box-image" && prefixed) {
+          return { source, slice: value === "initial" || slice.endsWith(" fill") ? slice : `${slice} fill` };
+        }
+        if (name === "-webkit-mask-box-image-source" && prefixed) return { source };
+        if (name === "-webkit-mask-box-image-slice" && prefixed) return { slice: value === "initial" ? "0" : value };
+        if (name === "mask" && standard) return { image: value, source: "none", slice: "0" };
+        if (name === "mask" && browser === "chrome") return { image: value };
+        if (name === "-webkit-mask" && prefixed) return { image: value };
+        return {};
+      };
+      const { blocks, output, wrong } = everyBlock(
+        [
+          "mask-border:url(b.png) 25",
+          "mask-border:url(b.png) 25 fill",
+          "mask-border:var(--b)",
+          "-webkit-mask-box-image:url(c.png) 30",
+          "mask-border-slice:25",
+          "-webkit-mask-box-image-slice:25",
+          "mask:url(a.png)",
+        ],
+        browsers,
+        { source: "none", slice: "0", image: "none" },
+        sets,
+        ({ declaration, applied }) => {
+          const facts = memo(({ name, value }: Read) => {
+            const [source, slice] = parts(value);
+            const split = name === "mask-border" && !value.startsWith("var(");
+            return {
+              writesSource: name === "-webkit-mask-box-image",
+              writesSlice: name === "-webkit-mask-box-image" || name === "-webkit-mask-box-image-slice",
+              // A `var()` shorthand cannot be split into longhands.
+              whole: name === "mask-border" && !split ? declaration(`-webkit-mask-box-image:${value}`) : undefined,
+              // `mask` resets the border, so the copies of the border are reset too.
+              source:
+                split || name === "mask"
+                  ? declaration(`-webkit-mask-box-image-source:${split ? source : "initial"}`)
+                  : undefined,
+              slice:
+                split || name === "mask" || name === "mask-border-slice"
+                  ? declaration(`-webkit-mask-box-image-slice:${split ? slice : name === "mask" ? "initial" : value}`)
+                  : undefined,
+              mask: name === "mask" ? declaration(`-webkit-mask:${value}`) : undefined,
+            };
+          });
+          // A browser with only the prefixed border names gets a copy of each standard declaration, for each longhand not yet written.
+          return (declarations, browser) => {
+            if (browser !== "chrome" && browser !== "prefixed") return applied(declarations, browser);
+            let [wroteSource, wroteSlice] = [false, false];
+            const out: Read[] = [];
+            for (let i = 0; i < declarations.length; i++) {
+              const { writesSource, writesSlice, whole, source, slice, mask } = facts(declarations[i]);
+              wroteSource ||= writesSource;
+              wroteSlice ||= writesSlice;
+              if (mask && browser === "prefixed") out.push(mask);
+              if (whole && !wroteSource && !wroteSlice) out.push(whole);
+              if (source && !wroteSource) out.push(source);
+              if (slice && !wroteSlice) out.push(slice);
+              out.push(declarations[i]);
+            }
+            return applied(out, browser);
+          };
+        },
+      );
+      expect(blocks.length).toBe(longest === 4 ? 2800 : 399);
+      expect(wrong).toEqual([]);
+      expect(prefix_test_output(output, "", defaults)).toBe(output);
+    });
+
+    test("a mask fallback changes no winning declaration", () => {
+      // A browser reads some of the names and parses colors up to a level: 0 `rgb()`, 1 `color(display-p3)`, 2 `lch()`.
+      type Browser = { names: "standard" | "both" | "prefixed"; level: number; up?: Browser };
+      const browsers: Record<string, Browser> = {};
+      for (const names of ["standard", "both", "prefixed"] as const) {
+        let up: Browser | undefined;
+        for (const level of [2, 1, 0]) up = browsers[`${names} names, color level ${level}`] = { names, level, up };
+      }
+      // The image that one declaration sets, named by its angle or its file, and the level of its colors.
+      const sets = ({ name, value }: Declaration, { names, level }: Browser) => {
+        const prefixed = name.startsWith("-webkit-");
+        const colors = value.includes("lch(") ? 2 : value.includes("display-p3") ? 1 : 0;
+        if (!/mask(-image)?$/.test(name) || (prefixed ? names === "standard" : names === "prefixed")) return {};
+        if (colors > level) return {};
+        return {
+          image: value
+            .match(/(\d+)deg|url\((\w+)/)!
+            .slice(1)
+            .join(""),
+          level: String(colors),
+        };
+      };
+      const lch = (angle: number) => `linear-gradient(${angle}deg, lch(50% 132 50), lch(50% 130 150))`;
+      const { blocks, output, wrong } = everyBlock(
+        [
+          "mask-image:url(u1.png)",
+          "mask-image:linear-gradient(30deg, color(display-p3 1 0 0), color(display-p3 0 1 0))",
+          `mask-image:${lch(40)}`,
+          `mask-image:${lch(50)}`,
+          `-webkit-mask-image:${lch(60)}`,
+          `mask:${lch(70)}`,
+        ],
+        browsers,
+        { image: "none", level: "" },
+        sets,
+        ({ declaration, applied }) => {
+          const copy = memo((source: Read) => declaration(`-webkit-${source.name}:${source.value}`));
+          // A prefix-only browser gets a copy of each standard declaration until the block writes a prefixed name.
+          const forPrefixOnly = memo((source: Read[]) => {
+            let written = false;
+            return source.map(declaration =>
+              (written ||= declaration.name.startsWith("-webkit-")) ? declaration : copy(declaration),
+            );
+          });
+          // A browser keeps the winner that it has in the source. One with none gets the fallback of the winner one level up.
+          const expected = (source: Read[], browser: Browser): Applied => {
+            const own = applied(browser.names === "prefixed" ? forPrefixOnly(source) : source, browser);
+            if (own[0] !== "none" || !browser.up) return own;
+            const [image, level] = expected(source, browser.up);
+            return [image, image === "none" ? level : String(Math.min(+level!, browser.level))];
+          };
+          return expected;
+        },
+      );
+      expect(blocks.length).toBe(longest === 4 ? 1554 : 258);
+      expect(wrong).toEqual([]);
+      expect(prefix_test_output(output, "", defaults)).toBe(output);
+    });
   });
 
   describe("font-palette-values", () => {

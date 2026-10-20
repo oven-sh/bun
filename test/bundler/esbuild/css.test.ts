@@ -1202,6 +1202,7 @@ b {
       api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
 /* entry.css */
 .a {
+  -webkit-mask: url("./sprites-mrrzcz3w.svg#icon");
   mask: url("./sprites-mrrzcz3w.svg#icon");
 }
 .b {
@@ -1233,12 +1234,14 @@ b {
       api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
 /* entry.css */
 .a {
+  -webkit-mask: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxtYXNrIGlkPSJtMSIvPjwvc3ZnPg==#m1");
   mask: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxtYXNrIGlkPSJtMSIvPjwvc3ZnPg==#m1");
 }
 .b {
   background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxtYXNrIGlkPSJtMSIvPjwvc3ZnPg==");
 }
 .c {
+  -webkit-mask: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxtYXNrIGlkPSJtMSIvPjwvc3ZnPg==#m1");
   mask: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxtYXNrIGlkPSJtMSIvPjwvc3ZnPg==#m1");
 }
 .d {
@@ -1260,7 +1263,11 @@ b {
     minifyWhitespace: true,
     outdir: "/out",
     onAfterBundle(api) {
-      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `.a{mask:url(./sprites-mrrzcz3w.svg#icon)}`);
+      api
+        .expectFile("/out/entry.css")
+        .toEqualIgnoringWhitespace(
+          /* css */ `.a{-webkit-mask:url(./sprites-mrrzcz3w.svg#icon);mask:url(./sprites-mrrzcz3w.svg#icon)}`,
+        );
     },
   });
 

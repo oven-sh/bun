@@ -13,6 +13,7 @@ use crate::css_properties::font::FontHandler;
 use crate::css_properties::margin_padding::{
     InsetHandler, MarginHandler, PaddingHandler, ScrollMarginHandler,
 };
+use crate::css_properties::masking::MaskHandler;
 use crate::css_properties::prefix_handler::FallbackHandler;
 use crate::css_properties::size::SizeHandler;
 use crate::css_properties::text::Direction;
@@ -86,6 +87,12 @@ impl<'bump> DeclarationBlock<'bump> {
                         .push(core::mem::replace(prop, placeholder_property()));
                 }
             }
+        }
+
+        // Each list has its own handler. The mask handler has to know what the other list wrote.
+        if !self.important_declarations.is_empty() && !self.declarations.is_empty() {
+            handler.mask.see_other_list(&self.important_declarations);
+            important_handler.mask.see_other_list(&self.declarations);
         }
 
         handle(
@@ -401,6 +408,7 @@ pub struct DeclarationHandler<'bump> {
     pub(crate) inset: InsetHandler,
     pub(crate) transform: TransformHandler,
     pub(crate) box_shadow: BoxShadowHandler,
+    pub(crate) mask: MaskHandler,
     pub(crate) color_scheme: ColorSchemeHandler,
     pub fallback: FallbackHandler,
     pub(crate) direction: Option<Direction>,
@@ -426,60 +434,65 @@ impl<'bump> DeclarationHandler<'bump> {
         self.inset.finalize(&mut self.decls, context);
         self.transform.finalize(&mut self.decls, context);
         self.box_shadow.finalize(&mut self.decls, context);
+        self.mask.finalize();
         self.color_scheme.finalize(&mut self.decls, context);
         self.fallback.finalize(&mut self.decls, context);
     }
 
     pub(crate) fn handle_property(
         &mut self,
-        property: &css::Property,
+        property: &mut css::Property,
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
-        // return this.background.handleProperty(property, &this.decls, context);
+        // Only the mask handler takes the declaration out of `property`. The others clone what they keep.
         self.background
-            .handle_property(property, &mut self.decls, context)
+            .handle_property(&*property, &mut self.decls, context)
             || self
                 .border
-                .handle_property(property, &mut self.decls, context)
+                .handle_property(&*property, &mut self.decls, context)
             || self
                 .flex
-                .handle_property(property, &mut self.decls, context)
+                .handle_property(&*property, &mut self.decls, context)
             || self
                 .align
-                .handle_property(property, &mut self.decls, context)
+                .handle_property(&*property, &mut self.decls, context)
             || self
                 .size
-                .handle_property(property, &mut self.decls, context)
+                .handle_property(&*property, &mut self.decls, context)
             || self
                 .margin
-                .handle_property(property, &mut self.decls, context)
+                .handle_property(&*property, &mut self.decls, context)
             || self
                 .padding
-                .handle_property(property, &mut self.decls, context)
+                .handle_property(&*property, &mut self.decls, context)
             || self
                 .scroll_margin
-                .handle_property(property, &mut self.decls, context)
+                .handle_property(&*property, &mut self.decls, context)
             || self
                 .transition
-                .handle_property(property, &mut self.decls, context)
+                .handle_property(&*property, &mut self.decls, context)
             || self
                 .font
-                .handle_property(property, &mut self.decls, context)
+                .handle_property(&*property, &mut self.decls, context)
             || self
                 .inset
-                .handle_property(property, &mut self.decls, context)
+                .handle_property(&*property, &mut self.decls, context)
             || self
                 .transform
-                .handle_property(property, &mut self.decls, context)
+                .handle_property(&*property, &mut self.decls, context)
             || self
                 .box_shadow
-                .handle_property(property, &mut self.decls, context)
+                .handle_property(&*property, &mut self.decls, context)
+            || (self.mask.wants(property)
+                && self
+                    .mask
+                    .handle_property(property, &mut self.decls, context))
             || self
                 .color_scheme
-                .handle_property(property, &mut self.decls, context)
+                .handle_property(&*property, &mut self.decls, context)
             || self
                 .fallback
-                .handle_property(property, &mut self.decls, context)
+                .handle_property(&*property, &mut self.decls, context)
     }
 
     pub(crate) fn new(bump: &'bump Bump) -> Self {
@@ -497,6 +510,7 @@ impl<'bump> DeclarationHandler<'bump> {
             inset: Default::default(),
             transform: Default::default(),
             box_shadow: Default::default(),
+            mask: Default::default(),
             color_scheme: Default::default(),
             fallback: Default::default(),
             direction: None,

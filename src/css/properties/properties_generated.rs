@@ -1522,7 +1522,7 @@ impl PropertyId {
                 b"mask-clip" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskClip),
                 b"mask-origin" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskOrigin),
                 b"mask-size" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskSize),
-                b"mask-composite" => (VendorPrefix::NONE, |_| PropertyId::MaskComposite),
+                b"mask-composite" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), |pre| if pre.contains(VendorPrefix::WEBKIT) { PropertyId::WebKitMaskComposite } else { PropertyId::MaskComposite }),
                 b"mask-type" => (VendorPrefix::NONE, |_| PropertyId::MaskType),
                 b"mask" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::Mask),
                 b"mask-border-source" => (VendorPrefix::NONE, |_| PropertyId::MaskBorderSource),
@@ -1532,7 +1532,6 @@ impl PropertyId {
                 b"mask-border-outset" => (VendorPrefix::NONE, |_| PropertyId::MaskBorderOutset),
                 b"mask-border-repeat" => (VendorPrefix::NONE, |_| PropertyId::MaskBorderRepeat),
                 b"mask-border" => (VendorPrefix::NONE, |_| PropertyId::MaskBorder),
-                b"-webkit-mask-composite" => (VendorPrefix::NONE, |_| PropertyId::WebKitMaskComposite),
                 b"mask-source-type" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskSourceType),
                 b"mask-box-image" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskBoxImage),
                 b"mask-box-image-source" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskBoxImageSource),
@@ -1841,7 +1840,12 @@ pub enum Property {
     MaskRepeat((SmallList<background::BackgroundRepeat, 1>, VendorPrefix)),
     MaskPositionX(SmallList<css::css_values::position::HorizontalPosition, 1>),
     MaskPositionY(SmallList<css::css_values::position::VerticalPosition, 1>),
-    MaskPosition((SmallList<position::Position, 1>, VendorPrefix)),
+    MaskPosition(
+        (
+            SmallList<css::css_values::position::Position, 1>,
+            VendorPrefix,
+        ),
+    ),
     MaskClip((SmallList<masking::MaskClip, 1>, VendorPrefix)),
     MaskOrigin((SmallList<masking::GeometryBox, 1>, VendorPrefix)),
     MaskSize((SmallList<background::BackgroundSize, 1>, VendorPrefix)),
@@ -3723,11 +3727,8 @@ impl Property {
                     return Ok(Property::MaskPositionY(c));
                 }
             }
-            PropertyId::MaskPosition(pre) => {
-                if let Some(c) = parse_value::<SmallList<position::Position, 1>>(input, options) {
-                    return Ok(Property::MaskPosition((c, pre)));
-                }
-            }
+            // Stays as written: `Position::to_css` writes `right 40%` with three values, and Chrome rejects three for this name.
+            PropertyId::MaskPosition(_) => {}
             PropertyId::MaskClip(pre) => {
                 if let Some(c) = parse_value::<SmallList<masking::MaskClip, 1>>(input, options) {
                     return Ok(Property::MaskClip((c, pre)));

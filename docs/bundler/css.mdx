@@ -863,6 +863,32 @@ For browsers that don't support `system-ui`, Bun's CSS bundler expands it to a c
 
 The expanded stack includes system fonts for macOS/iOS, Windows, Android, and Linux, plus fallbacks for older browsers.
 
+### Mask properties
+
+Chrome before 120 and Safari before 15.4 read the mask properties only with the `-webkit-` prefix.
+
+```css title="styles.css" icon="file-code"
+.fade {
+  mask-image: linear-gradient(black, transparent);
+  mask-composite: exclude;
+}
+```
+
+Bun writes the prefixed declaration in front of each mask declaration:
+
+```css title="styles.css" icon="file-code"
+.fade {
+  -webkit-mask-image: linear-gradient(#000, #0000);
+  mask-image: linear-gradient(#000, #0000);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+```
+
+`mask-border` and its longhands get `-webkit-mask-box-image` declarations in the same way.
+
+Bun keeps a `-webkit-` declaration that you write. It does not add one for a longhand that the rule already sets with the prefix.
+
 ## CSS Modules
 
 Bun's bundler also supports CSS modules, with the following features:

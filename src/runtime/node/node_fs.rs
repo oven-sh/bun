@@ -7635,12 +7635,9 @@ impl NodeFS {
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
             let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::NOCTTY;
 
-            // open + fd path is 3 syscalls at any depth, but open(2) refuses an
-            // inode it cannot hand out an fd for: a unix socket (EOPNOTSUPP on
-            // macOS, which has no O_PATH), a file with no read permission
-            // (EACCES), a process out of fds (EMFILE). Those still have a real
-            // path, so only a failed lookup is final. Everything else takes
-            // realpath(3), which never opens the file.
+            // open + fd path is 3 syscalls at any depth. open(2) can refuse an
+            // inode that still has a path (a socket on macOS, an unreadable
+            // file, EMFILE), so only a failed lookup is final.
             let buf: &[u8] = 'fast: {
                 match sys::open(path, flags, 0) {
                     Ok(fd) => {

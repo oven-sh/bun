@@ -89,13 +89,19 @@ function watch(
     return {
       [Symbol.asyncIterator]() {
         let closed = false;
+        let rejecting = false;
         return {
           async next() {
-            const error = closed ? undefined : makeAbortError();
+            if (closed) {
+              if (rejecting) await kDelegateTick;
+              return { value: undefined, done: true };
+            }
             closed = true;
+            const error = makeAbortError();
+            rejecting = true;
             await kDelegateTick;
-            if (error) throw error;
-            return { value: undefined, done: true };
+            rejecting = false;
+            throw error;
           },
           return() {
             closed = true;
@@ -138,6 +144,7 @@ function watch(
   return {
     [Symbol.asyncIterator]() {
       let closed = false;
+      let rejecting = false;
       return {
         async next() {
           let waited = false;
@@ -145,7 +152,11 @@ function watch(
             if (signal?.aborted) {
               closed = true;
               const error = makeAbortError();
-              if (!(waited && rejectsInAbortListener)) await kDelegateTick;
+              if (!(waited && rejectsInAbortListener)) {
+                rejecting = true;
+                await kDelegateTick;
+                rejecting = false;
+              }
               throw error;
             }
             // Node adds its abort listener at the first next(): https://github.com/nodejs/node/blob/v26.12.0/lib/internal/fs/watchers.js#L421
@@ -174,7 +185,7 @@ function watch(
             await promise;
           }
           // So that this next() does not settle before the one that took the AbortError in the same turn.
-          if (signal?.aborted) await kDelegateTick;
+          if (rejecting) await kDelegateTick;
           return { value: undefined, done: true };
         },
 

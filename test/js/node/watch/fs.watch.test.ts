@@ -1135,7 +1135,9 @@ describe("fs.promises.watch", () => {
       "next() waits, then abort()": "rejected on tick 3",
       "next() and abort() in the same turn": "rejected on tick 3",
       "abort(), then the first next()": "rejected on tick 2",
+      "abort(), then the second next()": "fulfilled on tick 1",
       "watch() with an aborted signal": "rejected on tick 2",
+      "watch() with an aborted signal, the second next()": "fulfilled on tick 1",
       "an earlier listener stops the propagation of the abort event": "rejected on tick 3",
       "the stack of the AbortError names the file that called next()": "true",
     };

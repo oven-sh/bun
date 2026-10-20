@@ -53,9 +53,11 @@ void MessagePortPipe::scheduleDrain(uint8_t side, ScriptExecutionContextIdentifi
     // while a wakeup is in flight. The task captures the ctxId it was posted
     // to so drainAndDispatch can detect if the side moved to a different
     // context before the task ran.
-    bool posted = ScriptExecutionContext::postTaskTo(ctxId, ctxLoopKind, [pipe = Ref { *this }, side, ctxId](ScriptExecutionContext&) {
-        pipe->drainAndDispatch(side, ctxId);
-    });
+    bool posted = ScriptExecutionContext::postTaskTo(
+        ctxId, ctxLoopKind, [pipe = Ref { *this }, side, ctxId](ScriptExecutionContext&) {
+            pipe->drainAndDispatch(side, ctxId);
+        },
+        ScriptExecutionContext::HoldsEventLoop::Never);
     if (!posted) {
         // Context already torn down. Drop DrainScheduled so a future
         // attach() to a new context can reschedule.
@@ -335,17 +337,19 @@ void MessagePortPipe::notifyPeerClosed(uint8_t peerSide)
     }
     if (!ctxId)
         return;
-    ScriptExecutionContext::postTaskTo(ctxId, ctxLoopKind, [pipe = Ref { *this }, peerSide, ctxId](ScriptExecutionContext&) {
-        RefPtr<MessagePort> port;
-        {
-            Locker locker { pipe->m_sides[peerSide].lock };
-            if (pipe->m_sides[peerSide].ctxId != ctxId)
-                return;
-            port = pipe->m_sides[peerSide].port.get();
-        }
-        if (port)
-            port->peerClosed();
-    });
+    ScriptExecutionContext::postTaskTo(
+        ctxId, ctxLoopKind, [pipe = Ref { *this }, peerSide, ctxId](ScriptExecutionContext&) {
+            RefPtr<MessagePort> port;
+            {
+                Locker locker { pipe->m_sides[peerSide].lock };
+                if (pipe->m_sides[peerSide].ctxId != ctxId)
+                    return;
+                port = pipe->m_sides[peerSide].port.get();
+            }
+            if (port)
+                port->peerClosed();
+        },
+        ScriptExecutionContext::HoldsEventLoop::Never);
 }
 
 } // namespace WebCore

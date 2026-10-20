@@ -283,7 +283,14 @@ void ScriptExecutionContext::willDestroyActiveDOMObject(ActiveDOMObject& activeD
     m_activeDOMObjects.remove(activeDOMObject);
 }
 
-bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& task)
+// Thread::currentSingleton() is a pthread_getspecific() call on Linux: postTaskTo() reads this.
+static uint32_t currentThreadUID()
+{
+    static thread_local uint32_t uid = Thread::currentSingleton().uid();
+    return uid;
+}
+
+bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& task, HoldsEventLoop hold)
 {
     // The map lock covers the lookup only. The context may be destroyed the moment the
     // lock is released, so nothing of it is used afterwards except a count taken on its
@@ -292,14 +299,18 @@ bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identif
     // released unrun by that teardown). Posting inside the critical section would make
     // every other context's lookup wait on this VM's queue.
     const BunVmHandleRef* retained = nullptr;
+    uint32_t contextThreadUID = 0;
     {
         Locker locker { allScriptExecutionContextsMapLock };
         auto* context = allScriptExecutionContextsMap().get(identifier);
         if (!context || context->isTerminating())
             return false;
         retained = Bun__VmHandle__retainRef(context->m_vmHandle);
+        contextThreadUID = context->m_contextThreadUID;
     }
-    Bun__VmHandle__postAndRelease(retained, new EventLoopTask(WTF::move(task)), loopKind);
+    bool holdsEventLoop = hold == HoldsEventLoop::Always
+        || (hold == HoldsEventLoop::FromContextThread && contextThreadUID == currentThreadUID());
+    Bun__VmHandle__postAndRelease(retained, new EventLoopTask(WTF::move(task)), loopKind, holdsEventLoop);
     return true;
 }
 
@@ -380,7 +391,7 @@ bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentif
     }
     if (retained) {
         // Off its thread: as postTaskTo(), through the handle, outside the lock.
-        Bun__VmHandle__postAndRelease(retained, new EventLoopTask(WTF::move(task)), BunLoopKind::Regular);
+        Bun__VmHandle__postAndRelease(retained, new EventLoopTask(WTF::move(task)), BunLoopKind::Regular, false);
         return true;
     }
     // On its own thread the context cannot be destroyed under us.

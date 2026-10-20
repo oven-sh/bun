@@ -103,7 +103,7 @@ pub fn vm_handle_queue_task_concurrently(
     crate::mark_binding!();
     // SAFETY: C++ passes the reference its ScriptExecutionContext holds, and
     // hands over a live heap EventLoopTask.
-    unsafe { crate::VmHandle::borrow_ref(r).post_cpp_task(crate::LoopKind::Regular, task) };
+    unsafe { crate::VmHandle::borrow_ref(r).post_cpp_task(crate::LoopKind::Regular, task, false) };
 }
 
 // HOST_EXPORT(Bun__handleRejectedPromise, c)

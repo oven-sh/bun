@@ -2684,8 +2684,7 @@ void GlobalObject::finishCreation(VM& vm)
              auto* function = JSFunction::create(init.vm, init.owner, 2, "ErrorPrepareStackTrace"_s, jsFunctionDefaultErrorPrepareStackTrace, ImplementationVisibility::Public);
              init.set(function);
              // A native getter of Error returns this function, so JSC does not find it among Error's properties.
-             if (init.owner->errorConstructor()->hasImmutableProperties())
-                 function->makePropertiesImmutable(init.vm);
+             init.owner->didCreateBuiltin(init.vm, function);
          } },
 
         { OBJECT_OFFSETOF(GlobalObject, m_utilInspectFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
@@ -2839,8 +2838,8 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, 
         JSC::AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
         console->putDirect(vm, property, result, 0);
     }
-    if (console->hasImmutableProperties() && result.isObject())
-        globalObject->makeObjectAndItsFunctionsImmutable(vm, asObject(result));
+    if (result.isObject())
+        globalObject->didCreateBuiltin(vm, asObject(result));
     return JSValue::encode(result);
 }
 

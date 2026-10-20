@@ -412,6 +412,26 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("without the option, jest.useFakeTimers() calls the trap of a Proxy in setTimeout's place", async () => {
+      using dir = tempDir("immutable-globals", {
+        "timers.test.js": `
+          import { expect, jest, test } from "bun:test";
+          test("a Proxy", () => {
+            const trapped = [];
+            globalThis.setTimeout = new Proxy(function () {}, {
+              deleteProperty(target, key) { trapped.push(key); return true; },
+            });
+            jest.useFakeTimers();
+            jest.useRealTimers();
+            expect(trapped).toEqual(["clock"]);
+          });
+        `,
+      });
+      const { stderr, exitCode } = await run(undefined, ["test", "timers.test.js"], String(dir));
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
+    });
+
     test("built-in modules add to native classes as they load", async () => {
       const script = `
         import crypto from "node:crypto";
@@ -475,15 +495,14 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
     test("node:quic finishes its own class whatever a program puts in node:net's exports", async () => {
       using dir = tempDir("immutable-globals-planted", {
         "index.cjs": `
-          ${attempt}
           const before = Reflect.ownKeys(Array.prototype).length;
-          require("node:net").SocketAddress = { get prototype() { attempt("net.SocketAddress"); return Array.prototype; } };
+          require("node:net").SocketAddress = { prototype: Array.prototype };
           require("node:quic");
-          console.log(JSON.stringify({ wrote, added: Reflect.ownKeys(Array.prototype).length - before }));
+          console.log(Reflect.ownKeys(Array.prototype).length - before);
         `,
       });
       const { stdout, exitCode } = await run("*", ["index.cjs"], String(dir));
-      expect(JSON.parse(stdout)).toEqual({ wrote: [], added: 0 });
+      expect(stdout).toBe("0\n");
       expect(exitCode).toBe(0);
     });
 

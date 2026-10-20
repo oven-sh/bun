@@ -301,7 +301,8 @@ if (Performance) {
       value: eventLoopUtilization,
     },
   };
-  for (const name in additions) defineBuiltinProperty(Performance.prototype, name, additions[name]);
+  const prototype = Performance.prototype;
+  for (const name in additions) defineBuiltinProperty(prototype, name, additions[name]);
 }
 
 export default {

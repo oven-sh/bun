@@ -540,6 +540,13 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) module_scope: js_ast::StoreRef<js_ast::Scope>,
     pub(crate) module_scope_directive_loc: bun_ast::Loc,
     pub(crate) is_control_flow_dead: bool,
+    /// Visiting an export that `replace_exports` deletes. Its uses are not counted (the code is
+    /// dead), but recorded in `used_by_deleted_exports`.
+    pub(crate) in_deleted_export: bool,
+    /// The symbols (by inner index) that the deleted exports use. An import that only they use goes
+    /// with them, also in JavaScript, where an unused import otherwise stays for its side effects.
+    /// Few: the data functions of a page and what they use.
+    pub(crate) used_by_deleted_exports: Vec<u32>,
     /// Fill `scope_uses` (bundling with the number renamer).
     pub(crate) track_scope_uses: bool,
     /// Next `Scope::visit_span` pre-order index. The module scope is 0.
@@ -2099,6 +2106,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // The use count stored in the symbol is used for generating symbol names
         // during minification. These counts shouldn't include references inside dead
         // code regions since those will be culled.
+        if self.is_control_flow_dead
+            && self.in_deleted_export
+            && !self.used_by_deleted_exports.contains(&ref_.inner_index())
+        {
+            self.used_by_deleted_exports.push(ref_.inner_index());
+        }
         if !self.is_control_flow_dead {
             debug_assert!(self.symbols.len() > ref_.inner_index() as usize);
             self.symbols[ref_.inner_index() as usize].use_count_estimate += 1;
@@ -9789,6 +9802,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             scope_order_to_visit: &[],
             module_scope_directive_loc: bun_ast::Loc::default(),
             is_control_flow_dead: false,
+            in_deleted_export: false,
+            used_by_deleted_exports: Default::default(),
             track_scope_uses,
             visit_scope_count: 0,
             field_init_class_bodies: Vec::new(),

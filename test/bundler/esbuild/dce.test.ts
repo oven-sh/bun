@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { readdirSync } from "node:fs";
 import { dedent, itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -2258,6 +2259,170 @@ describe("bundler", () => {
     run: {
       stdout: "1 2",
     },
+  });
+  // A used top-level destructuring of a module namespace reads each key once,
+  // where it runs. The bundle takes one copy per key and does not create the
+  // namespace object, so the exports that nothing reads are dropped. The
+  // namespace can be a star import, or an import that resolves to one.
+  for (const format of ["esm", "cjs", "iife"] as const) {
+    itBundled(`dce/DestructuringOfImportNamespaceTakesCopies_${format}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import * as ns from './lib.js'
+          import { sub } from './reexport.js'
+          import viaDefault from './default.js'
+          ns.inc()
+          const { count, inc } = ns
+          inc()
+          let { inner: first } = sub
+          var { inner: second } = viaDefault
+          console.log(count, ns.count, first, second)
+        `,
+        "/lib.js": /* js */ `
+          export let count = 0
+          export function inc() { count++ }
+          export const REMOVE_lib = 'unused'
+        `,
+        "/reexport.js": /* js */ `
+          export * as sub from './lib2.js'
+        `,
+        "/default.js": /* js */ `
+          import * as z from './lib3.js'
+          export default z
+        `,
+        "/lib2.js": /* js */ `
+          export const inner = 7
+          export const REMOVE_lib2 = 'unused'
+        `,
+        "/lib3.js": /* js */ `
+          export const inner = 8
+          export const REMOVE_lib3 = 'unused'
+        `,
+      },
+      format,
+      dce: true,
+      run: {
+        stdout: "1 2 7 8",
+      },
+    });
+  }
+  // The declaration reads the namespace object, as before, when other live
+  // code holds that object, when a key is not a named export to copy, and
+  // below the top level of the module.
+  itBundled("dce/DestructuringOfImportNamespaceReadsTheObject", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as held from './held.js'
+        import * as withDefault from './default.js'
+        import * as nested from './nested.js'
+        console.log(Object.keys(held).join())
+        const { a } = held
+        const { default: b } = withDefault
+        function read() {
+          const { c } = nested
+          return c
+        }
+        console.log(a, b, read())
+      `,
+      "/held.js": /* js */ `
+        export const a = 1
+        export const other = 2
+      `,
+      "/default.js": /* js */ `
+        export default 3
+      `,
+      "/nested.js": /* js */ `
+        export const c = 4
+      `,
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      for (const name of ["held", "default", "nested"]) {
+        expect(code).toContain(`var exports_${name} = {}`);
+      }
+    },
+    run: {
+      stdout: "a,other\n1 3 4",
+    },
+  });
+  // The part with the declaration keeps its place in the order of the chunks:
+  // the copy is taken before another module changes the export.
+  itBundled("dce/DestructuringOfImportNamespaceSplittingOrder", {
+    files: {
+      "/e1.js": /* js */ `
+        import { snapshot } from './snapshot.js'
+        import './mutate.js'
+        console.log('e1', snapshot)
+      `,
+      "/e2.js": /* js */ `
+        import { snapshot } from './snapshot.js'
+        console.log('e2', snapshot)
+      `,
+      "/e3.js": /* js */ `
+        import './mutate.js'
+        console.log('e3')
+      `,
+      "/snapshot.js": /* js */ `
+        import * as ns from './lib.js'
+        export const { count: snapshot } = ns
+      `,
+      "/mutate.js": /* js */ `
+        import { inc } from './lib.js'
+        inc()
+      `,
+      "/lib.js": /* js */ `
+        export let count = 0
+        export function inc() { count++ }
+        export const unused = 'unused'
+      `,
+    },
+    entryPoints: ["/e1.js", "/e2.js", "/e3.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      for (const file of readdirSync(api.outdir)) {
+        expect(api.readFile("/out/" + file)).not.toContain("exports_lib");
+      }
+    },
+    run: {
+      file: "/out/e1.js",
+      stdout: "e1 0",
+    },
+  });
+  // Another entry point holds the namespace object, so the declaration reads
+  // it, and its chunk imports the object.
+  itBundled("dce/DestructuringOfImportNamespaceSplittingHolder", {
+    files: {
+      "/e1.js": /* js */ `
+        import { snapshot } from './snapshot.js'
+        console.log('e1', snapshot)
+      `,
+      "/e2.js": /* js */ `
+        import * as ns from './lib.js'
+        console.log('e2', Object.keys(ns).join())
+      `,
+      "/snapshot.js": /* js */ `
+        import * as ns from './lib.js'
+        export const { count: snapshot } = ns
+      `,
+      "/lib.js": /* js */ `
+        export let count = 0
+        export function inc() { count++ }
+      `,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const chunks = readdirSync(api.outdir).map(file => api.readFile("/out/" + file));
+      expect(chunks.filter(chunk => chunk.includes("{ count: snapshot } = exports_lib"))).toHaveLength(1);
+    },
+    run: [
+      { file: "/out/e1.js", stdout: "e1 0" },
+      { file: "/out/e2.js", stdout: "e2 count,inc" },
+    ],
   });
   itBundled("dce/DCEOfDestructuringOfUnwrappedRequire", {
     files: {

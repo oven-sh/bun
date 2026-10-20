@@ -149,6 +149,9 @@ pub(crate) struct TestRunner<'a> {
     /// Set once any `node:test` registration API is called; gates `process.on('exit')` dispatch at the end of the run.
     pub(crate) node_test_used: bool,
 
+    /// Set when `--test-force-exit` ended a file's run in place of the event loop drain: the exit is then a requested one.
+    pub(crate) forced_exit: bool,
+
     pub(crate) bun_test_root: bun_test::BunTestRoot,
 }
 

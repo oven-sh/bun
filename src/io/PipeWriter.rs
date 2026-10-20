@@ -786,7 +786,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.handle.get_poll()
     }
 
-    pub(crate) fn get_fd(&self) -> Fd {
+    pub fn get_fd(&self) -> Fd {
         self.handle.get_fd()
     }
 

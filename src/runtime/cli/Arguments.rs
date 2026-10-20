@@ -648,6 +648,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--test-worker                    (internal) Run as a --parallel worker, receiving files over IPC."
     ),
     parse_param!(
+        "--test-force-exit                Exit when the tests of a file that node:test's run() started have finished, even if its event loop is still active. Every other `bun test` run exits that way already."
+    ),
+    parse_param!(
         "--shard <STR>                    Run a subset of test files, e.g. '--shard=1/3' runs the first of three shards. Useful for splitting tests across multiple CI jobs."
     ),
     parse_param!(
@@ -1966,6 +1969,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     let no_isolate = args.flag(b"--no-isolate");
     ctx.test_options.isolate = args.flag(b"--isolate") && !no_isolate;
     ctx.test_options.test_worker = args.flag(b"--test-worker");
+    ctx.test_options.force_exit = args.flag(b"--test-force-exit");
 
     if let Some(parallel_str) = args.option(b"--parallel") {
         let parsed: u32 = if !parallel_str.is_empty() {

@@ -873,6 +873,34 @@ impl FileSink {
         Some(unsafe { &mut *p.cast::<bun_jsc::VirtualMachineRef>() })
     }
 
+    /// For `process.stdout` or `process.stderr` (the `force_sync` sinks, whose writes to a pipe
+    /// or a socket still do not block), at an exit that `ExitHandler::flush_process_stdio` asks
+    /// to deliver them: blocks until the fd takes more bytes, then `true`. An fd that went away
+    /// also answers `true`, and the write that follows reports it.
+    fn wait_for_writable_at_exit(&self) -> bool {
+        #[cfg(unix)]
+        {
+            if !self.force_sync.get()
+                || !self
+                    .js_vm()
+                    .is_some_and(|vm| vm.exit_handler.flush_process_stdio)
+            {
+                return false;
+            }
+            let mut pollfd = [sys::posix::PollFd {
+                fd: self.writer.get().get_fd().native(),
+                events: sys::posix::POLL_OUT,
+                revents: 0,
+            }];
+            return sys::posix::poll(&mut pollfd, -1).is_ok();
+        }
+        // A stdio pipe is written synchronously (`Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio`), so none of it is left to wait for.
+        #[cfg(windows)]
+        {
+            return false;
+        }
+    }
+
     pub(crate) fn start(
         &self,
         stream_start: &streams::Start,
@@ -946,11 +974,18 @@ impl FileSink {
 
             let _guard = RefPtr::init_ref(this);
 
-            let amount_buffered = (*this).writer.get().outgoing.size();
+            let mut amount_buffered = (*this).writer.get().outgoing.size();
 
             // SAFETY(JsCell): `IOWriter::flush` is pure I/O; the `on_write`
             // callback it may trigger goes via the stored `*mut FileSink` backref.
-            match (*this).writer.with_mut(|w| w.flush()) {
+            let mut flushed = (*this).writer.with_mut(|w| w.flush());
+            while matches!(flushed, WriteResult::Pending(_))
+                && (*this).wait_for_writable_at_exit()
+            {
+                amount_buffered = (*this).writer.get().outgoing.size();
+                flushed = (*this).writer.with_mut(|w| w.flush());
+            }
+            match flushed {
                 WriteResult::Err(err) => {
                     (*this).update_ref(false);
                     // `flush()` returns a write error without routing through the

@@ -460,6 +460,10 @@ pub struct TestOptions {
     /// Internal: this process is a `--parallel` worker. Files arrive over
     /// fd 3, results are written back over fd 3; no discovery, no header.
     pub test_worker: bool,
+    /// `bun test --test-force-exit`, which `node:test`'s `run({ forceExit: true })` gives each
+    /// file: a file with tests ends without the event loop drain that
+    /// `BUN_TEST_DRAIN_EVENT_LOOP` asks for.
+    pub force_exit: bool,
     /// `bun test --changed[=<since>]`. When set, only test files whose
     /// module graph reaches a file changed according to git are run.
     /// None = flag not passed. "" = compare against uncommitted changes.
@@ -536,6 +540,7 @@ impl Default for TestOptions {
             parallel: 0,
             parallel_delay_ms: None,
             test_worker: false,
+            force_exit: false,
             changed: None,
             shard: None,
             timings_files: Vec::new(),

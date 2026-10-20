@@ -923,9 +923,10 @@ impl JunitReporter {
 }
 
 /// Drain the event loop after a file's tests finish, like a node process
-/// would before exiting; the vendored-node-test runner opts in via
-/// `BUN_TEST_DRAIN_EVENT_LOOP=1` so mustCall()-style exit checks see
+/// would before exiting; the vendored-node-test runner and node:test's run()
+/// opt in via `BUN_TEST_DRAIN_EVENT_LOOP=1` so mustCall()-style exit checks see
 /// completed async work. Off by default: bun suites keep exit-after-tests.
+/// `--test-force-exit` takes a file that has tests out of the drain again.
 fn should_drain_event_loop() -> bool {
     env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
 }
@@ -935,9 +936,16 @@ pub(crate) fn skip_exit_listeners(reporter: &CommandLineReporter) -> bool {
     !(reporter.jest.node_test_used || should_drain_event_loop())
 }
 
-/// `ExitHandler::requested` at the end of a run, which does not wait for the event loop to run dry.
-pub(crate) fn exit_is_requested() -> bool {
-    !should_drain_event_loop()
+/// `ExitHandler::requested` at the end of a run, unless the run waited for the event loop to run dry.
+pub(crate) fn exit_is_requested(reporter: &CommandLineReporter) -> bool {
+    !should_drain_event_loop() || reporter.jest.forced_exit
+}
+
+/// `ExitHandler::flush_process_stdio` at the end of a run: what starts a `bun test` with
+/// `BUN_TEST_DRAIN_EVENT_LOOP` reads the test report from its stdout, and neither a forced exit
+/// nor a drain that an unhandled error cut short has written all of it yet.
+pub(crate) fn exit_flushes_process_stdio() -> bool {
+    should_drain_event_loop()
 }
 
 pub(crate) struct CommandLineReporter {
@@ -1901,6 +1909,7 @@ impl TestCommand {
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
                 node_test_used: false,
+                forced_exit: false,
             },
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
@@ -2736,7 +2745,8 @@ impl TestCommand {
             vm.exit_handler.exit_code = 1;
         }
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
-        vm.exit_handler.requested = exit_is_requested();
+        vm.exit_handler.requested = exit_is_requested(&reporter);
+        vm.exit_handler.flush_process_stdio = exit_flushes_process_stdio();
         // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
         {
             let vm_ptr: *mut VirtualMachine = vm;
@@ -3065,7 +3075,16 @@ impl TestCommand {
                 // it early-returns when unhandled_error_counter > 0, which is fine
                 // here since such a file already failed. Opt-in; one file per process.
                 if should_drain_event_loop() {
-                    vm.on_before_exit();
+                    // node's --test-force-exit ends the process when the last top-level test
+                    // is done, so it leaves a file without one alone:
+                    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1613-L1620
+                    if reporter.jest.test_options.force_exit
+                        && !buntest.collection.root_scope.entries.is_empty()
+                    {
+                        reporter.jest.forced_exit = true;
+                    } else {
+                        vm.on_before_exit();
+                    }
                 }
                 drop(buntest_strong);
             }

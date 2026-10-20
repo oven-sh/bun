@@ -776,6 +776,10 @@ pub struct ExitHandler {
     /// `process.exit()`, a fatal error or the end of a `bun test` run, as opposed to the event loop running dry.
     /// See `VirtualMachine::exit_tears_down_napi_envs`.
     pub requested: bool,
+    /// The flush in `on_exit` waits until the bytes that `process.stdout` and `process.stderr` still buffer
+    /// have reached the fd; any other exit drops them, as Node does. `bun test` sets this at the end of a
+    /// run under `BUN_TEST_DRAIN_EVENT_LOOP`, whose parent reads the test report from that stdout.
+    pub flush_process_stdio: bool,
 }
 
 impl ExitHandler {

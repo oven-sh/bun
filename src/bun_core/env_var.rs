@@ -143,7 +143,8 @@ platform_specific_new!(pub C_INCLUDE_PATH: string, posix = "C_INCLUDE_PATH", win
 platform_specific_new!(pub LIBRARY_PATH: string, posix = "LIBRARY_PATH", windows = None, {});
 // Drain the event loop after a file's tests finish so node-style
 // `process.on('exit')` checks (e.g. common.mustCall) see completed async work.
-// Opt-in for the vendored node:test suite and run() children.
+// Opt-in for the vendored node:test suite and run() children. `bun test
+// --test-force-exit` leaves the drain out for a file that has tests.
 new!(pub BUN_TEST_DRAIN_EVENT_LOOP: boolean, "BUN_TEST_DRAIN_EVENT_LOOP", { default: false });
 new!(pub BUN_TMPDIR: string, "BUN_TMPDIR", {});
 new!(pub BUN_WATCHER_TRACE: string, "BUN_WATCHER_TRACE", {});

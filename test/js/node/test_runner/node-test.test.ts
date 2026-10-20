@@ -1,7 +1,8 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { run } from "node:test";
 
 describe("node:test", () => {
   // These three drive the largest fixtures (01-harness has 32 node:test cases);
@@ -343,6 +344,357 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
   ]);
   return { exitCode, stdout, stderr };
 }
+
+// run() starts one `bun test` process for each file. That process ends as a Node.js process
+// does, when its event loop has nothing left to do. With forceExit it gets node's
+// --test-force-exit, and ends when its tests do.
+//
+// Each test here starts a bun process that starts another one. On a debug+ASAN build one of
+// them takes several seconds to start, so the tests have more than the 5 seconds a test has by
+// default, as the first tests of this file do.
+describe("run() with forceExit", () => {
+  // Gives file.test.mjs to run() and prints what came back: the tests that passed and failed,
+  // the lines the file printed that start with "CHILD ", and the summary of the run.
+  const runner = `
+    import { existsSync } from "node:fs";
+    import { run } from "node:test";
+
+    const [options, reader] = process.argv.slice(2);
+    const file = "file.test.mjs";
+    // The report-delivery files give their tests names of many kilobytes.
+    const name = data =>
+      data.name === file ? "<file>" : data.name.length > 99 ? data.name.slice(0, data.name.indexOf(" ")) : data.name;
+    const result = { pass: [], fail: [], stdout: [], summary: null, readLate: false };
+    for await (const { type, data } of run({ files: [file], ...JSON.parse(options) })) {
+      if (reader === "late" && !result.readLate && type === "test:pass") {
+        // Read no more until the process of the file is at its exit. Its report is larger than
+        // its stdout takes, so most of it is then still inside that process.
+        const deadline = Date.now() + 20_000;
+        const cell = new Int32Array(new SharedArrayBuffer(4));
+        while (!existsSync("at-exit")) {
+          if (Date.now() > deadline) throw new Error("the process of the file did not reach its exit");
+          Atomics.wait(cell, 0, 0, 5);
+        }
+        result.readLate = true;
+      }
+      if (type === "test:pass") {
+        result.pass.push(name(data));
+      } else if (type === "test:fail") {
+        result.fail.push([name(data), data.details.error.failureType]);
+      } else if (type === "test:stdout") {
+        for (const line of data.message.split("\\n")) if (line.startsWith("CHILD ")) result.stdout.push(line);
+      } else if (type === "test:summary" && data.file === undefined) {
+        const { tests, passed, failed } = data.counts;
+        result.summary = { success: data.success, tests, passed, failed };
+      }
+    }
+    // The option ends the process of a file, not the process that called run().
+    await new Promise(resolve => setImmediate(resolve));
+    console.log("RESULT " + JSON.stringify(result));
+  `;
+
+  // A test file that itself runs under run() has NODE_TEST_CONTEXT, and run() starts nothing there.
+  const { NODE_TEST_CONTEXT: _, ...env } = bunEnv;
+
+  async function runFile(source: string, options: object = {}, reader: "prompt" | "late" = "prompt") {
+    using dir = tempDir("node-test-run-force-exit", { "runner.mjs": runner, "file.test.mjs": source });
+    await using proc = spawn({
+      cmd: [bunExe(), "runner.mjs", JSON.stringify(options), reader],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const line = stdout.split("\n").find(line => line.startsWith("RESULT "));
+    if (line === undefined)
+      throw new Error(`no RESULT line\nexit code: ${exitCode}\nstdout: ${stdout}\nstderr: ${stderr}`);
+    // signalCode is null when the process ended by itself: a run() that never ends is killed by the test's timeout.
+    return { ...JSON.parse(line.slice("RESULT ".length)), exitCode, signalCode: proc.signalCode };
+  }
+
+  const passed = (tests: number) => ({ success: true, tests, passed: tests, failed: 0 });
+  const ended = { readLate: false, exitCode: 0, signalCode: null };
+  // 'exit' listeners run at a forced exit, as for process.exit(). 'beforeExit' is for an event
+  // loop that ran dry, so a file that prints it was not forced.
+  const listeners = `
+    process.on("beforeExit", () => console.log("CHILD beforeExit"));
+    process.on("exit", code => console.log("CHILD exit " + code));
+  `;
+
+  test.concurrent.each([
+    [{ forceExit: true }, ["--test-force-exit"]],
+    [{ forceExit: true, execArgv: ["--smol"] }, ["--test-force-exit", "--smol"]],
+    // Node.js reads the flag in the process of the file, so the execArgv option can carry it too.
+    [{ execArgv: ["--test-force-exit"] }, ["--test-force-exit"]],
+  ])(
+    "%j: a file that keeps its event loop active ends when its tests do",
+    async (options, execArgv) => {
+      const file = `
+        import { test } from "node:test";
+        setInterval(() => {}, 1000);
+        ${listeners}
+        test("x", () => console.log("CHILD execArgv " + JSON.stringify(process.execArgv)));
+      `;
+      expect(await runFile(file, options)).toEqual({
+        pass: ["x"],
+        fail: [],
+        stdout: ["CHILD execArgv " + JSON.stringify(execArgv), "CHILD exit 0"],
+        summary: passed(1),
+        ...ended,
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "every test that is known runs to its end, and so do the root after() hooks",
+    async () => {
+      const file = `
+        import { after, test } from "node:test";
+        import { createServer } from "node:http";
+        createServer(() => {}).listen(0);
+        ${listeners}
+        after(() => console.log("CHILD root after"));
+        test("async", async () => {
+          await new Promise(resolve => setImmediate(resolve));
+          console.log("CHILD async done");
+        });
+        test("parent", async t => {
+          await t.test("sub", async () => {
+            await new Promise(resolve => setImmediate(resolve));
+          });
+        });
+        // A handle that would add a test later. The exit does not wait for it.
+        setTimeout(() => test("late", () => {}), 2 ** 31 - 1);
+      `;
+      expect(await runFile(file, { forceExit: true })).toEqual({
+        pass: ["async", "sub", "parent"],
+        fail: [],
+        stdout: ["CHILD async done", "CHILD root after", "CHILD exit 0"],
+        summary: passed(3),
+        ...ended,
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "a failed test fails the run, and what it scheduled for later does not run",
+    async () => {
+      // test/fixtures/test-runner/throws_sync_and_async.js of Node.js, with a timer that is further away.
+      const file = `
+        import { test } from "node:test";
+        ${listeners}
+        test("passes", () => {});
+        test("fails and schedules more work", () => {
+          setTimeout(() => {
+            console.log("CHILD this should not have a chance to be thrown");
+          }, 2 ** 31 - 1);
+          throw new Error("fails");
+        });
+      `;
+      expect(await runFile(file, { forceExit: true })).toEqual({
+        pass: ["passes"],
+        fail: [["fails and schedules more work", "testCodeFailure"]],
+        stdout: ["CHILD exit 1"],
+        summary: { success: false, tests: 2, passed: 1, failed: 1 },
+        ...ended,
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "the exit code of the file is kept",
+    async () => {
+      const file = `
+        import { test } from "node:test";
+        setInterval(() => {}, 1000);
+        ${listeners}
+        process.exitCode = 7;
+        test("x", () => {});
+      `;
+      expect(await runFile(file, { forceExit: true })).toEqual({
+        pass: ["x"],
+        // A file whose tests pass and that still exits with an error is itself the failed test.
+        fail: [["<file>", "testCodeFailure"]],
+        stdout: ["CHILD exit 7"],
+        summary: { success: false, tests: 2, passed: 1, failed: 1 },
+        ...ended,
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "a file with only skipped and todo tests ends too",
+    async () => {
+      const file = `
+        import { test } from "node:test";
+        setInterval(() => {}, 1000);
+        ${listeners}
+        test.skip("skipped", () => {});
+        test.todo("todo");
+      `;
+      expect(await runFile(file, { forceExit: true })).toEqual({
+        pass: ["skipped", "todo"],
+        fail: [],
+        stdout: ["CHILD exit 0"],
+        summary: { success: true, tests: 2, passed: 0, failed: 0 },
+        ...ended,
+      });
+    },
+    30_000,
+  );
+
+  // Node.js ends the process from its root test, when the last test of the file is done. A file
+  // without a test has no such moment, and ends as without the option: after its event loop.
+  describe("a file without a test is not forced", () => {
+    test.concurrent.each([
+      [
+        "a timer",
+        `setTimeout(() => {
+          console.log("CHILD timer");
+          process.exitCode = 1;
+        }, 1);`,
+        ["CHILD timer"],
+      ],
+      // As common.mustCall() of the Node.js tests does.
+      [
+        "an 'exit' listener",
+        `process.on("exit", () => {
+          console.log("CHILD exit check");
+          process.exitCode = 1;
+        });`,
+        ["CHILD exit check"],
+      ],
+    ])(
+      "it still fails from %s",
+      async (_, failure, stdout) => {
+        expect(await runFile(failure, { forceExit: true })).toEqual({
+          pass: [],
+          fail: [["<file>", "testCodeFailure"]],
+          stdout,
+          summary: { success: false, tests: 1, passed: 0, failed: 1 },
+          ...ended,
+        });
+      },
+      30_000,
+    );
+
+    test.concurrent(
+      "root hooks alone run, and the file ends",
+      async () => {
+        const file = `
+          import { after, before } from "node:test";
+          before(() => console.log("CHILD before"));
+          after(() => console.log("CHILD after"));
+          process.on("exit", code => console.log("CHILD exit " + code));
+        `;
+        expect(await runFile(file, { forceExit: true })).toEqual({
+          pass: ["<file>"],
+          fail: [],
+          stdout: ["CHILD before", "CHILD after", "CHILD exit 0"],
+          summary: passed(1),
+          ...ended,
+        });
+      },
+      30_000,
+    );
+  });
+
+  test.concurrent.each([[{}], [{ forceExit: false }]])(
+    "%j: a file waits for its event loop",
+    async options => {
+      const file = `
+        import { test } from "node:test";
+        process.on("exit", code => console.log("CHILD exit " + code));
+        test("x", () => {
+          setTimeout(() => console.log("CHILD timer"), 1);
+        });
+      `;
+      expect(await runFile(file, options)).toEqual({
+        pass: ["x"],
+        fail: [],
+        stdout: ["CHILD timer", "CHILD exit 0"],
+        summary: passed(1),
+        ...ended,
+      });
+    },
+    30_000,
+  );
+
+  // The file reports each test on its stdout, and its report is larger than that stdout takes
+  // at once. A process that ends without the event loop wait must still write all of it.
+  describe("the whole report arrives", () => {
+    const count = 64;
+    const names = Array.from({ length: count }, (_, i) => String(i));
+    const tests = `
+      import { writeFileSync } from "node:fs";
+      import { test } from "node:test";
+      process.on("exit", () => writeFileSync("at-exit", ""));
+      const pad = Buffer.alloc(16 * 1024, "x").toString();
+      for (let i = 0; i < ${count}; i++) test(i + " " + pad, () => {});
+    `;
+    // A Windows pipe is written synchronously: the file cannot get to its exit before all of
+    // its report is read, so there the reader keeps up.
+    const reader = isWindows ? "prompt" : "late";
+    const delivered = { stdout: [], readLate: !isWindows, exitCode: 0, signalCode: null };
+
+    test.concurrent(
+      "from a file that forceExit ends",
+      async () => {
+        const file = `
+          ${tests}
+          setInterval(() => {}, 1000);
+        `;
+        expect(await runFile(file, { forceExit: true }, reader)).toEqual({
+          pass: names,
+          fail: [],
+          summary: passed(count),
+          ...delivered,
+        });
+      },
+      30_000,
+    );
+
+    test.concurrent(
+      "from a file whose event loop wait an unhandled rejection cuts short",
+      async () => {
+        const file = `
+          ${tests}
+          Promise.reject(new Error("unhandled"));
+        `;
+        expect(await runFile(file, {}, reader)).toEqual({
+          pass: names,
+          fail: [["<file>", "testCodeFailure"]],
+          summary: { success: false, tests: count + 1, passed: count, failed: 1 },
+          ...delivered,
+        });
+      },
+      30_000,
+    );
+  });
+
+  // The forceExit cases of test/parallel/test-runner-run.mjs of Node.js.
+  test("forceExit is a boolean, and not for watch mode", () => {
+    for (const forceExit of [Symbol(), {}, 0, 1, "1", Promise.resolve([])] as unknown[]) {
+      expect(() => run({ forceExit: forceExit as boolean })).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: expect.stringMatching(/The "options\.forceExit" property must be of type boolean\./),
+        }),
+      );
+    }
+    expect(() => run({ forceExit: true, watch: true })).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_VALUE",
+        message: expect.stringMatching(/The property 'options\.forceExit' is not supported with watch mode\./),
+      }),
+    );
+  });
+});
 
 describe("node:test mock", () => {
   const { mock } = require("node:test");

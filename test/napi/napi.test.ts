@@ -2472,6 +2472,19 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       expect(exitCode).toBe(0);
     });
 
+    // node:test's run({ forceExit: true }) starts a file this way. Node's --test-force-exit ends in process.exit().
+    it("a `bun test --test-force-exit` run, which ends without that drain, skips it", async () => {
+      const files = { "addon.test.js": testFile("loads the addons") };
+      const { lines, stderr, exitCode } = await runBunTest(["--test-force-exit"], files, {
+        ...noDestruct,
+        BUN_TEST_DRAIN_EVENT_LOOP: "1",
+      });
+      expect(stderr).toContain("1 pass");
+      expect(lines).toEqual(setupLines.toSorted());
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     it("an event loop that runs dry tears it down", async () => {
       const { lines, stderr, exitCode } = await run(setup, noDestruct);
       expect(stderr).toBe("");

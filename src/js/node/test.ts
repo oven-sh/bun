@@ -325,7 +325,6 @@ function run(options: Record<string, unknown> = kEmptyObject) {
   if (opts.only) throwNotImplemented("run({ only: true })", 5090);
   if (opts.testNamePatterns != null) throwNotImplemented("run({ testNamePatterns })", 5090);
   if (opts.testSkipPatterns != null) throwNotImplemented("run({ testSkipPatterns })", 5090);
-  if (opts.forceExit) throwNotImplemented("run({ forceExit: true })", 5090);
   if (opts.concurrency != null) throwNotImplemented("run({ concurrency })", 5090);
   if (opts.files == null)
     throwNotImplemented("run() default file discovery", 5090, "Pass { files: [...] } explicitly.");
@@ -452,8 +451,15 @@ async function runOneFile(
   const absolute = path.resolve(opts.cwd as string, file);
   // Node's getRunArgs builds [...execArgv, path, ...argv] so runtime flags land
   // in the child's process.execArgv; bun's CLI likewise takes runtime flags
-  // before the `test` keyword and user args after the path.
-  const args = [process.execPath, ...(opts.execArgv as string[]), "test", absolute, ...(opts.argv as string[])];
+  // before the `test` keyword and user args after the path. forceExit travels
+  // as node's flag, in front of the execArgv option (runner.js getRunArgs), and
+  // takes the child out of the BUN_TEST_DRAIN_EVENT_LOOP wait once its tests end.
+  const execArgv = opts.execArgv as string[];
+  const argv = opts.argv as string[];
+  const args =
+    opts.forceExit === true
+      ? [process.execPath, "--test-force-exit", ...execArgv, "test", absolute, ...argv]
+      : [process.execPath, ...execArgv, "test", absolute, ...argv];
   const fileStarted = Date.now();
   const fileCounts = makeRunCounts();
 

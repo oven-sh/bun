@@ -1,6 +1,7 @@
 use crate::mal_prelude::*;
 use core::cell::UnsafeCell;
 use core::fmt;
+use std::borrow::Cow;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
@@ -510,6 +511,16 @@ fn additional_output_file_index(f: &AdditionalFile) -> usize {
     }
 }
 
+/// An output path as the value of a double-quoted `src`/`href`: its URL path, with `&` as a character reference.
+fn html_attribute_url(path: &[u8]) -> Cow<'_, [u8]> {
+    let url_path = strings::percent_encode_url_path(path);
+    if strings::contains_char(&url_path, b'&') {
+        Cow::Owned(strings::replace_owned(&url_path, b"&", b"&amp;"))
+    } else {
+        url_path
+    }
+}
+
 impl IntermediateOutput {
     pub(crate) fn allocator_for_size(_size: usize) -> &'static DynAlloc {
         // mimalloc serves large allocations via mmap already, so the global
@@ -720,6 +731,14 @@ impl IntermediateOutput {
                     || reference_path_style == ReferencePathStyle::OutdirRelative
                     || !import_prefix.is_empty();
 
+                // HTML `src`/`href` values are URLs; JS and CSS strings stay raw.
+                let url_path: fn(&[u8]) -> Cow<'_, [u8]> = if matches!(chunk.content, Content::Html)
+                {
+                    html_attribute_url
+                } else {
+                    |path| Cow::Borrowed(path)
+                };
+
                 let urls_for_css: &[&[u8]] = if standalone_chunk_contents.is_some() {
                     graph.ast.items_url_for_css()
                 } else {
@@ -802,6 +821,11 @@ impl IntermediateOutput {
                                 QueryKind::None | QueryKind::ChunkId => unreachable!(),
                             };
 
+                            // The write pass normalizes separators; measure the same bytes.
+                            let file_path = bun_paths::resolve_path::platform_to_posix_buf(
+                                file_path,
+                                &mut file_path_buf[..],
+                            );
                             let cheap_normalizer = cheap_prefix_normalizer(
                                 import_prefix,
                                 if use_outdir_relative_path {
@@ -815,7 +839,8 @@ impl IntermediateOutput {
                                     )
                                 },
                             );
-                            count += cheap_normalizer[0].len() + cheap_normalizer[1].len();
+                            let path_part = url_path(cheap_normalizer[1]);
+                            count += cheap_normalizer[0].len() + path_part.len();
                         }
                         QueryKind::None => {}
                     }
@@ -1013,6 +1038,7 @@ impl IntermediateOutput {
                                     )
                                 },
                             );
+                            let path_part = url_path(cheap_normalizer[1]);
 
                             if !cheap_normalizer[0].is_empty() {
                                 remain[..cheap_normalizer[0].len()]
@@ -1023,12 +1049,11 @@ impl IntermediateOutput {
                                 }
                             }
 
-                            if !cheap_normalizer[1].is_empty() {
-                                remain[..cheap_normalizer[1].len()]
-                                    .copy_from_slice(cheap_normalizer[1]);
-                                remain = &mut remain[cheap_normalizer[1].len()..];
+                            if !path_part.is_empty() {
+                                remain[..path_part.len()].copy_from_slice(&path_part);
+                                remain = &mut remain[path_part.len()..];
                                 if ENABLE_SOURCE_MAP_SHIFTS {
-                                    shift.after.advance(cheap_normalizer[1]);
+                                    shift.after.advance(&path_part);
                                 }
                             }
 

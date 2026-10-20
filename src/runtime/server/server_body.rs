@@ -653,11 +653,12 @@ impl AnyRoute {
         methods.insert(Method::GET);
         methods.insert(Method::HEAD);
 
-        init_ctx.user_routes.push(server_config::StaticRouteEntry {
-            path: builder.into_boxed_slice(),
+        server_config::StaticRouteEntry::push_bundled_file(
+            init_ctx.user_routes,
+            &builder,
             route,
-            method: methods,
-        });
+            methods,
+        );
         Ok(None)
     }
 

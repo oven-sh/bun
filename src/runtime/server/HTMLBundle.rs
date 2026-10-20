@@ -614,7 +614,7 @@ impl Route {
                         {
                             route_path = &route_path[1..];
                         }
-                        headers.append(b"SourceMap", route_path);
+                        headers.append(b"SourceMap", &strings::percent_encode_url_path(route_path));
                     }
 
                     let static_route = StaticRoute::new(blob, headers, Some(server), 200);
@@ -632,21 +632,21 @@ impl Route {
                         continue;
                     }
 
-                    bun_core::handle_oom(server.append_static_route(
+                    server.append_bundled_file_route(
                         route_path,
                         AnyRoute::Static(RefPtr::new(static_route)),
                         MethodOptional::Any,
-                    ));
+                    );
                 }
 
                 let (mut html_route, html_route_path) =
                     this_html_route.expect("the loop above visited html_index");
                 let html_route_clone = html_route.clone(global_this);
-                bun_core::handle_oom(server.append_static_route(
+                server.append_bundled_file_route(
                     &html_route_path,
                     AnyRoute::Static(RefPtr::new(html_route)),
                     MethodOptional::Any,
-                ));
+                );
                 self.state.set(State::Html(html_route_clone));
 
                 if !bun_core::handle_oom(server.reload_static_routes()) {

@@ -219,6 +219,27 @@ impl StaticRouteEntry {
     fn memory_cost(&self) -> usize {
         self.path.len() + self.route.memory_cost()
     }
+
+    /// Adds the route of a file the bundler wrote under its URL path, and under its raw name for a client that sends that as is.
+    pub(crate) fn push_bundled_file(
+        routes: &mut Vec<StaticRouteEntry>,
+        path: &[u8],
+        route: AnyRoute,
+        method: MethodOptional,
+    ) {
+        if let std::borrow::Cow::Owned(encoded) = strings::percent_encode_url_path(path) {
+            routes.push(StaticRouteEntry {
+                path: encoded.into_boxed_slice(),
+                route: route.clone(),
+                method,
+            });
+        }
+        routes.push(StaticRouteEntry {
+            path: Box::from(path),
+            route,
+            method,
+        });
+    }
 }
 
 impl ServerConfig {
@@ -312,20 +333,6 @@ impl ServerConfig {
         that.normalize_static_routes_list()?;
 
         Ok(that)
-    }
-
-    pub(crate) fn append_static_route(
-        &mut self,
-        path: &[u8],
-        route: AnyRoute,
-        method: MethodOptional,
-    ) -> Result<(), crate::Error> {
-        self.static_routes.push(StaticRouteEntry {
-            path: Box::<[u8]>::from(path),
-            route,
-            method,
-        });
-        Ok(())
     }
 }
 

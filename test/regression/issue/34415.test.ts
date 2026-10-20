@@ -88,14 +88,13 @@ test("HTTP/1.0 request with TE: chunked still gets a well-formed response", asyn
   const { server, port } = await serve(removeContentLengthHandler);
   try {
     const res = parseResponse(await rawRequest(port, "GET / HTTP/1.0\r\nHost: localhost\r\nTE: chunked\r\n\r\n"));
-    // The native writer never chunk-frames HTTP/1.0 responses, so the header
-    // must not be advertised and the body goes out close-delimited.
+    // Like Node: the TE header of the request makes the response chunk-framed, so the head says chunked and the body has the framing.
     expect({
       transferEncoding: res.headers["transfer-encoding"],
       connection: res.headers.connection,
-      body: res.body,
+      body: decodeChunked(res.body),
     }).toEqual({
-      transferEncoding: undefined,
+      transferEncoding: "chunked",
       connection: "close",
       body: "hello world",
     });

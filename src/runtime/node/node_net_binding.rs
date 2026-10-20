@@ -89,6 +89,7 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            alpn_refused: core::cell::Cell::new(false),
             latest_session: core::cell::Cell::new(None),
         });
         // Weak while idle: `_handle` owns it, and `this_value_for_connect` pins each attempt.

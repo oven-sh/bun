@@ -203,27 +203,10 @@ pub(super) mod ffi {
         // Swaps the cert/key/chain (and session-related state) this connection
         // serves to those of `ctx`; takes its own reference to `ctx`.
         pub(crate) fn SSL_set_SSL_CTX(ssl: *mut SSL, ctx: *mut SSL_CTX) -> *mut SSL_CTX;
-        // Apply `ctx`'s leaf certificate / private key / extra chain directly
-        // to the connection - SSL_set_SSL_CTX alone does not retarget the
-        // certificate once ClientHello processing has reached ALPN selection.
-        pub(crate) fn SSL_CTX_get0_certificate(ctx: *const SSL_CTX) -> *mut core::ffi::c_void;
-        pub(crate) fn SSL_CTX_get0_privatekey(ctx: *const SSL_CTX) -> *mut core::ffi::c_void;
-        pub(crate) fn SSL_use_certificate(
-            ssl: *mut SSL,
-            x509: *mut core::ffi::c_void,
-        ) -> core::ffi::c_int;
-        pub(crate) fn SSL_use_PrivateKey(
-            ssl: *mut SSL,
-            pkey: *mut core::ffi::c_void,
-        ) -> core::ffi::c_int;
-        pub(crate) fn SSL_CTX_get0_chain_certs(
-            ctx: *const SSL_CTX,
-            out_chain: *mut *mut core::ffi::c_void,
-        ) -> core::ffi::c_int;
-        pub(crate) fn SSL_set1_chain(
-            ssl: *mut SSL,
-            chain: *mut core::ffi::c_void,
-        ) -> core::ffi::c_int;
+        /// openssl.c: `SSL_set_SSL_CTX` for a server, which also gives `ctx` the select-certificate callback. Returns 0 when it is too late to switch.
+        pub(crate) fn us_ssl_set_server_ctx(ssl: *mut SSL, ctx: *mut SSL_CTX) -> core::ffi::c_int;
+        /// openssl.c then hands the ALPN protocols of this SSL's ClientHello to `us_dispatch_alpn_offer`.
+        pub(crate) safe fn us_ssl_on_alpn_offer(ssl: &SSL);
         // Stores `cb`/`arg` opaquely on the CTX (BoringSSL never derefs `arg`
         // outside the callback). Opaque-ZST `&SSL_CTX` + by-value fn-ptr +
         // opaque `*mut c_void` ⇒ no caller-side precondition.
@@ -870,6 +853,7 @@ pub(super) fn get_tls_peer_finished_message(
 /// `tlsSocket.setKeyCert(secureContext)` - serve this connection's identity
 /// from the given context: SSL_set_SSL_CTX swaps the cert/key/chain used for
 /// the rest of the handshake (Node calls it from ALPNCallback / SNICallback).
+/// On a server, a call that comes after BoringSSL picked the certificate changes nothing.
 pub(crate) fn set_key_cert(
     this: &This,
     global: &JSGlobalObject,
@@ -891,29 +875,13 @@ pub(crate) fn set_key_cert(
     // SAFETY: `sc` is a live SecureContext; SSL_set_SSL_CTX takes its own reference.
     unsafe {
         let ctx = &(*sc).ctx;
-        ffi::SSL_set_SSL_CTX(ssl_ptr.cast(), ctx.as_ptr().cast());
-        // A client keeps no session id context (see `us_internal_ssl_attach`).
         if ffi::SSL_is_server(boringssl::SSL::opaque_ref(ssl_ptr)) == 0 {
+            ffi::SSL_set_SSL_CTX(ssl_ptr.cast(), ctx.as_ptr().cast());
+            // A client keeps no session id context (see `us_internal_ssl_attach`).
             boringssl::SSL_set_session_id_context(ssl_ptr, core::ptr::null(), 0);
-        }
-        // SSL_set_SSL_CTX stops retargeting the certificate once ClientHello
-        // processing has reached ALPN selection, and Node supports calling
-        // setKeyCert from ALPNCallback - apply the identity directly.
-        let leaf = ffi::SSL_CTX_get0_certificate(ctx.as_ptr().cast());
-        let pkey = ffi::SSL_CTX_get0_privatekey(ctx.as_ptr().cast());
-        if !leaf.is_null() && !pkey.is_null() {
-            let ok_cert = ffi::SSL_use_certificate(ssl_ptr.cast(), leaf);
-            let ok_key = ffi::SSL_use_PrivateKey(ssl_ptr.cast(), pkey);
-            let mut ok_chain = 1;
-            let mut chain: *mut core::ffi::c_void = core::ptr::null_mut();
-            if ffi::SSL_CTX_get0_chain_certs(ctx.as_ptr().cast(), &raw mut chain) == 1
-                && !chain.is_null()
-            {
-                ok_chain = ffi::SSL_set1_chain(ssl_ptr.cast(), chain);
-            }
-            if ok_cert != 1 || ok_key != 1 || ok_chain != 1 {
-                return Err(global.throw(format_args!("setKeyCert failed to apply the context")));
-            }
+        } else if ffi::us_ssl_set_server_ctx(ssl_ptr.cast(), ctx.as_ptr().cast()) != 0 {
+            // BoringSSL reads the callbacks of a handshake off the SSL_CTX that is current.
+            super::install_sni_alpn_selector(ctx.as_ptr());
         }
     }
     Ok(JSValue::UNDEFINED)

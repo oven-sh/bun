@@ -144,7 +144,7 @@ test("the type of a Blob read through an object URL survives a Response.blob() o
         ready.reject(event.error ?? event.message);
         done.reject(event.error ?? event.message);
       };
-      worker.postMessage({ url, shared: state.buffer, types });
+      worker.postMessage({ url, shared: state.buffer });
       const read = await ready.promise;
 
       // The Worker reads while this loop writes, and stops when it ends.
@@ -159,17 +159,16 @@ test("the type of a Blob read through an object URL survives a Response.blob() o
       `,
     "worker.mjs": `import { resolveObjectURL } from "node:buffer";
 
-      self.onmessage = ({ data: { url, shared, types } }) => {
+      self.onmessage = ({ data: { url, shared } }) => {
         const state = new Int32Array(shared);
-        const expected = new Set(["", ...types]);
         // A Blob of this thread over the store of the Blob of the main thread.
         const blob = resolveObjectURL(url);
 
         // The first read comes before "ready", so the loop of the main thread starts while this one reads.
-        let unexpected = expected.has(blob.type) ? 0 : 1;
+        let unexpected = blob.type === "" ? 0 : 1;
         self.postMessage("ready");
         while (Atomics.load(state, 0) === 0) {
-          if (!expected.has(blob.type)) unexpected++;
+          if (blob.type !== "") unexpected++;
         }
         self.postMessage({ unexpected });
       };

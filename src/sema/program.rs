@@ -7135,9 +7135,6 @@ impl<'s> Files<'s> {
             let by_end = by_end.iter().map(|patterns| slice_in(patterns, arena));
             self.ambient_patterns_by_end = arena.alloc_slice_fill_iter(by_end);
         }
-        // Whether `export_stars_of` is empty for each module that has been augmented. A module can have an augmentation
-        // in every file, and `export_stars_of` looks at all of them.
-        let mut has_no_export_stars: FxHashMap<Sym, bool> = FxHashMap::default();
         for (file, name, sym) in augmentations {
             match self.module_of_specifier_as(file, name, self.module(file).default_mode) {
                 // An augmentation of a module that is `export = ns` is merged into `ns`.
@@ -7163,10 +7160,7 @@ impl<'s> Files<'s> {
                     // merged into the symbol at its declaration.
                     // `getResolvedMembersOrExportsOfSymbol` calls `getExportsOfModuleWorker`, and
                     // stores nothing in `moduleSymbolLinks`.
-                    let has_none = *has_no_export_stars
-                        .entry(main_module)
-                        .or_insert_with(|| self.export_stars_of(main_module).is_empty());
-                    let resolved_exports = if has_none {
+                    let resolved_exports = if self.export_stars_of(main_module).is_empty() {
                         SymbolMap::new_in(self.arena)
                     } else {
                         let links = resolve!(&*self, resolver => resolver.exports_of_module_worker(main_module));
@@ -7195,10 +7189,7 @@ impl<'s> Files<'s> {
                             self.merge_symbol(found, addition, false);
                         }
                     }
-                    let merged = self.merge_symbol(main_module, sym, false);
-                    let has_none = has_none && self.export_stars_of(sym).is_empty();
-                    has_no_export_stars.insert(main_module, has_none);
-                    has_no_export_stars.insert(merged, has_none);
+                    self.merge_symbol(main_module, sym, false);
                 }
                 // `mergeModuleAugmentation`: an augmentation of a module that doesn't exist is
                 // ignored.

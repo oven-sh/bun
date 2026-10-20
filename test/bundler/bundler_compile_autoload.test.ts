@@ -608,4 +608,69 @@ console.log("PRELOAD");
       setCwd: true,
     },
   });
+
+  // Prints TEST_VAR as the main thread and as a Worker see it. A Worker applies the
+  // flags of the executable to its own env loader, so the two can differ.
+  const mainAndWorkerTestVar = /* js */ `
+    const read = () => process.env.TEST_VAR || "not found";
+    const worker = new Worker(URL.createObjectURL(new Blob(["postMessage((" + read + ")())"])));
+    const fromWorker = await new Promise((resolve, reject) => {
+      worker.onmessage = event => resolve(event.data);
+      worker.onerror = event => reject(event.error ?? new Error(event.message));
+      worker.addEventListener("close", event =>
+        reject(new Error("the worker closed with code " + event.code + " before it posted")),
+      );
+    });
+    worker.terminate();
+    console.log("main: " + read() + ", worker: " + fromWorker);
+  `;
+
+  // The .env switches given at run time. The default files are on in this executable.
+  // `--no-env-file` and bunfig `env = false` turn them off, as for `bun run`.
+  itBundled("compile/AutoloadDotenvRuntimeOptOut", {
+    compile: true,
+    files: {
+      "/entry.ts": mainAndWorkerTestVar,
+    },
+    runtimeFiles: {
+      "/.env": `TEST_VAR=from_dotenv`,
+      "/bunfig-env-false/.env": `TEST_VAR=from_dotenv`,
+      "/bunfig-env-false/bunfig.toml": `env = false`,
+      "/bunfig-env-file-false/.env": `TEST_VAR=from_dotenv`,
+      "/bunfig-env-file-false/bunfig.toml": `
+[env]
+file = false
+      `,
+    },
+    run: [
+      { setCwd: true, stdout: "main: from_dotenv, worker: from_dotenv" },
+      { setCwd: true, env: { BUN_OPTIONS: "--no-env-file" }, stdout: "main: not found, worker: not found" },
+      // No arguments to parse: the executable loads bunfig.toml itself.
+      { cwd: "bunfig-env-false", stdout: "main: not found, worker: not found" },
+      // With arguments, the argument parser loads bunfig.toml.
+      {
+        cwd: "bunfig-env-file-false",
+        env: { BUN_OPTIONS: "--smol" },
+        stdout: "main: not found, worker: not found",
+      },
+    ],
+  });
+
+  // `--no-env-file` in the compiled arguments
+  itBundled("compile/AutoloadDotenvExecArgvNoEnvFileCLI", {
+    compile: {
+      execArgv: ["--no-env-file"],
+    },
+    backend: "cli",
+    files: {
+      "/entry.ts": mainAndWorkerTestVar,
+    },
+    runtimeFiles: {
+      "/.env": `TEST_VAR=from_dotenv`,
+    },
+    run: {
+      stdout: "main: not found, worker: not found",
+      setCwd: true,
+    },
+  });
 });

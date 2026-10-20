@@ -951,6 +951,7 @@ impl<'s> Program<'s> {
             names_of_small_numbers: Default::default(),
             interface_declarations: Default::default(),
             counted_export_declarations: Default::default(),
+            has_class_or_function_declaration: Default::default(),
             type_parameter_lists_are_identical: Default::default(),
             generic_mapped_types_in_progress: Vec::new(),
             generic_mapped_types_cut_short: Vec::new(),
@@ -1818,6 +1819,8 @@ pub struct Checker<'p, 's> {
     /// What the check of one declaration of an interface needs to know about all of them. An interface can have a
     /// declaration in every file, so no check of a single declaration may look at all the others.
     interface_declarations: FxHashMap<Sym, std::rc::Rc<errors_heritage::InterfaceDeclarations>>,
+    /// For `check_namespace_merge_order`: whether a class or a function is among the declarations of a symbol.
+    has_class_or_function_declaration: FxHashMap<Sym, bool>,
     /// For `check_external_module_exports`: how many declarations of an exported symbol count as duplicates.
     counted_export_declarations: FxHashMap<Sym, usize>,
     /// `areTypeParametersIdentical` for the declarations of a class or an interface that has several.

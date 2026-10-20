@@ -440,6 +440,22 @@ impl Checker<'_, '_> {
     /// same file.
     fn check_namespace_merge_order(&mut self, file: FileId, sym: Sym) {
         let files = self.files();
+        // Every file that has a part of the symbol gets here, and there can be a part in each file. The symbol's flags
+        // don't tell: a declaration that conflicts with the others is listed without adding its flags.
+        let is_class_or_function = |d: &Decl| matches!(d, Decl::Class(_) | Decl::Fn(_));
+        let has_class_or_function = match self.has_class_or_function_declaration.get(&sym) {
+            Some(&known) => known,
+            None => {
+                let mut parts = files.parts(sym).into_iter();
+                let has_any =
+                    parts.any(|it| files.symbol(it).decls.iter().any(is_class_or_function));
+                (self.has_class_or_function_declaration).insert(sym, has_any);
+                has_any
+            }
+        };
+        if !has_class_or_function {
+            return;
+        }
         let mut decls: Vec<Declaration> = Vec::new();
         for &part in files.parts(sym).iter() {
             for &decl in files.symbol(part).decls {

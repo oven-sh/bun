@@ -7197,6 +7197,7 @@ impl<'s> Files<'s> {
                     }
                     let merged = self.merge_symbol(main_module, sym, false);
                     let has_none = has_none && self.export_stars_of(sym).is_empty();
+                    has_no_export_stars.insert(main_module, has_none);
                     has_no_export_stars.insert(merged, has_none);
                 }
                 // `mergeModuleAugmentation`: an augmentation of a module that doesn't exist is

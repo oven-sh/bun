@@ -69,18 +69,6 @@ impl Program<'_> {
                     || !never_checked.any(|&(from, to)| (from..to).contains(&d.start))
             };
             out.extend(self.take_buffer(file).into_iter().filter(is_checked));
-            // `requestedExternalEmitHelpers`: only the first request for a helper reports, whichever file was being
-            // checked.
-            if self.files.options.import_helpers {
-                let earlier = self.emit_helper_errors_of_earlier_files.lock();
-                out.retain(|d| {
-                    let same = earlier
-                        .iter()
-                        .filter(|it| (it.file, it.code) == (file, d.code) && it.args == d.args);
-                    let first = same.min_by_key(|it| it.rank);
-                    first.is_none_or(|first| first.start == d.start)
-                });
-            }
             if !checked.unused_private_members.is_empty() {
                 let referenced = self.properties_referenced_before.lock();
                 let mut unused = checked.unused_private_members;

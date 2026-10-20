@@ -8,8 +8,7 @@
 //! A file requests each helper once, where `checkSourceFile` first reaches syntax that needs it. So the requesting
 //! positions are collected and sorted in the order it visits them: source order, except for nodes that
 //! `checkNodeDeferred` defers until everything else is checked. An expression that's checked early because something
-//! requests its type is sorted at the point of that request (`emit_helpers_checked_out_of_order`). If an earlier file's
-//! check makes the request, that file's task reports the error (`check_external_emit_helpers_of_later_files`).
+//! requests its type is sorted at the point of that request (`emit_helpers_checked_out_of_order`).
 
 use super::sink::held;
 use super::*;
@@ -79,32 +78,19 @@ struct Request {
     start: u32,
     end: u32,
     helpers: u32,
-    /// The expression whose check makes the request (`emit_helpers_checked_out_of_order`). `NONE` if checking something
-    /// else makes it, which only the file's own `checkSourceFile` reaches.
-    expression: ExprId,
-}
-
-/// A diagnostic of `checkExternalEmitHelpers` in `file`, reported at `start` while checking an earlier file, the one
-/// with `rank`.
-pub(super) struct EarlierEmitHelperError {
-    pub(super) file: FileId,
-    pub(super) code: u32,
-    pub(super) args: super::sink::Args,
-    pub(super) rank: u32,
-    pub(super) start: u32,
 }
 
 /// Returns `Request::order` for the request that checking `expression` makes. `regular` is the number of deferrals on
-/// the way to it and its position. `checked` is the first list from `emit_helpers_checked_out_of_order`.
+/// the way to it and its position. `checked` is the result of `emit_helpers_checked_out_of_order`.
 fn order_of_expression(
-    expression: (FileId, ExprId),
+    expression: ExprId,
     regular: (u32, u32),
-    checked: &[(FileId, ExprId, (u32, u32))],
+    checked: &[(ExprId, (u32, u32))],
 ) -> (u32, u32, u32) {
     let regular = (regular.0, regular.1, 0);
-    match checked.iter().position(|it| (it.0, it.1) == expression) {
+    match checked.iter().position(|it| it.0 == expression) {
         Some(rank) => {
-            let (deferred, start) = checked[rank].2;
+            let (deferred, start) = checked[rank].1;
             regular.min((deferred, start, rank as u32 + 1))
         }
         None => regular,
@@ -120,18 +106,17 @@ struct AllAccessorDeclarations {
 
 impl Checker<'_, '_> {
     pub(super) fn check_external_emit_helpers(&mut self, file: FileId) {
-        // FOR SPEED: skips the walk if this file's `tslib` has every helper, even though a later file may resolve to a
-        // different `tslib`.
-        if !self.files().options.import_helpers || self.emit_helpers_has_every_helper(file) {
+        // FOR SPEED: skips the walk if the file's `tslib` has every helper.
+        if !self.files().options.import_helpers
+            || !self.emit_helpers_is_effective_external_module(file)
+            || self.emit_helpers_has_every_helper(file)
+        {
             return;
         }
-        let (checked, in_later_files) = self.emit_helpers_checked_out_of_order(file);
-        self.check_external_emit_helpers_of_later_files(file, &in_later_files);
-        if self.emit_helpers_is_effective_external_module(file) {
-            let mut requests = self.emit_helpers_requests(file, &checked);
-            requests.shared_sort_by_key(|request| request.order);
-            self.emit_helpers_check_requests(file, requests);
-        }
+        let checked = self.emit_helpers_checked_out_of_order(file);
+        let mut requests = self.emit_helpers_requests(file, &checked);
+        requests.shared_sort_by_key(|request| request.order);
+        self.emit_helpers_check_requests(file, requests);
     }
 
     /// `IsEffectiveExternalModule`. All of a declaration file is ambient.
@@ -142,48 +127,6 @@ impl Checker<'_, '_> {
             && (options.module == ModuleKind::CommonJs || options.module.is_node());
         module.hir.kind != FileKind::Declaration
             && (module.hir.has_module_syntax || is_commonjs_module)
-    }
-
-    /// `checkExternalEmitHelpers` where checking `visited` reached an expression of a file that's checked later.
-    /// `requestedExternalEmitHelpers` belongs to the location's file, so that file doesn't report the same error again.
-    /// Its task can't see this one's report, so `finish_file` drops what that task reported instead.
-    fn check_external_emit_helpers_of_later_files(
-        &mut self,
-        visited: FileId,
-        in_later_files: &[(FileId, ExprId)],
-    ) {
-        let mut later: Vec<FileId> = in_later_files.iter().map(|it| it.0).collect();
-        later.shared_sort_unstable();
-        later.dedup();
-        for file in later {
-            if !self.emit_helpers_is_effective_external_module(file)
-                || self.emit_helpers_has_every_helper(file)
-            {
-                continue;
-            }
-            // Sorted in the order of the checks.
-            let check_index = |request: &Request| {
-                let mut checks = in_later_files.iter();
-                checks.position(|&it| it == (file, request.expression))
-            };
-            let requests = self.emit_helpers_requests(file, &[]).into_iter();
-            let mut requests: Vec<(usize, Request)> = requests
-                .filter_map(|request| Some((check_index(&request)?, request)))
-                .collect();
-            requests.shared_sort_by_key(|it| (it.0, it.1.order));
-            let from = self.reported.len();
-            self.emit_helpers_check_requests(file, requests.into_iter().map(|it| it.1).collect());
-            let rank = self.files().rank_of_file(visited);
-            let reported = self.reported[from..].iter().filter(|d| d.file == file);
-            let reported = reported.map(|d| EarlierEmitHelperError {
-                file,
-                code: d.code,
-                args: d.args.clone(),
-                rank,
-                start: d.start,
-            });
-            (self.p.emit_helper_errors_of_earlier_files.lock()).extend(reported);
-        }
     }
 
     /// FOR SPEED: true if `checkExternalEmitHelpers` can't report anything in `file`, whichever helper is requested,
@@ -325,11 +268,11 @@ impl Checker<'_, '_> {
 
     // ───────────────────────────── requests ─────────────────────────────
 
-    /// `checked`, here and below, is the first list from `emit_helpers_checked_out_of_order`.
+    /// `checked`, here and below, is the result of `emit_helpers_checked_out_of_order`.
     fn emit_helpers_requests(
         &mut self,
         file: FileId,
-        checked: &[(FileId, ExprId, (u32, u32))],
+        checked: &[(ExprId, (u32, u32))],
     ) -> Vec<Request> {
         // `GetEmitScriptTarget`
         let target = match self.files().options.target {
@@ -469,7 +412,7 @@ impl Checker<'_, '_> {
         file: FileId,
         target: ScriptTarget,
         index: &ExprsByKind,
-        checked: &[(FileId, ExprId, (u32, u32))],
+        checked: &[(ExprId, (u32, u32))],
         requests: &mut Vec<Request>,
     ) {
         if target >= ScriptTarget::ES2018 {
@@ -508,7 +451,6 @@ impl Checker<'_, '_> {
                 start,
                 end,
                 helpers,
-                expression: ExprId::NONE,
             });
         }
         for &e in index.of(ExprTag::Yield) {
@@ -520,11 +462,10 @@ impl Checker<'_, '_> {
             {
                 let start = self.error_start_inside_parentheses(file, e);
                 requests.push(Request {
-                    order: order_of_expression((file, e), (deferred, start), checked),
+                    order: order_of_expression(e, (deferred, start), checked),
                     start,
                     end: self.error_end_inside_parentheses(file, e),
                     helpers: AWAIT | ASYNC_DELEGATOR | ASYNC_VALUES,
-                    expression: e,
                 });
             }
         }
@@ -556,7 +497,6 @@ impl Checker<'_, '_> {
                     start,
                     end,
                     helpers,
-                    expression: ExprId::NONE,
                 });
             };
             match stmt.kind {
@@ -717,7 +657,7 @@ impl Checker<'_, '_> {
         file: FileId,
         target: ScriptTarget,
         index: &ExprsByKind,
-        checked: &[(FileId, ExprId, (u32, u32))],
+        checked: &[(ExprId, (u32, u32))],
         requests: &mut Vec<Request>,
     ) {
         if target >= ScriptTarget::ES2018 {
@@ -740,7 +680,6 @@ impl Checker<'_, '_> {
                     start,
                     end,
                     helpers: REST,
-                    expression: ExprId::NONE,
                 });
             }
         }
@@ -764,11 +703,10 @@ impl Checker<'_, '_> {
             let dots_end = self.end_of_token_before(file, self.start_of(file, last.value));
             let start = dots_end.saturating_sub(3);
             requests.push(Request {
-                order: order_of_expression((file, e), (deferred, start), checked),
+                order: order_of_expression(e, (deferred, start), checked),
                 start,
                 end: self.end_of_expr(file, last.value),
                 helpers: REST,
-                expression: e,
             });
         }
     }
@@ -894,7 +832,6 @@ impl Checker<'_, '_> {
                 start,
                 end,
                 helpers,
-                expression: ExprId::NONE,
             });
         }
     }
@@ -1033,18 +970,16 @@ impl Checker<'_, '_> {
         None
     }
 
-    /// Returns the expressions whose check calls `checkExternalEmitHelpers` and that checking `file` reaches because
-    /// something requests a type, in the order it reaches them. The first list is the expressions of `file` that are
-    /// reached before their regular position, each with its `emit_helpers_order_of_early_check`. The second list is the
-    /// expressions of files that are checked later. `emit_helpers_requests` tests the conditions and makes the
-    /// requests.
-    fn emit_helpers_checked_out_of_order(
-        &mut self,
-        file: FileId,
-    ) -> (Vec<(FileId, ExprId, (u32, u32))>, Vec<(FileId, ExprId)>) {
-        let (mut early, mut in_later_files) = (Vec::new(), Vec::new());
+    /// Returns the expressions of `file` whose check calls `checkExternalEmitHelpers` and that checking `file` reaches
+    /// before their regular position because something requests a type, in the order it reaches them, each with its
+    /// `emit_helpers_order_of_early_check`. `emit_helpers_requests` tests the conditions and makes the requests.
+    fn emit_helpers_checked_out_of_order(&mut self, file: FileId) -> Vec<(ExprId, (u32, u32))> {
+        let hir = self.hir(file);
+        let mut early = Vec::new();
         self.follow_check(file, true, &mut |c, of, e, current| {
-            let hir = c.hir(of);
+            if of != file {
+                return false;
+            }
             let is_requesting = match hir[e].kind {
                 ExprKind::Dot { .. } => is_private_name_at(hir, hir.name_pos(e)),
                 ExprKind::PrivateIdentifier(_)
@@ -1053,17 +988,15 @@ impl Checker<'_, '_> {
                 | ExprKind::Class(_) => true,
                 _ => false,
             };
-            if is_requesting && of != file {
-                in_later_files.push((of, e));
-            } else if is_requesting
+            if is_requesting
                 && let Some(order) = c.emit_helpers_order_of_early_check(file, e, current)
-                && !early.iter().any(|it: &(FileId, ExprId, _)| it.1 == e)
+                && !early.iter().any(|it: &(ExprId, _)| it.0 == e)
             {
-                early.push((file, e, order));
+                early.push((e, order));
             }
             false
         });
-        (early, in_later_files)
+        early
     }
 
     /// Returns `Request::order` for `e` when something requests its type while `c.currentNode`, as set by
@@ -1135,7 +1068,7 @@ impl Checker<'_, '_> {
         &self,
         file: FileId,
         target: ScriptTarget,
-        checked: &[(FileId, ExprId, (u32, u32))],
+        checked: &[(ExprId, (u32, u32))],
         requests: &mut Vec<Request>,
     ) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
@@ -1241,11 +1174,10 @@ impl Checker<'_, '_> {
                 SET_FUNCTION_NAME
             };
             requests.push(Request {
-                order: order_of_expression((file, e), (deferred, class.name_pos), checked),
+                order: order_of_expression(e, (deferred, class.name_pos), checked),
                 start,
                 end,
                 helpers,
-                expression: e,
             });
         }
     }
@@ -1256,7 +1188,7 @@ impl Checker<'_, '_> {
         file: FileId,
         target: ScriptTarget,
         index: &ExprsByKind,
-        checked: &[(FileId, ExprId, (u32, u32))],
+        checked: &[(ExprId, (u32, u32))],
         requests: &mut Vec<Request>,
     ) {
         if target >= ScriptTarget::ESNext && self.files().options.use_define_for_class_fields {
@@ -1275,7 +1207,7 @@ impl Checker<'_, '_> {
             };
             let start = self.start_inside_parentheses(file, e);
             requests.push(Request {
-                order: order_of_expression((file, e), (deferred, start), checked),
+                order: order_of_expression(e, (deferred, start), checked),
                 start,
                 end: self.end_inside_parentheses(file, e),
                 helpers: match bound.get_assignment_target_kind(hir, e) {
@@ -1283,7 +1215,6 @@ impl Checker<'_, '_> {
                     AssignmentKind::Definite => CLASS_PRIVATE_FIELD_SET,
                     AssignmentKind::Compound => CLASS_PRIVATE_FIELD_SET | CLASS_PRIVATE_FIELD_GET,
                 },
-                expression: e,
             });
         }
         for &e in index.of(ExprTag::Binary) {
@@ -1301,11 +1232,10 @@ impl Checker<'_, '_> {
                 && let Some(deferred) = self.emit_helpers_span(file, bound.parent_of_expr(e))
             {
                 requests.push(Request {
-                    order: order_of_expression((file, left), (deferred, start), checked),
+                    order: order_of_expression(left, (deferred, start), checked),
                     start,
                     end: self.end_of_name_at(file, start),
                     helpers: CLASS_PRIVATE_FIELD_IN,
-                    expression: left,
                 });
             }
         }

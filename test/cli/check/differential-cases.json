@@ -14620,7 +14620,7 @@
   "90-R17b": {
     "files": {
       "a1.ts": "import { late } from \"./b1\"; export const u = new late();\n",
-      "b1.ts": "@dec class X { static y = 1 } import { u } from \"./a1\"; declare const dec: any; u;\nexport const first = class { static x = 1 }; export const late = class { static x = 2 };\nconst sentinel: number = \"\";\n",
+      "b1.ts": "import { u } from \"./a1\"; u;\nexport const first = class { static x = 1 }; export const late = class { static x = 2 };\nconst sentinel: number = \"\";\n",
       "node_modules/tslib/index.d.ts": "export declare function __nothing(): void;\n",
       "node_modules/tslib/package.json": "{ \"name\": \"tslib\", \"version\": \"2.0.0\", \"types\": \"index.d.ts\" }\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\", \"esnext.decorators\"], \"importHelpers\": true, \"target\": \"es2022\", \"useDefineForClassFields\": false, \"module\": \"esnext\", \"moduleResolution\": \"bundler\" }, \"files\": [\"b1.ts\"] }\n"
@@ -14629,7 +14629,7 @@
   "90-R17c": {
     "files": {
       "a5.ts": "import { mk } from \"./b5\"; export const u = mk();\n",
-      "b5.ts": "const zero = class { static x = 0 }; import { u } from \"./a5\"; u;\nexport function mk() { const k = class { static x = 1 }; return new k(); }\nconst sentinel: number = \"\";\n",
+      "b5.ts": "import { u } from \"./a5\"; u;\nconst zero = class { static x = 0 };\nexport function mk() { const k = class { static x = 1 }; return new k(); }\nconst sentinel: number = \"\";\n",
       "node_modules/tslib/index.d.ts": "export declare function __nothing(): void;\n",
       "node_modules/tslib/package.json": "{ \"name\": \"tslib\", \"version\": \"2.0.0\", \"types\": \"index.d.ts\" }\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\", \"esnext.decorators\"], \"importHelpers\": true, \"target\": \"es2022\", \"useDefineForClassFields\": false, \"module\": \"esnext\", \"moduleResolution\": \"bundler\" }, \"files\": [\"b5.ts\"] }\n"

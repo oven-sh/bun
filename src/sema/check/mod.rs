@@ -220,11 +220,8 @@ pub struct Program<'s> {
     commits: commit::Commits<'s>,
     /// The union of all tasks' `Checker::referenced_properties`. The task that checks a declaration's
     /// file doesn't see what other tasks have marked, so `finish_file` retracts what that task reported.
-    /// Being a union, it doesn't depend on task order. Tasks write to this set and the next one directly.
+    /// Being a union, it doesn't depend on task order. Tasks write to this set directly.
     properties_referenced_before: Guarded<crate::util::FxHashSet<Sym>>,
-    /// The errors that `check_external_emit_helpers_of_later_files` reported, from all tasks.
-    /// `finish_file` keeps the first of each. The result doesn't depend on task order.
-    emit_helper_errors_of_earlier_files: Guarded<Vec<errors_emit_helpers::EarlierEmitHelperError>>,
     /// `autoArrayType`
     auto_array_type: TypeId,
     /// See `Services::file_info`. Built on first use.
@@ -610,7 +607,6 @@ impl<'s> Program<'s> {
             commits: commit::Commits::new_in(session.arena())
                 .for_files(files.ranks(), session.arena()),
             properties_referenced_before: Default::default(),
-            emit_helper_errors_of_earlier_files: Default::default(),
             auto_array_type,
             package_names_of_linked_files: Default::default(),
             types,

@@ -5363,6 +5363,65 @@ export {};
       `);
     });
 
+    test("`this` in the members of an intersection keeps the aliases", async () => {
+      using dir = project({
+        "a.ts": `
+interface Item<K> { kind: K; self(): this }
+type ItemA = Item<"a">;
+type AT = [1, 2];
+type P<T> = [T, T];
+type Both = AT & { c: 3 };
+declare const t: AT & { c: 3 };
+const a1: { sort: (x: number) => number } = t;
+const a2: { c: 3; d: 4 } = t;
+declare const p: P<1> & { c: 3 };
+const a3: { copyWithin: (x: string) => number } = p;
+declare const i: AT & ItemA;
+const a4: { sort: (x: number) => number } = i;
+const a5: { self: (x: number) => number } = i;
+declare const b: Both;
+const a6: { fill: (x: number) => number } = b;
+declare const same: AT & [1, 2];
+const a7: [1, 2, 3] = same;
+declare const twice: ItemA & Item<"a">;
+const a8: Item<"b"> = twice;
+export {};
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(8,7): error TS2322: Type 'AT & { c: 3; }' is not assignable to type '{ sort: (x: number) => number; }'.
+          Types of property 'sort' are incompatible.
+            Type '(compareFn?: ((a: 1 | 2, b: 1 | 2) => number) | undefined) => AT & { c: 3; }' is not assignable to type '(x: number) => number'.
+              Types of parameters 'compareFn' and 'x' are incompatible.
+                Type 'number' is not assignable to type '(a: 1 | 2, b: 1 | 2) => number'.
+        a.ts(9,7): error TS2322: Type 'AT & { c: 3; }' is not assignable to type '{ c: 3; d: 4; }'.
+          Property 'd' is missing in type '[1, 2] & { c: 3; }' but required in type '{ c: 3; d: 4; }'.
+        a.ts(11,7): error TS2322: Type 'P<1> & { c: 3; }' is not assignable to type '{ copyWithin: (x: string) => number; }'.
+          Types of property 'copyWithin' are incompatible.
+            Type '(target: number, start: number, end?: number | undefined) => P<1> & { c: 3; }' is not assignable to type '(x: string) => number'.
+              Target signature provides too few arguments. Expected 2 or more, but got 1.
+        a.ts(13,7): error TS2322: Type 'AT & ItemA' is not assignable to type '{ sort: (x: number) => number; }'.
+          Types of property 'sort' are incompatible.
+            Type '(compareFn?: ((a: 1 | 2, b: 1 | 2) => number) | undefined) => AT & ItemA' is not assignable to type '(x: number) => number'.
+              Types of parameters 'compareFn' and 'x' are incompatible.
+                Type 'number' is not assignable to type '(a: 1 | 2, b: 1 | 2) => number'.
+        a.ts(14,7): error TS2322: Type 'AT & ItemA' is not assignable to type '{ self: (x: number) => number; }'.
+          The types returned by 'self(...)' are incompatible between these types.
+            Type 'AT & ItemA' is not assignable to type 'number'.
+        a.ts(16,7): error TS2322: Type 'Both' is not assignable to type '{ fill: (x: number) => number; }'.
+          Types of property 'fill' are incompatible.
+            Type '(value: 1 | 2, start?: number | undefined, end?: number | undefined) => Both' is not assignable to type '(x: number) => number'.
+              Types of parameters 'value' and 'x' are incompatible.
+                Type 'number' is not assignable to type '1 | 2'.
+        a.ts(18,7): error TS2322: Type 'AT & [1, 2]' is not assignable to type '[1, 2, 3]'.
+          Source has 2 element(s) but target requires 3.
+        a.ts(20,7): error TS2322: Type 'ItemA & Item<"a">' is not assignable to type 'Item<"b">'.
+          Type '"a"' is not assignable to type '"b"'.
+        "
+      `);
+    });
+
     test("prints a union without its alias once an intersection in it has reduced to never", async () => {
       using dir = project({
         "a.ts": `

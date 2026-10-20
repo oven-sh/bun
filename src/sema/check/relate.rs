@@ -5955,11 +5955,15 @@ impl<'p, 's> Checker<'p, 's> {
                 // The diagnostic prints this type, and `apparent_type` leaves some intersections
                 // unchanged. One that it has replaced is already the apparent type. For example,
                 // the apparent type of `string & String` is `String`.
-                source = if REPORT && apparent == source {
-                    self.apparent_type_of_intersection(source)
+                if REPORT && apparent == source {
+                    // If it's still an intersection, `printed_source` makes it again.
+                    let printed = self.apparent_type_of_intersection(source);
+                    if !self.is_intersection(printed) || printed != self.printed_source(source) {
+                        source = printed;
+                    }
                 } else {
-                    apparent
-                };
+                    source = apparent;
+                }
                 sd = self.data(source);
             }
         } else if self.is_generic_mapped_type(source) {
@@ -6678,7 +6682,8 @@ impl<'p, 's> Checker<'p, 's> {
                         unmatched.push(tp);
                     }
                 }
-                self.report_unmatched_property(r, source, target, &sm, &unmatched);
+                let printed = self.printed_source(source);
+                self.report_unmatched_property(r, printed, target, &sm, &unmatched);
             }
             return Ternary::FALSE;
         }
@@ -6716,9 +6721,14 @@ impl<'p, 's> Checker<'p, 's> {
             if self.is_same_property_symbol((sp, source_mapper), (tp, tm.mapper)) {
                 continue;
             }
+            let printed = if REPORT {
+                self.printed_source(source)
+            } else {
+                source
+            };
             let related = self.property_related_to::<REPORT>(
                 r,
-                (source, target),
+                (printed, target),
                 sp,
                 |c| c.type_of_prop_as_read(sp, source_mapper),
                 tp,
@@ -7213,7 +7223,8 @@ impl<'p, 's> Checker<'p, 's> {
                     should_elaborate = false;
                 }
                 if REPORT && should_elaborate {
-                    self.report_error(r, 2658, &[Arg::Type(source), Arg::Sig(t)]);
+                    let printed = self.printed_source(source);
+                    self.report_error(r, 2658, &[Arg::Type(printed), Arg::Sig(t)]);
                 }
                 return Ternary::FALSE;
             }
@@ -8058,7 +8069,8 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         if REPORT {
-            self.report_error(r, 2329, &[Arg::Type(key), Arg::Type(source)]);
+            let printed = self.printed_source(source);
+            self.report_error(r, 2329, &[Arg::Type(key), Arg::Type(printed)]);
         }
         Ternary::FALSE
     }
@@ -8111,6 +8123,17 @@ impl<'p, 's> Checker<'p, 's> {
             })
             .collect();
         self.intersection(&apparent_parts)
+    }
+
+    /// The type that a diagnostic prints for the source of a structural comparison. The comparison
+    /// goes on with the intersection that `apparent_type` has left unchanged, so that `this` in its
+    /// members is that intersection, with its aliases. A tuple has no slot for `this`.
+    fn printed_source(&mut self, source: TypeId) -> TypeId {
+        if self.has_only_own_apparent_types(source) {
+            self.apparent_type_of_intersection(source)
+        } else {
+            source
+        }
     }
 
     /// `apparent_type_of_intersection(ty).is_never()`. FOR SPEED: an intersection whose members are

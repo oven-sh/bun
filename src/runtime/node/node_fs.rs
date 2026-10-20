@@ -3309,13 +3309,23 @@ pub(crate) mod args {
         signal: Option<&AbortSignalRef>,
         fast_path_takes_flag: bool,
     ) -> JsResult<bool> {
-        if matches!(target, PathOrFileDescriptor::Path(_)) {
+        match target {
             // An async call that is already aborted opens nothing.
-            return Ok(!(will_be_async && signal.is_some_and(|signal| signal.aborted())));
+            PathOrFileDescriptor::Path(_) => {
+                Ok(!(will_be_async && signal.is_some_and(|signal| signal.aborted())))
+            }
+            PathOrFileDescriptor::Fd(_) => Ok(!will_be_async
+                && fast_path_takes_flag
+                && has_utf8_fast_path_encoding(options, global_object)?),
         }
-        if will_be_async || !fast_path_takes_flag {
-            return Ok(false);
-        }
+    }
+
+    /// Node tests `options.encoding === 'utf8' || options.encoding === 'utf-8'`. Only a sync call that passes a flag with an fd gets here.
+    #[cold]
+    fn has_utf8_fast_path_encoding(
+        options: JSValue,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<bool> {
         let Some(encoding) = options.fast_get(global_object, bun_jsc::BuiltinName::Encoding)?
         else {
             return Ok(false);
@@ -4329,8 +4339,6 @@ pub(crate) mod args {
                         mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
                     }
                     // appendFile forces the flag of an fd to 'a': https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2485-L2486
-                    let fast_path_takes_flag =
-                        data_value.is_string_literal() && default_flag != FileSystemFlags::A;
                     if let Some(flag_) = flag_value
                         && converts_flag(
                             arg,
@@ -4338,7 +4346,7 @@ pub(crate) mod args {
                             &path,
                             arguments.will_be_async,
                             abort_signal.as_ref(),
-                            fast_path_takes_flag,
+                            data_value.is_string_literal() && default_flag != FileSystemFlags::A,
                         )?
                     {
                         flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);

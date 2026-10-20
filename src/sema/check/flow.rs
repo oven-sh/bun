@@ -205,6 +205,9 @@ pub(super) struct FlowMemo {
     types_with_facts: instantiate::Recent,
     /// `getNarrowedType`, keyed by type, candidate, `assumeTrue` and `checkDerived`.
     narrowed_types: FxHashMap<(TypeId, TypeId, bool, bool), TypeId>,
+    /// `narrowTypeByEquality`, keyed by the type, the unmodified type of the other operand, whether
+    /// the operator is `==`, and whether the operands are equal.
+    equal_types: FxHashMap<(TypeId, TypeId, bool, bool), TypeId>,
     /// `flowLoopCache`, keyed by the loop label and `getFlowReferenceKey`: the declared and the
     /// initial type, then the reference.
     flow_loop_cache: FxHashMap<FlowLoopKey, SmallVec<[(Reference, TypeId); 1]>>,
@@ -3415,6 +3418,28 @@ impl<'p, 's> Checker<'p, 's> {
         if value_ty == TypeId::UNRESOLVED {
             return ty;
         }
+        let key = (ty, operand_type, loose, sense);
+        if let Some(&known) = self.flow_memo.equal_types.get(&key) {
+            return known;
+        }
+        let (narrowed, stored) = self
+            .run_memoizable(|c| c.narrow_by_equal_type(ty, operand_type, value_ty, loose, sense));
+        if stored.is_some() && !self.is_stack_low() {
+            self.flow_memo.equal_types.insert(key, narrowed);
+        }
+        narrowed
+    }
+
+    /// Narrows `ty` given whether it's equal (`sense`) to a value of type `operand_type`.
+    /// `value_ty` is the same type as an annotation would denote it. `loose` means `==` semantics.
+    fn narrow_by_equal_type(
+        &mut self,
+        ty: TypeId,
+        operand_type: TypeId,
+        value_ty: TypeId,
+        loose: bool,
+        sense: bool,
+    ) -> TypeId {
         if value_ty.is_null() || value_ty.is_undefined() {
             if !self.p.files.options.strict_null_checks {
                 return ty;

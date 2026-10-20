@@ -6,7 +6,6 @@ use crate::options::Loader;
 use crate::Error;
 use crate::options::{OutputKind, Side};
 use bun_core::String as BunString;
-use bun_paths::PathBuffer;
 use bun_paths::fs;
 use bun_paths::resolve_path::{self, platform};
 use bun_sys::Fd;
@@ -40,6 +39,12 @@ pub struct OutputFile {
     /// The chunk is in the entry point's static import closure, i.e. it loads
     /// before the first `import()`.
     pub loads_at_startup: bool,
+    /// This chunk's module index in the `OutputKind::PrelinkedModuleGraph` blob (see
+    /// `prelinked_module_graph::build`); `u32::MAX` when it is not an ES module of that graph.
+    pub prelinked_module_index: u32,
+    /// Of a `Bytecode` or `BuiltinBytecode` file of a link with an order file, which has no bytes of its own: where its
+    /// cache entry starts in the `BytecodePayload`.
+    pub bytecode_entry_offset: u32,
 }
 
 impl OutputFile {
@@ -67,6 +72,8 @@ impl OutputFile {
             bake_extra: BakeExtra::default(),
             load_order: u32::MAX,
             loads_at_startup: false,
+            prelinked_module_index: u32::MAX,
+            bytecode_entry_offset: 0,
         }
     }
 }
@@ -216,6 +223,8 @@ impl OutputFile {
             bake_extra: options.bake_extra,
             load_order: u32::MAX,
             loads_at_startup: false,
+            prelinked_module_index: u32::MAX,
+            bytecode_entry_offset: 0,
         }
     }
 
@@ -232,7 +241,7 @@ impl OutputFile {
                     bun_sys::Dir::borrow(&root_dir).make_path(parent)?;
                 }
 
-                let mut path_buf = PathBuffer::uninit();
+                let mut path_buf = bun_paths::path_buffer_pool::get();
                 let _ = bun_sys::write_file_with_path_buffer(
                     &mut path_buf,
                     &bun_sys::WriteFileArgs {
@@ -252,14 +261,14 @@ impl OutputFile {
     }
 
     pub(crate) fn copy_to(&self, rel_path: &[u8], dir: Fd) -> Result<(), Error> {
-        let mut out_buf = PathBuffer::uninit();
+        let mut out_buf = bun_paths::path_buffer_pool::get();
         let fd_out = bun_sys::openat(
             dir,
             resolve_path::z(rel_path, &mut out_buf),
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o644,
         )?;
-        let mut in_buf = PathBuffer::uninit();
+        let mut in_buf = bun_paths::path_buffer_pool::get();
         let fd_in = bun_sys::openat(
             Fd::cwd(),
             resolve_path::z(self.src_path.text, &mut in_buf),

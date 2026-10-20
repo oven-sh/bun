@@ -1,0 +1,87 @@
+------------------
+{ printWidth: 80 }
+------------------
+type A = B[] /* c */;
+type C = [...D[] /* c */];
+type E = (F | G)[] /* c */;
+let h: A /* c */[] | null, i: A<B> /* c */[], j: A[] /* c */;
+type K = L extends (infer M) /* c */[] ? M : 1;
+function n(...o: P[] /* c */) {}
+type Q1 = B[] /* c */;
+let q2: B[] /* c */; // x
+let q3: B /* c */[] = d;
+type Q4 = C | B[] /* c */;
+type Q5 = [C, B[] /* c */];
+type Q6 = D<B[] /* c */>;
+type Q7 = D<E<B[] /* c */>, C>;
+function q8(a: B[] /* c */) {}
+function q9(): B /* c */[] {}
+function q10(this: B[] /* c */, a) {}
+declare function q11(): B /* c */[];
+type Q12 = { a: B[] /* c */ };
+type Q13 = { a: B /* c */[]; b: C };
+type Q14 = B[] /* c */[];
+type Q15 = B[] /* c */;
+type Q16 = (() => B /* c */[]) | C;
+let q17 = (d as B /* c */[]).e;
+let q18 = f(g(d as B[] /* c */), e);
+let q19 = { b: d as B /* c */[], e };
+let q20 = <B /* c */[]>d;
+class Q21 {
+  a: B /* c */[];
+  b;
+}
+class Q22<T extends B[] /* c */> {
+  a;
+}
+try {
+} catch (q23: B /* c */[]) {}
+if (d as B /* c */[]) {
+}
+let { q24 = d as B[] /* c */ } = e;
+type Q25 = B[] /* c */; /* x */
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type A = B[] /* c */;
+type C = [...D[] /* c */];
+type E = (F | G)[] /* c */;
+let h: A /* c */[] | null, i: A<B> /* c */[], j: A[] /* c */;
+type K = L extends (infer M) /* c */[] ? M : 1;
+function n(...o: P[] /* c */) {}
+type Q1 = B[] /* c */;
+let q2: B[] /* c */; // x
+let q3: B /* c */[] = d;
+type Q4 = C | B[] /* c */;
+type Q5 = [C, B[] /* c */];
+type Q6 = D<B[] /* c */>;
+type Q7 = D<E<B[] /* c */>, C>;
+function q8(a: B[] /* c */) {}
+function q9(): B /* c */[] {}
+function q10(this: B[] /* c */, a) {}
+declare function q11(): B /* c */[];
+type Q12 = { a: B[] /* c */ };
+type Q13 = { a: B /* c */[]; b: C };
+type Q14 = B[] /* c */[];
+type Q15 = B[] /* c */;
+type Q16 = (() => B /* c */[]) | C;
+let q17 = (d as B /* c */[]).e;
+let q18 = f(g(d as B[] /* c */), e);
+let q19 = { b: d as B /* c */[], e };
+let q20 = <B /* c */[]>d;
+class Q21 {
+  a: B /* c */[];
+  b;
+}
+class Q22<T extends B[] /* c */> {
+  a;
+}
+try {
+} catch (q23: B /* c */[]) {}
+if (d as B /* c */[]) {
+}
+let { q24 = d as B[] /* c */ } = e;
+type Q25 = B[] /* c */; /* x */
+
+===================== End =====================

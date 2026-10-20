@@ -469,6 +469,8 @@ Bun reads these environment variables from [`.env` files](/runtime/environment-v
 
 Options you pass to `s3.file(credentials)`, `new Bun.S3Client(credentials)`, or any of the methods that accept credentials override these defaults. So if you use the same credentials for different buckets, you can set the credentials once in your `.env` file and pass only `bucket: "my-bucket"` to `s3.file()`.
 
+Bun sends S3 requests through the proxy that `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY` select for the endpoint, the same way [`fetch`](/runtime/networking/fetch#proxying-requests) does.
+
 ### `S3Client` objects
 
 When you're not using environment variables, or you're using multiple buckets, create an `S3Client` object to set credentials explicitly.

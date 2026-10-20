@@ -3,8 +3,6 @@
 //! `bun_shell_parser` crate (no `bun_jsc` dependency). `Interpreter::parse`
 //! in `bun_runtime` consumes these via `bun_shell_parser::*`.
 
-#![allow(non_camel_case_types, non_snake_case, clippy::too_many_arguments)]
-
 use core::fmt;
 use std::io::Write as _;
 

@@ -6,8 +6,8 @@ use bun_alloc::{AllocError, allocators};
 use bun_collections::VecExt as _;
 use bun_core::Generation;
 use bun_core::MutableString;
+use bun_paths::MAX_PATH_BYTES;
 use bun_paths::strings;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer};
 use bun_ptr::Interned;
 use bun_sys::{self, Fd};
 use bun_threading::Mutex;
@@ -71,13 +71,6 @@ impl strings::Appender for FilenameStoreAppender {
         // (never freed); `Interned` is the canonical proof type for this widen.
         Ok(unsafe { bun_ptr::Interned::assume(r) }.as_bytes())
     }
-    #[inline]
-    fn append_lower_case(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
-        // SAFETY: see `append`.
-        let r = unsafe { FilenameStoreBacking::append_lower_case(self.backing, s)? };
-        // SAFETY: see `append`.
-        Ok(unsafe { bun_ptr::Interned::assume(r) }.as_bytes())
-    }
 }
 
 // dirname_store/filename_store are &'static singletons —
@@ -112,6 +105,9 @@ pub trait EntryKindResolver {
 pub enum EntryKind {
     Dir,
     File,
+    /// A symlink whose target doesn't exist. It's treated like a missing entry, which is how
+    /// `stat()` reports it.
+    Dangling,
 }
 
 #[derive(Clone, Copy)]
@@ -442,7 +438,7 @@ impl DirEntry {
         // case (matches `DirEntry::get`); only a basename longer than
         // `MAX_PATH_BYTES` — which `getdents`/`FindNextFile` can't produce —
         // would touch the heap.
-        let mut name_lc_buf = PathBuffer::uninit();
+        let mut name_lc_buf = bun_paths::path_buffer_pool::get();
         let name_lc_heap: Option<bun_collections::StringHashMapContext::PrehashedCaseInsensitive> =
             if name_slice.len() <= MAX_PATH_BYTES {
                 None
@@ -603,7 +599,7 @@ impl DirEntry {
         if query_.is_empty() || query_.len() > MAX_PATH_BYTES {
             return None;
         }
-        let mut scratch_lookup_buffer = PathBuffer::uninit();
+        let mut scratch_lookup_buffer = bun_paths::path_buffer_pool::get();
 
         let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
         let &result_ptr = self.data.get(query)?;
@@ -1045,7 +1041,6 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
         file_contents_ptr,
         shared_buffer.list.as_ptr()
     ));
-    let _ = file_contents_ptr;
     let file_contents: &'buf [u8] = &shared_buffer.list[..file_contents_len];
     Ok(PathContentsPair {
         contents: Cow::Borrowed(file_contents),

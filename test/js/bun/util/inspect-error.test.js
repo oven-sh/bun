@@ -105,7 +105,7 @@ test("Error inside minified file (no color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:86:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:87:5)"
     `);
   }
 });
@@ -134,7 +134,7 @@ test("Error inside minified file (color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:114:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:115:5)"
     `);
   }
 });
@@ -167,6 +167,60 @@ describe("observable properties", () => {
       expect(mock).not.toHaveBeenCalled();
     });
   }
+});
+
+describe("error.code is a String object that has no primitive value", () => {
+  const codes = {
+    "toString throws": `Object.assign(new String("E_X"), { toString() { throw new Error("toString threw"); } })`,
+    "no prototype": `Object.setPrototypeOf(new String("E_X"), null)`,
+    "Symbol.toPrimitive returns an object": `Object.assign(new String("E_X"), { [Symbol.toPrimitive]() { return {}; } })`,
+  };
+
+  async function run(source) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  describe.each(Object.entries(codes))("%s", (_, code) => {
+    // The own-property printer converts a String object with `toString`, so
+    // both calls can throw that error to the caller.
+    test.concurrent("Bun.inspect and console.error return to the caller", async () => {
+      const { stdout, stderr, exitCode, signalCode } = await run(`
+        const e = new Error("boom");
+        e.code = ${code};
+        try { Bun.inspect(e); } catch {}
+        try { console.error(e); } catch {}
+        console.log("survived");
+      `);
+      expect(stderr).toContain("error: boom");
+      expect({ stdout, exitCode, signalCode }).toEqual({ stdout: "survived\n", exitCode: 0, signalCode: null });
+    });
+
+    test.concurrent.each([
+      ["an uncaught throw", "throw e;"],
+      ["an unhandled rejection", "Promise.reject(e);"],
+    ])("%s prints the error", async (_, raise) => {
+      const { stdout, stderr, exitCode, signalCode } = await run(`
+        const e = new Error("boom");
+        e.code = ${code};
+        ${raise}
+      `);
+      expect(stderr).toContain("error: boom");
+      expect({ stdout, exitCode, signalCode }).toEqual({ stdout: "", exitCode: 1, signalCode: null });
+    });
+  });
+
+  test("a String object that has a primitive value is printed", () => {
+    const e = new Error("boom");
+    e.code = new String("E_X");
+    expect(Bun.inspect(e)).toContain(`code: "E_X"`);
+  });
 });
 
 test("error.stack throwing an error doesn't lead to a crash", () => {

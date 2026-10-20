@@ -134,14 +134,11 @@ const ONLY_ENUMERABLE = 2;
  * @returns `value` split on newlines (newline included at end), or `undefined`
  * if non-ascii UTF8/UTF16.
  *
- * Passing this a non-string will cause a panic.
- *
  * @type {(value: string) => string[] | undefined}
  */
-const extractedSplitNewLinesFastPathStringsOnly = $newRustFunction(
-  "node_util_binding.rs",
+const extractedSplitNewLinesFastPathStringsOnly = $bindgen(
+  "node_util_binding.bind.ts",
   "extractedSplitNewLinesFastPathStringsOnly",
-  1,
 );
 
 const isAsyncFunction = v =>
@@ -162,13 +159,11 @@ const {
   isDataView,
   isExternal,
   isMap,
-  isMapIterator,
   isModuleNamespaceObject,
   isNativeError,
   isNumberObject,
   isPromise,
   isSet,
-  isSetIterator,
   isStringObject,
   isWeakMap,
   isWeakSet,
@@ -176,6 +171,10 @@ const {
   isDate,
   isTypedArray,
 } = require("node:util/types");
+
+// previewEntries() reads internal fields of whatever these two accept, so a script must not be able to replace them.
+const isMapIterator = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsMapIterator", 1);
+const isSetIterator = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsSetIterator", 1);
 
 // We need this duplicate here to avoid a circular dependency between node:assert and node:util.
 class AssertionError extends Error {
@@ -197,12 +196,20 @@ const { validateObject, kValidateObjectAllowArray } = require("internal/validato
 
 const SymbolToPrimitive = Symbol.toPrimitive;
 
-const builtInObjects = new SafeSet(
-  ArrayPrototypeFilter(
-    ObjectGetOwnPropertyNames(globalThis),
-    e => RegExpPrototypeExec(/^[A-Z][a-zA-Z0-9]+$/, e) !== null,
-  ),
-);
+// Node.js computes this from `globalThis` at bootstrap, before any host globals
+// (Buffer, URL, ...) are installed. Bun's globalThis already has them when this
+// module loads, so hardcode the names Node observes instead of scraping.
+// prettier-ignore
+const builtInObjects = new SafeSet([
+  "AggregateError", "Array", "ArrayBuffer", "Atomics", "BigInt", "BigInt64Array",
+  "BigUint64Array", "Boolean", "DataView", "Date", "Error", "EvalError",
+  "FinalizationRegistry", "Float32Array", "Float64Array", "Function", "Infinity",
+  "Int16Array", "Int32Array", "Int8Array", "Intl", "Iterator", "JSON", "Map",
+  "Math", "NaN", "Number", "Object", "Promise", "Proxy", "RangeError",
+  "ReferenceError", "Reflect", "RegExp", "Set", "String", "Symbol", "SyntaxError",
+  "TypeError", "URIError", "Uint16Array", "Uint32Array", "Uint8Array",
+  "Uint8ClampedArray", "WeakMap", "WeakRef", "WeakSet",
+]);
 
 // https://tc39.es/ecma262/#sec-IsHTMLDDA-internal-slot
 const isUndetectableObject = v => typeof v === "undefined" && v !== undefined;

@@ -115,6 +115,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let body_loc = func.body.loc;
         let body_stmts: &'a [Stmt] = func.body.stmts.slice();
+        let prev_may_replace_body = self.enter_react_compiler_candidate(
+            func.name.map(|n| n.ref_),
+            func.flags
+                .contains(flags::Function::HasReactHooksSuppression),
+            body_stmts,
+        );
 
         self.push_scope_for_visit_pass(ScopeKind::FunctionArgs, open_parens_loc)
             .expect("unreachable");
@@ -168,11 +174,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `ReactRefresh::hook_ctx_mut` centralises the raw-pointer deref and returns a
             // borrow detached from `self` (the storage is on the caller's stack frame), so
             // it can be held across the `&mut self` method call below.
-            let hook_ctx = self
+            // There is no storage for a method, which takes no signature.
+            if let Some(hook) = self
                 .react_refresh
                 .hook_ctx_mut()
-                .expect("caller did not init hook storage. any function can have react hooks!");
-            if let Some(hook) = hook_ctx.as_ref() {
+                .and_then(|hook_ctx| hook_ctx.as_ref())
+            {
                 // `handle_react_refresh_post_visit_function_body` does not re-enter
                 // `hook_ctx_storage` (it only touches `stmts` and unrelated `P` fields).
                 self.handle_react_refresh_post_visit_function_body(&mut stmts, hook);
@@ -204,6 +211,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.pop_scope();
         self.pop_scope();
 
+        self.react_compiler_may_replace_body = prev_may_replace_body;
         self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
         self.fn_only_data_visit = old_fn_only_data;
 
@@ -291,6 +299,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let prev_require_to_convert_count = self.imports_to_convert_from_require.len();
                 let prev_macro_call_count = self.macro_call_count;
                 let orig_dead = self.is_control_flow_dead;
+                let orig_in_deleted = self.in_deleted_export;
                 // `replacement` is a `BackRef` so the
                 // borrow of `self.options` does not survive across `visit_expr_in_out(&mut self)`.
                 // `BackRef` invariant: `self.options.features.replace_exports` is never mutated
@@ -312,6 +321,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             replacement = Some(ptr);
                             if self.options.features.dead_code_elimination && !is_replace {
                                 self.is_control_flow_dead = true;
+                                self.in_deleted_export = true;
                             }
                         }
                     }
@@ -349,6 +359,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     &mut val,
                     ExprIn {
                         is_immediately_assigned_to_decl: true,
+                        // `const { a } = x` reads `x.a` and drops `x`.
+                        is_property_access_target: matches!(decl.binding.data, BData::BObject(_)),
                         ..Default::default()
                     },
                 );
@@ -564,6 +576,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if IS_POSSIBLY_DECL_TO_REMOVE {
                     self.is_control_flow_dead = orig_dead;
+                    self.in_deleted_export = orig_in_deleted;
                     if let BData::BIdentifier(_) = decl.binding.data {
                         if let Some(_ptr) = replacement {
                             // `BackRef::get` — entry lives in `self.options.features.replace_exports`,
@@ -1213,7 +1226,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if Self::IS_TYPESCRIPT_ENABLED {
-                // `lower_standard_decorators_stmt` owns field placement for such classes.
+                // Standard decorator lowering wraps field initializers where they are.
                 let use_define = self.options.use_define_for_class_fields
                     || class.should_lower_standard_decorators;
 
@@ -1764,12 +1777,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         debug_assert!(p.current_scope == initial_scope);
 
         if let Some(pending) = rc_pending
+            && p.react_compiler_may_replace_body
             && let Some(mut rc) = p.react_compiler.take()
         {
             let name = pending
                 .binding
                 .filter(|r| *r != js_ast::Ref::NONE)
                 .map(|r| p.load_name_from_ref(r));
+            // `Host::new_local` appends the locals of the compiled function here.
+            let generated_len = p.current_scope().generated.len();
             let compiled = {
                 let host = &mut crate::react_compiler_host::ReactCompilerHost::new(p);
                 bun_react_compiler::maybe_compile_pending(
@@ -1785,6 +1801,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 stmts.clear();
                 stmts.extend(new_body);
                 p.react_compiler_result = Some(result);
+                p.drop_symbols_of_replaced_function(pending.binding);
+            } else {
+                p.current_scope_mut().generated.truncate(generated_len);
             }
         }
 
@@ -1986,7 +2005,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 StmtData::SEmpty(_) => continue,
 
                 // skip directives for now
-                StmtData::SDirective(_) => continue,
+                StmtData::SDirective(_) if !p.options.keep_directives => continue,
 
                 StmtData::SLocal(local) => {
                     // Merge adjacent local statements

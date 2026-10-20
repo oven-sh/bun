@@ -5363,6 +5363,44 @@ export {};
       `);
     });
 
+    test("prints a union without its alias once an intersection in it has reduced to never", async () => {
+      using dir = project({
+        "a.ts": `
+type Nullable<T> = T | null | undefined;
+type Kind = { k: 1 } | { k: 2 };
+type Both = Kind | ({ v: 1 } & { v: 2 });
+type Maybe<T> = Kind | ({ v: 1 } & { v: T });
+enum E { A, B }
+declare function tuple<T>(x: T): [T];
+declare const a: Nullable<1> | ({ v: 1 } & { v: string });
+declare const b: Both;
+declare const c: Maybe<2>;
+declare const d: Maybe<1>;
+declare const e: E | ({ v: 1 } & { v: 2 });
+declare const f: Kind | never;
+const shown: never[] = [a, tuple(a), b, tuple(b), c, d, e, f];
+export {};
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(14,25): error TS2322: Type '1 | null | undefined' is not assignable to type 'never'.
+          Type 'undefined' is not assignable to type 'never'.
+        a.ts(14,28): error TS2322: Type '[1 | null | undefined]' is not assignable to type 'never'.
+        a.ts(14,38): error TS2322: Type '{ k: 1; } | { k: 2; }' is not assignable to type 'never'.
+          Type '{ k: 1; }' is not assignable to type 'never'.
+        a.ts(14,41): error TS2322: Type '[{ k: 1; } | { k: 2; }]' is not assignable to type 'never'.
+        a.ts(14,51): error TS2322: Type '{ k: 1; } | { k: 2; }' is not assignable to type 'never'.
+          Type '{ k: 1; }' is not assignable to type 'never'.
+        a.ts(14,54): error TS2322: Type 'Maybe<1>' is not assignable to type 'never'.
+          Type '{ k: 1; }' is not assignable to type 'never'.
+        a.ts(14,57): error TS2322: Type 'E' is not assignable to type 'never'.
+          Type 'E.A' is not assignable to type 'never'.
+        a.ts(14,60): error TS2322: Type 'Kind' is not assignable to type 'never'.
+          Type '{ k: 1; }' is not assignable to type 'never'."
+      `);
+    });
+
     // Per-node caches of files that nothing imports are freed in batches of several files.
     test.each(["", "--threads=1"])("reports every error in 60 files that nothing imports %s", async threads => {
       const leaf = (i: number) => `import { call, type Shape } from "./shared";

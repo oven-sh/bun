@@ -8247,7 +8247,18 @@ impl<'p, 's> Checker<'p, 's> {
                 let has_three = members.iter().filter(is_large).nth(2).is_some();
                 let facts = has_three.then(|| self.facts_for_siblings());
                 let outer = std::mem::replace(&mut self.sibling_intersections, facts);
-                let reduced = self.filter(ty, |c, m| !c.is_never_intersection(m));
+                // `getReducedUnionType` builds a union of the members that are left. Unlike `filterType` it keeps nothing of
+                // the origin, so `A | (X & Y)` is printed as the members of the alias `A`.
+                let mut kept: SmallVec<[TypeId; 8]> = SmallVec::new();
+                for &member in members.iter() {
+                    if !self.is_never_intersection(member) {
+                        kept.push(member);
+                    }
+                }
+                let reduced = match kept.len() == members.len() {
+                    true => ty,
+                    false => self.union(&kept),
+                };
                 self.sibling_intersections = outer;
                 // A member that's being reduced counts as not `never` for now, and doesn't change any counter.
                 let is_in_progress = |member: &TypeId| self.never_in_progress.contains(member);

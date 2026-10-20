@@ -1557,7 +1557,7 @@ describe.concurrent("bun update --latest keeps a dependency on the package of th
   async function expectLinked(dir: string, registry: TestRegistry, name: string, version: string, as = name) {
     expect(askedFor(registry, [name])).toEqual([]);
     expect(await resolutions(dir, name)).toStrictEqual([`${name}@workspace:packages/${name}`]);
-    expect(await loaded(dir, as)).toEqual(own(name, version));
+    expect(await loaded(dir, as)).toMatchObject(own(name, version));
   }
 
   // basic-1 has the very version that the registry has.
@@ -1623,20 +1623,21 @@ describe.concurrent("bun update --latest keeps a dependency on the package of th
       /** Fields of apps/web. The default is a dependency on both entries. */
       web?: Json;
       steps?: Step[];
-      /** The workspace package, and the name that apps/web has for it. */
+      /** The workspace package, the name that apps/web has for it, and more fields of its package.json. */
       name?: string;
       as?: string;
+      linked?: Json;
       /** The range of a-dep after the steps. */
       aDep?: string;
     };
-    const cataloged = ({ root, web, name = "no-deps" }: Row, version = "0.1.0") => ({
+    const cataloged = ({ root, web, name = "no-deps", linked }: Row, version = "0.1.0") => ({
       "package.json": {
         name: "root",
         private: true,
         ...(root ?? { workspaces: { packages: PACKAGES, catalog: entries(name) } }),
       },
       [`${APP}/package.json`]: member("web", web ?? { dependencies: references(name) }),
-      [`packages/${name}/package.json`]: own(name, version),
+      [`packages/${name}/package.json`]: { ...own(name, version), ...linked },
     });
 
     test.each<Row>([
@@ -1672,6 +1673,7 @@ describe.concurrent("bun update --latest keeps a dependency on the package of th
         web: { dependencies: { "a-dep": "catalog:" }, peerDependencies: { "no-deps": "catalog:" } },
       },
       { title: "a name that the registry does not have", name: "only-mine" },
+      { title: "a linked package with a dependency of its own", linked: { dependencies: { "a-dep": "catalog:" } } },
     ])("that links a workspace package stays: $title", async row => {
       const { steps = [["", ...LATEST]], name = "no-deps", as = name, aDep = "^1.0.10" } = row;
       using registry = recording();
@@ -1680,7 +1682,7 @@ describe.concurrent("bun update --latest keeps a dependency on the package of th
       await follow(dir, steps);
       expect(await pkgText(dir)).toBe(rootBefore.replace('"a-dep": "^1.0.1"', `"a-dep": "${aDep}"`));
       await expectLinked(dir, registry, name, "0.1.0", as);
-      await expectInSync(dir, ["", APP]);
+      await expectInSync(dir, ["", APP, `packages/${name}`]);
     });
 
     // one-range-dep@1.0.0 depends on no-deps@^1.0.0, and the override sends that row to the catalog entry too.
@@ -1726,9 +1728,9 @@ describe.concurrent("bun update --latest keeps a dependency on the package of th
 
     // After a change of the catalog the rows that read it are resolved before the root's row for the workspace
     // package, which a bare update leaves unbound until its turn.
-    test.each(["no-deps", "only-mine"])(
-      "that links a workspace package is not sent after a hand edit of another entry: %s",
-      async name => {
+    test.each(["no-deps", "only-mine"].flatMap(name => ["update", "install"].map(command => [name, command] as const)))(
+      "that links a workspace package is not sent after a hand edit of another entry: %s, bun %s",
+      async (name, command) => {
         using registry = recording();
         const catalog = { [name]: "^0.1.0", "a-dep": "1.0.1" };
         const dir = await project(
@@ -1737,7 +1739,7 @@ describe.concurrent("bun update --latest keeps a dependency on the package of th
         );
         const edited = (await pkgText(dir)).replace('"a-dep": "1.0.1"', '"a-dep": "1.0.2"');
         await write(join(dir, "package.json"), edited);
-        expect((await run(dir, "update")).stderr).toBe(SAVED);
+        expect((await run(dir, command)).stderr).toBe(SAVED);
         expect(await pkgText(dir)).toBe(edited);
         expect(await resolutions(dir, "a-dep")).toStrictEqual(["a-dep@1.0.2"]);
         await expectLinked(dir, registry, name, "0.1.0");

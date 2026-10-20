@@ -1770,7 +1770,6 @@ dependencies = [
  "bun_alloc",
  "bun_analytics",
  "bun_core",
- "bun_crash_handler",
  "bun_dispatch",
  "bun_errno",
  "bun_event_loop",

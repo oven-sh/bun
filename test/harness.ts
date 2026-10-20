@@ -620,12 +620,20 @@ class DisposableString extends String {
         return;
       } catch (error: any) {
         if (!isWindows || error?.code !== "EBUSY" || Date.now() > deadline) throw error;
-        Bun.sleepSync(50);
+        sleepSync(50);
       }
     }
   }
-  [Symbol.asyncDispose]() {
-    return fs.promises.rm(this + "", { recursive: true, force: true });
+  async [Symbol.asyncDispose]() {
+    const deadline = Date.now() + 5000;
+    while (true) {
+      try {
+        return await fs.promises.rm(this + "", { recursive: true, force: true });
+      } catch (error: any) {
+        if (!isWindows || error?.code !== "EBUSY" || Date.now() > deadline) throw error;
+        await Bun.sleep(50);
+      }
+    }
   }
 }
 

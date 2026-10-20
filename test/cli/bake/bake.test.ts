@@ -448,19 +448,18 @@ test.concurrent.each([
     join(String(dir), "app/server.ts"),
     `declare const Response: any;\nconst count: number = 1;\nexport default { fetch: () => new Response(String(count)) };\n`,
   );
-  await output.waitFor(/url: (http:\/\/\S+)/);
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
 
   // One save can start the process twice on Windows, and each start prints its own port.
+  if (!isWindows) {
+    expect(await get(url, "/missing")).toBe("200 1");
+    return;
+  }
   const deadline = Date.now() + 10_000;
-  let response: string;
-  while (true) {
-    const url = [...output.text.matchAll(/url: (http:\/\/\S+)/g)].at(-1)![1];
-    try {
-      response = await get(url, "/missing");
-      break;
-    } catch (error) {
-      if (Date.now() > deadline) throw error;
-    }
+  let response = "";
+  while (response !== "200 1" && Date.now() < deadline) {
+    const latest = [...output.text.matchAll(/url: (http:\/\/\S+)/g)].at(-1)![1];
+    response = await get(latest, "/missing").catch(String);
   }
   expect(response).toBe("200 1");
 });

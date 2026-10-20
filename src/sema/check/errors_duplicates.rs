@@ -440,9 +440,6 @@ impl Checker<'_, '_> {
     /// same file.
     fn check_namespace_merge_order(&mut self, file: FileId, sym: Sym) {
         let files = self.files();
-        if !(files.flags(sym)).intersects(SymFlags::CLASS | SymFlags::FUNCTION) {
-            return;
-        }
         let mut decls: Vec<Declaration> = Vec::new();
         for &part in files.parts(sym).iter() {
             for &decl in files.symbol(part).decls {

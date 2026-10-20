@@ -1077,14 +1077,27 @@ export function throws() {
   type Rewrite = {
     /** `sources[0]`. The absolute path of the file when it is `null`. */
     source: string | null;
+    sourceRoot?: string;
     sourcesContent?: boolean;
     mediaType?: string;
+    /** Lines above the text, which the map does not cover. */
+    above?: string;
     /** One mapping for each character of the file, or one for each line. */
     mappings?: "character" | "line";
   };
 
-  /** Three lines above the text, which the map does not cover, and four spaces before each of its lines. */
-  function rewrite(text: string, { source, sourcesContent = true, mediaType = "", mappings = "character" }: Rewrite) {
+  /** `above`, then the text with four spaces before each of its lines. */
+  function rewrite(
+    text: string,
+    {
+      source,
+      sourceRoot,
+      sourcesContent = true,
+      mediaType = "",
+      above = "// 1\n// 2\nglobalThis.injected = function injected() { return new Error().stack; };\n",
+      mappings = "character",
+    }: Rewrite,
+  ) {
     const digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     function vlq(n: number) {
       let rest = n < 0 ? (-n << 1) | 1 : n << 1;
@@ -1100,11 +1113,12 @@ export function throws() {
     let column = 0;
     const map = {
       version: 3,
+      sourceRoot,
       sources: [source],
       sourcesContent: sourcesContent ? [text] : undefined,
       names: [],
       mappings:
-        ";;;" +
+        ";".repeat(above.split("\n").length - 1) +
         lines
           .map((line, i) =>
             Array.from(mappings === "line" ? line.slice(0, 1) : line, (_, j) => {
@@ -1115,13 +1129,13 @@ export function throws() {
           )
           .join(";"),
     };
-    return `// 1\n// 2\nglobalThis.injected = function injected() { return new Error().stack; };\n${lines.map(line => "    " + line).join("\n")}
+    return `${above}${lines.map(line => "    " + line).join("\n")}
 //# sourceMappingURL=data:application/json${mediaType};base64,${btoa(JSON.stringify(map))}`;
   }
 
-  /** `plugin` is what a plugin does to `moved.ts`. Without it there is no plugin. */
-  async function report(movedOnDisk: string, plugin?: Rewrite) {
-    using dir = tempDir("cov-input-source-map", {
+  /** `plugin` is what a plugin does to `moved.ts`. */
+  function files(movedOnDisk: string, plugin?: Rewrite) {
+    return tempDir("cov-input-source-map", {
       "moved.ts": movedOnDisk,
       "plugin.js": `
         ${rewrite}
@@ -1136,6 +1150,8 @@ export function throws() {
           },
         });
       `,
+      "other.ts": "",
+      "uncaught.ts": `import { throws } from "./moved"; throws();`,
       "moved.test.ts": `
         import { ran, throws } from "./moved";
         test("moved", () => {
@@ -1149,6 +1165,11 @@ export function throws() {
         });
       `,
     });
+  }
+
+  /** Without `plugin` there is no plugin. */
+  async function report(movedOnDisk: string, plugin?: Rewrite) {
+    using dir = files(movedOnDisk, plugin);
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1211,8 +1232,101 @@ export function throws() {
     });
   });
 
-  test.concurrent("from a plugin, of another file", async () => {
-    expect(await report(moved, { source: "another.ts" })).toEqual(inTheText);
+  test.concurrent("from a plugin, of the file: one statement above a line with one statement", async () => {
+    const text = `import "./other";\n${moved}`;
+    const expected = {
+      positions: "thrown at moved.ts:11:13, injected at undefined",
+      lines: "FNF:3 FNH:2 DA:1,1 DA:2,0 DA:3,0 DA:5,1 DA:6,1 DA:7,1 DA:8,1 DA:10,1 DA:11,1",
+      exitCode: 0,
+    };
+    expect(await report(text)).toEqual(expected);
+    expect(await report(text, { source: "moved.ts", above: `import "./other";\n` })).toEqual(expected);
+  });
+
+  test.concurrent("from a plugin, of the file: the preview of an error", async () => {
+    using dir = files(moved, { source: "moved.ts" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./plugin.js", "uncaught.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(
+      ` 9 | export function throws() {\n10 |   throw new Error("here");\n                 ^\nerror: here`,
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent.each<[string, Rewrite]>([
+    ["another file", { source: "another.ts" }],
+    ["a file of the same name under sourceRoot", { source: "moved.ts", sourceRoot: "../src" }],
+  ])("from a plugin, of %s", async (_, plugin) => {
+    expect(await report(moved, plugin)).toEqual(inTheText);
+  });
+
+  test.concurrent("from a plugin, of a module that is not a file", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const map = { version: 3, sources: [""], names: [], mappings: "AAAA" };
+          Bun.plugin({
+            name: "virtual",
+            setup(build) {
+              build.module("virtual", () => ({
+                contents: "export default 1;\\n//# sourceMappingURL=data:application/json;base64," + btoa(JSON.stringify(map)),
+                loader: "js",
+              }));
+            },
+          });
+          console.log((await import("virtual")).default);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("1\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("from bun build, of several files", async () => {
+    using dir = tempDir("cov-bundle-source-map", {
+      "a.ts": "export function a1() {\n  return 1;\n}\nexport function a2() {\n  return 2;\n}\n",
+      "b.ts": "export function b1() {\n  return 1;\n}\nexport function b2() {\n  return 2;\n}\n",
+      "index.ts": `export * from "./a";\nexport * from "./b";\n`,
+      "bundle.test.ts": `
+        import { a1, b1 } from "./dist/index.js";
+        test("bundle", () => {
+          a1();
+          b1();
+        });
+      `,
+    });
+    for (const args of [
+      ["build", "index.ts", "--outdir", "dist", "--target=bun", "--sourcemap=inline"],
+      ["test", "--coverage", "--coverage-reporter=lcov", "bundle.test.ts"],
+    ]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "inherit",
+      });
+      expect(await proc.exited).toBe(0);
+    }
+    const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8");
+    expect(
+      lcov
+        .slice(lcov.indexOf("SF:dist"))
+        .split("end_of_record")[0]
+        .match(/^(FNF|FNH):.*$/gm),
+    ).toEqual(["FNF:4", "FNH:2"]);
   });
 
   test.concurrent("from the file itself", async () => {

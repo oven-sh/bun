@@ -24,7 +24,8 @@ pub struct ParsedSourceMap {
     /// If this is empty, this implies that the source code is a single file
     /// transpiled on-demand. If there are items, then it means this is a file
     /// loaded without transpilation but with external sources. This array
-    /// maps `source_index` to the correct filename.
+    /// maps `source_index` to the correct filename. When it is empty, the
+    /// index is 0 or [`crate::chunk::NOT_IN_INPUT_SOURCE_MAP`].
     pub external_source_names: Vec<Box<[u8]>>,
     /// In order to load source contents from a source-map after the fact,
     /// a handle to the underlying source provider is stored, along with a

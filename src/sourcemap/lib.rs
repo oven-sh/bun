@@ -836,7 +836,8 @@ pub(crate) fn parse_url(
                             break 'try_data_url;
                         };
                         // Babel and magic-string write `charset=utf-8;base64`.
-                        if after[..comma].rsplit(|c| *c == b';').next() != Some(b"base64") {
+                        let parameters = &after[..comma];
+                        if parameters != b"base64" && !parameters.ends_with(b";base64") {
                             break 'try_data_url;
                         }
                         let base64_data = &after[comma + 1..];
@@ -861,9 +862,16 @@ pub(crate) fn parse_url(
     parse_json(json_bytes, hint)
 }
 
-/// The map at the end of what an `onLoad` plugin returned for a file, when that
-/// file is its only source.
+/// The inline source map of `source`, a text that was not read from the file at its
+/// path, such as what an `onLoad` plugin returned, when that file is the map's only
+/// source.
 pub fn parse_input_source_map(source: &bun_ast::Source) -> Option<std::sync::Arc<ParsedSourceMap>> {
+    use bun_paths::{platform::Auto, resolve_path};
+
+    let path = source.path.text;
+    if !bun_paths::is_absolute(path) {
+        return None;
+    }
     let url = find_source_mapping_url_u8(source.contents())?;
     let arena = bun_alloc::Arena::new();
     let map = parse_url(&arena, url.slice(), ParseUrlResultHint::MappingsOnly)
@@ -872,9 +880,11 @@ pub fn parse_input_source_map(source: &bun_ast::Source) -> Option<std::sync::Arc
     let [name] = map.external_source_names.as_slice() else {
         return None;
     };
-    let path = source.path.text;
-    (**name == *path || name.strip_prefix(b"./").unwrap_or(name) == bun_paths::basename(path))
-        .then_some(map)
+    let resolved = resolve_path::join_abs_string_checked::<Auto>(
+        resolve_path::dirname::<Auto>(path),
+        &[name],
+    )?;
+    (resolved == path).then_some(map)
 }
 
 /// Parses a JSON source-map
@@ -944,12 +954,23 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
 
     // `Vec<Box<[u8]>>` drops automatically on error.
     let source_paths_slice: Option<Vec<Box<[u8]>>> = if !source_only {
+        // ECMA-426: `sourceRoot` goes before each source, with a `/` between them.
+        let source_root = json.get(b"sourceRoot");
+        let source_root = source_root
+            .as_ref()
+            .and_then(|root| root.as_utf8_string_literal())
+            .unwrap_or_default();
+        let separator: &[u8] = if source_root.is_empty() || source_root.ends_with(b"/") {
+            b""
+        } else {
+            b"/"
+        };
         let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_paths.items().len());
         for item in sources_paths.items() {
             let Some(s) = item.as_str() else {
                 return Err(crate::Error::InvalidSourceMap);
             };
-            v.push(Box::<[u8]>::from(s));
+            v.push([source_root, separator, s].concat().into_boxed_slice());
         }
         Some(v)
     } else {

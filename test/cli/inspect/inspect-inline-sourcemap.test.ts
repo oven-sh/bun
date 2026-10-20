@@ -99,7 +99,7 @@ test("--inspect inline sourcemap sources[0] is a valid path under cwd", async ()
   expect(map.sourcesContent[0]).toBe(source);
 });
 
-test("--inspect inline sourcemap is of what a plugin returned, with or without a source map", async () => {
+test("--inspect inline sourcemap is of what a plugin returned, when that ends with a source map", async () => {
   const map = JSON.parse(
     await inlineSourceMap(
       {

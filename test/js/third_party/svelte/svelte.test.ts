@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { render as svelteRender } from "svelte/server";
 import "./bun-loader-svelte";
 
@@ -8,15 +9,6 @@ describe("require", () => {
     const { body } = svelteRender(App);
 
     expect(body).toBe("<!--[--><h1>Hello world!</h1><!--]-->");
-  });
-
-  it("has the positions in the .svelte file in error.stack", () => {
-    const { default: App } = require("./throws.svelte");
-    expect(() => svelteRender(App)).toThrow(
-      expect.objectContaining({
-        stack: expect.stringMatching(/at boom \(.*throws\.svelte:4:\d+\)\n.*throws\.svelte:6:\d+\)/),
-      }),
-    );
   });
 
   it("works if you require it 1,000 times", () => {
@@ -49,3 +41,30 @@ describe("dynamic import", () => {
     expect(body).toBe("<!--[--><h1>Hello world!</h1><!--]-->");
   });
 });
+
+it("has the positions in the .svelte file in error.stack, with Svelte's source map", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "--preload",
+      "./bun-loader-svelte-source-map.ts",
+      "-e",
+      `
+        import { render } from "svelte/server";
+        import App from "./throws.svelte";
+        try {
+          render(App);
+        } catch (e) {
+          console.log(e.stack.match(/throws\\.svelte:\\d+:\\d+/g).join(" "));
+        }
+      `,
+    ],
+    env: bunEnv,
+    cwd: import.meta.dir,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("throws.svelte:4:15 throws.svelte:6:3\n");
+  expect(exitCode).toBe(0);
+}, 30_000);

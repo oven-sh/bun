@@ -2239,10 +2239,6 @@ fn transpile_source_code_of_any_provenance(
             bun_ast::Expr::data_store_reset();
             bun_ast::Stmt::data_store_reset();
 
-            let input_source_map = args
-                .virtual_source
-                .and_then(bun_sourcemap::parse_input_source_map);
-
             let hash = bun_watcher::Watcher::get_hash(path.text);
             // SAFETY: per fn contract.
             let (main, main_hash) = unsafe { ((*jsc_vm).main(), (*jsc_vm).main_hash) };
@@ -2492,6 +2488,7 @@ fn transpile_source_code_of_any_provenance(
             // ── Node-fallback virtual source ────────────────────────────────
             let fallback_source: bun_ast::Source;
             let mut virtual_source = args.virtual_source;
+            let input_source_map = virtual_source.and_then(bun_sourcemap::parse_input_source_map);
             if is_node_override {
                 if let Some(code) = node_fallbacks::contents_from_path(specifier) {
                     {

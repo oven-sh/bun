@@ -171,13 +171,19 @@ describe.concurrent("sourcemap: negative VLQ delta in mappings is rejected, not 
 });
 
 describe.concurrent("sourcemap: a map without sourcesContent", () => {
-  // The line of `body` that throws is line 7, column 4 of orig.ts.
+  // The line of `body` that throws is line 7, column 4 of the source.
   const map = JSON.stringify({ version: 3, sources: ["orig.ts"], names: [], mappings: ";;AAMG" });
+  const inSrc = JSON.stringify({ version: 3, sourceRoot: "src", sources: ["orig.ts"], names: [], mappings: ";;AAMG" });
+  const inline = (parameters: string, map: string) => ({
+    "entry.js": body + `//# sourceMappingURL=data:application/json${parameters},${btoa(map)}\n`,
+  });
 
   test.each([
-    ["external .map", { "entry.js": body + `//# sourceMappingURL=entry.js.map\n`, "entry.js.map": map }],
-    ["inline data-URL map", { "entry.js": body + `//# sourceMappingURL=data:application/json;base64,${btoa(map)}\n` }],
-  ])("%s", async (_, files) => {
+    ["external .map", "orig.ts", { "entry.js": body + `//# sourceMappingURL=entry.js.map\n`, "entry.js.map": map }],
+    ["inline data-URL map", "orig.ts", inline(";base64", map)],
+    ["inline data-URL map with a charset", "orig.ts", inline(";charset=utf-8;base64", map)],
+    ["sourceRoot", join("src", "orig.ts"), inline(";base64", inSrc)],
+  ])("%s", async (_, source, files) => {
     using dir = tempDir("no-sources-content", files);
     await using proc = Bun.spawn({
       cmd: [bunExe(), "entry.js"],
@@ -189,7 +195,7 @@ describe.concurrent("sourcemap: a map without sourcesContent", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stderr, stdout: stdout.trim() }).toEqual({
       stderr: "",
-      stdout: `at t (${join(String(dir), "orig.ts")}:7:4)`,
+      stdout: `at t (${join(String(dir), source)}:7:4)`,
     });
     expect(exitCode).toBe(0);
   });

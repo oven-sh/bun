@@ -351,6 +351,10 @@ impl LineOffsetTables<'_> {
     }
 }
 
+/// The `source_index` of a mapping that [`NewBuilder::input_source_map`] does not
+/// cover. Every other mapping of a module's own map has 0.
+pub const NOT_IN_INPUT_SOURCE_MAP: i32 = 1;
+
 pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
     pub source_map: SourceMapFormat<T>,
     pub line_offset_tables: LineOffsetTables<'a>,
@@ -385,8 +389,8 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
     pub prepend_count: bool,
 
     /// The map the source came with. Each mapping goes through it, back to the
-    /// text the source was made from, which is source 0. What the map does not
-    /// cover stays a position in the source, which is source 1.
+    /// text the source was made from. What the map does not cover stays a
+    /// position in the source, with [`NOT_IN_INPUT_SOURCE_MAP`].
     pub input_source_map: Option<&'a ParsedSourceMap>,
 }
 
@@ -620,7 +624,7 @@ impl NewBuilder<'_, VLQSourceMap> {
                 current_state.original_line = mapping.original.lines.zero_based();
                 current_state.original_column = mapping.original.columns.zero_based();
             } else {
-                current_state.source_index = 1;
+                current_state.source_index = NOT_IN_INPUT_SOURCE_MAP;
             }
         }
         self.append_mapping_without_remapping(current_state);

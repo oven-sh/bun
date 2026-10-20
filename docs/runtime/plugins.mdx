@@ -248,6 +248,8 @@ This plugin transforms all imports of the form `import env from "env"` into a Ja
 
 A plugin that you register with `Bun.plugin()` can end `contents` with an inline source map of the file it rewrote. Bun then reports stack traces and `bun test --coverage` lines at their positions in the file instead of their positions in `contents`.
 
+The comment must be a `//# sourceMappingURL=data:application/json;base64,` URL on a line of its own.
+
 ```ts plugin.ts icon="/icons/typescript.svg"
 import MagicString from "magic-string";
 import { basename } from "node:path";
@@ -268,7 +270,11 @@ Bun.plugin({
 });
 ```
 
-The map's `sources` must have exactly one entry: the name of the file or its absolute path. Bun ignores any other map.
+Load `plugin.ts` with [`preload`](/runtime/bunfig#preload), so that it runs before the files it rewrites.
+
+The map's `sources` must have exactly one entry, and it must resolve to the file. Bun resolves a relative entry from the file's directory, after `sourceRoot`. Bun ignores any other map.
+
+Positions are as precise as the map. Without `hires: true`, `magic-string` writes one mapping for each line of unchanged text, and every column on that line becomes 1.
 
 Code that the map does not cover has no position in the file. Coverage leaves it out, and a stack frame in it keeps its position in `contents`.
 

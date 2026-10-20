@@ -7,7 +7,8 @@ use bun_collections::VecExt;
 use bun_collections::bit_set::DynamicBitSet;
 use bun_core::{self, Utf8Bytes};
 use bun_jsc::{JSGlobalObject, JSValue, VM, bun_string_jsc};
-use bun_sourcemap::{Ordinal, ParsedSourceMap};
+use bun_sourcemap::chunk::NOT_IN_INPUT_SOURCE_MAP;
+use bun_sourcemap::{Mapping, Ordinal, ParsedSourceMap};
 
 type LinesHits = Vec<u32>;
 type Bitset = DynamicBitSet;
@@ -718,6 +719,9 @@ impl ByteRangeMapping {
         if let Some(source_map) = source_map.as_deref() {
             let mut previous_original = None;
             source_map.for_each_mapping(|mapping| {
+                if is_added_to_the_file(source_map, &mapping) {
+                    return;
+                }
                 // The printer repeats a mapping at column 0 of a line that starts without one.
                 let original = (
                     mapping.original.lines.zero_based(),
@@ -726,10 +730,6 @@ impl ByteRangeMapping {
                 if previous_original.replace(original) == Some(original)
                     && mapping.generated.columns.zero_based() == 0
                 {
-                    return;
-                }
-                // Code that a plugin added to the file.
-                if mapping.source_index != 0 {
                     return;
                 }
                 let (Ok(line), Some(offset)) = (
@@ -760,7 +760,7 @@ impl ByteRangeMapping {
                 let (line, column) = self.line_and_column_of(function.range.start);
                 source_map
                     .find_mapping(line, column)
-                    .is_some_and(|mapping| mapping.source_index == 0)
+                    .is_some_and(|mapping| !is_added_to_the_file(source_map, &mapping))
             });
         }
 
@@ -833,6 +833,11 @@ impl ByteRangeMapping {
             source_url,
         }
     }
+}
+
+/// Code that a plugin added to the file it rewrote: it has no line in the file.
+fn is_added_to_the_file(source_map: &ParsedSourceMap, mapping: &Mapping) -> bool {
+    !source_map.is_external() && mapping.source_index == NOT_IN_INPUT_SOURCE_MAP
 }
 
 /// `ByteRangeMapping::line_starts` and `executable_units`. Lines end where

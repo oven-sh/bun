@@ -1831,6 +1831,30 @@ impl VirtualMachine {
             || !el.next_immediate_tasks.is_empty()
     }
 
+    /// The terms of `is_event_loop_alive`, without its rule that an uncaught error ends the loop.
+    fn has_pending_event_loop_work(&self) -> bool {
+        let el = self.event_loop_shared();
+        let active = self
+            .platform_loop_opt()
+            .map(|h| h.is_active())
+            .unwrap_or(false);
+        (active as usize)
+            + self.active_tasks
+            + el.tasks.readable_length()
+            + el.yield_tasks.len()
+            + (el.has_concurrent_tasks() as usize)
+            + (el.has_pending_refs() as usize)
+            > 0
+            || !el.immediate_tasks.is_empty()
+            || !el.next_immediate_tasks.is_empty()
+    }
+
+    /// What a watch keep-alive loop drives the event loop on. Asked to stop, it runs what is pending: a watcher outlives an uncaught error.
+    pub fn is_event_loop_alive_for_watcher(&self) -> bool {
+        self.is_event_loop_alive()
+            || (crate::posix_signal_handle::stop_requested() && self.has_pending_event_loop_work())
+    }
+
     pub fn wakeup(&mut self) {
         self.event_loop_mut().wakeup();
     }
@@ -4707,6 +4731,11 @@ impl VirtualMachine {
 
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
     pub(crate) fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
+        // Asked to stop, the watcher starts nothing again.
+        if crate::posix_signal_handle::stop_requested() {
+            self.hot_reload_deferred = false;
+            return;
+        }
         if self.hot_reload == HotReload::Watch {
             // Watch reload replaces the process: never defer on a pending
             // entry promise (node restarts regardless of child state).

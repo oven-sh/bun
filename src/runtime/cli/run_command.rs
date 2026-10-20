@@ -1634,10 +1634,19 @@ impl Run<'_> {
         if vm.is_watcher_enabled() {
             vm.report_exception_in_hot_reloaded_module_if_needed();
             loop {
-                while vm.is_event_loop_alive() {
+                while vm.is_event_loop_alive_for_watcher() {
                     vm.tick();
                     vm.report_exception_in_hot_reloaded_module_if_needed();
                     vm.auto_tick_active();
+                }
+                if bun_jsc::posix_signal_handle::stop_requested() {
+                    vm.on_before_exit();
+                    vm.report_exception_in_hot_reloaded_module_if_needed();
+                    // A listener can have run in these calls and left work.
+                    if vm.is_event_loop_alive_for_watcher() {
+                        continue;
+                    }
+                    break;
                 }
                 vm.on_before_exit();
                 vm.report_exception_in_hot_reloaded_module_if_needed();

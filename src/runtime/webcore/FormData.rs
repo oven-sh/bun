@@ -226,13 +226,16 @@ pub(crate) fn to_js_from_multipart_data(
         }
     }
 
-    {
+    let result = {
         let mut wrap = Wrapper { global, form };
+        for_each_multipart_entry(input, boundary, &mut wrap, Wrapper::on_entry)
+    };
 
-        if let Err(e) = for_each_multipart_entry(input, boundary, &mut wrap, Wrapper::on_entry) {
-            scoped_log!(FormData, "failed to parse multipart data");
-            return Err(e);
-        }
+    // A failed parse leaves the parts it already copied in the wrapper.
+    DOMFormData::report_memory_cost(form_data_value);
+    if let Err(e) = result {
+        scoped_log!(FormData, "failed to parse multipart data");
+        return Err(e);
     }
 
     Ok(form_data_value)

@@ -33,6 +33,7 @@ unsafe extern "C" {
         arg4: &EncodedSlice,
     );
     safe fn WebCore__DOMFormData__count(arg0: &mut DOMFormData) -> usize;
+    safe fn WebCore__DOMFormData__reportMemoryCost(value: JSValue);
 }
 
 impl DOMFormData {
@@ -80,5 +81,10 @@ impl DOMFormData {
 
     pub fn count(&mut self) -> usize {
         WebCore__DOMFormData__count(self)
+    }
+
+    /// Report the wrapper's native byte cost to the GC after native appends.
+    pub fn report_memory_cost(value: JSValue) {
+        WebCore__DOMFormData__reportMemoryCost(value);
     }
 }

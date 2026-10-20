@@ -226,14 +226,14 @@ export const pins = {
     // Google only publishes a SHA-1, in dl.google.com/android/repository/repository2-3.xml. This is of the file that has it.
     sha256: "59c2f6dc96743b5daf5d1626684640b20a6bd2b1d85b13156b90333741bad5cc",
   },
-  // A FreeBSD release moves from download.freebsd.org to the archive when it reaches end of life.
+  // download.freebsd.org has a release until its end of life, and then only archive.freebsd.org/old-releases does.
   freebsd: {
-    version: "14.3",
-    baseUrl: "https://archive.freebsd.org/old-releases",
+    version: "14.4",
+    baseUrl: "https://download.freebsd.org/releases",
     // base.txz in the MANIFEST beside it.
     sha256: {
-      x64: "e38b5cf756d60086a6c2f736eff19cc7685f7e2313e31d14342fc8df57200a92",
-      aarch64: "f83e824cb7a20dbadb2888a8bd253e6a1ac35024cc6dc8af9f3e229f75ec7129",
+      x64: "769f60a6eea2938ad6b7943cfbcc17dfaf7d1f7ba59a32b869a00349302df853",
+      aarch64: "c456bf75ee3d0b4da0b0b527402b0a9e61497f02756b2cc5801b51e80b3f90c4",
     },
   },
   // The release WebKit's prebuilt is built on (glibc 2.31).

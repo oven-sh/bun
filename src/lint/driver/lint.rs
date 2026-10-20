@@ -19,7 +19,7 @@ use bun_lint::language::Parser;
 use bun_lint::languages::{Dialect, LineBreaks, Parsed};
 use bun_lint::linter::{
     Again, LintMessage, LintOptions, LintResult, ResolvedConfig, RuleId, Suggestion, apply_fixes,
-    is_parse_error, is_redeclaration, may_be_misread,
+    is_parse_error, is_redeclaration, may_be_misread, redeclarations,
 };
 use bun_lint::rule::{Kind, Plugin};
 use bun_lint_graph::Graph;
@@ -135,6 +135,8 @@ struct How<'h> {
     /// Set if the file isn't JavaScript: the arguments of [`File::in_language`].
     in_language: Option<(&'h [u8], &'h Parsed, LineBreaks)>,
     rules: Which<'h>,
+    /// True if the text is the output of a fix pass.
+    is_fixed: bool,
 }
 
 fn only_errors(_: &RuleId, severity: Severity) -> bool {
@@ -204,7 +206,8 @@ impl Context<'_, '_> {
     /// Whether fixes are applied to the file at `path`. A partly staged file won't be written, so its problems are reported
     /// unfixed.
     pub(crate) fn fixes_file(&self, path: &[u8]) -> bool {
-        self.fixes() && !self.only.is_some_and(|it| it.is_partly_staged(path))
+        let is_written = self.options.fix;
+        self.fixes() && !(is_written && self.only.is_some_and(|it| it.is_partly_staged(path)))
     }
 
     /// oxlint's `--fix-suggestions` and `--fix-dangerously`: a suggestion of a kind that they allow is as good as a fix.
@@ -302,6 +305,42 @@ impl Context<'_, '_> {
     /// Parses `text` as the file at `path` and lints it, without types.
     pub(crate) fn verify(&self, path: &[u8], text: &[u8], config: &ResolvedConfig) -> LintResult {
         self.verify_as(path, text, config, &How::default())
+    }
+
+    /// Lints `text` for one pass of `--fix`, like [`Self::verify`]. `is_fixed` is true if the previous pass produced
+    /// `text`.
+    pub(crate) fn verify_pass(
+        &self,
+        path: &[u8],
+        text: &[u8],
+        config: &ResolvedConfig,
+        is_fixed: bool,
+    ) -> LintResult {
+        let how = How {
+            is_fixed,
+            ..How::default()
+        };
+        self.verify_as(path, text, config, &how)
+    }
+
+    /// Adds `file`'s [`redeclarations`] to [`LintResult::tolerated_errors`], so that fixes that declare a name twice
+    /// are reverted. Only counts them when two texts will be compared: fixes produced this one (`is_fixed`), or it has
+    /// a fix that will be applied.
+    pub(crate) fn count_redeclarations<'f>(
+        &self,
+        file: &'f File<'f>,
+        result: &mut LintResult,
+        is_fixed: bool,
+    ) {
+        // oxlint only runs one fix pass, and it does write `const a = 1; const a = 2;` for two `var`s.
+        let is_compared = self.fixes() && !file.language().is_oxlint;
+        if !is_compared || result.messages.iter().any(|it| it.is_fatal) {
+            return;
+        }
+        let is_applied = |it: &LintMessage| it.fix.is_some() && self.should_fix(it);
+        if is_fixed || result.messages.iter().any(is_applied) {
+            result.tolerated_errors += redeclarations(file);
+        }
     }
 
     /// Lints the text that the messages of `result` are about once more, and makes what oxlint says besides each message. Nothing, if
@@ -445,7 +484,7 @@ impl Context<'_, '_> {
         let path = paths::from_native(&result.path);
         let text = match result.text.take() {
             Some(text) => text,
-            None => fs::read(&path).map_err(|error| {
+            None => git::read(self.only, &path).map_err(|error| {
                 Fatal([b"Cannot read ", &path[..], b": ", &fs::describe(&error)].concat())
             })?,
         };
@@ -485,9 +524,9 @@ impl Context<'_, '_> {
         let is_fixed_now = self.fixes_file(&path) && !had_types;
         *result = match is_fixed_now && fixable.any(|it| self.should_fix(it)) {
             true => {
-                let mut verify = |text: &[u8]| match framework {
+                let mut verify = |text: &[u8], is_fixed: bool| match framework {
                     Some(framework) => self.verify_scripts(framework, &path, text, &config),
-                    None => self.verify(&path, text, &config),
+                    None => self.verify_pass(&path, text, &config, is_fixed),
                 };
                 let text = (text, was_fixed);
                 self.verify_text_by(shown, &path, text, &config, &|_| (), &mut verify)
@@ -661,6 +700,9 @@ impl Context<'_, '_> {
             unused_directives_as_oxlint(&mut result, as_what.script.is_some());
         }
         self.promote_suggestions(&mut result);
+        if is_whole {
+            self.count_redeclarations(file, &mut result, as_what.is_fixed);
+        }
         // Fixes change the text, so these line starts wouldn't match the final one.
         if self.keeps_text && is_whole && !self.fixes() {
             result.line_starts = file.known_line_starts().map(<[u32]>::to_vec);
@@ -684,12 +726,13 @@ impl Context<'_, '_> {
             (text, false),
             config,
             on_circular_fixes,
-            &mut |text| self.verify(path_to_verify, text, config),
+            &mut |text, is_fixed| self.verify_pass(path_to_verify, text, config, is_fixed),
         )
     }
 
-    /// The same. `verify`: lints a text. `was_fixed`: `text` is not what is in the file, but what fixes have made of it: it is to
-    /// be written, whatever becomes of the fixes that are tried now.
+    /// Like [`Self::verify_text`], but the caller supplies `verify`, which lints a text and is told whether the fixes
+    /// being tried now produced that text. `was_fixed` is true if `text` isn't the file's content but the output of
+    /// earlier fixes. It then has to be written even if the fixes tried now are reverted.
     pub(crate) fn verify_text_by(
         &self,
         path: Vec<u8>,
@@ -697,18 +740,18 @@ impl Context<'_, '_> {
         (text, was_fixed): (Vec<u8>, bool),
         config: &Arc<ResolvedConfig>,
         on_circular_fixes: &dyn Fn(&[u8]),
-        verify: &mut dyn FnMut(&[u8]) -> LintResult,
+        verify: &mut dyn FnMut(&[u8], bool) -> LintResult,
     ) -> FileResult {
         let (result, text, is_fixed, fixes) = match self.fixes_file(path_to_verify) {
-            false => (verify(&text), text, false, 0),
+            false => (verify(&text, false), text, false, 0),
             true if config.language.is_oxlint => {
-                let mut result = verify(&text);
+                let mut result = verify(&text, false);
                 let mut messages = std::mem::take(&mut result.messages);
                 order_fixes_as_oxlint(&mut messages);
                 let fixed = apply_fixes(&text, messages, &|message| self.should_fix(message));
                 if fixed.is_fixed && !self.parses(path_to_verify, &fixed.output, config) {
                     self.note_broken_fixes(path_to_verify, fixed.applied);
-                    return self.result(path, verify(&text), text, was_fixed, config);
+                    return self.result(path, verify(&text, false), text, was_fixed, config);
                 }
                 result.messages = fixed.remaining;
                 // They are by place now.
@@ -801,7 +844,7 @@ impl Context<'_, '_> {
             return Ok(warns.then(|| self.ignored(&target.path, &target.status, flavor)));
         };
         let started = self.timing.now();
-        let text = match fs::read(&target.path) {
+        let text = match git::read(self.only, &target.path) {
             Ok(text) => text,
             Err(error) if matches!(target.loaded.flavor, Flavor::Oxlint | Flavor::BuiltIn) => {
                 // It is gone since it was found. oxlint passes over what is not there.
@@ -835,7 +878,7 @@ impl Context<'_, '_> {
                 (text, false),
                 config,
                 on_circular_fixes,
-                &mut |text| self.verify_scripts(framework, &target.path, text, config),
+                &mut |text, _| self.verify_scripts(framework, &target.path, text, config),
             )));
         }
         // With another parser it shows only when the file is read whether it can be read here.

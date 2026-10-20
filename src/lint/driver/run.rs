@@ -395,6 +395,17 @@ impl Run<'_> {
         }
     }
 
+    /// Prints a note that ESLint and oxlint both have a config for the same files, and which one is used.
+    fn note_ignored_config(&mut self, of_eslint: &[u8], of_oxlint: &[u8]) {
+        pretty!(
+            &mut self.out.stderr,
+            self.environment.stderr.colors,
+            "<blue>note<r><d>:<r> Using {}. {} is ignored. Use --config to pick it.\n",
+            BStr::new(of_oxlint),
+            BStr::new(of_eslint)
+        );
+    }
+
     /// Refuses the command line, which both do on standard error.
     fn refuse(mut self, text: &[u8]) -> Outcome {
         self.error(text);
@@ -553,7 +564,7 @@ impl Run<'_> {
                 (text, false),
                 config,
                 &on_circular_fixes,
-                &mut |text| context.verify_scripts(framework, &path, text, config),
+                &mut |text, _| context.verify_scripts(framework, &path, text, config),
             );
             return Ok(Linted {
                 results: vec![result],
@@ -653,6 +664,11 @@ impl Run<'_> {
         )?;
         if let Some(only) = context.only {
             targets.retain(|it| only.has(&it.path));
+            let mut gone = discover::find_files_not_on_disk(loader, patterns, only.not_on_disk())?;
+            if !gone.is_empty() {
+                targets.append(&mut gone);
+                bun_lint::utils::sort::sort_by(&mut targets, |a, b| a.path.cmp(&b.path));
+            }
         }
         phases.discovery = started.elapsed().as_secs_f64();
         if self.options.list_files {
@@ -928,13 +944,7 @@ impl Run<'_> {
         // `--rules` prints the same list either way, and `--doctor` has this in its report.
         let is_told = !options.rules && !options.doctor && !options.silent;
         if let Some((of_eslint, of_oxlint)) = loader.passed_over().filter(|_| is_told) {
-            pretty!(
-                &mut self.out.stderr,
-                environment.stderr.colors,
-                "<blue>note<r><d>:<r> Using {}. {} is ignored. Use --config to pick it.\n",
-                BStr::new(of_oxlint),
-                BStr::new(of_eslint)
-            );
+            self.note_ignored_config(of_eslint, of_oxlint);
         }
         if options.init {
             return match loader.for_directory(&environment.cwd) {
@@ -1026,17 +1036,20 @@ impl Run<'_> {
         let handed_back = Guarded::new(Vec::new());
         let (unread, needs_eslint) = (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
         let formatter = crate::fmt::ForRules::new(environment, options.of_bun_format.as_deref());
+        let only = (options.only.as_ref()).map(|it| git::Files::read(it, environment, true));
+        let only = match only.transpose() {
+            Ok(only) => only,
+            Err(Fatal(error)) => return self.refuse_flag(&error),
+        };
+        if let Some(only) = &only {
+            store.provide(only.already_read(false));
+        }
         // Only if it is asked for: to load the libraries and the types takes longer than to lint a small project. A file that
         // is linted with types has them anyway: `typed::OfFile`.
         let by_options = options.infer_globals.is_none() && options.infers_globals_by_options;
         let inferred = (options.infer_globals == Some(true) || by_options)
             .then(|| Inferred::new(environment, pool.threads(), by_options));
         let invalid_tsconfigs = Guarded::new(Default::default());
-        let only = (options.only.as_ref()).map(|it| git::Files::read(it, options.fix, environment));
-        let only = match only.transpose() {
-            Ok(only) => only,
-            Err(Fatal(error)) => return self.refuse_flag(&error),
-        };
         let context = Context {
             skipped_in_comments: &skipped_in_comments,
             out_of_stack: &out_of_stack,
@@ -1124,6 +1137,10 @@ impl Run<'_> {
         for warning in warnings.iter().filter(|_| !(is_native && options.silent)) {
             self.warn(warning);
         }
+        let passed_over = loader.passed_over_below();
+        for (of_eslint, of_oxlint) in passed_over.iter().filter(|_| !options.silent) {
+            self.note_ignored_config(of_eslint, of_oxlint);
+        }
         let without_types = js_plugins.rules_that_asked_for_types();
         if !without_types.is_empty() {
             let ids: Vec<&[u8]> = without_types.iter().map(|it| &it.id[..]).collect();
@@ -1168,7 +1185,7 @@ impl Run<'_> {
                     of,
                     &rules.join(&b", "[..])[..],
                     b" were not applied to ",
-                    &paths::relative(&environment.cwd, &paths::from_native(path))[..],
+                    &paths::relative_shown(&environment.cwd, &paths::from_native(path))[..],
                     b" because they would cause a syntax error",
                 ]
                 .concat(),
@@ -1179,7 +1196,7 @@ impl Run<'_> {
             bun_lint::utils::sort::sort_by(&mut incomplete, |a, b| a.cmp(b));
             incomplete.dedup();
             let shown: Vec<Vec<u8>> = (incomplete.iter().take(3))
-                .map(|it| paths::relative(&environment.cwd, &paths::from_native(it)))
+                .map(|it| paths::relative_shown(&environment.cwd, &paths::from_native(it)))
                 .collect();
             let more: &[u8] = if incomplete.len() > 3 { b", .." } else { b"" };
             self.warn(
@@ -1206,7 +1223,7 @@ impl Run<'_> {
                 false => format!("{:.0}ms", seconds * 1e3),
             };
             let relative =
-                |path: &[u8]| paths::relative(&environment.cwd, &paths::from_native(path));
+                |path: &[u8]| paths::relative_shown(&environment.cwd, &paths::from_native(path));
             let (config, example) = (relative(&program.config_path), relative(&program.example));
             let linted = match program.asked_for {
                 1 => example,
@@ -1273,7 +1290,7 @@ impl Run<'_> {
                 }
             };
             let first: Vec<Vec<u8>> = (unread.iter().take(3))
-                .map(|it| paths::relative(&environment.cwd, it))
+                .map(|it| paths::relative_shown(&environment.cwd, it))
                 .collect();
             loader.cannot_do(&[
                 unread.len().to_string().as_bytes(),
@@ -1554,13 +1571,9 @@ impl Run<'_> {
                     .concat(),
                 );
             }
-            if let Err(error) = fs::write_new(&path, &output) {
+            if let Err(why) = fs::write_new(&environment.cwd, &path, &output) {
                 return self.fail(
-                    &[
-                        &b"There was a problem writing the output file:\n"[..],
-                        &fs::describe(&error),
-                    ]
-                    .concat(),
+                    &[&b"There was a problem writing the output file:\n"[..], &why].concat(),
                 );
             }
         } else if !output.is_empty() {
@@ -1715,12 +1728,12 @@ impl Run<'_> {
         let mut suppressed = Suppressions::load(&path)?;
         if writes {
             suppressed.suppress(results, cwd, options.suppress_rule.as_deref(), is_oxlint);
-            suppressed.save(&path)?;
+            suppressed.save(cwd, &path)?;
         }
         let unused = suppressed.apply(results, cwd, is_oxlint);
         if options.prune_suppressions {
             suppressed.prune(&unused, cwd);
-            suppressed.save(&path)?;
+            suppressed.save(cwd, &path)?;
             return Ok(Suppressed {
                 updated,
                 ..Suppressed::default()
@@ -1889,10 +1902,10 @@ fn not_linted(loader: &Loader, cwd: &[u8], paths: &[Vec<u8>], because: [&[u8]; 2
     }
     bun_lint::utils::sort::sort_by_key(&mut kinds, |it| std::cmp::Reverse(it.1));
     let kinds: Vec<Vec<u8>> = (kinds.iter())
-        .map(|it| [format!("{} *", it.1).as_bytes(), it.0].concat())
+        .map(|it| [format!("{} *", it.1).as_bytes(), &paths::shown(it.0)].concat())
         .collect();
     let first: Vec<Vec<u8>> = (paths.iter().take(3))
-        .map(|it| paths::relative(cwd, it))
+        .map(|it| paths::relative_shown(cwd, it))
         .collect();
     loader.cannot_do(&[
         paths.len().to_string().as_bytes(),
@@ -1911,7 +1924,7 @@ fn not_linted(loader: &Loader, cwd: &[u8], paths: &[Vec<u8>], because: [&[u8]; 2
 fn warn_about_circular_fixes(loader: &Loader, path: &[u8]) {
     loader.warn(&[
         b"Circular fixes detected while fixing ",
-        &paths::to_native(path.to_vec()),
+        &paths::shown(&paths::to_native(path.to_vec())),
         b". It is likely that you have conflicting rules in your configuration.",
     ]);
 }
@@ -1937,16 +1950,21 @@ pub fn refuse_command_line(message: &[u8], environment: &Environment) -> Outcome
 }
 
 pub fn run(options: &Options, environment: &Environment) -> Outcome {
+    let mut options = options.clone();
+    let loaded = options.load_pipes(&environment.cwd);
     let execute = |environment: &Environment, modules: Option<&Modules>| {
         let run = Run {
-            options,
+            options: &options,
             environment,
             out: Outcome::default(),
             began: Instant::now(),
             is_for_oxlint: None,
             modules,
         };
-        run.execute()
+        match &loaded {
+            Ok(()) => run.execute(),
+            Err(why) => run.refuse_flag(why),
+        }
     };
     match options.doctor {
         true => doctor::watching(environment, |environment, modules| {

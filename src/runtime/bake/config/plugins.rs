@@ -51,3 +51,47 @@ pub(crate) fn is_restart(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResu
         RESTARTED.load(core::sync::atomic::Ordering::Relaxed),
     ))
 }
+
+/// `restartProcess()`: starts `bun bake` again with the same arguments, after a change to
+/// `bake.config.ts`. The server loads plugins once, so only a new process gets the new ones.
+/// When the restart fails, `reload_process` prints why and this exits 1: the kill signal handlers
+/// have run and the signal dispositions are reset, so the server cannot go on.
+pub(crate) fn restart_process(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    global.bun_vm().as_mut().restart_process(true);
+    // Not `process.exit()`: during a restart it tries the restart again, and panics when it fails.
+    bun_core::Output::flush();
+    bun_core::Global::exit(1);
+}
+
+/// `isRestarting()`: whether a restart is running the kill signal listeners. The process is then
+/// about to start again, so a listener must not end it.
+pub(crate) fn is_restarting(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    Ok(JSValue::from(
+        bun_jsc::posix_signal_handle::is_emitting_watch_kill_signal(),
+    ))
+}
+
+/// `setPages(framework?)`: the next `Bun.serve()` adds the routers of `framework` (the `framework`
+/// object of a plugin), or of the default React framework when it is undefined.
+pub(crate) fn set_pages(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [framework] = frame.arguments_as_array::<1>();
+    let vm = global.bun_vm().as_mut();
+    if framework.is_undefined_or_null() {
+        vm.bake_framework.deinit();
+    } else {
+        vm.bake_framework.set(global, framework);
+    }
+    vm.bake_pages = true;
+    Ok(JSValue::UNDEFINED)
+}
+
+/// `checkFramework(framework)`: throws the error that `Bun.serve()` would throw for this `framework`
+/// object of a plugin, so that `bun bake` reports it as an error of `bake.config.ts`.
+pub(crate) fn check_framework(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [framework] = frame.arguments_as_array::<1>();
+    let mut bundler_options = crate::bake::SplitBundlerOptions::default();
+    let result = crate::bake::Framework::from_js(framework, global, &mut bundler_options);
+    bundler_options.destroy_plugin();
+    result?;
+    Ok(JSValue::UNDEFINED)
+}

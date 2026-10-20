@@ -21,6 +21,7 @@
 pub use bun_alloc::{Arena, ArenaBox, ArenaVec, ArenaVecExt, transfer_arena, vec_from_iter_in};
 
 use crate::util::{AppendVec, FxBuild};
+use bun_threading::Guarded;
 use std::alloc::{AllocError, Allocator, Layout};
 use std::any::Any;
 use std::ptr::NonNull;
@@ -107,6 +108,33 @@ impl Session {
         let at = self.kept.push(Box::new(value));
         let kept: &(dyn Any + Send + Sync) = &**self.kept.get(at);
         kept.downcast_ref().expect("it was boxed as a `T`")
+    }
+
+    /// Drops the session right before the process exits. The arenas are destroyed in parallel, each thread preferring its
+    /// own, and their memory is returned to the OS immediately. Without this, a single thread unmaps everything at exit,
+    /// which costs about 70 ms per GB.
+    /// `in_parallel(n, f)` must call `f(i)` for every `i < n`, on any number of threads.
+    pub fn drop_before_the_process_ends(
+        mut self,
+        in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync)),
+    ) {
+        let mut arenas: Vec<Box<ThreadArena>> = Vec::new();
+        let mut next = self.first.take();
+        while let Some(mut node) = next {
+            next = node.next.take();
+            arenas.push(node);
+        }
+        // Make mimalloc return freed pages right away instead of caching them for reuse.
+        bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::purge_delay, 0);
+        let (count, arenas) = (arenas.len(), Guarded::new(arenas));
+        in_parallel(count, &|_| {
+            let thread = std::thread::current().id();
+            let mut left = arenas.lock();
+            let own = left.iter().position(|it| it.thread == thread);
+            let one = left.swap_remove(own.unwrap_or(0));
+            drop(left);
+            drop(one);
+        });
     }
 
     /// The number of threads that have an arena.

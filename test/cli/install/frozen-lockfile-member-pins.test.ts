@@ -128,8 +128,8 @@ describe("a workspace member keeps the versions its lockfile pins", () => {
         ),
       writeMember: (name: string, json: Json) =>
         write(join(cwd, "packages", name, "package.json"), memberJson(name, json)),
-      // What another machine has after a clone: the lockfile, no node_modules and no cache.
-      // In the meantime the registry published 1.1.0 of every package.
+      // This is what another machine has after a clone: the lockfile, no node_modules and no cache. In the meantime,
+      // the registry published 1.1.0 of every package.
       async freshCheckout() {
         registry.publish();
         await Promise.all([

@@ -77,6 +77,118 @@ describe("bundler", () => {
     },
     run: { stdout: "RedisClient\nRedisClient\nRedisClient\n" },
   });
+  // cjs and iife output turn an import statement of an external module into a
+  // require() call. The `type` attribute has to go with it, as the second
+  // argument: the runtime cannot tell a sqlite database from the name `my.db`.
+  const messagesDb = (() => {
+    const db = new Database(":memory:");
+    db.exec("create table messages (message text)");
+    db.exec("insert into messages values ('Hello, world!')");
+    return db.serialize();
+  })();
+  const sqliteEntry = /* js */ `
+    import db from './my.db' with {type: "sqlite"};
+    console.log(db.query("select message from messages LIMIT 1").get().message);
+  `;
+  for (const bytecode of [false, true]) {
+    itBundled(`bun/sqlite-type-attribute-cjs${bytecode ? "-bytecode" : ""}`, {
+      target: "bun",
+      format: "cjs",
+      bytecode,
+      outdir: "/out",
+      files: { "/entry.ts": sqliteEntry },
+      runtimeFiles: { "/out/my.db": messagesDb },
+      onAfterBundle(api) {
+        api.expectFile("/out/entry.js").toContain(`__toESM(require("./my.db", { type: "sqlite" }));`);
+      },
+      run: { stdout: "Hello, world!" },
+    });
+  }
+  itBundled("bun/sqlite-type-attribute-iife", {
+    target: "bun",
+    format: "iife",
+    files: { "/entry.ts": sqliteEntry },
+    runtimeFiles: { "/my.db": messagesDb },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain(`__toESM(__require("./my.db", { type: "sqlite" }));`);
+    },
+    run: { stdout: "Hello, world!" },
+  });
+  for (const minifyWhitespace of [false, true]) {
+    const call = (path: string, type: string) =>
+      minifyWhitespace ? `require("${path}",{type:"${type}"})` : `require("${path}", { type: "${type}" })`;
+    itBundled(`bun/external-type-attribute-cjs${minifyWhitespace ? "-minify-whitespace" : ""}`, {
+      target: "bun",
+      format: "cjs",
+      minifyWhitespace,
+      external: ["*.conf"],
+      files: {
+        "/entry.ts": /* js */ `
+          import './bare.conf' with { type: "text" };
+          import toml from './default.conf' with { type: "toml" };
+          import * as json from './star.conf' with { type: "json" };
+          console.log(toml.a, json.b);
+        `,
+      },
+      runtimeFiles: {
+        "/bare.conf": "not JavaScript\n",
+        "/default.conf": "a = 1\n",
+        "/star.conf": `{ "b": 2 }`,
+      },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain(call("./bare.conf", "text"));
+        expect(out).toContain(call("./default.conf", "toml"));
+        expect(out).toContain(call("./star.conf", "json"));
+      },
+      run: { stdout: "1 2" },
+    });
+  }
+  // "type": "module" makes the importer an ES module by type, so `__toESM`
+  // gets `, 1` and takes what require() returns as the default import. For
+  // sqlite and text that is an ES module namespace, which has its own default.
+  itBundled("bun/type-attribute-cjs-es-module-importer", {
+    target: "bun",
+    format: "cjs",
+    external: ["*.conf"],
+    files: {
+      "/package.json": `{ "type": "module" }`,
+      "/entry.ts": /* js */ `
+        import db from './my.db' with { type: "sqlite" };
+        import text from './text.conf' with { type: "text" };
+        import toml from './toml.conf' with { type: "toml" };
+        console.log(db.query("select message from messages LIMIT 1").get().message, text.trim(), toml.a);
+      `,
+    },
+    entryPoints: ["/entry.ts"],
+    runtimeFiles: {
+      "/my.db": messagesDb,
+      "/text.conf": "plain\n",
+      "/toml.conf": "a = 1\n",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain(`__toESM(require("./my.db", { type: "sqlite" }));`);
+      expect(out).toContain(`__toESM(require("./text.conf", { type: "text" }));`);
+      expect(out).toContain(`__toESM(require("./toml.conf", { type: "toml" }), 1);`);
+    },
+    run: { stdout: "Hello, world! plain 1" },
+  });
+  // Node's require() takes one argument.
+  itBundled("bun/type-attribute-cjs-target-node", {
+    target: "node",
+    format: "cjs",
+    external: ["*.conf"],
+    files: {
+      "/entry.ts": /* js */ `
+        import toml from './default.conf' with { type: "toml" };
+        console.log(toml.a);
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain(`__toESM(require("./default.conf"));`);
+    },
+  });
   itBundled("bun/embedded-sqlite-file", {
     target: "bun",
     outfile: "",

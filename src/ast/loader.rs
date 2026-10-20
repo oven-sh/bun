@@ -184,6 +184,16 @@ impl Loader {
         })
     }
 
+    /// The `type` import attribute that names this loader; `from_string` maps
+    /// it back. `SqliteEmbedded` shares `sqlite`: `embed` is its own attribute.
+    pub fn import_attribute_type(self) -> &'static [u8] {
+        match self {
+            Loader::Bunsh => b"sh",
+            Loader::Sqlite | Loader::SqliteEmbedded => b"sqlite",
+            _ => <&'static str>::from(self).as_bytes(),
+        }
+    }
+
     #[inline]
     pub fn is_jsx(self) -> bool {
         self == Loader::Jsx || self == Loader::Tsx
@@ -277,4 +287,27 @@ pub enum SideEffects {
     // /// unused imports to these files since running the plugin is a side effect.
     // /// Removing the import would not call the plugin which is observable.
     // NoSideEffectsPureDataFromPlugin,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn import_attribute_type_round_trips() {
+        for i in 0..<Loader as Enum>::LENGTH {
+            let loader = <Loader as Enum>::from_usize(i);
+            let expected = if loader == Loader::SqliteEmbedded {
+                Loader::Sqlite
+            } else {
+                loader
+            };
+            let name = loader.import_attribute_type();
+            assert!(
+                Loader::from_string(name) == Some(expected),
+                "{}",
+                bstr::BStr::new(name)
+            );
+        }
+    }
 }

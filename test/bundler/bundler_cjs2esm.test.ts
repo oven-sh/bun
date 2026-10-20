@@ -223,6 +223,86 @@ describe("bundler", () => {
     outdir: "/out",
     run: { file: "/user.mjs", stdout: "bar bar" },
   });
+  // `module.exports = require(external)` points the importer's record at the
+  // external. The record must not keep a loader from the shim: target bun
+  // prints it back as `with { type }`, and the runtime obeys it.
+  const theExternal = {
+    "/node_modules/the-external/index.js": /* js */ `
+      module.exports = { hello: "world" };
+    `,
+    "/node_modules/the-external/package.json": /* json */ `
+      { "name": "the-external", "main": "index.js" }
+    `,
+  };
+  itBundled("cjs2esm/ModuleExportsEqualsRequireExternal", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import pkg from 'lib';
+        import typed from './shim.js' with { type: "js" };
+        const required = require('./shim.js');
+        console.log(pkg.hello, typed.hello, required.hello);
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        module.exports = require('the-external');
+      `,
+      "/shim.js": /* js */ `
+        module.exports = require('the-external');
+      `,
+    },
+    external: ["the-external"],
+    target: "bun",
+    runtimeFiles: theExternal,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain(`import pkg from "the-external";`);
+      // The attribute described the shim, not the module behind it.
+      expect(out).toContain(`import typed from "the-external";`);
+      expect(out).toContain(`= __require("the-external");`);
+    },
+    run: { stdout: "world world world" },
+  });
+  itBundled("cjs2esm/ModuleExportsEqualsRequireExternalChained", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import pkg from './a.ts';
+        console.log(pkg.hello);
+      `,
+      "/a.ts": /* ts */ `
+        module.exports = require('./b.cjs');
+      `,
+      "/b.cjs": /* js */ `
+        module.exports = require('the-external');
+      `,
+    },
+    external: ["the-external"],
+    target: "bun",
+    runtimeFiles: theExternal,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain(`import pkg from "the-external";`);
+    },
+    run: { stdout: "world" },
+  });
+  // With the shim's loader on the record the runtime parsed this file as JSX.
+  itBundled("cjs2esm/ModuleExportsEqualsRequireExternalJSON", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import data from './shim.js';
+        console.log(data.hello);
+      `,
+      "/shim.js": /* js */ `
+        module.exports = require('./data.json');
+      `,
+    },
+    external: ["*.json"],
+    target: "bun",
+    runtimeFiles: {
+      "/data.json": `{ "hello": "world" }`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain(`import data from "./data.json";`);
+    },
+    run: { stdout: "world" },
+  });
   itBundled("cjs2esm/ModuleExportsBasedOnNodeEnvProduction", {
     files: {
       "/entry.js": /* js */ `

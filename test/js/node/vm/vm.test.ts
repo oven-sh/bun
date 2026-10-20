@@ -2765,23 +2765,22 @@ test.skipIf(memoryForLongStrings < 10 * 1024 ** 3)(
 test.concurrent("a FinalizationRegistry cleanup job is dropped when its context dies before the job runs", async () => {
   const fixture = /* js */ `
     import vm from "node:vm";
-    import { edenGC, fullGC } from "bun:jsc";
+    import { edenGC, fullGC, generateHeapSnapshotForDebugging } from "bun:jsc";
 
     const nextTurn = () => new Promise(resolve => setImmediate(resolve));
     const liveContextCleanedUp = Promise.withResolvers();
     let liveContext;
     let deadContextCleanups = 0;
+    const leaked = new Set();
 
     function setup() {
       // A collection sweeps the first 8 cells of a type itself and leaves the rest for later. ~JSGlobalObject
       // cancels the job too, so these contexts are past the first 8 and their registries are not.
       const swept = Array.from({ length: 8 }, () => vm.createContext({}));
-      const contexts = Array.from({ length: 4 }, () => vm.createContext({ onCleanup: () => deadContextCleanups++ }));
+      const contexts = Array.from({ length: 4 }, (_, n) => vm.createContext({ onCleanup: () => { deadContextCleanups++; leaked.add(n); } }));
       liveContext = vm.createContext({ onCleanup: liveContextCleanedUp.resolve });
       contexts.push(liveContext);
-      // The script's completion value is undefined: a registry returned through the native frames of
-      // runInContext can stay in a stack slot that the collections below scan, which keeps it alive.
-      for (const context of contexts) vm.runInContext("globalThis.registry = new FinalizationRegistry(onCleanup); void 0", context);
+      for (const context of contexts) vm.runInContext("globalThis.registry = new FinalizationRegistry(onCleanup)", context);
       edenGC(); // Old generation now: the next eden collection leaves them marked.
       for (const context of contexts) for (let i = 0; i < 5; i++) context.registry.register({ i }, i);
     }
@@ -2791,6 +2790,65 @@ test.concurrent("a FinalizationRegistry cleanup job is dropped when its context 
     edenGC(); // The registered objects are dead: every registry posts its cleanup job.
     fullGC(); // All contexts but one are dead, and their registries are destroyed.
     await liveContextCleanedUp.promise;
+    if (deadContextCleanups !== 0) {
+      // Diagnostic for CI: what retains the context whose cleanup job ran.
+      const s = generateHeapSnapshotForDebugging();
+      const NF = 7, EF = 4;
+      const nodeCount = s.nodes.length / NF;
+      const byId = new Map();
+      for (let i = 0; i < nodeCount; i++) byId.set(s.nodes[i * NF], i);
+      const cls = id => s.nodeClassNames[s.nodes[byId.get(id) * NF + 2]];
+      const incoming = new Map();
+      const outgoing = new Map();
+      for (let e = 0; e < s.edges.length; e += EF) {
+        const from = s.edges[e], to = s.edges[e + 1];
+        if (!incoming.has(to)) incoming.set(to, []);
+        incoming.get(to).push(e);
+        if (!outgoing.has(from)) outgoing.set(from, []);
+        outgoing.get(from).push(e);
+      }
+      const roots = new Map();
+      for (let r = 0; r < s.roots.length; r += 3) {
+        if (!roots.has(s.roots[r])) roots.set(s.roots[r], []);
+        roots.get(s.roots[r]).push(s.labels[s.roots[r + 1]] + "/" + s.labels[s.roots[r + 2]]);
+      }
+      const edgeName = e => {
+        const type = s.edgeTypes[s.edges[e + 2]];
+        return type + (type === "Property" || type === "Variable" ? ":" + s.edgeNames[s.edges[e + 3]] : "");
+      };
+      const describe = id => {
+        const ins = (incoming.get(id) || []).map(e => cls(s.edges[e]) + "#" + s.edges[e] + " -" + edgeName(e) + "->");
+        return cls(id) + "#" + id + " roots=" + JSON.stringify(roots.get(id) || []) + " in=" + JSON.stringify(ins.slice(0, 40));
+      };
+      // Sandboxes are the objects with an own onCleanup property.
+      const sandboxes = new Set();
+      for (let e = 0; e < s.edges.length; e += EF) if (edgeName(e) === "Property:onCleanup") sandboxes.add(s.edges[e]);
+      const interesting = [];
+      for (let i = 0; i < nodeCount; i++) {
+        const id = s.nodes[i * NF];
+        const c = s.nodeClassNames[s.nodes[i * NF + 2]];
+        if (c === "NodeVMGlobalObject" || c === "FinalizationRegistry" || c === "JSGlobalProxy" || c === "NodeVMSpecialSandbox" || sandboxes.has(id)) interesting.push(id);
+      }
+      console.error("leaked context indexes", [...leaked]);
+      for (const id of interesting) console.error(describe(id));
+      // Two more levels of retainers for each interesting node, through edges that are not from
+      // a Structure or a Function of the same kind of object.
+      const seen = new Set(interesting);
+      let frontier = interesting;
+      for (let depth = 0; depth < 2; depth++) {
+        const next = [];
+        for (const id of frontier) {
+          for (const e of incoming.get(id) || []) {
+            const from = s.edges[e];
+            if (seen.has(from) || cls(from) === "Structure" || (cls(from) === "Function" && edgeName(e) === "Internal")) continue;
+            seen.add(from);
+            next.push(from);
+            console.error("  retainer d" + (depth + 1) + " of #" + id + ": " + describe(from));
+          }
+        }
+        frontier = next;
+      }
+    }
     await nextTurn(); // A job posted after the live context's has run by now too.
     console.log({ deadContextCleanups });
   `;

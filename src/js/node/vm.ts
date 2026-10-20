@@ -119,7 +119,13 @@ function getContextOptions(options) {
     microtaskMode,
     importModuleDynamically,
   } = options;
-  const contextOptions = { name, origin, codeGeneration: undefined, microtaskMode, importModuleDynamically };
+  const contextOptions: {
+    name: unknown;
+    origin: unknown;
+    codeGeneration: { strings?: boolean; wasm?: boolean } | undefined;
+    microtaskMode: unknown;
+    importModuleDynamically: unknown;
+  } = { name, origin, codeGeneration: undefined, microtaskMode, importModuleDynamically };
   if (name !== undefined) {
     validateString(name, "options.contextName");
   }
@@ -129,7 +135,7 @@ function getContextOptions(options) {
   if (contextCodeGeneration !== undefined) {
     validateObject(contextCodeGeneration, "options.contextCodeGeneration");
     const { strings, wasm } = contextCodeGeneration;
-    const codeGeneration = {};
+    const codeGeneration: { strings?: boolean; wasm?: boolean } = {};
     if (strings !== undefined) {
       validateBoolean(strings, "options.contextCodeGeneration.strings");
       codeGeneration.strings = strings;

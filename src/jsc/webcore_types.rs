@@ -383,13 +383,15 @@ impl Blob {
 
     /// `Blob.hasContentTypeFromUser()` — `true` when the user set a type
     /// explicitly *or* the store is file/S3-backed (whose mime is sniffed).
+    /// The type must be non-empty too: `slice()` can empty it, and an S3 blob starts without one.
     #[inline]
     pub fn has_content_type_from_user(&self) -> bool {
-        self.content_type_was_set.get()
-            || self
-                .store()
-                .map(|s| matches!(s.data, store::Data::File(_) | store::Data::S3(_)))
-                .unwrap_or(false)
+        !self.content_type_slice().is_empty()
+            && (self.content_type_was_set.get()
+                || self
+                    .store()
+                    .map(|s| matches!(s.data, store::Data::File(_) | store::Data::S3(_)))
+                    .unwrap_or(false))
     }
 
     /// `Blob.contentTypeOrMimeType()` — explicit `content_type` if set, else

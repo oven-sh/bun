@@ -15815,6 +15815,60 @@ export const wrong: 0 = withSpread.p
       expect(exitCode).toBe(1);
     });
 
+    // tsc merges instantiations of one symbol that have the same type. The types of two different symbols are intersected,
+    // which flattens the alias away.
+    test("keeps the alias of an intersection in a `this`-typed member that its types inherit from one declaration", async () => {
+      using dir = project({
+        "a.ts": `interface Base { p: this }
+interface H0 extends Base {}
+type W = Base & H0
+declare const w: W
+export const e1: 0 = w.p
+type W2 = Base & { x: 1 }
+declare const w2: W2
+export const e2: 0 = w2.p
+type W3 = H0 & { x: 1 }
+declare const w3: W3
+export const e3: 0 = w3.p
+declare const w4: Base & H0
+export const e4: 0 = w4.p
+interface Other { p: this }
+type W5 = Base & Other
+declare const w5: W5
+export const e5: 0 = w5.p
+w.p = 0
+declare class C { m(): this }
+declare class D extends C { d: 1 }
+type CD = C & D
+declare const cd: CD
+export const e6: 0 = cd.m()
+export const e7: 0 = cd.m
+interface G<T> { p: this; t: T }
+type GG = G<1> & G<1> & { y: 1 }
+type G12 = G<1> & G<number>
+declare const gg: GG
+declare const g12: G12
+export const e8: 0 = gg.p
+export const e9: 0 = g12.p
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(5,14): error TS2322: Type 'W' is not assignable to type '0'.
+        a.ts(8,14): error TS2322: Type 'W2' is not assignable to type '0'.
+        a.ts(11,14): error TS2322: Type 'W3' is not assignable to type '0'.
+        a.ts(13,14): error TS2322: Type 'Base & H0' is not assignable to type '0'.
+        a.ts(17,14): error TS2322: Type 'Base & Other' is not assignable to type '0'.
+        a.ts(18,1): error TS2322: Type 'number' is not assignable to type 'W'.
+          Type 'number' is not assignable to type 'Base'.
+        a.ts(23,14): error TS2322: Type 'CD' is not assignable to type '0'.
+        a.ts(24,14): error TS2322: Type '() => CD' is not assignable to type '0'.
+        a.ts(30,14): error TS2322: Type 'GG' is not assignable to type '0'.
+        a.ts(31,14): error TS2322: Type 'G12' is not assignable to type '0'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     const jsdocErrors = {
       "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
       "a.js": `export {};

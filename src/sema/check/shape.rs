@@ -5693,13 +5693,19 @@ impl<'p, 's> Checker<'p, 's> {
                 } else {
                     let scope = self.begin_scope();
                     let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
+                    let is_union = self.is_union(*whole);
                     for part in parts.iter() {
-                        types.push(self.type_of_prop(part, MapperId::IDENTITY));
+                        let ty = self.type_of_prop(part, MapperId::IDENTITY);
+                        let single = (&parts[0], types.first());
+                        if is_union || !Self::is_merged_instantiation(single, (part, ty)) {
+                            types.push(ty);
+                        }
                     }
-                    let all = if self.is_union(*whole) {
-                        self.union(&types)
-                    } else {
-                        self.intersection(&types)
+                    let all = match types[..] {
+                        _ if is_union => self.union(&types),
+                        // An intersection of one aliased intersection would lose the alias.
+                        [only] => only,
+                        _ => self.intersection(&types),
                     };
                     if let Ok(stored) = self.end_scope_by_counters(scope) {
                         self.p
@@ -8087,6 +8093,20 @@ impl<'p, 's> Checker<'p, 's> {
         NeverReduced::No
     }
 
+    /// `isInstantiation && compareProperties(singleProp, prop, compareTypesEqual)`: true if `prop` is an instantiation of
+    /// the same symbol as `single` and has the same type. `type_of_single` is `None` if `prop` is `single`.
+    fn is_merged_instantiation(
+        (single, type_of_single): (&Prop, Option<&TypeId>),
+        (prop, ty): (&Prop, TypeId),
+    ) -> bool {
+        type_of_single == Some(&ty)
+            && matches!(single.source, PropSource::Symbol(_))
+            && single.source == prop.source
+            && (single.flags ^ prop.flags)
+                .difference(PropFlags::THISLESS)
+                .is_empty()
+    }
+
     /// The part of `createUnionOrIntersectionProperty` that looks at each symbol. `prop` is the first property with a
     /// name, and belongs to `member`. `holders` has the later members that have the name, each with its property.
     /// `long_prop_set` is scratch space. `facts` covers `prop`, then the properties in `holders`. See
@@ -8174,6 +8194,9 @@ impl<'p, 's> Checker<'p, 's> {
             let other_instantiation = (later.mapper != MapperId::IDENTITY).then_some(instantiation);
             let second =
                 self.type_of_prop_with_facts(facts.as_mut(), nth, other, other_instantiation);
+            if Self::is_merged_instantiation((prop, Some(&first_type)), (other, second.ty)) {
+                continue;
+            }
             types.push(second.ty);
             has_non_member_symbol |= is_non_member_symbol(self, other);
             (some, every) = (some | other.flags, every & other.flags);

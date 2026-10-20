@@ -121,6 +121,27 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
   );
 
   test(
+    "does not leave its trailers to the response that has the connection",
+    async () => {
+      expect(await run("connected-trailers", transport)).toEqual({
+        results: triggers.map(trigger => ({
+          trigger,
+          late: "returned",
+          pending: false,
+          regranted: false,
+          thirdQueued: true,
+          bodies: ["second-body", "third-body"],
+          errors: [],
+        })),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    timeout,
+  );
+
+  test(
     "a response that native code completed does not keep the process alive after it is replaced",
     async () => {
       expect(await run("completed-but-pending", transport)).toEqual({
@@ -138,7 +159,19 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
     async () => {
       const head = (length: number) =>
         `HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: ${length}\r\n\r\n`;
-      const calls = ["write", "end", "writeHead", "flushHeaders", "writeContinue", "writeInformational", "cork"];
+      // The two entries that take a trailer section are in the list: a queued handle must drop the
+      // section with the rest of the call.
+      const calls = [
+        "write",
+        "end",
+        "endWithTrailers",
+        "writeHead",
+        "writeHeadAndEndWithTrailers",
+        "flushHeaders",
+        "writeContinue",
+        "writeInformational",
+        "cork",
+      ];
       expect(await run("queued", transport)).toEqual({
         results: calls.map(call => ({
           call,
@@ -159,6 +192,57 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
     async () => {
       expect(await run("draining", transport)).toEqual({
         results: [{ displaced: true, pending: false, receivedAtLeastTheWrite: true }],
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    timeout,
+  );
+
+  // The frames of the WebSocket are all that follows the 101, and end() does the same with trailers
+  // as without. The orders are those of a wrapper that adds a trailer in its finally: its handler
+  // returns right after handleUpgrade(), waits for the first message ("after a frame": the WebSocket
+  // is open and has written), or waits for the 'close' of the WebSocket. The last two cases use an
+  // 'upgrade' listener, which builds the response itself, as @fastify/websocket does.
+  //
+  // The events are those of node v26.3.0: the response finishes while the WebSocket is open, and it
+  // does not finish once the socket has closed. Node writes the response into the WebSocket stream
+  // and arms the keep-alive timeout of the server on that socket (`timeout` 6000). Here nothing is
+  // written, the socket has no timeout, and the frame that follows the finished response arrives.
+  test(
+    "the response of the request that a WebSocket adopted can end with trailers",
+    async () => {
+      const hello = Buffer.from("\x81\x05hello", "latin1").toString("hex");
+      // A frame on each side of the end(), and no byte of the response between them.
+      const helloAndDone = Buffer.from("\x81\x05hello\x81\x04done", "latin1").toString("hex");
+      // The echo frame, then the Close frame of the server.
+      const helloAndClose = Buffer.from("\x81\x05hello\x88\x00", "latin1").toString("hex");
+      const finished = { result: "returned", events: ["prefinish", "finish", "end callback", "close"], timeout: 0 };
+      expect(await run("upgraded", transport)).toEqual({
+        results: [
+          { use: "end", ...finished, afterSwitch: hello },
+          { use: "addTrailers+end", ...finished, afterSwitch: hello },
+          { use: "flushHeaders+addTrailers+end", ...finished, afterSwitch: hello },
+          {
+            use: "write+addTrailers+end",
+            result: "returned",
+            events: ["write() true", "prefinish", "write callback", "finish", "end callback", "close"],
+            timeout: 0,
+            afterSwitch: hello,
+          },
+          { use: "after a frame", ...finished, afterSwitch: helloAndDone },
+          {
+            use: "after the WebSocket closed",
+            result: "returned",
+            // The close of the socket closed the response before its end(), and nothing finishes it.
+            events: ["close", "prefinish"],
+            timeout: 0,
+            afterSwitch: helloAndClose,
+          },
+          { use: "'upgrade' listener: addTrailers+end", ...finished, afterSwitch: hello },
+          { use: "'upgrade' listener: after a frame", ...finished, afterSwitch: helloAndDone },
+        ],
         stderr: "",
         exitCode: 0,
         signalCode: null,

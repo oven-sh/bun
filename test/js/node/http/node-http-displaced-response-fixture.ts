@@ -182,8 +182,9 @@ async function finished(call: string) {
 }
 
 // The client stays. Response 2 has the connection, so response 1 cannot write into its place,
-// and request 3 waits behind response 2.
-async function connected(trigger: string) {
+// and request 3 waits behind response 2. With trailers, response 1 also must not leave them for
+// response 2: a trailer makes a response chunked and follows its body.
+async function connected(trigger: string, withTrailers: boolean) {
   const responses: http.ServerResponse[] = [];
   const errors: string[] = [];
   const third = Promise.withResolvers<void>();
@@ -210,7 +211,10 @@ async function connected(trigger: string) {
   while (responses.length < 2) await turn();
   await turn();
 
-  const late = attempt(() => responses[0].end("first-body"));
+  const late = attempt(() => {
+    if (withTrailers) responses[0].addTrailers({ "x-first": "trailer" });
+    responses[0].end("first-body");
+  });
   const pending = isPending(handleOf(responses[0]));
   // The connection did not queue response 1, so it does not give it the connection again.
   const socketHandle = handleOf(responses[1].socket!);
@@ -332,6 +336,138 @@ async function adopted(use: string) {
   return { use, queued, switched: received.startsWith("HTTP/1.1 101 "), open, result, pending };
 }
 
+// A keep-alive connection whose first response sent a trailer. Its second request is an Upgrade
+// request that ws adopts, so the socket is a WebSocket when the response of that request ends.
+// Its trailer is its own: nothing of the socket may take it.
+//
+// The orders are those of a wrapper that adds a Server-Timing trailer and ends the response in its
+// finally. "addTrailers+end" is a handler that returns right after handleUpgrade(). "after a frame"
+// is a handler that waits for the first message: the WebSocket is open and has written a frame, so
+// the trailer would land in a block that the WebSocket uses. "after the WebSocket closed" is a
+// handler that waits for the 'close' of the WebSocket.
+//
+// A use that starts with "'upgrade' listener: " takes the other dispatcher branch: the server has an
+// 'upgrade' listener, which builds the response itself. @fastify/websocket and ws with { server } do
+// that. The 'request' listener never sees the Upgrade request then.
+//
+// Node v26.3.0 finishes such a response while the WebSocket is open: write() returns true, the
+// callbacks run, and 'finish' and 'close' follow 'prefinish'. It writes the response into the
+// WebSocket stream, and the keep-alive timeout of the server then closes that socket. The response
+// finishes in the same way here. Nothing is written and the socket stays with the WebSocket.
+async function upgraded(use: string) {
+  const wss = new WebSocketServer({ noServer: true });
+  const ended = Promise.withResolvers<{ ws: import("ws").WebSocket; result: string }>();
+  const viaUpgradeListener = use.startsWith("'upgrade' listener: ");
+  const order = viaUpgradeListener ? use.slice("'upgrade' listener: ".length) : use;
+  const afterFrame = order === "after a frame";
+  const afterClose = order === "after the WebSocket closed";
+  // The events of the response and its callbacks, in the order in which they come.
+  const events: string[] = [];
+  let adopted: net.Socket | undefined;
+  const adopt = (req: http.IncomingMessage, socket: net.Socket, head: Buffer, res: http.ServerResponse) => {
+    adopted = socket;
+    for (const name of ["prefinish", "finish", "close"]) res.on(name, () => events.push(name));
+    wss.handleUpgrade(req, socket, head, ws => {
+      ws.on("error", () => {});
+      const endWithTrailers = () =>
+        attempt(() => {
+          if (order === "flushHeaders+addTrailers+end") res.flushHeaders();
+          if (order === "write+addTrailers+end") {
+            events.push(`write() ${res.write("chunk", () => events.push("write callback"))}`);
+          }
+          if (order !== "end") res.addTrailers({ "x-second": Buffer.alloc(100, "b").toString() });
+          res.end("late", () => events.push("end callback"));
+        });
+      if (afterFrame) {
+        ws.on("message", () => {
+          ws.send("hello");
+          ended.resolve({ ws, result: endWithTrailers() });
+        });
+      } else if (afterClose) {
+        ws.on("message", () => ws.send("hello"));
+        ws.on("close", () => ended.resolve({ ws, result: endWithTrailers() }));
+      } else {
+        ended.resolve({ ws, result: endWithTrailers() });
+      }
+    });
+  };
+  const server = createServer((req, res) => {
+    res.on("error", () => {});
+    if (req.url === "/first") {
+      res.write("first-body");
+      res.addTrailers({ "x-first": Buffer.alloc(200, "a").toString() });
+      res.end();
+      return;
+    }
+    adopt(req, req.socket, Buffer.alloc(0), res);
+  });
+  if (viaUpgradeListener) {
+    server.on("upgrade", (req, socket, head) => {
+      const res = new http.ServerResponse(req);
+      res.on("error", () => {});
+      res.assignSocket(socket as net.Socket);
+      adopt(req, socket as net.Socket, head, res);
+    });
+  }
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const client = await connect(server);
+  // The server closes the connection after a closing handshake, so this can come before the 'close' of the WebSocket.
+  const closed = once(client, "close");
+  let received = "";
+  // The trailer section ends the first response.
+  const firstTrailer = `0\r\nx-first: ${Buffer.alloc(200, "a")}\r\n\r\n`;
+  let sentUpgrade = false;
+  const switched = Promise.withResolvers<void>();
+  const greeted = Promise.withResolvers<void>();
+  const finished = Promise.withResolvers<void>();
+  client.on("data", chunk => {
+    received += chunk.toString("latin1");
+    if (!sentUpgrade && received.endsWith(firstTrailer)) {
+      sentUpgrade = true;
+      client.write(
+        "GET /second HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
+          "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+      );
+    }
+    if (received.includes("HTTP/1.1 101 ")) switched.resolve();
+    if (received.endsWith("hello")) greeted.resolve();
+    if (received.endsWith("done")) finished.resolve();
+  });
+  client.write(request("/first"));
+  await switched.promise;
+  // One masked text frame ("ping"), as a browser sends it.
+  if (afterFrame || afterClose) client.write(Buffer.from([0x81, 0x84, 0, 0, 0, 0, 0x70, 0x69, 0x6e, 0x67]));
+  if (afterClose) {
+    await greeted.promise;
+    // A masked Close frame. The server answers with its own Close frame and closes the connection.
+    client.write(Buffer.from([0x88, 0x80, 0, 0, 0, 0]));
+    await closed;
+  }
+  const { ws, result } = await ended.promise;
+  // 'finish', the callbacks and 'close' of the response come in the ticks behind end(). The close of the
+  // connection at the end of this scenario is not a part of them.
+  await turn();
+  await turn();
+  const settled = events.slice();
+  // The keep-alive timeout of the server is for its HTTP connections: the WebSocket has this socket.
+  const timeout = adopted!.timeout;
+  if (!afterClose) {
+    // A frame behind the finished response: the WebSocket still has the connection, and no byte of the response is in front.
+    ws.send(afterFrame ? "done" : "hello");
+    await (afterFrame ? finished.promise : greeted.promise);
+  }
+
+  client.destroy();
+  await closed;
+  ws.terminate();
+  wss.close();
+  server.close();
+  server.closeAllConnections();
+  // The frames of the WebSocket are all that follows the 101: nothing of the response that ended.
+  const afterSwitch = received.slice(received.indexOf("HTTP/1.1 101 ")).split("\r\n\r\n")[1];
+  return { use, result, events: settled, timeout, afterSwitch: Buffer.from(afterSwitch, "latin1").toString("hex") };
+}
+
 // Response 2 waits in the queue behind response 1. Its native handle is called directly: the
 // connection is not its own yet, so nothing of the call reaches the wire.
 async function queued(call: string) {
@@ -354,9 +490,25 @@ async function queued(call: string) {
 
   const isQueued = responses[1].socket === null;
   const handle = handleOf(responses[1]);
+  // The trailer section sits in the last argument of each entry that takes one.
+  const section = "0\r\nx-early-trailer: yes\r\n\r\n";
   const result = attempt(() => {
     if (call === "cork") return void handle.cork(() => {});
     if (call === "writeHead") return void handle.writeHead(201, "Created", ["x-early", "yes"]);
+    if (call === "endWithTrailers") return void handle.endWithTrailers("early", undefined, undefined, undefined, section);
+    if (call === "writeHeadAndEndWithTrailers") {
+      return void handle.writeHeadAndEndWithTrailers(
+        201,
+        "Created",
+        ["x-early", "yes"],
+        "early",
+        undefined,
+        undefined,
+        0,
+        0,
+        section,
+      );
+    }
     handle[call](call === "flushHeaders" || call === "writeContinue" ? undefined : "early");
   });
   responses[0].end("first-body");
@@ -449,18 +601,42 @@ if (suite === "displaced") {
     ],
     finished,
   );
-} else if (suite === "connected") {
+} else if (suite === "connected" || suite === "connected-trailers") {
   // One after the other: each one listens for the uncaught exceptions of the process.
   for (const trigger of Object.keys(triggers)) {
-    results.push(await connected(trigger));
+    results.push(await connected(trigger, suite === "connected-trailers"));
   }
 } else if (suite === "completed-but-pending") {
   results.push(await completedButPending());
 } else if (suite === "adopted") {
   results = await all(Object.keys(uses), adopted);
+} else if (suite === "upgraded") {
+  // One after the other: a stray write on one socket must not be seen as a frame on the other.
+  for (const use of [
+    "end",
+    "addTrailers+end",
+    "flushHeaders+addTrailers+end",
+    "write+addTrailers+end",
+    "after a frame",
+    "after the WebSocket closed",
+    "'upgrade' listener: addTrailers+end",
+    "'upgrade' listener: after a frame",
+  ]) {
+    results.push(await upgraded(use));
+  }
 } else if (suite === "queued") {
   results = await all(
-    ["write", "end", "writeHead", "flushHeaders", "writeContinue", "writeInformational", "cork"],
+    [
+      "write",
+      "end",
+      "endWithTrailers",
+      "writeHead",
+      "writeHeadAndEndWithTrailers",
+      "flushHeaders",
+      "writeContinue",
+      "writeInformational",
+      "cork",
+    ],
     queued,
   );
 } else if (suite === "draining") {

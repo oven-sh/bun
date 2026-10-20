@@ -107,10 +107,8 @@ impl Checker<'_, '_> {
             if sym.file == file && sym.id.idx() != i {
                 continue;
             }
-            if !self.has_identical_type_parameter_lists.contains(&sym) {
-                let decls = self.files().decls_of(sym);
-                self.check_type_parameter_lists_identical(file, sym, &decls);
-            }
+            let decls = self.files().decls_of(sym);
+            self.check_type_parameter_lists_identical(file, sym, &decls);
         }
     }
 
@@ -138,7 +136,6 @@ impl Checker<'_, '_> {
             })
             .collect();
         if lists.len() < 2 {
-            self.has_identical_type_parameter_lists.insert(sym);
             return;
         }
         let targets = self.type_params_of_symbol(sym);
@@ -174,9 +171,7 @@ impl Checker<'_, '_> {
                 }
             }
         }
-        if identical {
-            self.has_identical_type_parameter_lists.insert(sym);
-        } else {
+        if !identical {
             for l in lists.iter().filter(|l| l.0 == file) {
                 match l.2 {
                     Some(name) => {

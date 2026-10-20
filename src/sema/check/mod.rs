@@ -947,7 +947,6 @@ impl<'s> Program<'s> {
             interface_declarations: Default::default(),
             counted_export_declarations: Default::default(),
             has_class_or_function_declaration: Default::default(),
-            has_identical_type_parameter_lists: Default::default(),
             generic_mapped_types_in_progress: Vec::new(),
             generic_mapped_types_cut_short: Vec::new(),
             recent_members: Box::new([shape::RecentMembers::NONE; shape::RECENT_MEMBERS]),
@@ -1816,8 +1815,6 @@ pub struct Checker<'p, 's> {
     has_class_or_function_declaration: FxHashMap<Sym, bool>,
     /// For `check_external_module_exports`: how many declarations of an exported symbol count as duplicates.
     counted_export_declarations: FxHashMap<Sym, usize>,
-    /// The classes and interfaces for which `check_type_parameter_lists_identical` has nothing to report.
-    has_identical_type_parameter_lists: crate::util::FxHashSet<Sym>,
     /// The mapped types with an `as` clause for which `isGenericMappedType` is in progress.
     generic_mapped_types_in_progress: Vec<(FileId, TypeNodeId)>,
     /// The ones for which it hit the `instantiation_count` limit since `check_file` began.

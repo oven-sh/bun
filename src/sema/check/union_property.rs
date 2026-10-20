@@ -3,21 +3,16 @@
 //!
 //! `createUnionOrIntersectionProperty` looks the name up in every member of the union. In a union of a hundred object
 //! types, most names exist in only a few members. For each of the other members it still computes which type to search,
-//! misses the lookup, and then searches for an applicable index signature. Three caches avoid most of that work. Each
-//! one is filled only after enough lookups to pay for it:
-//! - `MemberFacts`: everything about a member that doesn't depend on the name, provided the name is ordinary
-//!   (`is_ordinary_name`). With facts, a member that doesn't have the property costs little more than one lookup.
-//! - `UnionMembers::holders`: maps a name to the members that have a property with that name.
-//! - `UnionSummary`: the combined contribution of a long union's members to a property they don't have. Together with
-//!   the name's holders, it determines which members to visit. The rest are skipped entirely.
+//! misses the lookup, and then searches for an applicable index signature. `MemberFacts` avoids most of that work: it's
+//! everything about a member that doesn't depend on the name, provided the name is ordinary (`is_ordinary_name`). With
+//! facts, a member that doesn't have the property costs little more than one lookup. A member gets facts only after
+//! enough lookups to pay for them. They're keyed by member rather than by union, because narrowing or filtering a union
+//! creates another union of the same members.
 //!
-//! The first two are keyed by member rather than by union, because narrowing or filtering a union creates another union
-//! of the same members. The third is a few bits per member of the union.
+//! `getTypeOfPropertyOfContextualType` also looks a name up in every member of a union. It reads the facts
+//! (`members_to_search_for_context`) but never stores any.
 //!
-//! `getTypeOfPropertyOfContextualType` also looks a name up in every member of a union. It reads these caches
-//! (`members_to_search_for_context`) but never fills them.
-//!
-//! A lookup in a member can resolve types, report errors and hit cycles, so the caches must not change what is resolved
+//! A lookup in a member can resolve types, report errors and hit cycles, so the facts must not change what is resolved
 //! or in which order:
 //! - Facts are a by-product of a full lookup. Nothing is resolved just to compute them.
 //! - Facts only contain final data: the type's own flags, and entries already stored in a table or a memo. Reading
@@ -28,7 +23,7 @@
 use super::shape::{LONG_PROP_LIST, PropertyHolder};
 use super::shortcuts::{TypeNumbers, task_fact};
 use super::*;
-use crate::util::{FxHashSet, PositionSet, SharedSort};
+use crate::util::{FxHashSet, PositionSet};
 use smallvec::SmallVec;
 
 /// Shorter unions don't use `MemberFacts`. Most unions are short, and there's little to save in them.
@@ -37,15 +32,6 @@ const MIN_MEMBERS_FOR_FACTS: usize = 8;
 /// Length of `UnionMembers::recent`. Only a few unions have more members than this, and `task_fact::IS_WALKED_UNION`
 /// covers those.
 const RECENT_UNION_MEMBERS: usize = 512;
-
-/// Shorter unions don't get a `UnionSummary`. Walking their members with facts costs no more than the rest of building
-/// the property, so a summary would save little.
-const MIN_MEMBERS_FOR_SUMMARY: usize = 128;
-
-/// A name with more holders than this is looked up in every member instead. `holders` lists members of all unions, so
-/// each holder has to be searched for among this union's members. That search costs about 2 instructions per member.
-/// Visiting a member that has facts but not the property costs about 50.
-const MAX_HOLDERS: usize = 16;
 
 /// Flags that, together with `READONLY`, record which accessors a property has.
 const ACCESSOR_KIND: PropFlags = PropFlags::ACCESSOR.union(PropFlags::WRITE_ONLY);
@@ -85,22 +71,6 @@ struct MemberFacts<'p> {
     reduced_apparent_type: TypeId,
     members: Members<'p>,
     when_missing: WhenMissing,
-    /// Number of misses answered from `WhenMissing::Adds` in unions long enough for a summary. Stops counting once
-    /// `is_listed` is set.
-    miss_count: u32,
-    /// True if the member is in `UnionMembers::holders` under each of its property names. Implies that `when_missing`
-    /// is `Adds`.
-    is_listed: bool,
-}
-
-/// Per-union data that, together with a name's holders, is enough to build a long union's property with that name.
-struct UnionSummary {
-    /// Members that weren't listed when the summary was built.
-    always_visited: PositionSet,
-    /// Each distinct `Missing` value among the listed members, with the members that contribute it.
-    missing: SmallVec<[(Missing, PositionSet); 2]>,
-    /// `always_visited`, plus the listed members that fail `has_only_its_properties`.
-    always_searched_for_context: PositionSet,
 }
 
 /// Type ids can be task-local, so none of this is shared between tasks.
@@ -113,9 +83,6 @@ pub(super) struct UnionMembers<'p> {
     /// its next visit gets facts even if its union is being walked for the first time. Narrowing one union in many ways
     /// creates many unions that are each walked only once.
     recent: Vec<TypeId>,
-    /// Maps a name to the `is_listed` members that have a property with that name.
-    holders: FxHashMap<Atom, SmallVec<[TypeId; 4]>>,
-    summaries: FxHashMap<TypeId, UnionSummary>,
     /// True while a caller looks up every name that a union's members have. See `property_holder_of_member`.
     is_listing: bool,
 }
@@ -167,14 +134,10 @@ struct Walk {
     uses_facts: bool,
     /// True if every member of the union has been visited before with `uses_facts` set.
     was_walked_before: bool,
-    /// True if the union is long enough for a summary.
-    is_long: bool,
     /// Memo for `Checker::is_ordinary_name`, filled on first use.
     is_ordinary_name: Option<bool>,
     /// True once the name's literal type has been created.
     has_literal_type: bool,
-    /// Number of visited members that a summary would put in `UnionSummary::always_visited`.
-    always_visited: usize,
 }
 
 /// Accumulates the results of the first loop of `createUnionOrIntersectionProperty` for a union.
@@ -188,16 +151,13 @@ struct UnionPropertyBuilder<'p, 's> {
     symbols: SmallVec<[(*const Prop<'p>, MapperId); LONG_PROP_LIST]>,
     /// Everything in `symbols`, plus the symbols added after it filled up.
     more_symbols: FxHashSet<(*const Prop<'p>, MapperId)>,
-    /// `indexTypes`. Each type is paired with the position of the first member that contributes it.
-    /// `finish_union_property` sorts them by that position.
-    index_types: SmallVec<[(usize, TypeId); 4]>,
+    /// `indexTypes`. It's only passed to `getUnionType`, so duplicates are dropped.
+    index_types: SmallVec<[TypeId; 4]>,
     merged_instantiations: bool,
     flags: PropFlags,
     is_public: bool,
     /// Apparent type of the member that has `singleProp`.
     first_owner: TypeId,
-    /// Position of that member in the union.
-    first_at: Option<usize>,
 }
 
 impl<'p, 's> UnionPropertyBuilder<'p, 's> {
@@ -212,7 +172,6 @@ impl<'p, 's> UnionPropertyBuilder<'p, 's> {
             flags: PropFlags::empty(),
             is_public: false,
             first_owner: containing_type,
-            first_at: None,
         }
     }
 
@@ -244,35 +203,26 @@ impl<'p, 's> UnionPropertyBuilder<'p, 's> {
         self.prop_hashes.insert(prop.fx_hash_without_lists()) || !self.prop_set.contains(prop)
     }
 
-    /// Records that the member at `at` doesn't have the property. Members can be added out of order once `first_at` is
-    /// final.
-    fn add_missing(&mut self, at: usize, missing: Missing) {
+    /// Records that the next member doesn't have the property.
+    fn add_missing(&mut self, missing: Missing) {
         match missing {
             Missing::IndexSignature { value, is_readonly } => {
                 // Only `singleProp` sets these flags, so a member before it has nothing to clear.
-                if self.first_at.is_some_and(|first| first < at) {
-                    self.flags.remove(ACCESSOR_KIND);
-                }
-                self.flags |= PropFlags::WRITE_PARTIAL;
+                self.flags.remove(ACCESSOR_KIND);
                 if is_readonly {
                     self.flags |= PropFlags::READONLY;
                 }
-                self.add_index_type(at, value);
+                self.add_index_type(value);
             }
-            Missing::ClosedObjectLiteral => {
-                self.flags |= PropFlags::WRITE_PARTIAL;
-                self.add_index_type(at, TypeId::UNDEFINED);
-            }
+            Missing::ClosedObjectLiteral => self.add_index_type(TypeId::UNDEFINED),
             Missing::ReadPartial => self.flags |= PropFlags::READ_PARTIAL,
         }
     }
 
-    /// `indexTypes` is only passed to `getUnionType`, so duplicates are dropped. Properties are compared by value, so
-    /// the order must not depend on how many members were visited.
-    fn add_index_type(&mut self, at: usize, ty: TypeId) {
-        match self.index_types.iter_mut().find(|it| it.1 == ty) {
-            Some(same) => same.0 = same.0.min(at),
-            None => self.index_types.push((at, ty)),
+    fn add_index_type(&mut self, ty: TypeId) {
+        self.flags |= PropFlags::WRITE_PARTIAL;
+        if !self.index_types.contains(&ty) {
+            self.index_types.push(ty);
         }
     }
 }
@@ -362,29 +312,14 @@ impl<'p, 's> Checker<'p, 's> {
             skips_augment,
             is_late_bound: self.atoms().is_symbol_name(name),
             uses_facts,
-            was_walked_before: uses_facts,
-            is_long: parts.len() >= MIN_MEMBERS_FOR_SUMMARY,
+            was_walked_before: uses_facts
+                && !(self.task_facts).add(containing_type, task_fact::IS_WALKED_UNION),
             is_ordinary_name: None,
             has_literal_type: false,
-            always_visited: 0,
         };
         let mut builder = UnionPropertyBuilder::new(containing_type);
-        if let Some(visited) = self.members_to_visit(containing_type, &mut walk) {
-            self.visit_some_members(containing_type, &visited, &mut walk, &mut builder);
-            return self.finish_union_property(builder, containing_type, name);
-        }
-        walk.was_walked_before =
-            uses_facts && !(self.task_facts).add(containing_type, task_fact::IS_WALKED_UNION);
-        for (at, &current) in parts.iter().enumerate() {
-            self.visit_member(&mut walk, &mut builder, at, current);
-        }
-        // A summary saves little if more than 1/8 of the members have to be visited for every name.
-        if walk.was_walked_before
-            && walk.is_long
-            && walk.always_visited * 8 <= parts.len()
-            && !(self.union_members.summaries).contains_key(&containing_type)
-        {
-            self.summarize_union(containing_type);
+        for &current in parts {
+            self.visit_member(&mut walk, &mut builder, current);
         }
         self.finish_union_property(builder, containing_type, name)
     }
@@ -450,20 +385,6 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return None;
         }
-        if parts.len() >= MIN_MEMBERS_FOR_SUMMARY
-            && let Some(summary) = self.union_members.summaries.get(&union)
-            && let holders = self.union_members.holders.get(&name)
-            && let holders = holders.map_or(&[][..], |holders| &holders[..])
-            && holders.len() <= MAX_HOLDERS
-        {
-            let mut to_search = summary.always_searched_for_context.clone();
-            for holder in holders {
-                if let Some(at) = parts.iter().position(|member| member == holder) {
-                    to_search.insert(at);
-                }
-            }
-            return Some(to_search);
-        }
         let mut to_search = PositionSet::new(parts.len());
         for (at, member) in parts.iter().enumerate() {
             let lacks_it = self.union_members.facts(*member).is_some_and(|facts| {
@@ -477,84 +398,11 @@ impl<'p, 's> Checker<'p, 's> {
         Some(to_search)
     }
 
-    /// Returns the members of `union` to visit for the property, based on the union's summary and the name's holders,
-    /// or `None` to visit all of them.
-    fn members_to_visit(&self, union: TypeId, walk: &mut Walk) -> Option<PositionSet> {
-        if !(walk.uses_facts && walk.is_long) {
-            return None;
-        }
-        let summary = self.union_members.summaries.get(&union)?;
-        if !self.is_ordinary_name(walk) {
-            return None;
-        }
-        let holders = self.union_members.holders.get(&walk.name);
-        let holders = holders.map_or(&[][..], |holders| &holders[..]);
-        if holders.len() > MAX_HOLDERS {
-            return None;
-        }
-        let parts = self.parts(union);
-        let mut visited = summary.always_visited.clone();
-        for holder in holders {
-            if let Some(at) = parts.iter().position(|member| member == holder) {
-                visited.insert(at);
-            }
-        }
-        Some(visited)
-    }
-
-    /// The first loop of `createUnionOrIntersectionProperty` for a `union` that has a summary. `visited` is the result
-    /// of `members_to_visit`.
-    fn visit_some_members(
-        &mut self,
-        union: TypeId,
-        visited: &PositionSet,
-        walk: &mut Walk,
-        builder: &mut UnionPropertyBuilder<'p, 's>,
-    ) {
-        let parts = self.parts(union);
-        // `getApplicableIndexInfoForName` creates the name's literal type for the first member that has an index
-        // signature but not the property. If that member is skipped, the type is still created at the same point in the
-        // walk.
-        let has_index_signature =
-            |it: &&(Missing, PositionSet)| matches!(it.0, Missing::IndexSignature { .. });
-        let creates_literal_type_at = (self.union_members.summaries.get(&union))
-            .into_iter()
-            .flat_map(|summary| summary.missing.iter().filter(has_index_signature))
-            .filter_map(|it| it.1.first_except(visited))
-            .min();
-        for at in visited.iter() {
-            if !walk.has_literal_type && creates_literal_type_at.is_some_and(|turn| turn < at) {
-                self.string_literal(walk.name, false);
-                walk.has_literal_type = true;
-            }
-            self.visit_member(walk, builder, at, parts[at]);
-        }
-        if !walk.has_literal_type && creates_literal_type_at.is_some() {
-            self.string_literal(walk.name, false);
-        }
-        let Some(summary) = self.union_members.summaries.get(&union) else {
-            return;
-        };
-        if builder.prop_set.is_empty() {
-            return;
-        }
-        for (missing, members) in &summary.missing {
-            // The first member determines the index type's position. The last member determines whether a member after
-            // `singleProp` contributes it.
-            let ends = [members.first_except(visited), members.last_except(visited)];
-            for at in ends.into_iter().flatten() {
-                builder.add_missing(at, *missing);
-            }
-        }
-    }
-
-    /// One iteration of the first loop of `createUnionOrIntersectionProperty`, for the member `current` at position
-    /// `at`.
+    /// One iteration of the first loop of `createUnionOrIntersectionProperty`, for the member `current`.
     fn visit_member(
         &mut self,
         walk: &mut Walk,
         builder: &mut UnionPropertyBuilder<'p, 's>,
-        at: usize,
         current: TypeId,
     ) {
         // Only object types and intersections can have facts.
@@ -565,8 +413,7 @@ impl<'p, 's> Checker<'p, 's> {
             false => None,
         };
         let Some(facts) = facts else {
-            walk.always_visited += 1;
-            let lookup = self.add_member(walk, builder, at, current);
+            let lookup = self.add_member(walk, builder, current);
             if may_have_facts
                 && let Some(lookup) = lookup
                 && (walk.was_walked_before || self.was_recently_visited(current))
@@ -575,27 +422,22 @@ impl<'p, 's> Checker<'p, 's> {
             }
             return;
         };
-        walk.always_visited += usize::from(!facts.is_listed);
         let (t, members) = (facts.apparent_type, facts.members);
         if let Some(prop) = members.resolved.prop_with_filter(walk.name) {
             let symbol = self.identity_of_own_property(facts.reduced_apparent_type, prop);
-            self.add_member_property(builder, at, t, (symbol, prop), members.mapper);
+            self.add_member_property(builder, t, (symbol, prop), members.mapper);
             return;
         }
         if !self.is_ordinary_name(walk) {
-            self.add_member(walk, builder, at, current);
+            self.add_member(walk, builder, current);
             return;
         }
         let missing = match facts.when_missing {
             WhenMissing::Adds(missing) => {
-                // See `visit_some_members`.
+                // `getApplicableIndexInfoForName` creates the name's literal type.
                 if !walk.has_literal_type && matches!(missing, Missing::IndexSignature { .. }) {
                     self.string_literal(walk.name, false);
                     walk.has_literal_type = true;
-                }
-                // Only a union with a summary reads `holders`.
-                if walk.is_long && walk.was_walked_before && !facts.is_listed {
-                    self.count_miss(current);
                 }
                 missing
             }
@@ -612,7 +454,7 @@ impl<'p, 's> Checker<'p, 's> {
                 missing
             }
         };
-        builder.add_missing(at, missing);
+        builder.add_missing(missing);
     }
 
     /// True if `current` was already in `UnionMembers::recent`. Inserts it either way.
@@ -641,66 +483,6 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         self.union_members.cache_facts(current, facts);
-    }
-
-    /// Called when a lookup misses in the member `current`, which has facts but isn't listed. The member is listed once
-    /// that has happened a quarter as many times as it has properties. Listing costs about 60 instructions per property
-    /// and the facts saved about 250 per miss, so the savings have already paid for it.
-    fn count_miss(&mut self, current: TypeId) {
-        let UnionMembers {
-            facts,
-            facts_of,
-            holders,
-            ..
-        } = &mut self.union_members;
-        let at = (facts_of.get(current) as usize).wrapping_sub(1);
-        let Some(facts) = facts.get_mut(at) else {
-            return;
-        };
-        let props = &facts.members.shape().props;
-        facts.miss_count += 1;
-        if (facts.miss_count as usize) * 4 < props.len() {
-            return;
-        }
-        facts.is_listed = true;
-        for prop in props {
-            holders.entry(prop.name).or_default().push(current);
-        }
-    }
-
-    fn summarize_union(&mut self, union: TypeId) {
-        let parts = self.parts(union);
-        let mut summary = UnionSummary {
-            always_visited: PositionSet::new(parts.len()),
-            missing: SmallVec::new(),
-            always_searched_for_context: PositionSet::new(parts.len()),
-        };
-        for (at, current) in parts.iter().enumerate() {
-            let Some(
-                facts @ &MemberFacts {
-                    when_missing: WhenMissing::Adds(missing),
-                    is_listed: true,
-                    ..
-                },
-            ) = self.union_members.facts(*current)
-            else {
-                summary.always_visited.insert(at);
-                summary.always_searched_for_context.insert(at);
-                continue;
-            };
-            if !self.has_only_its_properties(*current, facts) {
-                summary.always_searched_for_context.insert(at);
-            }
-            match summary.missing.iter_mut().find(|it| it.0 == missing) {
-                Some((_, members)) => members.insert(at),
-                None => {
-                    let mut members = PositionSet::new(parts.len());
-                    members.insert(at);
-                    summary.missing.push((missing, members));
-                }
-            }
-        }
-        self.union_members.summaries.insert(union, summary);
     }
 
     /// Returns `apparent_type(ty)` for an intersection or a non-mapped object type, if the answer is already in the
@@ -777,8 +559,6 @@ impl<'p, 's> Checker<'p, 's> {
             reduced_apparent_type: apparent,
             members,
             when_missing: WhenMissing::Unknown,
-            miss_count: 0,
-            is_listed: false,
         })
     }
 
@@ -815,7 +595,6 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         walk: &Walk,
         builder: &mut UnionPropertyBuilder<'p, 's>,
-        at: usize,
         current: TypeId,
     ) -> Option<MemberLookup<'p>> {
         let before = self.non_cacheable_mark();
@@ -831,13 +610,13 @@ impl<'p, 's> Checker<'p, 's> {
         let missing = match self.property_of_holder(holder, walk.name, walk.skips_augment) {
             Some((prop, mapper)) => {
                 let symbol = self.identity_of_found_property(holder, prop);
-                self.add_member_property(builder, at, t, (symbol, prop), mapper);
+                self.add_member_property(builder, t, (symbol, prop), mapper);
                 None
             }
             None => {
                 let before = self.non_cacheable_mark();
                 let missing = self.missing_from_member(t, walk.name, walk.is_late_bound);
-                builder.add_missing(at, missing);
+                builder.add_missing(missing);
                 Some((missing, self.non_cacheable_mark() == before))
             }
         };
@@ -848,12 +627,11 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// Records that the member at `at`, whose apparent type is `t`, has `prop`. `symbol` is the result of
+    /// Records that the member whose apparent type is `t` has `prop`. `symbol` is the result of
     /// `identity_of_own_property`.
     fn add_member_property(
         &mut self,
         builder: &mut UnionPropertyBuilder<'p, 's>,
-        at: usize,
         t: TypeId,
         (symbol, prop): (*const Prop<'p>, &'p Prop<'p>),
         mapper: MapperId,
@@ -872,7 +650,6 @@ impl<'p, 's> Checker<'p, 's> {
         builder.is_public |= !prop.flags.intersects(access);
         if builder.prop_set.is_empty() {
             builder.first_owner = t;
-            builder.first_at = Some(at);
             builder.flags |= prop.flags & ACCESSOR_KIND;
             builder.prop_set.push(prop);
             return;
@@ -931,7 +708,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<Prop<'s>> {
         let UnionPropertyBuilder {
             mut prop_set,
-            mut index_types,
+            index_types,
             merged_instantiations,
             mut flags,
             is_public,
@@ -981,10 +758,7 @@ impl<'p, 's> Checker<'p, 's> {
         if flags.contains(PropFlags::PRIVATE) || is_public {
             flags.remove(PropFlags::PROTECTED);
         }
-        if !index_types.is_sorted_by_key(|it| it.0) {
-            index_types.shared_sort_by_key(|it| it.0);
-        }
-        prop_set.extend(index_types.iter().map(|&(_, t)| Prop {
+        prop_set.extend(index_types.into_iter().map(|t| Prop {
             name,
             flags: PropFlags::WRITE_PARTIAL,
             source: PropSource::Type(t),

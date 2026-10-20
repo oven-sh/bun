@@ -6,9 +6,8 @@ import { linesOf, tsc } from "./differential";
 afterAll(endChildren);
 
 // To create a property of a short union, `bun check` looks the name up in every member. In a union of 8 or more members
-// it caches what it learned about a member for the next lookup. In a union of 128 or more it visits only the members
-// that have the name, using bit sets of members with 64 per word, which need no allocation up to 128. So each program
-// here is checked with unions on both sides of those sizes, and the size must not change what's reported.
+// it caches what it learned about a member for the next lookup. So each program here is checked with unions on both
+// sides of that size, and the size must not change what's reported.
 
 const tsconfig = JSON.stringify({
   compilerOptions: {

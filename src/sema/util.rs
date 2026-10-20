@@ -149,28 +149,6 @@ impl PositionSet {
         self.0[position / 64] >> (position % 64) & 1 != 0
     }
 
-    /// Yields each word of the set with the bits in `excluded` cleared, paired with the word's index.
-    #[inline]
-    fn words_except(
-        &self,
-        excluded: &PositionSet,
-    ) -> impl DoubleEndedIterator<Item = (usize, u64)> {
-        let words = self.0.iter().zip(&excluded.0).enumerate();
-        words.map(|(at, (word, excluded))| (at, word & !excluded))
-    }
-
-    /// Returns the lowest position in the set that isn't in `excluded`.
-    pub(crate) fn first_except(&self, excluded: &PositionSet) -> Option<usize> {
-        let (at, word) = self.words_except(excluded).find(|it| it.1 != 0)?;
-        Some(at * 64 + word.trailing_zeros() as usize)
-    }
-
-    /// Returns the highest position in the set that isn't in `excluded`.
-    pub(crate) fn last_except(&self, excluded: &PositionSet) -> Option<usize> {
-        let (at, word) = self.words_except(excluded).rev().find(|it| it.1 != 0)?;
-        Some(at * 64 + 63 - word.leading_zeros() as usize)
-    }
-
     /// Iterates over the positions in ascending order.
     pub(crate) fn iter(&self) -> impl Iterator<Item = usize> {
         let words = self.0.iter().enumerate();

@@ -102,8 +102,8 @@ pub(super) mod task_fact {
     /// Set on a conditional type's extends type. Two instantiations of one declaration that both have this extends type
     /// have been related, so the inference between their extends types has already run.
     pub(in super::super) const HAS_INFERRED_BETWEEN_SAME_EXTENDS: u32 = 1 << 5;
-    /// See `union_property`. Every member of the union has been visited for a property. Facts and summaries are stored
-    /// starting with the second walk. Storing them costs about as much as one walk, and many unions only ever have one
+    /// See `union_property`. Every member of the union has been visited for a property. Facts are stored starting
+    /// with the second walk. Storing them costs about as much as one walk, and many unions only ever have one
     /// property looked up.
     pub(in super::super) const IS_WALKED_UNION: u32 = 1 << 6;
     /// See `union_property`. Set on an intersection that is stored as a `MemberFacts::apparent_type` or a

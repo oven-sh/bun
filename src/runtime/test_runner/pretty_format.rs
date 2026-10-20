@@ -99,12 +99,26 @@ pub(crate) enum MessageLevel {
     Debug = 3,
 }
 
+const REACT_19_ELEMENT: &[u8] = b"react.transitional.element";
+
 #[derive(Copy, Clone, Default)]
 pub(crate) struct FormatOptions {
     pub(crate) enable_colors: bool,
     pub(crate) add_newline: bool,
     pub flush: bool,
     pub(crate) quote_strings: bool,
+}
+
+struct CountedWriter<'a, W: bun_io::Write> {
+    writer: &'a mut W,
+    length: &'a core::cell::Cell<usize>,
+}
+
+impl<W: bun_io::Write> bun_io::Write for CountedWriter<'_, W> {
+    fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
+        self.length.set(self.length.get() + buf.len());
+        self.writer.write_all(buf)
+    }
 }
 
 impl JestPrettyFormat {
@@ -121,9 +135,11 @@ impl JestPrettyFormat {
         // type up front so the whole `Formatter` tree is instantiated once.
         let flush = options.flush;
         let result = {
-            let mut bridge = AsFmt::new(&mut *writer);
+            let length = core::cell::Cell::new(0);
+            let mut counted = CountedWriter { writer: &mut *writer, length: &length };
+            let mut bridge = AsFmt::new(&mut counted);
             let mut adapted = bun_io::write::FmtAdapter::new(&mut bridge);
-            Self::format_adapted(level, global, vals, len, &mut adapted, options)
+            Self::format_adapted(level, global, vals, len, &mut adapted, options, &length)
         };
         // `FmtAdapter::flush` can't reach `writer`; do the requested flush here.
         if flush {
@@ -139,6 +155,7 @@ impl JestPrettyFormat {
         len: usize,
         writer: &mut bun_io::write::FmtAdapter<'_, AsFmt<'_>>,
         options: FormatOptions,
+        output_length: &core::cell::Cell<usize>,
     ) -> JsResult<()> {
         use bun_io::Write as _;
         type W<'a, 'b> = bun_io::write::FmtAdapter<'a, AsFmt<'b>>;
@@ -150,6 +167,7 @@ impl JestPrettyFormat {
         if len == 1 {
             fmt = Formatter::new(global);
             fmt.quote_strings = options.quote_strings;
+            fmt.output_length = Some(output_length);
             let tag = Tag::get(vals[0], global)?;
 
             if tag.tag == Tag::String {
@@ -196,6 +214,7 @@ impl JestPrettyFormat {
         fmt = Formatter::new(global);
         fmt.remaining_values = &vals[..len][1..];
         fmt.quote_strings = options.quote_strings;
+        fmt.output_length = Some(output_length);
 
         let result: JsResult<()> = (|| {
             let mut this_value: JSValue = vals[0];
@@ -326,6 +345,8 @@ pub(crate) struct Formatter<'a> {
     /// Set by `did_older_bun_print`. The cell turns true once the output has diverged, so printing can stop.
     like_older_bun: Option<&'a core::cell::Cell<bool>>,
     same_as_older_bun: bool,
+    /// Bytes written so far. Only failure messages track it.
+    output_length: Option<&'a core::cell::Cell<usize>>,
     ancestors: ObjectList,
     copied: usize,
     print_basic_prototype: bool,
@@ -359,6 +380,7 @@ impl<'a> Formatter<'a> {
             snapshot_format: SnapshotFormat::Bun,
             like_older_bun: None,
             same_as_older_bun: true,
+            output_length: None,
             ancestors: ObjectList::default(),
             copied: 0,
             print_basic_prototype: false,
@@ -539,14 +561,10 @@ impl Tag {
         // Is this a react element?
         if js_type.is_object() && js_type != JSType::ProxyObject {
             if let Some(typeof_symbol) = value.get_own_truthy(global_this, "$$typeof")? {
-                if typeof_symbol
-                    .is_same_value(JSValue::symbol_for(global_this, b"react.element"), global_this)?
-                    || typeof_symbol.is_same_value(
-                        JSValue::symbol_for(global_this, b"react.fragment"),
-                        global_this,
-                    )?
-                {
-                    return Ok(TagResult { tag: Tag::JSX, cell: js_type });
+                for name in [REACT_19_ELEMENT, b"react.element", b"react.fragment"] {
+                    if typeof_symbol == JSValue::symbol_for(global_this, name) {
+                        return Ok(TagResult { tag: Tag::JSX, cell: js_type });
+                    }
                 }
             }
         }
@@ -2544,6 +2562,21 @@ impl<'a> Formatter<'a> {
         value: JSValue,
         global_this: &'a JSGlobalObject,
     ) -> JsResult<()> {
+        // Vitest's `maxOutputLength`. A React fiber or `window` would print hundreds of megabytes.
+        if !result.tag.is_primitive() && self.output_length.is_some_and(|length| length.get() > 1_000_000) {
+            let _ = writer.write_all(if result.tag == Tag::Array { b"[Array]" } else { b"[Object]" });
+            return Ok(());
+        }
+        let mut result = result;
+        if result.tag == Tag::JSX
+            && value.get_own_truthy(global_this, "$$typeof")? == Some(JSValue::symbol_for(global_this, REACT_19_ELEMENT))
+        {
+            // Older versions printed it as a plain object, along with the fiber in its `_owner`.
+            match self.like_older_bun {
+                Some(_) => result.tag = Tag::Object,
+                None => self.same_as_older_bun = false,
+            }
+        }
         if self.snapshot_format.is_pretty_format() || self.serializers.is_some() {
             let mut printed = Vec::new();
             let is_printed = self.print_for_other_runners(&mut printed, value);

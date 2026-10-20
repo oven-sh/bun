@@ -2376,7 +2376,7 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
   }
   const firstLine = `const firstLine = f => { try { f(); return "passes"; } catch (error) { return error.message.split("\\n")[0]; } };`;
 
-  // What Bun wrote before it printed DOM nodes as markup, called getters and skipped non-enumerable properties.
+  // What Bun wrote before it printed DOM nodes as markup and React 19 elements as JSX, called getters and skipped non-enumerable properties.
   const olderBun = `{
   "accessor": {
     "computed": [native code],
@@ -2398,6 +2398,15 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
   "list": [
     1,
   ],
+  "react": {
+    "$$typeof": Symbol(react.transitional.element),
+    "_owner": null,
+    "key": null,
+    "props": {
+      "children": "words",
+    },
+    "type": "b",
+  },
   "text": [
     Text {
       "data": "words",
@@ -2424,6 +2433,7 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
       element: new HTMLSpanElement(),
       text: [new Text()],
       list: NodeList.from([1]),
+      react: { $$typeof: Symbol.for("react.transitional.element"), type: "b", key: null, props: { children: "words" }, _owner: null },
     });
   `;
 

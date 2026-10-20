@@ -229,6 +229,11 @@ export default [
       _destroyed: {
         getter: "getDestroyed",
       },
+      _onImmediate: {
+        getter: "get_onImmediate",
+        setter: "set_onImmediate",
+        this: true,
+      },
       ["@@dispose"]: {
         fn: "dispose",
         length: 0,

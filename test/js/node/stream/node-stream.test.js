@@ -4,7 +4,8 @@ import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdir
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
-import { finished as finishedP } from "node:stream/promises";
+import { finished as finishedP, pipeline as pipelineP } from "node:stream/promises";
+import { promisify } from "node:util";
 import { join } from "path";
 
 describe("Readable", () => {
@@ -1915,9 +1916,8 @@ it("internal FixedQueue backing list is not holey (test-fixed-queue.js)", () => 
 // the matcher spins the event loop until the promise settles, so the per-test
 // timeout never fires on a hang (oven-sh/bun#33261).
 describe("promise pipeline with a function as the last entry (nodejs/node#65559)", () => {
-  const { pipeline: pipelineP } = require("node:stream/promises");
-  const { promisify } = require("node:util");
-  const chunks = () => Array.from({ length: 100 }, () => "x".repeat(1024));
+  const chunk = Buffer.alloc(1024, "x").toString();
+  const chunks = () => Array.from({ length: 100 }, () => chunk);
   async function* passThrough(source) {
     for await (const chunk of source) yield chunk;
   }

@@ -1,7 +1,6 @@
 "use strict";
 
 const ArrayPrototypePop = Array.prototype.pop;
-const ArrayIsArray = Array.isArray;
 
 const { isIterable, isNodeStream, isWebStream } = require("internal/streams/utils");
 const { pipelineImpl: pl } = require("internal/streams/pipeline");
@@ -27,7 +26,7 @@ function pipeline(...streams) {
     }
 
     let lastStream = streams[streams.length - 1];
-    if (streams.length === 1 && ArrayIsArray(lastStream)) {
+    if (streams.length === 1 && $isArray(lastStream)) {
       lastStream = lastStream[lastStream.length - 1];
     }
 
@@ -43,10 +42,7 @@ function pipeline(...streams) {
       { signal, end },
     );
 
-    // When the last entry is a function, pipelineImpl wraps its output in a
-    // PassThrough so the callback API can pipe it further. The promise API
-    // exposes no stream, so nothing reads it and the pump stalls at the high
-    // water mark. Drain it. (nodejs/node#65559)
+    // Nothing consumes the proxy PassThrough of a function tail. Drain it (nodejs/node#65559).
     if (typeof lastStream === "function" && stream.readable) {
       stream.resume();
     }

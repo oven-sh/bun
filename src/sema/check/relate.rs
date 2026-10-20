@@ -6706,6 +6706,11 @@ impl<'p, 's> Checker<'p, 's> {
                 ..
             }
         );
+        let printed = if REPORT {
+            self.printed_source(source)
+        } else {
+            source
+        };
         for tp in &tm.shape().props {
             if excluded.contains(&tp.name)
                 || optionals_only && !tp.flags.contains(PropFlags::OPTIONAL)
@@ -6721,11 +6726,6 @@ impl<'p, 's> Checker<'p, 's> {
             if self.is_same_property_symbol((sp, source_mapper), (tp, tm.mapper)) {
                 continue;
             }
-            let printed = if REPORT {
-                self.printed_source(source)
-            } else {
-                source
-            };
             let related = self.property_related_to::<REPORT>(
                 r,
                 (printed, target),

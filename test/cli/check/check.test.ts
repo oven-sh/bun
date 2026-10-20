@@ -5417,8 +5417,7 @@ export {};
         a.ts(18,7): error TS2322: Type 'AT & [1, 2]' is not assignable to type '[1, 2, 3]'.
           Source has 2 element(s) but target requires 3.
         a.ts(20,7): error TS2322: Type 'ItemA & Item<"a">' is not assignable to type 'Item<"b">'.
-          Type '"a"' is not assignable to type '"b"'.
-        "
+          Type '"a"' is not assignable to type '"b"'."
       `);
     });
 

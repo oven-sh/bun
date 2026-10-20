@@ -85,12 +85,13 @@ struct DatabaseSyncOpenConfiguration {
     bool enableDefensive = true;
     bool allowExtension = false;
     int timeout = 0;
-    // Per-limit value supplied via the constructor's {limits: {...}}
-    // option, applied after open(). Indexed by SQLITE_LIMIT_* id.
+    // Per-limit value from the constructor's {limits: {...}} option or a
+    // later `db.limits.<name> = v` write, replayed on every open() so a
+    // close()/open() cycle keeps it. Indexed by SQLITE_LIMIT_* id.
     // -1 means "unset" — we never accept a negative limit from the user,
     // so this is an unambiguous sentinel and keeps the struct trivially
     // copyable (std::optional<int>[11] would bloat every DatabaseSync).
-    std::array<int, kNodeSqliteLimitCount> initialLimits { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+    std::array<int, kNodeSqliteLimitCount> limits { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
     // Defaults inherited by statements prepared on this connection
     // (overridable per-statement via setReadBigInts() etc.).
     bool readBigInts = false;
@@ -145,6 +146,9 @@ public:
     void setEnableLoadExtension(bool v) { m_enableLoadExtension = v; }
 
     const DatabaseSyncOpenConfiguration& config() const { return m_config; }
+    // Write through to m_config so open() replays the value after close().
+    void setLimit(int id, int value);
+    void setEnableDefensive(bool v) { m_config.enableDefensive = v; }
 
     void trackSession(Ref<NodeSqliteSessionRecord>&& record) { m_sessions.append(WTF::move(record)); }
     void untrackSession(NodeSqliteSessionRecord* record)

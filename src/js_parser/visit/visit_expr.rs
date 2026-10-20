@@ -84,6 +84,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Tag::EArrow => Self::e_arrow(self, e, in_),
             Tag::EFunction => Self::e_function(self, e, in_),
             Tag::EClass => Self::e_class(self, e, in_),
+            Tag::ESuper => self.fn_only_data_visit.has_super_or_direct_eval = true,
             _ => {}
         }
     }
@@ -92,9 +93,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // Private associated fns on this impl so they can see the const-generic
     // feature params.
 
-    fn e_new_target(_: &mut Self, _e: &mut Expr, _: ExprIn) {
+    fn e_new_target(p: &mut Self, _e: &mut Expr, _: ExprIn) {
         // The "Cannot use \"new.target\" here" range error is intentionally
         // not emitted: it is not necessary and it was causing breakages.
+        if p.fn_only_data_visit.is_new_target_undefined {
+            p.new_target_count = p.new_target_count.wrapping_add(1);
+        }
     }
 
     fn e_string(_: &mut Self, _e: &mut Expr, _: ExprIn) {
@@ -122,6 +126,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn e_await(p: &mut Self, e: &mut Expr, _: ExprIn) {
         if let js_ast::ExprData::EAwait(mut e_) = e.data {
+            p.fn_or_arrow_data_visit.suspend_count += 1;
             p.await_target = Some(e_.value.data);
             p.visit_expr(&mut e_.value);
         }
@@ -129,6 +134,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn e_yield(p: &mut Self, e: &mut Expr, _: ExprIn) {
         if let js_ast::ExprData::EYield(mut e_) = e.data {
+            p.fn_or_arrow_data_visit.suspend_count += 1;
             if let Some(val) = e_.value.as_mut() {
                 p.visit_expr(val);
             }
@@ -1694,6 +1700,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut has_spread = false;
         let mut has_proto = false;
         for property in e_.properties.slice_mut() {
+            let mut sets_prototype = false;
             if property.kind != G::PropertyKind::Spread {
                 p.visit_expr(
                     property
@@ -1714,6 +1721,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .expect("infallible: variant checked")
                         .eql_comptime(b"__proto__")
                 {
+                    sets_prototype = true;
                     if has_proto {
                         let r = js_lexer::range_of_identifier(p.source, key.loc);
                         p.log().add_range_error(
@@ -1744,32 +1752,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if let Some(value) = &mut property.value {
-                // Propagate name from property key for decorated anonymous class expressions
-                // e.g., { Foo: @dec class {} } should give the class .name = "Foo"
-                if in_.assign_target == js_ast::AssignTarget::None
-                    && matches!(value.data, Data::EClass(..))
-                    && value
-                        .data
-                        .e_class()
-                        .unwrap()
-                        .should_lower_standard_decorators
-                    && value
-                        .data
-                        .e_class()
-                        .expect("infallible: variant checked")
-                        .class_name
-                        .is_none()
-                    && let Some(key) = property.key
-                    && matches!(key.data, Data::EString(..))
-                {
-                    let key_str = key.data.e_string().expect("infallible: variant checked");
-                    // While E.rs has duplicate impls (E0034), reach the bytes directly
-                    // — class-name keys are parser-produced (UTF-8, no rope).
-                    p.decorator_class_name = if !key_str.is_utf16 {
-                        Some(key_str.data.slice())
-                    } else {
-                        None
-                    };
+                // `{ Foo: class {} }` names the class "Foo". `__proto__: class {}` names nothing.
+                if in_.assign_target == js_ast::AssignTarget::None && !sets_prototype {
+                    (p.decorator_class_name, p.decorator_class_name_is_computed) = p
+                        .decorator_class_name_from_key(
+                            property.key,
+                            property.flags.contains(Flags::Property::IsComputed),
+                            value,
+                        );
                 }
                 p.visit_expr_in_out(
                     value,
@@ -1779,6 +1769,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                 );
                 p.decorator_class_name = None;
+                p.decorator_class_name_is_computed = false;
             }
 
             if property.initializer.is_some() {
@@ -1940,6 +1931,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         == b"eval"
                 {
                     e_.is_direct_eval = true;
+                    p.fn_only_data_visit.has_super_or_direct_eval = true;
 
                     // Pessimistically assume that if this looks like a CommonJS module
                     // (e.g. no "export" keywords), a direct call to "eval" means that
@@ -2815,12 +2807,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Save name from assignment context before visiting (nested visits may overwrite it)
         let decorator_name_from_context = p.decorator_class_name;
         p.decorator_class_name = None;
+        let name_is_computed = core::mem::take(&mut p.decorator_class_name_is_computed);
 
+        let suspend_count = p.fn_or_arrow_data_visit.suspend_count;
+        let new_target_count = p.new_target_count;
         let _ = p.visit_class(expr.loc, &mut e_, Ref::NONE, true);
 
         // Lower standard decorators for class expressions
         if e_.should_lower_standard_decorators {
-            *e = p.lower_standard_decorators_expr(expr, &mut e_, decorator_name_from_context);
+            // No function can hold an `await` or a `yield` of the function around the class.
+            let suspends = p.fn_or_arrow_data_visit.suspend_count != suspend_count;
+            // JavaScriptCore throws for `new.target` in a field initializer or a static block of a class that is in an arrow function: https://github.com/oven-sh/WebKit/pull/647
+            let loses_new_target = p.new_target_count != new_target_count;
+            let keeps_its_place = suspends
+                || loses_new_target
+                || (name_is_computed && e_.ts_decorators.len_u32() == 0);
+            *e = p.lower_standard_decorators_expr(
+                expr,
+                &mut e_,
+                decorator_name_from_context,
+                keeps_its_place,
+            );
             return;
         }
 

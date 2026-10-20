@@ -220,7 +220,7 @@ pub mod Runtime {
         /// This comment must never be used manually.
         pub dont_bundle_twice: bool,
 
-        /// Only hashed: `js_printer::Options::code_coverage` changes the source map that is cached.
+        /// `js_printer::Options::code_coverage` changes the source map that is cached, and the lowering of standard decorators prints a call for the function count.
         pub code_coverage: bool,
 
         /// This is a list of packages which even when require() is used, we will
@@ -1304,6 +1304,8 @@ pub struct FnOrArrowDataVisit {
     pub(crate) is_inside_loop: bool,
     pub(crate) is_inside_switch: bool,
     pub(crate) is_outside_fn_or_arrow: bool,
+    /// How many `await` and `yield` expressions of this function were visited.
+    pub(crate) suspend_count: u32,
 
     /// This is used to silence unresolvable imports due to "require" calls inside
     /// a try/catch statement. The assumption is that the try/catch statement is
@@ -1328,6 +1330,12 @@ pub struct FnOnlyDataVisit {
     /// or a class declaration). That means the top-level module scope "this" value
     /// has been shadowed and is now inaccessible.
     pub(crate) is_this_nested: bool,
+
+    /// True in a class field initializer or a class static block, which run as a method call.
+    pub(crate) is_new_target_undefined: bool,
+
+    /// A `super` or a direct `eval` of this function was visited.
+    pub(crate) has_super_or_direct_eval: bool,
 }
 
 /// Due to ES6 destructuring patterns, there are many cases where it's

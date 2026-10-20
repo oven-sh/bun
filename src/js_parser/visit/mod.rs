@@ -213,6 +213,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.react_compiler_may_replace_body = prev_may_replace_body;
         self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
+        self.visited_fn_has_super_or_direct_eval = self.fn_only_data_visit.has_super_or_direct_eval;
         self.fn_only_data_visit = old_fn_only_data;
 
         func
@@ -252,6 +253,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             duplicate_args_check = Some(StringVoidMap::get());
         }
 
+        // A default value runs for each call; the list around the function runs once.
+        let old_nearest_stmt_list_is_shared =
+            core::mem::replace(&mut self.nearest_stmt_list_is_shared, true);
+
         for arg in args.iter_mut() {
             if arg.ts_decorators.len_u32() > 0 {
                 self.visit_ts_decorators(&mut arg.ts_decorators);
@@ -261,9 +266,64 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let dup: Option<&mut StringVoidMap> = duplicate_args_check.as_deref_mut();
             self.visit_binding(arg.binding, dup);
             if let Some(default) = arg.default.as_mut() {
+                let prev_decorator_class_name = self.decorator_class_name;
+                self.decorator_class_name =
+                    self.decorator_class_name_from_binding(arg.binding, default);
                 self.visit_expr(default);
+                self.decorator_class_name = prev_decorator_class_name;
             }
         }
+
+        self.nearest_stmt_list_is_shared = old_nearest_stmt_list_is_shared;
+    }
+
+    /// The name that `binding` gives an anonymous class the lowering replaces.
+    pub(crate) fn decorator_class_name_from_binding(
+        &self,
+        binding: BindingNodeIndex,
+        value: &Expr,
+    ) -> Option<&'a [u8]> {
+        let ExprData::EClass(class) = value.data else {
+            return None;
+        };
+        if class.class_name.is_some() || !class.should_lower_standard_decorators {
+            return None;
+        }
+        let BData::BIdentifier(id) = binding.data else {
+            return None;
+        };
+        Some(self.load_name_from_ref(id.get().r#ref))
+    }
+
+    /// The name that `key` gives such a class. The flag is set where only the engine can name it: under a computed key, a bigint, or a string with a lone surrogate. A class decorator gets the name of a computed key only from a UTF-8 string, as on main.
+    pub(crate) fn decorator_class_name_from_key(
+        &self,
+        key: Option<Expr>,
+        is_computed: bool,
+        value: &Expr,
+    ) -> (Option<&'a [u8]>, bool) {
+        let (Some(key), ExprData::EClass(class)) = (key, value.data) else {
+            return (None, false);
+        };
+        if class.class_name.is_some() || !class.should_lower_standard_decorators {
+            return (None, false);
+        }
+        let name = match key.data {
+            ExprData::EString(mut string)
+                if string.is_utf8()
+                    || (!is_computed
+                        && char::decode_utf16(string.slice16().iter().copied())
+                            .all(|unit| unit.is_ok())) =>
+            {
+                Some(string.slice(self.arena))
+            }
+            ExprData::ENumber(number) if !is_computed => {
+                number.to_string(self.arena).map(|name| name.slice())
+            }
+            ExprData::EPrivateIdentifier(private) => Some(self.load_name_from_ref(private.ref_)),
+            _ => None,
+        };
+        (name, is_computed || name.is_none())
     }
 
     // `Vec<Expr>` is not `Copy`; mutate in place.
@@ -768,6 +828,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub(crate) fn visit_for_loop_init(&mut self, stmt: Stmt, is_in_or_of: bool) -> Stmt {
+        // The head of a `for-in` or a `for-of` runs for each iteration.
+        let old_nearest_stmt_list_is_shared = self.nearest_stmt_list_is_shared;
+        self.nearest_stmt_list_is_shared |= is_in_or_of;
         match stmt.data {
             StmtData::SExpr(mut st) => {
                 let assign_target = if is_in_or_of {
@@ -788,7 +851,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 for dec in st.decls.slice_mut() {
                     self.visit_binding(dec.binding, None);
                     if let Some(val) = dec.value.as_mut() {
+                        let prev_decorator_class_name = self.decorator_class_name;
+                        self.decorator_class_name =
+                            self.decorator_class_name_from_binding(dec.binding, val);
                         self.visit_expr(val);
+                        self.decorator_class_name = prev_decorator_class_name;
                     }
                 }
                 st.kind = self.select_local_kind(st.kind);
@@ -797,6 +864,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.panic("Unexpected stmt in visitForLoopInit", format_args!(""));
             }
         }
+        self.nearest_stmt_list_is_shared = old_nearest_stmt_list_is_shared;
 
         stmt
     }
@@ -926,6 +994,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
         }
+    }
+
+    /// Visits the test or the update of a loop, which runs more often than the list around the loop.
+    pub(crate) fn visit_loop_head(&mut self, expr: &mut Expr) {
+        let old_nearest_stmt_list_is_shared =
+            core::mem::replace(&mut self.nearest_stmt_list_is_shared, true);
+        self.visit_expr(expr);
+        self.nearest_stmt_list_is_shared = old_nearest_stmt_list_is_shared;
     }
 
     pub(crate) fn visit_loop_body(&mut self, stmt: Stmt) -> Stmt {
@@ -1081,6 +1157,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .expect("unreachable");
 
             let mut constructor_function: Option<bun_ast::StoreRef<E::Function>> = None;
+            let lowers_standard_decorators = class.should_lower_standard_decorators;
+            // With `useDefineForClassFields: false` an instance field becomes `this.x = init` in the constructor.
+            let assigns_instance_fields = Self::IS_TYPESCRIPT_ENABLED
+                && !self.options.use_define_for_class_fields
+                && !lowers_standard_decorators;
             let properties: &mut [G::Property] = class.properties.slice_mut();
             for property in properties.iter_mut() {
                 if property.kind == PropertyKind::ClassStaticBlock {
@@ -1089,6 +1170,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.fn_or_arrow_data_visit = FnOrArrowDataVisit::default();
                     self.fn_only_data_visit = FnOnlyDataVisit {
                         is_this_nested: true,
+                        is_new_target_undefined: true,
                         ..Default::default()
                     };
                     // PropertyKind::ClassStaticBlock guarantees `Some`; arena-owned for 'a.
@@ -1205,6 +1287,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else {
                         self.visit_expr(property.value.as_mut().unwrap());
                     }
+                    if self.visited_fn_has_super_or_direct_eval {
+                        property.flags.insert(flags::Property::HasSuperOrDirectEval);
+                    }
 
                     if Self::IS_TYPESCRIPT_ENABLED {
                         if constructor_function_.is_some() {
@@ -1220,24 +1305,61 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(val) = property.initializer {
                     let class_body = self.current_scope;
                     self.field_init_class_bodies.push(class_body);
-                    if let Some(name) = name_to_keep {
-                        let was_anon = val.is_anonymous_named();
-                        let prev_dcn2 = self.decorator_class_name;
-                        if let ExprData::EClass(e_class) = &val.data {
-                            if e_class.class_name.is_none()
-                                && e_class.should_lower_standard_decorators
-                            {
-                                self.decorator_class_name = Some(name);
-                            }
-                        }
-                        let mut visited = val;
-                        self.visit_expr(&mut visited);
-                        property.initializer =
-                            Some(self.maybe_keep_expr_symbol_name(visited, name, was_anon));
-                        self.decorator_class_name = prev_dcn2;
-                    } else {
-                        self.visit_expr(property.initializer.as_mut().unwrap());
+                    // An instance initializer runs for each object, a static one with the class.
+                    let old_nearest_stmt_list_is_shared = self.nearest_stmt_list_is_shared;
+                    if !property.flags.contains(flags::Property::IsStatic) {
+                        self.nearest_stmt_list_is_shared = true;
                     }
+                    // An initializer runs as a method of its own.
+                    let old_fn_only_data = core::mem::replace(
+                        &mut self.fn_only_data_visit,
+                        FnOnlyDataVisit {
+                            is_this_nested: true,
+                            is_new_target_undefined: true,
+                            ..Default::default()
+                        },
+                    );
+                    let was_anon = val.is_anonymous_named();
+                    let prev_dcn2 = (
+                        self.decorator_class_name,
+                        self.decorator_class_name_is_computed,
+                    );
+                    let is_computed = property.flags.contains(flags::Property::IsComputed);
+                    let (name, is_engine_named) =
+                        self.decorator_class_name_from_key(property.key, is_computed, &val);
+                    (
+                        self.decorator_class_name,
+                        self.decorator_class_name_is_computed,
+                    ) = if matches!(val.data, ExprData::EClass(class) if class.ts_decorators.len_u32() > 0)
+                    {
+                        // As on main, a computed key of a class gives a class decorator no name.
+                        (name.filter(|_| !is_computed), false)
+                    } else if (lowers_standard_decorators
+                        && (property.ts_decorators.len_u32() > 0
+                            || (property.kind == PropertyKind::AutoAccessor && !is_private)))
+                        || (assigns_instance_fields
+                            && property.kind == PropertyKind::Normal
+                            && !property.flags.contains(flags::Property::IsStatic))
+                    {
+                        // The lowering makes the initializer of a decorated member or of `accessor x` an argument of a call. The engine names no class there, and none in an assignment to `this.x`.
+                        (None, false)
+                    } else {
+                        (name, is_engine_named)
+                    };
+                    self.visit_expr(property.initializer.as_mut().unwrap());
+                    (
+                        self.decorator_class_name,
+                        self.decorator_class_name_is_computed,
+                    ) = prev_dcn2;
+                    self.fn_only_data_visit = old_fn_only_data;
+                    if let Some(name) = name_to_keep {
+                        property.initializer = Some(self.maybe_keep_expr_symbol_name(
+                            property.initializer.expect("unreachable"),
+                            name,
+                            was_anon,
+                        ));
+                    }
+                    self.nearest_stmt_list_is_shared = old_nearest_stmt_list_is_shared;
                     self.field_init_class_bodies.pop();
                 }
 
@@ -1484,6 +1606,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
+            self.visited_class_body = Some(self.current_scope);
+
             // manual restore for the block-level `defer`
             self.pop_scope();
             self.enclosing_class_keyword = old_enclosing_class_keyword;
@@ -1565,8 +1689,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.scope_order_to_visit =
                             scopes_for_enum_at(&p.scopes_in_order_for_enum, stmt.loc);
 
+                        // The list of this block is not the nearest one yet: an initializer declares its own temporaries.
+                        let old_nearest_stmt_list_is_shared =
+                            core::mem::replace(&mut p.nearest_stmt_list_is_shared, true);
                         let mut temp = ListManaged::new_in(p.arena);
                         let res = p.visit_and_append_stmt(&mut temp, stmt);
+                        p.nearest_stmt_list_is_shared = old_nearest_stmt_list_is_shared;
                         p.scope_order_to_visit = old_scopes_in_order;
                         res?;
                         preprocessed_enums.push(temp.into_bump_slice());
@@ -1584,6 +1712,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `&mut`) so the pointer shares the local's base tag and survives the
             // direct `&mut before` reborrows in the loop below (Stacked Borrows).
             p.nearest_stmt_list = NonNull::new(core::ptr::addr_of_mut!(before));
+            // `before` runs each time the statements after it run.
+            let prev_nearest_stmt_list_is_shared =
+                core::mem::replace(&mut p.nearest_stmt_list_is_shared, false);
 
             let mut preprocessed_enum_i: usize = 0;
 
@@ -1776,6 +1907,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // manual restore for the block-level `defer`s
             p.nearest_stmt_list = prev_nearest_stmt_list;
+            p.nearest_stmt_list_is_shared = prev_nearest_stmt_list_is_shared;
             p.is_control_flow_dead = old_is_control_flow_dead;
         }
 

@@ -360,6 +360,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) commonjs_replacement_stmts: StmtNodeList,
     /// How many `this` expressions the visit pass has seen.
     pub(crate) this_expr_count: u32,
+    /// `FnOnlyDataVisit::has_super_or_direct_eval` of the function that `visit_func` returned from last.
+    pub(crate) visited_fn_has_super_or_direct_eval: bool,
+    /// How many `new.target` expressions the visit pass saw in a class field initializer or a static block.
+    pub(crate) new_target_count: u32,
 
     pub(crate) parse_pass_symbol_uses: ParsePassSymbolUsageType<'a>,
 
@@ -721,6 +725,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Name from assignment context for anonymous decorated class expressions.
     /// Set before visitExpr, consumed by lowerStandardDecoratorsImpl.
     pub(crate) decorator_class_name: Option<&'a [u8]>,
+    /// Only the engine can name that class, as under a computed key.
+    pub(crate) decorator_class_name_is_computed: bool,
+    /// The body scope of the class `visit_class` just returned from, for standard decorator lowering.
+    pub(crate) visited_class_body: Option<js_ast::StoreRef<Scope>>,
+    /// The expression being visited can run more often than `nearest_stmt_list`, as a parameter default does.
+    pub(crate) nearest_stmt_list_is_shared: bool,
 }
 
 // `binding::ToExprWrapper` type-erases `*P` (which is generic over
@@ -8323,7 +8333,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         r#ref
     }
 
-    /// A lowering's own `var`. `bun run` prints names as they are, so there it gets a per-file counter.
+    /// A lowering's own `var` or `let`. `bun run` prints names as they are, so there it gets a per-file counter.
     pub(crate) fn generate_temp_var(&mut self, name: &'a [u8]) -> Ref {
         let name: &'a [u8] = if self.will_use_renamer() {
             name
@@ -8341,7 +8351,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Nested scopes are renamed from `Scope::generated`, a file's top level from `Part::declared_symbols`.
     pub(crate) fn declare_temp_var(&mut self, ref_: Ref) {
         let mut scope = self.current_scope_ref();
-        // A parameter default has no statement list; its `var` goes outside the function.
+        // The scope has to enclose the declaration. A parameter default has no statement list, and the scope outside the function encloses each place that declares for it.
         while !scope.kind_stops_hoisting() || scope.kind == js_ast::scope::Kind::FunctionArgs {
             scope = scope.parent.unwrap();
         }
@@ -9757,6 +9767,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             had_commonjs_named_exports_this_visit: false,
             commonjs_replacement_stmts: js_ast::StmtNodeList::EMPTY,
             this_expr_count: 0,
+            visited_fn_has_super_or_direct_eval: false,
+            new_target_count: 0,
             parse_pass_symbol_uses: None,
             has_commonjs_export_names: false,
             should_fold_typescript_constant_expressions: false,
@@ -9818,6 +9830,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             will_wrap_module_in_try_catch_for_using: false,
             nearest_stmt_list: None,
             decorator_class_name: None,
+            decorator_class_name_is_computed: false,
+            visited_class_body: None,
+            nearest_stmt_list_is_shared: false,
 
             jsx_transform,
 

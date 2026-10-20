@@ -2,48 +2,51 @@
 
 use bun_alloc::ArenaVecExt as _;
 
-use bun_collections::{HashMap, VecExt};
+use bun_collections::VecExt;
 
 use crate::lexer as js_lexer;
-use crate::p::{BinaryExpressionSimplifyVisitor, P};
+use crate::p::P;
 use crate::parser::{ARGUMENTS_STR as arguments_str, Ref, TempRef};
 use bun_ast::g::{DeclList, Property, PropertyKind};
 use bun_ast::{self as js_ast, B, E, Expr, ExprNodeList, Flags, G, S, Stmt};
 
 type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
 
+/// A function the lowering adds has no place in the source.
+const GENERATED: bun_ast::Loc = bun_ast::Loc::EMPTY;
+
 // ── Local helper types ───────────────────────────────────────────────────────
 
+/// The body of a decorated `#private` method: a method under a key the leading static block deletes.
+struct Host<'a> {
+    /// Gets the body, then what the decorators return.
+    function: Ref,
+    key: HostKey<'a>,
+    is_static: bool,
+}
+
 #[derive(Clone, Copy)]
-struct PrivateLoweredInfo {
-    storage_ref: Ref,
-    method_fn_ref: Option<Ref>,
-    getter_fn_ref: Option<Ref>,
-    setter_fn_ref: Option<Ref>,
-    accessor_desc_ref: Option<Ref>,
+enum HostKey<'a> {
+    /// `"#m"`, `"get #g"` or `"set #g"`, where no key of the home object can equal it.
+    Name(&'a [u8]),
+    /// The temporary that holds a new symbol.
+    Symbol(Ref),
 }
 
-impl PrivateLoweredInfo {
-    fn new(storage_ref: Ref) -> Self {
-        Self {
-            storage_ref,
-            method_fn_ref: None,
-            getter_fn_ref: None,
-            setter_fn_ref: None,
-            accessor_desc_ref: None,
-        }
-    }
-}
-
-type PrivateLoweredMap = HashMap<u32, PrivateLoweredInfo>;
-
-struct LoweredClass {
-    /// `var` statement for the temporaries the class body now refers to.
-    temps: Option<Stmt>,
-    /// `let` statement for `inner_class_ref`. Block scoped, so that a class
-    /// evaluated in a loop gets a fresh binding each time.
-    inner_binding: Option<Stmt>,
-    class_decorators: Option<ClassDecorators>,
+/// What the lowering adds to the class it rewrites.
+struct Generated<'a> {
+    class_body: js_ast::StoreRef<js_ast::Scope>,
+    /// The parameters of the functions the lowering adds, `i`, `o` and `v`, and the scope that declares them.
+    params: Option<js_ast::StoreRef<js_ast::Scope>>,
+    object: Option<Ref>,
+    value: Option<Ref>,
+    /// The temporary that holds the access function, and what each `case` of it returns.
+    access: Option<Ref>,
+    cases: BumpVec<'a, Expr>,
+    /// The `case` that tests for each `#private` name.
+    brands: bun_collections::HashMap<u32, usize>,
+    /// A `case` assigns: the access function takes `v`.
+    assigns: bool,
 }
 
 struct ClassDecorators {
@@ -89,6 +92,17 @@ fn is_constant_key(key: &Expr) -> bool {
         key.data,
         js_ast::ExprData::EString(_) | js_ast::ExprData::ENumber(_)
     )
+}
+
+/// Whether the key of `prop` can never equal the name of a host: `"#m"`, `"get #g"` or `"set #g"`.
+fn differs_from_host_names(prop: &Property) -> bool {
+    match prop.key.map(|key| key.data) {
+        Some(js_ast::ExprData::EPrivateIdentifier(_) | js_ast::ExprData::ENumber(_)) => true,
+        Some(js_ast::ExprData::EString(s)) => {
+            s.next.is_none() && s.is_utf8() && !bun_core::strings::contains_char(&s.data, b'#')
+        }
+        _ => false,
+    }
 }
 
 /// Which initializer list of `__decorateElement` a decorated accessor or field
@@ -214,344 +228,353 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         b"_accessor_storage"
     }
 
-    // ── Private access rewriting ─────────────────────────
-
-    fn private_get_expr(&mut self, obj: Expr, info: &PrivateLoweredInfo, l: bun_ast::Loc) -> Expr {
-        if let Some(desc_ref) = info.accessor_desc_ref {
-            let storage = self.use_ref(info.storage_ref, l);
-            let desc = self.use_ref(desc_ref, l);
-            let dot = self.new_expr(
-                E::Dot {
-                    target: desc,
-                    name: b"get".into(),
-                    name_loc: l,
-                    ..Default::default()
-                },
-                l,
-            );
-            self.call_rt(l, b"__privateGet", &[obj, storage, dot])
-        } else if let Some(fn_ref) = info.getter_fn_ref {
-            let storage = self.use_ref(info.storage_ref, l);
-            let f = self.use_ref(fn_ref, l);
-            self.call_rt(l, b"__privateGet", &[obj, storage, f])
-        } else if let Some(fn_ref) = info.method_fn_ref {
-            let storage = self.use_ref(info.storage_ref, l);
-            let f = self.use_ref(fn_ref, l);
-            self.call_rt(l, b"__privateMethod", &[obj, storage, f])
-        } else {
-            let storage = self.use_ref(info.storage_ref, l);
-            self.call_rt(l, b"__privateGet", &[obj, storage])
-        }
+    /// A parameter of the functions the lowering adds, in a scope below every name the class declares.
+    fn new_param(&mut self, generated: &mut Generated<'a>, name: &'static [u8]) -> Ref {
+        let mut scope = match generated.params {
+            Some(scope) => scope,
+            None => {
+                let mut class_body = generated.class_body;
+                let scope = js_ast::StoreRef::from(core::ptr::NonNull::from(self.arena.alloc(
+                    js_ast::Scope {
+                        kind: js_ast::scope::Kind::FunctionArgs,
+                        parent: Some(class_body),
+                        strict_mode: class_body.strict_mode,
+                        ..js_ast::Scope::EMPTY
+                    },
+                )));
+                VecExt::append(&mut class_body.children, scope);
+                generated.params = Some(scope);
+                scope
+            }
+        };
+        let param = self.new_symbol(js_ast::symbol::Kind::Other, name);
+        VecExt::append(&mut scope.generated, param);
+        param
     }
 
-    fn private_set_expr(
+    fn object_param(&mut self, generated: &mut Generated<'a>) -> Ref {
+        if let Some(param) = generated.object {
+            return param;
+        }
+        let param = self.new_param(generated, b"o");
+        generated.object = Some(param);
+        param
+    }
+
+    fn value_param(&mut self, generated: &mut Generated<'a>) -> Ref {
+        if let Some(param) = generated.value {
+            return param;
+        }
+        let param = self.new_param(generated, b"v");
+        generated.value = Some(param);
+        param
+    }
+
+    fn private_member(&mut self, target: Expr, name: Ref, l: bun_ast::Loc) -> Expr {
+        self.record_usage(name);
+        let index = self.new_expr(E::PrivateIdentifier { ref_: name }, l);
+        self.new_expr(
+            E::Index {
+                target,
+                index,
+                optional_chain: None,
+                is_import_property_use: false,
+            },
+            l,
+        )
+    }
+
+    fn member(&mut self, target: Expr, name: &'static [u8], l: bun_ast::Loc) -> Expr {
+        self.new_expr(
+            E::Dot {
+                target,
+                name: name.into(),
+                name_loc: l,
+                ..Default::default()
+            },
+            l,
+        )
+    }
+
+    fn call(&mut self, callee: Expr, args: &[Expr], l: bun_ast::Loc) -> Expr {
+        self.new_expr(
+            E::Call {
+                target: callee,
+                args: ExprNodeList::from_arena_slice(self.arena.alloc_slice_copy(args)),
+                ..Default::default()
+            },
+            l,
+        )
+    }
+
+    /// What `__decorateElement` reaches a decorated `#name` through: the access function of the class, and `flags` with the first `case` of the name above bit 4.
+    fn private_access(
         &mut self,
-        obj: Expr,
-        info: &PrivateLoweredInfo,
-        val: Expr,
+        name: Ref,
+        is_field: bool,
+        flags: f64,
+        generated: &mut Generated<'a>,
         l: bun_ast::Loc,
-    ) -> Expr {
-        if let Some(desc_ref) = info.accessor_desc_ref {
-            let storage = self.use_ref(info.storage_ref, l);
-            let desc = self.use_ref(desc_ref, l);
-            let dot = self.new_expr(
-                E::Dot {
-                    target: desc,
-                    name: b"set".into(),
-                    name_loc: l,
-                    ..Default::default()
+    ) -> (Expr, f64) {
+        let function = match generated.access {
+            Some(function) => function,
+            None => {
+                let function = self.declared_temp(b"_at");
+                generated.access = Some(function);
+                function
+            }
+        };
+        let target = self.use_ref(function, l);
+        // A getter and a setter of one name share the `case` that tests for it.
+        if let Some(&case) = generated.brands.get(&name.inner_index()) {
+            return (target, flags + (case * 32) as f64);
+        }
+        let case = generated.cases.len();
+        generated.brands.insert(name.inner_index(), case);
+        let object = self.object_param(generated);
+        self.record_usage(name);
+        let left = self.new_expr(E::PrivateIdentifier { ref_: name }, GENERATED);
+        let right = self.use_ref(object, GENERATED);
+        generated.cases.push(self.new_expr(
+            E::Binary {
+                op: js_ast::OpCode::BinIn,
+                left,
+                right,
+            },
+            GENERATED,
+        ));
+        if is_field {
+            let assigned = self.value_param(generated);
+            generated.assigns = true;
+            let receiver = self.use_ref(object, GENERATED);
+            generated
+                .cases
+                .push(self.private_member(receiver, name, GENERATED));
+            let receiver = self.use_ref(object, GENERATED);
+            let member = self.private_member(receiver, name, GENERATED);
+            generated
+                .cases
+                .push(Expr::assign(member, self.use_ref(assigned, GENERATED)));
+        }
+        (target, flags + (case * 32) as f64)
+    }
+
+    /// `_at = (i, o, v) => { switch (i) { case 0: return i == 0 ? #x in o : 0; case 1: return o.#x; case 2: return o.#x = v; ... } }`. One function for the class: the engine copies the `#private` names of a class for each function in it.
+    fn access_function(&mut self, generated: &mut Generated<'a>, l: bun_ast::Loc) -> Option<Expr> {
+        let function = generated.access?;
+        let arena = self.arena;
+        let index = self.new_param(generated, b"i");
+        let mut params = BumpVec::<Ref>::with_capacity_in(3, arena);
+        params.push(index);
+        params.extend(generated.object);
+        if generated.assigns {
+            params.extend(generated.value);
+        }
+        let mut cases = BumpVec::<js_ast::Case>::with_capacity_in(generated.cases.len(), arena);
+        for (case, value) in generated.cases.iter().enumerate() {
+            let mut value = *value;
+            // The `?:` is for two parsers. JavaScriptCore takes no bare `in` in an arrow function in the head of a `for`: https://github.com/oven-sh/WebKit/pull/429. terser 5.16 to 5.40 cannot compare two `case`s that are the same up to a `#x in o`.
+            if matches!(value.data, js_ast::ExprData::EBinary(test) if test.op == js_ast::OpCode::BinIn)
+            {
+                let test = Expr::init(
+                    E::Binary {
+                        op: js_ast::OpCode::BinLooseEq,
+                        left: self.use_ref(index, GENERATED),
+                        right: self.new_expr(E::Number::new(case as f64), GENERATED),
+                    },
+                    GENERATED,
+                );
+                let no = self.new_expr(E::Number::new(0.0), GENERATED);
+                value = self.new_expr(
+                    E::If {
+                        test,
+                        yes: value,
+                        no,
+                    },
+                    GENERATED,
+                );
+            }
+            let returned = self.s(S::Return { value: Some(value) }, GENERATED);
+            cases.push(js_ast::Case {
+                loc: GENERATED,
+                value: Some(self.new_expr(E::Number::new(case as f64), GENERATED)),
+                body: bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[returned])),
+            });
+        }
+        let test = self.use_ref(index, GENERATED);
+        let switch = self.s(
+            S::Switch {
+                test,
+                body_loc: GENERATED,
+                cases: bun_ast::StoreSlice::from_bump(cases),
+            },
+            GENERATED,
+        );
+        let args = arena.alloc_slice_fill_iter(params.iter().map(|&param| G::Arg {
+            binding: self.b(B::Identifier { r#ref: param }, GENERATED),
+            ..Default::default()
+        }));
+        let arrow = self.new_expr(
+            E::Arrow {
+                args: bun_ast::StoreSlice::new_mut(args),
+                body: G::FnBody {
+                    stmts: bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[switch])),
+                    loc: GENERATED,
                 },
-                l,
-            );
-            self.call_rt(l, b"__privateSet", &[obj, storage, val, dot])
-        } else if let Some(fn_ref) = info.setter_fn_ref {
-            let storage = self.use_ref(info.storage_ref, l);
-            let f = self.use_ref(fn_ref, l);
-            self.call_rt(l, b"__privateSet", &[obj, storage, val, f])
+                ..Default::default()
+            },
+            GENERATED,
+        );
+        let assigned = self.assign_to(function, arrow, l);
+        // `bun test --coverage` counts each function of the file. This call runs no case.
+        if self.options.features.code_coverage {
+            return Some(self.call(assigned, &[], l));
+        }
+        Some(assigned)
+    }
+
+    /// `key ||= $$typeof.constructor()`: a new symbol, where the file can declare `Symbol`.
+    fn new_symbol_once(&mut self, key: Ref, l: bun_ast::Loc) -> Expr {
+        let any_symbol = self.runtime_identifier(l, b"$$typeof");
+        let constructor = self.member(any_symbol, b"constructor", l);
+        let right = self.call(constructor, &[], l);
+        let left = self.use_ref(key, l);
+        self.new_expr(
+            E::Binary {
+                op: js_ast::OpCode::BinLogicalOrAssign,
+                left,
+                right,
+            },
+            l,
+        )
+    }
+
+    /// `this.prototype[key]`, or `this[key]` for a static member
+    fn host_member(&mut self, host: &Host<'a>, l: bun_ast::Loc) -> Expr {
+        let mut target = self.new_expr(E::This {}, l);
+        if !host.is_static {
+            target = self.member(target, b"prototype", l);
+        }
+        let index = match host.key {
+            HostKey::Name(name) => self.new_expr(E::EString::init(name), l),
+            HostKey::Symbol(symbol) => self.use_ref(symbol, l),
+        };
+        self.new_expr(
+            E::Index {
+                target,
+                index,
+                optional_chain: None,
+                is_import_property_use: false,
+            },
+            l,
+        )
+    }
+
+    /// `_m_fn = this.prototype[key]` and `delete this.prototype[key]`, before anything can see the key.
+    fn take_host(&mut self, host: &Host<'a>, l: bun_ast::Loc) -> [Expr; 2] {
+        let body = self.host_member(host, l);
+        let take = self.assign_to(host.function, body, l);
+        let value = self.host_member(host, l);
+        let delete = self.new_expr(
+            E::Unary {
+                op: js_ast::OpCode::UnDelete,
+                value,
+                flags: E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
+            },
+            l,
+        );
+        [take, delete]
+    }
+
+    /// The member `get #name() { return value }`, or `set #name(v) { return value }` where `value` uses `setter_param`.
+    fn private_accessor_member(
+        &mut self,
+        name: Ref,
+        is_static: bool,
+        setter_param: Option<Ref>,
+        value: Expr,
+    ) -> Property {
+        let mut flags = Flags::PropertySet::from(Flags::Property::IsMethod);
+        if is_static {
+            flags.insert(Flags::Property::IsStatic);
+        }
+        let (kind, func) = match setter_param {
+            Some(param) => (PropertyKind::Set, self.returning_fn(Some(param), value)),
+            None => (PropertyKind::Get, self.returning_fn(None, value)),
+        };
+        Property {
+            key: Some(self.new_expr(E::PrivateIdentifier { ref_: name }, GENERATED)),
+            value: Some(func),
+            kind,
+            flags,
+            ..Default::default()
+        }
+    }
+
+    /// `function(param) { return value }`: a call that `value` forwards to is a tail call, with no frame here.
+    fn returning_fn(&mut self, param: Option<Ref>, value: Expr) -> Expr {
+        let body = self
+            .arena
+            .alloc_slice_copy(&[self.s(S::Return { value: Some(value) }, GENERATED)]);
+        let args = match param {
+            Some(param) => {
+                bun_ast::StoreSlice::new_mut(core::slice::from_mut(self.arena.alloc(G::Arg {
+                    binding: self.b(B::Identifier { r#ref: param }, GENERATED),
+                    ..Default::default()
+                })))
+            }
+            None => bun_ast::StoreSlice::EMPTY,
+        };
+        let func = G::Fn {
+            args,
+            body: G::FnBody {
+                stmts: bun_ast::StoreSlice::new_mut(body),
+                loc: GENERATED,
+            },
+            ..Default::default()
+        };
+        self.new_expr(E::Function { func }, GENERATED)
+    }
+
+    /// `function.call(this)`, or `function.call(this, argument)`
+    fn call_with_this(&mut self, function: Expr, argument: Option<Ref>) -> Expr {
+        let callee = self.member(function, b"call", GENERATED);
+        let this = self.new_expr(E::This {}, GENERATED);
+        match argument {
+            Some(argument) => {
+                let argument = self.use_ref(argument, GENERATED);
+                self.call(callee, &[this, argument], GENERATED)
+            }
+            None => self.call(callee, &[this], GENERATED),
+        }
+    }
+
+    /// `let` in the body of a loop, so that each evaluation of the class has its own temporaries.
+    fn temps_kind(&self) -> S::Kind {
+        if self.fn_or_arrow_data_visit.is_inside_loop {
+            S::Kind::KLet
         } else {
-            let storage = self.use_ref(info.storage_ref, l);
-            self.call_rt(l, b"__privateSet", &[obj, storage, val])
+            S::Kind::KVar
         }
     }
 
-    fn rewrite_private_accesses_in_expr(&mut self, expr: &mut Expr, map: &PrivateLoweredMap) {
-        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
-            self.report_stack_overflow(expr.loc);
-            return;
-        }
-        let expr_loc = expr.loc;
-        match &mut expr.data {
-            js_ast::ExprData::EIndex(e) => {
-                let mut tgt = e.target;
-                self.rewrite_private_accesses_in_expr(&mut tgt, map);
-                e.target = tgt;
-                if let js_ast::ExprData::EPrivateIdentifier(pi) = &e.index.data {
-                    if let Some(info) = map.get(&pi.ref_.inner_index()).copied() {
-                        let target = e.target;
-                        *expr = self.private_get_expr(target, &info, expr_loc);
-                        return;
-                    }
-                }
-                let mut idx = e.index;
-                self.rewrite_private_accesses_in_expr(&mut idx, map);
-                e.index = idx;
-            }
-            js_ast::ExprData::EBinary(e) => {
-                if e.op == js_ast::OpCode::BinAssign {
-                    if let js_ast::ExprData::EIndex(left_idx) = &mut e.left.data {
-                        if let js_ast::ExprData::EPrivateIdentifier(pi) = &left_idx.index.data {
-                            if let Some(info) = map.get(&pi.ref_.inner_index()).copied() {
-                                let mut lt = left_idx.target;
-                                self.rewrite_private_accesses_in_expr(&mut lt, map);
-                                let mut rt = e.right;
-                                self.rewrite_private_accesses_in_expr(&mut rt, map);
-                                *expr = self.private_set_expr(lt, &info, rt, expr_loc);
-                                return;
-                            }
-                        }
-                    }
-                }
-                if e.op == js_ast::OpCode::BinIn {
-                    if let js_ast::ExprData::EPrivateIdentifier(pi) = &e.left.data {
-                        if let Some(info) = map.get(&pi.ref_.inner_index()).copied() {
-                            let mut rt = e.right;
-                            self.rewrite_private_accesses_in_expr(&mut rt, map);
-                            let storage = self.use_ref(info.storage_ref, expr_loc);
-                            *expr = self.call_rt(expr_loc, b"__privateIn", &[storage, rt]);
-                            return;
-                        }
-                    }
-                }
-                // Walk a left-nested chain of binary expressions with a loop instead of recursion.
-                // Every node the loop skips has a binary `left`, so it can't match the cases above.
-                let stack_bottom = self.binary_expression_simplify_stack.len();
-                let mut binary = *e;
-                while let js_ast::ExprData::EBinary(left) = binary.left.data
-                    && matches!(left.left.data, js_ast::ExprData::EBinary(_))
-                {
-                    self.binary_expression_simplify_stack
-                        .push(BinaryExpressionSimplifyVisitor { bin: binary });
-                    binary = left;
-                }
-                self.rewrite_private_accesses_in_expr(&mut binary.left, map);
-                self.rewrite_private_accesses_in_expr(&mut binary.right, map);
-                while self.binary_expression_simplify_stack.len() > stack_bottom {
-                    let mut parent = self.binary_expression_simplify_stack.pop().unwrap().bin;
-                    self.rewrite_private_accesses_in_expr(&mut parent.right, map);
-                }
-            }
-            js_ast::ExprData::ECall(e) => {
-                if let js_ast::ExprData::EIndex(tgt_idx) = &mut e.target.data {
-                    if let js_ast::ExprData::EPrivateIdentifier(pi) = &tgt_idx.index.data {
-                        if let Some(info) = map.get(&pi.ref_.inner_index()).copied() {
-                            let mut obj_expr = tgt_idx.target;
-                            self.rewrite_private_accesses_in_expr(&mut obj_expr, map);
-                            // `x.#m(...)` becomes `__privateGet(x, _m).call(x, ...)`, which
-                            // references the receiver twice. Only identifiers and `this` can
-                            // be repeated safely; any other receiver is captured in a
-                            // temporary so its side effects run once and nested private
-                            // calls don't duplicate the whole subtree (the duplication is
-                            // exponential in the length of a chain like `o.#m().#m().#m()`).
-                            let (get_obj, this_arg) = match &obj_expr.data {
-                                js_ast::ExprData::EIdentifier(id) => {
-                                    let obj_ref = id.ref_;
-                                    (obj_expr, self.use_ref(obj_ref, obj_expr.loc))
-                                }
-                                js_ast::ExprData::EThis(_) => {
-                                    (obj_expr, self.new_expr(E::This {}, obj_expr.loc))
-                                }
-                                _ => {
-                                    let tmp_ref = self.declared_temp(b"_obj");
-                                    let write = self.assign_to(tmp_ref, obj_expr, expr_loc);
-                                    let read = self.use_ref(tmp_ref, expr_loc);
-                                    (write, read)
-                                }
-                            };
-                            let private_access = self.private_get_expr(get_obj, &info, expr_loc);
-                            let call_target = self.new_expr(
-                                E::Dot {
-                                    target: private_access,
-                                    name: b"call".into(),
-                                    name_loc: expr_loc,
-                                    ..Default::default()
-                                },
-                                expr_loc,
-                            );
-                            let bump = self.arena;
-                            let orig_args = e.args.slice_mut();
-                            let mut new_args = BumpVec::with_capacity_in(1 + orig_args.len(), bump);
-                            new_args.push(this_arg);
-                            for arg in orig_args.iter_mut() {
-                                self.rewrite_private_accesses_in_expr(arg, map);
-                                new_args.push(*arg);
-                            }
-                            e.target = call_target;
-                            e.args = ExprNodeList::from_bump_vec(new_args);
-                            return;
-                        }
-                    }
-                }
-                let mut t = e.target;
-                self.rewrite_private_accesses_in_expr(&mut t, map);
-                e.target = t;
-                for arg in e.args.slice_mut() {
-                    self.rewrite_private_accesses_in_expr(arg, map);
-                }
-            }
-            js_ast::ExprData::EUnary(e) => self.rewrite_private_accesses_in_expr(&mut e.value, map),
-            js_ast::ExprData::EDot(e) => self.rewrite_private_accesses_in_expr(&mut e.target, map),
-            js_ast::ExprData::ESpread(e) => {
-                self.rewrite_private_accesses_in_expr(&mut e.value, map)
-            }
-            js_ast::ExprData::EIf(e) => {
-                let mut t = e.test;
-                self.rewrite_private_accesses_in_expr(&mut t, map);
-                e.test = t;
-                let mut y = e.yes;
-                self.rewrite_private_accesses_in_expr(&mut y, map);
-                e.yes = y;
-                let mut n = e.no;
-                self.rewrite_private_accesses_in_expr(&mut n, map);
-                e.no = n;
-            }
-            js_ast::ExprData::EAwait(e) => self.rewrite_private_accesses_in_expr(&mut e.value, map),
-            js_ast::ExprData::EYield(e) => {
-                if let Some(v) = &mut e.value {
-                    self.rewrite_private_accesses_in_expr(v, map);
-                }
-            }
-            js_ast::ExprData::ENew(e) => {
-                let mut t = e.target;
-                self.rewrite_private_accesses_in_expr(&mut t, map);
-                e.target = t;
-                for arg in e.args.slice_mut() {
-                    self.rewrite_private_accesses_in_expr(arg, map);
-                }
-            }
-            js_ast::ExprData::EArray(e) => {
-                for item in e.items.slice_mut() {
-                    self.rewrite_private_accesses_in_expr(item, map);
-                }
-            }
-            js_ast::ExprData::EObject(e) => {
-                for prop in e.properties.slice_mut() {
-                    self.rewrite_private_accesses_in_property(prop, map);
-                }
-            }
-            js_ast::ExprData::ETemplate(e) => {
-                if let Some(t) = &mut e.tag {
-                    self.rewrite_private_accesses_in_expr(t, map);
-                }
-                for part in e.parts_mut().iter_mut() {
-                    self.rewrite_private_accesses_in_expr(&mut part.value, map);
-                }
-            }
-            js_ast::ExprData::EFunction(e) => {
-                self.rewrite_private_accesses_in_fn(e.func.args, &mut e.func.body, map);
-            }
-            js_ast::ExprData::EArrow(e) => {
-                self.rewrite_private_accesses_in_fn(e.args, &mut e.body, map);
-            }
-            js_ast::ExprData::EClass(e) => self.rewrite_private_accesses_in_class(e, map),
-            _ => {}
-        }
-    }
-
-    fn rewrite_private_accesses_in_fn(
+    /// Declares the temporaries declared past `baseline`; `None` if there are none.
+    fn drain_temp_decls(
         &mut self,
-        args: bun_ast::StoreSlice<G::Arg>,
-        body: &mut G::FnBody,
-        map: &PrivateLoweredMap,
-    ) {
-        // A `var` of the body is not visible to a parameter default: the
-        // receiver temporaries of the defaults stay with the enclosing function.
-        for arg in args.slice_mut() {
-            self.rewrite_private_accesses_in_binding(arg.binding, map);
-            if let Some(default) = &mut arg.default {
-                self.rewrite_private_accesses_in_expr(default, map);
-            }
-        }
-        let temps_before = self.temp_refs_to_declare.len();
-        self.rewrite_private_accesses_in_stmts(body.stmts.slice_mut(), map);
-        body.stmts = self.declare_capture_temps_in_fn_body(body.stmts, temps_before, body.loc);
-    }
-
-    fn rewrite_private_accesses_in_class(&mut self, class: &mut G::Class, map: &PrivateLoweredMap) {
-        if let Some(extends) = &mut class.extends {
-            self.rewrite_private_accesses_in_expr(extends, map);
-        }
-        for prop in class.properties.slice_mut() {
-            self.rewrite_private_accesses_in_property(prop, map);
-        }
-    }
-
-    fn rewrite_private_accesses_in_property(
-        &mut self,
-        prop: &mut Property,
-        map: &PrivateLoweredMap,
-    ) {
-        if prop.flags.contains(Flags::Property::IsComputed)
-            && let Some(key) = &mut prop.key
-        {
-            self.rewrite_private_accesses_in_expr(key, map);
-        }
-        if let Some(value) = &mut prop.value {
-            self.rewrite_private_accesses_in_expr(value, map);
-        }
-        if let Some(initializer) = &mut prop.initializer {
-            self.rewrite_private_accesses_in_expr(initializer, map);
-        }
-        if let Some(block) = prop.class_static_block_mut() {
-            self.rewrite_private_accesses_in_stmts(block.stmts.slice_mut(), map);
-        }
-    }
-
-    fn rewrite_private_accesses_in_binding(
-        &mut self,
-        binding: js_ast::Binding,
-        map: &PrivateLoweredMap,
-    ) {
-        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
-            self.report_stack_overflow(binding.loc);
-            return;
-        }
-        match binding.data {
-            js_ast::b::B::BArray(mut array) => {
-                for item in array.items_mut() {
-                    self.rewrite_private_accesses_in_binding(item.binding, map);
-                    if let Some(default) = &mut item.default_value {
-                        self.rewrite_private_accesses_in_expr(default, map);
-                    }
-                }
-            }
-            js_ast::b::B::BObject(mut object) => {
-                for prop in object.properties_mut() {
-                    if prop.flags.contains(Flags::Property::IsComputed) {
-                        self.rewrite_private_accesses_in_expr(&mut prop.key, map);
-                    }
-                    self.rewrite_private_accesses_in_binding(prop.value, map);
-                    if let Some(default) = &mut prop.default_value {
-                        self.rewrite_private_accesses_in_expr(default, map);
-                    }
-                }
-            }
-            js_ast::b::B::BIdentifier(_) | js_ast::b::B::BMissing(_) => {}
-        }
-    }
-
-    /// Drain receiver-capture temporaries created past `baseline` into a
-    /// single `var` declaration statement; `None` if none were created.
-    fn drain_capture_temp_decls(&mut self, baseline: usize, loc: bun_ast::Loc) -> Option<Stmt> {
+        baseline: usize,
+        kind: S::Kind,
+        loc: bun_ast::Loc,
+    ) -> Option<Stmt> {
         let total = self.temp_refs_to_declare.len();
         if total == baseline {
             return None;
         }
         let bump = self.arena;
-        let mut capture_decls = BumpVec::<G::Decl>::with_capacity_in(total - baseline, bump);
+        let mut decls = BumpVec::<G::Decl>::with_capacity_in(total - baseline, bump);
         for i in baseline..total {
-            let capture_ref = self.temp_refs_to_declare[i].r#ref;
-            let binding = self.b(B::Identifier { r#ref: capture_ref }, loc);
-            capture_decls.push(G::Decl {
+            let temp = self.temp_refs_to_declare[i].r#ref;
+            let binding = self.b(B::Identifier { r#ref: temp }, loc);
+            decls.push(G::Decl {
                 binding,
                 value: None,
             });
@@ -559,187 +582,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.temp_refs_to_declare.truncate(baseline);
         Some(self.s(
             S::Local {
-                decls: DeclList::from_bump_vec(capture_decls),
+                kind,
+                decls: DeclList::from_bump_vec(decls),
                 ..Default::default()
             },
             loc,
         ))
-    }
-
-    /// Declare receiver-capture temporaries created past `temps_before` at the
-    /// top of the function body they were created in, so each invocation gets
-    /// a fresh binding. A binding hoisted outside the function would be shared
-    /// across invocations, and `__privateGet(_obj = recv, _s, getter)` runs the
-    /// user getter between the write and the `.call(_obj)` read; re-entering
-    /// the same call site through that getter would clobber the shared temp.
-    fn declare_capture_temps_in_fn_body(
-        &mut self,
-        stmts: js_ast::StmtNodeList,
-        temps_before: usize,
-        body_loc: bun_ast::Loc,
-    ) -> js_ast::StmtNodeList {
-        let Some(decl_stmt) = self.drain_capture_temp_decls(temps_before, body_loc) else {
-            return stmts;
-        };
-        let old_stmts = stmts.slice();
-        let mut new_stmts = BumpVec::<Stmt>::with_capacity_in(old_stmts.len() + 1, self.arena);
-        new_stmts.push(decl_stmt);
-        new_stmts.extend_from_slice(old_stmts);
-        js_ast::StmtNodeList::from_bump(new_stmts)
-    }
-
-    /// The declaration in the head of `for (const { a = this.#x } of ...)`. An
-    /// assignment target there is not a read and stays as written.
-    fn rewrite_private_accesses_in_loop_head(&mut self, init: &mut Stmt, map: &PrivateLoweredMap) {
-        if matches!(init.data, js_ast::StmtData::SLocal(_)) {
-            self.rewrite_private_accesses_in_stmts(core::slice::from_mut(init), map);
-        }
-    }
-
-    fn rewrite_private_accesses_in_stmts(&mut self, stmts: &mut [Stmt], map: &PrivateLoweredMap) {
-        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
-            self.report_stack_overflow(stmts.first().map_or(bun_ast::Loc::EMPTY, |stmt| stmt.loc));
-            return;
-        }
-        for stmt_item in stmts.iter_mut() {
-            match &mut stmt_item.data {
-                js_ast::StmtData::SExpr(data) => {
-                    self.rewrite_private_accesses_in_expr(&mut data.value, map)
-                }
-                js_ast::StmtData::SReturn(data) => {
-                    if let Some(v) = &mut data.value {
-                        self.rewrite_private_accesses_in_expr(v, map);
-                    }
-                }
-                js_ast::StmtData::SThrow(data) => {
-                    self.rewrite_private_accesses_in_expr(&mut data.value, map)
-                }
-                js_ast::StmtData::SLocal(data) => {
-                    for decl in data.decls.slice_mut() {
-                        self.rewrite_private_accesses_in_binding(decl.binding, map);
-                        if let Some(v) = &mut decl.value {
-                            self.rewrite_private_accesses_in_expr(v, map);
-                        }
-                    }
-                }
-                js_ast::StmtData::SFunction(data) => {
-                    let args = data.func.args;
-                    self.rewrite_private_accesses_in_fn(args, &mut data.func.body, map);
-                }
-                js_ast::StmtData::SClass(data) => {
-                    self.rewrite_private_accesses_in_class(&mut data.class, map);
-                }
-                js_ast::StmtData::SIf(data) => {
-                    let mut t = data.test;
-                    self.rewrite_private_accesses_in_expr(&mut t, map);
-                    data.test = t;
-                    let mut yes = data.yes;
-                    self.rewrite_private_accesses_in_stmts(core::slice::from_mut(&mut yes), map);
-                    data.yes = yes;
-                    if let Some(no) = &mut data.no {
-                        self.rewrite_private_accesses_in_stmts(core::slice::from_mut(no), map);
-                    }
-                }
-                js_ast::StmtData::SBlock(data) => {
-                    let stmts = data.stmts.slice_mut();
-                    self.rewrite_private_accesses_in_stmts(stmts, map);
-                }
-                js_ast::StmtData::SFor(data) => {
-                    if let Some(fi) = &mut data.init {
-                        self.rewrite_private_accesses_in_stmts(core::slice::from_mut(fi), map);
-                    }
-                    if let Some(t) = &mut data.test {
-                        self.rewrite_private_accesses_in_expr(t, map);
-                    }
-                    if let Some(u) = &mut data.update {
-                        self.rewrite_private_accesses_in_expr(u, map);
-                    }
-                    let mut body = data.body;
-                    self.rewrite_private_accesses_in_stmts(core::slice::from_mut(&mut body), map);
-                    data.body = body;
-                }
-                js_ast::StmtData::SForIn(data) => {
-                    let mut init = data.init;
-                    self.rewrite_private_accesses_in_loop_head(&mut init, map);
-                    data.init = init;
-                    let mut v = data.value;
-                    self.rewrite_private_accesses_in_expr(&mut v, map);
-                    data.value = v;
-                    let mut body = data.body;
-                    self.rewrite_private_accesses_in_stmts(core::slice::from_mut(&mut body), map);
-                    data.body = body;
-                }
-                js_ast::StmtData::SForOf(data) => {
-                    let mut init = data.init;
-                    self.rewrite_private_accesses_in_loop_head(&mut init, map);
-                    data.init = init;
-                    let mut v = data.value;
-                    self.rewrite_private_accesses_in_expr(&mut v, map);
-                    data.value = v;
-                    let mut body = data.body;
-                    self.rewrite_private_accesses_in_stmts(core::slice::from_mut(&mut body), map);
-                    data.body = body;
-                }
-                js_ast::StmtData::SWhile(data) => {
-                    let mut t = data.test;
-                    self.rewrite_private_accesses_in_expr(&mut t, map);
-                    data.test = t;
-                    let mut body = data.body;
-                    self.rewrite_private_accesses_in_stmts(core::slice::from_mut(&mut body), map);
-                    data.body = body;
-                }
-                js_ast::StmtData::SDoWhile(data) => {
-                    let mut t = data.test;
-                    self.rewrite_private_accesses_in_expr(&mut t, map);
-                    data.test = t;
-                    let mut body = data.body;
-                    self.rewrite_private_accesses_in_stmts(core::slice::from_mut(&mut body), map);
-                    data.body = body;
-                }
-                js_ast::StmtData::SSwitch(data) => {
-                    let mut t = data.test;
-                    self.rewrite_private_accesses_in_expr(&mut t, map);
-                    data.test = t;
-                    let cases = data.cases.slice_mut();
-                    for case in cases.iter_mut() {
-                        if let Some(v) = &mut case.value {
-                            self.rewrite_private_accesses_in_expr(v, map);
-                        }
-                        let body = case.body.slice_mut();
-                        self.rewrite_private_accesses_in_stmts(body, map);
-                    }
-                }
-                js_ast::StmtData::STry(data) => {
-                    let body = data.body.slice_mut();
-                    self.rewrite_private_accesses_in_stmts(body, map);
-                    if let Some(c) = &mut data.catch {
-                        if let Some(binding) = c.binding {
-                            self.rewrite_private_accesses_in_binding(binding, map);
-                        }
-                        let cb = c.body.slice_mut();
-                        self.rewrite_private_accesses_in_stmts(cb, map);
-                    }
-                    if let Some(f) = &mut data.finally {
-                        let fb = f.stmts.slice_mut();
-                        self.rewrite_private_accesses_in_stmts(fb, map);
-                    }
-                }
-                js_ast::StmtData::SLabel(data) => {
-                    let mut s = data.stmt;
-                    self.rewrite_private_accesses_in_stmts(core::slice::from_mut(&mut s), map);
-                    data.stmt = s;
-                }
-                js_ast::StmtData::SWith(data) => {
-                    let mut v = data.value;
-                    self.rewrite_private_accesses_in_expr(&mut v, map);
-                    data.value = v;
-                    let mut body = data.body;
-                    self.rewrite_private_accesses_in_stmts(core::slice::from_mut(&mut body), map);
-                    data.body = body;
-                }
-                _ => {}
-            }
-        }
     }
 
     // ── Public API ───────────────────────────────────────
@@ -753,10 +601,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::StmtData::SClass(c) => c,
             _ => unreachable!(),
         };
-        let lowered = self.lower_class_body(&mut s_class.class, stmt.loc, None);
-        out.extend(lowered.temps);
-        out.extend(lowered.inner_binding);
-        let Some(decorators) = lowered.class_decorators else {
+        let temps_before = self.temp_refs_to_declare.len();
+        let class_decorators = self.lower_class_body(&mut s_class.class, stmt.loc, None);
+        let kind = self.temps_kind();
+        out.extend(self.drain_temp_decls(temps_before, kind, stmt.loc));
+        let Some(decorators) = class_decorators else {
             out.push(stmt);
             return;
         };
@@ -772,81 +621,80 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         out.push(self.expr_stmt(decorators.run_extra_initializers, stmt.loc));
     }
 
+    /// `keeps_its_place`: the visit pass found why no function can go around the class.
     pub(crate) fn lower_standard_decorators_expr(
         &mut self,
         expr: Expr,
         class: &mut G::Class,
         name_from_context: Option<&'a [u8]>,
+        keeps_its_place: bool,
     ) -> Expr {
-        let lowered = self.lower_class_body(class, expr.loc, name_from_context);
-        let has_own_stmt_list = !self.is_param_default_or_field_initializer();
-        if let Some(stmt_list) = self.nearest_stmt_list_mut() {
-            stmt_list.extend(lowered.temps);
-            if has_own_stmt_list {
-                stmt_list.extend(lowered.inner_binding);
+        let temps_before = self.temp_refs_to_declare.len();
+        let class_decorators = self.lower_class_body(class, expr.loc, name_from_context);
+        let is_decorated = class_decorators.is_some();
+        let mut result = match class_decorators {
+            Some(decorators) => {
+                let decorated = self.use_ref(decorators.decorated, expr.loc);
+                Expr::join_all_with_comma(&[
+                    decorators.evaluate,
+                    expr,
+                    decorators.run_extra_initializers,
+                    decorated,
+                ])
             }
-        }
-        let Some(decorators) = lowered.class_decorators else {
-            return expr;
+            None => expr,
         };
-        let decorated = self.use_ref(decorators.decorated, expr.loc);
-        let value = Expr::join_all_with_comma(&[
-            decorators.evaluate,
-            expr,
-            decorators.run_extra_initializers,
-            decorated,
-        ]);
-        if has_own_stmt_list || !class.inner_class_ref.is_symbol() {
-            return value;
-        }
 
-        // `((_C) => value)()` gives each evaluation its own binding. Neither
-        // position allows `await` or `yield`, which an arrow would break.
-        let binding = self.b(
-            B::Identifier {
-                r#ref: class.inner_class_ref,
-            },
-            expr.loc,
-        );
-        let args = js_ast::StoreSlice::new_mut(self.arena.alloc_slice_fill_iter([G::Arg {
-            binding,
-            ..Default::default()
-        }]));
-        let body = self.s(S::Return { value: Some(value) }, expr.loc);
-        let target = self.new_expr(
-            E::Arrow {
-                args,
-                body: G::FnBody {
-                    loc: expr.loc,
-                    stmts: self.arena.alloc_slice_copy(&[body]).into(),
+        // Where the list runs less often than the class, an arrow function around the class declares the temporaries.
+        let has_list = self.nearest_stmt_list_mut().is_some();
+        if has_list && (keeps_its_place || !self.nearest_stmt_list_is_shared) {
+            let kind = self.temps_kind();
+            if let Some(decl) = self.drain_temp_decls(temps_before, kind, expr.loc)
+                && let Some(stmt_list) = self.nearest_stmt_list_mut()
+            {
+                stmt_list.push(decl);
+            }
+        } else if let Some(decl) = self.drain_temp_decls(temps_before, S::Kind::KVar, expr.loc) {
+            // The arrow function is between the class and what gave it a name: `(() => { ...; return { K: class {} }; })().K` names it. The member is on the call, because `maybe_rewrite_property_access` takes `{ K: value }.K` apart.
+            let key = match name_from_context {
+                Some(name) if !is_decorated => {
+                    let key = self.new_expr(E::EString::init(name), expr.loc);
+                    result = self.object_of(key, result, false);
+                    Some(key)
+                }
+                _ => None,
+            };
+            let returned = self.s(
+                S::Return {
+                    value: Some(result),
                 },
-                prefer_expr: true,
-                ..Default::default()
-            },
-            expr.loc,
-        );
-        self.new_expr(
-            E::Call {
-                target,
-                ..Default::default()
-            },
-            expr.loc,
-        )
-    }
-
-    /// Both run once per call or instance, and the nearest statement list is
-    /// outside the function or class they belong to.
-    fn is_param_default_or_field_initializer(&self) -> bool {
-        let mut scope = self.current_scope_ref();
-        loop {
-            match scope.kind {
-                js_ast::scope::Kind::FunctionArgs => return true,
-                // Set for a field's initializer, not for its key or decorators.
-                js_ast::scope::Kind::ClassBody => return scope.forbid_arguments,
-                _ if scope.kind_stops_hoisting() => return false,
-                _ => scope = scope.parent.unwrap(),
+                expr.loc,
+            );
+            let body = self.arena.alloc_slice_copy(&[decl, returned]);
+            let arrow = self.new_expr(
+                E::Arrow {
+                    body: G::FnBody {
+                        stmts: bun_ast::StoreSlice::new_mut(body),
+                        loc: expr.loc,
+                    },
+                    ..Default::default()
+                },
+                expr.loc,
+            );
+            result = self.call(arrow, &[], expr.loc);
+            if let Some(index) = key {
+                result = self.new_expr(
+                    E::Index {
+                        target: result,
+                        index,
+                        optional_chain: None,
+                        is_import_property_use: false,
+                    },
+                    expr.loc,
+                );
             }
         }
+        result
     }
 
     // ── Core lowering ────────────────────────────────────
@@ -857,18 +705,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Decorator lists are evaluated in the key of their member and applied by
     /// a leading `static {}`. What has to run between two instance fields rides
     /// in the initializer of the next one, or the constructor after the last.
-    /// A `#private` name with a decorated member becomes a WeakMap or WeakSet,
-    /// which is how the helpers reach it; its methods become function expressions.
+    /// A decorated `#private` name stays declared: a method, getter, setter or accessor of that name gives what the decorators returned.
     #[allow(clippy::too_many_lines)]
     fn lower_class_body(
         &mut self,
         class: &mut G::Class,
         loc: bun_ast::Loc,
         name_from_context: Option<&'a [u8]>,
-    ) -> LoweredClass {
+    ) -> Option<ClassDecorators> {
         let p = self;
         let bump = p.arena;
-        let temps_before = p.temp_refs_to_declare.len();
+        let mut generated = Generated {
+            class_body: p
+                .visited_class_body
+                .take()
+                .expect("visit_class ran for this class"),
+            params: None,
+            object: None,
+            value: None,
+            access: None,
+            cases: BumpVec::new_in(bump),
+            brands: bun_collections::HashMap::default(),
+            assigns: false,
+        };
 
         let class_decorators: ExprNodeList = bun_alloc::AstAlloc::take(&mut class.ts_decorators);
         let has_class_decorators = class_decorators.len_u32() > 0;
@@ -878,20 +737,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // accessors, static fields, instance fields.
         let mut next_initializer = [0usize; 4];
         let mut has_member_decorators = false;
-        let mut lowered_names: HashMap<u32, ()> = HashMap::default();
+        let mut has_hosts = false;
         for prop in class.properties.slice() {
             if prop.ts_decorators.len_u32() == 0 {
                 continue;
             }
             has_member_decorators = true;
-            if let Some(key) = prop.key
-                && let js_ast::ExprData::EPrivateIdentifier(private) = &key.data
-            {
-                lowered_names.insert(private.ref_.inner_index(), ());
-            }
+            has_hosts |= prop.flags.contains(Flags::Property::HasSuperOrDirectEval)
+                && matches!(
+                    prop.key.map(|key| key.data),
+                    Some(js_ast::ExprData::EPrivateIdentifier(_))
+                );
             if let Some(group) = initializer_group(prop) {
                 for later in &mut next_initializer[group + 1..] {
                     *later += 1;
+                }
+            }
+        }
+        // A host is named `"#m"` only where no key of its home object can be the same string.
+        let mut host_names_are_free = [has_hosts; 2];
+        if has_hosts {
+            for prop in class.properties.slice() {
+                let defines_a_key = prop.flags.contains(Flags::Property::IsMethod)
+                    || prop.kind == PropertyKind::AutoAccessor;
+                if defines_a_key && !differs_from_host_names(prop) {
+                    host_names_are_free
+                        [usize::from(prop.flags.contains(Flags::Property::IsStatic))] = false;
                 }
             }
         }
@@ -915,15 +786,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut last_key_host: Option<(usize, Option<Expr>)> = None;
         let mut constructor: Option<usize> = None;
         let mut storage_inits = BumpVec::<Expr>::new_in(bump);
-        let mut static_brands = BumpVec::<Expr>::new_in(bump);
-        let mut instance_brands = BumpVec::<Expr>::new_in(bump);
+        let mut hosts = BumpVec::<Host<'a>>::new_in(bump);
         let mut decorate: [BumpVec<'a, Expr>; 4] = [
             BumpVec::new_in(bump),
             BumpVec::new_in(bump),
             BumpVec::new_in(bump),
             BumpVec::new_in(bump),
         ];
-        let mut private_lowered_map: PrivateLoweredMap = PrivateLoweredMap::default();
 
         for slot in class.properties.slice_mut().iter_mut() {
             let mut prop = core::mem::take(slot);
@@ -933,15 +802,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             let key = prop.key.expect("a class member has a key");
-            let private_index = match &key.data {
-                js_ast::ExprData::EPrivateIdentifier(private) => Some(private.ref_.inner_index()),
+            let private_ref = match &key.data {
+                js_ast::ExprData::EPrivateIdentifier(private) => Some(private.ref_),
                 _ => None,
             };
+            let private_name: Option<&'a [u8]> = private_ref.map(|private| {
+                p.symbols[private.inner_index() as usize]
+                    .original_name
+                    .slice()
+            });
             let decorators: ExprNodeList = bun_alloc::AstAlloc::take(&mut prop.ts_decorators);
-            // An undecorated `accessor #x` behaves like the field `#x`.
-            if private_index.is_some()
-                && prop.kind == PropertyKind::AutoAccessor
-                && decorators.len_u32() == 0
+            // An undecorated `accessor #x` behaves like the field `#x`. So does a `declare` or an `abstract` field, which is here for its decorators.
+            if matches!(prop.kind, PropertyKind::Declare | PropertyKind::Abstract)
+                || (private_ref.is_some()
+                    && prop.kind == PropertyKind::AutoAccessor
+                    && decorators.len_u32() == 0)
             {
                 prop.kind = PropertyKind::Normal;
             }
@@ -955,7 +830,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 _ => 5,
             };
             let flags = f64::from(
-                kind + if is_static { 8 } else { 0 } + if private_index.is_some() { 16 } else { 0 },
+                kind + if is_static { 8 } else { 0 } + if private_ref.is_some() { 16 } else { 0 },
             );
             let group = usize::from(!is_static) + if kind == 5 { 2 } else { 0 };
 
@@ -974,89 +849,115 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 None
             };
 
-            // ── `#private` member of a lowered name ──
-            if let Some(private_index) = private_index
-                && lowered_names.contains_key(&private_index)
+            // ── A decorated `#private` method, getter or setter ──
+            if is_method
+                && let (Some(private_ref), Some(private_name)) = (private_ref, private_name)
+                && let Some(dec) = dec_ref
             {
-                let private_name: &'a [u8] =
-                    p.symbols[private_index as usize].original_name.slice();
-                let name_expr = p.new_expr(E::EString::init(private_name), loc);
-                let existing = private_lowered_map.get(&private_index).copied();
-                let storage = if let Some(existing) = existing {
-                    existing.storage_ref
-                } else {
-                    let name = p.bump_name3(b"_", &private_name[1..], b"");
-                    let storage = p.declared_temp(name);
-                    let container =
-                        p.new_global_expr(if is_method { b"WeakSet" } else { b"WeakMap" }, loc);
-                    storage_inits.push(p.assign_to(storage, container, loc));
-                    storage
+                let (prefix, suffix): (&[u8], &[u8]) = match kind {
+                    2 => (b"get ", b"_get"),
+                    3 => (b"set ", b"_set"),
+                    _ => (b"", b"_fn"),
                 };
-                let mut info = existing.unwrap_or_else(|| PrivateLoweredInfo::new(storage));
-                let storage_expr = p.use_ref(storage, loc);
+                let function = p.declared_temp(p.bump_name3(b"_", &private_name[1..], suffix));
 
-                if is_method {
-                    if existing.is_none() {
-                        let this = p.new_expr(E::This {}, loc);
-                        let brand = p.call_rt(loc, b"__privateAdd", &[this, storage_expr]);
-                        if is_static {
-                            static_brands.push(brand);
-                        } else {
-                            instance_brands.push(brand);
-                        }
-                    }
-                    let (suffix, slot): (&[u8], _) = match kind {
-                        2 => (b"_get", &mut info.getter_fn_ref),
-                        3 => (b"_set", &mut info.setter_fn_ref),
-                        _ => (b"_fn", &mut info.method_fn_ref),
-                    };
-                    let fn_name = p.bump_name3(b"_", &private_name[1..], suffix);
-                    let fn_ref = p.declared_temp(fn_name);
-                    *slot = Some(fn_ref);
-                    private_lowered_map.insert(private_index, info);
-                    let body = prop
-                        .value
-                        .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
-                    if let Some(dec) = dec_ref {
-                        let decorated = p.decorate_element(
-                            init_ref,
-                            flags,
-                            name_expr,
-                            dec,
-                            storage_expr,
-                            Some(body),
-                            loc,
-                        );
-                        decorate[group].push(p.assign_to(fn_ref, decorated, loc));
+                // A body with `super` stays a method where it is written, under a key of its own. A direct `eval` can have a `super` too.
+                let body = if prop.flags.contains(Flags::Property::HasSuperOrDirectEval) {
+                    let host_key = if host_names_are_free[usize::from(is_static)] {
+                        HostKey::Name(p.bump_name3(prefix, private_name, b""))
                     } else {
-                        storage_inits.push(p.assign_to(fn_ref, body, loc));
-                    }
-                    continue;
-                }
+                        HostKey::Symbol(p.declared_temp(b"_key"))
+                    };
+                    let key_temp = match host_key {
+                        HostKey::Name(name) => {
+                            key_effects.push(p.new_expr(E::EString::init(name), key.loc));
+                            None
+                        }
+                        HostKey::Symbol(symbol) => {
+                            key_effects.push(p.new_symbol_once(symbol, key.loc));
+                            Some(p.use_ref(symbol, key.loc))
+                        }
+                    };
+                    prop.key = Some(Expr::join_all_with_comma(&key_effects));
+                    key_effects.clear();
+                    prop.kind = PropertyKind::Normal;
+                    prop.flags.insert(Flags::Property::IsComputed);
+                    last_key_host = Some((members.len(), key_temp));
+                    members.push(prop);
+                    hosts.push(Host {
+                        function,
+                        key: host_key,
+                        is_static,
+                    });
+                    p.use_ref(function, loc)
+                } else {
+                    prop.value.expect("a method has a value")
+                };
 
-                let mut initializer_index = None;
-                if let Some(dec) = dec_ref {
-                    let extra = (kind == 4).then_some(storage_expr);
-                    let mut decorated = p.decorate_element(
-                        init_ref,
-                        flags,
-                        name_expr,
-                        dec,
-                        storage_expr,
-                        extra,
-                        loc,
-                    );
-                    if kind == 4 {
-                        let name = p.bump_name3(b"_", &private_name[1..], b"_acc");
-                        let descriptor = p.declared_temp(name);
-                        info.accessor_desc_ref = Some(descriptor);
-                        decorated = p.assign_to(descriptor, decorated, loc);
+                // The name gives what the decorators returned.
+                let decorated = p.use_ref(function, GENERATED);
+                let (setter_param, value) = match kind {
+                    2 => (None, p.call_with_this(decorated, None)),
+                    3 => {
+                        let param = p.value_param(&mut generated);
+                        (Some(param), p.call_with_this(decorated, Some(param)))
                     }
-                    decorate[group].push(decorated);
-                    initializer_index = Some((init_ref, next_initializer[group]));
-                    next_initializer[group] += 1;
-                }
-                private_lowered_map.insert(private_index, info);
+                    _ => (None, decorated),
+                };
+                members.push(p.private_accessor_member(
+                    private_ref,
+                    is_static,
+                    setter_param,
+                    value,
+                ));
+
+                let name_expr = p.new_expr(E::EString::init(private_name), loc);
+                let (target, flags) =
+                    p.private_access(private_ref, false, flags, &mut generated, loc);
+                let decorated =
+                    p.decorate_element(init_ref, flags, name_expr, dec, target, Some(body), loc);
+                decorate[group].push(p.assign_to(function, decorated, loc));
+                continue;
+            }
+
+            // ── A decorated `accessor #x` ──
+            if kind == 4
+                && let (Some(private_ref), Some(private_name)) = (private_ref, private_name)
+                && let Some(dec) = dec_ref
+            {
+                // The value is in a WeakMap, as the value of `accessor x` is.
+                let storage = p.declared_temp(p.bump_name3(b"_", &private_name[1..], b""));
+                let container = p.new_global_expr(b"WeakMap", loc);
+                storage_inits.push(p.assign_to(storage, container, loc));
+
+                // The name gives what the decorators returned: `get #x() { return _x_acc.get.call(this) }` and the `set`.
+                let descriptor = p.declared_temp(p.bump_name3(b"_", &private_name[1..], b"_acc"));
+                let getter = p.use_ref(descriptor, GENERATED);
+                let getter = p.member(getter, b"get", GENERATED);
+                let value = p.call_with_this(getter, None);
+                members.push(p.private_accessor_member(private_ref, is_static, None, value));
+                let param = p.value_param(&mut generated);
+                let setter = p.use_ref(descriptor, GENERATED);
+                let setter = p.member(setter, b"set", GENERATED);
+                let value = p.call_with_this(setter, Some(param));
+                members.push(p.private_accessor_member(private_ref, is_static, Some(param), value));
+
+                let name_expr = p.new_expr(E::EString::init(private_name), loc);
+                let (target, flags) =
+                    p.private_access(private_ref, false, flags, &mut generated, loc);
+                let storage_expr = p.use_ref(storage, loc);
+                let decorated = p.decorate_element(
+                    init_ref,
+                    flags,
+                    name_expr,
+                    dec,
+                    target,
+                    Some(storage_expr),
+                    loc,
+                );
+                decorate[group].push(p.assign_to(descriptor, decorated, loc));
+                let initializer_index = Some((init_ref, next_initializer[group]));
+                next_initializer[group] += 1;
                 let effects =
                     p.storage_init_effects(storage, prop.initializer, initializer_index, loc);
                 if is_static {
@@ -1134,9 +1035,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut name_expr = key;
             if is_constructor(&prop) {
                 constructor = Some(members.len());
-            } else if let Some(private_index) = private_index {
-                let name: &'a [u8] = p.symbols[private_index as usize].original_name.slice();
-                field_name = FieldName::Key(p.new_expr(E::EString::init(name), loc));
+            } else if let Some(name) = private_name {
+                name_expr = p.new_expr(E::EString::init(name), loc);
+                field_name = FieldName::Key(name_expr);
             } else {
                 // Only a field that may carry effects has to name its function itself.
                 let names_function = !is_method
@@ -1161,9 +1062,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let mut extra_initializer: Option<Expr> = None;
             if let Some(dec) = dec_ref {
-                let this = p.new_expr(E::This {}, loc);
+                // `__decorateElement` reaches a `#private` field through the access function.
+                let (target, flags) = match private_ref {
+                    Some(name) => p.private_access(name, true, flags, &mut generated, loc),
+                    None => (p.new_expr(E::This {}, loc), flags),
+                };
                 decorate[group]
-                    .push(p.decorate_element(init_ref, flags, name_expr, dec, this, None, loc));
+                    .push(p.decorate_element(init_ref, flags, name_expr, dec, target, None, loc));
                 if !is_method {
                     let DecoratedInitializer { value, extra } = p.decorated_initializer(
                         init_ref,
@@ -1242,8 +1147,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // ── The leading static block ──
+        for host in &hosts {
+            leading.extend_from_slice(&p.take_host(host, loc));
+        }
         leading.extend_from_slice(&storage_inits);
-        leading.extend_from_slice(&static_brands);
+        leading.extend(p.access_function(&mut generated, loc));
         let mut class_decorators_result: Option<ClassDecorators> = None;
         if has_decorators {
             let base = match base_ref {
@@ -1272,8 +1180,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .slice(),
                     None => name_from_context.unwrap_or(b""),
                 };
-                // A named class has the binding its body reads (`visit_class`).
+                // A named class has the binding its body reads (`visit_class`). It is a temporary of the class: each evaluation has its own.
                 let decorated_ref = if class.inner_class_ref.is_symbol() {
+                    p.temp_refs_to_declare.push(TempRef {
+                        r#ref: class.inner_class_ref,
+                    });
                     class.inner_class_ref
                 } else {
                     p.declared_temp(if js_lexer::is_identifier(name) {
@@ -1303,7 +1214,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // ── What runs before the first instance field ──
-        let mut instance_prologue = instance_brands;
+        let mut instance_prologue = BumpVec::<Expr>::new_in(bump);
         if !decorate[1].is_empty() {
             let this = p.new_expr(E::This {}, loc);
             instance_prologue.push(p.run_initializers(init_ref, 5.0, this, loc));
@@ -1320,15 +1231,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         constructor_effects.extend_from_slice(&instance_effects);
 
-        let mut leading = (!leading.is_empty()).then(|| p.make_static_block(&leading, loc));
-        if !private_lowered_map.is_empty() {
-            for member in members.iter_mut().chain(leading.as_mut()) {
-                p.rewrite_private_accesses_in_property(member, &private_lowered_map);
-            }
-            for effect in constructor_effects.iter_mut() {
-                p.rewrite_private_accesses_in_expr(effect, &private_lowered_map);
-            }
-        }
+        let leading = (!leading.is_empty()).then(|| p.make_static_block(&leading, loc));
 
         let mut new_constructor = None;
         if !constructor_effects.is_empty() {
@@ -1352,34 +1255,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         class.has_decorators = false;
         class.should_lower_standard_decorators = false;
 
-        let inner_binding = class.inner_class_ref.is_symbol().then(|| {
-            let binding = p.b(
-                B::Identifier {
-                    r#ref: class.inner_class_ref,
-                },
-                loc,
-            );
-            p.s(
-                S::Local {
-                    kind: js_ast::s::Kind::KLet,
-                    decls: DeclList::init_one(G::Decl {
-                        binding,
-                        value: None,
-                    }),
-                    ..Default::default()
-                },
-                loc,
-            )
-        });
-
-        LoweredClass {
-            temps: p.drain_capture_temp_decls(temps_before, loc),
-            inner_binding,
-            class_decorators: class_decorators_result,
-        }
+        class_decorators_result
     }
 
-    /// A temporary the `var` next to the class declares.
+    /// A temporary that `drain_temp_decls` declares for the class.
     fn declared_temp(&mut self, name: &'a [u8]) -> Ref {
         let ref_ = self.generate_temp_var(name);
         self.temp_refs_to_declare.push(TempRef { r#ref: ref_ });
@@ -1500,6 +1379,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         prop.flags.insert(Flags::Property::IsComputed);
     }
 
+    /// `{ key: value }`, which names an anonymous `value` as a field of that key would.
+    fn object_of(&mut self, key: Expr, value: Expr, is_computed: bool) -> Expr {
+        let mut flags = Flags::PROPERTY_NONE;
+        // `__proto__: value` sets the prototype.
+        if is_computed
+            || matches!(&key.data, js_ast::ExprData::EString(s) if s.eql_comptime(b"__proto__"))
+        {
+            flags.insert(Flags::Property::IsComputed);
+        }
+        let mut properties = bun_alloc::AstAlloc::vec();
+        VecExt::append(
+            &mut properties,
+            Property {
+                key: Some(key),
+                value: Some(value),
+                flags,
+                ..Default::default()
+            },
+        );
+        self.new_expr(
+            E::Object {
+                properties,
+                is_single_line: true,
+                ..Default::default()
+            },
+            value.loc,
+        )
+    }
+
     /// The initializer of a field that is about to go behind a comma. There an
     /// anonymous function or class is not named by the field any more.
     fn hosted_initializer(
@@ -1518,30 +1426,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             FieldName::Unknown => value,
             // `{ key: value }[key]` names it as the field would.
             FieldName::Key(key) | FieldName::Computed(key) => {
-                let mut flags = Flags::PROPERTY_NONE;
-                if matches!(field_name, FieldName::Computed(_))
-                    || matches!(&key.data, js_ast::ExprData::EString(s) if s.eql_comptime(b"__proto__"))
-                {
-                    flags.insert(Flags::Property::IsComputed);
-                }
-                let mut properties = bun_alloc::AstAlloc::vec();
-                VecExt::append(
-                    &mut properties,
-                    Property {
-                        key: Some(key),
-                        value: Some(value),
-                        flags,
-                        ..Default::default()
-                    },
-                );
-                let object = self.new_expr(
-                    E::Object {
-                        properties,
-                        is_single_line: true,
-                        ..Default::default()
-                    },
-                    value.loc,
-                );
+                let is_computed = matches!(field_name, FieldName::Computed(_));
+                let object = self.object_of(key, value, is_computed);
                 self.new_expr(
                     E::Index {
                         target: object,

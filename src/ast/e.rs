@@ -724,7 +724,7 @@ impl Number {
     /// by calling out to the APIs in WebKit which are responsible for this operation.
     ///
     /// This can return `None` in wasm builds to avoid linking JSC
-    pub(crate) fn to_string(self, bump: &Bump) -> Option<Str> {
+    pub fn to_string(self, bump: &Bump) -> Option<Str> {
         Self::to_string_from_f64(self.value(), bump)
     }
 

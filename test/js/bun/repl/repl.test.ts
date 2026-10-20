@@ -1,7 +1,7 @@
 // Tests for Bun REPL
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
-import { chmodSync, statSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, statSync } from "node:fs";
 import path from "path";
 
 const stripAnsi = Bun.stripANSI;
@@ -16,7 +16,8 @@ const stripAnsi = Bun.stripANSI;
  * evaluated before.
  */
 async function runRepl(
-  input: string | string[],
+  /** Lines (each gets a "\n"), the exact text or bytes of stdin, or a file to read stdin from. */
+  input: string | string[] | Uint8Array | Blob,
   options: {
     env?: Record<string, string>;
     cwd?: string;
@@ -32,7 +33,7 @@ async function runRepl(
   const home = options.home ?? String(tempHome);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "repl"],
-    stdin: Buffer.from(inputStr),
+    stdin: inputStr instanceof Blob ? inputStr : Buffer.from(inputStr),
     stdout: "pipe",
     stderr: "pipe",
     cwd,
@@ -54,6 +55,65 @@ async function runRepl(
     .map(chunk => chunk.replace(/^ +at .*\n?/gm, "").trim());
 
   return { stdout, stderr, exitCode, outputs };
+}
+
+/** What a non-TTY REPL wrote to stdout after its welcome message. */
+function afterWelcome(stdout: string): string {
+  const text = stripAnsi(stdout);
+  return text.slice(text.indexOf("\n\n") + 2);
+}
+
+/**
+ * Runs `bun repl` on a stdin pipe that stays open until `fn` returns, for input
+ * that depends on what the REPL has answered so far.
+ */
+async function withPipedRepl(
+  fn: (helpers: {
+    write: (text: string) => void;
+    /** Resolves with all of stdout once `pattern` is in it. */
+    waitFor: (pattern: string | RegExp) => Promise<string>;
+  }) => Promise<void>,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  using home = tempDir("repl-home", {});
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "repl"],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...bunEnv, TERM: "dumb", NO_COLOR: "1", HOME: String(home), USERPROFILE: String(home) },
+  });
+
+  const stderr = proc.stderr.text();
+  let received = "";
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  /** False once stdout has ended. */
+  const readMore = async () => {
+    const { value, done } = await reader.read();
+    if (value) received += decoder.decode(value, { stream: true });
+    return !done;
+  };
+  const waitFor = async (pattern: string | RegExp) => {
+    while (true) {
+      const stdout = stripAnsi(received);
+      if (typeof pattern === "string" ? stdout.includes(pattern) : pattern.test(stdout)) return stdout;
+      if (!(await readMore())) {
+        throw new Error(`stdout ended before ${pattern}\nReceived:\n${stdout}`);
+      }
+    }
+  };
+
+  await fn({
+    write: text => {
+      proc.stdin.write(text);
+      proc.stdin.flush();
+    },
+    waitFor,
+  });
+  proc.stdin.end();
+  while (await readMore());
+
+  return { stdout: stripAnsi(received), stderr: await stderr, exitCode: await proc.exited };
 }
 
 interface Screen {
@@ -214,8 +274,19 @@ async function withTerminalRepl(
     /** Changes the width of the pty, and of the screen that `waitForScreen` renders. */
     resize: (cols: number) => void;
     allOutput: () => string;
+    /** `allOutput` with its escape sequences. */
+    rawOutput: () => string;
+    /** `terminal.localFlags` (ICANON, ECHO, ISIG ...) from before the command ran. With `session`, from right after its spawn. */
+    localFlagsAtStart: number;
   }) => Promise<void>,
-  options: { env?: Record<string, string | undefined>; cols?: number } = {},
+  options: {
+    env?: Record<string, string | undefined>;
+    cols?: number;
+    /** What runs on the pty. Defaults to `bun repl`. */
+    cmd?: string[];
+    /** Makes the command a session leader with the pty as its controlling terminal, as a shell needs for job control. */
+    session?: boolean;
+  } = {},
 ) {
   const received: string[] = [];
   const cols = options.cols ?? 120;
@@ -227,7 +298,7 @@ async function withTerminalRepl(
 
   // The REPL loads and saves $HOME/.bun_repl_history (USERPROFILE on Windows).
   using home = tempDir("repl-home", {});
-  await using terminal = new Bun.Terminal({
+  const terminalOptions: Bun.TerminalOptions = {
     cols,
     rows,
     data(_term, data) {
@@ -238,11 +309,15 @@ async function withTerminalRepl(
         resolveWaiter = null;
       }
     },
-  });
+  };
+  // Bun.spawn gives the child a controlling terminal only when it creates the pty itself.
+  await using ownTerminal = options.session ? null : new Bun.Terminal(terminalOptions);
+  // Read before the spawn: a fast child has its terminal in raw mode by the time the spawn returns.
+  const ownLocalFlags = ownTerminal?.localFlags;
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "repl"],
-    terminal,
+    cmd: options.cmd ?? [bunExe(), "repl"],
+    terminal: ownTerminal ?? terminalOptions,
     env: {
       ...bunEnv,
       TERM: "xterm-256color",
@@ -252,6 +327,8 @@ async function withTerminalRepl(
     },
   });
 
+  const terminal = ownTerminal ?? proc.terminal!;
+  const localFlagsAtStart = ownLocalFlags ?? terminal.localFlags;
   const send = (text: string) => terminal.write(text);
 
   const waitFor = async (pattern: string | RegExp, timeoutMs = 5000): Promise<string> => {
@@ -316,16 +393,17 @@ async function withTerminalRepl(
     model.resize(newCols);
   };
 
-  const allOutput = () => stripAnsi(received.join(""));
+  const rawOutput = () => received.join("");
+  const allOutput = () => stripAnsi(rawOutput());
 
   await waitFor(/\u276f|> /); // Wait for prompt
 
-  await fn({ terminal, proc, send, waitFor, waitForScreen, resize, allOutput });
+  await fn({ terminal, proc, send, waitFor, waitForScreen, resize, allOutput, rawOutput, localFlagsAtStart });
 
   // Clean exit. Ctrl+A then Ctrl+K first discards whatever the test left on
   // the line, wherever the cursor is, so `.exit` is not appended to it (which
   // would leave the REPL running until the test times out).
-  if (proc.exitCode === null) {
+  if (proc.exitCode === null && proc.signalCode === null) {
     send("\x01\x0b.exit\n");
     await proc.exited;
   }
@@ -826,6 +904,293 @@ describe.concurrent("Bun REPL", () => {
         ".exit",
       ]);
       expect(outputs).toEqual(["42", "42", "undefined", '{\n  name: "test",\n}', '"test"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // These inputs end without `.exit`: the REPL reads the end of stdin.
+  describe("end of input", () => {
+    test.each([
+      { last: "the only line", input: "1 + 1", outputs: ["2"] },
+      {
+        last: "the second of two lines",
+        input: `console.log("one")\nconsole.log("two")`,
+        outputs: ["one\nundefined", "two\nundefined"],
+      },
+      {
+        last: "the brace that closes a block",
+        input: `if (true) {\n  console.log("two")\n}`,
+        outputs: ["two\nundefined"],
+      },
+      { last: "a REPL command", input: "1 + 1\n.history", outputs: ["2", "Command History:\n     1  1 + 1"] },
+      { last: "spaces", input: "1 + 1\n   ", outputs: ["2", "undefined"] },
+    ])("evaluates a last line that has no newline: $last", async ({ input, outputs }) => {
+      const result = await runRepl(input);
+      expect(result.outputs).toEqual(outputs);
+      expect(result.stderr).toBe("");
+      expect(result.exitCode).toBe(0);
+    });
+
+    // The REPL writes a newline after each line it takes, and one more when the input ends. Nothing follows `.exit`.
+    test.each([
+      { name: "no input", input: "", transcript: "> \n" },
+      { name: "a last line that leaves a call open", input: "foo(", transcript: "> \n\n" },
+      { name: "a last line that is .exit", input: "1 + 1\n.exit", transcript: "> \n2\n> \n" },
+    ])("writes no result and no error for $name", async ({ input, transcript }) => {
+      const { stdout, stderr, exitCode } = await runRepl(input);
+      expect({ transcript: afterWelcome(stdout), stderr, exitCode }).toEqual({ transcript, stderr: "", exitCode: 0 });
+    });
+
+    // Not on Windows: there the read after `closeSync(0)` does not fail, so the last line runs.
+    test.skipIf(isWindows)(
+      "evaluates the last line at the end of the input, but not after a read that failed",
+      async () => {
+        using dir = tempDir("repl-failed-read", {});
+        const ran = path.join(String(dir), "ran");
+        const failed = path.join(String(dir), "failed");
+        const lastLine = `require("fs").writeFileSync(process.env.MARKER, "")`;
+        // Both lines are in the REPL's buffer when the first one runs. After it closes fd 0, the next read fails.
+        const [cleanEnd, failedRead] = await Promise.all([
+          runRepl(`1\n${lastLine}`, { env: { MARKER: ran } }),
+          runRepl(`require("fs").closeSync(0)\n${lastLine}`, { env: { MARKER: failed } }),
+        ]);
+        expect({
+          cleanEnd: { ran: existsSync(ran), stderr: cleanEnd.stderr, exitCode: cleanEnd.exitCode },
+          failedRead: { ran: existsSync(failed), stderr: failedRead.stderr, exitCode: failedRead.exitCode },
+        }).toEqual({
+          cleanEnd: { ran: true, stderr: "", exitCode: 0 },
+          failedRead: { ran: false, stderr: "", exitCode: 0 },
+        });
+      },
+    );
+
+    test("saves a last line that has no newline to the history file", async () => {
+      using home = tempDir("repl-home", {});
+      const { outputs, stderr, exitCode } = await runRepl("1 + 1\n2 + 2", { home: String(home) });
+      expect(outputs).toEqual(["2", "4"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(path.join(String(home), ".bun_repl_history")).text()).toBe("1 + 1\n2 + 2\n");
+    });
+  });
+
+  // A pipe or a file holds text. None of its bytes is a key press, so none of
+  // them completes, deletes, moves the cursor or recalls history.
+  describe("stdin that is not a terminal", () => {
+    test("a TAB is text: it does not complete, indent or list completions", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        '"a\tb"',
+        "`a\tb`",
+        // `proc` has one completion, `process`: the Tab key puts it in the place of `proc`.
+        'var proc\t= 5; typeof proc + "," + typeof process',
+        // The Tab key on an empty line reports how many globals there are.
+        "if (1) {",
+        '\tconsole.log("in")',
+        "}",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(['"a\\tb"', '"a\\tb"', '"number,object"', "in\nundefined"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a control byte is text, not an editing key", async () => {
+      // Every C0 byte but LF and CR, and DEL. On a terminal most of them are
+      // keys: Ctrl+A, Backspace, Ctrl+C, Ctrl+D, ESC and so on.
+      const bytes = [...Array(32).keys(), 0x7f].filter(byte => byte !== 0x0a && byte !== 0x0d);
+      const { outputs, stderr, exitCode } = await runRepl([
+        ...bytes.map(byte => `"a${String.fromCharCode(byte)}b".charCodeAt(1)`),
+        // An arrow key on a terminal: it recalls the line before.
+        '"up\x1b[A".length',
+        ".exit",
+      ]);
+      expect(outputs).toEqual([...bytes.map(String), "5"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("CR LF and a lone CR each end one line", async () => {
+      const { outputs, stderr, exitCode } = await runRepl("`a\r\nb`\r\n1 + 1\r2 + 2\r\n.exit\r\n");
+      expect(outputs).toEqual(['"a\\nb"', "2", "4"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a CR LF that arrives in two reads is one line end", async () => {
+      const { stdout, stderr, exitCode } = await withPipedRepl(async ({ write, waitFor }) => {
+        write("1 + 1\r");
+        await waitFor("2\n> ");
+        write("\n3 + 3\r\n");
+        await waitFor("6\n> ");
+      });
+      // One prompt for each line, and the newline that the end of input writes.
+      expect(stdout.slice(stdout.indexOf("\n\n") + 2)).toBe("> \n2\n> \n6\n> \n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("bytes that are not UTF-8 become U+FFFD", async () => {
+      const { outputs, stderr, exitCode } = await runRepl(
+        Buffer.concat([Buffer.from('"a'), Buffer.from([0xff]), Buffer.from('b".codePointAt(1)\n.exit\n')]),
+      );
+      expect(outputs).toEqual(["65533"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test(".editor takes its lines as text and runs them at a 0x04 byte at the start of a line", async () => {
+      // 0x04 is what Ctrl+D sends on a terminal.
+      const { outputs, stderr, exitCode } = await runRepl(
+        '.editor\nvar proc\t= 5\n\ttypeof proc + "," + typeof process\n\x04.exit\n',
+      );
+      expect(outputs).toEqual([expect.stringMatching(/^\/\/ Entering editor mode.*\n+"number,object"$/)]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test(".editor runs nothing at the end of a pipe or after a 0x03 byte at the start of a line", async () => {
+      using dir = tempDir("repl-editor-cut", {});
+      const line = `require("fs").writeFileSync(process.env.MARKER, "")`;
+      // A writer that is cut off ends a pipe too, so the end of a pipe is not Ctrl+D. 0x03 is what Ctrl+C sends.
+      const [cut, cancelled] = await Promise.all([
+        runRepl(`.editor\n${line}\n`, { env: { MARKER: path.join(String(dir), "cut") } }),
+        runRepl(`.editor\n${line}\n\x031 + 1\n.exit\n`, { env: { MARKER: path.join(String(dir), "cancelled") } }),
+      ]);
+      expect(cancelled.outputs).toEqual([
+        expect.stringMatching(/^\/\/ Entering editor mode.*\n+\/\/ Editor mode cancelled$/),
+        "2",
+      ]);
+      expect(readdirSync(String(dir))).toEqual([]);
+      expect([cut.stderr, cut.exitCode, cancelled.stderr, cancelled.exitCode]).toEqual(["", 0, "", 0]);
+    });
+
+    test(".editor ends at a 0x04 byte at the start of a line while stdin stays open", async () => {
+      const { stdout, stderr, exitCode } = await withPipedRepl(async ({ write, waitFor }) => {
+        // 0x04 is what Ctrl+D sends on a terminal. A line of only a TAB or only blanks stays as it is.
+        write(".editor\nconst text = `a\n\t\n   \nb`;\n[...text].map(c => c.charCodeAt(0)).join()\n\x04");
+        await waitFor('"97,10,9,10,32,32,32,10,98"\n> ');
+        // In the middle of a line (here at the normal prompt) it is text.
+        write('"a\x04b".charCodeAt(1)\n');
+      });
+      expect(stdout).toEndWith('"97,10,9,10,32,32,32,10,98"\n> \n4\n> \n');
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a control byte outside a string is an error, and the lines after it run", async () => {
+      // On a terminal `ESC [ A` is the Up key and 0x04 is Ctrl+D. The `[` must not start an entry of several lines.
+      const { outputs, stderr, exitCode } = await runRepl(["1 + 1", "\x1b[A", "\x04 + 1", "2 + 2", ".exit"]);
+      expect(outputs).toEqual([
+        "2",
+        "SyntaxError: Invalid character '\\u001b'",
+        "SyntaxError: Invalid character '\\u0004'",
+        "4",
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    // The REPL reads 256 bytes at a time. A comment line puts the byte under test on that boundary.
+    test("a character that is cut by the end of a read stays whole", async () => {
+      using dir = tempDir("repl-read-boundary", {
+        "input.js": `//${Buffer.alloc(251, "x").toString()}\n"한".codePointAt(0).toString(16)\n.exit\n`,
+      });
+      const input = Bun.file(path.join(String(dir), "input.js"));
+      expect(new Uint8Array(await input.arrayBuffer()).indexOf(0xed)).toBe(255);
+      const { outputs, stderr, exitCode } = await runRepl(input);
+      // The comment is an entry of its own.
+      expect(outputs).toEqual(["undefined", '"d55c"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a 0x04 byte in the middle of a line does not end .editor, also at the start of a read", async () => {
+      using dir = tempDir("repl-read-boundary", {
+        "input.js": `.editor\n//${Buffer.alloc(228, "x").toString()}\nglobalThis.r = "a\x04b".charCodeAt(1)\n\x04r + 1\n.exit\n`,
+      });
+      const input = Bun.file(path.join(String(dir), "input.js"));
+      expect(new Uint8Array(await input.arrayBuffer()).indexOf(0x04)).toBe(256);
+      const { outputs, stderr, exitCode } = await runRepl(input);
+      expect(outputs).toEqual([expect.stringMatching(/^\/\/ Entering editor mode.*\n+4$/), "5"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a file name with a NUL byte is refused", async () => {
+      // The open takes a C string: it would open the name up to the NUL.
+      using dir = tempDir("repl-nul-name", {
+        "loaded.js": "globalThis.loadedThroughNul = 1;\n",
+        "saved.txt": "keep\n",
+      });
+      const { outputs, stderr, exitCode } = await runRepl(
+        [".load loaded.js\0tail.js", "typeof loadedThroughNul", ".save saved.txt\0tail", ".exit"],
+        { cwd: String(dir) },
+      );
+      expect(outputs).toEqual([
+        "The file name must not contain a null byte or a line break: loaded.js\\x00tail.js",
+        '"undefined"',
+        "The file name must not contain a null byte or a line break: saved.txt\\x00tail",
+      ]);
+      expect(readdirSync(String(dir)).sort()).toEqual(["loaded.js", "saved.txt"]);
+      expect(await Bun.file(path.join(String(dir), "saved.txt")).text()).toBe("keep\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    // Windows does not allow a control byte in a file name.
+    test.skipIf(isWindows)(
+      "a control byte in the name of a file that .load and .save open is spelled out",
+      async () => {
+        using dir = tempDir("repl-echo-open", { "lo\x1b[2Jad.js": "globalThis.loadedEsc = 6;\n" });
+        const { stdout, outputs, stderr, exitCode } = await runRepl(
+          [".load lo\x1b[2Jad.js", "loadedEsc + 1", ".save sa\x1b[2Jve.txt", ".exit"],
+          { cwd: String(dir) },
+        );
+        expect(outputs).toEqual(["Loading lo\\x1b[2Jad.js...\n6", "7", "Session saved to sa\\x1b[2Jve.txt"]);
+        expect(stdout).not.toContain("\x1b[2J");
+        expect(readdirSync(String(dir)).sort()).toEqual(["lo\x1b[2Jad.js", "sa\x1b[2Jve.txt"]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test("a TAB separates a REPL command from its argument", async () => {
+      using dir = tempDir("repl-load-tab", { "loaded.js": "globalThis.loadedByTab = 7;\n" });
+      const { outputs, stderr, exitCode } = await runRepl([
+        `.load\t${path.join(String(dir), "loaded.js")}`,
+        "loadedByTab + 1",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([expect.stringMatching(/^Loading .*loaded\.js\.\.\.\n7$/), "8"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a control byte in an echoed name or history entry is spelled out", async () => {
+      using dir = tempDir("repl-echo", {});
+      // ESC ] 0 sets the title of a terminal, ESC [ 2 J clears it.
+      const { stdout, outputs, stderr, exitCode } = await runRepl(
+        [
+          '"\x1b]0;title\x07".length',
+          ".history",
+          ".load missing\x1b[2J.js",
+          ".save missing\x1b[2J/saved.js",
+          ".nope\x1b[2J",
+          ".exit",
+        ],
+        { cwd: String(dir) },
+      );
+      expect(outputs).toEqual([
+        "10",
+        'Command History:\n     1  "\\x1b]0;title\\x07".length',
+        // Neither file can be opened. On POSIX the error names the file.
+        expect.stringMatching(isWindows ? /^E[A-Z]+: / : /^ENOENT: missing\\x1b\[2J\.js: /),
+        expect.stringMatching(isWindows ? /^E[A-Z]+: / : /^ENOENT: missing\\x1b\[2J\/saved\.js: /),
+        "Unknown command: .nope\\x1b[2J\nType .help for available commands",
+      ]);
+      expect(stdout).not.toContain("\x1b]0;");
+      expect(stdout).not.toContain("\x1b[2J");
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
@@ -1683,6 +2048,552 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
         expect(screen.rows.slice(top)).toEqual([`> ${line.slice(0, split)}`, line.slice(split), "6", "> "]);
       });
     });
+  });
+
+  test("a terminal that refuses raw mode is read as lines of text", async () => {
+    // The REPL is in a background process group that has lost its parent shell:
+    // there the terminal refuses tcsetattr() and reads. The REPL starts when the
+    // session leader opens the gate, which it does after that parent is gone. The
+    // leader then waits for the REPL through a FIFO and reports its exit code.
+    using dir = tempDir("repl-orphan", {});
+    const leader = `
+      set -m
+      mkfifo "$FIFO" "$GATE"
+      sh -c '( read go <"$GATE"; "$@" repl <&3 3<&-; echo "exit=$?" >"$FIFO" ) &' sh "$1" 3<&0 &
+      wait $!
+      echo go >"$GATE"
+      cat "$FIFO"
+    `;
+    await withTerminalRepl(
+      async ({ waitForScreen, rawOutput, proc }) => {
+        // All of the output can arrive at once, so wait on the screen and not on new output.
+        await waitForScreen(s => s.rows.includes("exit=0"));
+        const output = rawOutput();
+        // The plain prompt, the newline for the end of input, and nothing that is drawn.
+        expect(output.slice(output.indexOf("\r\n\r\n") + 4)).toBe("> \r\nexit=0\r\n");
+        expect(await proc.exited).toBe(0);
+      },
+      {
+        cmd: ["sh", "-c", leader, "sh", bunExe()],
+        session: true,
+        env: { FIFO: path.join(String(dir), "done"), GATE: path.join(String(dir), "gate") },
+      },
+    );
+  });
+
+  test("stdin that is a pipe is read as text also when stdout is a terminal", async () => {
+    await withTerminalRepl(
+      async ({ waitForScreen, rawOutput, proc }) => {
+        // All of the output can arrive at once, so wait on the screen and not on new output.
+        await waitForScreen(s => s.rows.includes("4"));
+        expect(await proc.exited).toBe(0);
+        // Nothing is drawn.
+        expect(rawOutput()).not.toContain("\x1b[J");
+      },
+      // \177 is DEL: on a terminal that byte is the Backspace key.
+      { cmd: ["sh", "-c", `printf '"ab\\177c".length\\n.exit\\n' | "$0" repl`, bunExe()] },
+    );
+  });
+
+  test("a terminal that edits its own lines keeps doing so after an awaited line", async () => {
+    // stdin is the terminal and stdout is a FIFO that `cat` copies to the terminal, so the REPL leaves
+    // the terminal as it is: the terminal echoes what is typed and sends whole lines.
+    using dir = tempDir("repl-line-mode", {});
+    const shell = `
+      mkfifo "$FIFO"
+      cat "$FIFO" &
+      "$0" repl > "$FIFO"
+      status=$?
+      wait
+      exit $status
+    `;
+    await withTerminalRepl(
+      async ({ send, waitFor, proc }) => {
+        send("await 1\n");
+        await waitFor(/\n1\r?\n> /);
+        send('"co" + "oked"\n');
+        // The echo of the terminal comes before the answer.
+        expect(await waitFor('"cooked"')).toContain('"co" + "oked"');
+        send(".exit\n");
+        expect(await proc.exited).toBe(0);
+      },
+      { cmd: ["sh", "-c", shell, bunExe()], env: { FIFO: path.join(String(dir), "out") } },
+    );
+  });
+
+  // stdin is the terminal and stdout is a pipe, so the REPL leaves the terminal as it is.
+  const lineModeShell = `{ "$0" repl; echo "exit=$?"; } | cat`;
+
+  // In line mode Ctrl+D hands over what is typed so far. At the start of a line that is no bytes: the end of input.
+  test.each([
+    ["a last line that has no line end", '"half" + "Line"\x04\x04', '"halfLine"'],
+    ["the lines of .editor", '.editor\n"ed" + "itor"\n\x04', '"editor"'],
+  ])("the end of input on a terminal in line mode runs %s", async (_name, typed, result) => {
+    await withTerminalRepl(
+      async ({ send, waitForScreen, proc }) => {
+        send(typed);
+        const { rows } = await waitForScreen(s => s.rows.includes("exit=0"));
+        const at = rows.indexOf(result);
+        expect(rows.slice(at, at + 3)).toEqual([result, "> ", "exit=0"]);
+        expect(await proc.exited).toBe(0);
+      },
+      { cmd: ["sh", "-c", lineModeShell, bunExe()] },
+    );
+  });
+
+  test("a read of no bytes from a terminal that is not in line mode runs nothing", async () => {
+    // After `stty -icanon min 0 time 0` a read returns at once, with no bytes when none wait: a read timeout,
+    // not the end of input. The shell prompts too. What is typed after `go` waits in the terminal for the REPL.
+    const shell = `
+      printf 'go> '
+      read go
+      stty -icanon min 0 time 0
+      ${lineModeShell}
+    `;
+    await withTerminalRepl(
+      async ({ send, waitForScreen, rawOutput, proc }) => {
+        send('go\n"half" + "Line"');
+        await waitForScreen(s => s.rows.includes("exit=0"));
+        const output = rawOutput();
+        // The REPL reads the half line, then no bytes, and ends: the half line did not run.
+        expect(output.slice(output.indexOf("\r\n\r\n") + 4)).toBe("> \r\nexit=0\r\n");
+        expect(await proc.exited).toBe(0);
+      },
+      { cmd: ["sh", "-c", shell, bunExe()] },
+    );
+  });
+
+  test("an escape sequence that is not a key leaves no text on the line", async () => {
+    await withTerminalRepl(async ({ send, waitForScreen }) => {
+      // F5, Shift+F5, the end marker of a paste that never began, a cursor position report,
+      // a device attributes report, a key with three numbers, Shift+Delete of rxvt, and a
+      // private sequence that ends like the Left key.
+      send('"a\x1b[15~b\x1b[15;2~c\x1b[201~d\x1b[12;40Re\x1b[?62;4cf\x1b[27;5;13~g\x1b[3$h\x1b[?Di"');
+      await waitForScreen(s => s.rows.at(-1) === '> "abcdefghi"');
+    });
+  });
+
+  test("text typed after `ESC [` is not taken for a key sequence", async () => {
+    await withTerminalRepl(async ({ send, waitFor, waitForScreen }) => {
+      // The blank cannot be part of a key sequence: it and what follows is typed text.
+      send("\x1b[10 + 20 + 30");
+      await waitForScreen(s => s.rows.at(-1) === ">  + 20 + 30");
+      send("\n");
+      await waitFor(/\n\s*50\b/);
+      // No key sequence is this long: 64 digits are dropped, the rest is typed text.
+      send("\x1b[" + Buffer.alloc(70, "1").toString());
+      await waitForScreen(s => s.rows.at(-1) === "> 111111");
+    });
+  });
+
+  test("the keys that send a CSI sequence edit the line", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      // Each row: type `ab cd ef`, press the keys, type `X`. The line is then quoted and upper-cased, so that
+      // the answer is not in the echo.
+      const rows: [keys: string, answer: string][] = [
+        ["\x1b[H", "XAB CD EF"], // Home
+        ["\x1b[1~", "XAB CD EF"], // Home
+        ["\x01\x1b[F", "AB CD EFX"], // End
+        ["\x01\x1b[4~", "AB CD EFX"], // End
+        ["\x01\x1b[3~", "XB CD EF"], // Delete
+        ["\x1b[D\x1b[D", "AB CD XEF"], // Left
+        ["\x01\x1b[C", "AXB CD EF"], // Right
+        ["\x1b[1;5D", "AB CD XEF"], // Ctrl+Left
+        ["\x1b[1;3D", "AB CD XEF"], // Alt+Left
+        ["\x01\x1b[1;5C", "AB XCD EF"], // Ctrl+Right
+        ["\x01\x1b[1;3C", "AB XCD EF"], // Alt+Right
+        ["\x01\x1b[;5C", "AB XCD EF"], // Ctrl+Right without the first number
+        ["\x01\x1b[2~", "XAB CD EF"], // Insert does nothing
+        ["\x1b[1;2D", "AB CD EFX"], // Shift+Left is not a key
+        ["\x01\x1b[3;5~", "XAB CD EF"], // Ctrl+Delete is not a key
+      ];
+      for (const [keys, answer] of rows) {
+        // Ctrl+A, a quote, Ctrl+E, the rest.
+        send(`ab cd ef${keys}X\x01"\x05".toUpperCase()\n`);
+        expect(await waitFor(/"[^"]*"\r\n/)).toContain(`"${answer}"\r\n`);
+      }
+    });
+  });
+
+  describe("multi-line history entries", () => {
+    // An input typed over several lines is one history entry. When it is
+    // recalled, each line is drawn on a row of its own, the later ones after
+    // the continuation prompt, and every keystroke redraws all of them from the
+    // row of the first prompt.
+    type Repl = Parameters<Parameters<typeof withTerminalRepl>[0]>[0];
+
+    /** Types `lines` as one input, waits for `result`, and returns the index of the row its prompt is on. */
+    async function enter({ send, waitForScreen }: Repl, lines: string[], result: string, prompt = "> ") {
+      let { rows } = await waitForScreen(s => s.rows.at(-1) === prompt);
+      const top = rows.length - 1;
+      for (const line of lines.slice(0, -1)) {
+        send(`${line}\n`);
+        const drawn = rows.length;
+        ({ rows } = await waitForScreen(s => s.rows.length > drawn && s.rows.at(-1) === "... "));
+      }
+      send(`${lines.at(-1)}\n`);
+      await waitForScreen(s => s.rows.at(-1) === prompt && s.rows.at(-2) === result);
+      return top;
+    }
+
+    test("a key on a recalled entry does not add rows", async () => {
+      await withTerminalRepl(async repl => {
+        const { send, waitForScreen } = repl;
+        await enter(repl, ["[1,", "2,", "3]"], "[ 1, 2, 3 ]");
+
+        send("\x1b[A"); // Up
+        let screen = await waitForScreen(s => s.rows.at(-1)!.endsWith("3]"));
+        const height = screen.rows.length;
+        let last = "3]";
+        for (const key of ["x", "y", "z"]) {
+          last += key;
+          send(key);
+          screen = await waitForScreen(s => s.rows.at(-1)!.endsWith(last));
+          expect(screen.rows.length).toBe(height);
+          await waitForScreen(s => s.cursor.row === height - 1 && s.cursor.col === s.rows.at(-1)!.length);
+        }
+      });
+    });
+
+    test("a recalled entry is drawn once and edited in place", async () => {
+      await withTerminalRepl(async repl => {
+        const { send, waitForScreen } = repl;
+        const top = await enter(repl, ["[1,", "2,", "3]"], "[ 1, 2, 3 ]");
+        const typed = ["> [1,", "... 2,", "... 3]", "[ 1, 2, 3 ]"];
+
+        send("\x1b[A"); // Up
+        let screen = await waitForScreen(s => s.rows.at(-1) === "... 3]");
+        expect(screen.rows.slice(top)).toEqual([...typed, "> [1,", "... 2,", "... 3]"]);
+        await waitForScreen(s => s.cursor.row === top + 6 && s.cursor.col === "... 3]".length);
+
+        send("xyz");
+        screen = await waitForScreen(s => s.rows.at(-1) === "... 3]xyz");
+        expect(screen.rows.slice(top)).toEqual([...typed, "> [1,", "... 2,", "... 3]xyz"]);
+        await waitForScreen(s => s.cursor.row === top + 6 && s.cursor.col === "... 3]xyz".length);
+
+        send("\x7f\x7f\x7f"); // Backspace, three times
+        screen = await waitForScreen(s => s.rows.at(-1) === "... 3]" && s.cursor.col === "... 3]".length);
+        expect(screen.rows.slice(top)).toEqual([...typed, "> [1,", "... 2,", "... 3]"]);
+
+        // Left over `]`, `3` and the line break: the cursor is at the end of the second line.
+        send("\x1b[D\x1b[D\x1b[D");
+        await waitForScreen(s => s.cursor.row === top + 5 && s.cursor.col === "... 2,".length);
+        send(" 2.5,");
+        screen = await waitForScreen(s => s.rows.at(-2) === "... 2, 2.5,");
+        expect(screen.rows.slice(top)).toEqual([...typed, "> [1,", "... 2, 2.5,", "... 3]"]);
+        await waitForScreen(s => s.cursor.row === top + 5 && s.cursor.col === "... 2, 2.5,".length);
+
+        // The result goes below the last line, not below the cursor.
+        send("\n");
+        screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "[ 1, 2, 2.5, 3 ]");
+        expect(screen.rows.slice(top)).toEqual([...typed, "> [1,", "... 2, 2.5,", "... 3]", "[ 1, 2, 2.5, 3 ]", "> "]);
+      });
+    });
+
+    test("each Backspace on the entry of issue #27560 redraws it once", async () => {
+      // With colors, as in the issue: the prompt is then "❯ ".
+      await withTerminalRepl(
+        async repl => {
+          const { send, waitForScreen } = repl;
+          const draw = (text: string) => text.split("\n").map((line, index) => (index === 0 ? "❯ " : "... ") + line);
+          let text = "if (1) {\n1\n2\n3\n}";
+          const top = await enter(repl, text.split("\n"), "undefined", "❯ ");
+          const typed = [...draw(text), "undefined"];
+
+          send("\x1b[A");
+          let screen = await waitForScreen(s => s.rows.at(-1) === "... }");
+          expect(screen.rows.slice(top)).toEqual([...typed, ...draw(text)]);
+
+          for (let deleted = 1; deleted <= 7; deleted++) {
+            text = text.slice(0, -1);
+            const drawn = draw(text);
+            send("\x7f");
+            screen = await waitForScreen(
+              s => s.rows.length === top + typed.length + drawn.length && s.rows.at(-1) === drawn.at(-1),
+            );
+            expect(screen.rows.slice(top)).toEqual([...typed, ...drawn]);
+          }
+          // `if (1) {` and an empty second line are left.
+          await waitForScreen(s => s.cursor.row === top + typed.length + 1 && s.cursor.col === "... ".length);
+        },
+        { env: { NO_COLOR: undefined, FORCE_COLOR: "1" } },
+      );
+    });
+
+    test("Enter and Ctrl+C go below the last line from a cursor on the first", async () => {
+      await withTerminalRepl(async repl => {
+        const { send, waitForScreen } = repl;
+        const top = await enter(repl, ["[1,", "2,", "3]"], "[ 1, 2, 3 ]");
+        const entry = ["> [1,", "... 2,", "... 3]"];
+
+        send("\x1b[A");
+        await waitForScreen(s => s.rows.at(-1) === "... 3]");
+        send("\x01"); // Ctrl+A: the start of the first line
+        await waitForScreen(s => s.cursor.row === top + 4 && s.cursor.col === "> ".length);
+        send("\n");
+        let screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.length === top + 9);
+        expect(screen.rows.slice(top + 4)).toEqual([...entry, "[ 1, 2, 3 ]", "> "]);
+
+        send("\x1b[A");
+        await waitForScreen(s => s.rows.at(-1) === "... 3]");
+        send("\x01");
+        await waitForScreen(s => s.cursor.row === top + 8 && s.cursor.col === "> ".length);
+        send("\x03");
+        screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "... 3]^C");
+        expect(screen.rows.slice(top + 8)).toEqual(["> [1,", "... 2,", "... 3]^C", "> "]);
+      });
+    });
+
+    test("recalling another entry clears every row of a multi-line one", async () => {
+      await withTerminalRepl(async repl => {
+        const { send, waitForScreen } = repl;
+        send("7\n");
+        await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "7");
+        const top = await enter(repl, ["[1,", "2,", "3]"], "[ 1, 2, 3 ]");
+        const typed = ["> [1,", "... 2,", "... 3]", "[ 1, 2, 3 ]"];
+
+        send("\x1b[A"); // Up: the three lines
+        let screen = await waitForScreen(s => s.rows.at(-1) === "... 3]");
+        expect(screen.rows.slice(top)).toEqual([...typed, "> [1,", "... 2,", "... 3]"]);
+
+        send("\x1b[A"); // Up: 7
+        screen = await waitForScreen(s => s.rows.at(-1) === "> 7");
+        expect(screen.rows.slice(top)).toEqual([...typed, "> 7"]);
+
+        send("\x1b[B"); // Down: the three lines again
+        screen = await waitForScreen(s => s.rows.at(-1) === "... 3]");
+        expect(screen.rows.slice(top)).toEqual([...typed, "> [1,", "... 2,", "... 3]"]);
+
+        send("\x1b[B"); // Down: the empty line
+        screen = await waitForScreen(s => s.rows.at(-1) === "> ");
+        expect(screen.rows.slice(top)).toEqual([...typed, "> "]);
+        await waitForScreen(s => s.cursor.row === top + 4 && s.cursor.col === "> ".length);
+      });
+    });
+
+    test("an entry recalled at the continuation prompt starts after that prompt", async () => {
+      await withTerminalRepl(async repl => {
+        const { send, waitForScreen } = repl;
+        const top = await enter(repl, ["[1,", "2,", "3]"], "[ 1, 2, 3 ]");
+
+        send("[0,\n");
+        await waitForScreen(s => s.rows.at(-1) === "... " && s.rows.at(-2) === "> [0,");
+        send("\x1b[A");
+        let screen = await waitForScreen(s => s.rows.at(-1) === "... 3]");
+        expect(screen.rows.slice(top + 4)).toEqual(["> [0,", "... [1,", "... 2,", "... 3]"]);
+        await waitForScreen(s => s.cursor.row === top + 7 && s.cursor.col === "... 3]".length);
+
+        send("]");
+        screen = await waitForScreen(s => s.rows.at(-1) === "... 3]]");
+        expect(screen.rows.slice(top + 4)).toEqual(["> [0,", "... [1,", "... 2,", "... 3]]"]);
+
+        send("\n");
+        screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "[ 0, [ 1, 2, 3 ] ]");
+        expect(screen.rows.slice(top + 4)).toEqual([
+          "> [0,",
+          "... [1,",
+          "... 2,",
+          "... 3]]",
+          "[ 0, [ 1, 2, 3 ] ]",
+          "> ",
+        ]);
+      });
+    });
+
+    test("lines of a recalled entry can be emptied and deleted", async () => {
+      await withTerminalRepl(async repl => {
+        const { send, waitForScreen } = repl;
+        // The second line is empty.
+        const top = await enter(repl, ["[1,", "", "2]"], "[ 1, 2 ]");
+        const typed = ["> [1,", "... ", "... 2]", "[ 1, 2 ]"];
+
+        send("\x1b[A");
+        let screen = await waitForScreen(s => s.rows.at(-1) === "... 2]");
+        expect(screen.rows.slice(top)).toEqual([...typed, "> [1,", "... ", "... 2]"]);
+
+        // Backspace over `]` and `2`: the input now ends with a line break.
+        send("\x7f\x7f");
+        screen = await waitForScreen(s => s.rows.length === top + 7 && s.rows.at(-1) === "... ");
+        expect(screen.rows.slice(top)).toEqual([...typed, "> [1,", "... ", "... "]);
+        await waitForScreen(s => s.cursor.row === top + 6 && s.cursor.col === "... ".length);
+
+        // The input is incomplete, so Enter asks for its next line on a new row.
+        send("\n");
+        await waitForScreen(s => s.rows.length === top + 8 && s.rows.at(-1) === "... ");
+        send("5]\n");
+        screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "[ 1, 5 ]");
+        const second = ["> [1,", "... ", "... ", "... 5]", "[ 1, 5 ]"];
+        expect(screen.rows.slice(top)).toEqual([...typed, ...second, "> "]);
+
+        // Up recalls those four lines. Ctrl+K after `[1,` deletes the other three.
+        send("\x1b[A");
+        screen = await waitForScreen(s => s.rows.at(-1) === "... 5]");
+        expect(screen.rows.slice(top)).toEqual([...typed, ...second, "> [1,", "... ", "... ", "... 5]"]);
+        send("\x01\x1b[C\x1b[C\x1b[C\x0b");
+        screen = await waitForScreen(s => s.rows.at(-1) === "> [1," && s.cursor.col === "> [1,".length);
+        expect(screen.rows.slice(top)).toEqual([...typed, ...second, "> [1,"]);
+
+        send("\n");
+        await waitForScreen(s => s.rows.at(-1) === "... " && s.rows.at(-2) === "> [1,");
+        send("6]\n");
+        screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "[ 1, 6 ]");
+        expect(screen.rows.slice(top)).toEqual([...typed, ...second, "> [1,", "... 6]", "[ 1, 6 ]", "> "]);
+      });
+    });
+
+    test("a line of the entry that is wider than the terminal wraps", async () => {
+      const cols = 30;
+      // "... " plus 34 characters: the first 26 share the continuation prompt's row.
+      const second = "333, 444, 555, 666, 777, 888, 999,";
+      const split = cols - "... ".length;
+      await withTerminalRepl(
+        async repl => {
+          const { send, waitForScreen } = repl;
+          const top = await enter(repl, ["[111, 222,", second, "0].length"], "10");
+          const drawn = ["> [111, 222,", `... ${second.slice(0, split)}`, second.slice(split), "... 0].length"];
+
+          send("\x1b[A");
+          let screen = await waitForScreen(s => s.rows.at(-1) === "... 0].length");
+          expect(screen.rows.slice(top)).toEqual([...drawn, "10", ...drawn]);
+          await waitForScreen(s => s.cursor.row === top + 8 && s.cursor.col === "... 0].length".length);
+
+          // Ctrl+B (left) to the end of the wrapped line, then insert there.
+          send(Buffer.alloc("\n0].length".length, "\x02").toString());
+          await waitForScreen(s => s.cursor.row === top + 7 && s.cursor.col === second.length - split);
+          send(" 1,");
+          const edited = `${second} 1,`;
+          screen = await waitForScreen(s => s.rows.at(-2) === edited.slice(split));
+          expect(screen.rows.slice(top + 5)).toEqual([
+            "> [111, 222,",
+            `... ${edited.slice(0, split)}`,
+            edited.slice(split),
+            "... 0].length",
+          ]);
+          await waitForScreen(s => s.cursor.row === top + 7 && s.cursor.col === edited.length - split);
+
+          // Ctrl+A, then insert on the first row while the cursor was three rows below it.
+          send("\x01" + "0, ");
+          screen = await waitForScreen(s => s.rows.at(-4) === "> 0, [111, 222,");
+          expect(screen.rows.slice(top + 5)).toEqual([
+            "> 0, [111, 222,",
+            `... ${edited.slice(0, split)}`,
+            edited.slice(split),
+            "... 0].length",
+          ]);
+          await waitForScreen(s => s.cursor.row === top + 5 && s.cursor.col === "> 0, ".length);
+
+          send("\n");
+          screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "11");
+          expect(screen.rows.slice(top + 8)).toEqual(["... 0].length", "11", "> "]);
+        },
+        { cols },
+      );
+    });
+
+    test("a line that fills the row exactly is followed by the next line", async () => {
+      const cols = 30;
+      // "> " plus 28 characters is exactly 30 columns.
+      const first = `["${Buffer.alloc(24, "a")}",`;
+      await withTerminalRepl(
+        async repl => {
+          const { send, waitForScreen } = repl;
+          const top = await enter(repl, [first, "2].length"], "2");
+          const typed = [`> ${first}`, "... 2].length", "2"];
+
+          send("\x1b[A");
+          let screen = await waitForScreen(s => s.rows.at(-1) === "... 2].length");
+          expect(screen.rows.slice(top)).toEqual([...typed, `> ${first}`, "... 2].length"]);
+          await waitForScreen(s => s.cursor.row === top + 4 && s.cursor.col === "... 2].length".length);
+
+          // Ctrl+B to the end of the full row. No cell is free after it, so the
+          // cursor is shown at the start of the next row.
+          send(Buffer.alloc("\n2].length".length, "\x02").toString());
+          await waitForScreen(s => s.cursor.row === top + 4 && s.cursor.col === 0);
+          // What is typed there wraps onto a row of its own.
+          send("0,");
+          screen = await waitForScreen(s => s.rows.at(-2) === "0,");
+          expect(screen.rows.slice(top)).toEqual([...typed, `> ${first}`, "0,", "... 2].length"]);
+          await waitForScreen(s => s.cursor.row === top + 4 && s.cursor.col === "0,".length);
+
+          send("\n");
+          screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "3");
+          const second = [`> ${first}`, "0,", "... 2].length", "3"];
+          expect(screen.rows.slice(top)).toEqual([...typed, ...second, "> "]);
+
+          // Recall it, delete all of it, and type one line that wraps: it is
+          // drawn like an input that never held a line break.
+          const line = "[111, 222, 333, 444, 555, 666].length";
+          const wrapAt = cols - "> ".length;
+          send("\x1b[A");
+          await waitForScreen(s => s.rows.at(-1) === "... 2].length" && s.rows.length === top + 10);
+          send("\x01\x0b" + line);
+          screen = await waitForScreen(s => s.rows.at(-1) === line.slice(wrapAt));
+          expect(screen.rows.slice(top)).toEqual([
+            ...typed,
+            ...second,
+            `> ${line.slice(0, wrapAt)}`,
+            line.slice(wrapAt),
+          ]);
+          await waitForScreen(s => s.cursor.row === top + 8 && s.cursor.col === line.length - wrapAt);
+
+          send("\n");
+          screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "6");
+          expect(screen.rows.slice(top + 7)).toEqual([`> ${line.slice(0, wrapAt)}`, line.slice(wrapAt), "6", "> "]);
+        },
+        { cols },
+      );
+    });
+
+    test("each line is highlighted on its own row", async () => {
+      // Colors enable syntax highlighting and ghost text; the prompt is then "❯ ".
+      await withTerminalRepl(
+        async repl => {
+          const { send, waitFor, waitForScreen } = repl;
+          send("var zzTail = 2\n");
+          await waitForScreen(s => s.rows.at(-1) === "❯ " && s.rows.at(-2) === "2");
+          const top = await enter(repl, ["[1, // one", "2]"], "[ 1, 2 ]", "❯ ");
+          const typed = ["❯ [1, // one", "... 2]", "[ 1, 2 ]"];
+
+          send("\x1b[A");
+          let screen = await waitForScreen(s => s.rows.at(-1) === "... 2]");
+          expect(screen.rows.slice(top)).toEqual([...typed, "❯ [1, // one", "... 2]"]);
+          // The comment's style ends before the line break, which is CR LF (the
+          // pty puts a CR of its own in front of the LF). The continuation prompt
+          // follows with a style of its own.
+          await waitFor(/\/\/ one(?:\x1b\[[\d;]*m)+\r\r\n(?:\x1b\[[\d;]*m)+\.\.\. (?:\x1b\[[\d;]*m)+/);
+
+          // The ghost text follows the last line.
+          send(" + zzT");
+          screen = await waitForScreen(s => s.rows.at(-1) === "... 2] + zzTail");
+          expect(screen.rows.slice(top)).toEqual([...typed, "❯ [1, // one", "... 2] + zzTail"]);
+          await waitForScreen(s => s.cursor.row === top + 4 && s.cursor.col === "... 2] + zzT".length);
+
+          // Right accepts it.
+          send("\x1b[C\n");
+          screen = await waitForScreen(s => s.rows.at(-1) === "❯ " && s.rows.at(-2) === '"1,22"');
+          expect(screen.rows.slice(top)).toEqual([...typed, "❯ [1, // one", "... 2] + zzTail", '"1,22"', "❯ "]);
+        },
+        { env: { NO_COLOR: undefined, FORCE_COLOR: "1" } },
+      );
+    });
+  });
+
+  // On a terminal only a key ends a line. A terminal that goes away is not the end of a line.
+  test("a terminal that goes away does not evaluate the line that is being typed", async () => {
+    using dir = tempDir("repl-hang-up", {});
+    const marker = path.join(String(dir), "ran");
+    const line = `require("fs").writeFileSync(process.env.MARKER, "")`;
+    await withTerminalRepl(
+      async ({ terminal, proc, send, waitForScreen }) => {
+        send(line);
+        await waitForScreen(s => s.rows.at(-1) === `> ${line}`);
+        // The shell ignores SIGHUP, so the REPL lives to read the end of its input.
+        terminal.close();
+        expect(await proc.exited).toBe(0);
+        expect(existsSync(marker)).toBe(false);
+      },
+      { cmd: ["sh", "-c", `trap "" HUP; exec "$0" repl`, bunExe()], env: { MARKER: marker } },
+    );
   });
 
   test(".editor mode collects lines until Ctrl+D", async () => {

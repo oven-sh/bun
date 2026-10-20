@@ -14,6 +14,7 @@
 #[cfg(unix)]
 use core::ffi::c_int;
 use core::fmt::Arguments;
+use std::io::Write as _;
 
 use bstr::BStr;
 
@@ -334,6 +335,8 @@ impl History {
 struct LineEditor {
     buffer: Vec<u8>,
     cursor: usize,
+    /// The buffer may hold control bytes, LF included (no key press puts one there): `refresh_line` then draws it line by line in display form.
+    has_control_bytes: bool,
 }
 
 impl LineEditor {
@@ -341,19 +344,28 @@ impl LineEditor {
         LineEditor {
             buffer: Vec::new(),
             cursor: 0,
+            has_control_bytes: false,
         }
     }
 
     fn clear(&mut self) {
         self.buffer.clear();
         self.cursor = 0;
+        self.has_control_bytes = false;
     }
 
     fn set(&mut self, text: &[u8]) -> Result<(), bun_alloc::AllocError> {
         self.buffer.clear();
         self.buffer.extend_from_slice(text);
         self.cursor = text.len();
+        self.has_control_bytes = text.iter().copied().any(is_control_byte);
         Ok(())
+    }
+
+    /// Inserts text that did not come from key presses, so it may hold any byte.
+    fn insert_text(&mut self, text: &[u8]) {
+        self.has_control_bytes |= text.iter().copied().any(is_control_byte);
+        let _ = self.insert_slice(text);
     }
 
     fn insert(&mut self, ch: u8) -> Result<(), bun_alloc::AllocError> {
@@ -723,19 +735,39 @@ fn cmd_clear(repl: &mut Repl, _: &[u8]) -> ReplResult {
     ReplResult::SkipEval
 }
 
-fn cmd_load(repl: &mut Repl, args: &[u8]) -> ReplResult {
+/// The file name that `.load` or `.save` got, or `None` after telling the user why there is none to open.
+fn file_name_argument<'a>(repl: &Repl, command: &str, args: &'a [u8]) -> Option<&'a [u8]> {
     let filename = strings::trim(args, b" \t");
     if filename.is_empty() {
-        repl.print_error(format_args!("Usage: .load <filename>\n"));
-        return ReplResult::SkipEval;
+        repl.print_error(format_args!("Usage: {command} <filename>\n"));
+        return None;
     }
+    // The open takes a C string: it would stop at the NUL and open another file. A line break is not part of a name either.
+    if strings::index_of_any(filename, b"\0\n").is_some() {
+        repl.print_error(format_args!(
+            "The file name must not contain a null byte or a line break: {}\n",
+            bun_core::fmt::escape_control_chars(filename)
+        ));
+        return None;
+    }
+    Some(filename)
+}
+
+fn cmd_load(repl: &mut Repl, args: &[u8]) -> ReplResult {
+    let Some(filename) = file_name_argument(repl, ".load", args) else {
+        return ReplResult::SkipEval;
+    };
 
     let mut path_buf = bun_paths::path_buffer_pool::get();
     let path_z = path::resolve_path::z(filename, &mut path_buf);
     let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), path_z) {
         sys::Result::Ok(bytes) => bytes.into(),
         sys::Result::Err(err) => {
-            repl.print_error(format_args!("{}\n", err));
+            // The error names the file.
+            repl.print_error(format_args!(
+                "{}\n",
+                bun_core::fmt::EscapeControlChars(&err)
+            ));
             return ReplResult::SkipEval;
         }
     };
@@ -743,7 +775,7 @@ fn cmd_load(repl: &mut Repl, args: &[u8]) -> ReplResult {
     repl.print(format_args!(
         "{}Loading {}...{}\n",
         Color::DIM,
-        BStr::new(filename),
+        bun_core::fmt::escape_control_chars(filename),
         Color::RESET
     ));
     repl.evaluate_and_print(&content);
@@ -751,11 +783,9 @@ fn cmd_load(repl: &mut Repl, args: &[u8]) -> ReplResult {
 }
 
 fn cmd_save(repl: &mut Repl, args: &[u8]) -> ReplResult {
-    let filename = strings::trim(args, b" \t");
-    if filename.is_empty() {
-        repl.print_error(format_args!("Usage: .save <filename>\n"));
+    let Some(filename) = file_name_argument(repl, ".save", args) else {
         return ReplResult::SkipEval;
-    }
+    };
 
     // Build content
     let mut content: Vec<u8> = Vec::new();
@@ -771,7 +801,11 @@ fn cmd_save(repl: &mut Repl, args: &[u8]) -> ReplResult {
     ) {
         sys::Result::Ok(fd) => sys::File::from_fd(fd),
         sys::Result::Err(err) => {
-            repl.print_error(format_args!("{}\n", err));
+            // The error names the file.
+            repl.print_error(format_args!(
+                "{}\n",
+                bun_core::fmt::EscapeControlChars(&err)
+            ));
             return ReplResult::SkipEval;
         }
     };
@@ -786,7 +820,7 @@ fn cmd_save(repl: &mut Repl, args: &[u8]) -> ReplResult {
     repl.print(format_args!(
         "{}Session saved to {}{}\n",
         Color::GREEN,
-        BStr::new(filename),
+        bun_core::fmt::escape_control_chars(filename),
         Color::RESET
     ));
     ReplResult::SkipEval
@@ -832,7 +866,7 @@ fn cmd_history(repl: &mut Repl, _: &[u8]) -> ReplResult {
             Color::DIM,
             i + 1,
             Color::RESET,
-            BStr::new(entry)
+            bun_core::fmt::escape_control_chars_multiline(entry)
         ));
     }
     repl.print(format_args!("\n"));
@@ -866,6 +900,11 @@ impl ScreenPos {
     }
 }
 
+/// Starts every line of an input but the first.
+const CONTINUATION_PROMPT: &[u8] = b"... ";
+const CONTINUATION_PROMPT_DIM: &[u8] = concat!("\x1b[2m", "... ", "\x1b[0m").as_bytes();
+const CONTINUATION_COLUMNS: usize = CONTINUATION_PROMPT.len();
+
 /// Follows where the terminal puts text written after the prompt.
 struct Layout {
     width: usize,
@@ -898,6 +937,22 @@ impl Layout {
             text = rest;
         }
         first.unwrap_or_else(|| self.next())
+    }
+
+    /// `advance` over the lines `Repl::write_lines` draws.
+    #[cold]
+    fn advance_lines(&mut self, text: &[u8]) -> ScreenPos {
+        let mut lines = strings::split(text, b"\n");
+        let first = self.advance(lines.next().unwrap_or_default());
+        for line in lines {
+            // One row down from a full row too: CR LF comes before the terminal wraps.
+            self.pos = ScreenPos {
+                row: self.pos.row + 1,
+                col: CONTINUATION_COLUMNS,
+            };
+            self.advance(line);
+        }
+        first
     }
 
     /// The cell the next glyph goes to. A full row counts as wrapped; `refresh_line` makes that so.
@@ -957,7 +1012,7 @@ pub(super) struct Repl<'a> {
     input_mode: InputMode,
     running: bool,
     use_colors: bool,
-    /// `None` when stdin or stdout is not a terminal; the input is then never redrawn.
+    /// `Some` on a terminal in raw mode: stdin is key presses. `None`: stdin is lines of text, never redrawn.
     drawing: Option<Drawing>,
     ctrl_c_pressed: bool,
 
@@ -1029,7 +1084,8 @@ impl<'a> Repl<'a> {
     // ========================================================================
 
     fn setup_terminal(&mut self) {
-        if !(Output::is_stdout_tty() && Output::is_stdin_tty()) {
+        // Without raw mode stdin holds lines of text, not key presses; see `drawing`.
+        if !(Output::is_stdout_tty() && Output::is_stdin_tty() && self.enter_raw_mode()) {
             self.use_colors = false;
             return;
         }
@@ -1037,13 +1093,15 @@ impl<'a> Repl<'a> {
 
         // Check for NO_COLOR
         self.use_colors = !env_var::NO_COLOR.get().unwrap_or(false);
+    }
 
-        // Enable raw mode
+    /// False when the terminal could not be switched: it still edits each line itself.
+    fn enter_raw_mode(&mut self) -> bool {
         #[cfg(unix)]
         {
-            let _ = self
-                .tty_state
-                .set_mode(0, tty::Mode::Raw, tty::SetAttrWhen::Drain);
+            self.tty_state
+                .set_mode(0, tty::Mode::Raw, tty::SetAttrWhen::Drain)
+                == 0
         }
         #[cfg(windows)]
         {
@@ -1057,6 +1115,7 @@ impl<'a> Repl<'a> {
                 },
             )
             .ok();
+            self.original_windows_mode.is_some()
         }
     }
 
@@ -1127,10 +1186,12 @@ impl<'a> Repl<'a> {
 
         #[cfg(unix)]
         {
-            // Back to raw mode
-            let _ = self
-                .tty_state
-                .set_mode(0, tty::Mode::Raw, tty::SetAttrWhen::Drain);
+            // Back to raw mode, but only in a session that has it (see `drawing`).
+            if self.drawing.is_some() {
+                let _ = self
+                    .tty_state
+                    .set_mode(0, tty::Mode::Raw, tty::SetAttrWhen::Drain);
+            }
 
             // Restore default SIGINT handling
             // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; SIG_DFL
@@ -1163,28 +1224,91 @@ impl<'a> Repl<'a> {
         }
     }
 
+    /// Reads more of stdin into the empty `stdin_buf`; 0 at the end of input.
+    #[inline]
+    fn fill_stdin_buf(&mut self) -> sys::Result<usize> {
+        // Stdio fd: `File::Drop` is a no-op, so this is safe to re-create on every call.
+        let n = sys::File::stdin().read(&mut self.stdin_buf)?;
+        self.stdin_buf_start = 0;
+        self.stdin_buf_end = n;
+        Ok(n)
+    }
+
     fn read_byte(&mut self) -> Option<u8> {
-        if self.stdin_buf_start < self.stdin_buf_end {
-            let b = self.stdin_buf[self.stdin_buf_start];
-            self.stdin_buf_start += 1;
-            return Some(b);
-        }
-        // Refill buffer (stdio fd: `File::Drop` is a no-op, so this is safe to
-        // re-create on every call).
-        let stdin = sys::File::stdin();
-        let n = match stdin.read(&mut self.stdin_buf) {
-            sys::Result::Ok(n) => n,
-            sys::Result::Err(_) => return None,
-        };
-        if n == 0 {
+        if self.stdin_buf_start == self.stdin_buf_end && !matches!(self.fill_stdin_buf(), Ok(1..)) {
             return None;
         }
-        self.stdin_buf_start = 1;
-        self.stdin_buf_end = n;
-        Some(self.stdin_buf[0])
+        let b = self.stdin_buf[self.stdin_buf_start];
+        self.stdin_buf_start += 1;
+        Some(b)
+    }
+
+    /// Reads a CSI sequence (after `ESC [`) to its final byte: one that names no key must leave no text on the line.
+    fn read_csi(&mut self) -> Key {
+        // More parameter bytes than any key or terminal report has.
+        const MAX_PARAMETER_BYTES: usize = 64;
+        // Up to two numbers name a key: `ESC [ 3 ~`, `ESC [ 1 ; 5 C`.
+        let mut params = [0u16; 2];
+        let mut count = 0;
+        let mut names_key = true;
+        let mut parameter_bytes = 0;
+        let last = loop {
+            let Some(byte) = self.read_byte() else {
+                return Key::Unknown;
+            };
+            match byte {
+                b'0'..=b'9' => {
+                    count = count.max(1);
+                    if let Some(param) = params.get_mut(count - 1) {
+                        *param = param
+                            .saturating_mul(10)
+                            .saturating_add(u16::from(byte - b'0'));
+                    }
+                }
+                b';' => count = count.max(1) + 1,
+                // `:` or a private-mode prefix (`<=>?`): a terminal report, not a key.
+                b':' | b'<'..=b'?' => names_key = false,
+                // `$` ends the shifted keys of rxvt (`ESC [ 3 $`).
+                0x40..=0x7e | b'$' => break byte,
+                // Not a byte of a key sequence (the user typed `ESC [` and then text): it is the next key.
+                _ => {
+                    self.stdin_buf_start -= 1;
+                    return Key::Unknown;
+                }
+            }
+            parameter_bytes += 1;
+            if parameter_bytes == MAX_PARAMETER_BYTES {
+                return Key::Unknown;
+            }
+        };
+        if !names_key || count > params.len() {
+            return Key::Unknown;
+        }
+        match (last, &params[..count]) {
+            (b'A', []) => Key::ArrowUp,
+            (b'B', []) => Key::ArrowDown,
+            (b'C', []) => Key::ArrowRight,
+            (b'D', []) => Key::ArrowLeft,
+            (b'H', []) => Key::Home,
+            (b'F', []) => Key::End,
+            // Ctrl (5) or Alt (3) with an arrow; the first number is not checked.
+            (b'C', [_, 3 | 5]) => Key::AltRight,
+            (b'D', [_, 3 | 5]) => Key::AltLeft,
+            (b'~', [1]) => Key::Home,
+            (b'~', [3]) => Key::Delete,
+            (b'~', [4]) => Key::End,
+            (b'~', [5]) => Key::PageUp,
+            (b'~', [6]) => Key::PageDown,
+            // Insert and the function keys.
+            _ => Key::Unknown,
+        }
     }
 
     fn read_key(&mut self) -> Option<Key> {
+        debug_assert!(
+            self.drawing.is_some(),
+            "stdin holds key presses only when the REPL put a terminal in raw mode"
+        );
         let byte = self.read_byte()?;
 
         // Handle escape sequences
@@ -1195,52 +1319,7 @@ impl<'a> Repl<'a> {
             };
 
             if second == b'[' {
-                // CSI
-                let Some(third) = self.read_byte() else {
-                    return Some(Key::Escape);
-                };
-
-                return Some(match third {
-                    b'A' => Key::ArrowUp,
-                    b'B' => Key::ArrowDown,
-                    b'C' => Key::ArrowRight,
-                    b'D' => Key::ArrowLeft,
-                    b'H' => Key::Home,
-                    b'F' => Key::End,
-                    b'1'..=b'6' => 'blk: {
-                        let Some(fourth) = self.read_byte() else {
-                            break 'blk Key::Unknown;
-                        };
-                        if fourth == b'~' {
-                            break 'blk match third {
-                                b'1' => Key::Home,
-                                b'2' => Key::Unknown, // insert
-                                b'3' => Key::Delete,
-                                b'4' => Key::End,
-                                b'5' => Key::PageUp,
-                                b'6' => Key::PageDown,
-                                _ => Key::Unknown,
-                            };
-                        } else if fourth == b';' {
-                            let Some(modifier) = self.read_byte() else {
-                                break 'blk Key::Unknown;
-                            };
-                            let Some(dir) = self.read_byte() else {
-                                break 'blk Key::Unknown;
-                            };
-                            if modifier == b'5' || modifier == b'3' {
-                                break 'blk match dir {
-                                    b'C' => Key::AltRight,
-                                    b'D' => Key::AltLeft,
-                                    _ => Key::Unknown,
-                                };
-                            }
-                            break 'blk Key::Unknown;
-                        }
-                        Key::Unknown
-                    }
-                    _ => Key::Unknown,
-                });
+                return Some(self.read_csi());
             } else if second == b'O' {
                 // SS3
                 let Some(third) = self.read_byte() else {
@@ -1302,13 +1381,17 @@ impl<'a> Repl<'a> {
     // Prompt and Display
     // ========================================================================
 
+    fn continuation_prompt(&self) -> &'static [u8] {
+        if self.use_colors {
+            CONTINUATION_PROMPT_DIM
+        } else {
+            CONTINUATION_PROMPT
+        }
+    }
+
     fn get_prompt(&self) -> &'static [u8] {
         if self.input_mode != InputMode::Normal {
-            if self.use_colors {
-                return concat!("\x1b[2m", "... ", "\x1b[0m").as_bytes();
-            } else {
-                return b"... ";
-            }
+            return self.continuation_prompt();
         }
 
         if self.use_colors {
@@ -1320,7 +1403,7 @@ impl<'a> Repl<'a> {
 
     fn get_prompt_length(&self) -> usize {
         if self.input_mode != InputMode::Normal {
-            return 4; // "... "
+            return CONTINUATION_COLUMNS;
         }
         2 // "> " or "\u{276f} "
     }
@@ -1356,6 +1439,19 @@ impl<'a> Repl<'a> {
         let prompt = self.get_prompt();
         let prompt_len = self.get_prompt_length();
         let line = self.line_editor.get_line();
+        let edit_cursor = self.line_editor.cursor;
+        // What the terminal gets for the line, and where the edit cursor is in that.
+        let has_control_bytes = self.line_editor.has_control_bytes;
+        let mut display_form = Vec::new();
+        let (line, edit_cursor) = if has_control_bytes {
+            let mut column = prompt_len;
+            push_display_form(&mut display_form, &line[..edit_cursor], &mut column);
+            let cursor_at = display_form.len();
+            push_display_form(&mut display_form, &line[edit_cursor..], &mut column);
+            (display_form.as_slice(), cursor_at)
+        } else {
+            (line, edit_cursor)
+        };
 
         // Erase the previous drawing from the prompt's row down.
         if drawing.cursor.row > 0 {
@@ -1368,7 +1464,9 @@ impl<'a> Repl<'a> {
         self.write(prompt);
 
         // Write line with syntax highlighting
-        if self.use_colors && !line.is_empty() && line.len() <= 2048 {
+        if has_control_bytes {
+            self.write_lines(line);
+        } else if self.use_colors && !line.is_empty() && line.len() <= 2048 {
             self.write_highlighted(line);
         } else {
             self.write(line);
@@ -1381,7 +1479,7 @@ impl<'a> Repl<'a> {
             self.write(Color::RESET.as_bytes());
         }
 
-        let (before_cursor, after_cursor) = line.split_at(self.line_editor.cursor);
+        let (before_cursor, after_cursor) = line.split_at(edit_cursor);
         let mut layout = Layout {
             width,
             pos: ScreenPos {
@@ -1389,8 +1487,13 @@ impl<'a> Repl<'a> {
                 col: prompt_len,
             },
         };
-        layout.advance(before_cursor);
-        let mut cursor = layout.advance(after_cursor);
+        let mut cursor = if has_control_bytes {
+            layout.advance_lines(before_cursor);
+            layout.advance_lines(after_cursor)
+        } else {
+            layout.advance(before_cursor);
+            layout.advance(after_cursor)
+        };
         let end = layout.next();
         if !ghost.is_empty() {
             // Only drawn with the cursor at the end of the line, so the cursor sits on the ghost.
@@ -1415,6 +1518,24 @@ impl<'a> Repl<'a> {
         self.drawing = Some(drawing);
 
         Output::flush();
+    }
+
+    /// One row per line of `text`; `Layout::advance_lines` counts the same rows.
+    #[cold]
+    fn write_lines(&self, text: &[u8]) {
+        let highlight = self.use_colors && text.len() <= 2048;
+        for (row, line) in strings::split(text, b"\n").enumerate() {
+            if row > 0 {
+                self.write(b"\r\n");
+                self.write(self.continuation_prompt());
+            }
+            if highlight && !line.is_empty() {
+                // One line at a time: the highlighter drops the line break that ends a `//` comment.
+                self.write_highlighted(line);
+            } else {
+                self.write(line);
+            }
+        }
     }
 
     /// Erases the ghost, writes `echo` after the line, and moves to the start of the row below it.
@@ -2342,6 +2463,108 @@ impl<'a> Repl<'a> {
         self.running = true;
         self.refresh_line();
 
+        // Decided once, by `setup_terminal`: what the bytes of stdin are.
+        if self.drawing.is_some() {
+            self.read_keys()?;
+        } else {
+            self.read_text_lines()?;
+        }
+
+        self.restore_terminal();
+        self.history.save();
+        Ok(())
+    }
+
+    /// For stdin that is not a raw terminal: every byte is text, and a line ends at LF, CR LF or CR.
+    fn read_text_lines(&mut self) -> Result<(), crate::Error> {
+        // An LF right after a CR is the same line end, also when it comes with the next read.
+        let mut after_cr = false;
+        while self.running {
+            if self.stdin_buf_start == self.stdin_buf_end {
+                match self.fill_stdin_buf() {
+                    Ok(1..) => {}
+                    Ok(0) => {
+                        let ctrl_d = stdin_is_line_mode_terminal();
+                        // The last line of a file need not end in a line end.
+                        if (ctrl_d || !Output::is_stdin_tty())
+                            && !self.line_editor.buffer.is_empty()
+                        {
+                            self.submit_text_line()?;
+                        }
+                        // Only the Ctrl+D key finishes `.editor`: a writer that was cut off also ends a pipe.
+                        if ctrl_d && self.running && self.input_mode == InputMode::Editor {
+                            self.finish_editor();
+                        }
+                        break;
+                    }
+                    // What was read so far may be cut off anywhere: do not run it.
+                    Err(_) => break,
+                }
+            }
+            let first = self.stdin_buf[self.stdin_buf_start];
+            if core::mem::take(&mut after_cr) && first == b'\n' {
+                self.stdin_buf_start += 1;
+                continue;
+            }
+            // No line of text ends `.editor`: there the bytes of Ctrl+D and Ctrl+C stay keys at the start of a line.
+            if matches!(first, 0x03 | 0x04)
+                && self.input_mode == InputMode::Editor
+                && self.line_editor.buffer.is_empty()
+            {
+                self.stdin_buf_start += 1;
+                if first == 0x04 {
+                    self.finish_editor();
+                } else {
+                    self.handle_ctrl_c();
+                }
+                continue;
+            }
+            let unread = &self.stdin_buf[self.stdin_buf_start..self.stdin_buf_end];
+            let Some(line_end) = strings::index_of_any(unread, b"\r\n") else {
+                self.line_editor.insert_text(unread);
+                self.stdin_buf_start = self.stdin_buf_end;
+                continue;
+            };
+            after_cr = unread[line_end] == b'\r';
+            self.line_editor.insert_text(&unread[..line_end]);
+            self.stdin_buf_start += line_end + 1;
+            self.submit_text_line()?;
+        }
+        if self.running {
+            self.leave_input(b"");
+        }
+        Ok(())
+    }
+
+    /// Enters the line that `read_text_lines` collected.
+    fn submit_text_line(&mut self) -> Result<(), crate::Error> {
+        replace_invalid_utf8(&mut self.line_editor.buffer);
+        self.handle_enter()
+    }
+
+    /// Ends `.editor` mode and runs what it collected.
+    fn finish_editor(&mut self) {
+        self.leave_input(b"");
+        // Text that is on the line but was not entered belongs to the buffer too.
+        if !self.line_editor.buffer.is_empty() {
+            self.editor_buffer
+                .extend_from_slice(&self.line_editor.buffer);
+            self.editor_buffer.push(b'\n');
+            self.line_editor.clear();
+        }
+        // Note: reshaped for borrowck — clone editor_buffer slice before evaluate
+        if !self.editor_buffer.is_empty() {
+            let code = core::mem::take(&mut self.editor_buffer);
+            self.evaluate_and_print(&code);
+            self.editor_buffer = code;
+        }
+        self.input_mode = InputMode::Normal;
+        self.editor_buffer.clear();
+        self.refresh_line();
+    }
+
+    /// For a terminal in raw mode: every byte is a key press or part of one.
+    fn read_keys(&mut self) -> Result<(), crate::Error> {
         while self.running {
             let Some(key) = self.read_key() else {
                 // EOF
@@ -2358,19 +2581,7 @@ impl<'a> Repl<'a> {
                 Key::Enter => self.handle_enter()?,
                 Key::CtrlC => self.handle_ctrl_c(),
                 Key::CtrlD => match self.input_mode {
-                    InputMode::Editor => {
-                        // Finish editor mode
-                        self.leave_input(b"");
-                        // Note: reshaped for borrowck — clone editor_buffer slice before evaluate
-                        if !self.editor_buffer.is_empty() {
-                            let code = core::mem::take(&mut self.editor_buffer);
-                            self.evaluate_and_print(&code);
-                            self.editor_buffer = code;
-                        }
-                        self.input_mode = InputMode::Normal;
-                        self.editor_buffer.clear();
-                        self.refresh_line();
-                    }
+                    InputMode::Editor => self.finish_editor(),
                     InputMode::Normal if self.line_editor.buffer.is_empty() => {
                         self.print(format_args!("\n"));
                         self.running = false;
@@ -2506,9 +2717,6 @@ impl<'a> Repl<'a> {
                 _ => {}
             }
         }
-
-        self.restore_terminal();
-        self.history.save();
         Ok(())
     }
 
@@ -2519,12 +2727,8 @@ impl<'a> Repl<'a> {
         let line: Vec<u8> = self.line_editor.get_line().to_vec();
 
         if self.input_mode == InputMode::Editor {
-            if strings::trim(&line, b" \t").is_empty() {
-                self.editor_buffer.extend_from_slice(b"\n");
-            } else {
-                self.editor_buffer.extend_from_slice(&line);
-                self.editor_buffer.push(b'\n');
-            }
+            self.editor_buffer.extend_from_slice(&line);
+            self.editor_buffer.push(b'\n');
             self.line_editor.clear();
             self.refresh_line();
             return Ok(());
@@ -2532,14 +2736,15 @@ impl<'a> Repl<'a> {
 
         // Check for REPL commands
         if !line.is_empty() && line[0] == b'.' {
-            let space_idx = strings::index_of_char(&line, b' ');
+            // A TAB ends the name too: in text, no Tab key completed the name and added a blank.
+            let space_idx = strings::index_of_any(&line, b" \t");
             let cmd_name = if let Some(idx) = space_idx {
-                &line[..idx as usize]
+                &line[..idx]
             } else {
                 &line[..]
             };
             let args = if let Some(idx) = space_idx {
-                &line[idx as usize + 1..]
+                &line[idx + 1..]
             } else {
                 &b""[..]
             };
@@ -2559,7 +2764,10 @@ impl<'a> Repl<'a> {
                     }
                 }
             } else {
-                self.print_error(format_args!("Unknown command: {}\n", BStr::new(cmd_name)));
+                self.print_error(format_args!(
+                    "Unknown command: {}\n",
+                    bun_core::fmt::escape_control_chars(cmd_name)
+                ));
                 self.print(format_args!(
                     "Type {}.help{} for available commands\n",
                     Color::CYAN,
@@ -2859,6 +3067,59 @@ extern "C" fn sigint_handler(_: c_int) {
     }
 }
 
+/// C0 and DEL. No key press puts one into the line.
+#[inline]
+fn is_control_byte(byte: u8) -> bool {
+    byte < 0x20 || byte == 0x7f
+}
+
+/// Appends part of the input line as the terminal gets it: TAB as blanks to the next tab stop, other control characters spelled out.
+fn push_display_form(out: &mut Vec<u8>, text: &[u8], column: &mut usize) {
+    const TAB_STOP: usize = 8;
+    let width = strings::visible::width::exclude_ansi_colors::utf8;
+    for (index, part) in strings::split(text, b"\t").enumerate() {
+        if index > 0 {
+            let blanks = TAB_STOP - *column % TAB_STOP;
+            out.extend(core::iter::repeat_n(b' ', blanks));
+            *column += blanks;
+        }
+        let start = out.len();
+        let _ = write!(
+            out,
+            "{}",
+            bun_core::fmt::escape_control_chars_multiline(part)
+        );
+        let shown = &out[start..];
+        // `write_lines` starts each later line after the continuation prompt.
+        *column = match strings::last_index_of_char(shown, b'\n') {
+            Some(lf) => CONTINUATION_COLUMNS + width(&shown[lf + 1..]),
+            None => *column + width(shown),
+        };
+    }
+}
+
+/// Replaces each malformed UTF-8 sequence with U+FFFD: the parser and the highlighter need UTF-8.
+fn replace_invalid_utf8(bytes: &mut Vec<u8>) {
+    if !strings::is_valid_utf8(bytes) {
+        *bytes = bstr::ByteSlice::to_str_lossy(bytes.as_slice())
+            .into_owned()
+            .into_bytes();
+    }
+}
+
+/// Only on a terminal in line mode is a read of no bytes the Ctrl+D key. In another mode it is also a read timeout, a hang-up or, on Windows, Ctrl+C.
+fn stdin_is_line_mode_terminal() -> bool {
+    #[cfg(unix)]
+    {
+        Output::is_stdin_tty()
+            && sys::posix::tcgetattr(0).is_ok_and(|termios| termios.c_lflag & libc::ICANON != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
 // ============================================================================
 // Inline Suggestions (ghost text)
 // ============================================================================
@@ -3051,6 +3312,8 @@ fn is_incomplete_code(code: &[u8]) -> bool {
 
         // Count brackets
         match ch {
+            // No later line completes a control byte outside a string (a piped `ESC [ A`): run it now, so that it fails.
+            0x00..=0x08 | 0x0e..=0x1f | 0x7f => return false,
             b'{' => brace_count += 1,
             b'}' => brace_count -= 1,
             b'[' => bracket_count += 1,

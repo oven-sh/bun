@@ -158,6 +158,35 @@ To export your history to a different file, use `.save`:
 
 ---
 
+## Piped input
+
+When standard input or standard output is not a terminal, `bun repl` reads standard input as lines of text. It prints the welcome message, a `> ` line for each prompt, and each result.
+
+```sh terminal icon="terminal"
+printf 'const x = 2\nx * 21\n' | bun repl
+```
+
+```txt
+Welcome to Bun v1.3.3
+Type .copy [code] to copy to clipboard. .help for more info.
+
+>
+2
+>
+42
+>
+```
+
+Keybindings do not apply to piped input: a tab or any other control character is part of the line. A line ends at `\n`, `\r\n`, or `\r`. An entry that is not complete continues on the next line, as in [Multi-line input](#multi-line-input), without the `...` prompt. `.break` cancels it.
+
+The same applies when you type into a session that has no terminal, such as `ssh` without `-t` or `docker run -i`. Use `ssh -t` or `docker run -it` to get keybindings.
+
+`.editor` collects the lines that follow. A line that starts with the byte `0x04`, which `Ctrl+D` sends, evaluates them as one entry. A line that starts with the byte `0x03`, which `Ctrl+C` sends, cancels them. The end of a pipe evaluates nothing.
+
+An error prints to standard output and does not change the exit code. The process exits when the input ends. It does not wait for timers or pending I/O. The REPL reads ahead of the line that it evaluates, so code that reads standard input itself, such as `prompt()`, does not get the next line. To run a script from standard input, use `bun run -`.
+
+---
+
 ## Non-interactive mode
 
 Use `-e` / `--eval` to evaluate a script with REPL semantics and exit. Use `-p` / `--print` to additionally print the result.

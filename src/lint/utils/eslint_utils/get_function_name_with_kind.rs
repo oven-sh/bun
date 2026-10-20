@@ -7,7 +7,7 @@ use crate::ast::{
 use crate::tokens::{skip_trivia, token_len};
 use bun_core::strings;
 
-/// `sourceCode.getText(key)`: without the brackets of a computed key.
+/// `sourceCode.getText(key)`, which excludes a computed key's brackets.
 fn key_text<'a>(key: Key<'a>, file: &'a File<'a>) -> &'a [u8] {
     match key.kind() {
         KeyKind::Computed(e) => e.text(),
@@ -20,7 +20,7 @@ fn key_text<'a>(key: Key<'a>, file: &'a File<'a>) -> &'a [u8] {
     }
 }
 
-/// The identifier that a function expression is the value or the default value of.
+/// The identifier that a function expression is assigned to, as its value or default value.
 fn assigned_name(e: Expr<'_>) -> Option<Name<'_>> {
     match e.parent() {
         Node::VarDecl(declaration) => declaration.pat().as_ident(),
@@ -38,16 +38,16 @@ fn assigned_name(e: Expr<'_>) -> Option<Name<'_>> {
 /// eslint-utils' `getFunctionNameWithKind`: `"async function 'foo'"`, `"static method 'foo'"`,
 /// `"private getter #foo"`, `"arrow function 'foo'"`, `"constructor"`, ..
 ///
-/// This is not ESLint's own `astUtils.getFunctionNameWithKind`, which words some of these
+/// This isn't ESLint's own `astUtils.getFunctionNameWithKind`, which words some of these
 /// differently. typescript-eslint's rules use this one.
 ///
-/// `with_key_text` stands for upstream's optional `sourceCode` argument: a computed key whose
-/// value is not known is then shown as it is written, `"method [foo]"`.
+/// `with_key_text` replaces upstream's optional `sourceCode` argument. With it, a computed key
+/// whose value isn't known is printed as source text: `"method [foo]"`.
 pub fn get_function_name_with_kind(func: Func<'_>, with_key_text: bool) -> Vec<u8> {
     let file = func.file();
     let owner = func.owner();
-    // The `Property`, `MethodDefinition` or `PropertyDefinition` whose value it is: its key, and
-    // how its kind is called.
+    // The key and the kind's name of the `Property`, `MethodDefinition` or `PropertyDefinition`
+    // whose value is the function.
     let mut property: Option<(Option<Key<'_>>, &str)> = None;
     let mut is_static = false;
     match owner {

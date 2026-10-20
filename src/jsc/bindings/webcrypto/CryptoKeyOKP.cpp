@@ -221,11 +221,6 @@ ExceptionOr<JsonWebKey> CryptoKeyOKP::exportJwk() const
     return result;
 }
 
-bool CryptoKeyOKP::isValidOKPAlgorithm(CryptoAlgorithmIdentifier algorithm)
-{
-    return algorithm == CryptoAlgorithmIdentifier::Ed25519;
-}
-
 auto CryptoKeyOKP::algorithm() const -> KeyAlgorithm
 {
     CryptoKeyAlgorithm result;

@@ -17,16 +17,16 @@ const NO_OBJECT_TYPE_AS_DEFAULT_PROP: Message =
     Message::new("", "Do not use {{kind}} as default prop value. Use a stable reference instead.");
 
 pub struct State<'a> {
-    /// `settings.react.componentWrapperFunctions`, for oxlint, which goes by the name and by what the function is in.
+    /// `settings.react.componentWrapperFunctions`, for oxlint, which decides by the function's name and its parent.
     component_wrapper_functions: &'a [Json],
     components: Components<'a>,
 }
 
-/// A default that is reported if the function is a component.
+/// A default value that's reported if the function is a component.
 struct Forbidden<'a> {
     right: Expr<'a>,
     kind: &'static str,
-    /// `None`: it is in an array.
+    /// `None` if it's in an array pattern.
     property: Option<PatProp<'a>>,
 }
 
@@ -40,7 +40,7 @@ impl Rule for NoObjectTypeAsDefaultProp {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        // oxlint looks at files that can have JSX.
+        // oxlint only checks files that can contain JSX.
         let is_candidate = if file.language().is_oxlint { is_jsx(file) } else { Components::may_have_any(file) };
         is_candidate.then(|| State {
             component_wrapper_functions: component_wrapper_functions(file),
@@ -54,7 +54,7 @@ impl Rule for NoObjectTypeAsDefaultProp {
             return;
         };
         let has_used_destructuring_syntax = match (first.pat().tag(), is_oxlint) {
-            // oxlint: an array as well. The default of the parameter itself is not looked at.
+            // oxlint also accepts an array pattern, and ignores the parameter's own default.
             (tag, true) => tag != PatTag::Ident,
             (PatTag::Object, false) => {
                 first.default().is_none() && !first.is_parameter_property() && func.this_param().is_none()
@@ -64,7 +64,7 @@ impl Rule for NoObjectTypeAsDefaultProp {
         if !has_used_destructuring_syntax {
             return;
         }
-        // oxlint looks through parentheses and TypeScript's wrappers.
+        // oxlint looks through parentheses and TypeScript wrappers.
         let forbidden = |default: Option<Expr<'a>>, property: Option<PatProp<'a>>| {
             let right = default.map(|it| if is_oxlint { get_inner_expression(it) } else { it })?;
             Some(Forbidden { right, kind: forbidden_default_kind(right, is_oxlint)?, property })
@@ -75,7 +75,7 @@ impl Rule for NoObjectTypeAsDefaultProp {
             match pat.kind() {
                 PatKind::Object(properties) => {
                     found.extend(properties.iter().filter_map(|it| forbidden(it.default(), Some(it))));
-                    // oxlint: every default in the pattern.
+                    // oxlint checks every default in the pattern, at any depth.
                     if is_oxlint {
                         pending.extend(properties.iter().map(PatProp::value));
                     }
@@ -98,14 +98,14 @@ impl Rule for NoObjectTypeAsDefaultProp {
                     .data("propName", property.key().and_then(name_of_key).unwrap_or(&b"undefined"[..]))
                     .data("forbiddenType", kind)
                     .at_the_end(),
-                // oxlint points at the value.
+                // oxlint reports the value.
                 None => cx.report(right, NO_OBJECT_TYPE_AS_DEFAULT_PROP).data("kind", kind),
             };
         }
     }
 }
 
-/// upstream's `FORBIDDEN_TYPES_MAP`, and the two that it asks for before.
+/// upstream's `FORBIDDEN_TYPES_MAP`, plus the two kinds it checks for before that.
 fn forbidden_default_kind(expr: Expr, is_oxlint: bool) -> Option<&'static str> {
     let (oxlint, upstream) = match expr.kind() {
         ExprKind::Object(_) => ("an object literal", "object literal"),
@@ -115,9 +115,9 @@ fn forbidden_default_kind(expr: Expr, is_oxlint: bool) -> Option<&'static str> {
         ExprKind::Class(_) => ("a class expression", "class expression"),
         ExprKind::New(_) => ("a `new` expression", "construction expression"),
         ExprKind::Regex(_) => ("a regular expression literal", "regex literal"),
-        // Upstream passes over a fragment.
+        // Upstream skips a fragment.
         ExprKind::Jsx(jsx) if is_oxlint || !jsx.is_fragment() => ("a JSX element", "JSX element"),
-        // oxlint passes over it.
+        // oxlint skips it.
         ExprKind::Call(call) if !is_oxlint && !expr.is_chain_root() && call.callee().is_ident("Symbol") => {
             ("", "Symbol literal")
         }
@@ -128,7 +128,7 @@ fn forbidden_default_kind(expr: Expr, is_oxlint: bool) -> Option<&'static str> {
 
 fn is_function_component<'a>(func: Func<'a>, cx: &mut Cx<'a, NoObjectTypeAsDefaultProp>) -> bool {
     if !cx.language().is_oxlint {
-        // All is asked when the program ends: it is in `components.list()`.
+        // Upstream checks everything in `Program:exit`, so the function has to be in `components.list()`.
         let components = &mut cx.state.components;
         components.finish();
         let component = components.get(Node::Func(func)).map(|id| components.component(id));

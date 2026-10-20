@@ -87,7 +87,7 @@ mod watcher_atomics;
 pub(super) use crate::server::SavedRequestUnion;
 pub(crate) use bundle::EntryPointList;
 use bundle::{RouteIndexAndRecurseFlag, TestingBatch};
-use deferred_request::{DeferredRequest, Handler, ResponseAndMethod};
+use deferred_request::{DeferredRequest, DeferredScriptRequest, Handler, ResponseAndMethod};
 pub(crate) use directory_watch_store::DirectoryWatchStore;
 use ensure_route::{HTMLRouter, ReqOrSaved, RequestEnsureRouteBundledCtx, ensure_route_is_bundled};
 use failures::mark_all_route_children;
@@ -96,7 +96,7 @@ use hmr_socket::hmr_socket_behavior;
 pub(crate) use hot_reload_event::HotReloadEvent;
 use http::{
     DevHandlerId, dev_route_tramp, extract_pathname_from_url, host_forbidden,
-    is_allowed_dev_origin, origin_forbidden,
+    is_allowed_dev_origin, on_outdated_js_corked, origin_forbidden,
 };
 pub(crate) use http::{is_allowed_dev_host, is_allowed_host_header};
 pub(crate) use lifecycle::init;
@@ -181,6 +181,8 @@ impl IncrementalResult {
 pub(crate) struct GraphTraceState {
     pub(crate) client_bits: DynamicBitSet,
     pub(crate) server_bits: DynamicBitSet,
+    /// Filled by `TraceImportGoal::FindErrors`.
+    pub(crate) failures: Vec<SerializedFailure>,
 }
 impl GraphTraceState {
     #[inline]
@@ -194,6 +196,7 @@ impl GraphTraceState {
     pub(crate) fn clear(&mut self) {
         self.server_bits.unmanaged.set_all(false);
         self.client_bits.unmanaged.set_all(false);
+        self.failures.clear();
     }
 
     pub(crate) fn resize(&mut self, side: Side, new_size: usize) -> Result<(), crate::Error> {
@@ -211,6 +214,7 @@ impl GraphTraceState {
         self.server_bits
             .resize(0, false)
             .expect("freeing memory can not fail");
+        self.failures = Vec::new();
     }
 }
 
@@ -441,6 +445,8 @@ pub(crate) struct CurrentBundle {
     /// calling their handler on success or sending the error page on failure.
     /// Owned by `deferred_request_pool` in DevServer.
     pub(crate) requests: deferred_request::List,
+    /// Answered by `finalize_bundle_cleanup`.
+    pub(crate) script_requests: Vec<bun_ptr::RefPtr<DeferredScriptRequest>>,
     /// Resolution failures are grouped by incremental graph file index.
     /// Unlike parse failures (`handleParseTaskFailure`), the resolution
     /// failures can be created asynchronously, and out of order.

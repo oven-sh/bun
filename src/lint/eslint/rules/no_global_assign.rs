@@ -49,7 +49,7 @@ impl<const IS_NATIVE_REASSIGN: bool> Rule for NoAssign<IS_NATIVE_REASSIGN> {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         self.check(file.unresolved_references().filter(|it| it.is_write()), cx);
-        // What a script declares at its top level is the global variable of that name.
+        // A top-level declaration in a script is the global variable of that name.
         for symbol in file.scope().symbols().filter(|it| it.has_modifying_references()) {
             self.check(symbol.references(), cx);
         }

@@ -9,11 +9,11 @@ const INCORRECT_DIRECTION: Message = Message::new(
     "The update clause in this loop moves the variable in the wrong direction.",
 );
 
-/// How many expressions in the update clause `e` modify `counter`, and the last of them. It goes
-/// through them from the last to the first.
+/// Counts the expressions in the update clause `e` that modify `counter`, and finds the last one. It visits them from
+/// last to first.
 fn modifying_expressions<'a>(mut e: Expr<'a>, counter: Name<'a>, count: &mut u32, last: &mut Option<Expr<'a>>) {
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
-        // Several: nothing is reported.
+        // Count it as several, so nothing is reported.
         *count += 2;
         return;
     }
@@ -40,7 +40,7 @@ fn modifying_expressions<'a>(mut e: Expr<'a>, counter: Name<'a>, count: &mut u32
     }
 }
 
-/// The sign of what is added to the counter. 0 if it is not known.
+/// Returns the sign of the value added to the counter, or 0 if it's unknown.
 fn sign_of(value: Expr<'_>) -> i32 {
     let sign = |n: f64| if n > 0.0 { 1 } else if n < 0.0 { -1 } else { 0 };
     match get_static_value(value, Some(value.file().scope())) {
@@ -51,8 +51,7 @@ fn sign_of(value: Expr<'_>) -> i32 {
     }
 }
 
-/// 1 if `update`, which modifies the counter, increments it, -1 if it decrements it, 0 if that is
-/// not known.
+/// Returns 1 if `update`, which modifies the counter, increments it, -1 if it decrements it, and 0 if that's unknown.
 fn direction_of(update: Expr<'_>) -> i32 {
     match update.kind() {
         ExprKind::Unary {
@@ -74,9 +73,9 @@ fn direction_of(update: Expr<'_>) -> i32 {
     }
 }
 
-/// oxlint's rule, which points at the test. It knows one counter, the left one if both sides are names, and an update
-/// clause that is one expression. Of what is added it looks at how it is written: a number, or an operator before
-/// something. In parentheses it knows nothing.
+/// oxlint's rule, which reports at the test. It handles one counter, the left one if both sides are names, and an
+/// update clause that's a single expression. It judges the added value by its syntax: a number, or an operator in front
+/// of something. It doesn't look inside parentheses.
 fn check_as_oxlint<'a>(test: Expr<'a>, update: Expr<'a>, cx: &Cx<'a, ForDirection>) {
     let Some((op, left, right)) = test.as_binary() else {
         return;
@@ -115,7 +114,7 @@ fn check_as_oxlint<'a>(test: Expr<'a>, update: Expr<'a>, cx: &Cx<'a, ForDirectio
         _ => return,
     };
     if is_forward != (is_less == is_left) {
-        // The other operator, in the place of all that is between the operands.
+        // The fix replaces everything between the operands with the opposite operator.
         let report = cx.report(test, INCORRECT_DIRECTION);
         let report = report.first_label("This test moves in the wrong direction").label(update, "with this update");
         report.fix_dangerously(|fixer| match update.kind() {
@@ -160,7 +159,7 @@ impl Rule for ForDirection {
         let Some((op, left, right)) = test.as_binary() else {
             return;
         };
-        // The direction that is wrong for a counter on the left.
+        // The direction that's wrong for a counter on the left.
         let wrong = match op {
             BinOp::Lt | BinOp::Le => -1,
             BinOp::Gt | BinOp::Ge => 1,

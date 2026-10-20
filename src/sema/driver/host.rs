@@ -204,14 +204,11 @@ impl Listing {
         different_case.map_or(Found::Nothing, Found::DifferentCase)
     }
 
-    /// Returns the name as spelled in the directory, and whether it's a directory.
-    fn find(&self, name: &[u8], case_sensitive: bool) -> Option<(&[u8], bool)> {
+    /// Returns the name as spelled in the directory, which may differ in case.
+    fn find(&self, name: &[u8]) -> Option<&[u8]> {
         match self.look_up(name) {
-            Found::Exact(entry) => Some((self.name(entry), entry.is_directory)),
-            Found::DifferentCase(entry) if !case_sensitive => {
-                Some((self.name(entry), entry.is_directory))
-            }
-            Found::DifferentCase(_) | Found::Nothing => None,
+            Found::Exact(entry) | Found::DifferentCase(entry) => Some(self.name(entry)),
+            Found::Nothing => None,
         }
     }
 
@@ -710,7 +707,7 @@ impl Disk {
         let mut exists = true;
         for (parent, name) in names.into_iter().rev() {
             let found = match exists.then(|| self.directory(parent)) {
-                Some(Directory::Listed(listing)) => listing.find(name, false).map(|it| it.0),
+                Some(Directory::Listed(listing)) => listing.find(name),
                 Some(Directory::Missing) => {
                     exists = false;
                     None

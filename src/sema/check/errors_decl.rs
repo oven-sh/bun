@@ -19,7 +19,7 @@ impl Checker<'_, '_> {
     /// Runs `check_reference_in_parameter` for the identifiers of `file`.
     fn check_parameter_references(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        for &(id, within, _) in bound.identifiers_in_parameters.iter() {
+        for &(id, within) in bound.identifiers_in_parameters.iter() {
             let local = bound.symbol_of_expr(id);
             if local.is_none() || bound.is_in_type_query(id) || bound.is_unchecked(id.idx()) {
                 continue;

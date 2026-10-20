@@ -8164,10 +8164,7 @@ impl<'p, 's> Checker<'p, 's> {
         let TypeData::StringMapping { kind, ty } = *self.data(target) else {
             return (source, target);
         };
-        let (mut source, mut inner) = (source, ty);
-        if matches!(self.data(inner), TypeData::StringMapping { .. }) {
-            (source, inner) = self.apply_target_string_mapping_to_source(source, inner);
-        }
+        let (source, inner) = self.apply_target_string_mapping_to_source(source, ty);
         (self.string_mapping(kind, source), inner)
     }
 

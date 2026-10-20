@@ -135,7 +135,6 @@ pub fn for_each_parallel_in_runs(
     }
     let region = Region {
         caches,
-        threads: threads.clamp(1, count.div_ceil(run)),
         next: AtomicUsize::new(0),
         count,
         run,
@@ -145,7 +144,7 @@ pub fn for_each_parallel_in_runs(
     if runs_regions_inline() {
         return region.work_off();
     }
-    let mut runners = vec![(); region.threads];
+    let mut runners = vec![(); threads.clamp(1, count.div_ceil(run))];
     region_pool().each((), |(), (), _| region.work_off(), &mut runners);
 }
 
@@ -165,13 +164,12 @@ pub(crate) fn for_each_parallel_while(
     }
     let region = Region {
         caches,
-        threads: threads.clamp(1, count.div_ceil(run)),
         next: AtomicUsize::new(0),
         count,
         run,
         work,
     };
-    let mut runners = vec![(); region.threads];
+    let mut runners = vec![(); threads.clamp(1, count.div_ceil(run))];
     region_pool().each_while((), |(), (), _| region.work_off(), &mut runners, meanwhile);
 }
 
@@ -191,7 +189,6 @@ pub(crate) fn for_each_with_helpers(
     };
     let region = Region {
         caches,
-        threads: 1 + helpers,
         next: AtomicUsize::new(0),
         count,
         run,
@@ -216,7 +213,6 @@ pub(crate) fn for_each_with_share(
 ) {
     let region = Region {
         caches,
-        threads: 1,
         next: AtomicUsize::new(0),
         count,
         run,
@@ -395,7 +391,6 @@ fn region_pool() -> &'static bun_threading::ThreadPool {
 /// State shared by the threads of [`for_each_parallel_in_runs`].
 struct Region<'a> {
     caches: &'a ThreadCaches,
-    threads: usize,
     next: AtomicUsize,
     count: usize,
     run: usize,
@@ -2771,13 +2766,10 @@ impl Host for WithOutputs<'_> {
         }
     }
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
-        match self.emitted_file(path) {
-            Some((_, emitted_text)) => Cow::Owned((*emitted_text).clone()),
-            None => self.disk.read(path).unwrap_or_else(|| {
-                self.unreadable.lock().push(path.to_vec());
-                Cow::default()
-            }),
-        }
+        self.read(path).unwrap_or_else(|| {
+            self.unreadable.lock().push(path.to_vec());
+            Cow::default()
+        })
     }
     fn origin(&self, path: &[u8]) -> usize {
         (self.emitted_file(path)).map_or(0, |(project, _)| self.first_origin + project)

@@ -2,7 +2,6 @@
 //! types of functions.
 
 use super::context::{IncludePatternInType, ReportErrors};
-use super::decl::declarations_of;
 use super::mapped::AccessNode;
 use super::related::FileSpan;
 use super::shape::{SpreadSymbolOptions, assignment_declaration};
@@ -661,7 +660,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some((file, member @ Decl::Member(_))) = value_declaration {
             return circularity_error_type(self.type_node_of_declaration(file, member));
         }
-        for (file, decl) in declarations_of(self.files(), sym) {
+        for (file, decl) in self.files().decls_of(sym) {
             let hir = self.hir(file);
             let annotation = match decl {
                 Decl::Var(pat) | Decl::Param(pat) => self.type_annotation_of_pat(file, pat),
@@ -813,7 +812,7 @@ impl<'p, 's> Checker<'p, 's> {
             });
         }
         if flags.intersects(SymFlags::VARIABLE) {
-            for (file, decl) in declarations_of(self.files(), sym) {
+            for (file, decl) in self.files().decls_of(sym) {
                 if let Decl::Var(pat) | Decl::Param(pat) = decl {
                     return self.type_of_pat(file, pat);
                 }
@@ -827,7 +826,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if flags.contains(SymFlags::FUNCTION) {
             let mut mapper = MapperId::IDENTITY;
-            for (file, decl) in declarations_of(self.files(), sym) {
+            for (file, decl) in self.files().decls_of(sym) {
                 if let Decl::Fn(f) = decl {
                     let scope = self.bound(file).fns[f.idx()].scope;
                     let parent = self.bound(file).scopes[scope.idx()].parent;
@@ -874,7 +873,7 @@ impl<'p, 's> Checker<'p, 's> {
             });
         }
         if flags.contains(SymFlags::PROPERTY) {
-            for (file, decl) in declarations_of(self.files(), sym) {
+            for (file, decl) in self.files().decls_of(sym) {
                 if let Decl::ExportExpr(stmt) = decl
                     && let StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) =
                         self.hir(file)[stmt].kind
@@ -1554,10 +1553,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// type parameters of the class (`getObjectTypeInstantiation`). The constructor type of a class
     /// that extends a value whose type is a type variable also includes that type variable.
     pub(super) fn type_of_class_value(&mut self, sym: Sym) -> TypeId {
-        let class = declarations_of(self.files(), sym).find_map(|(file, decl)| match decl {
-            Decl::Class(c) => Some((file, c)),
-            _ => None,
-        });
+        let class = self
+            .files()
+            .decls_of(sym)
+            .into_iter()
+            .find_map(|(file, decl)| match decl {
+                Decl::Class(c) => Some((file, c)),
+                _ => None,
+            });
         let mut mapper = MapperId::IDENTITY;
         if let Some((file, c)) = class {
             let scope = self.bound(file).class_scope[c.idx()];

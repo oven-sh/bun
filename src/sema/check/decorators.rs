@@ -81,7 +81,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `tryCreateTypeReference` for the global type `name`, whose resolver has `reportErrors`.
     fn try_create_type_reference(&mut self, name: &[u8], type_arguments: &[TypeId]) -> TypeId {
         let name = self.atoms().intern(name);
-        match self.get_global_type(name, type_arguments.len(), true) {
+        match self.get_global_type(name, type_arguments.len()) {
             Some(target) => self.intern_key(TypeKey::Ref {
                 target,
                 args: type_arguments,

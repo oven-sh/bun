@@ -2398,7 +2398,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn candidates_in_order_uncached(&mut self, sigs: &[SigId]) -> Sigs {
         let mut result = Sigs::with_capacity(sigs.len());
-        let mut last: Option<(Option<SigSymbol>, Option<SigParent>)> = None;
+        let mut last: Option<(SigSymbol, SigParent)> = None;
         let (mut cutoff, mut index, mut specialized) = (0usize, 0usize, 0usize);
         for &sig in sigs {
             // A clone has the declaration of its original (`Signature.declaration`).
@@ -2409,31 +2409,16 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 _ => None,
             };
-            let before = match last {
-                Some((Some(symbol), Some(parent))) => Some((symbol, parent)),
-                _ => None,
-            };
-            let (symbol, parent) = match declaration {
-                Some((file, func)) => {
-                    let (symbol, parent) = self.sig_home(file, func, before);
-                    (Some(symbol), Some(parent))
-                }
-                None => (None, None),
-            };
-            match &last {
-                Some((last_symbol, last_parent))
-                    if last_symbol.is_some() && *last_symbol != symbol =>
-                {
-                    let _ = last_parent;
+            let home = declaration.map(|(file, func)| self.sig_home(file, func, last));
+            match last {
+                Some((last_symbol, _)) if Some(last_symbol) != home.map(|it| it.0) => {
                     cutoff = result.len();
                     index = cutoff;
                 }
-                Some((_, last_parent)) if last_parent.is_some() && *last_parent == parent => {
-                    index += 1
-                }
+                Some((_, last_parent)) if Some(last_parent) == home.map(|it| it.1) => index += 1,
                 _ => index = cutoff,
             }
-            last = Some((symbol, parent));
+            last = home;
             let at = if declaration.is_some_and(|(file, func)| self.has_literal_types(file, func)) {
                 specialized += 1;
                 cutoff += 1;

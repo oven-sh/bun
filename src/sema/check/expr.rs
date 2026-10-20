@@ -662,13 +662,6 @@ impl<'p, 's> Checker<'p, 's> {
         floor
     }
 
-    /// Checks an operand whose type is discarded, as `checkExpression` does, so re-entering a
-    /// resolution in progress is still a cycle. The operand's type, and whether it's final, doesn't
-    /// affect the enclosing expression.
-    fn check_discarding_type(&mut self, file: FileId, e: ExprId) {
-        self.type_of_expr(file, e);
-    }
-
     /// Resolves a long chain one link at a time, innermost first, so that no resolution recurses
     /// all the way down: `a.b().c().d()` with hundreds of links, `a + b + c + ..` with hundreds of
     /// operands, `A.B.C. ..` with hundreds of names.
@@ -1221,13 +1214,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return (TypeId::ANY, may_short_circuit);
             }
             // `leftType.symbol == c.globalThisSymbol`
-            if matches!(
-                self.data(left),
-                TypeData::Anon {
-                    origin: Origin::GlobalThis,
-                    ..
-                }
-            ) {
+            if self.is_global_this_type(left) {
                 let right = self.span_of_right(file, name, name_pos);
                 if self.is_block_scoped_global(name) {
                     self.error_at(right, 2339, &[Arg::Atom(name), Arg::Type(left)]);
@@ -1414,7 +1401,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// JavaScript file, so only there does `getDeclaringConstructor` find one. `e` accesses
     /// `receiver`'s property `name`. Returns `getFlowTypeOfProperty`'s initial type if `e` is
     /// directly in the constructor that declares the property.
-    pub(super) fn auto_this_property(
+    fn auto_this_property(
         &mut self,
         file: FileId,
         e: ExprId,
@@ -1422,9 +1409,6 @@ impl<'p, 's> Checker<'p, 's> {
         name: Atom,
     ) -> Option<TypeId> {
         let hir = self.hir(file);
-        if !hir.is_js {
-            return None;
-        }
         let container = hir.get_this_container(hir.node(e), true, false);
         if hir.kind(container) != Kind::Constructor {
             return None;
@@ -1463,7 +1447,7 @@ impl<'p, 's> Checker<'p, 's> {
         if is_auto_typed && !has_declare_modifier {
             return Some(TypeId::UNDEFINED);
         }
-        let (class, _) = self.class_of_member_fn(file, container)?;
+        let class = self.class_of_member_fn(file, container)?;
         let inherited = self.type_of_property_in_base_class(file, class, name);
         Some(inherited.unwrap_or(TypeId::UNDEFINED))
     }
@@ -1880,7 +1864,7 @@ impl<'p, 's> Checker<'p, 's> {
                         && matches!(hir[target].kind, ExprKind::Object(_) | ExprKind::Array(_))
                         && !is_parenthesized(hir, target);
                     if !is_pattern {
-                        self.check_discarding_type(file, target);
+                        self.type_of_expr(file, target);
                     }
                     let source = self.type_of_expr(file, value);
                     self.precheck_assignment(file, e, target, source);
@@ -1941,7 +1925,7 @@ impl<'p, 's> Checker<'p, 's> {
             // `checkAssertion`. The callers of `getQuickTypeOfExpression` call `quick_type_of_expr`
             // first.
             ExprKind::As { expr, ty } => {
-                self.check_discarding_type(file, expr);
+                self.type_of_expr(file, expr);
                 self.precheck_type_node(file, ty);
                 self.check_node_deferred(file, e);
                 self.type_from_node(file, ty)
@@ -2420,15 +2404,15 @@ impl<'p, 's> Checker<'p, 's> {
             if matches!(hir[parent].kind, ExprKind::Call(c) | ExprKind::New(c) if hir[c].callee == e))
     }
 
-    /// Returns the class that `func` is a member of, and whether the member is static.
-    fn class_of_member_fn(&self, file: FileId, func: FnId) -> Option<(ClassId, bool)> {
+    /// Returns the class that `func` is a member of.
+    fn class_of_member_fn(&self, file: FileId, func: FnId) -> Option<ClassId> {
         let FnOwner::Member(m) = self.bound(file).fns[func.idx()].owner else {
             return None;
         };
         let MemberOwner::Class(c) = self.bound(file).member_owner[m.idx()] else {
             return None;
         };
-        Some((c, self.hir(file)[m].flags.contains(Flags::STATIC)))
+        Some(c)
     }
 
     /// `GetThisContainer(e, false, false)`. Returns `e`'s nearest enclosing non-arrow function, or
@@ -2481,7 +2465,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `checkThisBeforeSuper`
     fn check_this_before_super(&mut self, file: FileId, e: ExprId, container: FnId, code: u32) {
         let (hir, flow) = (self.hir(file), self.bound(file).flow_of_expr(e));
-        if let Some((class, _)) = self.class_of_member_fn(file, container)
+        if let Some(class) = self.class_of_member_fn(file, container)
             && hir[class].extends.is_some()
             && !self.class_declaration_extends_null(self.class_sym(file, class))
             && flow.is_some()
@@ -2489,6 +2473,17 @@ impl<'p, 's> Checker<'p, 's> {
         {
             self.error_at(self.span_of_token(file, hir[e].pos), code, &[]);
         }
+    }
+
+    /// `t.symbol == c.globalThisSymbol`
+    fn is_global_this_type(&self, ty: TypeId) -> bool {
+        matches!(
+            self.data(ty),
+            TypeData::Anon {
+                origin: Origin::GlobalThis,
+                ..
+            }
+        )
     }
 
     /// `checkThisExpression`
@@ -2539,22 +2534,13 @@ impl<'p, 's> Checker<'p, 's> {
             }
             _ => {}
         }
-        let is_global_this = |c: &Self, t: TypeId| {
-            matches!(
-                c.data(t),
-                TypeData::Anon {
-                    origin: Origin::GlobalThis,
-                    ..
-                }
-            )
-        };
         let Some(t) = self.try_get_this_type_at_ex(file, this, container) else {
             if !self.p.files.options.no_implicit_this {
                 return TypeId::ANY;
             }
             let is_shadowed = self
                 .try_get_this_type_at(file, container)
-                .is_some_and(|t| !is_global_this(self, t));
+                .is_some_and(|t| !self.is_global_this_type(t));
             let (from, to) = self.get_error_range_for_node(file, container);
             let shadowed = is_shadowed.then(|| self.new_diagnostic((file, from, to), 2738, &[]));
             let diagnostic = self.error_at(node(self), 2683, &[]);
@@ -2565,7 +2551,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         if captured_by_arrow_function
             && self.p.files.options.no_implicit_this
-            && is_global_this(self, t)
+            && self.is_global_this_type(t)
         {
             self.error_at(node(self), 7041, &[]);
         }
@@ -2759,7 +2745,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         match self.hir(file)[func].kind {
             FnKind::Constructor => match self.class_of_member_fn(file, func) {
-                Some((class, _)) => {
+                Some(class) => {
                     let sym = self.class_sym(file, class);
                     self.type_of_symbol(sym)
                 }
@@ -4607,7 +4593,7 @@ impl<'p, 's> Checker<'p, 's> {
             if param.default.is_some()
                 && !self.is_binding_pattern_in_ambient_or_type_node(file, param.pat)
             {
-                self.check_discarding_type(file, param.default);
+                self.type_of_expr(file, param.default);
                 self.precheck_with(|c| c.check_parameter_initializer(file, p));
             }
             if is_name && param.flags.contains(Flags::REST) {
@@ -4639,7 +4625,7 @@ impl<'p, 's> Checker<'p, 's> {
             PatKind::Object(props) => {
                 for p in props.iter() {
                     if let PropKey::Computed(key) = hir[p].key {
-                        self.check_discarding_type(file, key);
+                        self.type_of_expr(file, key);
                     }
                     self.precheck_binding_element(file, pat, hir[p].value, hir[p].default);
                 }
@@ -4667,7 +4653,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.precheck_with(|c| c.check_binding_element_accessibility(file, pattern, name));
         self.precheck_binding_name(file, name);
         if initializer.is_some() && !self.is_binding_pattern_in_ambient_or_type_node(file, name) {
-            self.check_discarding_type(file, initializer);
+            self.type_of_expr(file, initializer);
             self.precheck_with(|c| c.check_binding_element_initializer(file, name, initializer));
         }
     }
@@ -5324,7 +5310,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn type_of_unary(&mut self, file: FileId, e: ExprId, op: UnOp, operand: ExprId) -> TypeId {
         match op {
             UnOp::Typeof => {
-                self.check_discarding_type(file, operand);
+                self.type_of_expr(file, operand);
                 let literals = [
                     known::string,
                     known::number,
@@ -5344,7 +5330,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.undefined_widening()
             }
             UnOp::Delete => {
-                self.check_discarding_type(file, operand);
+                self.type_of_expr(file, operand);
                 self.check_delete_expression(file, e, operand);
                 TypeId::BOOLEAN
             }
@@ -5533,7 +5519,7 @@ impl<'p, 's> Checker<'p, 's> {
                 TypeId::BOOLEAN
             }
             BinOp::Comma => {
-                self.check_discarding_type(file, left);
+                self.type_of_expr(file, left);
                 self.type_of_expr(file, right)
             }
             BinOp::And => {
@@ -5542,7 +5528,7 @@ impl<'p, 's> Checker<'p, 's> {
                     self.check_truthiness_of_type(file, left, l);
                 }
                 if !self.can_be_truthy(l) {
-                    self.check_discarding_type(file, right);
+                    self.type_of_expr(file, right);
                     return l;
                 }
                 let r = self.type_of_expr(file, right);
@@ -5568,7 +5554,7 @@ impl<'p, 's> Checker<'p, 's> {
                     self.check_truthiness_of_type(file, left, l);
                 }
                 if !self.can_be_falsy(l) {
-                    self.check_discarding_type(file, right);
+                    self.type_of_expr(file, right);
                     return l;
                 }
                 let r = self.type_of_expr(file, right);
@@ -5587,7 +5573,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 let l = self.type_of_expr(file, left);
                 if !self.can_be_nullish(l) {
-                    self.check_discarding_type(file, right);
+                    self.type_of_expr(file, right);
                     return l;
                 }
                 let r = self.type_of_expr(file, right);

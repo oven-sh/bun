@@ -273,7 +273,7 @@ impl Checker<'_, '_> {
             return;
         }
         // `getGlobalPromiseTypeChecked`
-        if self.get_global_type(known::Promise, 1, true).is_some()
+        if self.get_global_type(known::Promise, 1).is_some()
             && self.is_global_ref(ret, known::Promise, 1).is_none()
         {
             let start = start_of_type(hir, func.ret);

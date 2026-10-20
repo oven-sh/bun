@@ -219,9 +219,8 @@ pub(super) struct Binder<'f, 's> {
     /// `requiresScopeChangeWorker` doesn't descend into.
     scope_change_of: FnId,
     /// `associatedDeclarationForContainingInitializerOrBindingName`, tracked during the descent, as
-    /// its name and the function whose parameter it is or belongs to. The name is `NONE` if there's
-    /// no such declaration, or under `withinDeferredContext`.
-    associated_declaration: (PatId, FnId),
+    /// its name. `NONE` if there's no such declaration, or under `withinDeferredContext`.
+    associated_declaration: PatId,
     /// Indexed by `ModuleId`. See `Binder::module_instance_state`.
     instance_states: Vec<InstanceState>,
     /// See `Binder::answer_along_chain`.
@@ -286,20 +285,7 @@ impl<'f, 's> Binder<'f, 's> {
             param_fn: filled(old.param_fn, f.params.len(), FnId::NONE),
             type_param_symbol: filled(old.type_param_symbol, f.type_params.len(), SymbolId::NONE),
             type_param_scope: filled(old.type_param_scope, f.type_params.len(), ScopeId::NONE),
-            fns: filled(
-                old.fns,
-                f.fns.len(),
-                FnInfo {
-                    owner: FnOwner::None,
-                    scope: ScopeId::NONE,
-                    enclosing: FnId::NONE,
-                    returns: IdList::EMPTY,
-                    yields: IdList::EMPTY,
-                    end: UNREACHABLE,
-                    exit: FlowId::NONE,
-                    contains_this: false,
-                },
-            ),
+            fns: filled(old.fns, f.fns.len(), parents::NO_FUNCTION),
             requires_scope_change: filled(old.requires_scope_change, f.fns.len(), false),
             fn_symbol: filled(old.fn_symbol, f.fns.len(), SymbolId::NONE),
             class_symbol: filled(old.class_symbol, f.classes.len(), SymbolId::NONE),
@@ -387,7 +373,7 @@ impl<'f, 's> Binder<'f, 's> {
             by_alias: false,
             type_literal_depth: 0,
             scope_change_of: FnId::NONE,
-            associated_declaration: (PatId::NONE, FnId::NONE),
+            associated_declaration: PatId::NONE,
             instance_states: Vec::new(),
             chain_answers: Default::default(),
             // Same limit as the parser. The checker walks whatever gets bound, and its time can be
@@ -3279,28 +3265,28 @@ impl<'f, 's> Binder<'f, 's> {
                         self.expr(key, Parent::PatKey(p));
                     }
                     // `bindBindingElementFlow`: the default is evaluated before its element.
-                    let associated = self.associated_declaration.0;
+                    let associated = self.associated_declaration;
                     if flags.contains(SymFlags::PARAMETER) {
-                        self.associated_declaration.0 = prop.value;
+                        self.associated_declaration = prop.value;
                     }
                     let element = PatParent::Prop(pat, p);
                     self.element_default(prop.value, element, Parent::PatPropDefault(p));
                     self.pat(prop.value, element, flags);
-                    self.associated_declaration.0 = associated;
+                    self.associated_declaration = associated;
                     self.scope_change_of = scope_change_of;
                 }
             }
             PatKind::Array(elems) => {
                 for e in elems.iter() {
                     let elem = &self.f[e];
-                    let associated = self.associated_declaration.0;
+                    let associated = self.associated_declaration;
                     if flags.contains(SymFlags::PARAMETER) {
-                        self.associated_declaration.0 = elem.pat;
+                        self.associated_declaration = elem.pat;
                     }
                     let element = PatParent::Elem(pat, e);
                     self.element_default(elem.pat, element, Parent::PatElemDefault(e));
                     self.pat(elem.pat, element, flags);
-                    self.associated_declaration.0 = associated;
+                    self.associated_declaration = associated;
                 }
             }
         }
@@ -3465,7 +3451,7 @@ impl<'f, 's> Binder<'f, 's> {
         // `getIsDeferredContext`
         let outer_associated = self.associated_declaration;
         if !is_immediately_invoked {
-            self.associated_declaration.0 = PatId::NONE;
+            self.associated_declaration = PatId::NONE;
         }
         let associated = self.associated_declaration;
         let arrow = f.kind == FnKind::Arrow;
@@ -3555,7 +3541,7 @@ impl<'f, 's> Binder<'f, 's> {
             // `requiresScopeChange` inspects the name and the initializer. `bindParameterFlow`: the
             // initializer comes first.
             self.scope_change_of = id;
-            self.associated_declaration = (param.pat, id);
+            self.associated_declaration = param.pat;
             if param.default.is_some() {
                 self.conditional_default(param.default, Parent::ParamDefault(p));
             }
@@ -4056,18 +4042,9 @@ impl<'f, 's> Binder<'f, 's> {
                 }
                 self.is_unchecked = was_unchecked;
             }
-            let class_member = if matches!(owner, MemberOwner::Class(_)) {
-                m
-            } else {
-                MemberId::NONE
-            };
             // `getControlFlowContainer`: a member of a type literal is in the class property whose
             // type the literal is part of.
-            let container = if class_member.is_some() {
-                class_member
-            } else {
-                self.cur_member
-            };
+            let container = if class.is_some() { m } else { self.cur_member };
             let outer_member = std::mem::replace(&mut self.cur_member, container);
             let is_static = self.is_static(m, owner);
             if is_static {
@@ -4093,9 +4070,9 @@ impl<'f, 's> Binder<'f, 's> {
             if member.init.is_some() {
                 let scope_change_of = std::mem::replace(&mut self.scope_change_of, FnId::NONE);
                 // `getIsDeferredContext`
-                let associated = self.associated_declaration.0;
+                let associated = self.associated_declaration;
                 if !is_static {
-                    self.associated_declaration.0 = PatId::NONE;
+                    self.associated_declaration = PatId::NONE;
                 }
                 if constructor.is_some() {
                     self.push_scope(
@@ -4108,7 +4085,7 @@ impl<'f, 's> Binder<'f, 's> {
                     self.pop_scope();
                 }
                 self.scope_change_of = scope_change_of;
-                self.associated_declaration.0 = associated;
+                self.associated_declaration = associated;
             }
             if is_initialized_property {
                 (self.flow, self.exception_target) = saved;
@@ -4629,10 +4606,10 @@ impl<'f, 's> Binder<'f, 's> {
             | ExprKind::NewTarget(_) => {}
             ExprKind::Ident(_) => {
                 self.idents.push((id, self.scope));
-                let (name, func) = self.associated_declaration;
+                let name = self.associated_declaration;
                 self.b.expr_flow[id.idx()] = self.flow;
                 if name.is_some() {
-                    self.b.identifiers_in_parameters.push((id, name, func));
+                    self.b.identifiers_in_parameters.push((id, name));
                 }
             }
             ExprKind::This => {

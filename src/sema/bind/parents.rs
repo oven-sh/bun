@@ -8,7 +8,7 @@ fn refill<T: Copy>(list: &mut Vec<T>, len: usize, value: T) {
     list.resize(len, value);
 }
 
-const NO_FUNCTION: FnInfo = FnInfo {
+pub(super) const NO_FUNCTION: FnInfo = FnInfo {
     owner: FnOwner::None,
     scope: ScopeId::NONE,
     enclosing: FnId::NONE,

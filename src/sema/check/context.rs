@@ -1272,10 +1272,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<TypeId> {
         let contextual_type = self.contextual_type(file, e, context_flags)?;
         let apparent = self.apparent_contextual_type(contextual_type, file, e, context_flags)?;
-        if matches!(self.hir(file)[e].kind, ExprKind::Object(_)) {
-            return Some(self.discriminate_by_object_members(file, e, apparent));
-        }
-        Some(apparent)
+        Some(self.discriminate_by_object_members(file, e, apparent))
     }
 
     /// Same for the JSX element `e`'s attributes, which aren't a separate node.
@@ -1967,7 +1964,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // `getGlobalImportCallOptionsType`
                 let name = self.atoms().lookup(b"ImportCallOptions");
                 Some(
-                    match name.and_then(|name| self.get_global_type(name, 0, false)) {
+                    match name.and_then(|name| self.global_type_of_arity(name, 0)) {
                         Some(sym) => self.declared_type(sym),
                         None => TypeId::EMPTY_OBJECT,
                     },
@@ -2259,30 +2256,14 @@ impl<'p, 's> Checker<'p, 's> {
                 m
             }
         });
-        let required = self.required_own_params(file, func);
         let mut found: SmallVec<[SigId; 4]> = SmallVec::new();
-        // The members that can have a signature.
-        let parts: Parts = self
-            .parts(context)
-            .iter()
-            .copied()
-            .filter(|&part| !self.is_primitive(part))
-            .collect();
-        for part in parts {
-            // `getContextualCallSignature`
-            let mut fitting: SmallVec<[SigId; 4]> = SmallVec::new();
-            for s in self.signatures(part, false) {
-                if !self.is_arity_smaller(s, required) {
-                    fitting.push(s);
-                }
+        for &part in self.parts(context) {
+            // Only the members that can have a signature.
+            if self.is_primitive(part) {
+                continue;
             }
-            let sig = match fitting[..] {
-                [] => continue,
-                [only] => only,
-                _ => match self.intersected_signature(&fitting) {
-                    Some(combined) => combined,
-                    None => continue,
-                },
+            let Some(sig) = self.contextual_call_signature(file, func, part) else {
+                continue;
             };
             // The members of a union must agree on everything but `this` and the return type.
             if let Some(&first) = found.first()
@@ -2685,7 +2666,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `createPromiseLikeType`: `unknown` if `getGlobalPromiseLikeType` finds no `PromiseLike`.
     fn create_promise_like_type(&mut self, promised_type: TypeId) -> TypeId {
-        let Some(target) = self.get_global_type(known::PromiseLike, 1, true) else {
+        let Some(target) = self.get_global_type(known::PromiseLike, 1) else {
             return TypeId::UNKNOWN;
         };
         let unwrapped = self.unwrap_awaited_type(promised_type);

@@ -622,7 +622,7 @@ impl Checker<'_, '_> {
         };
         // `getGlobalImportCallOptionsTypeChecked`
         let name = self.atoms().intern(b"ImportCallOptions");
-        if let Some(sym) = self.get_global_type(name, 0, true) {
+        if let Some(sym) = self.get_global_type(name, 0) {
             let expected = self.declared_type(sym);
             let expected = self.optional(expected);
             let error_node = self.span_of_parenthesized_expr(file, options);
@@ -997,14 +997,9 @@ impl Checker<'_, '_> {
         if of != file {
             return None;
         }
-        // `GetRootDeclaration`
-        let mut root = pat;
-        loop {
-            match bound.pat_parent[root.idx()] {
-                PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => root = outer,
-                PatParent::Var(d) => return Some((pat, d)),
-                _ => return None,
-            }
+        match root_declaration(bound, pat) {
+            PatParent::Var(d) => Some((pat, d)),
+            _ => None,
         }
     }
 
@@ -1242,13 +1237,10 @@ impl Checker<'_, '_> {
             FnOwner::Member(m) => parent_of_member(m),
             _ => Parent::None,
         };
-        let parent_of_pattern = |mut pat: PatId| loop {
-            match bound.pat_parent[pat.idx()] {
-                PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => pat = outer,
-                PatParent::Var(d) => return Parent::VarInit(d),
-                PatParent::Param(p) => return Parent::ParamDefault(p),
-                PatParent::None => return Parent::None,
-            }
+        let parent_of_pattern = |pat: PatId| match root_declaration(bound, pat) {
+            PatParent::Var(d) => Parent::VarInit(d),
+            PatParent::Param(p) => Parent::ParamDefault(p),
+            _ => Parent::None,
         };
         match parent {
             Parent::None | Parent::File => Parent::None,
@@ -1413,9 +1405,7 @@ impl Checker<'_, '_> {
                     let outer = self.alias_targets_in_progress.len();
                     self.alias_targets_in_progress
                         .extend_from_slice(in_progress);
-                    self.on_failed_to_resolve_symbol(
-                        file, location, None, scope, name, meaning, message,
-                    );
+                    self.on_failed_to_resolve_symbol(file, location, scope, name, meaning, message);
                     self.alias_targets_in_progress.truncate(outer);
                 }
             }
@@ -1450,9 +1440,7 @@ impl Checker<'_, '_> {
                     let message =
                         self.get_cannot_find_name_diagnostic_for_name(file, location, name);
                     let meaning = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
-                    self.on_failed_to_resolve_symbol(
-                        file, location, None, scope, name, meaning, message,
-                    );
+                    self.on_failed_to_resolve_symbol(file, location, scope, name, meaning, message);
                 }
             }
         }
@@ -1556,9 +1544,7 @@ impl Checker<'_, '_> {
             let (location, name) = (hir.node(first), hir[first].text);
             if files.resolve_name(file, scope, name, meaning).is_none() {
                 let message = self.get_cannot_find_name_diagnostic_for_name(file, location, name);
-                self.on_failed_to_resolve_symbol(
-                    file, location, None, scope, name, meaning, message,
-                );
+                self.on_failed_to_resolve_symbol(file, location, scope, name, meaning, message);
             }
         }
         self.mark_identifier_aliases_referenced(file, false);
@@ -1628,7 +1614,6 @@ impl Checker<'_, '_> {
                 self.on_failed_to_resolve_symbol(
                     file,
                     location,
-                    None,
                     scope,
                     name,
                     meaning_of_first,
@@ -1747,13 +1732,11 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `onFailedToResolveSymbol`. `scope` is the scope of `location`. `at` is the error position if that isn't
-    /// `location`. It's a tag, for a node synthesized from it.
+    /// `onFailedToResolveSymbol`. `scope` is the scope of `location`.
     pub(super) fn on_failed_to_resolve_symbol(
         &mut self,
         file: FileId,
         location: Node,
-        at: Option<super::related::FileSpan>,
         scope: ScopeId,
         name: Atom,
         meaning: SymFlags,
@@ -1763,10 +1746,8 @@ impl Checker<'_, '_> {
         if self.check_and_report_error_for_missing_prefix(file, location, name) {
             return;
         }
-        let at = at.unwrap_or_else(|| {
-            let (start, end) = self.get_error_range_for_node(file, location);
-            (file, start, end)
-        });
+        let (start, end) = self.get_error_range_for_node(file, location);
+        let at = (file, start, end);
         let (text, reported) = (self.atoms().bytes(name), Arg::Atom(name));
         if let NodeData::Expr(e) = hir.data(location)
             && self.check_and_report_error_for_extending_interface(file, e)

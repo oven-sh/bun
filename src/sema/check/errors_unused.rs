@@ -1208,7 +1208,7 @@ impl Checker<'_, '_> {
         };
         is_thisless(hir, m)
             && self
-                .outer_type_params(file, bound.class_scope[class.idx()])
+                .type_params_in_scope(file, bound.class_scope[class.idx()])
                 .iter()
                 .all(|&t| matches!(self.data(t), TypeData::ThisParam(_)))
     }

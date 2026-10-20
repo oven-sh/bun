@@ -901,7 +901,7 @@ impl Checker<'_, '_> {
         ty: TypeId,
         mut node: TypeNodeId,
     ) -> TypeId {
-        if !self.has_conditional_or_mapped_type(file) {
+        if !self.files().has_conditional_or_mapped_type(file) {
             return ty;
         }
         let hir = self.hir(file);

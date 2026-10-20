@@ -849,12 +849,6 @@ macro_rules! packed {
                 }
             }
         };
-
-        impl std::fmt::Debug for $packed {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                self.get().fmt(f)
-            }
-        }
     };
 }
 
@@ -1617,9 +1611,8 @@ pub struct BoundIn<S: Storage> {
     /// The `arguments` identifiers that refer to the arguments of an enclosing function. Sorted.
     pub arguments_objects: S::Few<ExprId>,
     /// The identifiers that have an `associatedDeclarationForContainingInitializerOrBindingName`
-    /// and aren't `withinDeferredContext`. Each comes with that declaration's name and the function
-    /// whose parameter it is or belongs to.
-    pub identifiers_in_parameters: S::Few<(ExprId, PatId, FnId)>,
+    /// and aren't `withinDeferredContext`. Each comes with that declaration's name.
+    pub identifiers_in_parameters: S::Few<(ExprId, PatId)>,
     /// `checkUnmatchedJSDocParameters`: the `@param` tags that match no parameter, as start and code.
     pub jsdoc_param_errors: S::Few<u32>,
     /// The identifiers named `arguments` that aren't expressions and that
@@ -2481,11 +2474,6 @@ fn few_map_to_arena<K: Ord, V>(map: FxHashMap<K, V>, arena: &Arena) -> ArenaFewM
 }
 
 impl BoundBuilder {
-    /// Moves the side tables into `arena`, with every list at its final size.
-    pub fn into_arena<'s>(mut self, arena: &'s Arena) -> Bound<'s> {
-        self.move_to_arena(arena)
-    }
-
     /// Resets it to `BoundBuilder::default()`, except that the lists keep their capacity.
     fn clear(&mut self) {
         // Destructures every field so that a newly added one can't be forgotten.
@@ -2675,8 +2663,8 @@ impl BoundBuilder {
         kind_counts.clear();
     }
 
-    /// Same as `into_arena`, but leaves `self` empty, and the lists that are long in most files
-    /// keep their capacity.
+    /// Moves the side tables into `arena`, with every list at its final size. Leaves `self` empty,
+    /// and the lists that are long in most files keep their capacity.
     fn move_to_arena<'s>(&mut self, arena: &'s Arena) -> Bound<'s> {
         Bound {
             ran_out_of_stack: self.ran_out_of_stack,
@@ -2978,7 +2966,7 @@ fn copy_of_few_map<'s, K: Copy + Ord, V: Copy>(
 impl<'s> Bound<'s> {
     /// The side tables of a file without nodes.
     pub fn empty_in(arena: &'s Arena) -> Bound<'s> {
-        BoundBuilder::default().into_arena(arena)
+        BoundBuilder::default().move_to_arena(arena)
     }
 }
 

@@ -761,7 +761,7 @@ impl Checker<'_, '_> {
             self.on_successfully_resolved_symbol(file, location, scope, result, all);
         } else {
             let message = self.get_cannot_find_name_diagnostic_for_name(file, location, name);
-            self.on_failed_to_resolve_symbol(file, location, None, scope, name, all, message);
+            self.on_failed_to_resolve_symbol(file, location, scope, name, all, message);
         }
         Some((location, scope, resolved))
     }
@@ -1212,7 +1212,7 @@ impl Checker<'_, '_> {
             self.on_successfully_resolved_symbol(cx.file, location, scope, result, value);
         } else {
             let message = self.get_cannot_find_name_diagnostic_for_name(cx.file, location, name);
-            self.on_failed_to_resolve_symbol(cx.file, location, None, scope, name, value, message);
+            self.on_failed_to_resolve_symbol(cx.file, location, scope, name, value, message);
         }
     }
 
@@ -1401,9 +1401,7 @@ impl Checker<'_, '_> {
         {
             let meaning = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
             let message = self.get_cannot_find_name_diagnostic_for_name(cx.file, location, name);
-            self.on_failed_to_resolve_symbol(
-                cx.file, location, None, scope, name, meaning, message,
-            );
+            self.on_failed_to_resolve_symbol(cx.file, location, scope, name, meaning, message);
         }
     }
 
@@ -1638,7 +1636,7 @@ impl Checker<'_, '_> {
         // `getGlobalImportAttributesTypeChecked` returns `emptyObjectType` if there's no such interface, and the check
         // is skipped.
         let name = self.atoms().intern(b"ImportAttributes");
-        if let Some(sym) = self.get_global_type(name, 0, true)
+        if let Some(sym) = self.get_global_type(name, 0)
             && let Some(source) = self.get_type_from_import_attributes(cx.file, object)
         {
             // `getNullableType(importAttributesType, TypeFlagsUndefined)`

@@ -150,7 +150,6 @@ impl Checker<'_, '_> {
                     self.on_failed_to_resolve_symbol(
                         file,
                         location,
-                        None,
                         scope,
                         name,
                         meaning,
@@ -185,9 +184,7 @@ impl Checker<'_, '_> {
             }
             if factory_is_missing {
                 let location = hir.node(element.tag);
-                self.on_failed_to_resolve_symbol(
-                    file, location, None, scope, factory, meaning, 2874,
-                );
+                self.on_failed_to_resolve_symbol(file, location, scope, factory, meaning, 2874);
             }
             if let Some(result) = jsx_factory_sym {
                 self.check_type_only_jsx_factory(file, j, result);

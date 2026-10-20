@@ -797,33 +797,10 @@ fn tuple_element_info(file: FileId, hir: &hir::File, elem: &TupleElem) -> ElemFl
     })
 }
 
-/// Iterates over every declaration of `sym`, which is canonical. These are the ones `Files::decls`
-/// lists.
-pub(super) fn declarations_of<'a>(
-    files: &'a Files<'_>,
-    sym: Sym,
-) -> impl Iterator<Item = (FileId, Decl)> + 'a {
-    files.parts(sym).into_iter().flat_map(move |part| {
-        files
-            .symbol(part)
-            .decls
-            .iter()
-            .map(move |&decl| (part.file, decl))
-    })
-}
-
 impl<'p, 's> Checker<'p, 's> {
     // ───────────────────────────── type parameters in scope ─────────────────────────────
 
     /// The type parameters that can be referenced in `scope`, outermost first.
-    pub fn outer_type_params(&mut self, file: FileId, scope: ScopeId) -> &'p [TypeId] {
-        if scope.is_none() {
-            return &[];
-        }
-        self.cached_outer_type_params(file, scope)
-    }
-
-    /// Same, for callers that only read them.
     pub(super) fn type_params_in_scope(&mut self, file: FileId, scope: ScopeId) -> &'p [TypeId] {
         if scope.is_none() || self.declares_no_type_params(file) {
             return &[];
@@ -846,7 +823,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let bound = self.bound(file);
         let s = &bound.scopes[scope.idx()];
-        let outer = self.outer_type_params(file, s.parent);
+        let outer = self.type_params_in_scope(file, s.parent);
         let mut own: Vec<(u32, TypeId)> = Vec::new();
         if matches!(
             s.kind,
@@ -949,14 +926,7 @@ impl<'p, 's> Checker<'p, 's> {
             return (cached, true);
         }
         let computation = self.begin_scope();
-        let adopted = self.adopted_type_params_in_scope(file, scope, u32::MAX);
-        let mapper = if adopted.is_empty() {
-            declared
-        } else {
-            let mut pairs = self.types().mapping(declared).to_vec();
-            pairs.extend(adopted.into_iter().map(|param| (param, param)));
-            self.types().mapper(pairs)
-        };
+        let mapper = self.with_adopted_type_params(declared, file, scope, u32::MAX);
         match self.end_scope_by_counters(computation) {
             Ok(stored) => {
                 let table = &self.p.identity_mappers_with_adopted;
@@ -1064,9 +1034,9 @@ impl<'p, 's> Checker<'p, 's> {
             .collect()
     }
 
-    /// The number of `outer_type_params(file, scope)`, outermost first, that have a statement block
-    /// between their declaration and `pos`. `isTypeParameterPossiblyReferenced` treats those as
-    /// referenced.
+    /// The number of `type_params_in_scope(file, scope)`, outermost first, that have a statement
+    /// block between their declaration and `pos`. `isTypeParameterPossiblyReferenced` treats those
+    /// as referenced.
     fn params_beyond_a_block(&mut self, file: FileId, mut scope: ScopeId, pos: u32) -> usize {
         let (hir, bound) = (self.hir(file), self.bound(file));
         while scope.is_some() {
@@ -1272,7 +1242,7 @@ impl<'p, 's> Checker<'p, 's> {
         scope: ScopeId,
         node: TypeNodeId,
     ) -> MapperId {
-        let is_in_conditional_type = self.has_conditional_or_mapped_type(file)
+        let is_in_conditional_type = self.files().has_conditional_or_mapped_type(file)
             && self.is_in_conditional_type_with_infer(file, node);
         if self.type_params_in_scope(file, scope).is_empty() && !is_in_conditional_type {
             return MapperId::IDENTITY;
@@ -1366,7 +1336,7 @@ impl<'p, 's> Checker<'p, 's> {
         mut node: TypeNodeId,
         out: &mut Mentioned,
     ) {
-        if !self.has_conditional_or_mapped_type(file) {
+        if !self.files().has_conditional_or_mapped_type(file) {
             return;
         }
         while let Some(parent) = Self::type_node_parent(self.hir(file), node).some() {
@@ -1689,39 +1659,6 @@ impl<'p, 's> Checker<'p, 's> {
         all.into_iter().map(|known| known.1).collect()
     }
 
-    /// The scope that the declaration `i` of an interface creates.
-    fn interface_scope(&self, file: FileId, i: InterfaceId) -> ScopeId {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let decl = &hir[i];
-        // A node inside it has its scope recorded.
-        let mut scope = if let Some(tp) = decl.type_params.iter().next() {
-            bound.type_param_scope[tp.idx()]
-        } else if let Some(base) = hir.ids(decl.extends).next() {
-            bound.type_scope[base.idx()]
-        } else {
-            let scope_of_member = |m: MemberId| {
-                if hir[m].func.is_some() {
-                    Some(bound.fns[hir[m].func.idx()].scope)
-                } else if hir[m].ty.is_some() {
-                    Some(bound.type_scope[hir[m].ty.idx()])
-                } else {
-                    None
-                }
-            };
-            decl.members
-                .iter()
-                .find_map(scope_of_member)
-                .unwrap_or(ScopeId::NONE)
-        };
-        while scope.is_some() && bound.scopes[scope.idx()].kind != ScopeKind::Interface(i) {
-            scope = bound.scopes[scope.idx()].parent;
-        }
-        if scope.is_some() {
-            return scope;
-        }
-        bound.interface_scope[i.idx()]
-    }
-
     /// `getOuterTypeParametersOfClassOrInterface`: the type parameters of the declarations that
     /// enclose `sym`, outermost first, without the `this` types.
     pub fn outer_type_params_of_symbol(&mut self, sym: Sym) -> List<'p, TypeId> {
@@ -1739,14 +1676,14 @@ impl<'p, 's> Checker<'p, 's> {
         });
         let own = scope_of_class.or_else(|| {
             symbol.decls.iter().find_map(|d| match *d {
-                Decl::Interface(i) => Some(self.interface_scope(file, i)),
+                Decl::Interface(i) => Some(bound.interface_scope[i.idx()]),
                 _ => None,
             })
         });
         let Some(own) = own.filter(|scope| scope.is_some()) else {
             return List::default();
         };
-        let all = self.outer_type_params(file, bound.scopes[own.idx()].parent);
+        let all = self.type_params_in_scope(file, bound.scopes[own.idx()].parent);
         if !all
             .iter()
             .any(|&p| matches!(self.data(p), TypeData::ThisParam(_)))
@@ -1776,10 +1713,6 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         List::Own(self.local_type_params_of_symbol(sym).into_vec())
-    }
-
-    pub(super) fn type_argument_arity(&self, sym: Sym) -> (usize, usize) {
-        self.files().type_argument_arity(sym)
     }
 
     pub(super) fn type_param_decl(&self, param: TypeId) -> Option<(FileId, &'p TypeParam)> {
@@ -1943,7 +1876,7 @@ impl<'p, 's> Checker<'p, 's> {
             return (file, tp, None);
         }
         let name = hir[tp].name;
-        for (of, decl) in declarations_of(self.files(), self.files().sym(file, owner)) {
+        for (of, decl) in self.files().decls_of(self.files().sym(file, owner)) {
             let other = self.hir(of);
             let Some(theirs) = decl.type_params_of_class_or_interface(other) else {
                 continue;
@@ -2484,12 +2417,10 @@ impl<'p, 's> Checker<'p, 's> {
                 args: &args,
             });
         }
-        if flags.contains(SymFlags::TYPE_ALIAS) {
-            for (file, decl) in declarations_of(self.files(), sym) {
-                if let Decl::Alias(a) = decl {
-                    return self.type_from_node(file, self.hir(file)[a].ty);
-                }
-            }
+        if flags.contains(SymFlags::TYPE_ALIAS)
+            && let Some((file, a)) = self.alias_declaration(sym)
+        {
+            return self.type_from_node(file, self.hir(file)[a].ty);
         }
         if flags.intersects(SymFlags::ENUM) {
             return self.enum_type(sym);
@@ -2498,7 +2429,7 @@ impl<'p, 's> Checker<'p, 's> {
             return self.enum_member_type(sym);
         }
         if flags.contains(SymFlags::TYPE_PARAMETER) {
-            for (file, decl) in declarations_of(self.files(), sym) {
+            for (file, decl) in self.files().decls_of(sym) {
                 if let Decl::TypeParam(tp) = decl {
                     return self.type_param(file, tp);
                 }
@@ -2550,7 +2481,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getDeclaredTypeOfEnum`, with what it assigns to `declaredType` of each member, in its regular form.
     fn get_declared_type_of_enum(&mut self, sym: Sym) -> (TypeId, Vec<(Sym, TypeId)>) {
         let mut member_types = Vec::new();
-        for (file, decl) in declarations_of(self.files(), sym) {
+        for (file, decl) in self.files().decls_of(sym) {
             let Decl::Enum(e) = decl else { continue };
             for m in self.hir(file)[e].members.iter() {
                 // `hasBindableName`
@@ -2612,7 +2543,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some((known, _)) = self.p.declared_types.get(&self.task, &member) {
             return known;
         }
-        for (file, decl) in declarations_of(self.files(), member) {
+        for (file, decl) in self.files().decls_of(member) {
             let Decl::EnumMember(m) = decl else { continue };
             let enum_type = self.enum_type_of_member(member);
             if let Some((known, _)) = self.p.declared_types.get(&self.task, &member) {
@@ -2645,8 +2576,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getEnumMemberValue(ast.GetDeclarationOfKind(symbol, ast.KindEnumMember)).Value`
     pub(super) fn enum_member_value_of_symbol(&mut self, member: Sym) -> Option<EnumValue> {
-        let (file, m) =
-            declarations_of(self.files(), member).find_map(|(file, decl)| match decl {
+        let (file, m) = self
+            .files()
+            .decls_of(member)
+            .into_iter()
+            .find_map(|(file, decl)| match decl {
                 Decl::EnumMember(m) => Some((file, m)),
                 _ => None,
             })?;
@@ -3663,7 +3597,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (least, most) = if has_no_type_parameters {
             (0, 0)
         } else {
-            self.type_argument_arity(sym)
+            self.files().type_argument_arity(sym)
         };
         if (least..=most).contains(&actual) {
             return Some(most);
@@ -3780,10 +3714,13 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The first type alias declaration of `sym`.
     fn alias_declaration(&self, sym: Sym) -> Option<(FileId, AliasId)> {
-        declarations_of(self.files(), sym).find_map(|(file, decl)| match decl {
-            Decl::Alias(alias) => Some((file, alias)),
-            _ => None,
-        })
+        self.files()
+            .decls_of(sym)
+            .into_iter()
+            .find_map(|(file, decl)| match decl {
+                Decl::Alias(alias) => Some((file, alias)),
+                _ => None,
+            })
     }
 
     /// `isLocalTypeAlias`: true if the type alias `sym` is declared inside a function.

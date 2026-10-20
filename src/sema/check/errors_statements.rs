@@ -825,7 +825,7 @@ impl Checker<'_, '_> {
             if name == known::AsyncDisposable && !is_await {
                 continue;
             }
-            if self.get_global_type(name, 0, true).is_some() {
+            if self.get_global_type(name, 0).is_some() {
                 target.push(self.global_ref(name, &[]));
             }
         }

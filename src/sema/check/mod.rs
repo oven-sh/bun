@@ -160,7 +160,7 @@ struct Provisional {
 macro_rules! buffered_fields {
     ($each:ident) => {
         $each!(
-            type_node_types fn_return_types pat_types literal_prop_types symbol_types circular_symbols
+            type_node_types fn_return_types pat_types literal_prop_types symbol_types
             circular_base_types circular_alias_targets circular_mapped_constraints circular_write_types
             base_constructor_types symbol_reference_links mapped_types_with_errors declared_types shapes
             distributed_intersections sig_params
@@ -245,8 +245,6 @@ pub struct Program<'s> {
     /// in `pat_types` is older than the cycle.
     circular_initializers:
         ByNode<(FileId, PatId), (), buffered!(circular_initializers), &'s Session>,
-    /// The symbols whose type is the result of a resolution cycle.
-    circular_symbols: ByNode<Sym, (), buffered!(circular_symbols), &'s Session>,
     /// The classes and interfaces whose base types were requested while they were being resolved
     /// (2310).
     circular_base_types: ByNode<Sym, (), buffered!(circular_base_types), &'s Session>,
@@ -603,7 +601,6 @@ impl<'s> Program<'s> {
             literal_prop_types: ByNode::new_in(&props, session),
             symbol_types: ByNode::new_in(&symbols, session),
             circular_initializers: ByNode::new_in(&pats, session),
-            circular_symbols: ByNode::new_in(&symbols, session),
             circular_base_types: ByNode::new_in(&symbols, session),
             circular_alias_targets: ByNode::new_in(&symbols, session),
             circular_mapped_constraints: ByKey::new_in(session),
@@ -1419,8 +1416,8 @@ pub struct Checker<'p, 's> {
     this_types_in_progress: Vec<Sym>,
     /// See `is_thisless_for_this_mapper`.
     thisless_members: FxHashMap<Sym, bool>,
-    /// `links.resolvedType` (or `links.writeType` if the flag is true) of instantiated symbols, by target and mapper.
-    /// Only contains the ones that differ from what the target's type gives. See `link_of_instantiated_symbol`.
+    /// `links.resolvedType` of instantiated symbols, by target and mapper. Only contains the ones that differ from what
+    /// the target's type gives. See `link_of_instantiated_symbol`.
     instantiated_symbol_links: FxHashMap<Sym, Vec<(MapperId, TypeId)>>,
     /// The `getResolvedMembersOrExportsOfSymbol` calls that are binding computed names, with `earlySymbols` in
     /// `links[resolutionKind]`. Each entry is the depth of `stack` at that point, the container, and true for
@@ -2252,13 +2249,6 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     fn files(&self) -> &'p Files<'s> {
         self.files
-    }
-
-    /// True if `file` contains a conditional or mapped type node. In any other file,
-    /// `getConditionalFlowTypeOfType` finds nothing among the ancestors.
-    #[inline]
-    pub(super) fn has_conditional_or_mapped_type(&self, file: FileId) -> bool {
-        self.files.has_conditional_or_mapped_type(file)
     }
 
     // ───────────────────────────── queries in progress ─────────────────────────────
@@ -4369,16 +4359,10 @@ impl<'p, 's> Checker<'p, 's> {
         self.files.global_type_of_arity(name, arity)
     }
 
-    /// `getGlobalType`. `None` means `emptyGenericType`, or `emptyObjectType` for an `arity` of 0.
-    pub(super) fn get_global_type(
-        &mut self,
-        name: Atom,
-        arity: usize,
-        report_errors: bool,
-    ) -> Option<Sym> {
+    /// `getGlobalType` with `reportErrors`. `None` means `emptyGenericType`, or `emptyObjectType` for an `arity` of 0.
+    pub(super) fn get_global_type(&mut self, name: Atom, arity: usize) -> Option<Sym> {
         let (code, symbol) = match self.files.get_global_type(name, arity) {
             Ok(symbol) => return Some(symbol),
-            Err(_) if !report_errors => return None,
             Err(error) => error,
         };
         let Some(symbol) = symbol else {
@@ -4404,7 +4388,7 @@ impl<'p, 's> Checker<'p, 's> {
             if let Err((_, symbol)) = self.files.get_global_type(name, arity) {
                 let declaration = symbol.and_then(|it| self.files.global_type_declaration(it));
                 if declaration.map(|(declared_in, _)| declared_in) == file {
-                    self.get_global_type(name, arity, true);
+                    self.get_global_type(name, arity);
                 }
             }
         }
@@ -4422,7 +4406,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `global_ref` for the case where the global type's resolver has `reportErrors`.
     pub(super) fn global_ref_checked(&mut self, name: Atom, args: &[TypeId]) -> TypeId {
-        match self.get_global_type(name, args.len(), true) {
+        match self.get_global_type(name, args.len()) {
             Some(target) => self.intern_key(TypeKey::Ref { target, args }),
             None => TypeId::EMPTY_OBJECT,
         }
@@ -4459,7 +4443,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `createPromiseType`
     pub fn promise_of(&mut self, promised_type: TypeId) -> TypeId {
         // `getGlobalPromiseTypeChecked`
-        let Some(target) = self.get_global_type(known::Promise, 1, true) else {
+        let Some(target) = self.get_global_type(known::Promise, 1) else {
             return TypeId::UNKNOWN;
         };
         let unwrapped = self.unwrap_awaited_type(promised_type);

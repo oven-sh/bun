@@ -78,7 +78,6 @@ private:
 
     WeakPtr<DOMURL> m_associatedURL;
     Vector<KeyValuePair<String, String>> m_pairs;
-    bool needsSorting { true };
 };
 
 } // namespace WebCore

@@ -29,6 +29,13 @@ impl<R> StyleRule<R> {
     pub(crate) fn is_empty(&self) -> bool {
         self.selectors.v.is_empty() || (self.declarations.is_empty() && self.rules.v.len() == 0)
     }
+
+    /// Whether the rule prints only its nested rules, with no block of its own.
+    pub(crate) fn prints_no_block(&self, targets: &css::targets::Targets) -> bool {
+        self.declarations.len() == 0
+            && self.rules.v.len() > 0
+            && targets.should_compile_same(css::Feature::Nesting)
+    }
 }
 
 // ─── behavior bodies ──────────────────────────────────────────────────────
@@ -167,7 +174,7 @@ impl<R> StyleRule<R> {
 
         let len =
             self.declarations.declarations.len() + self.declarations.important_declarations.len();
-        let has_declarations = supports_nesting || len > 0 || self.rules.v.len() == 0;
+        let has_declarations = !self.prints_no_block(&dest.targets);
 
         if has_declarations {
             //   #[cfg(feature = "sourcemap")]

@@ -17,7 +17,7 @@ pub struct MediaRule<R> {
 // the dispatch can call it without re-exporting `MinifyContext` here).
 impl<R> MediaRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        if dest.minify && self.query.always_matches() {
+        if self.query.prints_no_block(dest.minify) {
             self.rules.to_css(dest)?;
             return Ok(());
         }

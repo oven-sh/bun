@@ -14,6 +14,32 @@ pub struct NamespaceRule {
 }
 
 impl NamespaceRule {
+    /// A rule that no file holds. The bundler prints the `@namespace` rules of a chunk once.
+    pub fn new(prefix: Option<&'static [u8]>, url: &'static [u8]) -> Self {
+        Self {
+            prefix: prefix.map(|prefix| Ident {
+                v: std::ptr::from_ref::<[u8]>(prefix),
+            }),
+            url: std::ptr::from_ref::<[u8]>(url),
+            loc: Location::dummy(),
+        }
+    }
+
+    pub fn prefix(&self) -> Option<&[u8]> {
+        self.prefix.as_ref().map(Ident::v)
+    }
+
+    pub fn url(&self) -> &[u8] {
+        // SAFETY: a slice of the parser's arena or of the bundler's, which
+        // outlives the rule (see `crate::arena_str`).
+        unsafe { crate::arena_str(self.url) }
+    }
+
+    /// The line, from 1, and the column of the rule in its file.
+    pub fn line_and_column(&self) -> (u32, u32) {
+        (self.loc.line + 1, self.loc.column)
+    }
+
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);

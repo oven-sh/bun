@@ -414,11 +414,44 @@ impl<R> CssRule<R> {
             _ => false,
         }
     }
+
+    fn has_selectors(&self) -> bool {
+        match self {
+            CssRule::Style(_) | CssRule::Nesting(_) | CssRule::Custom(_) => true,
+            CssRule::Scope(rule) => {
+                rule.scope_start.is_some() || rule.scope_end.is_some() || rule.rules.has_selectors()
+            }
+            CssRule::Media(rule) => rule.rules.has_selectors(),
+            CssRule::Supports(rule) => rule.rules.has_selectors(),
+            CssRule::MozDocument(rule) => rule.rules.has_selectors(),
+            CssRule::LayerBlock(rule) => rule.rules.has_selectors(),
+            CssRule::Container(rule) => rule.rules.has_selectors(),
+            CssRule::StartingStyle(rule) => rule.rules.has_selectors(),
+            CssRule::Import(_)
+            | CssRule::Keyframes(_)
+            | CssRule::FontFace(_)
+            | CssRule::FontPaletteValues(_)
+            | CssRule::Page(_)
+            | CssRule::CounterStyle(_)
+            | CssRule::Namespace(_)
+            | CssRule::Viewport(_)
+            | CssRule::CustomMedia(_)
+            | CssRule::LayerStatement(_)
+            | CssRule::Property(_)
+            | CssRule::Unknown(_)
+            | CssRule::Ignored => false,
+        }
+    }
 }
 
 // ─── CssRuleList::{to_css,minify,deep_clone} ──────────────────────────────
 
 impl<R> CssRuleList<R> {
+    /// Whether a rule holds a selector that the parser reads. A default `@namespace` governs those.
+    pub fn has_selectors(&self) -> bool {
+        self.v.iter().any(CssRule::has_selectors)
+    }
+
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let mut first = true;
         let mut last_without_block = false;

@@ -6,8 +6,10 @@ use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, Range};
 use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
 use bun_core::{StackCheck, handle_oom};
 
+use super::prepare_css_asts_for_chunk::{TopLevelRules, top_level_of_wrapped};
 use crate::Graph::Graph;
-use crate::bun_css::{BundlerStyleSheet, ImportConditions, LayerName};
+use crate::bun_css::css_parser::{BundlerCssRule, NamespaceRule, TopLevelState};
+use crate::bun_css::{BundlerStyleSheet, ImportConditions, LayerName, Targets};
 use crate::chunk::{CssImportOrder, CssImportOrderKind, Layers};
 use crate::linker_context_mod::debug;
 use crate::{Index, LinkerContext};
@@ -472,7 +474,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     }
                     gop.value_ptr.push(i);
                 }
-                CssImportOrderKind::Layers(_) => {}
+                CssImportOrderKind::Layers(_) | CssImportOrderKind::Namespaces(_) => {}
             }
         }
     }
@@ -599,7 +601,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     ) as *const [LayerName]
                 }
                 CssImportOrderKind::Layers(layers) => layers.inner().slice_const(),
-                CssImportOrderKind::ExternalPath(_) => &[][..],
+                CssImportOrderKind::ExternalPath(_) | CssImportOrderKind::Namespaces(_) => &[][..],
             };
             // SAFETY: every match arm yields a pointer to a live slice (`css_asts`
             // arena, `entry.kind`'s `Layers`, or a static empty); the source-index
@@ -762,6 +764,9 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         CssOrderDebugStep::AfterMergingAdjacentLayerRules,
     );
 
+    hoist_namespaces(this, &mut order, css_asts);
+    debug_css_order(this, &order, CssOrderDebugStep::AfterHoistingNamespaces);
+
     Ok(order)
 }
 
@@ -788,6 +793,251 @@ impl CssImportChainTooDeep {
             ),
         );
     }
+}
+
+fn css_file<'a>(
+    entry: &CssImportOrder,
+    css_asts: &'a [crate::bundled_ast::CssCol],
+) -> Option<(u32, &'a BundlerStyleSheet)> {
+    let CssImportOrderKind::SourceIndex(index) = &entry.kind else {
+        return None;
+    };
+    let sheet = css_asts[index.get() as usize].as_deref();
+    Some((index.get(), sheet.expect("css ast present")))
+}
+
+/// The parser takes `@namespace` rules only before the body of a sheet.
+fn namespace_rules(sheet: &BundlerStyleSheet) -> impl Iterator<Item = &NamespaceRule> {
+    let mut state = TopLevelState::Start;
+    let prologue = sheet.rules.v.iter().take_while(move |rule| {
+        state = state.after(rule);
+        state != TopLevelState::Body
+    });
+    prologue.filter_map(|rule| match rule {
+        BundlerCssRule::Namespace(namespace) => Some(namespace),
+        _ => None,
+    })
+}
+
+// The rules live in the arena of their file, which outlives the chunk.
+fn arena_str(bytes: &[u8]) -> &'static [u8] {
+    bun_ast::StoreStr::new(bytes).slice()
+}
+
+/// The last default `@namespace` rule of a file is the one in force.
+fn default_namespace(sheet: &BundlerStyleSheet) -> Option<&'static [u8]> {
+    let defaults = namespace_rules(sheet).filter(|rule| rule.prefix().is_none());
+    defaults.last().map(|rule| arena_str(rule.url()))
+}
+
+/// Warns once for each rule and reason, because several chunks can hold the same files.
+fn warn_namespace_has_no_effect(
+    this: &LinkerContext,
+    source: u32,
+    rule: &NamespaceRule,
+    reason: &str,
+) {
+    let file = this.parse_graph().input_files.items_source()[source as usize]
+        .path
+        .text;
+    let (line, column) = rule.line_and_column();
+    let text = format!(
+        "{reason} in the same output file, so this rule (\"{}\") has no effect there",
+        BStr::new(rule.url()),
+    );
+    let log = this.log_disjoint();
+    let is_logged = log.msgs.iter().any(|msg| {
+        let at = msg.data.location.as_ref();
+        at.is_some_and(|at| {
+            (at.line, at.column) == (line as i32, column as i32) && *at.file == *file
+        }) && *msg.data.text == *text.as_bytes()
+    });
+    if !is_logged {
+        log.add_warning_fmt_line_col(file, line, column, format_args!("{text}"));
+    }
+}
+
+/// Prints the `@namespace` rules of a chunk in one entry when the parser rejects one where a file prints it.
+fn hoist_namespaces(
+    this: &LinkerContext,
+    order: &mut Vec<CssImportOrder>,
+    css_asts: &[crate::bundled_ast::CssCol],
+) {
+    let files = || {
+        let entries = order.slice().iter();
+        entries.filter_map(|entry| css_file(entry, css_asts))
+    };
+    if !files().any(|(_, sheet)| namespace_rules(sheet).next().is_some()) {
+        return;
+    }
+
+    let minifies_files = this.options.has_minify_flag();
+    let targets = Targets::for_bundler_target(this.options.target);
+    let mut state = TopLevelState::Start;
+    // `(prefix, url, file)` of the rule that the chunk has for each prefix. A rule in a valid place is in force.
+    let mut prefixes: StringArrayHashMap<(&'static [u8], &'static [u8], u32)> =
+        StringArrayHashMap::new();
+    let mut default_in_force: Option<(&'static [u8], u32)> = None;
+    let mut has_misplaced_rule = false;
+    for entry in order.slice() {
+        let file = css_file(entry, css_asts);
+        let (rules, minify) = match &entry.kind {
+            CssImportOrderKind::ExternalPath(_) => {
+                state = state.after_import();
+                continue;
+            }
+            CssImportOrderKind::Namespaces(_) => continue,
+            CssImportOrderKind::Layers(layers) if layers.inner().len() > 0 => (
+                TopLevelRules::LayerStatement,
+                this.options.minify_whitespace,
+            ),
+            CssImportOrderKind::Layers(_) => (TopLevelRules::None, this.options.minify_whitespace),
+            CssImportOrderKind::SourceIndex(_) => {
+                let has_rule = file.is_some_and(|(_, sheet)| !sheet.rules.v.is_empty());
+                let rules = if has_rule {
+                    TopLevelRules::Other
+                } else {
+                    TopLevelRules::None
+                };
+                (rules, minifies_files)
+            }
+        };
+        let mut state_in_file = match top_level_of_wrapped(rules, entry.conditions.slice(), minify)
+        {
+            TopLevelRules::None => continue,
+            TopLevelRules::LayerStatement => {
+                state = state.after_layer_statement();
+                continue;
+            }
+            TopLevelRules::Other => state,
+            TopLevelRules::Block => TopLevelState::Body,
+        };
+        if let Some((source, sheet)) = file {
+            let mut own_state = TopLevelState::Start;
+            for rule in &sheet.rules.v {
+                own_state = own_state.after(rule);
+                state_in_file = state_in_file.after_printed(rule, minifies_files, &targets);
+                if let BundlerCssRule::Namespace(namespace) = rule {
+                    let url = arena_str(namespace.url());
+                    match namespace.prefix() {
+                        _ if state_in_file != TopLevelState::Namespaces => {
+                            has_misplaced_rule = true;
+                        }
+                        Some(prefix) => {
+                            handle_oom(prefixes.put(prefix, (arena_str(prefix), url, source)));
+                        }
+                        None => default_in_force = Some((url, source)),
+                    }
+                }
+                // The file has no more `@namespace` rules, and the state of the chunk cannot change.
+                if own_state == TopLevelState::Body && state_in_file == TopLevelState::Body {
+                    break;
+                }
+            }
+        }
+        state = state_in_file;
+    }
+    if !has_misplaced_rule {
+        return;
+    }
+
+    // The first file with selectors, and the first such file with another default namespace.
+    let mut first: Option<(Option<&'static [u8]>, u32)> = None;
+    let mut other: Option<(Option<&'static [u8]>, u32)> = None;
+    for (source, sheet) in files().filter(|(_, sheet)| sheet.rules.has_selectors()) {
+        let default = (default_namespace(sheet), source);
+        match first {
+            None => first = Some(default),
+            Some((shared, _)) if shared != default.0 => other = other.or(Some(default)),
+            Some(_) => {}
+        }
+    }
+    let chunk_default = match (first, other) {
+        (Some((Some(url), source)), None) => Some((url, source)),
+        _ => default_in_force,
+    };
+
+    let sources = this.parse_graph().input_files.items_source();
+    let pretty = |source: u32| BStr::new(sources[source as usize].path.pretty);
+    for (source, sheet) in files() {
+        let rules: Vec<&NamespaceRule> = namespace_rules(sheet).collect();
+        for (at, rule) in rules.iter().enumerate() {
+            let later = &rules[at + 1..];
+            let reason = match rule.prefix() {
+                Some(prefix) => {
+                    let declared = (arena_str(prefix), arena_str(rule.url()), source);
+                    let kept = handle_oom(prefixes.get_or_put_value(prefix, declared)).value_ptr;
+                    let (_, url, owner) = *kept;
+                    // The last rule of a file for a prefix is the one in force.
+                    let is_last = || !later.iter().any(|later| later.prefix() == Some(prefix));
+                    if owner == source {
+                        *kept = declared;
+                        continue;
+                    }
+                    if url == rule.url() || !is_last() {
+                        continue;
+                    }
+                    format!(
+                        "\"{}\" declares the \"@namespace\" prefix \"{}\" as \"{}\"",
+                        pretty(owner),
+                        BStr::new(prefix),
+                        BStr::new(url),
+                    )
+                }
+                None if later.iter().any(|later| later.prefix().is_none()) => continue,
+                // A default namespace has an effect only on the selectors of its file.
+                None if !sheet.rules.has_selectors() => continue,
+                None => {
+                    let (default, owner) = match chunk_default {
+                        Some((kept, _)) if kept == rule.url() => continue,
+                        Some((kept, owner)) => (Some(kept), owner),
+                        None => {
+                            let has_another =
+                                |(default, _): &(Option<&[u8]>, u32)| *default != Some(rule.url());
+                            let mut disagreeing = [first, other].into_iter().flatten();
+                            let Some(another) = disagreeing.find(has_another) else {
+                                debug_assert!(false, "the files with selectors share this default");
+                                continue;
+                            };
+                            another
+                        }
+                    };
+                    match default {
+                        Some(url) => format!(
+                            "\"{}\" declares the default \"@namespace\" as \"{}\"",
+                            pretty(owner),
+                            BStr::new(url),
+                        ),
+                        None => format!("\"{}\" declares no default \"@namespace\"", pretty(owner)),
+                    }
+                }
+            };
+            warn_namespace_has_no_effect(this, source, rule, &reason);
+        }
+    }
+    let prefixes = prefixes.values().iter();
+    let mut declarations: Vec<_> = prefixes
+        .map(|&(prefix, url, _)| (Some(prefix), url))
+        .collect();
+    if let Some((url, _)) = chunk_default {
+        declarations.push((None, url));
+    }
+
+    let is_import =
+        |entry: &CssImportOrder| matches!(entry.kind, CssImportOrderKind::ExternalPath(_));
+    let after_imports = order
+        .slice()
+        .iter()
+        .rposition(is_import)
+        .map_or(0, |last| last + 1);
+    order.insert(
+        after_imports,
+        CssImportOrder {
+            kind: CssImportOrderKind::Namespaces(declarations),
+            conditions: Vec::new(),
+            condition_import_records: Vec::new(),
+        },
+    );
 }
 
 /// The returned list is later bitwise-copied into `CssImportOrder` entries via
@@ -948,6 +1198,7 @@ enum CssOrderDebugStep {
     WhileOptimizingRedundantLayerRules,
     AfterOptimizingRedundantLayerRules,
     AfterMergingAdjacentLayerRules,
+    AfterHoistingNamespaces,
 }
 
 impl CssOrderDebugStep {
@@ -960,6 +1211,7 @@ impl CssOrderDebugStep {
             Self::WhileOptimizingRedundantLayerRules => "WHILE_OPTIMIZING_REDUNDANT_LAYER_RULES",
             Self::AfterOptimizingRedundantLayerRules => "AFTER_OPTIMIZING_REDUNDANT_LAYER_RULES",
             Self::AfterMergingAdjacentLayerRules => "AFTER_MERGING_ADJACENT_LAYER_RULES",
+            Self::AfterHoistingNamespaces => "AFTER_HOISTING_NAMESPACES",
         }
     }
 }

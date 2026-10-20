@@ -1468,6 +1468,32 @@ describe("webstreams adapters (Node v26 sync)", () => {
       expect(exitCode).toBe(0);
     });
 
+    it("Writable.toWeb: closing the writer after the node stream was ended directly", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            import { Writable } from "node:stream";
+            const writable = new Writable({
+              write(chunk, encoding, callback) { callback(); },
+            });
+            writable.on("close", () => console.log("close event"));
+            const writer = Writable.toWeb(writable).getWriter();
+            await writer.write(new Uint8Array([1]));
+            writable.end();
+            await writer.close();
+            console.log("close resolved");
+          `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: stdout, err: stderr }).toEqual({ out: "close resolved\nclose event\n", err: "" });
+      expect(exitCode).toBe(0);
+    });
+
     it("Duplex.toWeb: destroying the duplex with an error after the writer closed", async () => {
       await using proc = Bun.spawn({
         cmd: [

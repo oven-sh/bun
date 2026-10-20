@@ -276,8 +276,8 @@ pub fn copy_file_replacing(in_: &bun_core::WStr, out: &bun_core::WStr) -> CopyFi
         return Err(crate::Error::from_win32(err, Tag::copyfile));
     }
     let mut buf = bun_paths::path_buffer_pool::get();
-    let out_utf8 = bun_core::convert_utf16_to_utf8_in_buffer(&mut buf[..], out.as_slice());
-    crate::Dir::cwd().delete_tree(out_utf8)?;
+    let out_utf8 = bun_paths::string_paths::from_w_path(&mut buf[..], out.as_slice());
+    crate::Dir::cwd().delete_tree(out_utf8.as_bytes())?;
     if copy() {
         return Ok(());
     }

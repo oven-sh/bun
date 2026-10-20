@@ -43,27 +43,29 @@ namespace Bun::Bindgen {
 // Reports each field that holds a cell to a heap snapshot, as a property of that name.
 void analyzeInternalFields(JSC::JSCell*, JSC::HeapAnalyzer&, std::span<const JSC::WriteBarrier<JSC::Unknown>>, std::span<const WTF::ASCIILiteral> names);
 
-// A base class, so that the method table of a class that is not refCounted keeps JSObject::estimatedSize.
+// A base class, so that a class that is not refCounted has no estimatedSize of its own.
 template<typename Traits>
 class JSRefCountedWrapperBase : public JSC::JSDestructibleObject {
 public:
+    using Base = JSC::JSDestructibleObject;
+
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
     {
-        return JSC::JSDestructibleObject::estimatedSize(cell, vm) + Traits::wrappedSize();
+        return Base::estimatedSize(cell, vm) + Traits::wrappedSize();
     }
 
 protected:
-    using JSC::JSDestructibleObject::JSDestructibleObject;
+    using Base::Base;
 };
 
 template<typename Traits>
-using JSFieldlessWrapperBase = std::conditional_t<Traits::refCounted, JSRefCountedWrapperBase<Traits>, JSC::JSDestructibleObject>;
+using JSWrapperBaseWithoutInternalFields = std::conditional_t<Traits::refCounted, JSRefCountedWrapperBase<Traits>, JSC::JSDestructibleObject>;
 
-// A base class, so that the method table of a class without internal fields keeps JSObject::visitChildren and analyzeHeap.
+// A base class, so that marking an object without internal fields calls JSObject::visitChildren and nothing before it.
 template<typename Traits>
-class JSInternalFieldsWrapperBase : public JSFieldlessWrapperBase<Traits> {
+class JSInternalFieldsWrapperBase : public JSWrapperBaseWithoutInternalFields<Traits> {
 public:
-    using Base = JSFieldlessWrapperBase<Traits>;
+    using Base = JSWrapperBaseWithoutInternalFields<Traits>;
 
     DECLARE_VISIT_CHILDREN;
 
@@ -78,7 +80,7 @@ protected:
 };
 
 template<typename Traits>
-using JSWrapperBase = std::conditional_t<Traits::internalFieldNames.empty(), JSFieldlessWrapperBase<Traits>, JSInternalFieldsWrapperBase<Traits>>;
+using JSWrapperBase = std::conditional_t<Traits::internalFieldNames.empty(), JSWrapperBaseWithoutInternalFields<Traits>, JSInternalFieldsWrapperBase<Traits>>;
 
 // JSDestructibleObject | WriteBarrier internalFields[numberOfInternalFields] | the Rust payload
 template<typename Traits>
@@ -117,7 +119,7 @@ public:
     static JSWrapper* create(JSC::VM& vm, JSC::Structure* structure)
     {
         JSWrapper* object;
-        // Otherwise LLVM leaves the allocator's fast path out of line for some classes.
+        // Otherwise LLVM calls allocateCell out of line for Timeout, Immediate and DNSResolver.
         [[clang::always_inline]] object = new (NotNull, JSC::allocateCell<JSWrapper>(vm, allocationSize())) JSWrapper(vm, structure);
         object->finishCreation(vm);
         return object;
@@ -187,6 +189,7 @@ void JSInternalFieldsWrapperBase<Traits>::visitChildrenImpl(JSC::JSCell* cell, V
     ASSERT_GC_OBJECT_INHERITS(thisObject, JSWrapper<Traits>::info());
     Base::visitChildren(thisObject, visitor);
     // Hidden: `analyzeHeap` reports them by name.
+    // One append for each: LLVM does not unroll the loop of appendValuesHidden.
     [&]<size_t... index>(std::index_sequence<index...>) {
         (visitor.appendHidden(thisObject->internalField(index)), ...);
     }(std::make_index_sequence<JSWrapper<Traits>::numberOfInternalFields>());

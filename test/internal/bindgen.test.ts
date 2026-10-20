@@ -280,11 +280,11 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     "x: a refCounted class has no mutates",
   );
   expect(() => b.class({ rustPath: "T", refCounted: true, proto: { x: { args: { bytes: stringOrBuffer } } } })).toThrow(
-    "bytes: a function given the struct of a b.classRef or a refCounted class can run JavaScript",
+    "bytes: a member of a refCounted class, or a function that takes one or a b.classRef, can run JavaScript",
   );
   for (const object of [b.class({ rustPath: "T", refCounted: true }), b.classRef("SocketAddress")])
     expect(() => b.fn({ args: { object: object.nullable, bytes: stringOrBuffer } })).toThrow(
-      "bytes: a function given the struct of a b.classRef or a refCounted class can run JavaScript",
+      "bytes: a member of a refCounted class, or a function that takes one or a b.classRef, can run JavaScript",
     );
   expect(() => b.class({ rustPath: "T", finalize: true })).toThrow("finalize is only for a refCounted class");
   expect(() => b.class({ rustPath: "T", refCounted: true, proto: { x: { capability: "js" } } })).toThrow(
@@ -2144,6 +2144,7 @@ describe("classes", () => {
     });
 
     it("the size of the object includes the struct", () => {
+      // The cell, then size_of::<TestRefCounted>().
       expect(estimateShallowMemoryUsageOf(new TestRefCounted(1))).toBe(48 + 12);
     });
   });

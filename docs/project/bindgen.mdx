@@ -424,9 +424,9 @@ here or in S3, throws.
 | `"pinned"`   | `"utf8"` | `PinnedBytes`         |
 
 **Borrowed** bytes are where they are. A string is converted into the frame of the host function,
-unless it is stored as ASCII already. JavaScript can detach, resize or free a buffer, so bytes that
-can come from one are for a function that cannot run it, and not for a member of a
-[`refCounted`](#refcounted) class, or a function that takes one or a `b.classRef`.
+unless it is stored as ASCII already. JavaScript can detach, resize or free a buffer, so a function
+that can run JavaScript cannot borrow bytes that can come from one. Neither can a member of a
+[`refCounted`](#refcounted) class, or a function that takes a `refCounted` class or a `b.classRef`.
 
 **A handle** is for a function that can. `JsBytes::get` borrows the bytes from the `JsHeap`, and the
 compiler refuses whatever takes the `&mut JsScope` until the slice is gone:
@@ -544,7 +544,8 @@ A class that JavaScript names but cannot make, like `Crypto`, declares
 `construct: { capability: "heap", throws: true }`, and its `constructor` returns
 `Err(heap.illegal_constructor())`.
 
-A property of `proto` is one of:
+A property of `proto` is one of these. In a [`refCounted`](#refcounted) class, `passGlobal` takes the place of
+`capability`.
 
 | Property                                    | What it is                                                               |
 | ------------------------------------------- | ------------------------------------------------------------------------ |
@@ -675,8 +676,8 @@ A member's parameters, in order:
 
 - The getter of `x` is `get_x`, its setter `set_x`.
 - There is no `capability`: the struct can hold the global object, so nothing checks what a member runs.
-- With `setter: true`, `{ internalField: "cron" }` also stores any value assigned to it. For an accessor that does
-  more, use a `getter` with `passThis: true`.
+- With `setter: true`, `{ internalField: "cron" }` stores any value assigned to it. For an accessor that does more,
+  use a `getter` with `passThis: true`.
 - Two keys can have the same `rustName`, as `stop` and `@@dispose` do here.
 - Mutable state is in `Cell` and `JsCell`. `mutates: true` is an error.
 - The pointer in the object never changes and is never null. A class with a closed or detached state tracks it in a

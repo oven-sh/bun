@@ -1743,9 +1743,17 @@ export interface SignatureOptions {
   expected?: Record<string, readonly string[] | string>;
 }
 
-function assertPassGlobal(options: { capability?: Capability; passGlobal?: boolean }, refCounted: boolean, at = "") {
+function assertCapabilityKey(
+  options: { capability?: Capability; passGlobal?: boolean },
+  refCounted: boolean,
+  name?: string,
+) {
+  const at = name === undefined ? "" : `${name}: `;
   assert(!refCounted || options.capability === undefined, `${at}a refCounted class has passGlobal, not capability`);
-  assert(refCounted || options.passGlobal === undefined, `${at}passGlobal is only for a refCounted class`);
+  assert(
+    refCounted || options.passGlobal === undefined,
+    `${at}passGlobal is only for a refCounted class: otherwise capability: "js" has cx.global()`,
+  );
 }
 
 export class Signature {
@@ -1766,7 +1774,7 @@ export class Signature {
     }
     this.returns = options.returns ?? new UnitType("undefined");
     this.capability = options.capability ?? "none";
-    this.passGlobal = !!options.passGlobal;
+    this.passGlobal = options.passGlobal ?? false;
     this.throws = options.throws ?? false;
     this.rustPath = options.rustPath;
     assertDistinct(
@@ -1778,7 +1786,7 @@ export class Signature {
       `length: ${this.length} is not a count`,
     );
     // The struct of a `.classes.ts` or refCounted class can hold the global object, so `capability: "none"` does not prove the body runs no JavaScript.
-    const capabilityUnchecked = refCounted || this.args.some(arg => arg.type.borrowsCell);
+    const takesClassStruct = refCounted || this.args.some(arg => arg.type.borrowsCell);
     for (const { name, type } of this.args) {
       refuseResultType(name, type);
       assert(
@@ -1786,8 +1794,8 @@ export class Signature {
         `${name}: JavaScript can detach a buffer; held: "handle" borrows the bytes each time they are read`,
       );
       assert(
-        !type.borrowsBuffer || !capabilityUnchecked,
-        `${name}: a function given the struct of a b.classRef or a refCounted class can run JavaScript, which can detach a buffer`,
+        !type.borrowsBuffer || !takesClassStruct,
+        `${name}: a member of a refCounted class, or a function that takes one or a b.classRef, can run JavaScript, which can detach a buffer`,
       );
     }
     const pinned = this.args.filter(arg => arg.type.rustFromExternThrows);
@@ -1801,7 +1809,7 @@ export class Signature {
       !this.returns.holdsJSValue || this.capability !== "none" || refCounted,
       'returning a JS value takes capability: "heap" or "js"',
     );
-    assertPassGlobal(options, refCounted);
+    assertCapabilityKey(options, refCounted);
   }
   /** The arguments up to the last that is not optional: what a caller writes at least. */
   get requiredCount(): number {
@@ -1884,7 +1892,7 @@ export class FunctionDefinition {
 export interface FunctionField extends Omit<SignatureOptions, "rustPath"> {
   /** `&mut self` instead of `&self`. Not with `capability: "js"`, which gets the wrapper. */
   mutates?: boolean;
-  /** Also pass the wrapper, for its `internalFields`. `capability: "js"` always gets it. In a `refCounted` class it is `this_value: JSValue`, which `passGlobal` does not add. */
+  /** Also pass the wrapper, for its `internalFields`. `capability: "js"` always gets it. In a `refCounted` class it is `this_value: JSValue`. */
   passThis?: boolean;
   /** When `this` is not an instance: `"throw"` (the default) throws `ERR_INVALID_THIS`, `"undefined"` returns `undefined`. */
   invalidThis?: "throw" | "undefined";
@@ -1933,7 +1941,7 @@ export type StaticField =
 export interface ClassOptions {
   /** Path of the Rust struct. It implements the generated `${name}Class` trait, unless the class is `refCounted`. */
   rustPath: string;
-  /** The struct is intrusively refcounted and the JS object holds one ref (a `RefPtr`), so it can outlive the object. The members are the struct's own methods, and each takes `&self`. */
+  /** The struct is intrusively refcounted and the JS object holds one ref, so it can outlive the object. The members are the struct's own methods, and each takes `&self`. */
   refCounted?: boolean;
   /** With `refCounted`: call `fn finalize(&self)` when the object is collected, before its ref is dropped. */
   finalize?: boolean;
@@ -2016,7 +2024,7 @@ export class Getter {
     this.receiver = memberReceiver(isStatic, refCounted, this.capability, false);
     this.setterReceiver = memberReceiver(isStatic, refCounted, this.capability, true);
     this.passThis = !!options.passThis;
-    this.passGlobal = !!options.passGlobal;
+    this.passGlobal = options.passGlobal ?? false;
     assert(!this.passThis || (refCounted && !isStatic), `${name}: only an accessor of a refCounted class has passThis`);
     this.throws = options.throws ?? false;
     this.hasSetter = options.setter ?? false;
@@ -2027,7 +2035,7 @@ export class Getter {
       !this.type.holdsJSValue || this.capability !== "none" || refCounted,
       `${name}: returning a JS value takes capability: "heap" or "js"`,
     );
-    assertPassGlobal(options, refCounted, `${name}: `);
+    assertCapabilityKey(options, refCounted, name);
     this.internalField = options.cache === true ? name : options.cache;
     this.declaresInternalField = options.cache === true;
   }

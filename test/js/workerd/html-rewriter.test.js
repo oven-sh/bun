@@ -2933,7 +2933,7 @@ describe("doctype publicId/systemId distinguish empty from absent", () => {
   });
 });
 
-it("element.attributes[Symbol.iterator] has the attributes of a built-in symbol method", () => {
+it("element.attributes[Symbol.iterator] is named [Symbol.iterator], and is writable, configurable and not enumerable", () => {
   let descriptor;
   new HTMLRewriter()
     .on("p", {

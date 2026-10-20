@@ -5,7 +5,6 @@ import {
   AnyType,
   asciiLiteral,
   Builtin,
-  type Capability,
   type ClassMember,
   ClassType,
   cppEmplace,
@@ -583,6 +582,12 @@ function cppDeclareConverted(
   ];
 }
 
+/** EnsureStillAliveScope is for a pointer a conversion takes out of the value. `b.any` is passed on as it is. */
+const cppHeldValue = (type: Type, variable: string) =>
+  type instanceof AnyType
+    ? { holder: "JSC::JSValue", value: variable }
+    : { holder: "JSC::EnsureStillAliveScope", value: `${variable}.value()` };
+
 /** Converts the arguments, then returns what `symbol(globalObject, ...leading, ...converted)` returns, or ends with the lines `finish` makes from that call. */
 function cppCallBody(
   signature: Signature,
@@ -594,10 +599,8 @@ function cppCallBody(
   // Converting a later argument can run JavaScript that detaches or resizes a buffer.
   const readLast: string[] = [];
   signature.args.forEach(({ name, type, expected }, i) => {
-    // b.any is passed on as it is and the call frame holds it. EnsureStillAliveScope is for a pointer a conversion takes out of the value.
-    const isAny = type instanceof AnyType;
-    const value = isAny ? `argument${i}` : `argument${i}.value()`;
-    lines.push(`${isAny ? "JSC::JSValue" : "JSC::EnsureStillAliveScope"} argument${i} = callFrame->argument(${i});`);
+    const { holder, value } = cppHeldValue(type, `argument${i}`);
+    lines.push(`${holder} argument${i} = callFrame->argument(${i});`);
     let ctx = `ctx${i}`;
     if (typeof expected === "string") {
       lines.push(cppStaticContext(ctx, `ArgumentMessageContext { ${asciiLiteral(name)}, ${asciiLiteral(expected)} }`));
@@ -685,7 +688,7 @@ struct ${name}Traits {
     static size_t wrappedSize() { return ${symbolName(type, "wrappedSize")}; }`
         : `static size_t payloadSize() { return ${symbolName(type, "payloadSize")}; }`
     }
-    static void finalize(void* payload) { ${classSymbolName(type, "finalize")}(payload); }
+    static constexpr auto finalize = ${classSymbolName(type, "finalize")};
 };
 using JS${name} = JSWrapper<${name}Traits>;
 void setup${name}ClassStructure(JSC::LazyClassStructure::Initializer&);
@@ -796,8 +799,7 @@ ${
 }
 `;
   if (getter.hasSetter) {
-    // b.any is passed on as it is, so Rust's own frame holds it.
-    const isAny = getter.type instanceof AnyType;
+    const { holder, value } = cppHeldValue(getter.type, "assigned");
     text += `
 extern "C" bool ${setSymbol}(JSC::JSGlobalObject*, JSC::JSCell*, ${externType(getter.type)});
 static JSC_DECLARE_CUSTOM_SETTER(${set});
@@ -810,9 +812,9 @@ ${cppPrologue}
         return false;
     }
     JSC::EnsureStillAliveScope ensureThisStillAlive { thisObject };
-    ${isAny ? "JSC::JSValue" : "JSC::EnsureStillAliveScope"} assigned { JSC::JSValue::decode(encodedValue) };
+    ${holder} assigned { JSC::JSValue::decode(encodedValue) };
     ${cppStaticContext("ctx", `LiteralConversionContext { ${asciiLiteral(`${type.name}.${getter.name}`)} }`)}
-    ${cppDeclareConverted(getter.type, "value", isAny ? "assigned" : "assigned.value()", "ctx", getter.name, "RETURN_IF_EXCEPTION(scope, false);").join("\n    ")}
+    ${cppDeclareConverted(getter.type, "value", value, "ctx", getter.name, "RETURN_IF_EXCEPTION(scope, false);").join("\n    ")}
     RELEASE_AND_RETURN(scope, ${setSymbol}(globalObject, thisObject, ${toExtern("value")}));
 }
 `;
@@ -885,7 +887,7 @@ ${
   type.refCounted
     ? cppCallBody(construct, classSymbolName(type, "construct"), [], call => [
         `void* wrapped = ${call};`,
-        "// RETURN_IF_EXCEPTION also handles traps: a termination thrown there would return without an owner for `wrapped`.",
+        "// Not RETURN_IF_EXCEPTION: it handles traps, and a termination thrown there would leak `wrapped`.",
         "if (!wrapped) [[unlikely]] {",
         "    EXCEPTION_ASSERT(scope.exception());",
         "    return {};",
@@ -936,22 +938,17 @@ ${
     ? `extern "C" JSC::EncodedJSValue ${symbolName(type, "create")}(Zig::GlobalObject* globalObject, void* wrapped)
 {
     return JSC::JSValue::encode(${type.cpp}::create(JSC::getVM(globalObject), globalObject->m_bindgenAdditions.m_classes[${type.classIndex}].get(globalObject), wrapped));
+}
+
+extern "C" void* ${symbolName(type, "fromJS")}(JSC::EncodedJSValue value)
+{
+    auto* object = dynamicDowncast<${type.cpp}>(JSC::JSValue::decode(value));
+    return object ? object->wrapped() : nullptr;
 }`
     : `extern "C" JSC::JSCell* ${symbolName(type, "create")}(JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
 {
     return ${type.cpp}::create(JSC::getVM(globalObject), structure ? structure : Bun::Bindgen::structureForClass(globalObject, ${type.classIndex}));
 }`
-}
-${
-  type.refCounted
-    ? `
-extern "C" void* ${symbolName(type, "fromJS")}(JSC::EncodedJSValue value)
-{
-    auto* object = dynamicDowncast<${type.cpp}>(JSC::JSValue::decode(value));
-    return object ? object->wrapped() : nullptr;
-}
-`
-    : ""
 }
 ${
   construct
@@ -1401,7 +1398,7 @@ function rustForClass(type: ClassType, scope: RustScope): string {
   const takeThis = refCounted
     ? ""
     : `let this = bindgen::JsWrapper::<${rustPath}>::from_extern(core::ptr::NonNull::new_unchecked(this), &cx.heap);\n`;
-  const capability = (member: { capability: Capability; passGlobal: boolean }) =>
+  const capabilityArgumentOf = (member: Pick<Signature, "capability" | "passGlobal">) =>
     member.passGlobal ? ["cx.global()"] : capabilityArgument[member.capability];
   // A member of a refCounted class takes b.any as a `JSValue`.
   const takeArguments = (args: readonly { name: string; type: Type }[]) =>
@@ -1425,7 +1422,7 @@ function rustForClass(type: ClassType, scope: RustScope): string {
         result("Self", signature.throws),
       ),
     );
-    const call = `${callee}::constructor(${[...capability(signature), ...rustArguments(signature)].join(", ")})`;
+    const call = `${callee}::constructor(${[...capabilityArgumentOf(signature), ...rustArguments(signature)].join(", ")})`;
     thunks += rustThunk(
       classSymbolName(type, "construct"),
       [...(refCounted ? [] : ["structure: *mut core::ffi::c_void"]), ...rustExternParameters(signature, scope)],
@@ -1456,7 +1453,7 @@ ${
     const call = `${callee}::${method.rustName}(${[
       ...receiverArgument[method.receiver],
       ...(method.passThis ? [wrapperArgument] : []),
-      ...capability(method),
+      ...capabilityArgumentOf(method),
       ...rustArguments(method),
     ].join(", ")})`;
     thunks += rustThunk(
@@ -1482,7 +1479,7 @@ bindgen::host_fn_return(cx, result, |heap, value| ${method.returns.rustToJS("val
       getterSymbolName(type, getter),
       getter.isStatic ? [] : ["this: *mut core::ffi::c_void"],
       "JSValue",
-      `${getter.isStatic ? "" : takeThis}let result = ${infallible(`${callee}::${getter.rustName}(${[...receiverArgument[receiver], ...passThisArgument, ...capability(getter)].join(", ")})`, getter.throws)};
+      `${getter.isStatic ? "" : takeThis}let result = ${infallible(`${callee}::${getter.rustName}(${[...receiverArgument[receiver], ...passThisArgument, ...capabilityArgumentOf(getter)].join(", ")})`, getter.throws)};
 bindgen::host_fn_return(cx, result, |heap, value| ${getter.type.rustToJS("value", scope)})`,
     );
     if (!getter.hasSetter) continue;
@@ -1501,7 +1498,7 @@ bindgen::host_fn_return(cx, result, |heap, value| ${getter.type.rustToJS("value"
       setterSymbolName(type, getter),
       ["this: *mut core::ffi::c_void", `value: ${getter.type.rustExternType(scope)}`],
       "bool",
-      `${takeThis}${takeArguments([{ name: "value", type: getter.type }])}let result = ${infallible(`${callee}::${setterName}(${[...receiverArgument[setterReceiver], ...passThisArgument, ...capability(getter), "value"].join(", ")})`, getter.throws, unit)};
+      `${takeThis}${takeArguments([{ name: "value", type: getter.type }])}let result = ${infallible(`${callee}::${setterName}(${[...receiverArgument[setterReceiver], ...passThisArgument, ...capabilityArgumentOf(getter), "value"].join(", ")})`, getter.throws, unit)};
 !bindgen::host_fn_return(cx, result, bindgen::to_js::undefined).is_empty()`,
     );
   }
@@ -1581,17 +1578,17 @@ function rustForRefCounted(type: ClassType): string {
     .map((field, index) => {
       const id = snakeCase(field);
       const offset = offsetOfInternalFields + 8 * index;
-      return `    /// \`None\` when it is empty.
+      return `    /// \`None\` if the field is empty.
     #[inline]
     pub fn ${id}_get_cached(this_value: JSValue) -> Option<JSValue> {
         debug_assert!(from_js(this_value).is_some());
-        // SAFETY: internal field ${index} of ${type.internalFields.length}.
+        // SAFETY: \`this_value\` is an instance, which has ${type.internalFields.length} internal fields.
         unsafe { bindgen::internal_field_at(this_value, ${offset}) }
     }
     #[inline]
     pub fn ${id}_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
         debug_assert!(from_js(this_value).is_some());
-        // SAFETY: internal field ${index} of ${type.internalFields.length}.
+        // SAFETY: \`this_value\` is an instance, which has ${type.internalFields.length} internal fields.
         unsafe { bindgen::set_internal_field_at(this_value, global, ${offset}, value) }
     }
     /// Reads and clears it.
@@ -1606,15 +1603,14 @@ function rustForRefCounted(type: ClassType): string {
   return `
 unsafe extern "C" {
     fn ${symbolName(type, "create")}(global: *mut JSGlobalObject, wrapped: *mut core::ffi::c_void) -> JSValue;
+    safe fn ${fromJS}(value: JSValue) -> *mut core::ffi::c_void;
 }
 #[unsafe(no_mangle)]
 pub static ${symbolName(type, "wrappedSize")}: usize = size_of::<${rustPath}>();
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(wrapped: *mut ${rustPath}) {
-    // SAFETY: the sweeper calls this once, with the ref the object owns.
-    unsafe {${type.finalize ? `\n        ${rustPath}::finalize(&*wrapped);` : ""}
-        drop(bun_ptr::RefPtr::from_raw(wrapped))
-    }
+    // SAFETY: the sweeper calls this once, with the pointer the object holds a ref on.
+    unsafe { bun_jsc::host_fn::host_fn_finalize_ref_counted(wrapped, ${type.finalize ? `${rustPath}::finalize` : "|_| {}"}) }
 }
 impl ${rustPath} {
     /// A new JS object that owns the caller's ref on \`ptr\`.
@@ -1630,9 +1626,6 @@ impl ${rustPath} {
     pub fn to_js_nonnull(ptr: core::ptr::NonNull<Self>, global: &JSGlobalObject) -> JSValue {
         js_${name}::to_js(ptr.as_ptr(), global)
     }
-}
-unsafe extern "C" {
-    safe fn ${fromJS}(value: JSValue) -> *mut core::ffi::c_void;
 }
 impl bun_jsc::JsClass for ${rustPath} {
     #[inline]

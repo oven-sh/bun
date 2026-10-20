@@ -122,13 +122,8 @@ impl<'p, 's> Checker<'p, 's> {
             return Some((*alias, SmallVec::from_slice(type_arguments)));
         }
 
-        let alias = self.alias_symbol_of_type(ty)?;
-        if let Some(cached) = self.links.alias_type_arguments(ty) {
-            return Some((alias, cached));
-        }
-        let (_, type_arguments) = self.derive_alias_of_node_type(ty)?;
-        (self.links).cache_alias_type_arguments(ty, &type_arguments);
-        Some((alias, type_arguments))
+        self.alias_symbol_of_type(ty)?;
+        self.derive_alias_of_node_type(ty)
     }
 
     /// Computes `alias_of_type` for a type that doesn't store its alias.

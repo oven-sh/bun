@@ -116,19 +116,11 @@ impl ByType {
     }
 }
 
-struct CachedAlias {
-    symbol: Sym,
-    /// Offset of its type arguments in `Aliases::type_arguments`, or `u32::MAX` if they haven't been requested.
-    start: u32,
-    len: u32,
-}
-
 #[derive(Default)]
 struct Aliases {
     /// 0 if the alias hasn't been requested, 1 if the type has no alias, otherwise 2 + the index in `cached`.
     of: ByType,
-    cached: Vec<CachedAlias>,
-    type_arguments: Vec<TypeId>,
+    cached: Vec<Sym>,
 }
 
 /// See the module docs.
@@ -169,11 +161,7 @@ impl TypeLinks {
             has_found_circular_mapped_constraint,
             aliases,
         } = self;
-        let Aliases {
-            of,
-            cached,
-            type_arguments,
-        } = aliases.get_mut();
+        let Aliases { of, cached } = aliases.get_mut();
         rows.clear();
         parts.clear();
         fixed_mapper_rows.clear();
@@ -182,7 +170,6 @@ impl TypeLinks {
         *has_found_circular_mapped_constraint = false;
         of.clear();
         cached.clear();
-        type_arguments.clear();
     }
 
     /// Returns 0 if the part isn't cached.
@@ -264,7 +251,7 @@ impl TypeLinks {
         match aliases.of.get(ty) {
             0 => None,
             1 => Some(None),
-            at => Some(Some(aliases.cached[at as usize - 2].symbol)),
+            at => Some(Some(aliases.cached[at as usize - 2])),
         }
     }
 
@@ -273,36 +260,8 @@ impl TypeLinks {
         let Some(symbol) = alias else {
             return aliases.of.set(ty, 1);
         };
-        aliases.cached.push(CachedAlias {
-            symbol,
-            start: u32::MAX,
-            len: 0,
-        });
+        aliases.cached.push(symbol);
         aliases.of.set(ty, aliases.cached.len() as u32 + 1);
-    }
-
-    /// Returns `t.alias.typeArguments` if `cache_alias_type_arguments` has cached them.
-    #[inline]
-    pub(super) fn alias_type_arguments(&self, ty: TypeId) -> Option<AliasArguments> {
-        let aliases = self.aliases.borrow();
-        let at = (aliases.of.get(ty) as usize).checked_sub(2)?;
-        let cached = aliases.cached.get(at)?;
-        let (start, len) = (cached.start as usize, cached.len as usize);
-        let type_arguments = aliases.type_arguments.get(start..start + len)?;
-        Some(SmallVec::from_slice(type_arguments))
-    }
-
-    /// A no-op unless `cache_alias_symbol` has already cached a symbol for `ty`.
-    pub(super) fn cache_alias_type_arguments(&self, ty: TypeId, type_arguments: &[TypeId]) {
-        let aliases = &mut *self.aliases.borrow_mut();
-        let Some(at) = (aliases.of.get(ty) as usize).checked_sub(2) else {
-            return;
-        };
-        if let Some(cached) = aliases.cached.get_mut(at) {
-            cached.start = aliases.type_arguments.len() as u32;
-            cached.len = type_arguments.len() as u32;
-            aliases.type_arguments.extend_from_slice(type_arguments);
-        }
     }
 }
 
@@ -470,7 +429,6 @@ mod tests {
             links.set_cell(ty, Kind::Mapped, 0, 40, Stored::new());
             links.cache_with_fixed_mapper(FixedMapper::Permissive, ty, 50, Stored::new());
             links.cache_alias_symbol(ty, Some(symbol));
-            links.cache_alias_type_arguments(ty, &types);
         }
         links.forget_restrictive_instantiations();
         links.note_uncached_derivation();
@@ -480,7 +438,6 @@ mod tests {
             assert_eq!(links.cell(ty, Kind::Mapped, 0), 0);
             assert_eq!(links.with_fixed_mapper(FixedMapper::Permissive, ty), 0);
             assert_eq!(links.alias_symbol(ty), None);
-            assert_eq!(links.alias_type_arguments(ty), None);
         }
         assert_eq!(
             (links.restrictive_resets, links.uncached_derivations),
@@ -547,19 +504,8 @@ mod tests {
         for (at, ty) in [none, one, five, not_requested].into_iter().enumerate() {
             links.cache_alias_symbol(ty, Some(symbol(at as u32)));
         }
-        links.cache_alias_type_arguments(five, &types);
-        links.cache_alias_type_arguments(none, &[]);
-        links.cache_alias_type_arguments(one, &[five]);
-        links.cache_alias_type_arguments(without, &[five]);
         assert_eq!(links.alias_symbol(without), Some(None));
         assert_eq!(links.alias_symbol(five), Some(Some(symbol(2))));
         assert_eq!(links.alias_symbol(TypeId(3)), None);
-        let type_arguments = |ty| links.alias_type_arguments(ty).map(|it| it.to_vec());
-        assert_eq!(type_arguments(without), None);
-        assert_eq!(type_arguments(none), Some(vec![]));
-        assert_eq!(type_arguments(one), Some(vec![five]));
-        assert_eq!(type_arguments(five), Some(types.to_vec()));
-        assert_eq!(type_arguments(not_requested), None);
-        assert_eq!(type_arguments(TypeId(3)), None);
     }
 }

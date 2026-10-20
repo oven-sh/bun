@@ -3,7 +3,7 @@
 // depend on how fast a debug build starts its workers.
 
 import { expect, test } from "bun:test";
-import { closeSync, constants, openSync, readFileSync } from "fs";
+import { closeSync, constants, openSync, readFileSync, readSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "path";
@@ -123,8 +123,37 @@ async function bothSpawned(log: string, proc: Bun.Subprocess) {
 // What the tests spawned has logged the coordinator's SIGTERM. That takes milliseconds: the
 // bound only ends a run in which the SIGTERM was never sent.
 async function bothTerminated(log: string) {
-  for (let i = 0; i < 200 && linesOf(log, "terminated").length < 2; i++) await Bun.sleep(25);
+  for (let i = 0; i < 80 && linesOf(log, "terminated").length < 2; i++) await Bun.sleep(25);
   return linesOf(log, "terminated").length === 2;
+}
+
+// Everything the coordinator writes to the FIFO behind `fd`, up to its exit. `fd` is
+// O_NONBLOCK: a read with nothing to take fails with EAGAIN, and this looks again.
+async function readUntilExit(fd: number, proc: Bun.Subprocess) {
+  const chunks: Buffer[] = [];
+  const chunk = Buffer.alloc(64 * 1024);
+  // Only ends a run in which the coordinator never exits.
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    // Checked before the reads: what a coordinator that has exited wrote is all in the FIFO.
+    const exited = proc.exitCode !== null || proc.signalCode !== null;
+    for (;;) {
+      let length = 0;
+      try {
+        length = readSync(fd, chunk, 0, chunk.length, null);
+      } catch (error: any) {
+        if (error.code !== "EAGAIN") throw error;
+      }
+      if (length === 0) break;
+      chunks.push(Buffer.from(chunk.subarray(0, length)));
+    }
+    const text = Buffer.concat(chunks).toString();
+    if (exited) return text;
+    if (Date.now() > deadline) {
+      throw new Error(`the coordinator did not exit. It wrote ${text.length} bytes, at last: ${text.slice(-300)}`);
+    }
+    await Bun.sleep(1);
+  }
 }
 
 // A run that fails leaves the workers' process groups behind.
@@ -145,53 +174,48 @@ const coordinatorEnv = (log: string) => ({ ...bunEnv, LOG: log, BUN_FEATURE_FLAG
 // started does not fit in it.
 //
 // Not concurrent: a serial test runs alone, after the cases above, which measure a time.
-test.skipIf(isWindows)(
-  "--parallel: the worker groups are signalled before a write that blocks",
-  async () => {
-    // Two files run. The names of the other 400 are about 100 KB of "had not started" lines.
-    const files: Record<string, string> = {};
-    const longName = Buffer.alloc(240, "x").toString();
-    for (let i = 0; i < 402; i++) files[`${longName}-${i}.test.ts`] = slowTestThatSpawns;
-    using dir = tempDir("parallel-signal-stall", files);
-    const log = join(String(dir), "log.txt");
-    const fifo = join(String(dir), "stderr.fifo");
-    mkfifo(fifo);
-    // "r+" does not wait for a reader. With that writer there, "r" does not wait either.
-    const writeEnd = openSync(fifo, "r+");
-    const readEnd = openSync(fifo, "r");
+test.skipIf(isWindows)("--parallel: the worker groups are signalled before a write that blocks", async () => {
+  // Two files run. The names of the other 400 are about 100 KB of "had not started" lines.
+  const files: Record<string, string> = {};
+  const longName = Buffer.alloc(240, "x").toString();
+  for (let i = 0; i < 402; i++) files[`${longName}-${i}.test.ts`] = slowTestThatSpawns;
+  using dir = tempDir("parallel-signal-stall", files);
+  const log = join(String(dir), "log.txt");
+  const fifo = join(String(dir), "stderr.fifo");
+  mkfifo(fifo);
+  // O_NONBLOCK: this open does not wait for a writer. With that reader there, the open of the
+  // write end does not wait either. The write end blocks when the FIFO is full.
+  const readEnd = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+  const writeEnd = openSync(fifo, constants.O_WRONLY);
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=0"],
-      env: coordinatorEnv(log),
-      cwd: String(dir),
-      // The coordinator catches SIGTERM, so the cleanup of `await using` would wait for an exit that never comes.
-      killSignal: "SIGKILL",
-      stdout: "ignore",
-      stderr: writeEnd,
-    });
-    closeSync(writeEnd);
-    try {
-      expect(await bothSpawned(log, proc)).toBe(true);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=0"],
+    env: coordinatorEnv(log),
+    cwd: String(dir),
+    // The coordinator catches SIGTERM, so the cleanup of `await using` would wait for an exit that never comes.
+    killSignal: "SIGKILL",
+    stdout: "ignore",
+    stderr: writeEnd,
+  });
+  closeSync(writeEnd);
+  try {
+    expect(await bothSpawned(log, proc)).toBe(true);
 
-      proc.kill("SIGINT");
-      expect(await bothTerminated(log)).toBe(true);
+    proc.kill("SIGINT");
+    expect(await bothTerminated(log)).toBe(true);
 
-      // The coordinator is blocked in its write, and a repeat of the signal does not cut that
-      // write short. It goes on when the test reads.
-      proc.kill("SIGTERM");
-      const stderr = await Bun.file(readEnd).text();
-      await proc.exited;
-      expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 130, signalCode: null });
-      expect(stderr).toContain("400 file(s) had not started:");
-      expect(stderr.split("\n").filter(line => line.includes(longName)).length).toBe(402);
-    } finally {
-      closeSync(readEnd);
-      killWorkerGroups(log);
-    }
-  },
-  // Above the bound of bothTerminated, so that its assertion is what a failing run reports.
-  30_000,
-);
+    // The coordinator is blocked in its write, and a repeat of the signal does not cut that
+    // write short. It goes on when the test reads.
+    proc.kill("SIGTERM");
+    const stderr = await readUntilExit(readEnd, proc);
+    expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 130, signalCode: null });
+    expect(stderr).toContain("400 file(s) had not started:");
+    expect(stderr.split("\n").filter(line => line.includes(longName)).length).toBe(402);
+  } finally {
+    closeSync(readEnd);
+    killWorkerGroups(log);
+  }
+});
 
 // A parent that forwards signals (`bun run`, a task runner) delivers one Ctrl-C twice: the
 // terminal signals the foreground process group, and the parent signals its child again. The
@@ -249,5 +273,4 @@ test.skipIf(isWindows).concurrent.each([
       killWorkerGroups(log);
     }
   },
-  30_000,
 );

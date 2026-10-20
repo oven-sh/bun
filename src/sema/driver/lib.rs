@@ -1743,11 +1743,54 @@ fn no_project_here(cwd: &[u8], below: &[Vec<u8>]) -> Diagnostic {
     text.extend_from_slice(b"\nTo check one: bun check -p ");
     text.extend_from_slice(&relative(&below[0]));
     text.extend_from_slice(b"\nTo check everything below this directory: bun check .");
+    refusal(text)
+}
+
+/// An error of `bun check` itself, which `tsc` has no code for.
+fn refusal(text: Vec<u8>) -> Diagnostic {
     Diagnostic {
         text,
         code: 0,
         ..global(18003, &[""; 0])
     }
+}
+
+/// `tsconfig.json`, `tsconfig.*.json` and the same of `jsconfig`: a configuration file by its name.
+fn is_named_like_config(path: &[u8]) -> bool {
+    let name = bun_paths::basename(path);
+    (name.starts_with(b"tsconfig.") || name.starts_with(b"jsconfig.")) && name.ends_with(b".json")
+}
+
+/// For paths that are all configuration files, which `-p` and `-b` take. `config` is the first.
+#[cold]
+fn config_named_as_path(disk: &host::Disk, cwd: &[u8], config: &[u8]) -> Diagnostic {
+    let config = get_relative_path_from_directory(cwd, config, disk.is_case_sensitive());
+    let mut text = Vec::new();
+    text.extend_from_slice(b"'");
+    text.extend_from_slice(&config);
+    text.extend_from_slice(b"' is a configuration file, not a file to check");
+    text.extend_from_slice(b"\nTo use it as the project: bun check -p ");
+    text.extend_from_slice(&config);
+    text.extend_from_slice(b"\nTo use it with the projects it references: bun check -b ");
+    text.extend_from_slice(&config);
+    if config::find_config(disk, cwd).is_some() {
+        text.extend_from_slice(b"\nTo check the project here: bun check");
+    }
+    refusal(text)
+}
+
+/// For `path`, which is there and has no TypeScript file in it.
+#[cold]
+fn nothing_to_check_in(path: &[u8]) -> Diagnostic {
+    let path = displayed_path(path);
+    refusal(
+        [
+            b"Nothing to check: no TypeScript files in '",
+            &path[..],
+            b"'",
+        ]
+        .concat(),
+    )
 }
 
 fn check_request(disk: &host::Disk, request: &Request) -> Report {
@@ -1899,6 +1942,16 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             }
         }
     }
+    // `-p` and `-b` take a configuration file. Under `--check`, a path is the module to run.
+    let is_config = |path: &Vec<u8>| {
+        explicit.as_ref().is_some_and(|it| is_same(it, path))
+            || is_named_like_config(path) && !disk.is_dir(path)
+    };
+    if !request.are_entry_points && missing.is_empty() && paths.iter().all(is_config) {
+        let refused = config_named_as_path(disk, &cwd, &paths[0]);
+        report.diagnostics.push(refused);
+        return report;
+    }
 
     // Each file is checked in its own project, once.
     let mut by_project: Vec<(Option<Vec<u8>>, Extent, Vec<Vec<u8>>)> = Vec::new();
@@ -1938,7 +1991,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             continue;
         }
         // The directory stands for the part of the project that is in it: of the project that is
-        // checked from there without an argument, so that `bun check .` is `bun check`.
+        // checked from there without an argument.
         // The projects know their files. A configuration file there is checked too.
         let is_in_directory = |file: &Vec<u8>| contains_path(path, file, is_case_sensitive);
         if let Some(config) = project_in(path) {
@@ -2011,16 +2064,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         return report;
     }
     if by_project.is_empty() {
-        report.diagnostics.push(Diagnostic {
-            text: [
-                b"Nothing to check: no TypeScript files in '",
-                &displayed_path(&paths[0])[..],
-                b"'",
-            ]
-            .concat(),
-            code: 0,
-            ..global(18003, &[""; 0])
-        });
+        report.diagnostics.push(nothing_to_check_in(&paths[0]));
         return report;
     }
     let is_one = by_project.len() == 1;
@@ -2116,6 +2160,18 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         };
         report.projects_checked += checked.projects_checked.max(usize::from(!is_one));
         report.merge(checked);
+    }
+    // A declaration file that `skipLibCheck` leaves out is TypeScript by its name, and passes.
+    let names_source = || {
+        let mut files = by_project.iter().flat_map(|it| &it.2);
+        files.any(|file| ScriptKind::from_file_name(file).is_some())
+    };
+    if report.files_checked + report.files_not_checked == 0
+        && report.is_ok()
+        && tristate(request.compiler_options, b"listFilesOnly") != Some(true)
+        && !names_source()
+    {
+        report.diagnostics.push(nothing_to_check_in(&paths[0]));
     }
     report.load_time = started.elapsed().saturating_sub(report.check_time);
     if request.plan_options.shares_every_file {

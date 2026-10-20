@@ -3019,55 +3019,55 @@ describe("invalid arguments throw instead of returning an error value", () => {
     expect(err).toBeInstanceOf(TypeError);
     expect(err.message).toBe("Expected a function");
   });
+});
 
-  it("a missing argument is treated as undefined", () => {
-    const outcome = fn => {
-      try {
-        return { returned: fn() };
-      } catch (e) {
-        return { name: e.name, code: e.code, message: e.message };
-      }
-    };
-    const missing = {};
-    const given = {};
-    const compare = (name, object, methods, ...first) => {
-      for (const method of methods) {
-        const label = `${name}.${method}(${first})`;
-        missing[label] = outcome(() => object[method](...first));
-        given[label] = outcome(() => object[method](...first, undefined));
-      }
-    };
-    let detached;
-    new HTMLRewriter()
-      .on("p", {
-        element(el) {
-          detached = el;
-          compare("element", el, ["before", "after", "replace", "prepend", "append", "setInnerContent"]);
-          compare("element", el, ["getAttribute", "hasAttribute", "removeAttribute", "setAttribute", "onEndTag"]);
-          compare("element", el, ["setAttribute"], "a");
-          el.onEndTag(tag => compare("endTag", tag, ["before", "after"]));
-        },
-        text: chunk => compare("text", chunk, ["before", "after", "replace"]),
-        comments: comment => compare("comment", comment, ["before", "after", "replace"]),
-      })
-      .onDocument({ end: end => compare("end", end, ["append"]) })
-      .transform("<p>t<!--c--></p>");
-    compare("detached", detached, ["onEndTag"]);
+it("a missing argument is treated as undefined", () => {
+  const outcome = fn => {
+    try {
+      return { returned: fn() };
+    } catch (e) {
+      return { name: e.name, code: e.code, message: e.message };
+    }
+  };
+  const missing = {};
+  const given = {};
+  const compare = (name, object, methods, ...first) => {
+    for (const method of methods) {
+      const label = `${name}.${method}(${first})`;
+      missing[label] = outcome(() => object[method](...first));
+      given[label] = outcome(() => object[method](...first, undefined));
+    }
+  };
+  let detached;
+  new HTMLRewriter()
+    .on("p", {
+      element(el) {
+        detached = el;
+        compare("element", el, ["before", "after", "replace", "prepend", "append", "setInnerContent"]);
+        compare("element", el, ["getAttribute", "hasAttribute", "removeAttribute", "setAttribute", "onEndTag"]);
+        compare("element", el, ["setAttribute"], "a");
+        el.onEndTag(tag => compare("endTag", tag, ["before", "after"]));
+      },
+      text: chunk => compare("text", chunk, ["before", "after", "replace"]),
+      comments: comment => compare("comment", comment, ["before", "after", "replace"]),
+    })
+    .onDocument({ end: end => compare("end", end, ["append"]) })
+    .transform("<p>t<!--c--></p>");
+  compare("detached", detached, ["onEndTag"]);
 
-    expect(missing).toEqual(given);
-    expect(Object.keys(missing).length).toBe(22);
-    expect(missing["element.before()"]).toEqual({
-      name: "TypeError",
-      code: "ERR_INVALID_ARG_TYPE",
-      message: "Expected string",
-    });
-    expect(missing["element.onEndTag()"]).toEqual({
-      name: "TypeError",
-      code: undefined,
-      message: "Expected a function",
-    });
-    expect(missing["detached.onEndTag()"]).toEqual({ returned: null });
+  expect(missing).toEqual(given);
+  expect(Object.keys(missing).length).toBe(22);
+  expect(missing["element.before()"]).toEqual({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: "Expected string",
   });
+  expect(missing["element.onEndTag()"]).toEqual({
+    name: "TypeError",
+    code: undefined,
+    message: "Expected a function",
+  });
+  expect(missing["detached.onEndTag()"]).toEqual({ returned: null });
 });
 
 describe("tagName, endTag.name, and comment.text setters", () => {

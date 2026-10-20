@@ -3591,7 +3591,7 @@ type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
 // `check_timeouts`; UnsafeCell-backed fields suppress `noalias` so LLVM cannot
 // cache them across re-entrant FFI calls (the proper fix for the
 // PROVEN_CACHED ref_count miscompile previously laundered with `black_box`).
-// `DNSResolver` in `dns_internals.bind.ts`.
+/// `DNSResolver`, declared in `dns_internals.bind.ts`.
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct Resolver {
     pub(crate) ref_count: bun_ptr::RefCount<Resolver>,
@@ -4989,23 +4989,25 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_as_array::<2>();
         let arguments_len = callframe.arguments_count() as usize;
         if arguments_len < 1 {
             return Err(global_this.throw_not_enough_arguments("reverse", 1, arguments_len));
         }
+        global_resolver(global_this).reverse(global_this, callframe.argument(0))
+    }
 
-        let ip_value = arguments[0];
+    pub(crate) fn reverse(
+        &self,
+        global_this: &JSGlobalObject,
+        ip_value: JSValue,
+    ) -> JsResult<JSValue> {
+        let context = global_this.bun_vm().context_of_caller_no_frame().id();
         if ip_value.is_empty_or_undefined_or_null() || !ip_value.is_string() {
             return Err(global_this.throw_invalid_argument_type("reverse", "ip", "string"));
         }
         let ip_view = ip_value.to_js_string_view(global_this)?;
-        global_resolver(global_this).reverse(global_this, ip_view.to_utf8().slice())
-    }
-
-    pub(crate) fn reverse(&self, global_this: &JSGlobalObject, ip: &[u8]) -> JsResult<JSValue> {
-        let context = global_this.bun_vm().context_of_caller_no_frame().id();
-        if ip.is_empty() {
+        let ip_slice = ip_view.to_utf8();
+        if ip_slice.slice().is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "reverse",
                 "ip",
@@ -5013,6 +5015,7 @@ impl Resolver {
             ));
         }
 
+        let ip = ip_slice.slice();
         let channel: *mut c_ares::Channel = match self.get_channel() {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
@@ -5198,33 +5201,32 @@ macro_rules! resolve_record_fn {
             global_this: &JSGlobalObject,
             callframe: &CallFrame,
         ) -> JsResult<JSValue> {
-            let arguments = callframe.arguments_as_array::<2>();
             let arguments_len = callframe.arguments_count() as usize;
             if arguments_len < 1 {
                 return Err(global_this.throw_not_enough_arguments($jsname, 1, arguments_len));
             }
-            let name_value = arguments[0];
-            if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
-                return Err(global_this.throw_invalid_argument_type($jsname, "hostname", "string"));
-            }
-            let name_view = name_value.to_js_string_view(global_this)?;
-            global_resolver(global_this).$method(global_this, name_view.to_utf8().slice())
+            global_resolver(global_this).$method(global_this, callframe.argument(0))
         }
 
         pub(crate) fn $method(
             &self,
             global_this: &JSGlobalObject,
-            hostname: &[u8],
+            name_value: JSValue,
         ) -> JsResult<JSValue> {
             let context = global_this.bun_vm().context_of_caller_no_frame().id();
-            if !$allow_empty && hostname.is_empty() {
+            if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
+                return Err(global_this.throw_invalid_argument_type($jsname, "hostname", "string"));
+            }
+            let name_view = name_value.to_js_string_view(global_this)?;
+            let name = name_view.to_utf8();
+            if !$allow_empty && name.slice().is_empty() {
                 return Err(global_this.throw_invalid_argument_type(
                     $jsname,
                     "hostname",
                     "non-empty string",
                 ));
             }
-            self.do_resolve_cares::<$ty>(hostname, global_this, context)
+            self.do_resolve_cares::<$ty>(name.slice(), global_this, context)
         }
     };
 }
@@ -5566,8 +5568,8 @@ impl Resolver {
     pub(crate) fn set_local_address(
         &self,
         global_this: &JSGlobalObject,
-        first: &bun::String,
-        second: Option<bun::String>,
+        first: JSValue,
+        second: JSValue,
     ) -> JsResult<()> {
         Self::set_channel_local_addresses(
             self.get_channel_or_error(global_this)?,
@@ -5580,16 +5582,16 @@ impl Resolver {
     fn set_channel_local_addresses(
         channel: *mut c_ares::Channel,
         global_this: &JSGlobalObject,
-        first: &bun::String,
-        second: Option<bun::String>,
+        first: JSValue,
+        second: JSValue,
     ) -> JsResult<()> {
         let first_af = Self::set_channel_local_address(channel, global_this, first)?;
 
-        let Some(second) = second else {
+        if second.is_undefined() {
             return Ok(());
-        };
+        }
 
-        let second_af = Self::set_channel_local_address(channel, global_this, &second)?;
+        let second_af = Self::set_channel_local_address(channel, global_this, second)?;
 
         if first_af != second_af {
             return Ok(());
@@ -5607,9 +5609,9 @@ impl Resolver {
     fn set_channel_local_address(
         channel: *mut c_ares::Channel,
         global_this: &JSGlobalObject,
-        value: &bun::String,
+        value: JSValue,
     ) -> JsResult<c_int> {
-        let address = value.to_owned_slice_z();
+        let address = value.to_bun_string(global_this)?.to_owned_slice_z();
 
         let mut addr = [0u8; 16];
 

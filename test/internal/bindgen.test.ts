@@ -2,6 +2,7 @@ import { bindgen as bindings } from "bun:internal-for-testing";
 import { describe as describeAlways, expect, it as itAlways } from "bun:test";
 import { runWithError } from "harness";
 import { BlockList, SocketAddress } from "node:net";
+import vm from "node:vm";
 import { rustIdent } from "../../src/codegen/bindgen-lib-internal.ts";
 import * as b from "../../src/codegen/bindgen-lib.ts";
 
@@ -95,8 +96,8 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   const instance = b.classRef("SocketAddress");
   const refCounted = b.class({ rustPath: "T", refCounted: true });
   for (const type of [instance, instance.nullable, b.union({ instance, ignored: b.any }), refCounted]) {
-    expect(() => b.dictionary({ type })).toThrow("a &T of a class is only for an argument");
-    expect(() => b.array(type)).toThrow("a &T of a class is only for an argument");
+    expect(() => b.dictionary({ type })).toThrow("b.classRef and a refCounted class are only for an argument");
+    expect(() => b.array(type)).toThrow("b.classRef and a refCounted class are only for an argument");
   }
   expect(() => b.union({ instance, again: b.classRef("SocketAddress") })).toThrow("again is never chosen");
   expect(() => b.namespace({})).toThrow("a namespace with no functions");
@@ -124,6 +125,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.fn({ args: { data: stringOrBuffer }, capability: "js" })).toThrow(
     'data: JavaScript can detach a buffer; held: "handle" borrows the bytes each time they are read',
   );
+  expect(() => b.fn({ args: { data: b.bytes({ from: ["string"] }) }, capability: "js" })).not.toThrow();
   expect(() => b.bytes({ from: [] })).toThrow("from: it takes nothing");
   expect(() => b.bytes({ from: ["string", "string"] })).toThrow("two kinds are both string");
   expect(() => b.bytes({ from: ["string"], refuse: ["null"] })).toThrow(
@@ -237,7 +239,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.class({ rustPath: "T", proto: { x: { rustName: "camelCase" } } })).toThrow(
     "camelCase: rustName is written in snake_case",
   );
-  expect(() => b.class({ rustPath: "T", proto: { x: { name: "y" } } })).toThrow("x: only an @@ key has a name");
+  expect(() => b.class({ rustPath: "T", proto: { x: { name: "y" } } })).toThrow("x: name is only for an @@ key");
   expect(() =>
     b.class({
       rustPath: "T",
@@ -258,12 +260,13 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.class({ rustPath: "T", construct: {}, static: { "@@x": {} } })).toThrow(
     "@@x: an @@ key is a property of the prototype",
   );
-  for (const inline of [
+  for (const members of [
     { construct: {}, static: { x: { internalField: "x" } } },
+    { refCounted: true, construct: {}, static: { x: { internalField: "x" } } },
     { proto: { x: { internalField: "x" } } },
   ]) {
     // @ts-expect-error
-    expect(() => b.class({ rustPath: "T", internalFields: ["x"], ...inline })).toThrow(
+    expect(() => b.class({ rustPath: "T", internalFields: ["x"], ...members })).toThrow(
       "x: an internalField accessor is a property of a refCounted class's prototype",
     );
   }
@@ -274,10 +277,14 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     "x: a refCounted class has no mutates",
   );
   expect(() => b.class({ rustPath: "T", refCounted: true, proto: { x: { args: { bytes: stringOrBuffer } } } })).toThrow(
-    "bytes: JavaScript can detach a buffer",
+    "bytes: b.classRef and a refCounted class can run JavaScript, which can detach a buffer",
   );
-  expect(() => b.class({ rustPath: "T", finalize: true })).toThrow("finalize requires refCounted");
-  expect(() => b.class({ rustPath: "T", fromJS: true })).toThrow("fromJS requires refCounted");
+  for (const object of [b.class({ rustPath: "T", refCounted: true }), b.classRef("SocketAddress")])
+    expect(() => b.fn({ args: { object: object.nullable, bytes: stringOrBuffer } })).toThrow(
+      "bytes: b.classRef and a refCounted class can run JavaScript, which can detach a buffer",
+    );
+  expect(() => b.class({ rustPath: "T", finalize: true })).toThrow("finalize is only for a refCounted class");
+  expect(() => b.class({ rustPath: "T", fromJS: true })).toThrow("fromJS is only for a refCounted class");
   expect(() => b.class({ rustPath: "T", refCounted: true, proto: { x: { capability: "heap" } } })).toThrow(
     'a refCounted class takes capability: "js" or "none"',
   );
@@ -2118,6 +2125,16 @@ describe("classes", () => {
       all = null;
       Bun.gc(true);
       expect(TestRefCounted.alive()).toBeLessThan(count);
+    });
+
+    it("does not leak the struct when the script is terminated as the constructor returns", () => {
+      const script = new vm.Script("for (;;) new TestRefCounted(1);");
+      const context = vm.createContext({ TestRefCounted });
+      Bun.gc(true);
+      const before = TestRefCounted.alive();
+      for (let i = 0; i < 200; i++) expect(() => script.runInContext(context, { timeout: 1 })).toThrow("timed out");
+      Bun.gc(true);
+      expect(TestRefCounted.alive()).toBeLessThanOrEqual(before);
     });
   });
 });

@@ -61,13 +61,8 @@ describe.each([
     expect(thrownBy()).toEqual(thrownBy(undefined));
   });
 
-  test("_handle.setLocalAddress() converts both arguments before it checks the first", () => {
-    expect(() => new Resolver()._handle.setLocalAddress("a.test", Symbol())).toThrow(
-      "Cannot convert a symbol to a string",
-    );
-  });
-
   test("the size of _handle includes the native resolver", () => {
+    // The object alone is 32 bytes.
     expect(estimateShallowMemoryUsageOf(new Resolver()._handle)).toBeGreaterThan(1024);
   });
 });

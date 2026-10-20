@@ -1280,7 +1280,10 @@ export class ArrayType extends Type {
     assert(!(element instanceof DefaultType), "an element of an array is never absent, so it has no default");
     assert(!(element instanceof RangeType), "a range reports the name of its argument, which an element does not have");
     assert(!element.passesValue, "b.bytes is only for an argument");
-    assert(!element.borrowsCell, "a &T of a class is only for an argument: nothing else keeps the instance alive");
+    assert(
+      !element.borrowsCell,
+      "b.classRef and a refCounted class are only for an argument: nothing else keeps the instance alive",
+    );
     assert(
       !element.borrowsHeap,
       "the bytes of a buffer are only for an argument: they are read after everything else is converted",
@@ -1518,7 +1521,10 @@ export class DictionaryType extends NamedType {
       "fields",
     );
     for (const { name, type } of this.members) assert(!type.passesValue, `${name}: b.bytes is only for an argument`);
-    assert(!this.borrowsCell, "a &T of a class is only for an argument: nothing else keeps the instance alive");
+    assert(
+      !this.borrowsCell,
+      "b.classRef and a refCounted class are only for an argument: nothing else keeps the instance alive",
+    );
     assert(
       !this.nonObjectAsEmpty || this.hasDefault,
       "nonObjectAsEmpty: every member must be optional or have a default",
@@ -1764,12 +1770,17 @@ export class Signature {
       this.length === undefined || (Number.isInteger(this.length) && this.length >= 0),
       `length: ${this.length} is not a count`,
     );
+    // Their structs can hold the global object, so nothing checks that `capability: "none"` runs no JavaScript.
+    const hasClassRef = refCounted || this.args.some(arg => arg.type.borrowsCell);
     for (const { name, type } of this.args) {
       refuseResultType(name, type);
-      // A member of a refCounted class reaches the VM through the struct, whatever its capability.
       assert(
-        !type.borrowsBuffer || (this.capability !== "js" && !refCounted),
+        !type.borrowsBuffer || this.capability !== "js",
         `${name}: JavaScript can detach a buffer; held: "handle" borrows the bytes each time they are read`,
+      );
+      assert(
+        !type.borrowsBuffer || !hasClassRef,
+        `${name}: b.classRef and a refCounted class can run JavaScript, which can detach a buffer`,
       );
     }
     const pinned = this.args.filter(arg => arg.type.rustFromExternThrows);
@@ -1968,7 +1979,7 @@ export class Method extends Signature {
     this.privateSymbol = options.privateSymbol;
     assert(!(this.privateSymbol && wellKnownSymbol(name)), `${name}: an @@ key has no privateSymbol`);
     this.functionName = options.name;
-    assert(this.functionName === undefined || wellKnownSymbol(name), `${name}: only an @@ key has a name`);
+    assert(this.functionName === undefined || wellKnownSymbol(name), `${name}: name is only for an @@ key`);
   }
 }
 
@@ -2084,8 +2095,8 @@ export class ClassType extends NamedType {
     this.refCounted = options.refCounted ?? false;
     this.finalize = options.finalize ?? false;
     this.fromJS = options.fromJS ?? false;
-    assert(this.refCounted || !this.finalize, "finalize requires refCounted: otherwise implement Drop");
-    assert(this.refCounted || !this.fromJS, "fromJS requires refCounted");
+    assert(this.refCounted || !this.finalize, "finalize is only for a refCounted class: otherwise implement Drop");
+    assert(this.refCounted || !this.fromJS, "fromJS is only for a refCounted class");
     const own = (type: Type): Type => {
       if (type === selfType) return this;
       return type instanceof OptionalType && type.inner === selfType ? new OptionalType(this, type.modifier) : type;
@@ -2213,7 +2224,7 @@ export class ClassType extends NamedType {
   }
   /** The Rust type of the payload: the struct, or a `RefPtr` to it when the class is `refCounted`. */
   get payloadType(): string {
-    return this.refCounted ? `bindgen::RefPtr<${this.rustPath}>` : this.rustPath;
+    return this.refCounted ? `bun_ptr::RefPtr<${this.rustPath}>` : this.rustPath;
   }
   rustType(): string {
     return this.refCounted ? `&'a ${this.rustPath}` : `bindgen::JsWrapper<'a, ${this.rustPath}>`;

@@ -526,17 +526,17 @@ outside the object.
 If a timer, another thread or a C library can still point at the struct after its JS object
 is collected, make the class [`refCounted`](#refcounted).
 
-| Key              | What it declares                                                                                      |
-| ---------------- | ----------------------------------------------------------------------------------------------------- |
-| `rustPath`       | the struct                                                                                            |
-| `construct`      | `new Name(..)`. Without it JavaScript cannot make one; Rust can, with `payload.into_js(heap)`.        |
-| `proto`          | properties of the prototype                                                                           |
-| `static`         | properties of the constructor: native functions and accessors without `setter` or `cache`             |
-| `internalFields` | JS values the object holds                                                                            |
-| `configurable`   | `false` makes the native properties non-configurable                                                  |
-| `refCounted`     | the struct is refcounted and [can outlive the object](#refcounted), which holds a `RefPtr` to it      |
-| `finalize`       | with `refCounted`: call `fn finalize(&self)` when the object is collected                             |
-| `fromJS`         | with `refCounted`: generate [`js_Name::from_js(value)`](#refcounted) and implement `bun_jsc::JsClass` |
+| Key              | What it declares                                                                               |
+| ---------------- | ---------------------------------------------------------------------------------------------- |
+| `rustPath`       | the struct                                                                                     |
+| `construct`      | `new Name(..)`. Without it JavaScript cannot make one; Rust can, with `payload.into_js(heap)`. |
+| `proto`          | properties of the prototype                                                                    |
+| `static`         | properties of the constructor: native functions and accessors without `setter` or `cache`      |
+| `internalFields` | JS values the object holds                                                                     |
+| `configurable`   | `false` makes the native properties non-configurable                                           |
+| `refCounted`     | the struct is a separate allocation that [can outlive the object](#refcounted)                 |
+| `finalize`       | with `refCounted`: call `fn finalize(&self)` when the object is collected                      |
+| `fromJS`         | with `refCounted`: generate [`js_Name::from_js(value)`](#refcounted)                           |
 
 Code that has the global object and no capability makes one with
 `payload.into_js_value(global)`, which returns a `JSValue`.
@@ -547,14 +547,14 @@ A class that JavaScript names but cannot make, like `Crypto`, declares
 
 A property of `proto` is one of:
 
-| Property                                    | What it is                                                                               |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `{ args, returns, capability, throws, .. }` | a native function; `privateSymbol` keys it by a private name of `src/js`                 |
-| `{ getter: T, capability, throws }`         | an accessor; with `setter: true` it can be assigned                                      |
-| `{ getter: T, cache: true \| "field", .. }` | an accessor that returns an [internal field](#internalfields); no setter                 |
-| `{ internalField: "field", setter }`        | an accessor that reads an [internal field](#internalfields) in C++, without calling Rust |
-| `{ builtin: true, length }`                 | the export of that name in `src/js/builtins/<class name>.ts`                             |
-| `[{ rustName, args, .. }, ..]`              | a native function with [overloads](#overloads)                                           |
+| Property                                    | What it is                                                               |
+| ------------------------------------------- | ------------------------------------------------------------------------ |
+| `{ args, returns, capability, throws, .. }` | a native function; `privateSymbol` keys it by a private name of `src/js` |
+| `{ getter: T, capability, throws }`         | an accessor; with `setter: true` it can be assigned                      |
+| `{ getter: T, cache: true \| "field", .. }` | an accessor that returns an [internal field](#internalfields); no setter |
+| `{ internalField: "field", setter }`        | with [`refCounted`](#refcounted): reads the field without calling Rust   |
+| `{ builtin: true, length }`                 | the export of that name in `src/js/builtins/<class name>.ts`             |
+| `[{ rustName, args, .. }, ..]`              | a native function with [overloads](#overloads)                           |
 
 The properties are in the order of the schema, which `for-in` and `Object.keys` show. The Rust
 function is named after the property. `rustName` names it otherwise, which tells apart the
@@ -583,12 +583,12 @@ table of the object that has the class:
 
 ### The receiver
 
-| The method is                          | It receives                 |
-| -------------------------------------- | --------------------------- |
-| `capability: "none"` or `"heap"`       | `&self`                     |
-| …with `mutates: true`                  | `&mut self`                 |
-| `capability: "js"`                     | `this: JsWrapper<'a, Self>` |
-| in a [`refCounted`](#refcounted) class | `&self`                     |
+| The method is                    | It receives                 |
+| -------------------------------- | --------------------------- |
+| `capability: "none"` or `"heap"` | `&self`                     |
+| …with `mutates: true`            | `&mut self`                 |
+| `capability: "js"`               | `this: JsWrapper<'a, Self>` |
+| with [`refCounted`](#refcounted) | `&self`                     |
 
 A method that can run JavaScript can be re-entered, by a callback that calls
 another method of the same object. A `&mut self` held across that would be
@@ -619,13 +619,10 @@ Every field starts as `undefined`, or empty in a [`refCounted`](#refcounted) cla
 holds as a property of its name.
 
 A getter with `cache: true` declares a field of its own name, with the same two functions, and
-returns it. While the field is as it started the getter calls Rust and stores the result, so
+returns it. While the field holds its initial value the getter calls Rust and stores the result, so
 `this.set_tag_field(heap, JsLocal::UNDEFINED)` makes the next read of `tag` compute it again.
 `cache: "tag"` on another getter declares nothing: it returns that field, of a getter or of
 `internalFields`, and fills it from its own Rust function.
-
-`{ internalField: "listener" }` is an accessor that returns the field without calling Rust. With `setter: true`
-it also stores any value assigned to it. For an accessor that does more, use a `getter` with `passThis: true`.
 
 ### `refCounted`
 
@@ -646,9 +643,9 @@ export const CronJob = b.class({
 });
 ```
 
-The struct is intrusively refcounted (`bun_ptr::CellRefCounted`, `RefCounted` or `ThreadSafeRefCounted`), and the
-object stores a `RefPtr` to it. No trait is generated: the members are the struct's own methods, and they take and
-return the types the rest of the struct's code uses.
+The struct is intrusively refcounted (`bun_ptr::CellRefCounted`, `RefCounted` or `ThreadSafeRefCounted`). No trait is
+generated: the members are the struct's own methods, and they take and return the types the rest of the struct's code
+uses.
 
 ```rust
 use crate::generated_bindgen::cron::js_CronJob as js;
@@ -674,18 +671,20 @@ A member's parameters, in order:
 | `global: &JSGlobalObject` | `capability: "js"` |
 | one for each of `args`    |                    |
 
-`b.any` is a `JSValue`, and so is a result that is an instance of a class (`Option<JSValue>` if it is `.optional` or
-`.nullable`). A `refCounted` class as an argument is `&T`. Every other type is the same as in a function.
-`throws: true` returns a `JsResult`, and `construct` returns a `RefPtr<Self>`.
+`b.any` is a `JSValue`, and so is a result that is an instance of a `refCounted` class (`Option<JSValue>` if it is
+`.optional` or `.nullable`). A `refCounted` class as an argument is `&T`. Every other type is the same as in a function.
+`throws: true` returns a `JsResult`, and `construct` returns a `*mut Self` whose ref the object takes over.
 
 - Getters are `get_x`, setters `set_x`.
-- `capability` is `"js"` or `"none"`.
+- `capability` is `"js"` or `"none"`, and only says whether the member takes the global object. Nothing checks that a
+  member with `"none"` runs no JavaScript.
+- `{ internalField: "cron" }` is an accessor that returns the field without calling Rust. With `setter: true` it also
+  stores any value assigned to it. For an accessor that does more, use a `getter` with `passThis: true`.
 - Two keys can have the same `rustName`, as `stop` and `@@dispose` do here.
 - Every member takes `&self`, so mutable state is in `Cell` and `JsCell`. `mutates: true` is an error.
 - The pointer in the object never changes and is never null. A class with a closed or detached state tracks it in a
   field of its own.
-- `finalize: true` calls `fn finalize(&self)` when the object is collected, before its ref is dropped. `Drop` runs when
-  the last ref is dropped, which can be much later.
+- `finalize` runs before the object's ref is dropped. `Drop` runs when the last ref is dropped, which can be much later.
 - C++ reads the pointer to the struct with `wrapper->wrapped()`.
 - A heap snapshot reports the object's size plus `size_of` the struct.
 
@@ -694,12 +693,12 @@ The generated `js_CronJob` module has what the struct's code needs to reach its 
 | Function                                         | What it does                                        |
 | ------------------------------------------------ | --------------------------------------------------- |
 | `js::to_js(ptr, global)`                         | makes the object, which takes over the caller's ref |
-| `js::callback_get_cached(this_value)`            | an internal field, or `None` if it was never set    |
+| `js::callback_get_cached(this_value)`            | an internal field, or `None` if it is empty         |
 | `js::callback_set_cached(this_value, global, v)` | sets it; `JSValue::ZERO` clears it                  |
 | `js::callback_take_cached(this_value, global)`   | reads and clears it                                 |
 | `js::from_js(value)`                             | with `fromJS: true`: the struct, if `value` is one  |
 
-`CronJob::to_js_ptr(ptr, global)` and `CronJob::to_js_nonnull(ptr, global)` are `js::to_js` for a `*mut` and a
+`CronJob::to_js_ptr(ptr, global)` is `js::to_js` as an `unsafe fn`, and `CronJob::to_js_nonnull(ptr, global)` takes a
 `NonNull`. `fromJS: true` also implements `bun_jsc::JsClass`, so `value.as_class_ref::<HTMLBundle>()` works. To get
 back to its JS object the struct stores a `JsRef`, and calls `finalize()` on it from the class's `finalize`.
 

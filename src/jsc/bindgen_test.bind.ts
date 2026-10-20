@@ -246,19 +246,19 @@ export const TestRefCounted = b.class({
   internalFields: ["listener"],
   proto: {
     value: { getter: b.i32, setter: true },
-    listener: { getter: b.any, setter: true, capability: "js", passThis: true },
+    listener: { getter: b.any, setter: true, passThis: true, capability: "js" },
     sameListener: { internalField: "listener", setter: true },
     readOnlyListener: { internalField: "listener" },
     /** Calls the listener, which may call back into this object, then returns the value. */
-    notify: { returns: b.i32, capability: "js", passThis: true, throws: true },
+    notify: { returns: b.i32, passThis: true, capability: "js", throws: true },
     /** Makes Rust hold a ref until `TestRefCounted.release()`. */
     keep: {},
     "@@dispose": {},
-    "@@toPrimitive": { returns: b.i32, name: "" },
-    valueOrUndefined: { returns: b.i32, invalidThis: "undefined" },
+    "@@toPrimitive": { rustName: "get_value", returns: b.i32, name: "" },
+    valueOrUndefined: { rustName: "get_value", returns: b.i32, invalidThis: "undefined" },
     /** Returns `this`, or nothing if the value is negative. */
     orUndefined: { returns: b.self.optional, passThis: true },
-    orNull: { returns: b.self.nullable, passThis: true },
+    orNull: { rustName: "or_undefined", returns: b.self.nullable, passThis: true },
     isSame: { args: { other: b.self.nullable }, returns: b.bool },
   },
   static: {

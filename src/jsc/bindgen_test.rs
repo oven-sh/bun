@@ -5,7 +5,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::bindgen::{
     self, BufferSource, IntoError as _, JsBytes, JsHeap, JsLocal, JsPayload as _, JsScope,
-    JsWrapper, JsWrapperStrong, PinnedBytes, RefPtr, StringOrJsBytes,
+    JsWrapper, JsWrapperStrong, PinnedBytes, StringOrJsBytes,
 };
 use crate::generated_bindgen::bindgen_test::{
     TestAnything, TestBare, TestChoice, TestColor, TestColorOrRest, TestCounterClass,
@@ -13,7 +13,7 @@ use crate::generated_bindgen::bindgen_test::{
     TestOptionsEcho, TestOuter, TestTextOrBytes, TestTokenClass, TestValue, js_TestRefCounted,
 };
 use crate::{JSGlobalObject, JSString, JSValue, JsResult};
-use bun_ptr::AsCtxPtr as _;
+use bun_ptr::{AsCtxPtr as _, RefPtr};
 
 // This example should be kept in sync with bindgen's documentation
 pub(crate) fn add<'a>(heap: &JsHeap<'a>, a: i32, b: i32) -> bindgen::Result<'a, i32> {
@@ -517,13 +517,13 @@ impl TestRefCounted {
         self.finalized.set(true);
     }
 
-    pub(crate) fn constructor(value: i32) -> RefPtr<Self> {
+    pub(crate) fn constructor(value: i32) -> *mut Self {
         REF_COUNTED_ALIVE.fetch_add(1, Ordering::SeqCst);
-        RefPtr::new(TestRefCounted {
+        bun_core::heap::into_raw(Box::new(TestRefCounted {
             ref_count: Cell::new(1),
             value: Cell::new(value),
             finalized: Cell::new(false),
-        })
+        }))
     }
 
     pub(crate) fn get_value(&self) -> i32 {
@@ -565,20 +565,8 @@ impl TestRefCounted {
         self.value.set(-1);
     }
 
-    pub(crate) fn to_primitive(&self) -> i32 {
-        self.value.get()
-    }
-
-    pub(crate) fn value_or_undefined(&self) -> i32 {
-        self.value.get()
-    }
-
     pub(crate) fn or_undefined(&self, this_value: JSValue) -> Option<JSValue> {
         (self.value.get() >= 0).then_some(this_value)
-    }
-
-    pub(crate) fn or_null(&self, this_value: JSValue) -> Option<JSValue> {
-        self.or_undefined(this_value)
     }
 
     pub(crate) fn is_same(&self, other: Option<&Self>) -> bool {

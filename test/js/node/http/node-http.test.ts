@@ -7572,3 +7572,26 @@ it("req.socket.setKeepAlive() and resetAndDestroy() return the socket", async ()
     server.close();
   }
 });
+
+it("the native response's cork() treats a missing callback as undefined", async () => {
+  const { promise, resolve } = Promise.withResolvers<unknown>();
+  const server = http.createServer((req, res) => {
+    const handle = res[Object.getOwnPropertySymbols(res).find(s => s.description === "handle")!];
+    try {
+      resolve(handle.cork());
+    } catch (error) {
+      resolve(error);
+    }
+    res.end();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+    expect(await promise).toMatchObject({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "cork" argument must be of type function. Received undefined',
+    });
+  } finally {
+    server.close();
+  }
+});

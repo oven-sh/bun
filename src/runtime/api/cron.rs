@@ -1368,7 +1368,7 @@ impl Drop for CronRemoveJob {
 // re-entry is Stacked-Borrows UB and an LLVM-level miscompile hazard. `&self`
 // + `UnsafeCell`-backed fields suppresses `noalias` on the receiver.
 // (Aligned for `NativePromiseContext`, which packs its tag into the pointer's low bits.)
-// `CronJob` in `cron.bind.ts`.
+/// `CronJob`, declared in `cron.bind.ts`.
 #[derive(bun_ptr::CellRefCounted)]
 #[repr(align(16))]
 pub(crate) struct CronJob {

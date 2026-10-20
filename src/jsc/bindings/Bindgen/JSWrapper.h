@@ -43,7 +43,7 @@ namespace Bun::Bindgen {
 // Reports each field that holds a cell to a heap snapshot, as a property of that name.
 void analyzeInternalFields(JSC::JSCell*, JSC::HeapAnalyzer&, std::span<const JSC::WriteBarrier<JSC::Unknown>>, std::span<const WTF::ASCIILiteral> names);
 
-// The base of a refCounted class's wrapper: its size includes the struct's.
+// A base class, so that the method table of a class that is not refCounted keeps JSObject::estimatedSize.
 template<typename Traits>
 class JSRefCountedWrapperBase : public JSC::JSDestructibleObject {
 public:
@@ -56,11 +56,14 @@ protected:
     using JSC::JSDestructibleObject::JSDestructibleObject;
 };
 
+template<typename Traits>
+using JSWrapperBase = std::conditional_t<Traits::refCounted, JSRefCountedWrapperBase<Traits>, JSC::JSDestructibleObject>;
+
 // JSDestructibleObject | WriteBarrier internalFields[numberOfInternalFields] | the Rust payload
 template<typename Traits>
-class JSWrapper final : public std::conditional_t<Traits::refCounted, JSRefCountedWrapperBase<Traits>, JSC::JSDestructibleObject> {
+class JSWrapper final : public JSWrapperBase<Traits> {
 public:
-    using Base = std::conditional_t<Traits::refCounted, JSRefCountedWrapperBase<Traits>, JSC::JSDestructibleObject>;
+    using Base = JSWrapperBase<Traits>;
     // DECLARE_DEFAULT_FINISH_CREATION names it unqualified, which does not look in a base that depends on Traits.
     using Base::inheritsSlow;
     static constexpr unsigned StructureFlags = Base::StructureFlags;

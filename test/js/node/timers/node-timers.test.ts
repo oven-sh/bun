@@ -362,15 +362,19 @@ describe("symbol-keyed methods", () => {
     ["Immediate", Symbol.dispose, immediate],
     // Node has no such property. It is defined like the others.
     ["Immediate", Symbol.toPrimitive, immediate],
-  ] as const)("%s.prototype[%p] has an empty name and is writable and configurable", (name, symbol, timer) => {
-    const { value, writable, configurable } = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(timer), symbol)!;
-    expect({ name: value.name, length: value.length, writable, configurable }).toEqual({
-      name: "",
-      length: 0,
-      writable: true,
-      configurable: true,
-    });
-  });
+  ] as const)(
+    "%s.prototype[%p] is defined like Node's: no name, no parameters, writable, configurable",
+    (name, symbol, timer) => {
+      const { value, ...attributes } = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(timer), symbol)!;
+      expect({ name: value.name, length: value.length, ...attributes }).toEqual({
+        name: "",
+        length: 0,
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      });
+    },
+  );
 });
 
 describe.each(["with", "without"])("setImmediate %s timers running", mode => {

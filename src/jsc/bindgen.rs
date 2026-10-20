@@ -6,7 +6,6 @@ use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
 use bun_core::EncodedSlice;
-pub use bun_ptr::RefPtr;
 
 use crate::{
     ArrayBuffer, CommonString, EncodedSliceJsc as _, ErrorCode, JSGlobalObject, JSObject, JSString,
@@ -1007,4 +1006,20 @@ pub fn host_fn_return<'a, T, E: IntoError<'a>>(
         "a body fails exactly when an exception is pending",
     );
     value
+}
+
+/// As [`host_fn_return`], for the constructor of a `refCounted` class: null if it failed.
+#[doc(hidden)]
+#[inline(always)]
+pub fn host_fn_construct_return<'a, T, E: IntoError<'a>>(
+    cx: &mut JsScope<'a>,
+    result: core::result::Result<*mut T, E>,
+) -> *mut c_void {
+    match result {
+        Ok(wrapped) => wrapped.cast(),
+        Err(error) => {
+            error.into_error(&cx.heap).into_host_fn_return(cx);
+            core::ptr::null_mut()
+        }
+    }
 }

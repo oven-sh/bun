@@ -34,7 +34,7 @@ use super::protocol::result_set::{self as ResultSet};
 bun_core::declare_scope!(MySQLConnection, visible);
 
 // JS can re-enter any method, so they all take `&self` and the fields are cells.
-// `MySQLConnection` in `JSMySQLConnection.bind.ts`.
+/// `MySQLConnection`, declared in `JSMySQLConnection.bind.ts`.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct JSMySQLConnection {
     ref_count: Cell<u32>,

@@ -69,9 +69,9 @@ mod connection {
     }
 }
 
-// `NodeHTTPResponse` in `NodeHTTPResponse.bind.ts`.
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
+/// `NodeHTTPResponse`, declared in `NodeHTTPResponse.bind.ts`.
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct NodeHTTPResponse {
     ref_count: bun_ptr::RefCount<Self>,

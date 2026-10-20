@@ -7,7 +7,7 @@ export const ContentOptions = b.dictionary(
   { allowArray: true, nonObjectAsEmpty: true },
 );
 
-/** Returns `this`. With `b.self.optional` or `b.self.nullable`, `undefined` or `null` after the handler returns: which one varies by class. */
+/** Returns `this`. After the handler returns, `b.self.optional` returns `undefined` and `b.self.nullable` returns `null`. */
 const chainable = (returns: b.Type) => ({ returns, passThis: true }) as const;
 const contentOp = (returns: b.Type) =>
   ({

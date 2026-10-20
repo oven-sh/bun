@@ -72,8 +72,11 @@ Structure* structureForNewTarget(JSGlobalObject* globalObject, CallFrame* callFr
 {
     // JSC_GET_DERIVED_STRUCTURE, for a Structure that is not a member of the global object.
     JSObject* newTarget = asObject(callFrame->newTarget());
-    if (newTarget == callFrame->jsCallee()) [[likely]]
-        return structureForClass(globalObject, classIndex);
+    if (newTarget == callFrame->jsCallee()) [[likely]] {
+        // The callee is the constructor of a class of `m_classes`, so its global object is the one that holds them.
+        auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+        return global->m_bindgenAdditions.m_classes[classIndex].get(global);
+    }
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* functionGlobalObject = tryGetFunctionRealm(newTarget);

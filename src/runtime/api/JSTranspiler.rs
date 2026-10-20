@@ -30,12 +30,11 @@ use bun_resolver::tsconfig_json::TSConfigJSON;
 use bun_collections::ArrayHashMapExt;
 use bun_core::{EncodedSlice, String as BunString};
 use bun_options_types::schema::api;
-use bun_ptr::RefPtr;
 
 // Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `JsCell` (= `UnsafeCell` projector). `JsCell` is
 // `#[repr(transparent)]`, so field offsets are unchanged.
-// `Transpiler` in `Transpiler.bind.ts`.
+/// `Transpiler`, declared in `Transpiler.bind.ts`.
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct JSTranspiler {
     pub(crate) transpiler: JsCell<Transpiler::Transpiler<'static>>,
@@ -929,7 +928,7 @@ impl JSTranspiler {
     pub(crate) fn constructor(
         global: &JSGlobalObject,
         config_arg: JSValue,
-    ) -> JsResult<RefPtr<JSTranspiler>> {
+    ) -> JsResult<*mut JSTranspiler> {
         // NOTE: a non-POD field cannot be left uninitialized in a live Box
         // (zeroed()/assume_init() on Transpiler is UB), so build `config` + `transpiler` on the
         // stack first, then move both into the Box. Nothing observes the
@@ -1049,8 +1048,7 @@ impl JSTranspiler {
         transpiler.options.react_fast_refresh = false;
         transpiler.options.repl_mode = config.repl_mode;
 
-        // SAFETY: a fresh allocation whose `ref_count` is the one ref handed over.
-        Ok(unsafe { RefPtr::from_raw(bun_core::heap::into_raw(this)) })
+        Ok(bun_core::heap::into_raw(this))
     }
 }
 

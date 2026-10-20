@@ -420,7 +420,7 @@ impl StatWatcherScheduler {
 // the JS thread, read by the work-pool callback). `last_check` is `Cell`
 // (worker-thread-only after init); `persistent`/`poll_ref`/`this_value` are
 // JS-thread-only. Read-only-after-construction fields stay bare.
-// `StatWatcher` in `node_fs_stat_watcher.bind.ts`.
+/// `StatWatcher`, declared in `node_fs_stat_watcher.bind.ts`.
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub(crate) struct StatWatcher {
     pub(crate) next: bun_threading::Link<StatWatcher>, // INTRUSIVE link for UnboundedQueue
@@ -842,8 +842,8 @@ impl StatWatcher {
             this_ref.poll_ref.with_mut(|p| p.ref_(el_ctx));
         }
 
-        // SAFETY: `this_ptr` ownership transfers to the C++ wrapper (freed via
-        // its finalizer). `args.global_this` is a `BackRef`
+        // SAFETY: `this_ptr` ownership transfers to the JS wrapper, which holds
+        // one ref. `args.global_this` is a `BackRef`
         // (JSC_BORROW) — safe Deref to `&JSGlobalObject`.
         let js_this = unsafe { StatWatcher::to_js_ptr(this_ptr, &args.global_this) };
         this_ref
@@ -982,8 +982,7 @@ impl bun_event_loop::Taskable for StatWatcher {
 }
 
 pub(crate) struct InitialStatTask {
-    // StatWatcher is intrusively ref-counted (ThreadSafeRefCount wrapper
-    // payload). We hold the strong ref via `ref_()`/`deref()` and keep the
+    // StatWatcher is intrusively ref-counted. We hold the strong ref via `ref_()`/`deref()` and keep the
     // raw `*mut`.
     watcher: *mut StatWatcher,
     ticket: bun_jsc::Ticket,

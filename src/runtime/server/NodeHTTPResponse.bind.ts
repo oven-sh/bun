@@ -19,7 +19,7 @@ export const NodeHTTPResponse = b.class({
     aborted: { getter: b.bool },
     bufferedAmount: { getter: b.u64 },
     cork: { ...method, args: { callback: b.any } },
-    end: { ...method, passThis: true, args: body, length: 2 },
+    end: { ...method, args: body, passThis: true, length: 2 },
     finished: { getter: b.bool },
     flags: { getter: b.i32 },
     flushHeaders: {},
@@ -43,8 +43,8 @@ export const NodeHTTPResponse = b.class({
     writeHead: { args: { ...head, ...autoHeaders }, capability: "js", throws: true, length: 3 },
     writeHeadAndEnd: {
       ...method,
-      passThis: true,
       args: { ...head, chunk: b.any, encoding: b.any, strictContentLength: b.any, ...autoHeaders },
+      passThis: true,
     },
     writeInformational: { args: { data: b.any, encoding: b.any }, capability: "js", throws: true, length: 1 },
   },

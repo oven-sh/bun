@@ -863,9 +863,9 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                     // SAFETY: `pip` is a live JSC heap cell (see above).
                     if unsafe { &*pip }.status() == PromiseStatus::Pending {
                         // SAFETY: per fn contract — short-lived `&mut *vm` for the
-                        // dispatched `auto_tick` hook (same shape as the
-                        // non-watcher `wait_for_promise` arm).
-                        unsafe { (*vm).auto_tick() };
+                        // dispatched hook (same shape as the non-watcher
+                        // `wait_for_promise` arm).
+                        unsafe { (*vm).auto_tick_while_pending(AnyPromise::Internal(pip)) };
                     }
                 }
             } else {
@@ -944,6 +944,58 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
 /// # Safety
 /// `vm` is the live per-thread VM.
 unsafe fn auto_tick(vm: *mut VirtualMachine) {
+    // SAFETY: per fn contract.
+    let has_yielded_tasks = unsafe { run_immediates(vm) };
+    // SAFETY: per fn contract.
+    unsafe { poll_and_drain_timers(vm, has_yielded_tasks, false) };
+}
+
+/// `eventLoop().autoTickWhilePending(promise)`: [`auto_tick`] for a turn of a
+/// promise wait. Once the immediates have settled `promise`, the poll returns at
+/// once instead of parking on the next-timer deadline. The rest of the turn
+/// runs as always.
+///
+/// # Safety
+/// `vm` is the live per-thread VM.
+unsafe fn auto_tick_while_pending(vm: *mut VirtualMachine, promise: AnyPromise) {
+    // SAFETY: per fn contract.
+    let has_yielded_tasks = unsafe { run_immediates(vm) };
+    let settled = promise.status() != bun_jsc::js_promise::Status::Pending;
+    // SAFETY: per fn contract.
+    unsafe { poll_and_drain_timers(vm, has_yielded_tasks, settled) };
+}
+
+/// The first phase of [`auto_tick`]: the immediates of this turn. Returns whether
+/// yield tasks were promoted, which the poll deadline needs.
+///
+/// # Safety
+/// `vm` is the live per-thread VM.
+#[inline(always)]
+unsafe fn run_immediates(vm: *mut VirtualMachine) -> bool {
+    // SAFETY: per fn contract — `vm` is the live per-thread VM.
+    let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
+
+    // After this call `immediate_tasks` reflects next-tick immediates, so
+    // the `has_pending_immediate` read in the poll phase is correct.
+    // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
+    unsafe { (*el).tick_immediate_tasks(vm) };
+    // SAFETY: as above.
+    let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
+    #[cfg(windows)]
+    if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {
+        // SAFETY: `el` is the live per-thread event loop.
+        unsafe { (*el).wakeup() };
+    }
+    has_yielded_tasks
+}
+
+/// The second phase of [`auto_tick`]: the I/O poll with the next-timer deadline,
+/// then the timers that are due. With `no_park` the poll returns at once.
+///
+/// # Safety
+/// `vm` is the live per-thread VM.
+#[inline(always)]
+unsafe fn poll_and_drain_timers(vm: *mut VirtualMachine, has_yielded_tasks: bool, no_park: bool) {
     // Note: reshaped for borrowck — `EventLoop` is a value field of
     // `VirtualMachine`, so holding `&mut EventLoop` while also touching VM
     // siblings would alias. Dereference per-field via the raw `vm` ptr.
@@ -952,15 +1004,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
     let loop_ = unsafe { (*el).usockets_loop() };
 
-    // ── tick_immediate_tasks ────────────────────────────────────────────
-    // After this call `immediate_tasks` reflects next-tick immediates, so
-    // the `has_pending_immediate` read below is correct.
-    // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
-    unsafe { (*el).tick_immediate_tasks(vm) };
-    // SAFETY: as above.
-    let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
+    // On Windows the async handle is what returns `us_loop_run` at once.
     #[cfg(windows)]
-    if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {
+    if no_park {
         // SAFETY: `el` is the live per-thread event loop.
         unsafe { (*el).wakeup() };
     }
@@ -1023,8 +1069,8 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // `tickImmediateTasks` swaps `next_immediate_tasks` in, so this
         // reflects next-tick immediates (queued during the drain above).
         // SAFETY: `el` is the live per-thread event loop.
-        // SAFETY: `el` is the live per-thread event loop.
-        let has_pending_immediate = has_yielded_tasks
+        let has_pending_immediate = no_park
+            || has_yielded_tasks
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
         // Fold the QUIC deadline into the poll timeout.
@@ -1499,6 +1545,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     load_preloads,
     ensure_debugger,
     auto_tick,
+    auto_tick_while_pending,
     auto_tick_active,
     print_exception,
     timer_insert,

@@ -287,6 +287,15 @@ impl Drop for EventLoopEnterNoCheckpointGuard {
     }
 }
 
+/// How [`EventLoop::wait_for_promise_while`] returned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Waited {
+    /// The promise settled.
+    Settled,
+    /// `keep_waiting` said to stop. The promise is still pending.
+    GaveUp,
+}
+
 /// What [`EventLoop::enter_js`] found.
 enum EnterJs<'a> {
     /// The callback may be called, inside this scope (none for [`ContextId::NONE`](crate::ContextId::NONE)).
@@ -303,6 +312,8 @@ impl EventLoop {
     /// afterwards (so that promises run). We must only do that once per task in the
     /// event loop. To make that work, we count enter/exit calls and once that
     /// counter reaches 0, we drain the microtasks.
+    ///
+    /// [`Self::wait_for_promise`] sets the count aside while it runs.
     #[inline]
     pub fn enter(&mut self) {
         bun_core::scoped_log!(EventLoop, "enter() = {}", self.entered_event_loop_count);
@@ -368,7 +379,8 @@ impl EventLoop {
     /// one, so its exit does not run the nextTicks and promise reactions the
     /// callback queued before its next statement. The dispatcher's explicit
     /// drains are unconditional, so the held count does not skip them, and the
-    /// continuations they run are covered by it as well.
+    /// continuations they run are covered by it as well. The exception is a
+    /// promise wait ([`Self::wait_for_promise`]): a loop of its own.
     ///
     /// # Safety
     /// As [`Self::enter_scope`].
@@ -1134,10 +1146,38 @@ impl EventLoop {
     /// `JsResult` function crosses explicitly with [`jsc::Stopped::throw`] (which, with
     /// the termination already pending, is just `Thrown`).
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
-        let jsc_vm = self.vm_ref().jsc_vm();
+        self.wait_for_promise_while(promise, || true).map(drop)
+    }
+
+    /// [`Self::wait_for_promise`], but gives up once `keep_waiting` says so. It is
+    /// asked before each poll, with the promise still pending.
+    ///
+    /// The wait is a loop of its own. The caller's entries ([`Self::enter`]) are set
+    /// aside while it runs, so a callback it dispatches is the outermost one and
+    /// its exit is a microtask checkpoint, as at the top of the loop. Under the
+    /// caller's entries it would not be, and a reaction it queued (the next
+    /// `setImmediate` of a chain) would wait for the next [`Self::tick`], after the
+    /// poll had parked without it.
+    pub fn wait_for_promise_while(
+        &mut self,
+        promise: jsc::AnyPromise,
+        keep_waiting: impl FnMut() -> bool,
+    ) -> Result<Waited, jsc::Stopped> {
         if promise.status() != PromiseStatus::Pending {
-            return Ok(());
+            return Ok(Waited::Settled);
         }
+        let entries = core::mem::replace(&mut self.entered_event_loop_count, 0);
+        let waited = self.wait_for_pending_promise(promise, keep_waiting);
+        self.entered_event_loop_count = entries;
+        waited
+    }
+
+    fn wait_for_pending_promise(
+        &mut self,
+        promise: jsc::AnyPromise,
+        mut keep_waiting: impl FnMut() -> bool,
+    ) -> Result<Waited, jsc::Stopped> {
+        let jsc_vm = self.vm_ref().jsc_vm();
         while promise.status() == PromiseStatus::Pending {
             if jsc_vm.execution_forbidden()
                 || !self.vm_ref().script_allowed()
@@ -1146,11 +1186,15 @@ impl EventLoop {
                 return Err(jsc::Stopped);
             }
             self.tick();
-            if promise.status() == PromiseStatus::Pending {
-                self.auto_tick();
+            if promise.status() != PromiseStatus::Pending {
+                break;
             }
+            if !keep_waiting() {
+                return Ok(Waited::GaveUp);
+            }
+            self.vm_ref().as_mut().auto_tick_while_pending(promise);
         }
-        Ok(())
+        Ok(Waited::Settled)
     }
 
     pub fn wakeup(&self) {

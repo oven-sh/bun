@@ -1221,16 +1221,29 @@ export function throws() {
     ["the absolute path of the file", { source: null }],
     ["no sourcesContent", { source: "moved.ts", sourcesContent: false }],
     ["charset=utf-8", { source: "moved.ts", mediaType: ";charset=utf-8" }],
+    ["one mapping for each line", { source: "moved.ts", mappings: "line" }],
   ])("from a plugin, of the file: %s", async (_, plugin) => {
     expect(await report(moved, plugin)).toEqual(inTheFile);
   });
 
-  test.concurrent("from a plugin, of the file: one mapping for each line", async () => {
-    expect(await report(moved, { source: "moved.ts", mappings: "line" })).toEqual({
-      ...inTheFile,
-      positions: "thrown at moved.ts:10:1, injected at moved.ts:3:56",
-    });
-  });
+  test.concurrent.each(["character", "line"] as const)(
+    "from a plugin, of the file: an inline snapshot, with one mapping for each %s",
+    async mappings => {
+      const text = (snapshot: string) =>
+        `import { expect, test } from "bun:test";\ntest("snapshot", () => {\n  expect(1).toMatchInlineSnapshot(${snapshot});\n});\n`;
+      using dir = files(text(""), { source: "moved.ts", mappings });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--preload", "./plugin.js", "--update-snapshots", "./moved.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "inherit",
+      });
+      const exitCode = await proc.exited;
+      expect(readFileSync(path.join(String(dir), "moved.ts"), "utf8")).toBe(text("`1`"));
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test.concurrent("from a plugin, of the file: one statement above a line with one statement", async () => {
     const text = `import "./other";\n${moved}`;

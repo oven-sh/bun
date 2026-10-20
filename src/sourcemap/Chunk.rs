@@ -622,7 +622,10 @@ impl NewBuilder<'_, VLQSourceMap> {
             ) {
                 current_state.source_index = 0;
                 current_state.original_line = mapping.original.lines.zero_based();
-                current_state.original_column = mapping.original.columns.zero_based();
+                // The text from the mapping on came from there, so a position further
+                // along is as far along there. A map with few mappings keeps its columns.
+                current_state.original_column = mapping.original.columns.zero_based()
+                    + (current_state.original_column - mapping.generated.columns.zero_based());
             } else {
                 current_state.source_index = NOT_IN_INPUT_SOURCE_MAP;
             }

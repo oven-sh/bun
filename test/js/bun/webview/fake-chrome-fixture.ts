@@ -56,6 +56,11 @@ Object.assign(globalThis, {
     closeSync(COMMANDS);
     setInterval(() => {}, 2 ** 30);
   },
+  // Sends one frame as given, ahead of the reply to the evaluate() that asked
+  // for it, so a scenario can deliver frames a real browser would not.
+  __fake_send(message: unknown) {
+    send(message);
+  },
 });
 
 function send(message: unknown) {

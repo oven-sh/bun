@@ -299,6 +299,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let prev_require_to_convert_count = self.imports_to_convert_from_require.len();
                 let prev_macro_call_count = self.macro_call_count;
                 let orig_dead = self.is_control_flow_dead;
+                let orig_in_deleted = self.in_deleted_export;
                 // `replacement` is a `BackRef` so the
                 // borrow of `self.options` does not survive across `visit_expr_in_out(&mut self)`.
                 // `BackRef` invariant: `self.options.features.replace_exports` is never mutated
@@ -320,6 +321,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             replacement = Some(ptr);
                             if self.options.features.dead_code_elimination && !is_replace {
                                 self.is_control_flow_dead = true;
+                                self.in_deleted_export = true;
                             }
                         }
                     }
@@ -574,6 +576,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if IS_POSSIBLY_DECL_TO_REMOVE {
                     self.is_control_flow_dead = orig_dead;
+                    self.in_deleted_export = orig_in_deleted;
                     if let BData::BIdentifier(_) = decl.binding.data {
                         if let Some(_ptr) = replacement {
                             // `BackRef::get` — entry lives in `self.options.features.replace_exports`,

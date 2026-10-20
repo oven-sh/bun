@@ -1198,7 +1198,8 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 return LauncherMode::fail(MODE, FailReason::InvalidShimValidation);
             }
 
-            // These run under `cmd /c`, which parses the line again: quoting protects no argument.
+            // These run under `cmd /c`, which parses the command line again, so quoting doesn't
+            // protect any argument.
             if is_batch_file(filename_u16)
                 && user_arguments_u16
                     .iter()
@@ -1771,7 +1772,8 @@ fn is_batch_file(filename_and_quote: &[u16]) -> bool {
     })
 }
 
-/// `batch_arg_has_cmd_metachars` (src/which/lib.rs) without `"`: a raw command line quotes with it.
+/// Same as `batch_arg_has_cmd_metachars` (src/which/lib.rs) but without `"`, because a raw command
+/// line uses it for quoting.
 fn is_cmd_special_character(unit: u16) -> bool {
     // % & | < > ^ \r \n
     matches!(unit, 0x25 | 0x26 | 0x7C | 0x3C | 0x3E | 0x5E | 0x0D | 0x0A)

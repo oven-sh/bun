@@ -180,7 +180,8 @@ const INSTALLED_DEPENDENCY_GROUPS: [DependencyGroup; 2] =
     [DependencyGroup::DEPENDENCIES, DependencyGroup::OPTIONAL];
 
 impl PackageJSON {
-    /// Whether auto-install can look up the version of an imported package in this package.json.
+    /// Returns true if auto-install can look up the version of an imported package in this
+    /// package.json.
     pub(crate) fn lists_dependencies(&self) -> bool {
         self.dependencies.map.count() > 0
             || self.package_manager_package_id != INVALID_PACKAGE_ID

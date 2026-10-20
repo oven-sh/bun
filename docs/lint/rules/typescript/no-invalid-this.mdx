@@ -44,7 +44,7 @@ Reported:
 
 {/* bad */}
 ```ts
-const button = {
+export const button = {
   label: "Save",
   onClick() {
     setTimeout(function () {
@@ -58,7 +58,7 @@ Not reported:
 
 {/* good */}
 ```ts
-const button = {
+export const button = {
   label: "Save",
   onClick() {
     setTimeout(() => {
@@ -87,14 +87,14 @@ function describe(this: Button) {
 
 {/* good */}
 ```ts
-function Timer() {
+export function Timer() {
   this.startedAt = Date.now();
 }
 ```
 
 {/* bad {"options": [{"capIsConstructor": false}]} */}
 ```ts
-function Timer() {
+export function Timer() {
   this.startedAt = Date.now();
 }
 ```

@@ -275,7 +275,7 @@ impl Rule for NoDuplicateImports {
         }
         // oxlint goes through all the imports of a file before its exports.
         let is_later = |it: &Entry| is_oxlint && it.is_export;
-        utils::sort::sort_unstable_by(&mut entries, |a, b| {
+        utils::sort::sort_by(&mut entries, |a, b| {
             (a.module.cmp(b.module))
                 .then_with(|| is_later(a).cmp(&is_later(b)))
                 .then_with(|| a.statement.span().start.cmp(&b.statement.span().start))

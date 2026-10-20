@@ -1601,6 +1601,15 @@ impl<'a, 'o> Printer<'a, 'o> {
                             self.trim_text_right(child);
                         }
                     }
+                } else if let (Some(previous), None) = (previous, next)
+                    && self.is_block_element(previous)
+                    && self.text_starts_with_white_space(child)
+                    && !self.is_empty_text(child)
+                    && !self.text_starts_with_linebreak(child, 1)
+                {
+                    // The plugin doesn't trim the last text: `<p>a</p> b` becomes `<p>a</p>`, a line break and ` b`.
+                    // Formatting that output again removes the space. Here it's removed on the first pass.
+                    self.trim_text_left(child);
                 }
                 docs.push(self.print(child, place));
             } else if self.is_block_element(child) {

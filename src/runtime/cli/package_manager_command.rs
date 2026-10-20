@@ -38,7 +38,8 @@ struct NodeModulesFolder {
     dependencies: Box<[DependencyID]>,
 }
 
-/// `bun pm ls` lists what is on disk: the lockfile also has never-installed optionals and pruned entries.
+/// `bun pm ls` lists what's on disk. The lockfile also has optional dependencies that were never
+/// installed, and pruned entries.
 struct InstalledFilter {
     path: AutoAbsPath,
     top_len: usize,
@@ -59,7 +60,9 @@ impl InstalledFilter {
         })
     }
 
-    /// `or_in_store`: an isolated install links only direct dependencies into a `node_modules`, so an entry of the (hoisted) tree may be in `node_modules/.bun` alone. A dependency of the root is one the root can load: it has to be linked.
+    /// `or_in_store`: an isolated install only links direct dependencies into a `node_modules`, so
+    /// an entry of the (hoisted) tree may only be in `node_modules/.bun`. A dependency of the root
+    /// has to be linked, because the root has to be able to load it.
     fn is_installed(
         &mut self,
         lockfile: &Lockfile,
@@ -78,7 +81,8 @@ impl InstalledFilter {
         // Local sources live outside of node_modules.
         match resolution.tag {
             ResolutionTag::Root | ResolutionTag::Symlink => return true,
-            // A pruned checkout (`turbo prune`, a Docker layer) lacks some of the lockfile's workspaces.
+            // A pruned checkout (`turbo prune`, a Docker layer) is missing some of the lockfile's
+            // workspaces.
             ResolutionTag::Workspace => {
                 // `join` resolves a `..` in the workspace's path, which `append` does not. Windows
                 // treats a `..` that is left in an absolute path as a literal name.
@@ -184,7 +188,7 @@ impl PackageManagerCommand {
         Global::crash();
     }
 
-    /// What `bun pm cache rm` must not delete, if `dir` (a real path) is or contains it.
+    /// Returns what `bun pm cache rm` must not delete, if `dir` (a real path) is or contains it.
     fn protected_in(dir: &[u8], bun_install: Option<&[u8]>, cwd: &[u8]) -> Option<&'static str> {
         let protected: [(&'static str, Option<&[u8]>); 5] = [
             ("the home directory", env_var::HOME.get_not_empty()),
@@ -202,7 +206,8 @@ impl PackageManagerCommand {
         let mut buf = bun_paths::path_buffer_pool::get();
         for (what, path) in protected {
             let Some(path) = path else { continue };
-            // Real paths on both sides: a symlink to `$HOME` has to compare as `$HOME`.
+            // Compare real paths on both sides, so that a symlink to `$HOME` compares equal to
+            // `$HOME`.
             let real: &[u8] = match Dir::open(path) {
                 Ok(opened) => match opened.get_fd_path(&mut buf) {
                     Ok(real) => &real[..],
@@ -282,7 +287,8 @@ impl PackageManagerCommand {
         let mut subcommand: &[u8] = if is_direct_whoami {
             b"whoami"
         } else {
-            // Drops a leading "pm" from the field: the branches below index `positionals[1]` and up.
+            // Drops a leading "pm" from the field, because the branches below index
+            // `positionals[1]` and up.
             Self::get_subcommand(&mut pm.options.positionals)
         };
         let positionals: &'static [&'static [u8]] = pm.options.positionals;
@@ -432,7 +438,8 @@ impl PackageManagerCommand {
                     Err(err) if err.get_errno() == bun_sys::E::ENOENT => None,
                     Err(err) => Self::crash_getting_cache_directory(err),
                 };
-                // The real path and whether it holds the global store; `None` when there is no directory.
+                // The real path, and whether it contains the global store. `None` if the directory
+                // doesn't exist.
                 let found: Option<(&[u8], bool)> = match &rm_dir {
                     Some(rm_dir) => {
                         let has_global_store =
@@ -452,7 +459,8 @@ impl PackageManagerCommand {
                 });
                 let protected = found
                     .and_then(|(real, _)| Self::protected_in(real, bun_install.as_deref(), &cwd));
-                // What bunx installed is inside the install cache: counted before it goes with it.
+                // The packages that bunx installed are inside the install cache, so count them
+                // before it's deleted.
                 let mut deleted: usize = match protected {
                     None if !prune => crate::cli::bunx_command::count_cached_packages(rm_path),
                     _ => 0,

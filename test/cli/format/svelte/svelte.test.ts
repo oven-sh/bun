@@ -10,8 +10,8 @@ import cases from "./cases.json";
 import { forOxfmt } from "./for-oxfmt";
 
 afterAll(endChildren);
-// `bun test` gives a test 5 seconds. A debug build takes up to a second to start `bun fmt`, and most of a minute for what
-// is nested 10,000 deep. No lane of CI has a debug build.
+// `bun test` gives each test 5 seconds. A debug build takes up to a second to start `bun fmt`, and most of a minute for
+// the file that's nested 10,000 deep. CI has no debug lane.
 if (isDebug) setDefaultTimeout(120_000);
 
 async function formatIn(cwd: string, names: string[], flags: string[] = ["."]) {
@@ -34,7 +34,7 @@ async function format(files: Record<string, string>, names: string[], flags: str
 const plugins = ["prettier-plugin-svelte"];
 const prettierrc = JSON.stringify({ plugins });
 const oxfmtrc = '{ "svelte": true }';
-/** Where components are formatted: without a config, with Prettier's plugin, and with oxfmt's `svelte`. */
+/** The configs that Bun formats components with: none, Prettier's plugin and oxfmt's `svelte`. */
 const everyConfig: [config: Record<string, string>][] = [
   [{}],
   [{ ".prettierrc": prettierrc }],
@@ -44,9 +44,9 @@ const everyConfig: [config: Record<string, string>][] = [
 const errorAt = (name: string) => new RegExp(`^    at ${name.replaceAll(".", "\\.")}(:\\d+:\\d+)?$`, "m");
 /** Returns `fill` repeated `count` times. */
 const repeated = (fill: string, count: number) => Buffer.alloc(count * Buffer.byteLength(fill), fill).toString();
-/** What is said about a place in a file: its line, a caret under its column, the message, and where it is. */
-function problem(kind: "error" | "warn", message: string, place: [number, number, string], name = "a.svelte") {
-  const [line, column, text] = place;
+/** Returns what's printed for a location: the source line, a caret under the column, the message and the location. */
+function problem(kind: "error" | "warn", message: string, location: [number, number, string], name = "a.svelte") {
+  const [line, column, text] = location;
   const caret = `${repeated(" ", `${line} | `.length + column - 1)}^`;
   return `${line} | ${text}\n${caret}\n${kind}: ${message}\n${kind === "warn" ? "   " : "    "}at ${name}:${line}:${column}\n\n`;
 }
@@ -55,36 +55,37 @@ const plugin = (version: string) => ({
   "node_modules/prettier-plugin-svelte/package.json": JSON.stringify({ name: "prettier-plugin-svelte", version }),
 });
 
-/** What a run prints that is about none of its files, and how it ends, when it formats them all. */
+/** What a run that formats all of its files prints apart from the messages about them, and its exit code. */
 const nothingElse = { stdout: "", stderr: "", exitCode: 0 };
 
 /**
- * `bun fmt` takes far longer to start than to format a component. So the texts of many tests are formatted in one run
- * for each configuration. A test adds its texts while the tests are collected. When it runs, it looks at what became of
- * them and at what was said about them, in a run that has them: the run of all the texts, which the first tests of the
- * file start, or else one of only its own, as when `-t` leaves those tests out.
+ * `bun fmt` takes far longer to start than to format a component, so many tests format their texts in one run per
+ * config. A test adds its texts at collection time. When it runs, it reads their output and the messages about them
+ * from a run that has them. That's the run of all the texts, which the first tests of the file start, or a run of only
+ * its own texts if `-t` filters those tests out.
  */
 function sharedRun(flags: string[] = []) {
   const texts: string[] = [];
   const name = (index: number) => `${index}.svelte`;
-  // By the configuration, the runs that there are. Each has the texts from `first` up to `end`.
+  // The runs so far, keyed by config. Each one has the texts from `first` up to `end`.
   const runs = new Map<string, { first: number; end: number; done: ReturnType<typeof run> }[]>();
 
   async function run(config: Record<string, string>, first: number, end: number) {
     const names = texts.slice(first, end).map((_, index) => name(first + index));
     const files = Object.fromEntries(names.map((it, index) => [it, texts[first + index]]));
     const { stdout, stderr, exitCode, files: after } = await format({ ...config, ...files }, names, flags);
-    // By the name of a file, what is said about it: a message ends with where it is and an empty line. By "", the rest.
-    const said = new Map<string, string>();
+    // The messages about each file, keyed by its name. A message ends with its location and an empty line. The key ""
+    // has everything else.
+    const messages = new Map<string, string>();
     for (const message of stderr.split(/(?<=\n\n)/)) {
-      const about = /\n {3,4}at (\d+\.svelte)(:\d+:\d+)?\n\n$/.exec(message)?.[1] ?? "";
-      said.set(about, (said.get(about) ?? "") + message);
+      const file = /\n {3,4}at (\d+\.svelte)(:\d+:\d+)?\n\n$/.exec(message)?.[1] ?? "";
+      messages.set(file, (messages.get(file) ?? "") + message);
     }
-    const rest = { stdout, stderr: said.get("") ?? "", exitCode };
-    return { files: new Map(names.map((it, index) => [it, after[index]])), said, rest };
+    const rest = { stdout, stderr: messages.get("") ?? "", exitCode };
+    return { files: new Map(names.map((it, index) => [it, after[index]])), messages, rest };
   }
 
-  /** With `config`: a run that has the texts from `first` up to `end`, or a new one of only those. */
+  /** Returns a run with `config` that has the texts from `first` up to `end`, or starts one with only those. */
   function runWith(config: Record<string, string>, first: number, end: number) {
     const key = JSON.stringify(config);
     const sameConfig = runs.get(key) ?? [];
@@ -95,7 +96,7 @@ function sharedRun(flags: string[] = []) {
   }
 
   return {
-    /** Adds `added`. Returns their names, and what became of them and what is said about them with a configuration. */
+    /** Adds `added`. Returns their file names, and `under`, which gives their output and messages for a config. */
     add(added: string[]) {
       const first = texts.length;
       texts.push(...added);
@@ -105,14 +106,14 @@ function sharedRun(flags: string[] = []) {
         async under(config: Record<string, string>) {
           const end = first + names.length;
           const found = runWith(config, first, end);
-          const { files, said, rest } = await found.done;
-          // A run of only these texts: no other test looks at the rest of it.
+          const { files, messages, rest } = await found.done;
+          // No other test checks the rest of a run that only has these texts.
           if (found.first === first && found.end === end) expect(rest).toEqual(nothingElse);
-          return { stderr: names.map(it => said.get(it) ?? "").join(""), files: names.map(it => files.get(it)) };
+          return { stderr: names.map(it => messages.get(it) ?? "").join(""), files: names.map(it => files.get(it)) };
         },
       };
     },
-    /** With a configuration: what the run of all the texts printed that is about no file, and how it ended. */
+    /** Returns what the run of all the texts with `config` printed that isn't about a file, and its exit code. */
     async rest(config: Record<string, string>) {
       return (await runWith(config, 0, texts.length).done).rest;
     },
@@ -147,9 +148,9 @@ const unstable = new Set([
 ]);
 // `bun fmt --debug-check-svelte` is compiled into debug and canary builds only.
 const hasRunner = isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
-// A run of it for the pairs of several tests, which starts with the first of them that asks for it. Not one for all the
-// pairs: a debug build takes ten seconds for them.
-let comparison: { pairs: [before: string, after: string][]; said?: ReturnType<typeof compare> } = { pairs: [] };
+// One run of it compares the pairs of several tests, and the first of those tests to ask starts it. It isn't one run
+// for all the pairs, because that takes a debug build ten seconds.
+let comparison: { pairs: [before: string, after: string][]; verdicts?: ReturnType<typeof compare> } = { pairs: [] };
 
 async function compare(pairs: [before: string, after: string][]) {
   const files = pairs.flatMap((pair, index) => pair.map((text, which) => [`${index}.${which}`, text]));
@@ -162,27 +163,27 @@ async function compare(pairs: [before: string, after: string][]) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { said: stdout.split("\n"), stderr, exitCode };
+  return { verdicts: stdout.split("\n"), stderr, exitCode };
 }
 
-/** Adds pairs of texts while the tests are collected. Returns what is said about each of them: "same" or "different". */
+/** Adds pairs of texts at collection time. Returns a function that gives each pair's verdict: "same" or "different". */
 function sameOrDifferent(added: [before: string, after: string][]) {
   if (comparison.pairs.length > 0 && comparison.pairs.length + added.length > 64) comparison = { pairs: [] };
   const [run, first] = [comparison, comparison.pairs.length];
   run.pairs.push(...added);
   return async () => {
-    const { said, stderr, exitCode } = await (run.said ??= compare(run.pairs));
-    return { said: said.slice(first, first + added.length), stderr, exitCode };
+    const { verdicts, stderr, exitCode } = await (run.verdicts ??= compare(run.pairs));
+    return { verdicts: verdicts.slice(first, first + added.length), stderr, exitCode };
   };
 }
 
 describe.concurrent("Svelte", () => {
-  // The rows of the tables below, in one run for each configuration: one that formats, and one with `--debug-check`.
-  // These tests are the first, and they start the runs of all the rows.
+  // The rows of the tables below are formatted in one run per config, and checked in one `--debug-check` run per
+  // config. These tests come first, and they start those runs.
   const inOneRun = sharedRun();
   const inOneCheck = sharedRun(["--debug-check"]);
 
-  test.each(everyConfig)("the runs that the tables share say nothing else, and exit with 0: %j", async config => {
+  test.each(everyConfig)("the shared runs print nothing else and exit with 0: %j", async config => {
     expect(await Promise.all([inOneRun.rest(config), inOneCheck.rest(config)])).toEqual([nothingElse, nothingElse]);
   });
 
@@ -328,7 +329,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "legacy/old.md": block,
     };
     const { stdout, ...rest } = await format(files, [], ["--log-level=log", "--list-different"]);
-    // The config is on one line, which is not how it is formatted either.
+    // The config file is listed too, because it's written on one line.
     expect({ listed: stdout.trimEnd().split("\n").sort(), ...rest }).toEqual({
       listed: [".oxfmtrc.json", ...listed],
       stderr: "",
@@ -375,7 +376,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "legacy/old.md": block,
     };
     const { stdout, ...rest } = await format(files, [], ["--log-level=log", "--list-different"]);
-    // The config is on one line, which is not how it is formatted either.
+    // The config file is listed too, because it's written on one line.
     expect({ listed: stdout.trimEnd().split("\n").sort(), ...rest }).toEqual({
       listed: [".prettierrc", ...listed],
       stderr: "",
@@ -591,13 +592,13 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     // 2.x accepts this.
     const options = { svelteSortOrder: "scripts-markup-styles" };
     const files = { "a.svelte": input, "b.js": "b  ;\n" };
-    // Once for each file: the configuration is one too. None is formatted.
+    // Printed once per file, and the configuration file is one too. No file is formatted.
     const error = "error: Invalid svelteSortOrder value: scripts-markup-styles.\n";
-    const refused = { stdout: "", stderr: error + error + error, files: Object.values(files), exitCode: 2 };
+    const rejected = { stdout: "", stderr: error + error + error, files: Object.values(files), exitCode: 2 };
 
     test("is an error when Bun formats the components", async () => {
       const config = { ".prettierrc": JSON.stringify({ plugins, ...options }) };
-      expect(await format({ ...files, ...config }, Object.keys(files))).toEqual(refused);
+      expect(await format({ ...files, ...config }, Object.keys(files))).toEqual(rejected);
     });
 
     test("is an unknown option without the plugin", async () => {
@@ -613,7 +614,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     test("is also an error if the installed version accepts it", async () => {
       const project = { ...files, ...prettier, ...plugin("2.10.1") };
       const config = { ".prettierrc": JSON.stringify({ plugins, ...options }) };
-      expect(await format({ ...project, ...config }, Object.keys(files))).toEqual(refused);
+      expect(await format({ ...project, ...config }, Object.keys(files))).toEqual(rejected);
     });
   });
 
@@ -711,7 +712,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
 
   // Each row is a label, the text, Bun's output and the plugin's output, which is a different component or not a valid
   // one.
-  const printedRight: [name: string, before: string, after: string, byPlugin: string][] = [
+  const brokenByPlugin: [label: string, before: string, after: string, byPlugin: string][] = [
     ["a quote in single quotes", `<Child   prop='"' />\n`, `<Child prop='"' />\n`, `<Child prop=""" />\n`],
     ["an element that's void in Svelte but not in the plugin", "<keygen>\n", "<keygen />\n", "<keygen></keygen>\n"],
     ["a comment after an expression", "{a  /* b */}\n", "{a /* b */}\n", "{a}\n"],
@@ -743,9 +744,9 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "{#each a as { undefined: { c } }}{c}{/each}\n",
     ],
   ];
-  for (const [name, before, after, byPlugin] of printedRight) {
+  for (const [label, before, after, byPlugin] of brokenByPlugin) {
     const [formatted, checked] = [inOneRun.add([before, after]), inOneCheck.add([before])];
-    test(`prints correctly what the plugin breaks: ${name}`, async () => {
+    test(`prints correctly what the plugin breaks: ${label}`, async () => {
       expect(after).not.toBe(byPlugin);
       for (const [config] of everyConfig) {
         expect(await Promise.all([formatted.under(config), checked.under(config)])).toEqual([
@@ -831,7 +832,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     ["{#if a\n/* c */\n}d{/if}\n", "{#if a\n/* c */\n}d{/if}\n", "{#if a}d{/if}\n"],
     ["<p on:click={a // b\n}>c</p>\n", "<p\n  on:click={a // b\n  }\n>\n  c\n</p>\n", "<p on:click={a}>c</p>\n"],
   ];
-  // Each text, and what it is formatted to, which stays.
+  // Each text and its output, which stays the same when it's formatted again.
   const withComments = inOneRun.add(comments.flatMap(it => [it[0], it[1]]));
   const withCommentsChecked = inOneCheck.add(comments.map(it => it[0]));
   test.each(everyConfig)("doesn't lose any comment: %j", async config => {
@@ -1549,7 +1550,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     ],
   };
   describe.each(Object.entries({ ...damaged, ...strict }))("%s", (_, rows) => {
-    // Each text, and what it is formatted to, which stays.
+    // Each text and its output, which stays the same when it's formatted again.
     const written = inOneRun.add(rows.flatMap(it => [it[0], it[1]]));
     const checked = inOneCheck.add(rows.map(it => it[0]));
 
@@ -1562,12 +1563,12 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
 
     const seen = rows.filter(it => it[2] !== null && it[2] !== it[1]);
     // Each input is paired with Bun's output, then with the other output.
-    const verdicts = sameOrDifferent(
+    const compared = sameOrDifferent(
       seen.flatMap(it => ([1, 2] as const).map((which): [string, string] => [it[0], it[which]!])),
     );
     test.skipIf(!hasRunner)("--debug-check would reject the other output", async () => {
-      expect(await verdicts()).toEqual({
-        said: seen.flatMap(it => ["same", it[3] === false ? "same" : "different"]),
+      expect(await compared()).toEqual({
+        verdicts: seen.flatMap(it => ["same", it[3] === false ? "same" : "different"]),
         stderr: "",
         exitCode: 0,
       });
@@ -1666,12 +1667,12 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     });
 
     const seen = rows.filter(it => it[3] !== null);
-    const verdicts = sameOrDifferent(
+    const compared = sameOrDifferent(
       seen.flatMap(it => ([1, 2, 3] as const).map((which): [string, string] => [it[0], it[which]!])),
     );
     test.skipIf(!hasRunner)("--debug-check would reject a comment outside the expression", async () => {
-      expect(await verdicts()).toEqual({
-        said: seen.flatMap(it => ["same", "same", it[4] === false ? "same" : "different"]),
+      expect(await compared()).toEqual({
+        verdicts: seen.flatMap(it => ["same", "same", it[4] === false ? "same" : "different"]),
         stderr: "",
         exitCode: 0,
       });
@@ -2022,11 +2023,11 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ["{(b + c) * d}\n", "{b + c * d}\n"],
       ["{[b, , c]}\n", "{[b, c]}\n"],
     ];
-    const verdicts = sameOrDifferent([...different, ...same]);
+    const compared = sameOrDifferent([...different, ...same]);
     test.skipIf(!hasRunner)("distinguishes different code from the same code written differently", async () => {
       const rows = [...different, ...same];
-      const { said, stderr, exitCode } = await verdicts();
-      expect(rows.map((it, index) => [...it, said[index]])).toEqual([
+      const { verdicts, stderr, exitCode } = await compared();
+      expect(rows.map((it, index) => [...it, verdicts[index]])).toEqual([
         ...different.map(it => [...it, "different"]),
         ...same.map(it => [...it, "same"]),
       ]);
@@ -2064,7 +2065,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         '<div>\n  <script\n    b="c" // d\n  >\n    let e;\n  </script>\n</div>\n',
       ],
     ];
-    // Each text, and what it is formatted to, which stays.
+    // Each text and its output, which stays the same when it's formatted again.
     const files = rows.flatMap((it, index) => it.map((text, which) => [`${index}.${which}.svelte`, text]));
     const names = files.map(it => it[0]);
     expect(await format({ ...config, ...Object.fromEntries(files) }, names)).toEqual({
@@ -2292,7 +2293,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       const files = Object.fromEntries(rows.map(([text], index) => [names[index], `${text}\n`]));
       const { stderr, ...result } = await format(files, names);
       const message = 'This is TypeScript, which needs <script lang="ts">';
-      // A message for each, and no other. They come in the order of the names as text: 10 is before 2.
+      // One message per row and nothing else. The order is that of the file names as text, so 10 comes before 2.
       expect({ messages: stderr.split(/(?<=\n\n)/).sort(), ...result }).toEqual({
         messages: rows
           .map(([text, column], index) => problem("error", message, [1, column, text], names[index]))
@@ -2349,11 +2350,12 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
 
   // The plugin writes the error to stderr too, and continues.
   describe("a script or style sheet that can't be parsed is left unchanged, with a warning", () => {
-    const warning = (message: string, place: [number, number, string], name?: string) =>
-      problem("warn", message, place, name);
+    const warning = (message: string, location: [number, number, string], name?: string) =>
+      problem("warn", message, location, name);
 
-    // The text, what becomes of it, and the warnings about it: each with its line, its column and the text of the line.
-    const unparsed: [name: string, before: string, after: string, warnings: [string, [number, number, string]][]][] = [
+    // Each row is a label, the text, Bun's output and the warnings. A warning is its message and its location: the
+    // line, the column and the source line.
+    const unparsed: [label: string, before: string, after: string, warnings: [string, [number, number, string]][]][] = [
       [
         "a script",
         "<script>\n  let a = ;\n</script>\n\n<p   >{a}</p>\n",
@@ -2400,10 +2402,10 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         [["Expression expected.", [1, 30, '<script>let é = "é"; let b = ;</script>']]],
       ],
     ];
-    for (const [name, before, after, warnings] of unparsed) {
+    for (const [label, before, after, warnings] of unparsed) {
       const component = inOneRun.add([before]);
-      test(name, async () => {
-        const stderr = warnings.map(([message, place]) => warning(message, place, component.names[0])).join("");
+      test(label, async () => {
+        const stderr = warnings.map(([message, location]) => warning(message, location, component.names[0])).join("");
         for (const [config] of everyConfig) {
           expect(await component.under(config)).toEqual({ stderr, files: [after] });
         }
@@ -2414,14 +2416,14 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "<script>\n  let a = ;\n</script>\n\n<p   >{a}</p>\n",
       "<script>\n  let a = ;\n</script>\n\n<p>{a}</p>\n",
     ];
-    const said = warning("Expression expected.", [2, 11, "  let a = ;"]);
+    const warn = warning("Expression expected.", [2, 11, "  let a = ;"]);
     const summary = "1 file needs formatting. Run bun fmt to fix it.\n";
 
     test("--check prints the warning too, for a formatted file and for an unformatted one", async () => {
       const checked = await format({ "a.svelte": after }, ["a.svelte"], ["--check"]);
-      expect(checked).toEqual({ stdout: "", stderr: said, files: [after], exitCode: 0 });
+      expect(checked).toEqual({ stdout: "", stderr: warn, files: [after], exitCode: 0 });
       const different = await format({ "a.svelte": before }, ["a.svelte"], ["--check"]);
-      expect(different).toEqual({ stdout: "a.svelte\n", stderr: said + summary, files: [before], exitCode: 1 });
+      expect(different).toEqual({ stdout: "a.svelte\n", stderr: warn + summary, files: [before], exitCode: 1 });
     });
 
     test("a source line is only shown with the first warning about it", async () => {
@@ -2492,13 +2494,13 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "Unclosed string",
       [1, 14, '<script lang="ts>let a</script>'],
     ],
-  ])("a syntax error is shown with its location: %s", async (_, text, message, place) => {
+  ])("a syntax error is shown with its location: %s", async (_, text, message, location) => {
     for (const [config] of everyConfig) {
-      // oxfmt sums up.
+      // oxfmt adds a summary.
       const summary = ".oxfmtrc.json" in config ? "Error occurred when checking code style in the above files.\n" : "";
       expect(await format({ ...config, "a.svelte": text, "b.svelte": input }, ["a.svelte", "b.svelte"])).toEqual({
         stdout: "",
-        stderr: problem("error", message, place) + summary,
+        stderr: problem("error", message, location) + summary,
         files: [text, output],
         exitCode: 2,
       });
@@ -2511,16 +2513,16 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
   });
 
   const withKeys = "{#each a as { b: b, c: { d: d } }}e{/each}\n";
-  const keysThatCanGo = [inOneCheck.add([withKeys]), inOneRun.add([withKeys])];
+  const droppableKeys = [inOneCheck.add([withKeys]), inOneRun.add([withKeys])];
   test("--debug-check accepts dropping a key that equals the name after it", async () => {
-    expect(await Promise.all(keysThatCanGo.map(it => it.under({})))).toEqual([
+    expect(await Promise.all(droppableKeys.map(it => it.under({})))).toEqual([
       { stderr: "", files: [withKeys] },
       { stderr: "", files: ["{#each a as { b, c: { d } }}e{/each}\n"] },
     ]);
   });
 
   const each = (pattern: string) => `{#each b as ${pattern}}c{/each}\n`;
-  const suchKeys: [before: string, after: string, said: string][] = [
+  const keyPairs: [before: string, after: string, verdict: string][] = [
     [each("{ a: a }"), each("{ a }"), "same"],
     [each("{ d: { a: a }, e: [{ f: f }] }"), each("{ d: { a }, e: [{ f }] }"), "same"],
     // In a string.
@@ -2535,9 +2537,9 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     // A computed key.
     [each("{ [a]: a }"), each("{ a }"), "different"],
   ];
-  const aboutSuchKeys = sameOrDifferent(suchKeys.map(([before, after]) => [before, after]));
+  const comparedKeys = sameOrDifferent(keyPairs.map(([before, after]) => [before, after]));
   test.skipIf(!hasRunner)("--debug-check doesn't mistake something else for a droppable key", async () => {
-    expect(await aboutSuchKeys()).toEqual({ said: suchKeys.map(it => it[2]), stderr: "", exitCode: 0 });
+    expect(await comparedKeys()).toEqual({ verdicts: keyPairs.map(it => it[2]), stderr: "", exitCode: 0 });
   });
 
   const likeItsName = "<p class:a-b={a-b}>c</p>\n";
@@ -2561,7 +2563,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     const { stderr, ...result } = await format(files, Object.keys(files), ["--threads=1"]);
     expect(result).toEqual({ stdout: "", files: [...Object.values(files).slice(0, 4), output], exitCode: 2 });
     const nested = (name: string) => `error: The code is nested too deeply\n    at ${name}\n\n`;
-    // One message for each of the four, in the order of their names, and no other.
+    // One message for each of the four files, ordered by name, and nothing else.
     expect(stderr.split(/(?<=\n\n)/)).toEqual([
       nested("blocks.svelte"),
       nested("elements.svelte"),
@@ -2708,14 +2710,14 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
 
   test("formats Svelte code blocks in Markdown whenever it formats components", async () => {
     const block = (text: string) => `# a\n\n\`\`\`svelte\n${text}\`\`\`\n`;
-    // One that is refused stays as it is, and nothing is said about it.
-    const refused = block("<p   >{a +}</p>\n");
+    // A rejected block stays unchanged, and nothing is printed about it.
+    const rejected = block("<p   >{a +}</p>\n");
     const withOtherVersion = { ".prettierrc": prettierrc, ...plugin("4.1.0") };
     for (const config of [{}, { ".prettierrc": prettierrc }, withOtherVersion, { ".oxfmtrc.json": oxfmtrc }]) {
-      expect(await format({ ...config, "a.md": block(input), "b.md": refused }, ["a.md", "b.md"])).toEqual({
+      expect(await format({ ...config, "a.md": block(input), "b.md": rejected }, ["a.md", "b.md"])).toEqual({
         stdout: "",
         stderr: "",
-        files: [block(output), refused],
+        files: [block(output), rejected],
         exitCode: 0,
       });
     }

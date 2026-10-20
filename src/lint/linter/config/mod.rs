@@ -688,6 +688,8 @@ pub struct Config {
     js_locations: Vec<(Box<[u8]>, Json)>,
     /// Objects, for different files, have different plugins under one name.
     has_twins: bool,
+    /// [`ResolvedConfig::aliases`] of all objects.
+    aliases: Vec<(Box<[u8]>, Plugin)>,
     heads: Heads,
     cache: Cache,
 }
@@ -1378,7 +1380,15 @@ impl Config {
             b"@" => registry.get(Plugin::Eslint, name).is_some() || formatting_rule(name).is_some(),
             other => match find_js_rule(&self.js_plugins, &[other, b"/", name].concat()) {
                 Some(found) => found.is_some(),
-                None => Plugin::of_prefix(other).is_some_and(|it| registry.get(it, name).is_some()),
+                None => {
+                    let alias = self
+                        .aliases
+                        .iter()
+                        .find(|it| *it.0 == *other)
+                        .map(|it| it.1);
+                    let plugin = alias.or_else(|| Plugin::of_prefix(other));
+                    plugin.is_some_and(|it| registry.get(it, name).is_some())
+                }
             },
         };
         let mut message = [
@@ -1516,6 +1526,15 @@ impl Config {
             for plugin in &object.foreign_plugins {
                 if !config.foreign_plugins.contains(plugin) {
                     config.foreign_plugins.push(plugin.clone());
+                }
+            }
+            for alias in self
+                .aliases
+                .iter()
+                .filter(|it| object.plugins.contains(&it.0))
+            {
+                if !config.aliases.iter().any(|it| it.0 == alias.0) {
+                    config.aliases.push(alias.clone());
                 }
             }
             for plugin in &object.printed_plugins {
@@ -1710,7 +1729,10 @@ impl Config {
                 true => registry.base_of(&setting.id),
                 false => None,
             };
-            let name: Option<Arc<[u8]>> = base.map(|_| Arc::from(&setting.id[..]));
+            // Also a rule under an alias: it keeps the configuration's name.
+            let is_aliased = native.is_some() && config.alias_of(prefix).is_some();
+            let name: Option<Arc<[u8]>> =
+                (base.is_some() || is_aliased).then(|| Arc::from(&setting.id[..]));
             let entry = match (native.or(base), js) {
                 (Some(entry), _) => entry,
                 (None, Some(Some(rule))) => {
@@ -1814,7 +1836,9 @@ impl Config {
             let mut implemented: Vec<Plugin> = Vec::new();
             let is_foreign =
                 |it: &&&[u8]| config.foreign_plugins.iter().any(|other| **other == ***it);
-            let built_in = plugins.iter().filter(|it| !is_foreign(it));
+            // An alias is found by `config.aliases` alone.
+            let is_alias = |it: &&&[u8]| config.alias_of(it).is_some();
+            let built_in = plugins.iter().filter(|it| !is_foreign(it) && !is_alias(it));
             for plugin in built_in.filter_map(|it| Plugin::of_prefix(it)) {
                 if !implemented.contains(&plugin) {
                     implemented.push(plugin);

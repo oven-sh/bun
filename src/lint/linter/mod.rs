@@ -208,6 +208,8 @@ struct Running<'r, S> {
     entry: &'static RuleEntry,
     /// What the configuration has for it.
     configured: Option<&'r ConfiguredRule>,
+    /// Its name, if a comment alone turns it on under an [alias](Named::Aliased).
+    alias: Option<Arc<[u8]>>,
     severity: Severity,
     /// [`Slot::in_oxlint`]
     in_oxlint: InOxlint,
@@ -218,10 +220,11 @@ struct Running<'r, S> {
 
 impl<'r, S> Running<'r, S> {
     #[inline]
-    fn ran(&self) -> Ran<'r> {
+    fn ran(&self) -> Ran<'_> {
         Ran {
             entry: self.entry,
             configured: self.configured,
+            alias: self.alias.as_ref(),
             severity: self.severity,
         }
     }
@@ -232,6 +235,8 @@ impl<'r, S> Running<'r, S> {
 struct Ran<'r> {
     entry: &'static RuleEntry,
     configured: Option<&'r ConfiguredRule>,
+    /// [`Running::alias`]
+    alias: Option<&'r Arc<[u8]>>,
     severity: Severity,
 }
 
@@ -242,10 +247,11 @@ impl<'r> Ran<'r> {
         (self.configured).map_or(self.entry.meta, ConfiguredRule::reported_as)
     }
 
-    /// [`ConfiguredRule::name`]
+    /// [`ConfiguredRule::name`], or [`Running::alias`].
     #[inline]
     fn name(self) -> Option<&'r Arc<[u8]>> {
-        self.configured.and_then(ConfiguredRule::name)
+        self.alias
+            .or_else(|| self.configured.and_then(ConfiguredRule::name))
     }
 
     /// ESLint's `ruleId` of what it reports.
@@ -275,6 +281,8 @@ enum Named<'c> {
     Native(&'static RuleEntry),
     /// One that has a [name](ConfiguredRule::name).
     Instance(&'c ConfiguredRule, &'c Arc<[u8]>),
+    /// One that only a comment names, under an [alias](ResolvedConfig::alias_of).
+    Aliased(&'static RuleEntry, &'c [u8]),
     Js(&'c Arc<js_plugin::Rule>),
 }
 
@@ -283,14 +291,23 @@ impl Named<'_> {
         match self {
             Named::Native(entry) => RuleId::Known(entry.meta),
             Named::Instance(rule, name) => RuleId::Named(rule.entry.meta, Arc::clone(name)),
+            Named::Aliased(entry, prefix) => {
+                RuleId::Named(entry.meta, Self::aliased_id(entry, prefix))
+            }
             Named::Js(rule) => RuleId::Js(Arc::clone(rule)),
         }
+    }
+
+    /// `<prefix>/<name>`: what a comment calls an [aliased](Named::Aliased) rule.
+    fn aliased_id(entry: &RuleEntry, prefix: &[u8]) -> Arc<[u8]> {
+        Arc::from([prefix, b"/", entry.meta.name.as_bytes()].concat())
     }
 
     fn is(self, other: Named) -> bool {
         match (self, other) {
             (Named::Native(a), Named::Native(b)) => is_same_rule(a, b),
             (Named::Instance(_, a), Named::Instance(_, b)) => a == b,
+            (Named::Aliased(a, p), Named::Aliased(b, q)) => is_same_rule(a, b) && p == q,
             (Named::Js(a), Named::Js(b)) => Arc::ptr_eq(a, b),
             _ => false,
         }
@@ -299,7 +316,9 @@ impl Named<'_> {
     /// [`schema::validate`]. `Ok`: what a rule of a JavaScript plugin gets as its options.
     fn validate(self, options: &[Json], stands_alone: bool) -> Result<Vec<Json>, Vec<u8>> {
         match self {
-            Named::Native(entry) | Named::Instance(&ConfiguredRule { entry, .. }, _) => {
+            Named::Native(entry)
+            | Named::Instance(&ConfiguredRule { entry, .. }, _)
+            | Named::Aliased(entry, _) => {
                 schema::validate(entry.meta, options, stands_alone).map(|()| Vec::new())
             }
             Named::Js(rule) => schema::validate_js(rule, options),
@@ -308,9 +327,9 @@ impl Named<'_> {
 
     fn with_defaults(self, options: &[Json]) -> Vec<Json> {
         match self {
-            Named::Native(entry) | Named::Instance(&ConfiguredRule { entry, .. }, _) => {
-                schema::with_defaults(entry.meta, options)
-            }
+            Named::Native(entry)
+            | Named::Instance(&ConfiguredRule { entry, .. }, _)
+            | Named::Aliased(entry, _) => schema::with_defaults(entry.meta, options),
             Named::Js(rule) => schema::with_js_defaults(rule, options),
         }
     }
@@ -320,7 +339,7 @@ impl<'c> Named<'c> {
     /// The rule, if it is one of a JavaScript plugin.
     fn js(self) -> Option<&'c js_plugin::Rule> {
         match self {
-            Named::Native(_) | Named::Instance(..) => None,
+            Named::Native(_) | Named::Instance(..) | Named::Aliased(..) => None,
             Named::Js(rule) => Some(rule),
         }
     }
@@ -417,7 +436,10 @@ impl<S: RuleSet> Linter<S> {
             };
             order.push((in_oxlint.number, slot, Arc::clone(instance)));
             if rule.entry.meta.requires_types {
-                typed.push(rule.entry.meta);
+                typed.push(match rule.name() {
+                    Some(name) => RuleId::Named(rule.entry.meta, Arc::clone(name)),
+                    None => RuleId::Known(rule.reported_as()),
+                });
             }
             if refusal.is_none() {
                 refusal = self.refusal(rule).map(Arc::from);
@@ -572,6 +594,7 @@ impl<S: RuleSet> Linter<S> {
                 running.push(Running {
                     entry: rule.entry,
                     configured: Some(rule),
+                    alias: None,
                     severity: rule.severity,
                     in_oxlint: slot.in_oxlint,
                     rule: RuleRef::Shared(instance),
@@ -717,13 +740,13 @@ impl<S: RuleSet> Linter<S> {
         let skips_typed_rules = file.types.is_none() && ignores_skipped_rules;
         if skips_typed_rules && is_plain {
             if has_directives {
-                rules_to_ignore.extend(prepared.typed.iter().copied().map(RuleId::Known));
+                rules_to_ignore.extend(prepared.typed.iter().cloned());
             }
         } else if skips_typed_rules && !options.again.is_some_and(|it| it.had_types) {
             let without_types = running
                 .iter()
                 .filter(|it| it.severity != Severity::Off && it.entry.meta.requires_types);
-            rules_to_ignore.extend(without_types.map(|it| RuleId::Known(it.entry.meta)));
+            rules_to_ignore.extend(without_types.map(|it| it.ran().id()));
         }
         if options.js_plugins.is_none() {
             let skipped = running_js.iter();
@@ -734,7 +757,7 @@ impl<S: RuleSet> Linter<S> {
             running.retain(|it| it.entry.meta.needs_modules);
             let is_of_another_rule = |it: &&LintMessage| {
                 (it.message_id.is_some() || is_thrown_error(it))
-                    && !matches!(&it.rule_id, Some(RuleId::Known(meta)) if meta.needs_modules)
+                    && !matches!(&it.rule_id, Some(RuleId::Known(meta) | RuleId::Named(meta, _)) if meta.needs_modules)
             };
             let previous = (again.previous.messages.iter()).chain(&again.previous.suppressed);
             problems.extend(previous.filter(is_of_another_rule).map(|it| LintMessage {
@@ -874,6 +897,7 @@ impl<S: RuleSet> Linter<S> {
             Some(Ran {
                 entry: rule.entry,
                 configured: Some(rule),
+                alias: None,
                 severity: slot.severity,
             })
         };
@@ -1422,9 +1446,12 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
         let is_of_eslint = !config.has_every_rule && !config.prefers_typescript_rules;
         let prefix = registry::parse_rule_id(id).0;
         let native = || {
-            (config.find_rule(&self.linter.registry, id))
-                .filter(|it| !is_of_eslint || it.meta.plugin.prefix().as_bytes() == prefix)
-                .map(Named::Native)
+            let found = config.find_rule(&self.linter.registry, id)?;
+            if let Some((alias, _)) = config.alias_of(prefix) {
+                return Some(Named::Aliased(found, alias));
+            }
+            (!is_of_eslint || found.meta.plugin.prefix().as_bytes() == prefix)
+                .then_some(Named::Native(found))
         };
         let lacks_it = config.lacks_rule(id);
         let is_about_layout =
@@ -1620,6 +1647,8 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             let existing = match rule {
                 Named::Native(entry) => self.config.rule(entry).map(Existing::Native),
                 Named::Instance(rule, _) => Some(Existing::Native(rule)),
+                // Under its name the configuration has nothing: `named_rule` has looked.
+                Named::Aliased(..) => None,
                 Named::Js(rule) => self.config.js_rule(rule).map(Existing::Js),
             };
             // A comment that has only a severity keeps the options of the configuration.
@@ -1674,9 +1703,9 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 continue;
             }
             let meta = match rule {
-                Named::Native(entry) | Named::Instance(&ConfiguredRule { entry, .. }, _) => {
-                    Some(entry.meta)
-                }
+                Named::Native(entry)
+                | Named::Instance(&ConfiguredRule { entry, .. }, _)
+                | Named::Aliased(entry, _) => Some(entry.meta),
                 Named::Js(_) => None,
             };
             if validated.is_some()
@@ -1703,10 +1732,15 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 };
                 running.retain(|it| !is_same_rule(it.entry, rests));
             }
+            let mut alias: Option<Arc<[u8]>> = None;
             let (entry, existing) = match (rule, existing) {
                 (Named::Native(entry), Some(Existing::Native(existing))) => (entry, Some(existing)),
                 (Named::Native(entry), _) => (entry, None),
                 (Named::Instance(rule, _), _) => (rule.entry, Some(rule)),
+                (Named::Aliased(entry, prefix), _) => {
+                    alias = Some(Named::aliased_id(entry, prefix));
+                    (entry, None)
+                }
                 (Named::Js(js), existing) => {
                     let is_it = |it: &RunningJs| Arc::ptr_eq(&it.configured.rule, js);
                     if severity == Severity::Off {
@@ -1735,7 +1769,9 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                     continue;
                 }
             };
-            let name = existing.and_then(ConfiguredRule::name);
+            let name = alias
+                .as_ref()
+                .or_else(|| existing.and_then(ConfiguredRule::name));
             let is_it = |it: &Running<S>| is_same_rule(it.entry, entry) && it.ran().name() == name;
             let linter = self.linter;
             let shared = existing
@@ -1765,6 +1801,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             let new = Running {
                 entry,
                 configured: existing,
+                alias: alias.clone(),
                 severity,
                 in_oxlint: InOxlint::unknown(entry.meta.reports, u16::MAX),
                 rule,

@@ -94,7 +94,7 @@ describe.concurrent("--rules -f json", () => {
       schema: [expect.objectContaining({ type: "object", additionalProperties: false })],
       default_options: [expect.objectContaining({ ignoreVoid: true, ignoreIIFE: false })],
       languages: [],
-      package: null,
+      package: "@typescript-eslint/eslint-plugin",
     });
     expect(rules.find(it => it.id === "json/no-duplicate-keys")).toMatchObject({
       scope: "json",

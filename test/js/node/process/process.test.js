@@ -797,6 +797,41 @@ describe("process.exitCode", () => {
     expect(exitCode).toBe(42);
     expect(stdout.toString().trim()).toBe("PASS");
   });
+
+  const fatal = [
+    ["an unhandled rejection", `Promise.reject(new Error("boom"));`],
+    ["an unhandled rejection in a later turn", `setImmediate(() => Promise.reject(new Error("boom")));`],
+    ["an unhandled rejection in 'beforeExit'", `process.once("beforeExit", () => Promise.reject(new Error("boom")));`],
+    ["an uncaught exception in a later turn", `setImmediate(() => { throw new Error("boom"); });`],
+  ];
+
+  it.concurrent.each(fatal)("is 1 in an 'exit' listener after %s", async (_, script) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.exitCode = 5; process.on("exit", code => console.log(code, process.exitCode)); ${script}`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toInclude("error: boom");
+    expect({ stdout, exitCode }).toEqual({ stdout: "1 1\n", exitCode: 1 });
+  });
+
+  it.concurrent.each(fatal)("set in an 'exit' listener wins after %s", async (_, script) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `process.on("exit", () => { process.exitCode = 9; }); ${script}`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toInclude("error: boom");
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 9 });
+  });
 });
 
 it("process exitCode range (#6284)", () => {

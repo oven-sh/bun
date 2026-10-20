@@ -448,9 +448,21 @@ test.concurrent.each([
     join(String(dir), "app/server.ts"),
     `declare const Response: any;\nconst count: number = 1;\nexport default { fetch: () => new Response(String(count)) };\n`,
   );
-  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+  await output.waitFor(/url: (http:\/\/\S+)/);
 
-  expect(await get(url, "/missing")).toBe("200 1");
+  // One save can start the process twice on Windows, and each start prints its own port.
+  const deadline = Date.now() + 10_000;
+  let response: string;
+  while (true) {
+    const url = [...output.text.matchAll(/url: (http:\/\/\S+)/g)].at(-1)![1];
+    try {
+      response = await get(url, "/missing");
+      break;
+    } catch (error) {
+      if (Date.now() > deadline) throw error;
+    }
+  }
+  expect(response).toBe("200 1");
 });
 
 // Creating a symlink on Windows needs a privilege that CI does not have.

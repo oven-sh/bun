@@ -26,15 +26,11 @@ impl<T> Store<T> {
     }
 
     /// A `bss_*!` singleton, in the storage of `bss_heap_init`. Nothing frees it.
-    fn singleton(store: *mut T) -> Self {
+    fn singleton(store: &'static T) -> Self {
         Store {
-            ptr: NonNull::new(store).unwrap(),
+            ptr: NonNull::from(store),
             boxed: false,
         }
-    }
-
-    fn raw(&self) -> *mut T {
-        self.ptr.as_ptr()
     }
 
     /// A singleton for as long as the process lives.
@@ -62,95 +58,22 @@ impl<T> Drop for Store<T> {
     }
 }
 
-// SAFETY: the threads of a test share the pointer of a store, as the threads of bun share the pointer of a singleton.
-unsafe impl<T> Sync for Store<T> {}
-
-// The calls that the tests make, on top of the stores as they are. Each call takes `&mut` or `&`
-// to the store from its pointer for that one call, which is what the resolver does with a singleton.
-
-impl<T> Store<list::List<T>> {
-    fn append_uninit(&self) -> core::result::Result<*mut MaybeUninit<T>, AllocError> {
-        // SAFETY: the list is live.
-        unsafe { list::List::append_uninit(self.raw()) }
-    }
-}
-
-impl Store<map::Map> {
-    fn get_or_put(&self, key: &[u8]) -> core::result::Result<Result, AllocError> {
-        // SAFETY: the map is live, and the `&mut` ends with the call.
-        unsafe { &mut *self.raw() }.get_or_put(key)
-    }
-
-    fn get(&self, key: &[u8]) -> Option<NonNull<u64>> {
-        // SAFETY: as above.
-        unsafe { &mut *self.raw() }.get(key).map(NonNull::from)
-    }
-
-    fn mark_not_found(&self, result: Result) {
-        // SAFETY: as above.
-        unsafe { &mut *self.raw() }.mark_not_found(result);
-    }
-
-    /// SAFETY: `index` must be a sentinel or an index that `put` on this map assigned.
-    unsafe fn at_index(&self, index: IndexType) -> Option<NonNull<u64>> {
-        // SAFETY: as above.
-        unsafe { &mut *self.raw() }
-            .at_index(index)
-            .map(NonNull::from)
-    }
-
-    fn put(
-        &self,
-        result: &mut Result,
-        value: u64,
-    ) -> core::result::Result<NonNull<u64>, AllocError> {
-        // SAFETY: as above.
-        unsafe { &mut *self.raw() }
-            .put(result, value)
-            .map(NonNull::from)
-    }
-
-    /// `put` with an index that is assigned.
-    ///
-    /// SAFETY: `put` on this map must have assigned `result.index`, and nothing else may use the slot.
-    unsafe fn replace(&self, result: &Result, value: u64) -> NonNull<u64> {
-        let mut result = *result;
-        // SAFETY: as above.
-        NonNull::from(unsafe { &mut *self.raw() }.put(&mut result, value).unwrap())
-    }
-
-    fn remove(&self, key: &[u8]) -> bool {
-        // SAFETY: as above.
-        unsafe { &mut *self.raw() }.remove(key)
-    }
-}
-
-impl<const COUNT: usize, const ITEM_LENGTH: usize> Store<BSSStringList<COUNT, ITEM_LENGTH>> {
-    fn append<A: BSSAppendable>(&self, value: &A) -> core::result::Result<&[u8], AllocError> {
-        // SAFETY: the list is live.
-        unsafe { BSSStringList::append(self.raw(), value) }
-    }
-
-    fn append_lower_case(&self, value: &[u8]) -> core::result::Result<&[u8], AllocError> {
-        // SAFETY: the list is live.
-        unsafe { BSSStringList::append_lower_case(self.raw(), value) }
-    }
-
-    fn print(&self, args: core::fmt::Arguments<'_>) -> core::result::Result<&[u8], AllocError> {
-        // SAFETY: the list is live.
-        unsafe { BSSStringList::print(self.raw(), args) }
-    }
-
-    fn exists(&self, value: &[u8]) -> bool {
-        // SAFETY: the list is live, and the `&` ends with the call.
-        unsafe { &*self.raw() }.exists(value)
-    }
-}
+// SAFETY: a `Store` gives out `&T` only.
+unsafe impl<T: Sync> Sync for Store<T> {}
 
 /// A slot pointer that a test gives to one thread.
 struct Slot<T>(*mut T);
 // SAFETY: the tests read or write a slot on one thread at a time.
 unsafe impl<T: Send> Send for Slot<T> {}
+
+/// Set when a writer thread ends, also by a panic. A reader that polls for a write then fails, and does not poll for ever.
+struct Done<'a>(&'a AtomicBool);
+
+impl Drop for Done<'_> {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
 
 /// Reads `slot` after `later` ran. A reference argument is protected for the call, so Miri rejects a store call in `later` that invalidates it.
 fn read_across<T: Copy>(slot: &T, later: impl FnOnce()) -> T {
@@ -574,6 +497,32 @@ mod map {
     }
 
     #[test]
+    #[should_panic(expected = "!result.has_slot()")]
+    fn put_with_an_assigned_index_panics() {
+        let map = new();
+        let mut result = map.get_or_put(b"a").unwrap();
+        map.put(&mut result, 1).unwrap();
+        let _ = map.put(&mut result, 2);
+    }
+
+    #[test]
+    fn failed_put_leaves_the_result_and_the_table_unassigned() {
+        let map = new();
+        fill_inline(&map, 0);
+        // Pretend that every block of the overflow list is allocated and full.
+        {
+            let mut state = lock_state(&map.state);
+            state.overflow_counts.blocks = OVERFLOW_GROUP_SLOTS as u16;
+            state.overflow_counts.tail_free = 0;
+        }
+        let mut result = map.get_or_put(b"a").unwrap();
+        assert_eq!(map.put(&mut result, 1), Err(AllocError));
+        assert!(result.index == UNASSIGNED);
+        assert_eq!(get(&map, b"a"), None);
+        assert!(map.get_or_put(b"a").unwrap().status == ItemStatus::Unknown);
+    }
+
+    #[test]
     fn put_does_not_race_with_a_lookup_of_an_earlier_slot() {
         let map = new();
         assert!(!put(&map, b"inline", 1).0.is_overflow());
@@ -611,8 +560,225 @@ mod map {
         );
     }
 
+    /// Two writers put keys. A reader polls each key until the table has it, and then reads the slot with no lock.
+    fn lookups_see_complete_slots<const N: usize>(keys_per_writer: u32) {
+        const WRITERS: usize = 2;
+        const READERS_PER_WRITER: u32 = 2;
+
+        fn key(writer: usize, i: u32) -> [u8; 8] {
+            let mut key = [0; 8];
+            key[..4].copy_from_slice(&(writer as u32).to_le_bytes());
+            key[4..].copy_from_slice(&i.to_le_bytes());
+            key
+        }
+        /// Never zero, so a zeroed slot cannot pass for a value.
+        fn value(writer: usize, i: u32) -> u64 {
+            0xA5A5_0000_0000_0000 | ((writer as u64) << 32) | u64::from(i)
+        }
+
+        let map: Store<BSSMapInner<u64, N, false>> = Store::boxed(BSSMapInner::init_at);
+        let map = &map;
+        let done: [AtomicBool; WRITERS] = Default::default();
+        let done = &done;
+        let start = Barrier::new(WRITERS * (1 + READERS_PER_WRITER as usize));
+        let start = &start;
+        std::thread::scope(|scope| {
+            for writer in 0..WRITERS {
+                scope.spawn(move || {
+                    let _done = Done(&done[writer]);
+                    start.wait();
+                    for i in 0..keys_per_writer {
+                        let mut result = map.get_or_put(&key(writer, i)).unwrap();
+                        map.put(&mut result, value(writer, i)).unwrap();
+                        std::thread::yield_now();
+                    }
+                });
+                for reader in 0..READERS_PER_WRITER {
+                    scope.spawn(move || {
+                        start.wait();
+                        for i in 0..keys_per_writer {
+                            let key = key(writer, i);
+                            let slot = loop {
+                                let writer_is_done = done[writer].load(Ordering::Acquire);
+                                let slot = if (reader + i) % 2 == 0 {
+                                    map.get(&key)
+                                } else {
+                                    let result = map.get_or_put(&key).unwrap();
+                                    // SAFETY: the table gave `result.index`, under the lock of the map.
+                                    unsafe { map.at_index(result.index) }
+                                };
+                                match slot {
+                                    Some(slot) => break slot,
+                                    None => {
+                                        assert!(
+                                            !writer_is_done,
+                                            "the writer ended without the key"
+                                        );
+                                        std::thread::yield_now();
+                                    }
+                                }
+                            };
+                            // SAFETY: the table has the key, so `put` wrote the slot. Nothing writes it again.
+                            assert_eq!(unsafe { *slot.as_ptr() }, value(writer, i));
+                        }
+                    });
+                }
+            }
+        });
+        let state = lock_state(&map.state);
+        let total = WRITERS * keys_per_writer as usize;
+        assert_eq!(state.index.len(), total);
+        assert_eq!(
+            (
+                usize::from(state.backing_buf_used),
+                state.overflow_counts.count as usize
+            ),
+            (total.min(N), total.saturating_sub(N))
+        );
+    }
+
+    #[test]
+    fn lookup_sees_a_complete_inline_slot_while_the_key_is_put() {
+        lookups_see_complete_slots::<64>(32);
+    }
+
+    /// The puts fill the inline buffer, and then five overflow blocks.
+    #[test]
+    fn lookup_sees_a_complete_overflow_slot_while_the_key_is_put() {
+        lookups_see_complete_slots::<4>(12);
+    }
+
     #[test]
     fn unused_map_drops() {
+        drop(new());
+    }
+}
+
+mod overflow_list {
+    use super::*;
+
+    const BLOCK: usize = 4;
+    type List = OverflowList<u64, BLOCK>;
+
+    /// All-zeros storage is the empty list.
+    fn new() -> Store<List> {
+        Store::boxed(|_| {})
+    }
+
+    fn append(list: &Store<List>, counts: &mut OverflowCounts, value: u64) -> *mut u64 {
+        list.append(counts, value).unwrap().as_ptr()
+    }
+
+    #[test]
+    fn slot_is_writable_after_a_later_append() {
+        let (list, mut counts) = (new(), OverflowCounts::default());
+        // SAFETY: `a` and `b` are initialized slots of a live list, and nothing else borrows them.
+        let (a, b) = unsafe {
+            let a = &mut *append(&list, &mut counts, 1);
+            *a = 5;
+            (a, &mut *append(&list, &mut counts, 2))
+        };
+        *a = 10;
+        assert_eq!((*a, *b), (10, 2));
+    }
+
+    #[test]
+    fn slot_is_writable_after_a_new_block() {
+        let (list, mut counts) = (new(), OverflowCounts::default());
+        // SAFETY: `a` is an initialized slot of a live list, and nothing else borrows it.
+        let a = unsafe { &mut *append(&list, &mut counts, 1) };
+        *a = 5;
+        for i in 0..BLOCK as u64 {
+            append(&list, &mut counts, i);
+        }
+        assert_eq!((counts.blocks, counts.tail_free as usize), (2, BLOCK - 1));
+        *a = 10;
+        assert_eq!(*a, 10);
+    }
+
+    #[test]
+    fn slot_ptr_finds_the_slot_of_every_block() {
+        let (list, mut counts) = (new(), OverflowCounts::default());
+        let slots: Vec<&mut u64> = (0..3 * BLOCK as u64)
+            // SAFETY: the slot is initialized, the list is live, and nothing else borrows the slot.
+            .map(|i| unsafe { &mut *append(&list, &mut counts, i) })
+            .collect();
+        assert_eq!(counts.count as usize, 3 * BLOCK);
+        for (i, slot) in slots.into_iter().enumerate() {
+            // SAFETY: `append` assigned the overflow index `i`.
+            let found = unsafe { list.slot_ptr(IndexType::new(i as u32, true)) };
+            assert_eq!(found.as_ptr(), &raw mut *slot);
+            assert_eq!(*slot, i as u64);
+        }
+    }
+
+    #[test]
+    fn append_fails_when_every_block_is_full() {
+        let (list, mut counts) = (new(), OverflowCounts::default());
+        let first = append(&list, &mut counts, 0);
+        // Pretend that every block but the last one is allocated and full.
+        counts.blocks = OVERFLOW_GROUP_MAX as u16;
+        counts.tail_free = 0;
+        let last: Vec<*mut u64> = (0..BLOCK as u64)
+            .map(|i| append(&list, &mut counts, i))
+            .collect();
+        assert_eq!(list.append(&mut counts, 9), Err(AllocError));
+        assert_eq!(usize::from(counts.blocks), OVERFLOW_GROUP_SLOTS);
+        // SAFETY: all are initialized slots of a live list.
+        unsafe {
+            *first = 10;
+            assert_eq!(
+                (*first, *last[0], *last[BLOCK - 1]),
+                (10, 0, BLOCK as u64 - 1)
+            );
+        }
+    }
+
+    /// The writer holds the lock of the counters, as the owner of a list does. The reader finds every assigned slot with no lock.
+    #[test]
+    fn slot_ptr_needs_no_lock_while_appends_add_blocks() {
+        const APPENDS: u32 = 5 * BLOCK as u32 + 2;
+
+        let list = new();
+        let list = &list;
+        let counts = std::sync::Mutex::new(OverflowCounts::default());
+        let counts = &counts;
+        let done = AtomicBool::new(false);
+        let done = &done;
+        let start = Barrier::new(2);
+        let start = &start;
+        std::thread::scope(|scope| {
+            scope.spawn(move || {
+                let _done = Done(done);
+                start.wait();
+                for i in 0..APPENDS {
+                    append(list, &mut lock_state(counts), u64::from(i) + 1);
+                    std::thread::yield_now();
+                }
+            });
+            scope.spawn(move || {
+                start.wait();
+                loop {
+                    let writer_is_done = done.load(Ordering::Acquire);
+                    let count = lock_state(counts).count;
+                    for i in 0..count {
+                        // SAFETY: `i < count`, so an `append` that is complete assigned `i`.
+                        let slot = unsafe { list.slot_ptr(IndexType::new(i, true)) };
+                        // SAFETY: `append` wrote the slot, and nothing writes it again.
+                        assert_eq!(unsafe { *slot.as_ptr() }, u64::from(i) + 1);
+                    }
+                    if count == APPENDS {
+                        break;
+                    }
+                    assert!(!writer_is_done, "the writer ended after {count} appends");
+                    std::thread::yield_now();
+                }
+            });
+        });
+    }
+
+    #[test]
+    fn unused_list_drops() {
         drop(new());
     }
 }
@@ -708,6 +874,34 @@ mod string_list {
         // "before", the "nested" of the first two passes, the print and its two NULs, the "nested" of the last pass.
         assert_eq!(before.as_ptr().wrapping_add(7 + 2 * 7), printed.as_ptr());
         assert_eq!(printed.as_ptr().wrapping_add(610 + 2 + 7), after.as_ptr());
+    }
+
+    #[test]
+    fn append_goes_to_the_heap_when_the_buffer_is_full() {
+        let list = new::<4, 16>();
+        let inline: Vec<&[u8]> = (0..6u8)
+            .map(|i| list.append(&&[b'a' + i; 8][..]).unwrap())
+            .collect();
+        assert!(inline.iter().all(|string| list.exists(string)));
+
+        let heap = list.append(&&[b'z'; 12][..]).unwrap();
+        let lower = list.append_lower_case(&[b'Q'; 300]).unwrap();
+        let long = [b'x'; 600];
+        let long = core::str::from_utf8(&long).unwrap();
+        let printed = list.print(format_args!("{long}")).unwrap();
+        assert_eq!(
+            (heap, lower, printed),
+            (&[b'z'; 12][..], &[b'q'; 300][..], long.as_bytes())
+        );
+        for (i, string) in inline.iter().enumerate() {
+            assert_eq!(
+                (*string, byte_after(&list, string, 0)),
+                (&[b'a' + i as u8; 8][..], 0)
+            );
+        }
+        assert!(!list.exists(heap) && !list.exists(lower) && !list.exists(printed));
+        // A short string still fits in the buffer.
+        assert!(list.exists(list.append(&&b"s"[..]).unwrap()));
     }
 
     #[test]

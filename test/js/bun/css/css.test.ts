@@ -8344,6 +8344,11 @@ describe("css tests", () => {
         color("hwb(210 calc(infinity * 1%) 40%)", "#fff");
         color("hwb(210 40% calc(infinity * 1%))", "#000");
         color("hwb(210 calc(infinity * 1%) calc(infinity * 1%))", "gray");
+        // The sum of the two channels is also finite after an interpolation rounds them up.
+        color(
+          "color-mix(in hwb, hwb(none calc(infinity * 1%) calc(infinity * 1%) / 0.8), hwb(none calc(infinity * 1%) calc(infinity * 1%)))",
+          "#808080e6",
+        );
       });
 
       // Below 100% in sum, and below 0%, nothing changes.

@@ -1396,8 +1396,8 @@ pub(crate) fn parse_hsl_hwb<
     })
 }
 
-/// An infinite whiteness or blackness is read as this (css-values-4 #calc-ieee). The sum of two is finite.
-const HWB_MAX: f32 = f32::MAX / 2.0;
+/// An infinite whiteness or blackness is read as this (css-values-4 #calc-ieee). The sum of two stays finite through the rounding of an interpolation.
+const HWB_MAX: f32 = f32::MAX / 4.0;
 
 /// Only `hsl()` has the legacy comma syntax.
 pub(crate) fn parse_hsl_hwb_components(

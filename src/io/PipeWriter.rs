@@ -61,31 +61,36 @@ pub trait PosixPipeWriter {
 
     fn handle(&self) -> &PollOrFd;
 
-    /// Set once `pwritev2(RWF_NOWAIT)` said this fd's file type does not support it, so we stop asking.
-    fn rwf_unsupported(&self) -> &core::cell::Cell<bool>;
+    /// What `try_write` knows about this writer's fd.
+    fn pipe_write(&self) -> &core::cell::Cell<PipeWrite>;
 
-    /// Only reads `get_file_type()` / `get_fd()` from `self`; takes `&self` so
-    /// callers may pass a `buf` that borrows from a field of `self` (e.g.
-    /// `self.outgoing.slice()`) without raw-pointer aliasing escapes.
+    /// Takes `&self` so a caller can pass a `buf` borrowed from a field of `self` (e.g. `self.outgoing.slice()`).
     fn try_write(&self, force_sync: bool, buf: &[u8]) -> WriteResult {
         // PERF: try_write_with_write_fn is not monomorphized per FileType —
         // profile if hot.
         let ft = self.get_file_type();
         // Linux: RWF_NOWAIT is a free per-call nonblocking write, so a pipe stays async even after a spawn cleared O_NONBLOCK on it.
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        if matches!(ft, FileType::Pipe | FileType::NonblockingPipe) && !self.rwf_unsupported().get()
+        if matches!(ft, FileType::Pipe | FileType::NonblockingPipe)
+            && self.pipe_write().get() == PipeWrite::RwfNowait
         {
             match self.try_write_nowait(buf) {
                 Some(rc) => return rc,
-                // Not a pipe as far as pwritev2 is concerned (tty, pty master, old kernel): remember, use the plain path.
-                None => self.rwf_unsupported().set(true),
+                // Not covered by pwritev2 (FIFO, tty, pty master, old kernel): remember, use the plain path.
+                None => self.pipe_write().set(PipeWrite::Unprobed),
             }
         }
         match ft {
             // send(MSG_DONTWAIT | MSG_NBIO) is nonblocking per call on every Unix, whatever the fd's flags.
             FileType::Socket => self.try_write_with_write_fn(buf, write_to_socket),
             FileType::Pipe if !force_sync => {
-                self.try_write_with_write_fn(buf, write_to_blocking_pipe)
+                let write_fn = blocking_pipe_write_fn(
+                    self.get_fd(),
+                    self.handle(),
+                    self.pipe_write(),
+                    buf.len(),
+                );
+                self.try_write_with_write_fn(buf, write_fn)
             }
             _ => self.try_write_with_write_fn(buf, sys::write),
         }
@@ -256,6 +261,61 @@ fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
     }
 }
 
+/// POLLOUT on a Linux pipe proves one free slot (one page); a larger write(2) without O_NONBLOCK sleeps until the reader drains it.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn write_one_slot_to_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
+    write_to_blocking_pipe(fd, &buf[..buf.len().min(bun_core::page_size())])
+}
+
+/// How a writer gets bytes into a pollable fd without waiting for its reader (Linux).
+#[derive(Copy, Clone, Eq, PartialEq, Default)]
+pub enum PipeWrite {
+    /// `pwritev2(RWF_NOWAIT)`, until the kernel refuses it for this fd.
+    #[default]
+    RwfNowait,
+    /// RWF_NOWAIT is refused and `blocking_pipe_write_fn` has not classified the fd.
+    Unprobed,
+    /// A pipe or FIFO: poll, then `write(2)` of at most one pipe slot while the description has no O_NONBLOCK.
+    OneSlot,
+    /// Neither a pipe nor a socket (a tty): poll, then `write(2)`.
+    Unbounded,
+}
+
+/// The write for the `FileType::Pipe` arm: a poll whose owner set none of Socket, Tty or Nonblocking.
+fn blocking_pipe_write_fn(
+    fd: Fd,
+    handle: &PollOrFd,
+    state: &core::cell::Cell<PipeWrite>,
+    len: usize,
+) -> fn(Fd, &[u8]) -> sys::Result<usize> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if len > bun_core::page_size() {
+        // One fstat per writer, on its first write that could wait.
+        if state.get() == PipeWrite::Unprobed {
+            match sys::fstat(fd).map(|stat| stat.st_mode as sys::Mode) {
+                Ok(mode) if sys::S::ISFIFO(mode) => state.set(PipeWrite::OneSlot),
+                // `send(MSG_DONTWAIT)` does not wait whatever the fd's flags are.
+                Ok(mode) if sys::S::ISSOCK(mode) => {
+                    if let Some(poll) = handle.get_poll() {
+                        poll.set_flag(FilePollFlag::Socket);
+                    }
+                    return write_to_socket;
+                }
+                _ => state.set(PipeWrite::Unbounded),
+            }
+        }
+        // `process.stdout` sets O_NONBLOCK on fd 1's description and an inherit spawn clears it, so ask on each call.
+        if state.get() == PipeWrite::OneSlot
+            && !sys::get_fcntl_flags(fd).is_ok_and(|flags| (flags as i32 & sys::O::NONBLOCK) != 0)
+        {
+            return write_one_slot_to_pipe;
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let _ = (fd, handle, state, len);
+    write_to_blocking_pipe
+}
+
 /// `send(2)` stands in for `write(2)` on the socketpair behind a child's stdio,
 /// only to pass `MSG_NOSIGNAL`. The error names `write`, as Node does.
 fn write_to_socket(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
@@ -352,7 +412,7 @@ pub struct PosixBufferedWriter<Parent: PosixBufferedWriterParent> {
     pub(crate) pollable: bool,
     pub(crate) closed_without_reporting: bool,
     pub close_fd: bool,
-    rwf_unsupported: core::cell::Cell<bool>,
+    pipe_write: core::cell::Cell<PipeWrite>,
 }
 
 impl<Parent: PosixBufferedWriterParent> Default for PosixBufferedWriter<Parent> {
@@ -364,7 +424,7 @@ impl<Parent: PosixBufferedWriterParent> Default for PosixBufferedWriter<Parent> 
             pollable: false,
             closed_without_reporting: false,
             close_fd: true,
-            rwf_unsupported: core::cell::Cell::new(false),
+            pipe_write: core::cell::Cell::new(PipeWrite::RwfNowait),
         }
     }
 }
@@ -394,8 +454,8 @@ impl<Parent: PosixBufferedWriterParent> PosixPipeWriter for PosixBufferedWriter<
     fn handle(&self) -> &PollOrFd {
         &self.handle
     }
-    fn rwf_unsupported(&self) -> &core::cell::Cell<bool> {
-        &self.rwf_unsupported
+    fn pipe_write(&self) -> &core::cell::Cell<PipeWrite> {
+        &self.pipe_write
     }
 }
 
@@ -686,7 +746,7 @@ pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
     pub force_sync: bool,
     /// Last reported `WriteStatus == Pending` (i.e. write(2) returned EAGAIN).
     backed_up: core::cell::Cell<bool>,
-    rwf_unsupported: core::cell::Cell<bool>,
+    pipe_write: core::cell::Cell<PipeWrite>,
 }
 
 impl<Parent: PosixStreamingWriterParent> Default for PosixStreamingWriter<Parent> {
@@ -699,7 +759,7 @@ impl<Parent: PosixStreamingWriterParent> Default for PosixStreamingWriter<Parent
             closed_without_reporting: false,
             force_sync: false,
             backed_up: core::cell::Cell::new(false),
-            rwf_unsupported: core::cell::Cell::new(false),
+            pipe_write: core::cell::Cell::new(PipeWrite::RwfNowait),
         }
     }
 }
@@ -729,8 +789,8 @@ impl<Parent: PosixStreamingWriterParent> PosixPipeWriter for PosixStreamingWrite
     fn handle(&self) -> &PollOrFd {
         &self.handle
     }
-    fn rwf_unsupported(&self) -> &core::cell::Cell<bool> {
-        &self.rwf_unsupported
+    fn pipe_write(&self) -> &core::cell::Cell<PipeWrite> {
+        &self.pipe_write
     }
 }
 

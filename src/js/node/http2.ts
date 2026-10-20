@@ -1934,24 +1934,7 @@ function streamErrorFromCode(code: number) {
   return $ERR_HTTP2_STREAM_ERROR(nameForErrorCode[code] || code);
 }
 hideFromStack(streamErrorFromCode);
-// Pending ping callbacks are invoked with the cancel error when their session goes away (node
-// semantics) instead of being silently dropped. Like node's pingCallback wrapper, a cancelled
-// ping reports only the error (no duration/payload arguments).
-// Each ping() call is a tracked async resource (node's Http2Ping); the test
-// asserts init/before/after/destroy fire for type 'HTTP2PING'.
-const { AsyncResource } = require("node:async_hooks");
 const kEmptyPingPayload = Buffer.alloc(8);
-function makeHttp2Ping(callback) {
-  const resource = new AsyncResource("HTTP2PING");
-  return function done(err, duration, payload) {
-    if (err) {
-      resource.runInAsyncScope(callback, null, err);
-    } else {
-      resource.runInAsyncScope(callback, null, null, duration, payload);
-    }
-    resource.emitDestroy();
-  };
-}
 
 // What the peer's ACK of a settings() call delivers, in node's order (settingsCallback in
 // lib/internal/http2/core.js): the callback, then 'localSettings'. The parser binds it to the
@@ -1980,12 +1963,12 @@ function settingsToSendLater(settings: Settings): Settings {
   return copy;
 }
 
-function cancelPendingPings(callbacks): void {
-  if (!callbacks) return;
-  const err = $ERR_HTTP2_PING_CANCEL();
-  for (let i = 0; i < callbacks.length; i++) {
-    process.nextTick(callbacks[i][0], err);
-  }
+// What a ping() callback hears: the peer's ACK, or with no payload that the session went away
+// first (like node's pingCallback, a cancelled ping reports only the error). The parser binds it
+// to the async context of each ping() call, where node makes an Http2Ping.
+function pingAcked(_self: Http2Session, payload: Buffer | undefined, callback: Function, duration: number) {
+  if (payload === undefined) process.nextTick(callback, $ERR_HTTP2_PING_CANCEL());
+  else callback(null, duration, payload);
 }
 
 // ERR_HTTP2_STREAM_CANCEL is not in the native error-code registry (the registry is positional
@@ -4058,7 +4041,8 @@ class ServerHttp2Session extends Http2Session {
   #pendingSettingsAckCount: number = 1;
   #maxOutstandingSettings: number = 10;
   #remoteSettings: Settings | null = null;
-  #pingCallbacks: Array<[Function, number]> | null = null;
+  // The PING frames sent that the peer has not acknowledged. The parser keeps their callbacks.
+  #pendingPings: number = 0;
   #strictFieldWhitespaceValidation: boolean = true;
   // The SETTINGS_MAX_CONCURRENT_STREAMS value this session advertised (enforced from the moment it
   // is submitted, like nghttp2's pending local settings — not only after the peer ACKs).
@@ -4157,7 +4141,7 @@ class ServerHttp2Session extends Http2Session {
           stream.destroy();
         }
         if (self.#connections === 0 && self.#closed) {
-          if (self.#pendingSettingsAckCount > 0 || (self.#pingCallbacks !== null && self.#pingCallbacks.length > 0)) {
+          if (self.#pendingSettingsAckCount > 0 || self.#pendingPings > 0) {
             scheduleSettingsAckGraceNT(self);
           } else {
             captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
@@ -4247,7 +4231,7 @@ class ServerHttp2Session extends Http2Session {
       self.#pendingSettingsAck = false;
       if (self.#pendingSettingsAckCount > 0) self.#pendingSettingsAckCount--;
       // This ACK may be the only thing a gracefully closed, idle session was waiting for.
-      const pingsDrained = self.#pingCallbacks === null || self.#pingCallbacks.length === 0;
+      const pingsDrained = self.#pendingPings === 0;
       if (self.#pendingSettingsAckCount === 0 && pingsDrained && self[kSettingsAckGraceTimer] !== undefined) {
         clearTimeout(self[kSettingsAckGraceTimer]);
         self[kSettingsAckGraceTimer] = undefined;
@@ -4270,36 +4254,38 @@ class ServerHttp2Session extends Http2Session {
       self.#remoteSettings = settings;
       self.emit("remoteSettings", settings);
     },
-    ping(self: ServerHttp2Session, payload: Buffer, isACK: boolean) {
+    ping(
+      self: ServerHttp2Session,
+      payload: Buffer | undefined,
+      isACK: boolean,
+      callback: Function | false | undefined,
+      duration: number,
+    ) {
       if (!self) return;
       if (!isACK) {
         // node emits 'ping' only for pings initiated by the peer, not for ACKs of our own.
         self.emit("ping", payload);
+        return;
       }
-      if (isACK) {
-        const callbacks = self.#pingCallbacks;
-        if (callbacks) {
-          const callbackInfo = callbacks.shift();
-          if (callbackInfo) {
-            const [callback, start] = callbackInfo;
-            const rtt = Date.now() - start;
-            const stats = self[kPerfStats];
-            if (stats !== undefined) stats.pingRTT = rtt;
-            callback(null, rtt, payload);
-            if (callbacks.length === 0 && self.#pendingSettingsAckCount === 0) {
-              if (self[kSettingsAckGraceTimer] !== undefined) {
-                clearTimeout(self[kSettingsAckGraceTimer]);
-                self[kSettingsAckGraceTimer] = undefined;
-              }
-              // A server session has no pending-request queue.
-              if (self.#closed && self.#connections === 0 && !self.destroyed) {
-                captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
-                setImmediate(destroyIfNotDestroyedNT, self);
-              }
-            }
+      // No payload: the parser cancels a ping of a session that goes away.
+      if (payload !== undefined) {
+        self.#pendingPings--;
+        const stats = self[kPerfStats];
+        if (stats !== undefined) stats.pingRTT = duration;
+        if (self.#pendingPings === 0 && self.#pendingSettingsAckCount === 0) {
+          if (self[kSettingsAckGraceTimer] !== undefined) {
+            clearTimeout(self[kSettingsAckGraceTimer]);
+            self[kSettingsAckGraceTimer] = undefined;
+          }
+          // A server session has no pending-request queue.
+          if (self.#closed && self.#connections === 0 && !self.destroyed) {
+            captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
+            setImmediate(destroyIfNotDestroyedNT, self);
           }
         }
       }
+      // false: the parser calls pingAcked() next, in the async context of that ping() call.
+      if (typeof callback === "function") pingAcked(self, payload, callback, duration);
     },
     error(self: ServerHttp2Session, errorCode: number | string, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
@@ -4659,22 +4645,16 @@ class ServerHttp2Session extends Http2Session {
     }
     validateFunction(callback, "callback");
 
-    const cb = makeHttp2Ping(callback);
     const parser = this.#parser;
-    if (!parser || !this[bunHTTP2Socket]) {
-      process.nextTick(cb, $ERR_HTTP2_PING_CANCEL(), 0, payload);
-      return false;
+    if (parser && this[bunHTTP2Socket]) {
+      // Counted first: a transport that is written to from JS can deliver the ACK inside the call.
+      this.#pendingPings++;
+      // The parser keeps the callback until the ACK of this frame, with the async context of this call.
+      if (parser.ping(payload || kEmptyPingPayload, callback, pingAcked) !== false) return true;
+      this.#pendingPings--;
     }
-    if (parser.ping(payload || kEmptyPingPayload) === false) {
-      process.nextTick(cb, $ERR_HTTP2_PING_CANCEL(), 0, payload);
-      return false;
-    }
-    if (this.#pingCallbacks) {
-      this.#pingCallbacks.push([cb, Date.now()]);
-    } else {
-      this.#pingCallbacks = [[cb, Date.now()]];
-    }
-    return true;
+    process.nextTick(callback, $ERR_HTTP2_PING_CANCEL());
+    return false;
   }
   goaway(code = NGHTTP2_NO_ERROR, lastStreamID = 0, opaqueData) {
     if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();
@@ -4753,7 +4733,7 @@ class ServerHttp2Session extends Http2Session {
     if (this.#connections === 0) {
       // Same bounded grace the client applies: an unACKed SETTINGS or ping still
       // reaches its callback/'localSettings' before the session is destroyed.
-      if (this.#pendingSettingsAckCount > 0 || (this.#pingCallbacks !== null && this.#pingCallbacks.length > 0)) {
+      if (this.#pendingSettingsAckCount > 0 || this.#pendingPings > 0) {
         scheduleSettingsAckGraceNT(this);
       } else {
         captureHttp2PerfFrameSnapshot(this, this.#parser);
@@ -4786,8 +4766,6 @@ class ServerHttp2Session extends Http2Session {
         clearTimeout(this[kTimeout]);
         this[kTimeout] = null;
       }
-      cancelPendingPings(this.#pingCallbacks);
-      this.#pingCallbacks = null;
       if (typeof error === "number") {
         code = error;
         error = code !== NGHTTP2_NO_ERROR ? $ERR_HTTP2_SESSION_ERROR(code) : undefined;
@@ -5025,7 +5003,8 @@ class ClientHttp2Session extends Http2Session {
   #pendingSettingsAckCount: number = 1;
   #maxOutstandingSettings: number = 10;
   #remoteSettings: Settings | null = null;
-  #pingCallbacks: Array<[Function, number]> | null = null;
+  // The PING frames sent that the peer has not acknowledged. The parser keeps their callbacks.
+  #pendingPings: number = 0;
   // RFC 9113 reserved (pushed) streams the peer may have open at once (node session option).
   #maxReservedRemoteStreams: number = 200;
   #reservedStreamsCount: number = 0;
@@ -5164,7 +5143,7 @@ class ClientHttp2Session extends Http2Session {
           // Deferred like close()'s own destroy: runs inside a native dispatch batch and
           // not-yet-dispatched frames must still reach JS. An outstanding settings() ACK or
           // ping gets bounded grace (scheduleSettingsAckGraceNT); its arrival completes destroy.
-          if (self.#pendingSettingsAckCount > 0 || (self.#pingCallbacks !== null && self.#pingCallbacks.length > 0)) {
+          if (self.#pendingSettingsAckCount > 0 || self.#pendingPings > 0) {
             scheduleSettingsAckGraceNT(self);
           } else {
             captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
@@ -5254,7 +5233,7 @@ class ClientHttp2Session extends Http2Session {
       self.#pendingSettingsAck = false;
       if (self.#pendingSettingsAckCount > 0) self.#pendingSettingsAckCount--;
       // This ACK may be the only thing a gracefully closed, idle session was waiting for.
-      const pingsDrained = self.#pingCallbacks === null || self.#pingCallbacks.length === 0;
+      const pingsDrained = self.#pendingPings === 0;
       if (self.#pendingSettingsAckCount === 0 && pingsDrained && self[kSettingsAckGraceTimer] !== undefined) {
         clearTimeout(self[kSettingsAckGraceTimer]);
         self[kSettingsAckGraceTimer] = undefined;
@@ -5279,40 +5258,42 @@ class ClientHttp2Session extends Http2Session {
       // The peer may have raised maxConcurrentStreams: queued requests might fit now.
       self.#flushPendingRequests();
     },
-    ping(self: ClientHttp2Session, payload: Buffer, isACK: boolean) {
+    ping(
+      self: ClientHttp2Session,
+      payload: Buffer | undefined,
+      isACK: boolean,
+      callback: Function | false | undefined,
+      duration: number,
+    ) {
       if (!self) return;
       if (!isACK) {
         // node emits 'ping' only for pings initiated by the peer, not for ACKs of our own.
         self.emit("ping", payload);
+        return;
       }
-      if (isACK) {
-        const callbacks = self.#pingCallbacks;
-        if (callbacks) {
-          const callbackInfo = callbacks.shift();
-          if (callbackInfo) {
-            const [callback, start] = callbackInfo;
-            const rtt = Date.now() - start;
-            const stats = self[kPerfStats];
-            if (stats !== undefined) stats.pingRTT = rtt;
-            callback(null, rtt, payload);
-            if (callbacks.length === 0 && self.#pendingSettingsAckCount === 0) {
-              if (self[kSettingsAckGraceTimer] !== undefined) {
-                clearTimeout(self[kSettingsAckGraceTimer]);
-                self[kSettingsAckGraceTimer] = undefined;
-              }
-              if (
-                self.#closed &&
-                self.#connections === 0 &&
-                (self.#pendingRequests === null || self.#pendingRequests.length === 0) &&
-                !self.destroyed
-              ) {
-                captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
-                setImmediate(destroyIfNotDestroyedNT, self);
-              }
-            }
+      // No payload: the parser cancels a ping of a session that goes away.
+      if (payload !== undefined) {
+        self.#pendingPings--;
+        const stats = self[kPerfStats];
+        if (stats !== undefined) stats.pingRTT = duration;
+        if (self.#pendingPings === 0 && self.#pendingSettingsAckCount === 0) {
+          if (self[kSettingsAckGraceTimer] !== undefined) {
+            clearTimeout(self[kSettingsAckGraceTimer]);
+            self[kSettingsAckGraceTimer] = undefined;
+          }
+          if (
+            self.#closed &&
+            self.#connections === 0 &&
+            (self.#pendingRequests === null || self.#pendingRequests.length === 0) &&
+            !self.destroyed
+          ) {
+            captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
+            setImmediate(destroyIfNotDestroyedNT, self);
           }
         }
       }
+      // false: the parser calls pingAcked() next, in the async context of that ping() call.
+      if (typeof callback === "function") pingAcked(self, payload, callback, duration);
     },
     error(self: ClientHttp2Session, errorCode: number | string, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
@@ -5605,22 +5586,16 @@ class ClientHttp2Session extends Http2Session {
     }
     validateFunction(callback, "callback");
 
-    const cb = makeHttp2Ping(callback);
     const parser = this.#parser;
-    if (!parser || !this[bunHTTP2Socket]) {
-      process.nextTick(cb, $ERR_HTTP2_PING_CANCEL(), 0, payload);
-      return false;
+    if (parser && this[bunHTTP2Socket]) {
+      // Counted first: a transport that is written to from JS can deliver the ACK inside the call.
+      this.#pendingPings++;
+      // The parser keeps the callback until the ACK of this frame, with the async context of this call.
+      if (parser.ping(payload || kEmptyPingPayload, callback, pingAcked) !== false) return true;
+      this.#pendingPings--;
     }
-    if (parser.ping(payload || kEmptyPingPayload) === false) {
-      process.nextTick(cb, $ERR_HTTP2_PING_CANCEL(), 0, payload);
-      return false;
-    }
-    if (this.#pingCallbacks) {
-      this.#pingCallbacks.push([cb, Date.now()]);
-    } else {
-      this.#pingCallbacks = [[cb, Date.now()]];
-    }
-    return true;
+    process.nextTick(callback, $ERR_HTTP2_PING_CANCEL());
+    return false;
   }
   goaway(errorCode = constants.NGHTTP2_NO_ERROR, lastStreamId = 0, opaqueData) {
     if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();
@@ -5861,7 +5836,7 @@ class ClientHttp2Session extends Http2Session {
     if (this.#connections === 0 && (this.#pendingRequests === null || this.#pendingRequests.length === 0)) {
       // An unACKed ping gets the same bounded grace as an unACKed SETTINGS: node always
       // delivers the ping callback its RTT on a healthy session, never a cancel error.
-      if (this.#pendingSettingsAckCount > 0 || (this.#pingCallbacks !== null && this.#pingCallbacks.length > 0)) {
+      if (this.#pendingSettingsAckCount > 0 || this.#pendingPings > 0) {
         scheduleSettingsAckGraceNT(this);
       } else {
         captureHttp2PerfFrameSnapshot(this, this.#parser);
@@ -5898,8 +5873,6 @@ class ClientHttp2Session extends Http2Session {
         clearTimeout(this[kTimeout]);
         this[kTimeout] = null;
       }
-      cancelPendingPings(this.#pingCallbacks);
-      this.#pingCallbacks = null;
       if (error === undefined) {
         // node's signature is destroy(error = NGHTTP2_NO_ERROR, code): the defaulted error is a
         // number and replaces code, so destroy(undefined, code) is destroy(). An explicit code only

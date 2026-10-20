@@ -15,7 +15,7 @@ export default [
       },
       ping: {
         fn: "ping",
-        length: 0,
+        length: 3,
       },
       altsvc: {
         fn: "altsvc",

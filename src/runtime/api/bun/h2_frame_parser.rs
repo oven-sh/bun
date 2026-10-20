@@ -1008,8 +1008,8 @@ impl Drop for Keepalive<'_> {
     }
 }
 
-/// A SETTINGS frame this side sent and the peer has not acknowledged yet (node's `Http2Settings`):
-/// what the ACK is delivered to.
+/// A SETTINGS or PING frame this side sent and the peer has not acknowledged yet (node's
+/// `Http2Settings` and `Http2Ping`): what the ACK is delivered to.
 struct PendingAck {
     callback: StrongOptional,
     /// The session's delivery function, bound to the async context of the call that sent the
@@ -1020,27 +1020,27 @@ struct PendingAck {
 }
 
 impl PendingAck {
-    /// `None` when there is nothing to keep: no callback, and no async context to deliver in.
-    fn capture(global: &JSGlobalObject, callback: JSValue, deliver: JSValue) -> Option<Self> {
+    fn capture(global: &JSGlobalObject, callback: JSValue, deliver: JSValue) -> Self {
         let has_callback = callback.is_callable();
         let bound = deliver.with_async_context(global);
-        let has_context = bound != deliver;
-        if !has_callback && !has_context {
-            return None;
-        }
-        Some(Self {
+        Self {
             callback: if has_callback {
                 StrongOptional::create(callback, global)
             } else {
                 StrongOptional::empty()
             },
-            deliver: if has_context {
+            deliver: if bound != deliver {
                 StrongOptional::create(bound, global)
             } else {
                 StrongOptional::empty()
             },
             sent_at: has_callback.then(std::time::Instant::now),
-        })
+        }
+    }
+
+    /// Nothing to keep: no callback, and no async context to deliver in.
+    fn is_empty(&self) -> bool {
+        !self.callback.has() && !self.deliver.has()
     }
 
     fn callback(&self) -> JSValue {
@@ -1062,6 +1062,8 @@ struct PendingAcks {
     /// `PendingLocalSettings::token` of the newest SETTINGS record.
     last_token: u32,
     settings: Vec<(u32, PendingAck)>,
+    /// One per PING frame, in the order sent: the peer acknowledges them in that order.
+    pings: std::collections::VecDeque<PendingAck>,
 }
 
 /// A `&mut Stream` that only exists inside an armed dispatch scope (`enter_stream_dispatch`):
@@ -2566,16 +2568,68 @@ impl H2FrameParser {
         );
     }
 
-    /// Calls `deliver(session, ...values)`. `deliver` is what `PendingAck::capture` bound: the call
-    /// runs in the async context of the call that sent the acknowledged frame.
-    fn deliver_ack(&self, deliver: JSValue, values: &[JSValue; 3]) {
+    /// The peer acknowledged the frame `ack` was kept for. `event`'s handler gets
+    /// `(session, ...values, callback, duration)` and does the session's own part in the async
+    /// context of the session. The callback is then called in the context of its caller.
+    fn dispatch_ack(&self, event: JSH2FrameParser::Gc, values: &[JSValue], ack: &PendingAck) {
+        let (callback, duration) = (ack.callback(), ack.duration());
+        match ack.deliver.get() {
+            // Nothing tracked async contexts when the frame was sent: the handler delivers.
+            None => self.dispatch_to_ack_handler(event, values, callback, duration),
+            // The caller's Bun.ModuleGraph was disposed: the handler delivers to nobody.
+            Some(deliver) if deliver.is_of_stopped_module_graph(&self.global()) => {
+                self.dispatch_to_ack_handler(event, values, JSValue::UNDEFINED, duration)
+            }
+            Some(deliver) => {
+                // One microtask checkpoint, after the delivery.
+                // SAFETY: the VM owns its event loop for the process lifetime.
+                let _entered = unsafe {
+                    bun_jsc::event_loop::EventLoop::enter_scope(self.handlers.get().vm.event_loop())
+                };
+                // `false`: the handler leaves the delivery to the call below.
+                self.dispatch_to_ack_handler(event, values, JSValue::FALSE, duration);
+                self.deliver_ack(deliver, values[0], callback, duration);
+            }
+        }
+    }
+
+    fn dispatch_to_ack_handler(
+        &self,
+        event: JSH2FrameParser::Gc,
+        values: &[JSValue],
+        callback: JSValue,
+        duration: JSValue,
+    ) {
         let Some(this_value) = self.strong_this.get().try_get() else {
             return;
         };
         let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
             return;
         };
-        let data = [ctx_value, values[0], values[1], values[2]];
+        let mut data = [JSValue::UNDEFINED; 5];
+        let len = values.len() + 3;
+        data[0] = ctx_value;
+        data[1..len - 2].copy_from_slice(values);
+        data[len - 2] = callback;
+        data[len - 1] = duration;
+        let _dispatch = self.enter_dispatch();
+        let _ =
+            self.handlers
+                .get()
+                .call_event_handler(event, this_value, ctx_value, &data[..len]);
+    }
+
+    /// Calls `deliver(session, value, callback, duration)`. `deliver` is what
+    /// `PendingAck::capture` bound: the call runs in the async context of the call that sent the
+    /// acknowledged frame.
+    fn deliver_ack(&self, deliver: JSValue, value: JSValue, callback: JSValue, duration: JSValue) {
+        let Some(this_value) = self.strong_this.get().try_get() else {
+            return;
+        };
+        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
+            return;
+        };
+        let data = [ctx_value, value, callback, duration];
         let handlers = self.handlers.get();
         if handlers.should_skip_dispatch(&data) {
             return;
@@ -2588,6 +2642,26 @@ impl H2FrameParser {
             ctx_value,
             &data,
         );
+    }
+
+    /// node cancels the pings that a session still waits on when it goes away: each callback
+    /// hears of it, in the async context of its ping() call. No payload says so.
+    fn cancel_pings(&self) {
+        while let Some(ack) = self
+            .pending_acks
+            .with_mut(|acks| acks.as_mut()?.pings.pop_front())
+        {
+            let (callback, duration) = (ack.callback(), ack.duration());
+            match ack.deliver.get() {
+                Some(deliver) => self.deliver_ack(deliver, JSValue::UNDEFINED, callback, duration),
+                None => self.dispatch_to_ack_handler(
+                    JSH2FrameParser::Gc::onPing,
+                    &[JSValue::UNDEFINED, JSValue::TRUE],
+                    callback,
+                    duration,
+                ),
+            }
+        }
     }
 
     /// A header block the HPACK encoder cannot emit fails the whole session in nghttp2, so node
@@ -3961,32 +4035,9 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             }
             js.put(&g, b"customSettings".as_slice(), custom);
         }
-        let Some(ack) = ack else {
-            return self.dispatch(JSH2FrameParser::Gc::onLocalSettings, js);
-        };
-        match ack.deliver.get() {
-            // Nothing tracked async contexts when the frame was sent: the handler delivers.
-            None => self.dispatch_with_2_extra(
-                JSH2FrameParser::Gc::onLocalSettings,
-                js,
-                ack.callback(),
-                ack.duration(),
-            ),
-            // The caller's Bun.ModuleGraph was disposed: its callback is not called, and the
-            // session still hears 'localSettings'.
-            Some(deliver) if deliver.is_of_stopped_module_graph(&g) => {
-                self.dispatch(JSH2FrameParser::Gc::onLocalSettings, js)
-            }
-            Some(deliver) => {
-                // One microtask checkpoint, after the delivery.
-                // SAFETY: the VM owns its event loop for the process lifetime.
-                let _entered = unsafe {
-                    bun_jsc::event_loop::EventLoop::enter_scope(self.handlers.get().vm.event_loop())
-                };
-                // `false`: the handler leaves the delivery to the call below.
-                self.dispatch_with_extra(JSH2FrameParser::Gc::onLocalSettings, js, JSValue::FALSE);
-                self.deliver_ack(deliver, &[js, ack.callback(), ack.duration()]);
-            }
+        match ack {
+            Some(ack) => self.dispatch_ack(JSH2FrameParser::Gc::onLocalSettings, &[js], &ack),
+            None => self.dispatch(JSH2FrameParser::Gc::onLocalSettings, js),
         }
     }
 
@@ -4080,11 +4131,22 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             self.out_standing_pings
                 .set(self.out_standing_pings.get().saturating_sub(1));
         }
+        // Out of the store before any script runs: a callback can call ping() or destroy().
+        let ack = if is_ack {
+            self.pending_acks
+                .with_mut(|acks| acks.as_mut()?.pings.pop_front())
+        } else {
+            None
+        };
         let g = self.global();
         let Some(buffer) = self.or_stop(self.handlers.get().binary_type.to_js(payload, &g)) else {
             return;
         };
-        self.dispatch_with_extra(JSH2FrameParser::Gc::onPing, buffer, JSValue::from(is_ack));
+        let is_ack = JSValue::from(is_ack);
+        match ack {
+            Some(ack) => self.dispatch_ack(JSH2FrameParser::Gc::onPing, &[buffer, is_ack], &ack),
+            None => self.dispatch_with_extra(JSH2FrameParser::Gc::onPing, buffer, is_ack),
+        }
     }
 
     fn on_go_away(&self, code: u32, last: u32, debug: &[u8]) {
@@ -4736,9 +4798,10 @@ impl H2FrameParser {
         this.load_settings_from_js_value(global_object, options)?;
 
         let ack = PendingAck::capture(global_object, callback, deliver);
-        Ok(JSValue::from(
-            this.set_settings(this.local_settings.get(), ack),
-        ))
+        Ok(JSValue::from(this.set_settings(
+            this.local_settings.get(),
+            (!ack.is_empty()).then_some(ack),
+        )))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -4953,7 +5016,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let [payload_arg] = callframe.arguments_as_array::<1>();
+        let [payload_arg, callback, deliver] = callframe.arguments_as_array::<3>();
         if callframe.arguments_count() < 1 {
             return Err(global_object.throw(format_args!("Expected payload argument")));
         }
@@ -4967,6 +5030,11 @@ impl H2FrameParser {
 
         if let Some(array_buffer) = payload_arg.as_array_buffer(global_object) {
             let slice = array_buffer.slice();
+            // Kept before the write: a transport that is written to from JS can deliver the ACK
+            // inside it.
+            let ack = PendingAck::capture(global_object, callback, deliver);
+            this.pending_acks
+                .with_mut(|acks| acks.get_or_insert_default().pings.push_back(ack));
             this.send_ping(false, slice);
             return Ok(JSValue::TRUE);
         }
@@ -7897,6 +7965,8 @@ impl H2FrameParser {
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        // Only here: the other ways in to `release_from_js` and `detach` must not run script.
+        this.cancel_pings();
         this.release_from_js();
         Ok(JSValue::UNDEFINED)
     }
@@ -7935,7 +8005,7 @@ impl H2FrameParser {
         self.tx_tracker.set(TxFrameTracker::default());
         // Drop every per-stream JS context root; the parser is detaching.
         self.sctx.with_mut(|m| m.clear());
-        // And the callbacks that waited for an ACK: none of them is called (node does not either).
+        // And the callbacks that still wait for an ACK. None of them is called from here.
         self.pending_acks.set(None);
         self.write_buffer_offset.set(0);
 

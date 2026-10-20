@@ -334,7 +334,12 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
 
 /* We do not want to block the loop with tons and tons of CPU-intensive work for SSL handshakes.
  * Spread it out during many loop iterations, prioritizing already open connections, they are far
- * easier on CPU */
+ * easier on CPU.
+ *
+ * A socket over the budget is parked in the low-priority queue: unlinked from its group, reads
+ * off. Only a socket with input is parked, and nothing acts on it over that unread input: a FIN
+ * does not end it (the EOF arm of us_internal_dispatch_ready_poll) and no timeout of its owner
+ * runs (us_internal_timer_sweep). */
 static const int MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION = 5;
 
 void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
@@ -565,14 +570,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                         us_internal_socket_group_link_socket(accept_group, s);
 
-                        int readable_now = listen_socket->deferred_accept;
+                        int handshake_budget_spent = 0;
                         if (listen_socket->ssl_ctx) {
                             us_internal_ssl_attach(s, listen_socket->ssl_ctx, /*is_client*/ 0, NULL, listen_socket);
                             us_internal_ssl_on_open(s, 0, bsd_addr_get_ip(&addr), bsd_addr_get_ip_length(&addr));
-                            /* With the handshake budget spent, the dispatch below would park the socket
-                             * unread. Only a socket the kernel reports readable may be parked: a silent
-                             * peer has to stay linked, where the sweep runs its timeout. */
-                            if (loop->data.low_prio_budget <= 0) readable_now = 0;
+                            handshake_budget_spent = loop->data.low_prio_budget <= 0;
                         } else {
                             us_dispatch_open(s, 0, bsd_addr_get_ip(&addr), bsd_addr_get_ip_length(&addr));
                         }
@@ -583,8 +585,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                          * on Linux, SO_ACCEPTFILTER on FreeBSD), the request/ClientHello is already
                          * in the buffer. Dispatch readable now instead of returning to epoll just to
                          * learn what we already know. The POLL_TYPE_SOCKET handler tolerates
-                         * EWOULDBLOCK for the rare case where the defer timed out with no data. */
-                        if (readable_now && s && !us_socket_is_closed(s)) {
+                         * EWOULDBLOCK for the rare case where the defer timed out with no data.
+                         * Over the handshake budget that dispatch parks the socket, so there the
+                         * rare case is sorted out first: a parked socket must have input. */
+                        if (listen_socket->deferred_accept && s && !us_socket_is_closed(s) &&
+                            (!handshake_budget_spent || us_socket_queued_input(s) == LIBUS_QUEUED_INPUT_DATA)) {
                             us_internal_dispatch_ready_poll((struct us_poll_t *) s, 0, 0, LIBUS_SOCKET_READABLE);
                         }
 

@@ -1897,6 +1897,8 @@ function runTest({
 test.concurrent.each([
   ["America/New_York", "America/New_York"],
   [undefined, "UTC"],
+  // ICU rejects this name, so the run uses the system's zone.
+  [":/etc/localtime", undefined],
 ])("delete process.env.TZ goes back to the time zone the run started with: TZ=%s", async (TZ, expected) => {
   using dir = tempDir("bun-test-delete-tz", {
     "tz.test.js": `
@@ -1919,7 +1921,8 @@ test.concurrent.each([
     stderr: "ignore",
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toContain(JSON.stringify([expected, "Asia/Tokyo", expected]));
+  const zones = JSON.parse(stdout.split("\n").find(line => line.startsWith("["))!);
+  expect(zones).toEqual([expected ?? zones[0], "Asia/Tokyo", zones[0]]);
   expect(exitCode).toBe(0);
 });
 

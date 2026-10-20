@@ -6270,9 +6270,11 @@ impl VirtualMachine {
     #[unsafe(export_name = "Bun__VM__restoreTestTimeZone")]
     pub extern "C" fn restore_test_time_zone(&self) {
         if let Some(tz) = self.test_isolation_state.time_zone.as_deref() {
-            let _ = self
-                .global()
-                .set_time_zone(&bun_core::EncodedSlice::from_bytes(tz));
+            let global = self.global();
+            // A name ICU rejects, like ":/etc/localtime", means the system's zone.
+            if !global.set_time_zone(&bun_core::EncodedSlice::from_bytes(tz)) {
+                let _ = global.set_time_zone(&bun_core::EncodedSlice::from_bytes(b""));
+            }
         }
     }
 

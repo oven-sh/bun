@@ -37,10 +37,12 @@
 #include "BunObject+exports.h"
 #include "ErrorCode.h"
 #include "GeneratedBunObject.h"
+#include "GeneratedBunObjectInternals.h"
 #include "GeneratedCrypto.h"
 #include "GeneratedCryptoHasher.h"
 #include "GeneratedCsrfJsc.h"
 #include "GeneratedDns.h"
+#include "GeneratedFilesystemRouter.h"
 #include "GeneratedGlob.h"
 #include "GeneratedHashObject.h"
 #include "GeneratedJSON5Object.h"
@@ -927,7 +929,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     CryptoHasher                                   Bun::Bindgen::Generated::CryptoHasher::getCryptoHasherConstructor   DontDelete|PropertyCallback
     FFI                                            BunObject_lazyPropCb_wrap_FFI                                       DontDelete|PropertyCallback
     FetchSession                                   BunObject_lazyPropCb_wrap_FetchSession                              DontDelete|PropertyCallback
-    FileSystemRouter                               BunObject_lazyPropCb_wrap_FileSystemRouter                          DontDelete|PropertyCallback
+    FileSystemRouter                               Bun::Bindgen::Generated::FilesystemRouter::getFileSystemRouterConstructor DontDelete|PropertyCallback
     Glob                                           Bun::Bindgen::Generated::Glob::getGlobConstructor                   DontDelete|PropertyCallback
     Image                                          BunObject_lazyPropCb_wrap_Image                                     DontDelete|PropertyCallback
     MD4                                            Bun::Bindgen::Generated::CryptoHasher::getMD4Constructor            DontDelete|PropertyCallback
@@ -1001,7 +1003,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     readableStreamToFormData                       WebCore::jsFunctionReadableStreamToFormData        DontDelete|Function 1
     readableStreamToJSON                           WebCore::jsFunctionReadableStreamToJSON            DontDelete|Function 1
     readableStreamToText                           WebCore::jsFunctionReadableStreamToText            DontDelete|Function 1
-    registerMacro                                  BunObject_callback_registerMacro                                    DontEnum|DontDelete|Function 1
+    registerMacro                                  Bun::Bindgen::Generated::BunObjectInternals::jsRegisterMacro        DontEnum|DontDelete|Function 1
     resolve                                        BunObject_callback_resolve                                          DontDelete|Function 1
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback

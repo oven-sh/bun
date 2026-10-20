@@ -5,7 +5,6 @@ use core::ptr::NonNull;
 
 use bun_ptr::{ParentRef, RefPtr};
 
-use bun_core::Utf8Bytes;
 use bun_event_loop::Taskable;
 use bun_io::KeepAlive;
 use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
@@ -97,81 +96,8 @@ impl CountedKeepAlive {
     }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_as_array::<2>();
-
-    let data_view;
-    let data_buffer;
-    let data: Utf8Bytes = 'blk: {
-        let data: JSValue = arguments[0];
-
-        if callframe.arguments_count() < 1 {
-            return Err(global_this.throw_invalid_argument_type_value(
-                b"data",
-                b"string or an instance of Buffer, TypedArray, or DataView",
-                JSValue::UNDEFINED,
-            ));
-        }
-        if data.is_string_literal() {
-            data_view = data.as_string().view(global_this)?;
-            break 'blk data_view.to_utf8();
-        }
-        let Some(buffer) = data.as_array_buffer(global_this) else {
-            let ty_str = data.js_type_string(global_this);
-            return Err(global_this
-                .err(
-                    ErrorCode::INVALID_ARG_TYPE,
-                    format_args!(
-                        "The \"data\" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer. Received {}",
-                        ty_str,
-                    ),
-                )
-                .throw());
-        };
-        data_buffer = buffer;
-        break 'blk Utf8Bytes::Borrowed(data_buffer.byte_slice());
-    };
-
-    let value: u32 = 'blk: {
-        let value: JSValue = arguments[1];
-        if callframe.arguments_count() < 2 {
-            break 'blk 0;
-        }
-        if !value.is_number() {
-            return Err(global_this.throw_invalid_argument_type_value(b"value", b"number", value));
-        }
-        let valuef = value.as_number();
-        let min: u32 = 0;
-        let max: u32 = u32::MAX;
-
-        if valuef.floor() != valuef {
-            return Err(global_this
-                .err(
-                    ErrorCode::OUT_OF_RANGE,
-                    format_args!(
-                        "The value of \"{}\" is out of range. It must be an integer. Received {}",
-                        "value", valuef,
-                    ),
-                )
-                .throw());
-        }
-        if valuef < min as f64 || valuef > max as f64 {
-            return Err(global_this
-                .err(
-                    ErrorCode::OUT_OF_RANGE,
-                    format_args!(
-                        "The value of \"{}\" is out of range. It must be >= {} and <= {}. Received {}",
-                        "value", min, max, valuef,
-                    ),
-                )
-                .throw());
-        }
-        break 'blk valuef as u32;
-    };
-
-    let crc = bun_zlib::crc32_bytes(value, data.slice());
-    Ok(JSValue::js_number(f64::from(crc)))
+pub(crate) fn crc32(data: &[u8], value: u32) -> u32 {
+    bun_zlib::crc32_bytes(value, data)
 }
 
 // ─── CompressionStream mixin trait ────────────────────────────────────────

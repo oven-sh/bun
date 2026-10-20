@@ -13,7 +13,7 @@ use super::sink::{MAX_SERIALIZATION_LEVEL, NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 use crate::program::SymbolTable;
-use crate::util::SharedSort;
+use crate::util::{PositionSet, SharedSort};
 use bun_core::strings;
 
 /// The diagnostics `check_file` passes to `Program::finish_file`, finalized. Diagnostics reported
@@ -40,28 +40,6 @@ pub struct Checked {
 }
 
 impl Checked {
-    /// Whether `finish_file` has nothing to report for the file unless another task reports something in it.
-    pub fn is_empty(&self) -> bool {
-        let Checked {
-            syntactic,
-            semantic,
-            declaration,
-            include,
-            expected_errors,
-            // Only drops what other tasks report.
-            never_checked: _,
-            unused_private_members,
-            declaration_file,
-        } = self;
-        syntactic.is_empty()
-            && semantic.as_ref().is_none_or(Vec::is_empty)
-            && declaration.is_empty()
-            && include.is_empty()
-            && expected_errors.is_empty()
-            && unused_private_members.is_empty()
-            && declaration_file.is_none()
-    }
-
     /// Moves the declaration diagnostics (`GetDeclarationDiagnostics`) into a `Checked` of their own, so that `finish_file` converts them
     /// separately. `None` if there are none.
     pub fn take_declaration_diagnostics(&mut self) -> Option<Checked> {
@@ -79,7 +57,7 @@ impl Checked {
 }
 
 impl Program<'_> {
-    /// The errors of `file`, after the last barrier. It runs no query and reads no HIR.
+    /// Returns the errors of `file`. Call it after the last task has ended. It runs no query and reads no HIR.
     pub fn finish_file(&self, file: FileId, checked: Checked) -> Vec<Explained> {
         let mut out = Vec::new();
         if let Some(semantic) = checked.semantic {
@@ -171,23 +149,73 @@ impl PartialEq for Container {
     }
 }
 
+/// See `Checker::forget_nodes_of_leaf`.
+#[derive(Default)]
+pub(super) struct CheckedLeaves {
+    /// Checked leaf files whose nodes are still in the memos, indexed by `FileId`.
+    files: PositionSet,
+    is_any: bool,
+    /// Number of entries left in the memos after the last sweep.
+    entries_kept: usize,
+}
+
 impl Checker<'_, '_> {
     /// Drops the memos of this checker that are keyed by a node of `file`, which `is_leaf` and has
     /// been checked: no other file refers to it, so nothing evaluates one of its nodes again. A
-    /// task of the last step checks dozens of such files. The capacity stays for the next one.
+    /// task checks dozens of such files. The capacity stays for the next one.
+    ///
+    /// A sweep costs time proportional to the memo's size, however few entries it drops, and the
+    /// number of entries kept for other files only grows. So the nodes of several files are dropped
+    /// in one sweep, once the memos have doubled in size. Until then nothing reads the stale
+    /// entries, and they use no more memory than the entries that are kept.
     fn forget_nodes_of_leaf(&mut self, file: FileId) {
-        self.literals_checked_under.retain(|key, _| key.0 != file);
-        self.discriminated.retain(|key, _| key.0 != file);
-        self.non_existent_properties.retain(|key, _| key.0 != file);
-        self.rechecked_exprs.retain(|key, _| key.0 != file);
-        self.rechecked_members.retain(|key, _| key.0 != file);
-        self.late_bound_members.retain(|key, _| key.0.file != file);
-        self.early_bound_for_good.retain(|key| key.0.file != file);
-        self.resolved_signatures.retain(|key| key.0 != file);
-        self.context_checked_here.retain(|key| key.0 != file);
-        self.prepared.retain(|key| key.0 != file);
+        if !self.checked_leaves.is_any {
+            let files = self.files().modules.len();
+            self.checked_leaves.files.reset(files);
+            self.checked_leaves.is_any = true;
+        }
+        self.checked_leaves.files.insert(file.idx());
+        if self.entries_by_node() < 2 * self.checked_leaves.entries_kept + 1024 {
+            return;
+        }
+        let leaves = std::mem::take(&mut self.checked_leaves.files);
+        let stays = |file: FileId| !leaves.contains(file.idx());
+        self.literals_checked_under.retain(|key, _| stays(key.0));
+        self.discriminated.retain(|key, _| stays(key.0));
+        self.conditional_roots.retain(|key, _| stays(key.0));
+        self.non_existent_properties.retain(|key, _| stays(key.0));
+        self.rechecked_exprs.retain(|key, _| stays(key.0));
+        self.rechecked_members.retain(|key, _| stays(key.0));
+        self.late_bound_members.retain(|key, _| stays(key.0.file));
+        self.thisless_members.retain(|key, _| stays(key.file));
+        self.early_bound_for_good.retain(|key| stays(key.0.file));
+        self.resolved_signatures.retain(|key| stays(key.0));
+        self.context_checked_here.retain(|key| stays(key.0));
+        self.prepared.retain(|key| stays(key.0));
         self.circular_before_parameter_symbol
-            .retain(|key| key.0 != file);
+            .retain(|key| stays(key.0));
+        self.checked_leaves = CheckedLeaves {
+            files: leaves,
+            is_any: false,
+            entries_kept: self.entries_by_node(),
+        };
+    }
+
+    /// Total number of entries in the memos that `forget_nodes_of_leaf` sweeps.
+    fn entries_by_node(&self) -> usize {
+        self.literals_checked_under.len()
+            + self.discriminated.len()
+            + self.conditional_roots.len()
+            + self.non_existent_properties.len()
+            + self.rechecked_exprs.len()
+            + self.rechecked_members.len()
+            + self.late_bound_members.len()
+            + self.thisless_members.len()
+            + self.early_bound_for_good.len()
+            + self.resolved_signatures.len()
+            + self.context_checked_here.len()
+            + self.prepared.len()
+            + self.circular_before_parameter_symbol.len()
     }
 
     /// Runs every check that queries `file`. Diagnostics it causes in other files, or other files
@@ -206,6 +234,7 @@ impl Checker<'_, '_> {
         self.side_effect_free.get_mut().clear();
         self.context_sensitive_functions.get_mut().clear();
         self.work_trap = WORK_TRAP_DISARMED;
+        self.limits_in_earlier_files += self.limits + self.instantiation_limit_hits;
         self.limits = 0;
         // tsgo never resets it, so each of its checkers reports nothing that needs the type of a
         // reference in the files after one whose module body got 2563.
@@ -224,7 +253,6 @@ impl Checker<'_, '_> {
         self.alias_targets_reported.clear();
         self.signatures_resolved_discarding.clear();
         self.expressions_cached_discarding.clear();
-        self.emit_helpers_checked_elsewhere.clear();
         self.reported.clear();
         self.release_provisional_shapes();
         self.is_type_checked = false;
@@ -272,7 +300,6 @@ impl Checker<'_, '_> {
             let from = self.reported.len();
             self.is_emitting = true;
             self.mark_linked_references_recursively(file);
-            self.mark_jsx_aliases_referenced(file);
             self.mark_property_aliases_referenced(file);
             self.inline_const_enums(file);
             self.is_emitting = false;
@@ -284,6 +311,12 @@ impl Checker<'_, '_> {
         self.save_deferred_diagnostics = true;
         let logged = self.task.diagnostics.len();
         self.check_source_file(file);
+        // The file will be rechecked, so skip the remaining passes.
+        if self.task.is_lost() {
+            self.reported.clear();
+            self.is_type_checked = true;
+            return self.checked(syntactic, Vec::new());
+        }
         self.check_declare_modifiers(file);
         self.check_modules(file);
         self.report_unresolved_identifiers();
@@ -326,16 +359,14 @@ impl Checker<'_, '_> {
         self.report_unresolved_identifiers();
         // `GetDeclarationDiagnostics`: no comment directive suppresses these, and plain JavaScript
         // gets them too.
-        // A diagnostic located in another file goes to the buffer of that file at the barrier.
+        // A diagnostic located in another file goes to the buffer of that file at the next commit.
         let reported = std::mem::take(&mut self.reported).into_iter();
         let (semantic, elsewhere): (Vec<_>, Vec<_>) = reported.partition(|d| d.file == file);
         self.reported = elsewhere;
         self.log_reported_from(0);
         let emits_later = !self.emits_first();
-        let was_emitting = self.set_symbol_ids_emitting(emits_later);
         self.is_type_checked = emits_later;
         let declaration = self.get_declaration_diagnostics(file);
-        self.set_symbol_ids_emitting(was_emitting);
         self.is_type_checked = true;
         let mut directives = Directives::default();
         let semantic = semantic.into_iter();
@@ -543,7 +574,7 @@ impl Checker<'_, '_> {
                 }
                 // `bindVariableDeclarationOrBindingElement`: the name, or each identifier directly in the binding pattern, is an alias,
                 // whatever `require` resolves to.
-                let declares_alias = match bound.expr_parent[call.idx()] {
+                let declares_alias = match bound.parent_of_expr(call) {
                     Parent::None => continue,
                     Parent::VarInit(decl)
                         if self.external_module_require_argument(file, decl).is_some() =>
@@ -763,7 +794,7 @@ impl Checker<'_, '_> {
         let files = self.files();
         for part in files.parts(module) {
             let hir = self.hir(part.file);
-            for &decl in &files.symbol(part).decls {
+            for &decl in files.symbol(part).decls {
                 let body = match decl {
                     Decl::File => hir.body,
                     Decl::Module(m) => hir[m].body,
@@ -962,14 +993,14 @@ impl Checker<'_, '_> {
     /// `let` or `const` of this file: the binding name, and the declaration that contains it.
     fn value_declaration_of_variable(&self, file: FileId, e: ExprId) -> Option<(PatId, VarDeclId)> {
         let bound = self.bound(file);
-        let s = bound.symbols.get(bound.expr_symbol[e.idx()].idx())?;
+        let s = bound.symbols.get(bound.symbol_of_expr(e).idx())?;
         // `isParameter`, `isAlias`
         if !s.flags.intersects(SymFlags::VARIABLE)
             || s.flags.intersects(SymFlags::PARAMETER | SymFlags::ALIAS)
         {
             return None;
         }
-        let sym = self.files().sym(file, bound.expr_symbol[e.idx()]);
+        let sym = self.files().sym(file, bound.symbol_of_expr(e));
         // In another file it is ambient, or an outer variable: initialized either way.
         let Some((of, Decl::Var(pat))) = self.files().value_declaration(sym) else {
             return None;
@@ -991,7 +1022,7 @@ impl Checker<'_, '_> {
     /// Whether `stmt` declares the variable of a `for`-`in` or a `for`-`of`.
     pub(super) fn declares_loop_variable(&self, file: FileId, stmt: StmtId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(owner)
+        matches!(bound.parent_of_stmt(stmt), Parent::Stmt(owner)
             if matches!(hir[owner].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == stmt))
     }
 
@@ -1012,7 +1043,7 @@ impl Checker<'_, '_> {
             return true;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let parent = bound.expr_parent[e.idx()];
+        let parent = bound.parent_of_expr(e);
         if hir.kind == FileKind::Declaration || matches!(parent, Parent::None) {
             return true;
         }
@@ -1050,7 +1081,7 @@ impl Checker<'_, '_> {
         }
         // `isOuterVariable`, which uses the flow container before it is moved out of function
         // expressions.
-        let declared_in = bound.stmt_parent[stmt.idx()];
+        let declared_in = bound.parent_of_stmt(stmt);
         if self.get_control_flow_container(file, parent)
             == self.get_control_flow_container(file, declared_in)
         {
@@ -1074,7 +1105,7 @@ impl Checker<'_, '_> {
             && decl.init.is_none()
             && !decl.flags.contains(Flags::DEFINITE)
             && self.is_mutable_local_variable_declaration(file, d)
-            && !self.is_symbol_assigned_definitely(file, bound.expr_symbol[e.idx()])
+            && !self.is_symbol_assigned_definitely(file, bound.symbol_of_expr(e))
     }
 
     /// `isMutableLocalVariableDeclaration`
@@ -1086,7 +1117,7 @@ impl Checker<'_, '_> {
             // `IsGlobalSourceFile`
             && !(stmt.is_some()
                 && matches!(hir[stmt].kind, StmtKind::Var(_))
-                && matches!(bound.stmt_parent[stmt.idx()], Parent::File)
+                && matches!(bound.parent_of_stmt(stmt), Parent::File)
                 && !self.files().module(file).is_module())
     }
 
@@ -1240,11 +1271,11 @@ impl Checker<'_, '_> {
         match parent {
             Parent::None | Parent::File => Parent::None,
             Parent::Expr(x) if x.is_none() => Parent::None,
-            Parent::Expr(x) => bound.expr_parent[x.idx()],
+            Parent::Expr(x) => bound.parent_of_expr(x),
             Parent::Stmt(s) if s.is_none() => Parent::None,
-            Parent::Stmt(s) => bound.stmt_parent[s.idx()],
+            Parent::Stmt(s) => bound.parent_of_stmt(s),
             Parent::VarInit(d) => Parent::Stmt(bound.var_stmt[d.idx()]),
-            Parent::Prop(p) | Parent::PropKey(_, p) => Parent::Expr(bound.prop_owner[p.idx()]),
+            Parent::Prop(p) | Parent::PropKey(p) => Parent::Expr(bound.prop_owner[p.idx()]),
             Parent::Case(c) => Parent::Stmt(bound.case_stmt[c.idx()]),
             Parent::FnBody(f) => of_fn(f),
             Parent::ParamDefault(p) => of_fn(bound.param_fn[p.idx()]),
@@ -1256,15 +1287,15 @@ impl Checker<'_, '_> {
                 ExprKind::Fn(f) => Parent::FnBody(f),
                 _ => Parent::None,
             },
-            Parent::MemberKey(m) | Parent::Decorator(_, DecoratorOwner::Member(m)) => {
+            Parent::MemberKey(m) | Parent::MemberDecorator(m) => {
                 if hir[m].func.is_some() {
                     Parent::FnBody(hir[m].func)
                 } else {
                     Parent::MemberInit(m)
                 }
             }
-            Parent::Decorator(_, DecoratorOwner::Param(p)) => Parent::ParamDefault(p),
-            Parent::ClassExtends(c) | Parent::Decorator(c, DecoratorOwner::Class(_)) => of_class(c),
+            Parent::ParamDecorator(p) => Parent::ParamDefault(p),
+            Parent::ClassExtends(c) | Parent::ClassDecorator(c) => of_class(c),
             Parent::EnumInit(m) => Parent::Stmt(hir[bound.enum_member_owner[m.idx()]].stmt),
             Parent::Module(m) => Parent::Stmt(hir[m].stmt),
         }
@@ -1283,7 +1314,7 @@ impl Checker<'_, '_> {
             (FnKind::Expr | FnKind::Arrow, FnOwner::Expr(e))
                 if self.is_immediately_invoked(file, f) =>
             {
-                Some(bound.expr_parent[e.idx()])
+                Some(bound.parent_of_expr(e))
             }
             _ => None,
         }
@@ -1300,6 +1331,8 @@ impl Checker<'_, '_> {
             if *self.unknown_symbols.entry(e).or_insert(is_discarded) {
                 return;
             }
+        } else {
+            self.note_error_in(file);
         }
         self.unresolved_identifiers.push((file, e, name));
     }
@@ -1353,7 +1386,7 @@ impl Checker<'_, '_> {
         }
         let other = SymFlags::TYPE | SymFlags::NAMESPACE;
         let is_resolved_by_check = !bound.is_unchecked(e.idx())
-            && match bound.expr_parent[e.idx()] {
+            && match bound.parent_of_expr(e) {
                 // `checkExportAssignment`: `export = A` and `export default A` resolve `A` with any
                 // meaning, `(A)` is checked as an expression. In a namespace they are invalid, and
                 // neither is checked.
@@ -1361,7 +1394,7 @@ impl Checker<'_, '_> {
                     if matches!(
                         hir[s].kind,
                         StmtKind::ExportAssign(_) | StmtKind::ExportDefault(_)
-                    ) && (matches!(bound.stmt_parent[s.idx()], Parent::Module(m) if matches!(hir[m].name, ModuleName::Ident(_)))
+                    ) && (matches!(bound.parent_of_stmt(s), Parent::Module(m) if matches!(hir[m].name, ModuleName::Ident(_)))
                         || !is_parenthesized(hir, e)
                             && self
                                 .files()
@@ -1490,7 +1523,7 @@ impl Checker<'_, '_> {
             // `export default A` in a file or a namespace.
             let is_exported = hir.kind(parent) == Kind::ExportAssignment
                 && hir.find_ancestor(hir.parent(parent), |n| !is_namespace(n)) == Node::FILE;
-            if matches!(bound.expr_parent[e.idx()], Parent::None)
+            if matches!(bound.parent_of_expr(e), Parent::None)
                 || hir.is_ambient(location)
                 || !(hir.is_expression_node(location)
                     || hir.kind(parent) == Kind::ShorthandPropertyAssignment
@@ -1535,7 +1568,7 @@ impl Checker<'_, '_> {
             };
             // `NodeFlagsAmbient`
             let is_ambient = import.flags.contains(Flags::AMBIENT)
-                || matches!(bound.stmt_parent[import.stmt.idx()], Parent::Module(m) if hir[m].flags.contains(Flags::AMBIENT));
+                || matches!(bound.parent_of_stmt(import.stmt), Parent::Module(m) if hir[m].flags.contains(Flags::AMBIENT));
             if !import.flags.contains(Flags::EXPORT) || names.len() != 1 || is_ambient {
                 continue;
             }
@@ -1967,7 +2000,7 @@ impl Checker<'_, '_> {
             {
                 return None;
             }
-            match bound.expr_parent[node.idx()] {
+            match bound.parent_of_expr(node) {
                 Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
                     ExprKind::Dot { .. } => node = parent,
                     ExprKind::Instantiation { .. } => break,
@@ -2011,10 +2044,8 @@ fn is_grammar_error(code: u32) -> bool {
 
 /// Whether an `export as namespace` statement that has modifiers starts at `start`.
 fn is_before_namespace_export(hir: &hir::File, start: u32) -> bool {
-    hir.stmts.iter().any(|s| {
-        matches!(s.kind, StmtKind::ExportAsNamespace(_))
-            && s.start == start
-            && !s.modifiers.is_empty()
+    hir.modifiers_of_stmts.iter().any(|of| {
+        matches!(hir[of.0].kind, StmtKind::ExportAsNamespace(_)) && hir[of.0].start == start
     })
 }
 
@@ -2119,6 +2150,13 @@ bun_core::comptime_string_map! {
 /// Whether `GetSpellingSuggestion` would suggest `candidate` for `name` if it were the only
 /// candidate.
 pub(crate) fn is_close(name: &[u8], candidate: &[u8]) -> bool {
+    // FOR SPEED, its first test, which most candidates fail: every name in scope is asked for every name that is not found.
+    if name.is_ascii() {
+        let maximum_length_difference = 2.max((name.len() as f64 * 0.34) as usize);
+        if candidate.len().abs_diff(name.len()) > maximum_length_difference {
+            return false;
+        }
+    }
     let only = std::iter::once(candidate);
     get_spelling_suggestion(name, only, get_candidate_name, |a, b| a.cmp(b)).is_some()
 }
@@ -2244,11 +2282,17 @@ impl SuggestionLookup for Checker<'_, '_> {
     }
 }
 
-/// By `meaning` and by the text of the name: what `getSuggestionForSymbolNameLookup` finds in
-/// `globals`. A program without the types of its test framework asks for the same few names
-/// thousands of times.
-pub(crate) type SuggestionsAmongGlobals =
-    std::cell::RefCell<FxHashMap<u32, FxHashMap<Vec<u8>, Option<SpellingSuggestion>>>>;
+/// What `getSuggestionForSymbolNameLookup` finds. A program without the types of its test framework asks for the same
+/// few names thousands of times, from everywhere in a file.
+#[derive(Default)]
+pub(crate) struct KnownSuggestions {
+    /// In `globals`, by `meaning` and by the text of the name.
+    among_globals: FxHashMap<u32, FxHashMap<Vec<u8>, Option<SpellingSuggestion>>>,
+    /// In the locals of a scope, by the scope, `meaning` and the name.
+    among_locals: FxHashMap<(FileId, ScopeId, u32, Atom), Option<SpellingSuggestion>>,
+}
+
+pub(crate) type SuggestionsAmongGlobals = std::cell::RefCell<KnownSuggestions>;
 
 impl Files<'_> {
     /// `getSuggestedSymbolForNonexistentSymbol`, and whether the result is among the locals of a
@@ -2291,9 +2335,9 @@ impl Files<'_> {
                     // tsgo does not put the name of a function or class expression in any symbol
                     // table: `Resolve` compares it directly.
                     let is_in_table = |&&(_, id): &&(Atom, crate::bind::SymbolId)| match bound
-                        .symbols[id.idx()]
-                    .decls
-                    .first()
+                        .symbol(id)
+                        .decls
+                        .first()
                     {
                         Some(&Decl::Fn(f)) => hir[f].kind != FnKind::Expr,
                         Some(&Decl::Class(c)) => {
@@ -2310,9 +2354,21 @@ impl Files<'_> {
                     if s.kind == ScopeKind::InferConstraint {
                         return None;
                     }
-                    let locals = bound.table(s.locals).iter().filter(is_in_table);
-                    let locals = locals.map(|&(candidate, id)| (candidate, files.sym(file, id)));
-                    get_spelling_suggestion_for_name(files, text, locals.filter(fits).map(named))
+                    let key = (file, scope, meaning.bits(), name);
+                    let known =
+                        among_globals.and_then(|it| it.borrow().among_locals.get(&key).copied());
+                    known.unwrap_or_else(|| {
+                        let locals = bound.table(s.locals).iter().filter(is_in_table);
+                        let locals =
+                            locals.map(|&(candidate, id)| (candidate, files.sym(file, id)));
+                        let locals = locals.filter(fits).map(named);
+                        let suggestion = get_spelling_suggestion_for_name(files, text, locals);
+                        if let Some(among_globals) = among_globals {
+                            let known = &mut among_globals.borrow_mut().among_locals;
+                            known.insert(key, suggestion);
+                        }
+                        suggestion
+                    })
                 }
                 SymbolTable::Exports(container) => get_spelling_suggestion_for_name(
                     files,
@@ -2320,8 +2376,10 @@ impl Files<'_> {
                     files.each_export(container).filter(fits).map(named),
                 ),
                 SymbolTable::Globals
-                    if let Some(known) = among_globals
-                        .and_then(|it| it.borrow().get(&meaning.bits())?.get(text).copied()) =>
+                    if let Some(known) = among_globals.and_then(|it| {
+                        let known = it.borrow();
+                        known.among_globals.get(&meaning.bits())?.get(text).copied()
+                    }) =>
                 {
                     known
                 }
@@ -2355,8 +2413,8 @@ impl Files<'_> {
                         globals.filter(fits).map(named).chain(words),
                     );
                     if let Some(among_globals) = among_globals {
-                        let mut among_globals = among_globals.borrow_mut();
-                        let of_meaning = among_globals.entry(meaning.bits()).or_default();
+                        let mut known = among_globals.borrow_mut();
+                        let of_meaning = known.among_globals.entry(meaning.bits()).or_default();
                         of_meaning.insert(text.to_vec(), suggestion);
                     }
                     suggestion
@@ -2555,7 +2613,6 @@ impl Checker<'_, '_> {
             // value. A name that none of them declares is reported as missing on the type of the
             // right operand as it is.
             ExprKind::PrivateIdentifier(name) if !is_parenthesized(hir, left) => {
-                self.note_external_emit_helpers_check(file, left);
                 if !self.bound(file).private_class.contains_key(&left)
                     && !self.enclosing_classes(file, left).is_empty()
                 {
@@ -2753,7 +2810,7 @@ impl Checker<'_, '_> {
     ) {
         // `evaluateEnumMember` reports errors of its own.
         let rhs_eval = self.constant_value(file, right);
-        let is_error = matches!(self.bound(file).expr_parent[e.idx()], Parent::EnumInit(_));
+        let is_error = matches!(self.bound(file).parent_of_expr(e), Parent::EnumInit(_));
         if (is_error || self.captures_suggestions())
             && let Some(EnumValue::Number(bits)) = rhs_eval
             && f64::from_bits(bits).abs() >= 32.0
@@ -2788,7 +2845,7 @@ impl Checker<'_, '_> {
         r: TypeId,
     ) -> bool {
         let may_be_symbol = |c: &mut Self, t| {
-            c.maybe_type_of_kind_considering_base_constraint(t, Self::is_symbol_like)
+            c.maybe_type_of_kind_considering_base_constraint(t, tf::ES_SYMBOL_LIKE)
         };
         let offending = if may_be_symbol(self, l) {
             left
@@ -2865,18 +2922,12 @@ impl Checker<'_, '_> {
         right_type: TypeId,
     ) -> Option<u32> {
         let hir = self.hir(file);
-        let ExprKind::Dot {
-            obj,
-            name,
-            name_pos,
-            ..
-        } = hir[left].kind
-        else {
+        let ExprKind::Dot { obj, name, .. } = hir[left].kind else {
             return None;
         };
         if !self.p.files.options.exact_optional_property_types
             || is_parenthesized(hir, left)
-            || is_private_name_at(hir, name_pos)
+            || is_private_name_at(hir, hir.name_pos(left))
         {
             return None;
         }
@@ -2925,9 +2976,9 @@ impl Checker<'_, '_> {
             {
                 expected = written;
                 // `checkPropertyAccessExpression` ends with `getFlowTypeOfAccessExpression`.
-                if let ExprKind::Dot { name_pos, .. } = hir[left].kind {
+                if let ExprKind::Dot { .. } = hir[left].kind {
                     let prop = self.get_property_of_type(object, name).map(|found| found.0);
-                    let right = (file, name_pos, hir[left].end);
+                    let right = (file, hir.name_pos(left), hir[left].end);
                     let target = self.target_kind(file, left);
                     expected = self.get_flow_type_of_access_expression(
                         file, left, prop, written, right, target,
@@ -3181,7 +3232,7 @@ impl Checker<'_, '_> {
                 && matches!(hir[obj].kind, ExprKind::This)
                 && !is_parenthesized(hir, obj)
                 && let Container::Fn(ctor) =
-                    self.get_control_flow_container(file, bound.expr_parent[expr.idx()])
+                    self.get_control_flow_container(file, bound.parent_of_expr(expr))
                 && hir[ctor].kind == FnKind::Constructor
                 && let FnOwner::Member(constructor) = bound.fns[ctor.idx()].owner
                 && let Some((declared_in, value_declaration)) = files.value_declaration(property)

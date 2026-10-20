@@ -23,7 +23,7 @@ impl Checker<'_, '_> {
     fn check_parameter_references(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for &(id, within, _) in bound.identifiers_in_parameters.iter() {
-            let local = bound.expr_symbol[id.idx()];
+            let local = bound.symbol_of_expr(id);
             if local.is_none() || bound.is_in_type_query(id) || bound.is_unchecked(id.idx()) {
                 continue;
             }
@@ -99,7 +99,7 @@ impl Checker<'_, '_> {
     fn check_merged_declarations(&mut self, file: FileId) {
         let bound = self.bound(file);
         for i in 0..bound.symbols.len() {
-            let symbol = &bound.symbols[i];
+            let symbol = bound.symbol(SymbolId(i as u32));
             if symbol.decls.len() < 2 && !symbol.flags.contains(SymFlags::MERGED)
                 || !symbol
                     .flags
@@ -213,7 +213,7 @@ impl Checker<'_, '_> {
             {
                 continue;
             }
-            for &node in &symbol.decls {
+            for &node in symbol.decls {
                 let is_checked = match node {
                     Decl::Var(_) | Decl::ParameterProperty(_) => true,
                     // `bindParameter` declares the property last, so that is the symbol of the node.

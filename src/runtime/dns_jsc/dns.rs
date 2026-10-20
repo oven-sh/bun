@@ -3837,20 +3837,8 @@ pub(crate) enum ChannelResult<'a> {
 
 // Canonical enum + parser live in `bun_dns` (lower tier so `cli` can parse
 // `--dns-result-order` without depending on the runtime). Re-export for
-// existing `crate::dns_jsc::Order` callers; `to_js` stays here as a tier-6
-// extension since it needs JSC.
+// existing `crate::dns_jsc::Order` callers.
 pub(crate) use bun_dns::Order;
-
-trait OrderJscExt {
-    fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue>;
-}
-
-impl OrderJscExt for Order {
-    fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        use jsc::StringJsc as _;
-        bun::String::static_(<&'static str>::from(self)).to_js(global_this)
-    }
-}
 
 #[repr(C)] // c_int
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -6000,21 +5988,16 @@ impl Resolver {
         Ok(promise)
     }
 
-    // FFI shim emitted by `export_host_fn!` below (JS2Native link name).
-    pub(crate) fn get_runtime_default_result_order_option(
-        global_this: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
+    pub(crate) fn get_runtime_default_result_order_option() -> bun::String {
         // `VirtualMachine.dns_result_order` is stored as a raw `u8` (the jsc
         // crate cannot depend on this crate's `Order`); cast through Order's repr(u8).
-        let raw = global_this.bun_vm().as_mut().dns_result_order;
+        let raw = VirtualMachine::get().dns_result_order;
         let order = match raw {
             4 => Order::Ipv4first,
             6 => Order::Ipv6first,
             _ => Order::Verbatim,
         };
-        order.to_js(global_this)
+        bun::String::static_(<&'static str>::from(order))
     }
 }
 
@@ -6068,10 +6051,6 @@ export_host_fn!(Resolver::global_lookup_service, "Bun__DNS__lookupService");
 export_host_fn!(
     Resolver::new_resolver,
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_newResolver"
-);
-export_host_fn!(
-    Resolver::get_runtime_default_result_order_option,
-    "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_getRuntimeDefaultResultOrderOption"
 );
 export_host_fn!(
     internal::seed_cache_for_testing,

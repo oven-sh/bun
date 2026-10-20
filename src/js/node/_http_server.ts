@@ -464,7 +464,6 @@ Server.prototype[kConnectionsCheckingInterval] = undefined;
 function rethrowUncaught(err) {
   throw err;
 }
-const reportError = globalThis.reportError;
 
 // Like Node.js's setupConnectionsTracking: each 'listening' event replaces
 // the connections-checking interval timer (used by the headers/request
@@ -982,6 +981,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           } else {
             http_res.assignSocket(socket);
           }
+          // A write() in the constructor of the response class returned false before the response had this socket.
+          if (http_res[kNeedDrain]) settleWhenEmpty(http_res);
         }
         function onClose() {
           didFinish = true;
@@ -3033,7 +3034,7 @@ function advanceResponsePipeline(server, socket) {
       res[kNeedDrain] = needDrain;
     }
   }
-  // What waited for the turn comes here when nothing is left to send, like the 'drain' of _flush(): https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1194-L1197
+  // What waited for the turn comes now when the handle is empty. From v26.8 Node.js also emits 'drain' here while the socket holds bytes under its mark: https://github.com/nodejs/node/pull/64991
   settleWhenEmpty(res);
 }
 
@@ -3059,18 +3060,18 @@ function settleWhenEmpty(res) {
   const owed = res[kNeedDrain];
   if (held === 0 && !owed) return;
   const handle = res[kHandle];
-  const socket = res[kSocket];
-  // The handle still holds bytes, or its socket is gone and the close path fails the callbacks: the drain callback of the handle stays armed.
-  if (
-    handle.bufferedAmount > 0 ||
-    (owed ? handle.flags & NodeHTTPResponseFlags.closed_or_completed : socket?.destroyed)
-  ) {
-    if (handle.onwritable === undefined) handle.onwritable = allowWritesToContinue.bind(res);
+  if (handle.bufferedAmount > 0) {
+    // Armed on a live connection only: a handle that reports closed can still answer, and would be asked again without end.
+    if (handle.onwritable === undefined && !(handle.flags & NodeHTTPResponseFlags.closed_or_completed)) {
+      handle.onwritable = allowWritesToContinue.bind(res);
+    }
     return;
   }
+  // The connection is gone: no 'drain' comes, and the close path fails the callbacks.
+  if (handle.flags & NodeHTTPResponseFlags.closed_or_completed) return;
   if (held !== 0) res._callPendingCallbacks();
-  // A response that gave its socket away gets no 'drain'.
-  if (owed && socket?._httpMessage === res) {
+  // A response that gave its socket away gets no 'drain'. One that the dispatcher detached for a 'close' from its handler still writes.
+  if (owed && (res[kDispatcherDetached] || res[kSocket]?._httpMessage === res)) {
     res[kNeedDrain] = false;
     // The count of the turn starts again for what the 'drain' listeners write.
     res[kBytesBuffered] = 0;
@@ -3149,11 +3150,7 @@ function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
     res.outputSize += bytes;
     addPipelineOutgoingData(queued, bytes);
   }
-  if (queued.bytes >= res.writableHighWaterMark) {
-    res[kNeedDrain] = true;
-    return false;
-  }
-  return true;
+  return queued.bytes < res.writableHighWaterMark || refuseWrite(res);
 }
 
 function bufferPipelinedEnd(res, queued, chunk, encoding, callback) {
@@ -3705,20 +3702,7 @@ function finishDrainedResponse(res) {
   const callback = res[kPendingFinish];
   if (callback === undefined) return;
   res[kPendingFinish] = undefined;
-  // The socket has written every chunk: their callbacks run before 'finish', in place like the write callbacks of the socket in Node.js.
-  const callbacks = res[kPendingCallbacks];
-  const length = callbacks.length;
-  if (length !== 0) {
-    res[kPendingCallbacks] = [];
-    for (let i = 0; i < length; i++) {
-      try {
-        callbacks[i]();
-      } catch (err) {
-        // Reported where it is thrown, like from a callback that the tick queue runs. The other callbacks and 'finish' still come.
-        reportError(err);
-      }
-    }
-  }
+  res._callPendingCallbacks();
   emitResponseFinished(res, callback);
 }
 
@@ -3761,6 +3745,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   }
 
   let result = 0;
+  let onWritten;
 
   const headerState = this[headerStateSymbol];
   callWriteHeadIfObservable(this, headerState);
@@ -3802,14 +3787,20 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
       return true;
     }
     // Socket already gone: like Node's _writeRaw(), report false and drop the callback: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L400-L406
-    this[kNeedDrain] = true;
-    return false;
+    return refuseWrite(this);
   }
 
   const strict = strictContentLength(this, headerState, false);
   // Node returns true for every write to a response that cannot have a body (write_ in lib/_http_outgoing.js).
   const hasBody = this._hasBody;
   const onWritable = hasBody ? allowWritesToContinue.bind(this) : undefined;
+  // A stream takes the callback with the chunk, like the socket of Node.js, unless callbacks wait here ahead of it: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L419
+  if (callback && hasBody && this[kPendingCallbacks].length === 0 && handle.takesWriteCallback) {
+    onWritten = callback;
+    callback = undefined;
+    // The job of the turn goes ahead of the tick in which the stream runs the callback: a 'drain' of this turn comes first, as in Node.js.
+    scheduleWriteAccountingFlush(this);
+  }
 
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
@@ -3831,10 +3822,10 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
       // If handle.writeHead throws, we don't want headersSent to be set to true.
       // So we set it here.
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-      result = handle.write(chunk, encoding, onWritable, strict);
+      result = handle.write(chunk, encoding, onWritable, strict, onWritten);
     });
   } else {
-    result = handle.write(chunk, encoding, onWritable, strict);
+    result = handle.write(chunk, encoding, onWritable, strict, onWritten);
   }
 
   if (result < 0 && hasBody) {
@@ -3843,20 +3834,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
       // We need to defer the callback until the write actually goes through.
       this[kPendingCallbacks].push(callback);
     }
-    this[kNeedDrain] = true;
-    return false;
-  }
-
-  if (callback) {
-    // A write callback reports that its bytes reached the socket: uncork them before the callback can destroy the response.
-    handle.flushHeaders();
-    if (hasBody && (this[kPendingCallbacks].length !== 0 || handle.bufferedAmount > 0)) {
-      // The handle holds bytes, or callbacks wait ahead of this one: settleWhenEmpty() runs it. The return value stays with the count below.
-      this[kPendingCallbacks].push(callback);
-      scheduleWriteAccountingFlush(this);
-    } else {
-      process.nextTick(callback);
-    }
+    return refuseWrite(this);
   }
 
   // Like Node.js, writes are accounted against the high water mark even when
@@ -3877,16 +3855,26 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   // While replaying the writes a pipelined response buffered before it was
   // assigned the socket, skip the per-turn accounting: 'drain' for those
   // writes is handled by advanceResponsePipeline / the native drain callback.
-  if (written > 0 && !this[kReplayingPipelinedOps]) {
-    this[kBytesBuffered] = (this[kBytesBuffered] ?? 0) + written;
+  const counted = written > 0 && !this[kReplayingPipelinedOps];
+  if (counted) this[kBytesBuffered] = (this[kBytesBuffered] ?? 0) + written;
+
+  if (callback) {
+    // A write callback reports that its bytes reached the socket: uncork them before the callback can destroy the response.
+    handle.flushHeaders();
+    if (hasBody && (this[kPendingCallbacks].length !== 0 || handle.bufferedAmount > 0)) {
+      // The handle holds bytes, or callbacks wait ahead of this one: settleWhenEmpty() runs it.
+      this[kPendingCallbacks].push(callback);
+      scheduleWriteAccountingFlush(this);
+    } else {
+      callAfterWriteAccounting(this, callback);
+    }
+  } else if (counted) {
     scheduleWriteAccountingFlush(this);
   }
 
   // An empty chunk reports the count too: Node returns state.length < highWaterMark for every write.
   const buffered = this[kBytesBuffered];
-  if (!buffered || buffered < this.writableHighWaterMark) return true;
-  this[kNeedDrain] = true;
-  return false;
+  return !buffered || buffered < this.writableHighWaterMark || refuseWrite(this);
 };
 
 // advanceResponsePipeline replays buffered ops through these; patched res.write/res.end (compression middleware) must not see them again.
@@ -3904,6 +3892,16 @@ function scheduleWriteAccountingFlush(res) {
   if (res[kAccountingFlushScheduled]) return;
   res[kAccountingFlushScheduled] = true;
   process.nextTick(flushWriteAccountingNT, res);
+}
+// For the callback of a write that the handle took. It runs behind the job of the turn, as in Node.js: in the tick of that job when none is queued yet.
+function callAfterWriteAccounting(res, callback) {
+  if (res[kAccountingFlushScheduled]) return process.nextTick(callback);
+  res[kAccountingFlushScheduled] = true;
+  process.nextTick(flushWriteAccountingThenCallNT, res, callback);
+}
+function flushWriteAccountingThenCallNT(res, callback) {
+  flushWriteAccountingNT(res);
+  callback();
 }
 
 ServerResponse.prototype._callPendingCallbacks = function () {
@@ -3971,16 +3969,13 @@ Object.defineProperty(ServerResponse.prototype, "writableFinished", {
 Object.defineProperty(ServerResponse.prototype, "writableLength", {
   get() {
     if (this.writableFinished) return 0;
-    // Bytes handed off this event-loop turn (including chunked framing, like
-    // Node.js's outputData accounting) plus whatever the native handle still
-    // has buffered, plus anything buffered while queued behind a pipelined
-    // response.
+    // The larger of the bytes handed off in this turn (with chunk framing, like the outputData of Node.js) and what the handle still holds, plus what a queued response keeps.
     const turn = this[kBytesBuffered] ?? 0;
     const queued = this[kPipelinedQueuedState]?.bytes ?? 0;
     // The bytes of the handle count only while the response has the socket: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L221-L226
     if (!this[kSocket]) return turn + queued;
-    // What the handle still holds of the bytes of this turn counts once.
-    return queued + Math.max(turn, this[kHandle]?.bufferedAmount ?? 0);
+    const held = this[kHandle]?.bufferedAmount ?? 0;
+    return queued + (turn > held ? turn : held);
   },
 });
 
@@ -4006,8 +4001,15 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
   }
 
   const strict = strictContentLength(this, this[headerStateSymbol], false);
-  // Not `callback`: it would replace the armed drain callback of a write() that returned false, and that 'drain' would never come.
-  const onWritable = allowWritesToContinue.bind(this);
+  const queued = this[kPipelinedQueuedState] !== undefined;
+  // Not `callback`: it would replace the armed drain callback of a write() that returned false. A queued response arms nothing: its turn settles it.
+  const onWritable = queued ? undefined : allowWritesToContinue.bind(this);
+  let onWritten;
+  if ($isCallable(callback) && !queued && this[kPendingCallbacks].length === 0 && handle.takesWriteCallback) {
+    onWritten = callback;
+    callback = undefined;
+  }
+  let result = 0;
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
       const renderedHeaders = renderNativeHeaders(this);
@@ -4025,18 +4027,14 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
         releaseRenderedHeaders(renderedHeaders);
       }
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-      handle.write(data, encoding, onWritable, strict);
+      result = handle.write(data, encoding, onWritable, strict, onWritten);
     });
   } else {
-    handle.write(data, encoding, onWritable, strict);
+    result = handle.write(data, encoding, onWritable, strict, onWritten);
   }
   // Socket already gone: like Node's _writeRaw(), the write is dropped and its callback never runs: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L400-L406
   if ($isCallable(callback) && !(handle.flags & NodeHTTPResponseFlags.closed_or_completed)) {
-    if (
-      this[kPipelinedQueuedState] !== undefined ||
-      this[kPendingCallbacks].length !== 0 ||
-      handle.bufferedAmount > 0
-    ) {
+    if (queued || this[kPendingCallbacks].length !== 0 || handle.bufferedAmount > 0) {
       // Like a callback of write(): settleWhenEmpty() runs it, and not before the turn of a queued response.
       this[kPendingCallbacks].push(callback);
       scheduleWriteAccountingFlush(this);
@@ -4044,6 +4042,8 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
       process.nextTick(callback);
     }
   }
+  // What the handle answered, like the socket.write() of Node.js: the write() of OutgoingMessage stores a false.
+  return result >= 0;
 };
 
 const kSnapshotStatusCode = Symbol("kSnapshotStatusCode");
@@ -4098,6 +4098,8 @@ ServerResponse.prototype.assignSocket = function (socket) {
   const queued = this[kBeforeReplay];
   if (queued === undefined) {
     this._flush();
+    // The socket can still hold what _flush() wrote: then the 'drain' waits for it.
+    if (this[kHandle] !== undefined) settleWhenEmpty(this);
     return;
   }
   // A queued response is replayed after this: of _flush() it needs only the output stored before it had a handle, and the 'prefinish' of an end() from there.
@@ -4242,6 +4244,12 @@ function callWriteHeadIfObservable(self, headerState, fromEnd?) {
 
 function allowWritesToContinue() {
   settleWhenEmpty(this);
+}
+
+// Every write() that returns false goes through here. What settles its 'drain': the drain callback that the handle armed, the job of the turn for the count, or the turn of a queued response.
+function refuseWrite(res) {
+  res[kNeedDrain] = true;
+  return false;
 }
 
 function failPendingWriteCallbacks(res, error) {

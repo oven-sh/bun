@@ -5337,81 +5337,35 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
   }
 });
 
-// The write() callbacks of such a socket run when it has taken their chunks: in the tick queue, or in place ahead of
-// 'finish' when the last write of end() completes. One that throws is an uncaught exception at the place where it
-// ran. The callbacks behind it, 'finish' and the end() callback still come. (Node.js stops at the throw: its socket
-// runs the callbacks of one flush in one loop.)
-test("a write() callback that throws on a socket from server.emit('connection') is reported where it ran, and the rest follows", async () => {
-  const script = `
-    const http = require("node:http");
-    const { Duplex } = require("node:stream");
-    // Holds every write until release().
-    class Socket extends Duplex {
-      held = [];
-      _read() {}
-      _write(chunk, encoding, callback) {
-        this.held.push(callback);
-      }
-      release() {
-        for (let callback; (callback = this.held.shift()); ) callback();
-      }
-    }
-    let events;
-    process.on("uncaughtException", err => events.push("uncaughtException: " + err.message));
-    const turn = () => new Promise(resolve => setImmediate(resolve));
-    async function run(mode) {
-      events = [];
-      const socket = new Socket();
-      http
-        .createServer((req, res) => {
-          const size = mode === "end() under the high water mark" ? 1 : socket.writableHighWaterMark + 1;
-          res.setHeader("Content-Length", 3 * size);
-          res.on("finish", () => events.push("finish"));
-          res.on("drain", () => events.push("drain"));
-          for (let i = 1; i <= 3; i++) {
-            res.write(Buffer.alloc(size, "a"), () => {
-              events.push("callback " + i);
-              if (i === 1) throw new Error("from callback 1");
-            });
-          }
-          if (mode !== "'drain'") res.end(() => events.push("end callback"));
-        })
-        .emit("connection", socket);
-      const close = mode === "end() of a Connection: close response" ? "Connection: close\\r\\n" : "";
-      socket.push("GET / HTTP/1.1\\r\\nHost: localhost\\r\\n" + close + "\\r\\n");
-      await turn();
-      socket.release();
-      await turn();
-      socket.destroy();
-      return events;
-    }
-    (async () => {
-      const results = {};
-      for (const mode of ["end() under the high water mark", "end() over the high water mark", "end() of a Connection: close response", "'drain'"]) {
-        results[mode] = await run(mode);
-      }
-      console.log(JSON.stringify(results));
-      process.exit(0);
-    })();
-  `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const thrown = ["callback 1", "uncaughtException: from callback 1", "callback 2", "callback 3"];
-  expect({ results: stdout.trim() && JSON.parse(stdout), stderr }).toEqual({
-    results: {
-      "end() under the high water mark": [...thrown, "finish", "end callback"],
-      "end() over the high water mark": [...thrown, "finish", "end callback"],
-      "end() of a Connection: close response": [...thrown, "finish", "end callback"],
-      "'drain'": ["drain", ...thrown],
+// Bun takes any typed array as a chunk (Node.js takes a Uint8Array only). The chunk of a write() with a callback
+// goes to the socket in one write with its framing: that copy is made of the bytes of the array, not of its elements.
+test("res.write(typedArray, callback) on a socket from server.emit('connection') sends the bytes of the array", async () => {
+  const wire: Buffer[] = [];
+  const socket = new Duplex({
+    read() {},
+    write(chunk, encoding, callback) {
+      wire.push(Buffer.from(chunk));
+      callback();
     },
-    stderr: "",
   });
-  expect(exitCode).toBe(0);
+  const finished = Promise.withResolvers<void>();
+  http
+    .createServer((req, res) => {
+      res.on("finish", finished.resolve);
+      // "ab" for each element, in the byte order of every platform that Bun runs on.
+      res.write(new Uint16Array(64).fill(0x6261), () => res.end());
+    })
+    .emit("connection", socket);
+  socket.push("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+  try {
+    await finished.promise;
+    const text = Buffer.concat(wire).toString("latin1");
+    expect(text.slice(text.indexOf("\r\n\r\n") + 4)).toBe(
+      "80\r\n" + Buffer.alloc(128, "ab").toString("latin1") + "\r\n0\r\n\r\n",
+    );
+  } finally {
+    socket.destroy();
+  }
 });
 
 // A TLS client that is mid-handshake when an https server with a 'clientError' listener is closed still

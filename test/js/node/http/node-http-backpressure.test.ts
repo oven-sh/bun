@@ -3411,6 +3411,8 @@ describe("backpressure", () => {
     // holds every write after them until the test releases it.
     class BudgetSocket extends Duplex {
       budget = 0;
+      // Like a TLS socket: a write that the socket takes completes on the next tick, not inside write().
+      tick = false;
       // The writes that the socket has completed.
       wire: Buffer[] = [];
       #held: { chunk: Buffer; callback: (err?: Error | null) => void }[] = [];
@@ -3423,7 +3425,8 @@ describe("backpressure", () => {
         if (!this.#holding && this.budget >= chunk.length) {
           this.budget -= chunk.length;
           this.wire.push(chunk);
-          callback();
+          if (this.tick) process.nextTick(callback);
+          else callback();
         } else {
           this.#holding = true;
           this.#held.push({ chunk, callback });
@@ -3476,12 +3479,14 @@ describe("backpressure", () => {
         budget: (mark: number) => 2 * mark,
         chunks: (mark: number) => [mark, mark, mark, mark],
         returned: [false, false, false, false],
+        taken: 1,
       },
       "a socket that holds less than its high water mark": {
         // The head and two chunks go out at once. The writes of the turn reached the mark with the second one.
         budget: (mark: number) => mark + 1024,
         chunks: (mark: number) => [mark / 2, mark / 2, mark / 2],
         returned: [true, false, false],
+        taken: 2,
       },
     };
 
@@ -4069,25 +4074,467 @@ describe("backpressure", () => {
       }
     });
 
-    it("a response that gave its socket away gets no 'drain', and its write() callbacks still run", async () => {
-      const events: string[] = [];
+    // The socket has the callbacks of the writes: it runs or fails them whoever owns it by then.
+    describe.each(Object.keys(backlogs) as (keyof typeof backlogs)[])(
+      "a response that gave away %s gets no 'drain'",
+      shape => {
+        const { budget, chunks, returned, taken } = backlogs[shape];
+
+        it.each(["release", "destroy"] as const)("and the socket settles its write() callbacks (%s)", async ending => {
+          const events: string[] = [];
+          const wrote = Promise.withResolvers<void>();
+          const socket = onBudgetSocket((req, res, socket) => {
+            const sizes = chunks(socket.writableHighWaterMark);
+            res.setHeader(
+              "Content-Length",
+              sizes.reduce((a, b) => a + b),
+            );
+            socket.budget = budget(socket.writableHighWaterMark);
+            res.on("drain", () => events.push("drain"));
+            sizes.forEach((size, i) =>
+              res.write(Buffer.alloc(size, "a"), err => events.push(`callback ${i}${err ? ": error" : ""}`)),
+            );
+            res.detachSocket(socket);
+            wrote.resolve();
+          });
+          socket.on("error", () => {});
+          try {
+            await wrote.promise;
+            await turn();
+            if (ending === "release") socket.release();
+            else socket.destroy();
+            await turn();
+            // A destroyed socket fails the chunks that it did not take.
+            expect(events).toEqual(
+              returned.map((_, i) => `callback ${i}${ending === "destroy" && i >= taken ? ": error" : ""}`),
+            );
+          } finally {
+            socket.destroy();
+          }
+        });
+      },
+    );
+
+    // Node.js gives the callback of a write() to the socket with the chunk.
+    it("each write() callback runs when the socket has written its chunk, while the socket holds the chunks behind it", async () => {
+      const ran: number[] = [];
       const wrote = Promise.withResolvers<void>();
-      const socket = onBudgetSocket((req, res, socket) => {
-        const mark = socket.writableHighWaterMark;
-        res.setHeader("Content-Length", 3 * (mark / 2));
-        // The head and two chunks go out at once. The writes of the turn reached the mark with the second one.
-        socket.budget = mark + 1024;
-        res.on("drain", () => events.push("drain"));
-        for (let i = 0; i < 3; i++) res.write(Buffer.alloc(mark / 2, "a"), () => events.push(`callback ${i}`));
-        res.detachSocket(socket);
+      const socket = onBudgetSocket((req, res) => {
+        res.setHeader("Content-Length", 400);
+        for (let i = 0; i < 4; i++) res.write(Buffer.alloc(100, "a"), () => ran.push(i));
         wrote.resolve();
       });
       try {
         await wrote.promise;
         await turn();
+        // The socket holds the head and the four chunks. It completes the head first.
+        socket.releaseOne();
+        const seen: number[][] = [];
+        for (let i = 0; i < 4; i++) {
+          await turn();
+          seen.push([...ran]);
+          socket.releaseOne();
+        }
+        await turn();
+        expect({ seen, ran }).toEqual({ seen: [[], [0], [0, 1], [0, 1, 2]], ran: [0, 1, 2, 3] });
+      } finally {
+        socket.destroy();
+      }
+    });
+
+    it("the write() callbacks of a handler that writes in every turn run while the socket stays busy", async () => {
+      const ran: number[] = [];
+      const started = Promise.withResolvers<http.ServerResponse>();
+      const socket = onBudgetSocket((req, res) => {
+        res.setHeader("Content-Length", 800);
+        started.resolve(res);
+      });
+      try {
+        const res = await started.promise;
+        const seen: number[] = [];
+        for (let i = 0; i < 8; i++) {
+          res.write(Buffer.alloc(100, "a"), () => ran.push(i));
+          // The socket completes one write in every second turn: the head, then the chunks.
+          if (i % 2) socket.releaseOne();
+          await turn();
+          seen.push(ran.length);
+        }
+        expect(seen).toEqual([0, 0, 0, 1, 1, 2, 2, 3]);
+      } finally {
+        socket.destroy();
+      }
+    });
+
+    // The socket runs the callback where it completes the write. What the callback throws goes to that caller.
+    it("a write() callback that throws does so where the socket completed the write, and the callbacks behind it and 'finish' still come", async () => {
+      const events: string[] = [];
+      const wrote = Promise.withResolvers<void>();
+      const socket = onBudgetSocket((req, res) => {
+        res.setHeader("Content-Length", 300);
+        res.on("finish", () => events.push("finish"));
+        for (let i = 1; i <= 3; i++) {
+          res.write(Buffer.alloc(100, "a"), () => {
+            events.push(`callback ${i}`);
+            if (i === 1) throw new Error("from callback 1");
+          });
+        }
+        res.end();
+        wrote.resolve();
+      });
+      try {
+        await wrote.promise;
+        await turn();
+        expect(() => socket.release()).toThrow("from callback 1");
         socket.release();
         await turn();
-        expect(events).toEqual(["callback 0", "callback 1", "callback 2"]);
+        expect(events).toEqual(["callback 1", "callback 2", "callback 3", "finish"]);
+      } finally {
+        socket.destroy();
+      }
+    });
+
+    // An uncork() that empties the socket leaves the 'drain' of the socket for the next tick. The response waits for it.
+    it("res.cork(), a write() over the high water mark and res.uncork() get one 'drain', and a small write() in it returns true", async () => {
+      const events: string[] = [];
+      const wrote = Promise.withResolvers<void>();
+      const socket = onBudgetSocket((req, res, socket) => {
+        socket.budget = Infinity;
+        res.setHeader("Content-Length", 1 << 30);
+        res.on("drain", () => events.push(`drain, and write(100) in it returned ${res.write(Buffer.alloc(100, "b"))}`));
+        events.push(`write(1) returned ${res.write("a")}`);
+        res.cork();
+        events.push(
+          `write() under the cork returned ${res.write(Buffer.alloc(socket.writableHighWaterMark + 1, "a"))}`,
+        );
+        res.uncork();
+        wrote.resolve();
+      });
+      try {
+        await wrote.promise;
+        for (let i = 0; i < 3; i++) await turn();
+        expect(events).toEqual([
+          "write(1) returned true",
+          "write() under the cork returned false",
+          "drain, and write(100) in it returned true",
+        ]);
+      } finally {
+        socket.destroy();
+      }
+    });
+
+    // Like a channel of npm's multiplex: destroy() emits 'close' in place, and a write after it is accepted and dropped.
+    it.each(["takes every write at once", "holds a chunk under its high water mark"])(
+      "a response whose 'drain' waits does not write to a socket that is destroyed, when that socket %s and still takes writes",
+      async behaviour => {
+        class Channel extends Duplex {
+          #gone = false;
+          // The bytes that the channel takes. It holds the write that does not fit, for ever.
+          room = Infinity;
+          writesAfterDestroy = 0;
+          get destroyed() {
+            return this.#gone;
+          }
+          _read() {}
+          _write(chunk: Buffer, encoding: string, callback: () => void) {
+            if (this.room < chunk.length) return;
+            this.room -= chunk.length;
+            callback();
+          }
+          write(chunk: any, ...rest: any[]) {
+            // Without a limit, a response that asks again at each answer keeps the tick queue busy for ever.
+            if (this.#gone && ++this.writesAfterDestroy > 100) return false;
+            return (super.write as any)(chunk, ...rest);
+          }
+          destroy() {
+            if (!this.#gone) {
+              this.#gone = true;
+              this.emit("close");
+            }
+            return this;
+          }
+        }
+        const socket = new Channel();
+        const wrote = Promise.withResolvers<boolean[]>();
+        http
+          .createServer((req, res) => {
+            const half = res.writableHighWaterMark / 2;
+            res.setHeader("Content-Length", 1 << 26);
+            res.flushHeaders();
+            if (behaviour !== "takes every write at once") socket.room = half;
+            // The writes of the turn reach the mark with the second one.
+            const returned = [res.write(Buffer.alloc(half, "a")), res.write(Buffer.alloc(half, "a"))];
+            // A server that drops a client which does not keep up.
+            if (!returned[1]) res.destroy();
+            wrote.resolve(returned);
+          })
+          .emit("connection", socket);
+        socket.push(GET);
+        expect(await wrote.promise).toEqual([true, false]);
+        for (let i = 0; i < 3; i++) await turn();
+        expect(socket.writesAfterDestroy).toBe(0);
+      },
+    );
+
+    // Node.js discards a chunk for a response without a body, and runs its callback in the next tick.
+    it("the callback of a write() to a HEAD response does not wait for a socket that holds bytes", async () => {
+      const events: string[] = [];
+      const wrote = Promise.withResolvers<void>();
+      const socket = onBudgetSocket((req, res) => {
+        res.flushHeaders();
+        events.push(`write() returned ${res.write("x", () => events.push("callback"))}`);
+        wrote.resolve();
+      }, "HEAD / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      try {
+        await wrote.promise;
+        await turn();
+        expect({ events, held: socket.writableLength > 0 }).toEqual({
+          events: ["write() returned true", "callback"],
+          held: true,
+        });
+      } finally {
+        socket.destroy();
+      }
+    });
+
+    // A response that nothing but its maker knows has no handle: its socket gets what it wrote before, as in Node.js.
+    it("a ServerResponse without a server gives a write() over the high water mark to the socket at assignSocket()", async () => {
+      const socket = new BudgetSocket();
+      const res = new http.ServerResponse(new http.IncomingMessage(socket as any));
+      const chunk = Buffer.alloc(res.writableHighWaterMark + 1, "a");
+      res.setHeader("Content-Length", chunk.length);
+      const returned = res.write(chunk);
+      try {
+        res.assignSocket(socket as any);
+        await turn();
+        socket.release();
+        await turn();
+        const wire = Buffer.concat(socket.wire);
+        expect({ returned, body: wire.subarray(wire.length - chunk.length).equals(chunk) }).toEqual({
+          returned: false,
+          body: true,
+        });
+      } finally {
+        socket.destroy();
+      }
+    });
+
+    it("OutgoingMessage.prototype.write() returns false for a chunk that the socket holds over its high water mark, and the 'drain' comes when the socket is empty", async () => {
+      const events: string[] = [];
+      const wrote = Promise.withResolvers<void>();
+      const socket = onBudgetSocket((req, res, socket) => {
+        res.setHeader("Content-Length", 1 << 20);
+        res.on("drain", () => events.push(`drain with ${socket.writableLength} bytes in the socket`));
+        const chunk = Buffer.alloc(socket.writableHighWaterMark + 1, "a");
+        const returned = http.OutgoingMessage.prototype.write.call(res, chunk);
+        events.push(`returned ${returned}, writableNeedDrain ${res.writableNeedDrain}`);
+        wrote.resolve();
+      });
+      try {
+        await wrote.promise;
+        await turn();
+        expect(events).toEqual(["returned false, writableNeedDrain true"]);
+        socket.release();
+        await turn();
+        expect(events).toEqual(["returned false, writableNeedDrain true", "drain with 0 bytes in the socket"]);
+      } finally {
+        socket.destroy();
+      }
+    });
+
+    it("the callbacks of the res._send() and write() calls of a response that waited run in the order of the calls", async () => {
+      const order: string[] = [];
+      let first: http.ServerResponse;
+      const socket = onBudgetSocket((req, res, socket) => {
+        socket.budget = Infinity;
+        if (req.url === "/first") return void (first = res);
+        res.writeHead(200, { "Content-Length": 2 });
+        (res as any)._send("x", "latin1", () => order.push("_send"));
+        res.write("y", () => order.push("write"));
+        first.end();
+      }, "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\nGET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      try {
+        for (let i = 0; i < 3; i++) await turn();
+        expect(order).toEqual(["_send", "write"]);
+      } finally {
+        socket.destroy();
+      }
+    });
+
+    it("the callback of a res._send() after the turn runs behind the callback of one that the response made while it waited", async () => {
+      const order: string[] = [];
+      const arrived = Promise.withResolvers<http.ServerResponse>();
+      let firstFinished = false;
+      const socket = onBudgetSocket((req, res) => {
+        if (req.url === "/first") {
+          res.on("finish", () => (firstFinished = true));
+          res.writeHead(200, { "Content-Length": 0 });
+          return void res.end();
+        }
+        res.writeHead(200, { "Content-Length": 2 });
+        (res as any)._send("x", "latin1", () => order.push("while it waited"));
+        arrived.resolve(res);
+      }, "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\nGET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      try {
+        const res = await arrived.promise;
+        while (!firstFinished) {
+          socket.releaseOne();
+          await turn();
+        }
+        // The second response has the socket, which still holds its first chunk.
+        (res as any)._send("y", "latin1", () => order.push("after the turn"));
+        while (socket.releaseOne()) await turn();
+        await turn();
+        expect(order).toEqual(["while it waited", "after the turn"]);
+      } finally {
+        socket.destroy();
+      }
+    });
+
+    it("the callback of a res._send() in a 'socket' listener runs behind the callback of one that the response made while it waited", async () => {
+      const order: string[] = [];
+      let first: http.ServerResponse;
+      const socket = onBudgetSocket((req, res, socket) => {
+        socket.budget = Infinity;
+        if (req.url === "/first") return void (first = res);
+        res.writeHead(200, { "Content-Length": 2 });
+        (res as any)._send("x", "latin1", () => order.push("while it waited"));
+        res.on("socket", () => (res as any)._send("y", "latin1", () => order.push("at 'socket'")));
+        first.end();
+      }, "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\nGET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      try {
+        for (let i = 0; i < 3; i++) await turn();
+        expect(order).toEqual(["while it waited", "at 'socket'"]);
+      } finally {
+        socket.destroy();
+      }
+    });
+
+    // The server ends the socket behind the end of the client. Node.js then keeps a later chunk and its callback for
+    // ever. Bun drops the chunk, and its callback runs when the socket has written what it held.
+    it("the callback of a write() behind the end of the client waits for the socket to finish", async () => {
+      const events: string[] = [];
+      const started = Promise.withResolvers<http.ServerResponse>();
+      const socket = onBudgetSocket((req, res) => {
+        res.setHeader("Content-Length", 2);
+        res.write("a");
+        started.resolve(res);
+      });
+      try {
+        const res = await started.promise;
+        socket.push(null);
+        await turn();
+        res.write("b", err => events.push(`callback: ${err ? "error" : "done"}`));
+        await turn();
+        expect(events).toEqual([]);
+        socket.release();
+        for (let i = 0; i < 3; i++) await turn();
+        expect(events).toEqual(process.versions.bun ? ["callback: done"] : []);
+      } finally {
+        socket.destroy();
+      }
+    });
+
+    // Node.js drops a raw write to a socket that is destroyed, and its callback with it.
+    it("the callback of a res._send() to a destroyed socket does not run", async () => {
+      const events: string[] = [];
+      const wrote = Promise.withResolvers<void>();
+      const socket = onBudgetSocket((req, res, socket) => {
+        res.writeHead(200, { "Content-Length": 1 });
+        socket.destroy();
+        (res as any)._send("x", "latin1", (err?: Error | null) => events.push(`callback: ${err ? "error" : "done"}`));
+        wrote.resolve();
+      });
+      socket.on("error", () => {});
+      await wrote.promise;
+      for (let i = 0; i < 3; i++) await turn();
+      expect(events).toEqual([]);
+    });
+
+    it("a ServerResponse without a server that wrote over the high water mark can be given a socket that has ended", () => {
+      const socket = new BudgetSocket();
+      socket.on("error", () => {});
+      socket.end();
+      const res = new http.ServerResponse(new http.IncomingMessage(socket as any));
+      const returned = res.write(Buffer.alloc(res.writableHighWaterMark + 1, "a"));
+      try {
+        res.assignSocket(socket as any);
+        expect({ returned, assigned: res.socket === (socket as any) }).toEqual({ returned: false, assigned: true });
+      } finally {
+        socket.destroy();
+      }
+    });
+
+    // What the response itself still holds when the socket closes fails, also when the response has ended.
+    it.each(["", " and has ended"])(
+      "the callback of a res._send() of a response that waited fails when the socket is destroyed with its chunk%s",
+      async ended => {
+        const events: string[] = [];
+        const arrived = Promise.withResolvers<void>();
+        let firstFinished = false;
+        const socket = onBudgetSocket((req, res) => {
+          if (req.url === "/first") {
+            res.on("finish", () => (firstFinished = true));
+            res.writeHead(200, { "Content-Length": 0 });
+            return void res.end();
+          }
+          res.writeHead(200, { "Content-Length": 1 });
+          (res as any)._send("x", "latin1", (err?: Error | null) => events.push(`callback: ${err ? "error" : "done"}`));
+          res.on("finish", () => events.push("finish"));
+          if (ended) res.end();
+          arrived.resolve();
+        }, "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\nGET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        socket.on("error", () => {});
+        try {
+          await arrived.promise;
+          // The socket completes the writes of the first response. The second one then has the socket, which holds its chunk.
+          while (!firstFinished) {
+            socket.releaseOne();
+            await turn();
+          }
+          expect(events).toEqual([]);
+          socket.destroy();
+          await turn();
+          expect(events).toEqual(ended ? ["callback: error", "finish"] : ["callback: error"]);
+        } finally {
+          socket.destroy();
+        }
+      },
+    );
+
+    // res._send() of a response that waits writes to the socket of the response ahead of it. It arms nothing for the one that waits.
+    it("a response that called res._send() while it waited gets the 'drain' of its buffered writes, on a socket that completes a write in the next tick", async () => {
+      const events: string[] = [];
+      const finished = Promise.withResolvers<void>();
+      let first: http.ServerResponse;
+      const socket = onBudgetSocket((req, res, socket) => {
+        const mark = socket.writableHighWaterMark;
+        if (req.url === "/first") {
+          socket.budget = Infinity;
+          socket.tick = true;
+          first = res;
+          res.writeHead(200, { "Content-Length": mark + 1 });
+          res.write(Buffer.alloc(mark + 1, "f"));
+          return;
+        }
+        res.writeHead(200, { "Content-Length": mark + 4 });
+        (res as any)._send("x");
+        first.end();
+        // With the byte of res._send() this reaches the mark. The socket then holds it under its mark, and emits no 'drain'.
+        events.push(`write() returned ${res.write(Buffer.alloc(mark - 1, "a"))}`);
+        res.on("drain", () => {
+          events.push("drain");
+          res.end("tail");
+        });
+        res.on("finish", finished.resolve);
+      }, "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\nGET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      try {
+        await finished.promise;
+        const wire = Buffer.concat(socket.wire).toString("latin1");
+        const body = "x" + Buffer.alloc(socket.writableHighWaterMark - 1, "a").toString("latin1") + "tail";
+        expect({ events, body: wire.endsWith("\r\n\r\n" + body) }).toEqual({
+          events: ["write() returned false", "drain"],
+          body: true,
+        });
       } finally {
         socket.destroy();
       }
@@ -4226,11 +4673,10 @@ describe("backpressure", () => {
       });
     });
 
-    // Replay a failing plan with BUN_HTTP_DRAIN_FUZZ_SEED=<seed of the plan>. Soak with BUN_HTTP_DRAIN_FUZZ_ITERS=<plans in a group>.
-    // An empty chunk asks a socket to call back behind the bytes that it holds. Node.js asks once, at end(). Bun
-    // asks only for a callback or a 'drain' that waits for a socket under its high water mark: over the mark the
-    // socket emits 'drain', an ended response has the callback of its last write, and with nothing that waits there
-    // is nothing to ask.
+    // The socket gets the callback of a write() with the chunk, as in Node.js. An empty chunk asks a socket to call
+    // back behind the bytes that it holds: Node.js asks once, at end(). Bun asks only for a 'drain' that waits for a
+    // socket under its high water mark. Over the mark the socket emits 'drain', and an ended response has the
+    // callback of its last write.
     describe("the chunks that a response writes to a socket that holds them", () => {
       const bun = !!process.versions.bun;
       type Handler = (res: http.ServerResponse, socket: BudgetSocket, events: string[]) => void | (() => void);
@@ -4288,17 +4734,30 @@ describe("backpressure", () => {
           res.setHeader("Content-Length", 100);
           res.write(Buffer.alloc(100, "a"), () => events.push("callback"));
         });
-        expect(result).toEqual({ events: ["callback"], lengths: bun ? [100, 0] : [100] });
+        expect(result).toEqual({ events: ["callback"], lengths: [100] });
       });
 
-      // In Bun the second chunk comes behind the empty chunk, so the response asks again behind it, once.
+      // Node.js hands the parts of a chunk to the socket one by one, the size with the head. Bun makes one write of a
+      // chunk of up to 16 KiB that has a callback, like its native handle does for a write of that size.
+      it.each([
+        ["of 16 KiB", 16 * 1024, true],
+        ["over 16 KiB", 16 * 1024 + 1, false],
+      ])("a write() callback of a chunk %s with chunked framing", async (_, size, oneWrite) => {
+        const result = await run((res, socket, events) => {
+          res.write(Buffer.alloc(size, "a"), () => events.push("callback"));
+        });
+        const sizeLine = size.toString(16).length + 2;
+        const inBun = oneWrite ? [sizeLine + size + 2] : [sizeLine, size, 2];
+        expect(result).toEqual({ events: ["callback"], lengths: bun ? inBun : [2, size, 2] });
+      });
+
       it("a write() callback in each of two turns", async () => {
         const result = await run((res, socket, events) => {
           res.setHeader("Content-Length", 200);
           res.write(Buffer.alloc(100, "a"), () => events.push("callback 1"));
           return () => void res.write(Buffer.alloc(100, "a"), () => events.push("callback 2"));
         });
-        expect(result).toEqual({ events: ["callback 1", "callback 2"], lengths: bun ? [100, 0, 100, 0] : [100, 100] });
+        expect(result).toEqual({ events: ["callback 1", "callback 2"], lengths: [100, 100] });
       });
 
       // The server hears the 'drain' of the socket while the socket holds bytes again, under its high water mark, so
@@ -4330,6 +4789,45 @@ describe("backpressure", () => {
       });
     });
 
+    // The response got its socket after the write() that returned false. The socket then holds what that write left.
+    it("a write() over the high water mark in the constructor of the response class gets its 'drain' when the socket is empty", async () => {
+      const events: string[] = [];
+      const finished = Promise.withResolvers<void>();
+      const socket = new BudgetSocket();
+      class Early extends http.ServerResponse {
+        returned: boolean;
+        constructor(req: http.IncomingMessage, options?: object) {
+          // @ts-ignore: the second argument is the one that the server passes.
+          super(req, options);
+          this.returned = this.write(Buffer.alloc(socket.writableHighWaterMark + 1, "c"));
+        }
+      }
+      http
+        .createServer({ ServerResponse: Early }, (req, res) => {
+          events.push(`write() in the constructor returned ${(res as Early).returned}`);
+          res.on("drain", () => events.push(`drain with ${socket.writableLength} bytes in the socket`));
+          res.on("finish", finished.resolve);
+          Readable.from([Buffer.from("piped-1;"), Buffer.from("piped-2;")]).pipe(res);
+        })
+        .emit("connection", socket);
+      socket.push(GET);
+      try {
+        await turn();
+        expect(events).toEqual(["write() in the constructor returned false"]);
+        // The socket completes one write in each turn.
+        let done = false;
+        finished.promise.then(() => (done = true));
+        while (!done) {
+          socket.releaseOne();
+          await turn();
+        }
+        expect(events).toEqual(["write() in the constructor returned false", "drain with 0 bytes in the socket"]);
+      } finally {
+        socket.destroy();
+      }
+    });
+
+    // Replay a failing plan with BUN_HTTP_DRAIN_FUZZ_SEED=<seed of the plan>. Soak with BUN_HTTP_DRAIN_FUZZ_ITERS=<plans in a group>.
     describe("seeded plans of write(), res._send(), end() and socket events", () => {
       const seed = Number(process.env.BUN_HTTP_DRAIN_FUZZ_SEED ?? 1000003);
       const iterations = Number(process.env.BUN_HTTP_DRAIN_FUZZ_ITERS ?? 25);
@@ -4349,6 +4847,197 @@ describe("backpressure", () => {
         },
       );
     });
+  });
+
+  // A 'drain' is owed from the write() that returned false, whichever path made the write and whether or not the
+  // response had its socket then. A response that keeps writableNeedDrain and gets no 'drain' stops every pipe() into it.
+  describe.each(["a server that listens", "server.emit('connection', socket)"] as const)(
+    "a response of %s that was written to outside of its handler's write()",
+    kind => {
+      // Starts `server` directly, or behind a net.Server that hands its sockets over.
+      async function start(server: http.Server) {
+        const front =
+          kind === "a server that listens" ? server : net.createServer(socket => server.emit("connection", socket));
+        await once(front.listen(0, "127.0.0.1"), "listening");
+        return { port: (front.address() as AddressInfo).port, close: () => void front.close() };
+      }
+
+      it("OutgoingMessage.prototype.write() returns true for a chunk that the connection takes, and a pipe() into the response finishes", async () => {
+        const seen = Promise.withResolvers<object>();
+        const server = http.createServer((req, res) => {
+          const returned = http.OutgoingMessage.prototype.write.call(res, "base;");
+          seen.resolve({ returned, writableNeedDrain: res.writableNeedDrain });
+          Readable.from([Buffer.from("piped-1;"), Buffer.from("piped-2;")]).pipe(res);
+        });
+        const { port, close } = await start(server);
+        try {
+          const body = Promise.withResolvers<string>();
+          http
+            .get({ port, host: "127.0.0.1", agent: false }, res => {
+              let text = "";
+              res.setEncoding("latin1");
+              res.on("data", chunk => (text += chunk));
+              res.on("end", () => body.resolve(text));
+            })
+            .on("error", body.reject);
+          expect({ ...(await seen.promise), body: await body.promise }).toEqual({
+            returned: true,
+            writableNeedDrain: false,
+            body: "base;piped-1;piped-2;",
+          });
+        } finally {
+          close();
+        }
+      });
+
+      // Node.js emits the 'drain' that a turn owes, then runs the callbacks of the writes of that turn.
+      it("a write() over the high water mark that the connection takes gets 'drain', and then its callback, which reads a writableLength of 0", async () => {
+        const events: string[] = [];
+        const server = http.createServer((req, res) => {
+          const chunk = Buffer.alloc(res.writableHighWaterMark, "a");
+          res.setHeader("Content-Length", chunk.length);
+          res.on("drain", () => events.push("drain"));
+          const returned = res.write(chunk, () => {
+            events.push(`callback: writableLength ${res.writableLength}, writableNeedDrain ${res.writableNeedDrain}`);
+            res.end();
+          });
+          events.push(`write() returned ${returned}`);
+        });
+        const { port, close } = await start(server);
+        try {
+          const response = await fetch(`http://127.0.0.1:${port}/`);
+          await response.arrayBuffer();
+          expect(events).toEqual([
+            "write() returned false",
+            "drain",
+            "callback: writableLength 0, writableNeedDrain false",
+          ]);
+        } finally {
+          close();
+        }
+      });
+
+      // The response class writes before the server gives the response its socket.
+      it.each(["", " and overrides assignSocket()"])(
+        "a pipe() into a response finishes when its class writes over the high water mark in the constructor%s",
+        async overrides => {
+          class Early extends http.ServerResponse {
+            returned: boolean;
+            constructor(req: http.IncomingMessage, options?: object) {
+              // @ts-ignore: the second argument is the one that the server passes.
+              super(req, options);
+              this.returned = this.write(Buffer.alloc(256 * 1024, "c"));
+            }
+          }
+          class Overriding extends Early {
+            assignSocket(socket: net.Socket) {
+              super.assignSocket(socket);
+            }
+          }
+          const finished = Promise.withResolvers<boolean>();
+          const server = http.createServer({ ServerResponse: overrides ? Overriding : Early }, (req, res) => {
+            res.on("finish", () => finished.resolve((res as Early).returned));
+            Readable.from([Buffer.from("piped-1;"), Buffer.from("piped-2;")]).pipe(res);
+          });
+          const { port, close } = await start(server);
+          const client = net.connect(port, "127.0.0.1");
+          try {
+            client.on("error", () => {});
+            client.resume();
+            client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+            expect(await finished.promise).toBe(false);
+          } finally {
+            client.destroy();
+            close();
+          }
+        },
+      );
+    },
+  );
+
+  // Node.js emits the 'drain' of a turn, then runs the callbacks of its writes, and counts what all of them write as
+  // one turn. The high water mark is small, so that the kernel takes each chunk whole.
+  describe("the write() calls that a 'drain' listener and write() callbacks make in one tick count as one turn", () => {
+    async function run(handler: (res: http.ServerResponse, half: Buffer, returned: boolean[]) => void) {
+      const returned: boolean[] = [];
+      const server = http.createServer({ highWaterMark: 1024 }, (req, res) => {
+        const half = Buffer.alloc(res.writableHighWaterMark / 2, "a");
+        res.setHeader("Content-Length", 4 * half.length);
+        handler(res, half, returned);
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      try {
+        const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+        await response.arrayBuffer();
+        return returned;
+      } finally {
+        server.close();
+      }
+    }
+
+    it("a write() in a 'drain' listener, then one in the callback of a write()", async () => {
+      const returned = await run((res, half, returned) => {
+        res.once("drain", () => returned.push(res.write(half)));
+        returned.push(res.write(half));
+        returned.push(
+          res.write(half, () => {
+            returned.push(res.write(half));
+            res.end();
+          }),
+        );
+      });
+      expect(returned).toEqual([true, false, true, false]);
+    });
+
+    it("a write() in the callback of each of two write() calls", async () => {
+      const returned = await run((res, half, returned) => {
+        returned.push(res.write(half, () => returned.push(res.write(half))));
+        returned.push(
+          res.write(half, () => {
+            returned.push(res.write(half));
+            res.end();
+          }),
+        );
+      });
+      expect(returned).toEqual([true, false, true, false]);
+    });
+  });
+
+  // Code that tells its own listeners of an abort emits 'close' on the response, and the server gives up the socket
+  // of a response that closed. The handle of the response still takes what the handler writes.
+  it("a response whose handler emitted 'close' on it still gets the 'drain' of its writes", async () => {
+    const CHUNK = Buffer.alloc(64 * 1024, "a");
+    const COUNT = 32;
+    const counts = { falses: 0, drains: 0 };
+    const server = http.createServer((req, res) => {
+      res.setHeader("Content-Length", COUNT * CHUNK.length);
+      res.emit("close");
+      let written = 0;
+      (function write() {
+        while (written < COUNT) {
+          written++;
+          if (res.write(CHUNK)) continue;
+          counts.falses++;
+          res.once("drain", () => {
+            counts.drains++;
+            write();
+          });
+          return;
+        }
+        res.end();
+      })();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+      const body = await response.arrayBuffer();
+      expect({ body: body.byteLength, owed: counts.falses - counts.drains }).toEqual({
+        body: COUNT * CHUNK.length,
+        owed: 0,
+      });
+    } finally {
+      server.close();
+    }
   });
 
   // A server that accepted the connection itself has no stream to ask. Its

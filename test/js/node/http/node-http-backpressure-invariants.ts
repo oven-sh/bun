@@ -1,11 +1,15 @@
-// Seeded plans of write(), _send(), end() and transport events against one ServerResponse, and the
+// Seeded plans of write(), _send(), end(), cork() and transport events against one ServerResponse, and the
 // invariants that Node.js v26.3.0 keeps for every one of them:
 //  1. A write() that returned false gets one 'drain' once the transport is empty, or a 'close'. No other 'drain' comes.
 //  2. 'drain' comes with res.writableLength 0 and an empty socket, never after end() or after the socket was destroyed.
-//  3. Write callbacks run once, in order, after the socket took their chunk, and before 'finish'.
+//  3. A write callback runs once, before 'finish'. One that reports no error runs after the socket took its chunk,
+//     also when the socket is destroyed later. The callbacks run in order: only the callback of a chunk that the
+//     socket took inside write() can come up to one tick late.
 //  4. After a write(), a writableLength at or over the high water mark means that a 'drain' is owed.
 //  5. writableNeedDrain is true right after a false, and false when no 'drain' is owed.
-//  6. The body on the wire is the bytes that were written.
+//  6. The body on the wire is the bytes that were written. After a teardown from a 'drain' listener or from a write
+//     callback, it has the bytes that the event stood for.
+// After the peer ended its side the server ends the socket: a later write goes nowhere, so only 'close' is required.
 // node-http-backpressure.test.ts runs them on a stream given to server.emit('connection'), also under Node.js.
 // node-http-syscall-fault.test.ts runs them on a listening server, with short sends in place of a slow client.
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
@@ -16,7 +20,9 @@ type Step =
   | { op: "write"; size: number; cb: boolean; str: boolean; wait: boolean }
   | { op: "send"; size: number; cb: boolean }
   | { op: "budget" | "foreign"; n: number }
-  | { op: "turn" | "tick" | "release" | "releaseNow" | "flushHeaders" };
+  // res.cork() now, res.uncork() behind the next `span` steps.
+  | { op: "cork"; span: number }
+  | { op: "turn" | "tick" | "release" | "releaseNow" | "flushHeaders" | "eof" };
 
 export type Plan = {
   seed: number;
@@ -26,8 +32,8 @@ export type Plan = {
   steps: Step[];
   // The bytes that the transport takes at once.
   budget: number;
-  // Who destroys the socket: the plan at step `teardownAt`, the 'drain' listener, or a write callback.
-  teardown: "socket" | "drain" | "cb" | null;
+  // Who destroys the socket: the plan or a reset of the peer at step `teardownAt`, the 'drain' listener, or a write callback.
+  teardown: "socket" | "reset" | "drain" | "cb" | null;
   teardownAt: number;
   // The size of a write() that the first 'drain' listener makes.
   drainWrite: number;
@@ -53,12 +59,20 @@ export type Transport = {
   // Bytes of another writer on the same socket.
   foreign(bytes: number): boolean;
   destroy(res: ServerResponse): void;
+  // The peer resets the connection. True when the socket is gone at once.
+  reset(): boolean;
+  // The peer ends its side. `ended` runs behind the 'end' listener of the server. False when the transport has no such step.
+  eof(ended: () => void): boolean;
+  // What the socket took so far, when the transport can tell at once.
+  taken(): Buffer | null;
   wire(complete: (wire: Buffer) => boolean): Promise<Buffer>;
   stop(): void;
   // Turns without progress after which a plan counts as stalled.
   idleTurns: number;
   // False when the transport refuses a write under the high water mark that it cannot send at once.
   buffersUnderTheMark: boolean;
+  // False when a 'drain' or a write callback can come before the bytes that it stands for are sent.
+  signalsAfterSend: boolean;
 };
 
 type Fault = {
@@ -94,20 +108,22 @@ export function makePlan(seed: number, native: boolean): Plan {
   const count = 1 + Math.floor(r() * 10);
   for (let i = 0; i < count; i++) {
     const k = r();
-    if (k < 0.5) steps.push({ op: "write", size: pick(sizes), cb: r() < 0.4, str: r() < 0.15, wait: r() < 0.5 });
-    else if (k < 0.58) steps.push({ op: "send", size: pick([1, hwm >> 2, hwm]), cb: r() < 0.7 });
-    else if (k < 0.68) steps.push({ op: "turn" });
-    else if (k < 0.74) steps.push({ op: "tick" });
-    else if (k < 0.8) steps.push({ op: "release" });
-    else if (k < 0.84) steps.push({ op: "releaseNow" });
-    else if (k < 0.92) steps.push({ op: "budget", n: pick([1, hwm >> 1, hwm, 4 * hwm]) });
-    else if (k < 0.96) steps.push({ op: "foreign", n: pick([1, 100]) });
+    if (k < 0.48) steps.push({ op: "write", size: pick(sizes), cb: r() < 0.4, str: r() < 0.15, wait: r() < 0.5 });
+    else if (k < 0.56) steps.push({ op: "send", size: pick([1, hwm >> 2, hwm]), cb: r() < 0.7 });
+    else if (k < 0.65) steps.push({ op: "turn" });
+    else if (k < 0.71) steps.push({ op: "tick" });
+    else if (k < 0.77) steps.push({ op: "release" });
+    else if (k < 0.81) steps.push({ op: "releaseNow" });
+    else if (k < 0.88) steps.push({ op: "budget", n: pick([1, hwm >> 1, hwm, 4 * hwm]) });
+    else if (k < 0.92) steps.push({ op: "foreign", n: pick([1, 100]) });
+    else if (k < 0.95) steps.push({ op: "cork", span: Math.floor(r() * 4) });
+    else if (k < 0.97) steps.push({ op: "eof" });
     else steps.push({ op: "flushHeaders" });
   }
   const chunked = r() < 0.5;
   const version = pick(["1.1", "1.1", "1.1", "1.1 close", "1.0"] as const);
   const budget = pick([0, 512, hwm >> 1, hwm + 1024, 8 * hwm, Infinity]);
-  const teardown = r() < 0.15 ? pick(["socket", "drain", "cb"] as const) : null;
+  const teardown = r() < 0.15 ? pick(["socket", "reset", "drain", "cb"] as const) : null;
   const teardownAt = Math.floor(r() * count);
   const drainWrite = r() < 0.3 ? pick([1, hwm >> 1, hwm]) : 0;
   const end = r() < 0.85 ? { size: pick([0, 0, 1, hwm >> 1, hwm + 1]), cb: r() < 0.4 } : null;
@@ -116,7 +132,7 @@ export function makePlan(seed: number, native: boolean): Plan {
   const onTick = r() < 0.3;
   // res._send() writes raw body bytes: not for a chunked body, and a queued response sends them ahead of its buffered writes.
   if (chunked || pipelined) steps = steps.filter(step => step.op !== "send");
-  if (native) steps = steps.filter(step => step.op !== "foreign");
+  if (native) steps = steps.filter(step => step.op !== "foreign" && step.op !== "eof");
   return {
     seed,
     hwm,
@@ -144,7 +160,9 @@ export function describePlan(plan: Plan) {
           ? `+${step.n}`
           : step.op === "foreign"
             ? `x${step.n}`
-            : step.op,
+            : step.op === "cork"
+              ? `cork${step.span}`
+              : step.op,
   );
   return [
     `hwm=${plan.hwm}${plan.onTick ? " tick-socket" : ""}`,
@@ -217,12 +235,23 @@ export function streamTransport(plan: Plan): Transport {
       return true;
     },
     destroy: () => void socket.destroy(),
+    reset() {
+      socket.destroy(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }));
+      return true;
+    },
+    eof(ended) {
+      socket.once("end", ended);
+      socket.push(null);
+      return true;
+    },
+    taken: () => Buffer.concat(socket.wire),
     wire: async () => Buffer.concat(socket.wire),
     stop() {
       if (!socket.destroyed) socket.destroy();
     },
     idleTurns: 6,
     buffersUnderTheMark: true,
+    signalsAfterSend: true,
   };
 }
 
@@ -258,6 +287,12 @@ export function listenTransport(plan: Plan, fault: Fault): Transport {
     budget: clamp,
     foreign: () => false,
     destroy: res => void res.req.socket.destroy(),
+    reset() {
+      client?.resetAndDestroy();
+      return false;
+    },
+    eof: () => false,
+    taken: () => null,
     async wire(complete) {
       fault.clear();
       let last = -1;
@@ -278,6 +313,8 @@ export function listenTransport(plan: Plan, fault: Fault): Transport {
     },
     idleTurns: 40,
     buffersUnderTheMark: false,
+    // The cork of the loop holds the writes under 16 KiB outside of what the handle counts, so a 'drain' or a write callback can come before those bytes are sent.
+    signalsAfterSend: false,
   };
 }
 
@@ -302,6 +339,29 @@ function bodyOnWire(wire: Buffer) {
   return at === wire.length ? got : `${wire.length - at} bytes behind the last chunk`;
 }
 
+// The body bytes of the response that the wire has so far: of a chunked body, the chunks that are complete.
+// `heads` responses without a body are ahead of it on the wire.
+function bodyTaken(wire: Buffer, heads: number) {
+  let at = 0;
+  let head = "";
+  for (let i = 0; i <= heads; i++) {
+    const headEnd = wire.indexOf("\r\n\r\n", at);
+    if (headEnd < 0) return 0;
+    head = wire.subarray(at, headEnd).toString("latin1").toLowerCase();
+    at = headEnd + 4;
+  }
+  if (!head.includes("transfer-encoding: chunked")) return wire.length - at;
+  let got = 0;
+  for (;;) {
+    const lineEnd = wire.indexOf("\r\n", at);
+    if (lineEnd < 0) return got;
+    const size = parseInt(wire.subarray(at, lineEnd).toString("latin1"), 16);
+    at = lineEnd + 2 + size + 2;
+    if (!(size > 0) || at > wire.length) return got;
+    got += size;
+  }
+}
+
 async function runPlan(
   res: ServerResponse,
   T: Transport,
@@ -310,26 +370,49 @@ async function runPlan(
   first: ServerResponse | null,
 ) {
   let owed = false;
+  // Node.js owes no 'drain' for a false that only the chunks under a cork caused.
+  let owedUnderCork = false;
   let closed = false;
   let finished = false;
   let ended = false;
   let tornDown = false;
+  // The peer reset the connection, and the server does not know yet.
+  let resetting = false;
+  // The peer ended its side, so the server ended the socket: what the response writes from here on goes nowhere.
+  let afterEof = false;
+  let bodyAtEof = 0;
   let done = false;
   let foreign = false;
   let queued = first !== null;
-  let inOrder = true;
   let drains = 0;
+  let corked = 0;
+  // A teardown under a cork: Node.js drops the callbacks of the chunks that the cork holds.
+  let lossy = false;
   // An upper bound of the bytes handed to the transport behind the head.
   let handed = 0;
   let body = 0;
-  const callbacks: { index: number; ran: number; mark: number; empty: boolean }[] = [];
+  // The body bytes that the 'drain' or the write callback which destroyed the socket stood for.
+  let mustHave = 0;
+  const heads = plan.pipelined ? 1 : 0;
+  // `late`: written after the peer ended its side. `loose`: an empty chunk under a cork, which Node.js writes ahead of the chunks that the cork holds.
+  const callbacks: {
+    index: number;
+    ran: number;
+    mark: number;
+    body: number;
+    empty: boolean;
+    late: boolean;
+    loose: boolean;
+  }[] = [];
 
   res.on("close", () => (closed = true));
   res.on("finish", () => {
     finished = true;
     // A destroyed socket fails its writes: Node still emits 'finish' from the failed last one.
     if (done || tornDown) return;
-    if (callbacks.some(callback => !callback.ran && !callback.empty)) violation("'finish' before a write callback");
+    if (callbacks.some(callback => !callback.ran && !callback.empty && !callback.late)) {
+      violation("'finish' before a write callback");
+    }
     if (!foreign && T.held()) violation(`'finish' with ${T.held()} bytes in the socket`);
   });
   res.on("drain", () => {
@@ -338,12 +421,15 @@ async function runPlan(
     if (tornDown) violation("'drain' after the socket was destroyed");
     if (ended) violation("'drain' after end()");
     if (!owed) violation("'drain' that no false owes");
-    owed = false;
+    owed = owedUnderCork = false;
     if (res.writableLength !== 0) violation(`'drain' with res.writableLength=${res.writableLength}`);
     if (T.held()) violation(`'drain' with ${T.held()} bytes in the socket`);
     if (res.writableNeedDrain) violation("writableNeedDrain is true inside 'drain'");
     if (tornDown || ended) return;
-    if (plan.teardown === "drain") return destroySocket();
+    if (plan.teardown === "drain") {
+      mustHave = afterEof ? bodyAtEof : body;
+      return destroySocket();
+    }
     if (plan.drainWrite && drains === 1) {
       // The buffer is free again: a write smaller than the mark is accepted.
       const returned = write({ op: "write", size: plan.drainWrite, cb: false, str: false, wait: false });
@@ -360,21 +446,45 @@ async function runPlan(
 
   function destroySocket() {
     tornDown = true;
+    lossy ||= corked > 0;
     T.destroy(res);
   }
   function onCallback(entry: (typeof callbacks)[number], err?: Error | null) {
     entry.ran++;
     if (done) return;
     if (entry.ran > 1) violation(`write callback ${entry.index} ran twice`);
-    if (finished && !entry.empty && !tornDown) violation(`write callback ${entry.index} after 'finish'`);
+    if (finished && !entry.empty && !entry.late && !tornDown) {
+      violation(`write callback ${entry.index} after 'finish'`);
+    }
     if (err) {
-      if (!tornDown)
+      // Behind the end of the peer the server ends the socket: a response that still waits behind another one fails there.
+      if (!tornDown && !resetting && !afterEof) {
         violation(`write callback ${entry.index} got ${(err as NodeJS.ErrnoException).code ?? err.message}`);
+      }
       return;
     }
+    // The socket took the chunk of a callback that reports no error, also when the socket is gone by now.
+    const taken = foreign || entry.late || entry.loose ? null : T.taken();
+    if (taken !== null && bodyTaken(taken, heads) < entry.body) {
+      violation(`write callback ${entry.index} reported no error and its chunk is not on the wire`);
+    }
     if (tornDown) return;
-    for (let i = 0; inOrder && i < entry.index; i++) {
-      if (!callbacks[i].ran) return violation(`write callback ${entry.index} before write callback ${i}`);
+    if (!entry.loose) checkPlace(entry);
+    if (plan.teardown === "cb") {
+      mustHave = entry.late ? bodyAtEof : entry.loose ? 0 : entry.body;
+      destroySocket();
+    }
+  }
+  // A callback runs behind the ones of the writes before it, when the socket holds no more than what came behind its chunk.
+  function checkPlace(entry: (typeof callbacks)[number]) {
+    const earlier = callbacks.filter(other => other.index < entry.index && !other.ran);
+    if (earlier.length) {
+      // The socket took those chunks inside write(), so their callbacks come in this tick. One that still waits in the next turn is out of order.
+      setImmediate(() => {
+        for (const other of earlier) {
+          if (!other.ran) violation(`write callback ${entry.index} before write callback ${other.index}`);
+        }
+      });
     }
     const behind = handed - entry.mark;
     const held = T.held();
@@ -383,13 +493,21 @@ async function runPlan(
         `write callback ${entry.index} while the socket holds ${held} bytes, at most ${behind} behind its chunk`,
       );
     }
-    if (plan.teardown === "cb") destroySocket();
   }
   function track(size: number, withCallback: boolean) {
     handed += size + FRAME;
     body += size;
     if (!withCallback) return undefined;
-    const entry = { index: callbacks.length, ran: 0, mark: handed, empty: size === 0 };
+    const empty = size === 0;
+    const entry = {
+      index: callbacks.length,
+      ran: 0,
+      mark: handed,
+      body,
+      empty,
+      late: afterEof,
+      loose: empty && corked > 0,
+    };
     callbacks.push(entry);
     return (err?: Error | null) => onCallback(entry, err);
   }
@@ -398,6 +516,7 @@ async function runPlan(
     const callback = track(step.size, step.cb);
     const returned = callback ? res.write(data, callback) : res.write(data);
     if (!returned) {
+      owedUnderCork = corked > 0 && (!owed || owedUnderCork);
       owed = true;
       if (!res.destroyed && res.writableNeedDrain !== true) {
         violation("writableNeedDrain is not true right after write() returned false");
@@ -405,12 +524,16 @@ async function runPlan(
     } else if (!owed && res.writableNeedDrain) {
       violation("writableNeedDrain is true and no write() returned false");
     }
-    if (!owed && res.writableLength >= res.writableHighWaterMark) {
+    // Node.js counts a chunk under a cork, and one behind the end of the peer, apart from what the socket holds.
+    if (!owed && !corked && !afterEof && res.writableLength >= res.writableHighWaterMark) {
       violation(
         `writableLength ${res.writableLength} >= mark ${res.writableHighWaterMark} after write(${step.size}) returned true`,
       );
     }
     return returned;
+  }
+  function uncorkAll() {
+    for (; corked > 0; corked--) res.uncork();
   }
   // Lets the transport take one held write for each turn until `until()`. False when it is empty and idle, and `until()` still does not hold.
   async function settle(until: () => boolean) {
@@ -429,15 +552,27 @@ async function runPlan(
   if (!plan.chunked) res.setHeader("Content-Length", 1 << 30);
   if (plan.steps.some(step => step.op === "send")) res.writeHead(200);
   let stalled = false;
+  const uncorks: number[] = [];
   for (let i = 0; i < plan.steps.length && !tornDown && !closed && !stalled; i++) {
+    for (; uncorks[i] > 0; uncorks[i]--, corked--) res.uncork();
     if (queued && i === plan.queuedSteps) {
       first!.end();
       queued = false;
     }
+    if (plan.teardown === "reset" && i === plan.teardownAt) {
+      lossy ||= corked > 0;
+      resetting = true;
+      tornDown = T.reset();
+      // Under a cork Node.js keeps the chunk and says true.
+      if (tornDown && !plan.pipelined && !corked && res.write("z") !== false) {
+        violation("write() after a reset did not return false");
+      }
+      break;
+    }
     if (plan.teardown === "socket" && i === plan.teardownAt) {
       destroySocket();
       // The socket is gone and the response does not know yet: write() says false, as on a full socket.
-      if (plan.pipelined) break;
+      if (plan.pipelined || corked) break;
       if (res.write("z") !== false) violation("write() after socket.destroy() did not return false");
       else if (!res.destroyed && res.writableNeedDrain !== true) {
         violation("writableNeedDrain is not true after a write() to a destroyed socket returned false");
@@ -446,7 +581,8 @@ async function runPlan(
     }
     const step = plan.steps[i];
     if (step.op === "write") {
-      if (!write(step) && step.wait && !queued && !(await settle(() => !owed || closed || tornDown))) {
+      // Under a cork the 'drain' waits for the uncork() of a later step.
+      if (!write(step) && step.wait && !queued && !corked && !(await settle(() => !owed || closed || tornDown))) {
         violation(`stall: write(${step.size}) returned false and no 'drain' came with the transport empty`);
         stalled = true;
       }
@@ -457,9 +593,7 @@ async function runPlan(
     } else if (step.op === "tick") {
       await tick();
     } else if (step.op === "releaseNow") {
-      // The transport takes a held write in the turn of the writes. Node runs the callback of a write that
-      // completed inside write() a tick later than this one, so the order of the callbacks is not checked.
-      if (T.held() !== null && T.pending(res)) inOrder = false;
+      // The transport takes a held write in the turn of the writes.
       T.release();
     } else if (step.op === "release") {
       await turn();
@@ -471,15 +605,32 @@ async function runPlan(
         foreign = true;
         handed += step.n;
       }
+    } else if (step.op === "cork") {
+      res.cork();
+      corked++;
+      const at = i + 1 + step.span;
+      uncorks[at] = (uncorks[at] ?? 0) + 1;
+    } else if (step.op === "eof") {
+      // The server ends the socket from its 'end' listener, which runs ahead of this one.
+      if (!afterEof) {
+        T.eof(() => {
+          afterEof = true;
+          bodyAtEof = body;
+          lossy ||= corked > 0;
+        });
+      }
     } else {
       res.flushHeaders();
     }
   }
   if (queued) first!.end();
+  // Under a cork an end() differs: Node.js sends a chunk of end() behind the last chunk, and on a stream Bun never sends the response.
+  if (!tornDown) uncorkAll();
 
-  if (tornDown || closed) {
+  if (tornDown || closed || resetting) {
     if (!(await settle(() => closed))) violation("no 'close' after the socket was destroyed");
-    const missing = plan.pipelined ? 0 : callbacks.filter(callback => callback.ran !== 1).length;
+    const missing =
+      plan.pipelined || lossy ? 0 : callbacks.filter(callback => callback.ran !== 1 && !callback.late).length;
     if (missing) violation(`${missing} write callbacks did not run exactly once after the teardown`);
   } else if (!stalled && plan.end) {
     ended = true;
@@ -491,7 +642,7 @@ async function runPlan(
     if (plan.end.cb) {
       res.end(data, () => {
         endCallbacks++;
-        if (!finished && !done) violation("end() callback before 'finish'");
+        if (!finished && !done && !afterEof) violation("end() callback before 'finish'");
       });
     } else {
       res.end(data);
@@ -501,7 +652,13 @@ async function runPlan(
     } else if (finished) {
       await turn();
       if (plan.end.cb && endCallbacks !== 1) violation(`end() callback ran ${endCallbacks} times`);
-      if (!foreign && !plan.pipelined && !tornDown) {
+      if (afterEof) {
+        // The socket sends what it had when the peer ended its side.
+        const got = bodyTaken(await T.wire(() => true), heads);
+        if (!foreign && !tornDown && got < bodyAtEof) {
+          violation(`the wire has ${got} body bytes, ${bodyAtEof} were written before the peer ended its side`);
+        }
+      } else if (!foreign && !plan.pipelined && !tornDown) {
         const got = bodyOnWire(await T.wire(wire => bodyOnWire(wire) === body));
         if (got !== body)
           violation(typeof got === "string" ? got : `body on the wire is ${got} bytes, ${body} written`);
@@ -511,11 +668,21 @@ async function runPlan(
       }
     }
   } else if (!stalled) {
-    if (!(await settle(() => (!owed && callbacks.every(callback => callback.ran)) || closed))) {
+    const drained = () => !owed || owedUnderCork;
+    if (!(await settle(() => (drained() && callbacks.every(callback => callback.ran || callback.late)) || closed))) {
       violation(
-        owed
+        !drained()
           ? "stall: a write() returned false and no 'drain' came with the transport empty"
           : "stall: write callbacks did not run with the transport empty",
+      );
+    }
+  }
+  if (mustHave && tornDown && !foreign && T.signalsAfterSend) {
+    const got = bodyTaken(await T.wire(wire => bodyTaken(wire, heads) >= mustHave), heads);
+    if (got < mustHave) {
+      const event = plan.teardown === "drain" ? "'drain'" : "write callback";
+      violation(
+        `the wire has ${got} body bytes, ${mustHave} were written before the ${event} that destroyed the socket`,
       );
     }
   }

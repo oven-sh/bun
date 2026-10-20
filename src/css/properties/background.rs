@@ -958,8 +958,6 @@ impl BackgroundHandler {
                     dest.push(clip);
                     self.flushed_properties.insert(BackgroundProperty::CLIP);
                 }
-
-                self.reset();
                 return;
             }
         }
@@ -1114,21 +1112,6 @@ impl BackgroundHandler {
             )));
             self.flushed_properties.insert(BackgroundProperty::CLIP);
         }
-
-        self.reset();
-    }
-
-    fn reset(&mut self) {
-        // Drop on assignment frees each field's old value.
-        self.color = None;
-        self.images = None;
-        self.x_positions = None;
-        self.y_positions = None;
-        self.repeats = None;
-        self.sizes = None;
-        self.attachments = None;
-        self.origins = None;
-        self.clips = None;
     }
 
     pub(crate) fn finalize(

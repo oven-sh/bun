@@ -3276,31 +3276,6 @@ mod draft {
                 }
             };
 
-            let mut should_continue = false;
-            if limits.skip_stdlib {
-                if let Some(sl) = &source.source_location {
-                    if strings::includes(&sl.file_name, b"lib/std") {
-                        should_continue = true;
-                    }
-                }
-            }
-            for &pattern in limits.skip_file_patterns {
-                if let Some(sl) = &source.source_location {
-                    if strings::includes(&sl.file_name, pattern) {
-                        should_continue = true;
-                    }
-                }
-            }
-            for &pattern in limits.skip_function_patterns {
-                if strings::includes(&source.symbol_name, pattern) {
-                    should_continue = true;
-                }
-            }
-            if should_continue {
-                frames_left -= 1;
-                frame_index = (frame_index + 1) % stack_trace.instruction_addresses.len();
-                continue;
-            }
             if limits.stop_at_jsc_llint && strings::includes(&source.symbol_name, b"_llint_") {
                 break;
             }

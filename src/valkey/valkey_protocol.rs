@@ -2,7 +2,7 @@ use core::fmt;
 
 use bstr::BStr;
 
-#[derive(strum::IntoStaticStr, strum::EnumString, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RedisError {
     AuthenticationFailed,
     ConnectionClosed,
@@ -25,7 +25,6 @@ pub enum RedisError {
     InvalidSet,
     InvalidSimpleString,
     InvalidVerbatimString,
-    JSError,
     OutOfMemory,
     UnsupportedProtocol,
     ConnectionTimeout,

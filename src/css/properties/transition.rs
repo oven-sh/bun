@@ -451,16 +451,6 @@ mod transition_handler_body {
                     )));
                 }
             }
-
-            self.reset();
-        }
-
-        fn reset(&mut self) {
-            self.properties = None;
-            self.durations = None;
-            self.delays = None;
-            self.timing_functions = None;
-            self.has_any = false;
         }
     }
 

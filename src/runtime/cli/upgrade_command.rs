@@ -73,7 +73,7 @@ pub(crate) struct Version {
 }
 
 impl Version {
-    pub(crate) fn name(&self) -> Option<Vec<u8>> {
+    pub(crate) fn name(&self) -> Vec<u8> {
         if self.tag.len() <= b"bun-v".len() || !self.tag.starts_with(b"bun-v") {
             if &*self.tag == b"canary" {
                 use crate::cli as Cli;
@@ -86,12 +86,12 @@ impl Version {
                     bun_fmt::hex_int_lower::<16>(hash(bytes)),
                 )
                 .expect("oom");
-                return Some(out);
+                return out;
             }
-            return Some(self.tag.to_vec());
+            return self.tag.to_vec();
         }
 
-        Some(self.tag[b"bun-v".len()..].to_vec())
+        self.tag[b"bun-v".len()..].to_vec()
     }
 
     // "windows" not "win32"; Android folds to "linux" (`SUFFIX_ABI` below adds
@@ -177,12 +177,12 @@ pub(crate) struct UpgradeCommand;
 impl UpgradeCommand {
     const DEFAULT_GITHUB_HEADERS: &'static [u8] = b"Acceptapplication/vnd.github.v3+json";
 
-    pub(crate) fn get_latest_version<const SILENT: bool>(
+    pub(crate) fn get_latest_version(
         env_loader: &mut DotEnv::Loader,
         refresher: Option<&mut Progress::Progress>,
         mut progress: Option<&mut Progress::Node>,
         use_profile: bool,
-    ) -> crate::Result<Option<Version>> {
+    ) -> crate::Result<Version> {
         let mut headers_buf: Vec<u8> = Self::DEFAULT_GITHUB_HEADERS.to_vec();
 
         let mut header_entries: headers::EntryList = headers::EntryList::default();
@@ -270,12 +270,10 @@ impl UpgradeCommand {
         ));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
-        if !SILENT {
-            // `progress_node` stores an untracked NonNull borrow of the caller's
-            // `progress`; sound because `send_sync` below completes before this
-            // frame returns, so the pointee outlives every use.
-            async_http.client.progress_node = Some(NonNull::from(progress.as_deref_mut().unwrap()));
-        }
+        // `progress_node` stores an untracked NonNull borrow of the caller's
+        // `progress`; sound because `send_sync` below completes before this
+        // frame returns, so the pointee outlives every use.
+        async_http.client.progress_node = Some(NonNull::from(progress.as_deref_mut().unwrap()));
         let response = async_http.send_sync(metadata_body)?;
 
         match response.status_code() {
@@ -297,36 +295,28 @@ impl UpgradeCommand {
         let expr = match JSON::parse_utf8(&source, &mut log, bump) {
             Ok(e) => e,
             Err(err) => {
-                if !SILENT {
-                    progress.expect("infallible: progress active").end();
-                    refresher.expect("infallible: progress active").refresh();
+                progress.expect("infallible: progress active").end();
+                refresher.expect("infallible: progress active").refresh();
 
-                    if log.errors > 0 {
-                        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                        Global::exit(1);
-                    } else {
-                        bun_core::pretty_errorln!(
-                            "Error parsing releases from GitHub: <r><red>{}<r>",
-                            err.name()
-                        );
-                        Global::exit(1);
-                    }
+                if log.errors > 0 {
+                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                    Global::exit(1);
+                } else {
+                    bun_core::pretty_errorln!(
+                        "Error parsing releases from GitHub: <r><red>{}<r>",
+                        err.name()
+                    );
+                    Global::exit(1);
                 }
-
-                return Ok(None);
             }
         };
 
         if log.errors > 0 {
-            if !SILENT {
-                progress.expect("infallible: progress active").end();
-                refresher.expect("infallible: progress active").refresh();
+            progress.expect("infallible: progress active").end();
+            refresher.expect("infallible: progress active").refresh();
 
-                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                Global::exit(1);
-            }
-
-            return Ok(None);
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            Global::exit(1);
         }
 
         let mut version = Version {
@@ -337,18 +327,14 @@ impl UpgradeCommand {
         };
 
         if !expr.is_object() {
-            if !SILENT {
-                progress.expect("infallible: progress active").end();
-                refresher.expect("infallible: progress active").refresh();
+            progress.expect("infallible: progress active").end();
+            refresher.expect("infallible: progress active").refresh();
 
-                bun_core::pretty_errorln!(
-                    "JSON error - expected an object but received {:?}",
-                    core::mem::discriminant(&expr.data)
-                );
-                Global::exit(1);
-            }
-
-            return Ok(None);
+            bun_core::pretty_errorln!(
+                "JSON error - expected an object but received {:?}",
+                core::mem::discriminant(&expr.data)
+            );
+            Global::exit(1);
         }
 
         if let Some(tag_name_) = expr.as_property(b"tag_name") {
@@ -358,20 +344,16 @@ impl UpgradeCommand {
         }
 
         if version.tag.is_empty() {
-            if !SILENT {
-                progress.expect("infallible: progress active").end();
-                refresher.expect("infallible: progress active").refresh();
+            progress.expect("infallible: progress active").end();
+            refresher.expect("infallible: progress active").refresh();
 
-                bun_core::pretty_errorln!(
-                    "JSON Error parsing releases from GitHub: <r><red>tag_name<r> is missing?\n{}",
-                    // `version.buf` is still empty at this point;
-                    // print the raw payload instead.
-                    bstr::BStr::new(metadata_body.list.as_slice())
-                );
-                Global::exit(1);
-            }
-
-            return Ok(None);
+            bun_core::pretty_errorln!(
+                "JSON Error parsing releases from GitHub: <r><red>tag_name<r> is missing?\n{}",
+                // `version.buf` is still empty at this point;
+                // print the raw payload instead.
+                bstr::BStr::new(metadata_body.list.as_slice())
+            );
+            Global::exit(1);
         }
 
         'get_asset: {
@@ -446,27 +428,22 @@ impl UpgradeCommand {
                                     u32::try_from(((n.value().ceil()) as i32).max(0)).unwrap();
                             }
                         }
-                        return Ok(Some(version));
+                        return Ok(version);
                     }
                 }
             }
         }
 
-        if !SILENT {
-            progress.expect("infallible: progress active").end();
-            refresher.expect("infallible: progress active").refresh();
-            if let Some(name) = version.name() {
-                bun_core::pretty_errorln!(
-                    "Bun v{} is out, but not for this platform ({}) yet.",
-                    bstr::BStr::new(&name),
-                    Version::TRIPLET
-                );
-            }
+        progress.expect("infallible: progress active").end();
+        refresher.expect("infallible: progress active").refresh();
+        let name = version.name();
+        bun_core::pretty_errorln!(
+            "Bun v{} is out, but not for this platform ({}) yet.",
+            bstr::BStr::new(&name),
+            Version::TRIPLET
+        );
 
-            Global::exit(0);
-        }
-
-        Ok(None)
+        Global::exit(0);
     }
 
     const EXE_SUFFIX: &'static str = if cfg!(windows) { ".exe" } else { "" };
@@ -566,19 +543,16 @@ impl UpgradeCommand {
             let progress: *mut Progress::Node =
                 unsafe { (*refresher).start(b"Fetching version tags", 0) };
 
-            let Some(version) = Self::get_latest_version::<false>(
+            let version = Self::get_latest_version(
                 &mut env_loader,
                 // SAFETY: refresher/progress point into the same leaked allocation;
-                // `get_latest_version` only touches them on the !SILENT error
+                // `get_latest_version` only touches them on the error
                 // path (no overlapping live borrows).
                 Some(unsafe { &mut *refresher }),
                 // SAFETY: progress points into the same leaked allocation (see above).
                 Some(unsafe { &mut *progress }),
                 use_profile,
-            )?
-            else {
-                return Ok(());
-            };
+            )?;
 
             // SAFETY: see above.
             unsafe { (*progress).end() };
@@ -586,33 +560,26 @@ impl UpgradeCommand {
             unsafe { (*refresher).refresh() };
 
             if !Environment::IS_CANARY {
-                if version.name().is_some() && version.is_current() {
+                if version.is_current() {
                     bun_core::pretty_errorln!(
                         "<r><green>Congrats!<r> You're already on the latest version of Bun <d>(which is v{})<r>",
-                        bstr::BStr::new(&version.name().unwrap())
+                        bstr::BStr::new(&version.name())
                     );
                     Global::exit(0);
                 }
             }
 
-            if version.name().is_none() {
-                bun_core::pretty_errorln!(
-                    "<r><red>error:<r> Bun versions are currently unavailable (the latest version name didn't match the expected format)"
-                );
-                Global::exit(1);
-            }
-
             if !Environment::IS_CANARY {
                 bun_core::pretty_errorln!(
                     "<r><b>Bun <cyan>v{}<r> is out<r>! You're on <blue>v{}<r>\n",
-                    bstr::BStr::new(&version.name().unwrap()),
+                    bstr::BStr::new(&version.name()),
                     Global::package_json_version
                 );
             } else {
                 bun_core::pretty_errorln!(
                     "<r><b>Downgrading from Bun <blue>{}-canary<r> to Bun <cyan>v{}<r><r>\n",
                     Global::package_json_version,
-                    bstr::BStr::new(&version.name().unwrap())
+                    bstr::BStr::new(&version.name())
                 );
             }
             Output::flush();
@@ -712,7 +679,7 @@ impl UpgradeCommand {
                 Global::exit(1);
             }
 
-            let version_name = version.name().unwrap();
+            let version_name = version.name();
 
             if version_name.is_empty()
                 || version_name.as_slice() == b"."
@@ -1230,8 +1197,6 @@ impl UpgradeCommand {
 
             #[cfg(windows)]
             let mut outdated_filename: Option<bun_core::ZBox> = None;
-            #[cfg(not(windows))]
-            let outdated_filename: Option<()> = None;
 
             if env_loader.map.get(b"BUN_DRY_RUN").is_none() {
                 #[cfg(windows)]
@@ -1367,10 +1332,6 @@ impl UpgradeCommand {
                     // would open a terminal window, which steals user focus (even if minimized).
                     let _ = to_remove;
                 }
-            }
-            #[cfg(not(windows))]
-            {
-                let _ = outdated_filename;
             }
         }
 

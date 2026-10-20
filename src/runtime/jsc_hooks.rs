@@ -405,7 +405,6 @@ unsafe fn init_runtime_state(
         // measurable on `bun -e ''` startup.
         let mut args = core::mem::take(&mut opts.transform_options);
         let preserve_symlinks = args.preserve_symlinks.unwrap_or(false);
-        args.write = Some(false);
         args.target = Some(api::Target::Bun);
         // The arena lives on
         // `RuntimeState` (boxed above) so `deinit_runtime_state` reclaims it
@@ -2409,37 +2408,6 @@ fn transpile_source_code_of_any_provenance(
 
             let is_node_override = specifier.starts_with(node_fallbacks::IMPORT_PATH);
 
-            // SAFETY: per fn contract.
-            let (macro_mode, has_any_macro_remappings) =
-                unsafe { ((*jsc_vm).macro_mode, (*jsc_vm).has_any_macro_remappings) };
-            let macro_remappings = if macro_mode || !has_any_macro_remappings || is_node_override {
-                bun_resolver::package_json::MacroMap::default()
-            } else {
-                // Note: `MacroMap`'s value type
-                // (`StringArrayHashMap<Box<[u8]>>`) has only the fallible
-                // `clone() -> Result<_, AllocError>` (no trait `Clone`), so
-                // the outer map can't be `clone()`d generically. Re-key
-                // shallowly here matching `bun_bundler::transpiler` and treat
-                // the inner OOM as a process-fatal alloc failure.
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread
-                // VM and `init_runtime_state` has already `ptr::write`n a
-                // real `Transpiler` into `vm.transpiler` (the `options.jsx` /
-                // `options.loaders` reads below depend on the same invariant).
-                let src = unsafe { &(*jsc_vm).transpiler.options.macro_remap };
-                if src.is_empty() {
-                    // Hot path: a module with no `--define`/`with { type: "macro" }`
-                    // remappings skips the per-entry re-key + per-value fallible
-                    // `clone()` entirely.
-                    bun_resolver::package_json::MacroMap::default()
-                } else {
-                    let mut m = bun_resolver::package_json::MacroMap::default();
-                    for (k, v) in src.iter() {
-                        m.insert(k, bun_core::handle_oom(v.clone()));
-                    }
-                    m
-                }
-            };
-
             let mut should_close_input_file_fd = true;
 
             // Only JS-like loaders get the cjs/esm wrapper hint.
@@ -2604,7 +2572,6 @@ fn transpile_source_code_of_any_provenance(
                     // `_fd_guard` scopeguard's tag is not invalidated by a
                     // fresh `&mut` (see Note on `_fd_guard`).
                     file_fd_ptr: Some(unsafe { &mut *input_file_fd_ptr }),
-                    macro_remappings,
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     jsx: unsafe { &*jsc_vm }.transpiler.options.jsx.clone(),
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
@@ -2655,14 +2622,14 @@ fn transpile_source_code_of_any_provenance(
                     unsafe {
                         (*jsc_vm)
                             .transpiler
-                            .parse_maybe_return_file_only::<true>(parse_options, None)
+                            .parse_maybe_return_file_only::<true>(parse_options)
                     }
                 } else {
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     unsafe {
                         (*jsc_vm)
                             .transpiler
-                            .parse_maybe_return_file_only::<false>(parse_options, None)
+                            .parse_maybe_return_file_only::<false>(parse_options)
                     }
                 };
 

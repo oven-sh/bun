@@ -23,7 +23,7 @@ use bun_ptr::BackRef;
 use bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
-use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
+use bun_resolver::package_json::PackageJSON;
 use bun_sys::{self, Dir, Fd, FdExt as _, File, OpenDirOptions};
 use bun_threading::Guarded;
 use bun_threading::unbounded_queue::{self, UnboundedQueue};
@@ -760,26 +760,6 @@ impl TranspilerJob {
         // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
         let is_node_override = strings::has_prefix_comptime(specifier, node_fallbacks::IMPORT_PATH);
 
-        // SAFETY: leaf scalar field reads on `*vm`; see `vm` note above.
-        let macro_remappings = if unsafe { (*vm).macro_mode }
-            || !unsafe { (*vm).has_any_macro_remappings }
-            || is_node_override
-        {
-            MacroRemap::default()
-        } else {
-            // Note: `MacroRemap` (StringArrayHashMap of StringArrayHashMap)
-            // has no nested `Clone` impl (the inherent `clone()` requires
-            // `V: Clone`). Re-key shallowly here
-            // matching the build-command conversion (transpiler.rs:2616).
-            // OOM during the
-            // inner `clone()` must abort — never silently drop a remapping.
-            let mut m = MacroRemap::default();
-            for (k, v) in transpiler.options.macro_remap.iter() {
-                m.insert(k, bun_core::handle_oom(v.clone()));
-            }
-            m
-        };
-
         // Only
         // initialised on the `is_node_override` branch and only read through
         // `parse_options.virtual_source` (raw-ptr borrow).
@@ -821,7 +801,6 @@ impl TranspilerJob {
             // outlives `parse_options`; `addr_of_mut!` avoids forming an
             // intermediate `&mut` so the close-guard's later borrow stays sound.
             file_fd_ptr: Some(unsafe { &mut *ptr::addr_of_mut!(input_file_fd) }),
-            macro_remappings,
             macro_js_ctx: transpiler::default_macro_js_value(),
             jsx: transpiler.options.jsx.clone(),
             emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
@@ -899,7 +878,7 @@ impl TranspilerJob {
             import_watcher.is_some_and(|iw| !matches!(&*iw, ImportWatcher::None));
 
         let Some(mut parse_result) = transpiler
-            .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(parse_options, None)
+            .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(parse_options)
         else {
             if is_watcher_enabled && input_file_fd.is_valid() {
                 if !is_node_override

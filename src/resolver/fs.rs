@@ -698,7 +698,7 @@ unsafe impl Send for Entry {}
 //     `readFileError` (a no-op in release).
 //   • `read_file_contents` — runtime-bool → const-generic dispatcher for the
 //     two `cache::Fs` callers (resolver/lib.rs + bundler/cache.rs), which take
-//     `use_shared_buffer`/`stream` at runtime and want only the bytes.
+//     `use_shared_buffer` at runtime and want only the bytes.
 // ══════════════════════════════════════════════════════════════════════════
 
 /// Runtime-bool → const-generic dispatcher for `cache::Fs::read_file{,_shared}`.
@@ -708,13 +708,10 @@ pub fn read_file_contents<'buf>(
     file: &bun_sys::File,
     use_shared_buffer: bool,
     shared: &'buf mut MutableString,
-    stream: bool,
 ) -> crate::CrateResult<Cow<'buf, [u8]>> {
-    match (use_shared_buffer, stream) {
-        (true, true) => read_file_with_handle_impl::<true, true>(None, file, shared),
-        (true, false) => read_file_with_handle_impl::<true, false>(None, file, shared),
-        (false, true) => read_file_with_handle_impl::<false, true>(None, file, shared),
-        (false, false) => read_file_with_handle_impl::<false, false>(None, file, shared),
+    match use_shared_buffer {
+        true => read_file_with_handle_impl::<true>(file, shared),
+        false => read_file_with_handle_impl::<false>(file, shared),
     }
     .map(|p| p.contents)
 }
@@ -730,10 +727,8 @@ pub fn read_file_contents<'buf>(
 /// at `ptr[len]` (not counted in `len`).
 pub fn read_file_contents_in_arena(
     file: &bun_sys::File,
-    path: &[u8],
     arena: &bun_alloc::Arena,
 ) -> crate::CrateResult<(core::ptr::NonNull<u8>, usize)> {
-    let _ = path;
     crate::fs::FileSystem::set_max_fd(file.handle().native());
 
     let mut initial_buf = [0u8; 16384];
@@ -752,8 +747,6 @@ pub fn read_file_contents_in_arena(
     }
     let initial_len = read_count;
 
-    // Skip the extra file.stat() call when possible (size_hint is always None
-    // on this path — `cache::Fs::read_file_with_allocator` never passes one).
     let size = file.get_end_pos()?;
     debug!("stat({}) = {}", file.handle(), size);
 
@@ -762,7 +755,7 @@ pub fn read_file_contents_in_arena(
     }
 
     // Arena-owned `[u8; cap + 1]` instead of `vec![0u8; size + 1]` — this is
-    // the load-bearing change vs. `read_file_with_handle_impl::<false, _>`.
+    // the load-bearing change vs. `read_file_with_handle_impl::<false>`.
     // The buffer is UNINITIALIZED; the
     // `copy_from_slice` + `read_all` below cover `[..total]` and
     // `finish_arena_contents` writes the trailing NUL at `[total]`.
@@ -843,8 +836,7 @@ fn finish_arena_contents(
     (ptr, total)
 }
 
-pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STREAM: bool>(
-    size_hint: Option<usize>,
+pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool>(
     file: &bun_sys::File,
     shared_buffer: &'buf mut MutableString,
 ) -> crate::CrateResult<PathContentsPair<'buf>> {
@@ -853,10 +845,10 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
 
     // in the `USE_SHARED_BUFFER` branch, `file_contents` borrows
     // `shared_buffer.list`; tracked as a raw (ptr, len) pair so borrowck doesn't tie the
-    // slice to `&mut shared_buffer` across the read/truncate/grow loop. The final slice is
+    // slice to `&mut shared_buffer` across the read/truncate/grow. The final slice is
     // reconstituted with `from_raw_parts`. The
     // non-shared-buffer branch owns its allocation and returns early with `Cow::Owned`.
-    // Definite-init: the read `loop` below assigns both before any `break`/read; the
+    // Definite-init: the shared-buffer branch below assigns both before any read; the
     // `else` (non-shared-buffer) arm always early-returns.
     let mut file_contents_ptr: *const u8;
     let mut file_contents_len: usize;
@@ -867,70 +859,28 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
     if USE_SHARED_BUFFER {
         shared_buffer.reset();
 
-        // Skip the extra file.stat() call when possible
-        let mut size = match size_hint {
-            Some(s) => s,
-            None => file.get_end_pos()?,
-        };
+        let size = file.get_end_pos()?;
         debug!("stat({}) = {}", file.handle(), size);
 
         // Skip the pread call for empty files
         // Otherwise will get out of bounds errors
         // plus it's an unnecessary syscall
         if size == 0 {
-            if USE_SHARED_BUFFER {
-                shared_buffer.reset();
-                return Ok(PathContentsPair {
-                    contents: Cow::Borrowed(b""),
-                });
-            } else {
-                return Ok(PathContentsPair {
-                    contents: Cow::Borrowed(b""),
-                });
-            }
+            return Ok(PathContentsPair {
+                contents: Cow::Borrowed(b""),
+            });
         }
 
-        let mut bytes_read: u64 = 0;
         shared_buffer.grow_by(size + 1)?;
         // SAFETY: u8; `read_all` overwrites the exposed tail before any read.
         unsafe { shared_buffer.list.expand_to_capacity() };
 
-        // if you press save on a large file we might not read all the
-        // bytes in the first few pread() calls. we only handle this on
-        // stream because we assume that this only realistically happens
-        // during HMR
-        loop {
-            // We use pread to ensure if the file handle was open, it doesn't seek from the last position
-            let read_count = file.read_all(&mut shared_buffer.list[bytes_read as usize..])?;
-            shared_buffer
-                .list
-                .truncate(read_count + bytes_read as usize);
-            file_contents_ptr = shared_buffer.list.as_ptr();
-            file_contents_len = shared_buffer.list.len();
-            debug!("read({}, {}) = {}", file.handle(), size, read_count);
-
-            if STREAM {
-                // check again that stat() didn't change the file size
-                // another reason to only do this when stream
-                let new_size = file.get_end_pos()?;
-
-                bytes_read += read_count as u64;
-
-                // don't infinite loop is we're still not reading more
-                if read_count == 0 {
-                    break;
-                }
-
-                if (bytes_read as usize) < new_size {
-                    shared_buffer.grow_by(new_size.saturating_sub(size))?;
-                    // SAFETY: u8; `read_all` overwrites the exposed tail before any read.
-                    unsafe { shared_buffer.list.expand_to_capacity() };
-                    size = new_size;
-                    continue;
-                }
-            }
-            break;
-        }
+        // We use pread to ensure if the file handle was open, it doesn't seek from the last position
+        let read_count = file.read_all(&mut shared_buffer.list[..])?;
+        shared_buffer.list.truncate(read_count);
+        file_contents_ptr = shared_buffer.list.as_ptr();
+        file_contents_len = shared_buffer.list.len();
+        debug!("read({}, {}) = {}", file.handle(), size, read_count);
 
         if shared_buffer.list.capacity() > file_contents_len {
             // SAFETY: capacity > len, so writing one byte past len is in-bounds
@@ -940,12 +890,12 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
         }
 
         // `file_contents_len == shared_buffer.list.len()` here (set by `truncate` in
-        // the read loop above); borrow the Vec directly so the slice ends before the
+        // the read above); borrow the Vec directly so the slice ends before the
         // `&mut shared_buffer.list` reborrow inside the BOM branch.
         if let Some(bom) = BOM::detect(&shared_buffer.list[..file_contents_len]) {
             debug!("Convert {} BOM", bom.tag_name());
             // We pre-set `list.len` to the un-BOM'd payload length so the helper sees the
-            // correct logical size (the read loop above truncated to `file_contents_len`).
+            // correct logical size (the read above truncated to `file_contents_len`).
             shared_buffer.list.truncate(file_contents_len);
             let converted = bom.remove_and_convert_to_utf8_without_dealloc(&mut shared_buffer.list);
             file_contents_ptr = converted.as_ptr();
@@ -956,7 +906,7 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
 
         // Optimization: don't call stat() unless the file is big enough
         // that we need to dynamically allocate memory to read it.
-        let initial_read: &[u8] = if size_hint.is_none() {
+        let initial_read: &[u8] = {
             let buf: &mut [u8] = &mut initial_buf;
             let read_count = file.read_all(buf)?;
             if read_count + 1 < buf.len() {
@@ -982,15 +932,9 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
             }
 
             &initial_buf[..read_count]
-        } else {
-            &initial_buf[..0]
         };
 
-        // Skip the extra file.stat() call when possible
-        let size = match size_hint {
-            Some(s) => s,
-            None => file.get_end_pos()?,
-        };
+        let size = file.get_end_pos()?;
         debug!("stat({}) = {}", file.handle(), size);
 
         // Allocate UNINITIALIZED (no zero-fill):
@@ -1034,7 +978,7 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
     }
 
     // `file_contents_ptr` always equals `shared_buffer.list.as_ptr()` on every
-    // shared-buffer path above (read loop and BOM rewrite both anchor at index 0), so we
+    // shared-buffer path above (read and BOM rewrite both anchor at index 0), so we
     // re-derive the final slice safely from `shared_buffer` with the real `'buf` lifetime
     // instead of fabricating `'static` via `from_raw_parts`.
     debug_assert!(core::ptr::eq(

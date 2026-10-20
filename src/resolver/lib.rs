@@ -1965,21 +1965,18 @@ pub mod cache {
                     shared_buffer: MutableString::init(0).expect("unreachable"),
                     macro_shared_buffer: MutableString::init(0).expect("unreachable"),
                     use_alternate_source_cache: false,
-                    stream: false,
                 },
                 json: Json::init(),
             }
         }
     }
 
-    /// File-read cache: shared read buffers plus flags controlling buffer
-    /// reuse and streaming reads.
+    /// File-read cache: shared read buffers plus the flag controlling buffer reuse.
     pub struct Fs {
         pub(crate) shared_buffer: MutableString,
         pub(crate) macro_shared_buffer: MutableString,
 
         pub use_alternate_source_cache: bool,
-        pub(crate) stream: bool,
     }
 
     /// Optional external destructor (`function(ctx)`) for foreign-owned
@@ -2267,16 +2264,12 @@ pub mod cache {
                 fd
             );
 
-            // reshaped for borrowck — capture `stream` scalar before borrowing
-            // the shared buffer.
-            let stream = self.stream;
-
             let contents = match (use_shared_buffer, arena) {
                 // Read straight into the per-call arena so the source bytes
                 // are reclaimed by `mi_heap_destroy` instead of pinning a
                 // segment in the worker thread's default heap.
                 (false, Some(arena)) => {
-                    match fs_mod::read_file_contents_in_arena(file_handle, path, arena) {
+                    match fs_mod::read_file_contents_in_arena(file_handle, arena) {
                         Ok((_, 0)) => Contents::Empty,
                         Ok((ptr, len)) => Contents::Arena { ptr, len },
                         Err(err) => {
@@ -2293,7 +2286,7 @@ pub mod cache {
                 }
                 _ => {
                     let shared = self.shared_buffer();
-                    match fs_mod::read_file_contents(file_handle, use_shared_buffer, shared, stream)
+                    match fs_mod::read_file_contents(file_handle, use_shared_buffer, shared)
                         .map(Contents::from)
                     {
                         Ok(c) => c,

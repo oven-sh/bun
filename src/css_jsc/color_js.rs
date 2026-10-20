@@ -1,7 +1,6 @@
 use std::io::Write as _;
 
 use bun_alloc::Arena;
-use bun_ast::Log;
 use bun_core::String as BunString;
 use bun_core::output::{ColorDepth, Source as OutputSource};
 use bun_jsc::bun_string_jsc;
@@ -227,8 +226,6 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         ));
     }
 
-    let log = Log::init();
-
     let unresolved_format: OutputColorFormat = 'brk: {
         if !args[1].is_empty_or_undefined_or_null() {
             if !args[1].is_string() {
@@ -338,20 +335,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     };
 
     match parsed_color {
-        Err(err) => {
-            if log.msgs.is_empty() {
-                return Ok(JSValue::NULL);
-            }
-
-            let kind_name = match err.basic().kind {
-                css::BasicParseErrorKind::unexpected_token(_) => "unexpected_token",
-                css::BasicParseErrorKind::end_of_input => "end_of_input",
-                css::BasicParseErrorKind::at_rule_invalid(_) => "at_rule_invalid",
-                css::BasicParseErrorKind::at_rule_body_invalid => "at_rule_body_invalid",
-                css::BasicParseErrorKind::qualified_rule_invalid => "qualified_rule_invalid",
-            };
-            return Err(global.throw(format_args!("color() failed to parse {}", kind_name)));
-        }
+        Err(_) => return Ok(JSValue::NULL),
         Ok(result) => {
             let format: OutputColorFormat = if unresolved_format == OutputColorFormat::Ansi {
                 match OutputSource::color_depth() {

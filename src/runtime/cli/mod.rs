@@ -2095,24 +2095,6 @@ Execute a shell script directly from Bun.
                 pretty!("<b>Usage<r>: <b><green>bun getcompletes<r>");
                 Output::flush();
             }
-            Tag::PatchCommand => {
-                pm_print_help(PmSubcommand::Patch);
-            }
-            Tag::PatchCommitCommand => {
-                pm_print_help(PmSubcommand::PatchCommit);
-            }
-            Tag::OutdatedCommand => {
-                pm_print_help(PmSubcommand::Outdated);
-            }
-            Tag::UpdateInteractiveCommand => {
-                pm_print_help(PmSubcommand::Update);
-            }
-            Tag::PublishCommand => {
-                pm_print_help(PmSubcommand::Publish);
-            }
-            Tag::AuditCommand => {
-                pm_print_help(PmSubcommand::Audit);
-            }
             Tag::CheckCommand => {
                 pretty!(
                     "\
@@ -2201,18 +2183,6 @@ Full documentation is available at <magenta>https://bun.com/docs/lint<r>
                 print_note_about_script("lint");
                 Output::flush();
             }
-            Tag::DedupeCommand => {
-                pm_print_help(PmSubcommand::Dedupe);
-            }
-            Tag::PruneCommand => {
-                pm_print_help(PmSubcommand::Prune);
-            }
-            Tag::InfoCommand => {
-                pm_print_help(PmSubcommand::Info);
-            }
-            Tag::WhyCommand => {
-                pm_print_help(PmSubcommand::Why);
-            }
             Tag::InitCommand => {
                 pretty!(
                     "\
@@ -2245,19 +2215,8 @@ Full documentation is available at <magenta>https://bun.com/docs/lint<r>
                 pretty!("<b>Usage<r>: <b><green>bun completions<r>\n");
                 Output::flush();
             }
-            Tag::PackageManagerCommand => {
-                pm_print_help(PmSubcommand::Pm);
-            }
             _ => HelpCommand::print_with_reason(HelpCommand::Reason::Explicit, false),
         }
-    }
-
-    use bun_install::package_manager_real::Subcommand as PmSubcommand;
-
-    /// Forward to `bun_install::PackageManager::CommandLineArguments::print_help`.
-    #[inline]
-    fn pm_print_help(subcommand: PmSubcommand) {
-        bun_install::package_manager_real::CommandLineArguments::print_help(subcommand);
     }
 }
 pub(crate) use command as Command;

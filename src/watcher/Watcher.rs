@@ -912,31 +912,13 @@ impl Watcher {
         None
     }
 
-    // Const-generic
-    // enum params need `adt_const_params` (nightly); the value is only
-    // compared to `.Directory`, so a plain runtime parameter is fine.
-    pub fn remove_at_index<const LOCK: bool>(
-        &mut self,
-        kind: WatchItemKind,
-        index: WatchItemIndex,
-        hash: HashType,
-        parents: &[HashType],
-    ) {
+    pub fn remove_at_index<const LOCK: bool>(&mut self, index: WatchItemIndex) {
         let _guard = LOCK.then(|| self.mutex.lock_guard());
 
         debug_assert!(index != NO_WATCH_ITEM);
 
         self.evict_list[self.evict_list_i as usize] = index;
         self.evict_list_i += 1;
-
-        if kind == WatchItemKind::Directory {
-            for &parent in parents {
-                if parent == hash {
-                    self.evict_list[self.evict_list_i as usize] = parent as WatchItemIndex;
-                    self.evict_list_i += 1;
-                }
-            }
-        }
     }
 
     pub fn get_resolve_watcher(&mut self) -> AnyResolveWatcher {

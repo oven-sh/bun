@@ -44,7 +44,6 @@ pub(crate) fn valkey_error_to_js(
         RedisError::NestingDepthExceeded => JscError::REDIS_INVALID_RESPONSE,
         RedisError::LineTooLong => JscError::REDIS_INVALID_RESPONSE,
         RedisError::ServerError => JscError::REDIS_SERVER_ERROR,
-        RedisError::JSError => return global.take_exception(JsError::Thrown),
         RedisError::OutOfMemory => {
             let _ = global.throw_out_of_memory();
             return global.take_exception(JsError::Thrown);

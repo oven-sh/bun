@@ -521,7 +521,6 @@ fn compute_simple_selector_specificity<Impl: BunSelectorImpl>(
         | C::ExplicitUniversalType
         | C::ExplicitAnyNamespace
         | C::ExplicitNoNamespace
-        | C::DefaultNamespace(_)
         | C::Namespace { .. } => {
             // Does not affect specificity
         }
@@ -725,47 +724,6 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
                 None => break,
             }
         };
-
-        if empty {
-            if let Some(url) = parser.default_namespace() {
-                // If there was no explicit type selector, but there is a
-                // default namespace, there is an implicit "<defaultns>|*" type
-                // selector. Except for :host() or :not() / :is() / :where(),
-                // where we ignore it.
-                //
-                // https://drafts.csswg.org/css-scoping/#host-element-in-tree:
-                //
-                //     When considered within its own shadow trees, the shadow
-                //     host is featureless. Only the :host, :host(), and
-                //     :host-context() pseudo-classes are allowed to match it.
-                //
-                // https://drafts.csswg.org/selectors-4/#featureless:
-                //
-                //     A featureless element does not match any selector at all,
-                //     except those it is explicitly defined to match. If a
-                //     given selector is allowed to match a featureless element,
-                //     it must do so while ignoring the default namespace.
-                //
-                // https://drafts.csswg.org/selectors-4/#matches
-                //
-                //     Default namespace declarations do not affect the compound
-                //     selector representing the subject of any selector within
-                //     a :is() pseudo-class, unless that compound selector
-                //     contains an explicit universal selector or type selector.
-                //
-                //     (Similar quotes for :where() / :not())
-                //
-                let ignore_default_ns = state
-                    .contains(SelectorParsingState::SKIP_DEFAULT_NAMESPACE)
-                    || matches!(
-                        result,
-                        SimpleSelectorParseResult::SimpleSelector(GenericComponent::Host(_))
-                    );
-                if !ignore_default_ns {
-                    builder.push_simple_selector(GenericComponent::DefaultNamespace(url));
-                }
-            }
-        }
 
         empty = false;
 
@@ -1400,13 +1358,6 @@ impl<'a> SelectorParser<'a> {
             .contains(css::ParserFlags::DEEP_SELECTOR_COMBINATOR)
     }
 
-    pub(crate) fn default_namespace(
-        &self,
-    ) -> Option<<impl_::Selectors as SelectorImpl>::NamespaceUrl> {
-        let _ = self;
-        None
-    }
-
     pub(crate) fn parse_part(&self) -> bool {
         let _ = self;
         true
@@ -1965,7 +1916,6 @@ pub enum GenericComponent<Impl: SelectorImpl> {
 
     ExplicitAnyNamespace,
     ExplicitNoNamespace,
-    DefaultNamespace(Impl::NamespaceUrl),
     Namespace {
         prefix: Impl::NamespacePrefix,
         url: Impl::NamespaceUrl,
@@ -2073,7 +2023,6 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
             C::Combinator(c) => C::Combinator(*c),
             C::ExplicitAnyNamespace => C::ExplicitAnyNamespace,
             C::ExplicitNoNamespace => C::ExplicitNoNamespace,
-            C::DefaultNamespace(u) => C::DefaultNamespace(*u),
             C::Namespace { prefix, url } => C::Namespace {
                 prefix: *prefix,
                 url: *url,
@@ -2139,7 +2088,6 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
             | (C::Empty, C::Empty)
             | (C::Scope, C::Scope)
             | (C::Nesting, C::Nesting) => true,
-            (C::DefaultNamespace(a), C::DefaultNamespace(b)) => strings::eql(a, b),
             (
                 C::Namespace {
                     prefix: ap,
@@ -2267,10 +2215,6 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
             }
             C::ExplicitAnyNamespace => tag!(1),
             C::ExplicitNoNamespace => tag!(2),
-            C::DefaultNamespace(u) => {
-                tag!(3);
-                hasher.update(u);
-            }
             C::Namespace { prefix, url } => {
                 tag!(4);
                 prefix.hash(hasher);
@@ -2393,7 +2337,6 @@ impl<Impl: BunSelectorImpl> fmt::Display for GenericComponent<Impl> {
             Self::Class(c) => write!(f, "class={}", c),
             Self::ExplicitAnyNamespace => f.write_str("explicit_any_namespace"),
             Self::ExplicitNoNamespace => f.write_str("explicit_no_namespace"),
-            Self::DefaultNamespace(_) => f.write_str("default_namespace"),
             Self::Namespace { .. } => f.write_str("namespace"),
             Self::ExplicitUniversalType => f.write_str("explicit_universal_type"),
             Self::Id(_) => f.write_str("id"),
@@ -2599,10 +2542,6 @@ impl<Impl: BunSelectorImpl> NthOfSelectorData<Impl> {
 bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct SelectorParsingState: u16 {
-        /// Whether we should avoid adding default namespaces to selectors that
-        /// aren't type or universal selectors.
-        const SKIP_DEFAULT_NAMESPACE = 1 << 0;
-
         /// Whether we've parsed a ::slotted() pseudo-element already.
         ///
         /// If so, then we can only parse a subset of pseudo-elements, and
@@ -3148,19 +3087,8 @@ pub(crate) fn parse_type_selector<Impl: BunSelectorImpl>(
 
     match namespace {
         QNamePrefix::ImplicitAnyNamespace => {}
-        QNamePrefix::ImplicitDefaultNamespace(url) => {
-            sink.push_simple_selector(GenericComponent::DefaultNamespace(url));
-        }
         QNamePrefix::ExplicitNamespace(prefix, url) => {
-            let component: GenericComponent<Impl> = 'component: {
-                if let Some(default_url) = parser.default_namespace() {
-                    if url == default_url {
-                        break 'component GenericComponent::DefaultNamespace(url);
-                    }
-                }
-                GenericComponent::Namespace { prefix, url }
-            };
-            sink.push_simple_selector(component);
+            sink.push_simple_selector(GenericComponent::Namespace { prefix, url });
         }
         QNamePrefix::ExplicitNoNamespace => {
             sink.push_simple_selector(GenericComponent::ExplicitNoNamespace);
@@ -3414,8 +3342,7 @@ pub(crate) fn parse_attribute_selector<Impl: BunSelectorImpl>(
                             }))
                         }
                         QNamePrefix::ExplicitAnyNamespace => Some(attrs::NamespaceConstraint::Any),
-                        QNamePrefix::ImplicitAnyNamespace
-                        | QNamePrefix::ImplicitDefaultNamespace(_) => {
+                        QNamePrefix::ImplicitAnyNamespace => {
                             unreachable!("Not returned with in_attr_selector = true");
                         }
                     },
@@ -3730,7 +3657,6 @@ pub(crate) fn parse_nth_pseudo_class<Impl: BunSelectorImpl>(
     // https://github.com/w3c/csswg-drafts/issues/8285
     let mut child_state = {
         let mut s = state;
-        s.insert(SelectorParsingState::SKIP_DEFAULT_NAMESPACE);
         s.insert(SelectorParsingState::DISALLOW_PSEUDOS);
         s
     };
@@ -3771,7 +3697,6 @@ where
     //
     let mut child_state = {
         let mut child_state = *state;
-        child_state.insert(SelectorParsingState::SKIP_DEFAULT_NAMESPACE);
         child_state.insert(SelectorParsingState::DISALLOW_PSEUDOS);
         child_state
     };
@@ -3818,15 +3743,13 @@ pub(crate) fn parse_has<Impl: BunSelectorImpl>(
     Ok(GenericComponent::Has(inner.into_boxed_selectors()))
 }
 
-/// Level 3: Parse **one** simple_selector.  (Though we might insert a second
-/// implied "<defaultns>|*" type selector.)
+/// Level 3: Parse **one** simple_selector.
 pub(crate) fn parse_negation<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     state: &mut SelectorParsingState,
 ) -> CResult<GenericComponent<Impl>> {
     let mut child_state = *state;
-    child_state.insert(SelectorParsingState::SKIP_DEFAULT_NAMESPACE);
     child_state.insert(SelectorParsingState::DISALLOW_PSEUDOS);
 
     let list = GenericSelectorList::<Impl>::parse_with_state(
@@ -3850,11 +3773,10 @@ pub(crate) enum OptionalQName<Impl: SelectorImpl> {
 }
 
 pub(crate) enum QNamePrefix<Impl: SelectorImpl> {
-    ImplicitNoNamespace,                          // `foo` in attr selectors
-    ImplicitAnyNamespace,                         // `foo` in type selectors, without a default ns
-    ImplicitDefaultNamespace(Impl::NamespaceUrl), // `foo` in type selectors, with a default ns
-    ExplicitNoNamespace,                          // `|foo`
-    ExplicitAnyNamespace,                         // `*|foo`
+    ImplicitNoNamespace,  // `foo` in attr selectors
+    ImplicitAnyNamespace, // `foo` in type selectors
+    ExplicitNoNamespace,  // `|foo`
+    ExplicitAnyNamespace, // `*|foo`
     ExplicitNamespace(Impl::NamespacePrefix, Impl::NamespaceUrl), // `prefix|foo`
 }
 
@@ -3911,10 +3833,9 @@ pub(crate) fn parse_qualified_name<Impl: BunSelectorImpl>(
                         Some(value),
                     ));
                 }
-                return Ok(parse_qualified_name_default_namespace_helper::<Impl>(
-                    parser,
-                    Some(value),
-                ));
+                return Ok(parse_qualified_name_default_namespace_helper::<Impl>(Some(
+                    value,
+                )));
             }
         }
         Token::Delim(c) => match u8::try_from(*c).ok() {
@@ -3939,9 +3860,7 @@ pub(crate) fn parse_qualified_name<Impl: BunSelectorImpl>(
                         .source_location()
                         .new_custom_error(SelectorParseErrorKind::ExpectedBarInAttr(t)));
                 } else {
-                    return Ok(parse_qualified_name_default_namespace_helper::<Impl>(
-                        parser, None,
-                    ));
+                    return Ok(parse_qualified_name_default_namespace_helper::<Impl>(None));
                 }
             }
             Some(b'|') => {
@@ -3960,15 +3879,9 @@ pub(crate) fn parse_qualified_name<Impl: BunSelectorImpl>(
 }
 
 fn parse_qualified_name_default_namespace_helper<Impl: BunSelectorImpl>(
-    parser: &mut SelectorParser,
     local_name: Option<Str>,
 ) -> OptionalQName<Impl> {
-    let namespace: QNamePrefix<Impl> = if let Some(url) = parser.default_namespace() {
-        QNamePrefix::ImplicitDefaultNamespace(url)
-    } else {
-        QNamePrefix::ImplicitAnyNamespace
-    };
-    OptionalQName::Some(namespace, local_name)
+    OptionalQName::Some(QNamePrefix::ImplicitAnyNamespace, local_name)
 }
 
 fn parse_qualified_name_eplicit_namespace_helper<Impl: BunSelectorImpl>(

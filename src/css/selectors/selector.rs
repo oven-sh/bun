@@ -270,7 +270,6 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
 
                 Component::ExplicitAnyNamespace
                 | Component::ExplicitNoNamespace
-                | Component::DefaultNamespace(_)
                 | Component::Namespace { .. } => F::Namespaces,
 
                 Component::ExplicitUniversalType => F::Selectors2,
@@ -674,7 +673,6 @@ pub(crate) mod serialize {
                     Component::ExplicitAnyNamespace
                     | Component::ExplicitNoNamespace
                     | Component::Namespace { .. } => (false, first_index + 1),
-                    Component::DefaultNamespace(_) => (true, first_index + 1),
                     _ => (true, first_index),
                 }
             };
@@ -1407,7 +1405,6 @@ pub(crate) mod tocss_servo {
                     Component::ExplicitAnyNamespace
                     | Component::ExplicitNoNamespace
                     | Component::Namespace { .. } => (false, 1),
-                    Component::DefaultNamespace(_) => (true, 1),
                     _ => (true, 0),
                 }
             };
@@ -1524,8 +1521,6 @@ pub(crate) mod tocss_servo {
             Component::ExplicitUniversalType => {
                 dest.write_char(b'*')?;
             }
-            Component::DefaultNamespace(_) => return Ok(()),
-
             Component::ExplicitNoNamespace => {
                 dest.write_char(b'|')?;
             }
@@ -1693,7 +1688,6 @@ fn is_namespace(component: Option<&parser::Component>) -> bool {
             Component::ExplicitAnyNamespace
                 | Component::ExplicitNoNamespace
                 | Component::Namespace { .. }
-                | Component::DefaultNamespace(_)
         );
     }
     false

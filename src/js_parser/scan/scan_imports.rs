@@ -299,12 +299,7 @@ impl<'a> ImportScanner<'a> {
                                 && st.default_name.is_none())
                         {
                             // internal imports are presumed to be always used
-                            // require statements cannot be stripped
-                            if !record!().flags.contains(import_record::Flags::IS_INTERNAL)
-                                && !record!()
-                                    .flags
-                                    .contains(import_record::Flags::WAS_ORIGINALLY_REQUIRE)
-                            {
+                            if !record!().flags.contains(import_record::Flags::IS_INTERNAL) {
                                 record!().flags.insert(import_record::Flags::IS_UNUSED);
                                 continue;
                             }
@@ -569,19 +564,6 @@ impl<'a> ImportScanner<'a> {
                                                 .unwrap_or(false),
                                     }));
                             }
-                        }
-
-                        if record!()
-                            .flags
-                            .contains(import_record::Flags::WAS_ORIGINALLY_REQUIRE)
-                        {
-                            let symbol = &mut p.symbols[namespace_ref.inner_index() as usize];
-                            symbol.namespace_alias = Some(bun_alloc::ast_box(G::NamespaceAlias {
-                                namespace_ref,
-                                alias: js_ast::StoreStr::EMPTY,
-                                import_record_index: st.import_record_index,
-                                was_originally_property_access: false,
-                            }));
                         }
                     }
 

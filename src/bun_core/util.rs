@@ -2090,7 +2090,6 @@ impl ThreadLock {
                     crate::DumpStackTraceOptions {
                         frame_count: 10,
                         stop_at_jsc_llint: true,
-                        ..Default::default()
                     },
                 );
                 panic!("ThreadLock: thread {cur} tried to lock, already held by {prev}");

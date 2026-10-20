@@ -639,7 +639,6 @@ pub(crate) struct TransformTask {
     pub transpiler: core::mem::ManuallyDrop<Transpiler::Transpiler<'static>>,
     pub log: bun_ast::Log,
     pub err: Option<Error>,
-    pub macro_map: MacroMap,
     pub tsconfig: Option<jsc::JsPtr<TSConfigJSON>>,
     pub loader: Loader,
     pub replace_exports: bun_ast::runtime::ReplaceableExportMap,
@@ -692,7 +691,6 @@ impl TransformTask {
             input_code,
             output_code: BunString::EMPTY,
             transpiler: transpiler_copy,
-            macro_map: clone_macro_map(&config.macro_map),
             tsconfig: config
                 .tsconfig
                 .as_deref()
@@ -767,7 +765,6 @@ impl TransformTask {
 
         let parse_options = ParseOptions {
             arena: arena_ref,
-            macro_remappings: clone_macro_map(&self.macro_map),
             dirname_fd: bun_sys::Fd::INVALID,
             file_descriptor: None,
             loader: self.loader,
@@ -793,7 +790,7 @@ impl TransformTask {
             allow_bytecode_cache: false,
         };
 
-        let Some(parse_result) = self.transpiler.parse(parse_options, None) else {
+        let Some(parse_result) = self.transpiler.parse(parse_options) else {
             self.err = Some(crate::Error::ParseError);
             return;
         };
@@ -1222,7 +1219,6 @@ impl JSTranspiler {
 
         let parse_options = ParseOptions {
             arena,
-            macro_remappings: clone_macro_map(&config.macro_map),
             dirname_fd: bun_sys::Fd::INVALID,
             file_descriptor: None,
             loader: loader.unwrap_or(config.default_loader),
@@ -1257,7 +1253,7 @@ impl JSTranspiler {
         };
 
         // SAFETY: see `transpiler_mut` — `parse` may re-enter JS via macros.
-        unsafe { self.transpiler_mut() }.parse(parse_options, None)
+        unsafe { self.transpiler_mut() }.parse(parse_options)
     }
 
     #[bun_jsc::host_fn(method)]

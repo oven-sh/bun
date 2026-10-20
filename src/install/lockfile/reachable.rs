@@ -283,37 +283,6 @@ pub(crate) fn packages_reached_without_peer_provider(
     reached
 }
 
-/// Returns the packages that the root reaches, each one before the packages that it depends on,
-/// except in a dependency cycle. Two packages with nothing between them come in the order of the
-/// dependencies that lead to them.
-pub(crate) fn dependents_first(lockfile: &Lockfile) -> Vec<PackageID> {
-    let lists = lockfile.packages.items_dependencies();
-    let resolutions = lockfile.buffers.resolutions.as_slice();
-    let mut seen = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
-    let mut order: Vec<PackageID> = Vec::with_capacity(lists.len());
-    // Each package on the way down from the root, with the end of the dependencies that are left to
-    // follow. A package is added to `order` after everything below it, and `order` is reversed at
-    // the end, so the last dependency goes first.
-    let mut path: Vec<(PackageID, DependencyID)> = Vec::new();
-    if mark(&mut seen, 0) {
-        path.push((0, lists[0].end()));
-    }
-    while let Some((package, left)) = path.last_mut() {
-        if *left == lists[*package as usize].begin() {
-            order.push(*package);
-            path.pop();
-            continue;
-        }
-        *left -= 1;
-        let id = resolutions[*left as usize];
-        if mark(&mut seen, id) {
-            path.push((id, lists[id as usize].end()));
-        }
-    }
-    order.reverse();
-    order
-}
-
 fn mark(seen: &mut DynamicBitSet, id: PackageID) -> bool {
     let index = id as usize;
     if seen.is_set_allow_out_of_bound(index, true) {

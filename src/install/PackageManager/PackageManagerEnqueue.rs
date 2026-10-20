@@ -4427,15 +4427,14 @@ fn range_most_peers_accept(
         .collect();
     let mut best: Option<(usize, Semver::Version, bool, &dependency::Version)> = None;
     for range in &ranges {
-        let newest = match manifest.find_for_dependency(
+        let found = manifest.find_for_dependency(
             range,
             buf,
             this.options.minimum_release_age_ms,
             this.options.minimum_release_age_excludes,
-        ) {
-            Npm::FindVersionResult::Found(result)
-            | Npm::FindVersionResult::FoundWithFilter { result, .. } => result.version,
-            Npm::FindVersionResult::Err(_) => continue,
+        );
+        let Some(newest) = found.unwrap().map(|found| found.version) else {
+            continue;
         };
         let accepting = (ranges.iter())
             .filter(|other| other.npm().version.satisfies(newest, buf, versions))

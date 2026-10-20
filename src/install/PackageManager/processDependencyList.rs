@@ -1,7 +1,8 @@
 use core::cell::Cell;
+use core::cmp::Ordering;
 
-use bun_collections::{DynamicBitSetList, index_sort};
-use bun_core::{Output, UnwrapOrOom, strings};
+use bun_collections::index_sort;
+use bun_core::{Output, strings};
 use bun_semver::{ExternalString, String as SemverString};
 
 use crate::bun_json::Expr;
@@ -15,7 +16,7 @@ use crate::repository_real::{RepositoryExt as _, locked_scp_like};
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
 use crate::{
     Dependency, DependencyID, ExtractData, ExtractDataJson, Features, INVALID_PACKAGE_ID,
-    PackageID, PackageNameHash, Resolution, TaskCallbackContext, dependency,
+    PackageID, Resolution, TaskCallbackContext, dependency,
 };
 
 /// The dependencies of a package.json, parsed into a separate lockfile. `LookAhead` reads it to
@@ -693,7 +694,8 @@ impl PackageManager {
             && !self.log_mut().has_errors()
     }
 
-    /// Queues the deferred peers for `drain_dependency_list`, in `peer_batch_order`.
+    /// Queues the deferred peers for `drain_dependency_list`, in `peer_batch_order`. The first
+    /// dependency on a name to be resolved decides what the others bind to.
     pub(crate) fn process_peer_dependency_list(&mut self) -> Result<(), crate::Error> {
         if !self.has_peers_to_process() {
             return Ok(());
@@ -724,14 +726,11 @@ impl PackageManager {
         index_sort::sort_indices_unstable(batch, &mut |a, b| a.cmp(&b));
 
         let lockfile = &*self.lockfile;
-        let lists = lockfile.packages.items_dependencies();
         let mut owners: Vec<PackageID> = vec![INVALID_PACKAGE_ID; batch.len()];
-        let mut first_of: Vec<u32> = vec![0; lists.len()];
-        for (owner, slice) in lists.iter().enumerate() {
+        for (owner, slice) in lockfile.packages.items_dependencies().iter().enumerate() {
             let first = batch.partition_point(|&id| id < slice.begin());
             let end = first + batch[first..].partition_point(|&id| id < slice.end());
             owners[first..end].fill(owner as PackageID);
-            first_of[owner] = first as u32;
         }
 
         let buf = lockfile.buffers.string_bytes.as_slice();
@@ -745,43 +744,13 @@ impl PackageManager {
             ResolutionTag::Workspace => 1,
             _ => 2,
         };
-        // A package uses the copy of the package above it if both have the peer dependency, so a
-        // peer waits if a package above its owner has it too. So does a peer of a package that
-        // nothing depends on until another peer in `batch` is resolved.
-        let mut peers: Vec<PackageNameHash> =
-            (batch.iter().map(|&id| dependencies[id as usize].name_hash)).collect();
-        peers.sort_unstable();
-        peers.dedup();
-        let above = DynamicBitSetList::init_empty(names.len(), peers.len()).unwrap_or_oom();
-        let mut waits: Vec<bool> = vec![true; batch.len()];
-        for package in crate::lockfile::reachable::dependents_first(lockfile) {
-            let list = lists[package as usize];
-            let first = first_of[package as usize] as usize;
-            for i in (first..batch.len()).take_while(|&i| owners[i] == package) {
-                waits[i] = false;
-                if rank(package as usize) == 2
-                    && let Ok(peer) =
-                        peers.binary_search(&dependencies[batch[i] as usize].name_hash)
-                {
-                    waits[i] = above.at(package as usize).is_set(peer);
-                    above.set(package as usize, peer);
-                }
-            }
-            for id in list.begin() as usize..list.end() as usize {
-                let below = lockfile.buffers.resolutions[id] as usize;
-                if !dependencies[id].behavior.is_peer() && below < names.len() {
-                    above.set_union(below, &above.at(package as usize));
-                }
-            }
-        }
         index_sort::sort_indices_unstable(&mut order, &mut |a, b| {
             let (a, b) = (a as usize, b as usize);
             let by_owner = match (owners[a] as usize, owners[b] as usize) {
-                (x, y) if x == y => waits[a].cmp(&waits[b]),
+                (x, y) if x == y => Ordering::Equal,
                 (x, y) if x >= names.len() || y >= names.len() => x.cmp(&y),
                 (x, y) => rank(x)
                     .cmp(&rank(y))
-                    .then_with(|| waits[a].cmp(&waits[b]))
                     .then_with(|| strings::order(names[x].slice(buf), names[y].slice(buf)))
                     .then_with(|| resolutions[x].order(&resolutions[y], buf, buf)),
             };

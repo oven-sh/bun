@@ -9,9 +9,9 @@ use super::*;
 use crate::bind::{Decl, ScopeKind};
 use smallvec::{SmallVec, smallvec};
 
-#[path = "infer_memo.rs"]
-mod memo;
-pub(super) use memo::{COMMITS, InferenceMemo};
+#[path = "infer_traces.rs"]
+mod traces;
+pub(super) use traces::COMMITS;
 
 /// The members of a union or an intersection during iteration.
 pub(super) type Parts = SmallVec<[TypeId; 8]>;
@@ -57,8 +57,8 @@ struct RepeatedArgumentWalks {
     /// The walks that changed nothing, each with the `inference_priority` it produced.
     priorities: FxHashMap<ArgumentWalk, i32>,
     /// `Checker::inference_disturbances` when they ran. A lookup that misses without starting an evaluation can get
-    /// another answer after a cycle or a limit, as for a whole walk (`infer_memo`).
-    disturbances: memo::Disturbances,
+    /// another answer after a cycle or a limit (`infer_traces`).
+    disturbances: traces::Disturbances,
 }
 
 /// The priority in `Inference::visited` of a pair whose action hasn't returned. `invoke_once` reads it as
@@ -130,8 +130,8 @@ pub(super) struct Inference {
     target_stack: SmallVec<[(TypeId, u32); 8]>,
     expanding: u8,
     depth: u32,
-    /// How many times `infer_types` was called for the walk, for `memo`. It never ends a walk,
-    /// because tsgo has no such limit.
+    /// How many times `infer_types` was called for the walk. See `REPEATED_ARGUMENT_WALKS_FROM`. It
+    /// never ends a walk, because tsgo has no such limit.
     calls: u32,
     /// The walk has reached a signature for which `is_sig_of_context_sensitive_function` is true.
     has_reached_contextual_function: bool,
@@ -358,14 +358,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return;
         }
-        if self.inference_memo.has_long_walk_to(target) {
-            self.infer_types_with_memo(n, source, target);
-        } else {
-            self.infer_types(n, source, target);
-        }
-        if n.calls >= memo::LONG_WALK {
-            self.inference_memo.note_long_walk_to(target);
-        }
+        self.infer_types(n, source, target);
         // Otherwise every clone of the context would copy it.
         n.repeated_argument_walks = None;
     }

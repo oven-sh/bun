@@ -9,7 +9,7 @@
 //! So while `reduced_members` filters a union, `combine_props` caches what it learned about each property of each
 //! member (`Fact`) and reads that instead of recomputing it.
 //!
-//! tsgo recomputes, so skipping the calls must not be observable. The rules are the same as in check/infer_memo.rs:
+//! tsgo recomputes, so skipping the calls must not be observable. The rules are the same as in check/infer_traces.rs:
 //!
 //! - A fact is about one property under one mapper. The calls it replaces have no other input.
 //! - A call's result is cached only if the call left no trace (`Checker::traces_of_inference`), so all its lookups hit

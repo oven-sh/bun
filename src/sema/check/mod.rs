@@ -845,7 +845,6 @@ impl<'s> Program<'s> {
             rechecked_members: Default::default(),
             spare_rechecked: Vec::new(),
             inference_contexts: Vec::new(),
-            inference_memo: Default::default(),
             instantiation_depth: 0,
             outermost_comparison: None,
             instantiation_count: 0,
@@ -1566,8 +1565,6 @@ pub struct Checker<'p, 's> {
     spare_rechecked: Vec<Rechecked>,
     /// `inferenceContextInfos`
     inference_contexts: Vec<InferenceContextInfo>,
-    /// Records what the `inferTypes` walks wrote. See check/infer_memo.rs.
-    inference_memo: infer::InferenceMemo,
     instantiation_depth: u32,
     /// The `errorNode` of the comparison that began while no query or instantiation was in progress
     /// and hasn't ended yet. See `begin_comparison`.

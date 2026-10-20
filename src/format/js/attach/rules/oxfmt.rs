@@ -524,6 +524,8 @@ impl<'a> Rules<'_, 'a, '_> {
             && let StmtKind::For { body, .. } = statement.kind()
             && self.following_node == Some(self.cx.owner_of_stmt(body))
             && self.next_token_starts_with(b'(')
+            // Not the `(` of `for (;;) /* prettier-ignore */ (a).b();`
+            && !self.prev_token_ends_with(b')')
         {
             return Some(Attachment {
                 is_unignored: true,

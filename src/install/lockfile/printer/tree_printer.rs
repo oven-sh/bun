@@ -393,7 +393,8 @@ fn write_updated_row<W: Write>(
     Ok(())
 }
 
-/// The one-section summary only walks `update_owners`' rows; other importers consume entries too.
+/// The one-section summary only walks the dependencies of `update_owners`, but other workspaces use
+/// catalog entries too.
 fn print_catalog_entry_updates<W: Write>(
     this: &Printer,
     manager: &mut PackageManager,
@@ -840,19 +841,6 @@ pub(crate) fn print<W: Write>(
                 writer,
                 enable_ansi_colors,
                 "<r><yellow>skipped<r> <b>{s}<r><d>@{f}<r> <d>(unsupported platform)<r>\n",
-                escape_control_chars(dependency.name.slice(string_buf)),
-                bun_core::fmt::for_terminal(resolution.fmt(string_buf, PathSep::Posix)),
-            )?;
-            continue;
-        }
-
-        if (this.lockfile.get_parent_pkg_of_dependency(dependency_id))
-            .is_some_and(|owner| this.lockfile.is_member_outside(owner))
-        {
-            bun_core::write_pretty!(
-                writer,
-                enable_ansi_colors,
-                "<r><yellow>skipped<r> <b>{s}<r><d>@{f}<r> <d>(workspace outside the project)<r>\n",
                 escape_control_chars(dependency.name.slice(string_buf)),
                 bun_core::fmt::for_terminal(resolution.fmt(string_buf, PathSep::Posix)),
             )?;

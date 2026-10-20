@@ -1038,52 +1038,66 @@ describe("bundler", () => {
       stdout: `0.6.0`,
     },
   });
+  const overwriteInputFiles = {
+    "/entry.js": /* js */ `
+      import { version } from './library';
+      console.log(version);
+    `,
+    "/library.js": /* js */ `
+      exports.version = '0.6.0';
+    `,
+  };
   itBundled("edgecase/OverwriteInputWithOutdir", {
-    todo: true, // bundler does not yet detect output paths that overwrite inputs
-    files: {
-      "/entry.js": /* js */ `
-        import { version } from './library';
-        console.log(version);
-      `,
-      "/library.js": /* js */ `
-        exports.version = '0.6.0';
-      `,
-    },
+    files: overwriteInputFiles,
     outdir: "/",
     bundleErrors: {
-      "<bun>": ['Refusing to overwrite input file "/entry.js"'],
+      "<bun>": ['Refusing to overwrite input file "entry.js"'],
     },
   });
   itBundled("edgecase/OverwriteInputWithOutfile", {
-    todo: true, // bundler does not yet detect output paths that overwrite inputs
-    files: {
-      "/entry.js": /* js */ `
-        import { version } from './library';
-        console.log(version);
-      `,
-      "/library.js": /* js */ `
-        exports.version = '0.6.0';
-      `,
-    },
+    files: overwriteInputFiles,
     outfile: "/entry.js",
     bundleErrors: {
-      "<bun>": ['Refusing to overwrite input file "/entry.js"'],
+      "<bun>": ['Refusing to overwrite input file "entry.js"'],
     },
   });
   itBundled("edgecase/OverwriteInputNonEntrypoint", {
-    todo: true, // bundler does not yet detect output paths that overwrite inputs
+    files: overwriteInputFiles,
+    outfile: "/library.js",
+    bundleErrors: {
+      "<bun>": ['Refusing to overwrite input file "library.js"'],
+    },
+  });
+  itBundled("edgecase/OverwriteInputWithOutdirCLI", {
+    backend: "cli",
+    files: overwriteInputFiles,
+    outdir: "/",
+    bundleErrors: {
+      "<bun>": ['Refusing to overwrite input file "entry.js"'],
+    },
+  });
+  itBundled("edgecase/OverwriteInputWithOutfileCLI", {
+    backend: "cli",
+    files: overwriteInputFiles,
+    outfile: "/library.js",
+    bundleErrors: {
+      "<bun>": ['Refusing to overwrite input file "library.js"'],
+    },
+  });
+  itBundled("edgecase/OverwriteInputSourcemap", {
     files: {
-      "/entry.js": /* js */ `
-        import { version } from './library';
-        console.log(version);
-      `,
-      "/library.js": /* js */ `
-        exports.version = '0.6.0';
+      ...overwriteInputFiles,
+      "/out/entry.js.map": `not a sourcemap`,
+      "/entry2.js": /* js */ `
+        import map from './out/entry.js.map' with { type: 'text' };
+        console.log(map);
       `,
     },
-    outfile: "/entry.js",
+    entryPoints: ["/entry2.js", "/entry.js"],
+    outdir: "/out",
+    sourceMap: "external",
     bundleErrors: {
-      "<bun>": ['Refusing to overwrite input file "/entry.js"'],
+      "<bun>": ['Refusing to overwrite input file "out/entry.js.map"'],
     },
   });
   itBundled("edgecase/ModuleExportsFunctionIssue2911", {

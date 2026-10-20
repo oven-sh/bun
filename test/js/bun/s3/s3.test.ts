@@ -1727,18 +1727,25 @@ describe("s3-server", () => {
       expect(() => hosted.deleteBucket("other")).toThrow(/virtualHostedStyle/);
       const hostedKnown = S3({ ...options, bucket: "buntest", virtualHostedStyle: true, endpoint: server.url.href });
       expect(() => hostedKnown.deleteBucket("other")).toThrow(/virtualHostedStyle/);
+      expect(() => hostedKnown.deleteBucket(undefined, { bucket: "other" })).toThrow(/virtualHostedStyle/);
+      expect(() => hostedKnown.deleteBucket("other", { bucket: "other" })).toThrow(/virtualHostedStyle/);
       expect(requests).toBe(0);
       expect(await code(hostedKnown.bucketExists("buntest"))).toBe("resolved");
-      expect(requests).toBe(1);
+      expect(await code(hostedKnown.bucketExists(undefined, { bucket: "buntest" }))).toBe("resolved");
+      expect(requests).toBe(2);
       const r2 = S3({
         ...options,
         virtualHostedStyle: true,
         endpoint: "https://buntest.account.r2.cloudflarestorage.com",
       });
       expect(() => r2.deleteBucket("other")).toThrow(/virtualHostedStyle/);
-      expect(() => client.bucketExists(5 as any)).toThrow(TypeError);
+      expect(() => client.bucketExists(5 as any)).toThrow(
+        'The "name" argument must be of type string. Received type number (5)',
+      );
       expect(() => client.createBucket("x", { acl: "nope" as any })).toThrow(/acl must be one of/);
-      expect(() => client.createBucket("x", { objectLockEnabled: "yes" as any })).toThrow(TypeError);
+      expect(() => client.createBucket("x", { objectLockEnabled: "yes" as any })).toThrow(
+        'The "objectLockEnabled" property must be of type boolean, got string',
+      );
     });
   });
 });

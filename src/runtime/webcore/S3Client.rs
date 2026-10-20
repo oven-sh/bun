@@ -593,7 +593,7 @@ impl S3Client {
             self.request_payer,
             global,
         )?;
-        BucketRequest::new(global, aws_options, name, options)
+        BucketRequest::new(global, aws_options, &self.credentials.bucket, name, options)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -705,7 +705,7 @@ impl S3Client {
             false,
             global,
         )?;
-        BucketRequest::new(global, aws_options, name, options)
+        BucketRequest::new(global, aws_options, &env_creds.bucket, name, options)
     }
 
     pub(crate) fn static_bucket_exists(
@@ -780,9 +780,12 @@ struct BucketRequest {
 }
 
 impl BucketRequest {
+    /// `base_bucket` is the bucket of the client or the environment, before
+    /// the options of the call.
     fn new(
         global: &JSGlobalObject,
         mut aws_options: bun_s3_signing::S3CredentialsWithOptions,
+        base_bucket: &[u8],
         name: JSValue,
         options: Option<JSValue>,
     ) -> JsResult<Self> {
@@ -790,22 +793,19 @@ impl BucketRequest {
             if !name.is_string() {
                 return Err(global.throw_invalid_argument_type_value(b"name", b"string", name));
             }
-            let name = name.to_utf8(global)?;
-            let credentials = &aws_options.credentials;
-            // The host is the bucket here, so a name could not reach the wire.
-            if credentials.virtual_hosted_style && !credentials.endpoint.is_empty() {
-                let known: Option<&[u8]> = if credentials.bucket.is_empty() {
-                    <S3Credentials as S3CredentialsExt>::guess_bucket(&credentials.endpoint)
-                } else {
-                    Some(&credentials.bucket)
-                };
-                if known != Some(&*name) {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "A virtualHostedStyle endpoint names its bucket. Pass no name, or a client for that bucket"
-                    )));
-                }
+            aws_options.credentials.bucket = name.to_utf8(global)?.into_vec().into_boxed_slice();
+        }
+        let credentials = &aws_options.credentials;
+        // The host is the bucket here, so a name or a bucket option could not reach the wire.
+        if credentials.virtual_hosted_style && !credentials.endpoint.is_empty() {
+            let host_bucket =
+                <S3Credentials as S3CredentialsExt>::guess_bucket(&credentials.endpoint)
+                    .unwrap_or(base_bucket);
+            if !credentials.bucket.is_empty() && *credentials.bucket != *host_bucket {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "A virtualHostedStyle endpoint names its bucket. Pass no name, or a client for that bucket"
+                )));
             }
-            aws_options.credentials.bucket = name.into_vec().into_boxed_slice();
         }
         // A separator inside the bucket would make the request an object request on the bucket before it.
         let bucket = bun_core::strings::trim(&aws_options.credentials.bucket, b"/\\");

@@ -4,6 +4,7 @@ use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_collections::VecExt as _;
 use bun_core::EncodedSlice;
 use bun_core::Output;
+use bun_core::strings;
 use bun_jsc::EncodedSliceJsc as _;
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
@@ -56,11 +57,33 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             break;
         }
     }
+    // alert() is a dialog read too, so a byte order mark on the line after it stays.
+    Output::take_first_dialog_read();
 
     // 8. Invoke WebDriver BiDi user prompt closed with this and true.
     // *  Again, not necessary in a server context.
 
     Ok(JSValue::UNDEFINED)
+}
+
+/// Returns the first byte of the answer, or `None` when the line or stdin ended first.
+fn skip_stdin_byte_order_mark(
+    reader: &mut bun_core::output::StdinReader,
+    first_byte: u8,
+) -> Option<u8> {
+    let [first_of_mark, rest_of_mark @ ..] = strings::BOM::UTF8_BYTES;
+    if !Output::take_first_dialog_read() || first_byte != first_of_mark {
+        return Some(first_byte);
+    }
+    for mark_byte in rest_of_mark {
+        match reader.take_byte() {
+            Ok(byte) if byte == mark_byte => {}
+            Ok(b'\n' | b'\r') | Err(_) => return None,
+            // Not a mark, and not `y` either: the caller reads to the end of the line and answers no.
+            Ok(_) => return Some(first_byte),
+        }
+    }
+    reader.take_byte().ok()
 }
 
 #[bun_jsc::host_fn(export = "WebCore__confirm")]
@@ -106,6 +129,9 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let mut reader = Output::stdin_reader();
 
     let Ok(first_byte) = reader.take_byte() else {
+        return Ok(JSValue::FALSE);
+    };
+    let Some(first_byte) = skip_stdin_byte_order_mark(&mut reader, first_byte) else {
         return Ok(JSValue::FALSE);
     };
 
@@ -314,6 +340,7 @@ pub(crate) mod prompt {
             //    that the user responded with.
             return Ok(JSValue::NULL);
         };
+        let first_dialog_read = Output::take_first_dialog_read();
 
         if first_byte == b'\n' {
             // 8. Let result be null if the user aborts, or otherwise the string
@@ -382,9 +409,18 @@ pub(crate) mod prompt {
 
         debug_assert!(!input.is_empty());
 
+        let answer = if first_dialog_read {
+            strings::without_utf8_bom(&input)
+        } else {
+            input.as_slice()
+        };
+        if answer.is_empty() {
+            return Ok(default);
+        }
+
         // 8. Let result be null if the user aborts, or otherwise the string
         //    that the user responded with.
-        let result = EncodedSlice::utf8(&input);
+        let result = EncodedSlice::utf8(answer);
 
         // 9. Invoke WebDriver BiDi user prompt closed with this, false if
         //    result is null or true otherwise, and result.

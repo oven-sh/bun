@@ -2792,6 +2792,13 @@ pub fn buffered_stdin_read_until_delimiter(
     unsafe { (*buffered_stdin()).read_until_delimiter_array_list(out, delimiter, max_size) }
 }
 
+static FIRST_DIALOG_READ: AtomicBool = AtomicBool::new(true);
+
+/// `true` once per process, at the first read of stdin by `alert()`, `confirm()` or `prompt()`. A UTF-8 byte order mark there is the signature of the writer.
+pub fn take_first_dialog_read() -> bool {
+    FIRST_DIALOG_READ.swap(false, Ordering::SeqCst)
+}
+
 /// https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036
 pub const SYNCHRONIZED_START: &str = "\x1b[?2026h";
 

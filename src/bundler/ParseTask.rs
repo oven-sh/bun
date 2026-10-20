@@ -116,6 +116,8 @@ pub struct ParseTask {
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
     pub(crate) is_entry_point: bool,
+    /// The import kind of the `onResolve` answer that made this task, until `BundleV2::adopt_resolver_result` runs.
+    pub(crate) created_by_on_resolve: Option<ast::ImportKind>,
 }
 
 pub enum ParseTaskStage {
@@ -255,7 +257,29 @@ impl ParseTask {
         // provenance to read-only, making the later `&mut *ctx` UB).
         ctx: *mut BundleV2<'_>,
     ) -> ParseTask {
-        let (package_name, package_version) = match resolve_result.package_json {
+        // SAFETY: lifetime erased — `ctx` outlives the ParseTask (BACKREF);
+        // write provenance from the `*mut BundleV2` parameter; caller passes a
+        // live `&mut BundleV2` coerced to `*mut`.
+        let ctx_ref = unsafe { bun_ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) };
+        let known_target = ctx_ref.get().transpiler().options.target;
+        let mut task = ParseTask {
+            ctx: Some(ctx_ref),
+            path: resolve_result.path_pair.primary,
+            contents_or_fd: ContentsOrFd::Fd {
+                dir: resolve_result.dirname_fd,
+                file: resolve_result.file_fd,
+            },
+            source_index,
+            known_target,
+            ..Default::default()
+        };
+        task.set_resolver_result(resolve_result);
+        task
+    }
+
+    /// What the resolver says about the file, apart from its path and its descriptors.
+    pub(crate) fn set_resolver_result(&mut self, resolve_result: &_resolver::Result) {
+        (self.package_name, self.package_version) = match resolve_result.package_json {
             // SAFETY: `package_json` is `Option<*const PackageJSON>`; the resolver
             // arena outlives the bundle pass, so deref'ing the raw pointer here to
             // borrow `name`/`version` is sound.
@@ -268,46 +292,13 @@ impl ParseTask {
             },
             None => (ast::StoreStr::EMPTY, ast::StoreStr::EMPTY),
         };
-        // SAFETY: lifetime erased — `ctx` outlives the ParseTask (BACKREF);
-        // write provenance from the `*mut BundleV2` parameter; caller passes a
-        // live `&mut BundleV2` coerced to `*mut`.
-        let ctx_ref = unsafe { bun_ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) };
-        let known_target = ctx_ref.get().transpiler().options.target;
-        ParseTask {
-            ctx: Some(ctx_ref),
-            path: resolve_result.path_pair.primary,
-            contents_or_fd: ContentsOrFd::Fd {
-                dir: resolve_result.dirname_fd,
-                file: resolve_result.file_fd,
-            },
-            side_effects: resolve_result.primary_side_effects_data,
-            // D042: resolver-side and bundler-side `jsx::Pragma` are the SAME
-            // nominal type (`bun_options_types::jsx::Pragma`). Preserves
-            // jsxImportSource/runtime/etc. from tsconfig.json.
-            jsx: resolve_result.jsx.clone(),
-            source_index,
-            module_type: resolve_result.module_type,
-            emit_decorator_metadata: resolve_result.flags.emit_decorator_metadata(),
-            experimental_decorators: resolve_result.flags.experimental_decorators(),
-            use_define_for_class_fields: resolve_result.flags.use_define_for_class_fields(),
-            package_version,
-            package_name,
-            known_target,
-            // defaults:
-            secondary_path_for_commonjs_interop: None,
-            external_free_function: ExternalFreeFunction::NONE,
-            loader: None,
-            task: ThreadPoolLib::Task {
-                node: ThreadPoolLib::Node::default(),
-                callback: task_callback,
-            },
-            io_task: ThreadPoolLib::Task {
-                node: ThreadPoolLib::Node::default(),
-                callback: io_task_callback,
-            },
-            stage: ParseTaskStage::NeedsSourceCode,
-            is_entry_point: false,
-        }
+        self.side_effects = resolve_result.primary_side_effects_data;
+        // Carries jsxImportSource, runtime and the rest from the tsconfig.json of the file.
+        self.jsx = resolve_result.jsx.clone();
+        self.module_type = resolve_result.module_type;
+        self.emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata();
+        self.experimental_decorators = resolve_result.flags.experimental_decorators();
+        self.use_define_for_class_fields = resolve_result.flags.use_define_for_class_fields();
     }
 
     /// Re-export of `parse_worker::get_runtime_source` as an associated fn so
@@ -347,6 +338,7 @@ impl Default for ParseTask {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            created_by_on_resolve: None,
         }
     }
 }
@@ -626,6 +618,7 @@ pub mod parse_worker {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            created_by_on_resolve: None,
         };
         let source = Source {
             // `bun_ast::Source.path` is `bun_paths::fs::Path<'static>`, distinct

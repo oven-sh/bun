@@ -5246,8 +5246,10 @@ impl VirtualMachine {
 
         // A `loop`
         // returning the resolver result; `retry_on_not_found` is consumed on
-        // the first miss.
-        let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
+        // the first miss. An absolute specifier names the directory to read
+        // again by itself: its importer can be a built-in module or a `blob:`.
+        let mut retry_on_not_found = bun_paths::is_absolute(source_to_use)
+            || bun_paths::is_absolute(normalized_specifier);
         let result: bun_resolver::Result = loop {
             let import_kind = if is_esm {
                 bun_ast::ImportKind::Stmt

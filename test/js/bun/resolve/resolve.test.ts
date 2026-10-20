@@ -2121,3 +2121,29 @@ test.concurrent.each(["import", "require"])(
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "later.mjs\nlater.mjs\n", stderr: "", exitCode: 0 });
   },
 );
+
+// The importer of a built-in module, such as the one `bun bake` runs, is a name too.
+test.concurrent(
+  "Bun.resolveSync() of a file written after its directory was read, from an importer that is not a path",
+  async () => {
+    using dir = tempDir("resolve-written-later-from-name", {
+      "entry.mjs": `
+      import { writeFileSync } from "node:fs";
+      import { basename, join } from "node:path";
+      // This lookup reads the directory.
+      console.log(basename(Bun.resolveSync(import.meta.path, "not-a-path")));
+      writeFileSync(join(import.meta.dir, "later.mjs"), "");
+      console.log(basename(Bun.resolveSync(join(import.meta.dir, "later.mjs"), "not-a-path")));
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "entry.mjs\nlater.mjs\n", stderr: "", exitCode: 0 });
+  },
+);

@@ -145,6 +145,11 @@ test.concurrent.each([
     files: { "app/pages/a]b.html": page },
     error: `"app/pages/a]b.html": a page cannot have "[", "]", ":", "*", "?", "#" or "%" in its path. Its URL must be fixed.`,
   },
+  {
+    name: "a page with a name that a URL reads as a folder",
+    files: { "app/pages/docs/..html": page },
+    error: `"app/pages/docs/..html": a page cannot be named ".", ".." or nothing before ".html".`,
+  },
   // `:` is not allowed in a file name on Windows.
   ...(isWindows
     ? []
@@ -951,6 +956,145 @@ test.concurrent("bun bake keeps serving when a reload finds a page it cannot ser
   expect(await get(url, "/missing")).toBe("200 v1");
 });
 
+test.concurrent("bun bake reloads app/server.ts again after a reload that found a page it cannot serve", async () => {
+  using dir = tempDir("bake-command-reload-after-error", {
+    "app/pages/index.html": page,
+    "app/server.ts": `export default { fetch: () => new Response("v1") };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+
+  await Bun.write(join(String(dir), "app/pages/[slug].html"), page);
+  await Bun.write(join(String(dir), "app/server.ts"), `export default { fetch: () => new Response("v2") };`);
+  await output.waitFor(/a page cannot have/);
+
+  // That reload stopped before it loaded app/server.ts. The next save of it reloads all the same.
+  rmSync(join(String(dir), "app/pages/[slug].html"));
+  await Bun.write(join(String(dir), "app/server.ts"), `export default { fetch: () => new Response("v3") };`);
+  let body = await get(url, "/missing");
+  while (!body.includes("v3")) body = await get(url, "/missing");
+  expect(body).toBe("200 v3");
+});
+
+const titled = (title: string) => `<!doctype html><html><body><h1>${title}</h1></body></html>`;
+
+test.concurrent("bun bake serves a page added to app/pages/ while it runs, at its first request", async () => {
+  using dir = tempDir("bake-command-added-page", {
+    "app/pages/index.html": page,
+    "shared/.keep": "",
+  });
+  // Creating a symlink on Windows needs a privilege that CI does not have.
+  if (!isWindows) symlinkSync(join(String(dir), "shared"), join(String(dir), "app/pages/linked"));
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+  expect(await get(url, "/late")).toBe("404 Not found");
+
+  // Next to a page that is served, in a new folder, under a dot name, and in a symlinked folder.
+  const added = [
+    ["app/pages/late.html", "/late"],
+    ["app/pages/docs/index.html", "/docs"],
+    ["app/pages/.well-known/info.html", "/.well-known/info"],
+    ["app/pages/.draft.html", "/.draft"],
+    ...(isWindows ? [] : [["shared/guide.html", "/linked/guide"]]),
+  ];
+  for (const [file, path] of added) {
+    await Bun.write(join(String(dir), file), titled(path));
+    // The request that finds the new page is sent to it again, and gets it from its route.
+    const found = await fetch(new URL(path, url), { redirect: "manual" });
+    expect([found.status, found.headers.get("location")]).toEqual([307, path]);
+    const pages = await Promise.all([1, 2, 3, 4].map(() => get(url, path)));
+    for (const body of pages) expect(body).toContain(`<h1>${path}</h1>`);
+  }
+
+  // The same process and server. It looked for pages once for each new one.
+  expect(proc.exitCode).toBeNull();
+  expect(output.text.match(/url: /g)).toHaveLength(1 + added.length);
+});
+
+test.concurrent("bun bake serves an added page before the fetch of app/server.ts, which still reloads", async () => {
+  const server = (version: string) => `
+    export default {
+      fetch(request, server) {
+        return new Response("${version} " + new URL(request.url).pathname + " " + (this === server), { status: 404 });
+      },
+    };
+  `;
+  using dir = tempDir("bake-command-added-page-fetch", {
+    "app/pages/index.html": page,
+    "app/server.ts": server("v1"),
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+  expect(await get(url, "/late")).toBe("404 v1 /late true");
+
+  await Bun.write(join(String(dir), "app/pages/late.html"), titled("late"));
+  expect(await get(url, "/late")).toContain("<h1>late</h1>");
+  // A path with no page still goes to fetch.
+  expect(await get(url, "/missing")).toBe("404 v1 /missing true");
+
+  // The reload loads every page again, the new one too.
+  await Bun.write(join(String(dir), "app/server.ts"), server("v2"));
+  let body = await get(url, "/missing");
+  while (!body.includes("v2")) body = await get(url, "/missing");
+  expect(body).toBe("404 v2 /missing true");
+  expect(await get(url, "/late")).toContain("<h1>late</h1>");
+  expect(output.text).not.toContain("Cannot find module");
+});
+
+test.concurrent("bun bake --check starts again when a request finds an added page", async () => {
+  using dir = tempDir("bake-command-added-page-check", {
+    "tsconfig.json": checkedTsconfig,
+    "app/pages/index.html": page,
+    "app/server.ts": `
+      declare const Response: any;
+      export default { fetch: () => new Response("fallback", { status: 404 }) };
+    `,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--check", "--port=0"]);
+  const output = collectOutput(proc);
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+
+  await Bun.write(join(String(dir), "app/pages/late.html"), titled("late"));
+  const before = output.text.length;
+  // The process that gets the request ends before it answers: the new one type checks the project.
+  await get(url, "/late").catch(() => {});
+  await output.waitFor(new RegExp(`^[\\s\\S]{${before}}[\\s\\S]*url: http`));
+  const next = output.text.slice(before).match(/url: (http:\/\/\S+)/)![1];
+  expect(await get(next, "/late")).toContain("<h1>late</h1>");
+});
+
+test.concurrent("bun bake serves pages with a dot name, but not editor files, .git or node_modules", async () => {
+  using dir = tempDir("bake-command-dot-pages", {
+    "app/pages/.well-known/info.html": titled("info"),
+    "app/pages/.draft.html": titled("draft"),
+    // What the router of the .tsx pages skips too.
+    "app/pages/.git/head.html": page,
+    "app/pages/node_modules/package/readme.html": page,
+    // A lock file of Emacs and a resource fork of macOS, next to a page they are named after.
+    "app/pages/.#about.html": page,
+    "app/pages/._about.html": page,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+
+  expect(await get(url, "/.well-known/info")).toContain("<h1>info</h1>");
+  expect(await get(url, "/.draft")).toContain("<h1>draft</h1>");
+  for (const path of ["/.git/head", "/node_modules/package/readme", "/.%23about", "/._about"]) {
+    expect(await get(url, path)).toBe("404 Not found");
+  }
+  // A request for a file that is no page does not start the server again.
+  expect(output.text.match(/url: /g)).toHaveLength(1);
+});
+
 test.concurrent("bun bake reads a bake.config.ts whose default export is a promise", async () => {
   using dir = tempDir("bake-command-config-promise", {
     "bake.config.ts": `
@@ -1291,6 +1435,28 @@ test.concurrent("bun bake starts again for the first .tsx page, at the next relo
   await output.waitFor(new RegExp(`^[\\s\\S]{${before}}[\\s\\S]*url: http`));
   const next = output.text.slice(before).match(/url: (http:\/\/\S+)/)![1];
   expect(await (await fetch(new URL("/about", next))).text()).toContain("<h1>about</h1>");
+});
+
+test.concurrent("bun bake starts again when a request finds an added .tsx page", async () => {
+  using dir = tempDir("bake-command-added-tsx-page", {
+    // The default framework starts for a page in a dot folder too.
+    "app/pages/.well-known/info.tsx": `export default () => <h1>info</h1>;`,
+  });
+  linkReact(String(dir));
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+  expect(await get(url, "/about")).toBe("404 Not found");
+
+  await Bun.write(join(String(dir), "app/pages/about.tsx"), `export default () => <h1>about</h1>;`);
+  const before = output.text.length;
+  // The router reads its pages once, so the process that gets the request ends before it answers.
+  await get(url, "/about").catch(() => {});
+  await output.waitFor(new RegExp(`^[\\s\\S]{${before}}[\\s\\S]*url: http`));
+  const next = output.text.slice(before).match(/url: (http:\/\/\S+)/)![1];
+  expect(await (await fetch(new URL("/about", next))).text()).toContain("<h1>about</h1>");
+  expect(await (await fetch(new URL("/.well-known/info", next))).text()).toContain("<h1>info</h1>");
 });
 
 test.concurrent("bun bake renders pages and layouts made with memo() and forwardRef()", async () => {

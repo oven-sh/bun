@@ -17,6 +17,7 @@ const isRestart = $newRustFunction("bake/config/plugins.rs", "isRestart", 0);
 const restartProcess = $newRustFunction("bake/config/plugins.rs", "restartProcess", 0);
 const setPages = $newRustFunction("bake/config/plugins.rs", "setPages", 1);
 const checkFramework = $newRustFunction("bake/config/plugins.rs", "checkFramework", 1);
+const hotReloadGeneration = $bindgen("jsc_hooks.bind.ts", "hotReloadGeneration");
 
 // `app/server.ts` runs before the code that checks its export, and can change these on the prototypes.
 const ObjectKeys = Object.keys;
@@ -40,6 +41,7 @@ Serves the app in the working directory, with hot reloading:
                         gets the requests that no page and no route matched.
 
 Changes to app/server.ts and the files it imports apply without a restart.
+A page added to app/pages/ is served from its first request.
 
 Options:
 
@@ -89,16 +91,27 @@ function routeOfPage(file: string): string {
   return route;
 }
 
-async function loadPages(pagesDir: string): Promise<Page[]> {
+/**
+ * The files in `app/pages/` that match `pattern`, relative to it, in a fixed order. A name can
+ * start with a dot, as in `.well-known/`. As the router of the `.tsx` pages, this does not look in
+ * `node_modules` and `.git`. A lock file of Emacs (`.#about.html`) and a resource fork of macOS
+ * (`._about.html`) have the name of the page they belong to, and are not pages.
+ */
+function pageFiles(pagesDir: string, pattern: string): string[] {
   let files: string[];
   try {
-    files = [...new Bun.Glob("**/*.html").scanSync({ cwd: pagesDir, onlyFiles: true, followSymlinks: true })];
+    files = [...new Bun.Glob(pattern).scanSync({ cwd: pagesDir, onlyFiles: true, followSymlinks: true, dot: true })];
   } catch (error: any) {
     if (error?.code === "ENOENT") return [];
     throw error;
   }
-  files.sort((a, b) => a.localeCompare(b));
+  return files
+    .filter(relative => !/(^|[\\/])(node_modules[\\/]|\.git[\\/]|\.[#_][^\\/]*$)/.test(relative))
+    .sort((a, b) => a.localeCompare(b));
+}
 
+/** Loads the pages in `files`: the `.html` files among the `pageFiles()`. */
+async function loadPages(pagesDir: string, files: string[]): Promise<Page[]> {
   const pages: Page[] = [];
   const fileOfRoute: Record<string, string> = { __proto__: null } as any;
   for (const relative of files) {
@@ -110,6 +123,11 @@ async function loadPages(pagesDir: string): Promise<Page[]> {
         `"${display(file)}": a page cannot have "[", "]", ":", "*", "?", "#" or "%" in its path. Its URL must be fixed.`,
         false,
       );
+    }
+    // In a URL, `.` and `..` name a folder, and a page with no name would be the index page.
+    const name = path.basename(relative).slice(0, -".html".length);
+    if (name === "" || name === "." || name === "..") {
+      throw new BakeError(`"${display(file)}": a page cannot be named ".", ".." or nothing before ".html".`, false);
     }
     const route = routeOfPage(relative);
     const other = fileOfRoute[route];
@@ -131,8 +149,23 @@ async function loadPages(pagesDir: string): Promise<Page[]> {
  */
 let configKeyInServer: string | undefined;
 
-/** Whether the server has the routers of a framework, once it started. */
-let frameworkRoutesInServer: boolean | undefined;
+/**
+ * The files that the router of the default framework read, once the server started: `routerFiles()`
+ * as one string, or "" with no page for that router. The router reads them once, so a change to
+ * them starts the process again.
+ */
+let routerFilesInServer: string | undefined;
+
+/** The page files that the server has, as `pagesKey()` gives them. */
+let pagesInServer: string | undefined;
+
+/** The `.html` pages that the server has, by URL. */
+let pageOfUrl: Record<string, Page> = { __proto__: null } as any;
+
+/** The page files as one string, which tells when one is added or removed. */
+function pagesKey(html: string[], routed: string[] | undefined): string {
+  return html.join("\0") + "\0\0" + (routed === undefined ? "" : routed.join("\0"));
+}
 
 /** The `framework` object of a plugin, and the plugin's name. */
 type FrameworkPlugin = { object: object; plugin: string };
@@ -253,19 +286,22 @@ function loadFramework(name: string, dir: string, pluginName: string, value: any
 }
 
 /**
- * The `.tsx` and `.jsx` pages of the default framework in `app/pages/`, relative to it. Files and
- * folders that start with `_`, such as `_layout.tsx`, are not pages. The dev server's router finds
- * and serves the pages itself; this finds them as it does, symlinked folders too.
+ * The `.tsx` and `.jsx` files in `app/pages/` that the router of the default framework reads,
+ * relative to it: the pages and the `_layout` files. Other files and folders that start with `_`
+ * are not pages. The dev server's router finds and serves the pages itself; this finds them as it
+ * does, symlinked folders too.
  */
-function componentPages(pagesDir: string): string[] {
-  try {
-    return [
-      ...new Bun.Glob("**/*.{tsx,jsx}").scanSync({ cwd: pagesDir, onlyFiles: true, followSymlinks: true }),
-    ].filter(relative => !relative.split(/[\\/]/).some(part => part.startsWith("_")));
-  } catch (error: any) {
-    if (error?.code === "ENOENT") return [];
-    throw error;
-  }
+function routerFiles(pagesDir: string): string[] {
+  return pageFiles(pagesDir, "**/*.{tsx,jsx}").filter(relative => {
+    const parts = relative.split(/[\\/]/);
+    const name = parts.pop()!;
+    return !parts.some(part => part.startsWith("_")) && (!name.startsWith("_") || /^_layout\.[jt]sx$/.test(name));
+  });
+}
+
+/** The pages among the `routerFiles()`. */
+function componentPages(routed: string[]): string[] {
+  return routed.filter(relative => !path.basename(relative).startsWith("_"));
 }
 
 /** A component page and an `.html` page cannot have the same URL: one file is the page. */
@@ -362,7 +398,7 @@ async function loadAppServer(
   return { file, server, routes, fetch };
 }
 
-/** How many times `start()` ran: once, then once more for each reload. */
+/** How many times `start()` ran: once, then once more for each reload and for each new set of pages. */
 let runs = 0;
 /**
  * Whether this process is a restart of `bun bake --check`: a new process that a change started, not
@@ -401,17 +437,32 @@ async function start() {
   // Before `Bun.serve()`: the server loads them with the plugins of bunfig.toml.
   setConfigPlugins(config.plugins, config.names);
   const pagesDir = path.join(cwd, "app", "pages");
-  const pages = await loadPages(pagesDir);
+  const htmlFiles = pageFiles(pagesDir, "**/*.html");
   // A framework plugin has its own routers. Without one, the default framework routes the `.tsx`
   // and `.jsx` pages of app/pages/, with the project's React.
-  const components = config.framework === undefined ? componentPages(pagesDir) : [];
-  checkPageClashes(pagesDir, components, pages);
+  const routed = config.framework === undefined ? routerFiles(pagesDir) : undefined;
+  const components = routed === undefined ? [] : componentPages(routed);
   const defaultFrameworkPages = components.length > 0;
-  if (defaultFrameworkPages) checkReactForPages(cwd);
+  let pages: Page[];
+  try {
+    pages = await loadPages(pagesDir, htmlFiles);
+    checkPageClashes(pagesDir, components, pages);
+    if (defaultFrameworkPages) checkReactForPages(cwd);
+  } catch (error) {
+    // A save of app/server.ts takes it off the file watcher until the module loader loads it
+    // again. A reload that stops here loads it, or no later save of it would reload.
+    if (runs > 1) {
+      try {
+        await loadAppServer(cwd);
+      } catch {}
+    }
+    throw error;
+  }
   const frameworkRoutes = config.framework !== undefined || defaultFrameworkPages;
-  // The server sets up the router of a framework when it starts: start again for the first page of
-  // the default framework, or when the last one is gone.
-  if (frameworkRoutesInServer !== undefined && frameworkRoutes !== frameworkRoutesInServer) {
+  // The server's router reads the files of the default framework when it starts: start again
+  // when one is added or removed.
+  const routerKey = defaultFrameworkPages ? routed!.join("\0") : "";
+  if (routerFilesInServer !== undefined && routerKey !== routerFilesInServer) {
     // Does not return: on a failure it prints the error and exits.
     restartProcess();
   }
@@ -446,7 +497,7 @@ async function start() {
     }
   }
 
-  const fetch = app?.fetch ?? (() => new Response("Not found", { status: 404 }));
+  const fetch = fetchOrFindPage(app?.fetch as Function | undefined, pagesDir, routed !== undefined);
   // Like `export default` in `bun app.ts`, every option of `Bun.serve()` in the export counts. These
   // are Bake's, and the flags come before the export's own `port` and `hostname`.
   const exported = app?.server;
@@ -499,7 +550,9 @@ async function start() {
     throw error;
   }
   configKeyInServer ??= config.key;
-  frameworkRoutesInServer ??= frameworkRoutes;
+  routerFilesInServer ??= routerKey;
+  pagesInServer = pagesKey(htmlFiles, routed);
+  pageOfUrl = pageOfRoute;
   const elapsed = (performance.now() - initial).toFixed(2);
 
   const listed: { route: string; file: string }[] = [];
@@ -509,8 +562,8 @@ async function start() {
   printBannerAndHandleShortcuts({ server, elapsed, pathname: "/", routes: listed });
 }
 
-/** `bun bake`. Prints a `BakeError` as one line, then exits or waits for a change. */
-async function main() {
+/** Runs `start()`. Prints a `BakeError` as one line, then exits or waits for a change. */
+async function run() {
   try {
     await start();
   } catch (error) {
@@ -520,6 +573,89 @@ async function main() {
     // session goes on. On a reload, the server is up and keeps serving until the next change.
     if (!error.fixable && runs === 1 && !restarted) process.exit(1);
   }
+}
+
+/**
+ * Settles when no `start()` runs. The runs wait here for each other: the first one, one for each
+ * reload, and one for each look for new pages.
+ */
+let idle: Promise<unknown> = Promise.$resolve();
+
+/** A look for new pages that waits for its turn. The requests that need one meanwhile share it. */
+let lookForPages: Promise<unknown> | undefined;
+
+/**
+ * Runs `start()` again when the page files are not the ones that the server has. With `--check`
+ * nothing reloads in place, so it starts the process again, which type checks the project again.
+ */
+function findNewPages(pagesDir: string, components: boolean): Promise<unknown> {
+  if (lookForPages === undefined) {
+    const look = idle.$then(async () => {
+      lookForPages = undefined;
+      const html = pageFiles(pagesDir, "**/*.html");
+      if (pagesKey(html, components ? routerFiles(pagesDir) : undefined) === pagesInServer) return;
+      // Does not return: on a failure it prints the error and exits.
+      if (hotReloadGeneration() === -1) restartProcess();
+      await run();
+    });
+    idle = lookForPages = look.$then(undefined, error => console.error(error));
+  }
+  return lookForPages;
+}
+
+/** Whether `app/pages/` has a file for the page at `pathname`, the path of a request's URL. */
+function hasPageFile(pagesDir: string, pathname: string, components: boolean): boolean {
+  let name: string;
+  try {
+    name = decodeURIComponent(pathname);
+  } catch {
+    return false;
+  }
+  // No page has one of these characters in its path, and `..` must not lead out of app/pages/.
+  if (/[[\]:*?#%\0]|(^|[\\/])\.\.?([\\/]|$)/.test(name)) return false;
+  const { existsSync } = require("node:fs");
+  const isPage = (file: string) =>
+    existsSync(file + ".html") || (components && (existsSync(file + ".tsx") || existsSync(file + ".jsx")));
+  const page = path.resolve(pagesDir, "." + name);
+  if (page === pagesDir) return isPage(path.join(page, "index"));
+  // Most requests for the fetch of app/server.ts name a folder that app/pages/ does not have.
+  // One look at the folder answers them.
+  const folder = path.dirname(page);
+  if (folder !== pagesDir && !existsSync(folder)) return false;
+  // `/docs` is docs.html, or docs/index.html.
+  return isPage(page) || (existsSync(page) && isPage(path.join(page, "index")));
+}
+
+/**
+ * The `fetch` of the server: `appFetch`, or a 404 without one. It gets the requests that no page
+ * and no route matched, so the first request for a page that was added after the last `start()`
+ * comes here. When `app/pages/` has a file for the URL, this looks for new pages, and sends the
+ * request to its page again.
+ */
+function fetchOrFindPage(appFetch: Function | undefined, pagesDir: string, components: boolean) {
+  const answer = (self: unknown, request: Request, server: unknown) =>
+    appFetch === undefined ? new Response("Not found", { status: 404 }) : appFetch.$call(self, request, server);
+  return function (this: unknown, request: Request, server: unknown) {
+    const method = request.method;
+    if (method !== "GET" && method !== "HEAD") return answer(this, request, server);
+    const { pathname, search } = new URL(request.url);
+    // A request for a page that the server has is not for a new one.
+    if (pageOfUrl[pathname] !== undefined || !hasPageFile(pagesDir, pathname, components)) {
+      return answer(this, request, server);
+    }
+    return findNewPages(pagesDir, components).$then(() =>
+      pageOfUrl[pathname] !== undefined
+        ? new Response(null, { status: 307, headers: { location: pathname + search } })
+        : answer(this, request, server),
+    );
+  };
+}
+
+/** `bun bake`, and each reload of it. */
+function main() {
+  const done = idle.$then(run);
+  idle = done.$then(undefined, () => {});
+  return done;
 }
 
 export default main;

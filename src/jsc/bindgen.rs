@@ -805,10 +805,19 @@ impl<T: JsPayload> JsWrapperRef<T> {
     pub fn empty() -> Self {
         JsWrapperRef(JsRef::empty(), PhantomData)
     }
+    #[inline]
+    pub fn init_weak(wrapper: JsWrapper<'_, T>) -> Self {
+        JsWrapperRef(JsRef::init_weak(wrapper.as_value().0), PhantomData)
+    }
+    /// As [`get`](Self::get), for the older API, which takes a [`JSValue`].
+    #[inline]
+    pub fn try_get(&self) -> Option<JSValue> {
+        self.0.try_get()
+    }
     /// `None`: never set, or collected.
     #[inline]
     pub fn get<'a>(&self, heap: &JsHeap<'a>) -> Option<JsWrapper<'a, T>> {
-        let value = self.0.try_get()?;
+        let value = self.try_get()?;
         // SAFETY: set from a `JsWrapper<T>`; a cell value is its pointer.
         Some(unsafe {
             JsWrapper::from_extern(NonNull::new_unchecked(value.encoded() as *mut c_void), heap)

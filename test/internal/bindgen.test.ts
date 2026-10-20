@@ -2022,6 +2022,18 @@ describe("classes", () => {
       expect(() => keep.call({})).toThrow(TypeError);
     });
 
+    it("b.self can be absent, as a result and as an argument", () => {
+      const [shared, negative] = [new TestShared(1), new TestShared(-1)];
+      expect(shared.orUndefined()).toBe(shared);
+      expect(shared.orNull()).toBe(shared);
+      expect(negative.orUndefined()).toBeUndefined();
+      expect(negative.orNull()).toBeNull();
+      expect(shared.is(shared)).toBe(true);
+      for (const other of [negative, null, undefined]) expect(shared.is(other)).toBe(false);
+      expect(shared.is.length).toBe(0);
+      expect(() => shared.is({})).toThrow(TypeError);
+    });
+
     it("fromJS: Rust finds out whether a value is an instance", () => {
       expect(TestShared.valueOf(new TestShared(9))).toBe(9);
       class Derived extends TestShared {}

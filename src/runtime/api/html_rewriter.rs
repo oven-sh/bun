@@ -5,10 +5,13 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use std::rc::Rc;
 
+use bun_jsc::bindgen::{
+    self, Callable, JsHeap, JsLocal, JsPayload as _, JsRefCountedPayload, JsScope, JsWrapper,
+    JsWrapperRef, to_js,
+};
 use bun_jsc::{
     self as jsc, CallFrame, CommonAbortReason, CommonAbortReasonExt as _, GlobalRef,
-    JSGlobalObject, JSPromise, JSValue, JsCell, JsCellRefExt as _, JsRef, JsResult, SystemError,
-    bun_string_jsc,
+    JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SystemError,
 };
 // Note: `bun_jsc::VirtualMachine` is a *module* re-export
 // (`pub use self::virtual_machine as VirtualMachine;`). The struct lives at
@@ -21,7 +24,12 @@ use bun_ptr::{BackRef, CellRefCounted, DetachablePtr, RawSlice, RefPtr};
 use bun_sys::Error as SysError;
 
 use crate::api::native_promise_context;
-use crate::generated_classes::{js_HTMLRewriter, js_HTMLRewriterTransform, js_Response};
+use crate::generated_bindgen::html_rewriter::{
+    AttributeIteratorClass, AttributeIteratorResult, CommentClass, ContentOptions, DocEndClass,
+    DocTypeClass, ElementClass, EndTagClass, HTMLRewriterTransformClass,
+    HTMLRewriterTransformInternalFields as _, TextChunkClass,
+};
+use crate::generated_classes::{js_HTMLRewriter, js_Response};
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{
@@ -64,8 +72,7 @@ fn system_error(code: &'static str, message: &'static str) -> SystemError {
 //
 // Note: a `#[bun_jsc::host_fn(method)]` proc-macro form of typed argument
 // decoding hasn't landed, so the per-type decode arms used by HTMLRewriter
-// (string, `?ContentOptions`, `JSValue`) are open-coded here as small
-// helpers.
+// (string, `JSValue`) are open-coded here as small helpers.
 
 /// Decode arm for a string — eat next arg, throw "Missing argument" if
 /// absent, "Expected string" if undefined/null, otherwise ToString it into a
@@ -92,110 +99,38 @@ fn eat_js_value(iter: &mut ArgumentsSlice<'_>, global: &JSGlobalObject) -> JsRes
         .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))
 }
 
-/// Decode arm for optional `ContentOptions` — peek next arg, read
-/// `.html` and coerce to bool. `None` if no arg or no `.html` property.
-fn eat_content_options(
-    iter: &mut ArgumentsSlice<'_>,
-    global: &JSGlobalObject,
-) -> JsResult<Option<ContentOptions>> {
-    let Some(arg) = iter.next_eat() else {
-        return Ok(None);
-    };
-    match arg.get(global, "html")? {
-        Some(html_val) => Ok(Some(ContentOptions {
-            html: html_val.to_boolean(),
-        })),
-        None => Ok(None),
-    }
-}
-
-/// Common `(content: string, contentOptions: ?ContentOptions)` pair —
-/// every `before/after/replace/append/prepend/setInnerContent` wrapper
-/// decodes exactly this shape.
-fn eat_content_args(
-    global: &JSGlobalObject,
-    call_frame: &CallFrame,
-) -> JsResult<(Utf8Bytes<'static>, Option<ContentOptions>)> {
-    let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
-    let content = eat_string(&mut iter, global)?;
-    let opts = eat_content_options(&mut iter, global)?;
-    Ok((content, opts))
-}
-
-/// Map the optional JS `{ html }` content options onto lol-html's
-/// `ContentType`: `Html` iff `html` was given and truthy, `Text` otherwise.
-fn content_type(opts: Option<ContentOptions>) -> lol_html::html_content::ContentType {
-    if opts.is_some_and(|o| o.html) {
+fn content_type(options: &ContentOptions) -> lol_html::html_content::ContentType {
+    if options.html {
         lol_html::html_content::ContentType::Html
     } else {
         lol_html::html_content::ContentType::Text
     }
 }
 
-/// Emit the per-wrapper `content_handler` plus one `(${name}_, $name)` pair
-/// per lol-html content op, sharing one `content_handler` body across all
-/// wrappers.
-///
-/// - `$Raw`      — the `Raw*` type alias of the backing lol-html unit, e.g.
-///                 `RawElement` (also paths the raw op as `$Raw::$name`,
-///                 which holds for all 16 ops).
-/// - `$field`    — the `DetachablePtr<$Raw>` field on `self`.
-/// - `$null_ret` — sentinel when the raw ptr is null. **Differs per wrapper**:
-///                 `JSValue::UNDEFINED` for TextChunk/Element,
-///                 `JSValue::NULL` for DocEnd/Comment/EndTag.
-/// - Each op arm accepts leading attrs (doc comments, `#[allow(dead_code)]`).
-///
-/// Expands inside an `impl $Wrapper { ... }` block to associated items.
+/// The JS object of a `T`.
+type Wrapper<'a, T> = JsWrapper<'a, RefPtr<T>>;
+
+/// One trait method per lol-html content op `$Raw::$name`, on the unit in the `DetachablePtr<$Raw>` at `self.$field`.
 macro_rules! lol_content_ops {
     (
-        $Raw:ident, $field:ident, $null_ret:expr;
-        $( $(#[$attr:meta])* $name:ident / $name_:ident ),* $(,)?
+        $Raw:ident, $field:ident;
+        $( $(#[$attr:meta])* $name:ident ),* $(,)?
     ) => {
-        fn content_handler(
-            &self,
-            callback: fn(&mut $Raw, &str, lol_html::html_content::ContentType),
-            this_object: JSValue,
-            global_object: &JSGlobalObject,
-            content: &[u8],
-            content_options: Option<ContentOptions>,
-        ) -> JsResult<JSValue> {
-            let Some(raw) = self.$field.get_mut() else {
-                return Ok($null_ret);
-            };
-            // lol-html content ops are infallible, so the UTF-8 check is the only throw path.
-            let content_str = utf8_or_throw(global_object, content)?;
-            callback(raw, content_str, content_type(content_options));
-            Ok(this_object)
-        }
-
         $(
             $(#[$attr])*
-            pub(crate) fn $name_(
+            fn $name<'a>(
                 &self,
-                call_frame: &CallFrame,
-                global_object: &JSGlobalObject,
-                content: &[u8],
-                content_options: Option<ContentOptions>,
-            ) -> JsResult<JSValue> {
-                self.content_handler(
-                    $Raw::$name,
-                    call_frame.this(),
-                    global_object,
-                    content,
-                    content_options,
-                )
-            }
-
-            // Decode `(content: string, contentOptions: ?ContentOptions)`
-            // then forward.
-            $(#[$attr])*
-            pub(crate) fn $name(
-                &self,
-                global: &JSGlobalObject,
-                call_frame: &CallFrame,
-            ) -> JsResult<JSValue> {
-                let (content, opts) = eat_content_args(global, call_frame)?;
-                self.$name_(call_frame, global, &content, opts)
+                this: Wrapper<'a, Self>,
+                heap: &JsHeap<'a>,
+                content: &'a [u8],
+                options: &ContentOptions,
+            ) -> bindgen::Result<'a, Option<Wrapper<'a, Self>>> {
+                let Some(raw) = self.$field.get_mut() else {
+                    return Ok(None);
+                };
+                // lol-html content ops are infallible, so the UTF-8 check is the only throw path.
+                $Raw::$name(raw, utf8_or_error(heap, content)?, content_type(options));
+                Ok(Some(this))
             }
         )*
     };
@@ -692,15 +627,6 @@ fn active_sink(global: &JSGlobalObject) -> Option<BackRef<RewriterPipe>> {
         .map(|p| BackRef::from(p.cast::<RewriterPipe>()))
 }
 
-/// Codegen alias: the generated `JSHTMLRewriterTransform` cell's `m_ctx` is a
-/// `*mut RewriterPipe`. The cell is created per `transform()` call, stashed in
-/// the output Response's `m_transform` slot, and used as the `.then()` context
-/// for a suspended handler's promise. Its six `values:` WriteBarrier slots
-/// root the output Response, input/output ReadableStreams, the JS-pump
-/// `WritablePending` promise, a captured handler error, and the suspension
-/// promise.
-pub(crate) type HTMLRewriterTransform = RewriterPipe;
-
 /// [`RewriterPipe::schedule_background_pull`]'s task: same pointer as the pipe, its own tag.
 #[repr(transparent)]
 pub(crate) struct RewriterPipeBackgroundPull(RewriterPipe);
@@ -710,7 +636,7 @@ impl bun_event_loop::Taskable for RewriterPipeBackgroundPull {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: the task's ref keeps the allocation live until the `deref_nn` below.
         let pipe = BackRef::from(unsafe { NonNull::new_unchecked(this.cast::<RewriterPipe>()) });
-        if let Some(cell) = pipe.cell.try_get() {
+        if let Some(cell) = pipe.cell.get().try_get() {
             cell.unprotect();
         }
         RewriterPipe::deref_nn(pipe.into());
@@ -740,10 +666,10 @@ impl bun_event_loop::Taskable for RewriterPipeBackgroundPull {
 #[repr(align(16))]
 pub struct RewriterPipe {
     pub(crate) global: GlobalRef,
-    /// The owning `JSHTMLRewriterTransform` wrapper cell (whose `m_ctx` is this
+    /// The owning `JSHTMLRewriterTransform` wrapper cell (which wraps this
     /// pipe). Its WriteBarrier slots root the response, input/output streams,
     /// pending promise, and handler error. Weak: the pipe's other owners outlive the cell.
-    cell: JsCell<JsRef>,
+    cell: JsCell<JsWrapperRef<RefPtr<RewriterPipe>>>,
     /// Boxed (never held by value): lol-html's `write/end/resume` re-enter
     /// the output sink which reads fields off `*self`. `JsCell`
     /// because those calls (and `suspended_*`) need `&mut LolRewriter` from
@@ -833,11 +759,18 @@ impl RewriterPipe {
     /// `fetch()` lets a request-body stream run ahead of the socket.
     const HIGH_WATER_MARK: BlobSizeType = 16384;
 
-    /// `JSHTMLRewriterTransform` finalizer. Runs during GC sweep: nothing
-    /// here may touch other GC cells, and the other ref holders may still
-    /// dispatch into the pipe after this cell is swept.
-    pub fn finalize(&self) {
-        self.cell.with_mut(JsRef::finalize);
+    /// Lends the Transform cell, for its internal fields. `None` once it is collected.
+    fn with_cell<R>(
+        &self,
+        f: impl for<'a> FnOnce(Wrapper<'a, Self>, &JsHeap<'a>) -> R,
+    ) -> Option<R> {
+        // SAFETY: the pipe is driven on the JS thread, outside a collection, and `f` gets no `JsScope` to run JavaScript with.
+        unsafe {
+            JsScope::with(self.global.as_mut_ptr(), |cx| {
+                let cell = self.cell.get().get(&cx.heap)?;
+                Some(f(cell, &cx.heap))
+            })
+        }
     }
 
     /// Release one ref, deferring the release of the *last* ref to the event
@@ -895,7 +828,7 @@ impl RewriterPipe {
         let cell = if vm_stopped {
             None
         } else {
-            this.cell.try_get().map(jsc::EnsureStillAlive)
+            this.cell.get().try_get().map(jsc::EnsureStillAlive)
         };
         if cell.is_none() {
             this.input_source.set(SourceHandle::None);
@@ -916,27 +849,20 @@ impl RewriterPipe {
     /// up once it returns. Rooted by the cell's `handlerError` WriteBarrier
     /// slot until it is taken.
     pub(crate) fn set_handler_error(&self, err: JSValue) {
-        if let Some(cell) = self.cell.try_get() {
-            js_HTMLRewriterTransform::handler_error_set_cached(cell, &self.global, err);
-        }
+        self.with_cell(|cell, heap| cell.set_handler_error_field(heap, JsLocal::new(heap, err)));
     }
 
     /// Take (and clear) the handler error recorded during the lol-html call
     /// that just returned.
     fn take_handler_error(&self) -> Option<JSValue> {
-        let cell = self.cell.try_get()?;
-        let err = js_HTMLRewriterTransform::handler_error_get_cached(cell);
-        match err {
-            Some(v) if !v.is_empty_or_undefined_or_null() => {
-                js_HTMLRewriterTransform::handler_error_set_cached(
-                    cell,
-                    &self.global,
-                    JSValue::UNDEFINED,
-                );
-                Some(v)
+        self.with_cell(|cell, heap| {
+            let err = cell.handler_error_field(heap).to_js();
+            if err.is_undefined_or_null() {
+                return None;
             }
-            _ => None,
-        }
+            cell.set_handler_error_field(heap, JsLocal::UNDEFINED);
+            Some(err)
+        })?
     }
 
     /// Sever the wired input source: null the upstream's raw `sink` backref
@@ -978,16 +904,19 @@ impl RewriterPipe {
     /// upstream pipe delivering `Done`) and while this cell may be reachable
     /// only through that source.
     fn release_input_roots(&self, src: SourceHandle) {
-        let Some(cell) = self.cell.try_get() else {
-            // Collected together with everything these edges pointed at.
-            return;
-        };
-        match src {
-            SourceHandle::ByteStream(bs) => bs.parent_const().set_sink_owner(JSValue::UNDEFINED),
-            SourceHandle::FileReader(fr) => fr.parent_const().set_sink_owner(JSValue::UNDEFINED),
-            _ => {}
-        }
-        js_HTMLRewriterTransform::input_stream_set_cached(cell, &self.global, JSValue::UNDEFINED);
+        // No cell: it was collected together with everything these edges pointed at.
+        self.with_cell(|cell, heap| {
+            match src {
+                SourceHandle::ByteStream(bs) => {
+                    bs.parent_const().set_sink_owner(JSValue::UNDEFINED)
+                }
+                SourceHandle::FileReader(fr) => {
+                    fr.parent_const().set_sink_owner(JSValue::UNDEFINED)
+                }
+                _ => {}
+            }
+            cell.set_input_stream_field(heap, JsLocal::UNDEFINED);
+        });
     }
 
     /// Sever the output `ByteStream`'s `SourceHandle::HTMLRewriter` backref
@@ -1028,9 +957,7 @@ impl RewriterPipe {
         {
             return true;
         }
-        self.cell
-            .try_get()
-            .and_then(js_HTMLRewriterTransform::output_stream_get_cached)
+        self.with_cell(|cell, heap| cell.output_stream_field(heap).to_js())
             .is_some_and(|stream| webcore::readable_stream::is_locked_value(stream, &self.global))
     }
 
@@ -1063,9 +990,9 @@ impl RewriterPipe {
         original: &Response,
         sync_only_noun: Option<&'static str>,
     ) -> JsResult<JSValue> {
-        let pipe = bun_core::heap::alloc_nn(RewriterPipe {
+        let pipe = RefPtr::new(RewriterPipe {
             global: GlobalRef::from(cx.global()),
-            cell: JsCell::new(JsRef::empty()),
+            cell: JsCell::new(JsWrapperRef::empty()),
             rewriter: JsCell::new(None),
             context,
             script_context: cx.context().id(),
@@ -1092,7 +1019,7 @@ impl RewriterPipe {
         });
         // Every field is `Cell`/`JsCell`, so a shared `&RewriterPipe` via
         // `BackRef` is sound across the re-entrant lol-html calls below.
-        let this = BackRef::from(pipe);
+        let this = BackRef::from(pipe.as_non_null());
 
         // The handler closures point into `Box`es owned by `(*pipe).context`,
         // which `pipe` keeps alive for the rewriter's whole lifetime.
@@ -1131,7 +1058,7 @@ impl RewriterPipe {
             },
             webcore::Body::new({
                 let mut pv = webcore::body::PendingValue::new(cx.global());
-                pv.task = Some(pipe.cast::<c_void>());
+                pv.task = Some(pipe.as_non_null().cast::<c_void>());
                 pv.on_start_buffering = Some(RewriterPipe::on_start_buffering);
                 pv.on_start_streaming = Some(RewriterPipe::on_start_streaming);
                 pv.on_readable_stream_available = Some(RewriterPipe::on_readable_stream_available);
@@ -1157,31 +1084,31 @@ impl RewriterPipe {
 
         let response_js_value = result_ref.to_js(&this.global);
 
-        // Hand ownership of `pipe` to its `JSHTMLRewriterTransform` wrapper cell.
-        // The cell's WriteBarrier slots root the Response and (later) the
-        // input/output streams; the Response's `transform` slot roots the cell
-        // so it survives as long as user code can reach the output.
-        let cell = js_HTMLRewriterTransform::to_js(pipe.as_ptr(), cx.global());
-        if !cell.is_cell() {
-            // No wrapper exists to own the initial ref, so drop it here.
-            Self::deref_nn(pipe);
-            return Err(cx.global().throw_out_of_memory());
-        }
-        this.cell.set(JsRef::init_weak(cell));
-        js_HTMLRewriterTransform::response_set_cached(cell, cx.global(), response_js_value);
-        js_Response::transform_set_cached(response_js_value, cx.global(), cell);
-        // This rewrite can outlive the rewriter's wrapper. Its handlers must not die with it.
-        if let Some(handlers) = handlers {
-            js_HTMLRewriterTransform::handlers_set_cached(cell, cx.global(), handlers.0);
-        }
-
         result_ref.set_url(original.url().clone());
 
-        // ── wire input ──────────────────────────────────────────────────────
         let value = original.get_body_value();
         let owned_readable_stream = original.get_body_readable_stream();
 
-        Self::wire_input(this, cell, cx, value, owned_readable_stream);
+        // Hand ownership of `pipe` to its `JSHTMLRewriterTransform` wrapper cell.
+        // The cell's internal fields root the Response and (later) the
+        // input/output streams; the Response's `transform` slot roots the cell
+        // so it survives as long as user code can reach the output.
+        // SAFETY: `cx` is the JS thread's, and the host function that has it holds no other scope.
+        unsafe {
+            JsScope::with(cx.global().as_mut_ptr(), |scope| {
+                let heap = &scope.heap;
+                let cell = pipe.into_js(heap);
+                this.cell.set(JsWrapperRef::init_weak(cell));
+                cell.set_response_field(heap, JsLocal::new(heap, response_js_value));
+                let cell_value = cell.as_value().to_js();
+                js_Response::transform_set_cached(response_js_value, cx.global(), cell_value);
+                // This rewrite can outlive the rewriter's wrapper. Its handlers must not die with it.
+                if let Some(handlers) = handlers {
+                    cell.set_handlers_field(heap, JsLocal::new(heap, handlers.0));
+                }
+                Self::wire_input(this, cell, scope, cx, value, owned_readable_stream);
+            })
+        }
 
         // A handler that failed synchronously (the input was materialized, so
         // the whole rewrite ran inline above) surfaces as a synchronous throw
@@ -1199,14 +1126,15 @@ impl RewriterPipe {
         Ok(response_js_value)
     }
 
-    fn wire_input(
+    fn wire_input<'a>(
         pipe: bun_ptr::BackRef<Self>,
-        cell: JSValue,
+        cell: Wrapper<'a, Self>,
+        scope: &mut JsScope<'a>,
         cx: &bun_jsc::JsThread<'_>,
         value: &mut webcore::body::Value,
         stream: Option<ReadableStream>,
     ) {
-        // `pipe` is the `heap::alloc_nn` allocation from `init()`; every field
+        // `pipe` is the allocation from `init()`; every field
         // is `Cell`/`JsCell`, so the shared `BackRef` borrow is sound across
         // the re-entrant lol-html calls below.
         let this = pipe;
@@ -1267,7 +1195,8 @@ impl RewriterPipe {
         // Root the stream on the pipe and mark the input body consumed, so a
         // second `transform()` / `.text()` on the same input throws "Body
         // already used" instead of quietly yielding an empty document.
-        js_HTMLRewriterTransform::input_stream_set_cached(cell, cx.global(), stream.value);
+        cell.set_input_stream_field(&scope.heap, JsLocal::new(&scope.heap, stream.value));
+        let cell = cell.as_value().to_js();
         *value = webcore::body::Value::Used;
 
         let sink_handle = SinkHandle::HTMLRewriter(this);
@@ -1373,7 +1302,7 @@ impl RewriterPipe {
             self.background_pull_queued.set(false);
             return;
         }
-        if let Some(cell) = self.cell.try_get() {
+        if let Some(cell) = self.cell.get().try_get() {
             cell.protect();
         }
         self.ref_();
@@ -1388,7 +1317,7 @@ impl RewriterPipe {
         // SAFETY: the task's ref (taken in `schedule_background_pull`) keeps
         // the allocation live until the `deref_nn` below.
         let this = BackRef::from(unsafe { NonNull::new_unchecked(pipe) });
-        let cell = this.cell.try_get();
+        let cell = this.cell.get().try_get();
         this.background_pull_queued.set(false);
         if this.background_pull_armed.replace(false)
             && !this.done.get()
@@ -1432,27 +1361,27 @@ impl RewriterPipe {
     /// there instead of buffering.
     fn on_readable_stream_available(
         ctx: NonNull<c_void>,
-        global_this: &JSGlobalObject,
+        _: &JSGlobalObject,
         readable: ReadableStream,
     ) {
         let this = bun_ptr::BackRef::from(ctx.cast::<RewriterPipe>());
-        let Some(cell) = this.cell.try_get() else {
+        let handler_error = this.with_cell(|cell, heap| {
+            if let Some(bytes) = readable.ptr.bytes() {
+                // A reader that roots the output stream roots the cell too, until `detach_output`: `producer` cannot outlive the pipe.
+                bytes.parent_const().set_owner(cell.as_value().to_js());
+                this.output.set(Some(bytes));
+            }
+            cell.set_output_stream_field(heap, JsLocal::new(heap, readable.value));
+            cell.handler_error_field(heap).to_js()
+        });
+        let Some(handler_error) = handler_error else {
             return;
         };
-        if let Some(bytes) = readable.ptr.bytes() {
-            // A reader rooting the output stream now roots the Transform cell
-            // too, so the `producer` backref cannot outlive the pipe. Cleared
-            // in `detach_output`.
-            bytes.parent_const().set_owner(cell);
-            this.output.set(Some(bytes));
-        }
-        js_HTMLRewriterTransform::output_stream_set_cached(cell, global_this, readable.value);
         // If the rewrite already completed before a reader attached, deliver
         // the terminal `Done` now so the first `read()` resolves.
         if this.phase.get() == RewritePhase::Done
             && !this.done.get()
-            && js_HTMLRewriterTransform::handler_error_get_cached(cell)
-                .is_none_or(|v| v.is_empty_or_undefined_or_null())
+            && handler_error.is_undefined_or_null()
         {
             if let Some(out) = this.output.get() {
                 out.on_data(StreamResult::Done);
@@ -1594,7 +1523,7 @@ impl RewriterPipe {
             return None;
         }
         // A handler can cut every other path to the cell while lol-html has handlers left to run.
-        let cell = self.cell.get_or_undefined();
+        let cell = self.cell.get().try_get().unwrap_or(JSValue::UNDEFINED);
         let _active = ActiveSinkGuard::enter(self);
         self.driving.set(true);
         let res = self.rewriter.with_mut(|r| r.as_deref_mut().map(f));
@@ -1613,8 +1542,7 @@ impl RewriterPipe {
 
     /// `None` once the rewrite is over or the cell is collected.
     fn handler_list(&self) -> Option<HandlerList> {
-        let cell = self.cell.try_get()?;
-        HandlerList::existing(js_HTMLRewriterTransform::handlers_get_cached(cell))
+        HandlerList::existing(self.with_cell(|cell, heap| cell.handlers_field(heap).to_js()))
     }
 
     /// The rewrite is over: an output `Response` that outlives it stops retaining the handlers.
@@ -1625,45 +1553,40 @@ impl RewriterPipe {
             return;
         }
         self.free_end_tag_slots.set(Vec::new());
-        if let Some(cell) = self.cell.try_get() {
-            js_HTMLRewriterTransform::handlers_set_cached(cell, &self.global, JSValue::UNDEFINED);
-            js_HTMLRewriterTransform::end_tag_handlers_set_cached(
-                cell,
-                &self.global,
-                JSValue::UNDEFINED,
-            );
-        }
+        self.with_cell(|cell, heap| {
+            cell.set_handlers_field(heap, JsLocal::UNDEFINED);
+            cell.set_end_tag_handlers_field(heap, JsLocal::UNDEFINED);
+        });
     }
 
     /// Holds `callback` for the end-tag handler that names the slot. `None`: no end tag can come.
-    fn hold_end_tag_callback(
+    fn hold_end_tag_callback<'a>(
         &self,
-        global: &JSGlobalObject,
+        heap: &JsHeap<'a>,
         replaced: Option<EndTagSlot>,
-        callback: JSValue,
+        callback: JsLocal<'a, Callable>,
     ) -> JsResult<Option<EndTagSlot>> {
         // A parked element can call this after its rewrite is over, or (until the abandon) collected.
         if self.phase.get() == RewritePhase::Done && !self.driving.get() {
             return Ok(None);
         }
-        let Some(cell) = self.cell.try_get() else {
+        let Some(cell) = self.cell.get().get(heap) else {
             return Ok(None);
         };
-        let list = match js_HTMLRewriterTransform::end_tag_handlers_get_cached(cell) {
-            Some(list) if list.is_cell() => list,
-            _ => {
-                let list = JSValue::create_empty_array(global, 0)?;
-                js_HTMLRewriterTransform::end_tag_handlers_set_cached(cell, global, list);
-                list
-            }
-        };
+        // SAFETY: the array is the pipe's own: its length is a field, and its elements are defined and not set.
+        let global = unsafe { heap.global() };
+        let mut list = cell.end_tag_handlers_field(heap).to_js();
+        if !list.is_cell() {
+            list = JSValue::create_empty_array(global, 0)?;
+            cell.set_end_tag_handlers_field(heap, JsLocal::new(heap, list));
+        }
         let slot = match replaced.or_else(|| self.free_end_tag_slots.with_mut(Vec::pop)) {
             Some(slot) => slot,
             None => EndTagSlot(list.get_length(global)? as u32),
         };
         // An own property, as in `HandlerList::append`.
-        list.put_index(global, slot.0, callback)?;
-        cell.ensure_still_alive();
+        list.put_index(global, slot.0, callback.to_js())?;
+        cell.as_value().to_js().ensure_still_alive();
         Ok(Some(slot))
     }
 
@@ -1675,9 +1598,7 @@ impl RewriterPipe {
     ) -> JsResult<Option<JSValue>> {
         // `drive_rewriter` keeps the cell alive, and the array stays until lol-html returns.
         let list = self
-            .cell
-            .try_get()
-            .and_then(js_HTMLRewriterTransform::end_tag_handlers_get_cached)
+            .with_cell(|cell, heap| cell.end_tag_handlers_field(heap).to_js())
             .filter(|list| list.is_cell());
         debug_assert!(list.is_some(), "HTMLRewriter end-tag handler has no array");
         let Some(list) = list else {
@@ -1882,12 +1803,13 @@ impl RewriterPipe {
         // destructor queues `abandon_suspension` — independent of whether
         // anything else still reaches the cell — so a rewrite parked on a
         // dead promise always fails its body instead of leaking.
-        let cell = self
-            .cell
-            .try_get()
+        let (cell, promise) = self
+            .with_cell(|cell, heap| {
+                let promise = cell.suspension_promise_field(heap).to_js();
+                (cell.as_value().to_js(), promise)
+            })
             .expect("lol-html suspended without the Transform cell");
-        let promise = js_HTMLRewriterTransform::suspension_promise_get_cached(cell)
-            .expect("suspension promise slot empty");
+        assert!(promise.is_cell(), "suspension promise slot empty");
         let pipe = core::ptr::from_ref(self).cast_mut();
         let context = native_promise_context::create(&self.global, pipe, cell);
         // The context destructor (promise GC'd unsettled) queues
@@ -1904,11 +1826,7 @@ impl RewriterPipe {
         // The slot only roots the promise across the lol-html unwind; once the
         // reaction is wired the promise must be independently collectible so
         // the NativePromiseContext destructor can fire `abandon_suspension`.
-        js_HTMLRewriterTransform::suspension_promise_set_cached(
-            cell,
-            &self.global,
-            JSValue::UNDEFINED,
-        );
+        self.with_cell(|cell, heap| cell.set_suspension_promise_field(heap, JsLocal::UNDEFINED));
     }
 
     /// The suspension begun by `begin_suspension` is over: the settle reaction or the abandonment
@@ -1952,6 +1870,13 @@ impl RewriterPipe {
             let _ = body_value.to_error_instance(err, &self.global);
         }
         self.release_input_roots(src);
+    }
+}
+
+impl HTMLRewriterTransformClass for RewriterPipe {
+    /// In a GC sweep: it touches no other cell, and the other ref holders may still dispatch into the pipe afterwards.
+    fn finalize(&self) {
+        self.cell.with_mut(JsWrapperRef::finalize);
     }
 }
 
@@ -2055,9 +1980,9 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
         if self.pending.get().state == PendingState::Pending {
             let prom = self.pending.with_mut(|p| p.promise(cx));
             let prom_js = JSPromise::opaque_ref(prom).to_js();
-            if let Some(cell) = self.cell.try_get() {
-                js_HTMLRewriterTransform::pending_promise_set_cached(cell, cx.global(), prom_js);
-            }
+            self.with_cell(|cell, heap| {
+                cell.set_pending_promise_field(heap, JsLocal::new(heap, prom_js))
+            });
             return bun_sys::Result::Ok(prom_js);
         }
         if self.done.get() || self.phase.get() == RewritePhase::Done {
@@ -2077,9 +2002,9 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
                 p.promise(cx)
             });
             let prom_js = JSPromise::opaque_ref(prom).to_js();
-            if let Some(cell) = self.cell.try_get() {
-                js_HTMLRewriterTransform::pending_promise_set_cached(cell, cx.global(), prom_js);
-            }
+            self.with_cell(|cell, heap| {
+                cell.set_pending_promise_field(heap, JsLocal::new(heap, prom_js))
+            });
             return bun_sys::Result::Ok(prom_js);
         }
         bun_sys::Result::Ok(JSPromise::resolved_promise_value(
@@ -2269,16 +2194,10 @@ impl HandlerLike for EndTagHandler {
 
 /// Trait abstracting the wrapper-type bits [`handler_callback`] and the
 /// suspension plumbing need.
-trait WrapperLike: bun_ptr::AnyRefCounted + Sized {
+trait WrapperLike: JsRefCountedPayload {
     type Raw;
     /// `pipe` is the one whose lol-html call lends `value`.
-    fn init(value: *mut Self::Raw, pipe: BackRef<RewriterPipe>) -> NonNull<Self>;
-    /// `jsc.Codegen.JS${T}.toJS` — wraps the *existing* heap allocation `this`
-    /// in a JS wrapper (the codegen `${T}__create`). Takes `NonNull<Self>` (not
-    /// `&self`) because the C++ side stores the raw heap pointer in `m_ctx`;
-    /// deriving it from a `&self` would launder shared-borrow provenance into
-    /// the GC's exclusive-owner pointer.
-    fn to_js(this: NonNull<Self>, global: &JSGlobalObject) -> JSValue;
+    fn init(value: *mut Self::Raw, pipe: BackRef<RewriterPipe>) -> RefPtr<Self>;
     /// Null out the wrapper's lol-html pointer and detach any sub-objects it
     /// handed to JS (Element's AttributeIterators). Every host-fn on the
     /// wrapper is a harmless no-op afterwards.
@@ -2295,7 +2214,7 @@ trait WrapperLike: bun_ptr::AnyRefCounted + Sized {
 }
 
 /// Forwarding `WrapperLike` impl — every wrapper type's trait impl is a pure
-/// pass-through to inherent / `JsClass`-codegen methods. `$field` is the
+/// pass-through to inherent methods. `$field` is the
 /// wrapper's `DetachablePtr<$raw>`; `$suspended` is the `lol_html::HtmlRewriter`
 /// accessor for the parked unit of that type.
 /// `Element` implements the trait by hand: its `detach` also has to
@@ -2304,11 +2223,8 @@ macro_rules! impl_wrapper_like {
     ($ty:ident, $raw:ty, $field:ident, $suspended:ident) => {
         impl WrapperLike for $ty {
             type Raw = $raw;
-            fn init(v: *mut Self::Raw, _pipe: BackRef<RewriterPipe>) -> NonNull<Self> {
+            fn init(v: *mut Self::Raw, _: BackRef<RewriterPipe>) -> RefPtr<Self> {
                 Self::init(v)
-            }
-            fn to_js(this: NonNull<Self>, g: &JSGlobalObject) -> JSValue {
-                Self::to_js_nonnull(this, g)
             }
             fn detach(&self) {
                 self.$field.detach();
@@ -2404,16 +2320,12 @@ where
         }
     };
 
-    // After the early returns: only `to_js` below gives the wrapper's first ref an owner.
-    let wrapper: NonNull<Z> = Z::init(value, sink);
+    let wrapper: RefPtr<Z> = Z::init(value, sink);
 
     // Our ref across the handler call; the guard detaches then drops it. On
     // the SUSPEND path the guard is disarmed and `SuspendedWrapper`'s drop
     // does the same once the handler's promise settles instead.
-    // SAFETY: `wrapper` is the live allocation `init` just made.
-    let guard = scopeguard::guard(unsafe { RefPtr::init_ref(wrapper.as_ptr()) }, |w| {
-        w.detach()
-    });
+    let guard = scopeguard::guard(wrapper.clone(), |w| w.detach());
 
     // Use a TopExceptionScope to properly handle exceptions from the JavaScript
     // callback. A post-hoc `try_take_exception()`
@@ -2426,7 +2338,7 @@ where
     // the pending exception through it, and clear it explicitly.
     bun_jsc::top_scope!(scope, global);
 
-    let result = match cb.call(global, this_object, &[Z::to_js(wrapper, global)]) {
+    let result = match cb.call(global, this_object, &[wrapper.into_js_value(global)]) {
         Ok(v) => v,
         Err(_) => {
             // A termination (a worker's stop, an enclosing vm run's timeout) is not this handler's
@@ -2503,11 +2415,10 @@ where
             // the handler's `await`, so disarm the guard here.
             let wrapper = scopeguard::ScopeGuard::into_inner(guard);
             // The callback came out of the cell, and `drive_rewriter` keeps it alive.
-            let cell = sink
-                .cell
-                .try_get()
-                .expect("HTMLRewriter handler ran without the Transform cell");
-            js_HTMLRewriterTransform::suspension_promise_set_cached(cell, global, result);
+            sink.with_cell(|cell, heap| {
+                cell.set_suspension_promise_field(heap, JsLocal::new(heap, result))
+            })
+            .expect("HTMLRewriter handler ran without the Transform cell");
             sink.pending_suspension
                 .set(Some(Z::into_suspended(wrapper)));
             HandlerOutcome::Suspend
@@ -2577,13 +2488,6 @@ impl ElementHandler {
     }
 }
 
-// ───────────────────────── ContentOptions ────────────────────────────────
-
-#[derive(Default, Clone, Copy)]
-pub(crate) struct ContentOptions {
-    pub(crate) html: bool,
-}
-
 // ────────────────────────── error helpers ────────────────────────────────
 
 fn create_lolhtml_error(global: &JSGlobalObject, message: &dyn core::fmt::Display) -> JSValue {
@@ -2605,6 +2509,12 @@ fn create_lolhtml_error(global: &JSGlobalObject, message: &dyn core::fmt::Displa
     value
 }
 
+fn lolhtml_error<'a>(heap: &JsHeap<'a>, message: &dyn core::fmt::Display) -> bindgen::Error<'a> {
+    // SAFETY: making the error runs no JavaScript: its `name` is defined and not set.
+    let error = create_lolhtml_error(unsafe { heap.global() }, message);
+    bindgen::Error::from_value(JsLocal::new(heap, error))
+}
+
 /// lol-html error `Display` text → owned `bun.String`.
 fn lol_err_string(e: impl core::fmt::Display) -> BunString {
     BunString::clone_utf8(e.to_string().as_bytes())
@@ -2617,6 +2527,11 @@ fn utf8_or_throw<'a>(global: &JSGlobalObject, bytes: &'a [u8]) -> JsResult<&'a s
     core::str::from_utf8(bytes).map_err(|e| global.throw_value(create_lolhtml_error(global, &e)))
 }
 
+/// As [`utf8_or_throw`], for the body to return.
+fn utf8_or_error<'a, 'b>(heap: &JsHeap<'a>, bytes: &'b [u8]) -> bindgen::Result<'a, &'b str> {
+    core::str::from_utf8(bytes).map_err(|e| lolhtml_error(heap, &e))
+}
+
 /// Decode a raw-`JSValue` setter argument to owned UTF-8. `to_utf8` runs
 /// ToString (user `toString()`/`[Symbol.toPrimitive]`), so callers MUST do
 /// this BEFORE `DetachablePtr::get_mut`: the re-entered JS would alias its
@@ -2626,26 +2541,24 @@ fn setter_utf8_arg(global: &JSGlobalObject, value: JSValue) -> JsResult<String> 
     Ok(utf8_or_throw(global, slice.slice())?.to_owned())
 }
 
-fn string_to_js(s: &str, global: &JSGlobalObject) -> JsResult<JSValue> {
-    bun_string_jsc::create_utf8_for_js(global, s.as_bytes())
-}
-
 /// lol-html's optional getters (`get_attribute`, `Doctype` name/ids) return
 /// `None` for "absent" and `Some("")` for present-but-empty. Map only the
 /// former to `null` so `<div a="">` reads as `""`, not `null`.
-fn opt_string_to_js_or_null(s: Option<String>, global: &JSGlobalObject) -> JsResult<JSValue> {
+fn opt_string_to_js_or_null<'a>(
+    s: Option<String>,
+    heap: &JsHeap<'a>,
+) -> bindgen::Result<'a, JsLocal<'a>> {
     match s {
-        None => Ok(JSValue::NULL),
-        Some(s) => string_to_js(&s, global),
+        None => Ok(JsLocal::NULL),
+        Some(s) => to_js::utf8(heap, s),
     }
 }
 
 // ─────────────────────────── TextChunk ───────────────────────────────────
 
-#[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct TextChunk {
-    // Intrusive RefCount; *Self is the JS wrapper m_ctx.
+    // Intrusive RefCount; the JS wrapper holds one ref.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
     pub(crate) text_chunk: DetachablePtr<RawTextChunk>,
@@ -2654,54 +2567,38 @@ pub(crate) struct TextChunk {
 impl TextChunk {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub(crate) fn init(text_chunk: *mut RawTextChunk) -> NonNull<TextChunk> {
-        bun_core::heap::alloc_nn(TextChunk {
+    pub(crate) fn init(text_chunk: *mut RawTextChunk) -> RefPtr<TextChunk> {
+        RefPtr::new(TextChunk {
             ref_count: Cell::new(1),
             text_chunk: DetachablePtr::new(text_chunk),
         })
     }
+}
 
-    lol_content_ops! { RawTextChunk, text_chunk, JSValue::UNDEFINED;
-        before / before_,
-        after / after_,
-        replace / replace_,
+impl TextChunkClass for TextChunk {
+    type Error<'a> = bindgen::Error<'a>;
+
+    lol_content_ops! { RawTextChunk, text_chunk;
+        before,
+        after,
+        replace,
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn remove(
-        &self,
-        _global: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let Some(chunk) = self.text_chunk.get_mut() else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        chunk.remove();
-        Ok(call_frame.this())
+    fn remove<'a>(&self, this: Wrapper<'a, Self>, _: &JsHeap<'a>) -> Option<Wrapper<'a, Self>> {
+        self.text_chunk.get_mut()?.remove();
+        Some(this)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_text(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(chunk) = self.text_chunk.get_mut() else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        string_to_js(chunk.as_str(), global)
+    fn get_text(&self) -> Option<impl AsRef<[u8]>> {
+        Some(self.text_chunk.get_mut()?.as_str())
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn removed(&self, _global: &JSGlobalObject) -> JSValue {
-        match self.text_chunk.get_mut() {
-            Some(chunk) => JSValue::from(chunk.removed()),
-            None => JSValue::UNDEFINED,
-        }
+    fn removed(&self) -> Option<bool> {
+        Some(self.text_chunk.get_mut()?.removed())
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn last_in_text_node(&self, _global: &JSGlobalObject) -> JSValue {
-        match self.text_chunk.get_mut() {
-            Some(chunk) => JSValue::from(chunk.last_in_text_node()),
-            None => JSValue::UNDEFINED,
-        }
+    fn last_in_text_node(&self) -> Option<bool> {
+        Some(self.text_chunk.get_mut()?.last_in_text_node())
     }
 }
 
@@ -2709,10 +2606,9 @@ impl_wrapper_like!(TextChunk, RawTextChunk, text_chunk, suspended_text_chunk);
 
 // ──────────────────────────── DocType ────────────────────────────────────
 
-#[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct DocType {
-    // Intrusive RefCount; *Self is the JS wrapper m_ctx.
+    // Intrusive RefCount; the JS wrapper holds one ref.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
     pub(crate) doctype: DetachablePtr<RawDoctype>,
@@ -2721,57 +2617,46 @@ pub(crate) struct DocType {
 impl DocType {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub(crate) fn init(doctype: *mut RawDoctype) -> NonNull<DocType> {
-        bun_core::heap::alloc_nn(DocType {
+    pub(crate) fn init(doctype: *mut RawDoctype) -> RefPtr<DocType> {
+        RefPtr::new(DocType {
             ref_count: Cell::new(1),
             doctype: DetachablePtr::new(doctype),
         })
     }
+}
+
+impl DocTypeClass for DocType {
+    type Error<'a> = bindgen::Error<'a>;
 
     /// The doctype name.
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    fn name<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         let Some(dt) = self.doctype.get_mut() else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(JsLocal::UNDEFINED);
         };
-        opt_string_to_js_or_null(dt.name(), global_object)
+        opt_string_to_js_or_null(dt.name(), heap)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn system_id(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    fn system_id<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         let Some(dt) = self.doctype.get_mut() else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(JsLocal::UNDEFINED);
         };
-        opt_string_to_js_or_null(dt.system_id(), global_object)
+        opt_string_to_js_or_null(dt.system_id(), heap)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn public_id(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    fn public_id<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         let Some(dt) = self.doctype.get_mut() else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(JsLocal::UNDEFINED);
         };
-        opt_string_to_js_or_null(dt.public_id(), global_object)
+        opt_string_to_js_or_null(dt.public_id(), heap)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn remove(
-        &self,
-        _global: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let Some(dt) = self.doctype.get_mut() else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        dt.remove();
-        Ok(call_frame.this())
+    fn remove<'a>(&self, this: Wrapper<'a, Self>, _: &JsHeap<'a>) -> Option<Wrapper<'a, Self>> {
+        self.doctype.get_mut()?.remove();
+        Some(this)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn removed(&self, _global: &JSGlobalObject) -> JSValue {
-        match self.doctype.get_mut() {
-            Some(dt) => JSValue::from(dt.removed()),
-            None => JSValue::UNDEFINED,
-        }
+    fn removed(&self) -> Option<bool> {
+        Some(self.doctype.get_mut()?.removed())
     }
 }
 
@@ -2779,10 +2664,9 @@ impl_wrapper_like!(DocType, RawDoctype, doctype, suspended_doctype);
 
 // ──────────────────────────── DocEnd ─────────────────────────────────────
 
-#[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct DocEnd {
-    // Intrusive RefCount; *Self is the JS wrapper m_ctx.
+    // Intrusive RefCount; the JS wrapper holds one ref.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
     pub(crate) doc_end: DetachablePtr<RawDocumentEnd>,
@@ -2791,15 +2675,19 @@ pub(crate) struct DocEnd {
 impl DocEnd {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub(crate) fn init(doc_end: *mut RawDocumentEnd) -> NonNull<DocEnd> {
-        bun_core::heap::alloc_nn(DocEnd {
+    pub(crate) fn init(doc_end: *mut RawDocumentEnd) -> RefPtr<DocEnd> {
+        RefPtr::new(DocEnd {
             ref_count: Cell::new(1),
             doc_end: DetachablePtr::new(doc_end),
         })
     }
+}
 
-    lol_content_ops! { RawDocumentEnd, doc_end, JSValue::NULL;
-        append / append_,
+impl DocEndClass for DocEnd {
+    type Error<'a> = bindgen::Error<'a>;
+
+    lol_content_ops! { RawDocumentEnd, doc_end;
+        append,
     }
 }
 
@@ -2807,10 +2695,9 @@ impl_wrapper_like!(DocEnd, RawDocumentEnd, doc_end, suspended_document_end);
 
 // ──────────────────────────── Comment ────────────────────────────────────
 
-#[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct Comment {
-    // Intrusive RefCount; *Self is the JS wrapper m_ctx.
+    // Intrusive RefCount; the JS wrapper holds one ref.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
     pub(crate) comment: DetachablePtr<RawComment>,
@@ -2819,64 +2706,50 @@ pub(crate) struct Comment {
 impl Comment {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub(crate) fn init(comment: *mut RawComment) -> NonNull<Comment> {
-        bun_core::heap::alloc_nn(Comment {
+    pub(crate) fn init(comment: *mut RawComment) -> RefPtr<Comment> {
+        RefPtr::new(Comment {
             ref_count: Cell::new(1),
             comment: DetachablePtr::new(comment),
         })
     }
+}
 
-    lol_content_ops! { RawComment, comment, JSValue::NULL;
-        before / before_,
-        after / after_,
-        replace / replace_,
+impl CommentClass for Comment {
+    type Error<'a> = bindgen::Error<'a>;
+
+    lol_content_ops! { RawComment, comment;
+        before,
+        after,
+        replace,
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn remove(
-        &self,
-        _global: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    fn remove<'a>(&self, this: Wrapper<'a, Self>, _: &JsHeap<'a>) -> Option<Wrapper<'a, Self>> {
+        self.comment.get_mut()?.remove();
+        Some(this)
+    }
+
+    fn text<'a>(&self, cx: &mut JsScope<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         let Some(comment) = self.comment.get_mut() else {
-            return Ok(JSValue::NULL);
+            return Ok(JsLocal::NULL);
         };
-        comment.remove();
-        Ok(call_frame.this())
+        to_js::utf8(&cx.heap, comment.text())
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_text(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(comment) = self.comment.get_mut() else {
-            return Ok(JSValue::NULL);
-        };
-        string_to_js(&comment.text(), global_object)
-    }
-
-    // Note: no `#[bun_jsc::host_fn(setter)]` — generated_classes.rs already
-    // emits `CommentPrototype__setText` via `host_setter_result` (which wants
-    // `JsResult<()>`); the proc-macro shim would emit a second, conflicting
-    // `JsResult<bool>` wrapper.
-    pub(crate) fn set_text(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+    fn set_text<'a>(&self, cx: &mut JsScope<'a>, value: JsLocal<'a>) -> bindgen::Result<'a, ()> {
         if self.comment.is_detached() {
             return Ok(());
         }
-        let text = setter_utf8_arg(global, value)?;
+        let text = setter_utf8_arg(cx.global(), value.to_js())?;
         let Some(comment) = self.comment.get_mut() else {
             return Ok(());
         };
-        if let Err(e) = comment.set_text(&text) {
-            return Err(global.throw_value(create_lolhtml_error(global, &e)));
-        }
-        Ok(())
+        comment
+            .set_text(&text)
+            .map_err(|e| lolhtml_error(&cx.heap, &e))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn removed(&self, _global: &JSGlobalObject) -> JSValue {
-        match self.comment.get_mut() {
-            Some(comment) => JSValue::from(comment.removed()),
-            None => JSValue::UNDEFINED,
-        }
+    fn removed(&self) -> Option<bool> {
+        Some(self.comment.get_mut()?.removed())
     }
 }
 
@@ -2884,10 +2757,9 @@ impl_wrapper_like!(Comment, RawComment, comment, suspended_comment);
 
 // ──────────────────────────── EndTag ─────────────────────────────────────
 
-#[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct EndTag {
-    // Intrusive RefCount; *Self is the JS wrapper m_ctx.
+    // Intrusive RefCount; the JS wrapper holds one ref.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
     pub(crate) end_tag: DetachablePtr<RawEndTag>,
@@ -2910,46 +2782,39 @@ impl EndTagHandler {
 impl EndTag {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub(crate) fn init(end_tag: *mut RawEndTag) -> NonNull<EndTag> {
-        bun_core::heap::alloc_nn(EndTag {
+    pub(crate) fn init(end_tag: *mut RawEndTag) -> RefPtr<EndTag> {
+        RefPtr::new(EndTag {
             ref_count: Cell::new(1),
             end_tag: DetachablePtr::new(end_tag),
         })
     }
+}
 
-    lol_content_ops! { RawEndTag, end_tag, JSValue::NULL;
-        before / before_,
-        after / after_,
+impl EndTagClass for EndTag {
+    type Error<'a> = bindgen::Error<'a>;
+
+    lol_content_ops! { RawEndTag, end_tag;
+        before,
+        after,
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn remove(
-        &self,
-        _global: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    fn remove<'a>(&self, this: Wrapper<'a, Self>, _: &JsHeap<'a>) -> Option<Wrapper<'a, Self>> {
+        self.end_tag.get_mut()?.remove();
+        Some(this)
+    }
+
+    fn name<'a>(&self, cx: &mut JsScope<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         let Some(end_tag) = self.end_tag.get_mut() else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(JsLocal::UNDEFINED);
         };
-        end_tag.remove();
-        Ok(call_frame.this())
+        to_js::utf8(&cx.heap, end_tag.name())
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(end_tag) = self.end_tag.get_mut() else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        string_to_js(&end_tag.name(), global_object)
-    }
-
-    // Note: no `#[bun_jsc::host_fn(setter)]` — generated_classes.rs already
-    // emits `EndTagPrototype__setName` via `host_setter_result`.
-    pub(crate) fn set_name(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+    fn set_name<'a>(&self, cx: &mut JsScope<'a>, value: JsLocal<'a>) -> bindgen::Result<'a, ()> {
         if self.end_tag.is_detached() {
             return Ok(());
         }
-        let name = setter_utf8_arg(global, value)?;
+        let name = setter_utf8_arg(cx.global(), value.to_js())?;
         let Some(end_tag) = self.end_tag.get_mut() else {
             return Ok(());
         };
@@ -2963,10 +2828,9 @@ impl_wrapper_like!(EndTag, RawEndTag, end_tag, suspended_end_tag);
 // ───────────────────────── AttributeIterator ─────────────────────────────
 
 /// The JS `AttributeIterator` heap-boxes one of these over `Element::attributes`
-#[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct AttributeIterator {
-    // Intrusive RefCount; *Self is the JS wrapper m_ctx.
+    // Intrusive RefCount; the JS wrapper holds one ref.
     ref_count: Cell<u32>,
     /// Non-owning backref to the `Element` wrapper that handed this iterator
     /// out. Reading the attributes through it (rather than caching a
@@ -2985,20 +2849,16 @@ impl AttributeIterator {
     fn detach(&self) {
         self.element.set(None);
     }
+}
 
-    pub(crate) fn finalize(&self) {
+impl AttributeIteratorClass for AttributeIterator {
+    type Error<'a> = bindgen::Error<'a>;
+
+    fn finalize(&self) {
         self.detach();
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn next(
-        &self,
-        global_object: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let done_label = bun_core::EncodedSlice::latin1(b"done");
-        let value_label = bun_core::EncodedSlice::latin1(b"value");
-
+    fn next<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, AttributeIteratorResult<'a>> {
         // Detached (the handler returned, or an attribute was mutated), the
         // element itself is gone, or we ran off the end of the buffer.
         let attribute = self
@@ -3008,50 +2868,30 @@ impl AttributeIterator {
             .and_then(|raw| raw.attributes().get(self.index.get()));
         let Some(attribute) = attribute else {
             self.detach();
-            return JSValue::create_object2(
-                global_object,
-                &done_label,
-                &value_label,
-                JSValue::TRUE,
-                JSValue::UNDEFINED,
-            );
+            return Ok(AttributeIteratorResult {
+                done: true,
+                value: JsLocal::UNDEFINED,
+            });
         };
         self.index.set(self.index.get() + 1);
 
-        let value = attribute.value();
-        let name = attribute.name();
-
-        JSValue::create_object2(
-            global_object,
-            &done_label,
-            &value_label,
-            JSValue::FALSE,
-            bun_string_jsc::to_js_array(
-                global_object,
-                &[
-                    BunString::clone_utf8(name.as_bytes()),
-                    BunString::clone_utf8(value.as_bytes()),
-                ],
-            )?,
-        )
+        let pair = [attribute.name(), attribute.value()];
+        Ok(AttributeIteratorResult {
+            done: false,
+            value: to_js::array(heap, pair, |heap, text| to_js::utf8(heap, text))?,
+        })
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn get_this(
-        &self,
-        _global: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Ok(call_frame.this())
+    fn get_this<'a>(&self, this: Wrapper<'a, Self>, _: &JsHeap<'a>) -> Wrapper<'a, Self> {
+        this
     }
 }
 
 // ──────────────────────────── Element ────────────────────────────────────
 
-#[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct Element {
-    // Intrusive RefCount; *Self is the JS wrapper m_ctx.
+    // Intrusive RefCount; the JS wrapper holds one ref.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
     pub(crate) element: DetachablePtr<RawElement>,
@@ -3076,8 +2916,8 @@ impl Drop for Element {
 impl Element {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub(crate) fn init(element: *mut RawElement, pipe: BackRef<RewriterPipe>) -> NonNull<Element> {
-        bun_core::heap::alloc_nn(Element {
+    pub(crate) fn init(element: *mut RawElement, pipe: BackRef<RewriterPipe>) -> RefPtr<Element> {
+        RefPtr::new(Element {
             ref_count: Cell::new(1),
             element: DetachablePtr::new(element),
             attribute_iterators: JsCell::new(Vec::new()),
@@ -3107,19 +2947,23 @@ impl Element {
         self.pipe.set(None);
         self.detach_attribute_iterators();
     }
+}
 
-    pub(crate) fn on_end_tag_(
+impl ElementClass for Element {
+    type Error<'a> = bindgen::Error<'a>;
+
+    fn on_end_tag<'a>(
         &self,
-        global_object: &JSGlobalObject,
-        function: JSValue,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+        this: Wrapper<'a, Self>,
+        heap: &JsHeap<'a>,
+        handler: JsLocal<'a>,
+    ) -> bindgen::Result<'a, Option<Wrapper<'a, Self>>> {
         let Some(el) = self.element.get_mut() else {
-            return Ok(JSValue::NULL);
+            return Ok(None);
         };
-        if function.is_undefined_or_null() || !function.is_callable() {
-            return Err(global_object.throw_type_error(format_args!("Expected a function")));
-        }
+        let Some(function) = handler.as_callable() else {
+            return Err(heap.type_error(format_args!("Expected a function")));
+        };
 
         // Every matching `on()` handler gets this lol-html element: its user data keeps the slot.
         let replaced = el.user_data().downcast_ref::<EndTagSlot>().copied();
@@ -3127,20 +2971,20 @@ impl Element {
         // `None` iff the element is void (`!can_have_content`) — the exact
         // condition lol-html's C API mapped to the "No end tag." error.
         let Some(handlers) = el.end_tag_handlers() else {
-            let err = create_lolhtml_error(global_object, &"No end tag.");
-            return Err(global_object.throw_value(err));
+            return Err(lolhtml_error(heap, &"No end tag."));
         };
 
         // Only `invalidate()` clears `pipe`, and it detaches `element` in the same call.
         let pipe = self.pipe.get().expect("attached Element without its pipe");
-        let slot = pipe.hold_end_tag_callback(global_object, replaced, function)?;
+        let slot = pipe.hold_end_tag_callback(heap, replaced, function)?;
         let (Some(slot), None) = (slot, replaced) else {
             // No end tag can come, or the earlier call's handler now reads the new callback.
-            return Ok(call_frame.this());
+            return Ok(Some(this));
         };
 
         let mut end_tag_handler = EndTagHandler {
-            global: GlobalRef::from(global_object),
+            // SAFETY: kept for the run of the handler, and passed to nothing here.
+            global: GlobalRef::from(unsafe { heap.global() }),
             slot,
         };
         handlers.push(Box::new(move |end_tag| {
@@ -3157,236 +3001,140 @@ impl Element {
         }));
         el.set_user_data(slot);
 
-        Ok(call_frame.this())
+        Ok(Some(this))
     }
 
     /// Returns the value for a given attribute name on the element, or null if it is not found.
-    pub(crate) fn get_attribute_(
-        &self,
-        global_object: &JSGlobalObject,
-        name: &[u8],
-    ) -> JsResult<JSValue> {
-        let Some(el) = self.element.get_mut() else {
-            return Ok(JSValue::NULL);
-        };
+    fn get_attribute<'a>(&self, name: &'a [u8]) -> Option<impl AsRef<[u8]>> {
         // A non-UTF-8 name came back from the C API as a null-data `Str`,
         // which JS saw as `null` — not a throw. Keep that distinction.
-        let Ok(name) = core::str::from_utf8(name) else {
-            return Ok(JSValue::NULL);
-        };
-        opt_string_to_js_or_null(el.get_attribute(name), global_object)
+        let name = core::str::from_utf8(name).ok()?;
+        self.element.get_mut()?.get_attribute(name)
     }
 
     /// Returns a boolean indicating whether an attribute exists on the element.
-    pub(crate) fn has_attribute_(&self, global: &JSGlobalObject, name: &[u8]) -> JsResult<JSValue> {
+    fn has_attribute<'a>(&self, heap: &JsHeap<'a>, name: &'a [u8]) -> bindgen::Result<'a, bool> {
         let Some(el) = self.element.get_mut() else {
-            return Ok(JSValue::FALSE);
+            return Ok(false);
         };
-        let name = utf8_or_throw(global, name)?;
-        Ok(JSValue::from(el.has_attribute(name)))
+        Ok(el.has_attribute(utf8_or_error(heap, name)?))
     }
 
     /// Sets an attribute to a provided value, creating the attribute if it does not exist.
-    pub(crate) fn set_attribute_(
+    fn set_attribute<'a>(
         &self,
-        call_frame: &CallFrame,
-        global_object: &JSGlobalObject,
-        name: &[u8],
-        value: &[u8],
-    ) -> JsResult<JSValue> {
+        this: Wrapper<'a, Self>,
+        heap: &JsHeap<'a>,
+        name: &'a [u8],
+        value: &'a [u8],
+    ) -> bindgen::Result<'a, Option<Wrapper<'a, Self>>> {
         let Some(el) = self.element.get_mut() else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(None);
         };
 
         // A push shifts what the index any live AttributeIterator holds refers
         // to, so end their iteration rather than let them repeat or skip one.
         self.detach_attribute_iterators();
 
-        let name = utf8_or_throw(global_object, name)?;
-        let value = utf8_or_throw(global_object, value)?;
-        if let Err(e) = el.set_attribute(name, value) {
-            let err = create_lolhtml_error(global_object, &e);
-            return Err(global_object.throw_value(err));
-        }
-        Ok(call_frame.this())
+        let name = utf8_or_error(heap, name)?;
+        let value = utf8_or_error(heap, value)?;
+        el.set_attribute(name, value)
+            .map_err(|e| lolhtml_error(heap, &e))?;
+        Ok(Some(this))
     }
 
     /// Removes the attribute.
-    pub(crate) fn remove_attribute_(
+    fn remove_attribute<'a>(
         &self,
-        call_frame: &CallFrame,
-        global_object: &JSGlobalObject,
-        name: &[u8],
-    ) -> JsResult<JSValue> {
+        this: Wrapper<'a, Self>,
+        heap: &JsHeap<'a>,
+        name: &'a [u8],
+    ) -> bindgen::Result<'a, Option<Wrapper<'a, Self>>> {
         let Some(el) = self.element.get_mut() else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(None);
         };
 
         // `Vec::remove` shifts the trailing attributes down, so a live
         // AttributeIterator's index would skip the one that took this slot.
         self.detach_attribute_iterators();
 
-        let name = utf8_or_throw(global_object, name)?;
-        el.remove_attribute(name);
-        Ok(call_frame.this())
+        el.remove_attribute(utf8_or_error(heap, name)?);
+        Ok(Some(this))
     }
 
-    // ── instance-method arg-decode wrappers (attribute ops) ──────────────
-
-    pub(crate) fn on_end_tag(
-        &self,
-        global: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
-        let function = eat_js_value(&mut iter, global)?;
-        self.on_end_tag_(global, function, call_frame)
-    }
-
-    pub(crate) fn get_attribute(
-        &self,
-        global: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
-        let name = eat_string(&mut iter, global)?;
-        self.get_attribute_(global, &name)
-    }
-
-    pub(crate) fn has_attribute(
-        &self,
-        global: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
-        let name = eat_string(&mut iter, global)?;
-        self.has_attribute_(global, &name)
-    }
-
-    pub(crate) fn set_attribute(
-        &self,
-        global: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
-        let name = eat_string(&mut iter, global)?;
-        let value = eat_string(&mut iter, global)?;
-        self.set_attribute_(call_frame, global, &name, &value)
-    }
-
-    pub(crate) fn remove_attribute(
-        &self,
-        global: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
-        let name = eat_string(&mut iter, global)?;
-        self.remove_attribute_(call_frame, global, &name)
-    }
-
-    lol_content_ops! { RawElement, element, JSValue::UNDEFINED;
+    lol_content_ops! { RawElement, element;
         /// Inserts content before the element.
-        before / before_,
+        before,
         /// Inserts content right after the element.
-        after / after_,
+        after,
         /// Inserts content right after the start tag of the element.
-        prepend / prepend_,
+        prepend,
         /// Inserts content right before the end tag of the element.
-        append / append_,
+        append,
         /// Removes the element and inserts content in place of it.
-        replace / replace_,
+        replace,
         /// Replaces content of the element.
-        set_inner_content / set_inner_content_,
+        set_inner_content,
     }
 
     /// Removes the element with all its content.
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn remove(
-        &self,
-        _global: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let Some(el) = self.element.get_mut() else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        el.remove();
-        Ok(call_frame.this())
+    fn remove<'a>(&self, this: Wrapper<'a, Self>, _: &JsHeap<'a>) -> Option<Wrapper<'a, Self>> {
+        self.element.get_mut()?.remove();
+        Some(this)
     }
 
     /// Removes the start tag and end tag of the element but keeps its inner content intact.
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn remove_and_keep_content(
+    fn remove_and_keep_content<'a>(
         &self,
-        _global: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let Some(el) = self.element.get_mut() else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        el.remove_and_keep_content();
-        Ok(call_frame.this())
+        this: Wrapper<'a, Self>,
+        _: &JsHeap<'a>,
+    ) -> Option<Wrapper<'a, Self>> {
+        self.element.get_mut()?.remove_and_keep_content();
+        Some(this)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_tag_name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    fn tag_name<'a>(&self, cx: &mut JsScope<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         let Some(el) = self.element.get_mut() else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(JsLocal::UNDEFINED);
         };
-        string_to_js(&el.tag_name(), global_object)
+        to_js::utf8(&cx.heap, el.tag_name())
     }
 
-    // Note: no `#[bun_jsc::host_fn(setter)]` — generated_classes.rs already
-    // emits `ElementPrototype__setTagName` via `host_setter_result`.
-    pub(crate) fn set_tag_name(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+    fn set_tag_name<'a>(
+        &self,
+        cx: &mut JsScope<'a>,
+        value: JsLocal<'a>,
+    ) -> bindgen::Result<'a, ()> {
         if self.element.is_detached() {
             return Ok(());
         }
-        let name = setter_utf8_arg(global, value)?;
+        let name = setter_utf8_arg(cx.global(), value.to_js())?;
         let Some(el) = self.element.get_mut() else {
             return Ok(());
         };
-        if let Err(e) = el.set_tag_name(&name) {
-            return Err(global.throw_value(create_lolhtml_error(global, &e)));
-        }
-        Ok(())
+        el.set_tag_name(&name)
+            .map_err(|e| lolhtml_error(&cx.heap, &e))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_removed(&self, _global: &JSGlobalObject) -> JSValue {
-        match self.element.get_mut() {
-            Some(el) => JSValue::from(el.removed()),
-            None => JSValue::UNDEFINED,
-        }
+    fn get_removed(&self) -> Option<bool> {
+        Some(self.element.get_mut()?.removed())
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_self_closing(&self, _global: &JSGlobalObject) -> JSValue {
-        match self.element.get_mut() {
-            Some(el) => JSValue::from(el.is_self_closing()),
-            None => JSValue::UNDEFINED,
-        }
+    fn get_self_closing(&self) -> Option<bool> {
+        Some(self.element.get_mut()?.is_self_closing())
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_can_have_content(&self, _global: &JSGlobalObject) -> JSValue {
-        match self.element.get_mut() {
-            Some(el) => JSValue::from(el.can_have_content()),
-            None => JSValue::UNDEFINED,
-        }
+    fn get_can_have_content(&self) -> Option<bool> {
+        Some(self.element.get_mut()?.can_have_content())
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_namespace_uri(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        let Some(el) = self.element.get_mut() else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        string_to_js(el.namespace_uri(), global_object)
+    fn get_namespace_uri(&self) -> Option<impl AsRef<[u8]>> {
+        Some(self.element.get_mut()?.namespace_uri())
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_attributes(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    fn get_attributes<'a>(&self, heap: &JsHeap<'a>) -> Option<Wrapper<'a, AttributeIterator>> {
         if self.element.is_detached() {
-            return Ok(JSValue::UNDEFINED);
+            return None;
         }
 
         // The iterator reads attributes back through `self` on every `next()`,
@@ -3403,10 +3151,7 @@ impl Element {
         self.attribute_iterators
             .with_mut(|v| v.push(attr_iter.clone()));
         // The JS wrapper owns this ref.
-        Ok(AttributeIterator::to_js_nonnull(
-            attr_iter.into_non_null(),
-            global_object,
-        ))
+        Some(attr_iter.into_js(heap))
     }
 }
 
@@ -3415,11 +3160,8 @@ impl Element {
 // hold a backref to it and read through it (see `invalidate`).
 impl WrapperLike for Element {
     type Raw = RawElement;
-    fn init(v: *mut Self::Raw, pipe: BackRef<RewriterPipe>) -> NonNull<Self> {
+    fn init(v: *mut Self::Raw, pipe: BackRef<RewriterPipe>) -> RefPtr<Self> {
         Self::init(v, pipe)
-    }
-    fn to_js(this: NonNull<Self>, g: &JSGlobalObject) -> JSValue {
-        Self::to_js_nonnull(this, g)
     }
     fn detach(&self) {
         self.invalidate();
@@ -3453,16 +3195,24 @@ impl WrapperLike for Element {
 // `RewriterPipe::wire_input`'s `.then_with_value()`; the cell (and thus the
 // pipe) stays alive as long as the pump promise's reaction is rooted.
 
+/// The pipe of the cell that is a reaction's last argument, which the frame holds.
+fn pipe_of_reaction(global: &JSGlobalObject, args: &[JSValue]) -> Option<BackRef<RewriterPipe>> {
+    // SAFETY: a promise reaction runs on the JS thread, with no other scope in use.
+    unsafe {
+        JsScope::with(global.as_mut_ptr(), |cx| {
+            let cell = RewriterPipe::from_js(&cx.heap, args[args.len() - 1])?;
+            Some(cell.with(&cx.payloads, |pipe| BackRef::from(pipe.as_non_null())))
+        })
+    }
+}
+
 fn on_resolve_input_stream(
-    _global_this: &JSGlobalObject,
+    global_this: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let args = callframe.arguments();
-    let Some(this) = js_HTMLRewriterTransform::from_js(args[args.len() - 1]) else {
+    let Some(this) = pipe_of_reaction(global_this, callframe.arguments()) else {
         return Ok(JSValue::UNDEFINED);
     };
-    let this = BackRef::from(this);
-    let this = &*this;
     this.js_pump_reaction_pending.set(false);
     this.end_from_stream(None);
     Ok(JSValue::UNDEFINED)
@@ -3473,12 +3223,10 @@ fn on_reject_input_stream(
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     let args = callframe.arguments();
-    let Some(this) = js_HTMLRewriterTransform::from_js(args[args.len() - 1]) else {
+    let Some(this) = pipe_of_reaction(global_this, args) else {
         return Ok(JSValue::UNDEFINED);
     };
     let err = args[0];
-    let this = BackRef::from(this);
-    let this = &*this;
     this.js_pump_reaction_pending.set(false);
     this.end_from_stream(Some(crate::webcore::streams::StreamError::JSValue(
         jsc::strong::Optional::create(err, global_this),

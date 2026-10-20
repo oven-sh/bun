@@ -574,6 +574,31 @@ impl TestSharedClass for TestShared {
         self.value.get()
     }
 
+    fn or_undefined<'a>(
+        &self,
+        this: JsWrapper<'a, RefPtr<Self>>,
+        _: &JsHeap<'a>,
+    ) -> Option<JsWrapper<'a, RefPtr<Self>>> {
+        (self.value.get() >= 0).then_some(this)
+    }
+
+    fn or_null<'a>(
+        &self,
+        this: JsWrapper<'a, RefPtr<Self>>,
+        heap: &JsHeap<'a>,
+    ) -> Option<JsWrapper<'a, RefPtr<Self>>> {
+        self.or_undefined(this, heap)
+    }
+
+    fn is<'a>(
+        &self,
+        this: JsWrapper<'a, RefPtr<Self>>,
+        _: &JsHeap<'a>,
+        other: Option<JsWrapper<'a, RefPtr<Self>>>,
+    ) -> bool {
+        other.is_some_and(|other| other.as_value().to_js() == this.as_value().to_js())
+    }
+
     fn kept() -> impl IntoIterator<Item = i32> {
         KEPT.with_borrow(|kept| match kept {
             Some(kept) => vec![kept.value.get(), i32::from(kept.finalized.get())],

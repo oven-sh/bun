@@ -568,7 +568,7 @@ A native function called on anything else than an instance throws `ERR_INVALID_T
 
 If any member has `throws: true`, the trait has a
 `type Error<'a>: bindgen::IntoError<'a>` that they all fail with. `b.self` is the
-class itself as an argument, a result or a getter of its own members.
+class itself as an argument, a result or a getter of its own members, where it can be `.optional` or `.nullable`.
 
 The constructor has a `PropertyCallback`, in the namespace of the file, for the static property
 table of the object that has the class:
@@ -669,7 +669,7 @@ impl CronJobClass for CronJob {
 - C++ reads the pointer with `wrapper->wrapped()`.
 
 The struct reaches its own object through a `JsWrapperRef<RefPtr<Self>>`, which is strong while native work needs the
-object and weak otherwise. `finalize` clears it:
+object and weak otherwise (`init_weak` for one that is never strong). `finalize` clears it:
 
 ```rust
 this_value: JsCell<JsWrapperRef<RefPtr<CronJob>>>,

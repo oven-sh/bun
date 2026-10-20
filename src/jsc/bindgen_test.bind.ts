@@ -255,6 +255,10 @@ export const TestShared = b.class({
     keep: {},
     "@@dispose": {},
     lenient: { returns: b.i32, invalidThis: "undefined" },
+    /** The object, unless its value is negative. */
+    orUndefined: { returns: b.self.optional, passThis: true, capability: "heap" },
+    orNull: { returns: b.self.nullable, passThis: true, capability: "heap" },
+    is: { args: { other: b.self.nullable }, returns: b.bool, passThis: true, capability: "heap" },
   },
   static: {
     /** The one Rust holds: its value, and whether its object was collected. */

@@ -2026,7 +2026,7 @@ class SelfType extends Type {
   readonly tsType = "this";
   toCpp(): string {
     throw new TypeError(
-      "b.self is an argument, a result or a getter of the class's own members, as it is: not .nullable, not in an array",
+      "b.self is an argument, a result or a getter of the class's own members, as it is or absent: not in an array",
     );
   }
   layout(): Layout {
@@ -2070,7 +2070,10 @@ export class ClassType extends NamedType {
     this.finalize = options.finalize ?? false;
     this.fromJS = options.fromJS ?? false;
     assert(this.refCounted || !this.finalize, "finalize: a struct that is freed with the object has Drop for that");
-    const own = (type: Type) => (type === selfType ? this : type);
+    const own = (type: Type): Type => {
+      if (type === selfType) return this;
+      return type instanceof OptionalType && type.inner === selfType ? new OptionalType(this, type.modifier) : type;
+    };
     const resolve = <T extends SignatureOptions>(signature: T): T => ({
       ...signature,
       args: Object.fromEntries(Object.entries(signature.args ?? {}).map(([name, type]) => [name, own(type)])),

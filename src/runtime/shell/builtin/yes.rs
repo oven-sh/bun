@@ -25,6 +25,8 @@ pub(crate) struct Yes {
     pub(crate) buffer_used: usize,
     /// Populated in `start()`.
     pub task: Option<YesTask>,
+    /// `task` is on the event loop and names this node: the builtin is not reported before it has run.
+    task_queued: bool,
 }
 
 impl Yes {
@@ -120,10 +122,9 @@ impl Yes {
             return Self::write_failing_error(interp, cmd, &buf, 1);
         }
         // Bounce back via the event loop so we don't block the main thread.
-        let task: *mut YesTask = Self::state_mut(interp, cmd)
-            .task
-            .as_mut()
-            .expect("YesTask set in start()");
+        let me = Self::state_mut(interp, cmd);
+        me.task_queued = true;
+        let task: *mut YesTask = me.task.as_mut().expect("YesTask set in start()");
         // SAFETY: `task` was set in `start()`; `Yes` lives in a `Box` inside
         // the interpreter arena, so the address is stable across the enqueue
         // and the later main-thread callback. `enqueue` ticks the event loop
@@ -153,6 +154,11 @@ impl Yes {
     ) -> Yield {
         Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
         Builtin::write_failing_error(interp, cmd, buf, exit_code)
+    }
+
+    /// `Builtin::after_stop`: a queued `YesTask` cannot be taken back, so `yes` ends when that task runs.
+    pub(crate) fn after_stop(interp: &Interpreter, cmd: NodeId) -> bool {
+        !Self::state_mut(interp, cmd).task_queued
     }
 
     pub(crate) fn on_io_writer_chunk(
@@ -246,6 +252,10 @@ impl YesTask {
     pub(crate) fn run_from_main_thread(this: &Self) {
         // SAFETY: `interp` was set in `Yes::start` and outlives the task.
         let (interp, cmd) = unsafe { (&*this.interp, this.cmd) };
+        Yes::state_mut(interp, cmd).task_queued = false;
+        if Builtin::of(interp, cmd).is_stopped() {
+            return Builtin::done_stopped(interp, cmd).run(interp);
+        }
         Yes::write_no_io_loop(interp, cmd).run(interp);
     }
 

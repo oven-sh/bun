@@ -236,6 +236,22 @@ impl Cat {
         }
     }
 
+    /// `Builtin::stop`: leave the reader this `cat` listens on (its stdin, or the operand it reads).
+    pub(crate) fn stop(interp: &Interpreter, cmd: NodeId) {
+        let rchild = ReaderChildPtr {
+            node: cmd,
+            tag: ReaderTag::Cat,
+        };
+        if let BuiltinInput::Fd(r) = &Builtin::of(interp, cmd).stdin {
+            r.remove_reader(rchild);
+        }
+        if let CatState::ExecFilepathArgs { reader, .. } = &mut Self::state_mut(interp, cmd).state {
+            if let Some(r) = reader.take() {
+                r.remove_reader(rchild);
+            }
+        }
+    }
+
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,

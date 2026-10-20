@@ -111,7 +111,6 @@ impl Ls {
                 let cwd = Builtin::cwd(interp, cmd);
                 let opts = Self::state_mut(interp, cmd).opts;
                 let evtloop = Builtin::event_loop(interp, cmd);
-                let interp_ptr = interp.as_ctx_ptr();
                 if let Some(start) = paths_start {
                     let print_directory = task_count > 1;
                     for i in start..argc {
@@ -123,7 +122,7 @@ impl Ls {
                             cwd,
                             ZBox::from_bytes(path),
                             evtloop,
-                            interp_ptr,
+                            interp,
                         );
                         // SAFETY: freshly heap-allocated.
                         unsafe {
@@ -139,7 +138,7 @@ impl Ls {
                         cwd,
                         ZBox::from_bytes(b"."),
                         evtloop,
-                        interp_ptr,
+                        interp,
                     );
                     // SAFETY: freshly heap-allocated.
                     unsafe { ShellTask::schedule_no_ref::<ShellLsTask>(task) };
@@ -193,6 +192,18 @@ impl Ls {
             return unsafe { OutputTask::<Ls>::on_io_writer_chunk(task, interp, written, e) };
         }
         Self::next(interp, cmd)
+    }
+
+    /// `Builtin::after_stop`: free the queued output; a pool task still out ends `ls` through `next`.
+    pub(crate) fn after_stop(interp: &Interpreter, cmd: NodeId) -> bool {
+        match &mut Self::state_mut(interp, cmd).state {
+            State::Exec(exec) => {
+                OutputTask::release_queued(&mut exec.output_queue);
+                exec.output_done = exec.output_waiting;
+                exec.tasks_done >= exec.task_count.load(Ordering::Relaxed)
+            }
+            State::Idle | State::WaitingWriteErr | State::Done => true,
+        }
     }
 
     /// # Safety
@@ -372,9 +383,9 @@ impl ShellLsTask {
         cwd: bun_sys::Fd,
         path: ZBox,
         event_loop: EventLoopHandle,
-        interp: *mut Interpreter,
+        interp: &Interpreter,
     ) -> *mut ShellLsTask {
-        let mut task = Box::new(ShellLsTask {
+        let task = Box::new(ShellLsTask {
             cmd,
             opts,
             print_directory: false,
@@ -386,10 +397,9 @@ impl ShellLsTask {
             err: None,
             now_secs: 0,
             event_loop,
-            interp,
-            task: ShellTask::new(event_loop),
+            interp: interp.as_ctx_ptr(),
+            task: ShellTask::for_builtin(interp, cmd),
         });
-        task.task.interp = interp;
         bun_core::heap::into_raw(task)
     }
 
@@ -486,6 +496,9 @@ impl ShellLsTask {
             this.add_dot_entries_if_needed(fd);
 
             loop {
+                if this.task.stopped() {
+                    return;
+                }
                 match iterator.next() {
                     Err(e) => {
                         this.err = Some(this.error_with_path(&e));

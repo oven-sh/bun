@@ -691,10 +691,7 @@ impl<'a> TablePrinter<'a> {
         let offset = cell_text.len();
         let mut value_formatter = self.value_formatter.shallow_clone();
         let tag = formatter::Tag::get(value, self.global_object)?;
-        value_formatter.quote_strings = !(matches!(
-            tag.tag,
-            TagPayload::String | TagPayload::StringPossiblyFormatted
-        ));
+        value_formatter.quote_strings = !matches!(tag.tag, TagPayload::String);
         value_formatter.format::<ENABLE_ANSI_COLORS>(tag, cell_text, value, self.global_object)?;
 
         let text = &cell_text[offset..];
@@ -1397,10 +1394,8 @@ pub fn format2(
     };
     let writer: &mut dyn bun_io::Write = &mut *_flush.writer;
 
-    let mut this_value: JSValue = vals[0];
     // see E0509 note above.
     let mut fmt = Formatter::new(global);
-    fmt.remaining_values = bun_ptr::RawSlice::new(&vals[1..]);
     fmt.ordered_properties = options.ordered_properties;
     fmt.quote_strings = options.quote_strings;
     fmt.max_depth = options.max_depth;
@@ -1409,62 +1404,48 @@ pub fn format2(
     fmt.stack_check = StackCheck::init();
     fmt.can_throw_stack_overflow = true;
     fmt.error_display_level = options.error_display_level;
-    let mut tag: formatter::TagResult;
 
     if fmt.write_indent(writer).is_err() {
         return Ok(());
     }
 
-    let mut any = false;
     if options.enable_colors {
         if level == MessageLevel::Error {
             let _ = writer.write_all(pfmt!("<r><red>", true).as_bytes());
         }
-        loop {
-            if any {
-                let _ = writer.write_all(b" ");
-            }
-            any = true;
-
-            tag = formatter::Tag::get(this_value, global)?;
-            if matches!(tag.tag, TagPayload::String) && !fmt.remaining().is_empty() {
-                tag.tag = TagPayload::StringPossiblyFormatted;
-            }
-
-            fmt.format::<true>(tag, writer, this_value, global)?;
-            if fmt.remaining().is_empty() {
-                break;
-            }
-
-            this_value = fmt.remaining()[0];
-            fmt.advance_remaining();
-        }
+        format_first_then_rest::<true>(&mut fmt, writer, vals[0], &vals[1..], global)?;
         if level == MessageLevel::Error {
             let _ = writer.write_all(pfmt!("<r>", true).as_bytes());
         }
     } else {
-        loop {
-            if any {
-                let _ = writer.write_all(b" ");
-            }
-            any = true;
-            tag = formatter::Tag::get(this_value, global)?;
-            if matches!(tag.tag, TagPayload::String) && !fmt.remaining().is_empty() {
-                tag.tag = TagPayload::StringPossiblyFormatted;
-            }
-
-            fmt.format::<false>(tag, writer, this_value, global)?;
-            if fmt.remaining().is_empty() {
-                break;
-            }
-
-            this_value = fmt.remaining()[0];
-            fmt.advance_remaining();
-        }
+        format_first_then_rest::<false>(&mut fmt, writer, vals[0], &vals[1..], global)?;
     }
 
     if options.add_newline {
         let _ = writer.write_all(b"\n");
+    }
+    Ok(())
+}
+
+/// Only a primitive-string first argument is a format string.
+/// <https://console.spec.whatwg.org/#logger>
+fn format_first_then_rest<'a, const C: bool>(
+    fmt: &mut Formatter<'a>,
+    writer: &mut dyn bun_io::Write,
+    first: JSValue,
+    mut rest: &[JSValue],
+    global: &'a JSGlobalObject,
+) -> JsResult<()> {
+    if first.is_string_literal() {
+        fmt.print_format_string::<C>(writer, first, &mut rest)?;
+    } else {
+        let tag = formatter::Tag::get(first, global)?;
+        fmt.format::<C>(tag, writer, first, global)?;
+    }
+    for &value in rest {
+        let _ = writer.write_all(b" ");
+        let tag = formatter::Tag::get(value, global)?;
+        fmt.format::<C>(tag, writer, value, global)?;
     }
     Ok(())
 }
@@ -1581,12 +1562,6 @@ pub mod formatter {
 
     pub struct Formatter<'a> {
         pub global_this: &'a JSGlobalObject,
-
-        /// Callers seat this to a stack slice and reset it to `EMPTY` before
-        /// the backing storage goes away. A `&'a`
-        /// slice cannot express that without forcing `'a` to outlive locals;
-        /// `RawSlice` carries the outlives-holder invariant instead.
-        pub(crate) remaining_values: bun_ptr::RawSlice<JSValue>,
         pub map: visited::Map,
         /// Pooled backing for `map`. `None` until the first cell that can have
         /// circular refs is formatted; `Drop` returns it to `visited::Pool`.
@@ -1622,7 +1597,6 @@ pub mod formatter {
         pub fn new(global_this: &'a JSGlobalObject) -> Self {
             Self {
                 global_this,
-                remaining_values: bun_ptr::RawSlice::EMPTY,
                 map: visited::Map::default(),
                 map_node: None,
                 hide_native: false,
@@ -1661,7 +1635,6 @@ pub mod formatter {
             );
             Self {
                 global_this: self.global_this,
-                remaining_values: self.remaining_values,
                 map: visited::Map::default(),
                 map_node: None,
                 hide_native: self.hide_native,
@@ -1683,23 +1656,6 @@ pub mod formatter {
                 error_display_level: self.error_display_level,
                 format_buffer_as_text: self.format_buffer_as_text,
             }
-        }
-
-        /// View the queued `%`-format arguments as a slice.
-        ///
-        /// Callers always seat `remaining_values` to a slice that outlives the
-        /// dereference site and reset it to `EMPTY` before the backing storage
-        /// is released (RawSlice invariant).
-        #[inline]
-        pub(crate) fn remaining(&self) -> &[JSValue] {
-            self.remaining_values.slice()
-        }
-
-        /// Drop the first queued `%`-format argument.
-        #[inline]
-        pub(crate) fn advance_remaining(&mut self) {
-            let s = self.remaining_values;
-            self.remaining_values = bun_ptr::RawSlice::new(&s.slice()[1..]);
         }
     }
 
@@ -1847,7 +1803,6 @@ pub mod formatter {
 
     #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr, core::marker::ConstParamTy)]
     pub enum Tag {
-        StringPossiblyFormatted,
         String,
         Undefined,
         Double,
@@ -1892,7 +1847,6 @@ pub mod formatter {
             matches!(
                 self,
                 Tag::String
-                    | Tag::StringPossiblyFormatted
                     | Tag::Undefined
                     | Tag::Double
                     | Tag::Integer
@@ -1921,7 +1875,6 @@ pub mod formatter {
     /// Only `CustomFormattedObject` carries a payload.
     #[derive(Copy, Clone, PartialEq, Eq)]
     pub enum TagPayload {
-        StringPossiblyFormatted,
         String,
         Undefined,
         Double,
@@ -1961,7 +1914,6 @@ pub mod formatter {
         }
         pub fn tag(self) -> Tag {
             match self {
-                TagPayload::StringPossiblyFormatted => Tag::StringPossiblyFormatted,
                 TagPayload::String => Tag::String,
                 TagPayload::Undefined => Tag::Undefined,
                 TagPayload::Double => Tag::Double,
@@ -2004,7 +1956,6 @@ pub mod formatter {
     impl From<Tag> for TagPayload {
         fn from(t: Tag) -> Self {
             match t {
-                Tag::StringPossiblyFormatted => TagPayload::StringPossiblyFormatted,
                 Tag::String => TagPayload::String,
                 Tag::Undefined => TagPayload::Undefined,
                 Tag::Double => TagPayload::Double,
@@ -2342,6 +2293,7 @@ pub mod formatter {
             &mut self,
             writer_: &mut dyn bun_io::Write,
             slice_: &[u8],
+            args: &mut &[JSValue],
             global: &'a JSGlobalObject,
         ) -> JsResult<()> {
             let mut writer = WrappedWriter {
@@ -2366,10 +2318,7 @@ pub mod formatter {
                             break;
                         }
 
-                        // borrowck — `writer` holds `&mut self.estimated_line_length`,
-                        // so route `remaining_values` reads/writes through the `RawSlice`
-                        // field directly instead of the `&self` helper methods.
-                        if self.remaining_values.is_empty() {
+                        if args.is_empty() {
                             break;
                         }
 
@@ -2408,11 +2357,8 @@ pub mod formatter {
                         i = 0;
                         hit_percent = true;
                         len = slice.len() as u32;
-                        let next_value = {
-                            let s = self.remaining_values;
-                            self.remaining_values = bun_ptr::RawSlice::new(&s.slice()[1..]);
-                            s.slice()[0]
-                        };
+                        let next_value = args[0];
+                        *args = &args[1..];
 
                         // https://console.spec.whatwg.org/#formatter
                         const MAX_BEFORE_E_NOTATION: f64 = 1.0e21;
@@ -2596,7 +2542,7 @@ pub mod formatter {
                                 writer.print(format_args!("{str}"));
                             }
                         }
-                        if self.remaining_values.is_empty() {
+                        if args.is_empty() {
                             break;
                         }
                     }
@@ -3302,9 +3248,6 @@ pub mod formatter {
             // `print_as` frame stays small enough to recurse 512 levels under
             // debug/ASAN before the stack-safety check fires.
             match format {
-                Tag::StringPossiblyFormatted => {
-                    self.print_string_possibly_formatted::<ENABLE_ANSI_COLORS>(writer_, value)
-                }
                 Tag::String => self.print_string::<ENABLE_ANSI_COLORS>(writer_, value, js_type),
                 Tag::Integer => self.print_integer::<ENABLE_ANSI_COLORS>(writer_, value),
                 Tag::BigInt => self.print_bigint::<ENABLE_ANSI_COLORS>(writer_, value),
@@ -3512,16 +3455,19 @@ pub mod formatter {
             )
         }
 
+        /// The only entry to the `%` specifier pass. The specifiers in `value`
+        /// take their arguments from the front of `rest`.
         #[inline(never)]
-        fn print_string_possibly_formatted<const C: bool>(
+        pub(super) fn print_format_string<const C: bool>(
             &mut self,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
+            rest: &mut &[JSValue],
         ) -> JsResult<()> {
             let str = value.to_utf8(self.global_this)?;
             let slice = str.slice();
             self.add_for_new_line(slice.len());
-            self.write_with_formatting::<C>(writer_, slice, self.global_this)
+            self.write_with_formatting::<C>(writer_, slice, rest, self.global_this)
         }
 
         #[inline(never)]
@@ -5672,13 +5618,9 @@ pub mod formatter {
             writer: &mut dyn bun_io::Write,
         ) -> JsResult<()> {
             self.stack_check.update();
-            let one = [value];
-            self.remaining_values = bun_ptr::RawSlice::new(&one);
             let global = self.global_this;
-            let result = Tag::get(value, global)
-                .and_then(|tag| self.format::<ENABLE_ANSI_COLORS>(tag, writer, value, global));
-            self.remaining_values = bun_ptr::RawSlice::EMPTY;
-            result
+            let tag = Tag::get(value, global)?;
+            self.format::<ENABLE_ANSI_COLORS>(tag, writer, value, global)
         }
     }
 

@@ -3008,10 +3008,6 @@ fn parse_completion_context(line: &[u8], cursor: usize) -> Option<CompletionCont
 }
 
 fn is_incomplete_code(code: &[u8]) -> bool {
-    const fn is_word_char(ch: u8) -> bool {
-        ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'$'
-    }
-
     /// Keywords after which a `/` starts a regex literal rather than division.
     const REGEX_KEYWORDS: &[&[u8]] = &[
         b"return",
@@ -3102,7 +3098,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                 _ => {}
             }
             // A `/` after a token that cannot end an expression starts a regex.
-            let after_keyword = is_word_char(prev)
+            let after_keyword = is_word_byte(prev)
                 && !word_after_dot
                 && !word_after_type_op
                 && REGEX_KEYWORDS.contains(&&code[word_start..word_end]);
@@ -3118,10 +3114,10 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                 }
                 if j > 0 && matches!(code[j - 1], b')' | b']' | b'}' | b'"' | b'\'' | b'`') {
                     true
-                } else if j > 0 && is_word_char(code[j - 1]) {
+                } else if j > 0 && is_word_byte(code[j - 1]) {
                     // `x !` and `o.in!` are postfix; `return !` is a prefix.
                     let end = j;
-                    while j > 0 && is_word_char(code[j - 1]) {
+                    while j > 0 && is_word_byte(code[j - 1]) {
                         j -= 1;
                     }
                     if (j > 0 && matches!(code[j - 1], b'.' | b'#'))
@@ -3135,7 +3131,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                             k -= 1;
                         }
                         let kw_end = k;
-                        while k > 0 && is_word_char(code[k - 1]) {
+                        while k > 0 && is_word_byte(code[k - 1]) {
                             k -= 1;
                         }
                         matches!(&code[k..kw_end], b"as" | b"satisfies")
@@ -3154,11 +3150,11 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                 }
                 if j > 0 && code[j - 1] == b'/' {
                     true
-                } else if j > 0 && (is_word_char(code[j - 1]) || matches!(code[j - 1], b'>' | b']'))
+                } else if j > 0 && (is_word_byte(code[j - 1]) || matches!(code[j - 1], b'>' | b']'))
                 {
                     // Walk the tag-name/type-argument run back to its opener.
                     while j > 0
-                        && (is_word_char(code[j - 1])
+                        && (is_word_byte(code[j - 1])
                             || matches!(
                                 code[j - 1],
                                 b'.' | b'-'
@@ -3177,7 +3173,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                     }
                     // `</tag>` or `Map<K, V>` (word before `<`) ends an expression; `a < b` does not.
                     (j > 1 && code[j - 1] == b'/' && code[j - 2] == b'<')
-                        || (j > 1 && code[j - 1] == b'<' && is_word_char(code[j - 2]))
+                        || (j > 1 && code[j - 1] == b'<' && is_word_byte(code[j - 2]))
                 } else {
                     false
                 }
@@ -3238,10 +3234,10 @@ fn is_incomplete_code(code: &[u8]) -> bool {
             }
         }
 
-        if is_word_char(ch) {
+        if is_word_byte(ch) {
             if word_end != i {
                 // `void` after `as`/`satisfies` (also across `|`/`&`) is a type.
-                word_after_type_op = (is_word_char(prev)
+                word_after_type_op = (is_word_byte(prev)
                     && matches!(&code[word_start..word_end], b"as" | b"satisfies"))
                     || (word_after_type_op && matches!(prev, b'|' | b'&'));
                 word_start = i;
@@ -3281,7 +3277,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                             | b'^'
                             | b'~'
                             | b'.'
-                    ) || (is_word_char(prev)
+                    ) || (is_word_byte(prev)
                         && !word_after_dot
                         && (REGEX_KEYWORDS.contains(&&code[word_start..word_end])
                             || matches!(&code[word_start..word_end], b"as" | b"satisfies"))
@@ -3296,7 +3292,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
             b']' => bracket_count -= 1,
             b'(' => {
                 paren_count += 1;
-                let mut head = is_word_char(prev)
+                let mut head = is_word_byte(prev)
                     && !word_after_dot
                     && matches!(
                         &code[word_start..word_end],
@@ -3304,7 +3300,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                     );
                 // `for await (` is a conditional head; bare `await (` is a call-like use.
                 if !head
-                    && is_word_char(prev)
+                    && is_word_byte(prev)
                     && !word_after_dot
                     && &code[word_start..word_end] == b"await"
                 {
@@ -3313,7 +3309,7 @@ fn is_incomplete_code(code: &[u8]) -> bool {
                         j -= 1;
                     }
                     let end = j;
-                    while j > 0 && is_word_char(code[j - 1]) {
+                    while j > 0 && is_word_byte(code[j - 1]) {
                         j -= 1;
                     }
                     head = &code[j..end] == b"for";

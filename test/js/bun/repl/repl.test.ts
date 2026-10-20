@@ -925,9 +925,11 @@ describe.concurrent("Bun REPL", () => {
         // A member named like a keyword is still postfix context.
         "q = ({ in: 84 }.in! / 2); q",
         'q = ("x"! / 2); q',
+        // An identifier ending in a non-ASCII letter is still a word.
+        "café = 90; q = (café! / 2); q",
         ".exit",
       ]);
-      expect(outputs).toEqual(["42", "43", "NaN", "44", "true", "42", "NaN"]);
+      expect(outputs).toEqual(["42", "43", "NaN", "44", "true", "42", "NaN", "45"]);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });

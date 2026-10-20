@@ -48,7 +48,7 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_io::{FmtAdapter, Write};
 use bun_js_printer::Encoding;
-use bun_paths::resolve_path::{platform, platform_to_posix_in_place, relative_normalized};
+use bun_paths::resolve_path::{self, platform, platform_to_posix_in_place, relative_normalized};
 use bun_resolver::fs::FileSystem;
 
 use crate::Graph::Graph;
@@ -218,14 +218,21 @@ pub(crate) fn write<W: Write + ?Sized>(
     writer.write_all(b"{")?;
 
     if options.html_manifest_has_module_dir() && !from_chunk_dir.is_empty() {
-        writer.write_all(b"\"root\":\"")?;
-        // A naming template can start with `./`.
-        for segment in strings::split(from_chunk_dir, b"/") {
-            if !segment.is_empty() && segment != b"." {
-                writer.write_all(b"../")?;
-            }
+        // A naming template can start with `./`, or lead above the outdir, where the way back
+        // goes through the outdir's own name.
+        let outdir = resolve_path::join_abs_string::<platform::Auto>(
+            FileSystem::get().top_level_dir,
+            &[&options.output_dir],
+        )
+        .to_vec();
+        let chunk_dir = resolve_path::join_abs_string::<platform::Auto>(&outdir, &[from_chunk_dir]);
+        let mut root = resolve_path::relative_alloc(chunk_dir, &outdir)?;
+        platform_to_posix_in_place(&mut root);
+        if !root.is_empty() {
+            writer.write_all(b"\"root\":")?;
+            bun_js_printer::write_json_string::<_, { Encoding::Utf8 }>(&root, writer)?;
+            writer.write_all(b",")?;
         }
-        writer.write_all(b"\",")?;
     }
 
     // Use the server-side public path here.

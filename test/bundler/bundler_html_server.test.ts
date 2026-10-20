@@ -47,6 +47,7 @@ describe.concurrent("bundler", () => {
 
   // The server entry lands in dist/src/ when a second entry point widens the root.
   const inSubfolder = { entrypoints: ["src/server.ts", "other.ts"], output: "dist/src/server.js" };
+  const aboveOutdir = { entrypoints: ["src/server.ts"], output: "server.js" };
 
   test.each([
     { name: "esm", format: "esm", entrypoints: ["src/server.ts"], output: "dist/server.js" },
@@ -56,6 +57,45 @@ describe.concurrent("bundler", () => {
     { name: "publicPath", format: "esm", publicPath: "/", ...inSubfolder },
     { name: "publicPath-cjs", format: "cjs", publicPath: "/", ...inSubfolder },
     { name: "naming-starts-with-dot", format: "esm", naming: { entry: "./[dir]/[name].[ext]" }, ...inSubfolder },
+    // The server entry lands above the outdir, or beside it: `root` leads back through the outdir's name.
+    // The entry naming moves the page there too, and a public path is what finds its files from there.
+    {
+      name: "naming-above-outdir",
+      format: "esm",
+      publicPath: "/",
+      naming: { entry: "../[name].[ext]" },
+      ...aboveOutdir,
+    },
+    {
+      name: "naming-above-outdir-cjs",
+      format: "cjs",
+      publicPath: "/",
+      naming: { entry: "../[name].[ext]" },
+      ...aboveOutdir,
+    },
+    {
+      name: "naming-beside-outdir",
+      format: "esm",
+      publicPath: "/",
+      naming: { entry: "../out/[name].[ext]" },
+      entrypoints: ["src/server.ts"],
+      output: "out/server.js",
+    },
+    // A segment that goes up and comes back is no way out of the outdir.
+    {
+      name: "naming-down-and-up",
+      format: "esm",
+      naming: { entry: "a/../b/[name].[ext]" },
+      entrypoints: ["src/server.ts"],
+      output: "dist/b/server.js",
+    },
+    // The page's own files sit above the outdir too.
+    {
+      name: "chunks-above-outdir",
+      format: "esm",
+      naming: { entry: "../[name].[ext]", chunk: "../[name]-[hash].[ext]", asset: "../[name]-[hash].[ext]" },
+      ...aboveOutdir,
+    },
     // The page's files land under the server entry's folder, and the HTML names them from the outdir.
     {
       name: "publicPath-files-below-entry",

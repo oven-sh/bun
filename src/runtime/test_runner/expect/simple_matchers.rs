@@ -4,7 +4,6 @@
 //! `Expect` all the same.
 
 use super::{Expect, OrderingRelation};
-use bun_core::strings;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 // ── unary predicates: expect(x).toBe<Kind>() ───────────────────────────────
@@ -68,11 +67,11 @@ impl Expect {
 
 // ── string affix: toStartWith / toEndWith / toInclude ──────────────────────
 pub(crate) fn to_start_with(this: &Expect, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-    this.run_string_affix_matcher(g, f, "toStartWith", "start with", strings::starts_with)
+    this.run_string_affix_matcher(g, f, "toStartWith", "start with", |pair| pair.starts_with())
 }
 pub(crate) fn to_end_with(this: &Expect, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-    this.run_string_affix_matcher(g, f, "toEndWith", "end with", strings::ends_with)
+    this.run_string_affix_matcher(g, f, "toEndWith", "end with", |pair| pair.ends_with())
 }
 pub(crate) fn to_include(this: &Expect, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-    this.run_string_affix_matcher(g, f, "toInclude", "include", strings::contains)
+    this.run_string_affix_matcher(g, f, "toInclude", "include", |pair| pair.includes())
 }

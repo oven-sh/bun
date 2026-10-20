@@ -20,6 +20,7 @@ import zlib from "node:zlib";
 
 // this is also testing that imports with default and named imports in the same statement work
 // our transpiler transform changes this to a var with import.meta.require
+import * as eventsNamespace from "node:events";
 import EventEmitter, {
   captureRejectionSymbol,
   getEventListeners,
@@ -27,7 +28,6 @@ import EventEmitter, {
   listenerCount,
   setMaxListeners,
 } from "node:events";
-import * as eventsNamespace from "node:events";
 
 describe("node:events", () => {
   test("captureRejectionSymbol", () => {

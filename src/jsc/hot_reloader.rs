@@ -496,6 +496,11 @@ where
     }
 
     pub(crate) fn append(&mut self, id: u32) {
+        // A replaced file is reported by its directory and by itself.
+        if self.hashes[..self.count as usize].contains(&id) {
+            return;
+        }
+
         if self.count == 8 {
             self.enqueue();
             self.count = 0;

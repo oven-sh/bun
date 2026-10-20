@@ -97,21 +97,25 @@ mod fake_mimalloc {
         heap.used += total;
         if heap.end - heap.at < total {
             let chunk = total.max(CHUNK);
+            // A large request gets its own allocation, so the rest of the current chunk stays usable.
+            let is_separate = total > CHUNK / 4;
+            // Like mimalloc, get a large zeroed allocation straight from the operating system, so a page that is never
+            // touched is never resident. The tables in `bun_sema::table` rely on that.
             // SAFETY: plain libc allocation.
-            let base = unsafe { libc::malloc(chunk) };
+            let base = unsafe {
+                if zero && is_separate {
+                    libc::calloc(1, chunk)
+                } else {
+                    libc::malloc(chunk)
+                }
+            };
             if base.is_null() {
                 return base;
             }
             heap.chunks.push(base);
-            if total > CHUNK / 4 {
-                // Allocated separately, so that the rest of the current chunk stays usable.
+            if is_separate {
                 // SAFETY: `total` bytes were reserved.
-                let p = unsafe { place(base, base.addr(), size, align, false) };
-                if zero {
-                    // SAFETY: `size` bytes at `p` are inside the chunk.
-                    unsafe { core::ptr::write_bytes(p.cast::<u8>(), 0, size) };
-                }
-                return p;
+                return unsafe { place(base, base.addr(), size, align, false) };
             }
             heap.at = base.addr();
             heap.end = base.addr() + chunk;

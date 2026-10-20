@@ -428,11 +428,12 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> sys::Maybe<Dir> {
 
 pub struct CacheDir {
     pub path: Vec<u8>,
-    /// Nothing names a cache directory: `path` is below the working directory, whoever owns that.
+    /// True if no cache directory is configured, so `path` is below the working directory, whoever
+    /// owns that.
     pub is_cwd_fallback: bool,
 }
 
-/// An empty variable counts as unset: `abs(&[b""])` is the project directory.
+/// An empty variable counts as unset, because `abs(&[b""])` would be the project directory.
 pub fn fetch_cache_directory_path(
     env: &mut DotEnvLoader,
     configured: Option<&[u8]>,
@@ -473,12 +474,13 @@ pub fn fetch_cache_directory_path(
 
 // ─────────────────────── cached folder name printers ──────────────────────────
 
-/// What an entry of the cache root is, by name. Every writer into it is listed at its variant.
+/// What kind of entry something in the cache root is, going by its name. Each variant lists the
+/// code that writes it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CacheEntryKind {
     /// `<name>@<version>...`, `@G@...`, `@GH@...`, `@T@...` (the printers below).
     Package,
-    /// `@<scope>`: holds scoped `Package` and `Index` entries.
+    /// `@<scope>`. Contains the scoped `Package` and `Index` entries.
     Scope,
     /// `<name>/<version>...` symlinks to `Package` directories (`ExtractTarball::extract`).
     Index,
@@ -750,7 +752,8 @@ pub fn cached_npm_package_folder_name_print<'a>(
     };
     w.put(b"@@");
     w.put(&scope_url.hostname[..visible_len]);
-    // The host alone names `https://host/`. A port, a path or http is another registry on it.
+    // The host alone stands for `https://host/`. With a port, a path or http, it's a different
+    // registry on that host.
     if visible_len < scope_url.hostname.len()
         || !scope_url.is_https()
         || !scope_url.port.is_empty()
@@ -831,7 +834,8 @@ pub fn cached_npm_package_folder_print_basename<'a>(
     w.finish_z()
 }
 
-/// `@T@sha512-<first 16 digest bytes as hex>@@@1`: a path or URL holds other bytes tomorrow.
+/// Prints `@T@sha512-<first 16 digest bytes as hex>@@@1`. The name uses the digest because a path
+/// or URL can serve different bytes tomorrow.
 pub fn cached_tarball_folder_name_print<'a>(
     buf: &'a mut [u8],
     integrity: &Integrity,
@@ -866,7 +870,8 @@ pub fn cached_tarball_folder_name_print<'a>(
     w.finish_z()
 }
 
-/// Empty, which callers treat as a cache miss, for a row that this run gives its integrity.
+/// Returns an empty name, which callers treat as a cache miss, for a dependency that only gets its
+/// integrity during this run.
 pub fn cached_tarball_folder_name(
     this: &PackageManager,
     integrity: &Integrity,
@@ -900,7 +905,8 @@ pub fn cached_tarball_folder_name(
 }
 
 impl PackageManager {
-    /// Whether what this run reads from a `file:` path or URL can become the integrity in bun.lock.
+    /// Returns true if what this run reads from a `file:` path or URL can become the integrity in
+    /// bun.lock.
     pub(crate) fn pins_tarballs(&self) -> bool {
         self.options.do_.save_lockfile() && self.options.offline != options::OfflineMode::Offline
     }
@@ -911,7 +917,8 @@ impl PackageManager {
             && !self.options.do_.contains(options::Do::VERIFY_INTEGRITY)
     }
 
-    /// `named_here`: the names on the command line are about the package.json `dependency` is in.
+    /// `named_here` means the names on the command line refer to the package.json that `dependency`
+    /// is in.
     pub(crate) fn repins_tarball(
         &self,
         dependency: &Dependency,
@@ -1162,7 +1169,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
             cache_dir = Fd::cwd();
         }
         ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
-            // Opened first: under `--no-verify` the name depends on what the cache holds.
+            // Open it first, because with `--no-verify` the name depends on what's in the cache.
             cache_dir = get_cache_directory(manager);
             cache_dir_subpath =
                 cached_tarball_folder_name(manager, integrity, resolution, patch_hash);

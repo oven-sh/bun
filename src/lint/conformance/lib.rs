@@ -9,6 +9,9 @@
 //! A case passes if the messages are the same (rule, id, text, place, fix, and for each suggestion
 //! id, text, fix and the code after it) and the code after one pass of fixes is.
 //!
+//! Here `--fix` never applies a fix that can change what a program does, even if upstream's `--fix` does. Those fixes
+//! need `--fix-dangerously`. They're compared as regular fixes, and the cases that have one are counted.
+//!
 //! `oxlint/` has the tests of the rules that are ports of oxlint's, with what the executable of oxlint reports. It does not print
 //! its fixes: there the code is compared after what `--fix` applies, then also `--fix-suggestions`, then also `--fix-dangerously`.
 
@@ -29,6 +32,7 @@ use bun_core::strings;
 use bun_format_conformance::output_line;
 use bun_lint::ast::File;
 use bun_lint::context::Severity;
+use bun_lint::languages::Dialect;
 use bun_lint::linter::{Config, FileConfig, LintMessage, Registry, ResolvedConfig};
 use bun_lint::options::Json;
 use bun_lint::rule::Plugin;
@@ -149,7 +153,7 @@ const SUITES: [(&str, &str); 5] = [
 ];
 
 /// The directories of a suite that have the tests of rules.
-const PLUGINS: [(&str, Plugin); 17] = [
+const PLUGINS: [(&str, Plugin); 19] = [
     ("eslint", Plugin::Eslint),
     ("typescript-eslint", Plugin::TypeScript),
     ("react-hooks", Plugin::ReactHooks),
@@ -167,6 +171,8 @@ const PLUGINS: [(&str, Plugin); 17] = [
     ("jest", Plugin::Jest),
     ("vitest", Plugin::Vitest),
     ("prettier", Plugin::Prettier),
+    ("json", Plugin::Json),
+    ("markdown", Plugin::Markdown),
 ];
 
 /// The directories of the bundle that are written to the disk.
@@ -213,10 +219,25 @@ fn write_link(path: &[u8], target: &[u8]) {
 /// The configuration that the `RuleTester` of the plugin lints a case with: only that rule, as an
 /// error.
 pub fn config_of(registry: &Registry, entry: &'static RuleEntry, case: &Json) -> ResolvedConfig {
+    let language_options = case.get(b"languageOptions").cloned().unwrap_or(Json::Null);
+    // If the case is in one of the plugin's languages, `languageOptions` are that language's options.
+    let language = string_of(case, b"language");
+    let dialect = language.and_then(|written| {
+        let name = &written[strings::last_index_of_char(written, b'/')? + 1..];
+        let language = registry.language(entry.meta.plugin, name)?;
+        let configured = language.configure(name, &language_options).ok()?;
+        Some(Dialect {
+            language,
+            configured,
+        })
+    });
     let config = Json::Object(vec![
         (
             b"languageOptions".to_vec(),
-            case.get(b"languageOptions").cloned().unwrap_or(Json::Null),
+            match language {
+                Some(_) => Json::Null,
+                None => language_options,
+            },
         ),
         (
             b"settings".to_vec(),
@@ -228,6 +249,8 @@ pub fn config_of(registry: &Registry, entry: &'static RuleEntry, case: &Json) ->
     let options = case.get(b"options").and_then(Json::as_array);
     // The first error is kept, and `null` in the recorded language options is one: what is to be seen is the refusal of the options.
     config.error = None;
+    config.language_name = language.map(Into::into);
+    config.dialect = dialect;
     config.configure(entry, Severity::Error, options.unwrap_or_default());
     // The `RuleTester` of typescript-eslint sets it, that of ESLint does not.
     config.linter.report_unused_disable_directives = match entry.meta.plugin {
@@ -680,6 +703,10 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
     output_line!(
         "\n{} cases have their messages in another order",
         counts.in_another_order.load(Ordering::Relaxed)
+    );
+    output_line!(
+        "\n{} cases have a fix that --fix holds back",
+        counts.holding_back_a_fix.load(Ordering::Relaxed)
     );
     output_line!(
         "\n{} rules, {perfect} without failures, {missing} not implemented\n{} cases passed, {} failed, {} skipped",

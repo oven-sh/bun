@@ -464,6 +464,7 @@ function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {
       "completions/bun.zsh",
       "completions/bun.fish",
       "src/runtime/bake/bun-framework-react/client.tsx",
+      "src/runtime/bake/bun-bake-react/client.tsx",
       "src/lint/linter/config/presets.txt",
       "src/lint/linter/deprecated.txt",
       "src/lint/linter/schema/schemas.txt",
@@ -950,6 +951,7 @@ export function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     ...outputNames.map(name => resolve(cfg.codegenDir, `${name}.h`)),
     resolve(cfg.codegenDir, "GeneratedBindings+Tables.h"),
     resolve(cfg.codegenDir, "GeneratedBindings+Counts.h"),
+    resolve(cfg.codegenDir, "GeneratedBindings+Classes.h"),
   ];
   const rust = [...new Set(compiled.map(src => crates.get(src)))].map(crate =>
     resolve(cfg.codegenDir, `generated_bindgen_${crate}.rs`),

@@ -1072,12 +1072,25 @@ where
         };
     }
 
+    // The surrogate pair at UTF-16 units `$idx` and `$idx + 1` as one code point, if they are a pair.
+    macro_rules! utf16_pair_at {
+        ($idx:expr) => {{
+            let lead = code_unit_at!($idx) as u16;
+            if strings::u16_is_lead(lead) && $idx + 1 < n {
+                strings::decode_surrogate_pair(lead, code_unit_at!($idx + 1) as u16)
+            } else {
+                None
+            }
+        }};
+    }
+
+    // Latin-1 and UTF-16 code points that print as they are collect here: one write for each run.
+    let mut run = [0u8; 128];
+
     while i < n {
         // A well-formed surrogate pair is one code point; a lone surrogate is escaped below.
         let utf16_pair: Option<u32> = match ENCODING {
-            Encoding::Utf16 if i + 1 < n => {
-                strings::decode_surrogate_pair(code_unit_at!(i) as u16, code_unit_at!(i + 1) as u16)
-            }
+            Encoding::Utf16 => utf16_pair_at!(i),
             _ => None,
         };
         let width: u8 = match ENCODING {
@@ -1124,10 +1137,36 @@ where
                     }
                 }
                 Encoding::Latin1 | Encoding::Utf16 => {
-                    let mut codepoint_bytes = [0u8; 4];
-                    let codepoint_len = strings::encode_wtf8_rune(&mut codepoint_bytes, c as u32);
-                    writer.write_all(&codepoint_bytes[..codepoint_len])?;
-                    i += clamped_width;
+                    let mut run_len: usize = 0;
+                    let mut code_point = c;
+                    let mut code_point_width = clamped_width;
+                    loop {
+                        let mut codepoint_bytes = [0u8; 4];
+                        let codepoint_len =
+                            strings::encode_wtf8_rune(&mut codepoint_bytes, code_point as u32);
+                        run[run_len..run_len + 4].copy_from_slice(&codepoint_bytes);
+                        run_len += codepoint_len;
+                        i += code_point_width;
+                        if i >= n {
+                            break;
+                        }
+                        let pair: Option<u32> = match ENCODING {
+                            Encoding::Utf16 => utf16_pair_at!(i),
+                            _ => None,
+                        };
+                        (code_point, code_point_width) = match pair {
+                            Some(pair) => (pair as i32, 2),
+                            None => (code_unit_at!(i), 1),
+                        };
+                        if !can_print_without_escape(code_point, ascii_only) {
+                            break;
+                        }
+                        if run_len + 4 > run.len() {
+                            writer.write_all(&run[..run_len])?;
+                            run_len = 0;
+                        }
+                    }
+                    writer.write_all(&run[..run_len])?;
                 }
             }
             continue;
@@ -1266,9 +1305,10 @@ pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
 }
 
 /// `write_json_string` for a string whose encoding is known only at run time. Equal strings print the same.
-pub fn write_json_string_encoded<W: Write + ?Sized>(
+pub fn write_json_string_encoded(
     input: bun_core::EncodedSlice<'_>,
-    writer: &mut W,
+    // Not generic: a generic writer adds three copies of the escaper for each writer type.
+    writer: &mut dyn Write,
 ) -> crate::Result<()> {
     let bytes = input.byte_slice();
     if input.is_16bit() {

@@ -124,29 +124,37 @@ impl JSGlobalObject {
 
     #[cold]
     pub fn throw_string_too_long(&self) -> JsError {
+        self.throw_value(self.create_string_too_long_error())
+    }
+
+    pub fn create_string_too_long_error(&self) -> JSValue {
         const _: () = assert!(bun_core::string::WTF_STRING_MAX_LENGTH == 2147483647);
         self.err(
             crate::ErrorCode::STRING_TOO_LONG,
             format_args!("Cannot create a string longer than 2147483647 characters"),
         )
-        .throw()
+        .to_js()
     }
 
     /// Node's error for a failed allocation, as opposed to JSC's
     /// [`Self::throw_out_of_memory`].
     #[cold]
     pub fn throw_memory_allocation_failed(&self) -> JsError {
+        self.throw_value(self.create_memory_allocation_failed_error())
+    }
+
+    pub fn create_memory_allocation_failed_error(&self) -> JSValue {
         self.err(
             crate::ErrorCode::MEMORY_ALLOCATION_FAILED,
             format_args!("Failed to allocate memory"),
         )
-        .throw()
+        .to_js()
     }
 
     #[cold]
     #[inline(never)]
     pub fn throw_out_of_memory_value(&self) -> JSValue {
-        JSGlobalObject__throwOutOfMemoryError(self);
+        let _ = self.throw_out_of_memory();
         JSValue::ZERO
     }
 
@@ -359,7 +367,11 @@ impl JSGlobalObject {
     /// `${T}Class__construct` thunk entirely, so the stub would be dead code.
     #[cold]
     pub fn throw_illegal_constructor(&self) -> JsError {
-        crate::ErrorCode::ILLEGAL_CONSTRUCTOR.throw(self, format_args!("Illegal constructor"))
+        self.throw_value(self.create_illegal_constructor_error())
+    }
+
+    pub fn create_illegal_constructor_error(&self) -> JSValue {
+        crate::ErrorCode::ILLEGAL_CONSTRUCTOR.fmt(self, format_args!("Illegal constructor"))
     }
 
     #[inline]
@@ -1188,56 +1200,6 @@ impl JSGlobalObject {
             format_args!("{}", bun_fmt::out_of_range(value, options)),
         )
         .throw()
-    }
-
-    pub fn validate_big_int_range<T: bun_core::Integer>(
-        &self,
-        value: JSValue,
-        default: T,
-        range: IntegerRange,
-    ) -> JsResult<T> {
-        if value.is_undefined() || value.is_empty() {
-            return Ok(T::ZERO);
-        }
-
-        let min_t: i128 = range.min.max(T::MIN_I128);
-        let max_t: i128 = range.max.min(T::MAX_I128);
-        if value.is_big_int() {
-            if T::SIGNED {
-                if value.is_big_int_in_int64_range(
-                    i64::try_from(min_t).expect("int cast"),
-                    i64::try_from(max_t).expect("int cast"),
-                ) {
-                    return Ok(T::from_i64(value.to_int64()));
-                }
-            } else {
-                if value.is_big_int_in_uint64_range(
-                    u64::try_from(min_t).expect("int cast"),
-                    u64::try_from(max_t).expect("int cast"),
-                ) {
-                    return Ok(T::from_u64(value.to_uint64_no_truncate()));
-                }
-            }
-            return Err(self
-                .err(
-                    JscError::OUT_OF_RANGE,
-                    format_args!(
-                        "The value is out of range. It must be >= {} and <= {}.",
-                        min_t, max_t
-                    ),
-                )
-                .throw());
-        }
-
-        self.validate_integer_range::<T>(
-            value,
-            default,
-            IntegerRange {
-                min: min_t.max(i128::from(MIN_SAFE_INTEGER)),
-                max: max_t.min(i128::from(MAX_SAFE_INTEGER)),
-                field_name: range.field_name,
-            },
-        )
     }
 
     pub fn validate_integer_range<T: bun_core::Integer>(

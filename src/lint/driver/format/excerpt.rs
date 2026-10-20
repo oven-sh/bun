@@ -81,13 +81,8 @@ impl<'r> Place<'r> {
         meta: &Meta,
     ) -> &(&'r FileResult, LineStarts, Vec<u8>) {
         self.file.take_if(|it| !std::ptr::eq(it.0, result));
-        self.file.get_or_insert_with(|| {
-            let starts = match &result.line_starts {
-                Some(starts) => LineStarts::at(starts.clone()),
-                None => LineStarts::new(result.text.as_deref().unwrap_or_default()),
-            };
-            (result, starts, display_path(&result.path, meta.cwd))
-        })
+        self.file
+            .get_or_insert_with(|| (result, result.lines(), display_path(&result.path, meta.cwd)))
     }
 }
 

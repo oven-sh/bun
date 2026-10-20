@@ -48,6 +48,16 @@ impl DevServer {
                         route.file_layout,
                     )?;
                 }
+                // A router whose pages also run in the browser: the same files, in the client graph.
+                for path in self.client_page_files(bundle.route_index).iter() {
+                    let stale = match self.client_graph.get_file_index(path) {
+                        Some(index) => self.client_graph.stale_files.is_set(index.get() as usize),
+                        None => true,
+                    };
+                    if stale {
+                        entry_points.append_js(path, bake::Graph::Client)?;
+                    }
+                }
             }
             route_bundle::Data::Html(html) => {
                 entry_points.append_html(&html.html_bundle.bundle.path)?;

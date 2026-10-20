@@ -29,9 +29,6 @@ pub unsafe extern "C" fn mi_free_opaque(_: *mut c_void, ptr: *mut c_void) {
     unsafe { raw::free(ptr) };
 }
 
-/// JSC `JSTypedArrayBytesDeallocator` → default allocator `free(ctx)`; `bytes` ignored.
-pub use mi_free_opaque as mi_free_ctx;
-
 /// JSC `JSTypedArrayBytesDeallocator` → default allocator `free(bytes)`; `ctx` ignored.
 pub unsafe extern "C" fn mi_free_bytes(bytes: *mut c_void, _ctx: *mut c_void) {
     // SAFETY: bytes was allocated by the default allocator (or is null).

@@ -523,7 +523,7 @@ impl<'f> Collector<'f, '_> {
     /// The right side, if the expression statement `s` is the left side of a `for`-`in` or a
     /// `for`-`of`.
     fn iterated_by(&self, s: hir::StmtId) -> Option<ExprId> {
-        let Some(&Parent::Stmt(owner)) = self.file.bound.stmt_parent.get(s.idx()) else {
+        let Parent::Stmt(owner) = self.file.bound.parent_of_stmt(s) else {
             return None;
         };
         match self.file.hir.stmts.get(owner.idx())?.kind {
@@ -551,8 +551,8 @@ impl<'f> Collector<'f, '_> {
         let mut targets: SmallVec<[ExprId; 4]> = SmallVec::new();
         let mut iterated = None;
         loop {
-            match bound.expr_parent.get(at.idx()) {
-                Some(&Parent::Expr(parent)) => {
+            match bound.parent_of_expr(at) {
+                Parent::Expr(parent) => {
                     match hir.exprs.get(parent.idx()).map(|it| it.kind) {
                         Some(ExprKind::Assign {
                             op: None,
@@ -608,7 +608,7 @@ impl<'f> Collector<'f, '_> {
                         _ => break,
                     }
                 }
-                Some(&Parent::Prop(p)) => {
+                Parent::Prop(p) => {
                     let owner = bound
                         .prop_owner
                         .get(p.idx())
@@ -626,7 +626,7 @@ impl<'f> Collector<'f, '_> {
                     }
                     (at, wrappers, has_satisfies) = (owner, 0, false);
                 }
-                Some(&Parent::Stmt(s)) => {
+                Parent::Stmt(s) => {
                     iterated = self.iterated_by(s);
                     break;
                 }
@@ -708,10 +708,7 @@ impl<'f> Collector<'f, '_> {
         for &id in file.bound.type_query_operands {
             if let Some(e) = file.hir.exprs.get(id.idx())
                 && let ExprKind::Ident(name) = e.kind
-                && !matches!(
-                    file.bound.expr_parent.get(id.idx()),
-                    None | Some(Parent::None)
-                )
+                && !matches!(file.bound.parent_of_expr(id), Parent::None)
                 && name != known::empty
                 && !(file.has_synthetic_nodes() && file.is_in_jsdoc(e.pos))
             {
@@ -766,27 +763,25 @@ impl<'f> Collector<'f, '_> {
     #[inline(never)]
     fn is_only_read(&self, id: ExprId) -> bool {
         let (hir, bound) = (&self.file.hir, &self.file.bound);
-        match bound.expr_parent.get(id.idx()) {
-            Some(&Parent::Expr(parent)) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
+        match bound.parent_of_expr(id) {
+            Parent::Expr(parent) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
                 None | Some(ExprKind::Jsx(_)) => false,
                 Some(ExprKind::Assign { target, .. }) => target != id,
                 Some(ExprKind::Unary { op, .. }) => !matches!(
                     op,
                     UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec
                 ),
-                Some(kind) if can_be_part_of_target(kind) => {
-                    match bound.expr_parent.get(parent.idx()) {
-                        Some(&Parent::Expr(around)) => hir
-                            .exprs
-                            .get(around.idx())
-                            .is_some_and(|it| !can_be_part_of_target(it.kind)),
-                        None | Some(Parent::None | Parent::Prop(_) | Parent::Stmt(_)) => false,
-                        Some(_) => true,
-                    }
-                }
+                Some(kind) if can_be_part_of_target(kind) => match bound.parent_of_expr(parent) {
+                    Parent::Expr(around) => hir
+                        .exprs
+                        .get(around.idx())
+                        .is_some_and(|it| !can_be_part_of_target(it.kind)),
+                    Parent::None | Parent::Prop(_) | Parent::Stmt(_) => false,
+                    _ => true,
+                },
                 Some(_) => true,
             },
-            Some(&Parent::Stmt(s)) => !matches!(
+            Parent::Stmt(s) => !matches!(
                 hir.stmts.get(s.idx()).map(|it| it.kind),
                 None | Some(
                     StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_) | StmtKind::Expr(_)
@@ -794,27 +789,27 @@ impl<'f> Collector<'f, '_> {
             ),
             // The value of a property of an object literal that is an argument, is returned, or
             // is what a variable is initialized with. The value of an attribute.
-            Some(&Parent::Prop(p)) => {
+            Parent::Prop(p) => {
                 let owner = bound
                     .prop_owner
                     .get(p.idx())
                     .copied()
                     .unwrap_or(ExprId::NONE);
-                match bound.expr_parent.get(owner.idx()) {
-                    Some(&Parent::Expr(around)) => matches!(
+                match bound.parent_of_expr(owner) {
+                    Parent::Expr(around) => matches!(
                         hir.exprs.get(around.idx()).map(|it| it.kind),
                         Some(ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Jsx(_))
                     ),
-                    Some(&Parent::Stmt(s)) => matches!(
+                    Parent::Stmt(s) => matches!(
                         hir.stmts.get(s.idx()).map(|it| it.kind),
                         Some(StmtKind::Return(_))
                     ),
-                    Some(Parent::VarInit(_) | Parent::FnBody(_) | Parent::MemberInit(_)) => true,
+                    Parent::VarInit(_) | Parent::FnBody(_) | Parent::MemberInit(_) => true,
                     _ => false,
                 }
             }
-            None | Some(Parent::None) => false,
-            Some(_) => true,
+            Parent::None => false,
+            _ => true,
         }
     }
 
@@ -832,9 +827,9 @@ impl<'f> Collector<'f, '_> {
         let file = self.file;
         let (hir, bound) = (&file.hir, &file.bound);
         let (mut flags, mut is_reference) = (READ, true);
-        let access = match bound.expr_parent.get(id.idx()) {
-            None | Some(Parent::None) => return true,
-            Some(&Parent::Expr(parent)) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
+        let access = match bound.parent_of_expr(id) {
+            Parent::None => return true,
+            Parent::Expr(parent) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
                 Some(
                     ExprKind::Assign { .. }
                     | ExprKind::Unary {
@@ -858,8 +853,8 @@ impl<'f> Collector<'f, '_> {
                 }
                 _ => Access::Read,
             },
-            Some(Parent::Prop(_)) => self.access(id, &mut merge.values),
-            Some(&Parent::Stmt(s)) => match hir.stmts.get(s.idx()).map(|it| it.kind) {
+            Parent::Prop(_) => self.access(id, &mut merge.values),
+            Parent::Stmt(s) => match hir.stmts.get(s.idx()).map(|it| it.kind) {
                 // "this could be a type or a variable"
                 Some(StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_))
                     if !self.is_javascript =>
@@ -964,7 +959,7 @@ impl<'f> Collector<'f, '_> {
         let is_simple = merge.into.is_plain && skipped.is_empty();
         // Which are identifiers, if the binder has noted the kinds.
         const IDENT: u8 = 2 * hir::ExprTag::Ident as u8;
-        let (kinds, parents) = (self.file.bound.expr_kinds, self.file.bound.expr_parent);
+        let (kinds, bound) = (self.file.bound.expr_kinds, &self.file.bound);
         // They are grouped already if the groups are made of these kinds. Where it has not noted them, each can be one.
         let is_grouped =
             self.file.groups_exprs_as_the_binder() && exprs.len() == self.file.hir.exprs.len();
@@ -987,7 +982,7 @@ impl<'f> Collector<'f, '_> {
         );
         // `false`: the expression at `i` is an identifier that is before the last one.
         let take = |i: usize| {
-            let (Some(e), Some(parent)) = (exprs.get(i), parents.get(i)) else {
+            let Some(e) = exprs.get(i) else {
                 return true;
             };
             let ExprKind::Ident(name) = e.kind else {
@@ -995,7 +990,7 @@ impl<'f> Collector<'f, '_> {
             };
             let id = ExprId(i as u32);
             // In most places nothing but a value that is read can be.
-            let is_only_read = match *parent {
+            let is_only_read = match bound.parent_of_expr(id) {
                 Parent::Expr(parent) => exprs.get(parent.idx()).is_some_and(|it| {
                     !can_be_part_of_target(it.kind)
                         && !matches!(it.kind, ExprKind::Unary { .. } | ExprKind::Jsx(_))
@@ -1094,8 +1089,8 @@ impl<'f> Collector<'f, '_> {
                     values.extend(declaration.init.some());
                     if let Some(&statement) = bound.var_stmt.get(d.idx())
                         && !matches!(
-                            bound.stmt_parent.get(statement.idx()),
-                            Some(Parent::FnBody(_) | Parent::File)
+                            bound.parent_of_stmt(statement),
+                            Parent::FnBody(_) | Parent::File
                         )
                     {
                         last = self.iterated_by(statement).unwrap_or(ExprId::NONE);
@@ -1286,10 +1281,7 @@ impl<'f> Collector<'f, '_> {
             let Some(export) = hir.exports.get(spec.export.idx()) else {
                 continue;
             };
-            let is_bound = matches!(
-                self.file.bound.stmt_parent.get(export.stmt.idx()),
-                Some(parent) if *parent != Parent::None
-            );
+            let is_bound = self.file.bound.parent_of_stmt(export.stmt) != Parent::None;
             // The name can be a string only before `from`.
             if export.has_module_specifier || !is_bound || spec.local.is_none() {
                 continue;
@@ -1322,7 +1314,7 @@ impl<'f> Collector<'f, '_> {
                 .filter(|(i, e)| {
                     matches!(e.kind, ExprKind::Jsx(jsx)
                         if !only_fragments || file.hir.jsx.get(jsx.idx()).is_some_and(|it| it.tag.is_none()))
-                        && !matches!(file.bound.expr_parent.get(*i), None | Some(Parent::None))
+                        && !matches!(file.bound.parent_of_expr(hir::ExprId(*i as u32)), Parent::None)
                 })
                 .map(|(_, e)| e.pos)
                 .collect();

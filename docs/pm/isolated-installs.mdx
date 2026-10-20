@@ -207,7 +207,7 @@ If you encounter issues, you can:
    bun install --linker hoisted
    ```
 
-   Switching linkers in either direction reinstalls the existing `node_modules` from scratch. Dot-directories of other tools, like `.cache` and `.vite`, stay. Those of a package manager, like `.pnpm`, go. The previous tree is moved to `node_modules/.old_modules-<random>` and deleted once the install has succeeded. [`bun prune`](/pm/cli/prune) removes the ones a failed install or an older version of Bun left.
+   Switching linkers in either direction reinstalls the existing `node_modules` from scratch. Dot-directories of other tools, like `.cache` and `.vite`, are kept. Those of a package manager, like `.pnpm`, are removed. The previous tree is moved to `node_modules/.old_modules-<random>` and deleted once the install has succeeded. [`bun prune`](/pm/cli/prune) removes the ones that a failed install or an older version of Bun left behind.
 
    Bun installs through a `node_modules` that is a symlink (the project's or a workspace's), but clears nothing behind the link and prints a warning. Empty the folder yourself before you switch.
 

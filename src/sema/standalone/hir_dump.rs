@@ -82,6 +82,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         text: _,
         unclosed_literals: _,
         modifiers_of_params: _,
+        modifiers_of_stmts: _,
         modifiers_of_props: _,
         body,
         references,
@@ -148,6 +149,8 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         bases: _,
         lazy: _,
         keyword_identifier_positions: _,
+        far_names: _,
+        tagged_templates: _,
     } = file;
     let mut d = Dump {
         file,
@@ -608,11 +611,9 @@ impl Dump<'_, '_> {
                 self.class(d, "class", class);
             }
             ExprKind::Dot {
-                obj,
-                name,
-                name_pos,
-                chain,
+                obj, name, chain, ..
             } => {
+                let name_pos = self.file.name_pos(id);
                 put!(
                     self,
                     depth,
@@ -641,7 +642,8 @@ impl Dump<'_, '_> {
                 self.expr(d, "target", target);
                 self.expr(d, "value", value);
             }
-            ExprKind::Cond { test, yes, no } => {
+            ExprKind::Cond { test, branches } => {
+                let Branches { yes, no } = self.file.branches(branches);
                 self.line(depth, label, &head);
                 self.expr(d, "test", test);
                 self.expr(d, "yes", yes);
@@ -661,6 +663,7 @@ impl Dump<'_, '_> {
                 self.list(d, "args", args, Self::expr);
             }
             ExprKind::Instantiation { expr, type_args } => {
+                let type_args = self.file.list_at(type_args);
                 self.line(depth, label, &head);
                 self.expr(d, "expr", expr);
                 self.list(d, "type_args", type_args, Self::ty);
@@ -688,8 +691,8 @@ impl Dump<'_, '_> {
             type_args,
             close_pos,
             chain,
-            template,
         } = node!(self, depth, label, calls, id);
+        let (type_args, template) = (self.file.list_at(type_args), self.file.template_of(id));
         put!(
             self,
             depth,
@@ -861,12 +864,8 @@ impl Dump<'_, '_> {
     }
 
     fn stmt(&mut self, depth: usize, label: &str, id: StmtId) {
-        let Stmt {
-            kind,
-            start,
-            loc,
-            modifiers,
-        } = node!(self, depth, label, stmts, id);
+        let Stmt { kind, start, loc } = node!(self, depth, label, stmts, id);
+        let modifiers = self.file.stmt_modifiers(id);
         let mut head = format!(
             "Stmt {} start={start} loc={}..{}",
             stmt_kind_name(kind),

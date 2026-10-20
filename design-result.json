@@ -1,0 +1,1061 @@
+{
+  "mode": "design",
+  "subject": "bun's CSS bundler (src/css, a Rust port of lightningcss) writes no vendor prefix for the text-decora…[+238c]",
+  "pick": "inplace-index-handler",
+  "plan": [
+    {
+      "step": "Start from the in-place handler already in the checkout (branch robobun/cf2a0e8e/css-text-decoration-handler, commit f7df4de6c1 plus the uncommitted text.rs), r…[+391c]"
+    },
+    {
+      "step": "Handler shape: one field, one inlined `||` entry after `font`, one finalize call. Each family declaration (typed or unparsed) is cloned into `dest` at arrival w…[+404c]"
+    },
+    {
+      "step": "Decline path is the tag test only. Remove the `All | Unparsed | Custom` arm and `see_other`. Keep `mark = dest.len()` after each family write. When the next fam…[+256c]"
+    },
+    {
+      "step": "Rule 2 across the two lists without a pass. Delete both `see_other_list` calls at declaration.rs:92-95 (they run in 5,161 of 21,276 fixture blocks). The `!impor…[+269c]"
+    },
+    {
+      "step": "Stale copy (rule 3 for Safari 8 to 18.0). Record only prefixed-only declarations as author-written. Because nothing merges, a Property that carries WEBKIT and N…[+725c]"
+    },
+    {
+      "step": "list-style-image: one arm of FallbackHandler. The typed Image value is written in place, the `-webkit-image-set()` fallback goes in front of it only when the bl…[+315c]"
+    },
+    {
+      "step": "Row side effects. Write the prefix flag in the supports() declaration printer so `@import supports(-webkit-text-decoration: ..)` keeps its prefix. Check that `t…[+282c]"
+    },
+    {
+      "step": "Tests in the existing files. Port test_text_decoration, test_text_emphasis, the parts of test_list that have a row, and the list-style-image cases of the test_i…[+654c]"
+    },
+    {
+      "step": "Docs: make docs/bundler/css.mdx lines 8 and 15 true for this family, verified by running each example, and say that longhands are not folded into the shorthand."
+    },
+    {
+      "step": "Run every measurement below on release builds of main 91e7e3b140 and the branch, put the numbers in the PR body with the deviation list, the expected table conf…[+79c]"
+    }
+  ],
+  "measurements": [
+    {
+      "what": "Instructions per declaration the handler declines (minify pass)",
+      "how": "Release builds of main 91e7e3b140 and the branch. One style rule with 5,000 and with 10,000 copies of each of `zoom:1`, `--x:1`, `color:red`, `margin:0`. (count(10k) - count(5k)) / 5,000 inside StyleS…[+35c]",
+      "tool": "qemu-x86_64 -one-insn-per-tb -d exec",
+      "report_as": "minify, per declined declaration: zoom:1 __ -> __, --x:1 __ -> __, color:red __ -> __ instructions (qemu exec …[+29c]"
+    },
+    {
+      "what": "Instructions and arena allocations per family declaration (changed path)",
+      "how": "Same method with `text-decoration:none`, `text-decoration:underline wavy`, `text-decoration:var(--x)`, `text-emphasis:dot red`. Count allocator entries in the same trace.",
+      "tool": "qemu-x86_64 -one-insn-per-tb -d exec, al…[+19c]",
+      "report_as": "per family declaration: typed __ -> __, var() __ -> __ instructions, __ arena allocations added (expected 1 cl…[+33c]"
+    },
+    {
+      "what": "Added passes per block",
+      "how": "Temporary counters on the normal-list walk and on the dest scan for `all`. Build the 15 sheets of /workspace/bun/test/js/bun/css/files for --target=browser.",
+      "tool": "temporary counter, bun build",
+      "report_as": "other-list walks: __ of 21,276 blocks (draft 5,161), `all` scans: __, handler code run in blocks with no famil…[+52c]"
+    },
+    {
+      "what": "Binary size",
+      "how": "size -A on the two release binaries, .text and .rodata deltas, plus the bun_css symbols from the linker map.",
+      "tool": "size -A (llvm-size)",
+      "report_as": "release binary: .text +__ B, .rodata +__ B (size -A, main 91e7e3b140 vs PR, audit estimate 28 KB)"
+    },
+    {
+      "what": "Type sizes and the bitset doubling",
+      "how": "Compile bun_css with RUSTFLAGS=-Zprint-type-sizes on both trees and read TextDecorationHandler, DeclarationHandler, Property, PropertyBitset, and the PropertyIdTag variant count.",
+      "tool": "rustc -Zprint-type-sizes",
+      "report_as": "TextDecorationHandler __ B, DeclarationHandler 6,848 -> __ B, PropertyBitset 32 -> __ B (tags 254 -> 262), Pro…[+17c]"
+    },
+    {
+      "what": "Name-table lookup after +8 keys",
+      "how": "Instructions inside PropertyId::from_name_and_prefix for one known name (`color`) and one unknown name (`zoom`), from the 5,000 / 10,000 parse traces of both builds.",
+      "tool": "qemu-x86_64 -one-insn-per-tb -d exec",
+      "report_as": "name lookup: known __ -> __, unknown __ -> __ instructions (251 -> 259 keys)"
+    },
+    {
+      "what": "Output bytes and moved declarations on real sheets",
+      "how": "Build each of the 15 sheets with both binaries for --target=browser and --target=bun. wc -c, count of added and removed lines, and a name-order comparison per rule.",
+      "tool": "bun build, diff, wc",
+      "report_as": "15 sheets, browser: +__ lines, +__ B, __ removed, __ moved (expected +29, about 1.8 KB, 0, 0). bun: __ changed…[+16c]"
+    },
+    {
+      "what": "Winners (rules 1-3 and 7)",
+      "how": "Every block of up to 4 declarations over the shorthand set (1,554), the longhand, emphasis and typed-crossing sets (8,400) and the bare-after-styled sets (2,800 one-rule, 7,938 two-rule) through cssIn…[+53c]",
+      "tool": "bun bd test test/js/bun/css/css.test.ts",
+      "report_as": "changed winners: unprefixed-only __, reads-both __, Safari __, author-written prefixed declarations deleted __…[+54c]"
+    }
+  ],
+  "siblings_in_scope": [
+    "text-decoration-color and text-emphasis-color: typed rows on main that no handler claims",
+    "Color fallbacks for the family's color values",
+    "Family names inside transition / transition-property, through the new prefix_feature() rows",
+    "@import supports(-webkit-text-decoration: ..) keeps its prefix (/workspace/bun/src/css/rules/support…[+9c]",
+    "text-decoration-thickness: split out of the shorthand and percent lowered to calc() when the targets…[+8c]",
+    "list-style-image image-set() prints 1x again instead of 1dppx"
+  ],
+  "siblings_noted": [
+    "@keyframes, @nest, @page, @font-face and style attributes: the handlers do not run there on main",
+    "bun build --no-bundle minifies with no browser list (transpiler.rs:3079), so nothing is prefixed the…[+2c]",
+    "list-style, list-style-type and list-style-position stay unknown names: no fallback for `list-style:…[+34c]",
+    "Longhands are not folded into text-decoration or text-emphasis (lightningcss folds them)",
+    "A line-only text-decoration in a different rule does not cancel a -webkit- copy added in an earlier …[+27c]",
+    "An `!important` list-style-image fallback does not look at the normal list"
+  ],
+  "revive": "oven-sh/bun#45814 (credit, not a base): its in-place writes, kept author-written prefixes and per-block ledger reset at `all` are the mechanism adopted here, without its merge rule and its list walk",
+  "pick_title": "css: write the text-decoration and text-emphasis prefixes in place (no buffer, no fold, no merge), plus the image-set() fallback for list-style-image",
+  "pick_layer": "Frame 13: the one `||` slot after `font` in DeclarationHandler::handle_property (/workspace/bun/src/css/declaration.rs), writing into `dest` at arrival; typed r…[+211c]",
+  "confidence": 0.74,
+  "pick_reason": "The slot after `font` plus the name table is the only place the brief allows {layers:a-fix-at-every-frame}, and among the designs that fix the repro this one ties the lowest audited per-call total (0, with finalize and shared; buffered is 0.25) and has the lowest rare-path total (146 against 151, 163 and 173) {inplace-index-handler:common-path-cost} {buffered-port-local-flush:common-path-cost} {shared-fallthrough-ledger-hybrid:common-path-cost}. Writing each declaration where it stands moves 0 declarations of other properties and excludes reordering and second-pass drift by construction {inplace-index-handler:blast-radius} {inplace-index-handler:class-and-free-wins}, while the buffered port reorders 31 of 128 family blocks on every target, --target=bun included {buffered-port-local-flush:blast-radius}. The harness evidence (the fold fires in 0 of the 15 fixture sheets, and no adjacency t…[+1210c]",
+  "why_not_minimal": "The pick is the minimal design that fixes anything (no-change and #45814 fix 0 of the 5 wrong rules). No larger design earns its size here. The shared ledger costs the common path more (a fall-through test on 45.9% of declarations and resets on all blocks) and has no second reader in the brief's scope {shared-fallthrough-ledger-hybrid:blast-radius} {shared-fallthrough-ledger-hybrid:class-and-free-wins}. The finalize pass adds a second walk for the same output. The fold (about 150 lines) fires in 0 of the 15 fixture sheets and makes the output depend on adjacency that differs between the two pa…[+145c]",
+  "premise": {
+    "verdict": "bug",
+    "votes": "exempt",
+    "confidence": 1,
+    "contract": {
+      "kind": "none",
+      "text": "",
+      "source": ""
+    },
+    "reason": "No premise ruling: the frame classifies this as feature, not a defect report.",
+    "narrower_claim": "",
+    "question_for_maintainer": ""
+  },
+  "tell_reporter": "",
+  "runner_up": "finalize-block-resolve-hybrid (text-only cut)",
+  "why_not_runner_up": "Equal audited per-call total (0), but the rare path is higher (151 against 146). It writes each family declaration as authored and then walks the block again and rebuilds the tail {finalize-block-resolve-hybrid:common-path-cost}, it decides at finalize where ctx.is_important is stale {finalize-block-resolve-hybrid:blast-radius}, and its roughly 330 finalize-time lines have no reference control flo…[+370c]",
+  "open_question": "REVIEW.md:36 makes the reference the spec for ported code, and lightningcss folds longhands into the shorthand (about 13 of its 80 assertions change without it, 0 hits in the 15 fixture sheets). This handler leaves longhands in place so that one pass is byte-stable under the merged-rule pass and nothing moves on --target=bun.",
+  "ranking": [
+    {
+      "id": "inplace-index-handler",
+      "rank": 1,
+      "fixes_it": "yes",
+      "common_path_cost": "small",
+      "class_removed": "instance only (the family's ten names and list-style-image). Inside the family, reordering and second-pass drift are exc…[+21c]",
+      "review_cost": "L",
+      "one_line": "Fixes the prefixes at the owning slot with a tag test on the decline path, 0 added passes and 0 moved declarations. The price is that longhands are not folded, so `.c` prints six lines where lightning…[+16c]"
+    },
+    {
+      "id": "finalize-block-resolve-hybrid",
+      "rank": 2,
+      "fixes_it": "yes",
+      "common_path_cost": "small",
+      "class_removed": "instance only (13 property ids)",
+      "review_cost": "L",
+      "one_line": "Same results and no observer, but it pushes and then re-walks and rebuilds the tail at finalize, where is_important is stale. As named it adds a `list` chain entry the brief does not allow and about 5…[+43c]"
+    },
+    {
+      "id": "shared-fallthrough-ledger-hybrid",
+      "rank": 3,
+      "fixes_it": "yes",
+      "common_path_cost": "small",
+      "class_removed": "instance only in the in-brief scope. The typed-row-without-owner class goes only in its out-of-brief default scope",
+      "review_cost": "L",
+      "one_line": "Fixes the same set as in-place but adds a fall-through test to 45.9% of declarations and resets to every block for a ledger that 131 blocks read and that decides none, and it needs maintainer agreemen…[+8c]"
+    },
+    {
+      "id": "buffered-port-local-flush",
+      "rank": 4,
+      "fixes_it": "partly",
+      "common_path_cost": "real",
+      "class_removed": "instance only",
+      "review_cost": "L",
+      "one_line": "Prints the repro right, but adds a pass in 25% of blocks, reorders declarations on every target and is not byte-stable in the merged pass. Both reviews reject it for in-place."
+    },
+    {
+      "id": "no-change",
+      "rank": 5,
+      "fixes_it": "no",
+      "common_path_cost": "zero",
+      "class_removed": "none",
+      "review_cost": "none",
+      "one_line": "Costs nothing and fixes 0 of the 5 wrong repro rules. The maintainer checklist #14167 and the docs claim ask for the fix, so rule 5 does not select it."
+    },
+    {
+      "id": "prefix-handler-as-written",
+      "rank": 6,
+      "fixes_it": "no",
+      "common_path_cost": "real",
+      "class_removed": "none for this symptom (it removes two neighbouring classes: rule loss for unknown names, prefix loss in @import supports…[+3c]",
+      "review_cost": "L",
+      "one_line": "Changes 0 of the 6 repro rules while charging 47.2% of declarations a new probe, measuring quadratic on rule floods and documenting the family as unsupported."
+    }
+  ],
+  "candidates": [
+    {
+      "id": "inplace-index-handler",
+      "tags": [
+        "minimal",
+        "revive",
+        "structural"
+      ],
+      "layer": "Frame 13: the one new `||` slot after `font` in DeclarationHandler::handle_property (/workspace/bun/src/css/declaration.rs:465-470). All rule state is private t…[+355c]",
+      "title": "css: add an in-place TextDecorationHandler for the text-decoration and text-emphasis prefixes, and the image-set() fallback for list-style-image",
+      "est_lines": 2550
+    },
+    {
+      "id": "buffered-port-local-flush",
+      "tags": [
+        "revive"
+      ],
+      "layer": "Frames 13 and 14: TextDecorationHandler buffers in handle_property (the slot after `font`, /workspace/bun/src/css/declaration.rs:465-467) and writes at flush po…[+255c]",
+      "title": "css: port the lightningcss buffering TextDecorationHandler, with flush points inside the handler that keep the winning declaration",
+      "est_lines": 3000
+    },
+    {
+      "id": "shared-fallthrough-ledger-hybrid",
+      "tags": [
+        "shared-layer",
+        "structural"
+      ],
+      "layer": "Frames 12 and 13: the fall-through that every unclaimed declaration passes (inner `handle` of DeclarationBlock::minify, /workspace/bun/src/css/declaration.rs:78…[+412c]",
+      "title": "css: keep the `all` / unknown-name barrier and the prefix ledger once at the chain's fall-through, with TextDecorationHandler and list-style-image as thin arms",
+      "est_lines": 3000
+    },
+    {
+      "id": "finalize-block-resolve-hybrid",
+      "tags": [
+        "structural"
+      ],
+      "layer": "Frame 14: DeclarationHandler::finalize -> TextDecorationHandler::finalize (/workspace/bun/src/css/declaration.rs:411-431) resolves the finished block in one pas…[+209c]",
+      "title": "css: resolve text-decoration, text-emphasis and list-style prefixes in one pass over the finished block",
+      "est_lines": 3050
+    },
+    {
+      "id": "prefix-handler-as-written",
+      "tags": [
+        "as-written"
+      ],
+      "layer": "Frame 13, the 16th and last `||` entry of the chain: PrefixHandler in /workspace/bun/src/css/properties/prefix_handler.rs as added by oven-sh/bun#45814 (diff at…[+99c]",
+      "title": "css: add PrefixHandler for nine same-value prefixed properties (oven-sh/bun#45814, unchanged)",
+      "est_lines": 1802
+    },
+    {
+      "id": "no-change",
+      "tags": [
+        "no-change"
+      ],
+      "layer": "None: main at 91e7e3b140 stays as it is. The family keeps falling through the chain at /workspace/bun/src/css/declaration.rs:78-87.",
+      "title": "No change: text-decoration, text-emphasis and list-style-image stay unknown names and pass through",
+      "est_lines": 0
+    }
+  ],
+  "frame": {
+    "kind": "feature",
+    "root_cause": {
+      "site": "/workspace/bun/src/css/declaration.rs:439-482 (`DeclarationHandler::handle_property`: no entry of the chain claims the family, so `DeclarationBlock::minify` pushes it verbatim at :80-87). Upstream of it: /workspace/bun/src/css/properties/properties_generated.rs:1295-1547, where the name table has only `text-decoration-color` (:1511) and `text-emphasis-color` (:1512), so every other name of the family becomes `PropertyId::Custom` at /workspace/bun/src/css/properties/properties_impl.rs:79.",
+      "mechanism": "`PropertyId::from_name_and_prefix` has rows only for `text-decoration-color` and `text-emphasis-color`; `text-decoration`, `-line`, `-style`, `-thickness`, `text-emphasis`, `-style`, `-position` and every `list-style*` name fall back to `PropertyId::Custom`, so they parse as `Property::Custom` (an unknown name plus raw tokens), which can hold neither VendorPrefix bits nor a typed Image. The two typed rows, and their Unparsed form, are offered to the 15 handlers of `DeclarationHandler::handle_property`; none matches, and `DeclarationBlock::minify` pushes the declaration to the output unchanged. So nothing ever asks `Targets::prefixes(.., Feature::TextDecoration | TextEmphasis ..)` (the table is already in /workspace/bun/src/css/prefixes.rs:1370-1398 and :1930-1961) or `Image::get_fallbacks`, and the printer writes exactly the prefix bits the author wrote. lightningcss's `TextDecorationHandler` (/tmp/lightningcss-src/src/properties/text.rs:1100-1356) and `ListStyleHandler` (/tmp/lightningcss-src/src/properties/list.rs:460-464, the generic shorthand_handler! of /tmp/lightningcss-src/src/macros.rs:207-313) were never ported."
+    },
+    "call_path": [
+      {
+        "frame": "CLI `bun build <entry>` -> BuildCommand::exec",
+        "at": "/workspace/bun/src/runtime/cli/build_command.rs:57",
+        "role": "Argument handling and pipeline choice: bundling goes to BundleV2::generate_from_cli (:624), `--no-bundle` goes to Transpiler::transform (:584). Picks the bundler target (default browser) that later selects the CSS browser list. `Bun.build` enters at /workspace/bun/src/runtime/api/JSBundler.rs:1468 and joins at BundleV2::run_from_js_in_new_thread (bundle_v2.rs:5651)."
+      },
+      {
+        "frame": "BundleV2::generate_from_cli",
+        "at": "/workspace/bun/src/bundler/bundle_v2.rs:4426",
+        "role": "Threading model: one ParseTask per file on the thread pool; no CSS logic. The dev server enters the same graph at start_from_bake_dev_server (:5858)."
+      },
+      {
+        "frame": "ParseTask::get_ast, `Loader::Css` arm",
+        "at": "/workspace/bun/src/bundler/ParseTask.rs:1273",
+        "role": "Per-file parse then minify on a worker thread. Owns the targets of the minify pass: `Targets::for_bundler_target(topts.target)` at :1319. The `--no-bundle` twin (/workspace/bun/src/bundler/transpiler.rs:3079) passes `MinifyOptions::default()`, i.e. no browsers."
+      },
+      {
+        "frame": "Targets::for_bundler_target",
+        "at": "/workspace/bun/src/css/targets.rs:75",
+        "role": "Maps the bundler target to a browser list: Browser -> BROWSER_DEFAULT (:190-199: chrome 80, edge 80, firefox 78, safari 14, opera 67); Bun/Node -> `browsers: None`. No user option reaches it."
+      },
+      {
+        "frame": "StyleSheet::parse_bundler -> NestedRuleParser::parse_value",
+        "at": "/workspace/bun/src/css/css_parser.rs:2731",
+        "role": "Rule and declaration parsing; each declaration is handed to parse_declaration_impl (css_parser.rs:2087-2110)."
+      },
+      {
+        "frame": "parse_declaration_impl",
+        "at": "/workspace/bun/src/css/declaration.rs:318",
+        "role": "Turns the name into a PropertyId (:329), parses the value (:339-341), splits the normal and !important lists (:380-384)."
+      },
+      {
+        "frame": "property_id_mixin::from_string -> PropertyId::from_name_and_prefix",
+        "at": "/workspace/bun/src/css/properties/properties_impl.rs:76",
+        "role": "Name table (properties_generated.rs:1293-1553, 251 rows, hand-maintained): strips -webkit-/-moz-/-o-/-ms- and looks the name up. Rows exist only for text-decoration-color and text-emphasis-color (:1511-1512). No row, or a prefix the row does not allow, gives `PropertyId::Custom(Unknown(full name as written))`. First place where the family loses its identity."
+      },
+      {
+        "frame": "Property::parse",
+        "at": "/workspace/bun/src/css/properties/properties_generated.rs:2431",
+        "role": "Typed value per row (the two color rows at :3667 and :3672), `Property::Custom` token list for an unknown name (:3878), `Property::Unparsed` when a typed value does not parse (:3889). Also what `bun pm diff` and `@import supports()` read."
+      },
+      {
+        "frame": "StyleSheet::minify",
+        "at": "/workspace/bun/src/css/css_parser.rs:2349",
+        "role": "Owns the two DeclarationHandlers (normal, !important) for the whole sheet (:2359-2360) and the PropertyHandlerContext that carries the targets."
+      },
+      {
+        "frame": "CssRuleList::minify -> minify_style_arm",
+        "at": "/workspace/bun/src/css/rules/mod.rs:487",
+        "role": "Decides which rule kinds get their declarations minified: style rules yes (:647, :661); @keyframes no (:506-510); @nest no (:580-596). Also merges same-selector rules and removes duplicate rules (:850-859)."
+      },
+      {
+        "frame": "StyleRule::minify",
+        "at": "/workspace/bun/src/css/rules/style.rs:313",
+        "role": "Sets the declaration context and calls DeclarationBlock::minify (:363)."
+      },
+      {
+        "frame": "DeclarationBlock::minify (inner `handle`)",
+        "at": "/workspace/bun/src/css/declaration.rs:56",
+        "role": "Feeds the !important list, then the normal list, to the handlers in source order (:91-97); a declaration that no handler claims is moved to the output list unchanged (:78-87); then finalize (:99-100). This is where the unprefixed-only output is produced."
+      }
+    ],
+    "entry_points": [
+      "`bun build <file>.css` and every CSS file the bundler reaches (JS `import './x.css'`, HTML `<link rel=stylesheet>`, `@import`, `*.module.css`), default --target=browser: /workspace/bun/src/bundler/ParseTask.rs:1273-1322",
+      "`Bun.build({ entrypoints })` (JS API), `bun build --compile`, the dev server and the HTML routes of Bun.serve (`bun ./index.html`): the same ParseTask arm. By code reading, StyleSheet::minify has three callers: ParseTask.rs:1316, transpiler.rs:3079, css_internals.rs:173",
+      "`bun build --no-bundle <file>.css`: Transpiler::build_css_output, /workspace/bun/src/bundler/transpiler.rs:3011-3110. It minifies with MinifyOptions::default() (:3079), so the handlers get no browser list even for --target=browser (observed: no handler adds a prefix on this path today)",
+      "`--target=bun` and `--target=node` builds: the same paths with no browser list (/workspace/bun/src/css/targets.rs:106)",
+      "Same-selector rules in one file (`.a{..} .a{..}`): the merged block goes through the handlers a second time (/workspace/bun/src/css/rules/mod.rs:1038, 1143)",
+      "Test-only: `bun:internal-for-testing` cssInternals.minifyTest / prefixTest / _test / *WithOptions (/workspace/bun/src/css_jsc/css_internals.rs:87-173). attrTest reaches StyleAttribute::minify, which is a no-op (/workspace/bun/src/css/css_parser.rs:2777)",
+      "Name-only consumers of the same missing rows, which never reach the handlers: names inside `transition` / `transition-property` (/workspace/bun/src/css/properties/transition.rs:76, prefixed through prefix_feature()); `@import .. supports(<declaration>)` (/workspace/bun/src/css/css_parser.rs:1194 -> /workspace/bun/src/css/rules/supports.rs:322); `@container style(<declaration>)` (/workspace/bun/src/css/rules/container.rs:147); the CSS-modules `composes` conflict check (/workspace/bun/src/css/css_parser.rs:2252); StyleRule::is_duplicate (/workspace/bun/src/css/rules/style.rs:463); `bun pm diff` CSS normalization, which parses and prints without minify (/workspace/bun/src/runtime/cli/pm_diff_normalize.rs:920-960)",
+      "`bun build <file.css>` (CLI, bundling, default --target=browser): the symptom.",
+      "`Bun.build({ entrypoints })` (/workspace/bun/src/runtime/api/JSBundler.rs:1468 -> BundleV2 -> the same ParseTask arm), including in-memory `files` and `minify`.",
+      "Any CSS that enters a bundle another way: `import './x.css'` from JS/TS, CSS `@import`, `*.module.css`, an HTML entry with `<link rel=stylesheet>` (`bun build ./index.html`, observed), plugin `onLoad` results with `loader: 'css'` (for example Tailwind output, whose preflight has `-webkit-text-decoration: inherit; text-decoration: inherit`), and `bun build --compile` of such entries.",
+      "The dev server and bake builds (`bun ./index.html`, `Bun.serve` HTML routes, `bun bake`): BundleV2::start_from_bake_dev_server (/workspace/bun/src/bundler/bundle_v2.rs:5858) and generate_from_bake_production_cli (:4606) use the same ParseTask arm (by source; not run here).",
+      "`--target=bun` / `--target=node` builds: same path with `browsers: None`. Nothing can be prefixed there, but a handler's folding and value rewriting still run.",
+      "`bun build --no-bundle <file.css>`: Transpiler::build_css_output (/workspace/bun/src/bundler/transpiler.rs:3011) runs the same handler chain with `MinifyOptions::default()` (:3079), so without a browser list even for --target=browser (observed: margins fold, no transition prefix, no color fallback).",
+      "`bun:internal-for-testing` cssInternals: minifyTest, prefixTest, _test, testWithOptions, prefixTestWithOptions, minifyTestWithOptions (/workspace/bun/src/js/internal-for-testing.ts:137-146 -> /workspace/bun/src/css_jsc/css_internals.rs:173). The only entry that takes an arbitrary browser list; it does not resolve URLs.",
+      "Consumers of the name table only (they see a row change, not a handler): `bun pm diff` CSS normalisation (/workspace/bun/src/runtime/cli/pm_diff_normalize.rs:917, parse then to_css, no minify); `@import url supports(<declaration>)` (/workspace/bun/src/css/css_parser.rs:1190-1194 -> /workspace/bun/src/css/rules/supports.rs:322); names inside `transition` / `transition-property`; the CSS-modules `composes` conflict check (css_parser.rs:2252-2289); cssInternals.attrTest (StyleAttribute parse then print)."
+    ],
+    "lifecycle": [
+      "construct once, then [handle_property x n, finalize] for every declaration block of the sheet: lightningcss reuses one handler pair for the whole stylesheet. TextDecorationHandler::finalize takes all seven fields and clears has_any (/tmp/lightningcss-src/src/properties/text.rs:1213-1226); the list handler's finalize flushes and clears flushed_properties (/tmp/lightningcss-src/src/macros.rs:264-267). Nothing buffered or remembered in one rule reaches the next. Bun reuses the handlers the same way (/workspace/bun/src/css/css_parser.rs:2359-2360, /workspace/bun/src/css/declaration.rs:99-105).",
+      "finalize when the block had no declaration of the family: lightningcss returns at `if !self.has_any` and writes nothing (text.rs:1214; macros.rs:273-275).",
+      "flush in the middle of a block, then more declarations: lightningcss calls its own finalize / flush from handle_property and keeps accepting declarations. Its flush points are: a declaration whose prefix set is not contained in the buffered one AND whose value differs (text.rs:1120-1130); any Unparsed declaration of the family, which flushes the decoration group and the emphasis group together (text.rs:1195-1206); for list-style, a buffered longhand replaced by a value the targets cannot read (macros.rs:230, 239) and any Unparsed member (macros.rs:248-257). It does not flush on `all`, on an unknown name, on a different value under the same prefix (the old value is dropped), or on text-decoration-thickness. The list handler remembers what it flushed, so the later value gets no second fallback (pinned upstream: `list-style-image: url(foo.png); list-style-image: image-set(..)` with ie 11 keeps url() and adds no -webkit-image-set, /tmp/lightningcss-src/src/lib.rs:17985-18047).",
+      "!important and normal declarations in one block: two handler instances; the !important list is handled first and printed last (/workspace/bun/src/css/declaration.rs:91-100, /workspace/bun/src/css/rules/style.rs:193-199). lightningcss splits the same way (observed: `text-decoration: underline wavy red !important; text-decoration: none` -> `text-decoration: none; -webkit-text-decoration: underline wavy red !important; text-decoration: underline wavy red !important`). Each list gets its own prefixes and neither sees a prefix the other declares.",
+      "second pass over the handler's own output after a same-selector merge (Bun /workspace/bun/src/css/rules/mod.rs:1038, 1143; lightningcss /tmp/lightningcss-src/src/rules/mod.rs:984): the input is the pass-1 output of rule A followed by the pass-1 output of rule B, with several prefix bits on one declaration, fallback copies and folded shorthands, and the pass can repeat. lightningcss accepts this order but is OBSERVED not stable: `.f{text-decoration: underline; text-decoration-color: red; -webkit-text-decoration-color: blue}` alone prints `-webkit-text-decoration: underline red; text-decoration: underline red; -webkit-text-decoration-color: #00f`; the same block followed by `.e{color: green}` on the same selector prints `color: green; -webkit-text-decoration: underline #00f; text-decoration: underline #00f`. The unprefixed color turns from red to blue: after pass 1 the buffered shorthand carries WEBKIT|NONE, so the `!prefixes.contains(vp)` test at text.rs:1125 no longer flushes and the -webkit- longhand overwrites the value for both prefixes. The same happens for `text-emphasis: dot red; -webkit-text-emphasis-color: blue`. An Unparsed value is stable in this pass because its id carries both bits.",
+      "no browser list (--target=bun or node, --no-bundle, minify_test): lightningcss still buffers and folds (`text-emphasis-style: dot; text-emphasis-color: red; text-emphasis-position: over right` -> `text-emphasis: dot red; text-emphasis-position: over`), keeps only the last value, adds nothing, and deletes an authored -webkit-text-decoration when a style or color is used (`-webkit-text-decoration: underline wavy red; text-decoration: underline wavy red` -> `text-decoration: underline wavy red`). Prefixed longhands are kept (`-moz-text-decoration-line: underline; text-decoration-line: underline` stays). All observed.",
+      "`all` in the block: lightningcss replaces the whole DeclarationHandler, discarding what is buffered and what is already written except custom properties, direction and unicode-bidi, then writes `all` (/tmp/lightningcss-src/src/declaration.rs:645-670; observed `text-decoration: underline wavy red; all: unset` -> `all: unset`). Bun has no `all` row and no handle_all: `all` arrives as an unclaimed Custom and is pushed in place, and Bun's buffering handlers write behind it (observed `margin-top: 1px; all: unset` -> `all: unset; margin-top: 1px`; `-webkit-transform: none; -khtml-x: 1; transform: none; all: unset` -> `-khtml-x: 1; all: unset; transform: none`).",
+      "order the reference leaves inside a block: everything buffered is written at finalize in handler order, behind every declaration that no handler buffers (observed `text-decoration: underline wavy red; color: blue; text-decoration: underline wavy red` -> `color` first; `text-decoration: underline wavy red; -khtml-text-decoration: none; text-decoration-color: blue` -> `-khtml-text-decoration: none; -webkit-text-decoration: underline wavy #00f; text-decoration: underline wavy #00f`).",
+      "blocks that never reach the handlers: lightningcss runs them on @keyframes blocks (/tmp/lightningcss-src/src/rules/keyframes.rs:126; observed prefixes inside @keyframes) but not on @page (observed). Bun runs them only for style rules: @keyframes (/workspace/bun/src/css/rules/mod.rs:506), @nest (:580), @page, @font-face and style attributes (/workspace/bun/src/css/css_parser.rs:2777, a TODO no-op) print as parsed, today and after a handler-level change. Work moved to parse time or print time would also change those blocks, `@container style()` features and `bun pm diff` output.",
+      "Handler life cycle in Bun: two `DeclarationHandler`s (normal, !important) are built once per `StyleSheet::minify` (css_parser.rs:2359-2360) and reused for every block. Per block, `handle_property` runs over the !important list first, then the normal list (declaration.rs:91-97), then `finalize` normal, then important (:99-100); the block prints normal, then important (:122-137). lightningcss is identical (observed: `text-decoration:underline wavy!important;text-decoration:underline dotted` prints the dotted pair, then the wavy pair with !important; nothing folds across the two lists).",
+      "Block with no family declaration (construct and never use): lightningcss `finalize` returns at once when `has_any` is false and writes nothing (text.rs:1213-1217). Open PR #45747 asserts the same of every handler.",
+      "`finalize`, then the same instance gets the next block: lightningcss takes all seven fields and clears `has_any` (text.rs:1218-1226), so nothing carries into the next rule."
+    ],
+    "constraints": [
+      "[brief, fixed] Base on main (HEAD 91e7e3b140), PR against main, not stacked on #45814 or #45747. TextDecorationHandler is one more field of DeclarationHandler, one more `||` entry after `font`, one more finalize call. In Bun that slot is between `font` and `inset` (/workspace/bun/src/css/declaration.rs:465-470, 425-426). Bun's order already differs from lightningcss: Bun has transition before font, lightningcss has font, text, list, transition (/tmp/lightningcss-src/src/declaration.rs:593-596). So what the handler writes at finalize lands after transition and font output and before inset, transform, box-shadow and color-scheme output.",
+      "[brief, fixed] Rules of this work (the rules of #45814): (1) never delete a prefixed declaration the author wrote; (2) never add a prefix the block already declares for that property; (3) never change which declaration wins: no declaration moves in front of `all`, an unknown name, or a different value of the same property; (4) an unparsed value (var(), initial, unset) gets the same prefixes as a typed value; (5) every deviation from lightningcss gets a one-line why-comment and a test, everything else follows lightningcss including test_text_decoration, test_text_emphasis, test_list; (6) the output of one pass is stable under a second pass; (7) a winner test over every block of up to four declarations, per kind of browser. The brief does not define two cases this family raises: whether an authored prefixed longhand (`-webkit-text-decoration-color`) counts as already declared for the shorthand `-webkit-text-decoration` and the reverse, and whether rule 1 covers a declaration whose VALUE is prefixed (`list-style-image: -webkit-image-set(..)`, which lightningcss with no browser list deletes when an `image-set(..)` declaration follows: observed).",
+      "[#45814 diff] Overlap with the as-written attempt, which is not merged: it inserts rows next to TextDecorationColor / TextEmphasisColor in every table of properties_generated.rs (its TextDecorationSkipInk goes between the two), adds types to properties/text.rs and to the `bridge_clone_partialeq!` list in generics.rs, adds its own field, chain line and finalize call in declaration.rs, exports `prefixTest` from test/js/bun/css/util.ts (not exported at HEAD; the rule-7 test needs the raw output), and adds to docs/bundler/css.mdx a list 'Bun does not add prefixes for the following yet' that names text-decoration, text-emphasis, their longhands and image-set() in list-style-image, which this work makes false. Its PrefixHandler is index-based and covers only properties whose prefixed names take the same value: per property it keeps the index of the last declaration and the prefixes written since `all`, merges into the previous declaration only when the value is equal and no unknown name lies between, and resets in finalize.",
+      "[code] The prefix table is complete for the family and generated (/workspace/bun/src/css/prefixes.rs:1 'Autogenerated by build-prefixes.js. DO NOT EDIT'): TextDecoration is -webkit- for Safari and iOS 8.0 to 18.0 (:1370-1381); TextDecorationLine / Style / Color is -moz- for Firefox 6 to 35 and -webkit- for Safari and iOS 8 to 12 (:1382-1398); TextEmphasis / Style / Color / Position is -webkit- for Chrome 25 to 98, Edge 79 to 98, Opera 15 to 85, Safari 6.1 to 7, Android 4.4, Samsung 4 to 17 (:1930-1961). Under the default browsers: the text-decoration shorthand needs -webkit- (Safari 14), its longhands need nothing, every text-emphasis name needs -webkit- (Chrome 80, Edge 80, Opera 67). `Targets::prefixes(prefix, feature)` returns `prefix` untouched when it lacks NONE or when there is no browser list (/workspace/bun/src/css/targets.rs:111-130).",
+      "[code, observed] Three paths run the handlers with no browser list: --target=bun or node (targets.rs:106), `bun build --no-bundle` (/workspace/bun/src/bundler/transpiler.rs:3079 passes MinifyOptions::default() even for --target=browser), and minify_test. lightningcss with no browser list still folds longhands, keeps only the last value, and deletes an authored -webkit-text-decoration when a style or color is used (observed), and its own tests pin the folding with no targets (/tmp/lightningcss-src/src/lib.rs:16104-16162, 16597-16639). #45814 pins the opposite policy for its rows: with no browser list nothing is added and authored prefixes stay.",
+      "[code] /workspace/bun/src/css/properties/properties_generated.rs is hand-maintained (line 1). One row touches the PropertyIdTag enum, prefix_feature() (:307), name() (:359), the PropertyId enum, tag(), prefix_slot_mut() (:1184), the KNOWN name table (:1295), the Property enum, property_id(), value_to_css(), parse() (:2431), deep_clone() and eql(); /workspace/bun/REVIEW.md:39 asks for every switch to be audited. prefix_feature() must map a new prefixed row, or `transition: text-decoration 1s` keeps one name (set_prefixes_for_targets :1281; lightningcss observed: `transition: -webkit-text-decoration 1s, text-decoration 1s`). PropertyIdTag is a dense repr(u16) whose last variant sizes the composes bitset (/workspace/bun/src/css/css_parser.rs:2248).",
+      "[code] One `Property::X((value, VendorPrefix))` prints one line per prefix bit with the same value, unprefixed last (/workspace/bun/src/css/properties/properties_impl.rs:39-45, 102-121); two values for two prefixes need two entries. Property has no Clone: handlers get `&Property` and deep_clone into the arena-backed output list, which the other handlers also push to and index (/workspace/bun/src/css/declaration.rs:75-88; FallbackHandler keeps indices, /workspace/bun/src/css/properties/prefix_handler.rs:46-62).",
+      "[code, observed] `all` has no row (no `all` key in the KNOWN table, so the name lookup never yields PropertyId::All): `all: unset` is a Property::Custom(Unknown), like `-khtml-text-decoration`, like `-epub-text-emphasis` (a real WebKit alias: /workspace/WebKit/Source/WebCore/css/CSSProperties.json:12149-12152), and like a known name with a prefix its row does not allow (`-ms-text-decoration-color`, `-moz-text-emphasis`). Bun has no handle_all and none of its buffering handlers flushes for these, so a handler ported as-is writes its buffer behind `all` and behind unknown names (observed for margin, font, transform). lightningcss is safe for `all` only because it discards everything before it.",
+      "[code, observed] Second pass: the lightningcss handler fails rules 6 and 3 in the merged-rule pass (see lifecycle, `.f` against `.e`). /workspace/bun/test/js/bun/css/duplicate-declaration-merge-hang.test.ts pins linear time over 2000 merged same-selector rules: a handler whose second pass adds to its own output (fallback copies, kept values, prefixes) grows the block on every pass. The chain runs once per declaration of every style rule on the bundler's parse threads (/workspace/bun/src/css/declaration.rs:439-482).",
+      "[observed] Where lightningcss 1.32.0 breaks rules 1-3 in this family. Rule 1: `-moz-text-decoration-line: underline; text-decoration-line: underline` -> `text-decoration-line: underline` under the default browsers; upstream pins the deletion for emphasis (/tmp/lightningcss-src/src/lib.rs:16660-16677). Rule 2: Tailwind preflight `-webkit-text-decoration: inherit; text-decoration: inherit` -> the -webkit- line twice; `-webkit-text-emphasis: dot; text-emphasis: dot red` -> `-webkit-text-emphasis: dot; -webkit-text-emphasis: dot red; text-emphasis: dot red`. Rule 3: the normalize.css pair `text-decoration: underline; text-decoration: underline dotted` keeps only the second value; a shorthand moves behind an unknown name; `text-emphasis-position: under; text-emphasis-position: under left` -> only `text-emphasis-position: under left`, so Chrome 80 gets neither.",
+      "[source, observed] lightningcss does not meet rule 4 in this family. An Unparsed longhand is prefixed with the SHORTHAND's feature (text.rs:1197, 1203): under the default browsers `text-decoration-color: var(--x)` gets `-webkit-text-decoration-color` while `text-decoration-color: red` gets none (same for -line and -style with var() or initial). An Unparsed shorthand is always prefixed (`text-decoration: initial`, `inherit`, `var(--x)`) while a typed one is prefixed only when a style or a color is used (text.rs:1248-1252: `text-decoration: underline` and `none` stay bare). `text-emphasis-position: var(--p)` is prefixed while a typed value with `left` never is, and an authored `-webkit-text-emphasis-position: over left` is rewritten to the unprefixed name (text.rs:1347-1351, observed).",
+      "[source, observed] lightningcss folds across different prefix sets: its `intersection` is a union (text.rs:1231, 1321). Observed: `-webkit-text-decoration-line: underline; text-decoration-style: wavy; text-decoration-color: red; text-decoration-thickness: auto` -> `-webkit-text-decoration: underline wavy red; text-decoration: underline wavy red`, an unprefixed underline the author never wrote (with no browser list only the unprefixed line is left); `-webkit-text-emphasis-style: dot; text-emphasis-color: red` -> `-webkit-text-emphasis: dot red; text-emphasis: dot red`."
+    ],
+    "agree_on_site": true
+  },
+  "rounds": 1,
+  "advocates": [
+    {
+      "id": "inplace-index-handler",
+      "strongest_point": "No rival that fixes the repro is shown to fix more inside the brief than this handler, and each is charged with something it does not do: the buffered port reorders declarations on every target (31 rules in 11 of the 15 in-tree sheets even under --target=bun) to end level on upstream assertions, sha…[+158c]",
+      "weakest_point": "As described it regresses output that main gets right: with the style-or-color predicate kept, a later bare `text-decoration` value leaves the earlier added -webkit- copy live, so Safari 14 draws the earlier style in 216 of 2,800 one-rule blocks and 615 of 7,938 two-rule splits, and the only repair …[+164c]",
+      "concedes_to": "",
+      "cites": [
+        "inplace-index-handler:fixes-it",
+        "inplace-index-handler:blast-radius",
+        "inplace-index-handler:class-and-free-wins",
+        "inplace-index-handler:common-path-cost",
+        "inplace-index-handler:review-cost",
+        "inplace-index-handler:review-cost:upstream-assertions-by-cut",
+        "inplace-index-handler:fixes-it:one-ruler-for-index-designs",
+        "inplace-index-handler:fixes-it:bare-value-after-prefixed-value",
+        "layers:a-fix-at-every-frame",
+        "constraints:rules-and-hot-paths",
+        "no-change:who-pays-if-nothing-happens",
+        "no-change:fixes-it",
+        "prefix-handler-as-written:fixes-it",
+        "prefix-handler-as-written:blast-radius",
+        "buffered-port-local-flush:blast-radius",
+        "buffered-port-local-flush:common-path-cost",
+        "buffered-port-local-flush:review-cost",
+        "buffered-port-local-flush:fixes-it:literal-repro-exit-1",
+        "shared-fallthrough-ledger-hybrid:fixes-it",
+        "shared-fallthrough-ledger-hybrid:blast-radius",
+        "shared-fallthrough-ledger-hybrid:review-cost",
+        "finalize-block-resolve-hybrid:review-cost:text-only-cut",
+        "finalize-block-resolve-hybrid:fixes-it",
+        "finalize-block-resolve-hybrid:blast-radius",
+        "finalize-block-resolve-hybrid:class-and-free-wins"
+      ]
+    },
+    {
+      "id": "buffered-port-local-flush",
+      "strongest_point": "It is the only candidate whose fix is measured rather than modelled: on a built binary it prints all six repro rules, passes 75 of 80 upstream assertions and changes 0 unprefixed-only or reads-both winners in 49,140 matrix runs, where the in-place description on the same ruler changes 250 and 480 of…[+7c]",
+      "weakest_point": "Buffering moves declarations: 31 of 128 family blocks in 11 of the 15 in-tree sheets change order on every target, including --target=bun where nothing can be prefixed, and the merged pass reprints 1,097 of 22,620 blocks once a typed neighbour is present, behind 12 flush conditions that an in-place …[+22c]",
+      "concedes_to": "inplace-index-handler",
+      "cites": [
+        "buffered-port-local-flush:fixes-it",
+        "buffered-port-local-flush:fixes-it:literal-repro-exit-1",
+        "buffered-port-local-flush:blast-radius",
+        "buffered-port-local-flush:blast-radius:as-written-risks-in-draft",
+        "buffered-port-local-flush:class-and-free-wins",
+        "buffered-port-local-flush:common-path-cost",
+        "buffered-port-local-flush:review-cost",
+        "constraints:rules-and-hot-paths",
+        "reference:how-others-solve-it",
+        "layers:a-fix-at-every-frame",
+        "inplace-index-handler:fixes-it:one-ruler-for-index-designs",
+        "inplace-index-handler:blast-radius",
+        "inplace-index-handler:review-cost:upstream-assertions-by-cut",
+        "inplace-index-handler:class-and-free-wins",
+        "inplace-index-handler:common-path-cost",
+        "shared-fallthrough-ledger-hybrid:review-cost"
+      ]
+    },
+    {
+      "id": "shared-fallthrough-ledger-hybrid",
+      "strongest_point": "No other candidate gives rules 1-3 a home that a second handler can read: this one records the `all` / unknown-name barrier once at the sole caller of handle_property, which every such declaration reaches, in about 65 lines that conflict with neither #45814 nor #45747, while in-place carries 2 priva…[+107c]",
+      "weakest_point": "In its in-brief scope that shared home has no second reader yet: it fixes 0 of the 14 chain entries that change the winner across `all`, decides 0 of the 131 corpus blocks that read it, adds a 7 to 13 instruction test to 45.9% of declarations of sheets that never use the family, and is a cross-cutti…[+99c]",
+      "concedes_to": "inplace-index-handler",
+      "cites": [
+        "shared-fallthrough-ledger-hybrid:fixes-it",
+        "shared-fallthrough-ledger-hybrid:common-path-cost",
+        "shared-fallthrough-ledger-hybrid:blast-radius",
+        "shared-fallthrough-ledger-hybrid:class-and-free-wins",
+        "shared-fallthrough-ledger-hybrid:review-cost",
+        "inplace-index-handler:fixes-it:one-ruler-for-index-designs",
+        "inplace-index-handler:class-and-free-wins",
+        "inplace-index-handler:common-path-cost",
+        "inplace-index-handler:review-cost",
+        "buffered-port-local-flush:class-and-free-wins",
+        "buffered-port-local-flush:blast-radius",
+        "layers:a-fix-at-every-frame",
+        "siblings:same-mechanism",
+        "prior-attempts:tracker",
+        "reference:how-others-solve-it",
+        "constraints:rules-and-hot-paths"
+      ]
+    },
+    {
+      "id": "finalize-block-resolve-hybrid",
+      "strongest_point": "It is the only design that decides after both declaration lists of the block are complete and in final order, so it needs no observer in the chain and no walk of the other list for `!important` (175 of 1,554 blocks): the in-place handler and the shared ledger need that walk as a repair, and the buff…[+61c]",
+      "weakest_point": "Its about 330 hand-written finalize-time lines (450 to 650 with the list unit) have no lightningcss control flow to diff against, need no fewer rule decisions than the in-place handler (8 against 8; look-ahead 15 against take-back 12), and bring 2 finalize-only defects and 3 invariants that no exist…[+16c]",
+      "concedes_to": "",
+      "cites": [
+        "finalize-block-resolve-hybrid:fixes-it",
+        "finalize-block-resolve-hybrid:blast-radius",
+        "finalize-block-resolve-hybrid:common-path-cost",
+        "finalize-block-resolve-hybrid:review-cost",
+        "finalize-block-resolve-hybrid:review-cost:text-only-cut",
+        "finalize-block-resolve-hybrid:class-and-free-wins",
+        "inplace-index-handler:fixes-it:one-ruler-for-index-designs",
+        "inplace-index-handler:blast-radius",
+        "inplace-index-handler:common-path-cost",
+        "inplace-index-handler:fixes-it",
+        "inplace-index-handler:review-cost",
+        "inplace-index-handler:review-cost:upstream-assertions-by-cut",
+        "shared-fallthrough-ledger-hybrid:fixes-it",
+        "shared-fallthrough-ledger-hybrid:blast-radius",
+        "buffered-port-local-flush:blast-radius",
+        "buffered-port-local-flush:common-path-cost",
+        "buffered-port-local-flush:fixes-it:literal-repro-exit-1",
+        "layers:a-fix-at-every-frame",
+        "no-change:fixes-it",
+        "prefix-handler-as-written:fixes-it"
+      ]
+    },
+    {
+      "id": "prefix-handler-as-written",
+      "strongest_point": "Its index-based ledger is the only built implementation of rules 1 to 3 that writes in place (a model of it matched a real #45814 build on 3,108 of 3,108 blocks), and with it the default browsers get 8 more prefixed property features (coverage 1 to 9 of 30) that no family design reaches in its in-br…[+10c]",
+      "weakest_point": "It changes 0 of the 6 repro rules and adds no TextDecorationHandler, so for this symptom all of its cost (a probe on 47.2% of declarations, a quadratic dedupe path on floods, +1,788 lines to review, a docs line that calls the family unsupported) is collateral and the family PR is still needed on top…[+1c]",
+      "concedes_to": "inplace-index-handler",
+      "cites": [
+        "prefix-handler-as-written:fixes-it",
+        "prefix-handler-as-written:class-and-free-wins",
+        "prefix-handler-as-written:blast-radius",
+        "prefix-handler-as-written:common-path-cost",
+        "prefix-handler-as-written:review-cost",
+        "inplace-index-handler:fixes-it:one-ruler-for-index-designs",
+        "finalize-block-resolve-hybrid:class-and-free-wins",
+        "reference:how-others-solve-it",
+        "layers:a-fix-at-every-frame",
+        "buffered-port-local-flush:class-and-free-wins",
+        "buffered-port-local-flush:blast-radius:as-written-risks-in-draft",
+        "inplace-index-handler:fixes-it",
+        "inplace-index-handler:blast-radius",
+        "inplace-index-handler:class-and-free-wins",
+        "inplace-index-handler:common-path-cost"
+      ]
+    },
+    {
+      "id": "no-change",
+      "strongest_point": "By identity with main it is the only candidate with no surviving regression of any kind (0 declarations moved, 0 winners changed for any reader, 0 builds turned from exit 0 to exit 1, +0 on every cost counter), so its correctness needs no repair, no matrix and no ruling on the still-unanswered rule …[+2c]",
+      "weakest_point": "It delivers none of the goal: 0 of the 5 wrong repro rules are fixed on any of the 16 default-browser entry shapes, a styled `text-decoration` shorthand still reaches Safari 14 with no `-webkit-` line, and even its 'lossless pass-through' claim fails on three observed inputs.",
+      "concedes_to": "inplace-index-handler",
+      "cites": [
+        "no-change:fixes-it",
+        "no-change:class-and-free-wins",
+        "no-change:common-path-cost",
+        "no-change:who-pays-if-nothing-happens",
+        "buffered-port-local-flush:fixes-it:literal-repro-exit-1",
+        "buffered-port-local-flush:blast-radius",
+        "buffered-port-local-flush:fixes-it",
+        "inplace-index-handler:fixes-it:bare-value-after-prefixed-value",
+        "inplace-index-handler:fixes-it:one-ruler-for-index-designs",
+        "shared-fallthrough-ledger-hybrid:fixes-it",
+        "finalize-block-resolve-hybrid:blast-radius",
+        "prefix-handler-as-written:blast-radius",
+        "constraints:rules-and-hot-paths",
+        "inplace-index-handler:common-path-cost",
+        "inplace-index-handler:blast-radius",
+        "prior-attempts:tracker",
+        "layers:a-fix-at-every-frame"
+      ]
+    }
+  ],
+  "reviews": [
+    {
+      "id": "inplace-index-handler",
+      "would_merge": "after-changes",
+      "points_to": "finalize-block-resolve-hybrid",
+      "cost_named": "One more out-of-line chain call plus the `see_other` observer for every declaration the first ten handlers decline: 26,735 of 45,894 chain calls (58%) in the 15…[+177c]",
+      "comment": "Every declaration the first ten handlers decline now pays one more out-of-line call with the `see_other` observer behind it: 58% of the declarations in the 15 fixture sheets, every `--custom-property` included, for a family that is 141 of 45,847 declarations. The handler does not need to watch the chain, because `all` and unknown names are already in `dest` in source order (/workspace/bun/src/css/declaration.rs:80-87 on main). Decline with an inlined tag test, keep writing each family declaratio…[+1150c]"
+    },
+    {
+      "id": "inplace-index-handler",
+      "would_merge": "after-changes",
+      "points_to": "",
+      "cost_named": "One more out-of-line handler call (a `slot_of` match, then `see_other`) on every declaration that the ten earlier handlers decline: 58.3% of chain invocations (…[+215c]",
+      "comment": "The shape is right (each declaration is written where it stands, no pass, no buffered arena value), but as opened it changes which declaration wins, and a handler whose whole point is to be strictly additive cannot do that. The equal-value merge copied from #45814 has no shorthand/longhand barrier: `text-decoration: underline; text-decoration-line: none; text-decoration: underline` loses its third line on every target, `--target=bun` included (250 unprefixed-only and 480 reads-both winners chang…[+1131c]"
+    },
+    {
+      "id": "buffered-port-local-flush",
+      "would_merge": "no",
+      "points_to": "inplace-index-handler",
+      "cost_named": "A pass per block: `see_other_list` (/workspace/bun/src/css/declaration.rs:91-95) walks both declaration lists again, one `property_id()` match per declaration, …[+291c]",
+      "comment": "`see_other_list` is a second pass over both declaration lists inside `DeclarationBlock::minify` for every block that has an `!important`: 5,161 of the 21,276 blocks in the 15 in-tree sheets pay it, and at most 7 of them have a declaration of this family. Find a way to do this without the walk: the `!important` list is handled first and finalized last, so the two handlers can exchange their ledgers in O(1). The buffer is the same mistake one level up: on `--target=bun`, where nothing can be prefi…[+1015c]"
+    },
+    {
+      "id": "buffered-port-local-flush",
+      "would_merge": "no",
+      "points_to": "inplace-index-handler",
+      "cost_named": "One more pass per block: `DeclarationBlock::minify` (/workspace/bun/src/css/declaration.rs:91-95) calls `see_other_list` on both declaration lists of every bloc…[+223c]",
+      "comment": "Don't buffer these. It takes a `pending` list, a group order, two join predicates and 17 `Unlike lightningcss` comments to put declarations back where they stood, and the merged-rule pass is still not stable: `text-decoration-color: red; text-decoration-color: blue; text-decoration: underline` keeps the red line after one pass and loses it after the second (104 of 4,680 blocks differ, main 0). `text-decoration: underline dotted; text-decoration: underline` now draws dotted in Safari 14 and solid…[+810c]"
+    },
+    {
+      "id": "shared-fallthrough-ledger-hybrid",
+      "would_merge": "after-changes",
+      "points_to": "finalize-block-resolve-hybrid",
+      "cost_named": "A kind test at the fall-through for every unclaimed declaration (20,903 of 45,847 declarations in the 15 in-tree sheets, 45.6%, counted by name over the fixture…[+259c]",
+      "comment": "This charges every unclaimed declaration for text-decoration: a kind test at the fall-through (src/css/declaration.rs:80-87), taken by 20,903 of the 45,847 declarations in the 15 in-tree sheets, and a reset per list in all 21,276 blocks, for a ledger that 131 blocks read and that decides none of them. Find a way to do this without charging blocks that have no text-decoration. The ledger is a copy of `dest`: that same push already puts `all` and every unknown name into the list in source order, s…[+840c]"
+    },
+    {
+      "id": "shared-fallthrough-ledger-hybrid",
+      "would_merge": "after-changes",
+      "points_to": "finalize-block-resolve-hybrid",
+      "cost_named": "A test at the fall-through on every unclaimed declaration (20,903 of 45,847 declarations in the 15 in-tree sheets, 45.6% by a name count, with a store for each …[+160c]",
+      "comment": "A ledger keyed by tag cannot know that a shorthand and its longhands override each other: `text-decoration: underline wavy; text-decoration-style: dotted; text-decoration: underline wavy` merges the third declaration into the first, so dotted wins, and with the default scope `mask-image: url(a.png); mask: none; mask-image: url(a.png)` loses the image; main prints both blocks in place and gets them right. The `!important` seed cannot come from the fall-through: the `!important` list is handled be…[+1084c]"
+    },
+    {
+      "id": "finalize-block-resolve-hybrid",
+      "would_merge": "after-changes",
+      "points_to": "inplace-index-handler",
+      "cost_named": "A second walk over the block's declaration list in `finalize`, for every block with a family declaration (plus a rebuilt tail when a fallback, the thickness spl…[+211c]",
+      "comment": "Why is there a second pass? `handle_property` pushes each text-decoration and text-emphasis declaration into `decls` as written, and `finalize` walks the block again from `first` (through what the ten earlier handlers just wrote) and rebuilds the tail when a fallback, the thickness split or a fold changes its length, to fix what it pushed one loop earlier. That walk keeps the in-place handler's ledger (index after the last `all`, floor after an unknown name, last entry per name, prefixes written…[+769c]"
+    },
+    {
+      "id": "finalize-block-resolve-hybrid",
+      "would_merge": "no",
+      "points_to": "inplace-index-handler",
+      "cost_named": "A second pass per family block: `handle_property` pushes the declaration as the author wrote it, then `finalize` re-walks `dest[first..]` (ten other handlers' f…[+262c]",
+      "comment": "Take the `list` handler out: the task is one handler and one chain entry, and a whole-unit port makes `*.module.css` rename every counter style outside lightningcss's 54-name enum (`list-style-type: cjk-ideographic` prints as written on main; lightningcss 1.32.0 prints `_1ZEqVW_cjk-ideographic`), for a fold and a fallback that fire in 0 of the 21,276 fixture blocks. `resolve` runs from `finalize`, where `context.is_important` is whatever the last handled declaration left (/workspace/bun/src/css/…[+1462c]"
+    },
+    {
+      "id": "prefix-handler-as-written",
+      "would_merge": "no",
+      "points_to": "inplace-index-handler",
+      "cost_named": "The unwanted fall-through push of the family is untouched (the repro prints byte-for-byte as on main; 0 of 6 rules change), while every unclaimed declaration pa…[+281c]",
+      "comment": "This does not fix the issue: nothing here claims `text-decoration`, `text-emphasis` or `list-style-image` (a build of the first two commits prints the repro byte-for-byte as main does, and the third commit adds no row), and the docs hunk files that family under \"Bun does not add prefixes for the following yet\". What every stylesheet pays instead is a 16th chain entry: on the 15 sheets in test/js/bun/css/files it is entered 21,642 times (47% of declarations) to claim 365, at +61 to +67 instructio…[+1189c]"
+    },
+    {
+      "id": "prefix-handler-as-written",
+      "would_merge": "no",
+      "points_to": "inplace-index-handler",
+      "cost_named": "0 of the 6 repro rules change, yet 47% of declarations (21,642 of 45,892 chain calls on the 15 in-tree sheets, 365 claimed; re-measured on the e03f9c528c build)…[+245c]",
+      "comment": "This does not fix the bug: there is no row, slot or arm for `text-decoration`, `text-emphasis`, their longhands or `list-style-image`, the repro built from this branch prints byte-for-byte what main prints, and the docs hunk now lists that family under \"Bun does not add prefixes for the following yet\". What it adds is paid by declarations that are not its own: 47% of the declarations in the 15 in-tree sheets reach `PrefixHandler` (21,642 calls, 365 claims) and each runs `slot_of` + `see_other` (…[+1077c]"
+    },
+    {
+      "id": "no-change",
+      "would_merge": "no",
+      "points_to": "inplace-index-handler",
+      "cost_named": "Nothing added and nothing prevented: every family declaration still pays the full 15-handler fall-through (863 instructions in the minify pass, measured on main…[+223c]",
+      "comment": "This adds no work and removes none: on main `text-decoration: underline wavy red` still runs 863 instructions in the minify pass (same as `zoom:1`, I measured both on 91e7e3b14) to fall through all 15 handlers and be pushed back as written at src/css/declaration.rs:80-87, and `Targets::prefixes` is never called for it. Safari 14 is a documented default target and drops that declaration (its `text-decoration` takes line keywords only), so it draws no underline, in user CSS and in our own dev erro…[+1188c]"
+    },
+    {
+      "id": "no-change",
+      "would_merge": "no",
+      "points_to": "inplace-index-handler",
+      "cost_named": "It adds 0 instructions and 0 bytes, and the operation the frame names is still performed by the component that owns it: the fall-through of `DeclarationBlock::m…[+376c]",
+      "comment": "This leaves five of the six repro rules wrong, exactly as on main (lightningcss 1.32.0 writes seven prefixed lines for them, this writes none): the fall-through at `src/css/declaration.rs:80-87` still pushes the family with only the prefixes the author wrote and never asks `Targets::prefixes` or `Image::get_fallbacks`. Our documented defaults are Safari 14 and Chrome 80. Safari 14 through 18.0 parses unprefixed `text-decoration` as line-only and drops `underline wavy red` whole (WebKit safari-61…[+1053c]"
+    }
+  ],
+  "audit": [
+    {
+      "id": "inplace-index-handler",
+      "work": "prevented",
+      "per_call_total": 0,
+      "per_call": {
+        "file_reads": 0,
+        "syscalls": 0,
+        "allocations": 0,
+        "queue_entries": 0,
+        "passes_over_input": 0,
+        "js_calls": 0
+      },
+      "rare_path_total": 146,
+      "per_process": {
+        "host_functions": 0,
+        "binary_kb_est": 28
+      },
+      "unknown": false
+    },
+    {
+      "id": "buffered-port-local-flush",
+      "work": "prevented",
+      "per_call_total": 0.25,
+      "per_call": {
+        "file_reads": 0,
+        "syscalls": 0,
+        "allocations": 0,
+        "queue_entries": 0,
+        "passes_over_input": 0.25,
+        "js_calls": 0
+      },
+      "rare_path_total": 163,
+      "per_process": {
+        "host_functions": 0,
+        "binary_kb_est": 36
+      },
+      "unknown": false
+    },
+    {
+      "id": "shared-fallthrough-ledger-hybrid",
+      "work": "prevented",
+      "per_call_total": 0,
+      "per_call": {
+        "file_reads": 0,
+        "syscalls": 0,
+        "allocations": 0,
+        "queue_entries": 0,
+        "passes_over_input": 0,
+        "js_calls": 0
+      },
+      "rare_path_total": 173,
+      "per_process": {
+        "host_functions": 0,
+        "binary_kb_est": 28
+      },
+      "unknown": false
+    },
+    {
+      "id": "finalize-block-resolve-hybrid",
+      "work": "prevented",
+      "per_call_total": 0,
+      "per_call": {
+        "file_reads": 0,
+        "syscalls": 0,
+        "allocations": 0,
+        "queue_entries": 0,
+        "passes_over_input": 0,
+        "js_calls": 0
+      },
+      "rare_path_total": 151,
+      "per_process": {
+        "host_functions": 0,
+        "binary_kb_est": 50
+      },
+      "unknown": false
+    },
+    {
+      "id": "prefix-handler-as-written",
+      "work": "n/a",
+      "per_call_total": 0.24,
+      "per_call": {
+        "file_reads": 0,
+        "syscalls": 0,
+        "allocations": -0.01,
+        "queue_entries": 0,
+        "passes_over_input": 0.25,
+        "js_calls": 0
+      },
+      "rare_path_total": 0.05,
+      "per_process": {
+        "host_functions": 0,
+        "binary_kb_est": 22
+      },
+      "unknown": false
+    },
+    {
+      "id": "no-change",
+      "work": "n/a",
+      "per_call_total": 0,
+      "per_call": {
+        "file_reads": 0,
+        "syscalls": 0,
+        "allocations": 0,
+        "queue_entries": 0,
+        "passes_over_input": 0,
+        "js_calls": 0
+      },
+      "rare_path_total": 0,
+      "per_process": {
+        "host_functions": 0,
+        "binary_kb_est": 0
+      },
+      "unknown": false
+    }
+  ],
+  "audit_adjudicated": false,
+  "panel": [
+    {
+      "pick": "inplace-index-handler",
+      "confidence": 0.74
+    },
+    {
+      "pick": "inplace-index-handler",
+      "confidence": 0.72
+    }
+  ],
+  "surviving": [
+    {
+      "key": "no-change:class-and-free-wins",
+      "kind": "class-and-free-wins",
+      "severity": "design-blocker",
+      "headline": "no-change fixes 0 of 8 sibling sites and 0 of the 5 wrong repro rules, removes no class (18 of 44 prefix-slot rows still fall through unclaimed, with no guard), and its claimed \"lossless pass-through\" is false on 3 observed inputs.",
+      "evidence": "Provenance: line numbers are main at 91e7e3b140, read from a `git archive HEAD` copy in /tmp/nochange-head, because the working tree holds another agent's uncommitted draft. Behaviour was observed on /workspace/bun/build/release/bun (1.4.4-canary.1+91e7e3b14, prints the bare repro, so it is main) with the default --target=browser unless stated. Reference runs used lightningcss 1.32.0 through /tmp/frame/lc.mjs. Nothing was built.\n\nSIBLINGS: all 8 are left, plus the symptom.\n- Symptom: the launcher's repro prints `.a` to `.e` unchanged (5 of 6 rules wrong; `.f` is right). The fall-through is /workspace/bun/src/css/declaration.rs:78-87, and the chain at :439-482 has no arm for the family.\n- 1. Typed colour rows (/workspace/bun/src/css/properties/properties_generated.rs:1511-1512): no handler references them (grep). /workspace/bun/src/css/properties/prefix_handler.rs:76-110 handles only Color and TextShadow.\n  - `text-emphasis-color: red` prints bare; lightningcss adds `-webkit-text-emphasis-color`.\n  - `text-decoration-color: lch(50% 100 40)` prints 1 line; `color: lch(50% 100 40)` prints 3.\n- 2. Names inside `transition` (properties_generated.rs:345-346, :1281-1288; /workspace/bun/src/css/properties/transition.rs:579, :597):\n  - `transition: text-emphasis-color 1s` prints `-webkit-text-emphasis-color 1s, text-emphasis-color 1s`, while the declaration itself stays bare.\n  - `transition: text-decoration 1s` and `text-emphasis 1s` stay bare.\n- 3. Duplicate-rule removal (/workspace…[+4606c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "no-change:fixes-it",
+      "kind": "fixes-it",
+      "severity": "design-blocker",
+      "headline": "no-change fixes 0 of the 5 wrong repro rules (0 of 7 missing lines) on all 16 default-browser entry-point shapes run on HEAD, 69 of 85 probed family blocks still differ from lightningcss 1.32.0, and it is not the lossless pass-through its text claims: `1x` becomes `1dppx` even inside a hand-written `-webkit-image-set()`, and an earlier same-selector rule is deleted.",
+      "evidence": "PROVENANCE. Everything below was run on /workspace/bun/build/release/bun (1.4.4-canary.1+91e7e3b14 = HEAD, built 13:40, before the other agent's uncommitted draft touched the tree at 13:43; the binary has 0 occurrences of the draft's `text-emphasis-position` row). Line numbers are from `git show HEAD:<path>`, because 10 working-tree files carry that draft. Reference: lightningcss 1.32.0 from /tmp/lcss. Nothing was built. Not run: Windows, `bun bake` production builds, `bun pm diff`. Scratch probes: /tmp/nc-fixes/{probe.mjs,cases.json,cases2.json,cases3.json,fixtures.mjs,fx2.mjs}, /tmp/nc-fixes/ep/{api.mjs,serve.mjs}.\n\nCODE PATH (unchanged by this candidate). /workspace/bun/src/css/declaration.rs:433-483: the 15-handler chain has no arm for the family. :80-87 pushes the unclaimed declaration as written. /workspace/bun/src/css/properties/properties_generated.rs:1511-1512 are the only two family rows. /workspace/bun/src/css/properties/prefix_handler.rs:76-110 and :124-125: FallbackHandler covers only `color` and `text-shadow`. So `Targets::prefixes` (/workspace/bun/src/css/targets.rs:111-130) and `Image::get_fallbacks` (/workspace/bun/src/css/values/image.rs:143-214) are never asked.\n\nENTRY POINTS, default browsers: 0 prefixed lines in every one (lightningcss writes 6 prefixed lines and 1 image-set fallback for the repro; only `.f` already matches).\n- CLI: `bun build x.css`, `--minify`, JS `import \"./x.css\"`, CSS `@import`, `*.module.css`, HTML `<link rel=stylesheet>`.\n- `Bun.bu…[+6385c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "prefix-handler-as-written:blast-radius",
+      "kind": "blast-radius",
+      "severity": "design-blocker",
+      "headline": "prefix-handler-as-written changes 0 of the 6 repro rules, so everything it changes is collateral: it claims 363 other declarations in the 15 in-tree sheets, adds 9 unrelated rows (254 -> 263 tags, composes bitset 256 -> 512 bits), changes rule dedupe for every unknown name and custom property in a way that measures quadratic (1.0 / 3.1 / 9.7 / 41 s for 1k / 2k / 4k / 8k same-selector rules on a debug build, linear on main), raises an error-level composes diagnostic on two build shapes that are silent on main, and documents the symptom family as unsupported.",
+      "evidence": "Provenance: #45814 was read from /tmp/frame/pr45814.diff (16 files, +1,788/-14) and was not built. Main was observed on /workspace/bun/build/release/bun (1.4.4-canary.1+91e7e3b14). The dedupe timing used /workspace/bun/build/debug/bun-debug, another candidate's draft build; its src/css/rules/style.rs hunk is the PR's hunk byte for byte (blob 4dc307d456). Probe inputs are in /tmp/br45814. No repo file was edited.\n\n1. Symptom path untouched.\n- The PR's name table gains only tab-size, hyphens, text-align-last, text-decoration-skip-ink, text-size-adjust, box-decoration-break, user-select, appearance, print-color-adjust (diff:556-575). `define_prefixes!` has 14 slots and none is in the family (diff:280-295).\n- text-decoration, text-emphasis, -style, -position and list-style-image stay `Property::Custom` and take see_other's floor arm (diff:365-369). text-emphasis-color takes `_ => {}` (diff:370).\n- Regex scan of /workspace/bun/test/js/bun/css/files: the handler claims 363 declarations (210 of the nine new names with prefixed spellings, 153 of transform-style / backface-visibility / perspective / box-sizing / text-overflow) and 0 of the 141 family declarations.\n- /workspace/bun/src/runtime/bake/client/overlay.css:412 (`text-decoration: underline wavy var(--color)`) stays bare.\n- The docs hunk lists `text-decoration`, `text-emphasis`, their longhands and `image-set()` in `list-style-image` under \"Bun does not add prefixes for the following yet\" (diff:53-58).\n\n2. Rule dedupe (shared …[+6030c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "prefix-handler-as-written:class-and-free-wins",
+      "kind": "class-and-free-wins",
+      "severity": "design-blocker",
+      "headline": "prefix-handler-as-written claims 0 of the symptom's 10 names and list-style-image (repro .a-.f prints as on main); it patches a closed list of 14 rows (default-browser prefix coverage 1 -> 9 of 30 property features, 21 left including all 5 of this family, 13 of 53 prefix-slot rows still unowned), removes only two neighbouring classes (rule loss for unknown names in is_duplicate, prefix loss in @import supports()), and the family can reuse its rule logic only by copying it.",
+      "evidence": "How this was read: main 91e7e3b140 through `git show HEAD:` (the working tree holds another agent's uncommitted family draft, so on-disk line numbers differ). The PR through the local ref origin/robobun/e36ea53a/css-prefix-handler @ e03f9c528c (+1,788/-14, 16 files; main has not touched any of them since its base 5866b5f13d) and /tmp/frame/pr45814.diff. Bun behaviour observed on /workspace/bun/build/release/bun 1.4.4-canary.1+91e7e3b14. The PR branch has no binary here, so its effect is by code reading. Nothing was built.\n\n1. SYMPTOM NOT REACHED. The PR name table has only `text-decoration-color`, `text-decoration-skip-ink`, `text-emphasis-color` of the family (PR src/css/properties/properties_generated.rs:1568-1570). text-decoration, -line, -style, -thickness, text-emphasis, -style, -position and list-style-image stay `Property::Custom`. `slot_of` (PR src/css/properties/prefix_handler.rs:24-33) matches only the 14 names of `define_prefixes!` (:57-72). Everything else goes to `see_other` (:136-149; an unknown name only raises `floor`), returns false, and is pushed unchanged at /workspace/bun/src/css/declaration.rs:80-87. Repro .a-.f: 0 changed lines. Regex estimate over the 15 sheets of /workspace/bun/test/js/bun/css/files (/tmp/probe_cf/count_rows.mjs): the PR adds 58 prefixed lines (appearance 36, user-select 16, backface-visibility 4, text-size-adjust 2), 0 of them on the 141 family declarations.\n\n2. ITS ONE FAMILY-ADJACENT ROW. `text-decoration-skip-ink` needs no prefix u…[+5396c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "prefix-handler-as-written:fixes-it",
+      "kind": "fixes-it",
+      "severity": "design-blocker",
+      "headline": "prefix-handler-as-written fixes 0 of the 5 wrong repro rules: `.a` to `.e` print exactly as on main at every entry point, because #45814 has no row, slot or arm for text-decoration, text-emphasis or list-style-image. The rule-7 matrix pointed at this family stays at 633 of 1,554 wrong prefix-only winners per shorthand (target 0), and only 2 name-level siblings improve.",
+      "evidence": "METHOD. The PR was not built. I read its tree from the local ref origin/robobun/e36ea53a/css-prefix-handler (e03f9c528c, +1788/-14 over 16 files, merge-base 5866b5f13d). Main's only src/css change since that base is 02f36b477e, which is off this path. Bun output was observed on /workspace/bun/build/release/bun (1.4.4-canary.1+91e7e3b14, built 13:40, before the other agent's working-tree edits). That the PR prints the same as main for this family is by code reading, not by running it.\n\nWHY THE FAMILY IS UNTOUCHED (PR tree)\n- Name table, src/css/properties/properties_generated.rs:1567-1570: the only family keys are text-decoration-color, text-decoration-skip-ink (new) and text-emphasis-color. There is no text-decoration, -line, -style, -thickness, text-emphasis, -style, -position or list-style* key (251 -> 260 keys). Lookup is an exact-match map (HEAD :1293, KNOWN.get_ascii_case_insensitive), so those names stay Property::Custom(Unknown).\n- src/css/properties/prefix_handler.rs:57-72: define_prefixes! has 14 slots. TextDecorationColor and TextEmphasisColor are not among them.\n- prefix_handler.rs:24-31 and :94-96: slot_of returns None for anything else, so handle_property calls see_other and returns false.\n- prefix_handler.rs:136-149: for a family name see_other only sets `floor = index + 1`. It is the only Property::Custom arm in any handler (git grep on the PR tree).\n- The declaration then takes the fall-through push at declaration.rs:78-87 (HEAD numbering), as on main.\n- PR do…[+4795c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "buffered-port-local-flush:blast-radius",
+      "kind": "blast-radius",
+      "severity": "should-fix",
+      "headline": "buffered-port-local-flush changes output well beyond the symptom: it reorders 31 of 128 family blocks in 11 of the 15 in-tree sheets on every target (0 bytes changed on --target=bun, where nothing can be prefixed; +29 lines / +1,959 B on browser), its merged-rule pass prints 58 of 4,263 small blocks differently from the first pass (no winner change seen), and it adds a family-only hook to the shared DeclarationBlock::minify that runs in 5,161 of 21,276 blocks and changes 0; no pre-existing test covers any of this.",
+      "evidence": "METHOD. Read the uncommitted draft in /workspace/bun (branch robobun/cf2a0e8e/css-text-decoration-handler, 10 files). Ran the existing binaries only, nothing built: main = /workspace/bun/build/release/bun (1.4.4, 91e7e3b14); draft = /workspace/bun/build/debug/bun-debug built 15:14. CAVEAT: /workspace/bun/src/css/properties/text.rs was edited again at 15:27 (push! now merges prefix bits into dest.last_mut()), so the binary is one edit behind; every line cited below is from the current working tree, and the mechanisms cited (see_other, joins, mid-block flush) are present in it. Scratch: /tmp/probe-br/{p1.js,p3.js,flood.js,flood2.js,stab.js,stab2.js,corpus/}.\n\n1. WHAT IT EDITS AND WHO CALLS IT (grep counts)\n- DeclarationBlock::minify gets a family-specific call, /workspace/bun/src/css/declaration.rs:91-94 (important_handler.text.see_normal(&self.declarations)). 3 callers: /workspace/bun/src/css/rules/style.rs:363, /workspace/bun/src/css/rules/mod.rs:1038 and :1143 (the two merge re-minify sites). The handler pair is built once per sheet (/workspace/bun/src/css/css_parser.rs:2359-2360); StyleSheet::minify has 3 callers: /workspace/bun/src/bundler/ParseTask.rs:1316, /workspace/bun/src/bundler/transpiler.rs:3079 (no browser list), /workspace/bun/src/css_jsc/css_internals.rs:173.\n- Chain entry declaration.rs:475-477, finalize :432, field :406. FallbackHandler gets 5 arms, /workspace/bun/src/css/properties/prefix_handler.rs:115-149 (1 caller, declaration.rs:490-492).\n- Carried shared…[+7992c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "buffered-port-local-flush:blast-radius:as-written-risks-in-draft",
+      "kind": "blast-radius",
+      "severity": "should-fix",
+      "headline": "buffered-port-local-flush as drafted (f7df4de6c1) keeps #45814's `same_property` hunk with the tag-only bucket key, so it takes the same quadratic-dedupe charge as as-written: `.a{--vN:1} .bN{color:red}` x 32,000 (1.07 MB) costs 7.97 s CPU in `bun build` against 0.13 s on main and 0.14 s in lightningcss (4.0 to 4.5x per doubling; largest bucket on the 15 real sheets is 2). Dropping the hunk is not neutral, and the composes error is a row effect that gets one sign, a fix, in every row-adding candidate.",
+      "evidence": "THE HUNK. `git show f7df4de6c1 -- src/css/rules/style.rs`: `same_property` (/workspace/bun/src/css/rules/style.rs:475-479) is #45814's helper word for word (/tmp/frame/pr45814.diff:977-1010). `is_duplicate` (:464-472) is rewritten and also compares the normal and `!important` lists separately, which #45814's diff (fetched 13:02) does not. `hash_key` (:38-53) still hashes selectors plus u16 tags. /workspace/bun/src/css/rules/mod.rs is untouched: `remove_duplicate` (:945-958) runs `bucket.iter().position(is_duplicate)`, `insert` (:961) appends, and the table is cleared only at a non-style rule (:619). The uncommitted edits now in the tree touch only text.rs and prefix_handler.rs.\n\nMEASURED. Release builds /tmp/bun-release-main (91e7e3b14) and /tmp/bun-release-branch (identical to build/release/bun, built after the commit); `bun build q.css --outdir o`; user+sys CPU, best of 3; N = 2,000 / 4,000 / 8,000 / 16,000 / 32,000 pairs.\n- Draft: 0.037 / 0.107 / 0.428 / 1.759 / 7.973 s, all N `.a` rules kept.\n- Main: 0.017 / 0.029 / 0.045 / 0.079 / 0.132 s, 1 `.a` rule kept (main drops the other N-1).\n- Control `.a{zoom:N}` on the draft: 0.022 / 0.027 / 0.042 / 0.078 / 0.143 s.\n- `--target=bun` on the draft: 1.90 s at 16,000. With one `@media` per 100 pairs: 0.113 s at 16,000.\n- gdb sample of /tmp/bun-profile-branch during the flood: the busy thread is in `same_property` (style.rs:477) under `is_duplicate` (style.rs:466).\n- lightningcss 1.32.0, same flood: 0.017 / 0.030 / 0.061 / 0.136 s …[+3633c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "buffered-port-local-flush:class-and-free-wins",
+      "kind": "class-and-free-wins",
+      "severity": "should-fix",
+      "headline": "buffered-port-local-flush patches instances, it does not remove a class: beyond the family it fixes 4 sibling sites for free (2 of them general, copied byte-for-byte from #45814), leaves 16 of main's 18 handler-less prefixed rows and the `all`/unknown-name reorder in every older handler (7 of 7 probes unchanged on the draft binary), and its rules are private to text.rs, so the list-style-image arm in the same diff already lacks the `!important` guard that `text` has.",
+      "evidence": "PROVENANCE. Draft = uncommitted working tree on branch robobun/cf2a0e8e/css-text-decoration-handler (git diff --numstat: +3001/-8 in total, src +1290/-7). Run on /workspace/bun/build/debug/bun-debug (built 15:14:29) against main /workspace/bun/build/release/bun (1.4.4-canary.1+91e7e3b14), through cssInternals.prefixTest with the default browsers (/tmp/cfw/p.mjs, /tmp/cfw/both.sh) and `bun build`. Nothing was built. text.rs was edited again at 15:27:10, after that binary: only `flush` changed between my two reads (its dedupe macro and the shorthand branch); handle_property, joins, joins_decoration, see_other, see_normal and prefixes were identical. Line numbers are from the 15:27 file.\n\nFIXED WITH NO FURTHER WORK (each read and run, main -> draft):\n1. The two typed rows no handler claimed: arms at /workspace/bun/src/css/properties/text.rs:786 and :807, unparsed arm :827-849. `text-emphasis-color: red` bare -> `-webkit-text-emphasis-color: red; text-emphasis-color: red`; `text-emphasis-color: var(--c)` gains the prefix; `text-decoration-color: lch(50% 100 40)` no fallback -> `#eb0005; color(display-p3 ..); lch(..)`.\n2. Names in `transition`: six new rows at /workspace/bun/src/css/properties/properties_generated.rs:353-360, read by set_prefixes_for_targets (:1325) from /workspace/bun/src/css/properties/transition.rs:579 and :597. `transition: text-decoration 1s` -> `-webkit-text-decoration 1s, text-decoration 1s`; `transition: text-emphasis 1s` likewise (both bare on main).\n3. D…[+5661c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "buffered-port-local-flush:common-path-cost",
+      "kind": "common-path-cost",
+      "severity": "should-fix",
+      "headline": "buffered-port-local-flush adds 0 allocations, 0 syscalls, 0 queue entries and 0 host functions for a declaration outside the family, but it is not free: the 57.5% of declarations that reach the new slot each pay one out-of-line call with an ungated name test (plus a `flush` call per unknown name), every block pays 2 `flush` calls and 6 stores, 25.1% of blocks pay a `see_normal` call, and with `--target=bun`, where nothing can be prefixed, 31 rules in 11 of the 15 in-tree sheets print in a different order.",
+      "evidence": "Read from the uncommitted draft in /workspace/bun (text.rs sha1 e65889fc at 16:06 UTC; the draft is still being edited, so line numbers can shift). Nothing was built. Instruction counts and binary bytes for the draft are estimates; everything marked MEASURED was run here.\n\nCODE (what runs for a declaration that is not in the family)\n- Chain entry: /workspace/bun/src/css/declaration.rs:475-477 calls TextDecorationHandler::handle_property (/workspace/bun/src/css/properties/text.rs:688). The decline arms (:827-832 for Unparsed, :850-853 for the rest) call see_other (:903-922). see_other runs is_all (:648-655), which for every Custom does `custom.name.as_str().eq_ignore_ascii_case(b\"all\")` (:652), then the Unknown test (:910-913), then `self.flush` (:918) for every unknown name. flush returns at `if self.buffered.is_empty()` (:992). No flag gates any of this. lightningcss declines with `_ => return false` and its finalize returns at `if !self.has_any` (/tmp/lightningcss-src/src/properties/text.rs:1207, 1213-1216).\n- FallbackHandler: a new `match property` at /workspace/bun/src/css/properties/prefix_handler.rs:115-149 runs for every declaration that reaches the last handler, with a 1-byte store per unknown name (:145-147). New field :14, reset :192.\n- Per block: declaration.rs:92-94 (one branch; when the block has an `!important` declaration, a see_normal call that walks the normal list with property_id() + tag() + Names::of + is_all per declaration, text.rs:926-935). declaration.…[+6840c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "buffered-port-local-flush:fixes-it",
+      "kind": "fixes-it",
+      "severity": "should-fix",
+      "headline": "buffered-port-local-flush fixes the six repro rules on every bundling entry point (75 of 80 upstream text assertions, main 38) and changes 0 unprefixed or reads-both winners in 49,140 matrix runs, but it makes Safari 14 lose a line in 136 of 1,554 blocks, leaves the symptom in 321 of 8,400 blocks with an authored -webkit- longhand, and reprints 266 runs differently on the merged pass.",
+      "evidence": "How this was checked. Everything below was run on the draft's debug binary (/workspace/bun/build/debug/bun-debug, built 15:54 from the uncommitted tree on robobun/cf2a0e8e/css-text-decoration-handler; a 15:14 build gave the same output on 175 probe cases). The reference is lightningcss 1.32.0 (/tmp/lcss) and main is build/release/bun. Scripts and raw output are in /tmp/bplf (matrix.mjs, draft-matrix-all.txt, lost.mjs, upstream.mjs, real/cmp-real.mjs). The Safari 14 and Chrome 80 readers are models built from prefixes.rs:1370-1381, :1930-1961 and compat.rs:477, not browser runs. Not run: dev server, --compile, plugin onLoad, bun pm diff, the draft's own test suite.\n\nWHAT IS FIXED\n- Repro .a to .f equal lightningcss through cssInternals. They are also fixed through `bun build` (plain and --minify), Bun.build (outdir and in-memory files), JS import, *.module.css, @import and HTML <link>.\n- Upstream assertions that print the upstream text: test_text_decoration 47/50 (main 24), test_text_emphasis 28/30 (main 14). The 5 that differ are 2 no-browser folds, 1 kept authored prefix, and 2 nested @supports fallbacks from the shared context.rs:310.\n- Matrix, 11 atom sets, 49,140 block-runs, each as a single rule and as a merged rule: 0 unprefixed-only winners changed, 0 reads-both winners changed, 0 -webkit- longhands left without a -webkit- setter.\n- The 15 in-tree sheets with --target=browser: 29 lines added, 0 removed.\n- The life-cycle orders hold: nothing carries between blocks, fina…[+2889c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "buffered-port-local-flush:fixes-it:literal-repro-exit-1",
+      "kind": "fixes-it",
+      "severity": "should-fix",
+      "headline": "buffered-port-local-flush: on the launcher's literal repro (no a.png, no b.png) the draft turns exit 0 into exit 1 on 9 of 9 bundling entry points and writes 0 of 6 rules. It prints 6 of 6 only through cssInternals or with both files on disk, which is the parse-time behaviour of every candidate with a typed `list-style-image: Image` row, so its \"all six on every entry point\" score is not a lead on `.e`.",
+      "evidence": "All runs are on draft commit f7df4de6c1 (HEAD, clean tree). Nothing was built or edited.\n\nBinaries used:\n- Draft: /workspace/bun/build/debug/bun-debug (built 18:15, last src/css edit 17:43) and /workspace/bun/build/release/bun.\n- CAUTION: /workspace/bun/build/release/bun was rebuilt at 18:44 from the draft. It still reports `1.4.4-canary.1+91e7e3b14` and is first in PATH, but it prints the -webkit- lines. It is no longer a main binary.\n- Baseline: /usr/local/bin/bun (1.4.2+744846f84). Main at 91e7e3b14 was not run here; the frame observed the same verbatim output on it.\n\nThis candidate on one scale (rules printed as lightningcss 1.32.0 prints them, out of 6):\n\n| Path | Exit | Rules | Notes |\n|---|---|---|---|\n| cssInternals.prefixTest, default browsers (debug binary, /tmp/probe-e-U2FrtW/internals.mjs) | n/a | 6/6 | `.c` folded; `.e` = `-webkit-image-set(url(\"a.png\") 1x, url(\"b.png\") 2x)` then `image-set(\"a.png\" 1x, \"b.png\" 2x)` |\n| Bundler, a.png and b.png present, 7 of 7 browser-target entry points | 0 | 6/6 in shape, 5/6 byte-equal | `.e` URLs rewritten: data: URLs for 8-byte files, `./a-3baxe5sm.png` for 300 KB files |\n| Bundler, files missing (the launcher's literal command), 9 of 9 entry points | 1 | 0/6 | two `Could not resolve` errors at a.css:5:34 and 5:46; no out dir written |\n| bun 1.4.2, files missing, same 9 entry points | 0 | as written | |\n\n- The 7 browser-target entry points: `bun build`, `--minify`, JS `import`, HTML `<link>`, CSS `@import`, `Bun.build`, onLoa…[+2964c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "buffered-port-local-flush:review-cost",
+      "kind": "review-cost",
+      "severity": "should-fix",
+      "headline": "buffered-port-local-flush is about 55% hand-decided, not \"mostly mechanical\": the draft is +3,001/-8 in 10 files (3 of its listed files are still untouched), its 574-line handler shares 21% of its identifier tokens with lightningcss text.rs:1099-1352 (62-65% for four handlers already ported on main), it has 14 marked and at least 11 unmarked deviations behind 12 flush conditions, and its rule-6 matrix check passes only because no atom is a typed neighbour (with one, the merged pass reorders 1,097 of 22,620 blocks).",
+      "evidence": "Measured on the uncommitted draft in /workspace/bun (branch robobun/cf2a0e8e/css-text-decoration-handler, HEAD 91e7e3b140 unmoved). Nothing was built and the draft's suite was not run. Runtime probes used the existing /workspace/bun/build/debug/bun-debug, built 15:14 UTC from the 15:12 source, so they predate the 15:25 and 15:27 edits. Probe scripts: /tmp/rc/probe.mjs, /tmp/rc/probe_emph.mjs, /tmp/rc/cmp_tests.py.\n\nSIZE (git diff --numstat, 15:45 UTC): 10 files, +3,001/-8.\n- /workspace/bun/src/css/properties/text.rs +1,046\n- /workspace/bun/test/js/bun/css/css.test.ts +1,710\n- /workspace/bun/src/css/properties/properties_generated.rs +162\n- /workspace/bun/src/css/properties/prefix_handler.rs +41/-1\n- /workspace/bun/src/css/generics.rs +14/-2\n- /workspace/bun/src/css/declaration.rs +12/-1\n- /workspace/bun/src/css/rules/style.rs +8/-2\n- /workspace/bun/src/css/properties/mod.rs +5\n- /workspace/bun/src/css/rules/supports.rs +2/-1\n- /workspace/bun/test/js/bun/css/util.ts +1/-1\n- Untouched although the candidate lists them: docs/bundler/css.mdx, test/js/bun/css/duplicate-declaration-merge-hang.test.ts, test/bundler/esbuild/css.test.ts. #45814 spent about 220 lines on the same three kinds.\n- The draft is still moving: +2,913 (frame), +2,973 (15:17), +2,997 (15:26), +3,001 (15:40).\n\nSPLIT (sums to about 3,000):\n- Repeated table edits, about 199 lines: 100 row-sites in properties_generated.rs (6 prefixed rows x 13 tables + 2 unprefixed rows x 11, 14 hunks); 12 type registrations (gener…[+6212c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "constraints:rules-and-hot-paths",
+      "kind": "constraints",
+      "severity": "should-fix",
+      "headline": "No perf rule bars the handler layer: the 15-entry chain (declaration.rs:439-482, one call site at :78) is a build-time per-declaration loop, the family is 141 of 45,840 declarations in the 15 in-tree stylesheets, and bench/ has no CSS benchmark. The written rules split on shape instead: REVIEW.md:36 backs lightningcss's buffering, REVIEW.md:66, CLAUDE.md:206 and merged #45210 back an in-place handler, and REVIEW.md:66 bars a shared handle_all or generic shorthand macro inside this PR.",
+      "evidence": "All file:line refs are HEAD 91e7e3b140, read with `git show HEAD:` because the working tree holds another agent's uncommitted src/css edits. Nothing was built.\n\nRULE FILES ON THE PATH\n- There is no /workspace/bun/src/css/CLAUDE.md. /workspace/bun/src/css/README.md is 4 lines of attribution. CONTRIBUTING.md has nothing on CSS, performance or ordering.\n- The rules are in /workspace/bun/REVIEW.md, /workspace/bun/.claude/docs/landing-prs.md (LP below), /workspace/bun/CLAUDE.md and /workspace/bun/src/CLAUDE.md.\n\nRULES THAT DECIDE SHAPE\n1. REVIEW.md:36: \"For ported code, the reference implementation (esbuild, Node) is the spec — diff control flow against it before \"fixing\" apparent bugs.\"\n   - Purpose: stop a porter from introducing divergences the reference's tests cannot catch.\n   - It covers src/css: docs/bundler/css.mdx:17 calls it \"a direct port of LightningCSS\".\n   - It favours the buffering port (lightningcss text.rs:1099-1356).\n   - In-tree precedent: src/css/properties/font.rs:733 keeps a suspected upstream bug with a one-line comment.\n2. REVIEW.md:66: \"When a heuristic keeps sprouting counterexamples in review, redesign structurally instead of adding tie-breakers.\"\n   - Purpose: stop review loops on patched heuristics.\n   - It covers a buffering handler that gains one flush condition per counterexample. The frame measured a verbatim port failing the brief's rules in 198, 26 and 2 of 1,554 blocks.\n   - It favours write-in-place. That mechanism exists on both sides: Fallbac…[+8404c]",
+      "refuted": "0/4"
+    },
+    {
+      "key": "finalize-block-resolve-hybrid:blast-radius",
+      "kind": "blast-radius",
+      "severity": "should-fix",
+      "headline": "finalize-block-resolve-hybrid moves 0 declarations and leaves 0 live `dest` indices after its finalize slot, but it is the only candidate with 2 new chain entries and 11 rows (254 -> 265 tags), and three of its parts break something main keeps: the whole list unit hashes `list-style-type` names in *.module.css (40 of WebKit's 94 built-in counter styles are outside the 54-name enum) and turns `list-style: image-set(\"x\")` into a resolve error, `ctx.is_important` is stale at finalize, and the cross-list context field needs a per-block clear that #45747 skips in release builds.",
+      "evidence": "All line numbers are `git show HEAD:<path>` at 91e7e3b140 (the working tree holds another candidate's uncommitted draft). Nothing was built; Bun observations are from /workspace/bun/build/release/bun (1.4.4-canary.1+91e7e3b14), lightningcss from /tmp/lcss (1.32.0). Probe scripts: /tmp/br/list_reach.mjs, /tmp/br/lcmod.mjs, /tmp/br/docs_probe.mjs.\n\nCALLERS (grep, HEAD)\n- DeclarationHandler::handle_property: 1 caller (src/css/declaration.rs:78). DeclarationHandler::finalize: 2 (declaration.rs:99-100). DeclarationBlock::minify: 3 (src/css/rules/style.rs:363, src/css/rules/mod.rs:1038, :1143). PropertyHandlerContext: 2 struct literals (src/css/context.rs:46, :60); reset() has 1 caller (rules/mod.rs:809) and clears 4 fields (context.rs:259-266).\n- Not applicable: 0 platform #[cfg] arms and 0 trace/perf hooks in src/css; the pass is synchronous arena code on a bundler thread, with no JS value, GC cell or async boundary. No public TypeScript type names a CSS property.\n\nWHAT IS SAFE\n- `dest` is append-only at HEAD except 2 same-length index writes, both inside handle_property (src/css/properties/prefix_handler.rs:58, :134; indices stored at :55, :136; reset at :151-152). No handler finalize reads a `dest` index, and #45814's PrefixHandler::finalize only calls close() (/tmp/frame/pr45814.diff:378-384). Reshaping `dest` at the text slot (between declaration.rs:425 and :426) breaks nothing today.\n- No handler claims a Property::Custom (the only construction is src/css/properties/ui.rs:16…[+6097c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "finalize-block-resolve-hybrid:common-path-cost",
+      "kind": "common-path-cost",
+      "severity": "should-fix",
+      "headline": "finalize-block-resolve-hybrid adds 0 allocations, queue entries, syscalls and indirect calls on the common path, but it is the only candidate with two new chain entries: 2 tag tests for each declaration that reaches the slot (59% of the fixture corpus; projected +8 to +70 instructions on a measured 606) and 4 idle finalize checks plus 1 store per block (projected +10 to +94 on a measured 634); it removes 1 mi_malloc and 1 mi_free per typed family declaration, adds 11 table rows and an estimated 30 to 45 KB, and two tools of its measurement plan do not measure what they name.",
+      "evidence": "Nothing was built. Baselines are measured on the release binary of HEAD (/workspace/bun/build/release/bun, 1.4.4-canary.1+91e7e3b14). Figures for the candidate are projections from those baselines.\n\n1. Where the cost lands (main 91e7e3b140).\n- /workspace/bun/src/css/declaration.rs:433-482: the chain short-circuits, so a declaration reaches a slot after `font` (:465-467) only when the ten handlers in front decline it. The design puts `text` and `list` there: 2 more entries per declined declaration. No other candidate adds a `list` entry.\n- declaration.rs:99-100 and :411-431: both DeclarationHandlers finalize every block. `text` and `list` make 4 more finalize calls per block, plus the store that clears the cross-list field on PropertyHandlerContext (/workspace/bun/src/css/context.rs:26-38). The design's cost line says \"one branch\".\n- declaration.rs:435: handlers get `&css::Property`, so \"pushes it where it stands\" is a deep_clone. The zero-copy move at :80-87 is only for unclaimed declarations.\n- Handlers are stack values, two per sheet (/workspace/bun/src/css/css_parser.rs:2359-2360). No heap, no dyn dispatch, no task.\n\n2. Instructions, measured. Tool: `qemu-x86_64 -one-insn-per-tb -d exec,nochain -dfilter 0x2ac0000..0x2bc0000`, per-pc counts attributed to symbols of build/release/bun-profile, (count(1000) - count(500)) / 500. Two runs of the same input gave 1,330,016 instructions with identical per-pc counts.\n- Declined declaration (`zoom:1`, `--x:1`): 606 self instructions …[+4602c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "finalize-block-resolve-hybrid:review-cost",
+      "kind": "review-cost",
+      "severity": "should-fix",
+      "headline": "finalize-block-resolve-hybrid is the largest candidate to review: about 3,700-3,900 lines over 13 files (est_lines 3,050 is 20-30% low), roughly 60% mechanical (133 hand-edited row sites for 11 rows, 18 ported value types, 110 upstream assertions) and an estimated 450-650 lines of hand-written `resolve` logic with no lightningcss control flow to diff; only 20 of the 110 upstream assertions have more than one declaration and 0 have `all`, an unknown name, `!important`, a second rule or both families, and the finalize-time shape adds 3 invariants that no existing test checks.",
+      "evidence": "Nothing of this design exists, so nothing was built or run for it. The `resolve` and list.rs sizes are estimates anchored on a measured sibling draft and on upstream line counts. Everything else below is counted at HEAD 91e7e3b140 or observed on the HEAD release binary and lightningcss 1.32.0.\n\nSIZE (counted, not est_lines)\n- Row sites: /workspace/bun/src/css/properties/properties_generated.rs is hand-maintained. A prefixed row is edited at 13 match sites and an unprefixed row at 11 (grep of `TextEmphasisColor`: lines 262, 346, 577, 845, 1130, 1238, 1512, 1835, 2115, 2387, 3672, 4392, 4937; `Direction`: the same minus prefix_feature and prefix_slot_mut).\n- This design has 11 rows: 6 prefixed (text-decoration, -line, -style, text-emphasis, -style, -position) and 5 unprefixed (text-decoration-thickness, list-style-image, list-style, list-style-type, list-style-position). That is 6x13 + 5x11 = 133 site edits, about 213 lines. The 8-row candidates have 100 sites.\n- Measured anchor: the sibling buffered draft in this working tree (`git diff --stat HEAD`) is +3,001/-8 over 10 files with 8 rows, no list unit, no docs, no flood test and no bundler test. Its parts: 162 lines in properties_generated.rs, 471 lines of value types (text.rs 128-598), 574 + 42 lines of handler, 1,710 lines of tests.\n- This design is that draft minus its handler, plus `resolve`/claim for text (est. 350-500), plus the list unit, plus docs, flood and bundler tests (about 130). The list unit is 3 rows (about 51…[+7148c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "finalize-block-resolve-hybrid:review-cost:text-only-cut",
+      "kind": "review-cost",
+      "severity": "should-fix",
+      "headline": "Scored as the text-only cut, finalize-block-resolve is about 2,930 inserted lines (about 330 of them hand-written finalize-time code), costs 1 discriminant test and no observer per declined declaration, keeps 1 of its 3 charged breaks (a stale `ctx.is_important`, a 3-line repair), and ties in-place on rule decisions: its look-ahead does not need fewer (8 against 8; 15 for look-ahead against 12 for take-back).",
+      "evidence": "Nothing was built. Line counts come from the committed draft (HEAD f7df4de6c1, the same cut with a buffering handler) plus an uncompiled sketch; rule decisions come from a JS model; two observations come from the existing binaries.\n\nLINES\n- Draft numstat: 3,087 insertions, 41 deletions, 10 files. Shared by every row-adding design: rows 162 (/workspace/bun/src/css/properties/properties_generated.rs), value types 460 (/workspace/bun/src/css/properties/text.rs:128-587), `Names` 47 (text.rs:600-646), list-style-image arm 41 (/workspace/bun/src/css/properties/prefix_handler.rs:113-149), tests 1,772.\n- Design-specific in the draft: the buffering handler, text.rs:648-1191 (544 lines), and the cross-list hook, /workspace/bun/src/css/declaration.rs:91-96 (6 lines).\n- Sketch of this cut's handler, fold included: /tmp/probe-frc/resolve_sketch.rs, 395 lines. Claim plus finalize are lines 4-70 (67). Code that runs at finalize is lines 72-398 (327), of which the fold (`Group`, `group()`, arm plumbing) is about 60.\n- Total: 3,087 - 544 - 6 + 395 = 2,932, about 150 below the draft and 800 to 950 below the 3,700 to 3,900 charged with the list unit. The draft also lacks the docs hunk, flood test, bundler test and rule-7 matrix (no `winner` in its test hunk); with them about 3,100 for any candidate.\n- An in-place handler on this base was not sketched. By the candidates' own figures its fold is about 150 lines against about 60 here.\n\nPER DECLINED DECLARATION AND PER BLOCK (by reading, not measur…[+4578c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "inplace-index-handler:blast-radius",
+      "kind": "blast-radius",
+      "severity": "should-fix",
+      "headline": "inplace-index-handler moves or deletes 0 declarations of other properties and breaks 0 existing assertions (no test at HEAD names this family), but its 8 rows change 6 things outside the handler, through about 100 hand-edited match sites of which 28 are not compiler-checked, and its equal-value merge rule, as described, has no shorthand/longhand barrier.",
+      "evidence": "Line numbers are HEAD 91e7e3b140, read with `git show` because the checkout holds another agent's uncommitted draft. No build of this candidate exists. \"HEAD\" = /workspace/bun/build/release/bun (1.4.4-canary.1+91e7e3b14). \"typed-row binary\" = /workspace/bun/build/debug/bun-debug, the other agent's buffered draft, which has the same 8 rows plus the supports.rs line.\n\nINVARIANT TODAY\n- Each family declaration is written once, in source position, as written: /workspace/bun/src/css/declaration.rs:78-87. Observed on HEAD: `.c{text-decoration:underline wavy;text-decoration-style:dotted;text-decoration:underline wavy}` prints all three lines.\n- The candidate also writes at handle time, so other properties keep their place by construction.\n- Its index fields rely on `dest` being append-only. At HEAD the only non-append writes are the in-place assignments at /workspace/bun/src/css/properties/prefix_handler.rs:58 and :134. The fold cut would add the first truncate of the shared list.\n\nCANDIDATE-SPECIFIC\n1. Merge rule (by reading the description, not run). It is #45814's rule: merge an equal-valued repeat unless `all` or an unknown name lies between (PrefixHandler::handle_property and see_other in /tmp/frame/pr45814.diff). Previous entries are looked up per slot, so a longhand between two equal shorthands is no barrier. The `.c` block above would become `-webkit-text-decoration: underline wavy; text-decoration: underline wavy; text-decoration-style: dotted`: style dotted where the sourc…[+5943c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "inplace-index-handler:class-and-free-wins",
+      "kind": "class-and-free-wins",
+      "severity": "should-fix",
+      "headline": "inplace-index-handler PATCHES instances: it fixes the family at the one layer all 3 DeclarationBlock::minify callers share and 8 sibling sites come free, but it takes only 2 of the 18 typed prefix rows that no handler owns (8 of the 16 left print bare under the default browsers), keeps its `all`/unknown-name ledger private (2 copies in its own diff, 3 with #45814), and nothing stops the next row from printing bare; inside the family it does rule out reordering and second-pass drift by construction.",
+      "evidence": "Read on main with `git show HEAD:<path>` (the working tree holds another agent's uncommitted draft). Observed on /workspace/bun/build/release/bun (1.4.4-canary.1+91e7e3b14) and lightningcss 1.32.0 via /tmp/frame/lc.mjs. Nothing was built.\n\nFIXED WITH NO FURTHER WORK (each verified)\n1. Entry points: DeclarationBlock::minify has 3 callers (src/css/rules/style.rs:363, src/css/rules/mod.rs:1038, :1143) and StyleSheet::minify has 3 (src/bundler/ParseTask.rs:1316-1319, src/bundler/transpiler.rs:3079, src/css_jsc/css_internals.rs:173). One handler covers the CLI, Bun.build, HTML, dev server, the merged-rule pass and the test API.\n2. text-emphasis-color and text-decoration-color: rows at src/css/properties/properties_generated.rs:1511-1512, and no handler file mentions either (grep). Observed bare; lightningcss writes -webkit-text-emphasis-color.\n3. Colour fallbacks in the family: observed that main prints `text-decoration: underline lch(50% 50 50)`, `text-decoration-color: lch(..)`, `text-emphasis-color: lch(..)` and `text-emphasis: dot lch(..)` with no fallback, while `color: lch(..)` gets #b25f37 and a P3 line.\n4. Names in `transition`: src/css/properties/transition.rs:579, :597 call set_prefixes_for_targets (properties_generated.rs:1281-1288), which reads prefix_feature(). Observed: `transition: text-emphasis-color 1s` is prefixed, `text-decoration 1s` and `text-emphasis 1s` are bare; lightningcss prefixes both.\n5. Duplicate-rule removal for family names: src/css/rules/style.rs:4…[+4745c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "inplace-index-handler:fixes-it",
+      "kind": "fixes-it",
+      "severity": "should-fix",
+      "headline": "inplace-index-handler prints the expected lines for 4 of the launcher's 6 rules on every bundling entry point (5 of 6 with its fold cut), but the literal repro becomes exit 1 because `.e`'s image-set() strings turn into import records; it leaves 4 contexts the reference covers unprefixed plus `list-style: image-set()`, and needs 7 small repairs its visible text does not state, one of which its own rule-7 matrix cannot catch (modelled as stated: 114 of 1,554 blocks keep a stale -webkit-text-decoration copy).",
+      "evidence": "BASIS. No code exists for this candidate, and its text reached this probe truncated (+1071 chars). I walked the stated mechanism through HEAD 91e7e3b14, and modelled it in JS (/tmp/pfx/model.mjs, run-model.mjs, run-model2.mjs). Bun facts are observed on /workspace/bun/build/release/bun (1.4.4-canary.1+91e7e3b14). lightningcss 1.32.0 facts are observed through /tmp/pfx/lc.mjs and lc2.mjs. Nothing was built.\n\nLAUNCHER REPRO, default browsers\n- `.a`, `.b`, `.d`, `.f` come out exact in both cuts.\n  - `Feature::prefixes_for` starts from NONE and adds WEBKIT for TextDecoration (Safari 14) and TextEmphasis (Chrome 80): /workspace/bun/src/css/prefixes.rs:199, :1370, :1930.\n  - An Unparsed property prints one line per prefix bit: /workspace/bun/src/css/properties/properties_generated.rs:2160.\n- `.c` is exact only in the fold cut. The minimal cut prints 6 lines (three prefixed longhand pairs) where 4 are expected; Chrome 80 ends with the same values.\n- `.e` gets the fallback only when a.png and b.png exist.\n  - `ImageSetOption::parse` adds an import record for each string: /workspace/bun/src/css/values/image.rs:395.\n  - Observed on the same value in `background-image` with no files: \"Could not resolve: a.png\", exit 1, no output (/tmp/pfx/r2).\n  - With files, the shape is right but the URLs are rewritten (/tmp/pfx/r5).\n  - Today only bare strings escape this; `list-style-image: url(\"missing.png\")` already fails (/tmp/pfx/r4).\n  - This is INHERENT to any typed `Image` row, so every row-a…[+6095c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "inplace-index-handler:fixes-it:bare-value-after-prefixed-value",
+      "kind": "fixes-it",
+      "severity": "should-fix",
+      "headline": "inplace-index-handler as described does not keep what main gets right: a later `text-decoration` value that the style-or-color predicate leaves bare keeps the earlier value's added `-webkit-` copy, so Safari 14 (reader checked in WebKit source) draws the earlier style in 216 of 2,800 one-rule blocks and 615 of 7,938 two-rule splits where main matches Chrome and Firefox; with #45814's ledger and merge rule unchanged, only dropping the predicate reaches 0 and 0 (+104 lines, +3.3 KB on the 15 in-tree sheets).",
+      "evidence": "1. READER, settled from WebKit source. The local checkout only has the new shorthand (/workspace/WebKit/Source/WebCore/css/CSSProperties.json:11897-11918), so I fetched five files of WebKit/WebKit by raw HTTPS into /tmp/bvp (no gh, no REST call).\n- Safari 14.0, branch safari-610-branch: `text-decoration` is a longhand that takes line keywords only (Source/WebCore/css/CSSProperties.json:3838-3856; css/parser/CSSPropertyParser.cpp:4078-4081 calls consumeTextDecorationLine, :1756-1778; a value with more tokens is dropped, :307-333). It has the same style setter as text-decoration-line (CSSProperties.json:6126-6133). `-webkit-text-decoration` is the shorthand of line, style and color (:6110-6117). These properties apply in parse order (style/PropertyCascade.cpp:39-70, style/StyleBuilder.cpp:131-135).\n- Safari 18.0, branch safari-7619-branch: `text-decoration` is a shorthand with the single longhand text-decoration-line (CSSProperties.json:5851-5861); `-webkit-text-decoration` is unchanged (:8213-8220).\nSo over Bun's whole prefix range (/workspace/bun/src/css/prefixes.rs:1370-1381) an unprefixed line-only `text-decoration` sets the line and keeps the style and color of an earlier `-webkit-text-decoration`. The probe's assumption is right.\n\n2. WHAT THE CANDIDATE PRINTS. It has no code. I modelled its description in /tmp/bvp/model.mjs: handle_property of #45814 (/tmp/frame/pr45814.diff:299-352: `covered = self.written[slot]` :329, `self.written[slot] |= written.difference(NONE)` :33…[+5393c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "inplace-index-handler:fixes-it:one-ruler-for-index-designs",
+      "kind": "fixes-it",
+      "severity": "should-fix",
+      "headline": "inplace-index-handler: on one ruler the charges that hold are 2 repairs, and shared-fallthrough-ledger needs the same 2: the stale copy is 0 of 1,554 with #45814's author-only `written` (282 only if added prefixes count), the 114 stale copies are the identical 114 on the buffered draft binary, and what is left is #45814's merge rule, which in this family changes the unprefixed-only winner in 250 and the reads-both winner in 480 of 8,400 blocks with and without a browser list, plus the !important cross-list walk (175 of 1,554); finalize is free of both only if its 'equal neighbours' means adjacent.",
+      "evidence": "RULER. One model, /tmp/oneruler/model.mjs: PrefixHandler::handle_property and see_other of /tmp/frame/pr45814.diff:300-370, keyed by the family names, with the two lightningcss value predicates. One ruler, /tmp/oneruler/ruler.mjs: computed line/style/color and emphasis style/color/position per reader (the readers of /tmp/frame/winner.mjs and /tmp/bplf/matrix.mjs). Model and draft binary run in one process: /tmp/bun-release-branch (built 18:50 from f7df4de6c1, prints the draft's .a to .f), BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1, cssInternals.prefixTest. Model check against the real #45814 build (/tmp/rfx_fixesit_q7/bun-pr45814-profile, /tmp/oneruler/pr_check.mjs): 3,108 of 3,108 blocks print the same declarations (the PR's user-select atoms, and a set with -khtml-user-select and color). Matrices: 1,554 = atoms of /tmp/frame/winner.mjs; 8,400 = the 2,800-block sets longhand (atoms of /tmp/frame/winner2.mjs), emphasis and typed-crossing of /tmp/bplf/sets-all.json; 15 matrices in all, 30,786 blocks.\n\nQ1, the ledger. pr45814.diff:339 `self.written[slot] |= written.difference(VendorPrefix::NONE)` (doc at :306: 'The prefixes that the author wrote'). /tmp/oneruler/q1.mjs, 1,554 blocks, readers unprefixed-only / reads-both / prefix-only: author-only ledger 0 / 0 / 0; ledger that also counts added prefixes 0 / 0 / 282; draft binary 0 / 0 / 0. The #45814 build prints `user-select:none;user-select:text` with both values prefixed (/tmp/oneruler/pr_none.mjs). On the 8,400 blocks the two r…[+5012c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "inplace-index-handler:review-cost:upstream-assertions-by-cut",
+      "kind": "review-cost",
+      "severity": "should-fix",
+      "headline": "inplace-index-handler keeps 67 of the 80 upstream assertions without the fold and 77 with it (75 if it takes the draft's Safari rule), by model; the buffered draft re-measures at 75 today, so the minimal cut is 8 behind buffered and the fold cut is level with it.",
+      "evidence": "METHOD. The 80 assertions were extracted from /tmp/lightningcss-src/src/lib.rs:16009-16842 into /tmp/probe_ua/upstream80.json: 50 in test_text_decoration, 30 in test_text_emphasis. 69 have one declaration and 11 have two or more; none has a non-family declaration between family ones. lightningcss 1.32.0 passes 80/80 of the extracted cases (/tmp/probe_ua/run_lc.mjs), so the extraction is faithful.\n\nDRAFT BINARY (measured, /tmp/probe_ua/run_draft.mjs, through cssInternals the way /workspace/bun/test/js/bun/css/util.ts calls it): 75/80 (decoration 47/50, emphasis 28/30).\n- The number is current, not stale. /workspace/bun/build/release/bun (built 18:44) and /workspace/bun/build/debug/bun-debug (built 18:15) print the same text for all 80. HEAD is f7df4de6c1 with a clean tree, and text.rs was last changed at 17:43.\n- It already includes the no-list change. The five failures are:\n  - lib.rs:16104 and :16120: no fold with no browser list (/workspace/bun/src/css/properties/text.rs:909-910).\n  - lib.rs:16660: the authored -webkit-text-emphasis-style is kept (rule 1).\n  - lib.rs:16431 and :16820: a second, nested @supports is printed. Bun's SupportsRule::minify (/workspace/bun/src/css/rules/supports.rs:406-423) has no enter_supports, unlike lightningcss src/rules/supports.rs:46-57. The same duplicate prints for text-shadow, box-shadow and border-color, so this is not a handler fact.\n- The draft's test file agrees (/tmp/probe_ua/draft_tests.mjs): 73 verbatim; :16104 and :16120 moved to …[+2075c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "layers:a-fix-at-every-frame",
+      "kind": "layers",
+      "severity": "should-fix",
+      "headline": "Of the 19 frames, only the name table plus the chain slot after `font` can host this fix under the brief (the parser has no targets, the printer has no block), and main has no shared home for rules 1-3: 6 of 6 probed handlers delete an authored prefix, 10 of 11 add an overriding prefixed copy, 4 of 4 buffering handlers write behind `all`; every upstream folding assertion in the three named tests (7 text, 4 list) folds adjacent declarations, so an in-place handler needs no flush point.",
+      "evidence": "PROVENANCE. Line numbers come from `git show HEAD:<path>` (HEAD 91e7e3b140). The working tree holds another agent's uncommitted draft (8 files, +1130 lines); I did not use it for line numbers. Bun behaviour was run on /workspace/bun/build/release/bun (1.4.4-canary.1+91e7e3b14, i.e. HEAD without the draft) with `bun build` and, for browser lists, `BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1` + cssInternals._test. lightningcss 1.32.0 was run through /tmp/frame/lc.mjs. Probe scripts are in /tmp/layers (probe.mjs, probe2-5.mjs, lc_probe.mjs, real.mjs, share.mjs, classify.mjs, multi.mjs). Nothing was built. Not measured: the real cost of one more chain entry (the 63% below is a name heuristic over fixtures).\n\nFRAME BY FRAME\n\nF1 BuildCommand::exec (/workspace/bun/src/runtime/cli/build_command.rs:57, :578-584, :624) and F2 BundleV2::generate_from_cli (/workspace/bun/src/bundler/bundle_v2.rs:4426). They choose the target and the pipeline only. No archetype applies. CLI, Bun.build and the dev server are already thin arms over one ParseTask arm (c); the one arm that differs is `--no-bundle` (F3).\n\nF3 ParseTask `Loader::Css` (/workspace/bun/src/bundler/ParseTask.rs:1273-1328) and its twin (/workspace/bun/src/bundler/transpiler.rs:3011-3112). (d) residue only: transpiler.rs:3079 minifies with `MinifyOptions::default()` while its printer at :3088-3094 gets `Targets::for_bundler_target`. A one-line change gives `--no-bundle` the handler output, but for all 15 existing handlers too (observed: `…[+13771c]",
+      "refuted": "0/4"
+    },
+    {
+      "key": "no-change:who-pays-if-nothing-happens",
+      "kind": "no-change",
+      "severity": "should-fix",
+      "headline": "No user has reported this (0 of the 13 matching oven-sh/bun issues): the demand is the maintainer's tracking checklist #14167 (12 unchecked rows of this family) plus one first-party rule, Bun's own dev error overlay (overlay.css:412, since HEAD), while today's output is a lossless pass-through that the lightningcss reference breaks on the patterns of 6 of the 15 in-tree framework fixtures, so no-change loses only to a strictly additive fix, and clearly only for the text-decoration shorthand.",
+      "evidence": "PROVENANCE. Bun runs use /workspace/bun/build/release/bun (`--revision` 1.4.4-canary.1+91e7e3b14 = HEAD) through `Bun.build({files})` in `bun -e`; nothing was built or written. The checkout has another agent's uncommitted edits in src/css (generics.rs, properties/mod.rs, properties_generated.rs, properties/text.rs), made after that binary was written, so every source line below is from `git show HEAD:<path>`. lightningcss 1.32.0 was run through /tmp/frame/lc.mjs. gh: 5 attempts used (3 searches and 1 issue read succeeded; 1 search died with a TLS handshake timeout and was retried once).\n\n1. WHO ASKS (tracker).\n- `gh api search/issues` with q=`repo:oven-sh/bun is:issue (\"text-decoration\" OR \"text-emphasis\" OR \"list-style-image\" OR \"image-set\" OR \"vendor prefix\" OR \"vendor prefixes\" OR \"vendor prefixing\")`: total_count=13. None reports a missing prefix of this family. 9 are unrelated (the words sit in pasted CSS or a package name). The other 4: #14167 (next line); #40133 'Allow configuring or disabling CSS syntax lowering' (closed as duplicate, 2 reactions: the opposite ask); #4896 (2023, postcss + autoprefixer plugin, closed); #42909 (robobun, closed not_planned, sample CSS only).\n- #14167 'MVP of CSS parser' (Jarred-Sumner, open, labels tracking + css, 24 reactions, updated 2026-10-18), section '### Minify and downlevel properties': body lines 191-194 `- [ ]` list-style-image, list-style-position, list-style-type, list-style; lines 304-313 `- [x] text-decoration-color`, `- [ …[+9103c]",
+      "refuted": "0/4"
+    },
+    {
+      "key": "prefix-handler-as-written:common-path-cost",
+      "kind": "common-path-cost",
+      "severity": "should-fix",
+      "headline": "prefix-handler-as-written changes 0 of the 6 repro rules, yet 47.2% of declarations (21,644 of 45,894 handler calls on the 15 in-tree sheets, counted on main) gain a 12th handler probe (+66 instructions reported, on a 606-instruction path measured here) and every block gains two 152-byte resets; it adds 0 allocations, syscalls, queue entries, indirect calls, host functions or startup work, and about +18.4 KB of .text.",
+      "evidence": "PROVENANCE. Main was read with `git show HEAD:<path>` (the working tree holds another agent's draft). Measurements ran on /workspace/bun/build/release/bun (1.4.4-canary.1+91e7e3b14; bun-profile.linker-map has no PrefixHandler or TextDecorationHandler symbol). No binary of the #45814 branch exists here, so its deltas come from the diff (/tmp/frame/pr45814.diff) or are PR-body figures quoted through the candidate text, and are labelled so. Nothing was built; no repo file was touched.\n\nWHAT THE DIFF ADDS ON THE COMMON PATH (read from the diff)\n- Symptom: the handler's list (new src/css/properties/prefix_handler.rs:57-72, diff lines 280-295) has 14 names and none of text-decoration, text-emphasis, their longhands or list-style-image. All six repro rules still fall through at /workspace/bun/src/css/declaration.rs:80-87.\n- Per declaration that all 15 handlers decline: one more `||` operand after `fallback` (main declaration.rs:480-482; diff lines 116-118). Its decline path is `slot_of` then `see_other` (new prefix_handler.rs:94-97, 136-149): 0 allocations, 0 indirect calls, 1 more direct call, 6 to 8 conditional branches at source level, 1 store to `floor` for an unknown name. In main's binary `fallback` is reached by a tail jump (`jmp FallbackHandler::handle_property` at 0x2b9f549); with a 16th operand it is no longer in tail position.\n- Per declaration that an earlier handler claims: nothing (`||` short-circuits).\n- Per block: `finalize` calls `close()`, which is `*self = Self::d…[+4251c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "prefix-handler-as-written:review-cost",
+      "kind": "review-cost",
+      "severity": "should-fix",
+      "headline": "prefix-handler-as-written costs a review of +1,788/-14 lines in 16 files (532 src = 358 mechanical row edits + 174 logic; 1,216 tests; 40 docs) and changes 0 lines of the repro's output, so the family PR's full review still comes on top, 22 of this diff's 53 hunks collide with the current family draft, and 51 of its 100 new css.test.ts assertions already pass on unfixed main.",
+      "evidence": "Nothing was built. The diff was read in full from /tmp/frame/pr45814.diff. The PR body and threads were not re-read (no gh calls), so numbers quoted from the body are the frame's, not mine.\n\nSIZE (counted with awk over the diff)\n- 16 files, 53 hunks, +1,788/-14. `git apply --check --cached` is clean on HEAD 91e7e3b140, and all 15 pre-existing files have base blob = HEAD blob, so no rebase is needed today.\n- The candidate's `files:` list shows 12 files; the real count is 16 (it omits test/bundler/css/vendor-prefix.test.ts (new), css.test.ts, duplicate-declaration-merge-hang.test.ts, util.ts).\n- src, 532 added: build-prefixes.js 5, declaration.rs 7, generics.rs 14, prefixes.rs 38, properties/prefix_handler.rs 159, properties_generated.rs 187, text.rs 64, ui.rs 48, rules/style.rs 8, rules/supports.rs 2.\n- tests, 1,216 added: css.test.ts 1,033, vendor-prefix.test.ts 141, cli.test.ts 35, duplicate-declaration-merge-hang.test.ts 6, util.ts 1.\n- docs/bundler/css.mdx: 40 added.\n\nMECHANICAL, 358 src lines\n- properties_generated.rs: 187 lines in 27 hunks = 9 rows x 13 sites = 117 row-sites. Sites at HEAD: tag enum :45, prefix_feature :307, name :359, PropertyId enum :628, tag() :912, prefix_slot_mut :1184, KNOWN table :1295, Property enum :1581, property_id :1897, value_to_css :2169, parse :2431, deep_clone :3896, eql :4487.\n- Other repeated sites: 9 entries in the define_prefixes! list, 7 bridge entries in generics.rs, 8 value enums (text.rs 5, ui.rs 3). Total 141 repeated sites, plus…[+5710c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "prior-attempts:tracker",
+      "kind": "prior-attempts",
+      "severity": "should-fix",
+      "headline": "No earlier PR ports TextDecorationHandler (0 PR hits for the name), but four open, maintainer-unreviewed robobun PRs (#45814, #42042, #45825, #41990) already build four different homes for \"flush before a declaration that can override\", rule 1 is still an unanswered \"Question for a maintainer\" on #45814, and an uncommitted 1,130-line buffering handler with 13 \"Unlike lightningcss\" arms is already in this checkout.",
+      "evidence": "A. THIS FAMILY HAS NO PRIOR PORT\n- `gh search prs --repo oven-sh/bun \"TextDecorationHandler\"`: 0 results. A second phrasing, `is:pr text-decoration`, gave 45 hits; none of the top 20 ports the family (the CSS hits are #45814, #45555, #45945, #45946, #43421).\n- The original port deferred it. `git show d4514457e8^:src/css/properties/generate_properties.ts` lines 1468-1509 and 1555-1567 have the rows for text-decoration-line/-style/-thickness, text-decoration, text-emphasis-style, text-emphasis, text-emphasis-position and list-style-type/-image/-position/list-style commented out since 274e5a2022 (#14122, 2024-09-26). `text.zig` lines 92-134 of the same commit are `@compileError(css.todo_stuff.depth)` stubs. 85ddc95b21 (#35002) later deleted the unused `TextDecorationLine`.\n- Tracker #14167 (Jarred-Sumner, open, \"Minify and downlevel properties (210/292)\") has unchecked boxes for the same names, including all four `list-style*`.\n- #45814's body counts the gap: \"The 37 default places that still differ: mask* and mask-border* (18), text-decoration and text-emphasis* (7), backdrop-filter (4, #44648), resolution media features (4), image-set() in list-style-image, :autofill (#42131)\". Its docs hunk (/tmp/frame/pr45814.diff:53-58) lists the family under \"Bun does not add prefixes for the following yet\".\n\nB. IN-FLIGHT ATTEMPT IN THIS CHECKOUT\n- Branch robobun/cf2a0e8e/css-text-decoration-handler at 91e7e3b140, uncommitted, not pushed, no PR. Files were still being written during this p…[+5417c]",
+      "refuted": "0/4"
+    },
+    {
+      "key": "reference:how-others-solve-it",
+      "kind": "reference",
+      "severity": "should-fix",
+      "headline": "lightningcss and all 11 of Bun's buffering handlers decide prefixes inside the handler at flush time, and no handler on main implements rules 1-3 (32 of 45 probe outputs equal lightningcss 1.32.0); the only in-tree shape for a buffering shorthand is open PR #41990 on FontHandler, whose author measured that a chain-wide \"flush before any unknown name\" changes 1,916 of 3,360 real stylesheets while a handler-local flush changes 0.",
+      "evidence": "REFERENCE (lightningcss v1.32.0, /tmp/lightningcss-src). The only commit to src/properties/text.rs after the tag is b0939ab68 \"Add NonNegative wrapper\" (2026-09-26), so master's handler logic is the same.\n- Validation is the name table: src/properties/mod.rs:1501-1510 (allowed prefixes per row), :1534-1537 (list rows, no prefix), :293 (`all`).\n- Ordering: one handler for the family, right after `font`: src/declaration.rs:555-556, :594-595, :714-715. It is built once per sheet with Default and does no work then (src/stylesheet.rs:230-231). Each block gets handle_property x n, then finalize (declaration.rs:238-264).\n- WHEN: typed values are only stored at handle time (text.rs:1132-1171). The prefix lookup, the fold, the colour fallbacks and the thickness split all run in finalize (text.rs:1213-1352; `targets.prefixes` inside the blocks at :1228-1268, :1270-1296, :1319-1352).\n- Call orders confirmed: never used returns at text.rs:1214; a mid-block flush re-arms through take() (:1218-1226). There are only two flush points: :1125 (value differs AND prefix not contained) and :1196/:1202 (Unparsed, written in place).\n- `all` is not the handler's job: DeclarationHandler::handle_all (declaration.rs:609, :645-672) replaces the whole handler.\n- list-style-image is a key of the generic shorthand_handler! (src/macros.rs:207-327; flush tests :230/:239; fallbacks at flush :293/:310; src/properties/list.rs:460-464). Bun ported none of its three users (list, outline, container).\n- Upstream sp…[+4936c]",
+      "refuted": "0/4"
+    },
+    {
+      "key": "shared-fallthrough-ledger-hybrid:blast-radius",
+      "kind": "blast-radius",
+      "severity": "should-fix",
+      "headline": "shared-fallthrough-ledger-hybrid: the barrier-only cut adds code to the fall-through that 45.6% of corpus declarations take (20,903 of 45,847) for a ledger that 131 of 21,276 blocks read and that decides 0 of them, and the lines only it edits conflict with neither #45814 nor #45747; the default cut also changes 8 properties outside the brief under the default browsers (backface-visibility and the 7 mask rows), re-owns 5 rows of #45814's PrefixHandler, and 7 of those 8 have no test.",
+      "evidence": "All file:line refs are HEAD 91e7e3b140 read with `git show HEAD:` (the working tree holds another agent's uncommitted draft). Nothing was built. Bun behaviour was observed on build/release/bun 1.4.4-canary.1+91e7e3b14, lightningcss 1.32.0 through /tmp/frame/lc.mjs. Corpus counts are by property name over the 15 sheets of test/js/bun/css/files (scripts in /tmp/sfl), not instrumented.\n\n1. Reach of the hook.\n- The fall-through is the inner `handle` of `DeclarationBlock::minify` (src/css/declaration.rs:69-89, push at :80-87).\n- `DeclarationBlock::minify` has 3 callers: src/css/rules/style.rs:363, src/css/rules/mod.rs:1038 and :1143.\n- `StyleSheet::minify` has 3 entry points: src/bundler/ParseTask.rs:1316, src/bundler/transpiler.rs:3079, src/css_jsc/css_internals.rs:173.\n- 20,903 of 45,847 corpus declarations fall through: 14,597 custom properties, 2,650 unknown names (2,510 once the family is typed), 3,656 typed rows with no handler, 0 `all` (/tmp/sfl/count_fallthrough.mjs).\n- Readers: 131 of 21,276 blocks have a family declaration; 0 have list-style-image.\n- 8 lists have two or more family declarations. 1 has an unknown name between them (bootstrap-4.css `abbr[title]`: `underline` then `underline dotted`); the values differ, so nothing merges either way (/tmp/sfl/count_barrier.mjs).\n- 0 blocks have family declarations in both the normal and the !important list. 5,161 blocks (24.3%) have !important, which is what an ungated cross-list seed walks.\n\n2. State placement (variant A, `…[+4841c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "shared-fallthrough-ledger-hybrid:class-and-free-wins",
+      "kind": "class-and-free-wins",
+      "severity": "should-fix",
+      "headline": "shared-fallthrough-ledger-hybrid: in its in-brief (barrier-only) scope it patches the same 10 names as the in-place handler and fixes 0 of the 14 chain entries that change the winner across `all` on main; only its out-of-brief default scope removes a class (typed prefix row with no owner: 18 rows to 0, 8 more rows prefixed under the default browsers, +4 lines in the 15 sheets), and neither scope removes the no-row class behind 8 of the symptom's 10 names (69 names left, 8 bare under the defaults).",
+      "evidence": "Method: main was read with `git show HEAD:` (HEAD 91e7e3b140; the working tree carries another agent's uncommitted draft). Bun output was observed on /workspace/bun/build/release/bun (1.4.4-canary.1+91e7e3b14 = HEAD), lightningcss 1.32.0 from /tmp/lcss. Scripts and probe sheets are in /tmp/sfl (prefixes_eval.mjs, classify.mjs, count_default_rows.mjs, p1..p7). The design has no code, so what it would do comes from its description (760 characters of which were cut). Nothing was built.\n\n1. THE SITE. There is one fall-through: /workspace/bun/src/css/declaration.rs:75-87 (`ctx.is_important` set at :76, push at :80-86). It is the only caller of DeclarationHandler::handle_property (:78). No handler has a `Property::Custom` arm (grep at HEAD: only properties_impl.rs:27, :92 and ui.rs:161, which creates one), and `all` has no key in the name table, so every `all` and every unknown name reaches this frame. The reference decides `all` at the same frame: /tmp/lightningcss-src/src/declaration.rs:608-610 (`prefix`, `handle_all`, `handle_custom_property` at the chain tail). The family itself is claimed by the mandated handler and never reaches the fall-through, so the ledger sees only barrier declarations and default rows; the family's entries must be written by the handler.\n\n2. SIBLINGS LEFT IN BOTH SCOPES (winner-changing class in existing entries). Observed on HEAD, default browsers:\n- `margin-top:1px;all:unset` prints `all: unset; margin-top: 1px`. The same happens for padding, scroll-m…[+6071c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "shared-fallthrough-ledger-hybrid:common-path-cost",
+      "kind": "common-path-cost",
+      "severity": "should-fix",
+      "headline": "shared-fallthrough-ledger-hybrid adds 0 allocations, 0 syscalls, 0 host functions and 0 startup work for sheets without the family, but it is not free: its fall-through test runs on 45.9% of their declarations (20,204 of 44,022 in the 15 fixtures, about 7 to 13 instructions each against 863 to 928 today) and resets on all 20,549 blocks for state that 131 blocks read, and its default scope changes their output (4 added -webkit-backface-visibility lines in the fixtures).",
+      "evidence": "Nothing was built. The branch side of every number is by code reading or a mock. The main side was measured on /tmp/bun-profile-main (1.4.4-canary.1+91e7e3b14, same .text and .rodata byte counts as the release binary).\n\nTODAY, same path (main 91e7e3b140)\n- /workspace/bun/src/css/declaration.rs:75-88: per declaration 1 store (ctx.is_important, :76) and 1 call into the 15-entry chain (:78, :433-483). An unclaimed declaration then costs 2 memcpy of 216 bytes and a push (:80-87). :99-100: 2 finalize calls per block.\n- No handler on main has a Property::Custom arm (grep of src/css/properties), and `--x:1` costs exactly what `zoom:1` costs. The ledger would be the first code on this path that tells them apart.\n- /workspace/bun/src/css/css_parser.rs:2358-2360: per sheet 1 PropertyHandlerContext (200 B, is_important at +0xc0 in the disassembly) and 2 DeclarationHandlers (6,848 B each), all on the stack.\n- Instructions per unit inside StyleSheet::minify, qemu-x86_64 10.0.13 `-one-insn-per-tb -d exec,nochain`, (count(10,000) - count(5,000)) / 5,000, in /tmp/sfl/m/results.tsv:\n  - `zoom:1`: 863.13 (863.15 on a repeat)\n  - `--x:1`: 863.13\n  - `display:block`: 928.14\n  - `color:red`: 850.01\n  - one-declaration rule `.aN{zoom:N}`: 3,671.79\n- Allocator calls in that window: 17 at 5,000 `zoom:1`, 18 at 10,000, so 0 per declaration (/tmp/sfl/m/zoomwatch-*.txt).\n\nWHAT THE DESIGN ADDS, barrier-only scope\nCorpus counts come from /tmp/sfl/classify2.mjs: a structural scan of the 15 fixtures, class…[+4699c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "shared-fallthrough-ledger-hybrid:fixes-it",
+      "kind": "fixes-it",
+      "severity": "should-fix",
+      "headline": "shared-fallthrough-ledger-hybrid fixes the same set as the in-place handler and no more (5 of 6 repro rules on every bundling entry point; --no-bundle, @keyframes/@nest/@page/style attributes and `list-style: image-set()` stay wrong, and the literal CLI repro exits 1 until a.png and b.png exist), while its per-tag merge as described breaks 1 family block and, in the default scope, 1 mask block that main prints correctly, and its !important seed needs a pre-walk the fall-through cannot supply.",
+      "evidence": "The candidate is a design, not code: nothing was built or run for it. HEAD was read with `git show HEAD:<path>` (the working tree holds another candidate's uncommitted draft). Bun output below is from /workspace/bun/build/release/bun (1.4.4-canary.1+91e7e3b14); the reference is lightningcss 1.32.0 via /tmp/lcss/run.mjs with the default browsers.\n\nA. REACH: the fall-through is a sound single home (by reading HEAD)\n- `DeclarationHandler::handle_property` has one caller, src/css/declaration.rs:78; the unclaimed push is :80-87. `DeclarationBlock::minify` has three callers: src/css/rules/style.rs:363 (first pass) and src/css/rules/mod.rs:1038 and :1143 (merged-rule pass). Every pass goes through the hook.\n- No handler matches `Property::Custom`, `PropertyId::Custom` or `All` (grep of src/css/properties at HEAD; ui.rs:161 only builds `--buncss-*`). `all` has no key in the name table (properties_generated.rs:1293-1553; only the tag name at :612). So every `all`, unknown name and `--x` reaches :80-87, and the five entries after the new slot (inset, transform, box_shadow, color_scheme, fallback) claim typed rows only. The fall-through sees the same barrier set as a handler-local `see_other` placed after `font`.\n- Handlers only push or replace by index (FallbackHandler, prefix_handler.rs:46-62); there is no insert/remove/truncate on `dest` in src/css, so ledger indices stay valid within a list.\n- No re-entry: the block finishes at style.rs:363 before nested rules run at :371 with a chi…[+5162c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "shared-fallthrough-ledger-hybrid:review-cost",
+      "kind": "review-cost",
+      "severity": "should-fix",
+      "headline": "shared-fallthrough-ledger-hybrid comes to about 2,800-2,950 lines in 14 files (barrier-only) or 3,200-3,400 (default scope), not the stated 2,350 / 3,000 in 12; 2,353 of those are rows, value types and tests every row-adding design carries, and the part only this design adds (about 65 lines in four shared files, plus about 200 lines and 16 rows outside the family in the default scope) is what a reviewer must check by hand and a maintainer must agree to first (REVIEW.md:66).",
+      "evidence": "Nothing was built or run from a branch. The design's code does not exist, so its own line counts are estimates against measured analogues. Measured numbers come from HEAD 91e7e3b14 and from an uncommitted draft in the working tree that adds the same 8 rows (`git diff --numstat HEAD`).\n\n**1. Shared base, measured (same for every row-adding candidate): 2,353 lines**\n- /workspace/bun/src/css/properties/properties_generated.rs: +162, 14 hunks at 13 sites.\n- /workspace/bun/src/css/generics.rs +14/-2, properties/mod.rs +5, rules/supports.rs +2/-1, test/js/bun/css/util.ts +1/-1.\n- Value types: 458 lines (working-tree /workspace/bun/src/css/properties/text.rs:128-585).\n- /workspace/bun/test/js/bun/css/css.test.ts: +1,711, 185 assertions. Upstream has 80 (test_text_decoration 50, test_text_emphasis 30, lightningcss src/lib.rs:16009-16842). 20 comments mark deviations; about 265 lines are the rule-7 oracle.\n- The stated barrier-only estimate (2,350) equals this base alone.\n\n**2. Row sites the compiler does not check**\n- Six matches are exhaustive: name :359, tag :912, property_id :1897, value_to_css :2169, parse :2431, deep_clone :3896.\n- Four accept a missing row silently: prefix_feature (`_ => return None`, :354), prefix_slot_mut (`_ => None`, :1253), the KNOWN name map (:1295), eql (`_ => false`, :5017).\n- That is 28 entries for 8 rows (8 names, 6 + 6 prefixed, 8 eql). The file is hand-maintained (line 1) with no cross-check.\n\n**3. What only this design adds (barrier-only): about 65…[+4353c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "siblings:same-mechanism",
+      "kind": "siblings",
+      "severity": "should-fix",
+      "headline": "Besides text and list, 10 more lightningcss chain entries, 6 of FallbackHandler's 8 arms and both tail steps are absent from Bun's 15-entry chain; 32 more property names print without their prefix or fallback under the default browsers today, and all converge at the fall-through of DeclarationHandler::handle_property (frame 13, pushed at frame 12), not at the name table.",
+      "evidence": "PATTERN: a lightningcss DeclarationHandler chain unit that was never ported. All 15 of Bun's `||` entries decline the declaration, `DeclarationBlock::minify` moves it to the output unchanged, and the in-tree target lookups (`Targets::prefixes`, `get_fallbacks`, compat checks) are never asked.\n\nAll line numbers are HEAD 91e7e3b140 via `git show HEAD:`; another agent has uncommitted edits in src/css.\n\nCHAIN DIFF\n- Upstream v1.32.0: /tmp/lightningcss-src/src/declaration.rs:543-569 (27 fields), :582-610 (chain, then `handle_all` :609 and `handle_custom_property` :610).\n- Bun: /workspace/bun/src/css/declaration.rs:390-408 and :439-482 (15 entries); fall-through push at :78-87.\n- Absent entries (12): outline, grid, scroll_padding, text, list, animation, display, position, overflow, mask, container, prefix. Both tail steps are absent too.\n- FallbackHandler has 2 of 8 arms: /workspace/bun/src/css/properties/prefix_handler.rs:9-19 has filter, backdrop_filter, fill, stroke, caret_color, caret commented out (\"not implemented yet\").\n- The other ported handlers mention every upstream Property variant (checked per file against upstream: align, background, border, border_image, border_radius, box_shadow, flex, font, size, transform, transition).\n- `git log -S` finds no commit with Mask/Outline/Display/Position/Overflow/ListStyle/TextDecoration/Prefix/ContainerHandler in src/css. The Zig source had the same 15 entries (d4514457e8^:src/css/declaration.zig:381-396).\n\nSITES\nPublic API for all: …[+4690c]",
+      "refuted": "0/4"
+    },
+    {
+      "key": "finalize-block-resolve-hybrid:class-and-free-wins",
+      "kind": "class-and-free-wins",
+      "severity": "consider",
+      "headline": "finalize-block-resolve-hybrid patches 13 property ids (9 text, 4 list) and does not remove the class: of the 29 property-level prefix features that the default browsers need and main writes for none it covers 5 and leaves 24 behind an unchanged fall-through; its only sibling gain over the other row-adding candidates is the whole list unit, whose fold and image fallback fire in 0 of 21,276 fixture blocks.",
+      "evidence": "Line numbers are main (git show HEAD:..., 91e7e3b140); the working tree holds another agent's uncommitted draft. Bun observations: /workspace/bun/build/release/bun 1.4.4-canary.1+91e7e3b14, default browsers. This candidate has no code, so its own behaviour is read from its description, not run.\n\nFIXED WITH NO FURTHER WORK (each checked in code)\n1. text-decoration-color, text-emphasis-color: typed rows with a prefix slot (/workspace/bun/src/css/properties/properties_generated.rs:261-262, :345-346, :1511-1512) and no handler arm (git grep outside that file: 0 hits). Observed bare, while `transition: text-emphasis-color 1s` prints `-webkit-text-emphasis-color 1s, text-emphasis-color 1s`. The text claim takes both.\n2. Family names in `transition`: set_prefixes_for_targets (properties_generated.rs:1281; called at /workspace/bun/src/css/properties/transition.rs:579, :597) reads prefix_feature() (:307). Observed `transition: text-decoration 1s` bare. Fixed by the rows, not by resolve, so the same for every row-adding candidate.\n3. Duplicate-rule removal compares tag + prefix (/workspace/bun/src/css/rules/style.rs:465-497, properties_generated.rs:893-898). Observed: `.a{text-decoration:underline}.b{color:red}.a{text-emphasis:dot}`, `.e{list-style:none}.f{color:red}.e{text-decoration:underline}` and `.c{cursor:pointer}.d{color:red}.c{content:\"x\"}` each lose the first rule. Rows fix the first two; the list rows add list-style, -type, -position (all 90 list-style* declarations of the 15…[+6223c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "finalize-block-resolve-hybrid:fixes-it",
+      "kind": "fixes-it",
+      "severity": "consider",
+      "headline": "finalize-block-resolve-hybrid fixes all 6 repro lines on every bundling entry point a handler reaches (0 declarations moved), with 2 repairable defects that come only from doing the work at finalize and the 2 misses every handler design shares (@keyframes/@page/@nest/style attributes; --no-bundle).",
+      "evidence": "Nothing was built. Bun facts are from /workspace/bun/build/release/bun (1.4.4-canary.1+91e7e3b14 = HEAD) and from `git show HEAD:`. Reference facts are lightningcss 1.32.0 run through /tmp/frame/lc.mjs with the default browsers. My copy of the candidate text is cut off after \"the list unit is ported whole (list-style, -type, -position, -image, and\".\n\nWHAT IT FIXES\n- One arm serves `bun build`, Bun.build, JS/HTML/@import/*.module.css imports, --compile and the dev server: /workspace/bun/src/bundler/ParseTask.rs:1273-1322 (targets at :1319).\n- Observed on HEAD: handlers run for style rules at top level and inside nesting, @media, @supports, @layer and @container (four margin longhands fold there).\n- `.a .b .c .d .f` come out as the launcher expects: the claim pushes each declaration where it stands, and the pass adds -webkit- bits, folds the adjacent emphasis style + color, and prints `over right` as `over`.\n- `all` and unknown names really are list entries in source order. No handler on main matches `Property::Custom`; only the fall-through at /workspace/bun/src/css/declaration.rs:80-87 pushes them.\n- The pass is call 11 of 16 in `DeclarationHandler::finalize` (after font :425, before inset :426), so the block is not finished: inset, transform and box-shadow still append. None of them writes a family, `all` or unknown-name entry.\n- Rewriting `dest[first..]` is safe on main. The only indices kept into `dest` are FallbackHandler's (/workspace/bun/src/css/properties/prefix_handle…[+4921c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "inplace-index-handler:common-path-cost",
+      "kind": "common-path-cost",
+      "severity": "consider",
+      "headline": "inplace-index-handler adds 0 allocations, 0 queue entries, 0 syscalls and 0 handler-state stores to a block with no family declaration, but it is not free: one more direct handler call on 58.3% of chain invocations (26,735 of 45,894, measured on the 15 in-tree sheets; est. +28 to 34 instructions each against 606 today), and its 8 rows cross 256 in three places, two of which its cost list misses or understates.",
+      "evidence": "Nothing was built. \"Measured\" means the HEAD release binary (/workspace/bun/build/release/bun-profile, 1.4.4-canary.1+91e7e3b14, no draft code) under qemu-x86_64 10.0.13. \"Est.\" means derived from those numbers for code that does not exist yet. Line numbers are `git show HEAD:<path>`, because the working tree holds another candidate's draft.\n\nTODAY (measured; `.a{<decl> x50}` against x100, delta / 50, instructions inside bun_css .text; 175,512 lines in three identical runs):\n- A declaration no handler claims (`zoom:1`, `--x:1`, `text-decoration:none`) costs 606 instructions in the chain and 0 allocations there: DeclarationHandler::handle_property 139, SizeHandlerImpl 4 x 50, Border 39 + 28 + 28, Fallback 27, BoxShadow 24, Transition 23, Font 22, Transform 22, ColorScheme 21, DeclarationBlock::minify 33. End to end it is 3,369.\n- One out-of-line `||` entry is 7 caller instructions (lea, 3 mov, call, test, jne at 0x2b9f48b-0x2b9f4a3, src/css/declaration.rs:466-468) plus 21 to 27 in the callee.\n- Per block, finalize plus the handler flushes cost 634 instructions for both lists.\n- Exact reach, by logging block entries at the chain entry, the first instruction after font declines (0x2b9f4a9, where the new entry goes), FallbackHandler and finalize: chain 45,894; slot after font 26,735 (58.3%); FallbackHandler 24,685 (53.8%); finalize 41,610 (20,805 blocks). The design's name heuristic said 59 to 63%.\n\nADDED, per declaration:\n- declaration.rs:466, the new entry: 1 direct call, est. …[+4503c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "inplace-index-handler:review-cost",
+      "kind": "review-cost",
+      "severity": "consider",
+      "headline": "inplace-index-handler is about 2,750 lines without the fold and 2,900 with it over 12 files (est_lines 2,550 is low): only about 190 lines (7%) are the repeated table edit (8 rows x 13 sites = 100 entries, 28 of them at wildcard sites the compiler does not check), about 1,290 have a lightningcss text to diff against, and about 1,300 to 1,400 are judgement, led by a 300 to 450 line handler with no lightningcss control flow behind it (100 to 250 lines fewer than the buffered draft's 545) and about 98 new test expectations.",
+      "evidence": "Nothing was built or run. The in-place handler does not exist as code, so its size is an estimate; everything else is measured on the other agent's uncommitted buffered draft in /workspace/bun (read-only), which adds the same 8 rows, value types and tests that every row-adding candidate needs.\n\nREPEATED EDIT (measured). `git diff HEAD -- src/css/properties/properties_generated.rs` is +162 lines in 14 hunks = 13 sites per row. HEAD lines in /workspace/bun/src/css/properties/properties_generated.rs: PropertyIdTag :45, prefix_feature :307, name :359, PropertyId :628, tag :912, prefix_slot_mut :1184, KNOWN :1295, Property :1581, property_id :1897, value_to_css :2169, parse :2431, deep_clone :3896, eql :4487. 6 prefixed rows x 13 + 2 unprefixed rows x 11 = 100 entries.\n- 72 entries are at exhaustive matches, so the compiler catches an omission.\n- 28 are at a wildcard or a lookup table, so an omission compiles: `_ => return None` :354 (6), `_ => None` :1253 (6), KNOWN lookup :1549 (8), `_ => false` :5017 (8). src/css at HEAD has no #[test], #[cfg(test)] or const assert.\n- Ported upstream assertions catch the 6 prefix_slot_mut arms (every prefixed print goes through prefix(), :2157-2165) and the 8 names.\n- Nothing catches the 6 prefix_feature arms (read only for names inside `transition`, :1281-1288) or the 8 eql arms (read only when equal rules merge, /workspace/bun/src/css/declaration.rs:193-207).\nOther repeated sites: /workspace/bun/src/css/generics.rs:724-725 (+14/-2), /workspac…[+3996c]",
+      "refuted": "0/3"
+    },
+    {
+      "key": "no-change:common-path-cost",
+      "kind": "common-path-cost",
+      "severity": "consider",
+      "headline": "no-change adds 0 and removes 0 on every counter; the baseline it keeps on main is 851 instructions per unclaimed declaration in the minify pass, with 58.3% of real declarations reaching the post-`font` slot, but two of its three baseline measurements do not isolate what they name as written.",
+      "evidence": "All Bun numbers are from /workspace/bun/build/release/bun-profile (BuildID 851c5ee28476595cfde29adcbc17a6b7e5970580). Source lines are HEAD 91e7e3b140 via `git show HEAD:`; the checkout is dirty with another candidate's draft (10 files, +3,001 lines), so on-disk line numbers are shifted.\n\nSTRUCTURAL COUNT\n- No file is edited. Per call: +0 allocations, queue entries, syscalls, branches, direct or indirect calls, struct fields. Per process: +0 host functions, table rows, bytes, startup work, memory. Nothing is removed.\n\nWHAT THE SAME PATH DOES TODAY\n- Per declaration (src/css/declaration.rs:75-88): one store (:76), one direct call into the chain (:78), one branch (:80).\n- Unclaimed declaration (:84-86): two 216-byte memcpy through the GOT and one capacity compare. No deep_clone. List growth is 9 calls for 1,000 declarations and 10 for 2,000.\n- Chain (:439-482): 15 entries. In the release build 4 are inlined (background, flex, align, size) and 11 are direct calls or a tail jump. The slot after `font` is pc 0x2b9f4a9.\n- finalize (:411-431, called at :99-100): 210 instructions per block when nothing is buffered.\n- Per sheet (src/css/css_parser.rs:2359-2360): two DeclarationHandler of 6,848 B each on the stack, read from the sret offsets in the StyleSheet::minify prologue.\n- Tables: 251 name keys (properties_generated.rs:1295-1547), 254 tags (:45-300), PROPERTY_BITSET_BITS 256 (css_parser.rs:2248).\n- Bytes: bun .text 81,665,765 and .rodata 22,614,988; the bun_css object is .text 1,…[+2941c]",
+      "refuted": "0/3"
+    }
+  ],
+  "dismissed_count": 1,
+  "dismissed_sample": [
+    {
+      "key": "buffered-port-local-flush:blast-radius:cross-list-rule-scope",
+      "kind": "blast-radius",
+      "why": "refuted 2/3: The concern's leading premise is factually wrong, and its recommendation rests on it. The measurements it reports are correct.\n\n**What is wrong: #45814 does have the cross-list code and tests**\n- `git ls-remote origin refs/pull/45814/head` returns e0fc9b1db8, \"css: keep `!important` rules and prefix…[+12303c]"
+    }
+  ],
+  "report": "\"# Design report: vendor prefixes for text-decoration, text-emphasis and list-style-image in Bun's CSS bundler\\n\\nStatus: I synthesized this from the brief alone, with no code read and nothing built. The audit costed the in-place design before it had code, so its numbers are estimates, models, or measurements of the buffered draft's shared rows. The pick step reports that the uncommitted `/workspace/bun/src/css/properties/text.rs` is now in the in-place shape; I did not re-check that.\\n\\n## 1. Pick\\n\\n**`inplace-index-handler`: css: write the text-decoration and text-emphasis prefixes in place (no buffer, no fold, no merge), plus the image-set() fallback for list-style-image.** Confidence 0.74.\\n\\n**Reason.** The `||` slot after `font` in `DeclarationHandler::handle_property` (`/workspace/bun/src/css/declaration.rs`) plus the name table is the only place the brief allows. Among the designs that fix the repro, this one ties the lowest audited per-call total (0) and has the lowest rare-path total (146 against 151, 163 and 173). It also moves 0 declarations of other properties, where the buffered port reorders 31 of 128 family blocks on every target.\\n\\n**Why not the minimal patch.** The pick is the minimal design that fixes anything: no-change and #45814 as written fix 0 of the 5 wrong repro rules. No larger design earns its size: the shared ledger charges 45.9% of declarations for a ledger with no second reader, the finalize pass adds a second walk for the same output, the fold fires in 0 of the 15 fixture sheets, and the list unit fires in 0 of 21,276 fixture blocks.\\n\\n**What the pick costs:**\\n- `.c` of the repro prints six lines (three prefixed longhand pairs) where lightningcss prints four.\\n- About 13 of the 80 upstream assertions change without the fold.\\n- The launcher's literal repro exits 1 until a.png and b.png exist, because `.e`'s image-set() strings become import records.\\n- It departs from the letter of REVIEW.md:36 (see section 8).\\n\\n## 2. Candidates\\n\\n| # | Candidate | Layer | Fixes it | Common-path cost | Class removed | Review cost | One line |\\n|---|---|---|---|---|---|---|---|\\n| 1 | inplace-index-handler | Frame 13: slot after `font` (declaration.rs:465-470). Rows at frames 7-8. One FallbackHandler arm. | Yes | Small. Audit: per call 0, rare path 146, about 28 KB. | Instance only (ten names and list-style-image). Reordering and pass-2 drift excluded by construction. | L. About 2,750 lines without the fold, 12 files. | 0 added passes, 0 moved declarations. Longhands are not folded. |\\n| 2 | finalize-block-resolve-hybrid | Frame 14: finalize (declaration.rs:411-431). | Yes | Small. Per call 0, rare path 151, about 50 KB as named. | Instance only (13 property ids). | L. 3,700-3,900 lines over 13 files as named; text-only cut about 2,930. | Same results, no observer. Re-walks and rebuilds the tail at finalize, where `is_important` is stale. |\\n| 3 | shared-fallthrough-ledger-hybrid | Frames 12-13: fall-through (declaration.rs:78-87, :480-482), context.rs, targets.rs:111. | Yes | Small, but on every block. Per call 0, rare path 173, about 28 KB. | Instance only in the in-brief scope. | L. 2,800-2,950 lines in 14 files, or 3,200-3,400 in the default scope. | Tests 45.9% of declarations for a ledger 131 blocks read. Needs maintainer agreement first (REVIEW.md:66). |\\n| 4 | buffered-port-local-flush | Frames 13 and 14, plus one call in `DeclarationBlock::minify` (declaration.rs:91). | Partly | Real. Per call 0.25, rare path 163, about 36 KB. | Instance only. | L. +3,001/-8 in 10 files, about 55% hand-decided. | Prints the repro right. Adds a pass in 25% of blocks, reorders on every target, not byte-stable in pass 2. |\\n| 5 | no-change | None. | No | Zero. | None. | None. | Fixes 0 of the 5 wrong rules. #14167 and the docs claim ask for the fix. |\\n| 6 | prefix-handler-as-written (#45814) | Frame 13: 16th chain entry. | No | Real. Per call 0.24, rare path 0.05, about 22 KB. | None for this symptom. | L. +1,788/-14 in 16 files. | Changes 0 of the 6 repro rules, charges 47.2% of declarations a probe, documents the family as unsupported. |\\n\\n## 3. Plan\\n\\n1. **Base.** Start from the in-place handler in the checkout: branch `robobun/cf2a0e8e/css-text-decoration-handler`, commit f7df4de6c1 plus the uncommitted text.rs.\\n   - Rebase on main 91e7e3b140. Do not stack on #45814.\\n   - Keep the 8 rows: text-decoration, -line, -style, -thickness, text-emphasis, -style, -position, and `list-style-image: Image`. Keep the value types and the bridge list.\\n   - The 28 wildcard or lookup sites (`prefix_feature`, `prefix_slot_mut`, the name table) are not compiler-checked. Give each new row one assertion that fails when its entry is missing.\\n   - Files: `/workspace/bun/src/css/properties/properties_generated.rs`, `/workspace/bun/src/css/properties/text.rs`, `/workspace/bun/src/css/generics.rs`, `/workspace/bun/src/css/properties/mod.rs`.\\n\\n2. **Handler shape.** One field, one inlined `||` entry after `font`, one finalize call.\\n   - Clone each family declaration (typed or unparsed) into `dest` at arrival.\\n   - Give it its written prefixes plus what `targets.prefixes(NONE, feature of its own name)` needs and the block does not yet have for that name, its shorthand or its longhands.\\n   - Write color fallbacks, the thickness split and the percent to calc() lowering at the same point.\\n   - No buffer, no fold, no merge, no test on `dest.last()`.\\n   - finalize is one branch and resets only when the block claimed a declaration.\\n   - Files: `/workspace/bun/src/css/properties/text.rs`, `/workspace/bun/src/css/declaration.rs`.\\n\\n3. **Decline path is the tag test only.**\\n   - Remove the `All | Unparsed | Custom` arm and `see_other`.\\n   - Keep `mark = dest.len()` after each family write.\\n   - When the next family declaration arrives, scan `dest[mark..]` for `all` (a Custom named all, `Property::All`, an Unparsed All). Reset the ledger if found.\\n   - The handler then needs no Owner::Custom hook under #45747.\\n   - File: `/workspace/bun/src/css/properties/text.rs`.\\n\\n4. **Rule 2 across the two lists without a pass.**\\n   - Delete both `see_other_list` calls at declaration.rs:92-95. They run in 5,161 of 21,276 fixture blocks.\\n   - The `!important` list is handled first. Copy its block ledger into the normal handler in O(1) between the two loops.\\n   - Walk the normal list only when the `!important` list claims a family declaration (at most 7 fixture blocks), by passing the normal list into the important loop.\\n   - Files: `/workspace/bun/src/css/declaration.rs`, `/workspace/bun/src/css/properties/text.rs`.\\n\\n5. **Stale copy (rule 3 for Safari 8 to 18.0).**\\n   - Record only prefixed-only declarations as author-written. Nothing merges, so a Property that carries WEBKIT and NONE is always a copy this handler added, in both passes.\\n   - A line-only `text-decoration` gets the `-webkit-` copy when the block since `all` (or the normal list, for an `!important` value) holds such an added copy with no author-written `-webkit-text-decoration` after it.\\n   - Otherwise the lightningcss style-or-color predicate stays, so `.f` stays bare.\\n   - Exit test: the 216 of 2,800 one-rule blocks and 615 of 7,938 two-rule splits go to 0 and 0.\\n   - If they do not, drop the predicate and say so in the PR body. That costs +104 lines and +3.3 KB on the 15 sheets, and `.f` then prints the prefixed line. This is the only repair shown to reach 0 and 0.\\n   - Correct the test oracle's Safari reader: it drops an unprefixed `text-decoration` with a style or a color whole.\\n   - Files: `/workspace/bun/src/css/properties/text.rs`, `/workspace/bun/test/js/bun/css/css.test.ts`.\\n\\n6. **list-style-image: one arm of FallbackHandler.**\\n   - Write the typed Image value in place.\\n   - Put the `-webkit-image-set()` fallback in front only when the block has no earlier value that covers it.\\n   - Keep an author-written `-webkit-image-set()` line. `all` resets the arm's ledger.\\n   - The PR body states that strings inside image-set() become import records, so a missing file is a build error as for background-image today.\\n   - File: `/workspace/bun/src/css/properties/prefix_handler.rs`.\\n\\n7. **Row side effects.**\\n   - Write the prefix flag in the supports() declaration printer, so `@import supports(-webkit-text-decoration: ..)` keeps its prefix.\\n   - Check that `transition: text-decoration 1s` gains the prefixed name through `prefix_feature()`.\\n   - Do not carry #45814's `same_property` hunk with the tag-only bucket key (7.97 s against 0.13 s on a 32,000-pair flood). Drop it, or key the bucket on the name in the same hunk and measure.\\n   - Files: `/workspace/bun/src/css/rules/supports.rs`, `/workspace/bun/src/css/rules/style.rs`.\\n\\n8. **Tests, in the existing files.**\\n   - Port `test_text_decoration`, `test_text_emphasis`, the parts of `test_list` that have a row, and the list-style-image cases of the `test_image_set` loop.\\n   - Every deviation gets a one-line `Unlike lightningcss` comment and a test.\\n   - Rule-7 matrix: computed line, style, color and emphasis style, color, position per reader (unprefixed-only, reads-both, Safari as corrected). Run it as one rule and as two same-selector rules, normal and `!important`.\\n   - Pass-2 byte equality over the matrix and a fuzz set with typed neighbours (inset, margin, transform, color).\\n   - Floods of 2,000 and 4,000 same-selector rules.\\n   - One bundler test through the CLI and Bun.build, target browser and bun, minify on and off, with real a.png and b.png.\\n   - Confirm the new tests fail under `USE_SYSTEM_BUN=1` and pass under `bun bd test`.\\n   - Files: `/workspace/bun/test/js/bun/css/css.test.ts`, `/workspace/bun/test/js/bun/css/util.ts`, `/workspace/bun/test/js/bun/css/duplicate-declaration-merge-hang.test.ts`, `/workspace/bun/test/bundler/esbuild/css.test.ts`.\\n\\n9. **Docs.** Make `/workspace/bun/docs/bundler/css.mdx` lines 8 and 15 true for this family, verified by running each example. Say that longhands are not folded into the shorthand.\\n\\n10. **Measure, then mark ready.** Run every measurement in section 4 on release builds of main 91e7e3b140 and the branch. Put the numbers in the PR body with the deviation list, the expected table conflicts with #45814 and the siblings left for later.\\n\\n## 4. Measure before ready\\n\\nUse known main binaries (`/tmp/bun-release-main`, `/tmp/bun-profile-main`). `/workspace/bun/build/release/bun` was rebuilt from the draft at 18:44 and is no longer main.\\n\\n1. **Instructions per declined declaration (minify pass).**\\n   - Procedure: one style rule with 5,000 and with 10,000 copies of each of `zoom:1`, `--x:1`, `color:red`, `margin:0`. Take (count(10k) - count(5k)) / 5,000 inside `StyleSheet::minify`, three identical runs, with `qemu-x86_64 -one-insn-per-tb -d exec`.\\n   - PR line: \\\"minify, per declined declaration: zoom:1 __ -> __, --x:1 __ -> __, color:red __ -> __ instructions (qemu exec trace, main 91e7e3b140 vs PR)\\\"\\n\\n2. **Instructions and arena allocations per family declaration.**\\n   - Procedure: same method with `text-decoration:none`, `text-decoration:underline wavy`, `text-decoration:var(--x)`, `text-emphasis:dot red`. Count allocator entries in the same trace.\\n   - PR line: \\\"per family declaration: typed __ -> __, var() __ -> __ instructions, __ arena allocations added (expected 1 clone where the fall-through moved)\\\"\\n\\n3. **Added passes per block.**\\n   - Procedure: temporary counters on the normal-list walk and on the dest scan for `all`. Build the 15 sheets of `/workspace/bun/test/js/bun/css/files` for `--target=browser`.\\n   - PR line: \\\"other-list walks: __ of 21,276 blocks (draft 5,161), `all` scans: __, handler code run in blocks with no family declaration: tag test and one finalize branch only\\\"\\n\\n4. **Binary size.**\\n   - Procedure: `size -A` (llvm-size) on the two release binaries, .text and .rodata deltas, plus the bun_css symbols from the linker map.\\n   - PR line: \\\"release binary: .text +__ B, .rodata +__ B (size -A, main 91e7e3b140 vs PR, audit estimate 28 KB)\\\"\\n\\n5. **Type sizes and the bitset doubling.**\\n   - Procedure: compile bun_css with `RUSTFLAGS=-Zprint-type-sizes` on both trees. Read TextDecorationHandler, DeclarationHandler, Property, PropertyBitset and the PropertyIdTag variant count.\\n   - PR line: \\\"TextDecorationHandler __ B, DeclarationHandler 6,848 -> __ B, PropertyBitset 32 -> __ B (tags 254 -> 262), Property 216 -> __ B\\\"\\n\\n6. **Name-table lookup after +8 keys.**\\n   - Procedure: instructions inside `PropertyId::from_name_and_prefix` for `color` (known) and `zoom` (unknown), from the 5,000 / 10,000 parse traces of both builds.\\n   - PR line: \\\"name lookup: known __ -> __, unknown __ -> __ instructions (251 -> 259 keys)\\\"\\n\\n7. **Output bytes and moved declarations on real sheets.**\\n   - Procedure: build each of the 15 sheets with both binaries for `--target=browser` and `--target=bun`. Run `wc -c`, count added and removed lines, and compare name order per rule.\\n   - PR line: \\\"15 sheets, browser: +__ lines, +__ B, __ removed, __ moved (expected +29, about 1.8 KB, 0, 0). bun: __ changed lines, __ moved\\\"\\n\\n8. **Winners (rules 1-3 and 7).**\\n   - Procedure: every block of up to 4 declarations over the shorthand set (1,554), the longhand, emphasis and typed-crossing sets (8,400) and the bare-after-styled sets (2,800 one-rule, 7,938 two-rule), through `cssInternals.prefixTest` with the corrected Safari reader. Run `bun bd test test/js/bun/css/css.test.ts`.\\n   - PR line: \\\"changed winners: unprefixed-only __, reads-both __, Safari __, author-written prefixed declarations deleted __ (target 0 / 0 / 0 / 0, lightningcss 2 / 0 / 198 / 26)\\\"\\n\\n9. **Second pass (rule 6) and linear time under rule merge.**\\n   - Procedure: each matrix block as one rule and with a same-selector rule appended, plus the fuzz set with typed neighbours. Count blocks whose bytes differ between pass 1 and pass 2. For floods of 2,000 and 4,000 same-selector rules, take the qemu instruction ratio and the declaration count.\\n   - PR line: \\\"pass-2 byte differences: __ of __ blocks (target 0). flood 4,000 / 2,000 instruction ratio __ (target 2.0), declarations added by pass 2: __\\\"\\n\\n10. **Distance from the reference.**\\n    - Procedure: count the upstream assertions of `test_text_decoration` (50) and `test_text_emphasis` (30) ported verbatim against changed. Run `grep -c 'Unlike lightningcss'` in `/workspace/bun/src/css`.\\n    - PR line: \\\"upstream assertions kept verbatim: __ of 80, deviation comments: __, each with a test\\\"\\n\\n11. **File syscalls from the typed image row.**\\n    - Procedure: `qemu-x86_64 -strace` on the 15-sheet corpus with both builds, and on a sheet with `list-style-image: image-set('a.png' 1x, 'b.png' 2x)` with both files present.\\n    - PR line: \\\"file syscalls: corpus __ -> __ (expected equal), image-set sheet +__ for two import records\\\"\\n\\n12. **Duplicate-rule removal on floods (only if rules/style.rs is touched).**\\n    - Procedure: `.a{--vN:1} .bN{color:red}` x 16,000 and x 32,000 through `bun build` on both builds. Take qemu instruction counts and their ratio.\\n    - PR line: \\\"dedupe flood 32k / 16k instruction ratio: main __, PR __ (target 2.0)\\\"\\n\\n## 5. Siblings\\n\\n**Fixed in the same work**\\n- `text-decoration-color` and `text-emphasis-color`: typed rows on main that no handler claims.\\n- Color fallbacks for the family's color values.\\n- Family names inside `transition` / `transition-property`, through the new `prefix_feature()` rows.\\n- `@import supports(-webkit-text-decoration: ..)` keeps its prefix (`/workspace/bun/src/css/rules/supports.rs:204`).\\n- `text-decoration-thickness`: split out of the shorthand, and percent lowered to calc() when the targets need it.\\n- `list-style-image` image-set() prints `1x` again instead of `1dppx`.\\n- Duplicate-rule removal for the family's names (distinct tags).\\n- `docs/bundler/css.mdx` lines 8 and 15 for this family.\\n\\n**Named in the PR body for later**\\n- `@keyframes`, `@nest`, `@page`, `@font-face` and style attributes: the handlers do not run there on main.\\n- `bun build --no-bundle` minifies with no browser list (transpiler.rs:3079), so nothing is prefixed there.\\n- `list-style`, `list-style-type` and `list-style-position` stay unknown names: no fallback for `list-style: image-set()` and no longhand fold.\\n- Longhands are not folded into `text-decoration` or `text-emphasis` (lightningcss folds them).\\n- A line-only `text-decoration` in a different rule does not cancel a `-webkit-` copy added in an earlier rule (same as lightningcss).\\n- An `!important` list-style-image fallback does not look at the normal list.\\n- `text-align: start | end` lowering, which the lightningcss handler also owns.\\n- Older buffering handlers still write behind `all` and unknown names (margin, font, transform).\\n- The general `is_duplicate` bug for two unknown names (fixed in #45814).\\n- 16 other typed prefix rows with no handler (backface-visibility, mask-*), and the 10 other lightningcss chain units not ported.\\n- The prefix table stops at Safari 18.0 for TextDecoration, where lightningcss 1.32.0 goes to 26.1.\\n- Table and docs conflicts with #45814, and PropertyBitset crossing 256 tags in whichever PR lands first.\\n\\n## 6. Evidence\\n\\n**Root cause and symptom** {no-change:fixes-it} {no-change:class-and-free-wins}\\n- No chain entry claims the family (`/workspace/bun/src/css/declaration.rs:439-482`), so `DeclarationBlock::minify` pushes it verbatim at :80-87.\\n- The name table (`properties_generated.rs:1295-1547`) has only `text-decoration-color` (:1511) and `text-emphasis-color` (:1512). Every other family name becomes `PropertyId::Custom` at `properties_impl.rs:79`.\\n- The default `--target=browser` is chrome 80, edge 80, firefox 78, safari 14, opera 67 (`targets.rs:190-199`).\\n- no-change fixes 0 of the 5 wrong rules (0 of 7 missing lines) on all 16 entry-point shapes run.\\n- 69 of 85 probed family blocks differ from lightningcss 1.32.0.\\n- Main is not a lossless pass-through: `1x` becomes `1dppx` even inside a hand-written `-webkit-image-set()`, and an earlier same-selector rule is deleted.\\n- 18 of 44 prefix-slot rows fall through unclaimed.\\n\\n**Layer** {layers:a-fix-at-every-frame}\\n- Of 19 frames, only the name table plus the chain slot after `font` can host the fix under the brief. The parser has no targets and the printer has no block.\\n- Main has no shared home for rules 1-3: 6 of 6 probed handlers delete an authored prefix, 10 of 11 add an overriding prefixed copy, and 4 of 4 buffering handlers write behind `all`.\\n- Every upstream folding assertion in the three named tests (7 text, 4 list) folds adjacent declarations.\\n\\n**Rules** {constraints:rules-and-hot-paths}\\n- No perf rule bars the handler layer. The 15-entry chain (declaration.rs:439-482, one call site at :78) is a build-time loop, and `bench/` has no CSS benchmark.\\n- The family is 141 of 45,840 declarations in the 15 in-tree sheets.\\n- REVIEW.md:36 backs the lightningcss buffering shape.\\n- REVIEW.md:66, CLAUDE.md:206 and merged #45210 back an in-place handler.\\n- REVIEW.md:66 bars a shared `handle_all` or generic shorthand macro inside this PR.\\n\\n**Reference and prior attempts** {reference:how-others-solve-it} {prior-attempts:tracker}\\n- lightningcss v1.32.0 stores values at handle time (text.rs:1132-1171) and decides prefixes, fold, fallbacks and the thickness split in finalize (text.rs:1213-1352).\\n- No handler on main implements rules 1-3; 32 of 45 probe outputs equal lightningcss.\\n- #41990 measured that a chain-wide flush before any unknown name changes 1,916 of 3,360 real sheets, while a handler-local flush changes 0.\\n- No earlier PR ports TextDecorationHandler (0 PR hits).\\n- Four open, maintainer-unreviewed PRs (#45814, #42042, #45825, #41990) build four homes for \\\"flush before an overriding declaration\\\".\\n- Rule 1 is an unanswered maintainer question on #45814.\\n\\n**Demand** {no-change:who-pays-if-nothing-happens}\\n- 0 of 13 matching issues report this.\\n- The demand is the tracking checklist #14167 (12 unchecked rows by that count; 8 or 11 by the other counts) and one first-party rule, `/workspace/bun/src/runtime/bake/client/overlay.css:412`.\\n- lightningcss breaks today's pass-through on the patterns of 6 of the 15 fixtures, so only a strictly additive fix beats no-change.\\n\\n**In-place: cost and reach** {inplace-index-handler:common-path-cost} {:blast-radius} {:class-and-free-wins} {:review-cost}\\n- It adds 0 allocations, queue entries, syscalls and handler-state stores to a block with no family declaration.\\n- As first described it adds one direct call on 58.3% of chain invocations (26,735 of 45,894), estimated +28 to 34 instructions on a measured 606. Plan step 3 replaces that call with an inlined tag test.\\n- The 8 rows take tags from 254 to 262 and keys from 251 to 259, and PropertyBitset from 32 to 64 B.\\n- It moves or deletes 0 declarations of other properties and breaks 0 existing assertions.\\n- The rows change 6 things outside the handler, through about 100 match sites (6 x 13 + 2 x 11); 28 are not compiler-checked.\\n- It takes 2 of the 18 typed prefix rows that no handler owns; 8 of the 16 left print bare under the default browsers.\\n- Size: about 2,750 lines without the fold and 2,900 with it, over 12 files. The handler is 300 to 450 lines with no lightningcss control flow behind it.\\n\\n**In-place: defects and repairs** {inplace-index-handler:fixes-it} {:bare-value-after-prefixed-value} {:one-ruler-for-index-designs} {:upstream-assertions-by-cut}\\n- It prints 4 of the 6 rules as expected on every bundling entry point (5 with the fold cut).\\n- The literal repro becomes exit 1 without a.png and b.png.\\n- A later bare `text-decoration` keeps the earlier added `-webkit-` copy. Safari 14 (reader checked in the WebKit safari-610 and safari-7619 branches) then draws the earlier style in 216 of 2,800 one-rule blocks and 615 of 7,938 two-rule splits.\\n- On one ruler the remaining charges are #45814's merge rule (250 unprefixed-only and 480 reads-both winners changed of 8,400) and the `!important` cross-list walk (175 of 1,554). The plan removes the merge and gates the walk.\\n- By model, the no-fold cut keeps 67 of 80 upstream assertions and the fold cut 77 (75 with the draft's Safari rule). The buffered draft measures 75.\\n\\n**Buffered port** {buffered-port-local-flush:blast-radius} {:as-written-risks-in-draft} {:class-and-free-wins} {:common-path-cost} {:fixes-it} {:literal-repro-exit-1} {:review-cost}\\n- It fixes the six repro rules and 75 of 80 upstream assertions (main 38), and changes 0 unprefixed or reads-both winners in 49,140 matrix runs.\\n- It reorders 31 of 128 family blocks in 11 of the 15 sheets on every target (0 bytes changed on `--target=bun`; +29 lines and +1,959 B on browser).\\n- Its hook in the shared `DeclarationBlock::minify` (declaration.rs:91-94) runs in 5,161 of 21,276 blocks and changes 0.\\n- Pass 2 prints 58 of 4,263 small blocks differently, and 266 matrix runs. With a typed neighbour it reorders 1,097 of 22,620 blocks.\\n- Safari 14 loses a line in 136 of 1,554 blocks, and 321 of 8,400 blocks keep the symptom.\\n- It keeps #45814's `same_property` hunk: 7.97 s against 0.13 s on main and 0.14 s in lightningcss at 32,000 pairs.\\n- The handler shares 21% of its identifier tokens with lightningcss text.rs:1099-1352 (62-65% for four ported handlers on main). It has 14 marked and at least 11 unmarked deviations behind 12 flush conditions.\\n- On the literal repro it exits 1 on 9 of 9 bundling entry points, as every typed `list-style-image: Image` row does.\\n\\n**Finalize pass** {finalize-block-resolve-hybrid:blast-radius} {:common-path-cost} {:review-cost} {:review-cost:text-only-cut} {:class-and-free-wins} {:fixes-it}\\n- It moves 0 declarations and needs no observer.\\n- As named it has 2 new chain entries and 11 rows (254 to 265 tags).\\n- The list unit hashes `list-style-type` names in `*.module.css` (40 of WebKit's 94 counter styles are outside the 54-name enum) and turns `list-style: image-set(\\\"x\\\")` into a resolve error.\\n- `ctx.is_important` is stale at finalize (declaration.rs:76, :91-100).\\n- The cross-list field needs a per-block clear that #45747 skips in release builds.\\n- The text-only cut is about 2,930 lines with about 330 finalize-time lines, and ties in-place on rule decisions (8 against 8).\\n- It covers 5 of 29 property-level prefix features the default browsers need.\\n\\n**Shared ledger** {shared-fallthrough-ledger-hybrid:blast-radius} {:class-and-free-wins} {:common-path-cost} {:fixes-it} {:review-cost}\\n- The barrier-only cut adds code to the fall-through that 45.6% of corpus declarations take (20,903 of 45,847), for a ledger that 131 of 21,276 blocks read and that decides 0.\\n- On sheets without the family the test runs on 20,204 of 44,022 declarations (about 7 to 13 instructions each against 863 to 928), and resets run on all 20,549 blocks.\\n- It fixes the same set as in-place and 0 of the 14 chain entries that change the winner across `all`.\\n- Its per-tag merge breaks 1 family block and, in the default scope, 1 mask block that main prints correctly.\\n- The `!important` seed needs a pre-walk the fall-through cannot supply.\\n- The default scope changes 8 properties outside the brief (backface-visibility and 7 mask rows); 7 of those 8 have no test.\\n\\n**#45814 as written** {prefix-handler-as-written:blast-radius} {:class-and-free-wins} {:fixes-it} {:common-path-cost} {:review-cost}\\n- It has no row, slot or arm for the family (`define_prefixes!` has 14 slots), so `.a` to `.e` print as on main. This is by code reading.\\n- The rule-7 matrix stays at 633 of 1,554 wrong prefix-only winners per shorthand.\\n- It claims 363 other declarations and adds 9 rows (254 to 263 tags).\\n- Its dedupe change measures quadratic on a debug build: 1.0 / 3.1 / 9.7 / 41 s for 1k / 2k / 4k / 8k same-selector rules.\\n- 47.2% of declarations (21,644 of 45,894) gain a probe (+66 instructions reported, 863 to 929), and every block gains two 152-byte resets.\\n- 22 of its 53 hunks collide with the family draft, and 51 of its 100 new css.test.ts assertions already pass on main.\\n\\n**Baseline and siblings** {no-change:common-path-cost} {siblings:same-mechanism}\\n- Main costs 851 instructions per unclaimed declaration in the minify pass.\\n- Besides text and list, 10 more lightningcss chain entries, 6 of FallbackHandler's 8 arms (`prefix_handler.rs:9-19`) and both tail steps are absent.\\n- 32 more property names print without their prefix or fallback under the default browsers.\\n\\n**Harness evidence from the build**\\n- The fold never fires on the 15 fixture sheets. Its only effect is to delete the first value of 9 `text-decoration: underline; text-decoration: underline dotted` pairs. (A candidate text counts four such pairs; I did not reconcile the two counts.)\\n- A fuzzer found four pass-2 instability classes on a buffering draft: a declaration sinks past in-place ones, a shorthand removes an earlier longhand, equal declarations merge across a group, and longhand order regroups.\\n- Other handlers move their own declarations between passes, so no adjacency test is the same in both passes.\\n- `cursor`, `vertical-align` and `all` arrive as `Property::Custom` with an Unknown name.\\n- A no-buffer design moves no declaration and is pass-2 stable by construction. Its cost is that `text-decoration-line: underline; text-decoration-style: dotted` stays two declarations.\\n\\n**Simulated reviews**\\n- Both reviews of buffered, #45814 and no-change answer \\\"no\\\" and point to in-place.\\n- Both reviews of the shared ledger, and one review of in-place, point to the finalize design.\\n- Both reviews of the finalize design point back to in-place (one says \\\"no\\\").\\n- The in-place reviews say \\\"after changes\\\": remove `see_other`, inline the tag test, and fix the merge rule and the stale copy. Plan steps 3 to 5 adopt all of these.\\n\\n## 7. Considered and set aside\\n\\n- **Buffered verbatim port.** It is the closest to REVIEW.md:36. It loses because it reorders 31 of 128 family blocks on every target, adds a pass in 5,161 of 21,276 blocks, and is not byte-stable in pass 2.\\n- **The fold (about 150 lines).** It fires in 0 of the 15 fixture sheets, and its result depends on adjacency that differs between the two passes. It would serve upstream test parity only (67 against 77 of 80).\\n- **The equal-value merge from #45814.** It has no shorthand/longhand barrier and changes winners in 250 and 480 of 8,400 blocks, so the plan has no merge.\\n- **A `see_other` observer on every declined declaration.** Reviews rejected it. `all` and unknown names are already in `dest` in source order, so the handler reads them only in blocks that claimed.\\n- **A shared ledger at the fall-through.** It has no second reader inside the brief and needs maintainer agreement first (REVIEW.md:66). Its default scope changes 8 properties outside the brief.\\n- **The whole list unit.** It fires in 0 of 21,276 fixture blocks, adds about 50 KB and a second chain entry the brief does not allow, and changes CSS-modules output.\\n- **Stacking on #45814.** It is credited for in-place writes, kept author prefixes and the ledger reset at `all`, but is not a base. Its docs hunk lists this family as unsupported.\\n- **Dismissed concern `buffered-port-local-flush:blast-radius:cross-list-rule-scope`.** Refuted 2 of 3. Its leading premise was wrong (#45814 does have the cross-list code), though its measurements were correct.\\n\\n## 8. Question for a maintainer\\n\\nREVIEW.md:36 makes the reference the spec for ported code, and lightningcss folds longhands into the shorthand. Without the fold about 13 of its 80 assertions change, with 0 hits in the 15 fixture sheets. This handler leaves longhands in place so that one pass is byte-stable under the merged-rule pass and nothing moves on `--target=bun`. **Is that deviation acceptable, or do you want the fold at the price of output that depends on the second pass?**\\n\\n- **If the deviation is acceptable:** the pick ships as planned. Each of the roughly 13 changed assertions carries an `Unlike lightningcss` comment and a test. The pass-2 target stays 0 byte differences, and the docs say longhands are not folded.\\n- **If you want the fold:** the brief does not spell this branch out; this is my reading of it. The pick stays in place and adds the adjacent-run fold cut at the tail of `dest` (a truncate and a push, about 150 lines, 77 of 80 assertions by model). It does not switch to the buffered port. The PR then reports the measured pass-2 differences instead of a 0 target. It also needs your call on folding with no browser list, because Safari 12.1 to 18.0 reads the unprefixed longhands but not an unprefixed styled shorthand.\"",
+  "report_preview": "\"# Design report: vendor prefixes for text-decoration, text-emphasis and list-style-image in Bun's CSS bundler\\n\\nStatus: I synthesized this from the brief alone, with no code read and nothing built. The audit costed the in-place design before it had code, so its numbers are estimates, models, or measurements of the buffered draft's shared rows. The pick step reports that the uncommitted `/workspace/bun/src/css/properties/text.rs` is now in the in-place shape; I did not re-check that.\\n\\n## 1. Pick\\n\\n**`inplace-index-handler`: css: write the text-decoration and text-emphasis prefixes in place (no buffer, no fold, no merge), plus the image-set() fallback for list-style-image.** Confidence 0.74.\\n\\n**Reason.** The `||` slot after `font` in `DeclarationHandler::handle_property` (`/workspace/bun/src/css/declaration.rs`) plus the name table is the only place the brief allows. Among the designs that fix the repro, this one ties the lowest audited per-call total (0) and has the lowest rare-path total (146 against 151, 163 and 173). It also moves 0 declarations of other properties, where the buffered port reorders 31 of 128 family blocks on every target.\\n\\n**Why not the minimal patch.** The pick is the minimal design that fixes anything: no-change and #45814 as written fix 0 of the 5 wrong repro rules. No larger design earns its size: the shared ledger charges 45.9% of declarations for a ledger with no second reader, the finalize pass adds a second walk for the same output, the fold fires in 0 of the 15 fixture sheets, and the list unit fires in 0 of 21,276 fixture blocks.\\n\\n**What the pick costs:**\\n- `.c` of the repro prints six lines (three prefixed longhand pairs) where lightningcss prints four.\\n- About 13 of the 80 upstream assertions change without the fold.\\n- The launcher's literal repro exits 1 until a.png and b.png exist, because `.e`'s image-set() strings become import records.\\n- It departs from the letter of REVIEW.md:36 (see section 8).\\n\\n## 2. Candidates\\n\\n| # | Candidate | Layer | Fixes it | Common-path cost | Class removed | Review cost | One line |\\n|---|---|---|---|---|---|---|---|\\n| 1 | inplace-index-handler | Frame 13: slot after `font` (declaration.rs:465-470). Rows at frames 7-8. One FallbackHandler arm. | Yes | Small. Audit: per call 0, rare path 146, about 28 KB. | Instance only (ten names and list-style-image). Reordering and pass-2 drift excluded by construction. | L. About 2,750 lines without the fold, 12 files. | 0 added passes, 0 moved declarations. Longhands are not folded. |\\n| 2 | finalize-block-resolve-hybrid | Frame 14: finalize (declaration.rs:411-431). | Yes | Small. Per call 0, rare path 151, about 50 KB as named. | Instance only (13 property ids). | L. 3,700-3,900 lines over 13 files as named; text-only cut about 2,930. | Same results, no observer. Re-walks and rebuilds the tail at finalize, where `is_important` is stale. |\\n| 3 | shared-fallthrough-ledger-hybrid | Frames 12-13: fall-through (declaration.rs:78-87, :480-482), context.rs, targets.rs:111. | Yes | Small, but on every block. Per call 0, rare path 173, about 28 KB. | Instance only in the in-brief scope. | L. 2,800-2,950 lines in 14 files, or 3,200-3,400 in the default scope. | Tests 45.9% of declarations for a ledger 131 blocks read. Needs maintainer agreement first (REVIEW.md:66). |\\n| 4 | buffered-port-local-flush | Frames 13 and 14, plus one call in `DeclarationBlock::minify` (declaration.rs:91). | Partly | Real. Per call 0.25, rare path 163, about 36 KB. | Instance only. | L. +3,001/-8 in 10 files, about 55% hand-decided. | Prints the repro right. Adds a pass in 25% of blocks, reorders on every target, not byte-stable in pass 2. |\\n| 5 | no-change | None. | No | Zero. | None. | None. | Fixes 0 of the 5 wrong rules. #14167 and the docs claim ask for the fix. |\\n| 6 | prefix-handler-as-written (#45814) | Frame 13: 16th chain entry. | No | Real. Per call 0.24, rare path 0.05, about 22 KB. | None for this symptom. | L. +1,788/-14 in 16 files. | Changes 0 of the 6 repro rules, charges 47.2% of declarations a probe, documents the family as unsupported. |\\n\\n## 3. Plan\\n\\n1. **Base.** Start from the in-place handler in the checkout: branch `robobun/cf2a0e8e/css-text-decoration-handler`, commit f7df4de6c1 plus the uncommitted text.rs.\\n   - Rebase on main 91e7e3b140. Do not stack on #45814.\\n   - Keep the 8 rows: text-decoration, -line, -style, -thickness, text-emphasis, -style, -position, and `list-style-image: Image`. Keep the value types and the bridge list.\\n   - The 28 wildcard or lookup sites (`prefix_feature`, `prefix_slot_mut`, the name table) are not compiler-checked. Give each new row one assertion that fails when its entry is missing.\\n   - Files: `/workspace/bun/src/css/properties/properties_generated.rs`, `/workspace/bun/src/css/properties/text.rs`, `/workspace/bun/src/css/generics.rs`, `/workspace/bun/src/css/properties/mod.rs`.\\n\\n2. **Handler shape.** One field, one inlined `||` entry after `font`, one finalize call.\\n   - Clone each family declaration (typed or unparsed) into `dest` at arrival.\\n   - Give it its written prefixes plus what `targets.prefixes(NONE, feature of its own name)` needs and the block does not yet have for that name, its shorthand or its longhands.\\n   - Write color fallbacks, the thickness split and the percent to calc() lowering at the same point.\\n   - No buffer, no fold, no merge, no test on `dest.last()`.\\n   - finalize is one branch and resets only when the block claimed a declaration.\\n   - Files: `/workspace/bun/src/css/properties/text.rs`, `/workspace/bun/src/css/declaration.rs`.\\n\\n3. **Decline path is the tag test only.**\\n   - Remove the `All | Unparsed | Custom` arm and `see_other`.\\n   - Keep `mark = dest.len()` after each family write.\\n   - When the next family declaration arrives, scan `dest[mark..]` for `all` (a Custom named all, `Property::All`, an Unparsed All). Reset the ledger if found.\\n   - The handler then needs no Owner::Custom hook under #45747.\\n   - File: `/workspace/bun/src/css/properties/text.rs`.\\n\\n4. **Rule 2 across the two lists without a pass.**\\n   - Delete both `see_other_list` calls at declaration.rs:92-95. They run in 5,161 of 21,276 fixture blocks.\\n   - The `!important` list is handled first. Copy its block ledger into the normal handler in O(1) between the two loops.\\n   - Walk the normal list only when the `!important` list claims a family declaration (at most 7 fixture blocks), by passing the normal list into the important loop.\\n   - Files: `/workspace/bun/src/css/declaration.rs`, `/workspace/bun/src/css/properties/text.rs`.\\n\\n5. **Stale copy (rule 3 for Safari 8 to 18.0).**\\n   - Record only prefixed-only declarations as author-written. Nothing merges, so a Property that carries WEBKIT and NONE is always a copy this handler added, in both passes.\\n   - A line-only `text-decoration` gets the `-webkit-` copy when the block since `all` (or the normal list, for an `!important` value) holds such an added copy with no author-written `-webkit-text-decoration` after it.\\n   - Otherwise the lightningcss style-or-color predicate stays, so `.f` stays bare.\\n   - Exit test: the 216 of 2,800 one-rule blocks and 615 of 7,938 two-rule splits go to 0 and 0.\\n   - If they do not, drop the predicate and say so in the PR body. That costs +104 lines and +3.3 KB on the 15 sheets, and `.f` then prints the prefixed line. This is the only repair shown to reach 0 and 0.\\n   - Correct the test oracle's Safari reader: it drops an unprefixed `text-decoration` with a style or a color whole.\\n   - Files: `/workspace/bun/src/css/properties/text.rs`, `/workspace/bun/test/js/bun/css/css.test.ts`.\\n\\n6. **list-style-image: one arm of FallbackHandler.**\\n   - Write the typed Image value in place.\\n   - Put the `-webkit-image-set()` fallback in front only when the block has no earlier value that covers it.\\n   - Keep an author-written `-webkit-image-set()` line. `all` resets the arm's ledger.\\n   - The …[+22818c]"
+}

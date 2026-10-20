@@ -274,9 +274,7 @@ pub fn e_from_negated(errno: core::ffi::c_int) -> E {
     }
 }
 
-/// `ENOTSUP` or `EOPNOTSUPP`. Darwin has two values: 45 (`ENOTSUP`) is what the kernel reports
-/// when a file system lacks an operation, 102 (`EOPNOTSUPP`) is for sockets. Linux, FreeBSD and
-/// Windows have one value, where a pattern that names both is unreachable.
+/// Darwin has two values: 45 (`ENOTSUP`) from a file system, 102 (`EOPNOTSUPP`) from a socket.
 #[inline]
 #[allow(deprecated)] // the one place that means both values
 pub fn is_not_supported(errno: E) -> bool {

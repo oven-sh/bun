@@ -1059,3 +1059,42 @@ test("b", () => {
     });
   });
 });
+
+test("the brace of a block is not listed after a comment, in a file that Bun does not transpile", async () => {
+  using dir = tempDir("cov-brace-after-comment", {
+    "built.js": `// @bun
+export function f() {
+  // A comment that ends like a sentence.
+  {
+    globalThis.x = [
+      {
+        one: 1,
+      },
+    ];
+  }
+}
+`,
+    "built.test.ts": `
+      import { f } from "./built.js";
+      test("built", () => {
+        f();
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov", "built.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "inherit",
+  });
+  const exitCode = await proc.exited;
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8");
+  const listed = lcov
+    .slice(lcov.indexOf("SF:built.js"))
+    .split("end_of_record")[0]
+    .match(/^DA:\d+/gm);
+  expect(listed).not.toContain("DA:4");
+  expect(listed).toContain("DA:6");
+  expect(exitCode).toBe(0);
+});

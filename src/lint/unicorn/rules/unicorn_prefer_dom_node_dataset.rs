@@ -3,6 +3,7 @@ use bun_lint_oxlint::codegen::print_string;
 use crate::unicorn::{call_uses_optional_chain, concat, is_expression_statement};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::utils::visible::is_visibly_dom_node;
 
 /// Use `.dataset` on DOM elements over `getAttribute(…)`, `.setAttribute(…)`, `.removeAttribute(…)` and `.hasAttribute(…)`.
 pub struct PreferDomNodeDataset;
@@ -56,7 +57,18 @@ impl Rule for PreferDomNodeDataset {
         };
         let is_removal = method.name().is("removeAttribute");
         let place = if is_removal { string_lit.span() } else { method.span() };
-        cx.report(place, PREFER_DATASET).data("method_name", method).fix(|fixer| {
+        // `HTMLRewriter` elements and XML libraries' elements have these methods but no `dataset`. For a missing
+        // attribute, `getAttribute` returns `null` and `dataset` returns `undefined`. `data-a-1` is `dataset["a-1"]`,
+        // which oxlint gets wrong.
+        let is_plain_name = || {
+            let name = dataset_property_name;
+            let mut pairs = name.iter().zip(name.iter().skip(1));
+            name.iter().all(|it| matches!(it, b'a'..=b'z' | b'0'..=b'9' | b'-'))
+                && !name.ends_with(b"-")
+                && pairs.all(|(byte, next)| !matches!(byte, b'-') || next.is_ascii_lowercase())
+        };
+        let is_safe = || !method.name().is("getAttribute") && is_plain_name() && is_visibly_dom_node(obj);
+        cx.report(place, PREFER_DATASET).data("method_name", method).fix_where_safe(is_safe, |fixer| {
             let file = fixer.file();
             let name = dash_to_camel_case(dataset_property_name);
             let access: &[u8] = if member_expr.is_optional() { b"?.dataset" } else { b".dataset" };

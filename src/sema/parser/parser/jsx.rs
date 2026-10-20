@@ -657,13 +657,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     self.identifier_name()
                 }
             };
-            let kind = ExprKind::Dot {
-                obj: expression,
-                name,
-                name_pos,
-                chain: Chain::No,
-            };
-            expression = self.finish_expr(kind, start);
+            expression = self.finish_dot((expression, Chain::No), (name, name_pos), start);
         }
         expression
     }

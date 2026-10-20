@@ -755,9 +755,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
             .strip_prefix(b"file://".as_slice())
             .unwrap_or(preload_slice);
 
-        // node: builtin specifiers bypass the file resolver — JSModuleLoader
-        // resolves them internally, so `bun --import node:*` works like Node's.
-        let module_name = if normalized.starts_with(b"node:") {
+        // JSModuleLoader resolves a builtin's name: `bun --import path` works like Node's.
+        let module_name = if bun_jsc::module_loader::preload_skips_resolver(normalized) {
             bun_core::String::from_bytes(normalized)
         } else {
             // ── resolve ─────────────────────────────────────────────────────

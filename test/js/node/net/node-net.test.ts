@@ -1717,7 +1717,8 @@ describe("Socket fd adoption", () => {
         });
         // This process's fd for each scenario: the other end of the child's fd, or the fd it passed.
         const fds = child.stdio.slice(3) as number[];
-        for (const fd of fds) open.add(fd);
+        // The datagram socket closes its own fd.
+        for (const fd of fds) if (fd !== datagramFd) open.add(fd);
         if (fifo) close(fifo.wfd);
 
         const stderr = child.stderr.getReader();

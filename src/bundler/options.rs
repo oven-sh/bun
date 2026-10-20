@@ -326,7 +326,7 @@ impl TargetExt for Target {
 const BUN_HASHBANG: &[u8] = b"#!/usr/bin/env bun";
 
 /// The first line that makes `target` default to bun (docs/bundler/index.mdx, `target`).
-pub fn has_bun_hashbang(contents: &[u8]) -> bool {
+pub(crate) fn has_bun_hashbang(contents: &[u8]) -> bool {
     contents.starts_with(BUN_HASHBANG)
         && matches!(
             contents.get(BUN_HASHBANG.len()),
@@ -1261,7 +1261,7 @@ pub struct BundleOptions<'a> {
     pub target: Target,
     /// No target was given. An entry point that starts with a bun hashbang then ends the pass
     /// with `Error::RestartForBunTarget`, and its caller builds again with target bun.
-    pub target_defaults_from_hashbang: bool,
+    pub(crate) target_defaults_from_hashbang: bool,
     pub(crate) main_fields: Box<[Box<[u8]>]>,
     /// TODO: remove this in favor accessing bundler.log
     /// raw `*mut` (not `&'a mut`) — the same `*Log` is aliased

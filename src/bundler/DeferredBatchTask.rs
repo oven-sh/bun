@@ -3,6 +3,8 @@
 //! comes back. It is embedded in its `BundleV2` and counts as one of the pass's pending items while it is
 //! out, so the pass cannot finish and be freed under it (a plugin may answer a deferred load without
 //! awaiting `.defer()`, so nothing else orders the pass's completion after this hop).
+//!
+//! A pass that is discarded makes the same hop for a second reason: see `schedule_release`.
 
 use crate::BundleV2;
 // Task is `(tag: u8, ptr: *mut ())` owned by bun_event_loop;

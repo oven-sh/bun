@@ -15399,6 +15399,49 @@ class V4c {
       expect(exitCode).toBe(1);
     });
 
+    // https://github.com/oven-sh/bun/issues/46113
+    test("doesn't report a cycle for Slate's `CustomTypes` augmentation", async () => {
+      using dir = project({
+        "lib.ts": `export interface CustomTypes {
+  [key: string]: unknown
+}
+
+type ExtendedType<K extends string, B> = unknown extends CustomTypes[K] ? B : CustomTypes[K]
+type OmitFirstArg<F> = F extends (x: any, ...args: infer P) => infer R ? (...args: P) => R : never
+
+export interface BaseEditor {
+  isInline: OmitFirstArg<typeof Editor.isInline>
+}
+
+export type Editor = ExtendedType<'Editor', BaseEditor>
+
+export declare const Editor: {
+  isInline: (editor: Editor, value: string) => boolean
+}
+`,
+        "main.ts": `import type { BaseEditor, Editor } from './lib'
+
+interface ExtEditor extends BaseEditor {}
+
+declare module './lib' {
+  interface CustomTypes {
+    Editor: BaseEditor & ExtEditor
+  }
+}
+
+export function check(editor: Editor) {
+  editor.isInline = value => value === 'link'
+  const wrong: number = editor.isInline
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(
+        `"main.ts(13,9): error TS2322: Type '(value: string) => boolean' is not assignable to type 'number'."`,
+      );
+      expect(exitCode).toBe(1);
+    });
+
     const jsdocErrors = {
       "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
       "a.js": `export {};

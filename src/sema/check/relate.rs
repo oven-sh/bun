@@ -6630,6 +6630,15 @@ impl<'p, 's> Checker<'p, 's> {
         result
     }
 
+    /// True if `a` and `b` are the same member of a class or an interface and `instantiateSymbol` returns that member
+    /// itself. Then the type that declares it and every type that inherits it have the same symbol.
+    pub(super) fn is_member_itself_in_both(&mut self, a: &Prop, b: &Prop) -> bool {
+        matches!((&a.source, &b.source), (&PropSource::Symbol(sym), &PropSource::Symbol(other))
+            if sym == other
+                && ((a.flags | b.flags).contains(PropFlags::THISLESS)
+                    || self.is_thisless_for_this_mapper(sym)))
+    }
+
     /// `a == b` for two property symbols, each with the mapper of the type that has it.
     #[inline]
     fn is_same_property_symbol(&mut self, a: (&Prop, MapperId), b: (&Prop, MapperId)) -> bool {
@@ -6641,11 +6650,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return true;
         }
-        // `instantiateSymbol` returns the symbol itself, in every type that inherits it.
-        if let PropSource::Symbol(sym) = a.0.source
-            && ((a.0.flags | b.0.flags).contains(PropFlags::THISLESS)
-                || self.is_thisless_for_this_mapper(sym))
-        {
+        if self.is_member_itself_in_both(a.0, b.0) {
             return true;
         }
         let (own_a, own_b) = (self.mapper_of_prop(a.0), self.mapper_of_prop(b.0));

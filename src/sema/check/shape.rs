@@ -8107,6 +8107,14 @@ impl<'p, 's> Checker<'p, 's> {
             if std::ptr::eq(prop, other) && member.mapper == later.mapper {
                 continue;
             }
+            // A spread copies a member's symbol under other modifiers, and that's another symbol.
+            if (prop.flags ^ other.flags)
+                .difference(PropFlags::THISLESS)
+                .is_empty()
+                && self.is_member_itself_in_both(prop, other)
+            {
+                continue;
+            }
             // FOR SPEED, neither is copied for the comparison, because a union's property contains a property of each
             // constituent.
             let instantiation =

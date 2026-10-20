@@ -3,9 +3,9 @@ use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint_oxlint::ast_util::static_string;
 
-/// Disallow `.split(separator).length` with a separator of one character, which makes an array only to count.
+/// Disallow `.split(separator).length` with a one-character separator, which builds an array only to count.
 pub struct NoArrayJustToCount {
-    /// `countFunction`: called as `countFunction(string, separator)`, it says how often the separator occurs.
+    /// `countFunction`: `countFunction(string, separator)` returns how often the separator occurs.
     count_function: Option<Box<[u8]>>,
 }
 
@@ -14,7 +14,7 @@ const ARRAY_TO_COUNT: Message = Message::new(
     "`split()` builds an array only to read its length. Count the separators instead.",
 );
 
-/// The string and the separator of `string.split(separator)`, if the separator is one character that is written out.
+/// The string and the separator of `string.split(separator)`, if the separator is a one-character literal.
 fn split_by_character(e: Expr<'_>) -> Option<(Expr<'_>, Expr<'_>)> {
     let call = e.as_call()?;
     let separator = call.args().first().filter(|_| call.args().len() == 1)?;
@@ -23,7 +23,7 @@ fn split_by_character(e: Expr<'_>) -> Option<(Expr<'_>, Expr<'_>)> {
     call.callee().object().filter(|_| is_one_character && is_split).map(|string| (string, separator))
 }
 
-/// Whether `a + b` has to be in parentheses where `e` is.
+/// True if `a + b` would need parentheses in `e`'s position.
 fn binds_tighter_than_addition(e: Expr) -> bool {
     match e.parent() {
         Node::Expr(parent) if !e.is_parenthesized() => match parent.kind() {
@@ -65,7 +65,7 @@ impl Rule for NoArrayJustToCount {
         let Some((string, separator)) = split_by_character(obj) else {
             return;
         };
-        // `.length - 1` is the number of separators itself.
+        // `.length - 1` is exactly the number of separators.
         let minus_one = e.parent().as_expr().filter(|parent| {
             matches!(parent.kind(), ExprKind::Binary { op: BinOp::Sub, left, right }
                 if left == e && !e.is_parenthesized() && matches!(right.kind(), ExprKind::Number(it) if it == 1.0))

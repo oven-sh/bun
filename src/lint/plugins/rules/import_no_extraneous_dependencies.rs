@@ -14,16 +14,16 @@ use std::sync::OnceLock;
 
 /// Forbid the use of extraneous packages.
 pub struct NoExtraneousDependencies {
-    /// `devDependencies`, `optionalDependencies`, `peerDependencies`, `bundledDependencies`: each with its field.
+    /// `devDependencies`, `optionalDependencies`, `peerDependencies`, `bundledDependencies`, each with its field's bit.
     configs: [(Config, u8); 4],
-    /// `None`: the closest `package.json` counts.
+    /// `None`: use the closest `package.json`.
     package_dir: Option<Vec<Box<[u8]>>>,
     include_internal: bool,
     include_types: bool,
     visitor: Visitor,
-    /// `getDependencies` with `packageDir`. All files of a run have the same working directory.
+    /// `getDependencies` with `packageDir`. Every file in a run has the same working directory.
     in_package_dir: OnceLock<(DepFields, Option<Failure>)>,
-    /// `depFieldCache`, by the path of the `package.json`, for as many as there is room.
+    /// `depFieldCache`, keyed by the `package.json`'s path. Once it's full, further files aren't cached.
     closest: [OnceLock<(Box<[u8]>, DepFields)>; 32],
 }
 
@@ -45,7 +45,7 @@ const IN_OPT_DEPS: u8 = 1 << 2;
 const IN_PEER_DEPS: u8 = 1 << 3;
 const IN_BUNDLED_DEPS: u8 = 1 << 4;
 
-/// The fields that are objects.
+/// The fields whose values are objects.
 const OBJECTS: [(&[u8], u8); 4] = [
     (b"dependencies", IN_DEPS),
     (b"devDependencies", IN_DEV_DEPS),
@@ -53,7 +53,7 @@ const OBJECTS: [(&[u8], u8); 4] = [
     (b"peerDependencies", IN_PEER_DEPS),
 ];
 
-/// What `object[name] !== undefined` finds in every object.
+/// The names for which `object[name] !== undefined` is true in every object.
 pub(crate) const INHERITED: [&[u8]; 12] = [
     b"__defineGetter__",
     b"__defineSetter__",
@@ -69,10 +69,10 @@ pub(crate) const INHERITED: [&[u8]; 12] = [
     b"valueOf",
 ];
 
-/// What is reported for a `package.json` that cannot be read, with the `message` of the error.
+/// The report for a `package.json` that can't be read, with the error's `message`.
 type Failure = (Message, Vec<u8>);
 
-/// An option that says where a field counts.
+/// An option that decides in which files a field counts.
 enum Config {
     Is(bool),
     Globs(GlobsFromCwd),
@@ -95,12 +95,13 @@ impl Config {
     }
 }
 
-/// `readJSON`. `Err`: what it throws.
+/// `readJSON`. `Err` is what it throws.
 fn read_json(modules: &dyn Modules, json_path: &[u8]) -> Result<Json, Option<Failure>> {
     if let Some(content) = modules.read(json_path) {
         return json_parse(&content).map_err(|message| Some((NOT_PARSED, message)));
     }
-    // `ENOENT`, and neither `EISDIR` nor `ENOTDIR`: what there is of the path is a directory, and not all of it.
+    // `ENOENT`, as opposed to `EISDIR` or `ENOTDIR`, means that the longest existing prefix of the path is a directory
+    // and isn't the whole path.
     let found = paths::ancestors(json_path).find(|it| modules.exists(it));
     let is_missing = found.is_none_or(|it| it.len() < json_path.len() && modules.read(it).is_none());
     Err(is_missing.then(|| (NOT_FOUND, Vec::new())))
@@ -109,9 +110,9 @@ fn read_json(modules: &dyn Modules, json_path: &[u8]) -> Result<Json, Option<Fai
 /// `packageContent`
 #[derive(Clone, Default)]
 struct DepFields {
-    /// The fields that a name is in.
+    /// The bits of the fields that list each name.
     fields: FxHashMap<Box<[u8]>, u8>,
-    /// How long the longest name is.
+    /// The length of the longest name.
     longest: usize,
 }
 
@@ -121,7 +122,7 @@ impl DepFields {
         self.longest = self.longest.max(name.len());
     }
 
-    /// `extractDepFields` of each of `packages`, assigned to one object in that order.
+    /// `extractDepFields` of each of `packages`, merged into one object in that order.
     fn new(packages: &[Json]) -> DepFields {
         let mut all = DepFields::default();
         for name in INHERITED {
@@ -141,10 +142,10 @@ impl DepFields {
                 Some(Json::Object(entries)) => entries.iter().map(|it| Some(&it.0[..])).collect(),
                 _ => Vec::new(),
             };
-            // `Object.assign` of an array to an array: a name takes the place of the one with its index.
-            let kept = bundled.split_off(names.len().min(bundled.len()));
+            // `Object.assign` of an array onto an array overwrites by index.
+            let tail = bundled.split_off(names.len().min(bundled.len()));
             bundled = names;
-            bundled.extend(kept);
+            bundled.extend(tail);
         }
         for name in bundled.into_iter().flatten() {
             all.add(name, IN_BUNDLED_DEPS);
@@ -198,7 +199,7 @@ fn get_module_original_name(name: &[u8]) -> Cow<'_, [u8]> {
     }
 }
 
-/// Whether `node` imports or exports nothing but types.
+/// True if `node` imports or exports only types.
 fn is_type_import(node: Node) -> bool {
     let Node::Stmt(node) = node else {
         return false;
@@ -249,7 +250,7 @@ impl Rule for NoExtraneousDependencies {
             ],
             package_dir: match options.get("packageDir") {
                 Some(Json::String(dir)) if !dir.is_empty() => Some(vec![dir.as_slice().into()]),
-                // `path.resolve` throws at what is no string: there are no dependencies.
+                // `path.resolve` throws if an entry isn't a string, which leaves no dependencies.
                 Some(Json::Array(dirs)) if !dirs.is_empty() => {
                     let dirs: Option<Vec<Box<[u8]>>> = dirs.iter().map(|it| it.as_str().map(Box::from)).collect();
                     Some(dirs.unwrap_or_default())
@@ -265,7 +266,7 @@ impl Rule for NoExtraneousDependencies {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        // What is wrong with `packageDir` is reported in every file.
+        // A problem with `packageDir` is reported in every file.
         (self.package_dir.is_some() || self.visitor.may_visit(file)).then_some(())
     }
 
@@ -292,7 +293,7 @@ impl Rule for NoExtraneousDependencies {
                 continue;
             }
             let (name, is_require) = (visited.specifier, visited.is_require);
-            // What is declared is not looked for: to resolve a name costs the most.
+            // Check the declared names first, because resolving a name is the most expensive step.
             let import_package_name = get_module_original_name(name);
             let mut declaration_status = deps.check_dependency_declaration(&import_package_name, 0);
             if declaration_status & allowed != 0 {

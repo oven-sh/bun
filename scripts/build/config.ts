@@ -564,9 +564,9 @@ export function detectLinuxAbi(): Abi {
 export const ANDROID_API_LEVEL_DEFAULT = pins.androidNdk.apiLevel;
 
 /**
- * FreeBSD release we target. 14.x is the current production series; 14.3
- * is the oldest 14.x still on download.freebsd.org. Building against 14.3
- * produces binaries that run on 14.3+ (FreeBSD guarantees forward ABI
+ * FreeBSD release we target. 14.x is the current production series; 14.4
+ * is the oldest 14.x still on download.freebsd.org. Building against 14.4
+ * produces binaries that run on 14.4+ (FreeBSD guarantees forward ABI
  * compat within a major).
  */
 export const FREEBSD_VERSION_DEFAULT = pins.freebsd.version;

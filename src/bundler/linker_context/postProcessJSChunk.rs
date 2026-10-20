@@ -800,11 +800,16 @@ pub(crate) fn post_process_js_chunk(
         // local, not `c`, avoiding the split-borrow with
         // `c.generate_source_map_for_chunk(&mut self, …)`.
         let resolver = c.resolver.expect("resolver set in load()");
+        let chunk_abs_dir = LinkerContext::source_map_chunk_abs_dir(
+            &resolver.opts.output_dir,
+            &chunk.template,
+            !c.options.compile,
+        );
         chunk.output_source_map = c.generate_source_map_for_chunk(
             chunk.isolated_hash,
             worker,
             &compile_results_for_source_map,
-            &resolver.opts.output_dir,
+            &chunk_abs_dir,
             can_have_shifts,
         )?;
     }

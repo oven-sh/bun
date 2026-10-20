@@ -842,42 +842,37 @@ pub struct MaskHandler {
 
 const _: () = assert!(core::mem::size_of::<MaskHandler>() <= 144);
 
-/// Matches the 27 mask rows, which are next to each other in `Property`: one range test.
+/// Matches the 27 mask rows of `Property`, `PropertyId` or `PropertyIdTag`. They are next to each other: one range test.
 macro_rules! mask_rows {
-    () => {
-        Property::MaskImage(..)
-            | Property::MaskMode(..)
-            | Property::MaskRepeat(..)
-            | Property::MaskPositionX(..)
-            | Property::MaskPositionY(..)
-            | Property::MaskPosition(..)
-            | Property::MaskClip(..)
-            | Property::MaskOrigin(..)
-            | Property::MaskSize(..)
-            | Property::MaskComposite(..)
-            | Property::MaskType(..)
-            | Property::Mask(..)
-            | Property::MaskBorderSource(..)
-            | Property::MaskBorderMode(..)
-            | Property::MaskBorderSlice(..)
-            | Property::MaskBorderWidth(..)
-            | Property::MaskBorderOutset(..)
-            | Property::MaskBorderRepeat(..)
-            | Property::MaskBorder(..)
-            | Property::WebKitMaskComposite(..)
-            | Property::MaskSourceType(..)
-            | Property::MaskBoxImage(..)
-            | Property::MaskBoxImageSource(..)
-            | Property::MaskBoxImageSlice(..)
-            | Property::MaskBoxImageWidth(..)
-            | Property::MaskBoxImageOutset(..)
-            | Property::MaskBoxImageRepeat(..)
+    ($kind:ident) => {
+        $kind::MaskImage { .. }
+            | $kind::MaskMode { .. }
+            | $kind::MaskRepeat { .. }
+            | $kind::MaskPositionX { .. }
+            | $kind::MaskPositionY { .. }
+            | $kind::MaskPosition { .. }
+            | $kind::MaskClip { .. }
+            | $kind::MaskOrigin { .. }
+            | $kind::MaskSize { .. }
+            | $kind::MaskComposite { .. }
+            | $kind::MaskType { .. }
+            | $kind::Mask { .. }
+            | $kind::MaskBorderSource { .. }
+            | $kind::MaskBorderMode { .. }
+            | $kind::MaskBorderSlice { .. }
+            | $kind::MaskBorderWidth { .. }
+            | $kind::MaskBorderOutset { .. }
+            | $kind::MaskBorderRepeat { .. }
+            | $kind::MaskBorder { .. }
+            | $kind::WebKitMaskComposite { .. }
+            | $kind::MaskSourceType { .. }
+            | $kind::MaskBoxImage { .. }
+            | $kind::MaskBoxImageSource { .. }
+            | $kind::MaskBoxImageSlice { .. }
+            | $kind::MaskBoxImageWidth { .. }
+            | $kind::MaskBoxImageOutset { .. }
+            | $kind::MaskBoxImageRepeat { .. }
     };
-}
-
-const fn is_mask_tag(tag: PropertyIdTag) -> bool {
-    tag as u16 >= PropertyIdTag::MaskImage as u16
-        && tag as u16 <= PropertyIdTag::MaskBoxImageRepeat as u16
 }
 
 impl MaskHandler {
@@ -885,12 +880,11 @@ impl MaskHandler {
     #[inline(always)]
     pub(crate) fn wants(&self, property: &Property) -> bool {
         match property {
-            mask_rows!() => true,
-            Property::Unparsed(unparsed) => {
-                let tag = unparsed.property_id.tag();
-                is_mask_tag(tag) || (self.open && tag == PropertyIdTag::All)
+            mask_rows!(Property) => true,
+            Property::All(_) | Property::Unparsed(_) | Property::Custom(_) => {
+                self.open
+                    || matches!(property, Property::Unparsed(unparsed) if matches!(unparsed.property_id, mask_rows!(PropertyId)))
             }
-            Property::Custom(_) | Property::All(_) => self.open,
             _ => false,
         }
     }
@@ -898,7 +892,7 @@ impl MaskHandler {
     #[inline(never)]
     pub(crate) fn handle_property(
         &mut self,
-        property: &mut Property,
+        property: &Property,
         dest: &mut css::DeclarationList,
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
@@ -923,10 +917,13 @@ impl MaskHandler {
                     self.end(Slot::Position.bit() | Slot::Mask.bit())
                 }
                 PropertyIdTag::MaskBorderMode => self.end(Slot::Border.bit() | Slot::Mask.bit()),
-                tag if is_mask_tag(tag) && tag != PropertyIdTag::MaskType => {
-                    self.floor = dest.len() as u32 + 1
+                PropertyIdTag::MaskType => {}
+                // A mask row that gets here is one of the six names that no browser has without the prefix.
+                tag => {
+                    if matches!(tag, mask_rows!(PropertyIdTag)) {
+                        self.floor = dest.len() as u32 + 1;
+                    }
                 }
-                _ => {}
             }
             return false;
         };
@@ -946,7 +943,7 @@ impl MaskHandler {
         }
         // Unlike lightningcss: a `var()` value gets no `@supports` color fallback. Bun would nest one more on each pass.
         let copy = names == NONE && targets.prefixes(NONE, Feature::Mask).contains(WEBKIT);
-        let declaration = core::mem::replace(property, Property::All(CSSWideKeyword::RevertLayer));
+        let declaration = property.deep_clone(dest.bump());
         match slot {
             Slot::Mask => self.mask(declaration, names, copy, dest, &targets),
             Slot::Border => self.border(declaration, names, copy, dest, &targets),
@@ -961,7 +958,7 @@ impl MaskHandler {
     /// Records the `-webkit-` names in the other list of the block: each list has its own handler.
     pub(crate) fn see_other_list(&mut self, declarations: &css::DeclarationList) {
         for declaration in declarations.iter() {
-            if !matches!(declaration, mask_rows!() | Property::Unparsed(_)) {
+            if !matches!(declaration, mask_rows!(Property) | Property::Unparsed(_)) {
                 continue;
             }
             let Some((slot, names)) = slot_of(id_of(declaration)) else {

@@ -441,58 +441,58 @@ impl<'bump> DeclarationHandler<'bump> {
 
     pub(crate) fn handle_property(
         &mut self,
-        property: &mut css::Property,
+        property: &css::Property,
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
-        // Only the mask handler takes the declaration out of `property`. The others clone what they keep.
+        // return this.background.handleProperty(property, &this.decls, context);
         self.background
-            .handle_property(&*property, &mut self.decls, context)
+            .handle_property(property, &mut self.decls, context)
             || self
                 .border
-                .handle_property(&*property, &mut self.decls, context)
+                .handle_property(property, &mut self.decls, context)
             || self
                 .flex
-                .handle_property(&*property, &mut self.decls, context)
+                .handle_property(property, &mut self.decls, context)
             || self
                 .align
-                .handle_property(&*property, &mut self.decls, context)
+                .handle_property(property, &mut self.decls, context)
             || self
                 .size
-                .handle_property(&*property, &mut self.decls, context)
+                .handle_property(property, &mut self.decls, context)
             || self
                 .margin
-                .handle_property(&*property, &mut self.decls, context)
+                .handle_property(property, &mut self.decls, context)
             || self
                 .padding
-                .handle_property(&*property, &mut self.decls, context)
+                .handle_property(property, &mut self.decls, context)
             || self
                 .scroll_margin
-                .handle_property(&*property, &mut self.decls, context)
+                .handle_property(property, &mut self.decls, context)
             || self
                 .transition
-                .handle_property(&*property, &mut self.decls, context)
+                .handle_property(property, &mut self.decls, context)
             || self
                 .font
-                .handle_property(&*property, &mut self.decls, context)
+                .handle_property(property, &mut self.decls, context)
             || self
                 .inset
-                .handle_property(&*property, &mut self.decls, context)
+                .handle_property(property, &mut self.decls, context)
             || self
                 .transform
-                .handle_property(&*property, &mut self.decls, context)
+                .handle_property(property, &mut self.decls, context)
             || self
                 .box_shadow
-                .handle_property(&*property, &mut self.decls, context)
+                .handle_property(property, &mut self.decls, context)
             || (self.mask.wants(property)
                 && self
                     .mask
                     .handle_property(property, &mut self.decls, context))
             || self
                 .color_scheme
-                .handle_property(&*property, &mut self.decls, context)
+                .handle_property(property, &mut self.decls, context)
             || self
                 .fallback
-                .handle_property(&*property, &mut self.decls, context)
+                .handle_property(property, &mut self.decls, context)
     }
 
     pub(crate) fn new(bump: &'bump Bump) -> Self {

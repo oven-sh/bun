@@ -53,13 +53,17 @@ const script = `
       Array.from({ length: n }, (_, i) => \`.a\${i}{color:red}\`).join(""),
       { chrome: 80 << 16 },
     ],
-    "mask-composite": [repeat(".a{mask-composite:add}"), { chrome: 80 << 16 }],
-    "mask-shorthand": [repeat(".a{mask:url(a.png) exclude}"), { chrome: 80 << 16 }],
-    "mask-var": [repeat(".a{mask-image:var(--x)}"), { chrome: 80 << 16 }],
+    // The third entry is the number of declarations in the output: a pass over a merged rule adds none.
+    "mask-composite": [repeat(".a{mask-composite:add}"), { chrome: 80 << 16 }, 2],
+    // Each url() is its own import, so each rule keeps its three declarations.
+    "mask-shorthand": [repeat(".a{mask:url(a.png) exclude}"), { chrome: 80 << 16 }, 3 * n],
+    "mask-var": [repeat(".a{mask-image:var(--x)}"), { chrome: 80 << 16 }, 2],
   };
-  for (const [name, [src, targets]] of Object.entries(floods)) {
+  for (const [name, [src, targets, declarations]] of Object.entries(floods)) {
     const out = targets === undefined ? c.minifyTest(src, "") : c._test(src, "", targets);
     if (typeof out !== "string" || out.length === 0) throw new Error(name + " produced no output");
+    const printed = out.split(";\\n").length - 1;
+    if (declarations !== undefined && printed !== declarations) throw new Error(name + " printed " + printed + " declarations");
     console.log("OK:" + name);
   }
 `;

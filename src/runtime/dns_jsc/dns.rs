@@ -464,7 +464,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
             resolver_for_caching: resolver,
             pending_slot: None,
             head: CAresLookup {
-                // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
+                // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
                 resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
                 global_this: bun_ptr::BackRef::new(global_this),
                 context,
@@ -600,7 +600,7 @@ impl GetHostByAddrInfoRequest {
             resolver_for_caching: resolver,
             pending_slot: None,
             head: CAresReverse {
-                // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
+                // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
                 resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
                 global_this: bun_ptr::BackRef::new(global_this),
                 context,
@@ -1182,7 +1182,7 @@ impl GetAddrInfoRequest {
             resolver_for_caching: resolver,
             pending_slot: None,
             head: DNSLookup {
-                // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
+                // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
                 resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
                 global_this: bun_ptr::BackRef::new(global_this),
                 promise: JSPromiseStrong::init(global_this),
@@ -1460,7 +1460,7 @@ impl CAresReverse {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         bun_core::heap::into_raw(Box::new(Self {
-            // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
+            // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
             resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
             global_this: bun_ptr::BackRef::new(global_this),
             context,
@@ -1584,7 +1584,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         Self::new(Self {
-            // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
+            // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
             resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
             global_this: bun_ptr::BackRef::new(global_this),
             context,
@@ -1730,7 +1730,7 @@ impl DNSLookup {
         poll_ref.ref_(js_event_loop_ctx());
 
         bun_core::heap::into_raw(Box::new(Self {
-            // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
+            // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
             resolver: Some(unsafe { RefPtr::init_ref(resolver) }),
             global_this: bun_ptr::BackRef::new(global_this),
             poll_ref,

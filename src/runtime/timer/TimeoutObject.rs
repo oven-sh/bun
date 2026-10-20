@@ -17,11 +17,7 @@ super::impl_timer_object!(TimeoutObject, TimeoutObject, "Timeout", TimeoutClass,
         this
     }
 
-    fn close<'a>(
-        &self,
-        this: JsWrapper<'a, RefPtr<Self>>,
-        _: &JsHeap<'a>,
-    ) -> JsWrapper<'a, RefPtr<Self>> {
+    fn close<'a>(&self, this: JsWrapper<'a, RefPtr<Self>>) -> JsWrapper<'a, RefPtr<Self>> {
         self.internals.cancel(VirtualMachine::get_mut_ptr());
         this
     }

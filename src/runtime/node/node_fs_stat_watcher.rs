@@ -642,7 +642,7 @@ impl StatWatcher {
         // BACKREF — `this` is alive (ref'd in
         // InitialStatTask::create_and_schedule). R-2: `cb.call()` below
         // re-enters JS, which may call `do_close()` → fresh `&Self` from
-        // m_ctx; aliased `&` is sound, aliased `&mut` is not. `ParentRef`
+        // the wrapper; aliased `&` is sound, aliased `&mut` is not. `ParentRef`
         // Deref gives that shared `&`.
         let this_ref = ParentRef::from(NonNull::new(this).expect("initial_stat_error: watcher"));
         if this_ref.closed.load(Ordering::Relaxed) {
@@ -728,7 +728,7 @@ impl StatWatcher {
         let _guard = unsafe { RefPtr::from_raw(this) };
         // BACKREF — `this` is alive (ref'd in restat()). R-2: `cb.call()`
         // below re-enters JS, which may call `do_close()` → fresh `&Self` from
-        // m_ctx; aliased `&` is sound, aliased `&mut` is not (and the
+        // the wrapper; aliased `&` is sound, aliased `&mut` is not (and the
         // work-pool thread may still hold `&*watcher`). `ParentRef` Deref
         // gives that shared `&`.
         let this_ref = ParentRef::from(NonNull::new(this).expect("swap_and_call: watcher"));
@@ -980,7 +980,7 @@ impl bun_event_loop::Taskable for StatWatcher {
 }
 
 pub(crate) struct InitialStatTask {
-    // StatWatcher is intrusively ref-counted (ThreadSafeRefCount m_ctx
+    // StatWatcher is intrusively ref-counted (ThreadSafeRefCount, the wrapper's
     // payload). We hold the strong ref via `ref_()`/`deref()` and keep the
     // raw `*mut`.
     watcher: *mut StatWatcher,
@@ -1000,7 +1000,7 @@ impl InitialStatTask {
         StatWatcher::ref_(watcher);
         WorkPool::schedule_new(InitialStatTask {
             watcher,
-            // The watcher is a JS-owned m_ctx; its VM waits for this ticket.
+            // The watcher belongs to a JS object; its VM waits for this ticket.
             // SAFETY: per fn contract; JS thread.
             ticket: unsafe { (*watcher).ctx.get() }.ticket(),
             task: WorkPoolTask::default(),

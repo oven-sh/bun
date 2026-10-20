@@ -581,7 +581,6 @@ impl TestRefCountedClass for TestRefCounted {
     fn or_undefined<'a>(
         &self,
         this: JsWrapper<'a, RefPtr<Self>>,
-        _: &JsHeap<'a>,
     ) -> Option<JsWrapper<'a, RefPtr<Self>>> {
         (self.value.get() >= 0).then_some(this)
     }
@@ -589,9 +588,8 @@ impl TestRefCountedClass for TestRefCounted {
     fn or_null<'a>(
         &self,
         this: JsWrapper<'a, RefPtr<Self>>,
-        heap: &JsHeap<'a>,
     ) -> Option<JsWrapper<'a, RefPtr<Self>>> {
-        self.or_undefined(this, heap)
+        self.or_undefined(this)
     }
 
     fn is_same<'a>(

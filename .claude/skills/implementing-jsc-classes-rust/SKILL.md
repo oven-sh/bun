@@ -127,7 +127,7 @@ Never store raw `JSValue` in a struct field. Declare a slot in `.classes.ts` (`v
 ## Reference implementations
 
 - `src/runtime/api/Shell.classes.ts` — constructor, methods, `hasPendingActivity`
-- `src/runtime/api/cron.rs` + `cron.classes.ts` — `noConstructor`, cached getter, `values: [...]`, custom finalize
+- `src/runtime/server/server.classes.ts` — `noConstructor`, cached getters, `values: [...]`, custom finalize
 - `src/runtime/image/Image.rs:56` — the `pub use crate::generated_classes::js_Image as js;` one-liner
 - `src/jsc/host_fn.rs` — the host-fn adapters the codegen dispatches through
 - `src/jsc_macros/lib.rs` — `#[bun_jsc::JsClass]` proc-macro source

@@ -48,7 +48,7 @@ pub(crate) struct JSTranspiler {
     pub(crate) scan_pass_result: JsCell<ScanPassResult>,
     pub(crate) buffer_writer: JsCell<Option<JSPrinter::BufferWriter>>,
     // Arena bulk-frees the config strings. Boxed so its
-    // address is stable across the move into `Box<JSTranspiler>` —
+    // address is stable across the move into `JSTranspiler` —
     // `transpiler.arena` holds a `&'static Arena` pointing into it.
     pub(crate) _arena: Box<Arena>,
     pub(crate) ref_count: bun_ptr::RefCount<JSTranspiler>,
@@ -929,22 +929,13 @@ fn export_replacement_value(
 
 impl JSTranspiler {
     fn init(global: &JSGlobalObject, config_arg: JSValue) -> JsResult<RefPtr<JSTranspiler>> {
-        // NOTE: a non-POD field cannot be left uninitialized in a live Box
-        // (zeroed()/assume_init() on Transpiler is UB), so build `config` + `transpiler` on the
-        // stack first, then move both into the Box. Nothing observes the
-        // `Box<JSTranspiler>` address before construction completes. The
-        // address-sensitive pointers are `transpiler.arena` (points into the
-        // separately-boxed `arena`, whose address is move-stable) and
-        // `transpiler.log` (initially points at the stack-local `config.log`;
-        // it is re-pointed via `set_log` once the Box exists — see the NOTE
-        // below), so no up-front allocation / `MaybeUninit` in-place init is
-        // needed.
+        // `config` and `transpiler` are built on the stack and moved into the allocation, then `set_log` re-points `transpiler.log`.
         let mut config = Config {
             log: bun_ast::Log::init(),
             ..Default::default()
         };
         let arena = Box::new(Arena::new());
-        // SAFETY: `arena` is heap-allocated and moved (as a Box) into `Box<JSTranspiler>` below;
+        // SAFETY: `arena` is heap-allocated and moved (as a Box) into the `JSTranspiler` below;
         // its address is stable for the lifetime of the JSTranspiler. `Transpiler<'static>` forces
         // the borrow to 'static, so launder through a raw ptr.
         let arena_ref: &'static Arena =
@@ -994,9 +985,9 @@ impl JSTranspiler {
         });
         // errdefer past this point → `this` drops its only ref and runs Drop for JSTranspiler.
 
-        // NOTE: `config` was built on the stack and moved into the Box, so
+        // NOTE: `config` was built on the stack and moved into the allocation, so
         // `transpiler.log` (a `*mut Log`) still points at the moved-from
-        // stack slot. Re-point it at the heap-stable field now that the Box exists.
+        // stack slot. Re-point it at the heap-stable field.
         // SAFETY: `this` is exclusively owned (init-time, before the JS
         // wrapper exists) so projecting `&mut`/`*mut` from the JsCells is trivially
         // alias-free.
@@ -1096,7 +1087,7 @@ impl TranspilerStateGuard {
     ///
     /// SAFETY: `self.transpiler` is always non-null — every construction site
     /// initializes it from `js_transpiler.transpiler.as_ptr()` (the
-    /// `JsCell<Transpiler>` in the heap-stable `Box<JSTranspiler>`), which
+    /// `JsCell<Transpiler>` in the heap-stable `JSTranspiler`), which
     /// outlives this stack-local guard. The guard is held as
     /// `let _restore = ...;` and never touched between construction and `Drop`,
     /// so no other `&mut Transpiler` projection from that `JsCell` is live when
@@ -1104,7 +1095,7 @@ impl TranspilerStateGuard {
     #[inline]
     fn transpiler_mut(&mut self) -> &mut Transpiler::Transpiler<'static> {
         // SAFETY: `self.transpiler` is non-null (set from `JsCell::as_ptr()` on the
-        // heap-stable `Box<JSTranspiler>`); the guard holds the only live `&mut`
+        // heap-stable `JSTranspiler`); the guard holds the only live `&mut`
         // projection of that `JsCell` between construction and `Drop`.
         unsafe { &mut *self.transpiler }
     }
@@ -1122,7 +1113,7 @@ impl TranspilerStateGuard {
 impl Drop for TranspilerStateGuard {
     fn drop(&mut self) {
         // `transpiler` and `restore_log` point into the heap-stable
-        // `Box<JSTranspiler>` (`self.transpiler` / `self.config.log`) which
+        // `JSTranspiler` (`self.transpiler` / `self.config.log`) which
         // outlives this stack frame. The guard is declared after the temporary
         // arena/log and so drops before them (reverse-decl order), ensuring the
         // Transpiler never observes a dangling `&'static Arena`.

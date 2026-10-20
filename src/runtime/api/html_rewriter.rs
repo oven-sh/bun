@@ -42,7 +42,7 @@ use bun_jsc::call_frame::ArgumentsSlice;
 use lol_html::html_content::UserData as _;
 
 // lol-html rewritable units, lifetime-erased to `'static` so a `*mut RawX`
-// can be parked in a JsClass `DetachablePtr` for the duration of the
+// can be parked in a class's `DetachablePtr` for the duration of the
 // synchronous handler call (the slot is nulled again before the handler
 // returns). The `DetachablePtr` type invariant is discharged by
 // `handler_callback`: it parks the `&mut X` lol-html lends the closure
@@ -761,13 +761,7 @@ impl RewriterPipe {
         &self,
         f: impl for<'a> FnOnce(JsWrapper<'a, RefPtr<Self>>, &JsHeap<'a>) -> R,
     ) -> Option<R> {
-        // SAFETY: the pipe is driven on the JS thread, outside a collection, nothing borrowed through another `JsScope` is still in use, and `f` gets no `JsScope` to run JavaScript with.
-        unsafe {
-            JsScope::with(self.global.as_mut_ptr(), |cx| {
-                let cell = self.cell.get().try_get(&cx.heap)?;
-                Some(f(cell, &cx.heap))
-            })
-        }
+        self.cell.get().with(&self.global, f)
     }
 
     /// Release one ref, deferring the release of the *last* ref to the event
@@ -987,6 +981,8 @@ impl RewriterPipe {
         original: &Response,
         sync_only_noun: Option<&'static str>,
     ) -> JsResult<JSValue> {
+        // https://github.com/oven-sh/bun/issues/3334
+        let headers = original.clone_init_headers(cx.global())?;
         let pipe = RefPtr::new(RewriterPipe {
             global: GlobalRef::from(cx.global()),
             cell: JsCell::new(JsWrapperRef::empty()),
@@ -1076,8 +1072,7 @@ impl RewriterPipe {
             original.get_init_status_text().clone(),
         );
 
-        // https://github.com/oven-sh/bun/issues/3334
-        result_ref.set_init_headers(original.clone_init_headers(cx.global())?);
+        result_ref.set_init_headers(headers);
 
         let response_js_value = result_ref.to_js(&this.global);
 
@@ -2585,11 +2580,7 @@ impl TextChunkClass for TextChunk {
         replace,
     }
 
-    fn remove<'a>(
-        &self,
-        this: JsWrapper<'a, RefPtr<Self>>,
-        _: &JsHeap<'a>,
-    ) -> Option<JsWrapper<'a, RefPtr<Self>>> {
+    fn remove<'a>(&self, this: JsWrapper<'a, RefPtr<Self>>) -> Option<JsWrapper<'a, RefPtr<Self>>> {
         self.text_chunk.get_mut()?.remove();
         Some(this)
     }
@@ -2655,11 +2646,7 @@ impl DocTypeClass for DocType {
         opt_string_to_js_or_null(dt.public_id(), heap)
     }
 
-    fn remove<'a>(
-        &self,
-        this: JsWrapper<'a, RefPtr<Self>>,
-        _: &JsHeap<'a>,
-    ) -> Option<JsWrapper<'a, RefPtr<Self>>> {
+    fn remove<'a>(&self, this: JsWrapper<'a, RefPtr<Self>>) -> Option<JsWrapper<'a, RefPtr<Self>>> {
         self.doctype.get_mut()?.remove();
         Some(this)
     }
@@ -2732,11 +2719,7 @@ impl CommentClass for Comment {
         replace,
     }
 
-    fn remove<'a>(
-        &self,
-        this: JsWrapper<'a, RefPtr<Self>>,
-        _: &JsHeap<'a>,
-    ) -> Option<JsWrapper<'a, RefPtr<Self>>> {
+    fn remove<'a>(&self, this: JsWrapper<'a, RefPtr<Self>>) -> Option<JsWrapper<'a, RefPtr<Self>>> {
         self.comment.get_mut()?.remove();
         Some(this)
     }
@@ -2811,11 +2794,7 @@ impl EndTagClass for EndTag {
         after,
     }
 
-    fn remove<'a>(
-        &self,
-        this: JsWrapper<'a, RefPtr<Self>>,
-        _: &JsHeap<'a>,
-    ) -> Option<JsWrapper<'a, RefPtr<Self>>> {
+    fn remove<'a>(&self, this: JsWrapper<'a, RefPtr<Self>>) -> Option<JsWrapper<'a, RefPtr<Self>>> {
         self.end_tag.get_mut()?.remove();
         Some(this)
     }
@@ -2899,11 +2878,7 @@ impl AttributeIteratorClass for AttributeIterator {
         })
     }
 
-    fn get_this<'a>(
-        &self,
-        this: JsWrapper<'a, RefPtr<Self>>,
-        _: &JsHeap<'a>,
-    ) -> JsWrapper<'a, RefPtr<Self>> {
+    fn get_this<'a>(&self, this: JsWrapper<'a, RefPtr<Self>>) -> JsWrapper<'a, RefPtr<Self>> {
         this
     }
 }
@@ -3011,7 +2986,7 @@ impl ElementClass for Element {
         handlers.push(Box::new(move |end_tag| {
             // SAFETY: lifetime erasure. `end_tag` only lives for this
             // synchronous call; `handler_callback`'s guard detaches the
-            // `EndTag` JsClass slot before this closure returns (or, on a
+            // `EndTag` slot before this closure returns (or, on a
             // suspension, re-points it at the heap copy lol-html parks), so
             // JS can never reach a dangling pointer.
             let raw: *mut RawEndTag = core::ptr::from_mut(end_tag).cast();
@@ -3099,11 +3074,7 @@ impl ElementClass for Element {
     }
 
     /// Removes the element with all its content.
-    fn remove<'a>(
-        &self,
-        this: JsWrapper<'a, RefPtr<Self>>,
-        _: &JsHeap<'a>,
-    ) -> Option<JsWrapper<'a, RefPtr<Self>>> {
+    fn remove<'a>(&self, this: JsWrapper<'a, RefPtr<Self>>) -> Option<JsWrapper<'a, RefPtr<Self>>> {
         self.element.get_mut()?.remove();
         Some(this)
     }
@@ -3112,7 +3083,6 @@ impl ElementClass for Element {
     fn remove_and_keep_content<'a>(
         &self,
         this: JsWrapper<'a, RefPtr<Self>>,
-        _: &JsHeap<'a>,
     ) -> Option<JsWrapper<'a, RefPtr<Self>>> {
         self.element.get_mut()?.remove_and_keep_content();
         Some(this)
@@ -3224,21 +3194,14 @@ impl WrapperLike for Element {
 // pipe) stays alive as long as the pump promise's reaction is rooted.
 
 /// Gets the pipe from the Transform cell passed as the reaction's last argument, which the call frame keeps alive.
-fn pipe_of_reaction(global: &JSGlobalObject, args: &[JSValue]) -> Option<BackRef<RewriterPipe>> {
-    // SAFETY: a promise reaction on the JS thread, and nothing borrowed through another `JsScope` is still in use.
-    unsafe {
-        JsScope::with(global.as_mut_ptr(), |cx| {
-            let cell = RewriterPipe::from_js(&cx.heap, args[args.len() - 1])?;
-            Some(cell.with(&cx.payloads, |pipe| BackRef::from(pipe.as_non_null())))
-        })
-    }
+fn pipe_of_reaction(args: &[JSValue]) -> Option<BackRef<RewriterPipe>> {
+    RewriterPipe::with_js(args[args.len() - 1], |pipe| {
+        BackRef::from(pipe.as_non_null())
+    })
 }
 
-fn on_resolve_input_stream(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let Some(this) = pipe_of_reaction(global_this, callframe.arguments()) else {
+fn on_resolve_input_stream(_: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let Some(this) = pipe_of_reaction(callframe.arguments()) else {
         return Ok(JSValue::UNDEFINED);
     };
     this.js_pump_reaction_pending.set(false);
@@ -3251,7 +3214,7 @@ fn on_reject_input_stream(
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     let args = callframe.arguments();
-    let Some(this) = pipe_of_reaction(global_this, args) else {
+    let Some(this) = pipe_of_reaction(args) else {
         return Ok(JSValue::UNDEFINED);
     };
     let err = args[0];

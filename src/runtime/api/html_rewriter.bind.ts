@@ -8,12 +8,13 @@ export const ContentOptions = b.dictionary(
 );
 
 /** `returns` is `b.self.optional` or `b.self.nullable`: after the handler returns, the method returns `undefined` or `null` (it varies by class) instead of `this`. */
-const chainable = (returns: b.Type) => ({ returns, passThis: true, capability: "heap" }) as const;
+const chainable = (returns: b.Type) => ({ returns, passThis: true }) as const;
 const contentOp = (returns: b.Type) =>
   ({
     ...chainable(returns),
     args: { content: string, options: ContentOptions.nullable.default({}) },
     expected: { content: "Expected string" },
+    capability: "heap",
     throws: true,
   }) as const;
 
@@ -116,11 +117,11 @@ export const Element = b.class({
     hasAttribute: { ...named, returns: b.bool, capability: "heap", throws: true },
     namespaceURI: { getter: b.string.utf8.optional, cache: true },
     /** `b.any`: after the element handler returns, `handler` is not type-checked. */
-    onEndTag: { ...chainable(b.self.nullable), args: { handler: b.any }, throws: true },
+    onEndTag: { ...chainable(b.self.nullable), args: { handler: b.any }, capability: "heap", throws: true },
     prepend: contentOp(b.self.optional),
     remove: chainable(b.self.optional),
     removeAndKeepContent: chainable(b.self.optional),
-    removeAttribute: { ...chainable(b.self.optional), ...named, throws: true },
+    removeAttribute: { ...chainable(b.self.optional), ...named, capability: "heap", throws: true },
     removed: { getter: b.bool.optional },
     replace: contentOp(b.self.optional),
     selfClosing: { getter: b.bool.optional },
@@ -128,6 +129,7 @@ export const Element = b.class({
       ...chainable(b.self.optional),
       args: { name: string, value: string },
       expected: { name: "Expected string", value: "Expected string" },
+      capability: "heap",
       throws: true,
     },
     setInnerContent: contentOp(b.self.optional),

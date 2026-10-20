@@ -237,6 +237,36 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     "camelCase: rustName is written in snake_case",
   );
   expect(() => b.class({ rustPath: "T", proto: { x: { name: "y" } } })).toThrow("x: name is only allowed on an @@ key");
+  expect(() =>
+    b.class({
+      rustPath: "T",
+      proto: {
+        x: [
+          { rustName: "x_string", args: { value: b.string }, invalidThis: "undefined" },
+          { rustName: "x_number", args: { value: b.f64 } },
+        ],
+      },
+    }),
+  ).toThrow("x: its overloads have one invalidThis");
+  expect(() => b.class({ rustPath: "T", proto: { "@@x": { getter: b.i32 } } })).toThrow(
+    "@@x: an @@ key is only allowed on a function",
+  );
+  expect(() => b.class({ rustPath: "T", proto: { "@@x": { privateSymbol: "x" } } })).toThrow(
+    "@@x: privateSymbol cannot be used with an @@ key",
+  );
+  expect(() => b.class({ rustPath: "T", construct: {}, static: { "@@x": {} } })).toThrow(
+    "@@x: an @@ key is only allowed in proto",
+  );
+  expect(() => b.class({ rustPath: "T", construct: {}, static: { x: { internalField: "x" } } })).toThrow(
+    "x: internalField is not allowed in static",
+  );
+  expect(() => b.class({ rustPath: "T", refCounted: true, proto: { x: { mutates: true } } })).toThrow(
+    "x: mutates is not allowed in a refCounted class",
+  );
+  expect(() => b.class({ rustPath: "T", finalize: true })).toThrow("finalize requires refCounted");
+  expect(() => b.class({ rustPath: "T", proto: { x: { returns: b.self } } })).toThrow(
+    "or passThis to return the object itself",
+  );
   expect(() => b.string.allowStringObject.loose).toThrow(".loose already takes a String object");
   expect(() => b.string.loose.allowStringObject).toThrow(".loose already takes a String object");
   // No overload can have the argument left out, so `undefined` goes to the one that reports its own error.

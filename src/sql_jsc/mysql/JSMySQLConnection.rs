@@ -258,12 +258,7 @@ impl JSMySQLConnection {
         &self,
         f: impl for<'a> FnOnce(JsWrapper<'a, RefPtr<Self>>, &JsHeap<'a>) -> Option<R>,
     ) -> Option<R> {
-        // SAFETY: every caller is a host function or an event-loop callback on the JS thread, and nothing borrowed through another `JsScope` is still in use.
-        unsafe {
-            JsScope::with(self.global_object.as_mut_ptr(), |cx| {
-                f(self.js_value.get().try_get(&cx.heap)?, &cx.heap)
-            })
-        }
+        self.js_value.get().with(&self.global_object, f).flatten()
     }
 
     fn ensure_js_value_is_alive(&self) {

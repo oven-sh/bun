@@ -22,7 +22,7 @@ use bun_core::EncodedSlice;
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
 use bun_io::{KeepAlive, Loop as AsyncLoop};
-use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper, JsWrapperRef};
+use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper, JsWrapperRef};
 use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
 use bun_jsc::{
     self as jsc, CallFrame, EncodedSliceJsc as _, EventLoopHandle, GlobalRef, JSFunction,
@@ -1755,17 +1755,14 @@ impl CronJob {
 
     /// Takes the pending tick's promise out of the wrapper's `pendingPromise` field.
     fn take_pending_promise(&self) -> JSValue {
-        // SAFETY: a promise reaction on the JS thread, and nothing borrowed through another `JsScope` is still in use.
-        unsafe {
-            JsScope::with(self.global.as_mut_ptr(), |cx| {
-                let Some(wrapper) = self.this_value.get().try_get(&cx.heap) else {
-                    return JSValue::UNDEFINED;
-                };
-                let promise = wrapper.pending_promise_field(&cx.heap).to_js();
-                wrapper.set_pending_promise_field(&cx.heap, JsLocal::UNDEFINED);
+        self.this_value
+            .get()
+            .with(&self.global, |wrapper, heap| {
+                let promise = wrapper.pending_promise_field(heap).to_js();
+                wrapper.set_pending_promise_field(heap, JsLocal::UNDEFINED);
                 promise
             })
-        }
+            .unwrap_or(JSValue::UNDEFINED)
     }
 
     pub(crate) fn register(
@@ -1864,39 +1861,23 @@ impl CronJobClass for CronJob {
         self.this_value.with_mut(|r| r.finalize());
     }
 
-    fn stop<'a>(
-        &self,
-        this: JsWrapper<'a, RefPtr<Self>>,
-        _: &JsHeap<'a>,
-    ) -> JsWrapper<'a, RefPtr<Self>> {
+    fn stop<'a>(&self, this: JsWrapper<'a, RefPtr<Self>>) -> JsWrapper<'a, RefPtr<Self>> {
         Self::self_stop(self.self_ref.get().this_ptr(), self.global.bun_vm());
         this
     }
 
-    fn dispose<'a>(
-        &self,
-        this: JsWrapper<'a, RefPtr<Self>>,
-        heap: &JsHeap<'a>,
-    ) -> JsWrapper<'a, RefPtr<Self>> {
-        self.stop(this, heap)
+    fn dispose<'a>(&self, this: JsWrapper<'a, RefPtr<Self>>) -> JsWrapper<'a, RefPtr<Self>> {
+        self.stop(this)
     }
 
-    fn do_ref<'a>(
-        &self,
-        this: JsWrapper<'a, RefPtr<Self>>,
-        _: &JsHeap<'a>,
-    ) -> JsWrapper<'a, RefPtr<Self>> {
+    fn do_ref<'a>(&self, this: JsWrapper<'a, RefPtr<Self>>) -> JsWrapper<'a, RefPtr<Self>> {
         if !self.stopped.get() {
             self.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         }
         this
     }
 
-    fn do_unref<'a>(
-        &self,
-        this: JsWrapper<'a, RefPtr<Self>>,
-        _: &JsHeap<'a>,
-    ) -> JsWrapper<'a, RefPtr<Self>> {
+    fn do_unref<'a>(&self, this: JsWrapper<'a, RefPtr<Self>>) -> JsWrapper<'a, RefPtr<Self>> {
         self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         this
     }

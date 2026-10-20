@@ -525,17 +525,17 @@ outside the object: there is no `estimatedSize` yet.
 If a timer, another thread or a C library can still point at the struct after its JS object
 is collected, make the class [`refCounted`](#refcounted).
 
-| Key              | What it declares                                                                                 |
-| ---------------- | ------------------------------------------------------------------------------------------------ |
-| `rustPath`       | the struct                                                                                       |
-| `construct`      | `new Name(..)`. Without it JavaScript cannot make one; Rust can, with `payload.into_js(heap)`.   |
-| `proto`          | properties of the prototype                                                                      |
-| `static`         | properties of the constructor: native functions and accessors without `setter` or `cache`        |
-| `internalFields` | JS values the object holds                                                                       |
-| `configurable`   | `false` makes the native properties non-configurable                                             |
-| `refCounted`     | the struct is refcounted and [can outlive the object](#refcounted), which holds a `RefPtr` to it |
-| `finalize`       | with `refCounted`: call `fn finalize(&self)` when the object is collected                        |
-| `fromJS`         | generate `Name::from_js(heap, value)`, which downcasts `value` to the wrapper                    |
+| Key              | What it declares                                                                                                                    |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `rustPath`       | the struct                                                                                                                          |
+| `construct`      | `new Name(..)`. Without it JavaScript cannot make one; Rust can, with `payload.into_js(heap)`.                                      |
+| `proto`          | properties of the prototype                                                                                                         |
+| `static`         | properties of the constructor: native functions and accessors without `setter` or `cache`                                           |
+| `internalFields` | JS values the object holds                                                                                                          |
+| `configurable`   | `false` makes the native properties non-configurable                                                                                |
+| `refCounted`     | the struct is refcounted and [can outlive the object](#refcounted), which holds a `RefPtr` to it                                    |
+| `finalize`       | with `refCounted`: call `fn finalize(&self)` when the object is collected                                                           |
+| `fromJS`         | generate `Name::from_js(heap, value)`, which downcasts `value` to the wrapper, and with `refCounted` also `Name::with_js(value, f)` |
 
 Code that has the global object and no capability makes one with
 `payload.into_js_value(global)`, which returns a `JSValue`.
@@ -557,12 +557,14 @@ A property of `proto` is one of:
 
 The properties are in the order of the schema, which `for-in` and `Object.keys` show. The Rust
 function is named after the property. `rustName` names it otherwise, which tells apart the
-overloads of a function, and two members of `proto` and `static` that share a name. An accessor of `static`
+overloads of a function, and two members of `proto` and `static` that share a name. A setter's function is `set_` and
+the getter's Rust name. An accessor of `static`
 ignores its receiver, so a subclass inherits it.
 
 A key that starts with `@@` is a well-known symbol: `"@@dispose"` defines `prototype[Symbol.dispose]`. The function is
-not enumerable, its `name` is `[Symbol.dispose]` and its Rust function is `dispose`. `name` overrides the function's
-`name`: Node's `Timeout.prototype[Symbol.dispose].name` is `""`.
+writable, configurable (even with `configurable: false`) and not enumerable, like the built-in ones. Its `name` is
+`[Symbol.dispose]` and its Rust function is `dispose`. `name` overrides the function's `name`: Node's
+`Timeout.prototype[Symbol.dispose].name` is `""`. Only a function can have an `@@` key.
 
 A native function throws `ERR_INVALID_THIS` when `this` is not an instance. With `invalidThis: "undefined"` it returns
 `undefined` instead, as some of Node's methods do.
@@ -636,7 +638,7 @@ export const CronJob = b.class({
   internalFields: ["callback", "pendingPromise", "cron"],
   proto: {
     cron: { internalField: "cron" },
-    stop: { returns: b.self, passThis: true, capability: "heap" },
+    stop: { returns: b.self, passThis: true },
   },
 });
 ```
@@ -650,7 +652,7 @@ impl CronJobClass for CronJob {
         self.this_value.with_mut(|r| r.finalize());
     }
 
-    fn stop<'a>(&self, this: JsWrapper<'a, RefPtr<Self>>, _: &JsHeap<'a>) -> JsWrapper<'a, RefPtr<Self>> {
+    fn stop<'a>(&self, this: JsWrapper<'a, RefPtr<Self>>) -> JsWrapper<'a, RefPtr<Self>> {
         Self::self_stop(self.self_ref.get().this_ptr(), self.global.bun_vm());
         this
     }
@@ -667,6 +669,9 @@ impl CronJobClass for CronJob {
 - `finalize: true` adds `fn finalize(&self)`, which runs when the object is collected, before its ref is dropped.
   `Drop` runs when the last ref is dropped, which can be much later. `finalize`, like `Drop`, gets no capability.
 - C++ reads the pointer to the struct with `wrapper->wrapped()`.
+- A heap snapshot reports the object's size plus `size_of` the struct.
+- With `fromJS: true`, `Name::with_js(value, |name| ..)` calls the closure with the `RefPtr` if `value` is an instance
+  and returns `None` otherwise. It needs no capability.
 
 To get back to its JS object, the struct stores a `JsWrapperRef<RefPtr<Self>>`, a typed `JsRef`. Make it strong while
 native work needs the object and weak otherwise (`init_weak` for one that is never strong), and call `finalize()` on it
@@ -674,6 +679,12 @@ from the class's `finalize`:
 
 ```rust
 this_value: JsCell<JsWrapperRef<RefPtr<CronJob>>>,
+```
+
+`with` reads or writes the object's internal fields from code that has only the global object:
+
+```rust
+self.this_value.get().with(&self.global, |wrapper, heap| wrapper.callback_field(heap).to_js())
 ```
 
 Event-loop callbacks are not given a capability. Create one with `JsScope::with` and pass `cx` on:

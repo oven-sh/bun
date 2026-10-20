@@ -667,7 +667,7 @@ function cppHeaderForClass(type: ClassType): string {
   const { name } = type;
   return `
 extern "C" const size_t ${symbolName(type, "payloadSize")};
-extern "C" void ${classSymbolName(type, "finalize")}(void*);
+${type.refCounted ? `extern "C" const size_t ${symbolName(type, "wrappedSize")};\n` : ""}extern "C" void ${classSymbolName(type, "finalize")}(void*);
 namespace Bun::Bindgen::Generated {
 struct ${name}Traits {
     static constexpr auto className = ${asciiLiteral(name)};
@@ -675,7 +675,7 @@ struct ${name}Traits {
     static constexpr bool refCounted = ${type.refCounted};
     static constexpr std::array<WTF::ASCIILiteral, ${type.internalFields.length}> internalFieldNames { ${type.internalFields.map(asciiLiteral).join(", ")} };
     static size_t payloadSize() { return ${symbolName(type, "payloadSize")}; }
-    static void finalize(void* payload) { ${classSymbolName(type, "finalize")}(payload); }
+${type.refCounted ? `    static size_t wrappedSize() { return ${symbolName(type, "wrappedSize")}; }\n` : ""}    static void finalize(void* payload) { ${classSymbolName(type, "finalize")}(payload); }
 };
 using JS${name} = JSWrapper<${name}Traits>;
 void setup${name}ClassStructure(JSC::LazyClassStructure::Initializer&);
@@ -1497,7 +1497,7 @@ ${type.refCounted ? "" : `impl bindgen::JsMutablePayload for ${rustPath} {}\n`}/
 const _: () = assert!(align_of::<${payloadType}>() <= 8);
 #[unsafe(no_mangle)]
 pub static ${symbolName(type, "payloadSize")}: usize = size_of::<${payloadType}>();
-#[unsafe(no_mangle)]
+${type.refCounted ? `#[unsafe(no_mangle)]\npub static ${symbolName(type, "wrappedSize")}: usize = size_of::<${rustPath}>();\n` : ""}#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(payload: *mut ${payloadType}) {
     // SAFETY: the sweeper calls this once, on an initialized payload nothing refers to.
     unsafe {${type.finalize ? `\n        <${rustPath} as ${trait}>::finalize(&*payload);` : ""}
@@ -1517,7 +1517,19 @@ impl ${rustPath} {
         // SAFETY: C++ checked the class, and the caller's frame holds \`value\`.
         Some(unsafe { bindgen::JsWrapper::from_extern(cell, heap) })
     }
-}
+${
+  type.refCounted
+    ? `
+    /// Calls \`f\` with the struct if \`value\` is an instance of the class. Returns \`None\` otherwise.
+    #[inline]
+    pub fn with_js<R>(value: JSValue, f: impl FnOnce(&${payloadType}) -> R) -> Option<R> {
+        let cell = core::ptr::NonNull::new(${symbolName(type, "fromJS")}(value))?;
+        // SAFETY: C++ checked the class.
+        Some(unsafe { bindgen::with_ref_counted(cell, f) })
+    }
+`
+    : ""
+}}
 `
     : ""
 }${

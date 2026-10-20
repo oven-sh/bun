@@ -23,7 +23,6 @@ use bun_core::{Output, fmt as bun_fmt};
 use bun_http::header_has_token;
 use bun_http::{self as http, Method, MimeType};
 use bun_jsc::Debugger::DebuggerId;
-use bun_jsc::bindgen::JsScope;
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError,
@@ -756,14 +755,7 @@ impl AnyRoute {
         init_ctx: &mut ServerInitContext,
     ) -> JsResult<Option<AnyRoute>> {
         use bun_collections::zig_hash_map::MapEntry as StdEntry;
-        // SAFETY: a host function on the JS thread, and nothing borrowed through another `JsScope` is still in use.
-        let html_bundle = unsafe {
-            JsScope::with(init_ctx.global.as_mut_ptr(), |cx| {
-                let wrapper = HTMLBundle::from_js(&cx.heap, argument)?;
-                Some(wrapper.with(&cx.payloads, RefPtr::this_ptr))
-            })
-        };
-        if let Some(html_bundle) = html_bundle {
+        if let Some(html_bundle) = HTMLBundle::with_js(argument, RefPtr::this_ptr) {
             let entry = init_ctx
                 .dedupe_html_bundle_map
                 .entry(html_bundle.as_ptr().cast_const());
@@ -1661,19 +1653,10 @@ where
             let _ = unsafe { (*request).request_context.set_timeout(value) };
             return Ok(JSValue::UNDEFINED);
         }
-        // SAFETY: a host function on the JS thread, and nothing borrowed through another `JsScope` is still in use.
-        let is_response = unsafe {
-            JsScope::with(global.as_mut_ptr(), |cx| {
-                let Some(response) = NodeHTTPResponse::from_js(&cx.heap, arguments[0]) else {
-                    return false;
-                };
-                response.with(&cx.payloads, |response| {
-                    response.set_timeout((value % 255) as u8)
-                });
-                true
-            })
-        };
-        if !is_response {
+        let response = NodeHTTPResponse::with_js(arguments[0], |response| {
+            response.set_timeout((value % 255) as u8)
+        });
+        if response.is_none() {
             return Err(self
                 .global()
                 .throw_invalid_arguments(format_args!("timeout() requires a Request object")));

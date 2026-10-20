@@ -4,7 +4,7 @@ export default b.module({ rustPath: "crate::timer::timer::internal_bindings" });
 
 export const monotonicNowMs = b.fn({ returns: b.f64 });
 
-const chainable = { returns: b.self, passThis: true, capability: "heap", invalidThis: "undefined" } as const;
+const chainable = { returns: b.self, passThis: true, invalidThis: "undefined" } as const;
 const construct = { capability: "heap", throws: true } as const;
 const destroyed = { getter: b.bool } as const;
 const hasRef = { returns: b.bool, invalidThis: "undefined" } as const;
@@ -30,7 +30,7 @@ export const Timeout = b.class({
     close: chainable,
     hasRef,
     ref,
-    refresh: { ...chainable, rustName: "do_refresh" },
+    refresh: { ...chainable, capability: "heap", rustName: "do_refresh" },
     unref,
     "@@dispose": dispose,
     "@@toPrimitive": toPrimitive,

@@ -406,19 +406,18 @@ impl All {
                 break 'brk unsafe { core::ptr::addr_of_mut!((*t).internals) };
             }
 
-            let is_timeout =
-                TimeoutObject::with_internals(global_this, timer_id_value, |timeout| {
-                    // clearImmediate should be a noop if anything other than an Immediate is passed to it.
-                    if kind != Kind::SetImmediate {
-                        timeout.cancel(vm);
-                    }
-                })
-                .is_some();
+            let is_timeout = TimeoutObject::with_js(timer_id_value, |timeout| {
+                // clearImmediate should be a noop if anything other than an Immediate is passed to it.
+                if kind != Kind::SetImmediate {
+                    timeout.internals.cancel(vm);
+                }
+            })
+            .is_some();
             if !is_timeout {
-                ImmediateObject::with_internals(global_this, timer_id_value, |immediate| {
+                ImmediateObject::with_js(timer_id_value, |immediate| {
                     // setImmediate can only be cleared by clearImmediate, not by clearTimeout or clearInterval.
                     if kind == Kind::SetImmediate {
-                        immediate.cancel(vm);
+                        immediate.internals.cancel(vm);
                     }
                 });
             }

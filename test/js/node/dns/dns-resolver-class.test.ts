@@ -1,4 +1,5 @@
 // node-dns.test.js resolves public hostnames. These tests need no network.
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import dns from "node:dns";
 
@@ -58,5 +59,15 @@ describe.each([
     };
     expect(thrownBy()).toEqual({ name: "TypeError", code, message: expect.any(String) });
     expect(thrownBy()).toEqual(thrownBy(undefined));
+  });
+
+  test("_handle.setLocalAddress() converts both arguments before it checks the first", () => {
+    expect(() => new Resolver()._handle.setLocalAddress("a.test", Symbol())).toThrow(
+      "Cannot convert a symbol to a string",
+    );
+  });
+
+  test("the size of _handle includes the native resolver", () => {
+    expect(estimateShallowMemoryUsageOf(new Resolver()._handle)).toBeGreaterThan(1024);
   });
 });

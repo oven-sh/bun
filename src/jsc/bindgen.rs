@@ -647,6 +647,21 @@ unsafe impl<T: JsRefCounted> JsPayload for RefPtr<T> {
     }
 }
 
+/// # Safety
+/// `cell` is the wrapper of a `T`.
+#[doc(hidden)]
+#[inline(always)]
+pub unsafe fn with_ref_counted<T: JsRefCounted, R>(
+    cell: NonNull<c_void>,
+    f: impl FnOnce(&RefPtr<T>) -> R,
+) -> R {
+    let wrapper = JsWrapper::<RefPtr<T>>(cell, PhantomData, PhantomData);
+    // SAFETY: a `RefPtr` payload is never lent as `&mut`, and the cell is kept alive until `f` returns.
+    let result = f(unsafe { &*wrapper.payload() });
+    wrapper.as_value().0.ensure_still_alive();
+    result
+}
+
 /// The JS object that wraps a `T`. The payload is reached only through [`JsPayloads`].
 #[repr(transparent)]
 pub struct JsWrapper<'a, T: JsPayload>(
@@ -821,6 +836,20 @@ impl<T: JsPayload> JsWrapperRef<T> {
         Some(unsafe {
             JsWrapper::from_extern(NonNull::new_unchecked(value.encoded() as *mut c_void), heap)
         })
+    }
+    /// Calls `f` with the wrapper and a heap to read its internal fields with. Returns `None` where [`try_get`](Self::try_get) does.
+    #[inline]
+    pub fn with<R>(
+        &self,
+        global: &JSGlobalObject,
+        f: impl for<'a> FnOnce(JsWrapper<'a, T>, &JsHeap<'a>) -> R,
+    ) -> Option<R> {
+        // SAFETY: a `JsHeap` is the global object, and `for<'a>` keeps the wrapper inside `f`.
+        let heap = unsafe { &*core::ptr::from_ref(global).cast::<JsHeap<'_>>() };
+        let wrapper = self.try_get(heap)?;
+        let result = f(wrapper, heap);
+        wrapper.as_value().0.ensure_still_alive();
+        Some(result)
     }
     #[inline]
     pub fn set_strong<'a>(&mut self, heap: &JsHeap<'a>, wrapper: JsWrapper<'a, T>) {

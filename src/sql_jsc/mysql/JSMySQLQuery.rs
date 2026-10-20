@@ -9,7 +9,6 @@ use crate::jsc::{
 use crate::shared::cached_structure::Undescribed;
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_jsc::JsCell;
-use bun_jsc::bindgen::JsScope;
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
@@ -101,14 +100,7 @@ impl JSMySQLQuery {
                 "run must be called with 2 arguments connection and target"
             )));
         }
-        // SAFETY: a host function on the JS thread, and nothing borrowed through another `JsScope` is still in use.
-        let connection = unsafe {
-            JsScope::with(global_object.as_mut_ptr(), |cx| {
-                let connection = MySQLConnection::from_js(&cx.heap, arguments[0])?;
-                Some(connection.with(&cx.payloads, RefPtr::this_ptr))
-            })
-        };
-        let Some(connection) = connection else {
+        let Some(connection) = MySQLConnection::with_js(arguments[0], RefPtr::this_ptr) else {
             return Err(global_object.throw(format_args!("connection must be a MySQLConnection")));
         };
         let connection: &MySQLConnection = &connection;

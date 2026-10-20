@@ -135,21 +135,6 @@ macro_rules! impl_timer_object {
                 }
                 js_value
             }
-
-            /// Calls `f` with the timer's internals if `value` is an instance of the class, and returns `None` otherwise.
-            pub(crate) fn with_internals<R>(
-                global: &::bun_jsc::JSGlobalObject,
-                value: ::bun_jsc::JSValue,
-                f: impl FnOnce(&super::TimerObjectInternals) -> R,
-            ) -> Option<R> {
-                // SAFETY: a `&JSGlobalObject` only exists on its JS thread, nothing borrowed through another `JsScope` is still in use, and `f` is given no scope to borrow through.
-                unsafe {
-                    ::bun_jsc::bindgen::JsScope::with(global.as_mut_ptr(), |cx| {
-                        let wrapper = Self::from_js(&cx.heap, value)?;
-                        Some(wrapper.with(&cx.payloads, |timer| f(&timer.internals)))
-                    })
-                }
-            }
         }
 
         impl $Class for $T {
@@ -168,7 +153,6 @@ macro_rules! impl_timer_object {
             fn do_ref<'a>(
                 &self,
                 this: ::bun_jsc::bindgen::JsWrapper<'a, ::bun_ptr::RefPtr<Self>>,
-                _: &::bun_jsc::bindgen::JsHeap<'a>,
             ) -> ::bun_jsc::bindgen::JsWrapper<'a, ::bun_ptr::RefPtr<Self>> {
                 self.internals.do_ref();
                 this
@@ -177,7 +161,6 @@ macro_rules! impl_timer_object {
             fn do_unref<'a>(
                 &self,
                 this: ::bun_jsc::bindgen::JsWrapper<'a, ::bun_ptr::RefPtr<Self>>,
-                _: &::bun_jsc::bindgen::JsHeap<'a>,
             ) -> ::bun_jsc::bindgen::JsWrapper<'a, ::bun_ptr::RefPtr<Self>> {
                 self.internals.do_unref();
                 this

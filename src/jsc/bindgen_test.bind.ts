@@ -257,8 +257,8 @@ export const TestRefCounted = b.class({
     "@@toPrimitive": { returns: b.i32, name: "" },
     valueOrUndefined: { returns: b.i32, invalidThis: "undefined" },
     /** Returns `this`, or nothing if the value is negative. */
-    orUndefined: { returns: b.self.optional, passThis: true, capability: "heap" },
-    orNull: { returns: b.self.nullable, passThis: true, capability: "heap" },
+    orUndefined: { returns: b.self.optional, passThis: true },
+    orNull: { returns: b.self.nullable, passThis: true },
     isSame: { args: { other: b.self.nullable }, returns: b.bool, passThis: true, capability: "heap" },
   },
   static: {

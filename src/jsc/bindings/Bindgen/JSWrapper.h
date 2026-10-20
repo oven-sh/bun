@@ -60,6 +60,14 @@ public:
         analyzeInternalFields(cell, analyzer, uncheckedDowncast<JSWrapper>(cell)->internalFields(), Traits::internalFieldNames);
     }
 
+    static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
+    {
+        if constexpr (Traits::refCounted)
+            return Base::estimatedSize(cell, vm) + Traits::wrappedSize();
+        else
+            return Base::estimatedSize(cell, vm);
+    }
+
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {

@@ -1,6 +1,6 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
-const chainable = { returns: b.self, passThis: true, capability: "heap" } as const;
+const chainable = { returns: b.self, passThis: true } as const;
 
 export const CronJob = b.class({
   rustPath: "crate::api::cron::CronJob",

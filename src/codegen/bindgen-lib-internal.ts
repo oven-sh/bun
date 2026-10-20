@@ -1735,7 +1735,7 @@ export class Signature {
   readonly throws: boolean;
   readonly rustPath: string | undefined;
   readonly length: number | undefined;
-  constructor(options: SignatureOptions) {
+  constructor(options: SignatureOptions, passThis = false) {
     this.length = options.length;
     const { args = {}, expected = {} } = options;
     this.args = Object.entries(args).map(([name, type]) => ({ name, type, expected: expected[name] }));
@@ -1770,8 +1770,8 @@ export class Signature {
     );
     assert(!(this.returns instanceof DefaultType), "a result has no default");
     assert(
-      !this.returns.holdsJSValue || this.capability !== "none",
-      'returning a JS value takes capability: "heap" or "js"',
+      !this.returns.holdsJSValue || this.capability !== "none" || passThis,
+      'returning a JS value takes capability: "heap" or "js", or passThis to return the object itself',
     );
   }
   /** The arguments up to the last that is not optional: what a caller writes at least. */
@@ -1943,7 +1943,7 @@ export class Method extends Signature {
   readonly privateSymbol: string | undefined;
   readonly functionName: string | undefined;
   constructor(name: string, options: FunctionField, isStatic = false, refCounted = false) {
-    super(options);
+    super(options, !!options.passThis);
     this.name = name;
     this.rustName = memberRustName(options.rustName ?? snakeCase(memberIdentifier(name)));
     assert(
@@ -2087,6 +2087,10 @@ export class ClassType extends NamedType {
     this.construct = options.construct ? new Signature(resolve(options.construct)) : null;
     const members = (fields: Record<string, Field>, isStatic: boolean) =>
       Object.entries(fields).map(([name, field]): ClassMember => {
+        assert(
+          !wellKnownSymbol(name) || !("builtin" in field || "internalField" in field || "getter" in field),
+          `${name}: an @@ key is only allowed on a function`,
+        );
         if ("builtin" in field) {
           assert(!isStatic, `${name}: a builtin is a property of the prototype`);
           return new Builtin(name, field.length);
@@ -2100,10 +2104,11 @@ export class ClassType extends NamedType {
           return new Getter(name, { ...field, getter: own(field.getter) }, isStatic, this.refCounted);
         }
         const overloads: readonly FunctionField[] = Array.isArray(field) ? field : [field];
-        assert(
-          overloads.every(overload => overload.privateSymbol === overloads[0]?.privateSymbol),
-          `${name}: its overloads have one privateSymbol`,
-        );
+        for (const key of ["privateSymbol", "invalidThis", "name"] as const)
+          assert(
+            overloads.every(overload => overload[key] === overloads[0]?.[key]),
+            `${name}: its overloads have one ${key}`,
+          );
         assert(!(isStatic && wellKnownSymbol(name)), `${name}: an @@ key is only allowed in proto`);
         const fn = new FunctionDefinition(
           overloads.map(overload => new Method(name, resolve(overload), isStatic, this.refCounted)),

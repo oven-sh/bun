@@ -1597,11 +1597,9 @@ impl<'a> Formatter<'a> {
                         return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
                             writer.ctx, value, JSType::Event,
                         );
-                    } else if let Some((id, kind)) = crate::timer::TimeoutObject::with_internals(
-                        self.global_this,
-                        value,
-                        |internals| (internals.id, internals.flags.get().kind()),
-                    ) {
+                    } else if let Some((id, kind)) = crate::timer::TimeoutObject::with_js(value, |timeout| {
+                        (timeout.internals.id, timeout.internals.flags.get().kind())
+                    }) {
                         self.add_for_new_line(b"Timeout(# ) ".len() + bun_fmt::digit_count(id.max(0)));
                         if kind == crate::timer::Kind::SetInterval {
                             self.add_for_new_line(b"repeats ".len() + bun_fmt::digit_count(id.max(0)));
@@ -1631,11 +1629,8 @@ impl<'a> Formatter<'a> {
                         }
 
                         return Ok(());
-                    } else if let Some(id) = crate::timer::ImmediateObject::with_internals(
-                        self.global_this,
-                        value,
-                        |internals| internals.id,
-                    ) {
+                    } else if let Some(id) = crate::timer::ImmediateObject::with_js(value, |immediate| immediate.internals.id)
+                    {
                         self.add_for_new_line(b"Immediate(# ) ".len() + bun_fmt::digit_count(id.max(0)));
                         writer.print(format_args!(
                             "{}Immediate{} {}(#{}{}{}{}){}",

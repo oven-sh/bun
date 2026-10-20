@@ -7111,7 +7111,11 @@ it.if(isPosix)("realpath resolves a path when the process is out of file descrip
     }
     realpath(target)
       .then(r => (out.promises = r), e => (out.promises = e.code))
-      .then(() => console.log(JSON.stringify(out)));
+      .then(() => {
+        // LeakSanitizer reads /proc/self/task at exit, which needs a free fd.
+        for (const fd of held) fs.closeSync(fd);
+        console.log(JSON.stringify(out));
+      });
   `;
   await using proc = Bun.spawn({
     cmd: ["/bin/sh", "-c", `ulimit -n 64; exec "$0" -e "$1"`, bunExe(), script],

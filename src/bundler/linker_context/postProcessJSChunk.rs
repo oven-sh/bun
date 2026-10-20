@@ -49,6 +49,18 @@ fn split_banner_hashbang(banner: &[u8]) -> (&[u8], &[u8]) {
     )
 }
 
+/// The banner without the hashbang comment it starts with. As in the lexer, the
+/// comment ends at the first line break, so the text after a lone CR stays.
+fn banner_without_hashbang(banner: &[u8]) -> &[u8] {
+    if !banner.starts_with(b"#!") {
+        return banner;
+    }
+    match strings::find_js_line_break(banner) {
+        Some((at, len)) => strings::trim_left(&banner[at + len..], b"\r\n"),
+        None => b"",
+    }
+}
+
 /// `__chunks(import.meta.url, ids, nodes, 0)` for a browser entry chunk of a
 /// split bundle: the chunk graph `__preload` walks (see runtime.js).
 fn module_preload_registration(
@@ -463,8 +475,10 @@ pub(crate) fn post_process_js_chunk(
     // Add the banner for all chunks. Its hashbang is only valid as the first bytes of the file.
     let banner = if j.len == 0 {
         c.options.banner
-    } else {
+    } else if source_hashbang.is_empty() {
         banner_rest
+    } else {
+        banner_without_hashbang(c.options.banner)
     };
     if !banner.is_empty() {
         j.push_static(banner);

@@ -21,7 +21,7 @@ namespace Bun {
 // and no-op — the block's dispose (~Ref) drops the last reference.
 class WebViewHost : public RefCounted<WebViewHost> {
 public:
-    static Ref<WebViewHost> createForIPC(uint32_t viewId, uint32_t width, uint32_t height, const WTF::String& persistDir);
+    static Ref<WebViewHost> createForIPC(uint32_t viewId, uint32_t width, uint32_t height, const WTF::String& persistDir, const WTF::String& userAgent);
     ~WebViewHost();
 
     void navigateIPC(const WTF::String& url);
@@ -56,7 +56,12 @@ public:
     WTF::String title();
 
     // Delegate IMP / block callbacks — fire inside CFRunLoop.
+    void onNavigationStarted();
+    // status is the main frame's HTTP status code, 0 for a non-HTTP response.
+    void onNavigationResponse(uint16_t status);
+    void onNavigationCommitted();
     void onNavigationFinished();
+    void onSameDocumentNavigation();
     void onNavigationFailed(const WTF::String& err);
     void onEvalComplete(id result, id error);
     void onScreenshotComplete(id nsimage, id error);
@@ -77,6 +82,19 @@ private:
     // (INVALID_STATE on overlap), and the block correlation in ObjCRuntime
     // (single m_evalTarget) requires it.
     bool m_navPending = false;
+    // Main-frame HTTP status of the navigation in flight, and whether a
+    // response policy callback delivered it. Resolved at commit: a
+    // back-forward cache restore has no response, so its status is read
+    // back from the history item it lands on
+    // (objc::WKBackForwardListItem::status). A load that commits into the
+    // committed document's own item (location.replace, reload) is not a
+    // restore.
+    uint16_t m_status = 0;
+    bool m_responseSeen = false;
+    // The committed document's history item and status. Same-document
+    // navigations move the item and stamp it with the status.
+    id m_documentItem = nullptr;
+    uint16_t m_documentStatus = 0;
     bool m_evalPending = false;
     bool m_screenshotPending = false;
     // Stashed by screenshotIPC; read by onScreenshotComplete to pick the

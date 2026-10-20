@@ -63,12 +63,13 @@ test.concurrent("navigate, events and evaluate cross the pipes", async () => {
     await view.navigate("http://fake/page");
     const value = await view.evaluate("({ answer: 6 * 7, text: 'from the fake' })");
     const undef = typeof (await view.evaluate("undefined"));
-    print({ url: view.url, title: view.title, value, undef });
+    print({ url: view.url, title: view.title, status: view.status, value, undef });
     view.close();
   `);
   expect(result).toEqual({
     url: "http://fake/page",
     title: "fake chrome",
+    status: 200,
     value: { answer: 42, text: "from the fake" },
     undef: "undefined",
   });

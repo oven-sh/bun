@@ -558,6 +558,10 @@ fn spawn(
             // CDP message rate limiter — a burst of evaluates/clicks in a test
             // loop hits it otherwise. Playwright and puppeteer both ship this.
             c"--disable-ipc-flooding-protection".as_ptr(),
+            // A page restored from the back-forward cache fires no
+            // Page.loadEventFired, so goBack()/goForward() to an HTTP page
+            // would never settle. Playwright ships the same switch.
+            c"--disable-back-forward-cache".as_ptr(),
             // No startup window — targets are Target.createTarget'd, not the
             // default about:blank. Saves one tab and the visual-complete wait.
             c"--no-startup-window".as_ptr(),

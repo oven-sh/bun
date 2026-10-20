@@ -4710,8 +4710,7 @@ impl Program {
                     i = end;
                 }
                 b'/' => {
-                    // `{**,a}/*`: its globstar doesn't match at the end of the path, so on `x/` the skip can't go on with it
-                    // after the separator. It matches wherever this `/` does instead, which is how any other alternative ends.
+                    // `{**,a}/*` matches `x/`: the `**` can end before this `/`, like any other alternative.
                     if &glob[i..] == b"/*" {
                         for it in waiting.iter().rev().take_while(|it| it.0 as usize == i) {
                             to.imply_node(it.1 + 1);

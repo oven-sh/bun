@@ -1496,6 +1496,7 @@ impl<'a> Transpiler<'a> {
                 // TC39 standard decorators have their own metadata mechanism.
                 opts.features.standard_decorators = !loader.is_typescript()
                     || !(this_parse.experimental_decorators || this_parse.emit_decorator_metadata);
+                opts.features.code_coverage = self.options.code_coverage;
                 opts.features.allow_runtime = self.options.allow_runtime;
                 opts.features.set_breakpoint_on_first_line =
                     this_parse.set_breakpoint_on_first_line;

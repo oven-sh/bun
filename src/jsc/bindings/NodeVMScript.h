@@ -10,13 +10,13 @@ namespace Bun {
 
 class ScriptOptions : public BaseVMOptions {
 public:
-    WTF::Vector<uint8_t> cachedData;
     std::optional<int64_t> timeout = std::nullopt;
     bool produceCachedData = false;
 
     using BaseVMOptions::BaseVMOptions;
 
-    bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg, JSValue* importer);
+    // cachedData goes to the caller: these options live as long as the Script, and the blob is only read while it is constructed.
+    bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg, JSValue* importer, WTF::Vector<uint8_t>& cachedData);
 };
 
 class NodeVMScriptConstructor final : public JSC::InternalFunction {
@@ -62,7 +62,6 @@ public:
 
     static JSObject* createPrototype(VM& vm, JSGlobalObject* globalObject);
 
-    JSC::ProgramExecutable* createExecutable();
     void cacheBytecode();
     JSC::JSUint8Array* getBytecodeBuffer();
 
@@ -74,8 +73,6 @@ public:
 
     const JSC::SourceCode& source() const { return m_source; }
     const ScriptOptions& options() const { return m_options; }
-    WTF::Vector<uint8_t>& cachedData() { return m_options.cachedData; }
-    JSC::ProgramExecutable* cachedExecutable() const { return m_cachedExecutable.get(); }
     bool cachedDataProduced() const { return m_cachedDataProduced; }
     void cachedDataProduced(bool value) { m_cachedDataProduced = value; }
     TriState cachedDataRejected() const { return m_cachedDataRejected; }
@@ -87,7 +84,6 @@ private:
     JSC::SourceCode m_source;
     RefPtr<JSC::CachedBytecode> m_cachedBytecode;
     JSC::WriteBarrier<JSC::JSUint8Array> m_cachedBytecodeBuffer;
-    JSC::WriteBarrier<JSC::ProgramExecutable> m_cachedExecutable;
     // The compile every run links. Only recompiled (and replaced) when a global object with a different
     // CodeGenerationMode, i.e. a debugger attached, runs the Script.
     JSC::WriteBarrier<JSC::UnlinkedProgramCodeBlock> m_unlinkedCodeBlock;

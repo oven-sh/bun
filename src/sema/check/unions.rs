@@ -55,15 +55,6 @@ enum Inspected {
     Constraints,
 }
 
-/// How `add_in_order` sorted a union's members.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum Shortcut {
-    /// `join_by_position`, with the union that contains all of them.
-    Joined(TypeId),
-    /// `merge_sorted_runs`
-    Merged,
-}
-
 /// A member of a union that's being merged, with the data `CompareTypes` looks at first.
 #[derive(Copy, Clone)]
 struct Ranked<'p> {
@@ -534,8 +525,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn create_unreduced_union(&mut self, types: &[TypeId]) -> TypeId {
         let mut members = Flat::new();
-        let shortcut = self.add_in_order(&mut members, types);
-        if shortcut.is_none() {
+        let is_sorted = self.add_in_order(&mut members, types);
+        if !is_sorted {
             self.add_in_id_order(&mut members, types);
         }
         if members.first() == Some(&TypeId::UNRESOLVED) {
@@ -546,7 +537,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.p.files.options.strict_null_checks {
             members.retain(|m| !m.is_undefined() && !m.is_null());
         }
-        self.union_of_type_set(types, members, shortcut, FirstRequest::NONE)
+        self.union_of_type_set(types, members, is_sorted, FirstRequest::NONE)
     }
 
     /// Adds the members of `types`, deduplicated and sorted by id.
@@ -559,44 +550,40 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The end of `getUnionTypeWorker`. Returns the union of `members`, which is what's left of the `typeSet` of
-    /// `actual`. They're already sorted if there's a `shortcut`. `first_request`: see `Types::as_first_request`.
+    /// `actual`. `first_request`: see `Types::as_first_request`.
     fn union_of_type_set(
         &mut self,
         actual: &[TypeId],
         mut members: Flat,
-        shortcut: Option<Shortcut>,
+        is_sorted: bool,
         first_request: FirstRequest,
     ) -> TypeId {
-        if shortcut.is_none() {
+        if !is_sorted {
             self.sort_types(&mut members);
         }
         if members.is_empty() {
             return TypeId::NEVER;
         }
-        let union = (self.types()).as_first_request(first_request, || {
+        (self.types()).as_first_request(first_request, || {
             self.union_of_named_unions(actual, &members)
-        });
-        if let Some(Shortcut::Joined(whole)) = shortcut {
-            self.note_part(union, whole);
-        }
-        union
+        })
     }
 
     /// `getUnionTypeWorker` with `UnionReductionLiteral`.
     #[inline(never)]
     fn create_union(&mut self, actual: &[TypeId], merge_constrained: bool) -> (TypeId, Inspected) {
         let mut members = Flat::new();
-        // With a shortcut, no member is `any` or `unknown`.
-        let mut shortcut = self.add_in_order(&mut members, actual);
-        if shortcut.is_none() {
+        // If so, no member is `any` or `unknown`.
+        let mut is_sorted = self.add_in_order(&mut members, actual);
+        if !is_sorted {
             self.add_in_id_order(&mut members, actual);
         }
         // `TypeFlagsIncludesWildcard`
-        if shortcut.is_none() && members.contains(&TypeId::WILDCARD) {
+        if !is_sorted && members.contains(&TypeId::WILDCARD) {
             return (TypeId::WILDCARD, Inspected::Members);
         }
         // `TypeFlagsIncludesError`: the error type takes precedence over `any` and `unknown`.
-        if shortcut.is_none()
+        if !is_sorted
             && members.first() != Some(&TypeId::UNRESOLVED)
             && members.iter().any(|&member| self.is_error_type(member))
         {
@@ -640,7 +627,7 @@ impl<'p, 's> Checker<'p, 's> {
         for m in members.iter() {
             if m.arrival_order() < 32 {
                 low |= 1 << m.arrival_order();
-            } else if shortcut.is_none() {
+            } else if !is_sorted {
                 break;
             }
         }
@@ -690,7 +677,7 @@ impl<'p, 's> Checker<'p, 's> {
                 } else {
                     Flat::new()
                 };
-                if shortcut.is_some() {
+                if is_sorted {
                     sort_by_id(&mut snapshot);
                 }
                 members.retain(|m| {
@@ -736,7 +723,7 @@ impl<'p, 's> Checker<'p, 's> {
                     };
                     // Both evaluate something for each member, and evaluation order determines the
                     // creation order of types. tsgo keeps the set sorted from the start.
-                    if shortcut.is_none() {
+                    if !is_sorted {
                         self.sort_types(&mut members);
                     }
                 }
@@ -746,7 +733,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if has_constrained {
                     self.remove_constrained_type_variables(&mut members);
                     // This may have added a type variable, which leaves the members sorted by id.
-                    shortcut = None;
+                    is_sorted = false;
                 }
             }
         }
@@ -755,8 +742,8 @@ impl<'p, 's> Checker<'p, 's> {
             true => FirstRequest::WITHOUT_PRIMITIVE_UNION,
             false => FirstRequest::NONE,
         };
-        // Without a shortcut, the members have been in id order up to here.
-        let union = self.union_of_type_set(actual, members, shortcut, first_request);
+        // Members that aren't sorted have been in id order up to here.
+        let union = self.union_of_type_set(actual, members, is_sorted, first_request);
         (union, inspected)
     }
 
@@ -1049,9 +1036,7 @@ impl<'p, 's> Checker<'p, 's> {
             if !is_reduced {
                 return union;
             }
-            let reduced = self.union_of_named_unions(types, &members);
-            self.note_part(reduced, union);
-            return reduced;
+            return self.union_of_named_unions(types, &members);
         }
         let len = members.len();
         let mut actual: Vec<TypeId> = Vec::with_capacity(len);
@@ -1182,8 +1167,7 @@ impl<'p, 's> Checker<'p, 's> {
             .map(|(&m, _)| m)
             .collect();
         self.order_as_in(union, &mut kept);
-        let shortcut = Some(Shortcut::Joined(union));
-        self.union_of_type_set(types, kept, shortcut, FirstRequest::NONE)
+        self.union_of_type_set(types, kept, true, FirstRequest::NONE)
     }
 
     /// `removeSubtypes`, keyProperty: returns the first property of `ty` whose type is a unit type, and that type.
@@ -1254,7 +1238,7 @@ impl<'p, 's> Checker<'p, 's> {
                             false => FirstRequest::WITHOUT_PRIMITIVE_UNION,
                         };
                         let types = self.types();
-                        let filtered = types.as_first_request(first_request, || {
+                        types.as_first_request(first_request, || {
                             types.intern_key_with(
                                 TypeKey::Union(&kept),
                                 &ProvenanceKey {
@@ -1267,9 +1251,7 @@ impl<'p, 's> Checker<'p, 's> {
                                     has_other_instantiation: false,
                                 },
                             )
-                        });
-                        self.note_part(filtered, ty);
-                        filtered
+                        })
                     }
                 }
             }
@@ -1358,7 +1340,6 @@ impl<'p, 's> Checker<'p, 's> {
                         };
                         kept == union
                     });
-                    self.note_part(kept, ty);
                     kept
                 } else if no_reductions {
                     self.union_unreduced(&mapped)
@@ -2805,37 +2786,30 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// FOR SPEED: fills the empty `members` with the deduplicated members of `actual` in `CompareTypes` order, without
-    /// sorting what's already sorted. Returns `None` if `members` is still empty and the caller has to sort.
+    /// sorting what's already sorted. Returns false if `members` is still empty and the caller has to sort.
     ///
     /// Most of the types a union is built from are unions, whose members are sorted. The caller also has to look at
     /// the members if one of them is `any` or `unknown`, which absorb the whole union.
-    fn add_in_order(&self, members: &mut Flat, actual: &[TypeId]) -> Option<Shortcut> {
+    fn add_in_order(&self, members: &mut Flat, actual: &[TypeId]) -> bool {
         let mut runs = 0;
         for &ty in actual {
             // `any` and `unknown` have the lowest flags, so they come first.
             if let Some(&first) = self.parts(ty).first()
                 && self.flags(first) & (tf::ANY | tf::UNKNOWN) != 0
             {
-                return None;
+                return false;
             }
             runs += usize::from(self.is_union(ty));
         }
         // Two types that aren't unions take one comparison either way.
         if runs == 0 && actual.len() < 3 {
-            return None;
+            return false;
         }
         // Next to a single union, the search for a type's position also tells whether the union already has it.
-        let joined = match runs > 1 {
-            true => self.join_by_position(members, actual),
-            false => None,
-        };
-        Some(match joined {
-            Some(whole) => Shortcut::Joined(whole),
-            None => {
-                self.merge_sorted_runs(members, actual);
-                Shortcut::Merged
-            }
-        })
+        if runs < 2 || !self.join_by_position(members, actual) {
+            self.merge_sorted_runs(members, actual);
+        }
+        true
     }
 
     /// FOR SPEED: sorts `kept`, a subset of the members of the union `whole`, into union order.
@@ -2852,36 +2826,27 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// FOR SPEED: narrowing removes members from a union, and where the branches join, the remaining members are
     /// combined again. If the members of each of `actual` are a subsequence of one union's members, then their union
-    /// has the members at all those positions, in that order, and nothing needs to be compared. Returns that one union.
-    ///
-    /// It's one of `actual`, or the union that one of them was derived from. `superset_unions` only suggests a
-    /// candidate. The positions are verified here.
-    fn join_by_position(&self, members: &mut Flat, actual: &[TypeId]) -> Option<TypeId> {
-        let (mut total, mut longest, mut remembered) = (0, TypeId::NEVER, None);
+    /// has the members at all those positions, in that order, and nothing needs to be compared. The longest of `actual` is
+    /// tried. Returns false if `members` is still empty.
+    fn join_by_position(&self, members: &mut Flat, actual: &[TypeId]) -> bool {
+        let (mut total, mut all) = (0, &[][..]);
         for &ty in actual {
-            let len = self.parts(ty).len();
-            total += len;
-            if len > self.parts(longest).len() {
-                longest = ty;
-            }
-            if remembered.is_none() && len > 1 {
-                remembered = self.superset_unions.get(ty.0, 0).map(TypeId);
+            let parts = self.parts(ty);
+            total += parts.len();
+            if parts.len() > all.len() {
+                all = parts;
             }
         }
-        let longest = (remembered != Some(longest)).then_some(longest);
-        for whole in remembered.into_iter().chain(longest) {
-            let all = self.parts(whole);
-            // Each of `actual` is searched for from the start of `all`, which isn't worth it if `all` is much longer
-            // than the requested union.
-            if actual.len() * all.len() > MAX_STEPS_PER_POSITION * total {
-                continue;
-            }
-            if let Some(positions) = self.positions_in(all, actual) {
-                members.extend(positions.iter().map(|at| all[at]));
-                return Some(whole);
-            }
+        // Each of `actual` is searched for from the start of `all`, which isn't worth it if `all` is much longer than
+        // the requested union.
+        if actual.len() * all.len() > MAX_STEPS_PER_POSITION * total {
+            return false;
         }
-        None
+        let Some(positions) = self.positions_in(all, actual) else {
+            return false;
+        };
+        members.extend(positions.iter().map(|at| all[at]));
+        true
     }
 
     /// Returns the positions of the members of `actual` in `all`, the members of a union, if `all` has every one of
@@ -3078,16 +3043,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.look_up_name(a);
         self.look_up_name(b);
         some_first(a.name, b.name).then_with(|| self.compare_types(a.ty, b.ty))
-    }
-
-    /// Records that the members of `part` may be among the members of the union `whole`.
-    fn note_part(&mut self, part: TypeId, whole: TypeId) {
-        if part == whole || !self.is_union(part) {
-            return;
-        }
-        // `whole` may be a part itself.
-        let whole = self.superset_unions.get(whole.0, 0).unwrap_or(whole.0);
-        self.superset_unions.put(part.0, 0, whole);
     }
 
     /// `containsType` for the members of a union. It tests identity, and comparing two types costs more than a linear

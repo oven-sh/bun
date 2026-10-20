@@ -925,7 +925,6 @@ impl<'s> Program<'s> {
             recent_unreduced_unions: Default::default(),
             unions_of_union_types: Default::default(),
             union_calls: Default::default(),
-            superset_unions: Default::default(),
             constraint_stack: Vec::new(),
             constraints_marked_circular: Vec::new(),
             circular_constraint_origins: Vec::new(),
@@ -1771,9 +1770,6 @@ pub struct Checker<'p, 's> {
     /// `unionOfUnionTypes`, for `UnionReductionSubtype`: the lower id first.
     unions_of_union_types: FxHashMap<(TypeId, TypeId), TypeId>,
     union_calls: unions::UnionCalls,
-    /// Maps a union that has some of another union's members to that other union, keyed by the id
-    /// and 0. See `join_by_position`.
-    superset_unions: instantiate::Recent,
     /// The `stack` of `getResolvedBaseConstraint`: the recursion identities of the nested
     /// constraint computations in progress.
     constraint_stack: Vec<relate::RecursionId>,

@@ -48,6 +48,13 @@ A `workspace:`, `file:`, or `link:` dependency loads from its folder on disk, an
 
 Without a lockfile, Bun reads `overrides`, `resolutions`, `catalog`, `catalogs`, and `workspaces` from the `package.json` of the project root. A peer dependency of an auto-installed package loads the version that this `package.json` lists, if it lists one.
 
+Bun does not use `latest` for an import that a [`paths`](/runtime/module-resolution#path-re-mapping) key in `tsconfig.json` or `jsconfig.json` maps to a file of the project that does not exist. The import fails and the registry is not asked. The key must name the package: the import itself, `name/*`, or `@scope/name/*`. Bun asks the registry as usual when:
+
+- a `package.json` lists the name, or `overrides` or `resolutions` gives it a version from the registry
+- the import has a version
+- the key maps to a declaration file (`.d.ts`), or to the folder of that package or of its `@types` package in `node_modules`
+- `-i`, `--install=fallback`, or `--install=force` is set, or the same [`install.auto`](/runtime/bunfig#install-auto) value
+
 ---
 
 ## Cache behavior

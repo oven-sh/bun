@@ -1035,7 +1035,10 @@ impl<'a> Resolver<'a> {
         if tsconfig.paths.count() == 0 {
             return MatchStatus::NotFound;
         }
-        self.match_tsconfig_paths(&tsconfig, import_path, kind, out)
+        match self.match_tsconfig_paths(&tsconfig, import_path, kind, out) {
+            PathsMatch::Found => MatchStatus::Success,
+            PathsMatch::Missed | PathsMatch::Unmatched => MatchStatus::NotFound,
+        }
     }
 
     pub(crate) fn flush_debug_logs(&mut self, flush_mode: FlushMode) -> crate::CrateResult<()> {
@@ -1816,9 +1819,8 @@ impl<'a> Resolver<'a> {
                 if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir_info) {
                     if tsconfig.paths.count() > 0 {
                         let mut res = MatchResult::default();
-                        if self
-                            .match_tsconfig_paths(&tsconfig, import_path, kind, &mut res)
-                            .is_success()
+                        if self.match_tsconfig_paths(&tsconfig, import_path, kind, &mut res)
+                            == PathsMatch::Found
                         {
                             // We don't set the directory fd here because it might remap an entirely different directory
                             return ResultUnion::Success(Result {
@@ -2556,13 +2558,12 @@ impl<'a> Resolver<'a> {
 
         // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
 
+        let mut paths_match = PathsMatch::Unmatched;
         if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir_info) {
             // Try path substitutions first
             if tsconfig.paths.count() > 0 {
-                if self
-                    .match_tsconfig_paths(&tsconfig, import_path, kind, out)
-                    .is_success()
-                {
+                paths_match = self.match_tsconfig_paths(&tsconfig, import_path, kind, out);
+                if paths_match == PathsMatch::Found {
                     if let Some(d) = self.debug_logs.as_mut() {
                         d.decrease_indent();
                     }
@@ -3117,6 +3118,22 @@ impl<'a> Resolver<'a> {
                     let resolution: Resolution = 'brk: {
                         if resolved_package_id == Install::INVALID_PACKAGE_ID {
                             if dependency_version.tag == Dependency::version::Tag::Uninitialized {
+                                // No package.json declares a version for the name, so what follows
+                                // asks the registry for `latest`. Not for an import that "paths"
+                                // maps to a missing file of the project, unless `-i` or `--install`
+                                // asks for the registry. The option, not `global_cache`: a preload
+                                // is always resolved as `read_only`.
+                                if paths_match == PathsMatch::Missed
+                                    && esm_ref.version.is_empty()
+                                    && !self.opts.global_cache.can_use(true)
+                                    && self.paths_claim_stops_lookup(
+                                        _dir_info,
+                                        import_path,
+                                        esm.name,
+                                    )
+                                {
+                                    break 'package_dir_info Ok(None);
+                                }
                                 let sliced_string =
                                     Semver::SlicedString::init(esm.version, esm.version);
                                 string_buf = esm.version;
@@ -3387,6 +3404,122 @@ impl<'a> Resolver<'a> {
             d.decrease_indent();
         }
         MatchStatus::NotFound
+    }
+
+    /// Auto-install is about to ask the registry for `latest` of `name`, and a "paths" key in the
+    /// tsconfig of the importer matched `import_path` with no module at its substitutions
+    /// (`PathsMatch::Missed`). Returns true, with the reason in the log, if the key maps the
+    /// import to a file of the project that is missing. Returns false if the tsconfig is not
+    /// the project's, or if the key or the project names the registry package.
+    #[cold]
+    #[inline(never)]
+    fn paths_claim_stops_lookup(
+        &mut self,
+        importer: DirInfoRef,
+        import_path: &[u8],
+        name: &[u8],
+    ) -> bool {
+        let Some(manager) = self.auto_installer() else {
+            return false;
+        };
+        // A package in the global cache sees the tsconfig that came in its tarball, or one
+        // above the cache.
+        let cache = manager.cache_directory();
+        if !cache.is_empty()
+            && ::bun_paths::resolve_path::is_parent_or_equal(cache, importer.abs_path)
+                != ::bun_paths::resolve_path::ParentEqual::Unrelated
+        {
+            return false;
+        }
+        // Auto-install uses the version of such a rule in place of `latest`.
+        if manager.overrides_to_registry(name) {
+            return false;
+        }
+
+        let Some(tsconfig) = self.enclosing_tsconfig_json(&importer) else {
+            return false;
+        };
+        // The entry that `match_tsconfig_paths` found no module in: the key that is the import,
+        // else the key with a `*`.
+        let exact = (tsconfig.paths.keys().iter())
+            .zip(tsconfig.paths.values().iter())
+            .find(|(key, targets)| {
+                ***key == *import_path && targets.iter().any(|it| !is_declaration_path(it))
+            });
+        let wildcard = match exact {
+            Some(_) => None,
+            None => PathsWildcard::longest(&tsconfig, import_path),
+        };
+        let (targets, matched_text): (&[Box<[u8]>], Option<&[u8]>) = match (exact, &wildcard) {
+            (Some((_, targets)), _) => (targets, None),
+            // `@scope/*`, `lib*` and `*` do not say which package the import is.
+            (None, Some(wildcard)) if wildcard.prefix.len() > name.len() => (
+                wildcard.original_paths,
+                Some(wildcard.matched_text(import_path)),
+            ),
+            _ => return false,
+        };
+
+        let base: &[u8] = if tsconfig.has_base_url() {
+            &tsconfig.base_url
+        } else {
+            &tsconfig.base_url_for_paths
+        };
+        let mut missing: Vec<u8> = Vec::new();
+        for target in targets {
+            if is_declaration_path(target) {
+                continue;
+            }
+            // The path that `match_tsconfig_paths` looked at.
+            let substituted: Vec<u8> = match (matched_text, strings::index_of_char(target, b'*')) {
+                (Some(matched_text), Some(star)) => {
+                    let star = star as usize;
+                    [&target[..star], matched_text, &target[star + 1..]].concat()
+                }
+                _ => target.to_vec(),
+            };
+            let parts: [&[u8]; 2] = if bun_paths::is_absolute(target) {
+                [&substituted, b""]
+            } else {
+                [base, strings::trim_left(&substituted, b"/\\")]
+            };
+            let Some(path) = self
+                .fs_ref()
+                .abs_buf_checked(&parts, bufs!(tsconfig_match_full_buf))
+            else {
+                continue;
+            };
+            // The key gives the registry package its place in `node_modules`, or local types.
+            if is_in_node_modules_of(path, name) || has_declaration_at(path) {
+                return false;
+            }
+            if !missing.is_empty() {
+                missing.extend_from_slice(b", ");
+            }
+            missing.push(b'"');
+            missing.extend_from_slice(path);
+            missing.push(b'"');
+        }
+        if missing.is_empty() {
+            return false;
+        }
+
+        let (prefix, star, suffix): (&[u8], &str, &[u8]) = match &wildcard {
+            Some(wildcard) => (wildcard.prefix, "*", wildcard.suffix),
+            None => (import_path, "", b""),
+        };
+        self.log_mut().add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "tsconfig \"paths\" key \"{}{}{}\" has no module at {}, so this import was not looked up in the registry",
+                bstr::BStr::new(prefix),
+                star,
+                bstr::BStr::new(suffix),
+                bstr::BStr::new(&missing),
+            ),
+        );
+        true
     }
 
     fn dir_info_for_resolution(
@@ -4805,7 +4938,7 @@ impl<'a> Resolver<'a> {
         path: &[u8],
         kind: ast::ImportKind,
         out: &mut MatchResult,
-    ) -> MatchStatus {
+    ) -> PathsMatch {
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "Matching \"{}\" against \"paths\" in \"{}\"",
@@ -4829,6 +4962,9 @@ impl<'a> Resolver<'a> {
                 bstr::BStr::new(abs_base_url)
             ));
         }
+
+        // What to return if no substitution resolves.
+        let mut unresolved = PathsMatch::Unmatched;
 
         // Check for exact matches first
         {
@@ -4858,66 +4994,17 @@ impl<'a> Resolver<'a> {
                             .load_as_file_or_directory(absolute_original_path, kind, out)
                             .is_success()
                         {
-                            return MatchStatus::Success;
+                            return PathsMatch::Found;
                         }
+                        unresolved = PathsMatch::Missed;
                     }
-                }
-            }
-        }
-
-        struct TSConfigMatch<'b> {
-            prefix: &'b [u8],
-            suffix: &'b [u8],
-            original_paths: &'b [Box<[u8]>],
-        }
-
-        let mut longest_match: Option<TSConfigMatch> = None;
-        let mut longest_match_prefix_length: i32 = -1;
-        let mut longest_match_suffix_length: i32 = -1;
-
-        for (key, original_paths) in tsconfig
-            .paths
-            .keys()
-            .iter()
-            .zip(tsconfig.paths.values().iter())
-        {
-            if let Some(star) = strings::index_of_char(key, b'*') {
-                let star = star as usize;
-                let prefix: &[u8] = if star == 0 { b"" } else { &key[0..star] };
-                let suffix: &[u8] = if star == key.len() - 1 {
-                    b""
-                } else {
-                    &key[star + 1..]
-                };
-
-                // Find the match with the longest prefix. If two matches have the same
-                // prefix length, pick the one with the longest suffix. This second edge
-                // case isn't handled by the TypeScript compiler, but we handle it
-                // because we want the output to always be deterministic
-                let plen = i32::try_from(prefix.len()).expect("int cast");
-                let slen = i32::try_from(suffix.len()).expect("int cast");
-                if path.len() >= prefix.len() + suffix.len()
-                    && path.starts_with(prefix)
-                    && path.ends_with(suffix)
-                    && (plen > longest_match_prefix_length
-                        || (plen == longest_match_prefix_length
-                            && slen > longest_match_suffix_length))
-                {
-                    longest_match_prefix_length = plen;
-                    longest_match_suffix_length = slen;
-                    longest_match = Some(TSConfigMatch {
-                        prefix,
-                        suffix,
-                        original_paths,
-                    });
                 }
             }
         }
 
         // If there is at least one match, only consider the one with the longest
         // prefix. This matches the behavior of the TypeScript compiler.
-        if longest_match_prefix_length != -1 {
-            let longest_match = longest_match.unwrap();
+        if let Some(longest_match) = PathsWildcard::longest(tsconfig, path) {
             if let Some(debug) = self.debug_logs.as_mut() {
                 debug.add_note_fmt(format_args!(
                     "Found a fuzzy match for \"{}*{}\" in \"paths\"",
@@ -4932,8 +5019,7 @@ impl<'a> Resolver<'a> {
                 }
 
                 // Swap out the "*" in the original path for whatever the "*" matched
-                let matched_text =
-                    &path[longest_match.prefix.len()..path.len() - longest_match.suffix.len()];
+                let matched_text = longest_match.matched_text(path);
 
                 // Build the substituted target path as a contiguous string. The
                 // previous implementation split the target at '*' and rejoined
@@ -4978,12 +5064,13 @@ impl<'a> Resolver<'a> {
                     .load_as_file_or_directory(absolute_original_path, kind, out)
                     .is_success()
                 {
-                    return MatchStatus::Success;
+                    return PathsMatch::Found;
                 }
+                unresolved = PathsMatch::Missed;
             }
         }
 
-        MatchStatus::NotFound
+        unresolved
     }
 
     /// A `paths` substitution written as a declaration file exists for type checking
@@ -4991,7 +5078,6 @@ impl<'a> Resolver<'a> {
     /// This looks at the tsconfig text, not the `*` expansion: `"@/*": ["./src/*"]`
     /// must still resolve `import "@/env.d.ts"`.
     fn is_type_only_tsconfig_path(&mut self, substitution: &[u8]) -> bool {
-        const DECLARATION_EXTS: [&[u8]; 3] = [b".d.ts", b".d.mts", b".d.cts"];
         let Some(ext) = DECLARATION_EXTS.iter().find(|ext| {
             substitution
                 .len()
@@ -6722,6 +6808,142 @@ enum DependencyToResolve {
     NotFound,
     Pending(Box<PendingResolution>),
     Resolution(Resolution),
+}
+
+/// What `Resolver::match_tsconfig_paths` found for an import.
+#[must_use]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PathsMatch {
+    /// A substitution resolved, and `out` holds the result.
+    Found,
+    /// A key matched, a substitution of it was looked for, and none resolved.
+    Missed,
+    /// No key matched, or the one that did has declaration files only.
+    Unmatched,
+}
+
+const DECLARATION_EXTS: [&[u8]; 3] = [b".d.ts", b".d.mts", b".d.cts"];
+
+/// Whether `path` is written as a declaration file. `Resolver::is_type_only_tsconfig_path`
+/// without the debug log.
+fn is_declaration_path(path: &[u8]) -> bool {
+    DECLARATION_EXTS.iter().any(|ext| {
+        path.len()
+            .checked_sub(ext.len())
+            .is_some_and(|start| path[start..].eq_ignore_ascii_case(ext))
+    })
+}
+
+/// Whether a declaration file stands for the module at `path`.
+fn has_declaration_at(path: &[u8]) -> bool {
+    const INDEX: &[u8] = b"/index.d.ts";
+    let path = strings::trim_right(path, b"/\\");
+    DECLARATION_EXTS
+        .into_iter()
+        .chain([INDEX])
+        .any(|ending| ::bun_sys::exists(&[path, ending].concat()))
+}
+
+/// Whether `path` is, or is in, the folder of the package `name` in a `node_modules` folder.
+/// The folder of its types in `@types` counts too: `name`, or `scope__name` for `@scope/name`.
+fn is_in_node_modules_of(path: &[u8], name: &[u8]) -> bool {
+    const NODE_MODULES: &[u8] = b"node_modules";
+    let is_folder_of = |folder: &[u8], name: &[u8]| {
+        folder.len() >= name.len()
+            && (folder.iter().zip(name))
+                .all(|(&a, &b)| a == b || (strings::char_is_any_slash(a) && b == b'/'))
+            && (folder.get(name.len())).is_none_or(|&c| strings::char_is_any_slash(c))
+    };
+    let child = |rest: &[u8], folder: &[u8]| -> Option<usize> {
+        let after = rest.strip_prefix(folder)?;
+        strings::char_is_any_slash(*after.first()?).then_some(folder.len() + 1)
+    };
+    let scoped = (name.strip_prefix(b"@")).and_then(|name| strings::split_once_char(name, b'/'));
+    let types_name: Vec<u8> = match scoped {
+        Some((scope, name)) => [scope, b"__".as_slice(), name].concat(),
+        None => name.to_vec(),
+    };
+
+    let mut rest = path;
+    while let Some(at) = strings::index_of(rest, NODE_MODULES) {
+        let is_segment = at > 0 && strings::char_is_any_slash(rest[at - 1]);
+        rest = &rest[at..];
+        if let Some(skip) = child(rest, NODE_MODULES).filter(|_| is_segment) {
+            let inside = &rest[skip..];
+            let types = child(inside, b"@types").map(|skip| &inside[skip..]);
+            if is_folder_of(inside, name)
+                || types.is_some_and(|types| is_folder_of(types, &types_name))
+            {
+                return true;
+            }
+        }
+        rest = &rest[NODE_MODULES.len()..];
+    }
+    false
+}
+
+/// A key of "paths" that has a `*`, and its substitutions.
+struct PathsWildcard<'b> {
+    prefix: &'b [u8],
+    suffix: &'b [u8],
+    original_paths: &'b [Box<[u8]>],
+}
+
+impl<'b> PathsWildcard<'b> {
+    /// The key that matches `path` with the longest prefix.
+    #[inline(always)]
+    fn longest(tsconfig: &'b TSConfigJSON, path: &[u8]) -> Option<Self> {
+        let mut longest_match: Option<Self> = None;
+        let mut longest_match_prefix_length: i32 = -1;
+        let mut longest_match_suffix_length: i32 = -1;
+
+        for (key, original_paths) in tsconfig
+            .paths
+            .keys()
+            .iter()
+            .zip(tsconfig.paths.values().iter())
+        {
+            if let Some(star) = strings::index_of_char(key, b'*') {
+                let star = star as usize;
+                let prefix: &[u8] = if star == 0 { b"" } else { &key[0..star] };
+                let suffix: &[u8] = if star == key.len() - 1 {
+                    b""
+                } else {
+                    &key[star + 1..]
+                };
+
+                // Find the match with the longest prefix. If two matches have the same
+                // prefix length, pick the one with the longest suffix. This second edge
+                // case isn't handled by the TypeScript compiler, but we handle it
+                // because we want the output to always be deterministic
+                let plen = i32::try_from(prefix.len()).expect("int cast");
+                let slen = i32::try_from(suffix.len()).expect("int cast");
+                if path.len() >= prefix.len() + suffix.len()
+                    && path.starts_with(prefix)
+                    && path.ends_with(suffix)
+                    && (plen > longest_match_prefix_length
+                        || (plen == longest_match_prefix_length
+                            && slen > longest_match_suffix_length))
+                {
+                    longest_match_prefix_length = plen;
+                    longest_match_suffix_length = slen;
+                    longest_match = Some(Self {
+                        prefix,
+                        suffix,
+                        original_paths,
+                    });
+                }
+            }
+        }
+
+        longest_match
+    }
+
+    /// What the `*` of the key stands for in `path`.
+    #[inline]
+    fn matched_text<'p>(&self, path: &'p [u8]) -> &'p [u8] {
+        &path[self.prefix.len()..path.len() - self.suffix.len()]
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]

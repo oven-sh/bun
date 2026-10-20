@@ -1740,16 +1740,9 @@ fn asked_version<'a>(
             let overridden = (this.lockfile.overrides)
                 .lookup_declared(&this.lockfile, id, rule_name_hash, &dependency.version)
                 .map(|rule| rule.version().clone())
-                // Auto-install only follows an override that points to the registry. Others, such
-                // as `file:`, are ignored.
                 .filter(|new| {
                     !this.options.runtime_auto_install
-                        || matches!(
-                            new.tag,
-                            dependency::version::Tag::Npm
-                                | dependency::version::Tag::DistTag
-                                | dependency::version::Tag::Catalog
-                        )
+                        || crate::lockfile::OverrideMap::points_to_registry(new)
                 });
             if let Some(new) = &overridden {
                 bun_output::scoped_log!(

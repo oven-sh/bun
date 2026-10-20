@@ -298,6 +298,22 @@ impl OverrideMap {
         self.map.get(&name_hash).map(OverrideRule::Flat)
     }
 
+    /// Auto-install only follows a rule that points to the registry. Others, such as `file:`,
+    /// are ignored.
+    pub(crate) fn points_to_registry(version: &dependency::Version) -> bool {
+        matches!(
+            version.tag,
+            VersionTag::Npm | VersionTag::DistTag | VersionTag::Catalog
+        )
+    }
+
+    /// Whether the rule for the plain name, which is the rule for an import of a project file,
+    /// points to the registry.
+    pub(crate) fn has_registry_rule_for(&self, name_hash: PackageNameHash) -> bool {
+        self.get_flat(name_hash)
+            .is_some_and(|rule| Self::points_to_registry(rule.version()))
+    }
+
     fn scoped_rule_for<'s>(
         &'s self,
         lockfile: &Lockfile,

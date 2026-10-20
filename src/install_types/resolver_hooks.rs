@@ -1430,6 +1430,11 @@ pub trait AutoInstaller {
         buf: &'b mut [u8],
     ) -> core::result::Result<&'b [u8], bun_core::Error>;
     fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState;
+    /// The folder of the global cache. Empty until a package is loaded from it.
+    fn cache_directory(&self) -> &[u8];
+    /// Whether `overrides` or `resolutions` of the project names a registry version for `name`,
+    /// which auto-install uses in place of `latest`.
+    fn overrides_to_registry(&self, name: &[u8]) -> bool;
     /// `package_json_dir` means the same as in `project_folder`. The path of a `file:` tarball is
     /// relative to it.
     fn enqueue_dependency_to_root(

@@ -329,6 +329,15 @@ impl hooks::AutoInstaller for PackageManager {
         PackageManager::get_preinstall_state(self, package_id)
     }
 
+    fn cache_directory(&self) -> &[u8] {
+        self.cache_directory_path.as_bytes()
+    }
+
+    fn overrides_to_registry(&self, name: &[u8]) -> bool {
+        (self.lockfile.overrides)
+            .has_registry_rule_for(bun_semver::string::Builder::string_hash(name))
+    }
+
     fn enqueue_dependency_to_root(
         &mut self,
         name: &[u8],

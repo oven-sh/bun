@@ -868,6 +868,481 @@ describe.concurrent("auto-install reads the project's package.json as `bun insta
   });
 });
 
+// docs/runtime/auto-install.mdx, "Version resolution". A bare import that a `paths`
+// key of the project's tsconfig.json maps to a file that does not exist went to
+// the registry, which has a no-deps of its own (`latest` is 2.0.0). That package
+// ran in place of the project's missing module, and the exit code was 0.
+describe.concurrent("auto-install and an import that a tsconfig `paths` key maps to a missing file", () => {
+  const tsconfig = (paths: Record<string, string[]>) => JSON.stringify({ compilerOptions: { paths } });
+  const claim = tsconfig({ "no-deps": ["./missing.ts"] });
+  const note = (key: string, ...missing: string[]) =>
+    `note: tsconfig "paths" key "${key}" has no module at ${missing.map(path => `"<dir>/${path}"`).join(", ")}, so this import was not looked up in the registry`;
+  const claimNote = note("no-deps", "missing.ts");
+  const installs = (version: string) => ["/no-deps", `/no-deps/-/no-deps-${version}.tgz`];
+  const refused = (error: string, expectedNote: string) => ({
+    stdout: "",
+    errors: [`error: ${error}`],
+    notes: [expectedNote],
+    requests: [],
+    exitCode: 1,
+  });
+  const ran = (stdout: string, requests: string[]) => ({ stdout, errors: [], notes: [], requests, exitCode: 0 });
+
+  function report(dir: string, run: { stdout: string; stderr: string; exitCode: number }, requests: string[]) {
+    const lines = run.stderr
+      .replaceAll("\\", "/")
+      .replaceAll(dir.replaceAll("\\", "/"), "<dir>")
+      .split("\n")
+      .map(line => line.replace(/ from '.*$/, ""));
+    return {
+      stdout: run.stdout,
+      errors: lines.filter(line => line.startsWith("error: ")),
+      notes: noteLines(lines.join("\n")),
+      requests,
+      exitCode: run.exitCode,
+    };
+  }
+
+  // A "bunfig.toml" in `files` is added to the one that names the registry.
+  async function run(files: DirectoryTree, ...args: string[]) {
+    using registry = fixtureRegistry();
+    const bunfig = registry.bunfig + (files["bunfig.toml"] ?? "");
+    using dir = tempDir("autoinstall-paths", { ...files, "bunfig.toml": bunfig });
+    return report(String(dir), await runAutoInstall(String(dir), ...args), registry.requests);
+  }
+
+  // The fixture registry, and one more package, which has `files`. `requests` has what the
+  // fixture registry is asked.
+  async function registryWith(name: string, files: Record<string, string>, manifest: object = {}) {
+    const registry = fixtureRegistry();
+    const tarball = await new Bun.Archive({
+      "package/package.json": JSON.stringify({ name, version: "1.0.0", ...manifest }),
+      ...Object.fromEntries(Object.entries(files).map(([file, text]) => [`package/${file}`, text])),
+    }).bytes("gzip");
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        if (pathname === `/${name}/-/${name}-1.0.0.tgz`) return new Response(tarball);
+        if (pathname !== `/${name}`) return fetch(new URL(pathname, registry.url));
+        const dist = { tarball: `${server.url}${name}/-/${name}-1.0.0.tgz` };
+        return Response.json({
+          name,
+          "dist-tags": { latest: "1.0.0" },
+          versions: { "1.0.0": { name, version: "1.0.0", ...manifest, dist } },
+        });
+      },
+    });
+    return {
+      requests: registry.requests,
+      bunfig: `[install]\nregistry = "${server.url}"\n`,
+      [Symbol.dispose]() {
+        server.stop(true);
+        registry[Symbol.dispose]();
+      },
+    };
+  }
+
+  test.each([
+    ["an exact key", { "no-deps": ["./missing.ts"] }, "no-deps", "Cannot find package 'no-deps'", claimNote],
+    [
+      "a name/* key",
+      { "no-deps/*": ["./missing/*"] },
+      "no-deps/package.json",
+      "Cannot find module 'no-deps/package.json'",
+      note("no-deps/*", "missing/package.json"),
+    ],
+    [
+      "a @scope/name/* key",
+      { "@scoped/no-deps/*": ["./missing/*"] },
+      "@scoped/no-deps/package.json",
+      "Cannot find module '@scoped/no-deps/package.json'",
+      note("@scoped/no-deps/*", "missing/package.json"),
+    ],
+    [
+      "a key with two targets, one in the node_modules folder of another package",
+      { "no-deps": ["./a.ts", "./node_modules/other/compat/"] },
+      "no-deps",
+      "Cannot find package 'no-deps'",
+      note("no-deps", "a.ts", "node_modules/other/compat/"),
+    ],
+    [
+      "an exact key, beside a * key that misses too",
+      { "no-deps": ["./missing.ts"], "*": ["./stubs/*"] },
+      "no-deps",
+      "Cannot find package 'no-deps'",
+      claimNote,
+    ],
+    [
+      "an exact key, beside a name/* key that misses too",
+      { "no-deps/package.json": ["./missing.json"], "no-deps/*": ["./missing/*"] },
+      "no-deps/package.json",
+      "Cannot find module 'no-deps/package.json'",
+      note("no-deps/package.json", "missing.json"),
+    ],
+  ])("the registry is not asked: %s", async (_, paths, specifier, error, expectedNote) => {
+    const files = { "tsconfig.json": tsconfig(paths), "index.js": `require("${specifier}");\n` };
+    expect(await run(files, "index.js")).toEqual(refused(error, expectedNote));
+  });
+
+  test("the registry is not asked: the key maps to a folder that is there and has no module", async () => {
+    const files = {
+      "tsconfig.json": tsconfig({ "no-deps": ["./lib/no-deps"] }),
+      "lib/no-deps/README.md": "",
+      "index.js": `require("no-deps");\n`,
+    };
+    const expected = refused("Cannot find package 'no-deps'", note("no-deps", "lib/no-deps"));
+    expect(await run(files, "index.js")).toEqual(expected);
+  });
+
+  test.each([
+    ["jsconfig.json", { "jsconfig.json": claim, "index.mjs": `import "no-deps";\n` }, ["index.mjs"]],
+    [
+      "a file that the tsconfig.json above the import extends",
+      {
+        "tsconfig.json": JSON.stringify({ extends: "./base.json" }),
+        "base.json": claim,
+        "src/app/index.js": `require("no-deps");\n`,
+      },
+      ["src/app/index.js"],
+    ],
+    [
+      "the file of --tsconfig-override",
+      { "custom.json": claim, "index.js": `require("no-deps");\n` },
+      ["--tsconfig-override", "custom.json", "index.js"],
+    ],
+  ])("the registry is not asked: the key is in %s", async (_, files, args) => {
+    expect(await run(files, ...args)).toEqual(refused("Cannot find package 'no-deps'", claimNote));
+  });
+
+  // Auto-install does not follow these rules of `overrides`, so they name no registry version.
+  test.each([
+    ["file:", { "no-deps": "file:./vendor/no-deps" }],
+    ["a rule for the dependency of one package", { "one-range-dep": { "no-deps": "1.0.0" } }],
+  ])("the registry is not asked: overrides with %s", async (_, overrides) => {
+    const files = {
+      "tsconfig.json": claim,
+      "package.json": JSON.stringify({ name: "app", overrides }),
+      "index.js": printNoDepsVersion,
+    };
+    expect(await run(files, "index.js")).toEqual(refused("Cannot find package 'no-deps'", claimNote));
+  });
+
+  test("the registry is not asked: each way to import or to resolve", async () => {
+    const files = {
+      "tsconfig.json": claim,
+      "package.json": JSON.stringify({ name: "app", imports: { "#dep": "no-deps" } }),
+      "index.mjs": `
+        import { createRequire } from "node:module";
+        const require = createRequire(import.meta.url);
+        const ways = {
+          "require()": () => require("no-deps"),
+          "require.resolve()": () => require.resolve("no-deps"),
+          "import()": () => import("no-deps"),
+          "import.meta.resolve()": () => import.meta.resolve("no-deps"),
+          "Bun.resolveSync()": () => Bun.resolveSync("no-deps", import.meta.dir),
+          "a package.json imports entry": () => require("#dep"),
+        };
+        for (const [way, use] of Object.entries(ways)) {
+          try {
+            await use();
+            console.log(way + ": resolved");
+          } catch (e) {
+            console.log(way + ": " + e.code);
+          }
+        }
+      `,
+    };
+    expect(await run(files, "index.mjs")).toEqual(
+      ran(
+        [
+          "require(): MODULE_NOT_FOUND",
+          "require.resolve(): MODULE_NOT_FOUND",
+          "import(): ERR_MODULE_NOT_FOUND",
+          "import.meta.resolve(): ERR_MODULE_NOT_FOUND",
+          "Bun.resolveSync(): ERR_MODULE_NOT_FOUND",
+          "a package.json imports entry: MODULE_NOT_FOUND",
+          "",
+        ].join("\n"),
+        [],
+      ),
+    );
+  });
+
+  // The transpiler adds this import for JSX.
+  test("the registry is not asked: the JSX runtime of jsxImportSource", async () => {
+    using registry = await registryWith("jsx-lib", {
+      "jsx-runtime.js": `exports.jsx = type => "the registry's " + type;\n`,
+    });
+    using dir = tempDir("autoinstall-paths-jsx", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { jsx: "react-jsx", jsxImportSource: "jsx-lib", paths: { "jsx-lib/*": ["./jsx/*"] } },
+      }),
+      "index.tsx": `console.log(<div />);\n`,
+      "bunfig.toml": registry.bunfig,
+    });
+    const result = await runAutoInstallWithEnv({ NODE_ENV: "production" }, String(dir), "index.tsx");
+    expect(report(String(dir), result, registry.requests)).toEqual(
+      refused("Cannot find module 'jsx-lib/jsx-runtime'", note("jsx-lib/*", "jsx/jsx-runtime")),
+    );
+  });
+
+  // A preload that fails has no error of its own to carry the note, so the note is an error.
+  test("the registry is not asked: --preload", async () => {
+    const files = { "tsconfig.json": claim, "index.js": `console.log("ran");\n` };
+    expect(await run(files, "--preload", "no-deps", "index.js")).toEqual({
+      stdout: "",
+      errors: [claimNote.replace("note: ", "error: "), `error: preload not found "no-deps"`],
+      notes: [],
+      requests: [],
+      exitCode: 1,
+    });
+  });
+
+  // With the package in the cache, the cached package loaded and the registry got no request.
+  test("a package of that name in the cache is not loaded", async () => {
+    const files = {
+      "index.js": `
+        console.log(require("no-deps").version);
+        require("./app/index.js");
+      `,
+      "app/tsconfig.json": claim,
+      "app/index.js": `
+        try {
+          console.log(require("no-deps").version);
+        } catch (e) {
+          console.log(e.code);
+        }
+      `,
+    };
+    expect(await run(files, "index.js")).toEqual(ran("2.0.0\nMODULE_NOT_FOUND\n", installs("2.0.0")));
+  });
+
+  // The failure is "not found", so what comes after a missing module still runs.
+  test("require.resolve() with `paths` goes on to the next directory", async () => {
+    const files = {
+      "a/tsconfig.json": claim,
+      "b/node_modules/no-deps/index.js": "",
+      "index.js": `
+        const found = require.resolve("no-deps", { paths: [__dirname + "/a", __dirname + "/b"] });
+        console.log(require("path").relative(__dirname, found).replaceAll("\\\\", "/"));
+      `,
+    };
+    expect(await run(files, "index.js")).toEqual(ran("b/node_modules/no-deps/index.js\n", []));
+  });
+
+  test("the import loads once the file that the key maps to exists", async () => {
+    const files = {
+      "tsconfig.json": tsconfig({ "no-deps": ["./local.js"] }),
+      "index.js": `
+        try {
+          require("no-deps");
+        } catch (e) {
+          console.log(e.code);
+        }
+        require("fs").writeFileSync(__dirname + "/local.js", "module.exports = { version: 'local' };");
+        console.log(require("no-deps").version);
+      `,
+    };
+    expect(await run(files, "index.js")).toEqual(ran("MODULE_NOT_FOUND\nlocal\n", []));
+  });
+
+  test("a package that no key names installs after an import was refused", async () => {
+    const files = {
+      "tsconfig.json": tsconfig({ "a-dep": ["./missing.ts"] }),
+      "index.js": `
+        try {
+          require("a-dep");
+        } catch (e) {
+          console.log(e.code);
+        }
+        console.log(require("no-deps").version);
+      `,
+    };
+    expect(await run(files, "index.js")).toEqual(ran("MODULE_NOT_FOUND\n2.0.0\n", installs("2.0.0")));
+  });
+
+  // The key does not say that the import is a file of the project, or the project or the
+  // command line names the registry package.
+  const pinned = { name: "app", overrides: { "no-deps": "1.0.0" } };
+  test.each([
+    ["a * key", { "tsconfig.json": tsconfig({ "*": ["./stubs/*"] }) }, [], "2.0.0"],
+    ["a key that does not fix the package name", { "tsconfig.json": tsconfig({ "no*": ["./stubs/*"] }) }, [], "2.0.0"],
+    [
+      "a key that maps to a declaration file",
+      {
+        "tsconfig.json": tsconfig({ "no-deps": ["./types/no-deps.d.ts"] }),
+        "types/no-deps.d.ts": `export declare const version: string;\n`,
+      },
+      [],
+      "2.0.0",
+    ],
+    [
+      "a key that maps to a path with a declaration file beside it",
+      {
+        "tsconfig.json": tsconfig({ "no-deps": ["./types/no-deps"] }),
+        "types/no-deps.d.ts": `export declare const version: string;\n`,
+      },
+      [],
+      "2.0.0",
+    ],
+    [
+      "a key that maps to a folder with an index.d.ts",
+      {
+        "tsconfig.json": tsconfig({ "no-deps": ["./types/no-deps"] }),
+        "types/no-deps/index.d.ts": `export declare const version: string;\n`,
+      },
+      [],
+      "2.0.0",
+    ],
+    [
+      "a key that maps to the folder of the package in node_modules",
+      { "tsconfig.json": tsconfig({ "no-deps": ["./node_modules/no-deps"] }) },
+      [],
+      "2.0.0",
+    ],
+    [
+      "a key that maps to the types of the package in node_modules",
+      { "tsconfig.json": tsconfig({ "no-deps": ["./node_modules/@types/no-deps/index"] }) },
+      [],
+      "2.0.0",
+    ],
+    [
+      "a name that package.json lists",
+      {
+        "tsconfig.json": claim,
+        "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "^1.0.0" } }),
+      },
+      [],
+      "1.1.0",
+    ],
+    ["a name that overrides pins", { "tsconfig.json": claim, "package.json": JSON.stringify(pinned) }, [], "1.0.0"],
+    [
+      "a name that resolutions pins",
+      { "tsconfig.json": claim, "package.json": JSON.stringify({ name: "app", resolutions: pinned.overrides }) },
+      [],
+      "1.0.0",
+    ],
+    ["-i", { "tsconfig.json": claim }, ["-i"], "2.0.0"],
+    ["--install=force", { "tsconfig.json": claim }, ["--install=force"], "2.0.0"],
+    ["auto = true in bunfig.toml", { "tsconfig.json": claim, "bunfig.toml": "auto = true\n" }, [], "2.0.0"],
+  ])("the registry is asked as before: %s", async (_, files, flags, version) => {
+    const result = await run({ ...files, "index.js": printNoDepsVersion }, ...flags, "index.js");
+    expect(result).toEqual(ran(`${version}\n`, installs(version)));
+  });
+
+  test("the registry is asked as before: a name that overrides makes an alias of another package", async () => {
+    const files = {
+      "tsconfig.json": tsconfig({ "a-dep": ["./missing.ts"], "a-dep/*": ["./missing/*"] }),
+      "package.json": JSON.stringify({ name: "app", overrides: { "a-dep": "npm:no-deps@1.0.0" } }),
+      "index.js": `console.log(require("a-dep/package.json").name, require("a-dep").version);\n`,
+    };
+    expect(await run(files, "index.js")).toEqual(ran("no-deps 1.0.0\n", installs("1.0.0")));
+  });
+
+  test("the registry is asked as before: a version in the import", async () => {
+    const files = {
+      "tsconfig.json": tsconfig({ "no-deps@1.0.1": ["./missing.ts"] }),
+      "index.js": `console.log(require("no-deps@1.0.1").version);\n`,
+    };
+    expect(await run(files, "index.js")).toEqual(ran("1.0.1\n", installs("1.0.1")));
+  });
+
+  // A key for a scope does not say which package the import is. The fixture registry has no
+  // scoped package, so the request is all that shows.
+  test.each([
+    ["a @scope/* key", { "@scoped/*": ["./packages/*/src"] }],
+    [
+      "a key that maps to the types of a scoped package in node_modules",
+      { "@scoped/no-deps": ["./node_modules/@types/scoped__no-deps"] },
+    ],
+  ])("the registry is asked as before: %s", async (_, paths) => {
+    const files = { "tsconfig.json": tsconfig(paths), "index.js": `require("@scoped/no-deps");\n` };
+    const { errors, requests, exitCode } = await run(files, "index.js");
+    expect({ errors, requests, exitCode }).toEqual({
+      errors: ["error: Cannot find module '@scoped/no-deps'"],
+      requests: ["/@scoped%2fno-deps"],
+      exitCode: 1,
+    });
+  });
+
+  test("the registry is asked as before: -i --preload", async () => {
+    const files = { "tsconfig.json": claim, "index.js": `console.log("ran");\n` };
+    const result = await run(files, "-i", "--preload", "no-deps", "index.js");
+    expect(result).toEqual(ran("ran\n", installs("2.0.0")));
+  });
+
+  // The tsconfig.json that a package ships is not the project's. A failed import in the
+  // folder of the package makes the resolver read that folder again.
+  const inPackage = `module.exports = require("no-deps").version;\n`;
+  const afterFailedImport = `try {\n  require("./nope");\n} catch {}\n` + inPackage;
+  test.each([
+    ["in its folder, after an import failed there", {}, { "index.js": afterFailedImport }],
+    ["in a folder below", { main: "dist/index.js" }, { "dist/index.js": afterFailedImport }],
+    [
+      "in a folder below that has a package.json",
+      {},
+      {
+        "index.js": `module.exports = require("./cjs/index.js");\n`,
+        "cjs/package.json": JSON.stringify({ type: "commonjs" }),
+        "cjs/index.js": afterFailedImport,
+      },
+    ],
+  ])(
+    "the registry is asked as before: the import is in a package from the registry, %s",
+    async (_, manifest, files) => {
+      using registry = await registryWith("carrier", { "tsconfig.json": claim, ...files }, manifest);
+      using dir = tempDir("autoinstall-paths-in-a-package", {
+        "index.js": `console.log(require("carrier"));\n`,
+        "bunfig.toml": registry.bunfig,
+      });
+      expect(report(String(dir), await runAutoInstall(String(dir), "index.js"), registry.requests)).toEqual(
+        ran("2.0.0\n", installs("2.0.0")),
+      );
+    },
+  );
+
+  // The key is tried first, then what a resolver without auto-install tries.
+  test.each([
+    [
+      "the folder of a workspace member",
+      {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/no-deps/package.json": JSON.stringify({ name: "no-deps", version: "7.0.0" }),
+        "packages/no-deps/index.js": `module.exports = { version: "the workspace member" };\n`,
+        "tsconfig.json": tsconfig({ "no-deps": ["./packages/no-deps/src/index.ts"] }),
+      },
+      "the workspace member",
+    ],
+    [
+      "a * key that has the file",
+      {
+        "tsconfig.json": tsconfig({ "no-deps": ["./missing.ts"], "*": ["./stubs/*"] }),
+        "stubs/no-deps.js": `module.exports = { version: "the * key" };\n`,
+      },
+      "the * key",
+    ],
+    [
+      "baseUrl",
+      {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { baseUrl: "./src", paths: { "no-deps": ["./missing.ts"] } },
+        }),
+        "src/no-deps.js": `module.exports = { version: "baseUrl" };\n`,
+      },
+      "baseUrl",
+    ],
+    [
+      "node_modules",
+      { "tsconfig.json": claim, "node_modules/no-deps/index.js": `module.exports = { version: "node_modules" };\n` },
+      "node_modules",
+    ],
+  ])("an import whose key misses loads from %s", async (_, files, version) => {
+    expect(await run({ ...files, "index.js": printNoDepsVersion }, "index.js")).toEqual(ran(`${version}\n`, []));
+  });
+});
+
 // A part of a dependency version that is longer than 8 bytes (the name an
 // alias points at, a git URL, a pre-release tag) is stored as an offset into
 // the package.json source. The resolver computed those offsets from the start

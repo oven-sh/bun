@@ -174,7 +174,7 @@ async function build(h: Helpers) {
     if (!serverExports?.length) continue;
     strippers.push({ dir: path.resolve(cwd, router.root) + path.sep, transpilers: new Map() });
     const transpilers = strippers[strippers.length - 1].transpilers;
-    for (const loader of ["ts", "tsx", "js", "jsx"]) {
+    for (const loader of ["ts", "tsx", "js", "jsx"] as const) {
       transpilers.set(
         loader,
         new Bun.Transpiler({

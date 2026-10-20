@@ -277,7 +277,7 @@ function componentPages(pagesDir: string): string[] {
 }
 
 /** A component page and an `.html` page cannot have the same URL: one file is the page. */
-function checkPageClashes(pagesDir: string, components: string[], pages: Page[]) {
+function checkPageClashes(pagesDir: string, components: string[], pages: Pick<Page, "route" | "file">[]) {
   const htmlOfRoute = new Map(pages.map(page => [page.route, page.file]));
   for (const relative of components) {
     let route = relative.replaceAll("\\", "/").replace(/\.[jt]sx$/, "");

@@ -59,6 +59,82 @@ describe("parse shell", () => {
     expect(result).toEqual(expected);
   });
 
+  test("redirect between arguments", () => {
+    // POSIX lets a redirection appear anywhere among a simple command's words.
+    // `echo x > log rm cache` must parse as one command with four words.
+    const cmd = {
+      assigns: [],
+      name_and_args: [
+        { simple: { Text: "echo" } },
+        { simple: { Text: "x" } },
+        { simple: { Text: "rm" } },
+        { simple: { Text: "cache" } },
+      ],
+      redirect: redirect({ stdout: true }),
+      redirect_file: { atom: { simple: { Text: "log" } } },
+    };
+    expect(JSON.parse(parse`echo x > log rm cache`)).toEqual({ stmts: [{ exprs: [{ cmd }] }] });
+
+    const catCmd = {
+      assigns: [],
+      name_and_args: [{ simple: { Text: "cat" } }, { simple: { Text: "f1" } }],
+      redirect: redirect({ stdin: true }),
+      redirect_file: { atom: { simple: { Text: "f0" } } },
+    };
+    expect(JSON.parse(parse`cat < f0 f1`)).toEqual({ stmts: [{ exprs: [{ cmd: catCmd }] }] });
+
+    // `n>&m` takes no file operand, so the following word stays in argv.
+    const dupCmd = {
+      assigns: [],
+      name_and_args: [
+        { simple: { Text: "echo" } },
+        { simple: { Text: "A" } },
+        { simple: { Text: "B" } },
+        { simple: { Text: "C" } },
+      ],
+      redirect: redirect({ stdout: true, duplicate_out: true }),
+      redirect_file: null,
+    };
+    expect(JSON.parse(parse`echo A 2>&1 B C`)).toEqual({ stmts: [{ exprs: [{ cmd: dupCmd }] }] });
+
+    const dupErrCmd = { ...dupCmd, redirect: redirect({ stderr: true, duplicate_out: true }) };
+    expect(JSON.parse(parse`echo A 1>&2 B C`)).toEqual({ stmts: [{ exprs: [{ cmd: dupErrCmd }] }] });
+
+    // A quoted word that touches the fd-dup stays in the command.
+    expect(JSON.parse(parse`echo "A"2>&1 B C`)).toEqual({ stmts: [{ exprs: [{ cmd: dupCmd }] }] });
+
+    // With no word after it the fd-dup still stands on its own.
+    expect(JSON.parse(parse`echo A 2>&1`)).toEqual({
+      stmts: [{ exprs: [{ cmd: { ...dupCmd, name_and_args: dupCmd.name_and_args.slice(0, 2) } }] }],
+    });
+  });
+
+  test.each([
+    [">", { stdout: true }],
+    [">>", { stdout: true, append: true }],
+    ["<", { stdin: true }],
+    ["2>", { stderr: true }],
+    ["&>", { stdout: true, stderr: true }],
+    ["&>>", { stdout: true, stderr: true, append: true }],
+  ])("word after `%s file` stays in the command", (operator, flags) => {
+    expect(JSON.parse(parse({ raw: [`echo a ${operator} f b`] }))).toEqual({
+      stmts: [
+        {
+          exprs: [
+            {
+              cmd: {
+                assigns: [],
+                name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "a" } }, { simple: { Text: "b" } }],
+                redirect: redirect(flags),
+                redirect_file: { atom: { simple: { Text: "f" } } },
+              },
+            },
+          ],
+        },
+      ],
+    });
+  });
+
   test("single atom", () => {
     expect(JSON.parse(parse`ls`)).toEqual({
       stmts: [
@@ -1066,5 +1142,19 @@ describe("parse shell invalid input", () => {
     await TestBuilder.command`echo (echo foo && echo hi)`.error("Unexpected token: `(`").run();
 
     await TestBuilder.command`echo foo >`.error("Redirection with no file").run();
+  });
+
+  test("second redirection in one command", () => {
+    const message = "Multiple redirects are not supported yet.";
+    expect(() => parse`echo a > f1 > f2`).toThrow(message);
+    expect(() => parse`echo a > f1 b > f2`).toThrow(message);
+    expect(() => parse`echo a 2>&1 b > f`).toThrow(message);
+  });
+
+  test("fd duplication followed by a JS object", () => {
+    const buffer = new Uint8Array(8);
+    const message = "`2>&1` and `1>&2` take no target. Use `&>` to send stdout and stderr to a JS object.";
+    expect(() => parse`echo hi 2>&1 ${buffer}`).toThrow(message);
+    expect(() => parse`echo hi 1>&2 ${buffer}`).toThrow(message);
   });
 });

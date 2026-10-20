@@ -439,8 +439,7 @@ pub mod ast {
             const STDOUT        = 1 << 1;
             const STDERR        = 1 << 2;
             const APPEND        = 1 << 3;
-            /// 1>&2 === stdout=true and duplicate_out=true
-            /// 2>&1 === stderr=true and duplicate_out=true
+            /// `2>&1` is `STDOUT | DUPLICATE_OUT`, `1>&2` is `STDERR | DUPLICATE_OUT`. Never set with a file target.
             const DUPLICATE_OUT = 1 << 4;
         }
     }
@@ -1349,10 +1348,26 @@ impl<'bump> Parser<'bump> {
 
         let mut name_and_args = bun_alloc::ArenaVec::new_in(self.alloc);
         name_and_args.push(name);
-        while let Some(arg) = self.parse_atom()? {
-            name_and_args.push(arg);
+        let mut parsed_redirect: Option<ParsedRedirect<'bump>> = None;
+        loop {
+            if let Some(arg) = self.parse_atom()? {
+                name_and_args.push(arg);
+                continue;
+            }
+            if !self.check(TokenTag::Redirect) {
+                break;
+            }
+            if parsed_redirect.is_some() {
+                self.add_error(format_args!("Multiple redirects are not supported yet."))?;
+                return Err(ParseError::Unsupported.into());
+            }
+            parsed_redirect = Some(self.parse_redirect()?);
+            // A redirection is usually last: skip the parse_atom() call that would allocate and find no word.
+            if self.at_command_end() {
+                break;
+            }
         }
-        let parsed_redirect = self.parse_redirect()?;
+        let parsed_redirect = parsed_redirect.unwrap_or_default();
 
         Ok(ast::CmdOrAssigns::Cmd(ast::Cmd {
             assigns: assigns.into_bump_slice(),
@@ -1360,6 +1375,22 @@ impl<'bump> Parser<'bump> {
             redirect_file: parsed_redirect.redirect,
             redirect: parsed_redirect.flags,
         }))
+    }
+
+    fn at_command_end(&self) -> bool {
+        let tag = self.peek().tag();
+        matches!(
+            tag,
+            TokenTag::Eof
+                | TokenTag::Semicolon
+                | TokenTag::Newline
+                | TokenTag::Pipe
+                | TokenTag::DoublePipe
+                | TokenTag::DoubleAmpersand
+                | TokenTag::Ampersand
+        ) || self
+            .inside_subshell
+            .is_some_and(|kind| kind.closing_tok() == tag)
     }
 
     fn parse_redirect(&mut self) -> ParseResult<ParsedRedirect<'bump>> {
@@ -1374,6 +1405,15 @@ impl<'bump> Parser<'bump> {
         };
         let redirect_file: Option<ast::Redirect<'bump>> = 'redirect_file: {
             if has_redirect {
+                if redirect.duplicate_out() {
+                    if self.check(TokenTag::JSObjRef) {
+                        self.add_error(format_args!(
+                            "`2>&1` and `1>&2` take no target. Use `&>` to send stdout and stderr to a JS object."
+                        ))?;
+                        return Err(ParseError::Unexpected.into());
+                    }
+                    break 'redirect_file None;
+                }
                 if self.r#match(TokenTag::JSObjRef) {
                     let Token::JSObjRef(obj_ref) = self.prev() else {
                         unreachable!()
@@ -1384,9 +1424,6 @@ impl<'bump> Parser<'bump> {
                 let file = match self.parse_atom()? {
                     Some(f) => f,
                     None => {
-                        if redirect.duplicate_out() {
-                            break 'redirect_file None;
-                        }
                         self.add_error(format_args!("Redirection with no file"))?;
                         return Err(ParseError::Expected.into());
                     }
@@ -1395,7 +1432,6 @@ impl<'bump> Parser<'bump> {
             }
             None
         };
-        // TODO check for multiple redirects and error
         Ok(ParsedRedirect {
             flags: redirect,
             redirect: redirect_file,
@@ -1654,7 +1690,7 @@ impl<'bump> Parser<'bump> {
                     | Token::Delimit
                     | Token::Eof
                     | Token::DoubleBracketOpen
-                    | Token::DoubleBracketClose => return Ok(None),
+                    | Token::DoubleBracketClose => break,
                 }
             }
         }

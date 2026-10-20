@@ -2646,3 +2646,64 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     }, 10_000);
   });
 });
+
+// `bun test --isolate` (and every `--parallel` worker) gives each file a fresh
+// global object. The addon is dlopen'd once per process, so a napi_ref it takes
+// in the first file keeps a function alive into the second file. Calling that
+// function there must open its handle scope on the global the napi_* calls
+// root into, or every value it creates is unrooted. Issue #45981.
+describe.concurrent.skipIf(!canBuildNodeAddons())("handle scope across bun test --isolate file swaps", () => {
+  const addonPath = join(__dirname, "napi-app/build/Debug/test_isolate_cross_file_function.node");
+  // Whichever file runs first keeps its functions. The second file calls them.
+  // So the two files can run in either order, as long as they share a process.
+  const testFile = `
+    import { test, expect } from "bun:test";
+    const addon = require(${JSON.stringify(addonPath)});
+    const first = addon.retained();
+    if (first === undefined) {
+      test("retain functions created in this file", async () => {
+        expect(await addon.createPromise()).toBe(42);
+        expect(addon.stress()).toBe(0);
+        addon.retain({ ...addon });
+      });
+    } else {
+      test("call createPromise from the first file", async () => {
+        expect(await first.createPromise()).toBe(42);
+      });
+      test("call stress from the first file", () => {
+        expect(first.stress()).toBe(0);
+      });
+      test("construct a class from the first file", () => {
+        const thing = new first.Thing(21);
+        expect(thing.get()).toBe(21);
+        expect(thing.doubled).toBe(42);
+        expect(thing).toBeInstanceOf(first.Thing);
+      });
+      test("escapable and explicit scopes from the first file", () => {
+        expect(first.escapable()).toEqual({ v: 7 });
+        expect(first.interleaved()).toBe(1);
+      });
+    }
+  `;
+
+  it.each([["--isolate"], ["--parallel=1"]])(
+    "a napi function kept across files under %s roots its values",
+    async flag => {
+      using dir = tempDir("napi-isolate", { "a.test.ts": testFile, "b.test.ts": testFile });
+      await using proc = spawn({
+        cmd: [bunExe(), "test", flag, "./a.test.ts", "./b.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // A --parallel worker reports through the coordinator's stdout.
+      const output = stdout + stderr;
+      expect(output).toContain(" 5 pass");
+      expect(output).toContain(" 0 fail");
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+});

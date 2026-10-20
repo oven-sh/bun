@@ -2090,43 +2090,47 @@ describe.concurrent(() => {
     const strict = "--unhandled-rejections=strict";
     const throws = "--unhandled-rejections=throw";
     const asyncListener = `process.on("unhandledRejection", async () => { round(); throw new Error("the listener failed"); });`;
+    const asyncMonitor = `process.on("uncaughtExceptionMonitor", async () => { round(); throw new Error("the monitor failed"); });`;
     const throwingListener = `process.on("unhandledRejection", () => { round(); Promise.reject(new Error("again")); throw new Error("the listener threw"); });`;
     const cases = [
       // Under strict the rejection is an uncaught exception first, and then the listener is called.
       [
         "an async 'unhandledRejection' listener that throws",
-        [strict],
+        strict,
         asyncListener + reject,
         ended(1, ["error: first"]),
       ],
       [
         "an async 'uncaughtExceptionMonitor' listener that throws",
-        [strict, throws],
-        `process.on("uncaughtExceptionMonitor", async () => { round(); throw new Error("the monitor failed"); });` +
-          reject,
+        strict,
+        asyncMonitor + `process.on("unhandledRejection", () => {});` + reject,
         ended(1, ["error: first"]),
       ],
       [
+        "an async 'uncaughtExceptionMonitor' listener that throws",
+        throws,
+        asyncMonitor + reject,
+        ended(1, ["error: first"]),
+      ],
+      ...[null, throws, "--unhandled-rejections=none"].map(flag => [
         "an 'unhandledRejection' listener that throws and rejects again",
-        [null, throws, "--unhandled-rejections=warn"],
+        flag,
         throwingListener + reject,
         ended(1, ["error: the listener threw"]),
-      ],
+      ]),
       [
         // The pass ends after the batch: a rejection of the same turn is not dropped.
         "every rejection of the turn is still reported",
-        [null],
+        null,
         throwingListener + reject + reject + reject,
         ended(3, Array(3).fill("error: the listener threw")),
       ],
-      ["throw prints the error once", [throws], reject, ended(0, ["error: first"])],
+      ["throw prints the error once", throws, reject, ended(0, ["error: first"])],
     ];
-    for (const [name, flags, script, expected] of cases) {
-      for (const flag of flags) {
-        it(`${name} (${flag ?? "no flag"})`, async () => {
-          expect(await run([...(flag ? [flag] : []), "main.js"], { "main.js": prelude + script })).toEqual(expected);
-        });
-      }
+    for (const [name, flag, script, expected] of cases) {
+      it(`${name} (${flag ?? "no flag"})`, async () => {
+        expect(await run([...(flag ? [flag] : []), "main.js"], { "main.js": prelude + script })).toEqual(expected);
+      });
     }
 
     it("-p still prints its value", async () => {

@@ -447,6 +447,58 @@ describe("a workspace member keeps the versions its lockfile pins", () => {
     expect(exitCode).toBe(0);
   });
 
+  // An update in a member, with --filter or with names resolves again the entries that it targets, and asks the
+  // registry about no other. From the root without --filter, and with -r, an update without names resolves every
+  // entry again: the ranges of the members stay on their versions, and their dist-tags move.
+  describe("bun update", () => {
+    const workspace: Project = {
+      root: { dependencies: { "root-range": "^1.0.0" } },
+      members: {
+        app: { dependencies: { "app-range": "^1.0.0", "app-latest": "latest" } },
+        lib: { dependencies: { "lib-range": "^1.0.0", "lib-latest": "latest" } },
+      },
+    };
+    const locked = ["app-latest@1.0.0", "app-range@1.0.0", "lib-latest@1.0.0", "lib-range@1.0.0", "root-range@1.0.0"];
+    const names = locked.map(pin => pin.slice(0, pin.indexOf("@")));
+    const moved = (...moved: string[]) =>
+      locked.map(pin => (moved.includes(pin.slice(0, pin.indexOf("@"))) ? pin.replace("1.0.0", "1.1.0") : pin));
+    const app = ["app-latest", "app-range"];
+
+    // [label, command, cwd, the manifests it asks for, the packages that move]
+    test.concurrent.each([
+      ["in a member moves that member's dependencies", ["update"], "packages/app", app, app],
+      [
+        "<name> in a member moves that dependency",
+        ["update", "app-range"],
+        "packages/app",
+        ["app-range"],
+        ["app-range"],
+      ],
+      ["--filter moves the selected member's dependencies", ["update", "--filter", "app"], ".", app, app],
+      [
+        "--filter <name> moves that dependency",
+        ["update", "--filter", "app", "app-range"],
+        ".",
+        ["app-range"],
+        ["app-range"],
+      ],
+      ["-r <name> moves that dependency", ["update", "-r", "app-range"], ".", ["app-range"], ["app-range"]],
+      ["at the root resolves every entry again", ["update"], ".", names, ["app-latest", "lib-latest", "root-range"]],
+      ["-r moves every dependency", ["update", "-r"], ".", names, names],
+    ] as const)("%s", async (_, args, at, asked, packages) => {
+      using project = await setup(workspace);
+      expect((await project.pins()).sort()).toEqual(locked);
+      await project.freshCheckout();
+
+      const { err, exitCode } = await project.bun([...args], join(project.cwd, at));
+
+      expect(err).not.toContain("error:");
+      expect(project.registry.manifests.toSorted()).toEqual([...asked]);
+      expect((await project.pins()).sort()).toEqual(moved(...packages));
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("bun.lockb records the scripts", () => {
     const app = (script: string) => ({ scripts: { postinstall: script }, devDependencies: { "latest-dep": "latest" } });
 

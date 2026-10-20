@@ -822,8 +822,8 @@ test.concurrent("`bun update --latest -r`: a pin ahead of `latest` keeps holding
   expect(check.exitCode).toBe(0);
 });
 
-// Root rows are re-appended unresolved before the plan runs; the snapshot recovers where they sat,
-// so a root pin still holds a member-scoped update's wants even though root is out of scope.
+// The root is out of scope, so its pin stays where bun.lock has it and still holds a member-scoped
+// update's wants.
 test.concurrent("a root pin holds transitive wants when updating from a member", async () => {
   using server = await serveRegistry({
     parent: { "1.0.0": { dependencies: { leaf: "*" } } },
@@ -1989,11 +1989,12 @@ type Manifests = Record<
 type Tags = Record<string, Record<string, string>>;
 
 // Serves one manifest per name from memory; the fixture registry has no parent whose newer version keeps a range on the same child, and no test moves its dist-tags. `tags` is read per request, so a test can move a tag after installing.
-// `status` is keyed by package name or by tarball file name ("leaf-1.1.0.tgz"); `tarballOrigin` replaces this server's origin in every `dist.tarball`.
+// `status` is keyed by package name or by tarball file name ("leaf-1.1.0.tgz"); `tarballOrigin` replaces this server's origin in every `dist.tarball`; `requests` counts the GETs under the same keys.
 type RegistryKnobs = {
   times?: Record<string, Record<string, string>>;
   status?: Record<string, number>;
   tarballOrigin?: string;
+  requests?: Record<string, number>;
 };
 
 async function serveRegistry(manifests: Manifests, tags: Tags = {}, knobs: RegistryKnobs = {}) {
@@ -2012,6 +2013,7 @@ async function serveRegistry(manifests: Manifests, tags: Tags = {}, knobs: Regis
     fetch(request) {
       const { origin, pathname } = new URL(request.url);
       const name = pathname.slice(1);
+      if (knobs.requests) knobs.requests[name] = (knobs.requests[name] ?? 0) + 1;
       const status = knobs.status?.[name];
       if (status) return new Response("registry says no", { status });
       const tarball = tarballs.get(pathname);
@@ -2881,6 +2883,372 @@ test.concurrent("`bun update --silent` swallows the unfetchable-manifest warning
   expect(await lockedVersions(dir, "other-leaf")).toStrictEqual(["1.1.0"]);
   expect(exitCode).toBe(0);
 });
+
+// A `bun update` in a workspace member, or with --filter, or with names, resolves again only the package.json entries that it targets. An entry that it does not target keeps the package that bun.lock has for it, so the registry is not asked about it and its answer cannot fail the command. Such an entry still follows a package that it shares with an entry that moved, when its range or its dist-tag accepts the new version.
+// From the root without --filter, and with -r, an update without names resolves every entry again.
+// Every registry package has 1.0.0 and 1.1.0 and is locked on 1.0.0: the first install pinned each range, and the `latest` of `tagged` moved after it.
+const SCOPE_NAMES = ["old", "extra", "good", "spare", "leaf", "tagged"];
+const SCOPE_REGISTRY: Manifests = {
+  ...Object.fromEntries(SCOPE_NAMES.map(name => [name, { "1.0.0": {}, "1.1.0": {} }])),
+  tarred: { "1.0.0": {} },
+  parent: { "1.0.0": { dependencies: { tagged: "^1.0.0" } } },
+};
+const SCOPE_WORKSPACE = {
+  "package.json": {
+    name: "root",
+    workspaces: ["packages/*"],
+    dependencies: { old: "^1.0.0", tarred: "<registry>/tarred-1.0.0.tgz", lib: "file:./lib" },
+    optionalDependencies: { extra: "^1.0.0" },
+  },
+  "lib/package.json": { name: "lib", version: "1.0.0", dependencies: { old: "^1.0.0" } },
+  "packages/pkg1/package.json": {
+    name: "pkg1",
+    version: "1.0.0",
+    dependencies: { good: "^1.0.0", pkg2: "workspace:*" },
+    devDependencies: { spare: "^1.0.0" },
+  },
+  "packages/pkg2/package.json": { name: "pkg2", version: "1.0.0", dependencies: { leaf: "^1.0.0", tagged: "latest" } },
+  "packages/empty/package.json": { name: "empty", version: "1.0.0" },
+};
+
+async function lockedBehind(files: Record<string, Json>) {
+  const knobs: RegistryKnobs = { status: {} };
+  const tags: Tags = { tagged: { latest: "1.0.0", stable: "1.0.0" } };
+  const server = await serveRegistry(SCOPE_REGISTRY, tags, knobs);
+  const texts = Object.entries(files).map(
+    ([path, json]) => [path, stringify(json).replaceAll("<registry>", server.url.origin)] as const,
+  );
+  const dir = String(
+    tempDir(
+      "update-scope-",
+      Object.fromEntries(texts.map(([path, text]) => [path, text.replaceAll("^1.0.0", "1.0.0")])),
+    ),
+  );
+  await servedBunfig(server, dir);
+  await install(dir);
+  await Promise.all(texts.map(([path, text]) => write(join(dir, path), text)));
+  expect(await install(dir)).toContain("Saved lockfile");
+  tags.tagged.latest = "1.1.0";
+  const read = () => Promise.all(texts.map(async ([path]) => [path, await file(join(dir, path)).text()] as const));
+  const before = await read();
+  return {
+    server,
+    dir,
+    // From here on the registry counts what it is asked, and answers 503 for everything but the manifests and the new tarballs of `targeted`, and `others`.
+    untarget(targeted: string[], others: string[] = []) {
+      const answered = [...targeted, ...targeted.map(name => `${name}-1.1.0.tgz`), ...others];
+      const paths = [...SCOPE_NAMES, ...SCOPE_NAMES.map(name => `${name}-1.1.0.tgz`), "tarred-1.0.0.tgz"];
+      for (const path of paths) if (!answered.includes(path)) knobs.status![path] = 503;
+      return (knobs.requests = {});
+    },
+    restore: () => void (knobs.status = {}),
+    // The package.json files that differ from what the second install read.
+    edited: async () => (await read()).filter(([, text], i) => text !== before[i][1]).map(([path]) => path),
+  };
+}
+
+const oncePerPackage = (names: string[]) =>
+  Object.fromEntries(names.flatMap(name => [name, `${name}-1.1.0.tgz`]).map(path => [path, 1]));
+
+async function expectOnlyMoved(dir: string, stdout: string, moved: string[]) {
+  // An entry on a dist-tag moves without a row.
+  const rows = moved.filter(name => name !== "tagged").map(name => movedRow(name, "1.0.0", "1.1.0"));
+  expect(movedRows(stdout).toSorted()).toStrictEqual(rows.toSorted());
+  for (const name of SCOPE_NAMES) {
+    expect({ [name]: await lockedVersions(dir, name) }).toStrictEqual({
+      [name]: [moved.includes(name) ? "1.1.0" : "1.0.0"],
+    });
+  }
+}
+
+const PKG1 = "packages/pkg1/package.json";
+const PKG2 = "packages/pkg2/package.json";
+const TARRED = { "tarred-1.0.0.tgz": 1 };
+// The dependabot form. `--filter` takes a path too.
+const AT_VERSION = ["good@1.1.0", "--filter", "./packages/pkg1", "--save-text-lockfile", "--ignore-scripts"];
+
+// [label, cwd, arguments, the packages that move, the package.json files that are rewritten, the other requests]
+test.concurrent.each<[string, string, string[], string[], string[], Record<string, number>]>([
+  ["from a member", "packages/pkg1", [], ["good", "spare"], [PKG1], {}],
+  ["--filter <member>", "", ["--filter", "pkg1"], ["good", "spare"], [PKG1], {}],
+  ["--latest from a member", "packages/pkg1", ["--latest"], ["good", "spare"], [PKG1], {}],
+  ["--depth 0 from a member", "packages/pkg1", ["--depth", "0"], ["good", "spare"], [PKG1], {}],
+  ["--depth 0 --filter <member>", "", ["--depth", "0", "--filter", "pkg1"], ["good", "spare"], [PKG1], {}],
+  ["<name> from a member", "packages/pkg1", ["good"], ["good"], [PKG1], {}],
+  ["<name> -r", "", ["-r", "good"], ["good"], [PKG1], {}],
+  ["<name>@<version> --filter <path>", "", AT_VERSION, ["good"], [PKG1], {}],
+  ["--dev from a member", "packages/pkg1", ["--dev"], ["spare"], [PKG1], {}],
+  ["--dev -r", "", ["-r", "--dev"], ["spare"], [PKG1], {}],
+  ["--prod from a member", "packages/pkg1", ["--prod"], ["good"], [PKG1], {}],
+  ["--no-optional from a member", "packages/pkg1", ["--no-optional"], ["good", "spare"], [PKG1], {}],
+  ["--filter <member without dependencies>", "", ["--filter", "empty"], [], [], {}],
+  // A workspace has no version to move. `bun update --filter <workspace>` updates its entries.
+  ["<workspace> from the root", "", ["pkg2"], [], [], {}],
+  ["<workspace> from a member", "packages/pkg1", ["pkg2"], [], [], {}],
+  ["<workspace> -r", "", ["-r", "pkg2"], [], [], {}],
+  // --force reads every tarball again, in every workspace.
+  ["--force from a member", "packages/pkg1", ["--force"], ["good", "spare"], [PKG1], TARRED],
+  // Every entry is resolved again. The ranges of the members stay on the versions they have, and the dist-tag moves.
+  ["from the root", "", [], ["old", "extra", "tagged"], ["package.json"], { good: 1, spare: 1, leaf: 1, ...TARRED }],
+  ["-r", "", ["-r"], SCOPE_NAMES, ["package.json", PKG1, PKG2], TARRED],
+])(
+  "`bun update` %s asks the registry only about the entries it targets",
+  async (_, cwd, args, moved, edited, other) => {
+    const project = await lockedBehind(SCOPE_WORKSPACE);
+    using _server = project.server;
+    await expectOnlyMoved(project.dir, "", []);
+    const requests = project.untarget(moved, Object.keys(other));
+    const { stdout, stderr, exitCode } = await runIn(project.dir, cwd, "update", ...args);
+    expectCleanStderr(stderr);
+    expect(requests).toEqual({ ...oncePerPackage(moved), ...other });
+    await expectOnlyMoved(project.dir, stdout, moved);
+    expect(await project.edited()).toStrictEqual(edited);
+    project.restore();
+    await frozen(project.dir);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// The picker asks about the entries of the workspaces it lists. The install then runs as `bun update <selected>`.
+test.concurrent.each<[string, string, string, string[], string[], string[]]>([
+  ["from a member", "packages/pkg1", "a\r", [], ["good", "spare"], ["good", "spare"]],
+  // The first row is `good`, of pkg1.
+  ["-r", "", " \r", ["-r"], SCOPE_NAMES, ["good"]],
+])(
+  "`bun update -i` %s resolves again only the entries that are selected",
+  async (_, cwd, keys, args, offered, moved) => {
+    const project = await lockedBehind(SCOPE_WORKSPACE);
+    using _server = project.server;
+    const requests = project.untarget(offered);
+    const { stdout, stderr, exitCode } = await runInteractive(join(project.dir, cwd), keys, ...args);
+    expect(stderr).not.toContain("error:");
+    expect(Object.keys(requests).toSorted()).toStrictEqual(
+      [...offered, ...moved.map(name => `${name}-1.1.0.tgz`)].toSorted(),
+    );
+    await expectOnlyMoved(project.dir, stdout, moved);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// A catalog entry belongs to the root package.json. An update without names moves every `catalog:` entry, also one that only another workspace uses.
+test.concurrent.each<[string, string, string[], Json]>([
+  ["--filter <member>", "", ["--filter", "pkg1"], { leaf: "^1.0.0", spare: "^1.0.0" }],
+  ["from a member", "packages/pkg1", [], { leaf: "^1.1.0", spare: "^1.1.0" }],
+])("`bun update` %s still moves the catalog entries, and asks about no other entry", async (_, cwd, args, catalog) => {
+  const project = await lockedBehind({
+    "package.json": {
+      name: "root",
+      workspaces: { packages: ["packages/*"], catalog: { leaf: "^1.0.0", spare: "^1.0.0" } },
+    },
+    [PKG1]: { name: "pkg1", version: "1.0.0", dependencies: { good: "^1.0.0", leaf: "catalog:" } },
+    [PKG2]: { name: "pkg2", version: "1.0.0", dependencies: { spare: "catalog:", old: "^1.0.0" } },
+  });
+  using _server = project.server;
+  const moved = ["good", "leaf", "spare"];
+  const requests = project.untarget(moved);
+  const { stderr, exitCode } = await runIn(project.dir, cwd, "update", ...args);
+  expectCleanStderr(stderr);
+  expect(requests).toEqual(oncePerPackage(moved));
+  for (const name of ["old", ...moved]) {
+    expect({ [name]: await lockedVersions(project.dir, name) }).toStrictEqual({
+      [name]: [moved.includes(name) ? "1.1.0" : "1.0.0"],
+    });
+  }
+  expect((await packageJsonOf(project.dir)).workspaces.catalog).toStrictEqual(catalog);
+  project.restore();
+  await frozen(project.dir);
+  expect(exitCode).toBe(0);
+});
+
+// pkg2 pins the newer `old`, and the root's range accepts both. An update of pkg1 leaves the root's entry on the one it has.
+test.concurrent.each([
+  ["from a member", "packages/pkg1", []],
+  ["--filter <member>", "", ["--filter", "pkg1"]],
+])("`bun update` %s does not move another workspace's entry onto a newer version in bun.lock", async (_, cwd, args) => {
+  const project = await lockedBehind({
+    "package.json": { name: "root", workspaces: ["packages/*"], dependencies: { old: "^1.0.0" } },
+    [PKG1]: { name: "pkg1", version: "1.0.0", dependencies: { tarred: "1.0.0" } },
+    [PKG2]: { name: "pkg2", version: "1.0.0", dependencies: { old: "1.1.0" } },
+  });
+  using _server = project.server;
+  const before = await lockText(project.dir);
+  expect(await lockedVersions(project.dir, "old")).toStrictEqual(["1.0.0", "1.1.0"]);
+  const { stdout, stderr, exitCode } = await runIn(project.dir, cwd, "update", ...args);
+  expectNoChangesLine(stdout);
+  expectCleanStderr(stderr);
+  expect(stderr).not.toContain("Saved lockfile");
+  expect(await lockText(project.dir)).toBe(before);
+  expect(exitCode).toBe(0);
+});
+
+// The entries of pkg1 and pkg2 share one `tagged`. When the update moves pkg1's, pkg2's follows if its own range or dist-tag resolves to the new version: the update has the manifest, so it asks nothing more. The `stable` tag stays on 1.0.0.
+test.concurrent.each<[string, Json, string, string[], string[]]>([
+  ["the same dist-tag", { tagged: "latest" }, "latest", ["tagged"], ["1.1.0"]],
+  ["a range", { tagged: "^1.0.0" }, "latest", ["tagged"], ["1.1.0"]],
+  ["a range, through a dependency", { parent: "1.0.0" }, "latest", ["tagged"], ["1.1.0"]],
+  ["a range, and the dist-tag points elsewhere", { tagged: "^1.0.0" }, "stable", ["tagged"], ["1.0.0", "1.1.0"]],
+])(
+  "an entry on a dist-tag follows the package that it shares with %s of the updated member",
+  async (_, dependencies, tag, moved, versions) => {
+    const project = await lockedBehind({
+      "package.json": { name: "root", workspaces: ["packages/*"], dependencies: { old: "^1.0.0", tagged: tag } },
+      [PKG1]: { name: "pkg1", version: "1.0.0", dependencies },
+      [PKG2]: { name: "pkg2", version: "1.0.0", dependencies: { tagged: tag } },
+    });
+    using _server = project.server;
+    expect(await lockedVersions(project.dir, "tagged")).toStrictEqual(["1.0.0"]);
+    const requests = project.untarget(moved);
+    const { stderr, exitCode } = await runIn(project.dir, "packages/pkg1", "update");
+    expectCleanStderr(stderr);
+    expect(requests).toEqual({ ...oncePerPackage(moved), ...("parent" in dependencies ? { parent: 1 } : {}) });
+    expect(await lockedVersions(project.dir, "tagged")).toStrictEqual(versions);
+    expect(await lockedVersions(project.dir, "old")).toStrictEqual(["1.0.0"]);
+    expect(await project.edited()).toStrictEqual(
+      "parent" in dependencies || "latest" === dependencies.tagged ? [] : [PKG1],
+    );
+    project.restore();
+    await frozen(project.dir);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// The entries of a `file:` folder that the updated member depends on are resolved again with the member, so a dist-tag in the folder's package.json follows its tag.
+test.concurrent(
+  "`bun update` from a member moves a dist-tag entry of a `file:` folder that the member depends on",
+  async () => {
+    const project = await lockedBehind({
+      "package.json": { name: "root", workspaces: ["packages/*"], dependencies: { old: "^1.0.0" } },
+      "lib/package.json": { name: "lib", version: "1.0.0", dependencies: { tagged: "latest" } },
+      [PKG1]: { name: "pkg1", version: "1.0.0", dependencies: { good: "^1.0.0", lib: "file:../../lib" } },
+    });
+    using _server = project.server;
+    const moved = ["good", "tagged"];
+    const requests = project.untarget(moved);
+    const { stderr, exitCode } = await runIn(project.dir, "packages/pkg1", "update");
+    expectCleanStderr(stderr);
+    expect(requests).toEqual(oncePerPackage(moved));
+    expect(await lockedVersions(project.dir, "tagged")).toStrictEqual(["1.1.0"]);
+    expect(await lockedVersions(project.dir, "old")).toStrictEqual(["1.0.0"]);
+    project.restore();
+    await frozen(project.dir);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// An update in a member, and an update with names, compare the package.json of every workspace with bun.lock, as `bun install` does. An edit that waits in one of them is applied in the same run, for the updated member and for the others. From the root and with -r, an update without names reads every workspace again and does none of this.
+const EDITED_MEMBERS = {
+  "package.json": { name: "root", workspaces: ["packages/*"] },
+  [PKG1]: { name: "pkg1", version: "1.0.0", dependencies: { good: "^1.0.0", extra: "^1.0.0" } },
+  [PKG2]: { name: "pkg2", version: "1.0.0", dependencies: { leaf: "^1.0.0", spare: "^1.0.0" } },
+};
+
+test.concurrent.each<[string, string, string[]]>([
+  ["from a member", "packages/pkg1", []],
+  ["<name> -r", "", ["-r", "good"]],
+])("`bun update` %s removes the dependencies that the workspaces no longer list", async (_, cwd, args) => {
+  const project = await lockedBehind(EDITED_MEMBERS);
+  using _server = project.server;
+  await servedBunfig(project.server, project.dir, { linker: "isolated" });
+  await install(project.dir, "--linker", "isolated");
+  const linked = (workspace: string, name: string) =>
+    exists(join(project.dir, "packages", workspace, "node_modules", name, "package.json"));
+  expect([await linked("pkg1", "extra"), await linked("pkg2", "spare")]).toStrictEqual([true, true]);
+  await write(join(project.dir, PKG1), stringify(member("pkg1", { good: "^1.0.0" })));
+  await write(join(project.dir, PKG2), stringify(member("pkg2", { leaf: "^1.0.0" })));
+
+  const requests = project.untarget(["good"]);
+  const { stdout, stderr, exitCode } = await runIn(project.dir, cwd, "update", ...args);
+  expectCleanStderr(stderr);
+  expect(stdout).toContain("Removed: 2");
+  expect(requests).toEqual(oncePerPackage(["good"]));
+  expect([await linked("pkg1", "extra"), await linked("pkg2", "spare")]).toStrictEqual([false, false]);
+  expect(await lockedVersions(project.dir, "extra")).toStrictEqual([]);
+  expect(await lockedVersions(project.dir, "spare")).toStrictEqual([]);
+  expect(await lockedVersions(project.dir, "leaf")).toStrictEqual(["1.0.0"]);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent(
+  "`bun update` from a member fails like `bun install` when a workspace depends on one that is gone",
+  async () => {
+    const project = await lockedBehind({
+      "package.json": { name: "root", workspaces: ["packages/*"] },
+      [PKG1]: { name: "pkg1", version: "1.0.0", dependencies: { good: "^1.0.0" } },
+      [PKG2]: { name: "pkg2", version: "1.0.0", optionalDependencies: { gone: "workspace:*" } },
+      "packages/gone/package.json": { name: "gone", version: "1.0.0" },
+    });
+    using _server = project.server;
+    await rm(join(project.dir, "packages", "gone"), { recursive: true });
+    const before = await lockText(project.dir);
+    const error =
+      'error: workspace "pkg2" depends on workspace "gone" (packages/gone), which is listed in bun.lock but not on disk';
+
+    const requests = project.untarget(["good"]);
+    const installed = await run(project.dir, "install");
+    expect(installed.stderr).toContain(error);
+    expect(installed.exitCode).toBe(1);
+    const { stderr, exitCode } = await runIn(project.dir, "packages/pkg1", "update");
+    expect(stderr).toContain(error);
+    expect(requests).toEqual({});
+    expect(await lockText(project.dir)).toBe(before);
+    expect(exitCode).toBe(1);
+  },
+);
+
+// bun.lock has an `overrides` rule that one of its packages does not follow, as after a merge. `bun update` repairs that row after it removed the packages that nothing uses any more, so the repair reads which packages the update reaches by their new ids. What it then downloads does not depend on where an unrelated dependency is.
+test.concurrent.each([
+  ["the updated member", PKG1],
+  ["another member", PKG2],
+])(
+  "`bun update` from a member repairs an `overrides` rule the same with an unrelated dependency in %s",
+  async (_, unrelated) => {
+    const tarballRequests: Record<string, number> = {};
+    using tarballs = await serveRegistry({ other: { "1.0.0": {} } }, {}, { requests: tarballRequests });
+    const tarball = `${tarballs.url.origin}/other-1.0.0.tgz`;
+    using server = await serveRegistry({
+      good: { "1.0.0": { dependencies: { leaf: "1.0.0" } }, "1.1.0": {} },
+      leaf: { "1.0.0": {} },
+      ruled: { "1.0.0": { dependencies: { alias: tarball } }, "2.0.0": {} },
+      spare: { "1.0.0": {} },
+    });
+    const members = (good: string) => ({
+      [PKG1]: member("pkg1", { good }),
+      [PKG2]: member("pkg2", { ruled: "^2.0.0", other: tarball }),
+    });
+    const files = (good: string, overrides?: Json) => {
+      const all: Record<string, Json> = {
+        "package.json": { name: "root", workspaces: ["packages/*"], overrides },
+        ...members(good),
+      };
+      all[unrelated].dependencies.spare = "1.0.0";
+      return Object.fromEntries(Object.entries(all).map(([path, json]) => [path, stringify(json)]));
+    };
+    const dir = String(tempDir("update-scope-overrides-", files("1.0.0")));
+    await servedBunfig(server, dir);
+    await install(dir);
+    await Promise.all(
+      Object.entries(files("^1.0.0", { ruled: "1.0.0" })).map(([path, text]) => write(join(dir, path), text)),
+    );
+    const packages = '  "packages": {';
+    const locked = await lockText(dir);
+    expect(locked).toContain(packages);
+    await write(
+      join(dir, "bun.lock"),
+      locked.replace(packages, `  "overrides": {\n    "ruled": "1.0.0",\n  },\n${packages}`),
+    );
+    for (const key in tarballRequests) delete tarballRequests[key];
+
+    const { stdout, stderr, exitCode } = await runIn(dir, "packages/pkg1", "update");
+    expectCleanStderr(stderr);
+    expect(movedRows(stdout)).toContain(movedRow("good", "1.0.0", "1.1.0"));
+    expect(tarballRequests).toEqual({ "other-1.0.0.tgz": 1 });
+    expect(await lockedVersions(dir, "ruled")).toStrictEqual(["1.0.0"]);
+    expect(await lockedVersions(dir, "good")).toStrictEqual(["1.1.0"]);
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual([]);
+    await frozen(dir);
+    expect(exitCode).toBe(0);
+  },
+);
 
 // `bun outdated` and `bun update -i` exist to answer for the direct dependencies, so for them a manifest that does not arrive is reported and fails the command (a registry that is down must not read as "nothing to update"); only an optional dependency's is a warning.
 const errorLines = (stderr: string) => stderr.split("\n").filter(line => line.startsWith("error:"));

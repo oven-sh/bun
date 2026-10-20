@@ -170,16 +170,22 @@ impl PackageManager {
             *package_id = existing_id;
             let mut existing = *self.lockfile.packages.get(existing_id as usize);
             let from_lockfile = existing_id < self.lockfile.loaded_package_count;
-            let moved = match existing.resolution.tag {
-                // A nested git ref can move, so `bun update` resolves the dependencies again.
-                ResolutionTag::Git | ResolutionTag::Github => self.to_update,
-                // Only `repins_tarball` reads one again that bun.lock has.
-                ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
-                    existing.meta.integrity != data.integrity
-                }
-                _ => false,
-            };
-            if !(from_lockfile && moved) {
+            let moved = from_lockfile
+                && match existing.resolution.tag {
+                    // A nested git ref can move, so `bun update` resolves again the dependencies
+                    // of a package that it reaches.
+                    ResolutionTag::Git | ResolutionTag::Github => {
+                        self.to_update
+                            && crate::update_scope::UpdateScope::of(self)
+                                .reaches(&self.lockfile, existing_id as usize)
+                    }
+                    // Only `repins_tarball` reads one again that bun.lock has.
+                    ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
+                        existing.meta.integrity != data.integrity
+                    }
+                    _ => false,
+                };
+            if !moved {
                 return existing;
             }
             if existing.resolution.tag.is_tarball() && existing.meta.integrity.tag.is_supported() {

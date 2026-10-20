@@ -1001,12 +1001,11 @@ impl Diff {
                 to_lockfile.buffers.string_bytes.as_slice()
             };
         }
-        let named_update_here = pm.update_requests.is_empty()
-            || crate::update_scope::UpdateScope::of(&*pm).contains_workspace(
-                from.resolution.tag == ResolutionTag::Root,
-                from.name_hash,
-                from.name.slice(from_buf!()),
-            );
+        let update_targets =
+            crate::update_scope::UpdateTargets::of(&*pm, &*from_lockfile, from.meta.id);
+        // `None` is also what the package.json of a `file:` folder gets. Its rows are no entries
+        // of the project: the transitive plan moves them.
+        let unbinds_targets = update_requests.is_some();
         // Re-derived after each package.json parse, which may grow `to_lockfile`'s dependencies.
         let mut to_deps: bun_ptr::RawSlice<Dependency> = to
             .dependencies
@@ -1209,18 +1208,17 @@ impl Diff {
                 && (from_dep.behavior.is_peer()
                     || to_lockfile.overrides.has_rule_for_name(from_dep.name_hash))
                 && (to_version.literal).eql(from_dep.version.literal, to_buf!(), from_buf!());
-            let is_explicit_update_target = update_requests.is_some_and(|updates| {
-                updates.is_empty()
-                    || (named_update_here
-                        && pm.is_update_request(
-                            from_dep.name_hash,
-                            from_dep.name.slice(from_buf!()),
-                        ))
-            });
+            // The root's link to a workspace has no version to move.
+            let is_explicit_update_target = unbinds_targets
+                && if from_dep.behavior.is_workspace() {
+                    update_targets.rereads_workspaces()
+                } else {
+                    update_targets.contains(&*pm, &to_deps!()[cur_to_i], to_buf!())
+                };
             if (same || same_folder) && !retyped {
                 if is_explicit_update_target
                     || (from_dep.version.tag == dependency::version::Tag::Tarball
-                        && pm.repins_tarball(from_dep, from_buf!(), named_update_here))
+                        && pm.repins_tarball(from_dep, from_buf!(), update_targets))
                     || Self::locked_version_is_out_of_range(
                         from_lockfile,
                         from_resolutions[i],
@@ -1698,9 +1696,13 @@ impl Diff {
     }
 
     /// `to` is about to replace `from_id`. Its dependencies keep the resolutions that `generate`
-    /// would let the root's dependencies keep.
+    /// would let the root's dependencies keep: all but the rows that `bun update` targets.
     pub(crate) fn keep_resolutions(pm: &mut PackageManager, from_id: PackageID, to: &Package) {
-        if pm.to_update || from_id >= pm.lockfile.loaded_package_count {
+        if from_id >= pm.lockfile.loaded_package_count {
+            return;
+        }
+        let update_targets = crate::update_scope::UpdateTargets::of(&*pm, &pm.lockfile, from_id);
+        if update_targets.all() {
             return;
         }
         let from = pm.lockfile.packages.items_dependencies()[from_id as usize];
@@ -1708,6 +1710,9 @@ impl Diff {
             let lockfile = &*pm.lockfile;
             let buf = lockfile.buffers.string_bytes.as_slice();
             let to_dep = &lockfile.buffers.dependencies[to_i];
+            if update_targets.contains(&*pm, to_dep, buf) {
+                continue;
+            }
             let kept = (from.begin() as usize..from.end() as usize).find_map(|from_i| {
                 let from_dep = &lockfile.buffers.dependencies[from_i];
                 let locked = lockfile.buffers.resolutions[from_i];

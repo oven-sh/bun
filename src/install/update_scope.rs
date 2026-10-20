@@ -26,7 +26,7 @@ pub struct UpdateScope<'a> {
     whole_workspace: bool,
     /// `--depth 0`: only the dependencies of the root and of workspaces are in scope.
     direct_only: bool,
-    /// Walked by `plan_named` before the differ invalidates rows; otherwise `reachable()` walks the lockfile it is given.
+    /// Walked by `plan_named` before the differ invalidates rows, and again for the cleaned lockfile; otherwise `reachable()` walks the lockfile it is given.
     planned: Option<&'a DynamicBitSet>,
     lazy: OnceCell<DynamicBitSet>,
 }
@@ -63,7 +63,7 @@ impl<'a> UpdateScope<'a> {
     }
 }
 
-/// Runs on the loaded lockfile before the differ invalidates the rows it re-enqueues, like `TransitiveUpdate::plan`.
+/// Runs on the loaded lockfile before the differ invalidates the rows it re-enqueues, like `TransitiveUpdate::plan`, and again once the lockfile is cleaned, which gives the packages new ids.
 pub fn plan_named(manager: &mut PackageManager) {
     let reachable = {
         let scope = UpdateScope::of(manager);
@@ -136,7 +136,7 @@ impl UpdateScope<'_> {
         }
     }
 
-    fn contains_package(&self, lockfile: &Lockfile, id: usize) -> bool {
+    pub(crate) fn contains_package(&self, lockfile: &Lockfile, id: usize) -> bool {
         let tag = lockfile.packages.items_resolution()[id].tag;
         match tag {
             ResolutionTag::Root | ResolutionTag::Workspace => self.contains_workspace(
@@ -144,13 +144,13 @@ impl UpdateScope<'_> {
                 lockfile.packages.items_name_hash()[id],
                 lockfile.packages.items_name()[id].slice(lockfile.buffers.string_bytes.as_slice()),
             ),
-            // Packages appended after the walk (ids past its end) were resolved for an in-scope row.
-            _ => {
-                !self.direct_only
-                    && (self.whole_workspace
-                        || self.reachable(lockfile).is_set_allow_out_of_bound(id, true))
-            }
+            _ => !self.direct_only && self.reaches(lockfile, id),
         }
+    }
+
+    /// A package that is not a workspace, also under `--depth 0`. Packages appended after the walk (ids past its end) were resolved for an in-scope row.
+    pub(crate) fn reaches(&self, lockfile: &Lockfile, id: usize) -> bool {
+        self.whole_workspace || self.reachable(lockfile).is_set_allow_out_of_bound(id, true)
     }
 
     /// Rows owned by no package (orphans left by the differ) are in scope.
@@ -185,6 +185,127 @@ impl UpdateScope<'_> {
             }
         }
         walk
+    }
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum UpdateKind {
+    /// Not `bun update`.
+    #[default]
+    None,
+    Named,
+    /// `bun update` without names.
+    Bare,
+}
+
+/// Which rows of one package.json lose their bun.lock package under `bun update`, so that they are resolved again. Every other row stays on its package, so it takes no manifest; it can still follow a package that it shares with a row that moved (`update_transitive::redirect`). Which of the resolved rows move is `should_update`'s question: a bare update at the root resolves a member's rows again without moving them.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct UpdateTargets {
+    kind: UpdateKind,
+    /// The names on the command line refer to this package.json (`bun add` too), or a bare update reaches it: a targeted root or workspace, or a `file:` folder that those reach.
+    here: bool,
+    /// A bare update at the root without `--filter`, or with `-r`.
+    whole_workspace: bool,
+}
+
+impl UpdateTargets {
+    /// `package` is the root, a workspace or a `file:` folder that bun.lock has.
+    pub(crate) fn of(
+        manager: &PackageManager,
+        lockfile: &Lockfile,
+        package: PackageID,
+    ) -> UpdateTargets {
+        if !manager.to_update && manager.update_requests.is_empty() {
+            return UpdateTargets::default();
+        }
+        let scope = UpdateScope::of(manager);
+        let id = package as usize;
+        if !manager.to_update {
+            return UpdateTargets {
+                kind: UpdateKind::None,
+                here: scope.contains_workspace(
+                    lockfile.packages.items_resolution()[id].tag == ResolutionTag::Root,
+                    lockfile.packages.items_name_hash()[id],
+                    lockfile.packages.items_name()[id]
+                        .slice(lockfile.buffers.string_bytes.as_slice()),
+                ),
+                whole_workspace: false,
+            };
+        }
+        UpdateTargets::of_update(manager, &scope, || scope.contains_package(lockfile, id))
+    }
+
+    /// For the package.json that row `id` is in.
+    pub(crate) fn of_dependency(
+        manager: &PackageManager,
+        lockfile: &Lockfile,
+        id: DependencyID,
+    ) -> UpdateTargets {
+        if !manager.to_update {
+            // `bun add <url>` reads the row that it names again, wherever that row is.
+            return UpdateTargets {
+                kind: UpdateKind::None,
+                here: true,
+                whole_workspace: false,
+            };
+        }
+        let scope = UpdateScope::of(manager);
+        UpdateTargets::of_update(manager, &scope, || scope.contains_dependency(lockfile, id))
+    }
+
+    fn of_update(
+        manager: &PackageManager,
+        scope: &UpdateScope<'_>,
+        reached: impl FnOnce() -> bool,
+    ) -> UpdateTargets {
+        let bare = manager.update_requests.is_empty();
+        let whole_workspace = bare && scope.is_whole_workspace();
+        UpdateTargets {
+            kind: if bare {
+                UpdateKind::Bare
+            } else {
+                UpdateKind::Named
+            },
+            here: whole_workspace || reached(),
+            whole_workspace,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn here(self) -> bool {
+        self.here
+    }
+
+    /// Every row is a target, so none keeps its package.
+    #[inline]
+    pub(crate) fn all(self) -> bool {
+        self.kind == UpdateKind::Bare && self.here
+    }
+
+    /// Every workspace is read again without a comparison of its rows, as a bare update of the whole workspace always did.
+    #[inline]
+    pub(crate) fn rereads_workspaces(self) -> bool {
+        self.whole_workspace
+    }
+
+    #[inline]
+    pub(crate) fn contains(
+        self,
+        manager: &PackageManager,
+        dependency: &crate::Dependency,
+        buf: &[u8],
+    ) -> bool {
+        match self.kind {
+            UpdateKind::None => false,
+            UpdateKind::Named => {
+                self.here
+                    && manager.is_update_request(dependency.name_hash, dependency.name.slice(buf))
+            }
+            // Catalogs belong to the root, so a bare update moves them from every workspace.
+            UpdateKind::Bare => {
+                self.here || dependency.version.tag == crate::DependencyVersionTag::Catalog
+            }
+        }
     }
 }
 

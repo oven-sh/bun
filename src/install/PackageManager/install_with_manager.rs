@@ -668,9 +668,9 @@ pub fn install_with_manager(
     // With `--depth 0`, a transitive dependency that shared the old package with a moved dependency
     // stays where it is.
     let direct_only = manager.options.do_.update_direct_only();
-    direct_deps_before.redirect_dependents(&mut manager.lockfile, direct_only);
-    transitive.redirect_dependents(&mut manager.lockfile);
-    redirect_moved_edges(&mut manager.lockfile, &named.moved, direct_only);
+    direct_deps_before.redirect_dependents(manager, direct_only);
+    transitive.redirect_dependents(manager);
+    redirect_moved_edges(manager, &named.moved, direct_only);
     // `bun audit fix` moved its rows to the fixed versions on purpose.
     if !matches!(manager.subcommand, Subcommand::Dedupe | Subcommand::Audit) {
         crate::dedupe::collapse_appended(manager);
@@ -2370,6 +2370,10 @@ fn clean_lockfile(
     // lockfile.
     manager.lockfile.package_extensions.rules =
         core::mem::take(&mut before_clean.package_extensions.rules);
+    // The update's scope is a set of package ids, and the copy numbered the packages again.
+    if manager.named_update_reachable.is_some() {
+        crate::update_scope::plan_named(manager);
+    }
     // The log had no errors before this, so the tree builder refused a name. Stop before the linker
     // runs.
     if manager.log_mut().has_errors() {
@@ -2549,7 +2553,7 @@ fn reresolve_rows_outside_overrides(
     if manager.log_mut().has_errors() {
         manager.crash();
     }
-    redirect_moved_edges(&mut manager.lockfile, &moved, false);
+    redirect_moved_edges(manager, &moved, false);
 
     let before_clean = clean_lockfile(manager, log_level)?;
     *root = *manager.lockfile.packages.get(0);

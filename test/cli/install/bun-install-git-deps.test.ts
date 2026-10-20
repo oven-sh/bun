@@ -829,9 +829,15 @@ test.concurrent(
 // `bun update` fetches the git and `github:` dependencies of the project again.
 // The dependencies of such a package resolve again too, also when its own
 // commit did not move, so a nested branch ref follows its branch.
-for (const parent of ["github:", "git+"] as const) {
+// With a bun.lock, `--depth 0` gives the same result.
+for (const [parent, flags] of [
+  ["github:", []],
+  ["git+", []],
+  ["github:", ["--depth", "0"]],
+  ["git+", ["--depth", "0"]],
+] as const) {
   test.concurrent(
-    `bun update moves a nested github: ref when the commit of its ${parent} parent hasn't moved`,
+    `bun ${["update", ...flags].join(" ")} moves a nested github: ref when the commit of its ${parent} parent hasn't moved`,
     async () => {
       using dir = tempDir("git-update-nested", {});
       const root = String(dir);
@@ -857,7 +863,7 @@ for (const parent of ["github:", "git+"] as const) {
       }
 
       github.heads.leaf = "ccccccc";
-      const { stderr, exitCode } = await runBun(project, join(root, "cache"), github.env, "update");
+      const { stderr, exitCode } = await runBun(project, join(root, "cache"), github.env, "update", ...flags);
       expect(stderr).toContain("Saved lockfile");
       expect(await installedVersionOf(project, "gh-leaf")).toBe("gh-leaf-moved");
       expect(await lockedPackages(project)).toEqual({ a: parentRow, "gh-leaf": github.ghLeafMoved });
@@ -866,6 +872,197 @@ for (const parent of ["github:", "git+"] as const) {
     30_000,
   );
 }
+
+// Writes `<root>/project`, a workspace root with the members `packages/m` and `packages/n`.
+function writeWorkspaces(root: string, dependencies: Record<"root" | "m" | "n", Record<string, string>>) {
+  const project = join(root, "project");
+  for (const name of ["m", "n"] as const) {
+    mkdirSync(join(project, "packages", name), { recursive: true });
+    writeFileSync(
+      join(project, "packages", name, "package.json"),
+      JSON.stringify({ name, version: "1.0.0", dependencies: dependencies[name] }),
+    );
+  }
+  const manifest = { name: "project", workspaces: ["packages/*"], dependencies: dependencies.root };
+  writeFileSync(join(project, "package.json"), JSON.stringify(manifest));
+  return project;
+}
+
+// From a workspace member, or with --filter, `bun update` targets that member. The git and `github:` dependencies of
+// the other workspaces keep their commit, and nothing is downloaded for them. In the second project `m` links the
+// workspace that has the dependency, so that workspace's package.json is read again: there bun.lock has the commit
+// where bun.lockb has the branch.
+const lockfileBunfig = (lockfile: string) => `[install]\nsaveTextLockfile = ${lockfile === "bun.lock"}\n`;
+const lockfileText = (project: string, lockfile: string) =>
+  readFileSync(join(project, lockfile), lockfile === "bun.lock" ? "utf8" : "hex");
+
+for (const [where, lockfile, dependencies] of [
+  ["the root", "bun.lock", { root: { a: "github:testowner/testrepo#main" }, m: {}, n: {} }],
+  ["a member it links", "bun.lock", { root: {}, m: { n: "workspace:*" }, n: { a: "github:testowner/testrepo#main" } }],
+  ["a member it links", "bun.lockb", { root: {}, m: { n: "workspace:*" }, n: { a: "github:testowner/testrepo#main" } }],
+] as const) {
+  for (const [command, args] of [
+    ["bun update in a member", []],
+    ["bun update --filter <member>", ["--filter", "m"]],
+  ] as const) {
+    test.concurrent(
+      `${command} downloads nothing for a github: dependency of ${where} (${lockfile})`,
+      async () => {
+        using dir = tempDir("git-update-other-workspace", {});
+        const root = String(dir);
+        await using github = await serveGithub();
+        const project = writeWorkspaces(root, dependencies);
+        writeFileSync(join(project, "bunfig.toml"), lockfileBunfig(lockfile));
+        const cache = join(root, "cache");
+        {
+          const { stderr, exitCode } = await runInstall(project, cache, github.env);
+          expect(stderr).toContain("Saved lockfile");
+          expect(await installedVersionOf(project, ghLeafOfGhDep)).toBe("gh-leaf");
+          expect(exitCode).toBe(0);
+        }
+        const locked = lockfileText(project, lockfile);
+
+        github.heads.leaf = "ccccccc";
+        github.downloads.length = 0;
+        const cwd = args.length ? project : join(project, "packages", "m");
+        const { stderr, exitCode } = await runBun(cwd, cache, github.env, "update", ...args);
+        expect(stderr).not.toContain("error:");
+        expect(github.downloads).toEqual([]);
+        expect(lockfileText(project, lockfile)).toBe(locked);
+        expect(exitCode).toBe(0);
+
+        // An update that targets the workspace with the dependency still follows the branch.
+        const all = await runBun(project, cache, github.env, "update", "-r");
+        expect(all.stderr).toContain("Saved lockfile");
+        expect(await installedVersionOf(project, ghLeafOfGhDep)).toBe("gh-leaf-moved");
+        expect(all.exitCode).toBe(0);
+      },
+      30_000,
+    );
+  }
+}
+
+// The same for a repository on a host. bun.lock and bun.lockb name such a repository as a `git+ssh://` URL, whatever
+// the package.json says. The second `bun update` runs a git that can reach no host, so a fetch would fail it.
+test.concurrent.each([
+  ["gitlab:group/lib#main", "gitlab.com/group/lib", "bun.lock"],
+  ["gitlab:group/lib#main", "gitlab.com/group/lib", "bun.lockb"],
+  ["git@example.com:group/lib.git", "git@example.com/group/lib.git", "bun.lock"],
+  ["git@example.com:group/lib.git", "git@example.com/group/lib.git", "bun.lockb"],
+])(
+  "bun update in a member runs no git for %s of a member it links (%s, %s)",
+  async (dependency, hostAndPath, lockfile) => {
+    using repo = await hostedGitRepository([`https://${hostAndPath}`], libPackage);
+    using dir = tempDir("git-update-hosted-other-workspace", {});
+    const root = String(dir);
+    const project = writeWorkspaces(root, { root: {}, m: { n: "workspace:*" }, n: { lib: dependency } });
+    writeFileSync(join(project, "bunfig.toml"), lockfileBunfig(lockfile));
+    const cache = join(root, "cache");
+    const first = await runInstall(project, cache, repo.env);
+    expect(first.stderr).toContain("Saved lockfile");
+    expect(first.exitCode).toBe(0);
+    const locked = lockfileText(project, lockfile);
+
+    const noHost = { ...repo.env, GIT_CONFIG_COUNT: "0" };
+    const { stderr, exitCode } = await runBun(join(project, "packages", "m"), cache, noHost, "update");
+    expect(stderr).not.toContain("error:");
+    expect(lockfileText(project, lockfile)).toBe(locked);
+    expect(exitCode).toBe(0);
+
+    const targeted = await runBun(join(project, "packages", "n"), cache, noHost, "update");
+    expect(targeted.stderr).toContain('for "lib" failed');
+    expect(targeted.exitCode).toBe(1);
+  },
+  30_000,
+);
+
+// The root and `m` depend on one branch of one repository, so bun.lock has one package for the two. An update of `m`
+// moves the branch. The root's dependency follows it, as a range follows a registry package that it shares: without
+// that, the old commit stays in bun.lock as a second package until an update of the root.
+for (const [command, args] of [
+  ["bun update in a member", []],
+  ["bun update --filter <member>", ["--filter", "m"]],
+] as const) {
+  test.concurrent(
+    `${command} keeps one package for a github: branch that the member shares with the root`,
+    async () => {
+      using dir = tempDir("git-update-shared-branch", {});
+      const root = String(dir);
+      await using github = await serveGithub();
+      const shared = { a: "github:testowner/leaf#main" };
+      const project = writeWorkspaces(root, { root: shared, m: shared, n: {} });
+      const cache = join(root, "cache");
+      const workspaces = { m: ["m@workspace:packages/m"], n: ["n@workspace:packages/n"] };
+      {
+        const { stderr, exitCode } = await runInstall(project, cache, github.env);
+        expect(stderr).toContain("Saved lockfile");
+        expect(await lockedPackages(project)).toEqual({ a: github.ghLeaf, ...workspaces });
+        expect(exitCode).toBe(0);
+      }
+
+      github.heads.leaf = "ccccccc";
+      github.downloads.length = 0;
+      const cwd = args.length ? project : join(project, "packages", "m");
+      const { stderr, exitCode } = await runBun(cwd, cache, github.env, "update", ...args);
+      expect(stderr).toContain("Saved lockfile");
+      expect(github.downloads).toEqual(["leaf#main"]);
+      expect(await lockedPackages(project)).toEqual({ a: github.ghLeafMoved, ...workspaces });
+      expect(await installedVersionOf(join(project, "packages", "m"), "a")).toBe("gh-leaf-moved");
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+}
+
+// The root gains a second ref to the commit of a git package that bun.lock has, so the repository is asked for that
+// ref. The update targets a member that does not reach the package, so the package keeps the dependencies that
+// bun.lock has for it. The registry that has them answers 503.
+test.concurrent(
+  "bun update for a member keeps the dependencies of a git package that it fetches for another workspace",
+  async () => {
+    using dir = tempDir("git-update-other-workspace-new-ref", {});
+    const root = String(dir);
+    const bare = await makeSharedRepo(
+      root,
+      [{ name: "git-dep", branch: "main", dependencies: { nested: "^1.0.0" } }],
+      "parent.git",
+    );
+    await git(bare, "branch", "v1", "main");
+    const repoUrl = `git+${pathToFileURL(bare)}`;
+    const tarball = await tarballOf("package", packageFiles("nested", "nested"));
+    let down = false;
+    await using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { origin, pathname } = new URL(req.url);
+        if (down) return new Response("registry says no", { status: 503 });
+        if (pathname.endsWith(".tgz")) return new Response(tarball);
+        const dist = { tarball: `${origin}/nested.tgz`, integrity: integrityOf(tarball) };
+        const versions = { "1.0.0": { name: "nested", version: "1.0.0", dist } };
+        return Response.json({ name: "nested", "dist-tags": { latest: "1.0.0" }, versions });
+      },
+    });
+    const env = { BUN_CONFIG_REGISTRY: registry.url.href };
+    const project = writeWorkspaces(root, { root: { a: `${repoUrl}#main` }, m: {}, n: {} });
+    const cache = join(root, "cache");
+    const sha = branchCommits(bare).main;
+    const locked = { a: `git-dep@${repoUrl}#${sha}`, nested: "nested@1.0.0" };
+    {
+      const { stderr, exitCode } = await runInstall(project, cache, env);
+      expect(stderr).toContain("Saved lockfile");
+      expect(await lockedResolutions(project)).toMatchObject(locked);
+      expect(exitCode).toBe(0);
+    }
+
+    writeWorkspaces(root, { root: { a: `${repoUrl}#main`, b: `${repoUrl}#v1` }, m: {}, n: {} });
+    down = true;
+    const { stderr, exitCode } = await runBun(join(project, "packages", "m"), cache, env, "update");
+    expect(stderr).not.toContain("error:");
+    expect(await lockedResolutions(project)).toMatchObject({ ...locked, b: locked.a });
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
 
 // The same with `git+`. The checkout task is keyed by the resolved commit, so two refs to one commit share one task and
 // one package.

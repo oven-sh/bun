@@ -9,7 +9,7 @@ use bun_semver as Semver;
 
 use crate::audit_fix;
 use crate::dedupe;
-use crate::dependency::{self, Behavior};
+use crate::dependency::{self, Behavior, VersionExt as _};
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, PackageIndexEntry};
 use crate::npm::PackageManifest;
@@ -66,11 +66,12 @@ impl DirectDependencies {
     }
 
     /// Edges on the previous package of a moved direct dependency follow it if their range allows.
-    pub fn redirect_dependents(&self, lockfile: &mut Lockfile, direct_only: bool) {
-        if self.owners.is_empty() || lockfile.loaded_package_count == 0 {
+    pub fn redirect_dependents(&self, manager: &mut PackageManager, direct_only: bool) {
+        if self.owners.is_empty() || manager.lockfile.loaded_package_count == 0 {
             return;
         }
-        redirect(lockfile, self.moved_pairs(lockfile), direct_only);
+        let moved = self.moved_rows(&manager.lockfile);
+        redirect(manager, moved, direct_only);
     }
 
     /// Returns the packages that direct dependencies have moved to since the snapshot.
@@ -80,6 +81,10 @@ impl DirectDependencies {
     }
 
     fn moved_pairs(&self, lockfile: &Lockfile) -> Vec<(PackageID, PackageID)> {
+        npm_pairs(lockfile, self.moved_rows(lockfile))
+    }
+
+    fn moved_rows(&self, lockfile: &Lockfile) -> Vec<Moved> {
         let packages_len = lockfile.packages.len();
         let pkg_res = lockfile.packages.items_resolution();
         let name_hashes = lockfile.packages.items_name_hash();
@@ -88,7 +93,7 @@ impl DirectDependencies {
         let deps = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
 
-        let mut pairs: Vec<(PackageID, PackageID)> = Vec::new();
+        let mut moved: Vec<Moved> = Vec::new();
         for &(owner, start, len) in &self.owners {
             let owner = owner as usize;
             if owner >= packages_len {
@@ -134,7 +139,7 @@ impl DirectDependencies {
                 if old == new
                     || (old as usize) >= packages_len
                     || (new as usize) >= packages_len
-                    || pkg_res[new as usize].tag != ResolutionTag::Npm
+                    || !Moved::is_followed(pkg_res, old, new)
                     || name_hashes[old as usize] != name_hashes[new as usize]
                     // A peer shares the version of a regular dependency of its owner or of the root.
                     // If that dependency still resolves to `old`, or already resolves to `new`, only
@@ -152,11 +157,42 @@ impl DirectDependencies {
                 {
                     continue;
                 }
-                pairs.push((old, new));
+                moved.push(Moved {
+                    old,
+                    new,
+                    row: dep_slices[owner].begin() + i as DependencyID,
+                });
             }
         }
-        pairs
+        moved
     }
+}
+
+/// A row that left `old` for `new`.
+struct Moved {
+    old: PackageID,
+    new: PackageID,
+    row: DependencyID,
+}
+
+impl Moved {
+    /// Both ids are in bounds. A move between two commits of a repository is only followed by the rows that name the same ref.
+    fn is_followed(pkg_res: &[crate::Resolution], old: PackageID, new: PackageID) -> bool {
+        match pkg_res[new as usize].tag {
+            ResolutionTag::Npm => true,
+            tag @ (ResolutionTag::Git | ResolutionTag::Github) => pkg_res[old as usize].tag == tag,
+            _ => false,
+        }
+    }
+}
+
+fn npm_pairs(lockfile: &Lockfile, moved: Vec<Moved>) -> Vec<(PackageID, PackageID)> {
+    let pkg_res = lockfile.packages.items_resolution();
+    moved
+        .into_iter()
+        .filter(|moved| pkg_res[moved.new as usize].tag == ResolutionTag::Npm)
+        .map(|moved| (moved.old, moved.new))
+        .collect()
 }
 
 /// One row per `(old, new)` npm pair, with the `(vX available)` hint of the `+` rows.
@@ -226,10 +262,16 @@ fn named_pairs(
 }
 
 /// Every edge still resolving to an `old` package whose range accepts its `new` npm package is re-pointed at it.
-fn redirect(lockfile: &mut Lockfile, pairs: Vec<(PackageID, PackageID)>, direct_only: bool) {
-    if pairs.is_empty() {
+/// `bun update` asks the registry nothing for an edge that it does not target, so such an edge cannot move on its own: it also follows when its dist-tag resolves to `new` in the manifest that the moved row read, and when it names the repository and the ref of the row that moved.
+fn redirect(manager: &mut PackageManager, moved: Vec<Moved>, direct_only: bool) {
+    if moved.is_empty() {
         return;
     }
+    let follows_specs = manager.to_update;
+    let min_age = manager.options.minimum_release_age_ms;
+    let excludes = manager.options.minimum_release_age_excludes;
+    let manifests = &mut manager.manifests;
+    let lockfile = &mut *manager.lockfile;
     let transitive_rows = direct_only.then(|| {
         let mut rows =
             DynamicBitSet::init_empty(lockfile.buffers.dependencies.len()).unwrap_or_oom();
@@ -238,45 +280,86 @@ fn redirect(lockfile: &mut Lockfile, pairs: Vec<(PackageID, PackageID)>, direct_
         }
         rows
     });
-    let mut new_of: Vec<PackageID> = vec![invalid_package_id; lockfile.packages.len()];
-    for (old, new) in pairs {
-        let slot = &mut new_of[old as usize];
-        if *slot == invalid_package_id {
-            *slot = new;
-        }
-    }
 
-    let moved: Vec<(usize, PackageID)> = {
+    let repointed: Vec<(usize, PackageID)> = {
         let lockfile: &Lockfile = lockfile;
         let buf = lockfile.buffers.string_bytes.as_slice();
         let pkg_res = lockfile.packages.items_resolution();
+        let pkg_names = lockfile.packages.items_name();
+        let name_hashes = lockfile.packages.items_name_hash();
         let deps = lockfile.buffers.dependencies.as_slice();
-        let mut moved = Vec::new();
+
+        let mut new_of: Vec<PackageID> = vec![invalid_package_id; lockfile.packages.len()];
+        // Usually empty: the rows that moved to another commit of their repository.
+        let mut refs: Vec<(&Moved, dependency::Version)> = Vec::new();
+        for moved in &moved {
+            if pkg_res[moved.new as usize].tag == ResolutionTag::Npm {
+                let slot = &mut new_of[moved.old as usize];
+                if *slot == invalid_package_id {
+                    *slot = moved.new;
+                }
+            } else if follows_specs
+                && let Some(asked) =
+                    dedupe::effective_version(lockfile, moved.row, &deps[moved.row as usize])
+            {
+                refs.push((moved, asked));
+            }
+        }
+
+        let mut repointed = Vec::new();
         for (j, &target) in lockfile.buffers.resolutions.iter().enumerate() {
             let Some(&new) = new_of.get(target as usize) else {
                 continue;
             };
-            if new == invalid_package_id {
+            if new == invalid_package_id && !refs.iter().any(|(moved, _)| moved.old == target) {
                 continue;
             }
             let dep = &deps[j];
             if dep.behavior.is_bundled() || transitive_rows.as_ref().is_some_and(|r| r.is_set(j)) {
                 continue;
             }
-            let Some(range) = dedupe::effective_npm_range(lockfile, j as DependencyID, dep) else {
+            let Some(asked) = dedupe::effective_version(lockfile, j as DependencyID, dep) else {
                 continue;
             };
-            if range
-                .npm()
-                .version
-                .satisfies(pkg_res[new as usize].npm().version, buf, buf)
-            {
-                moved.push((j, new));
+            let follows = match asked.tag {
+                DependencyVersionTag::Npm if new != invalid_package_id => asked
+                    .npm()
+                    .version
+                    .satisfies(pkg_res[new as usize].npm().version, buf, buf)
+                    .then_some(new),
+                DependencyVersionTag::DistTag if follows_specs && new != invalid_package_id => {
+                    let name = asked.dist_tag().name;
+                    (name.eql(pkg_names[new as usize], buf, buf)
+                        && manifests
+                            .by_name_hash_in_memory(name.slice(buf), name_hashes[new as usize])
+                            .is_some_and(|manifest| {
+                                (manifest.find_for_dependency(&asked, buf, min_age, excludes))
+                                    .unwrap()
+                                    .is_some_and(|found| {
+                                        found.version.order(
+                                            pkg_res[new as usize].npm().version,
+                                            &manifest.string_buf,
+                                            buf,
+                                        ) == Ordering::Equal
+                                    })
+                            }))
+                    .then_some(new)
+                }
+                DependencyVersionTag::Git | DependencyVersionTag::Github => refs
+                    .iter()
+                    .find(|(moved, ref_asked)| {
+                        moved.old == target && asked.eql(ref_asked, buf, buf)
+                    })
+                    .map(|(moved, _)| moved.new),
+                _ => None,
+            };
+            if let Some(new) = follows {
+                repointed.push((j, new));
             }
         }
-        moved
+        repointed
     };
-    for (j, new) in moved {
+    for (j, new) in repointed {
         lockfile.buffers.resolutions[j] = new;
     }
 }
@@ -400,10 +483,10 @@ impl TransitiveUpdate {
     }
 
     /// Once everything is resolved, the edges the plan skipped (peers that have a provider, bundled rows, other workspaces' pins) follow a moved package when their range allows, as they do for a moved direct dependency.
-    pub fn redirect_dependents(&self, lockfile: &mut Lockfile) {
+    pub fn redirect_dependents(&self, manager: &mut PackageManager) {
         let moved: Vec<(DependencyID, PackageID)> =
             self.pins.iter().map(|pin| (pin.dep_id, pin.from)).collect();
-        redirect_moved_edges(lockfile, &moved, false);
+        redirect_moved_edges(manager, &moved, false);
     }
 }
 
@@ -486,24 +569,29 @@ fn print_log(manager: &PackageManager) -> crate::Result<()> {
 
 /// `moved` pairs an invalidated edge with the package it used to resolve to; every other edge still on that package follows it to the edge's new npm resolution when its range allows.
 pub(crate) fn redirect_moved_edges(
-    lockfile: &mut Lockfile,
+    manager: &mut PackageManager,
     moved: &[(DependencyID, PackageID)],
     direct_only: bool,
 ) {
-    let pairs: Vec<(PackageID, PackageID)> = {
-        let pkg_res = lockfile.packages.items_resolution();
-        let resolutions = lockfile.buffers.resolutions.as_slice();
+    let moved: Vec<Moved> = {
+        let pkg_res = manager.lockfile.packages.items_resolution();
+        let resolutions = manager.lockfile.buffers.resolutions.as_slice();
         moved
             .iter()
-            .map(|&(dep_id, from)| (from, resolutions[dep_id as usize]))
-            .filter(|&(from, to)| {
-                to != from
-                    && (to as usize) < pkg_res.len()
-                    && pkg_res[to as usize].tag == ResolutionTag::Npm
+            .map(|&(row, old)| Moved {
+                old,
+                new: resolutions[row as usize],
+                row,
+            })
+            .filter(|moved| {
+                moved.new != moved.old
+                    && (moved.old as usize) < pkg_res.len()
+                    && (moved.new as usize) < pkg_res.len()
+                    && Moved::is_followed(pkg_res, moved.old, moved.new)
             })
             .collect()
     };
-    redirect(lockfile, pairs, direct_only);
+    redirect(manager, moved, direct_only);
 }
 
 /// Packages of `cleaned` that the `moved` edges of `before_clean` resolved to, for seeding the security scan.

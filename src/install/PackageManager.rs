@@ -609,7 +609,7 @@ pub struct PackageManager {
     // `bun update -r`/`--filter`: workspaces whose deps update. None = cwd only.
     pub update_target_workspaces: Option<Box<[UpdateTargetWorkspace]>>,
 
-    // `bun update <name>`: packages reachable from the workspaces in scope, see update_scope::plan_named.
+    // A `bun update` that does not reach every workspace: the packages that the workspaces in scope reach, by their id in the current lockfile. See update_scope::plan_named.
     pub(crate) named_update_reachable: Option<bun_collections::DynamicBitSet>,
 
     // bun update: patched packages a move was held back for; drained by update_transitive::print_kept_patched.

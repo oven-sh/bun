@@ -127,6 +127,8 @@ Within each section, individual packages may have a suffix (` dev`, ` peer`, ` o
 
 In a monorepo, `bun update` only rewrites the `package.json` of the workspace you run it in. From the root, it still updates the transitive dependencies of every workspace in `bun.lock`.
 
+From a workspace, or with `--filter`, Bun does not resolve the `package.json` entries of the other workspaces again: it does not look up newer versions for them. Such an entry still follows a package that it shares with an updated entry, if its range or dist-tag accepts the new version. An update without package names also updates every `catalog:` entry, because the catalog belongs to the root.
+
 - `--recursive` (`-r`) updates every workspace's `package.json`.
 - `--filter <pattern>` (`-F`) updates only the matching workspaces, using the [filter syntax](/pm/filter). As with `bun install --filter`, Bun links only the selected workspaces afterwards.
 

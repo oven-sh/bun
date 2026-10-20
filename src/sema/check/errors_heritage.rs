@@ -1005,7 +1005,7 @@ impl Checker<'_, '_> {
         name_type: Option<TypeId>,
         prop_type: TypeId,
     ) {
-        let is_private = name_type.is_none() && self.is_private_identifier_symbol(prop.name);
+        let is_private = name_type.is_none() && self.atoms().is_private_symbol_name(prop.name);
         if is_private {
             return;
         }

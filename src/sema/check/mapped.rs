@@ -518,7 +518,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// it, or `None` for a private name.
     pub(super) fn key_type_of_name(&mut self, name: Atom) -> Option<TypeId> {
         let text = self.atoms().bytes(name);
-        if self.is_private_identifier_symbol(name) {
+        if self.atoms().is_private_symbol_name(name) {
             return None;
         }
         if let Some(rest) = text.strip_prefix(crate::atom::SYMBOL_NAME_PREFIX) {

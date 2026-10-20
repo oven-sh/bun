@@ -2,7 +2,6 @@
 
 use super::*;
 use crate::bind::{JsDeclarationKind, assignment_declaration_kind, define_property_call};
-use crate::util::SharedSort;
 
 bun_core::comptime_string_set! {
     /// `textToKeyword`
@@ -34,11 +33,17 @@ impl ExportName {
             super::super::print::quoted(&self.text, b'"', false)
         }
     }
+
+    /// `export { local as name };`
+    fn export_of(&self, local: &[u8]) -> Statement {
+        let text = cat!(b"export { ", local, b" as ", self.printed_name(), b" };");
+        Statement::new(StatementKind::ExportDeclaration, text)
+    }
 }
 
 impl<'p> DeclarationEmit<'_, 'p, '_> {
     /// `cjsExportAssignmentVisitor`, then the CommonJS cases of `expressionVisitor` (`visitNestedExpression`), over the
-    /// whole file.
+    /// whole file. They run before any statement is visited, so `needsDeclare` is true.
     pub(super) fn transform_commonjs_exports(&mut self) {
         let file = self.file();
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
@@ -71,7 +76,6 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             };
             self.cjs_export_assignment =
                 self.transform_export_assignment(input, hir.node(e), value, true);
-            self.result_has_scope_marker = true;
             self.result_has_external_module_indicator = true;
             self.tracker.get_symbol_accessibility_diagnostic = saved;
         }
@@ -180,14 +184,6 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             let text = [b"export { ", &specifier[..], b" };"].concat();
             return Some(vec![Statement::new(StatementKind::ExportDeclaration, text)]);
         }
-        let declare = |first: &[Flags], needs_declare: bool| -> Vec<Flags> {
-            let declare: &[Flags] = if needs_declare {
-                &[Flags::AMBIENT]
-            } else {
-                &[]
-            };
-            [first, declare].concat()
-        };
         let comments = match bound.parent_of_expr(input) {
             Parent::Stmt(s) => self.leading_comments(hir[s].loc.pos),
             _ => Vec::new(),
@@ -211,7 +207,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 return Some(vec![Statement {
                     kind: StatementKind::Other,
                     comments: Vec::new(),
-                    modifiers: declare(&[Flags::EXPORT], self.needs_declare),
+                    modifiers: vec![Flags::EXPORT, Flags::AMBIENT],
                     text: [b"var ", &name.text[..], &ensured.text()[..], b";"].concat(),
                 }]);
             }
@@ -230,22 +226,14 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let statement = Statement {
             kind: StatementKind::Other,
             comments,
-            modifiers: declare(&[], self.needs_declare),
+            modifiers: vec![Flags::AMBIENT],
             text: [b"const ", &new_id[..], &ensured.text()[..], b";"].concat(),
         };
         let export = if is_default {
             let text = [b"export default ", &new_id[..], b";"].concat();
             Statement::new(StatementKind::ExportAssignment, text)
         } else {
-            let text = [
-                b"export { ",
-                &new_id[..],
-                b" as ",
-                &name.printed_name()[..],
-                b" };",
-            ]
-            .concat();
-            Statement::new(StatementKind::ExportDeclaration, text)
+            name.export_of(&new_id)
         };
         Some(vec![statement, export])
     }
@@ -260,33 +248,18 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
     ) -> Vec<Statement> {
         let file = self.file();
         let own_name = self.c.hir(file)[c].name;
-        let exported = |needs_declare: bool| match needs_declare {
-            true => vec![Flags::EXPORT, Flags::AMBIENT],
-            false => vec![Flags::EXPORT],
-        };
+        let exported = vec![Flags::EXPORT, Flags::AMBIENT];
         if own_name.is_none() {
             let class_name = match name.is_identifier {
                 true => name.text.clone(),
                 false => self.unique_name(b"_class"),
             };
-            let mut class =
-                self.transform_class_expression(c, &class_name, exported(self.needs_declare));
+            let mut class = self.transform_class_expression(c, &class_name, exported);
             class.comments = comments;
             if name.is_identifier {
                 return vec![class];
             }
-            let text = [
-                b"export { ",
-                &class_name[..],
-                b" as ",
-                &name.printed_name()[..],
-                b" };",
-            ]
-            .concat();
-            return vec![
-                class,
-                Statement::new(StatementKind::ExportDeclaration, text),
-            ];
+            return vec![class, name.export_of(&class_name)];
         }
         let class_name = self.name(own_name).to_vec();
         self.tracker.watched_class_symbol = Some(self.c.class_sym(file, c));
@@ -296,8 +269,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         // emitted.
         let mut class = None;
         if !names_differ {
-            class =
-                Some(self.transform_class_expression(c, &class_name, exported(self.needs_declare)));
+            class = Some(self.transform_class_expression(c, &class_name, exported));
         }
         let needs_isolation = names_differ || self.tracker.class_symbol_tracked;
         if needs_isolation {
@@ -306,7 +278,6 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             self.set_indent(self.indent - 1);
         }
         self.tracker.watched_class_symbol = None;
-        self.tracker.class_symbol_tracked = false;
         let Some(mut class) = class else {
             return Vec::new();
         };
@@ -315,27 +286,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             return vec![class];
         }
         let namespace = self.unique_name(b"_ns");
-        self.set_indent(self.indent + 1);
-        let body = self.statements_text(&[class]);
-        self.set_indent(self.indent - 1);
-        let modifiers = match self.needs_declare {
-            true => vec![Flags::AMBIENT],
-            false => Vec::new(),
-        };
-        let namespace_declaration = Statement {
-            kind: StatementKind::Other,
-            comments: Vec::new(),
-            modifiers,
-            text: [
-                b"namespace ",
-                &namespace[..],
-                b" {\n",
-                &body[..],
-                &self.indentation()[..],
-                b"}",
-            ]
-            .concat(),
-        };
+        let namespace_declaration =
+            self.namespace_declaration(vec![Flags::AMBIENT], &namespace, &[class]);
         let alias_base = [b"_", &name.text[..]].concat();
         let alias = match name.is_identifier && bun_core::lexer::is_identifier(&alias_base) {
             true => self.unique_name(&alias_base),
@@ -351,18 +303,10 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             b";",
         ]
         .concat();
-        let export = [
-            b"export { ",
-            &alias[..],
-            b" as ",
-            &name.printed_name()[..],
-            b" };",
-        ]
-        .concat();
         vec![
             namespace_declaration,
             Statement::new(StatementKind::ImportEquals, import),
-            Statement::new(StatementKind::ExportDeclaration, export),
+            name.export_of(&alias),
         ]
     }
 
@@ -377,28 +321,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 .modifiers
                 .retain(|&modifier| modifier != Flags::AMBIENT);
         }
-        self.set_indent(self.indent + 1);
-        let body = self.statements_text(&members);
-        self.set_indent(self.indent - 1);
-        let modifiers = if self.needs_declare {
-            vec![Flags::AMBIENT]
-        } else {
-            Vec::new()
-        };
-        vec![Statement {
-            kind: StatementKind::Other,
-            comments: Vec::new(),
-            modifiers,
-            text: [
-                b"namespace ",
-                &name[..],
-                b" {\n",
-                &body[..],
-                &self.indentation()[..],
-                b"}",
-            ]
-            .concat(),
-        }]
+        vec![self.namespace_declaration(vec![Flags::AMBIENT], &name, &members)]
     }
 
     /// `transformCjsRequireVariableDeclaration`

@@ -168,7 +168,7 @@ impl<'p, 's> Checker<'p, 's> {
         flags & kind != 0
     }
 
-    /// `shape::is_plain_object`, read from a column instead of the type's record.
+    /// True for any object type but a mapped type, read from a column instead of the type's record.
     #[inline]
     pub(super) fn is_plain_object_type(&self, ty: TypeId) -> bool {
         self.types().is_plain_object(ty)

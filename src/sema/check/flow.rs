@@ -146,8 +146,6 @@ impl PartialEq for Reference {
     }
 }
 
-impl Eq for Reference {}
-
 /// Flow analysis memo tables that aren't keyed by just a node. They belong to the checker, so
 /// they're dropped at the end of the task. The tables keyed by a node are fields of `Program`.
 /// Those are stored with `rewrite`, because tsgo assigns the link when the computation ends,
@@ -527,7 +525,16 @@ enum ResolvesKey {
 
 impl NarrowingSubjects for TestSubjects {
     fn add(&mut self, root: u32, first: u32) {
-        TestSubjects::add(self, root, first);
+        for chain in &mut self.chains {
+            if chain.0 == 0 {
+                *chain = (root, first);
+                return;
+            }
+            if chain.0 == root && (chain.1 == first || chain.1 == 0) {
+                return;
+            }
+        }
+        self.state |= TestSubjects::ANYTHING;
     }
 
     fn is_full(&self) -> bool {
@@ -601,19 +608,6 @@ impl TestSubjects {
     /// There are more subjects than `chains` can hold, a key whose name can only be resolved by a
     /// query, or a union (`add_union`).
     const ANYTHING: u32 = 2;
-
-    fn add(&mut self, root: u32, first: u32) {
-        for chain in &mut self.chains {
-            if chain.0 == 0 {
-                *chain = (root, first);
-                return;
-            }
-            if chain.0 == root && (chain.1 == first || chain.1 == 0) {
-                return;
-            }
-        }
-        self.state |= TestSubjects::ANYTHING;
-    }
 
     /// True if one of `chains` can be `reference`, have it as a prefix, or be the object of its
     /// last property.
@@ -770,23 +764,14 @@ fn branch_label_antecedents<'b>(
 }
 
 impl Walk {
-    fn new(
-        reference: Reference,
-        declared: TypeId,
-        initial: TypeId,
-        crosses_functions: bool,
-    ) -> Walk {
+    fn new(reference: Reference, declared: TypeId, initial: TypeId, crossing: Crossing) -> Walk {
         Walk {
             reference,
             has_reference_key: None,
             declared,
             initial,
             start: Start::Known,
-            crossing: if crosses_functions {
-                Crossing::Yes
-            } else {
-                Crossing::No
-            },
+            crossing,
             crossed: 0,
             shared_flows: SharedFlows::default(),
             reduced: Vec::new(),
@@ -1068,12 +1053,8 @@ impl<'p, 's> Checker<'p, 's> {
                 facts_for(OF_NUMBER, !is_zero, is_zero)
             }
             TypeData::Intrinsic(Intrinsic::BigInt) => facts_for(OF_BIGINT, true, true),
-            TypeData::BigIntLit { text, .. } => {
-                let is_zero = self
-                    .atoms()
-                    .bytes(*text)
-                    .iter()
-                    .all(|&c| c == b'0' || c == b'n');
+            TypeData::BigIntLit { .. } => {
+                let is_zero = self.is_definitely_falsy(ty);
                 facts_for(OF_BIGINT, !is_zero, is_zero)
             }
             TypeData::BoolLit { value, .. } => facts_for(OF_BOOLEAN, *value, !*value),
@@ -2111,11 +2092,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // `const { kind: k } = x`, `const [k] = x`
             PatParent::Prop(parent_pat, _) | PatParent::Elem(parent_pat, _) => {
-                let has_default = match parent {
-                    PatParent::Prop(_, prop) => hir[prop].default.is_some(),
-                    PatParent::Elem(_, elem) => hir[elem].default.is_some(),
-                    _ => true,
-                };
+                let has_default = parent.initializer(hir).is_some();
                 let PatParent::Var(d) = bound.pat_parent[parent_pat.idx()] else {
                     return None;
                 };
@@ -2395,7 +2372,7 @@ impl<'p, 's> Checker<'p, 's> {
             let node = hir.node(parent);
             let reference =
                 Reference::synthetic(file, Root::Pattern(parent), SmallVec::new(), node);
-            let mut walk = Walk::new(reference, parent_ty, parent_ty, true);
+            let mut walk = Walk::new(reference, parent_ty, parent_ty, Crossing::Yes);
             let narrowed = self.get_flow_type_of_reference(&mut walk, flow);
             if narrowed.is_never() {
                 break 'checked TypeId::NEVER;
@@ -2468,7 +2445,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (root, node) = (Root::Params(func), hir.node(func));
         let reference = Reference::synthetic(file, root, SmallVec::new(), node);
-        let mut walk = Walk::new(reference, rest_ty, rest_ty, true);
+        let mut walk = Walk::new(reference, rest_ty, rest_ty, Crossing::Yes);
         let narrowed = self.get_flow_type_of_reference(&mut walk, flow);
         // This is the result whether or not anything was narrowed, so a parameter declared `x?`
         // doesn't get `undefined` added.
@@ -2661,7 +2638,6 @@ impl<'p, 's> Checker<'p, 's> {
         ty: TypeId,
         access: Access,
     ) -> Option<(TypeId, bool)> {
-        let name = access.name;
         let remove_nullable = self.p.files.options.strict_null_checks
             && (access.optional || access.non_null)
             && self.maybe_type_of_kind(ty, tf::NULLABLE);
@@ -2670,13 +2646,13 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             ty
         };
-        let mut prop = self.type_of_property_of_type(base, name)?;
+        let mut prop = self.type_of_property_of_type(base, access.name)?;
         if prop == TypeId::UNRESOLVED {
             return None;
         }
         let has_never = prop.is_never()
             || (self.parts(base).iter()).any(|&m| {
-                self.type_of_property_or_index_signature_of_type(m, name)
+                self.type_of_property_or_index_signature_of_type(m, access.name)
                     .is_some_and(|t| t.is_never())
             });
         if remove_nullable && access.optional {
@@ -3089,24 +3065,14 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 BinOp::In => self.narrow_by_in(reference, ty, left, right, sense),
                 BinOp::Comma => self.narrow(reference, ty, right, sense),
-                BinOp::And => {
-                    if sense {
-                        let ty = self.narrow(reference, ty, left, true);
-                        self.narrow(reference, ty, right, true)
+                BinOp::And | BinOp::Or => {
+                    if sense == (op == BinOp::And) {
+                        let ty = self.narrow(reference, ty, left, sense);
+                        self.narrow(reference, ty, right, sense)
                     } else {
-                        let a = self.narrow(reference, ty, left, false);
-                        let b = self.narrow(reference, ty, right, false);
+                        let a = self.narrow(reference, ty, left, sense);
+                        let b = self.narrow(reference, ty, right, sense);
                         self.union(&[a, b])
-                    }
-                }
-                BinOp::Or => {
-                    if sense {
-                        let a = self.narrow(reference, ty, left, true);
-                        let b = self.narrow(reference, ty, right, true);
-                        self.union(&[a, b])
-                    } else {
-                        let ty = self.narrow(reference, ty, left, false);
-                        self.narrow(reference, ty, right, false)
                     }
                 }
                 _ => ty,
@@ -3213,11 +3179,8 @@ impl<'p, 's> Checker<'p, 's> {
                 operand,
             },
             ExprKind::String(name),
-        ) = (hir[l].kind, hir[r].kind)
-        {
-            return self.narrow_by_typeof(reference, ty, operand, op, name, sense);
-        }
-        if let (
+        )
+        | (
             ExprKind::String(name),
             ExprKind::Unary {
                 op: UnOp::Typeof,
@@ -3705,17 +3668,13 @@ impl<'p, 's> Checker<'p, 's> {
                 self.narrow_type_by_type_facts(ty, TypeId::BOOLEAN, TYPEOF_EQ_BOOLEAN)
             }
             known::symbol => self.narrow_type_by_type_facts(ty, TypeId::SYMBOL, TYPEOF_EQ_SYMBOL),
-            known::undefined => {
-                let undefined = TypeId::UNDEFINED;
-                self.narrow_type_by_type_facts(ty, undefined, EQ_UNDEFINED)
-            }
+            known::undefined => self.narrow_type_by_type_facts(ty, TypeId::UNDEFINED, EQ_UNDEFINED),
             known::object => {
                 if self.has_any_flag(ty) {
                     return ty;
                 }
                 let object = self.narrow_type_by_type_facts(ty, TypeId::OBJECT, TYPEOF_EQ_OBJECT);
-                let null = TypeId::NULL;
-                let null = self.narrow_type_by_type_facts(ty, null, EQ_NULL);
+                let null = self.narrow_type_by_type_facts(ty, TypeId::NULL, EQ_NULL);
                 self.union(&[object, null])
             }
             known::function => {
@@ -3875,9 +3834,8 @@ impl<'p, 's> Checker<'p, 's> {
         match (self.data(ty), self.data(tuple)) {
             (TypeData::Ref { target, .. }, _) => self
                 .base_types(*target)
-                .to_vec()
-                .into_iter()
-                .any(|base| self.has_tuple_base(base, tuple)),
+                .iter()
+                .any(|&base| self.has_tuple_base(base, tuple)),
             (
                 TypeData::Tuple {
                     flags, readonly, ..
@@ -5787,8 +5745,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             initial = self.type_with_facts(declared, facts::NE_UNDEFINED);
         }
-        let mut walk = Walk::new(reference, declared, initial, false);
-        walk.crossing = crossing;
+        let mut walk = Walk::new(reference, declared, initial, crossing);
         // `isAutomaticTypeInNonNull`
         if start == Start::Unassigned || is_automatic && self.is_operand_of_non_null(file, e) {
             self.start_unassigned(&mut walk);
@@ -5978,7 +5935,7 @@ impl<'p, 's> Checker<'p, 's> {
         // It doesn't occur in the source. Its parent is in the declaration or the assignment that
         // `init` is in.
         (reference.at, reference.node) = (ExprId::NONE, self.hir(file).node(init));
-        let mut walk = Walk::new(reference, declared, declared, false);
+        let mut walk = Walk::new(reference, declared, declared, Crossing::No);
         self.get_flow_type_of_reference(&mut walk, flow)
     }
 
@@ -6008,7 +5965,7 @@ impl<'p, 's> Checker<'p, 's> {
         }];
         let constructor = self.hir(file).node(func);
         let reference = Reference::synthetic(file, Root::This, path, constructor);
-        let mut walk = Walk::new(reference, declared, initial, false);
+        let mut walk = Walk::new(reference, declared, initial, Crossing::No);
         let ty = self.get_flow_type_of_reference(&mut walk, exit);
         !self.contains_undefined(ty)
     }
@@ -6032,7 +5989,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (path, parent) = (smallvec![Step::from_name(name)], self.hir(file).node(func));
         let reference = Reference::synthetic(file, Root::This, path, parent);
-        let mut walk = Walk::new(reference, TypeId::AUTO, initial, false);
+        let mut walk = Walk::new(reference, TypeId::AUTO, initial, Crossing::No);
         let ty = self.get_flow_type_of_reference(&mut walk, exit);
         if self.p.files.options.no_implicit_any && self.is_automatic_type(ty) {
             let at = self.span_of_untyped_property(file, value_declaration);
@@ -6068,7 +6025,7 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId::AUTO;
         }
         let reference = self.reference_of(file, e);
-        let mut walk = Walk::new(reference, TypeId::AUTO, initial, false);
+        let mut walk = Walk::new(reference, TypeId::AUTO, initial, Crossing::No);
         self.get_flow_type_of_reference(&mut walk, flow)
     }
 
@@ -6250,13 +6207,8 @@ impl<'p, 's> Checker<'p, 's> {
             return self.union_or_evolving_with(types, Join::Literal);
         }
         let initial = self.initial_of(walk);
-        let is_subset = |c: &Self, t: TypeId| {
-            t == initial
-                || t.is_never()
-                || c.is_union(initial) && c.is_type_subset_of_union(t, initial)
-        };
         if !self.is_union(initial) {
-            return match types.iter().all(|&t| is_subset(self, t)) {
+            return match types.iter().all(|&t| t == initial || t.is_never()) {
                 true => self.union_or_evolving_with(types, Join::Literal),
                 false => self.union_or_evolving_with(types, Join::Subtype),
             };
@@ -6521,7 +6473,7 @@ impl<'p, 's> Checker<'p, 's> {
                         && match walk.reference.root {
                             Root::Symbol(_) | Root::Global(_) => true,
                             Root::This => arrow,
-                            // Never walked without a path, or walked with `crosses_functions`.
+                            // Never walked without a path, or walked with `Crossing::Yes`.
                             Root::Super
                             | Root::ImportMeta
                             | Root::NewTarget(_)
@@ -6871,12 +6823,7 @@ impl<'p, 's> Checker<'p, 's> {
                 null: found & facts::IS_NULL != 0,
             },
         );
-        // `GetNonNullableType`
-        let non_nullable = if strict {
-            self.adjusted_type_with_facts(ty, facts::NE_UNDEFINED_OR_NULL)
-        } else {
-            ty
-        };
+        let non_nullable = self.non_nullable(ty);
         if non_nullable.is_never() || non_nullable.is_null() || non_nullable.is_undefined() {
             TypeId::ERROR
         } else {
@@ -7712,7 +7659,6 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getExplicitThisType`: the declared type of `this`. Nothing is narrowed.
     fn explicit_this_type(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
-        use crate::bind::{FnOwner, MemberOwner};
         let (class, is_static) = match self.this_container(file, e)? {
             Err(class_container) => class_container,
             Ok(func) => {
@@ -8496,7 +8442,7 @@ impl<'p, 's> Checker<'p, 's> {
         let start = if before.is_none() {
             initial
         } else {
-            let mut walk = Walk::new(reference.clone(), declared, initial, false);
+            let mut walk = Walk::new(reference.clone(), declared, initial, Crossing::No);
             // The invocation of `getTypeAtFlowNode` for the synthesized condition is in progress.
             walk.depth = 1;
             let ty = self.flow_type(&mut walk, before).ty;

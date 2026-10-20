@@ -104,13 +104,6 @@ enum Table {
     Globals,
 }
 
-/// `ignoreQualification` and `isLocalNameLookup` of `getAccessibleSymbolChainFromSymbolTable`
-#[derive(Copy, Clone)]
-struct TableLookup {
-    ignores_qualification: bool,
-    is_local_name_lookup: bool,
-}
-
 /// `printer.SymbolAccessibility`
 #[derive(PartialEq, Eq)]
 enum Accessibility {
@@ -988,18 +981,6 @@ impl<'p, 's> Checker<'p, 's> {
         (starts_with_global_this, chain)
     }
 
-    /// `lookup_symbol_chain_at` for the symbol `cloneTypeAsModuleType` created for `originating_import`, with the value
-    /// meaning.
-    pub(super) fn lookup_symbol_chain_of_module_clone_at(
-        &mut self,
-        originating_import: Sym,
-        yield_module_symbol: YieldModuleSymbol,
-        at: Enclosing,
-    ) -> (bool, Vec<Sym>) {
-        let symbol = self.module_clone(originating_import);
-        self.lookup_symbol_chain_at(symbol, true, yield_module_symbol, at, Vec::new())
-    }
-
     /// `IsTypeSymbolAccessible`
     pub(super) fn is_type_symbol_accessible_at(&mut self, symbol: Sym, at: Enclosing) -> bool {
         self.is_any_symbol_accessible(&[symbol], at, symbol, Meaning::Type, false)
@@ -1345,17 +1326,10 @@ impl<'p, 's> Checker<'p, 's> {
                 let Some(statement) = self.statement_of(file, decl) else {
                     return false;
                 };
-                let flags = match decl {
-                    Decl::Fn(f) => hir[f].flags,
-                    Decl::Class(c) => hir[c].flags,
-                    Decl::Interface(i) => hir[i].flags,
-                    Decl::Alias(a) => hir[a].flags,
-                    Decl::Enum(e) => hir[e].flags,
-                    Decl::Module(m) => hir[m].flags,
-                    Decl::ImportEquals(i) => hir[i].flags,
-                    _ => Flags::empty(),
-                };
-                (flags, bound.parent_of_stmt(statement))
+                (
+                    bound.modifier_flags(hir, decl),
+                    bound.parent_of_stmt(statement),
+                )
             }
             Decl::ExportSpec(_) => {
                 let Some(statement) = self.statement_of(file, decl) else {
@@ -1446,18 +1420,7 @@ impl<'p, 's> Checker<'p, 's> {
                 | Decl::Alias(_)
                 | Decl::Enum(_)
                 | Decl::Module(_) => {
-                    let is_exported = match decl {
-                        Decl::ImportEquals(i) => hir[i].flags,
-                        Decl::Fn(f) => hir[f].flags,
-                        Decl::Class(c) => hir[c].flags,
-                        Decl::Interface(i) => hir[i].flags,
-                        Decl::Alias(a) => hir[a].flags,
-                        Decl::Enum(e) => hir[e].flags,
-                        Decl::Module(m) => hir[m].flags,
-                        _ => Flags::empty(),
-                    }
-                    .contains(Flags::EXPORT);
-                    if is_exported {
+                    if bound.modifier_flags(hir, decl).contains(Flags::EXPORT) {
                         return None;
                     }
                     self.statement_of(file, decl)?
@@ -1779,12 +1742,8 @@ impl<'p, 's> Checker<'p, 's> {
             return Rc::clone(known);
         }
         let mut result = Vec::new();
-        let lookup = TableLookup {
-            ignores_qualification: false,
-            is_local_name_lookup: true,
-        };
         for table in self.tables_in_scope(at) {
-            result = self.chain_from_table(symbol, at, meaning, table, lookup, visited);
+            result = self.chain_from_table(symbol, at, meaning, table, false, visited);
             if !result.is_empty() {
                 break;
             }
@@ -1805,14 +1764,15 @@ impl<'p, 's> Checker<'p, 's> {
         at: Enclosing,
         meaning: Meaning,
         table: Table,
-        lookup: TableLookup,
+        ignores_qualification: bool,
         visited: &mut Vec<(Sym, Table)>,
     ) -> Vec<Sym> {
         if visited.contains(&(symbol, table)) {
             return Vec::new();
         }
         visited.push((symbol, table));
-        let result = self.try_symbol_table(symbol, at, meaning, table, lookup, visited);
+        let result =
+            self.try_symbol_table(symbol, at, meaning, table, ignores_qualification, visited);
         visited.retain(|&entry| entry != (symbol, table));
         result
     }
@@ -1824,10 +1784,9 @@ impl<'p, 's> Checker<'p, 's> {
         at: Enclosing,
         meaning: Meaning,
         table: Table,
-        lookup: TableLookup,
+        ignores_qualification: bool,
         visited: &mut Vec<(Sym, Table)>,
     ) -> Vec<Sym> {
-        let ignores_qualification = lookup.ignores_qualification;
         let res = self.lookup_symbol(table, symbol);
         if let Some(res) = res
             && self.is_accessible(
@@ -1856,7 +1815,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             candidates.push(vec![symbol]);
         }
-        for alias in self.aliases_to_try(table, at, lookup) {
+        for alias in self.aliases_to_try(table, at, ignores_qualification) {
             let Some(resolved) = self.resolve_alias_or_unknown(alias) else {
                 continue;
             };
@@ -1893,12 +1852,13 @@ impl<'p, 's> Checker<'p, 's> {
         Vec::new()
     }
 
-    /// The aliases of `table` that `trySymbolTable` resolves.
-    fn aliases_to_try(&mut self, table: Table, at: Enclosing, lookup: TableLookup) -> Vec<Sym> {
-        let TableLookup {
-            ignores_qualification,
-            is_local_name_lookup,
-        } = lookup;
+    /// The aliases of `table` that `trySymbolTable` resolves. `isLocalNameLookup` is `!ignores_qualification`.
+    fn aliases_to_try(
+        &mut self,
+        table: Table,
+        at: Enclosing,
+        ignores_qualification: bool,
+    ) -> Vec<Sym> {
         let is_in_module = !at.is_none() && self.hir(at.file).has_module_syntax;
         let mut aliases = Vec::new();
         for &(name, alias) in self.aliases_in_table(table).iter() {
@@ -1910,11 +1870,11 @@ impl<'p, 's> Checker<'p, 's> {
             if is_in_module && matches!(decls.first(), Some((_, Decl::UmdGlobal(_)))) {
                 continue;
             }
-            // `isNamespaceReexportDeclaration`
-            if is_local_name_lookup && decls.iter().any(|d| matches!(d.1, Decl::ExportStarAs(_))) {
-                continue;
-            }
-            if !ignores_qualification && decls.iter().any(|d| matches!(d.1, Decl::ExportSpec(_))) {
+            // `isNamespaceReexportDeclaration`, `KindExportSpecifier`
+            if !ignores_qualification
+                && (decls.iter())
+                    .any(|d| matches!(d.1, Decl::ExportStarAs(_) | Decl::ExportSpec(_)))
+            {
                 continue;
             }
             aliases.push(alias);
@@ -1956,13 +1916,9 @@ impl<'p, 's> Checker<'p, 's> {
         if is_property_or_method_declaration {
             return None;
         }
-        let lookup = TableLookup {
-            ignores_qualification: false,
-            is_local_name_lookup: true,
-        };
         for table in self.tables_in_scope(at) {
             let mut candidates = Vec::new();
-            for alias in self.aliases_to_try(table, at, lookup) {
+            for alias in self.aliases_to_try(table, at, false) {
                 if self.property_of_alias(alias) == Some(property)
                     && self.can_qualify_symbol(at, alias, Meaning::None, &mut Vec::new())
                 {
@@ -2013,10 +1969,7 @@ impl<'p, 's> Checker<'p, 's> {
             at,
             meaning,
             Table::ResolvedExports(resolved),
-            TableLookup {
-                ignores_qualification: true,
-                is_local_name_lookup: false,
-            },
+            true,
             visited,
         );
         if from_exports.is_empty()
@@ -2951,8 +2904,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             (ReferenceKind::Types, b"types"),
             (ReferenceKind::Lib, b"lib"),
         ] {
-            for &(kind, value, pos, mode) in hir.references.iter().filter(|it| it.0 == expected) {
-                let _ = kind;
+            for &(_, value, pos, mode) in hir.references.iter().filter(|it| it.0 == expected) {
                 let line = &hir.text[(pos as usize).min(hir.text.len())..];
                 let line = &line[..strings::index_of_char_usize(line, b'\n').unwrap_or(line.len())];
                 if !strings::contains(line, b"preserve=\"true\"")
@@ -3110,16 +3062,13 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         text
     }
 
-    /// `{`, each of `lines` on its own line indented one more level, with `separator` between them, and `}`.
-    fn block(&self, lines: &[Vec<u8>], separator: &[u8]) -> Vec<u8> {
+    /// `{`, each of `lines` on its own line indented one more level, and `}`.
+    fn block(&self, lines: &[Vec<u8>]) -> Vec<u8> {
         let mut text = b"{\n".to_vec();
-        for (i, line) in lines.iter().enumerate() {
+        for line in lines {
             text.extend_from_slice(&self.indentation());
             text.extend_from_slice(b"    ");
             text.extend_from_slice(line);
-            if i + 1 != lines.len() {
-                text.extend_from_slice(separator);
-            }
             text.push(b'\n');
         }
         text.extend_from_slice(&self.indentation());
@@ -3439,11 +3388,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     self.set_indent(outer);
                     self.tracker.get_symbol_accessibility_diagnostic = saved;
                     let host = self.expando_host(statement, name, &signature);
-                    self.expando_hosts.insert(statement, host.clone());
-                    if self.emitted_statements.contains_key(&statement) {
-                        let block = self.create_full_expando_block(statement, host);
-                        self.emitted_statements.insert(statement, block);
-                    }
+                    self.expando_hosts.insert(statement, host);
                     if let Some(isolated_declarations) = &mut self.tracker.isolated_declarations {
                         self.c
                             .iso_report_expandos(isolated_declarations, hir.node(d));
@@ -4023,7 +3968,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     text.extend_from_slice(&extends.join(&b", "[..]));
                 }
                 text.push(b' ');
-                text.extend_from_slice(&self.block(&members, b""));
+                text.extend_from_slice(&self.block(&members));
                 other(modifiers, text)
             }
             StmtKind::Fn(f) => {
@@ -4137,17 +4082,27 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             return host;
         };
         let modifiers = first.modifiers.clone();
+        host.push(self.namespace_declaration(modifiers, self.name(name), &members));
+        host
+    }
+
+    /// `namespace name { members }`. The members are emitted one level deeper.
+    fn namespace_declaration(
+        &mut self,
+        modifiers: Vec<Flags>,
+        name: &[u8],
+        members: &[Statement],
+    ) -> Statement {
         self.set_indent(self.indent + 1);
-        let body = self.statements_text(&members);
+        let body = self.statements_text(members);
         self.set_indent(self.indent - 1);
-        let head = [b"namespace ", self.name(name), b" {\n"].concat();
-        host.push(Statement {
+        let head = [b"namespace ", name, b" {\n"].concat();
+        Statement {
             kind: StatementKind::Other,
             comments: Vec::new(),
             modifiers,
             text: [&head[..], &body[..], &self.indentation()[..], b"}"].concat(),
-        });
-        host
+        }
     }
 
     /// `transformEnumDeclaration`, starting at the keyword.
@@ -4512,7 +4467,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             kind: StatementKind::Other,
             comments: Vec::new(),
             modifiers,
-            text: [&head[..], &self.block(&members, b"")[..]].concat(),
+            text: [&head[..], &self.block(&members)[..]].concat(),
         };
         base.into_iter().chain([class]).collect()
     }
@@ -4538,7 +4493,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             kind: StatementKind::Other,
             comments: Vec::new(),
             modifiers,
-            text: [&head[..], &self.block(&members, b"")[..]].concat(),
+            text: [&head[..], &self.block(&members)[..]].concat(),
         }
     }
 
@@ -4565,8 +4520,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     continue;
                 }
                 self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(p));
-                let modified = ModifiedNode::Nested;
-                let modifiers = self.ensure_modifiers(hir.param_modifiers(p), modified);
+                let modifiers = self.ensure_modifiers(hir.param_modifiers(p), ModifiedNode::Nested);
                 // `preserveJsDoc`
                 let comments = self.leading_comments(hir[p].loc.pos);
                 let modifiers = [comments, modifiers_text(&modifiers)].concat();
@@ -4661,7 +4615,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                         names.push((component, of, name));
                     }
                 }
-                if !components.is_empty() && names.len() == components.len() {
+                if names.len() == components.len() {
                     for (component, of, name) in names {
                         // `hasLateBindableName`: it's preserved as a property.
                         if self.c.member_name(of, PropKey::Computed(name)).is_some() {
@@ -4748,9 +4702,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 heritage = [b" extends ", &name[..], &arguments[..]].concat();
             } else if matches!(hir[class.extends].kind, ExprKind::Null) {
                 heritage = b" extends null".to_vec();
-            } else if hir.kind(hir.node(c)) == Kind::ClassDeclaration
-                && !matches!(hir[class.extends].kind, ExprKind::Null)
-            {
+            } else if hir.kind(hir.node(c)) == Kind::ClassDeclaration {
                 self.tracker.get_symbol_accessibility_diagnostic = Context::ExtendsClause(base);
                 let file = self.file();
                 let expression = hir.child(class.extends);
@@ -5198,7 +5150,6 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             self.enclosing,
             self.tracker.get_symbol_accessibility_diagnostic,
             self.tracker.error_name_node,
-            self.suppresses_new_contexts,
         );
         if f.is_some() {
             self.enter(bound.fns[f.idx()].scope);
@@ -5288,7 +5239,6 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             self.enclosing,
             self.tracker.get_symbol_accessibility_diagnostic,
             self.tracker.error_name_node,
-            self.suppresses_new_contexts,
         ) = saved;
         let member_text = self.with_comments((None, member.loc.end), &member_text?);
         Some([self.leading_comments(member.loc.pos), member_text].concat())
@@ -5522,6 +5472,11 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             }
             return Ensured::Initializer(self.create_literal_const_value(literal));
         }
+        let flags = if self.in_class_expression {
+            DECLARATION_EMIT_NODE_BUILDER_FLAGS & !WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL
+        } else {
+            DECLARATION_EMIT_NODE_BUILDER_FLAGS
+        };
         // An export assignment and a binding element have no annotation.
         if let NodeData::Type(annotation) = hir.data(hir.type_node(node))
             && !matches!(hir.data(node), NodeData::Param(p)
@@ -5531,11 +5486,6 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 self.visit_type(annotation, false);
                 return Ensured::Type(self.text_of(ReusedNode::Type(annotation)));
             }
-            let flags = if self.in_class_expression {
-                DECLARATION_EMIT_NODE_BUILDER_FLAGS & !WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL
-            } else {
-                DECLARATION_EMIT_NODE_BUILDER_FLAGS
-            };
             let (at, tracker) = (self.enclosing, &mut self.tracker);
             if let Some(text) = self
                 .c
@@ -5552,11 +5502,6 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         if !self.suppresses_new_contexts && can_produce_diagnostics(hir.kind(node)) {
             self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(node);
         }
-        let flags = if self.in_class_expression {
-            DECLARATION_EMIT_NODE_BUILDER_FLAGS & !WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL
-        } else {
-            DECLARATION_EMIT_NODE_BUILDER_FLAGS
-        };
         let ty = match hir.data(node) {
             NodeData::Stmt(s) => match hir[s].kind {
                 StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {

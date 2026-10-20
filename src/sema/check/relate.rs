@@ -1229,8 +1229,6 @@ impl<'p, 's> Checker<'p, 's> {
         // `relationCount <= 0`. Running out of native stack isn't a complexity overflow.
         let is_too_complex = overflow && r.relation_count <= 0 && self.cycles == r.cycles;
         let hit_cached_overflow = r.hit_cached_overflow;
-        r.is_from_related = false;
-        r.top_key = None;
         r.maybe_keys.clear();
         r.maybe_keys_set.clear();
         r.source_stack.clear();
@@ -1241,7 +1239,6 @@ impl<'p, 's> Checker<'p, 's> {
         r.overflow = false;
         r.hit_cached_overflow = false;
         if is_trial {
-            r.stores_failures_locally = false;
             r.failed.clear();
         }
         self.free_relaters.push(r);
@@ -1597,8 +1594,7 @@ impl<'p, 's> Checker<'p, 's> {
         let TypeData::IndexedAccess { obj, index, .. } = *self.data(t) else {
             return t;
         };
-        let object = obj;
-        let object = self.simplified(object, writing);
+        let object = self.simplified(obj, writing);
         let index_ty = self.simplified(index, writing);
         // T[A | B] is T[A] | T[B] for reading, T[A] & T[B] for writing.
         if let TypeData::Union(parts) = self.data(index_ty) {
@@ -2111,10 +2107,7 @@ impl<'p, 's> Checker<'p, 's> {
         let param = self.cond_distributes_over(t)?;
         let (file, node, mapper, _) = self.cond_origin(t);
         let check = self.cond_check(t);
-        let mut constraint = self.simplified(check, false);
-        if constraint == check {
-            constraint = self.constraint_of(check)?;
-        }
+        let constraint = self.simplified_or_constraint(check)?;
         if constraint == check {
             return None;
         }
@@ -2308,9 +2301,6 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn derive_mapped_name_type(&mut self, t: TypeId) -> Option<TypeId> {
         let (file, node, _) = self.mapped_origin(t)?;
-        if self.mapped_decl(file, node).name_ty.is_none() {
-            return None;
-        }
         let declared = self.declared_name_type_of_mapped(file, node);
         let mapper = self.mapped_mapper(t);
         Some(self.instantiate(declared, mapper))
@@ -2706,12 +2696,7 @@ impl<'p, 's> Checker<'p, 's> {
         if Some(sym) == self.global_type_of_arity(known::Array, 1)
             || Some(sym) == self.global_type_of_arity(known::ReadonlyArray, 1)
         {
-            let scope = self.begin_scope();
-            let variances: &'s [u8] = &[COVARIANT];
-            return match self.end_scope_as(scope, false) {
-                Ok(stored) => self.p.variances.insert(&self.task, sym, variances, stored),
-                Err(_) => variances,
-            };
+            return self.take_shared_variances(sym, &[COVARIANT]);
         }
         if self.variances_marked_empty.contains(&sym) {
             self.note_variance_cycle();
@@ -2783,14 +2768,12 @@ impl<'p, 's> Checker<'p, 's> {
         let before = self.sharing_blockers();
         self.variances_in_progress.push(sym);
         let was_computing = std::mem::replace(&mut self.in_variance_computation, true);
-        if !was_computing {
-            self.variances_measured.clear();
-        }
         // `resolutionStart`: resolutions in progress when the outermost variance computation began
         // are restarted if needed, and the computation in progress stops them from recursing
         // forever.
         let resolution_start = self.resolution_start;
         if !was_computing {
+            self.variances_measured.clear();
             self.resolution_start = self.stack.len();
         }
         let scope = self.begin_scope();
@@ -2883,7 +2866,7 @@ impl<'p, 's> Checker<'p, 's> {
         variances
     }
 
-    /// Stores `variances`, which come from `Program::serial_variances`, as the variances of `sym`.
+    /// Stores `variances`, which this task didn't measure, as the variances of `sym`.
     /// They're stored like one of this task's own results, so from now on `are_marker_arguments`
     /// recognizes the marker types of `sym`, as after a measurement.
     fn take_shared_variances(&mut self, sym: Sym, variances: &'s [u8]) -> &'s [u8] {
@@ -3032,14 +3015,6 @@ impl<'p, 's> Checker<'p, 's> {
         let result = self.is_assignable(source, target);
         self.is_marker_comparison = false;
         result
-    }
-
-    /// `variances_of`, as a list.
-    fn variances_list(&mut self, sym: Sym) -> List<'p, u8> {
-        match self.p.variances.get_ref(&self.task, &sym) {
-            Some(known) => List::Permanent(known),
-            None => List::Permanent(self.variances_worker(sym)),
-        }
     }
 
     /// `hasCovariantVoidArgument`
@@ -3545,7 +3520,6 @@ impl<'p, 's> Checker<'p, 's> {
                 if members.resolved.prop(name).is_some()
                     || self
                         .applicable_index_info_for_name(&members, name)
-                        .map(|info| info.value)
                         .is_some()
                 {
                     return true;
@@ -3699,7 +3673,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `2`.
         let mut source = source;
         if r.relation == Relation::Comparable && self.has_primitive_flag_as(target, td) {
-            let types = self.parts_of_intersection(source);
+            let types = self.constituents(source);
             let constraints: SmallVec<[TypeId; 8]> = types
                 .iter()
                 .map(|&t| {
@@ -3728,13 +3702,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // Not reported, because whether some member of it is related gives no useful elaboration.
         self.some_type_related_to_type::<false>(r, source, target, STATE_SOURCE)
-    }
-
-    fn parts_of_intersection(&self, t: TypeId) -> &'p [TypeId] {
-        match self.data(t) {
-            TypeData::Intersection(parts) => parts,
-            _ => self.parts(t),
-        }
     }
 
     pub(super) fn constituents(&self, t: TypeId) -> &'p [TypeId] {
@@ -3940,7 +3907,6 @@ impl<'p, 's> Checker<'p, 's> {
     /// True if every member of `union` is primitive.
     fn is_union_of_primitives(&self, union: TypeId) -> bool {
         // An intersection is never primitive.
-
         self.types().member_flags(union) & !tf::PRIMITIVE == 0 && !self.may_be_reduced(union)
     }
 
@@ -4917,33 +4883,23 @@ impl<'p, 's> Checker<'p, 's> {
             .collect();
         // `!c.isErrorType(t) && t.flags&TypeFlagsNever == 0`
         members.retain(|member| !self.is_error_type(*member) && !member.is_never());
-        if members.len() < 2 {
+        let properties = if members.len() < 2 {
             let apparent = members.first().copied().unwrap_or(source);
             // `getPropertyOfType` finds nothing in a type that isn't an object type, such as `any`,
             // which `T & U` resolves to if `U` extends `any`.
-            let properties = match self.members(apparent) {
+            match self.members(apparent) {
                 Some(_) => apparent,
                 None => self.synth(Shape::new_in(self.arena)),
-            };
-            return self.properties_related_to_ex::<REPORT>(
-                r,
-                source,
-                Some(properties),
-                target,
-                &[],
-                optionals_only,
-                state,
-                &mut None,
-            );
-        }
-        // `propertiesRelatedTo` lists the source's properties only if the target is the type of an object
-        // literal. Otherwise it looks them up by the target's property names, and a union property is
-        // created on lookup, along with the types of the properties it combines. If every member has an
-        // index signature, the list would contain the names from all of them. One real case has 150 props
-        // types with 300 properties each, where the target only has `theme` and `ownerState`.
-        let properties = match is_object_literal_kind(self.data(target)) {
-            true => self.object_of_apparent_union(apparent, &members),
-            false => apparent,
+            }
+        } else if is_object_literal_kind(self.data(target)) {
+            // `propertiesRelatedTo` lists the source's properties only if the target is the type of an object
+            // literal. Otherwise it looks them up by the target's property names, and a union property is
+            // created on lookup, along with the types of the properties it combines. If every member has an
+            // index signature, the list would contain the names from all of them. One real case has 150 props
+            // types with 300 properties each, where the target only has `theme` and `ownerState`.
+            self.object_of_apparent_union(apparent, &members)
+        } else {
+            apparent
         };
         self.properties_related_to_ex::<REPORT>(
             r,
@@ -4991,14 +4947,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `isSourceIntersectionNeedingExtraCheck`
-    pub(super) fn is_source_intersection_needing_extra_check(
+    fn is_source_intersection_needing_extra_check(
         &mut self,
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        if !self.is_intersection(source) {
-            return false;
-        }
         let apparent = self.apparent_type(source);
         (self.is_object_type(apparent) || self.is_union_or_intersection(apparent))
             && !self
@@ -5209,7 +5162,7 @@ impl<'p, 's> Checker<'p, 's> {
                     && !self.are_marker_arguments(alias, &params, &target_args)
             }
         {
-            let variances = self.variances_list(alias);
+            let variances = self.variances_of(alias);
             // The variances are being measured.
             if variances.is_empty() {
                 return Ternary::UNKNOWN;
@@ -5218,7 +5171,7 @@ impl<'p, 's> Checker<'p, 's> {
                 r,
                 &source_args,
                 &target_args,
-                &variances,
+                variances,
                 state,
                 &mut shared,
             );
@@ -5825,14 +5778,14 @@ impl<'p, 's> Checker<'p, 's> {
                     return Ternary::TRUE;
                 }
                 // For two instantiations of the same generic type, relate the type arguments by variance.
-                let variances = self.variances_list(*st);
+                let variances = self.variances_of(*st);
                 // The variance computation is in progress. So only occurrences that aren't inside
                 // instantiations of the type itself count.
                 if variances.is_empty() {
                     return Ternary::UNKNOWN;
                 }
                 let (sa, ta) = (self.type_arguments(source), self.type_arguments(target));
-                let result = self.relate_variances::<REPORT>(r, sa, ta, &variances, state, shared);
+                let result = self.relate_variances::<REPORT>(r, sa, ta, variances, state, shared);
                 let holds = result.is_some_and(Ternary::holds);
                 self.note_compared_by_variances::<REPORT>(*st, sa, ta, holds);
                 if let Some(result) = result {
@@ -6296,7 +6249,7 @@ impl<'p, 's> Checker<'p, 's> {
         both: &mut Option<(Members<'p>, Members<'p>)>,
     ) -> Ternary {
         if r.relation == Relation::Identity {
-            return self.properties_identical_to(r, source, target, excluded);
+            return self.properties_identical_to(r, source, target);
         }
         let mut result = Ternary::TRUE;
         let td = self.data(target);
@@ -6332,11 +6285,7 @@ impl<'p, 's> Checker<'p, 's> {
                     |f: &&ElemFlags| f.intersects(ElemFlags::REQUIRED | ElemFlags::VARIADIC);
                 let (source_arity, target_arity) = (source_elems.len(), target_elems.len());
                 let source_rest = source_flags.iter().any(|f| f.contains(ElemFlags::REST));
-                let source_min_length = if self.is_tuple(source) {
-                    source_flags.iter().filter(is_required).count()
-                } else {
-                    0
-                };
+                let source_min_length = source_flags.iter().filter(is_required).count();
                 let target_min_length = target_flags.iter().filter(is_required).count();
                 if !source_rest && source_arity < target_min_length {
                     if REPORT {
@@ -6783,7 +6732,6 @@ impl<'p, 's> Checker<'p, 's> {
         r: &mut Relater,
         source: TypeId,
         target: TypeId,
-        excluded: &[Atom],
     ) -> Ternary {
         if !self.is_object_type(source) || !self.is_object_type(target) {
             return Ternary::FALSE;
@@ -6791,21 +6739,11 @@ impl<'p, 's> Checker<'p, 's> {
         let (Some(sm), Some(tm)) = (self.members(source), self.members(target)) else {
             return Ternary::FALSE;
         };
-        let count = |m: &Members| {
-            m.shape()
-                .props
-                .iter()
-                .filter(|p| !excluded.contains(&p.name))
-                .count()
-        };
-        if count(&sm) != count(&tm) {
+        if sm.shape().props.len() != tm.shape().props.len() {
             return Ternary::FALSE;
         }
         let mut result = Ternary::TRUE;
         for sp in &sm.shape().props {
-            if excluded.contains(&sp.name) {
-                continue;
-            }
             let Some(tp) = tm.resolved.prop(sp.name) else {
                 return Ternary::FALSE;
             };
@@ -6919,27 +6857,23 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => return Ternary::FALSE,
             },
         };
-        let pick = |m: &Members| {
+        let pick = |m: &Members<'p>| -> &'p [SigId] {
             if construct {
-                m.construct_signatures().len()
+                m.construct_signatures()
             } else {
-                m.call_signatures().len()
+                m.call_signatures()
             }
         };
-        if r.relation == Relation::Identity && pick(&sm) != pick(&tm) {
+        if r.relation == Relation::Identity && pick(&sm).len() != pick(&tm).len() {
             return Ternary::FALSE;
         }
-        if pick(&tm) == 0 {
+        if pick(&tm).is_empty() {
             return Ternary::TRUE;
         }
         // Anything callable is a `Function`.
         let list =
             |c: &mut Self, ty: TypeId, data: &TypeData, m: &Members<'p>| -> List<'p, SigId> {
-                let sigs: &'p [SigId] = if construct {
-                    m.construct_signatures()
-                } else {
-                    m.call_signatures()
-                };
+                let sigs = pick(m);
                 match sigs {
                     _ if sigs.is_empty() || m.mapper == MapperId::IDENTITY => List::Permanent(sigs),
                     // An object type other than a mapped one is its own reduced apparent type.

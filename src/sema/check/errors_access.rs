@@ -925,7 +925,7 @@ impl<'p> Checker<'p, '_> {
         let missing = self.declaration_name_at(file, start);
         // The static side and the promised type are queried for a `#x` by its source text, which isn't any property's
         // name.
-        let is_private = self.is_private_name(name);
+        let is_private = self.atoms().is_private_name(name);
         // `TypeFlagsPrimitive`: `boolean`, and an enum, which is the union of its members.
         let is_enum = match self
             .parts(containing)
@@ -1044,7 +1044,7 @@ impl<'p> Checker<'p, '_> {
     /// `GetPromisedTypeOfPromise`: true if the promised type of `containing` has `name`, so an `await` is missing.
     fn is_property_of_promised_type(&mut self, containing: TypeId, name: Atom) -> bool {
         // It's queried for a `#x` by its source text, which isn't any property's name.
-        if self.is_private_name(name) {
+        if self.atoms().is_private_name(name) {
             return false;
         }
         let promised = match self.is_global_ref(containing, known::Promise, 1) {

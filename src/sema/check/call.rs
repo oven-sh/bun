@@ -461,9 +461,6 @@ impl<'p, 's> Checker<'p, 's> {
         let is_tainted_by_patterns_only = !self.contextual_binding_patterns.is_empty()
             && self.taints == self.taints_before_patterns;
         let stored = (left.ok()).or_else(|| is_tainted_by_patterns_only.then(Stored::new));
-        // `len(c.flowLoopStack) != 0`
-        let is_in_flow_loop =
-            |c: &Self| (c.flow_loops.last()).is_some_and(|pushed| c.is_flow_loop_visible(pushed.5));
         // A call that's requested while it's being resolved is resolved again, and `resolveCall`
         // reports its errors in the state at that time. Only the first resolution is retained.
         if is_in_progress {
@@ -480,19 +477,19 @@ impl<'p, 's> Checker<'p, 's> {
             // a frame in progress, from `signatures_resolved_within`. It doesn't take a result that
             // was cut short by a rejected query.
             if let Ok(stored) = left
-                && !is_in_flow_loop(self)
+                && !self.is_in_flow_loop()
             {
                 return self.cache_call(file, call, resolved, stored);
             }
             if left.is_err()
                 && assigned_within.is_none()
                 && self.rejected_at < serial
-                && !is_in_flow_loop(self)
+                && !self.is_in_flow_loop()
             {
                 self.signatures_resolved_within.push((file, call, resolved));
             }
         } else if let Some(stored) = stored
-            && !is_in_flow_loop(self)
+            && !self.is_in_flow_loop()
         {
             // A task that sees the call resolved also sees this, because one commit publishes both.
             if let Some(reported) = reported {
@@ -500,7 +497,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             return self.cache_call(file, call, resolved, stored);
         } else if let Some(reported) = reported
-            && is_in_flow_loop(self)
+            && self.is_in_flow_loop()
         {
             // `len(c.flowLoopStack) != 0`: the signature isn't stored, and the errors that
             // `resolveCall` reported from the temporary types stay.
@@ -508,7 +505,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `getResolvedSignature` assigns `links.resolvedSignature = result` only with an empty
         // `flowLoopStack`. This handles a result that isn't stored in `Program::calls`.
-        if !is_in_flow_loop(self) {
+        if !self.is_in_flow_loop() {
             self.resolved_signatures.insert((file, call));
         }
         resolved

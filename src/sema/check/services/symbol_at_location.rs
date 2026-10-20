@@ -399,7 +399,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                 };
                 match self.get_property_of_type(access.apparent, name) {
                     Some(found) => Some(found),
-                    None if self.c.is_private_name(name) => None,
+                    None if self.c.atoms().is_private_name(name) => None,
                     None if queried_module.is_some() => queried_module
                         .and_then(|module| self.c.files().namespace_member(module, name))
                         .map(Found::Symbol),

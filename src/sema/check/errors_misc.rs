@@ -342,7 +342,7 @@ impl Checker<'_, '_> {
         };
         let Some(name) = name else { return };
         let is_private =
-            self.is_private_name(name) && matches!(hir[operand].kind, ExprKind::Dot { .. });
+            self.atoms().is_private_name(name) && matches!(hir[operand].kind, ExprKind::Dot { .. });
         if is_private {
             self.error_at((file, start, end), 18011, &[]);
         }

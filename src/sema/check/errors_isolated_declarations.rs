@@ -7,12 +7,7 @@
 //! it with the checker's type (`pseudoTypeEquivalentToType`) and serializes it (`pseudoTypeToNode`), or else serializes
 //! the checker's type (`typeToTypeNode`). It reports whatever needs the checker (`ReportInferenceFallback`), and
 //! `createGetIsolatedDeclarationErrors` (`diagnostics.go`) creates the error. The node builder is the printer
-//! (print.rs), whose reports this file receives. Its output is discarded. The traversal is only done for the reports it
-//! produces and for the declarations found to be needed during it (`lateMarkedStatements`), which are then visited in
-//! turn.
-//!
-//! Not implemented: the declarations of CommonJS exports and `this.x = ..` in JavaScript, and the errors about
-//! inaccessible names (4xxx), which `TrackSymbol` reports.
+//! (print.rs), whose reports this file receives.
 
 use super::decl::Predicate;
 use super::enclosing_declaration::Enclosing;
@@ -147,14 +142,11 @@ impl<'p, 's> Checker<'p, 's> {
         is_on.then(|| Emit::new(file))
     }
 
-    /// Reports the diagnostics the transformer collected.
+    /// Reports the diagnostics the transformer collected. `SortAndDeduplicateDiagnostics`,
+    /// `compactAndMergeRelatedInfos`: a diagnostic reported twice becomes one error, with the related information of
+    /// both in file order.
     pub(super) fn finish_isolated_declarations(&mut self, tx: Emit) {
-        self.iso_report_all(tx.file, tx.reported);
-    }
-
-    /// `SortAndDeduplicateDiagnostics`, `compactAndMergeRelatedInfos`: a diagnostic reported twice becomes one error,
-    /// with the related information of both in file order.
-    fn iso_report_all(&mut self, file: FileId, mut reported: Vec<IsoDiagnostic>) {
+        let (file, mut reported) = (tx.file, tx.reported);
         reported.shared_sort_by(|a, b| {
             (a.start, a.end, a.code)
                 .cmp(&(b.start, b.end, b.code))
@@ -1727,9 +1719,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if errors.is_empty() {
                         tx.inference_fallbacks.push(*of);
                     }
-                    for &node in errors {
-                        tx.inference_fallbacks.push(node);
-                    }
+                    tx.inference_fallbacks.extend_from_slice(errors);
                 }
                 false
             }
@@ -1859,9 +1849,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if reports {
                         match pt {
                             Pseudo::Inferred { errors, .. } if !errors.is_empty() => {
-                                for &error in errors {
-                                    tx.inference_fallbacks.push(error);
-                                }
+                                tx.inference_fallbacks.extend_from_slice(errors);
                             }
                             _ if Self::iso_is_structural(pt) => {}
                             _ => tx.inference_fallbacks.push(node),
@@ -1908,12 +1896,11 @@ impl<'p, 's> Checker<'p, 's> {
     fn iso_are_params_equivalent(
         &mut self,
         tx: &mut Emit,
-        params: &[PseudoParam],
+        mut params: &[PseudoParam],
         sig: SigId,
         reports: bool,
         mismatch_node: Node,
     ) -> bool {
-        let mut params = params;
         if let Some((this, _)) = self.sig_this_parameter(sig) {
             let Some((first, rest)) = params
                 .split_first()

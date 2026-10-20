@@ -1081,7 +1081,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (access, may_short_circuit) = self.left_type_of_property_access(file, e, obj, chain);
         let (left, receiver) = (access.left, access.widened);
         let target = self.target_kind(file, e);
-        let is_private = self.is_private_name(name);
+        let is_private = self.atoms().is_private_name(name);
         // `parseRightSideOfDot`: in `typeof a.#b` the name is missing.
         if is_private && bound.is_in_type_query(e) {
             return (access.any_like.unwrap_or(TypeId::ERROR), may_short_circuit);

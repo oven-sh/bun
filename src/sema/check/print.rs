@@ -2552,11 +2552,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         let clone = self.c.module_clone(originating_import);
         self.track_symbol(clone, SymFlags::VALUE);
         let yield_module_symbol = self.yield_module_symbol();
-        let chain = self.c.lookup_symbol_chain_of_module_clone_at(
-            originating_import,
-            yield_module_symbol,
-            at,
-        );
+        let chain =
+            (self.c).lookup_symbol_chain_at(clone, true, yield_module_symbol, at, Vec::new());
         let chain = self.with_global_this(chain);
         self.symbol_chain_to_type_node(module, &chain, true, Vec::new())
     }
@@ -4170,7 +4167,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                     let name = self.text(property.name);
                     self.report(Report::PrivateInBaseOfClassExpression(name));
                 }
-                if self.c.is_private_identifier_symbol(property.name) {
+                if self.c.atoms().is_private_symbol_name(property.name) {
                     let name = self.c.written_name(property.name);
                     self.report(Report::PrivateInBaseOfClassExpression(name.to_vec()));
                 }
@@ -4492,7 +4489,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// `getPropertyNameNodeForSymbol`
     fn property_name(&mut self, prop: &Prop) -> Vec<u8> {
         let bytes = self.c.atoms().bytes(prop.name);
-        if self.c.is_private_identifier_symbol(prop.name) {
+        if self.c.atoms().is_private_symbol_name(prop.name) {
             return self.c.written_name(prop.name).to_vec();
         }
         // `getPropertyNameNodeForSymbolFromNameType`: the `nameType` is a `unique symbol`.
@@ -4555,7 +4552,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// `getNameOfSymbolFromNameType`, using only the name.
     fn name_from_name_type(&mut self, name: Atom) -> Vec<u8> {
         let bytes = self.c.atoms().bytes(name);
-        if self.c.is_private_identifier_symbol(name) {
+        if self.c.atoms().is_private_symbol_name(name) {
             return self.c.written_name(name).to_vec();
         }
         if self.c.atoms().is_symbol_name(name) {

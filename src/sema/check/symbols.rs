@@ -2659,8 +2659,7 @@ impl<'p, 's> Checker<'p, 's> {
                 hir[hir[d].init].kind,
                 ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Await(_) | ExprKind::As { .. }
             ));
-        let is_flow_loop_in_view =
-            (self.flow_loops.last()).is_some_and(|pushed| self.is_flow_loop_visible(pushed.5));
+        let is_flow_loop_in_view = self.is_in_flow_loop();
         let ty = if is_checked_cached && is_flow_loop_in_view {
             // `checkDeclarationInitializer` finds no `links.resolvedType`, so
             // `checkExpressionCached` checks the initializer again, with an empty `flowLoopStack`

@@ -1201,7 +1201,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) {
         let first = unmatched[0];
         // Two `#x` with the same spelling are distinct members.
-        if self.is_private_name(first.name)
+        if self.atoms().is_private_name(first.name)
             && let TypeData::Ref { target: class, .. } = *self.data(source)
             && self.files().flags(class).contains(SymFlags::CLASS)
         {

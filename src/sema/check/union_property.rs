@@ -25,7 +25,7 @@
 //! - A member that needs more than that never gets facts. It gets a full lookup every time.
 //! - Members are always visited in union order.
 
-use super::shape::{LONG_PROP_LIST, PropertyHolder, is_plain_object};
+use super::shape::{LONG_PROP_LIST, PropertyHolder};
 use super::shortcuts::{TypeNumbers, task_fact};
 use super::*;
 use crate::util::{FxHashSet, PositionSet, SharedSort};
@@ -735,7 +735,7 @@ impl<'p, 's> Checker<'p, 's> {
         // recomputed every time, from a base constraint, by instantiating a mapped type, or by resolving a global type.
         let is_covered = |ty: TypeId| {
             let data = self.data(ty);
-            is_plain_object(data) || matches!(data, TypeData::Intersection(_))
+            self.is_plain_object_type(ty) || matches!(data, TypeData::Intersection(_))
         };
         if !lookup.is_holder_final || !is_covered(current) || self.is_deferred(current) {
             return None;

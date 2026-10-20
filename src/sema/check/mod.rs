@@ -3781,9 +3781,7 @@ impl<'p, 's> Checker<'p, 's> {
         // loop from below the resolution (`is_flow_loop_visible`). So its result is no more short-lived than that of
         // any other non-cacheable frame. It's also requested from places where the loop isn't visible, where a result
         // that follows from a loop isn't a hit. Every use would then recompute it, and nested uses cost uses ^ depth.
-        let flow = frame.incomplete_flow
-            && (self.flow_loops.last())
-                .is_some_and(|innermost| self.is_flow_loop_visible(innermost.5));
+        let flow = frame.incomplete_flow && self.is_in_flow_loop();
         // tsgo recomputes it, and then finds the loop in `flowLoopCache`, whereas this computation
         // only saw the types collected so far.
         if flow && self.is_flow_loop_cached_since(frame.serial) {

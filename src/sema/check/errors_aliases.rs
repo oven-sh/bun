@@ -336,7 +336,7 @@ impl Checker<'_, '_> {
             .filter(|&e| match hir[e].kind {
                 ExprKind::Dot { name, .. } => {
                     !(transforms_private_elements
-                        && self.is_private_name(name)
+                        && self.atoms().is_private_name(name)
                         && (self.lookup_symbol_for_private_identifier_declaration(file, e, name))
                             .is_some())
                 }

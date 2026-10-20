@@ -1,7 +1,7 @@
 // Run by s3-moved-store.test.ts, one form in each process:
-//   bun s3-moved-store-fixture.ts <form> <key>
+//   bun s3-moved-store-fixture.ts <form> <key> [<road>]
 // It prints how the S3 call of that form ended, as one line of JSON.
-const [form, key] = process.argv.slice(2);
+const [form, key, road] = process.argv.slice(2);
 
 const client = new Bun.S3Client({
   accessKeyId: "test",
@@ -11,15 +11,22 @@ const client = new Bun.S3Client({
 });
 const file = client.file(key);
 
-// Moves the native store out of `file`, into the body of a Response that
-// nothing keeps. An array body is a list of Blob parts, which the types of
-// Response do not list.
-function move() {
-  new Response([file] as unknown as Bun.BodyInit);
-}
+// The roads by which user JS moves the native store out of `file`, into a
+// body that nothing keeps. The types list neither an array body nor the
+// options of server.fetch().
+const roads: Record<string, () => void> = {
+  "an array body": () => {
+    new Response([file] as unknown as Bun.BodyInit);
+  },
+  "the body of server.fetch()": () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response() });
+    (server as any).fetch("http://localhost/", { method: "POST", body: file });
+  },
+};
+const move = roads[road];
 
-// A collection then frees that store with the Response. The new files take
-// the freed memory. Each has a key of its own, as long as `key`.
+// A collection then frees that store with the body. The new files take the
+// freed memory. Each has a key of its own, as long as `key`.
 const others: unknown[] = [];
 function moveAndFree() {
   move();
@@ -55,7 +62,7 @@ const unlink = (options: Bun.S3Options): Promise<void> => (file as any).unlink(o
 const pathname = (url: string) => new URL(url).pathname;
 
 const forms: Record<string, () => unknown> = {
-  // Does `move()` still empty the file? `bucket` reads the store.
+  // Does this road still empty the file? `bucket` reads the store.
   "probe": () => {
     move();
     return file.bucket === undefined;

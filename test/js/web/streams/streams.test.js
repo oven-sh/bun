@@ -3193,7 +3193,26 @@ test("a read that rejects with a structuredClone()d error keeps the stack of the
   expect(caught.stack).toBe(original.stack);
 });
 
-test("a read that rejects with an error whose frames a collection formatted keeps that stack", async () => {
+test("a fetch() aborted with a structuredClone()d error rejects with the stack of the clone", async () => {
+  await using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+  const original = new Error("original");
+  const clone = structuredClone(original);
+  const controller = new AbortController();
+  async function request() {
+    try {
+      await fetch(server.url, { signal: controller.signal });
+    } catch (error) {
+      return error;
+    }
+  }
+  const pending = request();
+  controller.abort(clone);
+  const caught = await pending;
+  expect(caught).toBe(clone);
+  expect(caught.stack).toBe(original.stack);
+});
+
+test.concurrent("a read that rejects with an error whose frames a collection formatted keeps that stack", async () => {
   const src = `
     // Each pair is made at one place, by one call of a function that is garbage once it returns. An error holds
     // the functions of its frames weakly, so a collection formats the frames of both errors into a string.

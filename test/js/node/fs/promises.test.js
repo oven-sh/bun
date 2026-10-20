@@ -243,28 +243,23 @@ test("errors from fs.promises include async stack frames", async () => {
   expect(caught.stack).toContain("at async level1");
 });
 
-test("errors from fs.promises have no stack when Error.stackTraceLimit is not a number", async () => {
+test.concurrent.each([
+  ["a string", `Error.stackTraceLimit = "5";`],
+  ["an accessor", `Object.defineProperty(Error, "stackTraceLimit", { get: () => 5 });`],
+  ["deleted", `delete Error.stackTraceLimit;`],
+])("an error from fs.promises has no stack when Error.stackTraceLimit is %s", async (_, setLimit) => {
   // An error captures no stack under such a limit, as in Node. So it takes no frames from the await chain either.
   const src = `
     const { readFile } = require("node:fs/promises");
     const callSiteCounts = [];
     Error.prepareStackTrace = (error, callSites) => (callSiteCounts.push(callSites.length), "prepared");
-    async function failing() {
+    ${setLimit}
+    (async function failing() {
       try {
         await readFile("/nonexistent-path/does-not-exist.txt");
       } catch (error) {
-        return typeof error.stack;
+        console.log(JSON.stringify({ stack: typeof error.stack, callSiteCounts }));
       }
-    }
-    (async () => {
-      const stacks = [];
-      Error.stackTraceLimit = "5";
-      stacks.push(await failing());
-      Object.defineProperty(Error, "stackTraceLimit", { get: () => 5 });
-      stacks.push(await failing());
-      delete Error.stackTraceLimit;
-      stacks.push(await failing());
-      console.log(JSON.stringify({ stacks, callSiteCounts }));
     })();`;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", src],
@@ -273,7 +268,8 @@ test("errors from fs.promises have no stack when Error.stackTraceLimit is not a 
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.trim()).toBe(JSON.stringify({ stacks: ["undefined", "undefined", "undefined"], callSiteCounts: [] }));
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe(JSON.stringify({ stack: "undefined", callSiteCounts: [] }));
   expect(exitCode).toBe(0);
 });
 

@@ -171,8 +171,12 @@ impl PackageManager {
             let mut existing = *self.lockfile.packages.get(existing_id as usize);
             let from_lockfile = existing_id < self.lockfile.loaded_package_count;
             let moved = match existing.resolution.tag {
-                // A nested git ref can move, so `bun update` resolves the dependencies again.
-                ResolutionTag::Git | ResolutionTag::Github => self.to_update,
+                // A nested git ref can move, so a `bun update` without names that reaches the package resolves the dependencies again.
+                ResolutionTag::Git | ResolutionTag::Github => {
+                    (crate::update_scope::UpdateScope::of_update(self)).is_some_and(|scope| {
+                        scope.targets_all_of(self, &self.lockfile, existing_id as usize)
+                    })
+                }
                 // Only `repins_tarball` reads one again that bun.lock has.
                 ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                     existing.meta.integrity != data.integrity

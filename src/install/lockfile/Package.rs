@@ -18,6 +18,7 @@ use crate::lockfile_real::{
     StringBuilder, TrustedDependenciesSet,
 };
 use crate::resolution_real::{ResolutionType, Tag as ResolutionTag, TaggedValue};
+use crate::update_scope::UpdateScope;
 use crate::versioned_url::VersionedURLType;
 use crate::{
     self as install, Aligner, Bin, Dependency, ExternalStringList, ExternalStringMap, Features,
@@ -1001,12 +1002,6 @@ impl Diff {
                 to_lockfile.buffers.string_bytes.as_slice()
             };
         }
-        let named_update_here = pm.update_requests.is_empty()
-            || crate::update_scope::UpdateScope::of(&*pm).contains_workspace(
-                from.resolution.tag == ResolutionTag::Root,
-                from.name_hash,
-                from.name.slice(from_buf!()),
-            );
         // Re-derived after each package.json parse, which may grow `to_lockfile`'s dependencies.
         let mut to_deps: bun_ptr::RawSlice<Dependency> = to
             .dependencies
@@ -1209,18 +1204,14 @@ impl Diff {
                 && (from_dep.behavior.is_peer()
                     || to_lockfile.overrides.has_rule_for_name(from_dep.name_hash))
                 && (to_version.literal).eql(from_dep.version.literal, to_buf!(), from_buf!());
-            let is_explicit_update_target = update_requests.is_some_and(|updates| {
-                updates.is_empty()
-                    || (named_update_here
-                        && pm.is_update_request(
-                            from_dep.name_hash,
-                            from_dep.name.slice(from_buf!()),
-                        ))
-            });
+            let is_explicit_update_target = update_requests.is_some()
+                && Self::is_update_target(pm, from_lockfile, from, i, from_resolutions[i], is_root);
             if (same || same_folder) && !retyped {
                 if is_explicit_update_target
                     || (from_dep.version.tag == dependency::version::Tag::Tarball
-                        && pm.repins_tarball(from_dep, from_buf!(), named_update_here))
+                        && pm.repins_tarball(from_dep, from_buf!(), || {
+                            UpdateScope::is_about(pm, from_lockfile, from)
+                        }))
                     || Self::locked_version_is_out_of_range(
                         from_lockfile,
                         from_resolutions[i],
@@ -1248,6 +1239,8 @@ impl Diff {
                         from_lockfile,
                         to_lockfile,
                         from_resolutions[i],
+                        // An update without names asks about each dependency of the folder too.
+                        update_requests.filter(|requests| requests.is_empty()),
                         if frozen {
                             &mut not_counted
                         } else {
@@ -1574,6 +1567,7 @@ impl Diff {
         from_lockfile: &mut Lockfile,
         to_lockfile: &mut Lockfile,
         from_package_id: PackageID,
+        update_requests: Option<&[UpdateRequest]>,
         removed_names: &mut Vec<PackageNameHash>,
     ) -> crate::Result<Option<DiffSummary>> {
         let from_pkg = from_lockfile.packages.get(from_package_id as usize);
@@ -1615,7 +1609,7 @@ impl Diff {
             to_lockfile,
             &from_pkg,
             &folder_pkg,
-            None,
+            update_requests,
             None,
             removed_names,
         )
@@ -1697,35 +1691,112 @@ impl Diff {
                 == 1
     }
 
+    /// Returns true if `bun update` resolves dependency `i` of `from` again. Out of line, so that `bun install` sets up nothing for it.
+    #[cold]
+    #[inline(never)]
+    fn is_update_target(
+        pm: &PackageManager,
+        from_lockfile: &Lockfile,
+        from: &Package,
+        i: usize,
+        locked: PackageID,
+        is_root: bool,
+    ) -> bool {
+        let Some(scope) = UpdateScope::of_update(pm) else {
+            return false;
+        };
+        let buf = from_lockfile.buffers.string_bytes.as_slice();
+        let dep_id = from.dependencies.begin() + i as install::DependencyID;
+        let from_dep = &from_lockfile.buffers.dependencies[dep_id as usize];
+        if !pm.update_requests.is_empty() {
+            // The dependencies that are named through the package they're locked to are left to `enqueue_named_updates`.
+            return pm.is_update_request(from_dep.name_hash, from_dep.name.slice(buf))
+                && scope.targets_row(
+                    pm,
+                    from_lockfile,
+                    from.meta.id,
+                    dep_id,
+                    from_dep,
+                    buf,
+                    locked,
+                );
+        }
+        // Every workspace is read again, and `keep_resolutions_under_update` keeps what the update doesn't target.
+        (is_root && from_dep.behavior.is_workspace())
+            || scope.targets_row(
+                pm,
+                from_lockfile,
+                from.meta.id,
+                dep_id,
+                from_dep,
+                buf,
+                locked,
+            )
+    }
+
     /// `to` is about to replace `from_id`. Its dependencies keep the resolutions that `generate`
     /// would let the root's dependencies keep.
     pub(crate) fn keep_resolutions(pm: &mut PackageManager, from_id: PackageID, to: &Package) {
-        if pm.to_update || from_id >= pm.lockfile.loaded_package_count {
+        if from_id >= pm.lockfile.loaded_package_count {
             return;
         }
+        if pm.to_update {
+            return Self::keep_resolutions_under_update(pm, from_id, to);
+        }
+        Self::keep_resolutions_unless(pm, from_id, to, |_, _, _| false);
+    }
+
+    /// `bun update` resolves the dependencies it targets again and keeps the others, like `bun install`.
+    #[cold]
+    #[inline(never)]
+    fn keep_resolutions_under_update(pm: &mut PackageManager, from_id: PackageID, to: &Package) {
+        let targets_all = UpdateScope::of_update(pm)
+            .is_some_and(|scope| scope.targets_all_of(pm, &pm.lockfile, from_id as usize));
+        if targets_all {
+            return;
+        }
+        Self::keep_resolutions_unless(pm, from_id, to, |pm, to_i, locked| {
+            let lockfile = &*pm.lockfile;
+            let buf = lockfile.buffers.string_bytes.as_slice();
+            let to_dep = &lockfile.buffers.dependencies[to_i as usize];
+            UpdateScope::of_update(pm).is_some_and(|scope| {
+                scope.targets_row(pm, lockfile, from_id, to_i, to_dep, buf, locked)
+            })
+        });
+    }
+
+    #[inline(always)]
+    fn keep_resolutions_unless(
+        pm: &mut PackageManager,
+        from_id: PackageID,
+        to: &Package,
+        is_update_target: impl Fn(&PackageManager, install::DependencyID, PackageID) -> bool,
+    ) {
         let from = pm.lockfile.packages.items_dependencies()[from_id as usize];
         for to_i in to.dependencies.begin() as usize..to.dependencies.end() as usize {
             let lockfile = &*pm.lockfile;
             let buf = lockfile.buffers.string_bytes.as_slice();
             let to_dep = &lockfile.buffers.dependencies[to_i];
-            let kept = (from.begin() as usize..from.end() as usize).find_map(|from_i| {
-                let from_dep = &lockfile.buffers.dependencies[from_i];
-                let locked = lockfile.buffers.resolutions[from_i];
-                (from_dep.name_hash == to_dep.name_hash
-                    && from_dep.behavior == to_dep.behavior
-                    && (lockfile.packages.items_resolution().get(locked as usize))
-                        .is_some_and(|resolution| resolution.tag != ResolutionTag::Folder)
-                    && ((Dependency::eql(to_dep, from_dep, buf, buf)
-                        && !Self::locked_version_is_out_of_range(
-                            lockfile,
-                            locked,
-                            lockfile,
-                            to.dependencies.get(&lockfile.buffers.dependencies),
-                            to_i - to.dependencies.begin() as usize,
-                        ))
-                        || Self::locked_version_satisfies(lockfile, locked, to_dep, buf)))
-                .then_some(locked)
-            });
+            let kept = (from.begin() as usize..from.end() as usize)
+                .find_map(|from_i| {
+                    let from_dep = &lockfile.buffers.dependencies[from_i];
+                    let locked = lockfile.buffers.resolutions[from_i];
+                    (from_dep.name_hash == to_dep.name_hash
+                        && from_dep.behavior == to_dep.behavior
+                        && (lockfile.packages.items_resolution().get(locked as usize))
+                            .is_some_and(|resolution| resolution.tag != ResolutionTag::Folder)
+                        && ((Dependency::eql(to_dep, from_dep, buf, buf)
+                            && !Self::locked_version_is_out_of_range(
+                                lockfile,
+                                locked,
+                                lockfile,
+                                to.dependencies.get(&lockfile.buffers.dependencies),
+                                to_i - to.dependencies.begin() as usize,
+                            ))
+                            || Self::locked_version_satisfies(lockfile, locked, to_dep, buf)))
+                    .then_some(locked)
+                })
+                .filter(|&locked| !is_update_target(pm, to_i as install::DependencyID, locked));
             if let Some(locked) = kept {
                 pm.lockfile.buffers.resolutions[to_i] = locked;
             }

@@ -611,6 +611,8 @@ pub struct PackageManager {
 
     // `bun update <name>`: packages reachable from the workspaces in scope, see update_scope::plan_named.
     pub(crate) named_update_reachable: Option<bun_collections::DynamicBitSet>,
+    // `bun update` without names: the dist-tags that a dependency in scope asks for, see update_scope::plan_named.
+    pub(crate) update_tags_in_scope: Vec<(PackageNameHash, u64)>,
 
     // bun update: patched packages a move was held back for; drained by update_transitive::print_kept_patched.
     pub(crate) kept_patched: Vec<PackageID>,
@@ -1744,6 +1746,7 @@ fn allocate_package_manager(
         wr!(updating_catalogs, Vec::new());
         wr!(update_target_workspaces, None);
         wr!(named_update_reachable, None);
+        wr!(update_tags_in_scope, Vec::new());
         wr!(kept_patched, Vec::new());
         wr!(kept_patched_text, Vec::new());
         wr!(held_messages, None);

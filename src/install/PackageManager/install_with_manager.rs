@@ -207,6 +207,9 @@ pub fn install_with_manager(
                 if PackageJSONEditor::steers_catalogs_to_latest(manager) {
                     PackageJSONEditor::steer_used_catalogs_to_latest(manager, Some(&mut lockfile))?;
                 }
+                if bare_update {
+                    crate::update_scope::add_declared_tags(manager, &lockfile, &maybe_root);
+                }
                 let mut mapping = vec![invalid_package_id; maybe_root.dependencies.len as usize];
 
                 // `Diff::generate` (in lockfile_real::package) needs `manager`,
@@ -268,8 +271,9 @@ pub fn install_with_manager(
 
                 // A lockfile from an older Bun has no entries for these workspaces. They are added the
                 // next time the dependencies change. Until then that lockfile is valid as it is.
+                // An update without names adds them too: from such a workspace, it targets no dependency of the root.
                 let left_out = core::mem::take(&mut manager.summary.members_left_out);
-                if manager.summary.changes_dependencies() {
+                if manager.summary.changes_dependencies() || bare_update {
                     manager.summary.add += left_out.len() as u32;
                 } else {
                     for &row in left_out.iter().rev() {
@@ -1813,7 +1817,10 @@ fn enqueue_named_updates(
     for dependency_i in 0..dependencies_len {
         let dependency = manager.lockfile.buffers.dependencies[dependency_i].clone();
         let package_id = manager.lockfile.buffers.resolutions[dependency_i];
-        let Some(request) = index_of_named_update(manager, &dependency, package_id) else {
+        let lockfile: &Lockfile = &manager.lockfile;
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let Some(request) = index_of_named_update(manager, lockfile, &dependency, buf, package_id)
+        else {
             continue;
         };
         if !walkable.is_set(dependency_i) {
@@ -1853,23 +1860,26 @@ fn enqueue_named_updates(
     Ok(named)
 }
 
-fn index_of_named_update(
+/// The request that names `dependency`, as declared (its strings are in `buf`) or as the package `package_id` that it's locked to.
+pub(crate) fn index_of_named_update(
     manager: &PackageManager,
+    lockfile: &Lockfile,
     dependency: &Dependency,
+    buf: &[u8],
     package_id: PackageID,
 ) -> Option<usize> {
-    let buf = manager.lockfile.buffers.string_bytes.as_slice();
     if let Some(i) =
         manager.index_of_update_request(dependency.name_hash, dependency.name.slice(buf))
     {
         return Some(i);
     }
     if package_id != invalid_package_id {
-        let name_hash = manager.lockfile.packages.items_name_hash()[package_id as usize];
+        let name_hash = lockfile.packages.items_name_hash()[package_id as usize];
         if name_hash == dependency.name_hash {
             return None;
         }
-        let name = manager.lockfile.packages.items_name()[package_id as usize].slice(buf);
+        let name = lockfile.packages.items_name()[package_id as usize]
+            .slice(lockfile.buffers.string_bytes.as_slice());
         return manager.index_of_update_request(name_hash, name);
     }
     let realname = dependency.realname();
@@ -1955,7 +1965,9 @@ fn workspaces_reaching_request<'a>(
             .get(all_deps)
             .iter()
             .zip(res_list.get(all_resolutions))
-            .any(|(dep, &res)| index_of_named_update(manager, dep, res) == Some(request_index))
+            .any(|(dep, &res)| {
+                index_of_named_update(manager, lockfile, dep, buf, res) == Some(request_index)
+            })
         {
             owners.set(pkg_id);
         }
@@ -2364,6 +2376,10 @@ fn clean_lockfile(
         }
     };
     let mut before_clean = core::mem::replace(&mut manager.lockfile, new_lockfile);
+    // The clean numbered the packages anew.
+    if manager.named_update_reachable.is_some() {
+        crate::update_scope::plan_named(manager);
+    }
     // `reresolve_rows_outside_overrides` needs these, and the copy only has what's saved in the
     // lockfile.
     manager.lockfile.package_extensions.rules =

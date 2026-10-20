@@ -917,25 +917,22 @@ impl PackageManager {
             && !self.options.do_.contains(options::Do::VERIFY_INTEGRITY)
     }
 
-    /// `named_here` means the names on the command line refer to the package.json that `dependency`
-    /// is in.
+    /// `here` returns true if the command line is about the package.json that `dependency` is in: `UpdateScope::is_about` or `is_about_row`.
     pub(crate) fn repins_tarball(
         &self,
         dependency: &Dependency,
         string_buf: &[u8],
-        named_here: bool,
+        here: impl FnOnce() -> bool,
     ) -> bool {
         self.pins_tarballs()
             && (self.options.enable.force_install()
-                || if self.update_requests.is_empty() {
+                || (if self.update_requests.is_empty() {
                     self.to_update
                 } else {
-                    named_here
-                        && self
-                            .update_requests
-                            .iter()
-                            .any(|request| request.matches(dependency, string_buf))
-                })
+                    self.update_requests
+                        .iter()
+                        .any(|request| request.matches(dependency, string_buf))
+                } && here()))
     }
 
     pub(crate) fn locked_tarball(&self, resolution: &Resolution) -> Option<PackageID> {

@@ -5107,9 +5107,115 @@ describe("the git and github dependencies that bun.lock has already resolved", (
     expect(downloads).toEqual([download, download]);
   });
 
+  // An update without names resolves the dependencies of the workspaces it selects again. From the root, that's
+  // every dependency in bun.lock.
+  test.concurrent.each<[string, string, string[], boolean]>([
+    ["aren't downloaded again by a bun update in another workspace", "packages/b", [], false],
+    ["aren't downloaded again by a bun update --filter of another workspace", "", ["--filter", "b"], false],
+    ["are downloaded again by a bun update in the root", "", [], true],
+    ["are downloaded again by bun update -r", "", ["-r"], true],
+  ])("%s", async (_, rel, args, isDownloaded) => {
+    using project = await githubProject("hoisted");
+    const { cwd, downloads, env } = project;
+    await run(cwd, env, "install");
+    expect(downloads).toEqual([download]);
+
+    await run(join(cwd, rel), env, "update", ...args);
+    expect(downloads).toEqual(isDownloaded ? [download, download] : [download]);
+  });
+
+  // `main` is aaaaaaa when the project is installed and bbbbbbb afterwards.
+  async function movingBranchProject() {
+    let head = "aaaaaaa";
+    const downloads: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const ref = new URL(req.url).pathname.split("/").at(-1)!;
+        downloads.push(ref);
+        const commit = ref === "main" ? head : ref;
+        return new Response(
+          await githubTarball(`testowner-testrepo-${commit}`, {
+            "package.json": JSON.stringify({ name: "gh-dep", version: "1.0.0" }),
+          }),
+        );
+      },
+    });
+    const onMain = { "gh-dep": "github:testowner/testrepo#main" };
+    const dir = tempDir("workspace-moving-branch", {
+      "vendor/package.json": JSON.stringify({ name: "vendor", version: "1.0.0" }),
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      "bunfig.toml": `[install]\nlinker = "hoisted"\nsaveTextLockfile = true\n`,
+      "packages/a/package.json": member("a", onMain),
+      "packages/b/package.json": member("b", onMain),
+    });
+    const cwd = String(dir);
+    const env = { ...baseEnv, GITHUB_API_URL: server.url.origin, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") };
+    const project = {
+      cwd,
+      env,
+      downloads,
+      // The commit of every `gh-dep` in bun.lock.
+      async commits() {
+        const { packages } = Bun.JSONC.parse(await file(join(cwd, "bun.lock")).text()) as any;
+        return (Object.values(packages) as [string][])
+          .map(([resolution]) => resolution.match(/^gh-dep@github:testowner\/testrepo#(\w+)$/)?.[1])
+          .filter(commit => commit !== undefined)
+          .sort();
+      },
+      [Symbol.dispose]() {
+        server.stop(true);
+        dir[Symbol.dispose]();
+      },
+    };
+    try {
+      await run(cwd, env, "install");
+      expect(await project.commits()).toEqual(["aaaaaaa"]);
+      head = "bbbbbbb";
+      downloads.length = 0;
+    } catch (e) {
+      project[Symbol.dispose]();
+      throw e;
+    }
+    return project;
+  }
+
+  // As with `bun install`, each workspace keeps its own commit of a branch.
+  test.concurrent.each<[string, string, string[], string[]]>([
+    ["only moves for the workspace that bun update runs in", "packages/b", [], ["aaaaaaa", "bbbbbbb"]],
+    ["only moves for the workspace that bun update <name> runs in", "packages/b", ["gh-dep"], ["aaaaaaa", "bbbbbbb"]],
+    [
+      "only moves for the workspace of bun update <name> --filter",
+      "",
+      ["gh-dep", "--filter", "b"],
+      ["aaaaaaa", "bbbbbbb"],
+    ],
+    ["moves for both under bun update <name> -r", "", ["gh-dep", "-r"], ["bbbbbbb"]],
+    ["moves for both under bun update in the root", "", [], ["bbbbbbb"]],
+  ])("a branch that two workspaces depend on %s", async (_, rel, args, commits) => {
+    using project = await movingBranchProject();
+    const { cwd, env, downloads } = project;
+    await run(join(cwd, rel), env, "update", ...args);
+    expect({ commits: await project.commits(), downloads }).toEqual({ commits, downloads: ["main"] });
+    await run(cwd, env, "install", "--frozen-lockfile");
+  });
+
+  // A dependency whose package.json entry didn't change keeps what bun.lock has for it, also when another entry of
+  // that package.json changes.
+  test.concurrent("a branch keeps its commit when bun install reads its package.json again", async () => {
+    using project = await movingBranchProject();
+    const { cwd, env, downloads } = project;
+    await write(
+      join(cwd, "packages", "a", "package.json"),
+      member("a", { "gh-dep": "github:testowner/testrepo#main", vendor: "file:../../vendor" }),
+    );
+    await run(cwd, env, "install");
+    expect({ commits: await project.commits(), downloads }).toEqual({ commits: ["aaaaaaa"], downloads: [] });
+  });
+
   // Served over git's dumb HTTP protocol: after `git update-server-info` a bare repository is static files.
-  test.concurrent("a git repository is not fetched again, and a cold cache still gets its checkout", async () => {
-    using dir = tempDir("workspace-locked-git", {
+  async function gitProject() {
+    const dir = tempDir("workspace-locked-git", {
       "gitconfig": "[core]\n\tautocrlf = false\n",
       "src/package.json": JSON.stringify({ name: "git-dep", version: "1.0.0" }),
       "ws/package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
@@ -5135,15 +5241,8 @@ describe("the git and github dependencies that bun.lock has already resolved", (
       return stdout.trim();
     }
     const src = join(String(dir), "src");
-    await git(src, "init", "-q");
-    await git(src, "add", "-A");
-    await git(src, "commit", "-qm", "init");
-    const sha = await git(src, "rev-parse", "HEAD");
-    await git(String(dir), "clone", "-q", "--bare", src, bare);
-    await git(bare, "update-server-info");
-
     let requests = 0;
-    await using server = Bun.serve({
+    const server = Bun.serve({
       port: 0,
       async fetch(req) {
         requests++;
@@ -5151,17 +5250,49 @@ describe("the git and github dependencies that bun.lock has already resolved", (
         return (await found.exists()) ? new Response(found) : new Response(null, { status: 404 });
       },
     });
-    const gitDep = { "git-dep": `git+${server.url}repo.git#${sha}` };
+    const project = {
+      cwd,
+      env,
+      url: `git+${server.url}repo.git`,
+      requests: () => requests,
+      // Commits what is in `src` and makes it the head of the served repository. Returns the commit.
+      async push() {
+        await git(src, "add", "-A");
+        await git(src, "commit", "-qm", "commit");
+        await rm(bare, { recursive: true, force: true });
+        await git(String(dir), "clone", "-q", "--bare", src, bare);
+        await git(bare, "update-server-info");
+        return git(src, "rev-parse", "HEAD");
+      },
+      src,
+      [Symbol.dispose]() {
+        server.stop(true);
+        dir[Symbol.dispose]();
+      },
+    };
+    try {
+      await git(src, "init", "-q");
+      return Object.assign(project, { sha: await project.push() });
+    } catch (e) {
+      project[Symbol.dispose]();
+      throw e;
+    }
+  }
+
+  test.concurrent("a git repository is not fetched again, and a cold cache still gets its checkout", async () => {
+    using project = await gitProject();
+    const { cwd, env, requests } = project;
+    const gitDep = { "git-dep": `${project.url}#${project.sha}` };
     const memberJson = join(cwd, "packages", "a", "package.json");
 
     await write(memberJson, member("a", gitDep));
     await run(cwd, env, "install", "--linker=isolated");
-    expect(requests).toBeGreaterThan(0);
+    expect(requests()).toBeGreaterThan(0);
 
-    const afterFirstInstall = requests;
+    const afterFirstInstall = requests();
     await write(memberJson, member("a", { ...gitDep, vendor: "file:../../vendor" }));
     await run(cwd, env, "install", "--linker=isolated");
-    expect(requests).toBe(afterFirstInstall);
+    expect(requests()).toBe(afterFirstInstall);
 
     // Nothing is fetched to resolve the dependency, so the linker has to clone and check out.
     await Promise.all(
@@ -5171,11 +5302,49 @@ describe("the git and github dependencies that bun.lock has already resolved", (
     );
     await write(memberJson, member("a", gitDep));
     await run(cwd, env, "install", "--linker=isolated");
-    expect(requests).toBeGreaterThan(afterFirstInstall);
+    expect(requests()).toBeGreaterThan(afterFirstInstall);
     expect(await file(join(cwd, "packages", "a", "node_modules", "git-dep", "package.json")).json()).toEqual({
       name: "git-dep",
       version: "1.0.0",
     });
+  });
+
+  // The repository gets a second commit after the install. `b` is the dependencies of packages/b. Each case gives
+  // the commits in bun.lock after the update: the one that was installed, the new one, or both.
+  test.concurrent.each<[string, Record<string, string> | "shared", string, string[], ("installed" | "new")[]]>([
+    ["keeps its commit under an update from another workspace", {}, "packages/b", [], ["installed"]],
+    ["keeps its commit under an update --filter of another workspace", {}, "", ["--filter", "b"], ["installed"]],
+    ["moves to the new commit under an update from the root", {}, "", [], ["new"]],
+    ["moves to the new commit under an update from the workspace that depends on it", {}, "packages/a", [], ["new"]],
+    [
+      "only moves for the workspace that bun update <name> runs in",
+      "shared",
+      "packages/b",
+      ["git-dep"],
+      ["installed", "new"],
+    ],
+  ])("a git dependency %s", async (_, b, rel, args, expected) => {
+    using project = await gitProject();
+    const { cwd, env } = project;
+    const gitDep = { "git-dep": project.url };
+    await Promise.all([
+      write(join(cwd, "packages", "a", "package.json"), member("a", gitDep)),
+      write(join(cwd, "packages", "b", "package.json"), member("b", b === "shared" ? gitDep : b)),
+    ]);
+    await run(cwd, env, "install");
+    const commits = async () =>
+      [...(await file(join(cwd, "bun.lock")).text()).matchAll(/"git-dep@git\+[^"#]+#(\w+)"/g)].map(match => match[1]);
+    expect(await commits()).toEqual([project.sha]);
+
+    await write(join(project.src, "package.json"), JSON.stringify({ name: "git-dep", version: "1.1.0" }));
+    const head = await project.push();
+    // packages/a is read again, which doesn't make its dependencies part of an update of packages/b.
+    if (b === "shared") {
+      await write(join(cwd, "packages", "a", "package.json"), member("a", { ...gitDep, vendor: "file:../../vendor" }));
+    }
+    await run(join(cwd, rel), env, "update", ...args);
+    const commit = { installed: project.sha, new: head };
+    expect((await commits()).sort()).toEqual(expected.map(which => commit[which]).sort());
   });
 });
 
@@ -5220,4 +5389,991 @@ test("a package in the older node_modules of a workspace is replaced, not added 
   await rm(join(cwd, "node_modules"), { recursive: true });
   await install();
   expect(await readdirSorted(installed)).toEqual([".bun-tag", "only-in-3.0.0.js", "package.json"]);
+});
+
+// The registry in these tests has one version of every name it's asked for. `publish()` adds the newer versions and
+// moves `latest`, so a bun.lock written before that is out of date for every dependency, including the ones that use
+// a dist-tag.
+describe("an update of one workspace doesn't change the dependencies of the others", () => {
+  type Json = Record<string, any>;
+  // The package.json of each folder. A string is a file with that content.
+  type Repo = Record<string, Json | string>;
+  // What the registry has of one package. Without `after` it publishes 1.1.0 and 2.0.0. The last version is `latest`,
+  // unless `tags` is false: that registry has no dist-tags.
+  type Published = { before?: string[]; after?: string[]; dependencies?: (version: string) => Json; tags?: false };
+
+  function serveRegistry(published: Record<string, Published>) {
+    let isPublished = false;
+    const manifests: string[] = [];
+    const tarballRequests: string[] = [];
+    const githubDownloads: string[] = [];
+    // The status that the registry answers for the manifest and the tarballs of a name.
+    const failing = new Map<string, number>();
+    const versionsOf = (name: string) => {
+      const { before = ["1.0.0"], after = [...before, "1.1.0", "2.0.0"] } = published[name] ?? {};
+      return isPublished ? after : before;
+    };
+    const packageJson = (name: string, version: string) => ({
+      name,
+      version,
+      dependencies: published[name]?.dependencies?.(version),
+    });
+    // bun.lock records the integrity of the tarball, so a name and version always get the same bytes. The tarball at
+    // `/unpublished/` is the exception: its bytes change with `publish()`.
+    const tarballs = new Map<string, Promise<Uint8Array>>();
+    function tarballOf(name: string, version: string, description = "") {
+      const key = `${name}@${version}${description}`;
+      let bytes = tarballs.get(key);
+      if (!bytes) {
+        const files = { "package/package.json": JSON.stringify({ ...packageJson(name, version), description }) };
+        tarballs.set(key, (bytes = new Bun.Archive(files, { compress: "gzip" }).bytes()));
+      }
+      return bytes;
+    }
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        const path = decodeURIComponent(pathname).slice(1);
+        // `github:testowner/testrepo`. Every ref is the commit aaaaaaa of a package that depends on `leaf`.
+        const ref = path.match(/^repos\/testowner\/testrepo\/tarball\/(.+)$/)?.[1];
+        if (ref) {
+          githubDownloads.push(ref);
+          if (failing.has("gh-dep")) return Response.json({}, { status: failing.get("gh-dep") });
+          const gitHubPackage = { name: "gh-dep", version: "1.0.0", dependencies: { leaf: "latest" } };
+          return new Response(
+            await githubTarball("testowner-testrepo-aaaaaaa", { "package.json": JSON.stringify(gitHubPackage) }),
+          );
+        }
+        const tarball = path.match(/^(.+)\/-\/.+-(\d+\.\d+\.\d+)\.tgz$/);
+        if (tarball) {
+          const [, name, version] = tarball;
+          tarballRequests.push(`${name}@${version}`);
+          if (failing.has(name)) return Response.json({}, { status: failing.get(name) });
+          const unpublished = name.startsWith("unpublished/");
+          return new Response(
+            await tarballOf(name.replace("unpublished/", ""), version, unpublished && isPublished ? "changed" : ""),
+          );
+        }
+        manifests.push(path);
+        if (failing.has(path)) return Response.json({}, { status: failing.get(path) });
+        const versions = versionsOf(path);
+        const dist = (version: string) => ({ tarball: `${origin}/${path}/-/${path}-${version}.tgz` });
+        return Response.json({
+          name: path,
+          "dist-tags": published[path]?.tags === false ? undefined : { latest: versions.at(-1) },
+          versions: Object.fromEntries(
+            versions.map(version => [version, { ...packageJson(path, version), dist: dist(version) }]),
+          ),
+        });
+      },
+    });
+    return {
+      url: server.url.href,
+      manifests,
+      tarballRequests,
+      githubDownloads,
+      fail: (name: string, status: number) => failing.set(name, status),
+      publish() {
+        isPublished = true;
+      },
+      [Symbol.dispose]() {
+        server.stop(true);
+      },
+    };
+  }
+
+  const ROOT = { name: "root", private: true, workspaces: ["packages/*"] };
+  const member = (name: string, dependencies: Json) => ({ name, version: "1.0.0", dependencies });
+  const stringify = (json: Json) => JSON.stringify(json, null, 2) + "\n";
+
+  // The root and a each have a `latest` dependency. a and n share a range.
+  const REPO: Record<string, Json> = {
+    "": { ...ROOT, dependencies: { rootdep: "^1.0.0", roottag: "latest" } },
+    "packages/a": member("a", { tagged: "latest", shared: "^1.0.0", aonly: "^1.0.0" }),
+    "packages/n": member("n", { own: "^1.0.0", shared: "^1.0.0" }),
+  };
+
+  // Installs `repo` against the first version of everything, then publishes the newer versions.
+  async function setup(
+    files: Repo | ((registry: string) => Repo) = REPO,
+    published: Record<string, Published> = {},
+    afterInstall?: (cwd: string) => Promise<unknown>,
+    linker = "hoisted",
+  ) {
+    await acquireSlot();
+    using cleanup = new DisposableStack();
+    cleanup.defer(releaseSlot);
+    const registry = cleanup.use(serveRegistry(published));
+    const repo = typeof files === "function" ? files(registry.url) : files;
+    const dir = cleanup.use(
+      tempDir("update-scope-", {
+        "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, saveTextLockfile: true, linker } }),
+        ...Object.fromEntries(
+          Object.entries(repo).map(([rel, json]) =>
+            typeof json === "string" ? [rel, json] : [rel ? `${rel}/package.json` : "package.json", stringify(json)],
+          ),
+        ),
+      }),
+    );
+    const cwd = String(dir);
+    const folders = Object.keys(repo).filter(rel => typeof repo[rel] !== "string");
+    const env = {
+      ...baseEnv,
+      BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache"),
+      GITHUB_API_URL: new URL(registry.url).origin,
+    };
+
+    async function bun(rel: string, ...args: string[]) {
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: join(cwd, rel),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+    const lockText = () => file(join(cwd, "bun.lock")).text();
+
+    const { stderr, exitCode } = await bun("", "install");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    await afterInstall?.(cwd);
+    registry.publish();
+    for (const requests of [registry.manifests, registry.tarballRequests, registry.githubDownloads]) {
+      requests.length = 0;
+    }
+
+    const resources = cleanup.move();
+    return {
+      cwd,
+      registry,
+      bun,
+      write: (rel: string, json: Json) => write(join(cwd, rel, "package.json"), stringify(json)),
+      lockText,
+      texts: async () =>
+        Object.fromEntries(
+          await Promise.all(
+            folders.map(async rel => [rel, await file(join(cwd, rel, "package.json")).text()] as const),
+          ),
+        ),
+      // Maps each registry package to every version of it in bun.lock. A workspace, folder, git or tarball entry
+      // is under its bun.lock key, which says who depends on it.
+      async pins() {
+        if (!(await exists(join(cwd, "bun.lock")))) return {};
+        const { packages } = Bun.JSONC.parse(await lockText()) as Json;
+        const pins: Record<string, string[]> = {};
+        for (const [key, [resolution]] of Object.entries(packages) as [string, [string]][]) {
+          const registryPackage = resolution.match(/^(.+)@(\d+\.\d+\.\d+)$/);
+          if (registryPackage) (pins[registryPackage[1]] ??= []).push(registryPackage[2]);
+          else (pins[key] ??= []).push(resolution.slice(resolution.indexOf("@", 1) + 1).replace(registry.url, "/"));
+        }
+        return Object.fromEntries(Object.entries(pins).map(([name, list]) => [name, list.sort().join(" ")]));
+      },
+      // Maps each bun.lock entry of the registry package `name` to its version. The key says who gets that version.
+      async entriesOf(name: string) {
+        const { packages } = Bun.JSONC.parse(await lockText()) as Json;
+        return Object.fromEntries(
+          (Object.entries(packages) as [string, [string]][])
+            .filter(([, [resolution]]) => resolution.startsWith(`${name}@`))
+            .map(([key, [resolution]]) => [key, resolution.slice(name.length + 1)]),
+        );
+      },
+      [Symbol.dispose]: () => resources.dispose(),
+    };
+  }
+
+  type Project = Awaited<ReturnType<typeof setup>>;
+  const dependenciesOf = ({ dependencies, devDependencies }: Json) => ({ dependencies, devDependencies });
+
+  // Reports what one command did: the versions in bun.lock of the packages whose versions changed, the dependencies of
+  // each package.json that changed, and the manifests it requested from the registry.
+  async function ran(project: Project, rel: string, ...command: string[]) {
+    const [before, pinsBefore] = [await project.texts(), await project.pins()];
+    const { stdout, stderr, exitCode } = await project.bun(rel, ...command);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    const manifests = [...new Set(project.registry.manifests)].sort();
+    const pins = await project.pins();
+    const moved = Object.fromEntries([
+      ...Object.entries(pins).filter(([name, versions]) => versions !== pinsBefore[name]),
+      ...Object.keys(pinsBefore)
+        .filter(name => !(name in pins))
+        .map(name => [name, "removed"]),
+    ]);
+    const rewritten = Object.fromEntries(
+      Object.entries(await project.texts())
+        .filter(([at, text]) => text !== before[at])
+        .map(([at, text]) => [at, dependenciesOf(JSON.parse(text))]),
+    );
+    return { stdout, moved, rewritten, manifests };
+  }
+  const updated = (project: Project, rel: string, ...args: string[]) => ran(project, rel, "update", ...args);
+
+  async function expectFrozenInstallPasses(project: Project) {
+    const lockBefore = await project.lockText();
+    const { stderr, exitCode } = await project.bun("", "install", "--frozen-lockfile");
+    expect(stderr).not.toContain("error:");
+    expect(await project.lockText()).toBe(lockBefore);
+    expect(exitCode).toBe(0);
+  }
+
+  async function expectNoDuplicates(project: Project) {
+    const { stdout, stderr, exitCode } = await project.bun("", "dedupe", "--check");
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("No duplicates");
+    expect(exitCode).toBe(0);
+  }
+
+  async function replaceIn(path: string, from: string, to: string) {
+    const text = await file(path).text();
+    expect(text).toContain(from);
+    await write(path, text.replace(from, to));
+  }
+  const removeAll = (project: Project, ...paths: string[]) =>
+    Promise.all(paths.map(path => rm(join(project.cwd, path), { recursive: true, force: true })));
+  // Adds a file, so it applies to every version of a package.
+  const PATCH =
+    "diff --git a/patched.txt b/patched.txt\nnew file mode 100644\nindex 0000000..a3f5a8a\n--- /dev/null\n+++ b/patched.txt\n@@ -0,0 +1 @@\n+patched\n";
+
+  // What `ran` reports for a rewritten package.json of REPO, with some dependencies replaced.
+  const rewrittenIn = (rel: string, entries: Json) => ({
+    [rel]: dependenciesOf({ dependencies: { ...REPO[rel].dependencies, ...entries } }),
+  });
+  const N_IN_RANGE = {
+    moved: { own: "1.1.0", shared: "1.1.0" },
+    rewritten: rewrittenIn("packages/n", { own: "^1.1.0", shared: "^1.1.0" }),
+    manifests: ["own", "shared"],
+  };
+  // a's `^1.0.0` keeps the version of `shared` that it has.
+  const N_LATEST = {
+    moved: { own: "2.0.0", shared: "1.0.0 2.0.0" },
+    rewritten: rewrittenIn("packages/n", { own: "^2.0.0", shared: "^2.0.0" }),
+    manifests: ["own", "shared"],
+  };
+
+  test.concurrent.each<[string, string, string[], Json]>([
+    ["from a workspace", "packages/n", [], N_IN_RANGE],
+    ["--latest from a workspace", "packages/n", ["--latest"], N_LATEST],
+    ["--filter of a workspace", "", ["--filter", "./packages/n"], N_IN_RANGE],
+    ["--filter --latest of a workspace", "", ["--filter", "./packages/n", "--latest"], N_LATEST],
+    // From the root, every dependency in bun.lock is resolved again. A range of a workspace stays on its version
+    // when bun.lock has no higher one that it accepts, and only `-r` rewrites it.
+    [
+      "from the root",
+      "",
+      [],
+      {
+        moved: { rootdep: "1.1.0", roottag: "2.0.0", tagged: "2.0.0" },
+        rewritten: rewrittenIn("", { rootdep: "^1.1.0" }),
+        manifests: ["aonly", "own", "rootdep", "roottag", "shared", "tagged"],
+      },
+    ],
+    [
+      "--filter of the root",
+      "",
+      ["--filter", "root"],
+      {
+        moved: { rootdep: "1.1.0", roottag: "2.0.0" },
+        rewritten: rewrittenIn("", { rootdep: "^1.1.0" }),
+        manifests: ["rootdep", "roottag"],
+      },
+    ],
+    [
+      "-r",
+      "",
+      ["-r"],
+      {
+        moved: {
+          aonly: "1.1.0",
+          own: "1.1.0",
+          rootdep: "1.1.0",
+          roottag: "2.0.0",
+          shared: "1.1.0",
+          tagged: "2.0.0",
+        },
+        rewritten: {
+          ...rewrittenIn("", { rootdep: "^1.1.0" }),
+          ...rewrittenIn("packages/a", { shared: "^1.1.0", aonly: "^1.1.0" }),
+          ...N_IN_RANGE.rewritten,
+        },
+        manifests: ["aonly", "own", "rootdep", "roottag", "shared", "tagged"],
+      },
+    ],
+    // A named update only updates the dependencies that it names.
+    [
+      "<name> from a workspace that also has a `latest` dependency",
+      "packages/a",
+      ["aonly"],
+      {
+        moved: { aonly: "1.1.0" },
+        rewritten: rewrittenIn("packages/a", { aonly: "^1.1.0" }),
+        manifests: ["aonly"],
+      },
+    ],
+    [
+      "<pattern> from a workspace that also has a `latest` dependency",
+      "packages/a",
+      ["aon*"],
+      {
+        moved: { aonly: "1.1.0" },
+        rewritten: rewrittenIn("packages/a", { aonly: "^1.1.0" }),
+        manifests: ["aonly"],
+      },
+    ],
+    [
+      "<name> -r",
+      "",
+      ["shared", "-r"],
+      {
+        moved: { shared: "1.1.0" },
+        rewritten: {
+          ...rewrittenIn("packages/a", { shared: "^1.1.0" }),
+          ...rewrittenIn("packages/n", { shared: "^1.1.0" }),
+        },
+        manifests: ["shared"],
+      },
+    ],
+  ])("bun update %s", async (_, rel, args, expected) => {
+    using project = await setup();
+    const { moved, rewritten, manifests } = await updated(project, rel, ...args);
+    expect({ moved, rewritten, manifests }).toEqual(expected);
+    await expectFrozenInstallPasses(project);
+  });
+
+  // Each dependency of a gets to `latest` another way: as declared, through the catalog, and through `overrides`.
+  const ROUTES: Repo = {
+    "": {
+      ...ROOT,
+      workspaces: { packages: ["packages/*"], catalog: { cat: "latest", ovrcat: "latest" } },
+      overrides: { ovr: "latest", ovrcat: "catalog:" },
+    },
+    "packages/a": member("a", { tagged: "latest", cat: "catalog:", ovr: "^1.0.0", ovrcat: "^1.0.0" }),
+    "packages/n": member("n", { own: "^1.0.0" }),
+  };
+  const EVERY_ROUTE = { tagged: "2.0.0", cat: "2.0.0", ovr: "2.0.0", ovrcat: "2.0.0" };
+  // Only a `catalog:` dependency is resolved again in a workspace that the update doesn't select.
+  const ONLY_CATALOG = { cat: "2.0.0", own: "1.1.0" };
+  test.concurrent.each<[string, string, string[], Json]>([
+    ["from the root", "", [], EVERY_ROUTE],
+    ["-r", "", ["-r"], { ...EVERY_ROUTE, own: "1.1.0" }],
+    ["from another workspace", "packages/n", [], ONLY_CATALOG],
+    ["--filter of another workspace", "", ["--filter", "./packages/n"], ONLY_CATALOG],
+  ])("the dependencies of a workspace that follow a dist-tag, bun update %s", async (_, rel, args, expected) => {
+    using project = await setup(ROUTES);
+    const { moved } = await updated(project, rel, ...args);
+    expect(moved).toEqual(expected);
+    await expectFrozenInstallPasses(project);
+  });
+
+  // The root and a are on one version of `shared`. The update moves it for the root, and a's range accepts it.
+  test.concurrent("bun update from the root moves a range of a workspace with the root's", async () => {
+    using project = await setup({
+      "": { ...ROOT, dependencies: { shared: "^1.0.0" } },
+      "packages/a": member("a", { shared: "^1.0.0" }),
+    });
+    const { moved, rewritten } = await updated(project, "");
+    expect({ moved, rewritten: Object.keys(rewritten) }).toEqual({ moved: { shared: "1.1.0" }, rewritten: [""] });
+    await expectFrozenInstallPasses(project);
+  });
+
+  // c is installed after 1.1.0 is published, so bun.lock has 1.0.0 for a and 1.1.0 for c.
+  test.concurrent("bun update from the root moves a range of a workspace to a higher version in bun.lock", async () => {
+    using project = await setup({ "": ROOT, "packages/a": member("a", { host: "^1.0.0" }) });
+    await project.write("packages/c", member("c", { host: "^1.1.0" }));
+    expect((await ran(project, "", "install")).moved).toEqual({ c: "workspace:packages/c", host: "1.0.0 1.1.0" });
+    const { moved, rewritten } = await updated(project, "");
+    expect({ moved, rewritten }).toEqual({ moved: { host: "1.1.0" }, rewritten: {} });
+    await expectNoDuplicates(project);
+  });
+
+  // `bun init` writes `"@types/bun": "latest"` into every package.
+  const types = { devDependencies: { typesbun: "latest" } };
+  const INIT: Record<string, Json> = {
+    "": { ...ROOT, ...types },
+    "packages/a": { ...member("a", { own: "^1.0.0" }), ...types },
+    "packages/b": { ...member("b", {}), ...types },
+  };
+  const typesbun: Published = { dependencies: version => ({ buntypes: version }) };
+  // `latest` is 2.0.0 when the project is installed, and 1.1.0 afterwards.
+  const movesBack = { before: ["1.0.0", "2.0.0"], after: ["1.0.0", "2.0.0", "1.1.0"] };
+  test.concurrent.each<[string, string, string[], string]>([
+    ["from the root", "", [], "2.0.0"],
+    ["from a workspace", "packages/a", [], "2.0.0"],
+    ["--filter of a workspace", "", ["--filter", "./packages/a"], "2.0.0"],
+    ["from a workspace when `latest` moves back", "packages/a", [], "1.1.0"],
+    ["--filter of a workspace when `latest` moves back", "", ["--filter", "./packages/a"], "1.1.0"],
+  ])("workspaces that share a `latest` dependency stay on one version, bun update %s", async (_, rel, args, latest) => {
+    using project = await setup(
+      INIT,
+      latest === "1.1.0" ? { typesbun: { ...typesbun, ...movesBack }, buntypes: movesBack } : { typesbun },
+    );
+    const { moved } = await updated(project, rel, ...args);
+    expect(moved).toMatchObject({ typesbun: latest, buntypes: latest });
+    await expectNoDuplicates(project);
+    await expectFrozenInstallPasses(project);
+  });
+
+  // The updated workspace has no bun.lock entry for the dependency yet, or the registry has no tag to look up.
+  test.concurrent.each<[string, string, Record<string, Published>]>([
+    ["a workspace that just got it", "packages/a", { typesbun }],
+    ["a new workspace", "packages/c", { typesbun }],
+    ["a registry without dist-tags", "packages/a", { typesbun: { ...typesbun, tags: false } }],
+  ])("workspaces that share a `latest` dependency stay on one version, with %s", async (which, rel, published) => {
+    const justGotIt = which === "a workspace that just got it";
+    using project = await setup(
+      justGotIt ? { ...INIT, "packages/a": member("a", { own: "^1.0.0" }) } : INIT,
+      published,
+    );
+    if (justGotIt) await project.write("packages/a", INIT["packages/a"]);
+    if (rel === "packages/c") await project.write("packages/c", { ...member("c", {}), ...types });
+    const { moved } = await updated(project, rel);
+    expect(moved).toMatchObject({ typesbun: "2.0.0", buntypes: "2.0.0" });
+    await expectNoDuplicates(project);
+    await expectFrozenInstallPasses(project);
+  });
+
+  test.concurrent("bun update <name> doesn't share a `latest` dependency, and the next bun update does", async () => {
+    using project = await setup(INIT, { typesbun });
+    expect((await updated(project, "packages/a", "typesbun")).moved).toEqual({
+      typesbun: "1.0.0 2.0.0",
+      buntypes: "1.0.0 2.0.0",
+    });
+    expect((await updated(project, "packages/a")).moved).toMatchObject({ typesbun: "2.0.0", buntypes: "2.0.0" });
+    await expectFrozenInstallPasses(project);
+  });
+
+  test.concurrent.each<[string, string, string[]]>([
+    ["from a workspace", "packages/a", []],
+    ["--filter of a workspace", "", ["--filter", "./packages/a"]],
+  ])("a patched `latest` dependency moves in every workspace that shares it, bun update %s", async (_, rel, args) => {
+    using project = await setup(
+      {
+        ...INIT,
+        "": { ...INIT[""], patchedDependencies: { "typesbun@1.0.0": "patches/typesbun@1.0.0.patch" } },
+        "patches/typesbun@1.0.0.patch": PATCH,
+      },
+      { typesbun },
+    );
+    const { stderr, exitCode } = await project.bun(rel, "update", ...args);
+    expect(stderr).toContain("patches/typesbun@1.0.0.patch no longer applies");
+    expect(await project.pins()).toMatchObject({ typesbun: "2.0.0", buntypes: "2.0.0" });
+    expect(exitCode).toBe(0);
+  });
+
+  // `--latest` asks for `latest` in place of n's range, and that's what a's dependency asks for.
+  test.concurrent("bun update --latest shares `latest` with the workspaces that depend on the tag", async () => {
+    using project = await setup({
+      "": ROOT,
+      "packages/a": member("a", { host: "latest" }),
+      "packages/n": member("n", { host: "^1.0.0" }),
+    });
+    const { moved } = await updated(project, "packages/n", "--latest");
+    expect(moved).toEqual({ host: "2.0.0" });
+    await expectFrozenInstallPasses(project);
+  });
+
+  // a's peer dependency uses the version that the root has. That isn't what `latest` names, so b keeps its own.
+  test.concurrent("a peer dependency on `latest` doesn't share the version of its provider", async () => {
+    const versions = ["1.0.0", "1.0.5", "2.0.0"];
+    using project = await setup(
+      {
+        "": { ...ROOT, dependencies: { host: "1.0.5" } },
+        "packages/a": { ...member("a", {}), peerDependencies: { host: "latest" } },
+        "packages/b": member("b", { host: "latest" }),
+      },
+      { host: { before: versions, after: versions } },
+    );
+    expect(await project.pins()).toMatchObject({ host: "1.0.5 2.0.0" });
+    const { moved } = await updated(project, "packages/a");
+    expect(moved).toEqual({});
+  });
+
+  // The root's `overrides` makes both ranges a dependency on `latest`.
+  test.concurrent("workspaces whose dependency an override points at `latest` stay on one version", async () => {
+    using project = await setup({
+      "": { ...ROOT, overrides: { host: "latest" } },
+      "packages/a": member("a", { host: "^1.0.0" }),
+      "packages/b": member("b", { host: "^1.0.0" }),
+    });
+    const { moved } = await updated(project, "packages/a");
+    expect(moved).toEqual({ host: "2.0.0" });
+    await expectFrozenInstallPasses(project);
+  });
+
+  // m moves to 1.1.0 and k to 2.0.0. b isn't updated, and `bparent` is a dependency of b alone.
+  test.concurrent("a workspace that isn't updated stays on the version that its own dependencies use", async () => {
+    using project = await setup(
+      {
+        "": ROOT,
+        "packages/b": member("b", { host: "^1.0.0", bparent: "^1.0.0" }),
+        "packages/k": member("k", { host: "latest" }),
+        "packages/m": member("m", { host: "^1.0.0" }),
+      },
+      { bparent: { after: ["1.0.0"], dependencies: () => ({ host: "^1.0.0" }) } },
+    );
+    const { rewritten } = await updated(project, "", "--filter", "k", "--filter", "m");
+    expect({ host: await project.entriesOf("host"), rewritten: Object.keys(rewritten) }).toEqual({
+      host: { host: "1.0.0", "k/host": "2.0.0", "m/host": "1.1.0" },
+      rewritten: ["packages/m"],
+    });
+    await expectFrozenInstallPasses(project);
+  });
+
+  // a and n accept the same versions of `host`, and bun.lock has 1.0.5 for a and 1.0.0 for n. `bun dedupe` is the
+  // command that merges them.
+  test.concurrent.each<[string, string, string]>([
+    ["the one on the lower version", "packages/n", "1.0.5 1.1.0"],
+    ["the one on the higher version", "packages/a", "1.0.0 1.1.0"],
+  ])("a workspace keeps a version of its own under an update of %s", async (_, rel, versions) => {
+    using project = await setup(
+      {
+        "": ROOT,
+        "packages/a": member("a", { host: "^1.0.0" }),
+        "packages/n": member("n", { host: "1.0.0" }),
+      },
+      { host: { before: ["1.0.0", "1.0.5"], after: ["1.0.0", "1.0.5", "1.1.0"] } },
+      cwd =>
+        Promise.all(
+          ["packages/n/package.json", "bun.lock"].map(path =>
+            replaceIn(join(cwd, path), '"host": "1.0.0"', '"host": "^1.0.0"'),
+          ),
+        ),
+    );
+    const { moved } = await updated(project, rel);
+    expect(moved).toEqual({ host: versions });
+    await expectFrozenInstallPasses(project);
+  });
+
+  // n reaches `trans` through `parent`. a depends on it by tag, and a isn't updated, so `trans` stays on the version
+  // that a has. A version of its own for `parent` would be a duplicate.
+  const TRANSITIVE: Record<string, Json> = {
+    "": ROOT,
+    "packages/a": member("a", { trans: "latest", parent: "^1.0.0" }),
+    "packages/n": member("n", { parent: "^1.0.0" }),
+  };
+  test.concurrent.each<[string, string[]]>([
+    ["names a version that `parent` accepts", ["1.0.0", "1.1.0"]],
+    ["names a version that `parent` doesn't accept", ["1.0.0", "1.1.0", "2.0.0"]],
+  ])("a `latest` dependency of another workspace keeps its version when its tag %s", async (_, after) => {
+    using project = await setup(TRANSITIVE, {
+      parent: { after: ["1.0.0"], dependencies: () => ({ trans: "^1.0.0" }) },
+      trans: { after },
+    });
+    const { moved } = await updated(project, "packages/n");
+    expect(moved).toEqual({});
+    await expectNoDuplicates(project);
+    await expectFrozenInstallPasses(project);
+  });
+
+  // b's `latest` isn't the tag of a dependency that a has, so it keeps its version. In the first three cases a's
+  // range is left as written and only bun.lock moves. In the last one `latest` names the version that a moves to.
+  test.concurrent.each<[string, string, string[], Json, string, string[]]>([
+    ["from the workspace", "packages/a", [], {}, "1.x", ["1.0.0", "1.1.0", "2.0.0"]],
+    ["--filter of the workspace", "", ["--filter", "./packages/a"], {}, "1.x", ["1.0.0", "1.1.0", "2.0.0"]],
+    [
+      "--filter of a workspace that gets the range from the catalog",
+      "",
+      ["--filter", "./packages/a"],
+      { host: "^1.0.0" },
+      "catalog:",
+      ["1.0.0", "1.1.0", "2.0.0"],
+    ],
+    ["from a workspace whose range gets what `latest` names", "packages/a", [], {}, "1.x", ["1.0.0", "1.1.0"]],
+  ])(
+    "the `latest` dependency of another workspace keeps its version next to a range, bun update %s",
+    async (_, rel, args, catalog, range, after) => {
+      using project = await setup(
+        {
+          "": { ...ROOT, workspaces: { packages: ["packages/*"], catalog } },
+          "packages/a": member("a", { host: range }),
+          "packages/b": member("b", { host: "latest" }),
+        },
+        { host: { after } },
+      );
+      const { moved, rewritten } = await updated(project, rel, ...args);
+      expect({ moved, rewritten }).toEqual({ moved: { host: "1.0.0 1.1.0" }, rewritten: {} });
+      await expectFrozenInstallPasses(project);
+    },
+  );
+
+  test.concurrent(
+    "bun update --dev updates the devDependencies of the workspace and not its `latest` dependency",
+    async () => {
+      using project = await setup({
+        "": ROOT,
+        "packages/a": { ...member("a", { tagged: "latest" }), devDependencies: { adev: "^1.0.0" } },
+      });
+      const { moved, manifests } = await updated(project, "packages/a", "--dev");
+      expect({ moved, manifests }).toEqual({ moved: { adev: "1.1.0" }, manifests: ["adev"] });
+      await expectFrozenInstallPasses(project);
+    },
+  );
+
+  // The bytes at the URL change after the install. An update that selects a workspace with the dependency reads
+  // them again. bun.lock has one entry for a URL, so that's for every workspace that has it.
+  test.concurrent.each<[string, string, string[], boolean]>([
+    ["keeps its integrity under an update from another workspace", "packages/n", [], false],
+    ["keeps its integrity under an update --filter of another workspace", "", ["--filter", "./packages/n"], false],
+    ["is read again by an update from the root", "", [], true],
+    ["is read again by an update from the workspace that depends on it", "packages/a", [], true],
+    ["is read again by an update <name> from a workspace that shares it", "packages/s", ["tar"], true],
+  ])("a tarball URL %s", async (_, rel, args, isReadAgain) => {
+    using project = await setup(registry => {
+      const tar = { tar: `${registry}unpublished/tar/-/tar-1.0.0.tgz` };
+      return {
+        "": ROOT,
+        "packages/a": member("a", tar),
+        "packages/n": member("n", { own: "^1.0.0" }),
+        "packages/s": member("s", rel === "packages/s" ? tar : {}),
+      };
+    });
+    const integrity = async () => (await project.lockText()).match(/"tar@http[^"]+", \{\}, "(sha512-[^"]+)"/)?.[1];
+    const before = await integrity();
+    expect(before).toStartWith("sha512-");
+    await updated(project, rel, ...args);
+    expect({
+      downloaded: project.registry.tarballRequests.includes("unpublished/tar@1.0.0"),
+      kept: (await integrity()) === before,
+    }).toEqual({ downloaded: isReadAgain, kept: !isReadAgain });
+  });
+
+  const OTHERS = ["aonly", "rootdep", "roottag", "tagged"];
+  test.concurrent.each<[string, number, string[], string[]]>([
+    ["bun update", 404, [], OTHERS],
+    ["bun update <name>", 404, ["own"], [...OTHERS, "shared"]],
+    ["bun update <name>", 401, ["own"], [...OTHERS, "shared"]],
+  ])(
+    "%s doesn't request a manifest that it doesn't need, so a %d for it doesn't fail",
+    async (_, status, args, names) => {
+      using project = await setup();
+      for (const name of names) project.registry.fail(name, status);
+      const { moved, manifests } = await updated(project, "packages/n", ...args);
+      expect({ moved, manifests }).toEqual(
+        args.length === 0
+          ? { moved: N_IN_RANGE.moved, manifests: N_IN_RANGE.manifests }
+          : { moved: { own: "1.1.0" }, manifests: ["own"] },
+      );
+    },
+  );
+
+  const EVERYTHING_INSTALLED = [".bun-cache", "node_modules", "packages/a/node_modules", "packages/n/node_modules"];
+
+  // The registry refuses everything that n doesn't depend on. `--lockfile-only` doesn't install, so nothing of the
+  // other workspaces is requested.
+  test.concurrent("bun update <name> --lockfile-only requests nothing for the other workspaces", async () => {
+    using project = await setup();
+    for (const name of [...OTHERS, "shared"]) project.registry.fail(name, 401);
+    await removeAll(project, ...EVERYTHING_INSTALLED);
+    const { moved, manifests } = await updated(project, "packages/n", "own", "--lockfile-only");
+    expect({ moved, manifests, tarballs: project.registry.tarballRequests }).toEqual({
+      moved: { own: "1.1.0" },
+      manifests: ["own"],
+      tarballs: [],
+    });
+  });
+
+  // As with `bun install`, the install step downloads what is in neither the cache nor node_modules, for every
+  // workspace. The versions are the ones that bun.lock has.
+  test.concurrent("an update from a workspace installs the locked versions of the other workspaces", async () => {
+    using project = await setup();
+    await removeAll(project, ...EVERYTHING_INSTALLED);
+    const { moved, manifests } = await updated(project, "packages/n");
+    expect({ moved, manifests, tarballs: project.registry.tarballRequests.toSorted() }).toEqual({
+      moved: N_IN_RANGE.moved,
+      manifests: N_IN_RANGE.manifests,
+      tarballs: ["aonly@1.0.0", "own@1.1.0", "rootdep@1.0.0", "roottag@1.0.0", "shared@1.1.0", "tagged@1.0.0"],
+    });
+  });
+
+  test.concurrent("--dry-run only prints the dependencies of the targeted workspace and writes nothing", async () => {
+    using project = await setup();
+    const lockBefore = await project.lockText();
+    const { stdout, rewritten } = await updated(project, "packages/n", "--dry-run");
+    expect(stdout.match(/^\^ .+$/gm)).toEqual([
+      "^ own 1.0.0 -> 1.1.0 (v2.0.0 available)",
+      "^ shared 1.0.0 -> 1.1.0 (v2.0.0 available)",
+    ]);
+    expect(rewritten).toEqual({});
+    expect(await project.lockText()).toBe(lockBefore);
+  });
+
+  test.concurrent("a second update from the same workspace changes nothing", async () => {
+    using project = await setup();
+    await updated(project, "packages/n");
+    const [lockBefore, textsBefore] = [await project.lockText(), await project.texts()];
+    project.registry.manifests.length = 0;
+    const { stdout } = await updated(project, "packages/n");
+    expect(stdout).toContain("(no changes)");
+    expect(await project.lockText()).toBe(lockBefore);
+    expect(await project.texts()).toEqual(textsBefore);
+  });
+
+  // An update uses the package.json files on disk, so an edit is resolved the way `bun install` resolves it.
+  test.concurrent(
+    "an update of one workspace resolves a range edited by hand in another workspace, and nothing next to it",
+    async () => {
+      using project = await setup();
+      await project.write("packages/a", member("a", { ...REPO["packages/a"].dependencies, aonly: "^1.1.0" }));
+      const { moved, rewritten } = await updated(project, "packages/n");
+      expect({ moved, rewritten }).toEqual({
+        moved: { ...N_IN_RANGE.moved, aonly: "1.1.0" },
+        rewritten: N_IN_RANGE.rewritten,
+      });
+      await expectFrozenInstallPasses(project);
+    },
+  );
+
+  test.concurrent("without a bun.lock, an update from a workspace only rewrites its own package.json", async () => {
+    using project = await setup();
+    await rm(join(project.cwd, "bun.lock"));
+    const { rewritten } = await updated(project, "packages/n");
+    expect(rewritten).toEqual(N_IN_RANGE.rewritten);
+    await expectFrozenInstallPasses(project);
+  });
+
+  // The dependencies of a `file:` folder are updated with the workspaces that reach the folder. `fdep` sorts after
+  // `aown`, so the folder is still queued when the update waits for the manifest of `aown`.
+  const FOLDER: Record<string, Json> = {
+    "": ROOT,
+    "packages/m": member("m", { aown: "^1.0.0", fdep: "file:../../vendor/fdep" }),
+    "packages/n": member("n", { own: "^1.0.0" }),
+    "vendor/fdep": member("fdep", { ftag: "latest", frange: "^1.0.0" }),
+  };
+  const FOLDER_MOVES = { frange: "1.1.0", ftag: "2.0.0" };
+  const FOLDER_NAMES = ["frange", "ftag"];
+  test.concurrent.each<[string, string, string[], Json, string[]]>([
+    ["from another workspace", "packages/n", [], { own: "1.1.0" }, ["own"]],
+    ["--filter of another workspace", "", ["--filter", "./packages/n"], { own: "1.1.0" }, ["own"]],
+    [
+      "from the workspace that depends on it",
+      "packages/m",
+      [],
+      { ...FOLDER_MOVES, aown: "1.1.0" },
+      ["aown", ...FOLDER_NAMES],
+    ],
+    ["from the root", "", [], FOLDER_MOVES, ["aown", ...FOLDER_NAMES, "own"]],
+    ["-r", "", ["-r"], { ...FOLDER_MOVES, aown: "1.1.0", own: "1.1.0" }, ["aown", ...FOLDER_NAMES, "own"]],
+    ["<name> from the workspace that depends on it", "packages/m", ["aown"], { aown: "1.1.0" }, ["aown"]],
+    ["--depth 0 from the workspace that depends on it", "packages/m", ["--depth", "0"], { aown: "1.1.0" }, ["aown"]],
+  ])("the dependencies of a `file:` folder, bun update %s", async (_, rel, args, expected, names) => {
+    using project = await setup(FOLDER);
+    const { moved, manifests } = await updated(project, rel, ...args);
+    expect({ moved, manifests }).toEqual({ moved: expected, manifests: names });
+    await expectFrozenInstallPasses(project);
+  });
+
+  test.concurrent("bun update <name> doesn't request the manifests of a `file:` folder's dependencies", async () => {
+    using project = await setup({ ...FOLDER, "vendor/fdep": member("fdep", { frange: "^1.0.0" }) });
+    project.registry.fail("frange", 404);
+    const { moved, manifests } = await updated(project, "packages/m", "aown");
+    expect({ moved, manifests }).toEqual({ moved: { aown: "1.1.0" }, manifests: ["aown"] });
+  });
+
+  // n has the same `latest` dependency as the folder, which only m depends on.
+  test.concurrent.each<[string, string, string[]]>([
+    ["from a workspace", "packages/n", []],
+    ["--filter of a workspace", "", ["--filter", "./packages/n"]],
+  ])(
+    "a `file:` folder shares a `latest` dependency with the workspace that bun update %s selects",
+    async (_, rel, args) => {
+      using project = await setup({ ...FOLDER, "packages/n": member("n", { own: "^1.0.0", ftag: "latest" }) });
+      const { moved } = await updated(project, rel, ...args);
+      expect(moved).toEqual({ own: "1.1.0", ftag: "2.0.0" });
+      await expectFrozenInstallPasses(project);
+    },
+  );
+
+  // The folder ships its own copy of `host`.
+  test.concurrent("a bundled `latest` dependency of a `file:` folder keeps its version", async () => {
+    using project = await setup({
+      "": ROOT,
+      "packages/k": member("k", { host: "latest" }),
+      "packages/m": member("m", { fdep: "file:../../vendor/fdep" }),
+      "vendor/fdep": { ...member("fdep", { host: "latest" }), bundledDependencies: ["host"] },
+    });
+    const { moved } = await updated(project, "packages/k");
+    expect(moved).toEqual({ host: "1.0.0 2.0.0" });
+  });
+
+  // n links b with `workspace:*`. That doesn't put b's own dependencies in the scope of an update of n. `b` sorts
+  // after `aaa`, so b is still queued when the update waits for the manifest of `aaa`.
+  test.concurrent("a workspace that the updated workspace depends on keeps its dependencies", async () => {
+    using project = await setup({
+      "": ROOT,
+      "packages/b": member("b", { tagged: "latest", bonly: "^1.0.0" }),
+      "packages/n": member("n", { aaa: "^1.0.0", b: "workspace:*" }),
+    });
+    const { moved, manifests } = await updated(project, "packages/n");
+    expect({ moved, manifests }).toEqual({ moved: { aaa: "1.1.0" }, manifests: ["aaa"] });
+    await expectFrozenInstallPasses(project);
+  });
+
+  // n depends on the workspace b through its folder. That's b itself, and not a second package.
+  test.concurrent.each<[string, string, string[]]>([
+    ["from the workspace", "packages/n", []],
+    ["--filter of the workspace", "", ["--filter", "./packages/n"]],
+  ])("a `file:` path to another workspace stays that workspace, bun update %s", async (_, rel, args) => {
+    using project = await setup({
+      "": ROOT,
+      "packages/b": member("b", { tagged: "latest", bonly: "^1.0.0" }),
+      "packages/n": member("n", { aaa: "^1.0.0", b: "file:../b" }),
+    });
+    const { moved, manifests } = await updated(project, rel, ...args);
+    expect({ moved, manifests }).toEqual({ moved: { aaa: "1.1.0" }, manifests: ["aaa"] });
+    await expectFrozenInstallPasses(project);
+  });
+
+  // a links b with `workspace:*`, so an update of a reaches what is below b's own dependencies: what `bparent`
+  // depends on, and the `file:` folder with everything in it. b's own dependencies are b's to update.
+  test.concurrent.each<[string, string, string[]]>([
+    ["from the workspace", "packages/a", []],
+    ["--filter of the workspace", "", ["--filter", "./packages/a"]],
+  ])(
+    "a workspace that is linked with `workspace:*` keeps its own dependencies, bun update %s",
+    async (_, rel, args) => {
+      using project = await setup(
+        registry => ({
+          "": ROOT,
+          "packages/a": member("a", { aown: "^1.0.0", b: "workspace:*" }),
+          "packages/b": member("b", {
+            bown: "^1.0.0",
+            bparent: "^1.0.0",
+            btag: "latest",
+            fdep: "file:../../vendor/fdep",
+          }),
+          "vendor/fdep": member("fdep", {
+            frange: "^1.0.0",
+            ftag: "latest",
+            tar: `${registry}unpublished/tar/-/tar-1.0.0.tgz`,
+          }),
+        }),
+        { bparent: { after: ["1.0.0"], dependencies: () => ({ child: "^1.0.0" }) } },
+      );
+      const { moved, manifests } = await updated(project, rel, ...args);
+      expect({
+        moved,
+        manifests,
+        tarballReadAgain: project.registry.tarballRequests.includes("unpublished/tar@1.0.0"),
+      }).toEqual({
+        moved: { aown: "1.1.0", child: "1.1.0", frange: "1.1.0", ftag: "2.0.0" },
+        manifests: ["aown", "child", "frange", "ftag"],
+        tarballReadAgain: true,
+      });
+      await expectFrozenInstallPasses(project);
+    },
+  );
+
+  // n also depends on a GitHub branch, whose package depends on `leaf@latest`. The registry refuses `leaf`.
+  test.concurrent.each<[string, string[], Json, string[]]>([
+    ["another dependency leaves a GitHub branch alone", ["own"], { own: "1.1.0" }, []],
+    ["a GitHub branch doesn't resolve again what its package depends on", ["gh-dep"], {}, ["main"]],
+  ])("bun update <name> of %s", async (_, names, moved, downloads) => {
+    using project = await setup({
+      "": ROOT,
+      "packages/n": member("n", { own: "^1.0.0", "gh-dep": "github:testowner/testrepo#main" }),
+    });
+    project.registry.fail("leaf", 401);
+    expect((await updated(project, "packages/n", ...names)).moved).toEqual(moved);
+    expect(project.registry.githubDownloads).toEqual(downloads);
+  });
+
+  // a's `catalog:` dependency is resolved again for every update, and a's GitHub branch keeps its commit: GitHub
+  // isn't asked, so its 404 doesn't matter.
+  test.concurrent.each<[string, string, string[]]>([
+    ["from another workspace", "packages/n", []],
+    ["--filter of another workspace", "", ["--filter", "./packages/n"]],
+  ])("a GitHub branch next to a `catalog:` dependency isn't downloaded again, bun update %s", async (_, rel, args) => {
+    using project = await setup({
+      "": { ...ROOT, workspaces: { packages: ["packages/*"], catalog: { cat: "^1.0.0" } } },
+      "packages/a": member("a", { cat: "catalog:", "gh-dep": "github:testowner/testrepo#main" }),
+      "packages/n": member("n", { own: "^1.0.0" }),
+    });
+    project.registry.fail("gh-dep", 404);
+    const { moved } = await updated(project, rel, ...args);
+    expect({ moved, downloads: project.registry.githubDownloads }).toEqual({
+      moved: { cat: "1.1.0", own: "1.1.0" },
+      downloads: [],
+    });
+  });
+
+  // The package of `github:testowner/testrepo` depends on `leaf@latest`, and the registry refuses `leaf`. The catalog
+  // entry is resolved again for every workspace. What the package depends on is only resolved again for an update
+  // that reaches the package. The download still looks ahead to the manifest of `leaf`, and doesn't need it.
+  test.concurrent.each<[string, string, string[], number]>([
+    ["from another workspace", "packages/n", [], 404],
+    ["--filter of another workspace", "", ["--filter", "./packages/n"], 401],
+  ])(
+    "what a GitHub dependency of another workspace depends on keeps its version, bun update %s",
+    async (_, rel, args, status) => {
+      using project = await setup({
+        "": {
+          ...ROOT,
+          workspaces: { packages: ["packages/*"], catalog: { "gh-dep": "github:testowner/testrepo#main" } },
+        },
+        "packages/a": member("a", { "gh-dep": "catalog:" }),
+        "packages/n": member("n", { own: "^1.0.0" }),
+      });
+      project.registry.fail("leaf", status);
+      const { moved } = await updated(project, rel, ...args);
+      expect({ moved, downloads: project.registry.githubDownloads }).toEqual({
+        moved: { own: "1.1.0" },
+        downloads: ["main"],
+      });
+    },
+  );
+
+  test.concurrent("bun update --depth 0 keeps what a GitHub dependency depends on", async () => {
+    using project = await setup({
+      "": { ...ROOT, dependencies: { "gh-dep": "github:testowner/testrepo#main", own: "^1.0.0" } },
+    });
+    const { moved } = await updated(project, "", "--depth", "0");
+    expect({ moved, downloads: project.registry.githubDownloads }).toEqual({
+      moved: { own: "1.1.0" },
+      downloads: ["main"],
+    });
+  });
+
+  // Bun 1.4 and older left a workspace out of bun.lock when the root depends on a registry package of its name. Such
+  // a bun.lock is the one of a root without the workspace. An update without names from the workspace, from the
+  // root, or with `-r` adds it. `--filter` and a name select from bun.lock, so they can't select it before that.
+  test.concurrent.each<[string, Json, Json, Json]>([
+    ["adds it and updates it", {}, {}, { foo: "2.0.0", own: "1.1.0" }],
+    [
+      "shares a `latest` dependency with the root",
+      {},
+      { typesbun: "latest" },
+      { foo: "2.0.0", own: "1.1.0", typesbun: "2.0.0" },
+    ],
+    // The root isn't updated, so it keeps its version of the range that both have.
+    [
+      "leaves the root on its version of a range",
+      { shared: "^1.0.0" },
+      {},
+      { foo: "2.0.0", own: "1.1.0", shared: "1.0.0 1.1.0" },
+    ],
+  ])("an update from a workspace that an older bun.lock left out %s", async (_, both, tags, pins) => {
+    const rootDependencies = { dependencies: { foo: "^2.0.0", ...both }, devDependencies: tags };
+    const foo = { ...member("foo", { own: "^1.0.0", ...both }), devDependencies: tags };
+    using project = await setup(
+      { "": { name: "root", private: true, ...rootDependencies } },
+      { foo: { before: ["2.0.0"], after: ["2.0.0"] } },
+      cwd =>
+        Promise.all([
+          write(join(cwd, "package.json"), stringify({ ...ROOT, ...rootDependencies })),
+          write(join(cwd, "packages", "foo", "package.json"), stringify(foo)),
+        ]),
+    );
+    const { stderr, exitCode } = await project.bun("packages/foo", "update");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(await project.pins()).toEqual(pins);
+    expect((await file(join(project.cwd, "packages", "foo", "package.json")).json()).dependencies).toEqual(
+      Object.fromEntries(Object.keys(foo.dependencies).map(name => [name, "^1.1.0"])),
+    );
+    await expectFrozenInstallPasses(project);
+  });
 });

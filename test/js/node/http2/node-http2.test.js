@@ -5288,8 +5288,9 @@ for (const [name, runtime] of [
   it.skipIf(!runtime)(
     `http2 respondWithFD() and respondWithFile() respond like node v26 (${name})`,
     async () => {
+      using dir = tempDir("http2-respond-file-fixture", {});
       await using proc = Bun.spawn({
-        cmd: [runtime, path.join(import.meta.dir, "node-http2-respond-file.fixture.mjs")],
+        cmd: [runtime, path.join(import.meta.dir, "node-http2-respond-file.fixture.mjs"), String(dir)],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",

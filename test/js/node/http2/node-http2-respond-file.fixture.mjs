@@ -4,10 +4,10 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import http2 from "node:http2";
-import os from "node:os";
 import path from "node:path";
 
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), "h2-respond-file-"));
+// An empty directory for the files of this run. The test makes it and removes it.
+const dir = process.argv[2];
 const ten = path.join(dir, "ten.txt");
 const empty = path.join(dir, "empty.txt");
 const big = path.join(dir, "big.bin");
@@ -365,5 +365,4 @@ server.listen(0, "127.0.0.1", async () => {
   server.close();
   fs.closeSync(positioned);
   await Promise.all(handleCloses);
-  fs.rmSync(dir, { recursive: true, force: true });
 });

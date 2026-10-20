@@ -183,6 +183,18 @@ impl<'a> Coordinator<'a> {
     /// group kill here plus stdin EOF in the worker loop is the best effort.
     /// Exits with 128 + `signal`, the status a shell reports for a signal death.
     fn abort_all(&mut self, signal: i32) {
+        // Before any write: a write can block, and what the tests spawned must have its SIGTERM by then.
+        for w in self.workers[..self.spawned_count as usize].iter_mut() {
+            if let Some(p) = &w.process {
+                #[cfg(unix)]
+                terminate_process_group(p.pid);
+                #[cfg(not(unix))]
+                {
+                    // SIGKILL → TerminateProcess; libuv-win takes only SIGQUIT/SIGTERM/SIGKILL/SIGINT.
+                    let _ = p.kill(9);
+                }
+            }
+        }
         abort_handler::uninstall();
         let now = bun_core::time::milli_timestamp();
         let workers = &self.workers[..self.spawned_count as usize];
@@ -215,18 +227,6 @@ impl<'a> Coordinator<'a> {
                 }
             }
             Output::flush();
-        }
-        for w in self.workers[..self.spawned_count as usize].iter_mut() {
-            if let Some(p) = &w.process {
-                #[cfg(unix)]
-                terminate_process_group(p.pid);
-                #[cfg(not(unix))]
-                {
-                    // SIGKILL → TerminateProcess; libuv-win ENOSYSes signals
-                    // other than SIGQUIT/SIGTERM/SIGKILL/SIGINT.
-                    let _ = p.kill(9);
-                }
-            }
         }
         self.aborted = Some(u32::from(bun_sys::SignalCode(signal as u8).to_exit_code()));
     }

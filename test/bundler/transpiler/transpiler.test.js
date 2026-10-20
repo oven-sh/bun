@@ -517,18 +517,40 @@ describe("Bun.Transpiler", () => {
       // "async()" and "async(...b)" are also calls
       exp("x = a ? async() : b => c", "x = a ? async() : (b) => c;\n");
       exp("x = a ? async (): T => b : c", "x = a ? async () => b : c;\n");
-      expect(() => new Bun.Transpiler({ loader: "ts" }).transformSync("x = a ? async(...b) : c => d")).not.toThrow();
+      expect(new Bun.Transpiler({ loader: "ts" }).transformSync("x = a ? async(...b) : c => d")).toMatch(
+        /^x = a \? async\(.*b\) : \(c\) => d;\n$/,
+      );
     });
 
     describe("a decorated class in a typed arrow function of a true branch", () => {
       const source = head => `x = a ? ${head}: T => { class A { @d() p: Date; } return A; } : null;`;
       const tsconfig = { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } };
-      const designType = '("design:type", typeof Date === "undefined" ? Object : Date)';
+      // The two helpers are imported under generated names.
+      const helperNames = /(__legacy\w+?TS)_\w+/g;
+      const printed =
+        head => `import { __legacyDecorateClassTS as __legacyDecorateClassTS, __legacyMetadataTS as __legacyMetadataTS } from "bun:wrap";
+x = a ? ${head} => {
+
+  class A {
+  }
+  __legacyDecorateClassTS([
+    d(),
+    __legacyMetadataTS("design:type", typeof Date === "undefined" ? Object : Date)
+  ], A.prototype, "p", undefined);
+  return A;
+} : null;
+`;
 
       // A second parse of the body named the class in place of the type.
-      it.each(["(b: unknown)", "(b, c: C)", "(...b)", "(b, ...c)", "async (b: unknown)"])("after %s", head => {
+      it.each([
+        ["(b: unknown)", "(b)"],
+        ["(b, c: C)", "(b, c)"],
+        ["(...b)", "(...b)"],
+        ["(b, ...c)", "(b, ...c)"],
+        ["async (b: unknown)", "async (b)"],
+      ])("after %s", (head, printedHead) => {
         const transpiler = new Bun.Transpiler({ loader: "ts", tsconfig });
-        expect(transpiler.transformSync(source(head))).toContain(designType);
+        expect(transpiler.transformSync(source(head)).replace(helperNames, "$1")).toBe(printed(printedHead));
       });
 
       // After "()" the second parse ended the process: "panic: index out of bounds".
@@ -538,13 +560,13 @@ describe("Bun.Transpiler", () => {
             bunExe(),
             "-e",
             `const transpiler = new Bun.Transpiler({ loader: "ts", tsconfig: ${JSON.stringify(tsconfig)} });
-             console.log(transpiler.transformSync(${JSON.stringify(source("()"))}).includes(${JSON.stringify(designType)}));`,
+             process.stdout.write(transpiler.transformSync(${JSON.stringify(source("()"))}).replace(${helperNames}, "$1"));`,
           ],
           env: bunEnv,
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: printed("()"), stderr: "", exitCode: 0 });
       });
     });
 

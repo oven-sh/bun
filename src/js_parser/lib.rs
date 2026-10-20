@@ -590,14 +590,14 @@ pub mod defines {
         }
 
         pub fn has_dotted(&self, key: &[u8]) -> bool {
-            let tail = key.rsplit(|&c| c == b'.').next().unwrap_or(key);
+            let tail = &key[strings::last_index_of_char(key, b'.').map_or(0, |i| i + 1)..];
             self.dots.get(tail).is_some_and(|defines| {
                 defines.iter().any(|define| {
                     define
                         .parts
                         .iter()
                         .map(|part| &**part)
-                        .eq(key.split(|&c| c == b'.'))
+                        .eq(strings::split(key, b"."))
                 })
             })
         }

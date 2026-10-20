@@ -558,19 +558,51 @@ impl PosixBufferedReader {
             self.handle = PollOrFd::Fd(fd);
             return sys::Result::Ok(());
         }
+        if let Err(err) = self.start_polling(fd) {
+            // SAFETY: `self` is live. Note: this `&mut self` receiver still carries
+            // a protector across the (maybe-freeing) error dispatch — pre-existing
+            // on the parent chain, tracked with the raw-dispatch follow-up.
+            unsafe { Self::on_error(std::ptr::from_mut(self), err) };
+        }
+
+        sys::Result::Ok(())
+    }
+
+    fn start_polling(&mut self, fd: Fd) -> Result<(), sys::Error> {
         self.flags.insert(PosixFlags::POLLABLE);
         if self.get_fd() != fd {
             self.handle = PollOrFd::Fd(fd);
         }
         // With nothing left to read the fd is never waited on: like a non-pollable source, the parent's first read request ends the reader.
-        if !self.flags.contains(PosixFlags::IS_PAUSED) && !self.limit.reached() {
-            // SAFETY: `self` is live. Note: this `&mut self` receiver still carries
-            // a protector across the (maybe-freeing) error dispatch — pre-existing
-            // on the parent chain, tracked with the raw-dispatch follow-up.
-            unsafe { Self::register_poll(std::ptr::from_mut(self)) };
+        if self.flags.contains(PosixFlags::IS_PAUSED) || self.limit.reached() {
+            return Ok(());
         }
+        self.try_register_poll()
+    }
 
-        sys::Result::Ok(())
+    /// `start(fd, true)`, except that the event loop refusing to watch `fd` is not an error yet: it refuses what it has no
+    /// readiness to report for (`/dev/null`, `/dev/zero`), and those reads do not wait. One that would reports the refusal
+    /// when it arms the poll. Returns `false` for such a refusal.
+    ///
+    /// # Safety
+    /// `this` is the live reader; `on_reader_error` may free the parent embedding `*this`, so it runs with no borrow of `*this` live.
+    pub unsafe fn start_presumed_pollable(this: *mut Self, fd: Fd) -> bool {
+        // SAFETY: caller contract; the borrow ends at `;`, before the dispatch below.
+        let Err(err) = (unsafe { (*this).start_polling(fd) }) else {
+            return true;
+        };
+        let refusal = if cfg!(any(target_os = "linux", target_os = "android")) {
+            sys::E::EPERM
+        } else {
+            sys::E::EINVAL
+        };
+        // kqueue refuses `/dev/tty` the same way, and a read of that does wait.
+        if err.get_errno() == refusal && !sys::isatty(fd) {
+            return false;
+        }
+        // SAFETY: caller contract.
+        unsafe { Self::on_error(this, err) };
+        true
     }
 
     pub fn start_file_offset(&mut self, fd: Fd, poll: bool, offset: usize) -> sys::Result<()> {

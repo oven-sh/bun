@@ -1180,6 +1180,9 @@ where
                 if let Some(ciphers) = vm.tls_default_ciphers() {
                     c.set_default_ciphers(ciphers);
                 }
+                if let Some(certs) = vm.tls_default_ca() {
+                    c.set_default_ca(certs);
+                }
                 c
             }
         };

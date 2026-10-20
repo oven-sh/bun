@@ -47,6 +47,7 @@ const parseCACertificates = $newCppFunction("NodeTLS.cpp", "parseCACertificates"
 
 const getTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "getDefaultCiphers", 0);
 const setTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "setDefaultCiphers", 1);
+const setTLSDefaultCA = $newCppFunction("NodeTLS.cpp", "setDefaultCA", 1);
 const selectServerName = $newCppFunction("NodeTLS.cpp", "selectServerName", 2);
 let _VALID_CIPHERS_SET: Set<string> | undefined;
 function getValidCiphersSet() {
@@ -1641,7 +1642,7 @@ type CACertInput = string | NodeJS.ArrayBufferView;
 // name as "of type Array", so build the error directly to match Node here),
 // then hands the certs to the native root store. Bun has no equivalent native
 // store override, so keep a JS-side override that getCACertificates('default')
-// and createSecureContext() read.
+// and createSecureContext() read, and a native copy for fetch and WebSocket.
 function setDefaultCACertificates(certs: ReadonlyArray<CACertInput>): void {
   if (!$isArray(certs)) {
     let received: string;
@@ -1668,6 +1669,7 @@ function setDefaultCACertificates(certs: ReadonlyArray<CACertInput>): void {
     throw $ERR_CRYPTO_OPERATION_FAILED("No valid certificates found in the provided array");
   }
   _defaultCACertificatesOverride = normalized;
+  setTLSDefaultCA(normalized);
 }
 
 function getCACertificates(type = "default") {

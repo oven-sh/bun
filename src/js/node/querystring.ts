@@ -8,8 +8,7 @@ const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
 const NumberPrototypeToString = Number.prototype.toString;
 const parseQueryStringNative = $newCppFunction("NodeQueryString.cpp", "jsFunctionParseQueryString", 2);
-// decodeURIComponent that returns undefined instead of throwing. Node uses the
-// primordial decodeURIComponent here, so a patched global must not change the result.
+// decodeURIComponent that returns undefined instead of throwing (Node uses the primordial).
 const decodeQueryStringComponent = $newCppFunction("NodeQueryString.cpp", "jsFunctionDecodeQueryStringComponent", 1);
 
 var __commonJS =
@@ -391,10 +390,7 @@ var require_src = __commonJS((exports, module) => {
     const customDecode = decode !== qsUnescape;
 
     if (!sep && !eq && !customDecode) {
-      // The native parser and the loop below must agree on every input. The
-      // fuzz in test/js/node/querystring/querystring.test.ts checks that.
-      // The native parser returns undefined for a malformed %XX escape, which
-      // the loop handles through the unescapeBuffer fallback in qsUnescape.
+      // Undefined for a malformed %XX escape; the loop below then handles it.
       const parsed = parseQueryStringNative(qs, pairs);
       if (parsed !== undefined) return parsed;
     }

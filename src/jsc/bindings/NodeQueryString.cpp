@@ -17,16 +17,9 @@ namespace Bun {
 
 using namespace JSC;
 
-// Node's querystring.parse splits on '&' and on the first '=' of each pair, turns
-// '+' into ' ', and runs decodeURIComponent on every part that holds a %XX escape.
-// When decodeURIComponent throws, Node falls back to its byte-wise unescapeBuffer.
-// This host function covers the first three steps and the successful decode. It
-// returns undefined when any escape would make decodeURIComponent throw, and the
-// JS loop in querystring.ts parses the string with the fallback.
+// querystring.parse for the default separators and decoder; undefined when a malformed escape needs the JS fallback.
 
-// One escape sequence of ECMA-262 Decode: `%XX`, or the `%XX%XX..` run of one
-// UTF-8 encoded code point. Returns the number of characters it spans, or 0
-// where decodeURIComponent throws a URIError.
+// ECMA-262 Decode of one code point's `%XX..` run: its length, or 0 where decodeURIComponent throws.
 template<typename CharType>
 static ALWAYS_INLINE size_t decodeEscape(std::span<const CharType> part, size_t k, char32_t& character)
 {
@@ -51,9 +44,6 @@ static ALWAYS_INLINE size_t decodeEscape(std::span<const CharType> part, size_t 
     return sequenceLength * 3;
 }
 
-// True when decodeURIComponent accepts every escape in `characters`. Checked
-// once over the whole query before anything is allocated, so a malformed
-// escape costs one scan and not a parse that is thrown away.
 template<typename CharType>
 static bool escapesAreWellFormed(std::span<const CharType> characters)
 {
@@ -68,9 +58,7 @@ static bool escapesAreWellFormed(std::span<const CharType> characters)
     return true;
 }
 
-// ECMA-262 Decode with an empty reservedSet, the algorithm of decodeURIComponent.
-// Appends the decoded part to `builder`. Returns false where decodeURIComponent
-// throws a URIError. parse() turns '+' into ' ' before it decodes, unescape() does not.
+// decodeURIComponent into `builder`; parse() turns '+' into ' ' first, unescape() does not.
 template<bool plusIsSpace, typename CharType>
 static bool appendDecoded(std::span<const CharType> part, StringBuilder& builder)
 {
@@ -117,8 +105,7 @@ public:
     {
     }
 
-    // `pairs` is the JS `maxKeys` counter: decremented once per '&', unlimited
-    // when it never reaches zero (negative, fractional, NaN, Infinity).
+    // `pairs` is the JS maxKeys counter: one '&' each, unlimited unless it reaches 0.
     JSValue parse(double pairs)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
@@ -151,8 +138,6 @@ public:
     }
 
 private:
-    // One key/value pair. Returns false when a part has a malformed escape,
-    // which escapesAreWellFormed() has already ruled out.
     bool addPair(JSObject* object, std::span<const CharType> key, size_t valueStart, size_t valueLength)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
@@ -186,8 +171,7 @@ private:
         return true;
     }
 
-    // addKeyVal in querystring.ts: a first value is stored as is, a second turns
-    // the slot into an array, later ones are pushed.
+    // addKeyVal in querystring.ts: a repeated key collects its values in an array.
     template<typename KeyCharType>
     void put(JSObject* object, std::span<const KeyCharType> key, JSValue value)
     {
@@ -222,8 +206,6 @@ private:
             object->putDirect(m_vm, identifier, combined);
     }
 
-    // Returns the new array for a second value, or an empty JSValue after a push
-    // onto an existing one.
     JSValue combine(JSValue existing, JSValue value)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);

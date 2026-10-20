@@ -1,6 +1,6 @@
 import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -428,10 +428,10 @@ test("a Response or Blob returned from a macro is classified by its MIME essence
 // (or it is stranded and its keep-alive holds the process open). These run the macro in the main VM:
 // the entry file's macros, or a module require()d so it transpiles on the main thread.
 describe("event loop routing around macros", () => {
-  async function run(files: Record<string, string>, env: Record<string, string> = {}) {
+  async function run(files: Record<string, string>, env: Record<string, string> = {}, args: string[] = []) {
     using dir = tempDir("macro-loops", files);
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "index.ts"],
+      cmd: [bunExe(), "run", ...args, "index.ts"],
       env: { ...bunEnv, ...env },
       cwd: String(dir),
       stdout: "pipe",
@@ -562,6 +562,230 @@ describe("event loop routing around macros", () => {
     });
     expect({ lines, stderr }).toEqual({ lines: ["1 chained"], stderr: "" });
     expect(exitCode).toBe(0);
+  });
+
+  // `process.on(<signal>)` replaces the signal's default action with a handler that queues the signal
+  // for the event loop, so a queued signal that no loop runs is a signal the process ignores. The
+  // handler queues for the regular loop whichever loop is current, and the listeners run once the
+  // macro has returned, as the program's other callbacks do. On Windows libuv queues there already.
+  describe.skipIf(isWindows)("signals", () => {
+    // A child that never gets its signal would wait for good, and a test that times out does not
+    // end its child. This timer does not keep a child alive. It ends one that is still there.
+    const watchdog = { "watchdog.ts": `setTimeout(() => process.exit(99), 30_000).unref();\n` };
+    const preloadWatchdog = ["--preload", "./watchdog.ts"];
+    const runWithWatchdog = (files: Record<string, string>, env: Record<string, string> = {}, args: string[] = []) =>
+      run({ ...watchdog, ...files }, env, [...preloadWatchdog, ...args]);
+
+    const send = `process.kill(process.pid, "SIGUSR2");`;
+    const listen = `export function listen() {\n  process.on("SIGUSR2", () => globalThis.onSignal());\n  return 1;\n}\n`;
+    const withListen = {
+      "with-macro.ts": `import { listen } from "./m.ts" with { type: "macro" };\nexport const value = listen();\n`,
+    };
+    const sendAndWait = [
+      `const keepAlive = setInterval(() => {}, 2 ** 30);`,
+      `globalThis.onSignal = () => {`,
+      `  console.log("listener ran");`,
+      `  clearInterval(keepAlive);`,
+      `};`,
+      send,
+    ].join("\n");
+
+    // Every way a macro runs in the program's VM: the JS thread transpiles the module.
+    test.concurrent.each<[string, Record<string, string>, string[]]>([
+      [
+        "the entry file",
+        {
+          "index.ts": `import { listen } from "./m.ts" with { type: "macro" };\nconsole.log("value", listen());\n${sendAndWait}`,
+        },
+        [],
+      ],
+      [
+        "a module that the program require()s",
+        { ...withListen, "index.ts": `console.log("value", require("./with-macro.ts").value);\n${sendAndWait}` },
+        [],
+      ],
+      [
+        "a module that the program imports while a plugin has an onLoad hook",
+        {
+          ...withListen,
+          "plugin.ts": `Bun.plugin({\n  name: "unused",\n  setup(build) {\n    build.onLoad({ filter: /\\.unused$/ }, () => ({ contents: "", loader: "js" }));\n  },\n});\n`,
+          "index.ts": `import { value } from "./with-macro.ts";\nconsole.log("value", value);\n${sendAndWait}`,
+        },
+        ["--preload", "./plugin.ts"],
+      ],
+      [
+        "code that the program gives to Bun.Transpiler#transformSync",
+        {
+          "index.ts": [
+            `const macro = JSON.stringify(import.meta.dir + "/m.ts");`,
+            `const source = "import { listen } from " + macro + ' with { type: "macro" };\\nexport const value = listen();';`,
+            `const code = new Bun.Transpiler({ loader: "ts" }).transformSync(source);`,
+            `console.log("value", /value = (\\d+)/.exec(code)[1]);`,
+            sendAndWait,
+          ].join("\n"),
+        },
+        [],
+      ],
+    ])("a listener that a macro in %s adds runs for a signal that arrives later", async (_name, files, args) => {
+      const { lines, stderr, exitCode } = await runWithWatchdog({ "m.ts": listen, ...files }, {}, args);
+      expect({ lines, stderr }).toEqual({ lines: ["value 1", "listener ran"], stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent(
+      "a listener that a macro in a bun test file adds runs for a signal that arrives later",
+      async () => {
+        using dir = tempDir("macro-loops", {
+          "m.ts": listen,
+          "signal.test.ts": [
+            `import { expect, test } from "bun:test";`,
+            `import { listen } from "./m.ts" with { type: "macro" };`,
+            `test("signal", async () => {`,
+            `  expect(listen()).toBe(1);`,
+            `  const { promise, resolve } = Promise.withResolvers();`,
+            `  globalThis.onSignal = resolve;`,
+            `  ${send}`,
+            `  await promise;`,
+            `  console.log("listener ran");`,
+            `});`,
+          ].join("\n"),
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", "./signal.test.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
+        const lines = stdout.split("\n").filter(line => line === "listener ran");
+        expect({ lines, exitCode }).toEqual({ lines: ["listener ran"], exitCode: 0 });
+      },
+    );
+
+    // The listener is the program's. It runs after require() returns, so the macro sees an empty log.
+    const program = [
+      `globalThis.log = [];`,
+      `const keepAlive = setInterval(() => {}, 2 ** 30);`,
+      `process.on("SIGUSR2", () => {`,
+      `  globalThis.log.push("listener");`,
+      `  clearInterval(keepAlive);`,
+      `});`,
+      `const { seen } = require("./with-macro.ts");`,
+      `globalThis.log.push("required");`,
+      `process.on("exit", () => console.log(seen, JSON.stringify(globalThis.log)));`,
+    ].join("\n");
+    const withProbe = {
+      "with-macro.ts": `import { probe } from "./m.ts" with { type: "macro" };\nexport const seen = probe();\n`,
+    };
+    const seen = `return JSON.stringify(globalThis.log);`;
+
+    test.concurrent.each([
+      ["an async macro", `export async function probe() {\n  ${send}\n  await Bun.sleep(1);\n  ${seen}\n}`],
+      ["a sync macro", `export function probe() {\n  ${send}\n  ${seen}\n}`],
+      [
+        // Before, a listener added in a macro gave the macro loop a ring of its own, and the macro's
+        // wait ran the program's listener.
+        "an async macro whose module listens for another signal",
+        `process.on("SIGUSR1", () => {});\nexport async function probe() {\n  ${send}\n  await Bun.sleep(1);\n  ${seen}\n}`,
+      ],
+    ])("a signal that %s sends reaches the program's listener after the macro", async (_name, macroSource) => {
+      const { lines, stderr, exitCode } = await runWithWatchdog({
+        "m.ts": macroSource,
+        ...withProbe,
+        "index.ts": program,
+      });
+      expect({ lines, stderr }).toEqual({ lines: [`[] ["required","listener"]`], stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
+    // `bun --watch` makes the ring of pending signals when it starts, before any macro runs.
+    test.concurrent.each(["--watch", "--hot"])(
+      "a signal that a macro sends under %s reaches the program's listener",
+      async mode => {
+        const { lines, stderr, exitCode } = await runWithWatchdog(
+          {
+            "m.ts": `export function probe() {\n  ${send}\n  return 1;\n}`,
+            "with-macro.ts": `import { probe } from "./m.ts" with { type: "macro" };\nexport const value = probe();\n`,
+            "index.ts": [
+              `setInterval(() => {}, 2 ** 30);`,
+              `process.on("SIGUSR2", () => {`,
+              `  console.log("listener ran");`,
+              `  process.exit(0);`,
+              `});`,
+              `console.log("value", require("./with-macro.ts").value);`,
+            ].join("\n"),
+          },
+          {},
+          [mode],
+        );
+        expect({ lines, stderr }).toEqual({ lines: ["value 1", "listener ran"], stderr: "" });
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    // The macro's poll takes the wake-up that came with the signal. The macro runs in a setImmediate
+    // callback, so the regular loop polls next with no tick in between: it has to be woken again.
+    // Without the idle GC timer and JSC's sweep timer, nothing else ends that poll.
+    test.concurrent("a signal that arrives during a macro wakes the regular loop when the macro returns", async () => {
+      const { lines, stderr, exitCode } = await runWithWatchdog(
+        {
+          "m.ts": `export async function probe() {\n  ${send}\n  await Bun.sleep(1);\n  return 1;\n}`,
+          "with-macro.ts": `import { probe } from "./m.ts" with { type: "macro" };\nexport const value = probe();\n`,
+          "index.ts": [
+            `const keepAlive = setInterval(() => {}, 2 ** 30);`,
+            `process.on("SIGUSR2", () => {`,
+            `  console.log("listener ran");`,
+            `  clearInterval(keepAlive);`,
+            `});`,
+            `setImmediate(() => console.log("value", require("./with-macro.ts").value));`,
+          ].join("\n"),
+        },
+        { BUN_GC_TIMER_DISABLE: "1", BUN_JSC_sweepSynchronously: "1" },
+      );
+      expect({ lines, stderr }).toEqual({ lines: ["value 1", "listener ran"], stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
+    // The first read of process.stdout on a terminal adds the runtime's own SIGWINCH listener.
+    test.concurrent("a terminal resize reaches process.stdout when a macro was the first to read it", async () => {
+      using dir = tempDir("macro-loops", {
+        ...watchdog,
+        "m.ts": `export function columns() {\n  return process.stdout.columns;\n}\n`,
+        "index.ts": [
+          `import { columns } from "./m.ts" with { type: "macro" };`,
+          `process.stdout.on("resize", () => {`,
+          `  console.log("resized to", process.stdout.columns);`,
+          `  process.exit(0);`,
+          `});`,
+          `setInterval(() => {}, 2 ** 30);`,
+          `console.log("started with", columns());`,
+        ].join("\n"),
+      });
+      const started = Promise.withResolvers<"started">();
+      const decoder = new TextDecoder();
+      let output = "";
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", ...preloadWatchdog, "index.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        terminal: {
+          cols: 80,
+          rows: 24,
+          data(_terminal, chunk: Uint8Array) {
+            output += decoder.decode(chunk, { stream: true });
+            if (output.includes("started with 80")) started.resolve("started");
+          },
+        },
+      });
+      if ((await Promise.race([started.promise, proc.exited])) === "started") proc.terminal!.resize(100, 24);
+      const exitCode = await proc.exited;
+      proc.terminal?.close();
+      const lines = Bun.stripANSI(output)
+        .split(/\r?\n/)
+        .filter(line => line !== "" && !line.startsWith("[macro]"));
+      expect({ lines, exitCode }).toEqual({ lines: ["started with 80", "resized to 100"], exitCode: 0 });
+    });
   });
 });
 

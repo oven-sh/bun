@@ -1472,6 +1472,90 @@ export function f() {
     }
   });
 
+  // tsc looks for assignments by walking the function that declares the variable, and that walk doesn't enter a type
+  // node or an enum. In the last function tsc says `string | number`: `g()` makes it walk the function under `extends`
+  // on its own, for `p`, before anything asks about `x`.
+  test("ignores an assignment in a function in an `extends` clause or an enum initializer", async () => {
+    using dir = project({
+      "index.ts": `declare function mk(f: (p: string | number) => void): new () => object;
+declare function num(f: (p: string | number) => void): number;
+export function inAnExtendsClause() { let x: string | number = "a"; class C extends mk(function () { x = 1; }) {} C; x = "b"; const h = () => x; const r: never = h(); }
+export function inAnArrowFunction() { let x: string | number = "a"; class C extends mk(() => { x = 1; }) {} C; x = "b"; const h = () => x; const r: never = h(); }
+export function inAnEnum() { let x: string | number = "a"; enum E { A = num(function () { x = 1; }) } E; x = "b"; const h = () => x; const r: never = h(); }
+export function withoutAFunction() { let x: string | number = "a"; class C extends (x = 1, mk(() => {})) {} C; x = "b"; const h = () => x; const r: never = h(); }
+export function inAnOrdinaryFunction() { let x: string | number = "a"; function set() { x = 1; } set; x = "b"; const h = () => x; const r: never = h(); }
+export function walkedOnItsOwn() { let x: string | number = "a"; class C extends mk(function (p) { const g = () => p; const v = g(); x = 1; return v; }) {} C; x = "b"; const h = () => x; const r: never = h(); }
+`,
+    });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout).toBe(
+      [
+        "index.ts(3,152): error TS2322: Type 'string' is not assignable to type 'never'.",
+        "index.ts(4,146): error TS2322: Type 'string' is not assignable to type 'never'.",
+        "index.ts(5,140): error TS2322: Type 'string' is not assignable to type 'never'.",
+        "index.ts(6,146): error TS2322: Type 'string' is not assignable to type 'never'.",
+        "index.ts(7,137): error TS2322: Type 'string | number' is not assignable to type 'never'.",
+        "  Type 'string' is not assignable to type 'never'.",
+        "index.ts(8,194): error TS2322: Type 'string' is not assignable to type 'never'.",
+      ].join("\n"),
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  // tsc reports TS2339 at walked.ts(5,50): the walk of that file for `local` finds `c2 = 0` before `c2` is read. Nothing
+  // makes it walk plain.ts, so it accepts that file, as we do.
+  test("ignores an assignment to a `let` of a `declare global` block in another file", async () => {
+    using dir = project({
+      "globals.ts": `export {};
+declare global {
+  let c1: string | number;
+  let c2: string | number;
+}
+`,
+      "plain.ts": `export {};
+function reset() { c1 = 0; }
+if (typeof c1 === "string") { const g = () => c1.toUpperCase(); }
+`,
+      "walked.ts": `export {};
+let local = 1;
+const f = () => local;
+function reset() { c2 = 0; }
+if (typeof c2 === "string") { const g = () => c2.toUpperCase(); }
+`,
+    });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // The check stops at the misplaced rest element. tsc also reports TS2304 for `x1` to `x4`, because a walk that looks
+  // for the assignments to `p` or `q` resolves every assigned name on its way.
+  test("doesn't report an undeclared name below a rest element that's misplaced or has an initializer", async () => {
+    using dir = project({
+      "index.ts": `declare const arr: any[];
+declare const o: { a: any };
+export function notLast(p: string) { [...x1, arr[0]] = arr; p; }
+export function notLastInAnObject(p: string) { ({ ...x2, a: o.a } = o); p; }
+export function withAnInitializer(p: string) { [...x3 = 1] = arr; p; }
+export function narrowed(q: number[]) { [...x4, q[0]] = arr; q; }
+export function last() { [...x5] = arr; }
+export function lastInAnObject() { ({ ...x6 } = o); }
+`,
+    });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout).toBe(
+      [
+        "index.ts(3,39): error TS2462: A rest element must be last in a destructuring pattern.",
+        "index.ts(4,51): error TS2462: A rest element must be last in a destructuring pattern.",
+        "index.ts(5,55): error TS1186: A rest element cannot have an initializer.",
+        "index.ts(6,42): error TS2462: A rest element must be last in a destructuring pattern.",
+        "index.ts(7,30): error TS2304: Cannot find name 'x5'.",
+        "index.ts(8,42): error TS2304: Cannot find name 'x6'.",
+      ].join("\n"),
+    );
+    expect(exitCode).toBe(1);
+  });
+
   test("--threads 1 produces the same output", async () => {
     using dir = project({
       "a.ts": `import { b } from "./b";\nexport const a: number = b;\n`,

@@ -7,6 +7,7 @@ use crate::Refusal;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
+use bun_sema::util::SharedSort;
 
 /// The heritage clauses of a class: see `Class`.
 struct Heritage {
@@ -253,7 +254,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                         && p.f.parens.last().is_none_or(|last| last.0 != extended)
                     {
                         p.pop_expr();
-                        (heritage.extends, heritage.extends_args) = (expr, type_args);
+                        (heritage.extends, heritage.extends_args) = (expr, p.f.list_at(type_args));
                     } else if p.is_at_type_arguments_of_heritage_element() {
                         (heritage.extends_args, element_error) = p.type_arguments_unchecked();
                     }
@@ -357,6 +358,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         let empty_list = less_than.filter(|_| type_params.is_empty());
         let empty_list = empty_list.map(|less_than| (less_than, self.prev_end()));
+        // TypeScript parses the rest of an exported class in the await context even on the first parse.
+        let in_names = self.names_are_in_await_context;
+        self.names_are_in_await_context |=
+            flags.contains(Flags::EXPORT) && !self.options.dialect.oxc;
         let heritage = self.class_heritage();
         // `checkGrammarClassLikeDeclaration`, which looks at the clauses first. The checker finds the
         // empty list of anything else in the text.
@@ -395,6 +400,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if has_members {
             self.expect(T::CloseBrace);
         }
+        self.names_are_in_await_context = in_names;
         self.classes_around -= 1;
         if std::mem::replace(&mut self.has_odd_members, has_odd_members) {
             let (written, place) = (&self.s.members[members..], self.place());
@@ -493,12 +499,17 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     fn resolve_private_names(&mut self, (scanned, declared): (usize, usize)) {
         let own = self
             .declared_private_names
-            .get(declared..)
+            .get_mut(declared..)
             .unwrap_or_default();
+        // Sorted so that lookups can binary search. A generated class can declare tens of thousands of private names.
+        own.shared_sort_unstable_by_key(|it| it.0);
+        if own.array_windows().any(|[a, b]| a == b) {
+            self.f.rare_syntax |= rare::NOTABLE_CLASS_MEMBER;
+        }
         let mut at = 0;
         self.lx.private_names.retain(|it| {
             at += 1;
-            at <= scanned || !own.contains(it)
+            at <= scanned || own.binary_search_by_key(&it.0, |own| own.0).is_err()
         });
         self.declared_private_names.truncate(declared);
     }
@@ -768,9 +779,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     || before.iter().any(|it| it.kind == MemberKind::Constructor)
             }
             (_, PropKey::Private(name)) => {
+                // `resolve_private_names` detects duplicates.
                 self.declared_private_names.push(name);
-                before.iter().any(|it| it.key == member.key)
-                    || self.lx.text_of(name) == b"#constructor"
+                self.lx.text_of(name) == b"#constructor"
             }
             (_, PropKey::Name(name)) => name == known::constructor || name == known::prototype,
             _ => false,

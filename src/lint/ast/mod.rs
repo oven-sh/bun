@@ -119,9 +119,12 @@ slices! {
         names: hir::Name,
         parens: (hir::ExprId, u32, u32),
         non_null_ends: (hir::ExprId, u32),
+        far_names: (hir::ExprId, u32),
+        tagged_templates: (hir::CallId, hir::ExprId),
         jsx_expressions: (hir::ExprId, u32, u32),
         body_starts: (hir::FnId, u32),
         modifiers_of_params: hir::Span<hir::ModifierId>,
+        modifiers_of_stmts: (hir::StmtId, hir::Span<hir::ModifierId>),
         modifiers_of_props: (hir::PropId, hir::Span<hir::ModifierId>),
         with_bodies: (u32, u32),
         detached_semicolons: (u32, u32),
@@ -139,8 +142,8 @@ slices! {
     /// The same for the side tables of a `bind::Bound`.
     Bound of bind::BoundIn {
         ids: u32,
-        expr_parent: bind::Parent,
-        stmt_parent: bind::Parent,
+        expr_parent: bind::PackedParent,
+        stmt_parent: bind::PackedParent,
         type_scope: bind::ScopeId,
         pat_parent: bind::PatParent,
         prop_owner: hir::ExprId,
@@ -157,6 +160,45 @@ slices! {
         expr_kinds: u8,
         expr_kind_counts: u32,
         kind_counts: u32,
+    }
+}
+
+impl Hir<'_> {
+    /// Returns the modifiers of statement `s`, like `node.Modifiers()`.
+    pub(crate) fn stmt_modifiers(&self, s: hir::StmtId) -> hir::Span<hir::ModifierId> {
+        hir::stmt_modifiers_in(self.modifiers_of_stmts, s)
+    }
+
+    /// Returns the offset where the property name of the `Dot` expression `e` starts.
+    #[inline]
+    pub(crate) fn name_pos(&self, e: hir::ExprId) -> u32 {
+        hir::name_pos_in(self.exprs, self.far_names, e)
+    }
+
+    #[inline]
+    pub(crate) fn branches(&self, at: hir::BranchesAt) -> hir::Branches {
+        at.of(self.ids)
+    }
+
+    #[inline]
+    pub(crate) fn list_at<T>(&self, list: hir::ListAt<T>) -> hir::IdList<T> {
+        list.of(self.ids)
+    }
+}
+
+impl Bound<'_> {
+    /// Returns `Parent::None` if `e` isn't an expression in this file.
+    #[inline]
+    pub(crate) fn parent_of_expr(&self, e: hir::ExprId) -> bind::Parent {
+        let parent = self.expr_parent.get(e.idx()).copied();
+        parent.unwrap_or_default().get()
+    }
+
+    /// Returns `Parent::None` if `s` isn't a statement in this file.
+    #[inline]
+    pub(crate) fn parent_of_stmt(&self, s: hir::StmtId) -> bind::Parent {
+        let parent = self.stmt_parent.get(s.idx()).copied();
+        parent.unwrap_or_default().get()
     }
 }
 
@@ -227,6 +269,7 @@ pub struct File<'a> {
     /// [`File::in_language`]
     parsed: Option<(&'a crate::languages::Parsed, crate::source::LineBreaks)>,
     language: &'a LanguageOptions,
+    configured_language: &'a LanguageOptions,
     body: hir::IdList<hir::StmtId>,
     path: &'a [u8],
     kind: FileKind,
@@ -241,7 +284,8 @@ pub struct File<'a> {
 
 impl<'a> File<'a> {
     /// `path`: as it is reported. `types`: the type checker, if the file is part of a program that
-    /// has been checked.
+    /// has been checked. `language` is the file's configured options. [`File::language`] can
+    /// [differ](LanguageOptions::without_module_syntax).
     pub fn new<H: hir::Storage, B: hir::Storage>(
         path: &'a [u8],
         hir: &'a hir::FileIn<H>,
@@ -250,11 +294,20 @@ impl<'a> File<'a> {
         language: &'a LanguageOptions,
         types: Option<crate::types::Checker<'a>>,
     ) -> File<'a> {
+        let makes_a_module = hir::rare::TOP_LEVEL_AWAIT | hir::rare::IMPORT_META;
+        let configured_language = language;
+        let language = match language.without_module_syntax.as_deref() {
+            Some(commonjs) if !hir.has_module_syntax && hir.rare_syntax & makes_a_module == 0 => {
+                commonjs
+            }
+            _ => language,
+        };
         let hides_casts = hir.is_js && !hir.jsdoc_comments.is_empty();
         // Every lookup in the list is a binary search by the keyword's position.
         debug_assert!(hir.import_attributes.is_sorted_by_key(|it| it.0));
         File {
             language,
+            configured_language,
             body: hir.body,
             kind: hir.kind,
             is_js: hir.is_js,
@@ -374,6 +427,13 @@ impl<'a> File<'a> {
     #[inline]
     pub fn language(&self) -> &'a LanguageOptions {
         self.language
+    }
+
+    /// Returns the options passed to [`File::new`]. Use them to read another file with this file's options. Unlike
+    /// [`File::language`], they don't make the other file CommonJS just because this one is.
+    #[inline]
+    pub fn configured_language(&self) -> &'a LanguageOptions {
+        self.configured_language
     }
 
     /// ESLint's `context.settings`.
@@ -676,8 +736,8 @@ impl<'a> File<'a> {
         if !self.hides_casts {
             return None;
         }
-        match self.bound.expr_parent.get(id.idx()) {
-            Some(&bind::Parent::Expr(parent)) if self.jsdoc_cast_operand(parent) == Some(id) => {
+        match self.bound.parent_of_expr(id) {
+            bind::Parent::Expr(parent) if self.jsdoc_cast_operand(parent) == Some(id) => {
                 Some(parent)
             }
             _ => None,
@@ -738,7 +798,7 @@ impl<'a> File<'a> {
             let is_jsx = |e: hir::ExprId| matches!(self.hir.exprs.get(e.idx()), Some(hir::Expr { kind: hir::ExprKind::Jsx(_), .. }));
             let names = self.hir.jsx.iter().flat_map(|it| [it.tag, it.close_tag]);
             let mut tags: Vec<(u32, u32)> = names
-                .filter(|it| matches!(self.bound.expr_parent.get(it.idx()), Some(&bind::Parent::Expr(parent)) if is_jsx(parent)))
+                .filter(|it| matches!(self.bound.parent_of_expr(*it), bind::Parent::Expr(parent) if is_jsx(parent)))
                 .filter_map(|it| self.hir.exprs.get(it.idx()))
                 .filter(|it| matches!(it.kind, hir::ExprKind::Dot { .. }))
                 .map(|it| (it.pos, it.end))

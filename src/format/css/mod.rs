@@ -286,10 +286,12 @@ fn parse_and_print<'o>(
         let is_toml =
             language == b"toml" || (language.is_empty() && front_matter.starts_with(b"+++"));
         let is_yaml = language == b"yaml" || (language.is_empty() && !is_toml);
-        let value = bun_core::strings::trim_js_whitespace(
-            front_matter
-                .get(first_line_end..last_line_start)
-                .unwrap_or_default(),
+        let value = crate::front_matter::trim_end_to_last_line(
+            bun_core::strings::trim_js_whitespace_start(
+                front_matter
+                    .get(first_line_end..last_line_start)
+                    .unwrap_or_default(),
+            ),
         );
         // There is no formatter for TOML, and what is not YAML after all stays as it is.
         let formatted = match value {

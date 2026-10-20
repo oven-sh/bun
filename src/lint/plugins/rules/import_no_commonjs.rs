@@ -264,7 +264,7 @@ impl NoCommonjs {
                 !self.allow_conditional_require
                     || is_in_root_scope(Node::Expr(e), &mut cx.state.root_scope)
             }
-            false => Node::Expr(e).scope().variable_scope().kind() == ScopeKind::Module,
+            false => Node::Expr(e).scope().variable_scope().is_top_level_of_module(),
         };
         let is_conditional = |it: Node| match it {
             Node::Stmt(stmt) => matches!(stmt.tag(), StmtTag::If | StmtTag::Try),

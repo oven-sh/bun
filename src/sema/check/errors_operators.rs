@@ -203,7 +203,7 @@ pub(super) fn check_satisfies(
 pub(super) fn check_template_spans(c: &mut Checker<'_, '_>, file: FileId, spans: IdList<ExprId>) {
     for span in c.hir(file).ids(spans) {
         let ty = c.type_of_expr(file, span);
-        if c.maybe_type_of_kind_considering_base_constraint(ty, Checker::is_symbol_like) {
+        if c.maybe_type_of_kind_considering_base_constraint(ty, tf::ES_SYMBOL_LIKE) {
             c.error(file, c.hir(file).child(span), 2731, &[]);
         }
     }
@@ -274,7 +274,7 @@ pub(super) fn has_empty_object_intersection(c: &mut Checker<'_, '_>, ty: TypeId)
 /// `expressionResultIsUnused`
 fn is_result_unused(hir: &File, bound: &Bound, mut e: ExprId) -> bool {
     loop {
-        match bound.expr_parent[e.idx()] {
+        match bound.parent_of_expr(e) {
             Parent::Stmt(s) if s.is_some() => {
                 return match hir[s].kind {
                     StmtKind::Expr(_) => true,
@@ -328,7 +328,7 @@ pub(super) fn check_yield_result(c: &mut Checker<'_, '_>, file: FileId, e: ExprI
     }
     // `getContextualTypeForArgumentAtIndex`: the argument of `import()` has the contextual type
     // string.
-    if matches!(bound.expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::ImportCall { .. }))
+    if matches!(bound.parent_of_expr(e), Parent::Expr(p) if matches!(hir[p].kind, ExprKind::ImportCall { .. }))
     {
         return;
     }

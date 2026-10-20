@@ -13,6 +13,8 @@ mod for_rules;
 mod prettier;
 mod tailwind;
 
+pub(crate) use files::Negative;
+
 use crate::doctor::{Modules, watching};
 use crate::run::{Environment, Fatal, Outcome, Pool};
 use crate::{fs, git, paths};
@@ -27,6 +29,7 @@ use bun_format::verify::Program;
 use bun_format::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::File;
 use bun_lint::js_plugin::{HEAVY, Unformatted};
+use bun_lint::json::{Notation, parse_as};
 use bun_lint::language::{LanguageOptions, ParseOptions, Parser, SourceType};
 use bun_lint::linter::TypesInJavaScript;
 use bun_lint::utils::text::ends_with_ignore_ascii_case as ends_in;
@@ -35,6 +38,7 @@ use bun_sema::bind::{BindOptions, Recycled, bind, bind_for_format_in, try_bind_f
 use bun_sema::hir::Diagnostic;
 use bun_sema::resolve::Dialect;
 use bun_sema::session::Session;
+use bun_sema::util::FxHashMap;
 use bun_sema_parser::Summary;
 use bun_threading::Guarded;
 use cli::{LogLevel, Options};
@@ -594,11 +598,11 @@ fn parse_parts(text: &[u8], then: &mut dyn FnMut(ParsePart<'_>)) {
     });
 }
 
-/// Whether the two texts are the same value. What cannot be read as a value, with a key twice, is not looked at.
-fn is_same_toml(before: &[u8], after: &[u8]) -> bool {
-    use bun_lint::json::{Notation, parse_as};
-    match parse_as(Notation::Toml, before) {
-        Ok(before) => parse_as(Notation::Toml, after).is_ok_and(|after| after == before),
+/// True if both texts parse to the same value. Also true if `before` can't be read as a value, so there's nothing to
+/// compare: TOML with a duplicate key, YAML with an alias to a node that contains it.
+fn is_same_value(notation: Notation, before: &[u8], after: &[u8]) -> bool {
+    match parse_as(notation, before) {
+        Ok(before) => parse_as(notation, after).is_ok_and(|after| after == before),
         Err(_) => true,
     }
 }
@@ -666,6 +670,10 @@ fn format(
         }
         Some(Kind::Yaml) => {
             let done = bun_format::yaml::format(text, options, &mut scratch.yaml, &mut out);
+            if verifies && done.is_ok() && out != text && !is_same_value(Notation::Yaml, text, &out)
+            {
+                return Err(Failure::Changed("formatting would change its contents"));
+            }
             return finish(done, out, "YAML");
         }
         Some(kind @ (Kind::Markdown | Kind::Mdx)) => {
@@ -718,7 +726,8 @@ fn format(
                     false => Failure::Syntax(error),
                 });
             }
-            if verifies && done.is_ok() && out != text && !is_same_toml(text, &out) {
+            if verifies && done.is_ok() && out != text && !is_same_value(Notation::Toml, text, &out)
+            {
                 return Err(Failure::Changed("formatting would change its contents"));
             }
             return finish(done, out, "TOML");
@@ -1604,8 +1613,7 @@ impl Run<'_> {
         let asks_for_different = (options.check || options.list_different) && !options.write;
         let only_looks = asks_for_different || options.debug_check;
         let is_oxfmt = configs.flavor == Flavor::Oxfmt;
-        let only =
-            (options.only.as_ref()).map(|it| git::Files::read(it, !only_looks, self.environment));
+        let only = (options.only.as_ref()).map(|it| git::Files::read(it, self.environment, false));
         let only = match only.transpose() {
             Ok(only) => only,
             Err(Fatal(error)) => return self.fail(&error),
@@ -1782,8 +1790,17 @@ impl Run<'_> {
         // Tailwind cannot be asked, and that is allowed.
         let leaves_classes = AtomicBool::new(false);
         let once = fs::Written::default();
+        // A file with several hard links is overwritten in place. A thread reading it through another link at the same
+        // time could see partial text and write that back. So each link is locked from its read to its write. The lock
+        // is picked by inode modulo 32, so unrelated files occasionally wait for each other.
+        let turns: [Guarded<()>; 32] = Default::default();
+        let turn_of = |target: &Target| {
+            let linked = target.linked.filter(|_| !only_looks);
+            linked.map(|(_, inode)| turns[inode as usize % turns.len()].lock())
+        };
         let format_at = |at: usize| {
             let (index, target) = work[at];
+            let _turn = turn_of(target);
             let began = Instant::now();
             let shown = paths::relative(cwd, &target.path);
             let mut scratch = scratches.lock().pop().unwrap_or_default();
@@ -1794,7 +1811,7 @@ impl Run<'_> {
                 if leaves_classes.load(Ordering::Relaxed) {
                     options.options.tailwind = None;
                 }
-                let text = fs::read(&target.path).map_err(|error| {
+                let text = git::read(only.as_ref(), &target.path).map_err(|error| {
                     [
                         b"Unable to read file \"",
                         &shown[..],
@@ -1876,12 +1893,14 @@ impl Run<'_> {
             let is_heavy = |at: usize| handed_over[at].1.size >= HEAVY as u64;
             bridge.for_each(handed_over.len(), &is_heavy, &|at| {
                 let (index, target) = handed_over[at];
+                let _turn = turn_of(target);
                 let began = Instant::now();
                 let shown = paths::relative(cwd, &target.path);
                 let config = configs.path_of_config(&target.scope);
                 let file = (&target.path[..], &shown[..]);
                 let writes = !only_looks && !is_partly_staged(target);
-                results.lock()[index] = Some(match bridge.format_file(file, config, writes) {
+                let formatted = bridge.format_file(file, config, writes, only.as_ref());
+                results.lock()[index] = Some(match formatted {
                     Ok(true) if !only_looks && !writes => Done::PartlyStaged,
                     Ok(true) => Done::Different(began.elapsed()),
                     Ok(false) => Done::Unchanged,
@@ -1896,7 +1915,28 @@ impl Run<'_> {
         let mut warnings = std::mem::take(warnings.get_mut());
         sort_slice_by(&mut warnings[..], |a, b| a.0.cmp(&b.0));
         let mut warnings = warnings.into_iter().peekable();
-        let results = std::mem::take(results.get_mut());
+        let mut results = std::mem::take(results.get_mut());
+        // It's a race which hard link gets formatted first and does the write, so report every link to a rewritten file
+        // as changed.
+        let linked = |it: &Expanded| match it {
+            Expanded::File(target) if !only_looks => target.linked,
+            _ => None,
+        };
+        let rewritten: FxHashMap<fs::Identity, Duration> = (expanded.iter().zip(&results))
+            .filter_map(|(it, done)| match done {
+                Some(Done::Different(took)) => Some((linked(it)?, *took)),
+                _ => None,
+            })
+            .collect();
+        if !rewritten.is_empty() {
+            for (it, done) in expanded.iter().zip(&mut results) {
+                if matches!(done, Some(Done::Unchanged))
+                    && let Some(took) = linked(it).and_then(|it| rewritten.get(&it))
+                {
+                    *done = Some(Done::Different(*took));
+                }
+            }
+        }
         for (index, (it, done)) in expanded.iter().zip(results).enumerate() {
             let target = match it {
                 Expanded::Error(error) => {
@@ -2272,7 +2312,8 @@ impl Run<'_> {
         let mut out = if is_unnamed {
             self.format_unnamed_stdin(&configs)
         } else {
-            let mut ignored = match Ignored::new(options, &environment.cwd, configs.flavor) {
+            let (cwd, is_native) = (&environment.cwd, self.is_native);
+            let mut ignored = match Ignored::new(options, cwd, configs.flavor, is_native) {
                 Ok(ignored) => ignored,
                 Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
             };
@@ -2300,12 +2341,17 @@ pub fn run(options: &Options, environment: &Environment) -> Outcome {
 }
 
 fn run_in(options: &Options, environment: &Environment, modules: Option<&Modules>) -> Outcome {
+    let mut options = options.clone();
+    let mut loaded = options.load_pipes(&environment.cwd);
     let as_oxfmt = options
         .as_oxfmt_reads_it()
-        .filter(|_| Configs::new(options, environment).flavor == Flavor::Oxfmt);
-    let options = as_oxfmt.as_ref().unwrap_or(options);
+        .filter(|_| Configs::new(&options, environment).flavor == Flavor::Oxfmt);
+    if let Some(as_oxfmt) = as_oxfmt {
+        options = as_oxfmt;
+        loaded = loaded.and_then(|()| options.load_pipes(&environment.cwd));
+    }
     let run = Run {
-        options,
+        options: &options,
         environment,
         out: Outcome::default(),
         began: Instant::now(),
@@ -2313,5 +2359,8 @@ fn run_in(options: &Options, environment: &Environment, modules: Option<&Modules
         is_native: false,
         has_left_files: false,
     };
-    run.execute()
+    match loaded {
+        Ok(()) => run.execute(),
+        Err(why) => run.fail(&why),
+    }
 }

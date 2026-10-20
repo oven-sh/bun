@@ -6816,7 +6816,7 @@ describe("css tests", () => {
       '.foo{list-style-image:url(foo.png);list-style-image:image-set("foo.png" 2x)}',
     );
 
-    // A prefix that the block already has is not written a second time.
+    // A prefix that the author wrote in the block is not written a second time.
     prefix_test(
       `
       .foo {
@@ -6828,6 +6828,21 @@ describe("css tests", () => {
       .foo {
         list-style-image: -webkit-image-set(url("a.png") 1x, url("b.png") 2x);
         list-style-image: image-set("c.png" 1x, "d.png" 2x);
+      }
+      `,
+      { chrome: Some(95 << 16) },
+    );
+
+    // A fallback that Bun wrote is no such prefix. The next image gets its own, so the prefixed function keeps no earlier image.
+    prefix_test(
+      '.foo { list-style-image: image-set("a.png" 1x); color: red; list-style-image: image-set("b.png" 1x) }',
+      indoc`
+      .foo {
+        list-style-image: -webkit-image-set(url("a.png") 1x);
+        list-style-image: image-set("a.png" 1x);
+        color: red;
+        list-style-image: -webkit-image-set(url("b.png") 1x);
+        list-style-image: image-set("b.png" 1x);
       }
       `,
       { chrome: Some(95 << 16) },
@@ -7035,8 +7050,10 @@ describe("css tests", () => {
       const parse = (text: string) => {
         let declaration = parsed.get(text);
         if (declaration) return declaration;
-        const [prefixed, colon] = [text.startsWith("-webkit-"), text.indexOf(":")];
-        const [name, words] = [text.slice(prefixed ? 8 : 0, colon), text.slice(colon + 1).split(" ")];
+        // The prefix is in the name, or in the function of the value.
+        const [prefixed, colon] = [text.includes("-webkit-"), text.indexOf(":")];
+        const name = text.slice(text.startsWith("-webkit-") ? 8 : 0, colon);
+        const words = text.slice(colon + 1).split(" ");
         // `all` sets every value, and `cursor` is the fourth one.
         const values =
           name === "all"
@@ -7162,6 +7179,24 @@ describe("css tests", () => {
                 ],
         // Chrome 80 reads only the prefixed names of this family.
         (name, prefixed, words, values) => (prefixed ? values : []),
+      );
+      expect(blocks).toBe(1554);
+    });
+
+    test("the fallbacks of list-style-image change no image that a browser applies", () => {
+      const blocks = expectSameValues(
+        [
+          "list-style-image:url(a.png)",
+          'list-style-image:image-set("b.png" 1x)',
+          'list-style-image:image-set("c.png" 1x)',
+          "list-style-image:-webkit-image-set(url(d.png) 1x)",
+          "list-style-image:var(--v)",
+          "all:unset",
+        ],
+        // The image: the letter of its file or of its variable.
+        (name, words) => [/(\w)\.png|--(\w)/.exec(words[0])!.slice(1).join("")],
+        // Chrome 80 reads `-webkit-image-set()` and drops `image-set()`.
+        (name, prefixed, words, values) => (prefixed || !words[0].startsWith("image-set(") ? values : []),
       );
       expect(blocks).toBe(1554);
     });

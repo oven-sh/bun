@@ -10,8 +10,8 @@ use bun_alloc::ArenaVecExt as _;
 pub struct FallbackHandler {
     pub(crate) color: Option<usize>,
     pub(crate) text_shadow: Option<usize>,
-    /// The prefixes of the `list-style-image` functions that the block has since `all` or an unknown name.
-    pub(crate) list_style_image: VendorPrefix,
+    /// The prefixes of the `list-style-image` functions that the author wrote in the block, and the length of the list after the last one.
+    pub(crate) list_style_image: (VendorPrefix, usize),
     // The remaining fallback fields are not implemented yet.
     // filter: Option<usize>,
     // backdrop_filter: Option<usize>,
@@ -115,20 +115,30 @@ impl FallbackHandler {
         match property {
             Property::ListStyleImage(image) => {
                 let mut image = image.deep_clone(arena);
-                let written = this.list_style_image;
-                // Unlike lightningcss: an earlier image stays, and a fallback gets no prefix that the block already has.
+                let (mut written, mark) = this.list_style_image;
+                // `all` and an unknown name (`list-style`) can set the image, so the images before them count no more.
+                let reset = dest[mark..].iter().any(|property| match property {
+                    Property::All(_) => true,
+                    Property::Custom(custom) => {
+                        matches!(custom.name, CustomPropertyName::Unknown(_))
+                    }
+                    _ => false,
+                });
+                if reset {
+                    written = VendorPrefix::empty();
+                }
+                // Unlike lightningcss: an earlier image stays, and a fallback gets no prefix that the author wrote in the block.
                 if image.get_vendor_prefix() == VendorPrefix::NONE {
                     let fallbacks = image.get_fallbacks(arena, &context.targets);
                     for fallback in fallbacks.to_owned_slice().into_vec() {
-                        let prefix = fallback.get_vendor_prefix();
-                        if !written.intersects(prefix) {
-                            this.list_style_image.insert(prefix);
+                        if !written.intersects(fallback.get_vendor_prefix()) {
                             dest.push(Property::ListStyleImage(fallback));
                         }
                     }
                 }
-                this.list_style_image.insert(image.get_vendor_prefix());
+                written.insert(image.get_vendor_prefix());
                 dest.push(Property::ListStyleImage(image));
+                this.list_style_image = (written, dest.len());
                 return true;
             }
             Property::Unparsed(val) if val.property_id.tag() == PropertyIdTag::ListStyleImage => {
@@ -136,14 +146,6 @@ impl FallbackHandler {
                 context.add_unparsed_fallbacks(arena, &mut unparsed);
                 dest.push(Property::Unparsed(unparsed));
                 return true;
-            }
-            // `all` and `list-style` set the image, so the next image gets its own fallbacks.
-            Property::All(_) => this.list_style_image = VendorPrefix::empty(),
-            Property::Unparsed(val) if val.property_id.tag() == PropertyIdTag::All => {
-                this.list_style_image = VendorPrefix::empty()
-            }
-            Property::Custom(custom) if matches!(custom.name, CustomPropertyName::Unknown(_)) => {
-                this.list_style_image = VendorPrefix::empty()
             }
             _ => {}
         }
@@ -189,6 +191,6 @@ impl FallbackHandler {
     ) {
         self.color = None;
         self.text_shadow = None;
-        self.list_style_image = VendorPrefix::empty();
+        self.list_style_image = (VendorPrefix::empty(), 0);
     }
 }

@@ -51,6 +51,24 @@ test("custom require extension overwrite default loader", () => {
     require.extensions[".js"] = original;
   }
 });
+test("each run of the same assignment replaces the loader", () => {
+  const original = require.extensions[".js"];
+  const file = require.resolve("./extensions-fixture/d");
+  const loaded: string[] = [];
+  try {
+    for (let i = 0; i < 4; i++) {
+      require.extensions[".js"] = module => {
+        module.exports = `loader ${i}`;
+      };
+      delete require.cache[file];
+      loaded.push(require(file));
+    }
+  } finally {
+    require.extensions[".js"] = original;
+    delete require.cache[file];
+  }
+  expect(loaded).toEqual(["loader 0", "loader 1", "loader 2", "loader 3"]);
+});
 test("custom require extension overwrite default loader with other default loader", () => {
   const original = require.extensions[".js"];
   try {

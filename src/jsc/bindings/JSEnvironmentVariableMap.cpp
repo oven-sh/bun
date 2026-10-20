@@ -181,6 +181,9 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
         RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
     }
 
+    // An inline cache would store the next value as given, without calling put().
+    slot.disableCaching();
+
     auto* uid = propertyName.uid();
     if (uid && uid->isSymbol()) {
         throwTypeError(globalObject, scope, "Cannot convert a symbol to a string"_s);
@@ -228,7 +231,11 @@ bool JSEnvironmentVariableMap::putByIndex(JSCell* cell, JSGlobalObject* globalOb
     // and coercion rules apply.
     JSString* string = coerceEnvValue(globalObject, scope, value);
     RETURN_IF_EXCEPTION(scope, false);
-    RELEASE_AND_RETURN(scope, Base::putByIndex(cell, globalObject, index, string, shouldThrow));
+    bool result = Base::putByIndex(cell, globalObject, index, string, shouldThrow);
+    RETURN_IF_EXCEPTION(scope, false);
+    // JSC overwrites an element that is in the vector without calling putByIndex().
+    asObject(cell)->enterDictionaryIndexingMode(vm);
+    return result;
 }
 
 bool JSEnvironmentVariableMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
@@ -1049,6 +1056,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
                     RETURN_IF_EXCEPTION(scope, {});
                     object->putDirectIndex(globalObject, *index, value, 0, PutDirectIndexLikePutDirect);
                     RETURN_IF_EXCEPTION(scope, {});
+                    object->enterDictionaryIndexingMode(vm);
                 }
                 continue;
             }

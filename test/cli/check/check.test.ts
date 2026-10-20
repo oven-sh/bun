@@ -1409,6 +1409,43 @@ class C2 extends Base<Cond<C2>> { x = 1 }
     }
   });
 
+  // The files import each other, and `z.ts` comes first and takes longer. `a.ts`'s task closes the cycle through `again`
+  // before `z.ts` is done, so it's discarded and `a.ts` is rechecked. If the task has already shared the base constraints
+  // of `a.ts`'s types, the recheck finds them resolved, but not the comparisons that were made while they were being
+  // resolved, and rejects `Merge<Head>`.
+  test("accepts a type argument in a file that's rechecked after its base constraints were resolved", async () => {
+    const lines = (n: number, line: (i: number) => string) => Array.from({ length: n }, (_, i) => line(i)).join("");
+    using dir = project({
+      "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files: ["a.ts", "z.ts"] }),
+      "a.ts": `import type { Z } from "./z";
+export type Schema = boolean | Readonly<{ items?: Schema; moreItems?: Schema; props?: Schema; moreProps?: Schema }>;
+type Parse<S extends Schema> = unknown;
+type CleanItems<S extends Schema> = S extends Readonly<{ items: Schema }>
+  ? S extends Readonly<{ moreItems: Schema }> ? S : S & Readonly<{ moreItems: true }>
+  : S extends boolean ? S : Omit<S, "moreItems">;
+type CleanProps<S extends Schema> = S extends Readonly<{ moreProps: Schema }>
+  ? S extends Readonly<{ props: Schema }> ? S : S & Readonly<{ props: {} }>
+  : S extends boolean ? S : Omit<S, "moreProps">;
+type Merge<S extends Schema, Clean extends Schema = CleanProps<CleanItems<S>>> = Omit<Schema, keyof Clean> & Clean;
+type All<List extends readonly Schema[]> = List extends readonly [infer Head]
+  ? Head extends Schema ? Parse<Merge<Head>> : never
+  : never;
+export function again(n: number) { return n ? again(n - 1) : 0; }
+export type UsesZ = Z;
+`,
+      "z.ts": `import type { Schema } from "./a";
+export type Z = Schema | 1;
+${lines(800, i => `export function z${i}(x: { a: number; b: string[] }, y = [x.a, ${i}]) { return y.map(v => v + x.a + x.b.length).filter(v => v > ${i}).length; }\n`)}`,
+    });
+    const threads = [1, 2, 2, 2, 3, 3, 3, 8, 8];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe(
+        "a.ts(14,17): error TS7023: 'again' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.",
+      );
+      expect(exitCode).toBe(1);
+    }
+  });
+
   test("--threads 1 produces the same output", async () => {
     using dir = project({
       "a.ts": `import { b } from "./b";\nexport const a: number = b;\n`,

@@ -518,7 +518,11 @@ impl OrderDependent<'_> {
 /// The `Buffered` tables keyed by a type, a signature or a mapper, except for `relations` and the small ones that
 /// describe a declared type parameter or flag a type. An entry of these tables is evaluated inside an evaluation that
 /// `relations` or a table keyed by a node or a symbol records, so a task that hits those entries never looks these up.
-const RECORD_KEYED_TABLES: [&str; 29] = [
+///
+/// `constraints` isn't in the list. A task shares the base constraints of its own file's types (`store_constraint`) but
+/// keeps the comparisons it made while it resolved them. An immediate write outlives a discard, so the recheck would
+/// find those constraints resolved without the comparisons, and would compare in a different order than `tsc`.
+const RECORD_KEYED_TABLES: [&str; 28] = [
     "shapes",
     "members",
     "sig_params",
@@ -545,7 +549,6 @@ const RECORD_KEYED_TABLES: [&str; 29] = [
     "never_intersections",
     "mapped_targets",
     "inferred_constraints",
-    "constraints",
     "plain_global_refs",
     "equivalent_base_types",
 ];

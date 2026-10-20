@@ -1,5 +1,16 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, hideFromStackTrace, integersThatNeedRounding, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  deepestAcceptedSource,
+  expectRssDeltaBelow,
+  hideFromStackTrace,
+  integersThatNeedRounding,
+  isWindows,
+  tempDir,
+  withBoundedMainThreadStack,
+} from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -6419,5 +6430,196 @@ describe("same-target destructuring with an unstable target", () => {
       stable: "a1b1",
     });
     expect(exitCode).toBe(0);
+  });
+});
+
+// The depth limit follows the build, the platform and the thread, so each child searches for it.
+describe.concurrent("a define value", () => {
+  const nested = depth => Buffer.alloc(depth, "[").toString() + "1" + Buffer.alloc(depth, "]").toString();
+  const shallow = '{"a":[1,"two"]}';
+  const searchSource = `
+    ${deepestAcceptedSource}
+    const nested = ${nested};
+    const transpilerLoads = depth => {
+      try {
+        new Bun.Transpiler({ define: { DEEPX: nested(depth) } });
+        return true;
+      } catch (e) {
+        if (!/too deeply nested|StackOverflow/.test(e.message)) throw e;
+        return false;
+      }
+    };
+    // The deepest value that loads, then a second define read next to it after a GC.
+    const limitAndReadBack = async () => {
+      const limit = await deepestAccepted(transpilerLoads);
+      const transpiler = new Bun.Transpiler({ define: { DEEPX: nested(limit), SHALLOW: ${JSON.stringify(shallow)} } });
+      Bun.gc(true);
+      return "limit " + limit + " " + transpiler.transformSync("console.log(SHALLOW.a[1]);").trim();
+    };
+  `;
+  const workerMain = `
+    const worker = new Worker("./worker.js");
+    worker.onerror = event => { console.log("error: " + event.message); worker.terminate(); };
+    worker.onmessage = event => { console.log(event.data); worker.terminate(); };
+  `;
+  const bunfig = defines =>
+    "[define]\n" +
+    Object.entries(defines)
+      .map(([name, value]) => `"${name}" = '${value}'\n`)
+      .join("");
+
+  // A define that fails to parse in Bun.Transpiler leaks its log messages (#35312).
+  const noLeakCheck = {
+    ...bunEnv,
+    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+  };
+
+  async function run(args, files = {}, env = bunEnv) {
+    using dir = tempDir("deep-define", files);
+    await using proc = Bun.spawn({
+      cmd: withBoundedMainThreadStack([bunExe(), ...args]),
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  async function measure(args, files) {
+    const result = await run(args, files, noLeakCheck);
+    expect({ ...result, stdout: result.stdout.replace(/\d+/, "N") }).toEqual({
+      stdout: 'limit N console.log({ a: [1, "two"] }.a[1]);\n',
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+    return parseInt(result.stdout.slice("limit ".length), 10);
+  }
+
+  let mainThreadLimit, workerLimit;
+  const measureMainThreadLimit = () =>
+    (mainThreadLimit ??= measure(["-e", `${searchSource} console.log(await limitAndReadBack());`]));
+  const measureWorkerLimit = () =>
+    (workerLimit ??= measure(["main.js"], {
+      "worker.js": `${searchSource} postMessage(await limitAndReadBack());`,
+      "main.js": workerMain,
+    }));
+
+  it("that is deeply nested loads in new Bun.Transpiler()", async () => {
+    expect(await measureMainThreadLimit()).toBeGreaterThanOrEqual(64);
+  });
+
+  it("that is deeply nested loads in new Bun.Transpiler() in a Worker", async () => {
+    expect(await measureWorkerLimit()).toBeGreaterThanOrEqual(64);
+  });
+
+  // 3/4 of the limit is longer than the 32K command line of Windows. bunfig.toml covers it.
+  it.skipIf(isWindows)("that is deeply nested loads from --define", async () => {
+    const depth = ((await measureMainThreadLimit()) * 3) >> 2;
+    const files = { "entry.js": `console.log(JSON.stringify(SHALLOW));` };
+    expect(
+      await run(["--define", `DEEPX=${nested(depth)}`, "--define", `SHALLOW=${shallow}`, "entry.js"], files),
+    ).toEqual({ stdout: shallow + "\n", stderr: "", exitCode: 0, signalCode: null });
+  });
+
+  it("that is deeply nested loads from bunfig.toml [define]", async () => {
+    const depth = ((await measureMainThreadLimit()) * 3) >> 2;
+    const files = {
+      "bunfig.toml": bunfig({ DEEPX: nested(depth), SHALLOW: shallow }),
+      "entry.js": `console.log(JSON.stringify(SHALLOW));`,
+    };
+    expect(await run(["entry.js"], files)).toEqual({
+      stdout: shallow + "\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  it("that is deeply nested loads again in a Worker of a process that has it", async () => {
+    const depth = (Math.min(await measureMainThreadLimit(), await measureWorkerLimit()) * 3) >> 2;
+    const files = {
+      "bunfig.toml": bunfig({ DEEPX: nested(depth), SHALLOW: shallow }),
+      "worker.js": `postMessage(JSON.stringify(SHALLOW));`,
+      "main.js": workerMain,
+    };
+    expect(await run(["main.js"], files)).toEqual({
+      stdout: shallow + "\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  it("that is nested past the limit fails with the error of the parser", async () => {
+    const depth = (await measureMainThreadLimit()) * 4;
+    const files = {
+      "bunfig.toml": bunfig({ DEEPX: nested(depth) }),
+      "entry.js": `console.log("ran");`,
+    };
+    const { stdout, stderr, exitCode, signalCode } = await run(["entry.js"], files);
+    expect(stderr).toContain("error: JSON document is too deeply nested");
+    expect({ stdout, exitCode, signalCode }).toEqual({ stdout: "", exitCode: 1, signalCode: null });
+  });
+
+  it("is freed with its transpiler", async () => {
+    const script = `
+      const entries = {};
+      for (let i = 0; i < 150; i++) entries["key" + i] = ["value" + i, i, { n: i }];
+      const define = { LIST_HEAVY: JSON.stringify(entries) };
+      const construct = count => {
+        for (let i = 0; i < count; i++) {
+          new Bun.Transpiler({ define });
+          if (i % 5 === 0) Bun.gc(true);
+        }
+        Bun.gc(true);
+      };
+      construct(10);
+      const before = process.memoryUsage.rss();
+      construct(100);
+      const deltaMiB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+      const printed = new Bun.Transpiler({ define }).transformSync("console.log(LIST_HEAVY.key149[0]);");
+      if (!printed.includes('key149: ["value149", 149, { n: 149 }]')) throw new Error("the define is not whole: " + printed);
+      console.log(JSON.stringify({ deltaMiB }));
+    `;
+    // 100 transpilers that leak this define grow RSS by 12 to 15 MiB. Freed, the growth is under 3 MiB.
+    await expectRssDeltaBelow(["--smol", "-e", script], { release: 6, debug: 6 });
+  });
+
+  it("that is empty is not shared with an empty macro result", async () => {
+    // An empty define and the empty result of a macro must be two objects.
+    const files = {
+      "bunfig.toml": `[define]\n"EMPTYX" = ""\n`,
+      "macro.js": `
+        export function emptyJson() {
+          return new Response("", { headers: { "content-type": "application/json" } });
+        }
+      `,
+      "worker.js": `
+        function f() {
+          const a = EMPTYX;
+          a.y = 1;
+          return String(a.y) + " " + (a === a);
+        }
+        postMessage(f());
+      `,
+      "main.js": `
+        import { emptyJson } from "./macro.js" with { type: "macro" };
+        const fromMacro = emptyJson();
+        const worker = new Worker("./worker.js");
+        worker.onerror = event => { console.log("error: " + event.message); worker.terminate(); };
+        worker.onmessage = event => { console.log(JSON.stringify(fromMacro), event.data); worker.terminate(); };
+      `,
+    };
+    const result = await run(["main.js"], files);
+    // Debug builds print "[macro] call <name>" to stdout first.
+    expect({ ...result, stdout: result.stdout.replace(/^\[macro\].*\n/gm, "") }).toEqual({
+      stdout: "{} 1 true\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 });

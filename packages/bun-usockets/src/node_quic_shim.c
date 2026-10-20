@@ -49,8 +49,7 @@ static lsquic_conn_ctx_t *nq_on_new_client_conn(void *if_ctx, lsquic_conn_t *c) 
     (void) if_ctx;
     return lsquic_conn_get_ctx(c);
 }
-/* A server conn has the session of the mini conn that ran its handshake, or
- * none. Rust reads it from the conn. */
+/* Rust reads the session that the mini conn carried, if any, from the conn. */
 static lsquic_conn_ctx_t *nq_on_new_server_conn(void *if_ctx, lsquic_conn_t *c) {
     struct us_nq_vtable *vt = if_ctx;
     return (lsquic_conn_ctx_t *) vt->on_new_conn(vt->owner, c);

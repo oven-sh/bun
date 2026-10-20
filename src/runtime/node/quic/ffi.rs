@@ -10,15 +10,12 @@ use core::ffi::c_void;
 ///   back via `*(us_nq_vtable**)ctx`. Those structs are `#[repr(C)]` precisely
 ///   so that first-field read stays valid, and the shim never invents or
 ///   offsets a context pointer.
-/// * A server session is the ctx of the mini conn that runs its handshake
-///   (`on_new_mini_conn` returns it) and then of the conn lsquic promotes that
-///   mini conn to. lsquic moves it, so exactly one conn has it at a time.
+/// * A server session is the ctx of its handshake's mini conn first, then of the promoted conn.
 /// * The only other value the shim can pass is NULL — teardown clears the
-///   conn/stream ctx, on a mini conn too (and lsquic passes NULL for
-///   crypto/mini-conn streams that never got one), so a null check is the
-///   whole liveness test. A non-null ctx is a live `T`: the owning JS wrapper
-///   keeps the allocation alive until after the engine that could call us is
-///   destroyed.
+///   conn/stream ctx (and lsquic passes NULL for crypto/mini-conn streams that
+///   never got one), so a null check is the whole liveness test. A non-null
+///   ctx is a live `T`: the owning JS wrapper keeps the allocation alive until
+///   after the engine that could call us is destroyed.
 /// * lsquic only calls into us from `process_conns`/`packet_in` on the JS
 ///   thread, so the returned `&T` cannot race another thread, and every
 ///   mutable field of these types is `Cell`-based (shared-ref interior

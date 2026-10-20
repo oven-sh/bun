@@ -350,12 +350,7 @@ pub(crate) struct QuicSession {
     /// `*(us_nq_vtable**)conn_ctx`.
     vtable: *const lsquic::NqVtable,
     pub(super) conn: Cell<*mut lsquic::lsquic_conn>,
-    /// The mini conn that runs this server session's handshake. lsquic holds
-    /// the session as that conn's ctx from its first packet
-    /// (`QuicEndpoint::on_new_mini_conn`) until it promotes the conn
-    /// (`bind_conn`) or the handshake fails (`on_mini_conn_failed`). It is not
-    /// `conn`: lsquic accepts only the ctx accessors and
-    /// `lsquic_conn_get_sockaddr` on a mini conn.
+    /// This server session's handshake conn. lsquic accepts only ctx and sockaddr calls on it.
     mini_conn: Cell<*mut lsquic::lsquic_conn>,
     /// The owning endpoint (raw pointer; the JS-side Strong keeps it alive).
     endpoint: Cell<*mut QuicEndpoint>,
@@ -510,16 +505,14 @@ impl QuicSession {
         Ok((raw, handle))
     }
 
-    /// `conn` is the mini conn lsquic made for this session's handshake. The
-    /// caller returns the session to lsquic as that conn's ctx.
+    /// `conn` is the mini conn that gets this session as its ctx.
     pub(super) fn bind_mini_conn(&self, conn: *mut lsquic::lsquic_conn) {
         debug_assert!(self.conn.get().is_null() && self.mini_conn.get().is_null());
         self.mini_conn.set(conn);
         self.cache_sockaddrs(conn);
     }
 
-    /// lsquic promoted the mini conn to `conn`, moved the ctx to it, and frees
-    /// the mini conn next.
+    /// lsquic promoted the mini conn to `conn` and moved the ctx to it.
     pub(super) fn bind_conn(&self, conn: *mut lsquic::lsquic_conn) {
         debug_assert!(self.conn.get().is_null() && !self.mini_conn.get().is_null());
         self.mini_conn.set(null_mut());
@@ -1853,12 +1846,9 @@ impl QuicSession {
             unsafe { lsquic::lsquic_conn_set_ctx(conn, null_mut()) };
         }
         let mini = self.mini_conn.replace(null_mut());
+        // Without a ctx the handshake logs no keys, and `on_new_conn` drops the conn it becomes.
         if !mini.is_null() {
-            // The handshake has no session now. Without the ctx its key log
-            // reaches none, and `QuicEndpoint::on_new_conn` drops the conn
-            // if lsquic promotes it.
-            // SAFETY: lsquic frees a mini conn only after it cleared
-            // `mini_conn` through `bind_conn` or `on_mini_conn_failed`.
+            // SAFETY: `bind_conn` and `on_mini_conn_failed` clear `mini_conn` before the conn dies.
             unsafe { lsquic::lsquic_conn_set_ctx(mini, null_mut()) };
         }
         self.events.with_mut(Vec::clear);
@@ -2441,26 +2431,19 @@ lsquic_callback! {
         endpoint.on_new_conn(c).cast()
     }
 
-    /// The mini conn of this session's handshake died before lsquic promoted
-    /// it. lsquic took the session off the conn and frees the conn next.
+    /// This session's handshake died. lsquic frees the mini conn after this returns.
     pub(super) fn on_mini_conn_failed(session: &QuicSession, error_code: u64) {
         /// CRYPTO_ERROR base (RFC 9001 §4.8) + TLS no_application_protocol(120).
         const CRYPTO_ERROR_NO_APPLICATION_PROTOCOL: u64 = 0x0100 + 120;
-        /// Bit 63 marks "the peer sent its own CONNECTION_CLOSE" (QUIC codes
-        /// fit in 62 bits); the low bits carry the peer's code. See the
-        /// connection-close-pns lsquic patch.
+        /// The peer sent a CONNECTION_CLOSE: the low bits are its code (connection-close-pns).
         const PEER_CLOSE_BIT: u64 = 1 << 63;
         debug_assert!(!session.mini_conn.get().is_null());
         session.mini_conn.set(null_mut());
         let (code, reason): (u64, &[u8]) = if error_code & PEER_CLOSE_BIT != 0 {
-            // Not a failure: the client closed during the handshake
-            // (connect() then immediate close()). Report the peer's own code
-            // so `closed` settles the way node's does.
+            // Not a failure: the client closed mid-handshake. Its code settles `closed` as in node.
             (error_code & !PEER_CLOSE_BIT, b"")
         } else if error_code == 0 {
-            // The peer went away without a frame (destroyed client, dropped
-            // packets): node's server surfaces the idle death of a
-            // handshaking session as a clean close, not an error.
+            // The peer went away without a frame: node reports a clean close, not an error.
             (0, b"")
         } else if error_code == CRYPTO_ERROR_NO_APPLICATION_PROTOCOL {
             (error_code, b"no application protocol")

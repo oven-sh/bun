@@ -435,9 +435,7 @@ extern "C" fn on_data(
     if closed_any {
         this.drive_engines_once();
     }
-    // The server engine creates a session from inside `lsquic_engine_packet_in`
-    // (`on_new_mini_conn`); hold the send scope so that nothing it runs can
-    // flush lsquic underneath us.
+    // `on_new_mini_conn` runs inside `lsquic_engine_packet_in`: the scope keeps it out of lsquic.
     this.send_scope_depth.set(this.send_scope_depth.get() + 1);
     bun_boringssl_sys::ERR_clear_error();
     for i in 0..packets {
@@ -1504,8 +1502,7 @@ impl QuicEndpoint {
             }
         }
         let mut ms = earliest_us.map(|us| (us.max(0) as u64).div_ceil(1000).max(1));
-        // A probe is settled only by `sweep_verneg_probes` and has no engine
-        // to advise a tick, so without a poll the sweep never runs.
+        // A probe has no engine to advise a tick, so only this poll runs its sweep.
         const SWEEP_POLL_MS: u64 = 250;
         if !self.pending_verneg.get().is_empty() {
             ms = Some(ms.map_or(SWEEP_POLL_MS, |m| m.min(SWEEP_POLL_MS)));
@@ -1546,10 +1543,7 @@ impl QuicEndpoint {
         this_ref.process(global);
     }
 
-    /// The client engine, when this endpoint also listens and `payload` is a
-    /// long-header packet for one of the client engine's connections. The
-    /// server engine does not know that DCID and would start a handshake for
-    /// the packet (RFC 8999 §5.1 for the header layout).
+    /// The client engine, if `payload` is a long-header packet of one of its connections.
     fn client_engine_owner(&self, payload: &[u8]) -> Option<*mut lsquic::lsquic_engine> {
         let client = self.client_engine.get();
         if client.is_null() || self.server_engine.get().is_null() {
@@ -1566,6 +1560,7 @@ impl QuicEndpoint {
         let dcid = &payload[dcid_start..dcid_start + dcid_len];
         // SAFETY: engines live until release_socket.
         let in_use = unsafe { lsquic::lsquic_engine_cid_in_use(client, dcid.as_ptr(), dcid.len()) };
+        // The server engine does not know this DCID and would start a handshake for the packet.
         (in_use != 0).then_some(client)
     }
 
@@ -1611,9 +1606,7 @@ impl QuicEndpoint {
         }
     }
 
-    /// Refuses the handshake of a mini conn lsquic has just made. The conn
-    /// then ignores its first packet, so no TLS handshake runs, and answers
-    /// with CONNECTION_REFUSED, which is what makes the client reject.
+    /// Makes a new mini conn skip its TLS handshake and answer CONNECTION_REFUSED.
     fn refuse_mini_conn(conn: *mut lsquic::lsquic_conn) -> *mut QuicSession {
         // SAFETY: `conn` is the live mini conn lsquic just created.
         unsafe {
@@ -1622,16 +1615,10 @@ impl QuicEndpoint {
         null_mut()
     }
 
-    /// lsquic made a mini conn for a first packet and has not read the packet
-    /// yet. The session created here is that conn's ctx for the whole
-    /// handshake, so what the handshake reports (its key log, its failure,
-    /// its promotion) names its session. Node creates its Session at the
-    /// same point (node/src/quic/endpoint.cc Endpoint::Receive), so
-    /// `onsession` precedes the client's `opened`.
+    /// Creates the session that lsquic keeps as a new mini conn's ctx, or refuses the conn.
     pub(super) fn on_new_mini_conn(&self, conn: *mut lsquic::lsquic_conn) -> *mut QuicSession {
         let global_ptr = self.global.get();
-        // A close() must stop accepting: a session accepted now keeps
-        // `sessions` non-empty and the finish gate never trips.
+        // A session accepted during close() keeps `sessions` non-empty: the finish gate stays shut.
         if global_ptr.is_null() || self.closing.get() {
             return Self::refuse_mini_conn(conn);
         }
@@ -1667,9 +1654,7 @@ impl QuicEndpoint {
         }
     }
 
-    /// lsquic promoted a mini conn whose handshake is complete. `conn` has
-    /// the ctx `on_new_mini_conn` gave that mini conn, unless the session was
-    /// destroyed since.
+    /// Binds a promoted conn to the session its mini conn had, or drops it if that session is gone.
     pub(super) fn on_new_conn(&self, conn: *mut lsquic::lsquic_conn) -> *mut QuicSession {
         // SAFETY: `conn` is the live conn lsquic just created.
         let ctx = unsafe { lsquic::lsquic_conn_get_ctx(conn) };
@@ -1680,12 +1665,10 @@ impl QuicEndpoint {
                 return null_mut();
             };
             if self.closing.get() {
-                // CONNECTION_REFUSED (not a code-0 close) is what makes the
-                // client of a closing endpoint reject.
+                // A code-0 close would not make the client of a closing endpoint reject.
                 c.abort_error(false, QUIC_TRANSPORT_CONNECTION_REFUSED, c"");
             } else {
-                // Node's dead server goes silent, and `lsquic_conn_abort`
-                // sends a CONNECTION_CLOSE.
+                // Node's dead server goes silent: no CONNECTION_CLOSE.
                 c.abort_silent();
             }
             return null_mut();

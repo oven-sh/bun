@@ -215,11 +215,7 @@ unsafe extern "C" fn keylog_cb(ssl: *const ssl::SSL, line: *const core::ffi::c_c
     if conn.is_null() {
         return;
     }
-    // A conn has its session as ctx for its whole handshake: a client conn
-    // from `connect`, a server conn from its first packet
-    // (`QuicEndpoint::on_new_mini_conn`). A conn without one lost its session,
-    // and its secrets go nowhere.
-    // SAFETY: `conn` is live; `ctx_ref` documents the context-pointer contract.
+    // SAFETY: `conn` is live. Its ctx is its session from its first packet on, or null (`ctx_ref`).
     let Some(session) = (unsafe {
         super::ffi::ctx_ref::<super::session::QuicSession>(bun_lsquic_sys::lsquic_conn_get_ctx(
             conn,
@@ -227,8 +223,7 @@ unsafe extern "C" fn keylog_cb(ssl: *const ssl::SSL, line: *const core::ffi::c_c
     }) else {
         return;
     };
-    // SAFETY: `line` is the NUL-terminated NSS key log line BoringSSL
-    // guarantees valid for this callback.
+    // SAFETY: BoringSSL passes a NUL-terminated line that is valid for this callback.
     let bytes = unsafe { core::ffi::CStr::from_ptr(line).to_bytes().to_vec() };
     session.push_event(super::session::SessionEvent::Keylog(bytes));
 }

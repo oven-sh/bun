@@ -89,8 +89,6 @@ private:
     std::expected<void, Exception> m_value;
 };
 
-ExceptionOr<void> isolatedCopy(ExceptionOr<void>&&);
-
 template<typename ReturnType> inline ExceptionOr<ReturnType>::ExceptionOr(Exception&& exception)
     : m_value(makeUnexpected(WTF::move(exception)))
 {
@@ -184,13 +182,6 @@ inline const Exception& ExceptionOr<void>::exception() const
 inline Exception ExceptionOr<void>::releaseException()
 {
     return WTF::move(m_value.error());
-}
-
-inline ExceptionOr<void> isolatedCopy(ExceptionOr<void>&& value)
-{
-    if (value.hasException())
-        return isolatedCopy(value.releaseException());
-    return {};
 }
 
 template<typename T> inline constexpr bool IsExceptionOr = WTF::IsTemplate<std::decay_t<T>, ExceptionOr>::value;

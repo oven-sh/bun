@@ -344,8 +344,16 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
       },
     ],
     // The fragment buffer also holds the 9 bytes of padding that a buffered compressed
-    // message is inflated with, and a control frame that is not whole in one read.
-    ["a compressed message with no room left for its padding", deflate, client => client.binary(full, { rsv1: true })],
+    // message is inflated with, and a control frame that is not whole in one read. The
+    // padding is reserved with the first frame, so a second frame has to take its room.
+    [
+      "a compressed message with no room left for its padding",
+      deflate,
+      client => {
+        client.binary(full.subarray(9), { rsv1: true, fin: false });
+        client.send(OP.continuation, full.subarray(0, 9));
+      },
+    ],
     [
       "a split control frame behind a fragment that fills the buffer",
       undefined,
@@ -399,6 +407,17 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
       expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
       await expectStillServing(scheme);
     });
+  });
+
+  // The first frame reserves its padding too. Without that, the padding would need a block of
+  // twice the message, which is over the cap here.
+  test("a buffered compressed message has room for its padding", async () => {
+    using client = await connect("ws", deflate);
+    const message = patterned(3 * MiB);
+    client.binary(deflateRawSync(message, { level: 0 }), { rsv1: true });
+    client.close(1000);
+    expect(await client.remainingFrames()).toEqual([got(message), "close 1000"]);
+    expect(await nextEvent()).toEqual({ close: 1000, reason: "" });
   });
 
   // The ping waits behind the first fragment until its second half arrives. Then it is cut

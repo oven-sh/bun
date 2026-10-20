@@ -178,10 +178,13 @@ private:
                 }
             } else {
                 /* Ask for the whole frame up front first time, but at most 16 MiB: the peer controls that length.
+                 * A compressed message is padded in place, so the padding is asked for here too.
                  * A refusal fails the connection here, before it holds memory for a message it cannot finish. */
-                if (!webSocketData->fragmentBuffer.length()
-                    && !webSocketData->fragmentBuffer.tryReserve(std::min<size_t>(length + remainingBytes, 16 * 1024 * 1024))) {
-                    return failOutOfMemory(s);
+                if (!webSocketData->fragmentBuffer.length()) {
+                    size_t padding = webSocketData->compressionStatus == WebSocketData::CompressionStatus::COMPRESSED_FRAME ? 9 : 0;
+                    if (!webSocketData->fragmentBuffer.tryReserve(std::min<size_t>(length + remainingBytes, 16 * 1024 * 1024) + padding)) {
+                        return failOutOfMemory(s);
+                    }
                 }
                 /* Fragments forming a big message are not caught until appending them */
                 if (refusePayloadLength(length + webSocketData->fragmentBuffer.length(), webSocketState, s)) {

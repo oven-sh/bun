@@ -3,7 +3,7 @@ use rustc_hash::FxHashMap;
 
 /// Enforce a maximum depth that blocks can be nested.
 pub struct MaxDepth {
-    /// `None`: `{ "maximum": 0 }` without `max`, with which upstream compares to `undefined`.
+    /// `None` for `{ "maximum": 0 }` without `max`, where upstream compares against `undefined`.
     max: Option<usize>,
 }
 
@@ -12,12 +12,11 @@ const TOO_DEEPLY: Message = Message::new(
     "Blocks are nested too deeply ({{depth}}). Maximum allowed is {{maxDepth}}.",
 );
 
-/// The keyword that `stmt` starts with, if it is a statement that counts: not the `if` of an
-/// `else if`.
+/// Returns the keyword that `stmt` starts with, if it's a statement that counts. The `if` of an `else if` doesn't.
 fn keyword_of(stmt: Stmt) -> Option<&'static str> {
     Some(match stmt.tag() {
         StmtTag::If => {
-            // For oxlint neither that of `if (a) if (b) ..`.
+            // For oxlint the inner `if` of `if (a) if (b) ..` doesn't count either.
             let is_oxlint = stmt.file().language().is_oxlint;
             let is_else_if = matches!(stmt.parent(), Node::Stmt(parent) if parent.tag() == StmtTag::If
                 && (is_oxlint || parent.as_if().is_some_and(|it| it.2 == Some(stmt))));
@@ -36,20 +35,20 @@ fn keyword_of(stmt: Stmt) -> Option<&'static str> {
     })
 }
 
-/// Counts ancestors, for a rule that asks that of many nodes.
+/// Counts ancestors, for a rule that needs the count for many nodes.
 ///
-/// A long walk towards the root leaves its count at every [`AncestorCounter::STRIDE`]th node on its
-/// way, and a walk that comes to such a node ends there. So all the walks in a file together take
-/// O(nodes + walks) steps, however deep the nodes are in each other.
+/// A long walk towards the root caches its count at every [`AncestorCounter::STRIDE`]th node on the way, and a walk
+/// that reaches such a node stops there. So all the walks in a file together take O(nodes + walks) steps, however
+/// deeply the nodes are nested.
 #[derive(Default)]
 pub struct AncestorCounter<'a> {
-    /// How many ancestors of a node count.
+    /// For a node, how many of its ancestors count.
     known: FxHashMap<Node<'a>, u32>,
 }
 
-/// What an ancestor is to an [`AncestorCounter`].
+/// How an [`AncestorCounter`] treats an ancestor.
 enum Ancestor {
-    /// Neither it nor what is above it counts.
+    /// Neither it nor anything above it counts.
     End,
     Counted,
     Passed,
@@ -58,7 +57,7 @@ enum Ancestor {
 impl<'a> AncestorCounter<'a> {
     const STRIDE: u32 = 32;
 
-    /// How many of the ancestors of `start` count. `classify` depends on nothing but the ancestor.
+    /// Returns how many of `start`'s ancestors count. `classify` must depend only on the ancestor.
     fn count(&mut self, start: Node<'a>, classify: impl Fn(Node<'a>) -> Ancestor) -> usize {
         let (mut at, mut steps, mut count) = (start, 0u32, 0u32);
         loop {
@@ -98,18 +97,18 @@ impl<'a> AncestorCounter<'a> {
 #[derive(Default)]
 pub struct State<'a> {
     ancestors: AncestorCounter<'a>,
-    /// ESLint before 10 counts while it walks: how deep it is in each of the functions around.
+    /// ESLint before 10 counts while it walks. This is the current depth in each of the enclosing functions.
     depths: Vec<i64>,
 }
 
-/// Whether ESLint before 10 counts `node` where it ends.
+/// True if ESLint before 10 decrements the depth when it leaves `node`.
 fn ends_a_block_before_10(node: Node) -> bool {
     matches!(node, Node::Stmt(stmt) if stmt.as_block().is_none())
 }
 
 impl MaxDepth {
-    /// An `if` that is directly in another one, as that of `else if`, is not counted where it begins, and is where it
-    /// ends. So what follows it in the function is less deep by one.
+    /// An `if` directly inside another one, like the `if` of an `else if`, isn't counted on entry but is on exit. So
+    /// everything after it in the function is one level less deep.
     fn enter_before_10<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let (Some(max), Node::Stmt(stmt), true) = (self.max, node, ends_a_block_before_10(node))
         else {
@@ -188,18 +187,18 @@ impl Rule for MaxDepth {
         let (Some(max), Some(keyword)) = (self.max, keyword_of(stmt)) else {
             return;
         };
-        let around = cx
-            .state
-            .ancestors
-            .count(Node::Stmt(stmt), |ancestor| match ancestor {
-                Node::Func(_) => Ancestor::End,
-                Node::Stmt(outer) if keyword_of(outer).is_some() => Ancestor::Counted,
-                _ => Ancestor::Passed,
-            });
-        let depth = around + 1;
+        let enclosing_count =
+            cx.state
+                .ancestors
+                .count(Node::Stmt(stmt), |ancestor| match ancestor {
+                    Node::Func(_) => Ancestor::End,
+                    Node::Stmt(outer) if keyword_of(outer).is_some() => Ancestor::Counted,
+                    _ => Ancestor::Passed,
+                });
+        let depth = enclosing_count + 1;
         if depth > max {
             let whole = stmt.span();
-            // oxlint points at the whole statement.
+            // oxlint reports the whole statement.
             let end = if cx.language().is_oxlint {
                 whole.end
             } else {

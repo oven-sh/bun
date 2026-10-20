@@ -1,8 +1,7 @@
-//! The strongly connected components of the import graph, and their levels. Computed once, at the
-//! end of loading.
+//! The strongly connected components of the import graph, and their levels. Computed once, at the end of loading.
 //!
-//! The link step resolves exports and aliases one component at a time, each after the components
-//! it imports. Everything here depends only on the graph and on program order.
+//! The link step resolves exports and aliases one component at a time, each after the components it imports. Everything
+//! here depends only on the graph and on program order.
 
 use crate::program::FileId;
 use crate::session::Arena;
@@ -19,19 +18,19 @@ pub struct Component<'s> {
 pub struct Components<'s> {
     /// In program order of their first files.
     pub all: &'s [Component<'s>],
-    /// For each `FileId` the index of its component in `all`. `u32::MAX`: the file is not in the program.
+    /// For each `FileId`, the index of its component in `all`, or `u32::MAX` if the file isn't in the program.
     pub of_file: &'s [u32],
 }
 
 impl<'s> Components<'s> {
-    /// Of a program without files.
+    /// The components of an empty program.
     pub const EMPTY: Components<'static> = Components {
         all: &[],
         of_file: &[],
     };
 
-    /// `order`: the files of the program, in program order. `imports(file)`: the files that `file` refers to, in any order, with
-    /// repetitions.
+    /// `order`: the program's files in program order. `imports(file)`: the files that `file` refers to, in any order,
+    /// possibly with duplicates.
     pub fn new(
         order: &[FileId],
         imports: &dyn Fn(FileId) -> Vec<FileId>,
@@ -52,7 +51,7 @@ impl<'s> Components<'s> {
             edges
         };
         let edges: Vec<Vec<u32>> = order.iter().map(edges_of).collect();
-        // Numbered by the traversal: a component has a higher number than every component it imports.
+        // Numbered by the traversal, so a component has a higher number than every component it imports.
         let (number_of, numbered) = strongly_connected_components(&edges);
         let mut levels = vec![0u32; numbered.len()];
         let mut imports: Vec<Vec<usize>> = vec![Vec::new(); numbered.len()];
@@ -80,18 +79,18 @@ impl<'s> Components<'s> {
             level: levels[number],
             imports: arena.alloc_slice_fill_iter(imports[number].iter().map(|&it| index_of[it])),
         };
-        let of_node = |&node: &u32| match number_of.get(node as usize) {
+        let index_of_node = |&node: &u32| match number_of.get(node as usize) {
             Some(&number) => index_of[number as usize],
             None => u32::MAX,
         };
         Components {
             all: arena.alloc_slice_fill_iter(in_program_order.iter().map(component)),
-            of_file: arena.alloc_slice_fill_iter(node_of.iter().map(of_node)),
+            of_file: arena.alloc_slice_fill_iter(node_of.iter().map(index_of_node)),
         }
     }
 }
 
-/// Tarjan's algorithm, without recursion. For each node the number of its component, and the nodes of each component in ascending
+/// Tarjan's algorithm, without recursion. Returns each node's component number, and each component's nodes in ascending
 /// order. A component has a higher number than every component it has an edge to.
 fn strongly_connected_components(edges: &[Vec<u32>]) -> (Vec<u32>, Vec<Vec<usize>>) {
     const NOT_VISITED: u32 = u32::MAX;

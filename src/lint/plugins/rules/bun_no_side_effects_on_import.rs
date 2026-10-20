@@ -4,11 +4,12 @@ use bun_lint::rule::Plugin;
 use bun_lint_oxlint::ast_util::is_global_reference;
 use smallvec::{SmallVec, smallvec};
 
-/// Disallow statements outside functions that call something or assign to a property: importing the module then acts.
+/// Disallow top-level statements that call something or assign to a property, because they make importing the module
+/// have side effects.
 ///
-/// Not `module.exports` and `exports`, which are how a CommonJS module exports: see "Modules: CommonJS modules" in the
-/// documentation of Node.js. By default `allow` has what declares tests, hooks and mocks in `bun:test`, Jest, Vitest,
-/// Mocha and `node:test`.
+/// Assignments to `module.exports` and `exports` are allowed, since that's how a CommonJS module exports. See "Modules:
+/// CommonJS modules" in the Node.js documentation. By default `allow` lists the functions that declare tests, hooks and
+/// mocks in `bun:test`, Jest, Vitest, Mocha and `node:test`.
 pub struct NoSideEffectsOnImport {
     allow: Box<[Box<[u8]>]>,
 }
@@ -38,19 +39,19 @@ fn is_commonjs_export(target: Expr) -> bool {
 }
 
 impl NoSideEffectsOnImport {
-    /// `a.b` allows `a.b()`. `a` also allows all that starts with it: `a.b()`, `a.b()()`.
+    /// `a.b` allows `a.b()`. `a` also allows every chain that starts with it: `a.b()`, `a.b()()`.
     fn allows(&self, callee: Expr) -> bool {
         is_listed(&self.allow, callee.text()) || is_listed(&self.allow, chain_start(callee).text())
     }
 
-    /// The first part of `e` that does something, and what to say about it.
+    /// The first part of `e` that has a side effect, and the message for it.
     fn effect_in<'a>(&self, e: Expr<'a>) -> Option<(Expr<'a>, Message)> {
         use UnOp::{Delete, PostDec, PostInc, PreDec, PreInc};
-        // The next is the last.
+        // A stack with the next expression on top.
         let mut pending: SmallVec<[Expr<'a>; 8]> = smallvec![e];
         while let Some(e) = pending.pop() {
             match e.skip_type_wrappers().kind() {
-                // `require()` is what `import` is.
+                // `require()` is equivalent to `import`.
                 ExprKind::Call(call) if call.callee().is_ident("require") || self.allows(call.callee()) => {}
                 ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_) | ExprKind::ImportCall { .. } => {
                     return Some((e, CALL));

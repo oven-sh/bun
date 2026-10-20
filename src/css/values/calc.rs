@@ -930,15 +930,21 @@ impl<V: CalcValue> Calc<V> {
                 let calc = expression;
                 if num.abs() < 1.0 {
                     let div = 1.0 / num;
-                    calc.to_css(dest)?;
-                    dest.delim(b'/', true)?;
-                    CSSNumberFns::to_css(div, dest)?;
+                    if div.is_finite() {
+                        calc.to_css(dest)?;
+                        dest.delim(b'/', true)?;
+                        return CSSNumberFns::to_css(div, dest);
+                    }
+                    // An infinite 1/num prints as 3.40282e38, so multiply (lightningcss divides).
+                    if num < 0.0 {
+                        dest.write_char(b'-')?; // https://github.com/oven-sh/bun/pull/38516
+                    }
+                    CSSNumberFns::to_css(num.abs(), dest)?;
                 } else {
                     CSSNumberFns::to_css(num, dest)?;
-                    dest.delim(b'*', true)?;
-                    calc.to_css(dest)?;
                 }
-                Ok(())
+                dest.delim(b'*', true)?;
+                calc.to_css(dest)
             }
             Calc::Function(f) => f.to_css(dest),
         }

@@ -514,7 +514,6 @@ impl crate::types::Follow for decl::Predicate {
 pub struct Spare<'p, 's> {
     task: Task<'s>,
     task_facts: shortcuts::TaskFacts,
-    counterparts_of_literals: shortcuts::TypeMap<TypeId>,
     simplified: [shortcuts::TypeMap<TypeId>; 2],
     reduced_unions: shortcuts::TypeMap<TypeId>,
     links: links::TypeLinks,
@@ -743,7 +742,6 @@ impl<'s> Program<'s> {
         Box::new(Spare {
             task: Task::new_in(self.session.arena(), &self.types),
             task_facts: Default::default(),
-            counterparts_of_literals: Default::default(),
             simplified: Default::default(),
             reduced_unions: Default::default(),
             links: Default::default(),
@@ -880,7 +878,6 @@ impl<'s> Program<'s> {
             enum_relation: Default::default(),
             enum_literal_types: Default::default(),
             task_facts: spare.task_facts,
-            counterparts_of_literals: spare.counterparts_of_literals.into(),
             relation_sizes: [0; 6],
             variances_cut_short: Default::default(),
             free_relaters: Vec::new(),
@@ -1668,9 +1665,6 @@ pub struct Checker<'p, 's> {
     enum_literal_types: FxHashMap<(Sym, crate::types::EnumValue), TypeId>,
     /// See `shortcuts::task_fact`.
     task_facts: shortcuts::TaskFacts,
-    /// `LiteralType.freshType` and `regularType`. Once one has been made from the other, each id is cached under the
-    /// other id. Read under `&Checker`.
-    counterparts_of_literals: std::cell::RefCell<shortcuts::TypeMap<TypeId>>,
     /// `Relation.size()`, indexed by `relate::Relation`: the entries of `relations` that this task has
     /// stored. The entries from files that a single checker would have checked earlier aren't counted.
     relation_sizes: [i32; 6],
@@ -4180,25 +4174,6 @@ impl<'p, 's> Checker<'p, 's> {
         if !fresh && self.has_no_fresh_literal(ty) {
             return ty;
         }
-
-        if let Some(counterpart) = self.counterparts_of_literals.borrow().get(ty) {
-            let chosen = match self.types().has_fresh_literal(ty) == fresh {
-                true => ty,
-                false => counterpart,
-            };
-
-            return chosen;
-        }
-        let found = self.intern_with_freshness(ty, fresh);
-        if found != ty {
-            let mut counterparts = self.counterparts_of_literals.borrow_mut();
-            counterparts.insert(ty, found);
-            counterparts.insert(found, ty);
-        }
-        found
-    }
-
-    fn intern_with_freshness(&self, ty: TypeId, fresh: bool) -> TypeId {
         match *self.data(ty) {
             TypeData::StringLit { value, fresh: f } if f != fresh => {
                 self.intern(TypeData::StringLit { value, fresh })

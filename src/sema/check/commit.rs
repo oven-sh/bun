@@ -825,7 +825,6 @@ impl<'p, 's> Checker<'p, 's> {
         let mut spare = Box::new(Spare {
             task: self.task,
             task_facts: self.task_facts,
-            counterparts_of_literals: self.counterparts_of_literals.into_inner(),
             simplified: self.simplified,
             reduced_unions: self.reduced_unions,
             links: self.links,
@@ -834,7 +833,6 @@ impl<'p, 's> Checker<'p, 's> {
             apparent_types_of_intersections: self.apparent_types_of_intersections,
         });
         spare.task_facts.clear();
-        spare.counterparts_of_literals.clear();
         spare.simplified.iter_mut().for_each(|map| map.clear());
         spare.reduced_unions.clear();
         spare.links.clear();

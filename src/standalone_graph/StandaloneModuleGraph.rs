@@ -273,6 +273,8 @@ impl StandaloneModuleGraph {
     }
 
     /// `(entry, is_dir)`; `entry` is the basename, or the `name`-relative path when `recursive`.
+    /// In the order node's `fs.readdirSync` returns: each directory's entries
+    /// sorted by name bytes, a directory's entries before its subdirectories'.
     pub fn readdir(&self, name: &[u8], recursive: bool) -> Option<Vec<(Box<[u8]>, bool)>> {
         if !is_bun_standalone_file_path(name) {
             return None;
@@ -311,7 +313,18 @@ impl StandaloneModuleGraph {
         for (k, v) in seen.iter() {
             out.push((Box::<[u8]>::from(&k[..]), *v));
         }
+        out.sort_unstable_by(|(a, _), (b, _)| Self::readdir_order(a, b));
         Some(out)
+    }
+
+    /// Breadth first, then by name bytes. `/` compares below every other byte
+    /// so that `a/x` sorts before `a-b/x`, as `a` is listed before `a-b`.
+    fn readdir_order(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
+        let depth = |p: &[u8]| strings::count_char(p, b'/');
+        let key = |c: &u8| if *c == b'/' { 0 } else { *c };
+        depth(a)
+            .cmp(&depth(b))
+            .then_with(|| a.iter().map(key).cmp(b.iter().map(key)))
     }
 
     pub fn find_assume_standalone_path(&mut self, name: &[u8]) -> Option<&mut File> {

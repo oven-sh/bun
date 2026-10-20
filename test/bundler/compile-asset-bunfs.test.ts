@@ -91,6 +91,9 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           readFileDirErr: errcode(() => fs.readFileSync(root)),
           recursive: fs.readdirSync(root, { recursive: true }).map(String).sort(),
           recursiveAsync: (await fs.promises.readdir(root, { recursive: true })).map(String).sort(),
+          // Unsorted here: the embedded listing comes in node's readdirSync order.
+          entriesOrder: fs.readdirSync(root),
+          recursiveOrder: fs.readdirSync(root, { recursive: true }),
           // parentPath is the caller's string verbatim (no platform normalization)
           parentPaths: [...new Set(entries.map(e => e.parentPath))],
           nestedParentPath: appCss?.parentPath,
@@ -202,6 +205,17 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           readFileDirErr: "EISDIR",
           recursive: expectedRecursive,
           recursiveAsync: expectedRecursive,
+          entriesOrder: ["_app", "empty.txt", "favicon.svg", "index.html"],
+          recursiveOrder: [
+            "_app",
+            "empty.txt",
+            "favicon.svg",
+            "index.html",
+            join("_app", "immutable"),
+            join("_app", "immutable", "app.css"),
+            join("_app", "immutable", "chunks"),
+            join("_app", "immutable", "chunks", "entry.js"),
+          ],
           parentPaths: [r.client.root],
           nestedParentPath: join(r.client.root, "_app", "immutable"),
           emptyFile: "",

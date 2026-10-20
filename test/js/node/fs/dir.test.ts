@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { isLinux, tempDir } from "harness";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -241,5 +242,49 @@ describe("Dir explicit resource management", () => {
     dir.closeSync();
     expect(() => dir[Symbol.dispose]()).not.toThrow();
     await expect(dir[Symbol.asyncDispose]()).resolves.toBeUndefined();
+  });
+});
+
+// fs.readdir sorts its entries like node (libuv's scandir). A Dir does not:
+// node reads it with uv_fs_readdir, which is the kernel order. On Linux no
+// filesystem lists a directory of this shape in sorted order.
+describe.skipIf(!isLinux)("fs.Dir keeps the kernel order", () => {
+  const names = [
+    "readme",
+    "a.b",
+    "Zed",
+    "10",
+    "file-1",
+    "b",
+    "A",
+    "a b",
+    "~",
+    "9",
+    "ab",
+    "file-001",
+    "_",
+    "z",
+    "README",
+    "1",
+  ];
+
+  it("opendirSync and fs.promises.opendir list in the same order, which is not the sorted one", async () => {
+    using dir = tempDir("dir-kernel-order", {});
+    const root = String(dir);
+    for (const name of names) fs.writeFileSync(path.join(root, name), "");
+
+    const sync: string[] = [];
+    {
+      using d = fs.opendirSync(root);
+      for (let e = d.readSync(); e; e = d.readSync()) sync.push(e.name);
+    }
+    const async: string[] = [];
+    for await (const e of await fs.promises.opendir(root)) async.push(e.name);
+
+    const sorted = fs.readdirSync(root);
+    expect(sorted).toEqual(names.toSorted());
+    expect(sync.toSorted()).toEqual(sorted);
+    expect(async).toEqual(sync);
+    expect(sync).not.toEqual(sorted);
   });
 });

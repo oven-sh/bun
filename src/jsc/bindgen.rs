@@ -809,7 +809,7 @@ impl<T: JsPayload> JsWrapperRef<T> {
     pub fn init_weak(wrapper: JsWrapper<'_, T>) -> Self {
         JsWrapperRef(JsRef::init_weak(wrapper.as_value().0), PhantomData)
     }
-    /// As [`get`](Self::get), for the older API, which takes a [`JSValue`].
+    /// As [`get`](Self::get), for what takes a [`JSValue`].
     #[inline]
     pub fn try_get(&self) -> Option<JSValue> {
         self.0.try_get()

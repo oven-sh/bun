@@ -1,5 +1,6 @@
 import {
   callerSourceOrigin,
+  // @ts-expect-error deprecated alias
   describeArray,
   deserialize,
   drainMicrotasks,
@@ -11,6 +12,7 @@ import {
   heapSize,
   heapStats,
   isRope,
+  // @ts-expect-error deprecated alias
   describe as jscDescribe,
   memoryUsage,
   numberOfDFGCompiles,
@@ -96,13 +98,83 @@ describe("bun:jsc", () => {
     expect(releaseWeakRefs()).toBeUndefined();
   });
   it("totalCompileTime", () => {
-    expect(totalCompileTime(count)).toBeGreaterThanOrEqual(0);
+    expect((totalCompileTime as any)(count)).toBeGreaterThanOrEqual(0);
   });
   it("reoptimizationRetryCount", () => {
     expect(reoptimizationRetryCount(count)).toBeGreaterThanOrEqual(0);
   });
-  it("drainMicrotasks", () => {
-    expect(drainMicrotasks()).toBeUndefined();
+  describe("drainMicrotasks", () => {
+    it("returns undefined", () => {
+      expect(drainMicrotasks()).toBeUndefined();
+    });
+
+    it("runs promise reactions, queueMicrotask() and process.nextTick() callbacks", () => {
+      const ran: string[] = [];
+      Promise.resolve().then(() => ran.push("promise"));
+      queueMicrotask(() => ran.push("queueMicrotask"));
+      process.nextTick(() => ran.push("nextTick"));
+      drainMicrotasks();
+      expect(ran.sort()).toEqual(["nextTick", "promise", "queueMicrotask"]);
+    });
+
+    it("does not run a task that this thread has queued", async () => {
+      const { port1, port2 } = new MessageChannel();
+      try {
+        const { promise, resolve } = Promise.withResolvers<string>();
+        const log: string[] = [];
+        port2.onmessage = e => {
+          log.push("message");
+          resolve(e.data);
+        };
+        // A message to a port of the same thread is a task in the event loop's queue from here on.
+        port1.postMessage("from port1");
+        drainMicrotasks();
+        log.push("after drainMicrotasks");
+
+        expect(await promise).toBe("from port1");
+        expect(log).toEqual(["after drainMicrotasks", "message"]);
+      } finally {
+        port1.close();
+        port2.close();
+      }
+    });
+
+    it("does not run a task that another thread has posted", async () => {
+      const ready = new Int32Array(new SharedArrayBuffer(4));
+      const url = URL.createObjectURL(
+        new Blob(
+          [
+            `self.onmessage = ({ data: ready }) => {
+              postMessage("from worker");
+              Atomics.store(ready, 0, 1);
+              Atomics.notify(ready, 0);
+            };`,
+          ],
+          { type: "text/javascript" },
+        ),
+      );
+      const worker = new Worker(url);
+      try {
+        const { promise, resolve, reject } = Promise.withResolvers<string>();
+        const log: string[] = [];
+        worker.onerror = reject;
+        worker.onmessage = e => {
+          log.push("message");
+          resolve(e.data);
+        };
+        worker.postMessage(ready);
+        // Block until the worker has posted its message, so that the task is in the queue for certain.
+        expect(Atomics.wait(ready, 0, 0, 30_000)).not.toBe("timed-out");
+        drainMicrotasks();
+        log.push("after drainMicrotasks");
+
+        expect(await promise).toBe("from worker");
+        expect(log).toEqual(["after drainMicrotasks", "message"]);
+      } finally {
+        worker.terminate();
+        URL.revokeObjectURL(url);
+      }
+    });
   });
   it("startRemoteDebugger", () => {
     // try {
@@ -171,7 +243,7 @@ describe("bun:jsc", () => {
   });
 
   it.todoIf(isBuildKite && isWindows)("profile async", async () => {
-    const { promise, resolve } = Promise.withResolvers();
+    const { promise, resolve } = Promise.withResolvers<object>();
     const result = await profile(
       async function hey(arg1: number) {
         await Bun.sleep(10).then(() => resolve(arguments));
@@ -210,8 +282,20 @@ describe("bun:jsc", () => {
       return acc;
     };
 
+    // On a busy machine the sampler thread may still not get to run in that
+    // window, so profile again until it has. A profiler that no longer samples
+    // uses up the time limit, which has to be here: this never yields.
+    const deadline = performance.now() + 5000;
+    const profileUntilSampled = () => {
+      let result;
+      do {
+        result = profile(work, sampleInterval);
+      } while (result.stackTraces.traces.length === 0 && performance.now() < deadline);
+      return result;
+    };
+
     // First profile call
-    const result1 = profile(work, sampleInterval);
+    const result1 = profileUntilSampled();
     expect(result1).toBeDefined();
     expect(result1.functions).toBeDefined();
     expect(result1.stackTraces).toBeDefined();
@@ -219,14 +303,14 @@ describe("bun:jsc", () => {
 
     // Second profile call - should work after first one completed
     // This verifies that shutdown() -> pause() fix works
-    const result2 = profile(work, sampleInterval);
+    const result2 = profileUntilSampled();
     expect(result2).toBeDefined();
     expect(result2.functions).toBeDefined();
     expect(result2.stackTraces).toBeDefined();
     expect(result2.stackTraces.traces.length).toBeGreaterThan(0);
 
     // Third profile call - verify profiler can be reused multiple times
-    const result3 = profile(work, sampleInterval);
+    const result3 = profileUntilSampled();
     expect(result3).toBeDefined();
     expect(result3.functions).toBeDefined();
     expect(result3.stackTraces).toBeDefined();

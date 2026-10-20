@@ -8,6 +8,7 @@ import {
   isDebug,
   isLinux,
   isMacOS,
+  isRoot,
   isWindows,
   tempDir,
   tempDirWithFiles,
@@ -88,7 +89,7 @@ describe("fs.watch", () => {
       count++;
       try {
         expect(["rename", "change"]).toContain(event);
-        expect(["new-file.txt", "new-folder.txt"]).toContain(filename);
+        expect(["new-file.txt", "new-folder.txt"]).toContain(filename as string);
         if (count >= 2) {
           watcher.close();
         }
@@ -272,7 +273,7 @@ describe("fs.watch", () => {
       expect(watcher.constructor.name).toBe("FSWatcher");
       expect(typeof watcher.ref).toBe("function");
       expect(typeof watcher.unref).toBe("function");
-      expect(typeof watcher.start).toBe("function");
+      expect(typeof (watcher as any).start).toBe("function");
     } finally {
       watcher.close();
     }
@@ -534,8 +535,6 @@ describe("fs.watch", () => {
   // on windows 0o200 will be readable (match nodejs behavior)
   // Root has CAP_DAC_OVERRIDE, so the chmod 0o200 below never yields the
   // EACCES these two tests expect; they only make sense as a non-root user.
-  const isRoot = process.getuid?.() === 0;
-
   test.skipIf(isWindows || isRoot)("should throw if no permission to watch the directory", async () => {
     const filepath = path.join(testDir, "permission-dir");
     fs.mkdirSync(filepath, { recursive: true });
@@ -710,7 +709,7 @@ describe("fs.watch", () => {
   // seccomp. The same `add_one` error branch is reachable with EACCES by
   // watching a tree that contains one unreadable subdirectory as an
   // unprivileged user, so this test drops privileges to trigger it.
-  test.skipIf(!isLinux || process.getuid?.() !== 0)(
+  test.skipIf(!isLinux || !isRoot)(
     "recursive watch surfaces inotify_add_watch failure on a subdirectory as an 'error' event",
     async () => {
       const NOBODY = 65534;
@@ -721,7 +720,7 @@ describe("fs.watch", () => {
       const root = fs.realpathSync(String(dir));
       // The de-privileged child must be able to traverse into `root`, read it,
       // and write inside `open/`, while `locked/` denies read so
-      // inotify_add_watch on it returns EACCES. CI's runner.node.mjs points
+      // inotify_add_watch on it returns EACCES. CI's runner.node.ts points
       // TMPDIR at a mode-0700 mkdtemp dir, so every ancestor of `root` needs
       // +x for uid 65534 or the child fails at path resolution on the root
       // itself before the recursive walk ever reaches `locked/`.
@@ -984,7 +983,7 @@ describe("fs.promises.watch", () => {
         count++;
         try {
           expect(["rename", "change"]).toContain(event.eventType);
-          expect(["new-file.txt", "new-folder.txt"]).toContain(event.filename);
+          expect(["new-file.txt", "new-folder.txt"]).toContain(event.filename!);
 
           if (count >= 2) {
             success = true;
@@ -1222,7 +1221,6 @@ describe("fs.promises.watch", () => {
 
     expect(event).toBeDefined();
     expect(Object.getPrototypeOf(event)).toBe(null);
-    // @ts-expect-error
     expect(event.hasOwnProperty).toBeUndefined();
     expect(() => String(event)).toThrow(TypeError);
     expect(Object.keys(event!).sort()).toEqual(["eventType", "filename"]);

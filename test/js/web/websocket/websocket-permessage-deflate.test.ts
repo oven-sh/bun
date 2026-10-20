@@ -244,11 +244,6 @@ test("WebSocket client handles context takeover options", async () => {
   server.stop();
 });
 
-test.skip("WebSocket client rejects compressed control frames", async () => {
-  // This test would require a custom server that sends invalid compressed control frames
-  // Skip for now as it requires low-level WebSocket frame manipulation
-});
-
 // Every WebSocket client on a thread inflates through one shared libdeflate
 // handle and one shared output buffer. Interleaving compressed messages across
 // clients must not let one client's payload leak into another's.

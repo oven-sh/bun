@@ -6,7 +6,7 @@ test("YAML.parse throws SyntaxError like JSON.parse", () => {
   try {
     YAML.parse("[ invalid");
     throw new Error("Should have thrown");
-  } catch (e) {
+  } catch (e: any) {
     expect(e).toBeInstanceOf(SyntaxError);
     expect(e.constructor.name).toBe("SyntaxError");
     expect(e.message).toContain("YAML Parse error");
@@ -16,7 +16,7 @@ test("YAML.parse throws SyntaxError like JSON.parse", () => {
   try {
     YAML.parse("{ key: value");
     throw new Error("Should have thrown");
-  } catch (e) {
+  } catch (e: any) {
     expect(e).toBeInstanceOf(SyntaxError);
     expect(e.constructor.name).toBe("SyntaxError");
     expect(e.message).toContain("YAML Parse error");
@@ -26,7 +26,7 @@ test("YAML.parse throws SyntaxError like JSON.parse", () => {
   try {
     YAML.parse(":\n :  - invalid");
     throw new Error("Should have thrown");
-  } catch (e) {
+  } catch (e: any) {
     expect(e).toBeInstanceOf(SyntaxError);
     expect(e.constructor.name).toBe("SyntaxError");
     expect(e.message).toContain("YAML Parse error");
@@ -36,7 +36,7 @@ test("YAML.parse throws SyntaxError like JSON.parse", () => {
   try {
     JSON.parse("{ invalid");
     throw new Error("Should have thrown");
-  } catch (e) {
+  } catch (e: any) {
     expect(e).toBeInstanceOf(SyntaxError);
     expect(e.constructor.name).toBe("SyntaxError");
     expect(e.message).toContain("JSON Parse error");

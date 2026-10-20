@@ -4,8 +4,14 @@ import { createHash, createHmac } from "node:crypto";
 
 // Every digest literal in this file was checked against python hashlib (openssl for md4).
 
-test("Bun.file in CryptoHasher is not supported yet", () => {
-  const file = Bun.file(import.meta.path);
+test.each([
+  ["Bun.file", () => Bun.file(import.meta.path)],
+  [
+    "an S3 file",
+    () => new Bun.S3Client({ accessKeyId: "id", secretAccessKey: "secret", bucket: "bucket" }).file("key"),
+  ],
+])("%s in CryptoHasher is not supported yet", (_, make) => {
+  const file = make();
   const fileBlob = expect.objectContaining({
     name: "TypeError",
     code: "ERR_INVALID_ARG_TYPE",
@@ -14,15 +20,14 @@ test("Bun.file in CryptoHasher is not supported yet", () => {
   expect(() => Bun.SHA1.hash(file)).toThrow(fileBlob);
   expect(() => Bun.CryptoHasher.hash("sha1", file)).toThrow(fileBlob);
   expect(() => new Bun.SHA1().update(file)).toThrow(fileBlob);
-  expect(() => new Bun.CryptoHasher("sha1").update(file)).toThrow(
-    "Bun.file() is not supported here yet (it needs an async version)",
-  );
+  expect(() => new Bun.CryptoHasher("sha1").update(file)).toThrow(fileBlob);
+  expect(() => Bun.sha(file)).toThrow(fileBlob);
 });
 test("CryptoHasher update should throw when no parameter/null/undefined is passed", () => {
   const expected = expect.objectContaining({
     name: "TypeError",
     code: "ERR_INVALID_ARG_TYPE",
-    message: "expected blob, string or buffer",
+    message: "input must be a string, ArrayBuffer, ArrayBufferView or Blob",
   });
   // @ts-expect-error
   expect(() => new Bun.CryptoHasher("sha1").update()).toThrow(expected);
@@ -48,7 +53,7 @@ test("CryptoHasher.update(str, 'hex') rejects odd-length hex like node:crypto", 
   }
 
   // Error message echoes the encoding argument as passed.
-  expect(() => new Bun.CryptoHasher("sha1").update("abc", "HEX")).toThrow(
+  expect(() => new Bun.CryptoHasher("sha1").update("abc", "HEX" as any)).toThrow(
     expect.objectContaining({
       code: "ERR_INVALID_ARG_VALUE",
       message: "The argument 'encoding' is invalid for data of length 3. Received 'HEX'",
@@ -97,11 +102,51 @@ test("CryptoHasher throws on non-latin1 algorithm names instead of crashing", ()
   expect(() => new Bun.CryptoHasher("ünïcode")).toThrow(unsupported("Unsupported algorithm ünïcode"));
 });
 
+test("a subclass inherits the static getters", () => {
+  class MyMD5 extends Bun.MD5 {}
+  expect(MyMD5.byteLength).toBe(16);
+  expect(MyMD5.hash("abc", "hex")).toBe("900150983cd24fb0d6963f7d28e17f72");
+  class MyHasher extends Bun.CryptoHasher {}
+  expect(MyHasher.algorithms).toEqual(Bun.CryptoHasher.algorithms);
+});
+
+test("heapStats does not count a prototype as an instance", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const classes = ["CryptoHasher", "MD4", "MD5", "SHA1", "SHA224", "SHA256", "SHA384", "SHA512", "SHA512_256"];
+      for (const name of classes) Bun[name].prototype;
+      const counts = require("bun:jsc").heapStats().objectTypeCounts;
+      console.log(JSON.stringify(classes.filter(name => counts[name])));`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("[]\n");
+  expect(exitCode).toBe(0);
+});
+
+test("hex of odd length is refused in a String object as in a string", () => {
+  const expected = expect.objectContaining({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_VALUE",
+    message: "The argument 'encoding' is invalid for data of length 3. Received 'hex'",
+  });
+  expect(() => new Bun.CryptoHasher("sha1").update("616", "hex")).toThrow(expected);
+  // @ts-expect-error
+  expect(() => new Bun.CryptoHasher("sha1").update(new String("616"), "hex")).toThrow(expected);
+  // @ts-expect-error
+  expect(new Bun.CryptoHasher("sha1").update(new String("6162"), "hex").digest("hex")).toBe(Bun.SHA1.hash("ab", "hex"));
+});
+
 test("static hash requires the algorithm to be a string primitive", () => {
   const expected = expect.objectContaining({
     name: "TypeError",
     code: "ERR_INVALID_ARG_TYPE",
-    message: "Expected string",
+    message: "algorithm must be a string",
   });
   // @ts-expect-error
   expect(() => Bun.CryptoHasher.hash(new String("sha256"), "hello")).toThrow(expected);
@@ -241,7 +286,7 @@ test("Bun.sha validates its arguments like Bun.SHA512_256.hash", () => {
   const badOutput = expect.objectContaining({
     name: "TypeError",
     code: "ERR_INVALID_ARG_TYPE",
-    message: "expected string or buffer",
+    message: "output must be of type string or ArrayBuffer or ArrayBufferView",
   });
   for (const output of [123, {}, null, true, [], () => {}, Symbol("x")]) {
     const label = `output ${typeof output}`;
@@ -254,7 +299,7 @@ test("Bun.sha validates its arguments like Bun.SHA512_256.hash", () => {
   const badInput = expect.objectContaining({
     name: "TypeError",
     code: "ERR_INVALID_ARG_TYPE",
-    message: "expected blob, string or buffer",
+    message: "input must be a string, ArrayBuffer, ArrayBufferView or Blob",
   });
   for (const input of [undefined, 123, null, {}]) {
     const label = `input ${typeof input}`;
@@ -306,12 +351,12 @@ describe("HMAC", () => {
 
   for (let key of ["key", Buffer.from("key"), Buffer.from("key").buffer]) {
     test.each(Object.entries(hashes))("%s (key: " + key.constructor.name + ")", (algorithm, expected) => {
-      const hmac = new Bun.CryptoHasher(algorithm, key);
+      const hmac = new Bun.CryptoHasher(algorithm as Bun.SupportedCryptoAlgorithms, key as string | Buffer);
       hmac.update("data\n");
       const copied = hmac.copy();
       expect(copied.copy()).toBeInstanceOf(Bun.CryptoHasher);
 
-      const state = { algorithm, byteLength: expected.length / 2, digest: expected };
+      const state: any = { algorithm, byteLength: expected.length / 2, digest: expected };
       expect({ algorithm: hmac.algorithm, byteLength: hmac.byteLength, digest: hmac.digest("hex") }).toEqual(state);
       // The copy is still usable after the original was digested.
       expect({ algorithm: copied.algorithm, byteLength: copied.byteLength, digest: copied.digest("hex") }).toEqual(
@@ -426,16 +471,16 @@ describe("Hash matches reference digests", () => {
             const bytes = Buffer.from(digests[algorithm][i % sourceInputs.length], "hex");
             return encoding === undefined ? bytes : bytes.toString(encoding);
           });
-          const results = {
+          const results: Record<string, unknown[]> = {
             instance: inputs.map(input => {
               const hasher = new Bun.CryptoHasher(algorithm);
               // The input encoding argument has no effect on a Buffer or Blob input.
               expect(hasher.update(input, encoding)).toBe(hasher);
-              return hasher.digest(encoding);
+              return hasher.digest(encoding as any);
             }),
-            static: inputs.map(input => Bun.CryptoHasher.hash(algorithm, input, encoding)),
-            classInstance: inputs.map(input => new Class().update(input).digest(encoding)),
-            classStatic: inputs.map(input => Class.hash(input, encoding)),
+            static: inputs.map(input => Bun.CryptoHasher.hash(algorithm, input, encoding as any)),
+            classInstance: inputs.map(input => new Class().update(input).digest(encoding as any)),
+            classStatic: inputs.map(input => Class.hash(input, encoding as any)),
           };
           expect(results).toEqual({
             instance: expected,
@@ -491,7 +536,7 @@ describe("CryptoHasher", () => {
   };
 
   // The algorithm getter reports the canonical name of an alias.
-  const canonical: Record<string, string> = {
+  const canonical: Record<string, Bun.SupportedCryptoAlgorithms> = {
     "rmd160": "ripemd160",
     "sha128": "sha1",
     "sha-1": "sha1",
@@ -509,7 +554,7 @@ describe("CryptoHasher", () => {
 
   const encodings = ["hex", "base64", "base64url", "buffer", undefined] as const;
 
-  test.each(Object.entries(hello))("%s", (algorithm, hex) => {
+  test.each(Object.entries(hello) as [Bun.SupportedCryptoAlgorithms, string][])("%s", (algorithm, hex) => {
     const bytes = Buffer.from(hex, "hex");
     // "buffer" and no encoding both return the raw bytes.
     const expected = {
@@ -529,8 +574,8 @@ describe("CryptoHasher", () => {
       byteLength: bytes.length,
     });
     expect({
-      instance: collect(encoding => new Bun.CryptoHasher(algorithm).update("hello").digest(encoding)),
-      static: collect(encoding => Bun.CryptoHasher.hash(algorithm, "hello", encoding)),
+      instance: collect(encoding => new Bun.CryptoHasher(algorithm).update("hello").digest(encoding as any)),
+      static: collect(encoding => Bun.CryptoHasher.hash(algorithm, "hello", encoding as any)),
     }).toEqual({ instance: expected, static: expected });
   });
 });

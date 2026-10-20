@@ -71,6 +71,12 @@ tsd
   )
   .is<Promise<void>>();
 
+Bun.secrets.set({ service: "hey", name: "hey", value: "hey", persist: "local" });
+Bun.secrets.set({ service: "hey", name: "hey", value: "hey", persist: "enterprise" });
+Bun.secrets.set({ service: "hey", name: "hey", value: "hey", persist: undefined });
+// @ts-expect-error - Bun does not expose CRED_PERSIST_SESSION
+Bun.secrets.set({ service: "hey", name: "hey", value: "hey", persist: "session" });
+
 tsd
   .expectType(
     Bun.secrets.delete({
@@ -93,3 +99,7 @@ tsd
 
 tsd.expectType(Bun.mmap("./data.bin", { offset: 4096 })).is<Uint8Array<ArrayBuffer>>();
 tsd.expectType(Bun.mmap("./data.bin", { size: 1024 })).is<Uint8Array<ArrayBuffer>>();
+
+declare const webview: Bun.WebView;
+tsd.expectType(webview.goBack()).is<Promise<void>>();
+tsd.expectType(webview.goForward()).is<Promise<void>>();

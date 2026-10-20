@@ -279,10 +279,12 @@ pub mod entry {
         // if true this entry gets symlinked to `node_modules/.bun/node_modules`
         pub hoisted: bool,
 
-        /// Exists only inside the packages declaring it: no store directory, task or hoist slot.
+        /// It only exists inside the packages that declare it, so it has no store directory, task
+        /// or hoist slot.
         pub nested_folder: bool,
 
-        /// Of a `file:` / URL tarball also the pinned integrity; without peers its first 8 bytes.
+        /// For a `file:` or URL tarball, this also covers the pinned integrity. Without peers, it's
+        /// the integrity's first 8 bytes.
         pub peer_hash: PeerHash,
 
         /// Content hash of (package + sorted resolved dependency global-store keys),
@@ -509,7 +511,8 @@ pub mod entry {
     pub struct DependenciesItem {
         pub(crate) entry_id: Id,
 
-        // The dependent's own dependency on `entry_id`: it has the name this dependent uses.
+        // The dependent's own dependency on `entry_id`, which has the name that this dependent
+        // uses.
         pub(crate) dep_id: DependencyID,
     }
 

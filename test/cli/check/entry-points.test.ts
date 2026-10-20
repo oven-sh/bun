@@ -322,6 +322,24 @@ test("an error far into a long line has its place in a build, and no line of tex
   expect(exitCode).toBe(0);
 });
 
+test("one process can run several checks, sequentially and concurrently", async () => {
+  using dir = tempDir("bun-check", {
+    "tsconfig.json": config({ noEmit: true }),
+    "right.ts": `export const n: number = 1;\n`,
+    "wrong.ts": `export const n: number = "1";\n`,
+    "build.ts": `
+      const check = entry => Bun.build({ check: true, throw: false, entrypoints: [entry] }).then(it => it.logs.length);
+      const found = [await check("wrong.ts"), await check("right.ts"), await check("wrong.ts")];
+      found.push(...(await Promise.all(["wrong.ts", "right.ts", "wrong.ts"].map(check))));
+      console.log(JSON.stringify(found));
+    `,
+  });
+  await using proc = spawn({ timeout: longLimit, cmd: [bunExe(), "build.ts"], cwd: String(dir), env, stdout: "pipe" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual([1, 0, 1, 1, 0, 1]);
+  expect(exitCode).toBe(0);
+});
+
 test("a byte order mark is not a column, wherever the text comes from", async () => {
   const text = `export const n: number = "1";\n`;
   using dir = tempDir("bun-check", {

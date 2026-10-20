@@ -2885,19 +2885,6 @@ JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError
     return JSC::JSValue::encode(result);
 }
 
-JSC::EncodedJSValue
-JSC__JSObject__create(JSC::JSGlobalObject* globalObject, size_t initialCapacity, void* arg2,
-    void (*ArgFn3)(void* arg0, JSC::JSObject* arg1, JSC::JSGlobalObject* arg2))
-{
-    JSC::JSObject* object = initialCapacity
-        ? JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), static_cast<unsigned>(std::min(initialCapacity, static_cast<size_t>(JSFinalObject::maxInlineCapacity))))
-        : JSC::constructEmptyObject(globalObject);
-
-    ArgFn3(arg2, object, globalObject);
-
-    return JSC::JSValue::encode(object);
-}
-
 bool JSC__JSValue__hasOwnPropertyValue(JSC::EncodedJSValue value, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue ownKey)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -3003,52 +2990,6 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
     }
 
     return std::numeric_limits<double>::infinity();
-}
-
-[[ZIG_EXPORT(check_slow)]]
-void JSC__JSObject__putRecord(JSC::JSObject* object, JSC::JSGlobalObject* global, EncodedSlice* key, EncodedSlice* values, size_t valuesLen)
-{
-    auto scope = DECLARE_THROW_SCOPE(global->vm());
-    auto ident = Identifier::fromString(global->vm(), Zig::toStringCopy(*key));
-    JSC::PropertyDescriptor descriptor;
-
-    descriptor.setEnumerable(1);
-    descriptor.setConfigurable(1);
-    descriptor.setWritable(1);
-
-    if (valuesLen == 1) {
-        descriptor.setValue(JSC::jsString(global->vm(), Zig::toStringCopy(values[0])));
-    } else {
-
-        // Pre-convert all strings to JSValues before entering ObjectInitializationScope,
-        // since jsString() allocates GC cells which is not allowed inside the scope.
-        MarkedArgumentBuffer strings;
-        for (size_t i = 0; i < valuesLen; ++i) {
-            strings.append(JSC::jsString(global->vm(), Zig::toStringCopy(values[i])));
-        }
-
-        JSC::JSArray* array = nullptr;
-        {
-            JSC::ObjectInitializationScope initializationScope(global->vm());
-            if ((array = JSC::JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, global->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), valuesLen))) {
-
-                for (size_t i = 0; i < valuesLen; ++i) {
-                    array->initializeIndexWithoutBarrier(initializationScope, i, strings.at(i));
-                }
-            }
-        }
-
-        if (!array) {
-            JSC::throwOutOfMemoryError(global, scope);
-            return;
-        }
-
-        descriptor.setValue(array);
-    }
-
-    object->methodTable()->defineOwnProperty(object, global, ident, descriptor, true);
-    object->putDirect(global->vm(), ident, descriptor.value());
-    scope.release();
 }
 
 JSC::JSPromise* JSC__JSValue__asInternalPromise(JSC::EncodedJSValue JSValue0)
@@ -3425,34 +3366,6 @@ extern "C" JSC::JSPromise* JSModuleLoader__import(JSC::JSGlobalObject* globalObj
 
     EXCEPTION_ASSERT(!!scope.exception() == !promise);
     return promise;
-}
-
-JSC::EncodedJSValue JSC__JSValue__fromEntries(JSC::JSGlobalObject* globalObject, EncodedSlice* keys,
-    EncodedSlice* values, size_t initialCapacity, bool clone)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (initialCapacity == 0) {
-        return JSC::JSValue::encode(JSC::constructEmptyObject(globalObject));
-    }
-
-    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned int>(initialCapacity), JSFinalObject::maxInlineCapacity));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (!clone) {
-        for (size_t i = 0; i < initialCapacity; ++i) {
-            object->putDirect(
-                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, Zig::toString(keys[i]))),
-                Zig::toJSStringGC(values[i], globalObject), 0);
-        }
-    } else {
-        for (size_t i = 0; i < initialCapacity; ++i) {
-            object->putDirect(vm, JSC::PropertyName(Zig::toIdentifier(keys[i], globalObject)),
-                Zig::toJSStringGC(values[i], globalObject), 0);
-        }
-    }
-
-    return JSC::JSValue::encode(object);
 }
 
 JSC::EncodedJSValue JSC__JSValue__keys(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue objectValue)
@@ -4375,41 +4288,6 @@ uint8_t JSC__JSValue__asBigIntCompare(JSC::EncodedJSValue JSValue0, JSC::JSGloba
 JSC::EncodedJSValue JSC__JSValue__fromInt64NoTruncate(JSC::JSGlobalObject* globalObject, int64_t val)
 {
     return JSC::JSValue::encode(JSC::JSBigInt::createFrom(globalObject, val));
-}
-
-JSC::EncodedJSValue JSC__JSValue__fromTimevalNoTruncate(JSC::JSGlobalObject* globalObject, int64_t nsec, int64_t sec)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto big_nsec = JSC::JSBigInt::createFrom(globalObject, nsec);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto big_sec = JSC::JSBigInt::createFrom(globalObject, sec);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto big_1e6 = JSC::JSBigInt::createFrom(globalObject, 1e6);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto sec_as_nsec = JSC::JSBigInt::multiply(globalObject, big_1e6, big_sec);
-    RETURN_IF_EXCEPTION(scope, {});
-    ASSERT(sec_as_nsec.isHeapBigInt());
-    auto* big_sec_as_nsec = sec_as_nsec.asHeapBigInt();
-    ASSERT(big_sec_as_nsec);
-    auto result = JSC::JSBigInt::add(globalObject, big_sec_as_nsec, big_nsec);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSC::JSValue::encode(result);
-}
-
-JSC::EncodedJSValue JSC__JSValue__bigIntSum(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue a, JSC::EncodedJSValue b)
-{
-    JSC::JSValue a_value = JSC::JSValue::decode(a);
-    JSC::JSValue b_value = JSC::JSValue::decode(b);
-
-    ASSERT(a_value.isHeapBigInt());
-    auto* big_a = a_value.asHeapBigInt();
-    ASSERT(big_a);
-
-    ASSERT(b_value.isHeapBigInt());
-    auto* big_b = b_value.asHeapBigInt();
-    ASSERT(big_b);
-    return JSC::JSValue::encode(JSC::JSBigInt::add(globalObject, big_a, big_b));
 }
 
 JSC::EncodedJSValue JSC__JSValue__fromUInt64NoTruncate(JSC::JSGlobalObject* globalObject, uint64_t val)

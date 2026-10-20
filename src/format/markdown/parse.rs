@@ -32,6 +32,8 @@ pub(crate) enum Syntax {
     WithDirectives,
     /// The same, to see what two lines are: see `leaves_paragraph`, which is not asked again for them.
     TwoLines,
+    /// `Markdown`, used to parse two lines on their own.
+    TwoLinesOfMarkdown,
     /// See [`parse_content`].
     Plain,
     /// What Prettier makes of MDX, with remark-parse 8: `import` and `export`, any tag starts HTML, which is JSX.
@@ -528,13 +530,17 @@ struct Builder<'t> {
     can_start_with_check: &'t Cell<bool>,
     /// The paragraph that is open starts with one.
     starts_with_check: bool,
-    /// For oxfmt: a line break whose fate what follows it decides.
+    /// The syntax `leaves_paragraph` parses two lines with. If `None`, lines that are paragraph text only because
+    /// they're indented aren't handled specially.
+    two_lines: Option<Syntax>,
+    /// A pending line break. How it's printed depends on the node after it.
     guarded_break: Option<GuardedBreak>,
     /// For oxfmt: the line is one that it prints as it is written.
     is_on_line_as_written: bool,
 }
 
-/// A line break before a line that is text only because it is indented.
+/// A line break before a line that is paragraph text only because it's indented. Prettier always strips the
+/// indentation, so a fence starts a code block, `***` becomes a thematic break, and `<div>` starts HTML.
 #[derive(Copy, Clone)]
 struct GuardedBreak {
     place: (u32, u32),
@@ -621,7 +627,7 @@ fn is_like_delimiter_row(line: &[u8]) -> bool {
 
 /// Whether `line` is not a line of the paragraph any more if it starts in the first column. `above` is the line
 /// before it, which only the row under the header of a table looks at. Without it, the header is taken to fit.
-fn leaves_paragraph(above: Option<&[u8]>, line: &[u8]) -> bool {
+pub(crate) fn leaves_paragraph(above: Option<&[u8]>, line: &[u8], syntax: Syntax) -> bool {
     let fitting_header: Vec<u8>;
     let first: &[u8] = match above {
         _ if !is_like_delimiter_row(line) => b"a",
@@ -640,7 +646,7 @@ fn leaves_paragraph(above: Option<&[u8]>, line: &[u8]) -> bool {
     };
     let text = [first, b"\n", line, b"\n"].concat();
     let mut tree = Tree::default();
-    let Some(root) = parse_lines(&text, &mut tree, Syntax::TwoLines, 0) else {
+    let Some(root) = parse_lines(&text, &mut tree, syntax, 0) else {
         return false;
     };
     let first = tree.get(root).map_or(NONE, |root| root.first_child);
@@ -1502,9 +1508,7 @@ impl Builder<'_> {
     /// A node without anything in it at `self.place`.
     /// The line break at `self.place`, if what follows it has a say in what becomes of it.
     fn guarded_break(&mut self, kind: LineBreak) -> Option<GuardedBreak> {
-        if !self.is_for_oxfmt {
-            return None;
-        }
+        self.two_lines?;
         let next = self.lines.partition_point(|line| line.beg <= self.place.0);
         let (above, line) = (self.lines.get(next.checked_sub(1)?)?, self.lines.get(next)?);
         let written = self.text.get(line.beg as usize..line.end as usize)?;
@@ -1518,6 +1522,17 @@ impl Builder<'_> {
             self.is_on_line_as_written = is_line_shape_start(written);
             return None;
         }
+        // Prettier escapes these or keeps them off the start of a line, and so does this printer.
+        if !self.is_for_oxfmt {
+            let word = &written[..written.iter().take_while(|&&byte| !is_space(byte)).count()];
+            let marks = written.trim_ascii_end();
+            if super::printer::Printer::may_start_block(word)
+                || marks.iter().all(|&byte| byte == b'=')
+                || marks.iter().all(|&byte| byte == b'-')
+            {
+                return None;
+            }
+        }
         Some(GuardedBreak {
             place: self.place,
             kind,
@@ -1528,7 +1543,7 @@ impl Builder<'_> {
 
     /// `follower` comes next: now it is known what becomes of the line break before it.
     fn end_guarded_break(&mut self, follower: Follower) {
-        let Some(it) = self.guarded_break.take() else {
+        let (Some(it), Some(two_lines)) = (self.guarded_break.take(), self.two_lines) else {
             return;
         };
         let text = self.text;
@@ -1550,10 +1565,12 @@ impl Builder<'_> {
                     || line.starts_with(b"~~~")
                     || line.starts_with(b"$$")));
         let is_hard = matches!(it.kind, LineBreak::Hard);
-        let stays = is_hard || self.is_on_line_as_written || is_line_as_written;
+        // Only oxfmt prints some lines verbatim.
+        let stays =
+            is_hard || (self.is_for_oxfmt && (self.is_on_line_as_written || is_line_as_written));
         self.is_on_line_as_written = is_line_as_written;
         // Behind a line break that stays it does not look at the line above.
-        let leaves = leaves_paragraph((!stays).then(|| slice(it.above)), line);
+        let leaves = leaves_paragraph((!stays).then(|| slice(it.above)), line, two_lines);
         if let LineBreak::Soft { is_as_written } = it.kind {
             // What looks like the line under a heading is escaped.
             let marks = line.trim_ascii_end();
@@ -2158,7 +2175,10 @@ pub(crate) fn parse_lines(
         leaf_bytes: match syntax {
             Syntax::Plain | Syntax::CommonMark { .. } => b"",
             Syntax::Mdx => b"ie",
-            Syntax::Markdown | Syntax::WithDirectives | Syntax::TwoLines => b"{",
+            Syntax::Markdown
+            | Syntax::WithDirectives
+            | Syntax::TwoLines
+            | Syntax::TwoLinesOfMarkdown => b"{",
         },
         leaf: &leaf,
         span_bytes: match syntax {
@@ -2208,6 +2228,11 @@ pub(crate) fn parse_lines(
         alt_end: 0,
         can_start_with_check: &can_start_with_check,
         starts_with_check: false,
+        two_lines: match syntax {
+            Syntax::WithDirectives => Some(Syntax::TwoLines),
+            Syntax::Markdown => Some(Syntax::TwoLinesOfMarkdown),
+            _ => None,
+        },
         guarded_break: None,
         is_on_line_as_written: false,
     };

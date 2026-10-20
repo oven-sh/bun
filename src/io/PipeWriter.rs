@@ -811,6 +811,18 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.outgoing.size()
     }
 
+    /// The error a write to this socket fails with now, asked with a send of no bytes: `EPIPE`
+    /// once no process holds the other end. `None` while one does, however full the socket is,
+    /// and for an fd that is not a socket.
+    pub fn socket_write_error(&self) -> Option<sys::Error> {
+        if !matches!(self.get_file_type(), FileType::Socket) {
+            return None;
+        }
+        write_to_socket(self.get_fd(), &[])
+            .err()
+            .filter(|err| !err.is_retry())
+    }
+
     pub(crate) fn should_buffer(&self, addition: usize) -> bool {
         !self.force_sync && self.outgoing.size() + addition < Self::CHUNK_SIZE
     }

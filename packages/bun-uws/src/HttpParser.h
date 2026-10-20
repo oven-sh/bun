@@ -664,10 +664,7 @@ struct HttpResponseData;
             return count;
         }
 
-        /* node:http gets the header fields of a request, and the trailer fields that acceptNodeTrailerSection()
-         * accepted, as a run of field records (NodeHTTP.cpp reads it). A field record is
-         * [u32 nameLen][u32 valueLen][name][value]. These are its two lengths, little-endian. u32: maxHeaderSize
-         * has no upper bound, and a u16 would truncate a value over 64 KiB and desync the run. */
+        /* The two lengths of a field record, [u32 nameLen][u32 valueLen][name][value], little-endian. NodeHTTP.cpp reads the records. */
         static std::array<uint8_t, 8> fieldRecordLengths(std::string_view name, std::string_view value) {
             const uint32_t nameLen = (uint32_t) name.length();
             const uint32_t valueLen = (uint32_t) value.length();
@@ -678,27 +675,18 @@ struct HttpResponseData;
         }
 
     private:
-        /* node:http compat: the verdict on the trailer section of a chunked request, taken once: when the
-         * section is complete, before the fin completes the message. Node's llhttp fails the message on a
-         * malformed trailer field line (clientError HPE_INVALID_HEADER_TOKEN). llhttp does so at the offending
-         * byte, this parser when the final CRLF of the section arrives. A CTL byte in a value is only
-         * accepted under insecureHTTPParser, exactly like a header value. A Content-Length or
+        /* node:http compat: validate a captured, complete trailer section before the
+         * message is completed. Node's llhttp fails the message on a malformed trailer
+         * field line (clientError HPE_INVALID_HEADER_TOKEN) instead of completing it
+         * with req.trailers silently dropped; a CTL byte in a value is only accepted
+         * under insecureHTTPParser, exactly like a header value. A Content-Length or
          * Transfer-Encoding field in the trailer section is rejected exactly like
          * llhttp does (it runs trailers through the same header state machine, so
          * the already-set F_CHUNKED collides), unless insecureHTTPParser is set
          * (llhttp's LENIENT_CHUNKED_LENGTH / LENIENT_TRANSFER_ENCODING, which "relaxed" does not set). An empty
          * section (bare CRLF, no trailers) is valid. Node counts trailer fields from
          * zero against server.maxHeadersCount (maxHeadersCount here, 0 = not set).
-         *
-         * The fields of an accepted section go to *records, a field record each (fieldRecordLengths()), and only
-         * after every field passed every rule: a rejected section leaves no record. req.rawTrailers is built from
-         * the records, so no later step parses the section or decides again what it holds. The section itself
-         * never leaves the parser: it ends here, whatever the verdict.
-         *
-         * Known bound: parseTrailerFields stops at MAX_TRAILER_FIELDS, so a section with
-         * more valid fields than that followed by a malformed line is accepted where node
-         * still errors; reaching it requires a deliberately padded (but size-capped)
-         * section, and rejecting it would need a second scanning mode. */
+         * The section ends here: an accepted one leaves its fields in *records (fieldRecordLengths()), a rejected one leaves nothing. */
         HttpParserError acceptNodeTrailerSection(std::string *records, bool useInsecureHTTPParser, bool useLenientTransferEncoding, uint32_t maxHeadersCount) {
             if (fallback.size() <= 2) {
                 /* No fields. clear() keeps the block, as the parser does for a head that took several reads. */
@@ -712,12 +700,13 @@ struct HttpResponseData;
             if (section.size() > UINT32_MAX) {
                 return HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE;
             }
-            std::pair<std::string_view, std::string_view> fields[MAX_TRAILER_FIELDS];
-            unsigned count = parseTrailerFields(section, fields, useInsecureHTTPParser);
+            /* One slot more than a section may have fields: a section that fills it has too many. */
+            std::pair<std::string_view, std::string_view> fields[MAX_TRAILER_FIELDS + 1];
+            unsigned count = parseTrailerFields(section, fields, useInsecureHTTPParser, MAX_TRAILER_FIELDS + 1);
             if (count == 0) {
                 return HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN;
             }
-            if (maxHeadersCount && count > maxHeadersCount) {
+            if (count > MAX_TRAILER_FIELDS || (maxHeadersCount && count > maxHeadersCount)) {
                 return HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE;
             }
             size_t recordsSize = 0;
@@ -741,8 +730,7 @@ struct HttpResponseData;
             return HTTP_PARSER_ERROR_NONE;
         }
 
-        /* A field section that is not complete yet: the head of the next request while no body is in flight, or
-         * (node:http) the trailer section of the chunked body in flight, until acceptNodeTrailerSection(). */
+        /* A partial head while no body is in flight, or (node:http) the trailer section of the chunked body in flight. */
         std::string fallback;
     public:
         /* node:http under LENIENT_TRANSFER_ENCODING: the current request's

@@ -240,8 +240,7 @@ static std::string* requestTrailersFor(us_socket_t* socket)
     return &httpResponseData->nodeHttpRequestTrailers;
 }
 
-/* Move the trailer fields that the parser accepted for the connection's current request
- * (field records, see uWS::HttpParser::fieldRecordLengths) out, returning their (ptr, length)
+/* Move the connection's accepted trailer fields (field records) out, returning their (ptr, length)
  * through a thread-local buffer that stays valid until the next call on this
  * thread. Called by NodeHTTPResponse at the request's body fin, still inside the
  * parser, so a pipelined request cannot overwrite or inherit another's trailers. */

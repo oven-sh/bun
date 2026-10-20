@@ -111,6 +111,9 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         const std::string_view name = pair.first;
         const std::string_view value = pair.second;
 
+        // u32 length prefixes: header sizes are usually tiny, but maxHeaderSize
+        // is user-configurable with no upper bound, so a u16 would silently
+        // truncate a >64 KiB value and desync the buffer.
         const std::array<uint8_t, 8> lens = uWS::HttpParser::fieldRecordLengths(name, value);
         flatHeaders.append(std::span<const uint8_t> { lens });
         flatHeaders.append(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(name.data()), name.length() });
@@ -166,8 +169,7 @@ static String headerValueString(NodeHTTPRequestHeaderValues& remembered, HTTPHea
     return *slot;
 }
 
-// The next field record (uWS::HttpParser::fieldRecordLengths) of a run: the header fields that
-// assignHeadersFromUWebSocketsForCall captured, or the trailer fields that the parser accepted.
+// The next field record (uWS::HttpParser::fieldRecordLengths) of the captured header fields or the accepted trailer fields.
 static bool nextCapturedHeader(const uint8_t* data, size_t length, size_t& offset, std::span<const Latin1Character>& name, std::span<const Latin1Character>& value)
 {
     if (offset + 8 > length)

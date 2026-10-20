@@ -290,6 +290,31 @@ test("a trailer value over 64 KiB keeps the field after it", async () => {
   assert.deepStrictEqual(named, ["X-Big", "big", "X-After", "1"]);
 });
 
+// Bun keeps at most 199 trailer fields for a request. Node keeps server.maxHeadersCount of them, 2000 by default.
+describe("a trailer section with many fields", () => {
+  const request = (count: number, lastLine = "") =>
+    "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n0\r\n" +
+    Array.from({ length: count }, (_, i) => `F${i}: ${i}\r\n`).join("") +
+    lastLine +
+    "\r\n";
+
+  test("199 fields: the request has them all", async () => {
+    const outcome = await outcomeOf(http.createServer(), request(199));
+    const summary = "raw" in outcome ? { entries: outcome.raw.length, last: outcome.raw.slice(-2) } : outcome;
+    assert.deepStrictEqual(summary, { entries: 398, last: ["F198", "198"] });
+  });
+
+  test("199 fields and a line that is not a field: the request fails", async () => {
+    const outcome = await outcomeOf(http.createServer(), request(199, "not a field\r\n"));
+    assert.deepStrictEqual(outcome, { clientError: "HPE_INVALID_HEADER_TOKEN" });
+  });
+
+  // Node v26.3.0 gives the request the 200 fields.
+  bunOnlyTest("200 fields: the request fails", async () => {
+    assert.deepStrictEqual(await outcomeOf(http.createServer(), request(200)), { clientError: "HPE_HEADER_OVERFLOW" });
+  });
+});
+
 // The parser keeps a trailer section that is not complete from one read to the next, in the buffer where it also
 // keeps a request head that is not complete. Each connection below cuts the same two requests into reads at
 // other places.
@@ -375,9 +400,11 @@ describe("an Upgrade request body that the peer's FIN cuts off has no trailer fi
     const server = http.createServer();
     if (maxHeadersCount) server.maxHeadersCount = maxHeadersCount;
     server.on("upgrade", (req: http.IncomingMessage, socket: Duplex) => {
-      opened.push(socket.on("error", () => {}));
+      opened.push(socket);
       req.resume();
       socket.on("end", () => resolve([...req.rawTrailers]));
+      socket.on("error", reject);
+      socket.on("close", () => reject(new Error("the upgraded socket closed before the FIN reached it")));
     });
     // A listener that leaves the socket open, so that the FIN reaches it.
     server.on("clientError", () => {});
@@ -385,6 +412,7 @@ describe("an Upgrade request body that the peer's FIN cuts off has no trailer fi
       const socket = connect({ port, host: "127.0.0.1", allowHalfOpen: true });
       opened.push(socket);
       socket.on("error", reject);
+      socket.on("close", () => reject(new Error("the connection closed before the FIN reached the upgraded socket")));
       socket.end(head + section);
       try {
         await promise;

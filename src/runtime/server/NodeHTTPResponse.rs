@@ -92,12 +92,10 @@ pub(crate) struct NodeHTTPResponse {
     pub(crate) promise: JsCell<StrongOptional>, // Strong.Optional
     pub(crate) server: AnyServer,
 
-    /// node:http: the trailer fields the parser accepted after THIS request's
-    /// chunked body, as [u32 nameLen][u32 valueLen][name][value]... like
-    /// raw_request_headers. Moved off the connection's single per-parse buffer
-    /// the moment the body finishes (still inside the parser), because a
-    /// pipelined request's parse would otherwise overwrite them before this
-    /// request's JS reads them.
+    /// node:http: the accepted trailer section, in the form of raw_request_headers, that followed THIS request's chunked
+    /// body. Moved off the connection's single per-parse buffer the moment the
+    /// body finishes (still inside the parser), because a pipelined request's
+    /// parse would otherwise overwrite it before this request's JS reads it.
     pub(crate) request_trailers: JsCell<Vec<u8>>,
     /// The JS wrapper whose `ondata` slot was armed for THIS request body. `get_this_value()`
     /// resolves through the socket's current response, which under pipelining is a different
@@ -193,18 +191,16 @@ unsafe extern "C" {
     safe fn Bun__NodeHTTP__notifyWhenReadParsed(ssl: core::ffi::c_int, socket: *mut c_void)
     -> bool;
 
-    // Moves the trailer fields the parser accepted for the connection's current node:http request
-    // out ([u32 nameLen][u32 valueLen][name][value]...). `*out` points into
+    // Moves the connection's accepted node:http request-trailer fields out. `*out` points into
     // a C++ thread-local valid until the next call on this thread; caller copies immediately.
-    // Returns 0 when there are none or the socket is closed.
+    // Returns 0 when nothing captured or socket closed.
     safe fn Bun__NodeHTTP__takeRequestTrailerBytes(
         is_ssl: bool,
         socket: *mut c_void,
         out: *mut *const u8,
     ) -> usize;
     // Builds req.rawHeaders' flat [name, value, ...] JSArray from the header
-    // bytes captured at dispatch ([u32 nameLen][u32 valueLen][name][value]...),
-    // and req.rawTrailers' from the accepted trailer fields, which have that form.
+    // bytes captured at dispatch ([u32 nameLen][u32 valueLen][name][value]...).
     // `headers` is req.headers if that was built first, for its value strings.
     safe fn Bun__NodeHTTP__buildRawHeadersArray(
         global_object: &JSGlobalObject,
@@ -466,9 +462,9 @@ impl NodeHTTPResponse {
     }
 
     /// Called at this request's body fin, still inside the parser: move the
-    /// connection's accepted trailer fields onto this request before the next
-    /// pipelined message's parse can overwrite them. A no-op unless the parser
-    /// accepted trailer fields for this exact message.
+    /// connection's accepted trailer section onto this request before the next
+    /// pipelined message's parse can overwrite it. A no-op unless a chunked
+    /// body's trailer section was accepted with fields for this exact message.
     fn capture_request_trailers(&self) {
         let flags = self.flags.get();
         if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
@@ -2466,9 +2462,7 @@ impl NodeHTTPResponse {
         Ok(headers)
     }
 
-    /// `handle.takeRequestTrailers()` — the trailer fields the parser accepted
-    /// for this request as a flat [name, value, ...] array, or undefined when
-    /// it has none (or they were already taken). Consumes them.
+    /// `handle.takeRequestTrailers()`: this request's accepted trailer fields as a flat [name, value, ...] array, or undefined. Consumes them.
     pub(crate) fn take_request_trailers(
         &self,
         global_object: &JSGlobalObject,

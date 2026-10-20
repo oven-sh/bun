@@ -136,9 +136,9 @@ function emitEOFIncomingMessageOuter(self) {
   self.complete = true;
   // node:http server: trailer fields received after a chunked request body
   // populate req.trailers/rawTrailers before 'end' is emitted, like Node's
-  // parserOnMessageComplete. Native moved the fields that the parser accepted
-  // onto THIS request's handle at its body fin, so pipelined requests can
-  // neither inherit nor overwrite another request's trailers.
+  // parserOnMessageComplete. Native moved the accepted fields onto THIS request's
+  // handle at its body fin, so pipelined requests can neither inherit nor
+  // overwrite another request's trailers.
   // Trailers can only follow a chunked request body: a no-body request has
   // none, so skip the native call for the common GET/HEAD case.
   if (self[kHandle] !== undefined && !self[noBodySymbol]) {

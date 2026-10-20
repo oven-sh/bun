@@ -292,12 +292,10 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
      * chunked framing for the response body. HTTP_NODE_HAS_RESPONSE_TRAILERS in
      * the shared flags word mirrors !empty(). */
     std::string nodeHttpResponseTrailers;
-    /* The trailer fields that the parser accepted after the final 0-size chunk
-     * of the current request's chunked body, as field records
-     * (HttpParser::fieldRecordLengths): never raw wire bytes. Cleared when a
-     * new request is dispatched; moved onto the request at its body fin
-     * (req.trailers/rawTrailers). The parser gets it as a nullable pointer
-     * (see HttpParser::consumePostPadded). */
+    /* The accepted trailer fields of the current request's chunked body, as field records (HttpParser::fieldRecordLengths).
+     * Cleared when a new request is dispatched; consumed by the JS layer when
+     * the request reaches EOF (req.trailers/rawTrailers). The parser gets it
+     * as a nullable pointer (see HttpParser::consumePostPadded). */
     std::string nodeHttpRequestTrailers;
     bool headersCompleted = false;
     /* Timeout sweep already reported this message; reset when it completes. */

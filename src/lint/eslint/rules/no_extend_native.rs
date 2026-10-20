@@ -10,7 +10,7 @@ const UNEXPECTED: Message = Message::new(
     "{{builtin}} prototype is read only, properties should not be added.",
 );
 
-/// Whether the identifier `e` resolves to a variable of the global scope.
+/// True if the identifier `e` resolves to a variable in the global scope.
 fn is_variable_of_global_scope(e: Expr) -> bool {
     e.reference().is_some_and(|reference| match reference.symbol() {
         Some(symbol) => symbol.scope().kind() == ScopeKind::Global,
@@ -19,7 +19,7 @@ fn is_variable_of_global_scope(e: Expr) -> bool {
 }
 
 impl NoExtendNative {
-    /// The `Builtin` of `e`, if that is `Builtin.prototype`.
+    /// Returns the `Builtin` if `e` is `Builtin.prototype`.
     fn builtin_of_prototype<'a>(&self, e: Expr<'a>) -> Option<Name<'a>> {
         let object = ast_utils::member_object(e)?;
         let name = object.as_ident()?;

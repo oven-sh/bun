@@ -14,7 +14,7 @@ const NO_PROMISE_IN_CALLBACK: Message = Message::new("", "Avoid using promises i
 impl Rule for NoPromiseInCallback {
     const META: Meta = Meta::oxlint(Plugin::Promise, "no-promise-in-callback", Kind::Problem);
     const ON: On = PROMISE_CALLS;
-    /// Whether something is in an error-first callback.
+    /// Caches whether a node is inside an error-first callback.
     type State<'a> = AncestorMemo<'a, ()>;
 
     fn new(options: &Options) -> Self {
@@ -30,8 +30,8 @@ impl Rule for NoPromiseInCallback {
         let Some(call_expr) = e.as_call().filter(|it| is_promise(*it).is_some()) else {
             return;
         };
-        // A function that returns a promise is most likely part of a chain of promises. Parentheses and the whole of an
-        // optional chain are nodes in between for oxlint.
+        // A function that returns a promise is most likely part of a promise chain. In oxlint's AST parentheses and an
+        // optional chain are nodes in between.
         if matches!(e.parent(), Node::Stmt(parent) if parent.tag() == StmtTag::Return) && !e.is_parenthesized() && !e.is_chain_root() {
             return;
         }
@@ -56,7 +56,7 @@ fn is_error_first_callback(func: Func) -> bool {
     first_parameter.and_then(|it| it.pat().as_ident()).is_some_and(|name| name.is_any(&["err", "error"]))
 }
 
-/// It is an argument of `then` or `catch`.
+/// True if it's an argument of `then` or `catch`.
 fn is_within_promise_handler(func: Func) -> bool {
     let Node::Expr(e) = func.owner() else {
         return false;

@@ -1,5 +1,5 @@
-//! The contents of a `package.json`, from `Host::parse_package_json`, and a `tsconfig.json` as
-//! parsed by the one shared parser.
+//! JSON values, which is what `Host::parse_package_json` returns for a `package.json`, and a `tsconfig.json` parsed by
+//! the shared parser.
 
 use crate::atom::Interner;
 use crate::check::spans::{Spans, skip_trivia};
@@ -14,8 +14,8 @@ use crate::util::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 
-/// A value can be nested as deep as memory allows: `JSON.parse` has no limit, and rules read files with it. So `drop`, `clone`
-/// and `==`, which can't report that the stack is full, keep their place in a list and never recurse.
+/// A value can be nested as deep as memory allows, because `JSON.parse` has no depth limit and rules read files with
+/// it. `drop`, `clone` and `==` can't report a stack overflow, so they use an explicit work list instead of recursing.
 #[derive(Debug)]
 pub enum Json {
     Null,
@@ -58,7 +58,7 @@ impl Json {
         nested.extend(inner.map(|it| std::mem::replace(it, Json::Null)));
     }
 
-    /// `self` without what is inside its arrays and objects, which are `null` in the copy.
+    /// Copies `self` one level deep. An array's elements and an object's values are `null` in the copy.
     fn clone_one_level(&self) -> Json {
         match self {
             Json::Null => Json::Null,
@@ -73,7 +73,7 @@ impl Json {
         }
     }
 
-    /// Whether `self` and `other` are equal if what is inside their arrays and objects is.
+    /// True if `self` and `other` are equal, assuming their array elements and object values are.
     fn eq_one_level(&self, other: &Json) -> bool {
         match (self, other) {
             (Json::Null, Json::Null) => true,
@@ -194,7 +194,7 @@ impl Json {
             Json::String(value) => append_quote(out, value),
             Json::Array(items) => {
                 out.push(b'[');
-                // `convertArrayLiteralExpressionToJson` leaves out what is `null`.
+                // `convertArrayLiteralExpressionToJson` skips `null` elements.
                 let converted = items.iter().filter(|item| !matches!(item, Json::Null));
                 for (index, item) in converted.enumerate() {
                     if index > 0 {
@@ -219,9 +219,9 @@ impl Json {
         }
     }
 
-    /// An object with `entries` as a text has them. A key that is written more than once is there once, at its first place and
-    /// with its last value: what `JSON.parse` makes of it, and an object to which each entry is assigned in turn. Everything that
-    /// reads a text makes its objects with this, so whoever walks the entries sees what [`Json::get`] finds.
+    /// Builds an object from `entries` in source order. A repeated key appears once, at its first position and with its
+    /// last value, the same as with `JSON.parse` or when assigning each entry to an object in turn. Every parser builds
+    /// its objects with this, so iterating the entries agrees with [`Json::get`].
     pub fn object(entries: Vec<(Vec<u8>, Json)>) -> Json {
         // Comparing all pairs is faster than hashing for the few keys that most objects have.
         let has_repeats = match entries.len() {
@@ -235,21 +235,21 @@ impl Json {
         if !has_repeats {
             return Json::Object(entries);
         }
-        let mut places: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
-        let mut kept: Vec<(Vec<u8>, Json)> = Vec::with_capacity(entries.len());
+        let mut index_by_key: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
+        let mut deduped: Vec<(Vec<u8>, Json)> = Vec::with_capacity(entries.len());
         for (key, value) in entries {
-            match places.entry(key) {
-                Entry::Occupied(place) => kept[*place.get()].1 = value,
-                Entry::Vacant(place) => {
-                    kept.push((place.key().clone(), value));
-                    place.insert(kept.len() - 1);
+            match index_by_key.entry(key) {
+                Entry::Occupied(map_entry) => deduped[*map_entry.get()].1 = value,
+                Entry::Vacant(map_entry) => {
+                    deduped.push((map_entry.key().clone(), value));
+                    map_entry.insert(deduped.len() - 1);
                 }
             }
         }
-        Json::Object(kept)
+        Json::Object(deduped)
     }
 
-    /// Of two entries with one key the last counts, as for `JSON.parse`.
+    /// If a key is repeated the last entry wins, as with `JSON.parse`.
     pub fn get(&self, key: &[u8]) -> Option<&Json> {
         match self {
             Json::Object(entries) => entries.iter().rfind(|e| e.0 == key).map(|e| &e.1),
@@ -285,7 +285,7 @@ impl Json {
         }
     }
 
-    /// A type with a `Drop` can't be taken apart by a pattern. These three do that.
+    /// A type that implements `Drop` can't be destructured by value, so these three move the contents out instead.
     pub fn into_string(mut self) -> Option<Vec<u8>> {
         match &mut self {
             Json::String(s) => Some(std::mem::take(s)),
@@ -308,7 +308,7 @@ impl Json {
     }
 }
 
-/// The expression of the single statement of a JSON file.
+/// Returns the expression of a JSON file's single statement.
 fn root_expression(hir: &File) -> Option<ExprId> {
     hir.ids(hir.body).find_map(|s| match hir[s].kind {
         StmtKind::ExportAssign(e) => Some(e),
@@ -316,7 +316,7 @@ fn root_expression(hir: &File) -> Option<ExprId> {
     })
 }
 
-/// The index in `File::numbers` of `n`, if `e` is `-n` and `n` a `NumericLiteral`.
+/// If `e` is `-n` and `n` is a `NumericLiteral`, returns the index of `n` in `File::numbers`.
 fn negated_numeric_literal(hir: &File, e: ExprId) -> Option<u32> {
     match hir[e].kind {
         ExprKind::Unary {
@@ -330,19 +330,23 @@ fn negated_numeric_literal(hir: &File, e: ExprId) -> Option<u32> {
     }
 }
 
-/// What a function that visits the values of a JSON text in source order has yet to visit. It is
-/// in a list, the next at the end: the original calls itself, on a stack that grows.
+/// A work item of a function that visits a JSON text's values in source order. Items sit on an explicit stack, next one
+/// last. The original recurses instead, on Go's growable stack.
 enum Pending {
     Value(ExprId),
-    /// Of an object literal.
+    /// A property of an object literal.
     Property(PropId),
 }
 
-/// The end of `parseJSONText` for the file `hir` with source `text`: the errors of
-/// `validateJsonValue` are parse diagnostics.
+/// The last step of `parseJSONText` for the file `hir` with source `text`: adds `validateJsonValue`'s errors as parse
+/// diagnostics.
 pub fn validate_json(hir: &mut File, text: &[u8]) {
     /// `validateJsonValue`, `validateJsonObjectLiteral`
-    fn validate_json_value(spans: Spans<'_, '_>, root: ExprId, refused: &mut Vec<(u32, u32, u32)>) {
+    fn validate_json_value(
+        spans: Spans<'_, '_>,
+        root: ExprId,
+        json_errors: &mut Vec<(u32, u32, u32)>,
+    ) {
         let hir = spans.hir;
         let is_double_quoted = |at: u32| spans.text.get(at as usize) == Some(&b'"');
         let mut pending = vec![Pending::Value(root)];
@@ -352,13 +356,13 @@ pub fn validate_json(hir: &mut File, text: &[u8]) {
                 Pending::Property(p) => {
                     let prop = hir[p];
                     if prop.kind != PropKind::Init {
-                        refused.push((prop.start, 1136, spans.prop(p) as u32));
+                        json_errors.push((prop.start, 1136, spans.prop(p) as u32));
                         continue;
                     }
                     if !is_double_quoted(prop.pos) {
-                        // `getErrorSpanForNode`: a missing name is before the trivia.
+                        // `getErrorSpanForNode`: a missing name's position is before the trivia.
                         let start = skip_trivia(spans.text, prop.pos as usize) as u32;
-                        refused.push((start, 1327, spans.prop_name(p) as u32));
+                        json_errors.push((start, 1327, spans.prop_name(p) as u32));
                     }
                     prop.value
                 }
@@ -380,18 +384,18 @@ pub fn validate_json(hir: &mut File, text: &[u8]) {
                 }
                 _ => 1328,
             };
-            refused.push((start, code, spans.expr(e) as u32));
+            json_errors.push((start, code, spans.expr(e) as u32));
         }
     }
-    let mut refused = Vec::new();
+    let mut json_errors = Vec::new();
     if let Some(root) = root_expression(hir).filter(|_| !hir.has_errors) {
-        validate_json_value(Spans { hir, text }, root, &mut refused);
+        validate_json_value(Spans { hir, text }, root, &mut json_errors);
     }
-    hir.has_parse_diagnostics |= !refused.is_empty();
+    hir.has_parse_diagnostics |= !json_errors.is_empty();
     hir.diagnostics
         .to_mut()
-        .extend(refused.iter().map(|&(start, code, end)| {
-            // Only a missing node ends where the text starts.
+        .extend(json_errors.iter().map(|&(start, code, end)| {
+            // Only a missing node ends at offset 0.
             let end = match end {
                 0 => Diagnostic::NO_LENGTH,
                 end => end,
@@ -423,7 +427,7 @@ fn private_identifier_token_value(text: &[u8]) -> Vec<u8> {
     value
 }
 
-/// `jsnum.ParsePseudoBigInt`: the base 10 digits of the bigint literal `text`.
+/// `jsnum.ParsePseudoBigInt`: returns the base-10 digits of the bigint literal `text`.
 fn parse_pseudo_big_int(text: &[u8]) -> Vec<u8> {
     let text = text.strip_suffix(b"n").unwrap_or(text);
     let (radix, digits) = match text.get(1) {
@@ -432,13 +436,13 @@ fn parse_pseudo_big_int(text: &[u8]) -> Vec<u8> {
         Some(b'x' | b'X') => (16, &text[2..]),
         _ => (10, text),
     };
-    // Least significant first.
+    // Least significant digit first.
     let mut decimal = vec![0u8];
     for &digit in digits {
         let mut carry = char::from(digit).to_digit(radix).unwrap_or(0);
-        for place in &mut decimal {
-            let value = u32::from(*place) * radix + carry;
-            *place = (value % 10) as u8;
+        for decimal_digit in &mut decimal {
+            let value = u32::from(*decimal_digit) * radix + carry;
+            *decimal_digit = (value % 10) as u8;
             carry = value / 10;
         }
         while carry > 0 {
@@ -446,7 +450,11 @@ fn parse_pseudo_big_int(text: &[u8]) -> Vec<u8> {
             carry /= 10;
         }
     }
-    decimal.iter().rev().map(|place| place + b'0').collect()
+    decimal
+        .iter()
+        .rev()
+        .map(|decimal_digit| decimal_digit + b'0')
+        .collect()
 }
 
 /// `tokenValue` of the bigint literal `text`: `scanHexDigits`, `scanBigIntSuffix`.
@@ -469,16 +477,16 @@ pub fn bigint_token_value(text: &[u8]) -> Vec<u8> {
 pub struct TsConfigSourceFile<'s> {
     hir: File<'s>,
     atoms: Interner<'s>,
-    /// `convertConfigFileToObject`: the object that is converted. `None`: the root is not an
-    /// object, nor an array that contains one.
+    /// `convertConfigFileToObject`: the object that gets converted. `None` if the root is neither an object nor an
+    /// array that contains one.
     pub root: Option<ExprId>,
-    /// For an object with many properties that `property` has been asked about: the first with
-    /// each name. It is asked about each of thousands of `paths`.
+    /// Caches the first property with each name, for every large object that `property` has searched. `property` is
+    /// called once per entry of `paths`, and there can be thousands.
     first_with_name: RefCell<FxHashMap<ExprId, FxHashMap<Box<[u8]>, PropId>>>,
 }
 
 impl<'s> TsConfigSourceFile<'s> {
-    /// `NewTsconfigSourceFileFromFilePath`. `None`: the parser failed.
+    /// `NewTsconfigSourceFileFromFilePath`. Returns `None` if the parser failed.
     pub fn parse(
         host: &dyn Host,
         session: &'s Session,
@@ -521,22 +529,22 @@ impl<'s> TsConfigSourceFile<'s> {
         if let Some(name) = prop.key.name() {
             return Some(self.atoms.bytes(name));
         }
-        // A private identifier and a bigint literal declare nothing: the key is without their text.
-        let written = hir
+        // A private identifier or a bigint literal doesn't declare anything, so the key doesn't have its text.
+        let source_text = hir
             .text
             .get(prop.pos as usize..Spans::of(hir).prop_name(p))?;
         let token_value = if is_private_name_at(hir, prop.pos) {
-            private_identifier_token_value(written)
+            private_identifier_token_value(source_text)
         } else if is_bigint_literal_at(hir, prop.pos) {
-            bigint_token_value(written)
+            bigint_token_value(source_text)
         } else {
             return None;
         };
         Some(self.atoms.bytes(self.atoms.intern(&token_value)))
     }
 
-    /// The properties for which `convertObjectLiteralExpressionToJson` calls `onPropertySet`, in
-    /// source order, each with `keyText`. None if `object` is no object literal.
+    /// Yields the properties for which `convertObjectLiteralExpressionToJson` calls `onPropertySet`, in source order,
+    /// each with its `keyText`. Yields nothing if `object` isn't an object literal.
     pub(crate) fn properties(&self, object: ExprId) -> impl Iterator<Item = (PropId, &[u8])> {
         let props = match self.hir[object].kind {
             ExprKind::Object(props) if !is_parenthesized(&self.hir, object) => props,
@@ -550,15 +558,15 @@ impl<'s> TsConfigSourceFile<'s> {
             .filter(|property| !property.1.is_empty())
     }
 
-    /// `getTsConfigObjectLiteralExpression`: `root`, if it is the expression of the first statement
-    /// itself. What is reported after the conversion looks its node up from here.
+    /// `getTsConfigObjectLiteralExpression`: returns `root` if it's the first statement's expression itself. Errors
+    /// reported after the conversion look up their nodes from here.
     pub(crate) fn object_literal_expression(&self) -> Option<ExprId> {
         self.root
             .filter(|&root| root_expression(&self.hir) == Some(root))
     }
 
-    /// `ForEachPropertyAssignment`: the first property of `object` called `key` or `key2`. An empty
-    /// `key2` is a name like any other.
+    /// `ForEachPropertyAssignment`: returns the first property of `object` named `key` or `key2`. An empty `key2` is
+    /// matched like any other name.
     pub fn property(&self, object: ExprId, key: &[u8], key2: Option<&[u8]>) -> Option<PropId> {
         let props = match self.hir[object].kind {
             ExprKind::Object(props) if !is_parenthesized(&self.hir, object) => props,
@@ -567,17 +575,17 @@ impl<'s> TsConfigSourceFile<'s> {
         let mut assignments = props.iter().filter(|&p| self.hir[p].kind == PropKind::Init);
         if props.len() > 32 {
             let mut first_with_name = self.first_with_name.borrow_mut();
-            let of_object = first_with_name.entry(object).or_insert_with(|| {
-                let mut of_object = FxHashMap::default();
+            let by_name = first_with_name.entry(object).or_insert_with(|| {
+                let mut by_name = FxHashMap::default();
                 for p in assignments {
                     if let Some(prop_name) = self.try_get_text_of_property_name(p) {
-                        of_object.entry(prop_name.into()).or_insert(p);
+                        by_name.entry(prop_name.into()).or_insert(p);
                     }
                 }
-                of_object
+                by_name
             });
             let keys = [Some(key), key2].into_iter().flatten();
-            return (keys.filter_map(|key| of_object.get(key).copied())).min_by_key(|p| p.idx());
+            return (keys.filter_map(|key| by_name.get(key).copied())).min_by_key(|p| p.idx());
         }
         assignments.find(|&p| {
             let prop_name = self.try_get_text_of_property_name(p);
@@ -589,7 +597,7 @@ impl<'s> TsConfigSourceFile<'s> {
         self.hir[p].value
     }
 
-    /// None if `array` is no array literal (`IsArrayLiteralExpression`).
+    /// Yields nothing if `array` isn't an array literal (`IsArrayLiteralExpression`).
     pub fn elements(&self, array: ExprId) -> impl Iterator<Item = ExprId> {
         let items = match self.hir[array].kind {
             ExprKind::Array(items) if !is_parenthesized(&self.hir, array) => items,
@@ -598,7 +606,7 @@ impl<'s> TsConfigSourceFile<'s> {
         self.hir.ids(items)
     }
 
-    /// The span of the name of `p`.
+    /// The span of `p`'s name.
     pub fn name_span(&self, p: PropId) -> (u32, u32) {
         (self.hir[p].pos, Spans::of(&self.hir).prop_name(p) as u32)
     }
@@ -607,7 +615,7 @@ impl<'s> TsConfigSourceFile<'s> {
         (start_of(&self.hir, e), Spans::of(&self.hir).expr(e) as u32)
     }
 
-    /// `Loc`: from the end of the token before it.
+    /// `Loc`: starts at the end of the previous token.
     fn loc(&self, start: u32, end: usize) -> (u32, u32) {
         let pos = crate::check::spans::skip_trivia_back(&self.hir.text, start as usize);
         (pos as u32, end as u32)
@@ -618,8 +626,8 @@ impl<'s> TsConfigSourceFile<'s> {
         self.hir.text.get(start_of(&self.hir, e) as usize) == Some(&b'`')
     }
 
-    /// The errors of `convertPropertyValueToJson` for `e`, which is converted for `option`: the
-    /// code, the arguments and the span.
+    /// Collects the errors that `convertPropertyValueToJson` reports when it converts `e` for `option`. Each has a
+    /// code, arguments and a span.
     pub(crate) fn conversion_errors(
         &self,
         e: ExprId,
@@ -627,7 +635,7 @@ impl<'s> TsConfigSourceFile<'s> {
         errors: &mut Vec<(u32, Vec<Vec<u8>>, (u32, u32))>,
     ) {
         let (hir, spans) = (&self.hir, Spans::of(&self.hir));
-        // Each with the option that it, or the object literal that has it, is converted for.
+        // Each item is paired with the option that it, or the object literal containing it, is converted for.
         let mut pending = vec![(Pending::Value(e), option)];
         while let Some((next, option)) = pending.pop() {
             let (e, option) = match next {
@@ -667,12 +675,15 @@ impl<'s> TsConfigSourceFile<'s> {
                 _ => {}
             }
             let (code, args) = match option {
-                Some(option) => (5024, vec![option.name().to_vec(), option.takes().to_vec()]),
+                Some(option) => (
+                    5024,
+                    vec![option.name().to_vec(), option.value_type_name().to_vec()],
+                ),
                 None => (1328, Vec::new()),
             };
             let end = spans.expr(e);
             let loc = match hir[e].kind {
-                // `createMissingNode`: it is empty, at the end of the token before it.
+                // `createMissingNode`: an empty node at the end of the previous token.
                 ExprKind::Missing if !is_parenthesized(hir, e) => (end as u32, end as u32),
                 _ => self.loc(start_of(hir, e), end),
             };
@@ -680,10 +691,10 @@ impl<'s> TsConfigSourceFile<'s> {
         }
     }
 
-    /// `convertPropertyValueToJson`. A value that is not in the expected format becomes `null`,
-    /// which stays in an array (`[null]` is a nil slice, `[]` is not): the readers leave it out.
-    /// So does a value for which the stack, which grows in Go, is at its end. Only `StringifyJson`
-    /// reads what is nested that deep, and it panics beyond `maxNestingDepth`.
+    /// `convertPropertyValueToJson`. A value that isn't in the expected format becomes `null`. The `null` stays in an
+    /// array, because `[null]` is a nil slice and `[]` isn't, and readers skip it. A value nested too deep for the
+    /// stack also becomes `null`, where Go's stack would grow. Only `StringifyJson` reads values nested that deep, and
+    /// it panics beyond `maxNestingDepth`.
     pub fn convert_property_value_to_json(&self, e: ExprId) -> Json {
         let hir = &self.hir;
         match hir[e].kind {

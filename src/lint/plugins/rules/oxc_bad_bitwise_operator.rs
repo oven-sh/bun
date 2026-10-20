@@ -73,7 +73,7 @@ fn is_numeric_expr(e: Expr) -> bool {
     }
 }
 
-/// Whether one of the operands of `a + (b + c) + ..` is a string or a `typeof`.
+/// True if one of the operands of `a + (b + c) + ..` is a string or a `typeof`.
 fn is_string_concat(binary_expr: Expr) -> bool {
     let mut pending: SmallVec<[Expr; 8]> = smallvec![binary_expr];
     while let Some(e) = pending.pop() {

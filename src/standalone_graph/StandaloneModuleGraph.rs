@@ -839,8 +839,6 @@ impl LazySourceMap {
                 let ism = SourceMap::InternalSourceMap {
                     data: blob.as_ptr(),
                 };
-                // Note: `from_internal` fills `internal = Some(ism)` +
-                // `input_line_count = ism.input_line_count()` and defaults the rest.
                 let mut stored = SourceMap::ParsedSourceMap::from_internal(ism);
 
                 let source_files_count = serialized.source_files_count();
@@ -3476,7 +3474,7 @@ pub(crate) fn serialize_json_source_map_for_standalone(
         return Err(crate::Error::InvalidSourceMap);
     }
 
-    let map_blob = SourceMap::InternalSourceMap::from_vlq(map_vlq, 0)
+    let map_blob = SourceMap::InternalSourceMap::from_vlq(map_vlq)
         .map_err(|_| crate::Error::InvalidSourceMap)?;
 
     // Every offset/length in the serialized map is a u32 `StringPointer`;

@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
+import { cares } from "../../scripts/build/deps/cares.ts";
 import { webkit } from "../../scripts/build/deps/webkit.ts";
 import { parsePackedFeaturesList } from "../../scripts/build/features-json.ts";
 import { computeFlags, DARWIN_STACK_SIZE } from "../../scripts/build/flags.ts";
@@ -209,6 +210,14 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     const lto = webkit.source(resolveDarwin());
     if (lto.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${lto.kind}`);
     expect(lto.url).toContain("bun-webkit-macos-arm64-lto.tar.gz");
+  });
+
+  test("c-ares is configured with connectx(), its only switch for TCP Fast Open on macOS", () => {
+    // Without HAVE_CONNECTX in ares_config.h, DNS over TCP on macOS uses a
+    // plain connect() and nothing fails. Linux and FreeBSD need no macro.
+    const build = cares.build(resolveDarwin());
+    if (build.kind !== "direct") throw new Error(`expected a direct c-ares build, got ${build.kind}`);
+    expect(build.headers?.["ares_config.h"]).toEqual(expect.stringContaining("#define HAVE_CONNECTX 1"));
   });
 
   test("ELF links compress debug sections at link time, with and without LTO", () => {

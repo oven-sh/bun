@@ -29,6 +29,15 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// Look up `name` (already known to be under the standalone virtual root)
     /// and return the embedded file's canonical name slice if present.
     fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&'static [u8]>;
+    /// Calls `each(basename, is_dir)` for every entry of the embedded directory `dir` (either path syntax,
+    /// trailing separator allowed); `false` when the graph has no such directory. `/$bunfs` lists `root`.
+    fn for_each_dir_entry(&self, _dir: &[u8], _each: &mut dyn FnMut(&[u8], bool)) -> bool {
+        false
+    }
+    /// The bytes of the embedded file `name` (either path syntax), if there is one.
+    fn file_contents(&self, _name: &[u8]) -> Option<&[u8]> {
+        None
+    }
     /// Whether the embedded file at `name` is an ES module whose record the loader can build without parsing: it carries
     /// a serialized `module_info` body or is a module of the pre-resolved graph.
     fn has_module_info(&self, _name: &[u8]) -> bool {

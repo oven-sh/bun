@@ -9,6 +9,11 @@
 const path = require("node:path");
 const fs = require("node:fs");
 
+// `bake.config.ts` and the plugins run before the code that uses these, and can change them.
+const RegExpEscape = RegExp.escape;
+const MapGroupBy = Map.groupBy;
+const ArrayPrototypeToReversed = Array.prototype.toReversed;
+
 const buildFramework = $newRustFunction("bake/config/plugins.rs", "buildFramework", 1);
 const serveStaticEnv = $newRustFunction("bake/config/plugins.rs", "serveStaticEnv", 0);
 const serveStaticPlugins = $newRustFunction("bake/config/plugins.rs", "serveStaticPlugins", 0);
@@ -93,7 +98,7 @@ function pagesOfRouter(router: any, h: Helpers): FrameworkPage[] {
     const pattern = node.part === "/" ? prefix : prefix + node.part;
     const layouts = node.layout ? [...outerLayouts, node.layout] : outerLayouts;
     const { page } = node;
-    if (page) pages.push({ pattern: pattern || "/", page, layouts: layouts.toReversed() });
+    if (page) pages.push({ pattern: pattern || "/", page, layouts: ArrayPrototypeToReversed.$call(layouts) });
     for (const child of node.children) walk(child, pattern, layouts);
   };
   walk(scanned.toJSON(), "", []);
@@ -144,7 +149,7 @@ function servePatterns(page: FrameworkPage, prefix: string, h: Helpers) {
 
 /** A filter that matches exactly one of `names`. */
 function exactly(names: string[]) {
-  return new RegExp(`^(?:${names.map(name => RegExp.escape(name)).join("|")})$`);
+  return new RegExp(`^(?:${names.map(name => RegExpEscape(name)).join("|")})$`);
 }
 
 function formatLogs(logs: readonly unknown[]) {
@@ -253,7 +258,7 @@ async function build(h: Helpers) {
       const browser = build.config.target === "browser";
       // The entry points: generated files, named as the outputs are.
       build.onResolve(
-        { filter: new RegExp(`^${RegExp.escape(virtualDir + path.sep)}(?:route-\\d+\\.js|production-server\\.ts)$`) },
+        { filter: new RegExp(`^${RegExpEscape(virtualDir + path.sep)}(?:route-\\d+\\.js|production-server\\.ts)$`) },
         (args: any) => ({
           path: args.path,
         }),
@@ -274,7 +279,7 @@ async function build(h: Helpers) {
           return { path: module.path !== undefined ? Bun.resolveSync(module.path, cwd) : builtInPath(args.path) };
         });
       }
-      build.onLoad({ filter: new RegExp(`^${RegExp.escape(virtualDir + path.sep)}`) }, (args: any) => {
+      build.onLoad({ filter: new RegExp(`^${RegExpEscape(virtualDir + path.sep)}`) }, (args: any) => {
         const file: string = args.path;
         return { contents: generated(path.basename(file), browser), loader: path.extname(file).slice(1) };
       });
@@ -384,7 +389,7 @@ async function build(h: Helpers) {
     const metafile = typeof result.metafile === "string" ? JSON.parse(result.metafile) : result.metafile;
     const publicUrl = (output: string) => encodedPath(output.replace(/^\.\//, ""));
     // By real path, as the bundler reports them. Two symlinks can be one file, with one output.
-    const urlsOfHtmlFile = Map.groupBy(htmlPages, page => fs.realpathSync(page.file));
+    const urlsOfHtmlFile = MapGroupBy(htmlPages, page => fs.realpathSync(page.file));
     for (const [output, info] of Object.entries<any>(metafile.outputs)) {
       if (output.endsWith(".html")) {
         const pages = urlsOfHtmlFile.get(fs.realpathSync(path.resolve(cwd, info.entryPoint)));

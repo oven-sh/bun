@@ -2350,6 +2350,82 @@ const htmlFiles = {
   ".env": `PUBLIC_NAME=from-env\n`,
 };
 
+test.concurrent("bun bake build gives the browser the values of .env.production, not .env.development", async () => {
+  using dir = tempDir("bake-build-env-files", {
+    ...htmlFiles,
+    ".env.development": `PUBLIC_NAME=from-development\n`,
+    ".env.production": `PUBLIC_NAME=from-production\n`,
+  });
+  expect((await buildApp(String(dir))).exitCode).toBe(0);
+  const { proc, url } = await startBuild(String(dir));
+  await using _ = proc;
+
+  const [, script] = (await get(url, "/")).match(/<script type="module"[^>]* src="([^"]+)"/)!;
+  const code = await get(url, script);
+  expect(code).toContain("from-production");
+  expect(code).not.toContain("from-development");
+});
+
+test.concurrent("bun bake build does not keep a response with Vary or Set-Cookie", async () => {
+  using dir = tempDir("bake-build-vary", {
+    "render/server.ts": `
+      let renders = 0;
+      export function render(request, meta) {
+        const headers = { "cache-control": "s-maxage=1000", ...meta.pageModule.headers };
+        return new Response("render " + ++renders + " " + request.headers.get("accept-language"), { headers });
+      }
+    `,
+    "bake.config.ts": `export default { plugins: [{ name: "strings", framework: { fileSystemRouterTypes: [{ root: "app/pages", style: "nextjs-pages", serverEntryPoint: "./render/server.ts" }] } }] };`,
+    "app/pages/kept.ts": `export const headers = {}; export default "kept";`,
+    "app/pages/vary.ts": `export const headers = { vary: "Accept-Language" }; export default "vary";`,
+    "app/pages/cookie.ts": `export const headers = { "set-cookie": "session=first" }; export default "cookie";`,
+  });
+  expect((await buildApp(String(dir))).exitCode).toBe(0);
+  const { proc, url } = await startBuild(String(dir));
+  await using _ = proc;
+  const language = async (path: string, language: string) => {
+    const res = await fetch(new URL(path, url), { headers: { "accept-language": language } });
+    return (await res.text()).split(" ").slice(2).join(" ");
+  };
+
+  expect([await language("/kept", "en"), await language("/kept", "fr")]).toEqual(["en", "en"]);
+  expect([await language("/vary", "en"), await language("/vary", "fr")]).toEqual(["en", "fr"]);
+  expect([await language("/cookie", "en"), await language("/cookie", "fr")]).toEqual(["en", "fr"]);
+});
+
+test.concurrent("the server of bun bake build reads the options of app/server.ts from its prototype", async () => {
+  using dir = tempDir("bake-build-class-export", {
+    "app/server.ts": `
+      class App {
+        get routes() { return { "/route": new Response("from a route") }; }
+        fetch() { return new Response("from fetch"); }
+      }
+      export default new App();
+    `,
+  });
+  expect((await buildApp(String(dir))).exitCode).toBe(0);
+  const { proc, url } = await startBuild(String(dir));
+  await using _ = proc;
+
+  expect(await get(url, "/route")).toBe("200 from a route");
+  expect(await get(url, "/other")).toBe("200 from fetch");
+});
+
+test.concurrent("bun bake build works after bake.config.ts removes the globals that it uses", async () => {
+  using dir = tempDir("bake-build-globals", {
+    "bake.config.ts": `
+      delete RegExp.escape;
+      delete Map.groupBy;
+      delete Array.prototype.toReversed;
+      export default {};
+    `,
+    "app/pages/index.html": `<!doctype html><html><body><h1>home</h1></body></html>`,
+  });
+  const { stdout, stderr, exitCode } = await buildApp(String(dir));
+  expect(stdout + stderr).toContain("Built 1 page");
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("bun bake build serves .html pages of the same file name, from any folder", async () => {
   using dir = tempDir("bake-build-html", htmlFiles);
   expect((await buildApp(String(dir))).exitCode).toBe(0);

@@ -7,7 +7,7 @@
 // same path, whatever the query: a response that depends on the query must not set `s-maxage`. After
 // that, the next request gets the kept response and the page renders again in the background
 // (`stale-while-revalidate`). The default framework sets it for pages without
-// `getServerSideProps`.
+// `getServerSideProps`. A response with `Vary` or `Set-Cookie` is for one visitor, and is not kept.
 
 type Params = Record<string, string | string[]>;
 
@@ -76,8 +76,9 @@ function keep(key: string, entry: Kept) {
 }
 
 function keepFor(response: Response): number | undefined {
-  if (response.status !== 200) return undefined;
-  const cacheControl = response.headers.get("cache-control");
+  const { headers } = response;
+  if (response.status !== 200 || headers.has("vary") || headers.has("set-cookie")) return undefined;
+  const cacheControl = headers.get("cache-control");
   const maxAge = cacheControl && /(?:^|,)\s*s-maxage=(\d+)/i.exec(cacheControl);
   const seconds = maxAge ? Number(maxAge[1]) : 0;
   return seconds > 0 ? seconds : undefined;
@@ -210,8 +211,8 @@ export function start(build: Build) {
   if (build.app === null || (build.app !== undefined && typeof build.app !== "object")) {
     throw new Error(`"app/server.ts" must have a default export with "routes", "fetch" or "websocket".`);
   }
-  const { static: staticRoutes, ...app }: Record<string, any> = build.app ?? {};
-  const appRoutes = app.routes ?? staticRoutes;
+  const app: Record<string, any> = build.app ?? {};
+  const appRoutes = app.routes ?? app.static;
   if (appRoutes && typeof appRoutes === "object" && !Array.isArray(appRoutes)) {
     for (const [route, value] of Object.entries(appRoutes)) {
       if (pages.has(route)) throw new Error(`The route "${route}" of app/server.ts is also a page.`);
@@ -219,16 +220,21 @@ export function start(build: Build) {
     }
   }
 
-  const server = Bun.serve({
-    ...app,
-    routes,
-    fetch: app.fetch ?? (() => new Response("Not Found", { status: 404 })),
-    development: false,
-    // As in `bun bake`, a `unix` socket in the export is kept: `PORT` and `HOST` are for TCP.
-    ...(app.unix !== undefined
-      ? { port: undefined, hostname: undefined, host: undefined }
-      : { port: process.env.PORT ?? app.port ?? 3000, hostname: process.env.HOST ?? app.hostname ?? app.host }),
-  });
+  // As in `bun bake`, the options of the export count wherever it has them: on its prototype too.
+  const options = Object.create(
+    app,
+    Object.getOwnPropertyDescriptors({
+      routes,
+      static: undefined,
+      fetch: app.fetch ?? (() => new Response("Not Found", { status: 404 })),
+      development: false,
+      // As in `bun bake`, a `unix` socket in the export is kept: `PORT` and `HOST` are for TCP.
+      ...(app.unix !== undefined
+        ? { port: undefined, hostname: undefined, host: undefined }
+        : { port: process.env.PORT ?? app.port ?? 3000, hostname: process.env.HOST ?? app.hostname ?? app.host }),
+    }),
+  );
+  const server = Bun.serve(options);
   console.log(`Listening on ${server.url}`);
   return server;
 }

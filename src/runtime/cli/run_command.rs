@@ -2818,6 +2818,11 @@ impl RunCommand {
                     Output::flush();
                     Global::exit(1);
                 }
+                // Before the VM loads the `.env` files: `.env.production`, not `.env.development`.
+                this_transpiler
+                    .env_mut()
+                    .map
+                    .put(b"NODE_ENV", b"production")?;
                 if let Err(err) = Self::boot_main(ctx, BootMain::Bake) {
                     Self::boot_failed_exit(ctx, b"bake", &err);
                 }

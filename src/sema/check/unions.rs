@@ -1489,7 +1489,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// removes duplicates. Returns `found` plus what the types add.
     fn add_types_to_intersection(
         &mut self,
-        set: &mut OrderedSet<TypeId>,
+        set: &mut Flat,
         mut found: MembersByFlags,
         types: &[TypeId],
     ) -> MembersByFlags {
@@ -1503,7 +1503,7 @@ impl<'p, 's> Checker<'p, 's> {
             if self.is_empty_anonymous_object_type(ty) {
                 if found.includes & tf::INCLUDES_EMPTY_OBJECT == 0 {
                     found.includes |= tf::INCLUDES_EMPTY_OBJECT;
-                    set.insert(ty);
+                    set.push(ty);
                 }
                 continue;
             }
@@ -1524,7 +1524,9 @@ impl<'p, 's> Checker<'p, 's> {
                 if member != ty {
                     found.includes |= tf::INCLUDES_MISSING_TYPE;
                 }
-                set.insert(member);
+                if !set.contains(&member) {
+                    set.push(member);
+                }
                 found.add(one);
                 continue;
             }
@@ -1605,9 +1607,8 @@ impl<'p, 's> Checker<'p, 's> {
         no_constraint_reduction: bool,
         alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
-        let mut set = OrderedSet::default();
+        let mut set = Flat::with_capacity(types.len());
         let found = self.add_types_to_intersection(&mut set, MembersByFlags::default(), types);
-        let mut set: Flat = set.into_keys();
         let includes = found.includes;
         if includes & tf::NEVER != 0 {
             return if set.contains(&TypeId::SILENT_NEVER) {

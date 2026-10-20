@@ -114,12 +114,7 @@ pub(crate) struct OrderedSet<K> {
 }
 
 impl<K> OrderedSet<K> {
-    /// `orderedSetMapThreshold`
     const FEW: usize = 16;
-
-    pub(crate) fn into_keys(self) -> SmallVec<[K; OrderedSet::<()>::FEW]> {
-        self.keys
-    }
 }
 
 impl<K> Default for OrderedSet<K> {
@@ -894,10 +889,5 @@ mod tests {
         }
         assert_eq!(keys.index_of(39 * 7), Some(39));
         assert!(keys.index_of(1).is_none() && keys.insert(1) && !keys.insert(1));
-        assert!(
-            keys.into_keys()
-                .into_iter()
-                .eq((0..40).map(|key| key * 7).chain([1]))
-        );
     }
 }

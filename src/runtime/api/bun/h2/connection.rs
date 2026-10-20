@@ -33,6 +33,9 @@ mod pseudo {
 #[derive(Clone, Copy)]
 pub(crate) struct PendingLocalSettings {
     pub settings: Settings,
+    /// The embedder's name for what it keeps on record for this submission (0: nothing).
+    /// `Sink::on_local_settings` hands it back with the ACK.
+    pub token: u32,
 }
 
 /// Per-stream protocol state tracked by the engine.
@@ -194,7 +197,8 @@ pub(crate) trait Sink {
     /// `lib_error_code` is the negative nghttp2-style library error code (`wire::lib_error`) the
     /// embedder maps to node's NghttpError.
     fn on_error(&self, lib_error_code: i32, last_stream_id: u32, debug: &[u8]);
-    fn on_local_settings(&self, settings: &Settings);
+    /// `token`: the acknowledged submission's [`PendingLocalSettings::token`].
+    fn on_local_settings(&self, settings: &Settings, token: u32);
     fn on_remote_settings(&self, settings: &Settings);
     fn on_ping(&self, payload: &[u8], is_ack: bool);
     /// `code` is the raw u32 from the wire so unknown error codes survive to JS (node parity).
@@ -757,12 +761,13 @@ impl Connection {
                     .pop_front()
                     .unwrap_or(PendingLocalSettings {
                         settings: self.local_settings,
+                        token: 0,
                     });
             self.acked_local_initial_window = acked.settings.initial_window_size;
             // The peer has acknowledged this submission: header-list enforcement may now use the
             // limit it carried.
             self.enforced_max_header_list_size = acked.settings.max_header_list_size;
-            sink.on_local_settings(&acked.settings);
+            sink.on_local_settings(&acked.settings, acked.token);
             return false;
         }
         // node's maxSettings (nghttp2 max_settings): refuse SETTINGS frames carrying more entries
@@ -2130,6 +2135,8 @@ mod tests {
         pings: RefCell<Vec<(Vec<u8>, bool)>>,
         remote_settings: Cell<u32>,
         goaway: Cell<Option<(u32, u32)>>,
+        /// The token of each acknowledged SETTINGS submission, in ACK order.
+        acked_settings: RefCell<Vec<u32>>,
         /// nghttp2-style lib error code from on_error (locally-detected connection errors).
         local_error: Cell<Option<i32>>,
         opens: RefCell<Vec<u32>>,
@@ -2151,7 +2158,9 @@ mod tests {
             // send_go_away() reports through on_error; record it so the _is_goaway tests can assert.
             self.local_error.set(Some(lib_code));
         }
-        fn on_local_settings(&self, _s: &Settings) {}
+        fn on_local_settings(&self, _s: &Settings, token: u32) {
+            self.acked_settings.borrow_mut().push(token);
+        }
         fn on_remote_settings(&self, _s: &Settings) {
             self.remote_settings.set(self.remote_settings.get() + 1);
         }
@@ -2251,6 +2260,28 @@ mod tests {
         let fed = c.receive(&sink, &f);
         assert!(fed.fatal);
         assert_eq!(sink.local_error.get(), Some(wire::lib_error::PROTO));
+    }
+
+    #[test]
+    fn settings_ack_returns_the_token_of_its_submission() {
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(true, Settings::default());
+        c.preface_received = wire::CONNECTION_PREFACE.len();
+        for token in [0, 7, 9] {
+            c.pending_local_settings_acks
+                .push_back(PendingLocalSettings {
+                    settings: Settings::default(),
+                    token,
+                });
+        }
+        let ack = frame(FrameType::Settings, wire::flags::ACK, 0, &[]);
+        // One more ACK than submissions: the last one is unsolicited and reaches nobody.
+        for _ in 0..4 {
+            let fed = c.receive(&sink, &ack);
+            assert!(!fed.fatal);
+            assert_eq!(fed.consumed, ack.len());
+        }
+        assert_eq!(*sink.acked_settings.borrow(), vec![0, 7, 9]);
     }
 
     #[test]

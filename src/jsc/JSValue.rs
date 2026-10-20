@@ -1603,6 +1603,34 @@ impl JSValue {
         AsyncContextFrame__withAsyncContextIfNeeded(global, self)
     }
 
+    /// Like [`with_async_context_if_needed`](Self::with_async_context_if_needed), but "no async
+    /// context" is captured too: the callback then runs with none, and not with the one that is
+    /// current where it is called. A wrapper is bound again. `self` unchanged while nothing tracks
+    /// async contexts.
+    #[inline]
+    pub fn with_async_context(self, global: &JSGlobalObject) -> JSValue {
+        unsafe extern "C" {
+            safe fn AsyncContextFrame__withAsyncContext(
+                global: &JSGlobalObject,
+                callback: JSValue,
+            ) -> JSValue;
+        }
+        AsyncContextFrame__withAsyncContext(global, self)
+    }
+
+    /// Whether a call of this wrapper is dropped: the `Bun.ModuleGraph` it was wrapped inside has
+    /// been disposed since. `false` for anything that is not a wrapper.
+    #[inline]
+    pub fn is_of_stopped_module_graph(self, global: &JSGlobalObject) -> bool {
+        unsafe extern "C" {
+            safe fn AsyncContextFrame__isOfStoppedModuleGraph(
+                global: &JSGlobalObject,
+                stored: JSValue,
+            ) -> bool;
+        }
+        AsyncContextFrame__isOfStoppedModuleGraph(global, self)
+    }
+
     /// For a handler script sets on something long-lived whose events arrive from the event loop: it
     /// continues the `Bun.ModuleGraph` whose script set it, without the `AsyncLocalStorage` stores of
     /// that moment. Outside any graph, `self` unchanged.

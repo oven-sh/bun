@@ -1008,6 +1008,62 @@ impl Drop for Keepalive<'_> {
     }
 }
 
+/// A SETTINGS frame this side sent and the peer has not acknowledged yet (node's `Http2Settings`):
+/// what the ACK is delivered to.
+struct PendingAck {
+    callback: StrongOptional,
+    /// The session's delivery function, bound to the async context of the call that sent the
+    /// frame. Empty while nothing tracks async contexts: the session's handler then delivers.
+    deliver: StrongOptional,
+    /// Read for a callback only.
+    sent_at: Option<std::time::Instant>,
+}
+
+impl PendingAck {
+    /// `None` when there is nothing to keep: no callback, and no async context to deliver in.
+    fn capture(global: &JSGlobalObject, callback: JSValue, deliver: JSValue) -> Option<Self> {
+        let has_callback = callback.is_callable();
+        let bound = deliver.with_async_context(global);
+        let has_context = bound != deliver;
+        if !has_callback && !has_context {
+            return None;
+        }
+        Some(Self {
+            callback: if has_callback {
+                StrongOptional::create(callback, global)
+            } else {
+                StrongOptional::empty()
+            },
+            deliver: if has_context {
+                StrongOptional::create(bound, global)
+            } else {
+                StrongOptional::empty()
+            },
+            sent_at: has_callback.then(std::time::Instant::now),
+        })
+    }
+
+    fn callback(&self) -> JSValue {
+        self.callback.get().unwrap_or(JSValue::UNDEFINED)
+    }
+
+    /// Milliseconds since the frame was sent (node reports a fraction too).
+    fn duration(&self) -> JSValue {
+        match self.sent_at {
+            Some(sent_at) => JSValue::js_number(sent_at.elapsed().as_secs_f64() * 1000.0),
+            None => JSValue::UNDEFINED,
+        }
+    }
+}
+
+/// The records of the frames that wait for an ACK. Allocated by the first call that keeps one.
+#[derive(Default)]
+struct PendingAcks {
+    /// `PendingLocalSettings::token` of the newest SETTINGS record.
+    last_token: u32,
+    settings: Vec<(u32, PendingAck)>,
+}
+
 /// A `&mut Stream` that only exists inside an armed dispatch scope (`enter_stream_dispatch`):
 /// while it is live, rewrite_read defers stream frees, so user JS that re-enters `read()`
 /// (option getters, header-value `toString`) cannot free the stream out from under the borrow.
@@ -1102,6 +1158,7 @@ pub(crate) struct H2FrameParser {
     /// order).
     pending_settings_window_submissions:
         JsCell<Vec<crate::api::h2::connection::PendingLocalSettings>>,
+    pending_acks: JsCell<Option<Box<PendingAcks>>>,
     /// Stream ids whose legacy-side lifecycle finished while a dispatch held the engine
     /// borrow (the normal request path: receive() -> JS handler -> respond -> END_STREAM).
     /// Drained into Connection::close_stream on the next rewrite_read batch.
@@ -2066,7 +2123,12 @@ impl H2FrameParser {
         off
     }
 
-    pub(crate) fn set_settings(&self, settings: FullSettingsPayload) -> bool {
+    /// `ack`: what the peer's ACK of this frame is delivered to. Kept only when the frame is sent.
+    fn set_settings(
+        &self,
+        settings: FullSettingsPayload,
+        ack: Option<PendingAck>,
+    ) -> bool {
         bun_output::scoped_log!(H2FrameParser, "HTTP_FRAME_SETTINGS ack false");
 
         if self.outstanding_settings.get() >= self.max_outstanding_settings.get() {
@@ -2099,14 +2161,41 @@ impl H2FrameParser {
             .set(self.outstanding_settings.get() + 1);
 
         // Remember which values this submission carries so the engine can attribute the peer's
-        // ACK to it (§6.5.3 - ACKs apply to outstanding SETTINGS in order).
+        // ACK to it (§6.5.3 - ACKs apply to outstanding SETTINGS in order). The record is kept
+        // before the write: a transport that is written to from JS can deliver the ACK inside it.
+        let token = self.keep_settings_ack(ack);
         self.pending_settings_window_submissions.with_mut(|v| {
             v.push(crate::api::h2::connection::PendingLocalSettings {
                 settings: settings.to_engine_settings(),
+                token,
             })
         });
         let _ = self.write(&buffer[..FrameHeader::BYTE_SIZE + payload_len]);
         true
+    }
+
+    /// Returns the `PendingLocalSettings::token` that `take_settings_ack` gives `ack` back for.
+    fn keep_settings_ack(&self, ack: Option<PendingAck>) -> u32 {
+        let Some(ack) = ack else {
+            return 0;
+        };
+        self.pending_acks.with_mut(|acks| {
+            let acks = acks.get_or_insert_default();
+            acks.last_token = acks.last_token.wrapping_add(1).max(1);
+            acks.settings.push((acks.last_token, ack));
+            acks.last_token
+        })
+    }
+
+    fn take_settings_ack(&self, token: u32) -> Option<PendingAck> {
+        if token == 0 {
+            return None;
+        }
+        self.pending_acks.with_mut(|acks| {
+            let settings = &mut acks.as_mut()?.settings;
+            let index = settings.iter().position(|(kept, _)| *kept == token)?;
+            Some(settings.remove(index).1)
+        })
     }
 
     pub(crate) fn abort_stream(&self, stream: &mut Stream, abort_reason: JSValue) {
@@ -2339,6 +2428,7 @@ impl H2FrameParser {
         self.pending_settings_window_submissions.with_mut(|v| {
             v.push(crate::api::h2::connection::PendingLocalSettings {
                 settings: self.local_settings.get().to_engine_settings(),
+                token: 0,
             })
         });
         let _ = settings_header.write(&mut preface_stream, &self.frames_sent_legacy);
@@ -2473,6 +2563,30 @@ impl H2FrameParser {
             this_value,
             ctx_value,
             &[ctx_value, value, extra, extra2],
+        );
+    }
+
+    /// Calls `deliver(session, ...values)`. `deliver` is what `PendingAck::capture` bound: the call
+    /// runs in the async context of the call that sent the acknowledged frame.
+    fn deliver_ack(&self, deliver: JSValue, values: &[JSValue; 3]) {
+        let Some(this_value) = self.strong_this.get().try_get() else {
+            return;
+        };
+        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
+            return;
+        };
+        let data = [ctx_value, values[0], values[1], values[2]];
+        let handlers = self.handlers.get();
+        if handlers.should_skip_dispatch(&data) {
+            return;
+        }
+        let _dispatch = self.enter_dispatch();
+        handlers.vm.event_loop_ref().run_callback(
+            bun_event_loop::ContextId::NONE,
+            deliver,
+            &handlers.global(),
+            ctx_value,
+            &data,
         );
     }
 
@@ -3825,11 +3939,13 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         );
     }
 
-    fn on_local_settings(&self, settings: &crate::api::h2::settings::Settings) {
+    fn on_local_settings(&self, settings: &crate::api::h2::settings::Settings, token: u32) {
         // Bridge: our SETTINGS was ACKed — release the legacy outstanding-settings slot so the
         // legacy settings() host fn doesn't hit MAX_PENDING_SETTINGS_ACK.
         self.outstanding_settings
             .set(self.outstanding_settings.get().saturating_sub(1));
+        // Out of the store before any script runs: a callback can call settings() or destroy().
+        let ack = self.take_settings_ack(token);
         let g = self.global();
         let js = rewrite_settings_to_js(settings, g);
         // node exposes the custom settings this side submitted on localSettings.customSettings.
@@ -3845,7 +3961,33 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             }
             js.put(&g, b"customSettings".as_slice(), custom);
         }
-        self.dispatch(JSH2FrameParser::Gc::onLocalSettings, js);
+        let Some(ack) = ack else {
+            return self.dispatch(JSH2FrameParser::Gc::onLocalSettings, js);
+        };
+        match ack.deliver.get() {
+            // Nothing tracked async contexts when the frame was sent: the handler delivers.
+            None => self.dispatch_with_2_extra(
+                JSH2FrameParser::Gc::onLocalSettings,
+                js,
+                ack.callback(),
+                ack.duration(),
+            ),
+            // The caller's Bun.ModuleGraph was disposed: its callback is not called, and the
+            // session still hears 'localSettings'.
+            Some(deliver) if deliver.is_of_stopped_module_graph(&g) => {
+                self.dispatch(JSH2FrameParser::Gc::onLocalSettings, js)
+            }
+            Some(deliver) => {
+                // One microtask checkpoint, after the delivery.
+                // SAFETY: the VM owns its event loop for the process lifetime.
+                let _entered = unsafe {
+                    bun_jsc::event_loop::EventLoop::enter_scope(self.handlers.get().vm.event_loop())
+                };
+                // `false`: the handler leaves the delivery to the call below.
+                self.dispatch_with_extra(JSH2FrameParser::Gc::onLocalSettings, js, JSValue::FALSE);
+                self.deliver_ack(deliver, &[js, ack.callback(), ack.duration()]);
+            }
+        }
     }
 
     fn on_remote_custom_setting(&self, id: u16, value: u32) {
@@ -4586,14 +4728,17 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let [options] = callframe.arguments_as_array::<1>();
+        let [options, callback, deliver] = callframe.arguments_as_array::<3>();
         if callframe.arguments_count() < 1 {
             return Err(global_object.throw(format_args!("Expected settings argument")));
         }
 
         this.load_settings_from_js_value(global_object, options)?;
 
-        Ok(JSValue::from(this.set_settings(this.local_settings.get())))
+        let ack = PendingAck::capture(global_object, callback, deliver);
+        Ok(JSValue::from(
+            this.set_settings(this.local_settings.get(), ack),
+        ))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -7517,6 +7662,7 @@ impl H2FrameParser {
             pending_engine_stream_closes: JsCell::new(Vec::new()),
             dispatch_depth: Cell::new(0),
             pending_settings_window_submissions: JsCell::new(Vec::new()),
+            pending_acks: JsCell::new(None),
             max_rejected_streams: Cell::new(100),
             max_session_invalid_frames: Cell::new(1000),
             stream_reset_burst: Cell::new(crate::api::h2::connection::DEFAULT_STREAM_RESET_BURST),
@@ -7736,7 +7882,7 @@ impl H2FrameParser {
             this_ref.local_settings.get().header_table_size,
         )));
         if is_server {
-            let _ = this_ref.set_settings(this_ref.local_settings.get());
+            let _ = this_ref.set_settings(this_ref.local_settings.get(), None);
         } else {
             // consider that we need to queue until the first flush
             this_ref.has_nonnative_backpressure.set(true);
@@ -7789,6 +7935,8 @@ impl H2FrameParser {
         self.tx_tracker.set(TxFrameTracker::default());
         // Drop every per-stream JS context root; the parser is detaching.
         self.sctx.with_mut(|m| m.clear());
+        // And the callbacks that waited for an ACK: none of them is called (node does not either).
+        self.pending_acks.set(None);
         self.write_buffer_offset.set(0);
 
         // `HpackHandle::drop` → `lshpack_wrapper_deinit` (cleanup + free).

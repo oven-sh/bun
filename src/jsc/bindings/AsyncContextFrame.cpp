@@ -59,6 +59,17 @@ JSValue AsyncContextFrame::withAsyncContextIfNeeded(JSGlobalObject* globalObject
         context);
 }
 
+JSValue AsyncContextFrame::withAsyncContext(JSGlobalObject* globalObject, JSValue callback)
+{
+    if (!globalObject->isAsyncContextTrackingEnabled()) [[likely]]
+        return callback;
+    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(callback))
+        callback = wrapper->callback.get();
+    else if (!callback.isCallable())
+        return callback;
+    return AsyncContextFrame::create(globalObject, callback, globalObject->m_asyncContextData.get()->getInternalField(0));
+}
+
 JSValue AsyncContextFrame::withGraphContextIfNeeded(JSGlobalObject* globalObject, JSValue callback)
 {
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
@@ -129,6 +140,18 @@ void auditEverything(JSGlobalObject* globalObject, JSValue value, JSValue thisVa
 extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlobalObject* globalObject, JSC::EncodedJSValue callback)
 {
     return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, JSValue::decode(callback)));
+}
+
+extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContext(JSGlobalObject* globalObject, JSC::EncodedJSValue callback)
+{
+    return JSValue::encode(AsyncContextFrame::withAsyncContext(globalObject, JSValue::decode(callback)));
+}
+
+// Whether a call of `stored` is dropped: it was wrapped inside a Bun.ModuleGraph that has been disposed since.
+extern "C" bool AsyncContextFrame__isOfStoppedModuleGraph(JSGlobalObject* globalObject, JSC::EncodedJSValue stored)
+{
+    auto* wrapper = dynamicDowncast<AsyncContextFrame>(JSValue::decode(stored));
+    return wrapper && Bun::shouldDropCallbackOfStoppedModuleGraph(defaultGlobalObject(globalObject), wrapper->context.get());
 }
 
 extern "C" JSC::EncodedJSValue AsyncContextFrame__withGraphContextIfNeeded(JSGlobalObject* globalObject, JSC::EncodedJSValue callback)

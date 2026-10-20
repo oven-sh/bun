@@ -1953,6 +1953,33 @@ function makeHttp2Ping(callback) {
   };
 }
 
+// What the peer's ACK of a settings() call delivers, in node's order (settingsCallback in
+// lib/internal/http2/core.js): the callback, then 'localSettings'. The parser binds it to the
+// async context of each settings() call, where node makes an Http2Settings.
+function settingsAcked(
+  self: Http2Session,
+  settings: Settings,
+  callback: Function | undefined,
+  duration: number | undefined,
+) {
+  if (callback !== undefined) callback(null, settings, duration);
+  self.emit("localSettings", settings);
+}
+
+// A copy of settings that validateSettings() accepted, for the parser to read when the session
+// connects. validateSettings() reads a custom setting id with Number(), as node does ("0x10" is 16).
+// The parser reads decimal ids only, and it must not throw that late.
+function settingsToSendLater(settings: Settings): Settings {
+  const copy = { ...settings };
+  const custom = settings.customSettings;
+  if (custom !== undefined) {
+    const byId: Record<number, number> = {};
+    for (const key of ObjectKeys(custom)) byId[Number(key)] = custom[key];
+    copy.customSettings = byId;
+  }
+  return copy;
+}
+
 function cancelPendingPings(callbacks): void {
   if (!callbacks) return;
   const err = $ERR_HTTP2_PING_CANCEL();
@@ -4030,9 +4057,6 @@ class ServerHttp2Session extends Http2Session {
   // ERR_HTTP2_MAX_PENDING_SETTINGS_ACK when this exceeds maxOutstandingSettings.
   #pendingSettingsAckCount: number = 1;
   #maxOutstandingSettings: number = 10;
-  // node's Http2Settings queue: one entry per outstanding SETTINGS (initial-preface
-  // seed = null), invoked after 'localSettings' when that submission's ACK arrives.
-  #pendingSettingsCallbacks: Array<[Function, number] | null> = [null];
   #remoteSettings: Settings | null = null;
   #pingCallbacks: Array<[Function, number]> | null = null;
   #strictFieldWhitespaceValidation: boolean = true;
@@ -4212,7 +4236,12 @@ class ServerHttp2Session extends Http2Session {
         self.emit("stream", stream, headers, flags, rawheaders);
       }
     },
-    localSettings(self: ServerHttp2Session, settings: Settings) {
+    localSettings(
+      self: ServerHttp2Session,
+      settings: Settings,
+      callback: Function | false | undefined,
+      duration: number | undefined,
+    ) {
       if (!self) return;
       self.#localSettings = settings;
       self.#pendingSettingsAck = false;
@@ -4233,11 +4262,8 @@ class ServerHttp2Session extends Http2Session {
         captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
         setImmediate(destroyIfNotDestroyedNT, self);
       }
-      const queued = self.#pendingSettingsCallbacks.shift();
-      // Node's settingsCallback (lib/internal/http2/core.js) invokes the settings()
-      // callback first and emits 'localSettings' after it.
-      if (queued != null) queued[0](null, settings, Date.now() - queued[1]);
-      self.emit("localSettings", settings);
+      // false: the parser calls settingsAcked() next, in the async context of that settings() call.
+      if (callback !== false) settingsAcked(self, settings, callback, duration);
     },
     remoteSettings(self: ServerHttp2Session, settings: Settings) {
       if (!self) return;
@@ -4685,27 +4711,27 @@ class ServerHttp2Session extends Http2Session {
     // in ServerHttp2Session's constructor). Clients still accept `enablePush`
     // via their own `settings()` method.
     settings = { ...settings, enablePush: false };
-    if (typeof settings.maxConcurrentStreams === "number") {
-      this.#advertisedMaxConcurrentStreams = settings.maxConcurrentStreams;
-    }
     // node: enforce maxOutstandingSettings - the session is destroyed with
     // ERR_HTTP2_MAX_PENDING_SETTINGS_ACK when too many SETTINGS are un-ACKed.
-    this.#pendingSettingsAckCount++;
-    if (this.#pendingSettingsAckCount > this.#maxOutstandingSettings) {
+    if (this.#pendingSettingsAckCount >= this.#maxOutstandingSettings) {
+      // The frame is not sent. node tells the callback first (Http2Session::AddSettings).
+      if (callback !== undefined) callback($ERR_HTTP2_SETTINGS_CANCEL());
       this.destroy($ERR_HTTP2_MAX_PENDING_SETTINGS_ACK(), constants.NGHTTP2_INTERNAL_ERROR);
       return;
     }
+    this.#pendingSettingsAckCount++;
+    if (typeof settings.maxConcurrentStreams === "number") {
+      this.#advertisedMaxConcurrentStreams = settings.maxConcurrentStreams;
+    }
     this.#pendingSettingsAck = true;
-    this.#parser?.settings(settings);
+    // The parser keeps the callback until the ACK of this frame, with the async context of this call.
+    this.#parser?.settings(settings, callback, settingsAcked);
     // The frame is queued on the native session; flush it now (as close() does for its
     // GOAWAY) instead of waiting for the next unrelated write. Node schedules a session
     // write for every settings() call, so its SETTINGS goes out with the current batch -
     // a late frame here means the ACK trails the peer's response and a session closed at
     // that response's end never resolves the settings callback.
     this.#parser?.flush?.();
-    // Queue the callback so this call's own ACK invokes it (after 'localSettings');
-    // the null seed absorbs the initial-preface ACK that has no user callback.
-    this.#pendingSettingsCallbacks.push(typeof callback === "function" ? [callback, Date.now()] : null);
   }
 
   // Gracefully closes the Http2Session, allowing any existing streams to complete on their own and preventing new Http2Stream instances from being created. Once closed, http2session.destroy() might be called if there are no open Http2Stream instances.
@@ -4978,6 +5004,11 @@ class ClientHttp2Session extends Http2Session {
   #closeCalled: boolean = false;
   /// connected indicates that the connection/socket is connected
   #connected: boolean = false;
+  // node's `!connecting`: true once #onConnect ran, and at once for a socket that createConnection()
+  // returned connected.
+  #ready: boolean = false;
+  // The settings() calls made before that, for #onConnect to send.
+  #settingsBeforeConnect: Array<[Settings, Function | undefined]> | null = null;
   #connections: number = 0;
 
   #socket_proxy: import("node:net").Socket | import("node:tls").TLSSocket | undefined;
@@ -4993,9 +5024,6 @@ class ClientHttp2Session extends Http2Session {
   // ERR_HTTP2_MAX_PENDING_SETTINGS_ACK when this exceeds maxOutstandingSettings.
   #pendingSettingsAckCount: number = 1;
   #maxOutstandingSettings: number = 10;
-  // node's Http2Settings queue: one entry per outstanding SETTINGS (initial-preface
-  // seed = null), invoked after 'localSettings' when that submission's ACK arrives.
-  #pendingSettingsCallbacks: Array<[Function, number] | null> = [null];
   #remoteSettings: Settings | null = null;
   #pingCallbacks: Array<[Function, number]> | null = null;
   // RFC 9113 reserved (pushed) streams the peer may have open at once (node session option).
@@ -5215,7 +5243,12 @@ class ClientHttp2Session extends Http2Session {
         }
       },
     ),
-    localSettings(self: ClientHttp2Session, settings: Settings) {
+    localSettings(
+      self: ClientHttp2Session,
+      settings: Settings,
+      callback: Function | false | undefined,
+      duration: number | undefined,
+    ) {
       if (!self) return;
       self.#localSettings = settings;
       self.#pendingSettingsAck = false;
@@ -5236,11 +5269,8 @@ class ClientHttp2Session extends Http2Session {
         captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
         setImmediate(destroyIfNotDestroyedNT, self);
       }
-      const queued = self.#pendingSettingsCallbacks.shift();
-      // Node's settingsCallback (lib/internal/http2/core.js) invokes the settings()
-      // callback first and emits 'localSettings' after it.
-      if (queued != null) queued[0](null, settings, Date.now() - queued[1]);
-      self.emit("localSettings", settings);
+      // false: the parser calls settingsAcked() next, in the async context of that settings() call.
+      if (callback !== false) settingsAcked(self, settings, callback, duration);
     },
     remoteSettings(self: ClientHttp2Session, settings: Settings) {
       if (!self) return;
@@ -5425,6 +5455,14 @@ class ClientHttp2Session extends Http2Session {
       this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
     }
     process.nextTick(emitConnectNT, this, socket);
+    this.#ready = true;
+    const settingsBeforeConnect = this.#settingsBeforeConnect;
+    if (settingsBeforeConnect !== null) {
+      this.#settingsBeforeConnect = null;
+      for (let i = 0; i < settingsBeforeConnect.length; i++) {
+        this.#parser.settings(settingsBeforeConnect[i][0], settingsBeforeConnect[i][1], settingsAcked);
+      }
+    }
     this.#parser.flush();
     if (this.#closed) {
       // close() was called while the socket was still connecting: requests made in the meantime
@@ -5618,22 +5656,29 @@ class ClientHttp2Session extends Http2Session {
     validateSettings(settings);
     // node: when more SETTINGS are submitted than maxOutstandingSettings allows un-ACKed, the
     // session is destroyed with ERR_HTTP2_MAX_PENDING_SETTINGS_ACK (surfaced via 'error').
-    this.#pendingSettingsAckCount++;
-    if (this.#pendingSettingsAckCount > this.#maxOutstandingSettings) {
+    if (this.#pendingSettingsAckCount >= this.#maxOutstandingSettings) {
+      // The frame is not sent. node tells the callback first (Http2Session::AddSettings).
+      if (callback !== undefined) callback($ERR_HTTP2_SETTINGS_CANCEL());
       this.destroy($ERR_HTTP2_MAX_PENDING_SETTINGS_ACK(), constants.NGHTTP2_INTERNAL_ERROR);
       return;
     }
+    this.#pendingSettingsAckCount++;
     this.#pendingSettingsAck = true;
-    this.#parser?.settings(settings);
+    if (!this.#ready) {
+      // node sends it from a 'connect' listener, so the callback and 'localSettings' run in the
+      // async context of that event and not of this call:
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1569-L1574
+      (this.#settingsBeforeConnect ??= []).push([settingsToSendLater(settings), callback]);
+      return;
+    }
+    // The parser keeps the callback until the ACK of this frame, with the async context of this call.
+    this.#parser?.settings(settings, callback, settingsAcked);
     // The frame is queued on the native session; flush it now (as close() does for its
     // GOAWAY) instead of waiting for the next unrelated write. Node schedules a session
     // write for every settings() call, so its SETTINGS goes out with the current batch -
     // a late frame here means the ACK trails the peer's response and a session closed at
     // that response's end never resolves the settings callback.
     this.#parser?.flush?.();
-    // Queue the callback so this call's own ACK invokes it (after 'localSettings');
-    // the null seed absorbs the initial-preface ACK that has no user callback.
-    this.#pendingSettingsCallbacks.push(typeof callback === "function" ? [callback, Date.now()] : null);
   }
 
   constructor(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
@@ -5734,6 +5779,7 @@ class ClientHttp2Session extends Http2Session {
         socket.once(connectEvent, onConnect.bind(this));
       } else {
         connectOnNextTick = true;
+        this.#ready = true;
       }
     } else {
       // Like node, https only: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3638
@@ -5936,6 +5982,7 @@ class ClientHttp2Session extends Http2Session {
     }
     this.#parser = null;
     this[bunHTTP2Socket] = null;
+    this.#settingsBeforeConnect = null;
 
     // Read-and-clear the frame first: emitting 'error' with no listener throws,
     // which would skip the clear and leave a retained session pinning the store.

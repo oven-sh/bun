@@ -39,7 +39,7 @@ export default [
       },
       settings: {
         fn: "updateSettings",
-        length: 1,
+        length: 3,
       },
       setLocalWindowSize: {
         fn: "setLocalWindowSize",

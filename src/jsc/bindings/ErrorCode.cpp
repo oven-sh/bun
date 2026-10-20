@@ -2470,6 +2470,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_TOO_MANY_INVALID_FRAMES, "Too many invalid HTTP/2 frames"_s));
     case ErrorCode::ERR_HTTP2_PING_CANCEL:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_PING_CANCEL, "HTTP2 ping cancelled"_s));
+    case ErrorCode::ERR_HTTP2_SETTINGS_CANCEL:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_SETTINGS_CANCEL, "HTTP2 session settings canceled"_s));
 
     default: {
         // "<literal> arg1 <literal> [arg2 <literal>]" messages come from a table.

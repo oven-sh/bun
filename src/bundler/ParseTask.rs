@@ -2681,14 +2681,14 @@ pub mod parse_worker {
         }
 
         // Only an ES module that Bun runs has `import.meta.require`. The dev server prints `import.meta` as an object of its own. Iife output and the browser files of a server build have no `require` to take its place.
+        let is_browser_file_of_server_build = target == options::Target::Browser
+            && worker_ctx.transpiler().options.target.is_server_side();
         opts.lower_import_meta_require = !task.source_index.is_runtime()
             && match output_format {
                 options::Format::InternalBakeDev => true,
                 options::Format::Iife => false,
-                options::Format::Cjs => target == worker_ctx.transpiler().options.target,
-                options::Format::Esm => {
-                    target == worker_ctx.transpiler().options.target && !target.is_bun()
-                }
+                options::Format::Cjs => !is_browser_file_of_server_build,
+                options::Format::Esm => !target.is_bun() && !is_browser_file_of_server_build,
             };
 
         opts.tree_shaking = if task.source_index.is_runtime() {

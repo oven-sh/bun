@@ -510,6 +510,22 @@ error: Hello World`,
     outdir: "/out",
     run: { stdout: "app: /" },
   });
+  // `.resolve()` in an executable is a lookup where the executable runs, in CommonJS output as well.
+  itBundled("bun/ImportMetaRequireResolveInCompiledBytecode", {
+    compile: true,
+    bytecode: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import "./foo.file";
+        const path = import.meta.require.resolve("./foo.file");
+        console.log(path.includes("$bunfs") || path.includes("~BUN"));
+      `,
+      "/foo.file": "abcd",
+    },
+    outfile: "dist/out",
+    run: { stdout: "true", setCwd: true },
+  });
   // Iife output has no `__require` for a value, so `import.meta.require` stays there.
   itBundled("bun/ImportMetaRequireWrittenForBunIife", {
     files: writtenForBun.Helper.files,
@@ -550,21 +566,28 @@ error: Hello World`,
     });
   }
   // An entry that starts with `#!/usr/bin/env bun` makes its chunk a module for Bun, whatever the target of the build is.
-  itBundled("bun/ImportMetaRequireBehindBunHashbang", {
-    files: {
-      "/cli.js": `#!/usr/bin/env bun\nimport { platform } from "./dep.js";\nimport { sep } from "./dist/index.js";\nconsole.log("cli:", platform(), sep("node:path"));`,
-      "/dep.js": `export function platform() { return typeof import.meta.require("node:os").platform(); }`,
-      "/dist/index.js": `// @bun\nvar __require = import.meta.require;\nfunction sep(name) {\n  return __require(name).posix.sep;\n}\nexport {\n  sep\n};\n`,
-    },
-    entryPoints: ["/cli.js"],
-    target: "browser",
-    run: { stdout: "cli: string /" },
-    onAfterBundle(api) {
-      const out = api.readFile("/out.js");
-      expect(out).toContain('import.meta.require("node:os")');
-      expect(out).toMatch(/^var __require\d* = import\.meta\.require;$/m);
-    },
-  });
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled(`bun/ImportMetaRequireBehindBunHashbang-${format}`, {
+      files: {
+        "/cli.js": `#!/usr/bin/env bun\nimport { platform } from "./dep.js";\nimport { sep } from "./dist/index.js";\nconsole.log("cli:", platform(), sep("node:path"));`,
+        "/dep.js": `export function platform() { return typeof import.meta.require("node:os").platform(); }`,
+        "/dist/index.js": `// @bun\nvar __require = import.meta.require;\nfunction sep(name) {\n  return __require(name).posix.sep;\n}\nexport {\n  sep\n};\n`,
+      },
+      entryPoints: ["/cli.js"],
+      target: "browser",
+      format,
+      run: { stdout: "cli: string /" },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        if (format === "esm") {
+          expect(out).toContain('import.meta.require("node:os")');
+          expect(out).toMatch(/^var __require\d* = import\.meta\.require;$/m);
+        } else {
+          expect(out).not.toContain("import.meta");
+        }
+      },
+    });
+  }
 
   describe("a bundle over files that bun wrote for bun", () => {
     const build = async (cwd: string, config: Omit<Bun.BuildConfig, "entrypoints"> & { entrypoints: string[] }) => {

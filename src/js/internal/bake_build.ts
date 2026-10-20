@@ -243,7 +243,8 @@ async function build(h: Helpers) {
   const virtualDir = path.join(outdir, ".bun-bake");
   fs.mkdirSync(virtualDir, { recursive: true });
   // Not in `virtualDir`: with `[dir]` in the names, the name of a file comes from where it is in the
-  // project, which gives each `.html` page its own output and this one `<outdir>/server.js`.
+  // project, which gives each `.html` page its own output and this one `<outdir>/server.js`. The
+  // bundler knows it as a file of the `bun-bake` namespace: the project can have a `server.js` too.
   const serverEntry = path.join(cwd, "server.js");
 
   const bakePlugin: any = {
@@ -252,15 +253,17 @@ async function build(h: Helpers) {
       const browser = build.config.target === "browser";
       // The entry points: generated files, named as the outputs are.
       build.onResolve(
-        {
-          filter: new RegExp(
-            `^(?:${RegExp.escape(virtualDir + path.sep)}(?:route-\\d+\\.js|production-server\\.ts)|${RegExp.escape(serverEntry)})$`,
-          ),
-        },
+        { filter: new RegExp(`^${RegExp.escape(virtualDir + path.sep)}(?:route-\\d+\\.js|production-server\\.ts)$`) },
         (args: any) => ({
           path: args.path,
         }),
       );
+      if (!browser) {
+        build.onResolve({ filter: exactly([serverEntry]) }, (args: any) =>
+          args.kind === "entry-point-build" ? { path: "server.js", namespace: "bun-bake" } : undefined,
+        );
+        build.onLoad({ filter: /^/, namespace: "bun-bake" }, () => ({ contents: serverCode, loader: "js" }));
+      }
       build.onResolve({ filter: /^bun:bake\/(client|server)$/ }, (args: any) => ({
         path: path.join(virtualDir, args.path.slice("bun:".length).replace("/", "-") + ".js"),
       }));
@@ -271,7 +274,6 @@ async function build(h: Helpers) {
           return { path: module.path !== undefined ? Bun.resolveSync(module.path, cwd) : builtInPath(args.path) };
         });
       }
-      if (!browser) build.onLoad({ filter: exactly([serverEntry]) }, () => ({ contents: serverCode, loader: "js" }));
       build.onLoad({ filter: new RegExp(`^${RegExp.escape(virtualDir + path.sep)}`) }, (args: any) => {
         const file: string = args.path;
         return { contents: generated(path.basename(file), browser), loader: path.extname(file).slice(1) };
@@ -323,7 +325,15 @@ async function build(h: Helpers) {
   };
 
   const plugins = [bakePlugin, ...(await loadServeStaticPlugins(h)), ...config.plugins];
-  const define = { "process.env.NODE_ENV": '"production"' };
+  // As in `bun bake`, which sets these at src/runtime/bake/config/transpiler.rs.
+  const defines = (ssr: boolean) => ({
+    "process.env.NODE_ENV": '"production"',
+    "import.meta.env.DEV": "false",
+    "import.meta.env.PROD": "true",
+    "import.meta.env.MODE": '"production"',
+    "import.meta.env.SSR": String(ssr),
+    "import.meta.env.STATIC": "false",
+  });
   const env = serveStaticEnv();
 
   // The browser build.
@@ -348,7 +358,7 @@ async function build(h: Helpers) {
         chunk: "_bun/[name]-[hash].[ext]",
         asset: "_bun/[name]-[hash].[ext]",
       },
-      define,
+      define: defines(false),
       ...(env !== undefined && { env }),
       plugins,
       // The bundler drops these exports from each file, as in `bun bake`, after the plugins load it.
@@ -403,7 +413,6 @@ async function build(h: Helpers) {
   }
 
   // The server build.
-  const appName = appServer !== undefined ? name(appServer) : undefined;
   const routeEntries = routes.map(route => {
     const server = name(entryPoint(route.router.serverEntryPoint));
     const client = clientOfRoute.get(route.index) ?? { modules: [], modulepreload: [], styles: [] };
@@ -421,9 +430,10 @@ async function build(h: Helpers) {
   });
   serverCode = `
     import { start } from ${JSON.stringify(path.join(virtualDir, "production-server.ts"))};
+    ${appServer !== undefined ? `import app from ${JSON.stringify(appServer)};` : ""}
     ${imports.map((specifier, i) => `import * as m${i} from ${JSON.stringify(specifier)};`).join("\n")}
     start({
-      app: ${appName !== undefined ? `${appName}.default` : "undefined"},
+      app: ${appServer !== undefined ? "app" : "undefined"},
       frameworkRoutes: [${routeEntries.join(", ")}],
       files: ${JSON.stringify(files)},
       htmlPages: ${JSON.stringify(htmlPages.map(page => page.url))},
@@ -444,7 +454,7 @@ async function build(h: Helpers) {
     publicPath: "/",
     minify: { syntax: true },
     sourcemap: "linked",
-    define,
+    define: defines(true),
     plugins,
     throw: false,
   } as any);

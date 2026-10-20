@@ -1509,7 +1509,12 @@ test.concurrent("bun bake reports two pages with the same URL pattern, and keeps
 });
 
 /** Runs `bun dist/server.js` in `dir` on a free port, and returns its URL. */
-async function startBuild(dir: string, server = "dist/server.js", extraEnv: Record<string, string> = {}) {
+async function startBuild(
+  dir: string,
+  server = "dist/server.js",
+  extraEnv: Record<string, string> = {},
+  listening = /Listening on (https?:\/\/\S+)/,
+) {
   const proc = Bun.spawn({
     cmd: [bunExe(), server],
     env: { ...env, PORT: "0", ...extraEnv },
@@ -1522,7 +1527,7 @@ async function startBuild(dir: string, server = "dist/server.js", extraEnv: Reco
   let text = "";
   for await (const chunk of proc.stdout) {
     text += decoder.decode(chunk, { stream: true });
-    const url = text.match(/Listening on (https?:\/\/\S+)/)?.[1];
+    const url = text.match(listening)?.[1];
     if (url) return { proc, url };
   }
   throw new Error("dist/server.js exited: " + text + (await proc.stderr.text()));
@@ -2149,7 +2154,9 @@ test.concurrent.each([
     "app/server.ts": `export default { routes: { "/about": () => new Response("from the app") } };`,
   });
   expect((await buildApp(String(dir))).exitCode).toBe(0);
-  await expect(startBuild(String(dir))).rejects.toThrow(`The route "/about" of app/server.ts is also a page.`);
+  // Not `expect().rejects`: it runs the event loop inside the call, and the concurrent tests lose events.
+  const error = await startBuild(String(dir)).catch(error => error);
+  expect(error.message).toContain(`The route "/about" of app/server.ts is also a page.`);
 });
 
 test.concurrent("bun bake build serves a page at a fixed path before an optional catch-all", async () => {
@@ -2255,6 +2262,82 @@ test.concurrent.each([[["--check", "bake", "build"]], [["bake", "build", "--chec
     const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
     expect(stderr).toContain(`"bun bake build" builds once. Remove --check, --watch and --hot.`);
     expect(exitCode).toBe(1);
+  },
+);
+
+test.concurrent("bun bake build keeps the project's own server.js apart from dist/server.js", async () => {
+  using dir = tempDir("bake-build-root-server", {
+    "server.js": `export const answer = "from the project's server.js";`,
+    "app/server.ts": `
+      import { answer } from "../server.js";
+      export default { routes: { "/answer": () => new Response(answer) } };
+    `,
+  });
+  const build = await buildApp(String(dir));
+  expect(build.stderr).toBe("");
+  expect(build.exitCode).toBe(0);
+  const { proc, url } = await startBuild(String(dir));
+  await using _ = proc;
+
+  expect(await get(url, "/answer")).toBe("200 from the project's server.js");
+  expect(readFileSync(join(String(dir), "server.js"), "utf8")).toBe(
+    `export const answer = "from the project's server.js";`,
+  );
+});
+
+// Bun.serve's `unix` option takes a socket path, which this test only makes on POSIX.
+test.concurrent.skipIf(isWindows)("the server of bun bake build keeps a unix socket when HOST is set", async () => {
+  using dir = tempDir("bake-build-unix", {});
+  const socket = join(String(dir), "app.sock");
+  await Bun.write(
+    join(String(dir), "app/server.ts"),
+    `export default { unix: ${JSON.stringify(socket)}, fetch: () => new Response("via unix") };`,
+  );
+  expect((await buildApp(String(dir))).exitCode).toBe(0);
+  const { proc } = await startBuild(String(dir), "dist/server.js", { HOST: "127.0.0.1" }, /Listening on (unix:\S+)/);
+  await using _ = proc;
+
+  expect(await (await fetch("http://localhost/", { unix: socket })).text()).toBe("via unix");
+});
+
+test.concurrent("bun bake build gives pages and .html scripts the values of import.meta.env", async () => {
+  const values = `[import.meta.env.DEV, import.meta.env.PROD, import.meta.env.MODE, import.meta.env.SSR, import.meta.env.STATIC]`;
+  using dir = tempDir("bake-build-import-meta-env", {
+    "app/pages/index.html": `<!doctype html><html><body><script type="module" src="./page.ts"></script></body></html>`,
+    "app/pages/page.ts": `globalThis.seen = "env-in-browser:" + JSON.stringify(${values});`,
+    "app/server.ts": `export default { routes: { "/env": () => Response.json(${values}) } };`,
+  });
+  expect((await buildApp(String(dir))).exitCode).toBe(0);
+  const { proc, url } = await startBuild(String(dir));
+  await using _ = proc;
+
+  expect(await (await fetch(new URL("/env", url))).json()).toEqual([false, true, "production", true, false]);
+  const [, script] = (await get(url, "/")).match(/<script type="module"[^>]* src="([^"]+)"/)!;
+  const code = await get(url, script);
+  expect(code).not.toContain("import.meta");
+  expect(code).toContain(`[!1,!0,"production",!1,!1]`);
+});
+
+test.concurrent("bun bake build refuses an app/server.ts with no default export", async () => {
+  using dir = tempDir("bake-build-no-default", {
+    "app/server.ts": `export const routes = { "/": () => new Response("hi") };`,
+  });
+  const { stdout, stderr, exitCode } = await buildApp(String(dir));
+  expect(stderr).toContain(`No matching export in "app/server.ts" for import "default"`);
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+});
+
+test.concurrent(
+  "the server of bun bake build refuses a default export of app/server.ts that is no object",
+  async () => {
+    using dir = tempDir("bake-build-function-default", {
+      "app/server.ts": `export default function () {}`,
+    });
+    expect((await buildApp(String(dir))).exitCode).toBe(0);
+    const error = await startBuild(String(dir)).catch(error => error);
+    expect(error.message).toContain(
+      `"app/server.ts" must have a default export with "routes", "fetch" or "websocket".`,
+    );
   },
 );
 

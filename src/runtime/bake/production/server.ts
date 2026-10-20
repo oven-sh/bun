@@ -30,7 +30,8 @@ type FrameworkRoute = {
 };
 
 type Build = {
-  app: Record<string, any> | undefined;
+  /** The default export of `app/server.ts`, which the build checks is there. */
+  app: unknown;
   frameworkRoutes: FrameworkRoute[];
   /** URL path to file, relative to `dist/`: the `.html` pages, the browser files and `public/`. */
   files: Record<string, string>;
@@ -206,7 +207,10 @@ export function start(build: Build) {
       pages.add(pattern);
     }
   }
-  const { static: staticRoutes, ...app } = build.app ?? {};
+  if (build.app === null || (build.app !== undefined && typeof build.app !== "object")) {
+    throw new Error(`"app/server.ts" must have a default export with "routes", "fetch" or "websocket".`);
+  }
+  const { static: staticRoutes, ...app }: Record<string, any> = build.app ?? {};
   const appRoutes = app.routes ?? staticRoutes;
   if (appRoutes && typeof appRoutes === "object" && !Array.isArray(appRoutes)) {
     for (const [route, value] of Object.entries(appRoutes)) {
@@ -220,8 +224,10 @@ export function start(build: Build) {
     routes,
     fetch: app.fetch ?? (() => new Response("Not Found", { status: 404 })),
     development: false,
-    port: process.env.PORT ?? app.port ?? 3000,
-    hostname: process.env.HOST ?? app.hostname ?? app.host,
+    // As in `bun bake`, a `unix` socket in the export is kept: `PORT` and `HOST` are for TCP.
+    ...(app.unix !== undefined
+      ? { port: undefined, hostname: undefined, host: undefined }
+      : { port: process.env.PORT ?? app.port ?? 3000, hostname: process.env.HOST ?? app.hostname ?? app.host }),
   });
   console.log(`Listening on ${server.url}`);
   return server;

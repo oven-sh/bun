@@ -6,7 +6,6 @@ use super::errors::Container;
 use super::expr::TargetKind;
 use super::related::FileSpan;
 use super::shape::UntypedProperty;
-use super::unions::PartsOf;
 use super::*;
 use crate::bind::{
     Decl, Flow, FlowId, FlowTarget, FnOwner, MAX_FLOW_DEPTH, MemberOwner, Parent, PatParent,
@@ -1930,15 +1929,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// the union `target`. It runs for every condition that every reference passes, so a search per
     /// member makes n tests of a union of n members cost n^4.
     fn is_type_subset_of_union(&self, source: TypeId, target: TypeId) -> bool {
-        let (members, target_members) = (self.parts(source), self.parts(target));
         // Both are in `compare_types` order, so one pass finds a subset's members.
-        let mut rest = target_members.iter();
-        match members.iter().position(|m| !rest.any(|t| t == m)) {
-            None => true,
-            Some(unordered) => members[unordered..]
-                .iter()
-                .all(|m| target_members.contains(m)),
-        }
+        let mut rest = self.parts(target).iter();
+        (self.parts(source).iter()).all(|member| rest.any(|it| it == member))
     }
 
     /// `isDiscriminantProperty`
@@ -6214,14 +6207,9 @@ impl<'p, 's> Checker<'p, 's> {
             };
         }
         // FOR SPEED: the subset test against the initial type also finds the members' positions.
-        let parts = self.parts_of_union(initial, types);
-
-        match &parts {
-            PartsOf::Other => self.union_or_evolving_with(types, Join::Subtype),
-            PartsOf::OutOfOrder => self.union_or_evolving_with(types, Join::Literal),
-            PartsOf::InOrder(positions) => {
-                self.union_or_evolving_with(types, Join::Parts(initial, positions))
-            }
+        match &self.positions_in(self.parts(initial), types) {
+            None => self.union_or_evolving_with(types, Join::Subtype),
+            Some(positions) => self.union_or_evolving_with(types, Join::Parts(initial, positions)),
         }
     }
 

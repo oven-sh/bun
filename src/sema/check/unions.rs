@@ -64,16 +64,6 @@ enum Shortcut {
     Merged,
 }
 
-/// See `Checker::parts_of_union`.
-pub(super) enum PartsOf {
-    /// Some member of one of the types isn't a member of the union.
-    Other,
-    /// All are members of the union, but one type's members aren't in union order.
-    OutOfOrder,
-    /// All are members of the union, and each type's members are in union order. Holds their positions.
-    InOrder(PositionSet),
-}
-
 /// A member of a union that's being merged, with the data `CompareTypes` looks at first.
 #[derive(Copy, Clone)]
 struct Ranked<'p> {
@@ -378,12 +368,6 @@ fn sort_by_id(types: &mut [TypeId]) {
     types.sort_unstable_by_key(|ty| ty.arrival_order());
 }
 
-/// True if `some` is a subsequence of `all`.
-fn is_subsequence(some: &[TypeId], all: &[TypeId]) -> bool {
-    let mut rest = all.iter();
-    some.iter().all(|item| rest.any(|it| it == item))
-}
-
 /// A stable sort for `CompareTypes`. Comparing two instantiations of one alias is expensive, and the input is often
 /// nearly sorted or made of sorted runs, where a binary insertion sort needs twice as many comparisons.
 fn merge_sort_by<T: Copy>(
@@ -455,7 +439,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.union_ex_inspecting(types, merge_constrained, None).0
     }
 
-    /// Same as `union(types)`. `positions` is the `PartsOf::InOrder` value of `types` in the union `whole`.
+    /// Same as `union(types)`. `positions`: `positions_in` for `types` and the members of the union `whole`.
     pub(super) fn union_of_parts(
         &mut self,
         whole: TypeId,
@@ -609,7 +593,9 @@ impl<'p, 's> Checker<'p, 's> {
         let union = (self.types()).as_first_request(first_request, || {
             self.union_of_named_unions(actual, &members)
         });
-        self.note_sorted_runs(union, actual, &members, shortcut);
+        if let Some(Shortcut::Joined(whole)) = shortcut {
+            self.note_part(union, whole);
+        }
         union
     }
 
@@ -1217,7 +1203,8 @@ impl<'p, 's> Checker<'p, 's> {
             .filter(|(_, k)| **k)
             .map(|(&m, _)| m)
             .collect();
-        let shortcut = self.order_as_in(union, &mut kept);
+        self.order_as_in(union, &mut kept);
+        let shortcut = Some(Shortcut::Joined(union));
         self.union_of_type_set(types, kept, shortcut, FirstRequest::NONE)
     }
 
@@ -2843,12 +2830,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// FOR SPEED: fills the empty `members` with the deduplicated members of `actual` in `CompareTypes` order, without
     /// sorting what's already sorted. Returns `None` if `members` is still empty and the caller has to sort.
     ///
-    /// Most of the types a union is built from are unions. The members of a union with `Types::is_sorted_run` are a
-    /// sorted run, which means two things:
-    /// - Each is less than the next.
-    /// - None is `any` or `unknown`, which absorb the whole union.
-    ///
-    /// Anything built here from sorted runs is a sorted run again, and so is a subsequence of a sorted run.
+    /// Most of the types a union is built from are unions, whose members are sorted. The caller also has to look at
+    /// the members if one of them is `any` or `unknown`, which absorb the whole union.
     ///
     /// `found`: see `union_of_parts`.
     fn add_in_order(
@@ -2857,25 +2840,20 @@ impl<'p, 's> Checker<'p, 's> {
         actual: &[TypeId],
         found: Option<(TypeId, &PositionSet)>,
     ) -> Option<Shortcut> {
-        if let Some((whole, positions)) = found
-            && self.is_known_sorted_run(whole)
-        {
-            let all = self.parts(whole);
-            members.extend(positions.iter().map(|at| all[at]));
-            let shortcut = Shortcut::Joined(whole);
-            return Some(shortcut);
-        }
         let mut runs = 0;
         for &ty in actual {
-            let flags = self.flags(ty);
-            if flags & tf::UNION != 0 {
-                if !self.types().is_sorted_run(ty) {
-                    return None;
-                }
-                runs += 1;
-            } else if flags & (tf::ANY | tf::UNKNOWN) != 0 {
+            // `any` and `unknown` have the lowest flags, so they come first.
+            if let Some(&first) = self.parts(ty).first()
+                && self.flags(first) & (tf::ANY | tf::UNKNOWN) != 0
+            {
                 return None;
             }
+            runs += usize::from(self.is_union(ty));
+        }
+        if let Some((whole, positions)) = found {
+            let all = self.parts(whole);
+            members.extend(positions.iter().map(|at| all[at]));
+            return Some(Shortcut::Joined(whole));
         }
         // Two types that aren't unions take one comparison either way.
         if runs == 0 && actual.len() < 3 {
@@ -2895,56 +2873,16 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// True if the members of the union `whole` are known to be a sorted run.
-    fn is_known_sorted_run(&self, whole: TypeId) -> bool {
-        self.types().is_sorted_run(whole)
-    }
-
-    /// Finds the members of `types` among the members of the union `whole`. A type that isn't a union counts as its
-    /// only member.
-    pub(super) fn parts_of_union(&self, whole: TypeId, types: &[TypeId]) -> PartsOf {
-        let all = self.parts(whole);
-        let mut positions = PositionSet::new(all.len());
-        let mut is_in_order = true;
-        for &ty in types {
-            let (parts, mut after) = (self.parts(ty), 0);
-            for (at, member) in parts.iter().enumerate() {
-                let Some(found) = all[after..].iter().position(|it| it == member) else {
-                    if !parts[at..].iter().all(|it| all.contains(it)) {
-                        return PartsOf::Other;
-                    }
-                    is_in_order = false;
-                    break;
-                };
-                after += found + 1;
-                positions.insert(after - 1);
-            }
-        }
-        match is_in_order {
-            true => PartsOf::InOrder(positions),
-            false => PartsOf::OutOfOrder,
-        }
-    }
-
-    /// FOR SPEED: sorts `kept`, a subset of the members of the union `whole`, into union order. Returns `None` if the
-    /// caller has to sort.
-    fn order_as_in(&self, whole: TypeId, kept: &mut Flat) -> Option<Shortcut> {
-        if !self.is_known_sorted_run(whole) {
-            return None;
-        }
+    /// FOR SPEED: sorts `kept`, a subset of the members of the union `whole`, into union order.
+    fn order_as_in(&self, whole: TypeId, kept: &mut Flat) {
         sort_by_id(kept);
         let is_kept = |member: &TypeId| {
             kept.binary_search_by_key(&member.arrival_order(), |it| it.arrival_order())
                 .is_ok()
         };
-        let in_order: Flat = (self.parts(whole).iter().copied())
+        *kept = (self.parts(whole).iter().copied())
             .filter(is_kept)
             .collect();
-        if in_order.len() != kept.len() {
-            return None;
-        }
-        *kept = in_order;
-        Some(Shortcut::Joined(whole))
     }
 
     /// FOR SPEED: narrowing removes members from a union, and where the branches join, the remaining members are
@@ -2970,9 +2908,7 @@ impl<'p, 's> Checker<'p, 's> {
             let all = self.parts(whole);
             // Each of `actual` is searched for from the start of `all`, which isn't worth it if `all` is much longer
             // than the requested union.
-            if actual.len() * all.len() > MAX_STEPS_PER_POSITION * total
-                || !self.is_known_sorted_run(whole)
-            {
+            if actual.len() * all.len() > MAX_STEPS_PER_POSITION * total {
                 continue;
             }
             if let Some(positions) = self.positions_in(all, actual) {
@@ -2983,8 +2919,9 @@ impl<'p, 's> Checker<'p, 's> {
         None
     }
 
-    /// Returns the positions of the members of `actual` in `all`, if the members of each are in the order of `all`.
-    fn positions_in(&self, all: &[TypeId], actual: &[TypeId]) -> Option<PositionSet> {
+    /// Returns the positions of the members of `actual` in `all`, the members of a union, if `all` has every one of
+    /// them. A type that isn't a union counts as its only member.
+    pub(super) fn positions_in(&self, all: &[TypeId], actual: &[TypeId]) -> Option<PositionSet> {
         let mut positions = PositionSet::new(all.len());
         for &ty in actual {
             let mut after = 0;
@@ -2996,7 +2933,7 @@ impl<'p, 's> Checker<'p, 's> {
         Some(positions)
     }
 
-    /// Merges the members of `actual`, each of which is a sorted run or a type that isn't a union.
+    /// Merges the members of `actual`.
     fn merge_sorted_runs(&self, members: &mut Flat, actual: &[TypeId]) {
         let mut unions: smallvec::SmallVec<[&'p [TypeId]; 4]> = smallvec::SmallVec::new();
         // The types that aren't unions form one run. They're sorted unless they're already in order.
@@ -3178,61 +3115,10 @@ impl<'p, 's> Checker<'p, 's> {
         some_first(a.name, b.name).then_with(|| self.compare_types(a.ty, b.ty))
     }
 
-    /// `members` are a sorted run except that they may include `any` or `unknown`, `union` is their union, and it was
-    /// built from `actual`. See `add_in_order`.
-    fn note_sorted_runs(
-        &mut self,
-        union: TypeId,
-        actual: &[TypeId],
-        members: &[TypeId],
-        shortcut: Option<Shortcut>,
-    ) {
-        // `any` and `unknown` have the lowest flags, so they come first.
-        if self.flags(members[0]) & (tf::ANY | tf::UNKNOWN) != 0 {
-            return;
-        }
-        let types = self.types();
-        // Skips a named union that has these members and others.
-        if self.is_union(union) && *self.parts(union) == *members {
-            types.mark_sorted_run(union);
-        }
-        match shortcut {
-            Some(Shortcut::Joined(whole)) => self.note_part(union, whole),
-            Some(Shortcut::Merged) => {}
-            // A union among `actual` that isn't known to be a sorted run is one if its members are a subsequence of
-            // `members`.
-            None => {
-                for &ty in actual {
-                    if self.is_union(ty)
-                        && !types.is_sorted_run(ty)
-                        && is_subsequence(self.parts(ty), members)
-                    {
-                        types.mark_sorted_run(ty);
-                    }
-                }
-            }
-        }
-    }
-
-    /// `copy` is `ty` with another alias or origin, so if it's a union it has the same members. Returns `copy`.
-    pub(super) fn with_members_of(&self, ty: TypeId, copy: TypeId) -> TypeId {
-        if self.types().is_sorted_run(ty) {
-            self.types().mark_sorted_run(copy);
-        }
-        copy
-    }
-
-    /// Records that the members of `part` may be a subsequence of the members of the union `whole`.
+    /// Records that the members of `part` may be among the members of the union `whole`.
     fn note_part(&mut self, part: TypeId, whole: TypeId) {
-        let types = self.types();
-        if part == whole || !self.is_union(part) || !types.is_sorted_run(whole) {
+        if part == whole || !self.is_union(part) {
             return;
-        }
-        if !types.is_sorted_run(part) {
-            if !is_subsequence(self.parts(part), self.parts(whole)) {
-                return;
-            }
-            types.mark_sorted_run(part);
         }
         // `whole` may be a part itself.
         let whole = self.superset_unions.get(whole.0, 0).unwrap_or(whole.0);
@@ -3251,7 +3137,7 @@ impl<'p, 's> Checker<'p, 's> {
 
 #[cfg(test)]
 mod tests {
-    use super::{PatternsByPrefix, Reduction, UnionArguments, UnionCalls, is_subsequence};
+    use super::{PatternsByPrefix, Reduction, UnionArguments, UnionCalls};
     use crate::bind::SymbolId;
     use crate::program::{FileId, Sym};
     use crate::types::TypeId;
@@ -3440,25 +3326,5 @@ mod tests {
             calls.put(call(&other).hash(), &call(&other), TypeId(2));
             assert_eq!(get(&calls, &call(&other)), Some(TypeId(2)));
         }
-    }
-
-    #[test]
-    fn subsequence_keeps_the_order_of_the_whole() {
-        let ids = |numbers: &[u32]| -> Vec<TypeId> { numbers.iter().map(|&n| TypeId(n)).collect() };
-        let all = ids(&[5, 3, 9, 1, 7]);
-        for some in [&[][..], &[5], &[7], &[5, 7], &[3, 9, 1], &[5, 3, 9, 1, 7]] {
-            assert!(is_subsequence(&ids(some), &all), "{some:?}");
-        }
-        for some in [
-            &[2][..],
-            &[3, 5],
-            &[7, 7],
-            &[5, 3, 9, 1, 7, 7],
-            &[9, 1, 7, 2],
-        ] {
-            assert!(!is_subsequence(&ids(some), &all), "{some:?}");
-        }
-        assert!(is_subsequence(&[], &[]));
-        assert!(!is_subsequence(&all[..1], &[]));
     }
 }

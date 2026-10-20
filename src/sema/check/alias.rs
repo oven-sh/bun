@@ -64,8 +64,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getUnionTypeFromSortedList`: returns a union with `union`'s members, `origin` and no alias.
     pub(super) fn with_origin(&self, union: TypeId, origin: OriginKey<'_>) -> TypeId {
-        let copy = self.intern_key_with_alias(TypeKey::Data(self.data(union)), None, origin);
-        self.with_members_of(union, copy)
+        self.intern_key_with_alias(TypeKey::Data(self.data(union)), None, origin)
     }
 
     /// The alias stored in `ty`.
@@ -78,8 +77,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn with_alias(&self, ty: TypeId, alias: Sym, type_arguments: &[TypeId]) -> TypeId {
         let key = TypeKey::Data(self.data(ty));
         let alias = Some((alias, type_arguments));
-        let copy = self.intern_key_with_alias(key, alias, self.origin(ty).into());
-        self.with_members_of(ty, copy)
+        self.intern_key_with_alias(key, alias, self.origin(ty).into())
     }
 
     /// The end of `getUnionTypeWorker` when it's given an alias. `created` is the union without the
@@ -114,8 +112,7 @@ impl<'p, 's> Checker<'p, 's> {
             is_array_pattern: false,
             has_other_instantiation: could_contain_type_variables,
         };
-        let copy = (self.types()).intern_key_with(TypeKey::Data(self.data(created)), &provenance);
-        self.with_members_of(created, copy)
+        (self.types()).intern_key_with(TypeKey::Data(self.data(created)), &provenance)
     }
 
     /// `t.alias`. A type identified by its type node has the alias whose body is that node, with

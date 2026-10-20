@@ -1732,8 +1732,6 @@ pub struct TypeRecord<'s> {
     constrained_type_variable: std::sync::atomic::AtomicU8,
     /// `FirstRequest::WITHOUT_PRIMITIVE_UNION`
     is_without_primitive_union: bool,
-    /// See `Types::mark_sorted_run`.
-    is_sorted_run: AtomicBool,
     id: TypeId,
 }
 
@@ -2035,7 +2033,6 @@ impl Record for TypeRecord<'_> {
             is_from_type_node: AtomicBool::new(false),
             constrained_type_variable: AtomicU8::new(0),
             is_without_primitive_union: false,
-            is_sorted_run: AtomicBool::new(false),
             id: TypeId::UNRESOLVED,
         }
     }
@@ -3754,7 +3751,6 @@ impl<'p, 's> Types<'p, 's> {
             is_from_type_node: AtomicBool::new(first_request.has(FirstRequest::FROM_TYPE_NODE)),
             constrained_type_variable: std::sync::atomic::AtomicU8::new(constrained_type_variable),
             is_without_primitive_union: first_request.has(FirstRequest::WITHOUT_PRIMITIVE_UNION),
-            is_sorted_run: AtomicBool::new(false),
             created,
             id: TypeId(id),
         }
@@ -3886,23 +3882,6 @@ impl<'p, 's> Types<'p, 's> {
             last_syntax: ranking.last_syntax,
             content: ranking.content.0,
         })
-    }
-
-    /// Marks the union `id` as a sorted run, whose members can be merged with another union's members
-    /// instead of being sorted again. See `Checker::add_in_order` for the conditions. The mark is
-    /// permanent and depends only on the members. So any task may set the mark at any time, even on
-    /// a published record. An unmarked union may qualify too. It's just sorted the slow way.
-    #[inline]
-    pub fn mark_sorted_run(&self, id: TypeId) {
-        let record = self.record(id);
-        if !record.is_sorted_run.load(Ordering::Relaxed) {
-            record.is_sorted_run.store(true, Ordering::Relaxed);
-        }
-    }
-
-    #[inline]
-    pub fn is_sorted_run(&self, id: TypeId) -> bool {
-        self.record(id).is_sorted_run.load(Ordering::Relaxed)
     }
 
     /// `Shape::has_no_instantiable_symbol` is part of a type's identity only where it makes a

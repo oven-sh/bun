@@ -313,9 +313,7 @@ impl EventLoop {
     /// event loop. To make that work, we count enter/exit calls and once that
     /// counter reaches 0, we drain the microtasks.
     ///
-    /// A wait that runs the loop under the caller's frame
-    /// ([`Self::wait_for_promise`]) sets the count aside for its duration: the
-    /// callbacks it dispatches are at the top of a loop of their own.
+    /// [`Self::wait_for_promise`] sets the count aside while it runs.
     #[inline]
     pub fn enter(&mut self) {
         bun_core::scoped_log!(EventLoop, "enter() = {}", self.entered_event_loop_count);
@@ -381,9 +379,8 @@ impl EventLoop {
     /// one, so its exit does not run the nextTicks and promise reactions the
     /// callback queued before its next statement. The dispatcher's explicit
     /// drains are unconditional, so the held count does not skip them, and the
-    /// continuations they run are covered by it as well. A promise wait the
-    /// callback reaches ([`Self::wait_for_promise`]) is the one native call that
-    /// does checkpoint beneath the frame: it is a loop of its own, and runs as one.
+    /// continuations they run are covered by it as well. The exception is a
+    /// promise wait ([`Self::wait_for_promise`]): a loop of its own.
     ///
     /// # Safety
     /// As [`Self::enter_scope`].
@@ -1148,9 +1145,6 @@ impl EventLoop {
     /// that run, not tick on over it). Nothing is thrown for it; a caller inside a
     /// `JsResult` function crosses explicitly with [`jsc::Stopped::throw`] (which, with
     /// the termination already pending, is just `Thrown`).
-    ///
-    /// The wait is a loop of its own, whatever frame it runs under. See
-    /// [`Self::wait_for_promise_while`].
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
         self.wait_for_promise_while(promise, || true).map(drop)
     }
@@ -1158,24 +1152,12 @@ impl EventLoop {
     /// [`Self::wait_for_promise`], but gives up once `keep_waiting` says so. It is
     /// asked before each poll, with the promise still pending.
     ///
-    /// A wait is often entered from JS: a matcher's `await expect(p).resolves`, a
-    /// bundler plugin hook, a macro. The caller's frame then holds one or more
-    /// entries ([`Self::enter`]), and a callback the wait dispatches would be nested
-    /// under them: its exit ([`Self::exit`]) is not the outermost one, so it skips
-    /// the microtask checkpoint, and the reactions it queued wait for the next
-    /// [`Self::tick`]. That is the wrong order (node runs a checkpoint after every
-    /// immediate and timer callback), and it stalls: an immediate that resolves the
-    /// promise of one hop leaves the `setImmediate` of the next hop unqueued when
-    /// `auto_tick` picks its poll deadline, so the poll blocks until something
-    /// unrelated wakes the loop. The wait is a complete loop ([`Self::tick`] already
-    /// drains beneath the caller's frame), so it runs as one: the caller's entries
-    /// are set aside while it runs and restored when it returns, and every
-    /// dispatcher it reaches checkpoints as it does at the top of the loop.
-    ///
-    /// The immediates of a turn run before the poll, and their checkpoints can
-    /// settle the promise. The turn then ends there: a poll would park on a deadline
-    /// that nothing in it is waiting for, until something unrelated woke the loop
-    /// (`VirtualMachine::auto_tick_while_pending`).
+    /// The wait is a loop of its own. The caller's entries ([`Self::enter`]) are set
+    /// aside while it runs, so a callback it dispatches is the outermost one and
+    /// its exit is a microtask checkpoint, as at the top of the loop. Under the
+    /// caller's entries it would not be, and a reaction it queued (the next
+    /// `setImmediate` of a chain) would wait for the next [`Self::tick`], after the
+    /// poll had parked without it.
     pub fn wait_for_promise_while(
         &mut self,
         promise: jsc::AnyPromise,

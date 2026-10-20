@@ -951,12 +951,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
 }
 
 /// `eventLoop().autoTickWhilePending(promise)`: [`auto_tick`] for a turn of a
-/// promise wait. The immediates run before the poll, and their checkpoints can
-/// settle `promise`. Then the wait is over, and the poll must not park on a
-/// deadline that nothing in it is waiting for: the turn goes on with a poll that
-/// returns at once. The rest of the turn is the same (the timers due, the
-/// after-loop callback, the rejections to report), so a caller that waits again
-/// before it returns to its loop still moves the loop forward.
+/// promise wait. Once the immediates have settled `promise`, the poll returns at
+/// once instead of parking on the next-timer deadline. The rest of the turn
+/// runs as always.
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
@@ -1007,8 +1004,7 @@ unsafe fn poll_and_drain_timers(vm: *mut VirtualMachine, has_yielded_tasks: bool
     // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
     let loop_ = unsafe { (*el).usockets_loop() };
 
-    // `get_timeout` decides the deadline on unix. On Windows the async handle
-    // is what returns `us_loop_run` at once, as for a pending immediate.
+    // On Windows the async handle is what returns `us_loop_run` at once.
     #[cfg(windows)]
     if no_park {
         // SAFETY: `el` is the live per-thread event loop.

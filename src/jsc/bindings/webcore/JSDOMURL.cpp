@@ -294,9 +294,8 @@ JSString* JSDOMURL::substringOfHref(JSGlobalObject& lexicalGlobalObject, unsigne
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     const String& string = wrapped().href().string();
-    // An already-canonical input is reused as the URL string. When that input is itself a slice of a larger string
-    // (a line of a file), a substring of it would keep the whole source alive. Copy the component instead.
-    if (string.impl()->isSubString()) [[unlikely]]
+    // A kept slice pins its base. Copy when the base is a slice itself, or is more than 8 times the component.
+    if (string.impl()->isSubString() || length * 8 < string.length()) [[unlikely]]
         return JSC::jsString(vm, string.substring(offset, length));
     JSString* base = href(lexicalGlobalObject);
     return JSC::jsSubstring(&lexicalGlobalObject, vm, base, offset, length);

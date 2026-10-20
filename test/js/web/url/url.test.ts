@@ -254,9 +254,11 @@ describe("url", () => {
   it("component getters are substrings of href, not copies", () => {
     // #45627: every read of host, pathname, ... copied the bytes into a new string. They now slice the href string.
     const u = new URL("https://my-bucket.s3.us-east-1.amazonaws.com/photos/2026/cat.jpg?versionId=abc&x-id=GetObject");
-    for (const name of ["origin", "protocol", "host", "hostname", "pathname", "search"] as const) {
+    for (const name of ["origin", "host", "hostname", "pathname", "search"] as const) {
       expect(isRope(u[name])).toBe(true);
     }
+    // A component shorter than an eighth of the href is copied, so that it does not pin the href.
+    expect(isRope(u.protocol)).toBe(false);
     expect(isRope(u.href)).toBe(false);
   });
 
@@ -354,6 +356,13 @@ describe("url", () => {
     expect(parts.map(p => p.length)).toEqual([11, 15, 13, 9]);
   });
 
+  // Extra memory after two full collections, so the number covers only what the kept strings hold.
+  function extraMemoryAfterGC(): number {
+    Bun.gc(true);
+    Bun.gc(true);
+    return heapStats().extraMemorySize;
+  }
+
   it("components of a URL parsed from a slice do not keep the source string alive", () => {
     // The parser reuses an already-canonical input as the URL string. When that input is a slice of a larger
     // string, the component getters must copy instead of slicing it, or one hostname keeps the whole file.
@@ -367,12 +376,28 @@ describe("url", () => {
       }
       return kept;
     }
+    const before = extraMemoryAfterGC();
     const kept = parseLines();
-    Bun.gc(true);
-    Bun.gc(true);
     // 16 filler strings of 2 MiB are 32 MiB. The unfixed getters keep all of it.
-    expect(heapStats().extraMemorySize).toBeLessThan(8 * 1024 * 1024);
+    expect(extraMemoryAfterGC() - before).toBeLessThan(8 * 1024 * 1024);
     expect(kept.slice(0, 3)).toEqual(["host0.example.com", "/some/path", "?q=0"]);
+  });
+
+  it("a short component of a long URL does not keep the href alive", () => {
+    function parseLongURLs(): string[] {
+      const kept: string[] = [];
+      for (let i = 0; i < 16; i++) {
+        const query = Buffer.alloc(2 * 1024 * 1024, 120).toString();
+        const u = new URL(`https://host${i}.example.com/p?${query}`);
+        kept.push(u.hostname, u.pathname, u.protocol);
+      }
+      return kept;
+    }
+    const before = extraMemoryAfterGC();
+    const kept = parseLongURLs();
+    // 16 hrefs of 2 MiB are 32 MiB. A component slice that pinned its href would keep all of it.
+    expect(extraMemoryAfterGC() - before).toBeLessThan(8 * 1024 * 1024);
+    expect(kept.slice(0, 3)).toEqual(["host0.example.com", "/p", "https:"]);
   });
 
   it("prints", () => {

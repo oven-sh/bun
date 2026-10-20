@@ -1,7 +1,6 @@
 // Tests how a `ws` server socket handles incoming frames, using a raw TCP client. See ws-raw-peer.ts.
 import { afterAll, describe, expect, test } from "bun:test";
 import { tls as harnessTls, isLinux } from "harness";
-import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import http, { type IncomingMessage } from "node:http";
 import https from "node:https";
@@ -112,10 +111,17 @@ describe.each(implementations)("ws server receive ($name)", ({ ws: implementatio
       clients.push(client);
       return client;
     };
-    // These tests run one at a time, so the next connection is this client's.
-    const connection = once(server.wss, "connection");
     const client = connect(request);
-    const [ws, req] = (await connection) as [WebSocket, IncomingMessage];
+    // The server is shared, so the client's port picks its 'connection'. An upgrade that a test abandoned when it
+    // timed out can arrive during a later test.
+    const connection = Promise.withResolvers<[WebSocket, IncomingMessage]>();
+    server.wss.on("connection", function onConnection(ws: WebSocket, req: IncomingMessage) {
+      const port = client.socket.localPort;
+      if (!port || req.socket.remotePort !== port) return;
+      server.wss.off("connection", onConnection);
+      connection.resolve([ws, req]);
+    });
+    const [ws, req] = await connection.promise;
     const events = recordEvents(ws);
     const closed = new Promise<void>(resolve => ws.on("close", () => resolve()));
     await client.response;

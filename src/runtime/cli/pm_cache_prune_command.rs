@@ -3,8 +3,10 @@
 use bstr::BStr;
 use bun_core::fmt::escape_control_chars;
 use bun_core::{Output, ZBox, fmt as bun_fmt};
-use bun_install::package_manager_real::directories::CacheEntryKind as Kind;
-use bun_sys::{self, Dir, E, EntryKind, PosixStat};
+use bun_install::package_manager_real::directories::{
+    CacheEntryKind as Kind, is_index_link_package_in_cache,
+};
+use bun_sys::{self, Dir, E, EntryKind, Fd, PosixStat};
 
 pub(crate) struct PmCachePruneCommand;
 
@@ -72,6 +74,7 @@ fn tree_size(dir: &Dir, path: &[u8]) -> u64 {
 
 struct Prune {
     root: Vec<u8>,
+    cache_dir: Fd,
     cutoff_sec: i64,
     dry_run: bool,
     checked: usize,
@@ -82,7 +85,8 @@ struct Prune {
 
 impl Prune {
     /// `prefix` is `dir` relative to the cache root, which is either empty or `@scope/`.
-    fn prune_dir(&mut self, dir: &Dir, prefix: &[u8], in_scope: bool) {
+    /// Returns whether no entry of `dir` is left. A dry run removes nothing and returns false.
+    fn prune_dir(&mut self, dir: &Dir, prefix: &[u8], in_scope: bool) -> bool {
         let read_path: &[u8] = if prefix.is_empty() {
             &self.root
         } else {
@@ -90,35 +94,37 @@ impl Prune {
         };
         let Some(entries) = read_entries(dir, read_path) else {
             self.failed += 1;
-            return;
+            return false;
         };
+        let mut left = entries.len();
 
         for entry in &entries {
             let name = entry.name.as_bytes();
-            match Kind::from_name(name, entry.kind, in_scope) {
+            let gone = match Kind::from_name(name, entry.kind, in_scope) {
                 Kind::Package => self.prune_package(dir, entry, prefix),
                 Kind::Scope => {
                     let sub_prefix = [prefix, name, b"/"].concat();
-                    let sub = match dir.open_at(name) {
-                        Ok(sub) => sub,
+                    match dir.open_at(name) {
+                        Ok(sub) => {
+                            let emptied = self.prune_dir(&sub, &sub_prefix, true);
+                            drop(sub);
+                            emptied && self.remove_empty(dir, entry, &sub_prefix)
+                        }
+                        Err(err) if err.get_errno() == E::ENOENT => true,
                         Err(err) => {
                             Output::err(err, "Could not open {s}", (BStr::new(&sub_prefix),));
                             self.failed += 1;
-                            continue;
+                            false
                         }
-                    };
-                    self.prune_dir(&sub, &sub_prefix, true);
-                    drop(sub);
-                    if !self.dry_run {
-                        self.remove_if_empty(dir, entry, &sub_prefix);
                     }
                 }
-                Kind::Index | Kind::Other => {}
-            }
+                Kind::Index | Kind::Other => false,
+            };
+            left -= usize::from(gone);
         }
 
         if self.dry_run {
-            return;
+            return false;
         }
         for entry in &entries {
             let name = entry.name.as_bytes();
@@ -126,34 +132,54 @@ impl Prune {
                 continue;
             }
             let display = [prefix, name].concat();
-            match dir.open_at(name) {
-                Ok(index) => self.remove_dangling_links(&index, &display),
+            let gone = match dir.open_at(name) {
+                Ok(index) => {
+                    let emptied = self.remove_dangling_links(&index, dir, name, &display);
+                    drop(index);
+                    emptied && self.remove_empty(dir, entry, &display)
+                }
+                Err(err) if err.get_errno() == E::ENOENT => true,
                 Err(err) => {
                     Output::err(err, "Could not open {s}", (BStr::new(&display),));
                     self.failed += 1;
-                    continue;
+                    false
                 }
-            }
-            self.remove_if_empty(dir, entry, &display);
+            };
+            left -= usize::from(gone);
         }
+        left == 0
     }
 
-    fn remove_if_empty(&mut self, dir: &Dir, entry: &Entry, display: &[u8]) {
+    /// Only for a directory the walk left empty: `rmdir` answers EROFS or EACCES before ENOTEMPTY.
+    fn remove_empty(&mut self, dir: &Dir, entry: &Entry, display: &[u8]) -> bool {
         match bun_sys::rmdirat(dir.fd(), &entry.name) {
-            Ok(()) => {}
-            Err(err) if matches!(err.get_errno(), E::ENOTEMPTY | E::EEXIST | E::ENOENT) => {}
-            Err(err) => {
-                Output::err(err, "Could not delete {s}", (BStr::new(display),));
-                self.failed += 1;
-            }
+            Ok(()) => true,
+            Err(err) => match err.get_errno() {
+                E::ENOENT => true,
+                // Another process added an entry after the walk read the directory.
+                E::ENOTEMPTY | E::EEXIST => false,
+                _ => {
+                    Output::err(err, "Could not delete {s}", (BStr::new(display),));
+                    self.failed += 1;
+                    false
+                }
+            },
         }
     }
 
-    fn remove_dangling_links(&mut self, index: &Dir, prefix: &[u8]) {
+    /// Returns whether no entry of `index` is left. `parent` holds `index` under `name`.
+    fn remove_dangling_links(
+        &mut self,
+        index: &Dir,
+        parent: &Dir,
+        name: &[u8],
+        prefix: &[u8],
+    ) -> bool {
         let Some(entries) = read_entries(index, prefix) else {
             self.failed += 1;
-            return;
+            return false;
         };
+        let mut left = entries.len();
         for entry in &entries {
             if entry.kind != EntryKind::SymLink {
                 continue;
@@ -162,26 +188,37 @@ impl Prune {
                 Err(err) if err.get_errno() == E::ENOENT => {}
                 _ => continue,
             }
-            if let Err(err) = bun_sys::unlinkat(index.fd(), &entry.name)
-                .or_else(|_| bun_sys::rmdirat(index.fd(), &entry.name))
-            {
-                let display = [prefix, b"/", entry.name.as_bytes()].concat();
-                Output::err(err, "Could not delete {s}", (BStr::new(&display),));
-                self.failed += 1;
+            // The target is an absolute path, which is missing when the cache is at another path.
+            let link = entry.name.as_bytes();
+            if is_index_link_package_in_cache(self.cache_dir, parent.fd(), name, link) {
+                continue;
+            }
+            let removed = bun_sys::unlinkat(index.fd(), &entry.name);
+            #[cfg(windows)]
+            let removed = removed.or_else(|_| bun_sys::rmdirat(index.fd(), &entry.name));
+            match removed {
+                Ok(()) => left -= 1,
+                Err(err) if err.get_errno() == E::ENOENT => left -= 1,
+                Err(err) => {
+                    let display = [prefix, b"/", entry.name.as_bytes()].concat();
+                    Output::err(err, "Could not delete {s}", (BStr::new(&display),));
+                    self.failed += 1;
+                }
             }
         }
+        left == 0
     }
 
-    fn prune_package(&mut self, dir: &Dir, entry: &Entry, prefix: &[u8]) {
+    /// Returns whether the package is gone.
+    fn prune_package(&mut self, dir: &Dir, entry: &Entry, prefix: &[u8]) -> bool {
         let name = entry.name.as_bytes();
         let st = match bun_sys::lstatat(dir.fd(), &entry.name) {
             Ok(st) => st,
+            Err(err) if err.get_errno() == E::ENOENT => return true,
             Err(err) => {
-                if err.get_errno() != E::ENOENT {
-                    Output::err(err, "Could not stat {s}", (BStr::new(name),));
-                    self.failed += 1;
-                }
-                return;
+                Output::err(err, "Could not stat {s}", (BStr::new(name),));
+                self.failed += 1;
+                return false;
             }
         };
         self.checked += 1;
@@ -189,7 +226,7 @@ impl Prune {
             .sec
             .max(bun_sys::stat_atime(&st).sec);
         if last_used > self.cutoff_sec {
-            return;
+            return false;
         }
 
         let display = [prefix, name].concat();
@@ -205,11 +242,12 @@ impl Prune {
             if let Err(err) = dir.delete_tree(name) {
                 Output::err(err, "Could not delete {s}", (BStr::new(&display),));
                 self.failed += 1;
-                return;
+                return false;
             }
             self.bytes += size;
         }
         self.removed += 1;
+        !self.dry_run
     }
 }
 
@@ -234,6 +272,7 @@ impl PmCachePruneCommand {
         let max_age_sec = i64::from(max_age_days) * i64::from(bun_core::time::S_PER_DAY);
         let mut prune = Prune {
             root: cache_path.to_vec(),
+            cache_dir: cache_dir.fd(),
             cutoff_sec: now.saturating_sub(max_age_sec),
             dry_run,
             checked: 0,

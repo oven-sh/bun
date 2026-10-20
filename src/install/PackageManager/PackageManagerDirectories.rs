@@ -513,6 +513,23 @@ impl CacheEntryKind {
     }
 }
 
+/// Whether the package that the link `<index>/<link>` is named after is in the cache.
+pub fn is_index_link_package_in_cache(
+    cache_dir: Fd,
+    index_parent: Fd,
+    index: &[u8],
+    link: &[u8],
+) -> bool {
+    let has = |dir: Fd, folder: &[&[u8]]| {
+        let folder = ZBox::from_bytes(&folder.concat());
+        !matches!(sys::lstatat(dir, &folder), Err(err) if err.get_errno() == sys::E::ENOENT)
+    };
+    // The link name is the folder name, less `<index>@` (npm) or `@GH@` (GitHub).
+    has(index_parent, &[index, b"@", link])
+        || has(cache_dir, &[b"@GH@", link])
+        || has(cache_dir, &[link])
+}
+
 // PERF: an earlier version used `core::fmt::write` over a `format_args!` of
 // `bun_fmt::s` / `hex_int_*` pieces. In Rust that is *dynamic* dispatch — every `{}` argument is a
 // `&dyn Display` whose vtable lives in `.data.rel.ro`, and every

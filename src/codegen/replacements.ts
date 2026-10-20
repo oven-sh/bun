@@ -106,7 +106,8 @@ export const nativeGlobals = Array.from(
   ),
 )
   .filter(
-    ({ 2: value, 3: kind }) => /\b(CellProperty|ClassStructure)\b/.test(kind) || /ConstructorCallback$/.test(value),
+    ({ 2: value, 3: kind }) =>
+      /\b(CellProperty|ClassStructure)\b/.test(kind) || /ConstructorCallback$|::get\w+Constructor$/.test(value),
   )
   .map(({ 1: name }) => name)
   .filter(name => !globalsToPrefix.includes(name) && name !== "Bun" && name !== "process");

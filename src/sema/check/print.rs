@@ -368,6 +368,15 @@ impl Checker<'_, '_> {
 }
 
 impl<'p, 's> Checker<'p, 's> {
+    /// `GetTextOfNode`. Returns an empty slice if the node is missing, the HIR doesn't record its
+    /// start, or the file's text isn't retained (the default library).
+    pub(super) fn get_text_of_node(&self, file: FileId, node: hir::Node) -> &'p [u8] {
+        let hir = self.hir(file);
+        let (start, end) = (hir.start(node), self.end_of_node(file, node));
+        let text = hir.text.get(start as usize..end as usize);
+        text.filter(|_| start != 0).unwrap_or_default()
+    }
+
     /// `NodeBuilder.SerializeTypeForDeclaration` for a declaration of `file`. `ty` is
     /// `getTypeOfSymbol(symbol)`. `declaration` is `None` if nothing is reused from its syntax.
     pub(super) fn serialize_type_for_declaration(
@@ -2074,20 +2083,11 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
     }
 
-    /// `GetTextOfNode`. Returns an empty text if the node is missing, the HIR doesn't record its
-    /// start, or the text isn't retained (the default library).
-    fn get_text_of_node(&self, file: FileId, node: hir::Node) -> &'p [u8] {
-        let hir = self.c.hir(file);
-        let (start, end) = (hir.start(node), self.c.end_of_node(file, node));
-        let text = hir.text.get(start as usize..end as usize);
-        text.filter(|_| start != 0).unwrap_or_default()
-    }
-
     /// `DeclarationNameToString`. The source text is used only for what `node.Text()` lacks, the
     /// escapes of an identifier. A name isn't always at `start` (the name of an `@overload` is at
     /// the tag), and a missing name still has a token at that position.
     fn declaration_name_to_string(&self, file: FileId, name: hir::Node) -> Vec<u8> {
-        let text = match self.get_text_of_node(file, name) {
+        let text = match self.c.get_text_of_node(file, name) {
             raw_text if bun_core::strings::contains_char(raw_text, b'\\') => raw_text.to_vec(),
             _ => self.property_key_text(file, name),
         };
@@ -2105,7 +2105,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// identifier has its escapes decoded.
     fn property_key_text(&self, file: FileId, name: hir::Node) -> Vec<u8> {
         let hir = self.c.hir(file);
-        let (text, raw_text) = (hir.text(name), self.get_text_of_node(file, name));
+        let (text, raw_text) = (hir.text(name), self.c.get_text_of_node(file, name));
         match (hir.kind(name), raw_text.first()) {
             (_, Some(b'[' | b'"' | b'\'' | b'0'..=b'9')) => raw_text.to_vec(),
             // `.5`. A name that's missing before a `.` isn't written.

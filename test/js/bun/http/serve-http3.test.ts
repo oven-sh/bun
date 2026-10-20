@@ -1949,9 +1949,9 @@ describe("Bun.serve HTTP/3 request validation", () => {
       },
       "200 helloabc",
     ],
-    // A request with no pseudo-header fields is malformed. What its own stream
-    // gets is not asserted here, only the other request of the connection.
-    ["as the first block of the request", (stream: any) => stream.sendHeaders({}, { terminal: true }), undefined],
+    // A request with no pseudo-header fields is malformed. It has no method and
+    // no path, so no route matches it.
+    ["as the first block of the request", (stream: any) => stream.sendHeaders({}, { terminal: true }), "404 "],
   ])("decodes a header block with no field lines %s", async (_, send, subject) => {
     const release = Promise.withResolvers<void>();
     await using server = Bun.serve({
@@ -2007,7 +2007,7 @@ describe("Bun.serve HTTP/3 request validation", () => {
     const held = exchange({ headers: requestHeaders("/held") });
     const subjectResponse = await exchange({}, send);
     release.resolve();
-    expect({ subject: subject && subjectResponse, held: await held }).toEqual({ subject, held: "200 first,second" });
+    expect({ subject: subjectResponse, held: await held }).toEqual({ subject, held: "200 first,second" });
   });
 
   test("requestCert with rejectUnauthorized only serves QUIC clients whose certificate chains to the configured CA", async () => {

@@ -22,11 +22,8 @@ export const lsqpack: Dependency = {
     // QPACK uses the same RFC 7541 Huffman code as HPACK; share lshpack's
     // .bss-backed hencs/hdecs instead of carrying a second 768 KB copy.
     "patches/lsqpack/bss-huff-tables.patch",
-    // The decoder failed a field section that is only its prefix, with no
-    // field lines. RFC 9204 Section 4.5 allows one, and the encoder writes
-    // one for an empty header list, such as a trailer section that the
-    // application left empty. lsquic answers a decoder failure by closing the
-    // connection, which ends every other request on it. Not fixed upstream:
+    // Decode a field section that has no field lines (RFC 9204 Section 4.5)
+    // instead of failing it, which closes the connection. Not fixed upstream:
     // https://github.com/litespeedtech/ls-qpack/issues/90#issuecomment-5472689782
     "patches/lsqpack/accept-empty-field-section.patch",
   ],

@@ -1655,3 +1655,222 @@ describe.concurrent("onResolve", () => {
     });
   });
 });
+
+// A specifier without an extension: a package name, `./other`, `/abs/other`.
+describe.concurrent("onResolve is asked about a specifier without an extension", () => {
+  const files = {
+    "node_modules/dep-pkg/package.json": `{ "name": "dep-pkg", "main": "main.js" }`,
+    "node_modules/dep-pkg/main.js": `module.exports = "dep-pkg from disk";`,
+    "elsewhere/node_modules/far-pkg/package.json": `{ "name": "far-pkg", "main": "main.js" }`,
+    "elsewhere/node_modules/far-pkg/main.js": `module.exports = "far-pkg";`,
+    "src/other.ts": `export default "other.ts";`,
+    "src/dir/index.ts": `export default "dir/index.ts";`,
+    "src/util.ts": `export default "util.ts";`,
+    "index.js": `module.exports = "index.js";`,
+    "a.test.js": `
+      import ws from "ws";
+      import { test } from "bun:test";
+      test("the builtin", () => console.log(typeof ws));
+    `,
+    "plugin.ts": `
+      Bun.plugin({
+        name: "host",
+        setup(build) {
+          build.onResolve({ filter: /^@somemodule\\/foo(\\/.*)?$/ }, args => {
+            console.log("onResolve", args.path);
+            return { path: args.path, namespace: "host" };
+          });
+          build.onLoad({ filter: /.*/, namespace: "host" }, args => ({
+            exports: { path: args.path },
+            loader: "object",
+          }));
+          build.onResolve({ filter: /^@app\\// }, ({ path }) => ({ path: "./" + path.slice("@app/".length) }));
+          build.onResolve({ filter: /^virtual:/ }, ({ path }) => {
+            console.log("onResolve", path);
+            return { path: path.slice("virtual:".length), namespace: "host" };
+          });
+          build.onResolve({ filter: /^first$/, namespace: "virtual" }, ({ path }) => {
+            console.log("onResolve virtual", path);
+            return { path: "first from virtual", namespace: "host" };
+          });
+        },
+      });
+    `,
+    "log.ts": `
+      import { basename, isAbsolute } from "node:path";
+      Bun.plugin({
+        name: "log",
+        setup(build) {
+          build.onResolve({ filter: /.*/ }, ({ path, importer }) => {
+            console.log("onResolve", isAbsolute(path) ? "<absolute>/" + basename(path) : path, basename(importer));
+            return process.env.ANSWER_SELF ? { path } : undefined;
+          });
+        },
+      });
+    `,
+    "inner.ts": `
+      import { basename, dirname } from "node:path";
+      Bun.plugin({
+        name: "resolves inside",
+        setup(build) {
+          build.onResolve({ filter: /^\\.\\/other$|^far-pkg$/ }, ({ path, importer }) => {
+            console.log("onResolve", path);
+            const fs = require("fs");
+            const dep = require("dep-pkg");
+            const far = require.resolve("far-pkg", { paths: [dirname(dirname(importer)) + "/elsewhere"] });
+            console.log(typeof fs.readFileSync, dep, basename(far));
+            if (path === "far-pkg") return undefined;
+            return { path: Bun.resolveSync(path, dirname(importer)) };
+          });
+        },
+      });
+    `,
+    "load.ts": `
+      Bun.plugin({
+        name: "onLoad of a builtin key",
+        setup(build) {
+          build.onLoad({ filter: /^ws$/ }, ({ path }) => ({ contents: "export default " + JSON.stringify(path), loader: "js" }));
+        },
+      });
+    `,
+  };
+  async function run(name: string, source: string, preload = "./plugin.ts", env = {}) {
+    using dir = tempDir("plugin-onresolve-no-extension", { ...files, ["src/" + name]: source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-install", "--preload", preload, "src/" + name],
+      cwd: String(dir),
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+  }
+
+  it.each([
+    ["an import statement", "entry.mjs", `import { path } from "@somemodule/foo"; console.log(path);`],
+    ["import()", "entry.mjs", `console.log((await import("@somemodule/foo")).path);`],
+    ["require()", "entry.cjs", `console.log(require("@somemodule/foo").path);`],
+    ["import.meta.require()", "entry.mjs", `console.log(import.meta.require("@somemodule/foo").path);`],
+  ])("and moves a package name into a namespace for %s", async (_, name, source) => {
+    expect(await run(name, source)).toEqual({
+      stdout: ["onResolve @somemodule/foo", "@somemodule/foo"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("and moves a subpath of a package into a namespace", async () => {
+    const source = `
+      console.log((await import("@somemodule/foo/bar")).path);
+      console.log(require.resolve("@somemodule/foo/baz/qux"));
+    `;
+    expect(await run("entry.mjs", source)).toEqual({
+      stdout: [
+        "onResolve @somemodule/foo/bar",
+        "@somemodule/foo/bar",
+        "onResolve @somemodule/foo/baz/qux",
+        "host:@somemodule/foo/baz/qux",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The namespace's own onResolve is asked first, then the file namespace with the whole specifier.
+  it("and offers a specifier with a namespace to the file namespace as well", async () => {
+    const source = `
+      console.log((await import("virtual:thing")).path, (await import("virtual:first")).path);
+      console.log(require.resolve("virtual:other"));
+    `;
+    expect(await run("entry.mjs", source)).toEqual({
+      stdout: [
+        "onResolve virtual:thing",
+        "onResolve virtual first",
+        "thing first from virtual",
+        "onResolve virtual:other",
+        "host:other",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("and its answer about a package name is resolved from the importer", async () => {
+    const source = `
+      import util from "@app/util";
+      import dir from "@app/dir";
+      console.log(util, dir, (await import("@app/other")).default, require("@app/util").default === util);
+    `;
+    expect(await run("entry.mjs", source)).toEqual({
+      stdout: ["util.ts dir/index.ts other.ts true"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  const sees = `
+    import other from "./other";
+    import fs from "fs";
+    import path from "node:path";
+    console.log(other, require("./dir").default, require(import.meta.dir + "/util").default, require("dep-pkg"));
+    console.log(require("fs") === fs, require("path") === path, require(".."));
+  `;
+  // (The entry point has an extension, so a catch-all filter sees it, as before.)
+  const seen = [
+    "onResolve <absolute>/entry.mjs bun:main",
+    "onResolve ./other entry.mjs",
+    "onResolve ./dir entry.mjs",
+    "onResolve <absolute>/util entry.mjs",
+    "onResolve dep-pkg entry.mjs",
+    "other.ts dir/index.ts util.ts dep-pkg from disk",
+    "onResolve .. entry.mjs",
+    "true true index.js",
+  ];
+  it("sees relative, absolute and package specifiers, and not builtin names", async () => {
+    expect(await run("entry.mjs", sees, "./log.ts")).toEqual({ stdout: seen, stderr: "", exitCode: 0 });
+  });
+
+  it("is transparent when its answer is the specifier", async () => {
+    expect(await run("entry.mjs", sees, "./log.ts", { ANSWER_SELF: "1" })).toEqual({
+      stdout: seen,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // What the callback resolves itself is not offered to it again, and keeps the `paths` of the outer `require.resolve()`.
+  it("is not asked about what its callback resolves", async () => {
+    const source = `
+      console.log(require("./other").default);
+      console.log(require("node:path").basename(require.resolve("far-pkg", { paths: [__dirname + "/../elsewhere"] })));
+    `;
+    expect(await run("entry.cjs", source, "./inner.ts")).toEqual({
+      stdout: [
+        "onResolve ./other",
+        "function dep-pkg from disk main.js",
+        "other.ts",
+        "onResolve far-pkg",
+        "function dep-pkg from disk main.js",
+        "main.js",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("while a builtin key under bun test is not offered to an onLoad in the file namespace", async () => {
+    using dir = tempDir("plugin-onload-builtin-key", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--preload", "./load.ts", "./a.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("function\n");
+    expect(stderr).toContain(" 1 pass\n");
+    expect(exitCode).toBe(0);
+  });
+});

@@ -208,7 +208,7 @@ pub struct Options {
     pub(crate) truncate: bool,
     /// `Bun.write(path, stream)`: create missing parent directories.
     pub(crate) mkdirp: bool,
-    /// `open_for_stream`: `setup` cannot fail. An fd it cannot duplicate or poll is written in place.
+    /// `open_for_stream`: `setup` cannot fail. No duplicate: the fd is written in place. No poll: a write waits for room.
     #[cfg(unix)]
     pub(crate) must_start: bool,
 }

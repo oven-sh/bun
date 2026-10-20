@@ -919,22 +919,6 @@ impl<'s> Checker<'_, 's> {
         self.check_type_parameters_deferred(file, symbol, decl.type_params, false);
         if symbol.is_some() {
             self.check_grammar_interface_declaration(file, interface);
-            let sym = self.files().sym(file, symbol);
-            let declared = self.declared_type(sym);
-            let bases = self.base_types(sym);
-            // `typeWithThis`, and `getTypeWithThisArgument(baseType, t.thisType)`: created before
-            // the members are checked, and `isDeeplyNestedType` depends on the type creation order.
-            // An interface without type parameters may be thisless, which is expensive to
-            // determine.
-            if !decl.type_params.is_empty() {
-                let this = self.intern(TypeData::ThisParam(sym));
-                self.type_with_this_argument(declared, this);
-                for &base in bases.iter() {
-                    self.type_with_this_argument(base, this);
-                }
-            }
-        }
-        if symbol.is_some() {
             self.check_interface_heritage(file, interface);
             // `getMembersOfSymbol`: `checkInheritedPropertiesAreIdentical` or
             // `checkIndexConstraints` has requested the members.

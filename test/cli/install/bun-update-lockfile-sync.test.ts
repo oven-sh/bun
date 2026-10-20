@@ -1011,6 +1011,7 @@ describe.concurrent("bun add", () => {
     await expectInSync(dir);
   });
 
+  // The install script of uses-what-bin starts node. From a cold disk that alone can take over 5 seconds.
   test("bun add --trust", async () => {
     const dir = await setup({ "package.json": root({}) }, { install: false });
     expect((await run(dir, "add", "uses-what-bin@1.0.0", "--trust")).stderr).toBe(SAVED);
@@ -1021,7 +1022,7 @@ describe.concurrent("bun add", () => {
     });
     expect(await exists(join(dir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBe(true);
     await expectInSync(dir);
-  });
+  }, 60_000);
 
   test("bun add --trust of a package already listed in devDependencies", async () => {
     const dir = await setup({ "package.json": root({ devDependencies: { "uses-what-bin": "1.0.0" } }) });
@@ -1033,7 +1034,7 @@ describe.concurrent("bun add", () => {
     });
     expect(await exists(join(dir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBe(true);
     await expectInSync(dir);
-  });
+  }, 60_000);
 });
 
 describe.concurrent("catalogs", () => {

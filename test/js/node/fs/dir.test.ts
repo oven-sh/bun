@@ -248,7 +248,7 @@ describe("Dir explicit resource management", () => {
 
 // fs.opendir opens the directory, and the Dir reads that open directory a
 // batch at a time. Renaming or removing the path afterwards changes nothing.
-describe.concurrent("Dir reads the directory that opendir opened", () => {
+describe("Dir reads the directory that opendir opened", () => {
   // Descriptors of this process that are open on `dir` or on something below it.
   function descriptorsOn(dir: string) {
     let count = 0;
@@ -299,7 +299,8 @@ describe.concurrent("Dir reads the directory that opendir opened", () => {
   it("a read takes a part of the directory, not all of it", async () => {
     // More than any read buffer holds: glibc's readdir, which node uses, takes 32 KB (about 150 of these names).
     const count = 400;
-    const names = Array.from({ length: count }, (_, i) => String(i).padStart(4, "0") + "-".repeat(191));
+    const filler = Buffer.alloc(191, "-").toString();
+    const names = Array.from({ length: count }, (_, i) => String(i).padStart(4, "0") + filler);
     using root = tempDir("opendir-batch", {});
     const fill = (name: string) => {
       const dir = path.join(String(root), name);
@@ -414,25 +415,33 @@ describe.concurrent("Dir reads the directory that opendir opened", () => {
   });
 
   it.skipIf(!isLinux)("a recursive walk holds open what the depth of the tree asks for, not its width", async () => {
-    // 584 directories, 512 of them on the widest level.
+    // 258 directories, 216 of them on the widest level.
     const tree: Record<string, string> = {};
-    for (let i = 0; i < 8; i++)
-      for (let j = 0; j < 8; j++) for (let k = 0; k < 8; k++) tree[`a${i}/b${j}/c${k}/f`] = "";
+    for (let i = 0; i < 6; i++)
+      for (let j = 0; j < 6; j++) for (let k = 0; k < 6; k++) tree[`a${i}/b${j}/c${k}/f`] = "";
     using root = tempDir("opendir-fds-wide", tree);
-    const peak = { sync: 0, forAwait: 0 };
-    const seen = { sync: 0, forAwait: 0 };
+    const peak = { sync: 0, forAwait: 0, largeBufferSize: 0 };
+    const seen = { sync: 0, forAwait: 0, largeBufferSize: 0 };
 
     using dir = fs.opendirSync(String(root), { recursive: true });
     while (dir.readSync()) {
-      if (seen.sync++ % 16 === 0) peak.sync = Math.max(peak.sync, descriptorsOn(String(root)));
+      if (seen.sync++ % 8 === 0) peak.sync = Math.max(peak.sync, descriptorsOn(String(root)));
     }
     for await (const _ of await fs.promises.opendir(String(root), { recursive: true })) {
-      if (seen.forAwait++ % 16 === 0) peak.forAwait = Math.max(peak.forAwait, descriptorsOn(String(root)));
+      if (seen.forAwait++ % 8 === 0) peak.forAwait = Math.max(peak.forAwait, descriptorsOn(String(root)));
+    }
+    // A large bufferSize gives more entries in one read. It does not open more directories.
+    using large = fs.opendirSync(String(root), { recursive: true, bufferSize: 1024 });
+    while (large.readSync()) {
+      if (seen.largeBufferSize++ % 8 === 0) {
+        peak.largeBufferSize = Math.max(peak.largeBufferSize, descriptorsOn(String(root)));
+      }
     }
 
-    expect(seen).toEqual({ sync: 1096, forAwait: 1096 });
+    expect(seen).toEqual({ sync: 474, forAwait: 474, largeBufferSize: 474 });
     expect(peak.sync).toBeLessThan(100);
     expect(peak.forAwait).toBeLessThan(100);
+    expect(peak.largeBufferSize).toBeLessThan(100);
   });
 
   it("a Dir that is collected while open closes its directory and warns", async () => {
@@ -485,7 +494,8 @@ describe.concurrent("Dir reads the directory that opendir opened", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // stderr has the default print of each warning.
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe(JSON.stringify({ warnings: 4, open: 0, atEnd: null }));
     expect(exitCode).toBe(0);
   });
@@ -494,9 +504,14 @@ describe.concurrent("Dir reads the directory that opendir opened", () => {
     using root = tempDir("opendir-foreign", { "file": "x" });
     const fd = fs.openSync(path.join(String(root), "file"), "r");
     try {
+      const invalidHandle = expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" });
       const dir = new fs.Dir(fd as any, String(root));
-      expect(() => dir.readSync()).toThrow();
-      expect(() => dir.closeSync()).toThrow();
+      expect(() => dir.readSync()).toThrow(invalidHandle);
+      expect(() => dir.closeSync()).toThrow(invalidHandle);
+      // The constructor closes its handle when bufferSize is invalid. That must not hide the error, nor close this descriptor.
+      expect(() => new fs.Dir(fd as any, String(root), { bufferSize: 0 })).toThrow(
+        expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      );
       expect(fs.fstatSync(fd).isFile()).toBe(true);
     } finally {
       fs.closeSync(fd);
@@ -555,6 +570,15 @@ describe.concurrent("Dir reads the directory that opendir opened", () => {
     );
   });
 
+  it("a function as the options of promises.opendir is not the callback", async () => {
+    using root = tempDir("opendir-options-promise", { "a": "" });
+    const calledBack = Promise.withResolvers<string>();
+    const opened = fs.promises.opendir(String(root), (() => calledBack.resolve("called as the callback")) as any);
+    const result = await Promise.race([opened, calledBack.promise]);
+    expect(result).toBeInstanceOf(fs.Dir);
+    await (result as fs.Dir).close();
+  });
+
   it("a file: URL gives Dir.path and the error the path that it names", async () => {
     using root = tempDir("opendir-url", { "sp ace/entry": "" });
     const d = path.join(String(root), "sp ace");
@@ -572,7 +596,7 @@ describe.concurrent("Dir reads the directory that opendir opened", () => {
 
 // With `recursive`, a directory is read only after its entry was returned,
 // and it is opened relative to its parent's open directory.
-describe.concurrent("Dir recursive walk", () => {
+describe("Dir recursive walk", () => {
   const relativeTo = (root: string) => (e: fs.Dirent) => path.relative(root, path.join(e.parentPath, e.name));
 
   it("reads a directory after its entry is returned", async () => {
@@ -614,11 +638,11 @@ describe.concurrent("Dir recursive walk", () => {
       [dotdot]: [...nested, dotdot + "|a", dotdot + "|top"].sort(),
     });
 
-    // The encoding is for the names only.
+    // The encoding is for the names only. (On Windows the names of a Dirent are not encoded at all.)
     using hex = fs.opendirSync(t, { encoding: "hex" });
     const entry = hex.readSync()!;
     expect(entry.parentPath).toBe(t);
-    expect(["a", "top"]).toContain(Buffer.from(entry.name, "hex").toString());
+    if (!isWindows) expect(["a", "top"]).toContain(Buffer.from(entry.name, "hex").toString());
   });
 
   // Until the entries for this encoding are Dirents, a name is the only place for the directory of an entry.

@@ -8,7 +8,6 @@ use bun_event_loop::{ContextId, Task, Taskable, task_tag};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_paths::resolve_path::{self, platform};
-use bun_paths::string_paths::without_nt_prefix;
 use bun_sys::FdExt as _;
 use bun_sys::{self as sys, E, Fd, Maybe};
 use bun_threading::Guarded;
@@ -39,14 +38,14 @@ impl DirStream {
     /// Codegen `finalize: true`. The directories close with the last reference: this one, unless a read is on the work pool.
     #[allow(clippy::boxed_local)] // codegen's signature
     pub(crate) fn finalize(self: Box<Self>) {
-        if !self.stream.close_requested.load(Ordering::Relaxed) {
+        if !self.stream.close_requested.load(Ordering::SeqCst) {
             DirStreamCollected::schedule();
         }
     }
 
     /// Codegen `estimatedSize: true` entry point. Any thread.
     pub(crate) fn estimated_size(&self) -> usize {
-        size_of::<Self>() + size_of::<Stream>() + self.stream.native_bytes.load(Ordering::Relaxed)
+        size_of::<Self>() + size_of::<Stream>() + self.stream.native_bytes.load(Ordering::SeqCst)
     }
 }
 
@@ -95,9 +94,9 @@ pub(crate) struct Stream {
     close_requested: AtomicBool,
 }
 
-// SAFETY: the walk is reached only through its lock, and nothing in it is
-// thread-affine: descriptors, iterator buffers and owned bytes (the Windows
-// iterator's raw name filter is never set).
+// SAFETY: a `Stream` holds no VM or JS state: descriptors, iterator buffers
+// and owned bytes (the Windows iterator's raw name filter is never set). The
+// walk is reached only through its lock.
 unsafe impl Send for Stream {}
 // SAFETY: see `Send`.
 unsafe impl Sync for Stream {}
@@ -134,7 +133,9 @@ enum Source {
     },
     /// A `/$bunfs/` directory of a compiled binary. There is no descriptor.
     Graph {
-        /// `Graph::readdir` of the level's path, made at the first read. A recursive listing has the whole tree.
+        /// The path that the graph looks up.
+        lookup: Box<[u8]>,
+        /// `Graph::readdir` of `lookup`, made at the first read. A recursive listing has the whole tree.
         list: Option<std::vec::IntoIter<(Box<[u8]>, bool)>>,
     },
 }
@@ -213,7 +214,7 @@ impl DirBatch {
 }
 
 impl Stream {
-    /// `path` is the caller's, for the error. `path_z` is the one the OS opens and `Dirent.parentPath` reports.
+    /// `path` is the caller's: the errors and `Dirent.parentPath` report it as given, as node does. `path_z` is the one the OS opens.
     pub(crate) fn open(
         path: &[u8],
         path_z: &bun_core::ZStr,
@@ -227,7 +228,7 @@ impl Stream {
         };
         let root = Level {
             source,
-            path: Box::from(path_z.as_bytes()),
+            path: Box::from(path),
             relative: Box::default(),
         };
         let bytes = root.bytes();
@@ -247,7 +248,7 @@ impl Stream {
         }))
     }
 
-    /// At most `limit` entries. A recursive walk gives up to `Walk::READ_AHEAD`, and opens at most `limit` directories.
+    /// At most `limit` entries. A recursive walk gives up to `Walk::READ_AHEAD`, and opens at most `Walk::OPEN_AHEAD` directories.
     pub(crate) fn read(&self, limit: u32) -> Maybe<DirBatch> {
         let mut walk = self.walk.lock();
         let result = match walk.tag {
@@ -255,13 +256,13 @@ impl Stream {
             ret::ReaddirTag::Buffers => walk.read_batch::<Buffer>(limit),
             ret::ReaddirTag::Files => unreachable!("`fs.opendir` asks for file types"),
         };
-        self.native_bytes.store(walk.bytes, Ordering::Relaxed);
+        self.native_bytes.store(walk.bytes, Ordering::SeqCst);
         result
     }
 
     /// JS thread, when `Dir` asks for the close. `close` can run later, on the work pool.
     pub(crate) fn close_requested(&self) {
-        self.close_requested.store(true, Ordering::Relaxed);
+        self.close_requested.store(true, Ordering::SeqCst);
     }
 
     /// Closes every directory of the walk.
@@ -271,13 +272,15 @@ impl Stream {
         walk.children.clear();
         walk.pending = None;
         walk.bytes = 0;
-        self.native_bytes.store(0, Ordering::Relaxed);
+        self.native_bytes.store(0, Ordering::SeqCst);
     }
 }
 
 impl Walk {
     /// The most entries that one read of a recursive walk lists: about what one 8 KB read of the OS holds.
     const READ_AHEAD: u32 = 256;
+    /// The most directories that one read opens: the walk then holds about depth x 32 descriptors for any `bufferSize`.
+    const OPEN_AHEAD: u32 = 32;
 
     fn read_batch<T: ReaddirEntry>(&mut self, limit: u32) -> Maybe<DirBatch> {
         if self.root.is_none() {
@@ -296,8 +299,8 @@ impl Walk {
         } as usize;
         let mut out: Vec<T> = Vec::with_capacity((limit as usize).min(64));
         let mut opened: Vec<Level> = Vec::new();
-        // Depth first, and `limit` directories opened at most: the open directories stay near depth x `limit`, not the width of the tree.
-        let mut may_open = limit;
+        // Depth first, and few directories opened in one read: the open directories follow the depth of the tree, not its width.
+        let mut may_open = limit.min(Self::OPEN_AHEAD);
         // `children[..older]` are from earlier reads. This read does not read a child that it opens: node returns a child's entry before it reads the child.
         let mut older = self.children.len();
 
@@ -361,8 +364,8 @@ impl Level {
             + self.relative.len()
             + match &self.source {
                 Source::Os { iter, .. } => iter.as_ref().map_or(0, LevelIter::bytes),
-                Source::Graph { list } => {
-                    list.as_ref().map_or(0, |list| size_of_val(list.as_slice()))
+                Source::Graph { lookup, list } => {
+                    lookup.len() + list.as_ref().map_or(0, |list| size_of_val(list.as_slice()))
                 }
             }
     }
@@ -382,7 +385,7 @@ impl Level {
                 let fd = *fd;
                 let end = out.len() + want;
                 let mut failed = None;
-                // node reports the path as it is, in every encoding of the names.
+                // node reports the path as it was given, in every encoding of the names.
                 let mut parent_path = BunString::DEAD;
                 let mut scratch: Vec<u8> = Vec::new();
                 let ended = match iter.get_or_insert_with(|| LevelIter::new::<T>(fd)) {
@@ -400,8 +403,7 @@ impl Level {
                             }
                             if T::IS_DIRENT {
                                 if parent_path.is_empty() {
-                                    parent_path =
-                                        BunString::clone_utf8(without_nt_prefix::<u8>(path));
+                                    parent_path = BunString::clone_utf8(path);
                                 }
                                 T::append_entry(out, name_bytes, &parent_path, kind, encoding);
                             } else {
@@ -439,7 +441,7 @@ impl Level {
                                 }
                             }
                             if parent_path.is_empty() {
-                                parent_path = BunString::clone_utf8(without_nt_prefix::<u8>(path));
+                                parent_path = BunString::clone_utf8(path);
                             }
                             T::append_entry_w(
                                 out,
@@ -466,10 +468,10 @@ impl Level {
                     Ok(false) => Ok(failed.map_or(Stop::Filled, Stop::ChildFailed)),
                 }
             }
-            Source::Graph { list } => {
+            Source::Graph { lookup, list } => {
                 let list = list.get_or_insert_with(|| {
                     bun_standalone_graph::Graph::get_ref()
-                        .and_then(|graph| graph.readdir(path, recursive))
+                        .and_then(|graph| graph.readdir(lookup, recursive))
                         .unwrap_or_default()
                         .into_iter()
                 });
@@ -543,7 +545,10 @@ impl Source {
         if let Some(graph) = bun_standalone_graph::Graph::get_ref() {
             if bun_standalone_graph::is_bun_standalone_file_path(path_z.as_bytes()) {
                 return match graph.dir_key(path_z.as_bytes()) {
-                    Ok(_) => Ok(Source::Graph { list: None }),
+                    Ok(_) => Ok(Source::Graph {
+                        lookup: Box::from(path_z.as_bytes()),
+                        list: None,
+                    }),
                     Err(errno) => Err(sys::Error::from_code(errno, sys::Tag::opendir)),
                 };
             }

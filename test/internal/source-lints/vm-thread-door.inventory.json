@@ -166,6 +166,14 @@
       "AsyncReaddirRecursiveTask"
     ]
   },
+  "src/runtime/node/node_fs_dir.rs": {
+    "unsafe impl Send": [
+      "Stream"
+    ],
+    "unsafe impl Sync": [
+      "Stream"
+    ]
+  },
   "src/runtime/node/node_fs_stat_watcher.rs": {
     "WorkPool::schedule*": 2,
     "owned_task!": [

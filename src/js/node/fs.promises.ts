@@ -202,6 +202,8 @@ function settleFromNodeCallback(resolve, reject, err, value) {
 async function opendir(dir: string, options?) {
   // The callback form opens the directory on the work pool and makes the Dir.
   const { promise, resolve, reject } = Promise.withResolvers<import("node:fs").Dir>();
+  // A function in the options slot means no options (node's getOptions). The callback form would take it as the callback.
+  if (typeof options === "function") options = undefined;
   require("node:fs").opendir(dir, options, settleFromNodeCallback.bind(null, resolve, reject));
   return promise;
 }

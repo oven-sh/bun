@@ -1060,7 +1060,9 @@ class Dir {
         validateUint32(bufferSize, "options.bufferSize", true);
       } catch (err) {
         // Userland cannot close the handle when this throws, so close it first (node does the same).
-        fs.dirCloseSync(handle);
+        try {
+          fs.dirCloseSync(handle);
+        } catch {}
         throw err;
       }
       this.#bufferSize = bufferSize;

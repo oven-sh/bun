@@ -464,11 +464,7 @@ impl Checker<'_, '_> {
             }
         }
         let decls = &decls[..];
-        if decls.len() < 2
-            || !decls
-                .iter()
-                .any(|d| matches!(d.1, Decl::Class(_) | Decl::Fn(_)))
-        {
+        if decls.len() < 2 {
             return;
         }
         let is_ambient = |c: &Self, of: FileId, flags: Flags| {

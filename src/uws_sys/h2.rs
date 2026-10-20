@@ -384,6 +384,10 @@ impl App {
     pub fn clear_routes(&mut self) {
         c::uws_h2_app_clear_routes(self)
     }
+    /// Sorts the route tree now, so that the first request does not.
+    pub fn sort_routes(&mut self) {
+        c::uws_h2_app_sort_routes(self)
+    }
 
     fn route<UD, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: *mut UD, _handler: H)
     where
@@ -522,6 +526,7 @@ mod c {
         );
         pub(super) safe fn uws_h2_app_drain(app: &mut App) -> bool;
         pub(super) safe fn uws_h2_app_clear_routes(app: &mut App);
+        pub(super) safe fn uws_h2_app_sort_routes(app: &mut App);
         pub(super) safe fn uws_h2_res_write_continue(res: &mut Response);
         pub(super) fn uws_h2_app_get(
             app: *mut App,

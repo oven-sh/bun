@@ -33,6 +33,7 @@ import {
   show,
   showFrame,
   shrinkBuffers,
+  syncPrefix,
   tooLong,
   tryCall,
   upgradeRequest,
@@ -74,6 +75,9 @@ async function readLargeFrames(client: RawClient, count: number) {
   return lines;
 }
 
+// The Pong that answers the Ping of roundTrip().
+const isSyncPong = (frame: Frame) => frame.opcode === OP.pong && frame.payload.toString().startsWith(syncPrefix);
+
 // For runScript(). Without a collection before the exit, the closed server and the loaded modules are still allocated
 // when LeakSanitizer looks. It then takes seconds to symbolize them, only for a suppression to drop the report.
 const collectBeforeExit = `process.on("beforeExit", () => Bun.gc(true));`;
@@ -91,21 +95,26 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
   /**
    * `openServer()` for a test that only sends: it adds no listener, changes no property and leaves no fragmented message
    * unfinished. These tests use one socket, one after the other, because it takes several times longer to open one than
-   * to run the test. A test ends with `keep()`, which checks that the socket emitted no event and has nothing left to
-   * write, and keeps it for the next test. A test that fails doesn't get there: its socket is destroyed.
+   * to run the test. A test ends with a `roundTrip()` and then `keep()`. That checks that the socket emitted no event
+   * and has nothing left to write, and that the client got nothing behind the Pong, then keeps the socket for the next
+   * test. A test that fails doesn't get there: its socket is destroyed.
    */
   async function sharedSocket() {
-    const server = idle ?? (await openServer(implementation));
+    const taken = idle;
     idle = undefined;
+    const server = taken ?? (await openServer(implementation));
     return {
       ...server,
       keep() {
-        const { events, ws } = server;
-        expect({ events, readyState: ws.readyState, bufferedAmount: ws.bufferedAmount }).toEqual({
-          events: [],
-          readyState: OPEN,
-          bufferedAmount: 0,
-        });
+        const { events, ws, client } = server;
+        expect({
+          events,
+          readyState: ws.readyState,
+          bufferedAmount: ws.bufferedAmount,
+          unread: client.frames.slice(client.frames.findLastIndex(isSyncPong) + 1).map(showFrame),
+          unparsedBytes: client.unparsedBytes,
+          socketEvents: client.socketEvents,
+        }).toEqual({ events: [], readyState: OPEN, bufferedAmount: 0, unread: [], unparsedBytes: 0, socketEvents: [] });
         idle ??= server;
       },
       async [Symbol.asyncDispose]() {

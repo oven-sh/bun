@@ -3306,7 +3306,7 @@ pub(crate) mod args {
     /// UTF-8 fast paths, which hand both to C++ for any target:
     /// https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L432-L437 (readFileSync)
     /// https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2398-L2411 (writeFileSync)
-    #[inline]
+    #[inline(always)]
     fn get_encoding_and_converts_open_options(
         object: JSValue,
         global_object: &JSGlobalObject,
@@ -3323,6 +3323,7 @@ pub(crate) mod args {
     }
 
     /// Node tests `options.encoding === 'utf8' || options.encoding === 'utf-8'`.
+    #[inline(never)]
     fn get_encoding_and_takes_utf8_fast_path(
         object: JSValue,
         global_object: &JSGlobalObject,

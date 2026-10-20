@@ -44,7 +44,7 @@ private:
     /* Handler ids are 32-bit */
     static constexpr uint32_t HANDLER_MASK = 0x0fffffff;
 
-    /* Name of the child of a method node that holds the literal keys. No segment of a pattern has a '/', so none is equal to it. */
+    /* Name of the child of a method node that holds the literal keys: executeHandlers runs it as a wildcard, and no pattern segment has a '/' */
     static constexpr std::string_view LITERAL_TOKEN = "*/";
 
     /* List of handlers */
@@ -211,10 +211,7 @@ private:
         return false;
     }
 
-    /* Whether the tree cannot hold this literal key byte for byte: as a pattern, one of its segments
-     * is a parameter or a wildcard, or it has all the segments that are read of a URL, and a longer
-     * URL would match it. This splits the key as getUrlSegment does, but it does not call it: one
-     * more caller stops the inlining of getUrlSegment into executeHandlers. */
+    /* Whether a pattern cannot hold this key byte for byte. No call of getUrlSegment: one more caller stops its inlining into executeHandlers */
     bool needsLiteralNode(std::string_view key) {
         unsigned int segments = 0;
         for (; !key.empty() && segments < MAX_URL_SEGMENTS; segments++) {
@@ -225,12 +222,11 @@ private:
             }
             key.remove_prefix(segment.length());
         }
+        /* A URL is read up to this many segments, so a pattern of this many also matches a longer URL */
         return segments == MAX_URL_SEGMENTS;
     }
 
-    /* The node of a literal key: a child, named by the whole key, of the literal container of the method node.
-     * executeHandlers runs the container as a wildcard, ahead of every route but the WebSocket upgrades.
-     * Its one handler runs the handlers of the child that is equal to the whole URL. */
+    /* The node of a literal key: a child of the LITERAL_TOKEN container, named by the whole key */
     Node *literalNode(Node *methodNode, std::string_view key, bool create) {
         Node *container = nullptr;
         for (const std::unique_ptr<Node> &node : methodNode->children) {
@@ -324,8 +320,7 @@ public:
         return userData;
     }
 
-    /* While on, add() and remove() take their pattern as a literal path. It matches a URL byte for byte:
-     * a segment that starts with ':' or '*' is not a parameter or a wildcard. */
+    /* While on, add() and remove() take their pattern as a literal path: ':' and '*' do not start a parameter or a wildcard */
     void setLiteral(bool on) {
         literalKeys = on;
     }

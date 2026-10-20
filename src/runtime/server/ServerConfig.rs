@@ -210,11 +210,9 @@ impl Default for RouteDeclaration {
 
 /// The path of a static route, and how the router reads it.
 pub(crate) enum RouteKey {
-    /// A key of `routes`. A segment that starts with `:` is a parameter, and
-    /// one that starts with `*` is a wildcard.
+    /// A key of `routes`: a segment that starts with `:` or `*` is a parameter or a wildcard.
     Pattern(Box<[u8]>),
-    /// The URL path of a file the bundler wrote. The route answers at exactly
-    /// these bytes.
+    /// The URL path of a file the bundler wrote. The route answers at exactly these bytes.
     Literal(Box<[u8]>),
 }
 
@@ -361,6 +359,40 @@ impl ServerConfig {
     }
 }
 
+pub(crate) fn apply_static_route<T: StaticRouteLike, A: RouteApp>(
+    server: AnyServer,
+    app: &mut A,
+    entry: ThisPtr<T>,
+    path: &RouteKey,
+    method: http_method::Optional,
+    path_has_user_head_route: bool,
+) {
+    entry.set_server(server);
+
+    // Only answer HEAD from an entry that serves GET (HEAD must mirror GET,
+    // RFC 9110 section 9.3.2) or HEAD itself, and never displace an explicit HEAD
+    // handler route: uWS keeps the last registration for the same method and path.
+    let head = !path_has_user_head_route && serves_head(&method);
+    let register = |app: &mut A| {
+        if head {
+            app.method_this(Method::HEAD, path, T::on_head_request, entry);
+        }
+        match method {
+            http_method::Optional::Any => app.any_this(path, T::on_request, entry),
+            http_method::Optional::Method(m) => {
+                let mut iter = m.iter();
+                while let Some(method_) = iter.next() {
+                    app.method_this(method_, path, T::on_request, entry);
+                }
+            }
+        }
+    };
+    match path {
+        RouteKey::Pattern(_) => register(app),
+        RouteKey::Literal(_) => app.literal_routes(register),
+    }
+}
+
 /// Whether a static route registered for `method` should also answer HEAD.
 fn serves_head(method: &http_method::Optional) -> bool {
     match method {
@@ -371,8 +403,7 @@ fn serves_head(method: &http_method::Optional) -> bool {
     }
 }
 
-/// The route-registration surface shared by `uws::NewApp`, `uws::h2::App` and
-/// `uws::h3::App`; each hands the handler type-erased `AnyRequest`/`AnyResponse`.
+/// The route-registration surface shared by `uws::NewApp`, `uws::h2::App` and `uws::h3::App`.
 pub(crate) trait RouteApp {
     fn method_this<U: 'static, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
     where
@@ -410,39 +441,6 @@ macro_rules! impl_route_app {
 impl_route_app!(uws::NewApp<SSL>, const SSL: bool);
 impl_route_app!(uws::h2::App);
 impl_route_app!(uws::h3::App);
-
-pub(crate) fn apply_static_route<T: StaticRouteLike, A: RouteApp>(
-    server: AnyServer,
-    app: &mut A,
-    entry: ThisPtr<T>,
-    path: &RouteKey,
-    method: http_method::Optional,
-    path_has_user_head_route: bool,
-) {
-    entry.set_server(server);
-
-    let register = |app: &mut A| {
-        // Only answer HEAD from an entry that serves GET (HEAD must mirror GET,
-        // RFC 9110 section 9.3.2) or HEAD itself, and never displace an explicit HEAD
-        // handler route: uWS keeps the last registration for the same method and path.
-        if !path_has_user_head_route && serves_head(&method) {
-            app.method_this(Method::HEAD, path, T::on_head_request, entry);
-        }
-        match method {
-            http_method::Optional::Any => app.any_this(path, T::on_request, entry),
-            http_method::Optional::Method(m) => {
-                let mut iter = m.iter();
-                while let Some(method_) = iter.next() {
-                    app.method_this(method_, path, T::on_request, entry);
-                }
-            }
-        }
-    };
-    match path {
-        RouteKey::Pattern(_) => register(app),
-        RouteKey::Literal(_) => app.literal_routes(register),
-    }
-}
 
 /// Per-route trait that `apply_static_route` monomorphizes over
 /// (`StaticRoute`/`FileRoute`/`DirectoryRoute`/`HTMLBundle.Route`). The route

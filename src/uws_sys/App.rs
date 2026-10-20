@@ -154,9 +154,7 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_clear_routes(Self::SSL_FLAG, self.as_raw())
     }
 
-    /// Runs `register`. The pattern of each route it adds is a literal path:
-    /// it matches a URL byte for byte, and a segment that starts with `:` or
-    /// `*` is not a parameter or a wildcard.
+    /// Runs `register` with literal route keys: `:` and `*` do not start a parameter or a wildcard.
     pub fn literal_routes(&mut self, register: impl FnOnce(&mut Self)) {
         c::uws_app_literal_routes(Self::SSL_FLAG, self.as_raw(), true);
         register(self);

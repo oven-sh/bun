@@ -7,13 +7,12 @@ use core::sync::atomic::AtomicU8;
 use core::sync::atomic::Ordering;
 
 use crate::Error;
-use crate::webcore::Lifetime;
 #[cfg(not(windows))]
 use crate::webcore::blob::ClosingState;
 #[cfg(windows)]
 use crate::webcore::blob::store::Bytes as ByteStore;
 use crate::webcore::blob::store::{Data, File as FileStore};
-use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, Store};
+use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, SourceBytes, Store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_collections::ByteVecExt as _;
@@ -55,11 +54,7 @@ macro_rules! log {
 /// `F` provides the callback that converts the read bytes to a JSValue.
 /// Modelled as a trait so each instantiation monomorphizes.
 pub(crate) trait ReadFileToJs {
-    /// `by` carries the caller's allocation provenance unchanged:
-    /// `Lifetime::Temporary` ⇒ a `Box::<[u8]>::into_raw` the callee MUST take
-    /// ownership of (every `to_*_with_bytes::<Temporary>` arm reclaims it);
-    /// otherwise a borrow valid for the call.
-    fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], lifetime: Lifetime) -> JsResult<JSValue>;
+    fn call(b: &Blob, g: &JSGlobalObject, bytes: SourceBytes<'_>) -> JsResult<JSValue>;
 }
 
 pub(crate) struct NewReadFileHandler<'a, F: ReadFileToJs> {
@@ -116,19 +111,10 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                     blob.size
                         .set((bytes.len() as SizeType).min(blob.size.get()));
                 }
-                // Owned until `F::call` takes it: `wrap` does not call this for a graph that was
-                // disposed, and a raw buffer would be left behind.
-                // SAFETY: `result.buf` is the `heap::into_raw` of a boxed slice (see the producers).
-                let bytes = unsafe { bun_core::heap::take(bytes) };
                 // The `#[track_caller]` `to_js_host_call` inside `AnyPromise::wrap`
                 // provides the source-location/exception-scope behaviour.
                 AnyPromise::Normal(promise).wrap(global_this, move |g| {
-                    F::call(
-                        &blob,
-                        g,
-                        bun_core::heap::into_raw(bytes),
-                        Lifetime::Temporary,
-                    )
+                    F::call(&blob, g, SourceBytes::Temporary(bytes))
                 })?;
             }
             ReadFileResultType::Err(err) => {
@@ -197,20 +183,12 @@ impl Drop for ReadFileCompletionFns {
 unsafe impl bun_jsc::job::JsAffine for ReadFileCompletionFns {}
 
 pub(crate) struct ReadFileRead {
-    /// Always a `Box::<[u8]>::into_raw` from the producer's read buffer
-    /// (`Vec::into_boxed_slice()` so layout is exactly `(ptr, len)`). Every
-    /// consumer reclaims via `heap::take` — there is no borrow case left
-    /// (only the two finishers below construct this type and both hand off
-    /// owned bytes).
-    /// Stored as a raw pointer rather than `Box<[u8]>` because the
-    /// `NewReadFileHandler` consumer forwards it straight into
-    /// `to_*_with_bytes::<Temporary>(*mut [u8])`, which itself decides whether
-    /// the bytes are freed locally or transferred to a JSC external string.
-    pub(crate) buf: *mut [u8],
+    /// The producer's read buffer, handed over whole.
+    pub(crate) buf: Box<[u8]>,
 }
 
 /// Result-or-error union for a completed read.
-// Constructed/matched in Blob.rs and Body.rs;
+// Constructed here; matched here and in Blob.rs;
 // boxing the Err arm would change the cross-file callback ABI for no real win.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum ReadFileResultType {
@@ -632,10 +610,8 @@ impl ReadFile {
             return completion.complete(ReadFileResultType::Err(err));
         }
 
-        // The receiver takes ownership. Normalize to `Box<[u8]>` so every
-        // consumer can reclaim via `heap::take` with a matching layout.
         completion.complete(ReadFileResultType::Result(ReadFileRead {
-            buf: bun_core::heap::into_raw(buf.into_boxed_slice()),
+            buf: buf.into_boxed_slice(),
         }))
     }
 
@@ -1110,13 +1086,9 @@ impl<'a> ReadFileUV<'a> {
             ReadFileResultType::Err(err)
         } else {
             // Move byte_store out so dropping `this_box` below does not free the
-            // buffer we hand to the callback. Normalize to `Box<[u8]>` so the
-            // `is_temporary` consumer (Body.rs / Blob.rs) can soundly reclaim
-            // via `heap::take` — handing out `(ptr, len)` from a ByteStore
-            // whose `cap > len` would be a layout-mismatched dealloc.
-            let boxed = core::mem::take(&mut this_box.byte_store).into_boxed_slice();
+            // buffer we hand to the callback.
             ReadFileResultType::Result(ReadFileRead {
-                buf: bun_core::heap::into_raw(boxed),
+                buf: core::mem::take(&mut this_box.byte_store).into_boxed_slice(),
             })
         };
 

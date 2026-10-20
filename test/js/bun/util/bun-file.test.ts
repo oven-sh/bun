@@ -1,6 +1,6 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import fsPromises from "fs/promises";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, tempDir } from "harness";
 import { join } from "path";
 
 test("delete() and stat() should work with unicode paths", async () => {
@@ -154,4 +154,61 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
     emptyErr: "Unexpected end of JSON input",
   });
   expect(exitCode).toBe(0);
+});
+
+// formData() over a file reads the file into a buffer of its own and parses that buffer. The
+// FormData copies what it keeps, so the buffer belongs to the call on each of the three ways out:
+// no form Content-Type, a body that parses, a body that does not.
+describe("Bun.file().formData() frees the bytes it read", () => {
+  const size = 2 * 1024 * 1024;
+  const multipart = "multipart/form-data; boundary=zz";
+  const part = '--zz\r\nContent-Disposition: form-data; name="a"\r\n\r\n' + Buffer.alloc(size, "x").toString();
+  const shapes = {
+    "a multipart file": { type: multipart, body: part + "\r\n--zz--\r\n", outcome: size },
+    "a urlencoded file": {
+      type: "application/x-www-form-urlencoded",
+      body: "a=" + Buffer.alloc(size, "x").toString(),
+      outcome: size,
+    },
+    "a multipart file without its last boundary": {
+      type: multipart,
+      body: part,
+      outcome: "FormData encoding failed: missing final boundary",
+    },
+    "a file without a form type": {
+      type: undefined,
+      body: Buffer.alloc(size, "x").toString(),
+      outcome: "Invalid encoding",
+    },
+  };
+
+  test.concurrent.each(Object.entries(shapes))("%s", async (_, { type, body, outcome }) => {
+    using dir = tempDir("bun-file-formdata-leak", { "form.txt": body });
+    const code = /* js */ `
+      const file = () => Bun.file(${JSON.stringify(join(String(dir), "form.txt"))}, ${JSON.stringify({ type })});
+      async function once() {
+        let outcome;
+        try {
+          outcome = (await file().formData()).get("a").length;
+        } catch (e) {
+          outcome = e.message;
+        }
+        if (outcome !== ${JSON.stringify(outcome)}) throw new Error("unexpected outcome: " + outcome);
+      }
+      // A collection after each call, so that the values of the last calls do not count as growth.
+      async function rssAfter(calls) {
+        for (let i = 0; i < calls; i++) {
+          await once();
+          Bun.gc(true);
+        }
+        return process.memoryUsage.rss();
+      }
+      const before = await rssAfter(2);
+      const after = await rssAfter(8);
+      console.log(JSON.stringify({ deltaMiB: (after - before) / 1024 / 1024 }));
+    `;
+
+    // Unfixed: 16 MiB (8 x 2 MiB). Fixed: under 2 MiB.
+    await expectRssDeltaBelow(["--smol", "-e", code], { release: 6, debug: 6 });
+  });
 });

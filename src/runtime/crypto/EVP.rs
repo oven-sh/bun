@@ -1,5 +1,3 @@
-use core::ffi::{CStr, c_uint};
-
 use bun_alloc::AllocError;
 use bun_boringssl_sys as boringssl;
 
@@ -14,7 +12,7 @@ pub(crate) struct EVP {
 // The `Algorithm` enum + `md()` live in
 // `bun_sha_hmac::evp` so lower-tier crates (`bun_csrf`, `bun_sha_hmac::hmac`)
 // can name it without depending upward on bun_runtime. Re-export the canonical
-// enum here; the higher-tier extras (`lookup`, `tag_cstr`) live below as an
+// enum here; the higher-tier extras (`lookup`, `name`) live below as an
 // extension trait / free fns on the re-exported type.
 // ──────────────────────────────────────────────────────────────────────────
 pub(crate) use bun_sha_hmac::evp::Algorithm;
@@ -22,33 +20,32 @@ pub(crate) use bun_sha_hmac::evp::Algorithm;
 /// Higher-tier helpers on the lowered `Algorithm` enum (orphan rules prevent an
 /// inherent `impl` on a foreign type, so callers `use evp::AlgorithmExt as _;`).
 pub(crate) trait AlgorithmExt: Copy + Sized {
-    /// NUL-terminated tag name. Needed for `EVP_get_digestbyname` which reads
-    /// a C string.
-    fn tag_cstr(self) -> &'static CStr;
+    /// The canonical name, as `Bun.CryptoHasher.algorithms` lists it.
+    fn name(self) -> &'static str;
 }
 
 impl AlgorithmExt for Algorithm {
-    fn tag_cstr(self) -> &'static CStr {
+    fn name(self) -> &'static str {
         match self {
-            Algorithm::Blake2b256 => c"blake2b256",
-            Algorithm::Blake2b512 => c"blake2b512",
-            Algorithm::Blake2s256 => c"blake2s256",
-            Algorithm::Md4 => c"md4",
-            Algorithm::Md5 => c"md5",
-            Algorithm::Ripemd160 => c"ripemd160",
-            Algorithm::Sha1 => c"sha1",
-            Algorithm::Sha224 => c"sha224",
-            Algorithm::Sha256 => c"sha256",
-            Algorithm::Sha384 => c"sha384",
-            Algorithm::Sha512 => c"sha512",
-            Algorithm::Sha512_224 => c"sha512-224",
-            Algorithm::Sha512_256 => c"sha512-256",
-            Algorithm::Sha3_224 => c"sha3-224",
-            Algorithm::Sha3_256 => c"sha3-256",
-            Algorithm::Sha3_384 => c"sha3-384",
-            Algorithm::Sha3_512 => c"sha3-512",
-            Algorithm::Shake128 => c"shake128",
-            Algorithm::Shake256 => c"shake256",
+            Algorithm::Blake2b256 => "blake2b256",
+            Algorithm::Blake2b512 => "blake2b512",
+            Algorithm::Blake2s256 => "blake2s256",
+            Algorithm::Md4 => "md4",
+            Algorithm::Md5 => "md5",
+            Algorithm::Ripemd160 => "ripemd160",
+            Algorithm::Sha1 => "sha1",
+            Algorithm::Sha224 => "sha224",
+            Algorithm::Sha256 => "sha256",
+            Algorithm::Sha384 => "sha384",
+            Algorithm::Sha512 => "sha512",
+            Algorithm::Sha512_224 => "sha512-224",
+            Algorithm::Sha512_256 => "sha512-256",
+            Algorithm::Sha3_224 => "sha3-224",
+            Algorithm::Sha3_256 => "sha3-256",
+            Algorithm::Sha3_384 => "sha3-384",
+            Algorithm::Sha3_512 => "sha3-512",
+            Algorithm::Shake128 => "shake128",
+            Algorithm::Shake256 => "shake256",
             // upstream enum is `#[non_exhaustive]`; the variant set is closed in
             // practice.
             _ => unreachable!("unhandled EVP algorithm variant"),
@@ -184,34 +181,6 @@ impl EVP {
 
     /// # Safety
     /// `engine` must be either null or a valid `ENGINE` pointer.
-    pub(crate) fn hash(
-        &mut self,
-        engine: *mut boringssl::ENGINE,
-        input: &[u8],
-        output: &mut [u8],
-    ) -> Option<u32> {
-        boringssl::ERR_clear_error();
-        let mut outsize: c_uint = (output.len() as u16).min(self.size()) as c_uint;
-        // SAFETY: input/output point to valid slices of the given lengths; outsize bounded by output.len().
-        if unsafe {
-            boringssl::EVP_Digest(
-                input.as_ptr().cast(),
-                input.len(),
-                output.as_mut_ptr(),
-                &raw mut outsize,
-                self.md,
-                engine,
-            )
-        } != 1
-        {
-            return None;
-        }
-
-        Some(outsize)
-    }
-
-    /// # Safety
-    /// `engine` must be either null or a valid `ENGINE` pointer.
     pub(crate) fn r#final<'a>(
         &mut self,
         engine: *mut boringssl::ENGINE,
@@ -261,32 +230,12 @@ impl EVP {
         }
         Ok(new)
     }
+}
 
-    /// # Safety
-    /// `engine` must be either null or a valid `ENGINE` pointer.
-    pub(crate) fn by_name_and_engine(engine: *mut boringssl::ENGINE, name: &[u8]) -> Option<EVP> {
-        if let Some(algorithm) = lookup_ignore_case(name) {
-            if let Some(md) = algorithm.md() {
-                // `Algorithm::md()` lives in `bun_sha_hmac`
-                // and returns that crate's opaque `EVP_MD`; both name the same C
-                // `struct env_md_st`, so a pointer cast is the correct unification.
-                // SAFETY: md is a BoringSSL static singleton; caller upholds `engine`.
-                return Some(EVP::init(algorithm, md.cast::<boringssl::EVP_MD>(), engine));
-            }
-
-            // strum's `<&'static str>::from(algorithm)` is NOT NUL-terminated, so use the
-            // explicit `tag_cstr()` table for the C-string FFI.
-            // SAFETY: FFI into BoringSSL; EVP_get_digestbyname expects a NUL-terminated
-            // C string, which `tag_cstr()` guarantees.
-            let md = unsafe { boringssl::EVP_get_digestbyname(algorithm.tag_cstr().as_ptr()) };
-            if !md.is_null() {
-                // SAFETY: md is non-null from EVP_get_digestbyname; caller upholds `engine`.
-                return Some(EVP::init(algorithm, md, engine));
-            }
-        }
-
-        None
-    }
+/// The algorithm a name denotes, and its BoringSSL `EVP_MD` (`None` for a RustCrypto one).
+pub(crate) fn md_by_name(name: &[u8]) -> Option<(Algorithm, Option<*const boringssl::EVP_MD>)> {
+    let algorithm = lookup_ignore_case(name)?;
+    Some((algorithm, algorithm.md()))
 }
 
 impl Drop for EVP {

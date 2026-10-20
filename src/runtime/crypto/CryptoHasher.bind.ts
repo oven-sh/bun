@@ -41,7 +41,15 @@ export const CryptoHasher = b.class({
   },
   static: {
     algorithms: { getter: b.array(b.string.utf8) },
-    hash: { ...method, args: { algorithm: b.string, input, output: DigestOutput.optional }, returns: b.any },
+    hash: {
+      ...method,
+      args: {
+        algorithm: b.bytes({ from: ["string"], refuse: ["stringObject"] }),
+        input,
+        output: DigestOutput.optional,
+      },
+      returns: b.any,
+    },
   },
 });
 

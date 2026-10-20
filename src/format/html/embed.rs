@@ -37,6 +37,63 @@ pub(crate) fn infer_parser_by_type_attribute(kind: &[u8]) -> Option<&'static [u8
     })
 }
 
+/// What `inferElementParser` looks at.
+#[derive(Copy, Clone, Default)]
+pub(super) struct Element<'e> {
+    pub(super) name: &'e [u8],
+    /// `attrMap.lang`, if it is a string that is not empty.
+    pub(super) lang: Option<&'e [u8]>,
+    /// `attrMap.type`, if it is a string that is not empty.
+    pub(super) kind: Option<&'e [u8]>,
+    pub(super) has_src: bool,
+}
+
+/// `inferElementParser`
+pub(super) fn infer_element_parser(
+    element: Element<'_>,
+    is_mjml: bool,
+    is_vue_non_html_block: impl FnOnce() -> bool,
+) -> Option<&'static [u8]> {
+    let Element {
+        name,
+        lang,
+        kind,
+        has_src,
+    } = element;
+    let by_attributes = || {
+        lang.and_then(infer_parser)
+            .or_else(|| kind.and_then(infer_parser_by_type_attribute))
+    };
+    // `inferScriptParser`
+    if name == b"script" && !has_src {
+        if lang.is_none() && kind.is_none() {
+            return Some(b"babel");
+        }
+        if let Some(parser) = by_attributes() {
+            return Some(parser);
+        }
+    }
+    // `inferStyleParser`
+    if name == b"style" {
+        match lang {
+            None => return Some(b"css"),
+            Some(language) => {
+                if let Some(parser) = infer_parser(language) {
+                    return Some(parser);
+                }
+            }
+        }
+    }
+    if name == b"mj-style" && is_mjml {
+        return Some(b"css");
+    }
+    // `inferVueSfcBlockParser`
+    if !is_vue_non_html_block() || has_src {
+        return None;
+    }
+    by_attributes()
+}
+
 /// Returns the classes in `value`, separated by single spaces. HTML splits them at ASCII whitespace. Prettier splits at
 /// JavaScript whitespace, so a class name that contains a no-break space becomes two classes.
 fn class_names(value: &[u8]) -> Vec<u8> {
@@ -331,46 +388,17 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
 
     // ───────────────────────────── `embed` ─────────────────────────────
 
-    /// `inferElementParser`
     fn infer_element_parser(&self, id: Id) -> Option<&'static [u8]> {
-        let (tree, node) = (self.tree, &self.tree[id]);
-        let by_attributes = || {
-            let language = tree.attribute_value(id, b"lang").and_then(infer_parser);
-            language.or_else(|| {
-                tree.attribute_value(id, b"type")
-                    .and_then(infer_parser_by_type_attribute)
-            })
+        let tree = self.tree;
+        let element = Element {
+            name: &tree[id].name,
+            lang: tree.attribute_value(id, b"lang"),
+            kind: tree.attribute_value(id, b"type"),
+            has_src: tree.attribute(id, b"src").is_some(),
         };
-        // `inferScriptParser`
-        if &node.name[..] == b"script" && tree.attribute(id, b"src").is_none() {
-            if tree.attribute_value(id, b"lang").is_none()
-                && tree.attribute_value(id, b"type").is_none()
-            {
-                return Some(b"babel");
-            }
-            if let Some(parser) = by_attributes() {
-                return Some(parser);
-            }
-        }
-        // `inferStyleParser`
-        if &node.name[..] == b"style" {
-            match tree.attribute_value(id, b"lang") {
-                None => return Some(b"css"),
-                Some(language) => {
-                    if let Some(parser) = infer_parser(language) {
-                        return Some(parser);
-                    }
-                }
-            }
-        }
-        if &node.name[..] == b"mj-style" && self.options.parser == Parser::Mjml {
-            return Some(b"css");
-        }
-        // `inferVueSfcBlockParser`
-        if !tree.is_vue_non_html_block(id, self.options) || tree.attribute(id, b"src").is_some() {
-            return None;
-        }
-        by_attributes()
+        infer_element_parser(element, self.options.parser == Parser::Mjml, || {
+            tree.is_vue_non_html_block(id, self.options)
+        })
     }
 
     /// Prettier's `embed`. Returns whether it has written the node.

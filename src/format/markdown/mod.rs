@@ -8,6 +8,7 @@
 
 pub mod ast;
 pub(crate) mod embed;
+pub(crate) mod highlight;
 mod parse;
 mod preprocess;
 mod printer;

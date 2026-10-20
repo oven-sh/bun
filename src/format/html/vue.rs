@@ -14,27 +14,70 @@ struct VFor<'v> {
     right: &'v [u8],
 }
 
-/// `parseVueVForDirective`
-fn parse_vue_v_for_directive(value: &[u8]) -> Option<VFor<'_>> {
-    // `/(.*?)\s+(in|of)\s+(.*)/s`
+/// What is in the value of an attribute, as far as its name says.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(super) enum Directive {
+    /// `v-for`
+    For,
+    /// `generic` of a `<script>`
+    TypeParameters,
+    /// `v-slot`, `#name`, `slot-scope`: the parameters of a function.
+    Parameters,
+    /// `@name`, `v-on:name`
+    On,
+    /// `:name`, `.name`, `v-bind:name`
+    Bind,
+    /// Any other `v-name`.
+    Other,
+}
+
+impl Directive {
+    /// `None`: the value is text, unless the element says otherwise.
+    pub(super) fn from_name(name: &[u8]) -> Option<Directive> {
+        Some(if name == b"v-for" {
+            Directive::For
+        } else if name.starts_with(b"#")
+            || name == b"slot-scope"
+            || name == b"v-slot"
+            || name.starts_with(b"v-slot:")
+        {
+            // `isVueSlotAttribute`
+            Directive::Parameters
+        } else if name.starts_with(b"@") || name.starts_with(b"v-on:") {
+            Directive::On
+        } else if name.starts_with(b":") || name.starts_with(b".") || name.starts_with(b"v-bind:") {
+            Directive::Bind
+        } else if name.starts_with(b"v-") {
+            Directive::Other
+        } else {
+            return None;
+        })
+    }
+}
+
+/// `/(.*?)\s+(in|of)\s+(.*)/s`: where the first group ends, and where the second starts.
+pub(super) fn find_v_for_operator(value: &[u8]) -> Option<(usize, usize)> {
     let mut at = 0;
-    let (alias, operator, right) = loop {
+    loop {
         let rest = value.get(at..).filter(|rest| !rest.is_empty())?;
         let blank_len = text::leading_white_space_len(rest);
         if let [b'i', b'n', right @ ..] | [b'o', b'f', right @ ..] = &rest[blank_len..]
             && blank_len > 0
             && text::starts_with_white_space(right)
         {
-            let operator = &rest[blank_len..blank_len + 2];
-            break (
-                &value[..at],
-                operator,
-                bun_core::strings::trim_js_whitespace(right),
-            );
+            return Some((at, at + blank_len));
         }
         // From anywhere else in the white space, the same follows it.
         at += blank_len.max(1);
-    };
+    }
+}
+
+/// `parseVueVForDirective`
+fn parse_vue_v_for_directive(value: &[u8]) -> Option<VFor<'_>> {
+    let (alias_end, operator_start) = find_v_for_operator(value)?;
+    let (alias, rest) = (&value[..alias_end], &value[operator_start..]);
+    let (operator, right) = rest.split_at(2);
+    let right = bun_core::strings::trim_js_whitespace(right);
     if right.is_empty() {
         return None;
     }
@@ -158,76 +201,78 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             ..InHtml::default()
         };
         let expression = in_html(HtmlRoot::JsExpression);
-        if name == b"v-for" {
-            return self.print_attribute_with(attr, |printer| {
-                printer.print_vue_v_for_directive(value, is_typescript, expression)
-            });
-        }
-        if name == b"generic" && self.tree.is_vue_script_tag(element, self.options) {
-            return self.print_attribute_with(attr, |printer| {
-                printer.out.foreign(|f| {
-                    js::write_binding(
-                        f,
-                        value,
-                        true,
-                        in_html(HtmlRoot::Program),
-                        (Binding::TypeParameters, flavor),
-                    )
-                })
-            });
-        }
-        // `isVueSlotAttribute`, `isVueSfcBindingsAttribute`
-        let is_bindings = name.starts_with(b"#")
-            || name == b"slot-scope"
-            || name == b"v-slot"
-            || name.starts_with(b"v-slot:")
-            || (self.tree.is_vue_sfc_block(element, self.options)
-                && ((self.tree[element].is_full_name(b"script") && name == b"setup")
-                    || (self.tree[element].is_full_name(b"style") && name == b"vars")));
-        if is_bindings {
-            return self.print_attribute_with(attr, |printer| {
-                printer.out.foreign(|f| {
-                    js::write_binding(
-                        f,
-                        value,
-                        is_typescript,
-                        in_html(HtmlRoot::Program),
-                        (Binding::Parameters, flavor),
-                    )
-                })
-            });
-        }
-        if name.starts_with(b"@") || name.starts_with(b"v-on:") {
-            // `printVueVOnDirective`
-            let syntax = if is_typescript {
-                Syntax::BabelTs
-            } else {
-                Syntax::Babel
-            };
-            return self.print_attribute_with(attr, |printer| {
-                printer.out.foreign(|f| {
-                    js::write_expression(f, value, is_typescript, expression, Hug::Expression)
-                })
-            }) || self.print_attribute_with(attr, |printer| {
-                printer.out.foreign(|f| {
-                    js::write_program_in_attribute(
-                        f,
-                        value,
-                        syntax,
-                        in_html(HtmlRoot::VueEventBinding),
-                        Hug::Expression,
-                    )
-                })
-            });
-        }
-        let root =
-            if name.starts_with(b":") || name.starts_with(b".") || name.starts_with(b"v-bind:") {
-                HtmlRoot::VueExpression
-            } else if name.starts_with(b"v-") {
-                HtmlRoot::JsExpression
-            } else {
-                return false;
-            };
+        let directive = if name == b"generic" && self.tree.is_vue_script_tag(element, self.options)
+        {
+            Some(Directive::TypeParameters)
+        } else if matches!(name, b"setup" | b"vars")
+            && self.tree.is_vue_sfc_block(element, self.options)
+            && ((self.tree[element].is_full_name(b"script") && name == b"setup")
+                || (self.tree[element].is_full_name(b"style") && name == b"vars"))
+        {
+            // `isVueSfcBindingsAttribute`
+            Some(Directive::Parameters)
+        } else {
+            Directive::from_name(name)
+        };
+        let root = match directive {
+            None => return false,
+            Some(Directive::For) => {
+                return self.print_attribute_with(attr, |printer| {
+                    printer.print_vue_v_for_directive(value, is_typescript, expression)
+                });
+            }
+            Some(Directive::TypeParameters) => {
+                return self.print_attribute_with(attr, |printer| {
+                    printer.out.foreign(|f| {
+                        js::write_binding(
+                            f,
+                            value,
+                            true,
+                            in_html(HtmlRoot::Program),
+                            (Binding::TypeParameters, flavor),
+                        )
+                    })
+                });
+            }
+            Some(Directive::Parameters) => {
+                return self.print_attribute_with(attr, |printer| {
+                    printer.out.foreign(|f| {
+                        js::write_binding(
+                            f,
+                            value,
+                            is_typescript,
+                            in_html(HtmlRoot::Program),
+                            (Binding::Parameters, flavor),
+                        )
+                    })
+                });
+            }
+            Some(Directive::On) => {
+                // `printVueVOnDirective`
+                let syntax = if is_typescript {
+                    Syntax::BabelTs
+                } else {
+                    Syntax::Babel
+                };
+                return self.print_attribute_with(attr, |printer| {
+                    printer.out.foreign(|f| {
+                        js::write_expression(f, value, is_typescript, expression, Hug::Expression)
+                    })
+                }) || self.print_attribute_with(attr, |printer| {
+                    printer.out.foreign(|f| {
+                        js::write_program_in_attribute(
+                            f,
+                            value,
+                            syntax,
+                            in_html(HtmlRoot::VueEventBinding),
+                            Hug::Expression,
+                        )
+                    })
+                });
+            }
+            Some(Directive::Bind) => HtmlRoot::VueExpression,
+            Some(Directive::Other) => HtmlRoot::JsExpression,
+        };
         self.print_attribute_with(attr, |printer| {
             printer.out.foreign(|f| {
                 js::write_expression(f, value, is_typescript, in_html(root), Hug::Expression)

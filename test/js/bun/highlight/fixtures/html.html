@@ -1,0 +1,84 @@
+---
+layout: default
+title: Orders
+tags: [shop, "admin"]
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name=viewport content="width=device-width, initial-scale=1">
+    <title>Orders &amp; returns &mdash; Acme</title>
+    <link rel="stylesheet" href=/assets/site.css>
+    <!-- Critical styles are inlined. -->
+    <style>
+      :root {
+        --accent: #0a7;
+      }
+      .order > td:first-child {
+        color: var(--accent);
+        padding: 0.5rem 1em;
+      }
+    </style>
+    <style media="print" lang="scss">
+      $gap: 4px;
+      .order { td { margin: $gap; } }
+    </style>
+    <script type="importmap">
+      { "imports": { "app": "/assets/app.js" } }
+    </script>
+    <script type="application/ld+json">
+      { "@context": "https://schema.org", "@type": "WebPage", "name": "Orders" }
+    </script>
+    <!--[if lt IE 9]><script src="/assets/html5shiv.js"></script><![endif]-->
+  </head>
+  <body class="page page--orders" data-user-id='42' hidden>
+    <header style="display: flex; gap: 8px; background: url(/img/bg.png)">
+      <h1 id="top">Orders</h1>
+      <button type="button" onclick="refresh(event, { force: true })" disabled>Refresh</button>
+      <a href="/help?topic=orders&amp;lang=en" title="He said &quot;hi&quot;">Help</a>
+    </header>
+
+    <main>
+      <p>Prices: 5 &lt; 10, &#169; 2026, &#x2014; and 3 < 4 is plain text.</p>
+      <table>
+        <tr class="order"><td>1001<td>Ada<td>&euro;12.50
+        <tr class="order"><td>1002<td>Grace<td>&euro;8.00
+      </table>
+      <img src="/img/chart.png" alt="" width="640" height="480" />
+      <br>
+      <textarea name="note" rows="3">Dear <customer> &amp; co.</textarea>
+      <pre><code>if (a &lt; b) { swap(a, b); }</code></pre>
+      <my-widget mode="compact" onmouseover='this.open = !this.open; log("over")'></my-widget>
+      <svg viewBox="0 0 10 10" xmlns:xlink="http://www.w3.org/1999/xlink">
+        <desc><![CDATA[ 1 < 2 && <b> is text ]]></desc>
+        <circle cx="5" cy="5" r="4" />
+        <use xlink:href="#top" />
+      </svg>
+    </main>
+
+    <template id="row">
+      <tr><td class="id"></td><td class="name"></td></tr>
+    </template>
+    <script type="text/html" id="empty">
+      <p class="empty">No orders &hellip;</p>
+    </script>
+    <script type="text/x-mustache">
+      Hello {{ name }}, this stays plain.
+    </script>
+    <script>
+      var rows = document.querySelectorAll("tr.order");
+      console.log(`found ${rows.length} rows`);
+    </script>
+    <script type="module">
+      import { start } from "app";
+      await start({ root: document.body });
+    </script>
+    <script lang="ts">
+      const total: number = 2;
+    </script>
+    <script type="text/babel" data-type="module">
+      const el = <b className="x">{total}</b>;
+    </script>
+  </body>
+</html>

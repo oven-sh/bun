@@ -3956,6 +3956,7 @@ test("ModuleGraph isolation: every property of Bun is classified", () => {
         "gunzipSync",
         "gzipSync",
         "hash",
+        "highlight",
         "indexOfLine",
         "inflateSync",
         "inspect",

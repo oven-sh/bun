@@ -976,6 +976,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     gunzipSync                                     Bun::Bindgen::Generated::BunObject::jsGunzipSync                    DontDelete|Function 1
     gzipSync                                       Bun::Bindgen::Generated::BunObject::jsGzipSync                      DontDelete|Function 1
     hash                                           Bun::Bindgen::Generated::HashObject::createHash                     DontDelete|PropertyCallback
+    highlight                                      BunObject_lazyPropCb_wrap_highlight                                 DontDelete|PropertyCallback
     indexOfLine                                    Bun::Bindgen::Generated::BunObject::jsIndexOfLine                   DontDelete|Function 1
     inflateSync                                    Bun::Bindgen::Generated::BunObject::jsInflateSync                   DontDelete|Function 1
     inspect                                        BunObject_lazyPropCb_wrap_inspect                                   DontDelete|PropertyCallback

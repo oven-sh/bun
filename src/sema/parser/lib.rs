@@ -20,7 +20,7 @@ mod pragmas;
 mod summarize;
 mod token;
 
-pub use names::FileAtoms;
+pub use names::{FileAtoms, NoInterner};
 pub use parser::keyword_suggestion;
 
 use bun_sema::atom::Intern;

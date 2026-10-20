@@ -1,0 +1,74 @@
+# A package manifest with a bit of everything.
+title = "TOML Example"
+"quoted key" = 'literal \n stays'
+'single' = "tab\t quote\" backslash\\ bell\b esc\e hex\x41 \u00e9 \U0001F600"
+bare-key_1 = true
+1234 = false
+site."example.com".port = 8080
+
+[package]
+name = "my-app" # the name
+version = "1.2.3"
+authors = ["Ada <ada@example.com>", 'Bob']
+private = true
+description = """
+Several lines, \
+    joined by a backslash.
+"Quotes" and ""two quotes"" are fine.\n"""
+pattern = '''
+\d+\.\d+ is not escaped
+'''
+
+[numbers]
+int = 42
+positive = +99
+negative = -17
+grouped = 1_000_000
+hex = 0xDEAD_beef
+octal = 0o755
+binary = 0b1101_0110
+float = 3.1415
+exponent = 5e+22
+both = -6.626e-34
+infinite = inf
+minus-infinite = -inf
+not-a-number = nan
+plus-nan = +nan
+
+[dates]
+offset = 1979-05-27T07:32:00Z
+offset-2 = 1979-05-27T00:32:00.999999-07:00
+with-space = 1979-05-27 07:32:00Z
+local = 1979-05-27T07:32:00
+day = 1979-05-27
+time = 07:32:00
+short-time = 07:32
+
+[dependencies.serde]
+version = "1.0"
+features = [
+  "derive", # a comment in an array
+  "rc",
+]
+
+[ servers . "alpha beta" ]
+ip = "10.0.0.1"
+ports = [8000, 8001, [1, 2], { min = 1, max = 2 }]
+point = { x = 1, y = 2.5, nested.deep = { ok = true } }
+empty = {}
+none = []
+multi-line = {
+  a = 1, # TOML 1.1
+  b = "two",
+}
+
+[[products]]
+name = "Hammer"
+sku = 738594937
+
+[[products]] # the second one
+name = "Nail"
+color = "gray"
+
+[[products.variants]]
+size = 'L'

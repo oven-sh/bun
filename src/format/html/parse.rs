@@ -20,15 +20,15 @@ type Result<'a, T> = std::result::Result<T, ParseError<'a>>;
 
 /// `ParseOptions`
 #[derive(Copy, Clone)]
-struct ParseOptions {
+pub(super) struct ParseOptions {
     name: Parser,
     normalize_tag_name: bool,
     normalize_attribute_name: bool,
-    is_tag_name_case_sensitive: bool,
-    lexer: lexer::Options,
+    pub(super) is_tag_name_case_sensitive: bool,
+    pub(super) lexer: lexer::Options,
 }
 
-fn parse_options(parser: Parser) -> ParseOptions {
+pub(super) fn parse_options(parser: Parser) -> ParseOptions {
     let html = ParseOptions {
         name: Parser::Html,
         normalize_tag_name: true,
@@ -86,7 +86,7 @@ fn should_parse_as_raw_text_in_mjml(
     matches!(tag_name, b"mj-style" | b"mj-raw")
 }
 
-fn should_parse_as_raw_text_in_vue(
+pub(super) fn should_parse_as_raw_text_in_vue(
     tag_name: &[u8],
     has_parent: bool,
     attrs: &[LexedAttribute<'_>],

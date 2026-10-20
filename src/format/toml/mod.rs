@@ -13,6 +13,7 @@
 //! What Bun does not read as TOML is a syntax error. oxfmt writes such a text again around its errors,
 //! and not always in the same order.
 
+pub(crate) mod highlight;
 mod printer;
 mod tree;
 

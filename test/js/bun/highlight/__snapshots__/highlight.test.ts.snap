@@ -1,0 +1,1571 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`fixtures angular.component.html: angular.component.html 1`] = `
+"⟦comment|<!-- The cart page. -->⟧
+⟦keyword|@let⟧ ⟦variable|total⟧ ⟦operator|=⟧ ⟦variable|cart⟧⟦punctuation.delimiter|.⟧⟦property|items⟧⟦punctuation.delimiter|.⟧⟦property|length⟧ ⟦operator|*⟧ ⟦variable|price⟧ ⟦operator||⟧ ⟦function|currency⟧⟦punctuation.delimiter|:⟧ ⟦string|"EUR"⟧ ⟦punctuation.delimiter|:⟧ ⟦string|"symbol"⟧⟦punctuation.delimiter|;⟧
+⟦keyword|@let⟧ ⟦variable|label⟧ ⟦operator|=⟧ ⟦string|\`Cart (⟧⟦punctuation.special|\${⟧⟦variable|cart⟧⟦punctuation.delimiter|.⟧⟦property|items⟧⟦punctuation.delimiter|.⟧⟦property|length⟧⟦punctuation.special|}⟧⟦string|)\`⟧⟦punctuation.delimiter|;⟧
+
+⟦tag.delimiter|<⟧⟦tag|header⟧ ⟦attribute|class⟧⟦operator|=⟧⟦string|"cart"⟧ ⟦attribute|[class.empty]⟧⟦operator|=⟧⟦string|"⟧⟦operator|!⟧⟦variable|cart⟧⟦punctuation.delimiter|.⟧⟦property|items⟧⟦punctuation.delimiter|.⟧⟦property|length⟧⟦string|"⟧ ⟦attribute|[style.width.px]⟧⟦operator|=⟧⟦string|"⟧⟦variable|width⟧⟦string|"⟧ ⟦attribute|[attr.aria-label]⟧⟦operator|=⟧⟦string|"⟧⟦variable|label⟧⟦string|"⟧⟦tag.delimiter|>⟧
+  ⟦tag.delimiter|<⟧⟦tag|h1⟧ ⟦attribute|#title⟧ ⟦attribute|i18n⟧⟦operator|=⟧⟦string|"cart title|The heading of the cart@@cartTitle"⟧⟦tag.delimiter|>⟧Your cart ⟦string.escape|&ndash;⟧ ⟦punctuation.special|{{⟧ ⟦variable|total⟧ ⟦punctuation.special|}}⟧⟦tag.delimiter|</⟧⟦tag|h1⟧⟦tag.delimiter|>⟧
+  ⟦tag.delimiter|<⟧⟦tag|input⟧ ⟦attribute|[(ngModel)]⟧⟦operator|=⟧⟦string|"⟧⟦variable|query⟧⟦string|"⟧ ⟦attribute|(keyup.enter)⟧⟦operator|=⟧⟦string|"⟧⟦function|search⟧⟦punctuation.bracket|(⟧⟦variable|query⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧ ⟦variable|query⟧ ⟦operator|=⟧ ⟦string|''"⟧ ⟦attribute|placeholder⟧⟦operator|=⟧⟦string|"Search ⟧⟦punctuation.special|{{⟧⟦string| ⟧⟦variable|cart⟧⟦punctuation.delimiter|.⟧⟦property|name⟧⟦string| ⟧⟦punctuation.special|}}⟧⟦string.escape|&hellip;⟧⟦string|"⟧ ⟦tag.delimiter|/>⟧
+  ⟦tag.delimiter|<⟧⟦tag|button⟧
+    ⟦comment|// Clears everything.⟧
+    ⟦attribute|type⟧⟦operator|=⟧⟦string|"button"⟧
+    ⟦comment|/* The handler asks first. */⟧
+    ⟦attribute|(click)⟧⟦operator|=⟧⟦string|"⟧⟦function|clear⟧⟦punctuation.bracket|(⟧⟦variable.builtin|$event⟧⟦punctuation.bracket|)⟧⟦string|"⟧
+    ⟦attribute|[disabled]⟧⟦operator|=⟧⟦string|"⟧⟦variable|cart⟧⟦punctuation.delimiter|.⟧⟦property|items⟧⟦punctuation.delimiter|.⟧⟦property|length⟧ ⟦operator|===⟧ ⟦number|0⟧ ⟦operator|||⟧ ⟦variable|busy⟧⟦string|"⟧
+    ⟦attribute|style⟧⟦operator|=⟧⟦string|"⟧⟦property|margin-left⟧⟦punctuation.delimiter|:⟧ ⟦constant|auto⟧⟦string|"⟧
+    ⟦attribute|onclick⟧⟦operator|=⟧⟦string|"⟧⟦variable|console⟧⟦punctuation.delimiter|.⟧⟦function.method|log⟧⟦punctuation.bracket|(⟧⟦string|'native'⟧⟦punctuation.bracket|)⟧⟦string|"⟧
+  ⟦tag.delimiter|>⟧
+    Clear
+  ⟦tag.delimiter|</⟧⟦tag|button⟧⟦tag.delimiter|>⟧
+⟦tag.delimiter|</⟧⟦tag|header⟧⟦tag.delimiter|>⟧
+
+⟦keyword.control|@if⟧ ⟦punctuation.bracket|(⟧⟦variable|user$⟧ ⟦operator||⟧ ⟦function|async⟧⟦punctuation.delimiter|;⟧ ⟦keyword.operator|as⟧ ⟦variable|user⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦tag.delimiter|<⟧⟦tag|p⟧⟦tag.delimiter|>⟧Hello, ⟦punctuation.special|{{⟧ ⟦variable|user⟧⟦punctuation.delimiter|.⟧⟦property|name⟧ ⟦operator||⟧ ⟦function|titlecase⟧ ⟦punctuation.special|}}⟧! ⟦punctuation.special|{{⟧ ⟦variable|user⟧⟦punctuation.delimiter|?.⟧⟦property|address⟧⟦punctuation.delimiter|?.⟧⟦property|city⟧ ⟦operator|??⟧ ⟦string|"Unknown"⟧ ⟦punctuation.special|}}⟧⟦tag.delimiter|</⟧⟦tag|p⟧⟦tag.delimiter|>⟧
+⟦punctuation.bracket|}⟧ ⟦keyword.control|@else⟧ ⟦keyword.control|if⟧ ⟦punctuation.bracket|(⟧⟦variable|loading⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦tag.delimiter|<⟧⟦tag|app-spinner⟧ ⟦attribute|[size]⟧⟦operator|=⟧⟦string|"⟧⟦number|32⟧⟦string|"⟧ ⟦tag.delimiter|/>⟧
+⟦punctuation.bracket|}⟧ ⟦keyword.control|@else⟧ ⟦punctuation.bracket|{⟧
+  ⟦tag.delimiter|<⟧⟦tag|a⟧ ⟦attribute|routerLink⟧⟦operator|=⟧⟦string|"/login"⟧ ⟦attribute|[queryParams]⟧⟦operator|=⟧⟦string|"⟧⟦punctuation.bracket|{⟧ ⟦property|next⟧⟦punctuation.delimiter|:⟧ ⟦string|'/cart'⟧⟦punctuation.delimiter|,⟧ ⟦property|retry⟧⟦punctuation.delimiter|:⟧ ⟦boolean|true⟧ ⟦punctuation.bracket|}⟧⟦string|"⟧⟦tag.delimiter|>⟧Sign in⟦tag.delimiter|</⟧⟦tag|a⟧⟦tag.delimiter|>⟧
+⟦punctuation.bracket|}⟧
+
+⟦tag.delimiter|<⟧⟦tag|ul⟧⟦tag.delimiter|>⟧
+  ⟦keyword.control|@for⟧ ⟦punctuation.bracket|(⟧⟦variable|item⟧ ⟦keyword.operator|of⟧ ⟦variable|cart⟧⟦punctuation.delimiter|.⟧⟦property|items⟧⟦punctuation.delimiter|;⟧ ⟦keyword|track⟧ ⟦variable|item⟧⟦punctuation.delimiter|.⟧⟦property|id⟧⟦punctuation.delimiter|;⟧ ⟦keyword|let⟧ ⟦variable|i⟧ ⟦operator|=⟧ ⟦variable.builtin|$index⟧⟦punctuation.delimiter|,⟧ ⟦variable|last⟧ ⟦operator|=⟧ ⟦variable.builtin|$last⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+    ⟦tag.delimiter|<⟧⟦tag|li⟧ ⟦attribute|[class]⟧⟦operator|=⟧⟦string|"⟧⟦punctuation.bracket|{⟧ ⟦property|odd⟧⟦punctuation.delimiter|:⟧ ⟦variable|i⟧ ⟦operator|%⟧ ⟦number|2⟧ ⟦operator|===⟧ ⟦number|1⟧⟦punctuation.delimiter|,⟧ ⟦property|last⟧⟦punctuation.delimiter|:⟧ ⟦variable|last⟧ ⟦punctuation.bracket|}⟧⟦string|"⟧ ⟦attribute|(click)⟧⟦operator|=⟧⟦string|"⟧⟦function|select⟧⟦punctuation.bracket|(⟧⟦variable|item⟧⟦punctuation.delimiter|,⟧ ⟦variable|i⟧⟦punctuation.bracket|)⟧⟦string|"⟧⟦tag.delimiter|>⟧
+      ⟦punctuation.special|{{⟧ ⟦variable|i⟧ ⟦operator|+⟧ ⟦number|1⟧ ⟦punctuation.special|}}⟧. ⟦punctuation.special|{{⟧ ⟦variable|item⟧⟦punctuation.delimiter|.⟧⟦property|title⟧ ⟦punctuation.special|}}⟧ ⟦string.escape|&times;⟧ ⟦punctuation.special|{{⟧ ⟦variable|item⟧⟦punctuation.delimiter|.⟧⟦property|count⟧ ⟦punctuation.special|}}⟧ ⟦punctuation.special|{{⟧ ⟦variable|item⟧⟦punctuation.delimiter|.⟧⟦property|tags⟧⟦punctuation.delimiter|.⟧⟦function.method|map⟧⟦punctuation.bracket|(⟧⟦variable.parameter|tag⟧ ⟦operator|=>⟧ ⟦variable|tag⟧⟦punctuation.delimiter|.⟧⟦property|name⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|.⟧⟦function.method|join⟧⟦punctuation.bracket|(⟧⟦string|", "⟧⟦punctuation.bracket|)⟧ ⟦punctuation.special|}}⟧
+    ⟦tag.delimiter|</⟧⟦tag|li⟧⟦tag.delimiter|>⟧
+  ⟦punctuation.bracket|}⟧ ⟦keyword.control|@empty⟧ ⟦punctuation.bracket|{⟧
+    ⟦tag.delimiter|<⟧⟦tag|li⟧⟦tag.delimiter|>⟧Nothing here.⟦tag.delimiter|</⟧⟦tag|li⟧⟦tag.delimiter|>⟧
+  ⟦punctuation.bracket|}⟧
+⟦tag.delimiter|</⟧⟦tag|ul⟧⟦tag.delimiter|>⟧
+
+⟦keyword.control|@switch⟧ ⟦punctuation.bracket|(⟧⟦variable|cart⟧⟦punctuation.delimiter|.⟧⟦property|state⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦keyword.control|@case⟧ ⟦punctuation.bracket|(⟧⟦string|"open"⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+    ⟦tag.delimiter|<⟧⟦tag|span⟧⟦tag.delimiter|>⟧Open⟦tag.delimiter|</⟧⟦tag|span⟧⟦tag.delimiter|>⟧
+  ⟦punctuation.bracket|}⟧
+  ⟦keyword.control|@case⟧ ⟦punctuation.bracket|(⟧⟦string|"paid"⟧⟦punctuation.bracket|)⟧
+  ⟦keyword.control|@case⟧ ⟦punctuation.bracket|(⟧⟦string|"shipped"⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+    ⟦tag.delimiter|<⟧⟦tag|span⟧⟦tag.delimiter|>⟧Done⟦tag.delimiter|</⟧⟦tag|span⟧⟦tag.delimiter|>⟧
+  ⟦punctuation.bracket|}⟧
+  ⟦keyword.control|@default⟧ ⟦punctuation.bracket|{⟧
+    ⟦tag.delimiter|<⟧⟦tag|span⟧⟦tag.delimiter|>⟧⟦punctuation.special|{{⟧ ⟦variable|cart⟧⟦punctuation.delimiter|.⟧⟦property|state⟧ ⟦comment|// the raw state⟧ ⟦punctuation.special|}}⟧⟦tag.delimiter|</⟧⟦tag|span⟧⟦tag.delimiter|>⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword.control|@defer⟧ ⟦punctuation.bracket|(⟧⟦keyword|on⟧ ⟦variable|viewport⟧⟦punctuation.delimiter|;⟧ ⟦keyword|prefetch⟧ ⟦keyword|on⟧ ⟦variable|idle⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦tag.delimiter|<⟧⟦tag|app-recommendations⟧ ⟦attribute|[for]⟧⟦operator|=⟧⟦string|"⟧⟦variable|cart⟧⟦string|"⟧ ⟦tag.delimiter|/>⟧
+⟦punctuation.bracket|}⟧ ⟦keyword.control|@placeholder⟧ ⟦punctuation.bracket|(⟧⟦keyword|minimum⟧ ⟦number|500⟧⟦number.unit|ms⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦tag.delimiter|<⟧⟦tag|p⟧⟦tag.delimiter|>⟧Recommendations⟦tag.delimiter|</⟧⟦tag|p⟧⟦tag.delimiter|>⟧
+⟦punctuation.bracket|}⟧ ⟦keyword.control|@loading⟧ ⟦punctuation.bracket|(⟧⟦keyword|after⟧ ⟦number|100⟧⟦number.unit|ms⟧⟦punctuation.delimiter|;⟧ ⟦keyword|minimum⟧ ⟦number|1⟧⟦number.unit|s⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦tag.delimiter|<⟧⟦tag|app-spinner⟧ ⟦tag.delimiter|/>⟧
+⟦punctuation.bracket|}⟧ ⟦keyword.control|@error⟧ ⟦punctuation.bracket|{⟧
+  ⟦tag.delimiter|<⟧⟦tag|p⟧⟦tag.delimiter|>⟧Could not load.⟦tag.delimiter|</⟧⟦tag|p⟧⟦tag.delimiter|>⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword.control|@defer⟧ ⟦punctuation.bracket|(⟧⟦keyword|when⟧ ⟦variable|cart⟧⟦punctuation.delimiter|.⟧⟦property|items⟧⟦punctuation.delimiter|.⟧⟦property|length⟧ ⟦operator|>⟧ ⟦number|3⟧⟦punctuation.delimiter|;⟧ ⟦keyword|on⟧ ⟦function|timer⟧⟦punctuation.bracket|(⟧⟦number|5⟧⟦number.unit|s⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|,⟧ ⟦function|hover⟧⟦punctuation.bracket|(⟧⟦variable|title⟧⟦punctuation.bracket|))⟧ ⟦punctuation.bracket|{⟧
+  ⟦tag.delimiter|<⟧⟦tag|app-upsell⟧ ⟦tag.delimiter|/>⟧
+⟦punctuation.bracket|}⟧
+
+⟦tag.delimiter|<⟧⟦tag|p⟧ ⟦attribute|i18n⟧⟦tag.delimiter|>⟧
+  ⟦punctuation.bracket|{⟧⟦variable|cart⟧⟦punctuation.delimiter|.⟧⟦property|items⟧⟦punctuation.delimiter|.⟧⟦property|length⟧⟦punctuation.delimiter|,⟧ ⟦keyword|plural⟧⟦punctuation.delimiter|,⟧ ⟦label|=0⟧ ⟦punctuation.bracket|{⟧No items⟦punctuation.bracket|}⟧ ⟦label|=1⟧ ⟦punctuation.bracket|{⟧One item⟦punctuation.bracket|}⟧ ⟦label|other⟧ ⟦punctuation.bracket|{⟧⟦tag.delimiter|<⟧⟦tag|b⟧⟦tag.delimiter|>⟧⟦punctuation.special|{{⟧ ⟦variable|cart⟧⟦punctuation.delimiter|.⟧⟦property|items⟧⟦punctuation.delimiter|.⟧⟦property|length⟧ ⟦punctuation.special|}}⟧⟦tag.delimiter|</⟧⟦tag|b⟧⟦tag.delimiter|>⟧ items⟦punctuation.bracket|}}⟧
+  for ⟦punctuation.bracket|{⟧⟦variable|user⟧⟦punctuation.delimiter|.⟧⟦property|gender⟧⟦punctuation.delimiter|,⟧ ⟦keyword|select⟧⟦punctuation.delimiter|,⟧ ⟦label|male⟧ ⟦punctuation.bracket|{⟧him⟦punctuation.bracket|}⟧ ⟦label|female⟧ ⟦punctuation.bracket|{⟧her⟦punctuation.bracket|}⟧ ⟦label|other⟧ ⟦punctuation.bracket|{⟧them⟦punctuation.bracket|}}⟧
+⟦tag.delimiter|</⟧⟦tag|p⟧⟦tag.delimiter|>⟧
+
+⟦tag.delimiter|<⟧⟦tag|ng-container⟧ ⟦keyword.control|*ngIf⟧⟦operator|=⟧⟦string|"⟧⟦variable|legacy⟧⟦punctuation.delimiter|;⟧ ⟦keyword.control|else⟧ ⟦variable|modern⟧⟦string|"⟧⟦tag.delimiter|>⟧
+  ⟦tag.delimiter|<⟧⟦tag|div⟧ ⟦keyword.control|*ngFor⟧⟦operator|=⟧⟦string|"⟧⟦keyword|let⟧ ⟦variable|row⟧ ⟦keyword.operator|of⟧ ⟦variable|rows⟧ ⟦operator||⟧ ⟦function|slice⟧⟦punctuation.delimiter|:⟧ ⟦number|0⟧ ⟦punctuation.delimiter|:⟧ ⟦number|5⟧⟦punctuation.delimiter|;⟧ ⟦property|trackBy⟧⟦punctuation.delimiter|:⟧ ⟦variable|trackById⟧⟦punctuation.delimiter|;⟧ ⟦keyword|let⟧ ⟦variable|odd⟧ ⟦operator|=⟧ ⟦variable|odd⟧⟦punctuation.delimiter|;⟧ ⟦variable|index⟧ ⟦keyword.operator|as⟧ ⟦variable|n⟧⟦string|"⟧ ⟦attribute|[ngClass]⟧⟦operator|=⟧⟦string|"⟧⟦punctuation.bracket|{⟧ ⟦property|odd⟧⟦punctuation.delimiter|:⟧ ⟦variable|odd⟧ ⟦punctuation.bracket|}⟧⟦string|"⟧⟦tag.delimiter|>⟧
+    ⟦punctuation.special|{{⟧ ⟦variable|n⟧ ⟦punctuation.special|}}⟧: ⟦punctuation.special|{{⟧ ⟦variable|row⟧⟦punctuation.delimiter|.⟧⟦property|value⟧ ⟦operator||⟧ ⟦function|number⟧⟦punctuation.delimiter|:⟧ ⟦string|"1.0-2"⟧ ⟦punctuation.special|}}⟧ ⟦punctuation.special|{{⟧ ⟦keyword.operator|typeof⟧ ⟦variable|row⟧⟦punctuation.delimiter|.⟧⟦property|value⟧ ⟦operator|===⟧ ⟦string|"number"⟧ ⟦operator|?⟧ ⟦variable|row⟧⟦punctuation.delimiter|.⟧⟦property|value⟧⟦operator|!⟧ ⟦punctuation.delimiter|:⟧ ⟦constant.builtin|null⟧ ⟦punctuation.special|}}⟧
+  ⟦tag.delimiter|</⟧⟦tag|div⟧⟦tag.delimiter|>⟧
+  ⟦tag.delimiter|<⟧⟦tag|ng-container⟧ ⟦attribute|[ngSwitch]⟧⟦operator|=⟧⟦string|"⟧⟦variable|mode⟧⟦string|"⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|b⟧ ⟦keyword.control|*ngSwitchCase⟧⟦operator|=⟧⟦string|"'a'"⟧⟦tag.delimiter|>⟧A⟦tag.delimiter|</⟧⟦tag|b⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|i⟧ ⟦keyword.control|*ngSwitchDefault⟧⟦tag.delimiter|>⟧Other⟦tag.delimiter|</⟧⟦tag|i⟧⟦tag.delimiter|>⟧
+  ⟦tag.delimiter|</⟧⟦tag|ng-container⟧⟦tag.delimiter|>⟧
+  ⟦tag.delimiter|<⟧⟦tag|ng-container⟧ ⟦attribute|*ngTemplateOutlet⟧⟦operator|=⟧⟦string|"⟧⟦variable|tpl⟧⟦punctuation.delimiter|;⟧ ⟦property|context⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|{⟧ ⟦property|$implicit⟧⟦punctuation.delimiter|:⟧ ⟦variable|rows⟧⟦punctuation.bracket|[⟧⟦number|0⟧⟦punctuation.bracket|]⟧⟦punctuation.delimiter|,⟧ ⟦property|extra⟧⟦punctuation.delimiter|:⟧ ⟦string.regexp|/^a+$/i⟧⟦punctuation.delimiter|.⟧⟦function.method|test⟧⟦punctuation.bracket|(⟧⟦variable|name⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|}⟧⟦string|"⟧⟦tag.delimiter|></⟧⟦tag|ng-container⟧⟦tag.delimiter|>⟧
+⟦tag.delimiter|</⟧⟦tag|ng-container⟧⟦tag.delimiter|>⟧
+⟦tag.delimiter|<⟧⟦tag|ng-template⟧ ⟦attribute|#modern⟧ ⟦attribute|let-data⟧⟦operator|=⟧⟦string|"data"⟧⟦tag.delimiter|>⟧
+  ⟦tag.delimiter|<⟧⟦tag.component|MatCard⟧ ⟦attribute|bind-title⟧⟦operator|=⟧⟦string|"⟧⟦variable|data⟧⟦punctuation.delimiter|.⟧⟦property|title⟧⟦string|"⟧ ⟦attribute|on-close⟧⟦operator|=⟧⟦string|"⟧⟦variable|closed⟧ ⟦operator|=⟧ ⟦boolean|true⟧⟦string|"⟧⟦tag.delimiter|>⟧⟦punctuation.special|{{⟧ ⟦variable.builtin|this⟧⟦punctuation.delimiter|.⟧⟦property|data⟧ ⟦punctuation.special|}}⟧⟦tag.delimiter|</⟧⟦tag.component|MatCard⟧⟦tag.delimiter|>⟧
+⟦tag.delimiter|</⟧⟦tag|ng-template⟧⟦tag.delimiter|>⟧
+
+⟦tag.delimiter|<⟧⟦tag|style⟧⟦tag.delimiter|>⟧
+  ⟦selector.class|.cart⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|display⟧⟦punctuation.delimiter|:⟧ ⟦constant|flex⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+⟦tag.delimiter|</⟧⟦tag|style⟧⟦tag.delimiter|>⟧
+⟦tag.delimiter|<⟧⟦tag|script⟧ ⟦attribute|type⟧⟦operator|=⟧⟦string|"application/json"⟧⟦tag.delimiter|>⟧
+  ⟦punctuation.bracket|{⟧ ⟦property|"version"⟧⟦punctuation.delimiter|:⟧ ⟦number|1⟧ ⟦punctuation.bracket|}⟧
+⟦tag.delimiter|</⟧⟦tag|script⟧⟦tag.delimiter|>⟧
+"
+`;
+
+exports[`fixtures css.css: css.css 1`] = `
+"⟦keyword.directive|@charset⟧ ⟦string|"utf-8"⟧⟦punctuation.delimiter|;⟧
+⟦keyword.import|@import⟧ ⟦function|url⟧⟦punctuation.bracket|(⟧⟦string|"reset.css"⟧⟦punctuation.bracket|)⟧ ⟦function|layer⟧⟦punctuation.bracket|(⟧⟦constant|base⟧⟦punctuation.bracket|)⟧ ⟦function|supports⟧⟦punctuation.bracket|(⟧⟦property|display⟧⟦punctuation.delimiter|:⟧ ⟦constant|grid⟧⟦punctuation.bracket|)⟧ ⟦constant|screen⟧ ⟦keyword.operator|and⟧ ⟦punctuation.bracket|(⟧⟦property|min-width⟧⟦punctuation.delimiter|:⟧ ⟦number|40⟧⟦number.unit|em⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+⟦keyword.directive|@namespace⟧ ⟦constant|svg⟧ ⟦function|url⟧⟦punctuation.bracket|(⟧⟦string.special|http://www.w3.org/2000/svg⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+⟦keyword.directive|@layer⟧ ⟦constant|base⟧⟦punctuation.delimiter|,⟧ ⟦constant|components⟧⟦punctuation.delimiter|,⟧ ⟦constant|utilities⟧⟦punctuation.delimiter|;⟧
+
+⟦comment.doc|/**⟧
+⟦comment.doc| * Design tokens.⟧
+⟦comment.doc| */⟧
+⟦selector.pseudo|:root⟧ ⟦punctuation.bracket|{⟧
+  ⟦variable|--brand⟧⟦punctuation.delimiter|:⟧ ⟦constant|#f472b6⟧⟦punctuation.delimiter|;⟧
+  ⟦variable|--gap⟧⟦punctuation.delimiter|:⟧ ⟦function|calc⟧⟦punctuation.bracket|(⟧⟦number|1⟧⟦number.unit|rem⟧ ⟦operator|+⟧ ⟦number|2⟧ ⟦operator|*⟧ ⟦function|var⟧⟦punctuation.bracket|(⟧⟦variable|--unit⟧⟦punctuation.delimiter|,⟧ ⟦number|4⟧⟦number.unit|px⟧⟦punctuation.bracket|))⟧⟦punctuation.delimiter|;⟧
+  ⟦variable|--font-stack⟧⟦punctuation.delimiter|:⟧ ⟦string|"Inter var"⟧⟦punctuation.delimiter|,⟧ ⟦constant|system-ui⟧⟦punctuation.delimiter|,⟧ ⟦constant|-apple-system⟧⟦punctuation.delimiter|,⟧ ⟦constant|sans-serif⟧⟦punctuation.delimiter|;⟧
+  ⟦variable|--empty⟧⟦punctuation.delimiter|:;⟧
+  ⟦property|color-scheme⟧⟦punctuation.delimiter|:⟧ ⟦constant|light⟧ ⟦constant|dark⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword.directive|@property⟧ ⟦variable|--angle⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|syntax⟧⟦punctuation.delimiter|:⟧ ⟦string|"<angle>"⟧⟦punctuation.delimiter|;⟧
+  ⟦property|inherits⟧⟦punctuation.delimiter|:⟧ ⟦constant|false⟧⟦punctuation.delimiter|;⟧
+  ⟦property|initial-value⟧⟦punctuation.delimiter|:⟧ ⟦number|0⟧⟦number.unit|deg⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword.directive|@font-face⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|font-family⟧⟦punctuation.delimiter|:⟧ ⟦string|"Inter var"⟧⟦punctuation.delimiter|;⟧
+  ⟦property|src⟧⟦punctuation.delimiter|:⟧ ⟦function|url⟧⟦punctuation.bracket|(⟧⟦string.special|/fonts/inter.woff2⟧⟦punctuation.bracket|)⟧ ⟦function|format⟧⟦punctuation.bracket|(⟧⟦string|"woff2"⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|,⟧ ⟦function|url⟧⟦punctuation.bracket|(⟧⟦string|"/fonts/inter.woff"⟧⟦punctuation.bracket|)⟧ ⟦function|format⟧⟦punctuation.bracket|(⟧⟦string|"woff"⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+  ⟦property|unicode-range⟧⟦punctuation.delimiter|:⟧ ⟦number|U+0000-00FF⟧⟦punctuation.delimiter|,⟧ ⟦number|U+2000-206F⟧⟦punctuation.delimiter|,⟧ ⟦number|u+4??⟧⟦punctuation.delimiter|;⟧
+  ⟦property|font-display⟧⟦punctuation.delimiter|:⟧ ⟦constant|swap⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦comment|/* Every kind of selector. */⟧
+⟦selector|*⟧⟦punctuation.delimiter|,⟧
+⟦selector|*⟧⟦selector.pseudo|::before⟧⟦punctuation.delimiter|,⟧
+⟦selector|*⟧⟦selector.pseudo|::after⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|box-sizing⟧⟦punctuation.delimiter|:⟧ ⟦constant|border-box⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦tag|html⟧⟦punctuation.delimiter|,⟧ ⟦tag|body⟧⟦selector.id|#app⟧⟦selector.class|.dark⟧ ⟦operator|>⟧ ⟦tag|main⟧ ⟦operator|~⟧ ⟦tag|aside⟧ ⟦operator|+⟧ ⟦tag|footer⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|margin⟧⟦punctuation.delimiter|:⟧ ⟦number|0⟧ ⟦constant|auto⟧ ⟦number|-1⟧⟦number.unit|px⟧⟦punctuation.delimiter|;⟧
+  ⟦property|font⟧⟦punctuation.delimiter|:⟧ ⟦constant|italic⟧ ⟦number|500⟧ ⟦number|1⟧⟦number.unit|rem⟧⟦operator|/⟧⟦number|1.5⟧ ⟦function|var⟧⟦punctuation.bracket|(⟧⟦variable|--font-stack⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦tag|a⟧⟦punctuation.bracket|[⟧⟦attribute|href⟧⟦operator|^=⟧⟦string|"https://"⟧ ⟦keyword.modifier|i⟧⟦punctuation.bracket|]⟧⟦selector.pseudo|:not⟧⟦punctuation.bracket|(⟧⟦selector.class|.internal⟧⟦punctuation.delimiter|,⟧ ⟦punctuation.bracket|[⟧⟦attribute|data-skip⟧⟦punctuation.bracket|])⟧⟦selector.pseudo|:hover::after⟧⟦punctuation.delimiter|,⟧
+⟦tag|input⟧⟦punctuation.bracket|[⟧⟦attribute|type⟧⟦operator|=⟧⟦string|checkbox⟧⟦punctuation.bracket|]⟧⟦selector.pseudo|:checked⟧⟦punctuation.delimiter|,⟧
+⟦namespace|svg⟧⟦operator||⟧⟦tag|a⟧⟦punctuation.bracket|[⟧⟦namespace|xlink⟧⟦operator||⟧⟦attribute|href⟧⟦punctuation.bracket|]⟧⟦punctuation.delimiter|,⟧
+⟦tag|li⟧⟦selector.pseudo|:nth-child⟧⟦punctuation.bracket|(⟧⟦number|2⟧⟦number.unit|n⟧ ⟦operator|+⟧ ⟦number|1⟧ ⟦keyword.operator|of⟧ ⟦selector.class|.item⟧⟦punctuation.bracket|)⟧⟦selector.pseudo|:lang⟧⟦punctuation.bracket|(⟧⟦constant|en⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|content⟧⟦punctuation.delimiter|:⟧ ⟦string|"⟧⟦string.escape|\\201C ⟧⟦string|quoted ⟧⟦string.escape|\\"⟧⟦string|text⟧⟦string.escape|\\"⟧⟦string| ⟧⟦string.escape|\\a⟧⟦string|"⟧⟦punctuation.delimiter|;⟧
+  ⟦property|color⟧⟦punctuation.delimiter|:⟧ ⟦function|rgb⟧⟦punctuation.bracket|(⟧⟦number|0⟧ ⟦number|0⟧ ⟦number|0⟧ ⟦operator|/⟧ ⟦number|50⟧⟦number.unit|%⟧⟦punctuation.bracket|)⟧ ⟦keyword.modifier|!important⟧⟦punctuation.delimiter|;⟧
+  ⟦property|background⟧⟦punctuation.delimiter|:⟧ ⟦function|url⟧⟦punctuation.bracket|(⟧⟦string.special|data:image/png;base64,iVBORw0KGgo=⟧⟦punctuation.bracket|)⟧ ⟦constant|no-repeat⟧ ⟦constant|center⟧ ⟦operator|/⟧ ⟦constant|cover⟧⟦punctuation.delimiter|,⟧ ⟦function|linear-gradient⟧⟦punctuation.bracket|(⟧⟦constant|to⟧ ⟦constant|right⟧⟦punctuation.delimiter|,⟧ ⟦constant|#fff⟧ ⟦number|0⟧⟦number.unit|%⟧⟦punctuation.delimiter|,⟧ ⟦constant|transparent⟧ ⟦number|100⟧⟦number.unit|%⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+  ⟦property|transition⟧⟦punctuation.delimiter|:⟧ ⟦constant|opacity⟧ ⟦number|.3⟧⟦number.unit|s⟧ ⟦constant|ease-in-out⟧⟦punctuation.delimiter|,⟧ ⟦constant|transform⟧ ⟦number|1.5e-1⟧⟦number.unit|s⟧ ⟦function|cubic-bezier⟧⟦punctuation.bracket|(⟧⟦number|0.4⟧⟦punctuation.delimiter|,⟧ ⟦number|0⟧⟦punctuation.delimiter|,⟧ ⟦number|0.2⟧⟦punctuation.delimiter|,⟧ ⟦number|1⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦selector.class|.sm\\:flex⟧⟦punctuation.delimiter|,⟧
+⟦selector.class|.w-1\\/2⟧⟦punctuation.delimiter|,⟧
+⟦tag|my-element⟧⟦selector.pseudo|::part⟧⟦punctuation.bracket|(⟧⟦constant|label⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|display⟧⟦punctuation.delimiter|:⟧ ⟦constant|-webkit-box⟧⟦punctuation.delimiter|;⟧
+  ⟦property|grid-template-columns⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|[⟧⟦constant|full-start⟧⟦punctuation.bracket|]⟧ ⟦function|minmax⟧⟦punctuation.bracket|(⟧⟦number|1⟧⟦number.unit|em⟧⟦punctuation.delimiter|,⟧ ⟦number|1⟧⟦number.unit|fr⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|[⟧⟦constant|content-start⟧⟦punctuation.bracket|]⟧ ⟦function|repeat⟧⟦punctuation.bracket|(⟧⟦number|3⟧⟦punctuation.delimiter|,⟧ ⟦number|20⟧⟦number.unit|%⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|[⟧⟦constant|full-end⟧⟦punctuation.bracket|]⟧⟦punctuation.delimiter|;⟧
+  ⟦property|grid-area⟧⟦punctuation.delimiter|:⟧ ⟦number|1⟧ ⟦operator|/⟧ ⟦number|2⟧ ⟦operator|/⟧ ⟦constant|span⟧ ⟦number|3⟧ ⟦operator|/⟧ ⟦number|-1⟧⟦punctuation.delimiter|;⟧
+  ⟦property|width⟧⟦punctuation.delimiter|:⟧ ⟦number|+100.5⟧⟦number.unit|PX⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦selector.class|.card⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|padding⟧⟦punctuation.delimiter|:⟧ ⟦function|var⟧⟦punctuation.bracket|(⟧⟦variable|--gap⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+
+  ⟦selector|&⟧⟦selector.pseudo|:hover⟧⟦punctuation.delimiter|,⟧
+  ⟦selector|&⟧⟦selector.class|.is-active⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|outline⟧⟦punctuation.delimiter|:⟧ ⟦number|2⟧⟦number.unit|px⟧ ⟦constant|solid⟧ ⟦constant|currentColor⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+
+  ⟦selector|&⟧ ⟦operator|>⟧ ⟦selector.class|.title⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|font-weight⟧⟦punctuation.delimiter|:⟧ ⟦constant|bold⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+
+  ⟦selector.class|.theme-dark⟧ ⟦selector|&⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|background⟧⟦punctuation.delimiter|:⟧ ⟦constant|#000c⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+
+  ⟦keyword.directive|@media⟧ ⟦punctuation.bracket|(⟧⟦property|hover⟧⟦punctuation.delimiter|:⟧ ⟦constant|hover⟧⟦punctuation.bracket|)⟧ ⟦keyword.operator|and⟧ ⟦punctuation.bracket|(⟧⟦number|400⟧⟦number.unit|px⟧ ⟦operator|<=⟧ ⟦property|width⟧ ⟦operator|<=⟧ ⟦number|700⟧⟦number.unit|px⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|aspect-ratio⟧⟦punctuation.delimiter|:⟧ ⟦number|16⟧ ⟦operator|/⟧ ⟦number|9⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword.directive|@media⟧ ⟦constant|screen⟧ ⟦keyword.operator|and⟧ ⟦punctuation.bracket|(⟧⟦property|min-width⟧⟦punctuation.delimiter|:⟧ ⟦number|768⟧⟦number.unit|px⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|,⟧ ⟦constant|print⟧ ⟦keyword.operator|and⟧ ⟦punctuation.bracket|(⟧⟦property|orientation⟧⟦punctuation.delimiter|:⟧ ⟦constant|landscape⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|,⟧ ⟦keyword.operator|not⟧ ⟦constant|all⟧ ⟦keyword.operator|and⟧ ⟦punctuation.bracket|(⟧⟦property|monochrome⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦selector.class|.sidebar⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|float⟧⟦punctuation.delimiter|:⟧ ⟦constant|left⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword.directive|@supports⟧ ⟦punctuation.bracket|((⟧⟦property|display⟧⟦punctuation.delimiter|:⟧ ⟦constant|grid⟧⟦punctuation.bracket|)⟧ ⟦keyword.operator|and⟧ ⟦punctuation.bracket|(⟧⟦keyword.operator|not⟧ ⟦punctuation.bracket|(⟧⟦property|display⟧⟦punctuation.delimiter|:⟧ ⟦constant|inline-grid⟧⟦punctuation.bracket|)))⟧ ⟦keyword.operator|or⟧ ⟦function|selector⟧⟦punctuation.bracket|(⟧⟦selector.pseudo|:has⟧⟦punctuation.bracket|(⟧⟦operator|>⟧ ⟦tag|img⟧⟦punctuation.bracket|))⟧ ⟦punctuation.bracket|{⟧
+  ⟦selector.class|.grid⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|display⟧⟦punctuation.delimiter|:⟧ ⟦constant|grid⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword.directive|@container⟧ ⟦constant|sidebar⟧ ⟦punctuation.bracket|(⟧⟦property|inline-size⟧ ⟦operator|>⟧ ⟦number|30⟧⟦number.unit|em⟧⟦punctuation.bracket|)⟧ ⟦keyword.operator|and⟧ ⟦function|style⟧⟦punctuation.bracket|(⟧⟦variable|--responsive⟧⟦punctuation.delimiter|:⟧ ⟦constant|true⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦selector.class|.nav⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|flex-direction⟧⟦punctuation.delimiter|:⟧ ⟦constant|row⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword.directive|@keyframes⟧ ⟦constant|spin⟧ ⟦punctuation.bracket|{⟧
+  ⟦keyword|from⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|transform⟧⟦punctuation.delimiter|:⟧ ⟦function|rotate⟧⟦punctuation.bracket|(⟧⟦number|0⟧⟦number.unit|deg⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+  ⟦number|50.5⟧⟦number.unit|%⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|opacity⟧⟦punctuation.delimiter|:⟧ ⟦number|0.5⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+  ⟦keyword|to⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|transform⟧⟦punctuation.delimiter|:⟧ ⟦function|rotate⟧⟦punctuation.bracket|(⟧⟦number|1⟧⟦number.unit|turn⟧⟦punctuation.bracket|)⟧ ⟦function|translate3d⟧⟦punctuation.bracket|(⟧⟦number|0⟧⟦punctuation.delimiter|,⟧ ⟦number|-50⟧⟦number.unit|%⟧⟦punctuation.delimiter|,⟧ ⟦number|0⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword.directive|@scope⟧ ⟦punctuation.bracket|(⟧⟦selector.class|.card⟧⟦punctuation.bracket|)⟧ ⟦keyword.operator|to⟧ ⟦punctuation.bracket|(⟧⟦selector.class|.content⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦tag|img⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|border⟧⟦punctuation.delimiter|:⟧ ⟦number|1⟧⟦number.unit|px⟧ ⟦constant|solid⟧ ⟦constant|black⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword.directive|@page⟧ ⟦selector.pseudo|:first⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|margin⟧⟦punctuation.delimiter|:⟧ ⟦number|1⟧⟦number.unit|in⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+"
+`;
+
+exports[`fixtures graphql.graphql: graphql.graphql 1`] = `
+"⟦comment|# Schema and operations of a small blog.⟧
+⟦keyword|schema⟧ ⟦decorator|@link⟧⟦punctuation.bracket|(⟧⟦variable.parameter|url⟧⟦punctuation.delimiter|:⟧ ⟦string|"https://specs.apollo.dev/federation/v2.3"⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦keyword|query⟧⟦punctuation.delimiter|:⟧ ⟦type|Query⟧
+  ⟦keyword|mutation⟧⟦punctuation.delimiter|:⟧ ⟦type|Mutation⟧
+  ⟦keyword|subscription⟧⟦punctuation.delimiter|:⟧ ⟦type|Subscription⟧
+⟦punctuation.bracket|}⟧
+
+⟦comment.doc|"""⟧
+⟦comment.doc|A point in time, as an ISO 8601 string.⟧
+⟦comment.doc|It can say \\""" without ending.⟧
+⟦comment.doc|"""⟧
+⟦keyword|scalar⟧ ⟦type|DateTime⟧ ⟦decorator|@specifiedBy⟧⟦punctuation.bracket|(⟧⟦variable.parameter|url⟧⟦punctuation.delimiter|:⟧ ⟦string|"https://www.rfc-editor.org/rfc/rfc3339"⟧⟦punctuation.bracket|)⟧
+
+⟦keyword|directive⟧ ⟦decorator|@cost⟧⟦punctuation.bracket|(⟧
+  ⟦comment.doc|"How much one call costs."⟧
+  ⟦variable.parameter|weight⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|Int⟧⟦operator|!⟧ ⟦operator|=⟧ ⟦number|1⟧
+  ⟦variable.parameter|tags⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|[⟧⟦type.builtin|String⟧⟦operator|!⟧⟦punctuation.bracket|]⟧ ⟦operator|=⟧ ⟦punctuation.bracket|[⟧⟦string|"a"⟧⟦punctuation.delimiter|,⟧ ⟦string|"b"⟧⟦punctuation.bracket|]⟧
+⟦punctuation.bracket|)⟧ ⟦keyword|repeatable⟧ ⟦keyword|on⟧ ⟦constant|FIELD_DEFINITION⟧ ⟦operator||⟧ ⟦constant|OBJECT⟧
+
+⟦keyword|enum⟧ ⟦type|Role⟧ ⟦punctuation.bracket|{⟧
+  ⟦constant|ADMIN⟧
+  ⟦comment.doc|"Can write posts."⟧
+  ⟦constant|AUTHOR⟧ ⟦decorator|@deprecated⟧⟦punctuation.bracket|(⟧⟦variable.parameter|reason⟧⟦punctuation.delimiter|:⟧ ⟦string|"Use ⟧⟦string.escape|\\"⟧⟦string|WRITER⟧⟦string.escape|\\"⟧⟦string|,⟧⟦string.escape|\\n⟧⟦string|not C:⟧⟦string.escape|\\\\⟧⟦string|author"⟧⟦punctuation.bracket|)⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword|interface⟧ ⟦type|Entity⟧ ⟦keyword|implements⟧ ⟦type|Node⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|id⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|ID⟧⟦operator|!⟧
+  ⟦property|createdAt⟧⟦punctuation.delimiter|:⟧ ⟦type|DateTime⟧
+⟦punctuation.bracket|}⟧
+
+⟦comment.doc|"Somebody who can log in."⟧
+⟦keyword|type⟧ ⟦type|User⟧ ⟦keyword|implements⟧ ⟦type|Node⟧ ⟦operator|&⟧ ⟦type|Entity⟧ ⟦decorator|@key⟧⟦punctuation.bracket|(⟧⟦variable.parameter|fields⟧⟦punctuation.delimiter|:⟧ ⟦string|"id"⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|id⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|ID⟧⟦operator|!⟧
+  ⟦property|createdAt⟧⟦punctuation.delimiter|:⟧ ⟦type|DateTime⟧
+  ⟦property|name⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|String⟧⟦operator|!⟧
+  ⟦property|score⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|Float⟧
+  ⟦property|isActive⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|Boolean⟧⟦operator|!⟧
+  ⟦property|role⟧⟦punctuation.delimiter|:⟧ ⟦type|Role⟧⟦operator|!⟧
+  ⟦property|posts⟧⟦punctuation.bracket|(⟧⟦variable.parameter|first⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|Int⟧ ⟦operator|=⟧ ⟦number|10⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|after⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|String⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|filter⟧⟦punctuation.delimiter|:⟧ ⟦type|PostFilter⟧ ⟦operator|=⟧ ⟦punctuation.bracket|{⟧ ⟦property|tags⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|[⟧⟦string|"news"⟧⟦punctuation.bracket|]⟧⟦punctuation.delimiter|,⟧ ⟦property|draft⟧⟦punctuation.delimiter|:⟧ ⟦boolean|false⟧ ⟦punctuation.bracket|})⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|[⟧⟦type|Post⟧⟦operator|!⟧⟦punctuation.bracket|]⟧⟦operator|!⟧
+    ⟦decorator|@cost⟧⟦punctuation.bracket|(⟧⟦variable.parameter|weight⟧⟦punctuation.delimiter|:⟧ ⟦number|5⟧⟦punctuation.bracket|)⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword|type⟧ ⟦type|Post⟧ ⟦keyword|implements⟧ ⟦type|Node⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|id⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|ID⟧⟦operator|!⟧
+  ⟦property|title⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|String⟧⟦operator|!⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword|union⟧ ⟦type|SearchResult⟧ ⟦operator|=⟧ ⟦type|User⟧ ⟦operator||⟧ ⟦type|Post⟧
+
+⟦keyword|input⟧ ⟦type|PostFilter⟧ ⟦decorator|@oneOf⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|tags⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|[⟧⟦type.builtin|String⟧⟦operator|!⟧⟦punctuation.bracket|]⟧ ⟦operator|=⟧ ⟦punctuation.bracket|[]⟧
+  ⟦property|draft⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|Boolean⟧ ⟦operator|=⟧ ⟦boolean|false⟧
+  ⟦property|minScore⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|Float⟧ ⟦operator|=⟧ ⟦number|-1.5e3⟧
+  ⟦property|author⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|ID⟧ ⟦operator|=⟧ ⟦constant.builtin|null⟧
+  ⟦property|role⟧⟦punctuation.delimiter|:⟧ ⟦type|Role⟧ ⟦operator|=⟧ ⟦constant|ADMIN⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword|type⟧ ⟦type|Query⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|node⟧⟦punctuation.bracket|(⟧⟦variable.parameter|id⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|ID⟧⟦operator|!⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|:⟧ ⟦type|Node⟧
+  ⟦property|search⟧⟦punctuation.bracket|(⟧⟦variable.parameter|text⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|String⟧⟦operator|!⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|[⟧⟦type|SearchResult⟧⟦operator|!⟧⟦punctuation.bracket|]⟧⟦operator|!⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword|type⟧ ⟦type|Mutation⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|publish⟧⟦punctuation.bracket|(⟧⟦variable.parameter|input⟧⟦punctuation.delimiter|:⟧ ⟦type|PostFilter⟧⟦operator|!⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|:⟧ ⟦type|Post⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword|extend⟧ ⟦keyword|schema⟧ ⟦decorator|@link⟧⟦punctuation.bracket|(⟧⟦variable.parameter|url⟧⟦punctuation.delimiter|:⟧ ⟦string|"https://example.com"⟧⟦punctuation.bracket|)⟧
+⟦keyword|extend⟧ ⟦keyword|scalar⟧ ⟦type|DateTime⟧ ⟦decorator|@cost⟧
+⟦keyword|extend⟧ ⟦keyword|type⟧ ⟦type|Query⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|me⟧⟦punctuation.delimiter|:⟧ ⟦type|User⟧
+⟦punctuation.bracket|}⟧
+⟦keyword|extend⟧ ⟦keyword|interface⟧ ⟦type|Node⟧ ⟦decorator|@cost⟧
+⟦keyword|extend⟧ ⟦keyword|union⟧ ⟦type|SearchResult⟧ ⟦operator|=⟧ ⟦type|Query⟧
+⟦keyword|extend⟧ ⟦keyword|enum⟧ ⟦type|Role⟧ ⟦punctuation.bracket|{⟧
+  ⟦constant|GUEST⟧
+⟦punctuation.bracket|}⟧
+⟦keyword|extend⟧ ⟦keyword|input⟧ ⟦type|PostFilter⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|limit⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|Int⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword|query⟧ ⟦function|FindUser⟧⟦punctuation.bracket|(⟧⟦variable|$id⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|ID⟧⟦operator|!⟧⟦punctuation.delimiter|,⟧ ⟦variable|$first⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|Int⟧ ⟦operator|=⟧ ⟦number|20⟧⟦punctuation.delimiter|,⟧ ⟦variable|$tags⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|[⟧⟦type.builtin|String⟧⟦operator|!⟧⟦punctuation.bracket|]⟧⟦operator|!⟧ ⟦operator|=⟧ ⟦punctuation.bracket|[⟧⟦string|"a"⟧⟦punctuation.bracket|]⟧ ⟦decorator|@cost⟧⟦punctuation.delimiter|,⟧ ⟦variable|$withPosts⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|Boolean⟧ ⟦operator|=⟧ ⟦boolean|true⟧⟦punctuation.bracket|)⟧
+⟦decorator|@cost⟧⟦punctuation.bracket|(⟧⟦variable.parameter|weight⟧⟦punctuation.delimiter|:⟧ ⟦number|2⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|user⟧⟦punctuation.delimiter|:⟧ ⟦property|node⟧⟦punctuation.bracket|(⟧⟦variable.parameter|id⟧⟦punctuation.delimiter|:⟧ ⟦variable|$id⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|id⟧
+    ⟦operator|...⟧⟦function|UserFields⟧ ⟦decorator|@include⟧⟦punctuation.bracket|(⟧⟦variable.parameter|if⟧⟦punctuation.delimiter|:⟧ ⟦variable|$withPosts⟧⟦punctuation.bracket|)⟧
+    ⟦operator|...⟧ ⟦keyword|on⟧ ⟦type|User⟧ ⟦punctuation.bracket|{⟧
+      ⟦property|recent⟧⟦punctuation.delimiter|:⟧ ⟦property|posts⟧⟦punctuation.bracket|(⟧⟦variable.parameter|first⟧⟦punctuation.delimiter|:⟧ ⟦variable|$first⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|filter⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|{⟧ ⟦property|tags⟧⟦punctuation.delimiter|:⟧ ⟦variable|$tags⟧⟦punctuation.delimiter|,⟧ ⟦property|draft⟧⟦punctuation.delimiter|:⟧ ⟦boolean|false⟧⟦punctuation.delimiter|,⟧ ⟦property|author⟧⟦punctuation.delimiter|:⟧ ⟦constant.builtin|null⟧⟦punctuation.delimiter|,⟧ ⟦property|role⟧⟦punctuation.delimiter|:⟧ ⟦constant|AUTHOR⟧ ⟦punctuation.bracket|})⟧ ⟦punctuation.bracket|{⟧
+        ⟦property|title⟧
+      ⟦punctuation.bracket|}⟧
+    ⟦punctuation.bracket|}⟧
+    ⟦operator|...⟧ ⟦decorator|@skip⟧⟦punctuation.bracket|(⟧⟦variable.parameter|if⟧⟦punctuation.delimiter|:⟧ ⟦boolean|false⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+      ⟦property|__typename⟧
+    ⟦punctuation.bracket|}⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword|mutation⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|publish⟧⟦punctuation.bracket|(⟧⟦variable.parameter|input⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|{⟧ ⟦property|tags⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|[]⟧⟦punctuation.delimiter|,⟧ ⟦property|minScore⟧⟦punctuation.delimiter|:⟧ ⟦number|0.5⟧ ⟦punctuation.bracket|})⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|id⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword|subscription⟧ ⟦function|OnPost⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|postAdded⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|title⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword|fragment⟧ ⟦function|UserFields⟧ ⟦keyword|on⟧ ⟦type|User⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|name⟧
+  ⟦property|type⟧⟦punctuation.delimiter|:⟧ ⟦property|role⟧
+⟦punctuation.bracket|}⟧
+
+⟦punctuation.bracket|{⟧
+  ⟦property|me⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|name⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+"
+`;
+
+exports[`fixtures handlebars.hbs: handlebars.hbs 1`] = `
+"⟦punctuation.special|---⟧
+⟦property|title⟧⟦punctuation.delimiter|:⟧ ⟦string|Users⟧
+⟦property|layout⟧⟦punctuation.delimiter|:⟧ ⟦string|main⟧
+⟦punctuation.special|---⟧
+⟦keyword.directive|<!DOCTYPE html>⟧
+⟦tag.delimiter|<⟧⟦tag|html⟧ ⟦attribute|lang⟧⟦operator|=⟧⟦string|"en"⟧⟦tag.delimiter|>⟧
+  ⟦tag.delimiter|<⟧⟦tag|head⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|title⟧⟦tag.delimiter|>⟧⟦punctuation.special|{{⟧⟦variable|title⟧⟦punctuation.special|}}⟧ ⟦string.escape|&mdash;⟧ ⟦punctuation.special|{{⟧⟦variable.builtin|@root⟧⟦punctuation.delimiter|.⟧⟦property|site⟧⟦punctuation.delimiter|.⟧⟦property|name⟧⟦punctuation.special|}}⟧⟦tag.delimiter|</⟧⟦tag|title⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|style⟧⟦tag.delimiter|>⟧
+      ⟦selector.class|.user⟧ ⟦punctuation.bracket|{⟧ ⟦property|color⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.special|{{⟧⟦variable|theme⟧⟦punctuation.delimiter|.⟧⟦property|color⟧⟦punctuation.special|}}⟧⟦punctuation.delimiter|;⟧ ⟦property|margin⟧⟦punctuation.delimiter|:⟧ ⟦number|0⟧ ⟦constant|auto⟧⟦punctuation.delimiter|;⟧ ⟦punctuation.bracket|}⟧
+    ⟦tag.delimiter|</⟧⟦tag|style⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|script⟧⟦tag.delimiter|>⟧
+      ⟦variable|window⟧⟦punctuation.delimiter|.⟧⟦property|users⟧ ⟦operator|=⟧ ⟦punctuation.special|{{{⟧⟦function|json⟧⟦variable| users⟧⟦punctuation.special|}}}⟧⟦punctuation.delimiter|;⟧
+      ⟦variable|console⟧⟦punctuation.delimiter|.⟧⟦function.method|log⟧⟦punctuation.bracket|(⟧⟦string|"loaded"⟧⟦punctuation.delimiter|,⟧ ⟦variable|window⟧⟦punctuation.delimiter|.⟧⟦property|users⟧⟦punctuation.delimiter|.⟧⟦property|length⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+    ⟦tag.delimiter|</⟧⟦tag|script⟧⟦tag.delimiter|>⟧
+  ⟦tag.delimiter|</⟧⟦tag|head⟧⟦tag.delimiter|>⟧
+  ⟦tag.delimiter|<⟧⟦tag|body⟧ ⟦attribute|class⟧⟦operator|=⟧⟦string|"page ⟧⟦punctuation.special|{{⟧⟦function|if⟧ ⟦variable|dark⟧ ⟦string|"dark"⟧ ⟦string|'light'⟧⟦punctuation.special|}}⟧⟦string| wide"⟧ ⟦attribute|data-count⟧⟦operator|=⟧⟦punctuation.special|{{⟧⟦variable|users⟧⟦punctuation.delimiter|.⟧⟦property|length⟧⟦punctuation.special|}}⟧ ⟦attribute|style⟧⟦operator|=⟧⟦string|"⟧⟦property|margin⟧⟦punctuation.delimiter|:⟧⟦string| ⟧⟦number|0⟧⟦string|"⟧⟦tag.delimiter|>⟧
+    ⟦comment|<!-- The header, with {{a mustache}} that is text -->⟧
+    ⟦comment|{{!-- A comment with }} in it --}}⟧
+    ⟦comment|{{! a short comment }}⟧
+    ⟦punctuation.special|{{⟧⟦keyword.import|>⟧ ⟦function|header⟧ ⟦attribute|title⟧⟦operator|=⟧⟦variable|title⟧ ⟦attribute|subtitle⟧⟦operator|=⟧⟦string|"All ⟧⟦string.escape|\\"⟧⟦string|users⟧⟦string.escape|\\"⟧⟦string|"⟧ ⟦punctuation.special|}}⟧
+    ⟦punctuation.special|{{⟧⟦keyword.import|#>⟧ ⟦function|layouts/card⟧ ⟦attribute|class⟧⟦operator|=⟧⟦string|"wide"⟧⟦punctuation.special|}}⟧
+      Nothing here.
+    ⟦punctuation.special|{{⟧⟦keyword.control|/⟧⟦function|layouts/card⟧⟦punctuation.special|}}⟧
+    ⟦punctuation.special|{{⟧⟦keyword.control|#*⟧⟦function|inline⟧ ⟦string|"badge"⟧⟦punctuation.special|}}⟧⟦tag.delimiter|<⟧⟦tag|b⟧⟦tag.delimiter|>⟧⟦punctuation.special|{{⟧⟦variable.builtin|this⟧⟦punctuation.special|}}⟧⟦tag.delimiter|</⟧⟦tag|b⟧⟦tag.delimiter|>⟧⟦punctuation.special|{{⟧⟦keyword.control|/⟧⟦function|inline⟧⟦punctuation.special|}}⟧
+
+    ⟦punctuation.special|{{⟧⟦keyword.control|#if⟧ ⟦variable|users⟧⟦punctuation.special|}}⟧
+      ⟦tag.delimiter|<⟧⟦tag|ul⟧ ⟦attribute|id⟧⟦operator|=⟧⟦string|list⟧⟦tag.delimiter|>⟧
+        ⟦punctuation.special|{{⟧⟦keyword.control|#each⟧ ⟦variable|users⟧ ⟦keyword.operator|as⟧ ⟦punctuation.delimiter||⟧⟦variable.parameter|user⟧ ⟦variable.parameter|index⟧⟦punctuation.delimiter||⟧⟦punctuation.special|}}⟧
+          ⟦tag.delimiter|<⟧⟦tag|li⟧ ⟦attribute|class⟧⟦operator|=⟧⟦punctuation.special|{{⟧⟦function|if⟧ ⟦variable|user⟧⟦punctuation.delimiter|.⟧⟦property|active⟧ ⟦string|"on"⟧⟦punctuation.special|}}⟧ ⟦attribute|data-index⟧⟦operator|=⟧⟦string|"⟧⟦punctuation.special|{{⟧⟦variable|index⟧⟦punctuation.special|}}⟧⟦string|"⟧⟦tag.delimiter|>⟧
+            ⟦punctuation.special|{{⟧⟦variable.builtin|@index⟧⟦punctuation.special|}}⟧/⟦punctuation.special|{{⟧⟦variable.builtin|@key⟧⟦punctuation.special|}}⟧: ⟦punctuation.special|{{⟧⟦variable|user⟧⟦punctuation.delimiter|.⟧⟦property|name⟧⟦punctuation.delimiter|.⟧⟦property|first⟧⟦punctuation.special|}}⟧ ⟦punctuation.special|{{{⟧⟦variable|user⟧⟦punctuation.delimiter|.⟧⟦property|bio⟧⟦punctuation.special|}}}⟧ ⟦punctuation.special|{{&⟧⟦variable|user⟧⟦punctuation.delimiter|.⟧⟦property|html⟧⟦punctuation.special|}}⟧
+            ⟦punctuation.special|{{⟧⟦function|format-date⟧ ⟦variable|user⟧⟦punctuation.delimiter|.⟧⟦property|joined⟧ ⟦attribute|format⟧⟦operator|=⟧⟦string|"short"⟧ ⟦attribute|utc⟧⟦operator|=⟧⟦boolean|true⟧ ⟦attribute|limit⟧⟦operator|=⟧⟦number|-1.5⟧ ⟦attribute|fallback⟧⟦operator|=⟧⟦constant.builtin|null⟧ ⟦attribute|other⟧⟦operator|=⟧⟦constant.builtin|undefined⟧⟦punctuation.special|}}⟧
+            ⟦punctuation.special|{{~⟧⟦keyword.control|#unless⟧ ⟦variable.builtin|@last⟧⟦punctuation.special|~}}⟧, ⟦punctuation.special|{{~⟧⟦keyword.control|/unless⟧⟦punctuation.special|~}}⟧
+          ⟦tag.delimiter|</⟧⟦tag|li⟧⟦tag.delimiter|>⟧
+        ⟦punctuation.special|{{⟧⟦keyword.control|else⟧⟦punctuation.special|}}⟧
+          ⟦tag.delimiter|<⟧⟦tag|li⟧⟦tag.delimiter|>⟧Nobody ⟦string.escape|&amp;⟧ nothing⟦tag.delimiter|</⟧⟦tag|li⟧⟦tag.delimiter|>⟧
+        ⟦punctuation.special|{{⟧⟦keyword.control|/each⟧⟦punctuation.special|}}⟧
+      ⟦tag.delimiter|</⟧⟦tag|ul⟧⟦tag.delimiter|>⟧
+    ⟦punctuation.special|{{⟧⟦keyword.control|else⟧ ⟦keyword.control|if⟧ ⟦punctuation.bracket|(⟧⟦function|and⟧ ⟦variable|loading⟧ ⟦punctuation.bracket|(⟧⟦function|not⟧ ⟦punctuation.bracket|(⟧⟦function|eq⟧ ⟦variable|retries⟧ ⟦number|3⟧⟦punctuation.bracket|)))⟧⟦punctuation.special|}}⟧
+      ⟦tag.delimiter|<⟧⟦tag|p⟧⟦tag.delimiter|>⟧Loading⟦string.escape|&hellip;⟧⟦tag.delimiter|</⟧⟦tag|p⟧⟦tag.delimiter|>⟧
+    ⟦punctuation.special|{{⟧⟦keyword.control|else⟧⟦punctuation.special|}}⟧
+      ⟦tag.delimiter|<⟧⟦tag|p⟧⟦tag.delimiter|>⟧⟦punctuation.special|{{⟧⟦function|t⟧ ⟦string|"users.empty"⟧ ⟦attribute|count⟧⟦operator|=⟧⟦number|0⟧⟦punctuation.special|}}⟧⟦tag.delimiter|</⟧⟦tag|p⟧⟦tag.delimiter|>⟧
+    ⟦punctuation.special|{{⟧⟦keyword.control|/if⟧⟦punctuation.special|}}⟧
+
+    ⟦punctuation.special|{{⟧⟦keyword.control|#with⟧ ⟦variable.builtin|..⟧⟦punctuation.delimiter|/⟧⟦property|owner⟧ ⟦keyword.operator|as⟧ ⟦punctuation.delimiter||⟧⟦variable.parameter|owner⟧⟦punctuation.delimiter||⟧⟦punctuation.special|}}{{⟧⟦variable|owner⟧⟦punctuation.delimiter|.⟧⟦property|[full name]⟧⟦punctuation.special|}}⟧ ⟦punctuation.special|{{⟧⟦variable.builtin|this⟧⟦punctuation.delimiter|.⟧⟦property|id⟧⟦punctuation.special|}}⟧ ⟦punctuation.special|{{⟧⟦variable.builtin|.⟧⟦punctuation.delimiter|/⟧⟦property|id⟧⟦punctuation.special|}}{{⟧⟦keyword.control|/with⟧⟦punctuation.special|}}⟧
+    ⟦punctuation.special|{{⟧⟦keyword.control|#let⟧ ⟦punctuation.bracket|(⟧⟦function|hash⟧ ⟦attribute|a⟧⟦operator|=⟧⟦number|1⟧ ⟦attribute|b⟧⟦operator|=⟧⟦string|"two"⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|(⟧⟦function|array⟧ ⟦number|1⟧ ⟦number|2⟧⟦punctuation.bracket|)⟧ ⟦keyword.operator|as⟧ ⟦punctuation.delimiter||⟧⟦variable.parameter|options⟧ ⟦variable.parameter|list⟧⟦punctuation.delimiter||⟧⟦punctuation.special|}}{{⟧⟦variable|options⟧⟦punctuation.delimiter|.⟧⟦property|a⟧⟦punctuation.special|}}{{⟧⟦keyword.control|/let⟧⟦punctuation.special|}}⟧
+    ⟦punctuation.special|{{⟧⟦keyword.control|#each-in⟧ ⟦variable|settings⟧ ⟦keyword.operator|as⟧ ⟦punctuation.delimiter||⟧⟦variable.parameter|key⟧ ⟦variable.parameter|value⟧⟦punctuation.delimiter||⟧⟦punctuation.special|}}{{⟧⟦variable|key⟧⟦punctuation.special|}}⟧=⟦punctuation.special|{{⟧⟦variable|value⟧⟦punctuation.special|}}{{⟧⟦keyword.control|/each-in⟧⟦punctuation.special|}}⟧
+    ⟦punctuation.special|{{⟧⟦keyword.control|^⟧⟦function|users⟧⟦punctuation.special|}}⟧No users⟦punctuation.special|{{⟧⟦keyword.control|/⟧⟦function|users⟧⟦punctuation.special|}}⟧
+    ⟦punctuation.special|{{⟧⟦keyword.control|#⟧⟦function|my-helper⟧ ⟦variable|users⟧ ⟦attribute|size⟧⟦operator|=⟧⟦number|10⟧⟦punctuation.special|}}{{⟧⟦variable|yield⟧⟦punctuation.special|}}{{⟧⟦keyword.control|^⟧⟦punctuation.special|}}⟧none⟦punctuation.special|{{⟧⟦keyword.control|/⟧⟦function|my-helper⟧⟦punctuation.special|}}⟧
+
+    ⟦string.escape|\\⟧{{escaped}} and \\⟦string.escape|\\⟧⟦punctuation.special|{{⟧⟦variable|not-escaped⟧⟦punctuation.special|}}⟧
+    ⟦punctuation.special|{{{{⟧⟦function|raw-helper⟧⟦punctuation.special|}}}}⟧ {{this is text}} ⟦punctuation.special|{{{{⟧⟦keyword.control|/⟧⟦function|raw-helper⟧⟦punctuation.special|}}}}⟧
+
+    ⟦tag.delimiter|<⟧⟦tag.component|Ui::Card⟧ ⟦attribute|@title⟧⟦operator|=⟧⟦string|"Hello"⟧ ⟦attribute|@user⟧⟦operator|=⟧⟦punctuation.special|{{⟧⟦variable.builtin|this⟧⟦punctuation.delimiter|.⟧⟦property|user⟧⟦punctuation.special|}}⟧ ⟦attribute|class⟧⟦operator|=⟧⟦string|"card"⟧ ⟦attribute|...attributes⟧ ⟦keyword.operator|as⟧ ⟦punctuation.delimiter||⟧⟦variable.parameter|card⟧⟦punctuation.delimiter||⟧⟦tag.delimiter|>⟧
+      ⟦tag.delimiter|<⟧⟦tag|:header⟧⟦tag.delimiter|>⟧⟦punctuation.special|{{⟧⟦variable|card⟧⟦punctuation.delimiter|.⟧⟦property|title⟧⟦punctuation.special|}}⟧⟦tag.delimiter|</⟧⟦tag|:header⟧⟦tag.delimiter|>⟧
+      ⟦tag.delimiter|<⟧⟦tag.component|card.Body⟧ ⟦attribute|@onSave⟧⟦operator|=⟧⟦punctuation.special|{{⟧⟦function|fn⟧ ⟦variable.builtin|this⟧⟦punctuation.delimiter|.⟧⟦property|save⟧ ⟦variable|user⟧⟦punctuation.special|}}⟧ ⟦punctuation.special|{{⟧⟦function|on⟧ ⟦string|"click"⟧ ⟦variable.builtin|this⟧⟦punctuation.delimiter|.⟧⟦property|open⟧⟦punctuation.special|}}⟧ ⟦punctuation.special|{{⟧⟦function|did-insert⟧ ⟦variable.builtin|this⟧⟦punctuation.delimiter|.⟧⟦property|focus⟧⟦punctuation.special|}}⟧ ⟦tag.delimiter|/>⟧
+      ⟦tag.delimiter|<⟧⟦tag.component|this.Footer⟧ ⟦tag.delimiter|/><⟧⟦tag.component|@icon⟧ ⟦tag.delimiter|/>⟧
+      ⟦tag.delimiter|<⟧⟦tag.component|Button⟧ ⟦attribute|disabled⟧ ⟦comment|{{! why not }}⟧ ⟦attribute|type⟧⟦operator|=⟧⟦string|"submit"⟧⟦tag.delimiter|>⟧Save⟦tag.delimiter|</⟧⟦tag.component|Button⟧⟦tag.delimiter|>⟧
+      ⟦tag.delimiter|<⟧⟦tag|img⟧ ⟦attribute|src⟧⟦operator|=⟧⟦string|"/a.png"⟧ ⟦attribute|alt⟧⟦operator|=⟧⟦string|"a ⟧⟦string.escape|&lt;⟧⟦string| b"⟧⟦tag.delimiter|><⟧⟦tag|br⟧⟦tag.delimiter|/>⟧
+    ⟦tag.delimiter|</⟧⟦tag.component|Ui::Card⟧⟦tag.delimiter|>⟧
+  ⟦tag.delimiter|</⟧⟦tag|body⟧⟦tag.delimiter|>⟧
+⟦tag.delimiter|</⟧⟦tag|html⟧⟦tag.delimiter|>⟧
+"
+`;
+
+exports[`fixtures html.html: html.html 1`] = `
+"⟦punctuation.special|---⟧
+⟦property|layout⟧⟦punctuation.delimiter|:⟧ ⟦string|default⟧
+⟦property|title⟧⟦punctuation.delimiter|:⟧ ⟦string|Orders⟧
+⟦property|tags⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|[⟧⟦string|shop⟧⟦punctuation.delimiter|,⟧ ⟦string|"admin"⟧⟦punctuation.bracket|]⟧
+⟦punctuation.special|---⟧
+⟦keyword.directive|<!doctype html>⟧
+⟦tag.delimiter|<⟧⟦tag|html⟧ ⟦attribute|lang⟧⟦operator|=⟧⟦string|"en"⟧⟦tag.delimiter|>⟧
+  ⟦tag.delimiter|<⟧⟦tag|head⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|meta⟧ ⟦attribute|charset⟧⟦operator|=⟧⟦string|"utf-8"⟧ ⟦tag.delimiter|/>⟧
+    ⟦tag.delimiter|<⟧⟦tag|meta⟧ ⟦attribute|name⟧⟦operator|=⟧⟦string|viewport⟧ ⟦attribute|content⟧⟦operator|=⟧⟦string|"width=device-width, initial-scale=1"⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|title⟧⟦tag.delimiter|>⟧Orders ⟦string.escape|&amp;⟧ returns ⟦string.escape|&mdash;⟧ Acme⟦tag.delimiter|</⟧⟦tag|title⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|link⟧ ⟦attribute|rel⟧⟦operator|=⟧⟦string|"stylesheet"⟧ ⟦attribute|href⟧⟦operator|=⟧⟦string|/assets/site.css⟧⟦tag.delimiter|>⟧
+    ⟦comment|<!-- Critical styles are inlined. -->⟧
+    ⟦tag.delimiter|<⟧⟦tag|style⟧⟦tag.delimiter|>⟧
+      ⟦selector.pseudo|:root⟧ ⟦punctuation.bracket|{⟧
+        ⟦variable|--accent⟧⟦punctuation.delimiter|:⟧ ⟦constant|#0a7⟧⟦punctuation.delimiter|;⟧
+      ⟦punctuation.bracket|}⟧
+      ⟦selector.class|.order⟧ ⟦operator|>⟧ ⟦tag|td⟧⟦selector.pseudo|:first-child⟧ ⟦punctuation.bracket|{⟧
+        ⟦property|color⟧⟦punctuation.delimiter|:⟧ ⟦function|var⟧⟦punctuation.bracket|(⟧⟦variable|--accent⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+        ⟦property|padding⟧⟦punctuation.delimiter|:⟧ ⟦number|0.5⟧⟦number.unit|rem⟧ ⟦number|1⟧⟦number.unit|em⟧⟦punctuation.delimiter|;⟧
+      ⟦punctuation.bracket|}⟧
+    ⟦tag.delimiter|</⟧⟦tag|style⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|style⟧ ⟦attribute|media⟧⟦operator|=⟧⟦string|"print"⟧ ⟦attribute|lang⟧⟦operator|=⟧⟦string|"scss"⟧⟦tag.delimiter|>⟧
+      ⟦variable|$gap⟧⟦punctuation.delimiter|:⟧ ⟦number|4⟧⟦number.unit|px⟧⟦punctuation.delimiter|;⟧
+      ⟦selector.class|.order⟧ ⟦punctuation.bracket|{⟧ ⟦tag|td⟧ ⟦punctuation.bracket|{⟧ ⟦property|margin⟧⟦punctuation.delimiter|:⟧ ⟦variable|$gap⟧⟦punctuation.delimiter|;⟧ ⟦punctuation.bracket|}⟧ ⟦punctuation.bracket|}⟧
+    ⟦tag.delimiter|</⟧⟦tag|style⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|script⟧ ⟦attribute|type⟧⟦operator|=⟧⟦string|"importmap"⟧⟦tag.delimiter|>⟧
+      ⟦punctuation.bracket|{⟧ ⟦property|"imports"⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|{⟧ ⟦property|"app"⟧⟦punctuation.delimiter|:⟧ ⟦string|"/assets/app.js"⟧ ⟦punctuation.bracket|}⟧ ⟦punctuation.bracket|}⟧
+    ⟦tag.delimiter|</⟧⟦tag|script⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|script⟧ ⟦attribute|type⟧⟦operator|=⟧⟦string|"application/ld+json"⟧⟦tag.delimiter|>⟧
+      ⟦punctuation.bracket|{⟧ ⟦property|"@context"⟧⟦punctuation.delimiter|:⟧ ⟦string|"https://schema.org"⟧⟦punctuation.delimiter|,⟧ ⟦property|"@type"⟧⟦punctuation.delimiter|:⟧ ⟦string|"WebPage"⟧⟦punctuation.delimiter|,⟧ ⟦property|"name"⟧⟦punctuation.delimiter|:⟧ ⟦string|"Orders"⟧ ⟦punctuation.bracket|}⟧
+    ⟦tag.delimiter|</⟧⟦tag|script⟧⟦tag.delimiter|>⟧
+    ⟦comment|<!--[if lt IE 9]><script src="/assets/html5shiv.js"></script><![endif]-->⟧
+  ⟦tag.delimiter|</⟧⟦tag|head⟧⟦tag.delimiter|>⟧
+  ⟦tag.delimiter|<⟧⟦tag|body⟧ ⟦attribute|class⟧⟦operator|=⟧⟦string|"page page--orders"⟧ ⟦attribute|data-user-id⟧⟦operator|=⟧⟦string|'42'⟧ ⟦attribute|hidden⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|header⟧ ⟦attribute|style⟧⟦operator|=⟧⟦string|"⟧⟦property|display⟧⟦punctuation.delimiter|:⟧ ⟦constant|flex⟧⟦punctuation.delimiter|;⟧ ⟦property|gap⟧⟦punctuation.delimiter|:⟧ ⟦number|8⟧⟦number.unit|px⟧⟦punctuation.delimiter|;⟧ ⟦property|background⟧⟦punctuation.delimiter|:⟧ ⟦function|url⟧⟦punctuation.bracket|(⟧⟦string.special|/img/bg.png⟧⟦punctuation.bracket|)⟧⟦string|"⟧⟦tag.delimiter|>⟧
+      ⟦tag.delimiter|<⟧⟦tag|h1⟧ ⟦attribute|id⟧⟦operator|=⟧⟦string|"top"⟧⟦tag.delimiter|>⟧Orders⟦tag.delimiter|</⟧⟦tag|h1⟧⟦tag.delimiter|>⟧
+      ⟦tag.delimiter|<⟧⟦tag|button⟧ ⟦attribute|type⟧⟦operator|=⟧⟦string|"button"⟧ ⟦attribute|onclick⟧⟦operator|=⟧⟦string|"⟧⟦function|refresh⟧⟦punctuation.bracket|(⟧⟦variable|event⟧⟦punctuation.delimiter|,⟧ ⟦punctuation.bracket|{⟧ ⟦property|force⟧⟦punctuation.delimiter|:⟧ ⟦boolean|true⟧ ⟦punctuation.bracket|})⟧⟦string|"⟧ ⟦attribute|disabled⟧⟦tag.delimiter|>⟧Refresh⟦tag.delimiter|</⟧⟦tag|button⟧⟦tag.delimiter|>⟧
+      ⟦tag.delimiter|<⟧⟦tag|a⟧ ⟦attribute|href⟧⟦operator|=⟧⟦string|"/help?topic=orders⟧⟦string.escape|&amp;⟧⟦string|lang=en"⟧ ⟦attribute|title⟧⟦operator|=⟧⟦string|"He said ⟧⟦string.escape|&quot;⟧⟦string|hi⟧⟦string.escape|&quot;⟧⟦string|"⟧⟦tag.delimiter|>⟧Help⟦tag.delimiter|</⟧⟦tag|a⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|</⟧⟦tag|header⟧⟦tag.delimiter|>⟧
+
+    ⟦tag.delimiter|<⟧⟦tag|main⟧⟦tag.delimiter|>⟧
+      ⟦tag.delimiter|<⟧⟦tag|p⟧⟦tag.delimiter|>⟧Prices: 5 ⟦string.escape|&lt;⟧ 10, ⟦string.escape|&#169;⟧ 2026, ⟦string.escape|&#x2014;⟧ and 3 < 4 is plain text.⟦tag.delimiter|</⟧⟦tag|p⟧⟦tag.delimiter|>⟧
+      ⟦tag.delimiter|<⟧⟦tag|table⟧⟦tag.delimiter|>⟧
+        ⟦tag.delimiter|<⟧⟦tag|tr⟧ ⟦attribute|class⟧⟦operator|=⟧⟦string|"order"⟧⟦tag.delimiter|><⟧⟦tag|td⟧⟦tag.delimiter|>⟧1001⟦tag.delimiter|<⟧⟦tag|td⟧⟦tag.delimiter|>⟧Ada⟦tag.delimiter|<⟧⟦tag|td⟧⟦tag.delimiter|>⟧⟦string.escape|&euro;⟧12.50
+        ⟦tag.delimiter|<⟧⟦tag|tr⟧ ⟦attribute|class⟧⟦operator|=⟧⟦string|"order"⟧⟦tag.delimiter|><⟧⟦tag|td⟧⟦tag.delimiter|>⟧1002⟦tag.delimiter|<⟧⟦tag|td⟧⟦tag.delimiter|>⟧Grace⟦tag.delimiter|<⟧⟦tag|td⟧⟦tag.delimiter|>⟧⟦string.escape|&euro;⟧8.00
+      ⟦tag.delimiter|</⟧⟦tag|table⟧⟦tag.delimiter|>⟧
+      ⟦tag.delimiter|<⟧⟦tag|img⟧ ⟦attribute|src⟧⟦operator|=⟧⟦string|"/img/chart.png"⟧ ⟦attribute|alt⟧⟦operator|=⟧⟦string|""⟧ ⟦attribute|width⟧⟦operator|=⟧⟦string|"640"⟧ ⟦attribute|height⟧⟦operator|=⟧⟦string|"480"⟧ ⟦tag.delimiter|/>⟧
+      ⟦tag.delimiter|<⟧⟦tag|br⟧⟦tag.delimiter|>⟧
+      ⟦tag.delimiter|<⟧⟦tag|textarea⟧ ⟦attribute|name⟧⟦operator|=⟧⟦string|"note"⟧ ⟦attribute|rows⟧⟦operator|=⟧⟦string|"3"⟧⟦tag.delimiter|>⟧Dear <customer> ⟦string.escape|&amp;⟧ co.⟦tag.delimiter|</⟧⟦tag|textarea⟧⟦tag.delimiter|>⟧
+      ⟦tag.delimiter|<⟧⟦tag|pre⟧⟦tag.delimiter|><⟧⟦tag|code⟧⟦tag.delimiter|>⟧if (a ⟦string.escape|&lt;⟧ b) { swap(a, b); }⟦tag.delimiter|</⟧⟦tag|code⟧⟦tag.delimiter|></⟧⟦tag|pre⟧⟦tag.delimiter|>⟧
+      ⟦tag.delimiter|<⟧⟦tag|my-widget⟧ ⟦attribute|mode⟧⟦operator|=⟧⟦string|"compact"⟧ ⟦attribute|onmouseover⟧⟦operator|=⟧⟦string|'⟧⟦variable.builtin|this⟧⟦punctuation.delimiter|.⟧⟦property|open⟧ ⟦operator|=⟧ ⟦operator|!⟧⟦variable.builtin|this⟧⟦punctuation.delimiter|.⟧⟦property|open⟧⟦punctuation.delimiter|;⟧ ⟦function|log⟧⟦punctuation.bracket|(⟧⟦string|"over"⟧⟦punctuation.bracket|)⟧⟦string|'⟧⟦tag.delimiter|></⟧⟦tag|my-widget⟧⟦tag.delimiter|>⟧
+      ⟦tag.delimiter|<⟧⟦tag|svg⟧ ⟦attribute|viewBox⟧⟦operator|=⟧⟦string|"0 0 10 10"⟧ ⟦attribute|xmlns:xlink⟧⟦operator|=⟧⟦string|"http://www.w3.org/1999/xlink"⟧⟦tag.delimiter|>⟧
+        ⟦tag.delimiter|<⟧⟦tag|desc⟧⟦tag.delimiter|>⟧⟦punctuation.special|<![CDATA[⟧ 1 < 2 && <b> is text ⟦punctuation.special|]]>⟧⟦tag.delimiter|</⟧⟦tag|desc⟧⟦tag.delimiter|>⟧
+        ⟦tag.delimiter|<⟧⟦tag|circle⟧ ⟦attribute|cx⟧⟦operator|=⟧⟦string|"5"⟧ ⟦attribute|cy⟧⟦operator|=⟧⟦string|"5"⟧ ⟦attribute|r⟧⟦operator|=⟧⟦string|"4"⟧ ⟦tag.delimiter|/>⟧
+        ⟦tag.delimiter|<⟧⟦tag|use⟧ ⟦attribute|xlink:href⟧⟦operator|=⟧⟦string|"#top"⟧ ⟦tag.delimiter|/>⟧
+      ⟦tag.delimiter|</⟧⟦tag|svg⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|</⟧⟦tag|main⟧⟦tag.delimiter|>⟧
+
+    ⟦tag.delimiter|<⟧⟦tag|template⟧ ⟦attribute|id⟧⟦operator|=⟧⟦string|"row"⟧⟦tag.delimiter|>⟧
+      ⟦tag.delimiter|<⟧⟦tag|tr⟧⟦tag.delimiter|><⟧⟦tag|td⟧ ⟦attribute|class⟧⟦operator|=⟧⟦string|"id"⟧⟦tag.delimiter|></⟧⟦tag|td⟧⟦tag.delimiter|><⟧⟦tag|td⟧ ⟦attribute|class⟧⟦operator|=⟧⟦string|"name"⟧⟦tag.delimiter|></⟧⟦tag|td⟧⟦tag.delimiter|></⟧⟦tag|tr⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|</⟧⟦tag|template⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|script⟧ ⟦attribute|type⟧⟦operator|=⟧⟦string|"text/html"⟧ ⟦attribute|id⟧⟦operator|=⟧⟦string|"empty"⟧⟦tag.delimiter|>⟧
+      ⟦tag.delimiter|<⟧⟦tag|p⟧ ⟦attribute|class⟧⟦operator|=⟧⟦string|"empty"⟧⟦tag.delimiter|>⟧No orders ⟦string.escape|&hellip;⟧⟦tag.delimiter|</⟧⟦tag|p⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|</⟧⟦tag|script⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|script⟧ ⟦attribute|type⟧⟦operator|=⟧⟦string|"text/x-mustache"⟧⟦tag.delimiter|>⟧
+      Hello {{ name }}, this stays plain.
+    ⟦tag.delimiter|</⟧⟦tag|script⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|script⟧⟦tag.delimiter|>⟧
+      ⟦keyword|var⟧ ⟦variable|rows⟧ ⟦operator|=⟧ ⟦variable|document⟧⟦punctuation.delimiter|.⟧⟦function.method|querySelectorAll⟧⟦punctuation.bracket|(⟧⟦string|"tr.order"⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+      ⟦variable|console⟧⟦punctuation.delimiter|.⟧⟦function.method|log⟧⟦punctuation.bracket|(⟧⟦string|\`found ⟧⟦punctuation.special|\${⟧⟦variable|rows⟧⟦punctuation.delimiter|.⟧⟦property|length⟧⟦punctuation.special|}⟧⟦string| rows\`⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+    ⟦tag.delimiter|</⟧⟦tag|script⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|script⟧ ⟦attribute|type⟧⟦operator|=⟧⟦string|"module"⟧⟦tag.delimiter|>⟧
+      ⟦keyword.import|import⟧ ⟦punctuation.bracket|{⟧ ⟦function|start⟧ ⟦punctuation.bracket|}⟧ ⟦keyword.import|from⟧ ⟦string|"app"⟧⟦punctuation.delimiter|;⟧
+      ⟦keyword.control|await⟧ ⟦function|start⟧⟦punctuation.bracket|({⟧ ⟦property|root⟧⟦punctuation.delimiter|:⟧ ⟦variable|document⟧⟦punctuation.delimiter|.⟧⟦property|body⟧ ⟦punctuation.bracket|})⟧⟦punctuation.delimiter|;⟧
+    ⟦tag.delimiter|</⟧⟦tag|script⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|script⟧ ⟦attribute|lang⟧⟦operator|=⟧⟦string|"ts"⟧⟦tag.delimiter|>⟧
+      ⟦keyword|const⟧ ⟦variable|total⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|number⟧ ⟦operator|=⟧ ⟦number|2⟧⟦punctuation.delimiter|;⟧
+    ⟦tag.delimiter|</⟧⟦tag|script⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|script⟧ ⟦attribute|type⟧⟦operator|=⟧⟦string|"text/babel"⟧ ⟦attribute|data-type⟧⟦operator|=⟧⟦string|"module"⟧⟦tag.delimiter|>⟧
+      ⟦keyword|const⟧ ⟦variable|el⟧ ⟦operator|=⟧ ⟦tag.delimiter|<⟧⟦tag|b⟧ ⟦attribute|className⟧⟦operator|=⟧⟦string|"x"⟧⟦tag.delimiter|>⟧⟦punctuation.special|{⟧⟦variable|total⟧⟦punctuation.special|}⟧⟦tag.delimiter|</⟧⟦tag|b⟧⟦tag.delimiter|>⟧⟦punctuation.delimiter|;⟧
+    ⟦tag.delimiter|</⟧⟦tag|script⟧⟦tag.delimiter|>⟧
+  ⟦tag.delimiter|</⟧⟦tag|body⟧⟦tag.delimiter|>⟧
+⟦tag.delimiter|</⟧⟦tag|html⟧⟦tag.delimiter|>⟧
+"
+`;
+
+exports[`fixtures javascript.js: javascript.js 1`] = `
+"⟦string|"use strict"⟧⟦punctuation.delimiter|;⟧
+⟦keyword|const⟧ ⟦variable|fs⟧ ⟦operator|=⟧ ⟦function|require⟧⟦punctuation.bracket|(⟧⟦string|"fs"⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+⟦keyword|const⟧ ⟦punctuation.bracket|{⟧ ⟦property|join⟧⟦punctuation.delimiter|:⟧ ⟦variable|joinPath⟧ ⟦punctuation.bracket|}⟧ ⟦operator|=⟧ ⟦function|require⟧⟦punctuation.bracket|(⟧⟦string|"path"⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+
+⟦comment.doc|/** ⟧⟦keyword|@typedef⟧⟦comment.doc| ⟧⟦type|{{ name: string, age?: number }}⟧⟦comment.doc| ⟧⟦type|Person⟧⟦comment.doc| */⟧
+
+⟦comment.doc|/**⟧
+⟦comment.doc| * ⟧⟦keyword|@param⟧⟦comment.doc| ⟧⟦type|{Person[]}⟧⟦comment.doc| ⟧⟦variable.parameter|people⟧
+⟦comment.doc| * ⟧⟦keyword|@param⟧⟦comment.doc| ⟧⟦type|{(person: Person) => boolean}⟧⟦comment.doc| [⟧⟦variable.parameter|filter⟧⟦comment.doc|]⟧
+⟦comment.doc| */⟧
+⟦keyword|function⟧ ⟦function|names⟧⟦punctuation.bracket|(⟧⟦variable.parameter|people⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|filter⟧ ⟦operator|=⟧ ⟦punctuation.bracket|()⟧ ⟦operator|=>⟧ ⟦boolean|true⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦keyword.control|return⟧ ⟦variable.parameter|people⟧⟦punctuation.delimiter|.⟧⟦function.method|filter⟧⟦punctuation.bracket|(⟧⟦variable.parameter|filter⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|.⟧⟦function.method|map⟧⟦punctuation.bracket|(({⟧ ⟦variable.parameter|name⟧ ⟦punctuation.bracket|})⟧ ⟦operator|=>⟧ ⟦variable.parameter|name⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword|class⟧ ⟦type|Animal⟧ ⟦punctuation.bracket|{⟧
+  ⟦keyword.modifier|static⟧ ⟦property|count⟧ ⟦operator|=⟧ ⟦number|0⟧⟦punctuation.delimiter|;⟧
+  ⟦property|#sound⟧⟦punctuation.delimiter|;⟧
+  ⟦keyword|constructor⟧⟦punctuation.bracket|(⟧⟦variable.parameter|sound⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+    ⟦variable.builtin|this⟧⟦punctuation.delimiter|.⟧⟦property|#sound⟧ ⟦operator|=⟧ ⟦variable.parameter|sound⟧⟦punctuation.delimiter|;⟧
+    ⟦type|Animal⟧⟦punctuation.delimiter|.⟧⟦property|count⟧ ⟦operator|+=⟧ ⟦number|1⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+  ⟦function.method|speak⟧⟦punctuation.bracket|(⟧⟦variable.parameter|times⟧ ⟦operator|=⟧ ⟦number|1⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+    ⟦keyword.control|return⟧ ⟦string|\`⟧⟦punctuation.special|\${⟧⟦variable.builtin|this⟧⟦punctuation.delimiter|.⟧⟦property|#sound⟧⟦punctuation.special|}⟧⟦string| \`⟧⟦punctuation.delimiter|.⟧⟦function.method|repeat⟧⟦punctuation.bracket|(⟧⟦variable.parameter|times⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|.⟧⟦function.method|trim⟧⟦punctuation.bracket|()⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+  ⟦keyword.modifier|static⟧ ⟦punctuation.bracket|{⟧
+    ⟦type|Animal⟧⟦punctuation.delimiter|.⟧⟦property|count⟧ ⟦operator|=⟧ ⟦number|0⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword|function⟧ ⟦function|Legacy⟧⟦punctuation.bracket|()⟧ ⟦punctuation.bracket|{⟧
+  ⟦keyword.control|if⟧ ⟦punctuation.bracket|(⟧⟦operator|!⟧⟦keyword.operator|new⟧⟦punctuation.delimiter|.⟧⟦property|target⟧⟦punctuation.bracket|)⟧ ⟦keyword.control|return⟧ ⟦keyword.operator|new⟧ ⟦type|Legacy⟧⟦punctuation.bracket|()⟧⟦punctuation.delimiter|;⟧
+  ⟦variable.builtin|this⟧⟦punctuation.delimiter|.⟧⟦property|args⟧ ⟦operator|=⟧ ⟦variable.builtin|arguments⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+⟦function|Legacy⟧⟦punctuation.delimiter|.⟧⟦property|prototype⟧⟦punctuation.delimiter|.⟧⟦function.method|toString⟧ ⟦operator|=⟧ ⟦keyword|function⟧ ⟦punctuation.bracket|()⟧ ⟦punctuation.bracket|{⟧
+  ⟦keyword.control|return⟧ ⟦string|"[Legacy]"⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧⟦punctuation.delimiter|;⟧
+
+⟦keyword|var⟧ ⟦variable|a⟧ ⟦operator|=⟧ ⟦number|1⟧⟦punctuation.delimiter|,⟧ ⟦variable|b⟧ ⟦operator|=⟧ ⟦variable|a⟧ ⟦operator|/⟧ ⟦number|2⟧ ⟦operator|/⟧ ⟦variable|a⟧⟦punctuation.delimiter|,⟧ ⟦variable|c⟧ ⟦operator|=⟧ ⟦string.regexp|/=/⟧⟦punctuation.delimiter|.⟧⟦function.method|test⟧⟦punctuation.bracket|(⟧⟦string|"="⟧⟦punctuation.bracket|)⟧ ⟦operator|?⟧ ⟦variable|a⟧ ⟦punctuation.delimiter|:⟧ ⟦variable|b⟧⟦punctuation.delimiter|;⟧
+⟦label|label⟧⟦punctuation.delimiter|:⟧ ⟦keyword.control|do⟧ ⟦punctuation.bracket|{⟧
+  ⟦keyword.control|switch⟧ ⟦punctuation.bracket|(⟧⟦variable|a⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+    ⟦keyword.control|case⟧ ⟦number|1⟧⟦punctuation.delimiter|:⟧
+      ⟦keyword.control|break⟧ ⟦label|label⟧⟦punctuation.delimiter|;⟧
+    ⟦keyword.control|default⟧⟦punctuation.delimiter|:⟧
+      ⟦keyword|debugger⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧ ⟦keyword.control|while⟧ ⟦punctuation.bracket|(⟧⟦variable|a⟧⟦operator|--⟧ ⟦operator|>⟧ ⟦number|0⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+
+⟦keyword.control|for⟧ ⟦punctuation.bracket|(⟧⟦keyword|const⟧ ⟦variable|key⟧ ⟦keyword.operator|in⟧ ⟦variable|fs⟧⟦punctuation.bracket|)⟧ ⟦keyword.control|if⟧ ⟦punctuation.bracket|(⟧⟦variable|key⟧ ⟦keyword.operator|in⟧ ⟦variable.builtin|globalThis⟧⟦punctuation.bracket|)⟧ ⟦keyword.operator|delete⟧ ⟦variable.builtin|globalThis⟧⟦punctuation.bracket|[⟧⟦variable|key⟧⟦punctuation.bracket|]⟧⟦punctuation.delimiter|;⟧
+⟦keyword|const⟧ ⟦function|html⟧ ⟦operator|=⟧ ⟦type|String⟧⟦punctuation.delimiter|.⟧⟦function.method|raw⟧⟦string|\`<div>⟧⟦string.escape|\\n⟧⟦string|</div>\`⟧⟦punctuation.delimiter|;⟧
+⟦keyword|const⟧ ⟦variable|page⟧ ⟦operator|=⟧ ⟦function|html⟧⟦string|\`⟧⟦tag.delimiter|<⟧⟦tag|p⟧ ⟦attribute|class⟧⟦operator|=⟧⟦punctuation.special|\${⟧⟦variable|a⟧⟦punctuation.special|}⟧⟦tag.delimiter|>⟧Hello ⟦tag.delimiter|<⟧⟦tag|b⟧⟦tag.delimiter|>⟧⟦punctuation.special|\${⟧⟦function|names⟧⟦punctuation.bracket|([])⟧⟦punctuation.special|}⟧⟦tag.delimiter|</⟧⟦tag|b⟧⟦tag.delimiter|></⟧⟦tag|p⟧⟦tag.delimiter|>⟧⟦string|\`⟧⟦punctuation.delimiter|;⟧
+⟦keyword|const⟧ ⟦variable|element⟧ ⟦operator|=⟧ ⟦tag.delimiter|<⟧⟦tag|div⟧ ⟦attribute|onClick⟧⟦operator|=⟧⟦punctuation.special|{⟧⟦punctuation.bracket|()⟧ ⟦operator|=>⟧ ⟦variable|c⟧⟦punctuation.special|}⟧⟦tag.delimiter|>⟧text⟦tag.delimiter|</⟧⟦tag|div⟧⟦tag.delimiter|>⟧⟦punctuation.delimiter|;⟧
+⟦variable|module⟧⟦punctuation.delimiter|.⟧⟦property|exports⟧ ⟦operator|=⟧ ⟦punctuation.bracket|{⟧ ⟦function|names⟧⟦punctuation.delimiter|,⟧ ⟦type|Animal⟧⟦punctuation.delimiter|,⟧ ⟦function|Legacy⟧⟦punctuation.delimiter|,⟧ ⟦variable|joinPath⟧⟦punctuation.delimiter|,⟧ ⟦variable|page⟧⟦punctuation.delimiter|,⟧ ⟦variable|element⟧⟦punctuation.delimiter|,⟧ ⟦constant.builtin|undefined⟧ ⟦punctuation.bracket|}⟧⟦punctuation.delimiter|;⟧
+⟦keyword.import|import⟧⟦punctuation.bracket|(⟧⟦string|"./other.js"⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|.⟧⟦function.method|then⟧⟦punctuation.bracket|(⟧⟦variable.parameter|m⟧ ⟦operator|=>⟧ ⟦variable.parameter|m⟧⟦punctuation.delimiter|.⟧⟦function.method|default⟧⟦punctuation.delimiter|?.⟧⟦punctuation.bracket|(⟧⟦keyword.import|import⟧⟦punctuation.delimiter|.⟧⟦property|meta⟧⟦punctuation.delimiter|.⟧⟦property|url⟧⟦punctuation.bracket|)⟧ ⟦operator|??⟧ ⟦constant.builtin|null⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+"
+`;
+
+exports[`fixtures json.json: json.json 1`] = `
+"⟦punctuation.bracket|{⟧
+  ⟦comment|// JSON with comments, and what JSON5 adds⟧
+  ⟦property|"name"⟧⟦punctuation.delimiter|:⟧ ⟦string|"bun"⟧⟦punctuation.delimiter|,⟧
+  ⟦property|"version"⟧⟦punctuation.delimiter|:⟧ ⟦string|"1.5.0"⟧⟦punctuation.delimiter|,⟧
+  ⟦property|"private"⟧⟦punctuation.delimiter|:⟧ ⟦boolean|true⟧⟦punctuation.delimiter|,⟧
+  ⟦property|"nothing"⟧⟦punctuation.delimiter|:⟧ ⟦constant.builtin|null⟧⟦punctuation.delimiter|,⟧
+  ⟦property|"numbers"⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|[⟧⟦number|0⟧⟦punctuation.delimiter|,⟧ ⟦number|-1⟧⟦punctuation.delimiter|,⟧ ⟦number|2.5e10⟧⟦punctuation.delimiter|,⟧ ⟦number|0xFF⟧⟦punctuation.delimiter|,⟧ ⟦number|+1⟧⟦punctuation.delimiter|,⟧ ⟦number|.5⟧⟦punctuation.delimiter|,⟧ ⟦constant.builtin|Infinity⟧⟦punctuation.delimiter|,⟧ ⟦constant.builtin|NaN⟧⟦punctuation.bracket|]⟧⟦punctuation.delimiter|,⟧
+  ⟦property|"escapes"⟧⟦punctuation.delimiter|:⟧ ⟦string|"a⟧⟦string.escape|\\n\\"⟧⟦string|b⟧⟦string.escape|\\"\\u00e9⟧⟦string|"⟧⟦punctuation.delimiter|,⟧
+  ⟦property|"nested"⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|{⟧ ⟦property|"a"⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|{⟧ ⟦property|"b"⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|[]⟧ ⟦punctuation.bracket|}⟧⟦punctuation.delimiter|,⟧ ⟦property|"c"⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|{}⟧ ⟦punctuation.bracket|}⟧⟦punctuation.delimiter|,⟧
+  ⟦property|unquoted⟧⟦punctuation.delimiter|:⟧ ⟦string|'single'⟧⟦punctuation.delimiter|,⟧
+  ⟦comment|/* block */⟧
+  ⟦property|"trailing"⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|[⟧⟦number|1⟧⟦punctuation.delimiter|,⟧ ⟦number|2⟧⟦punctuation.delimiter|,⟧⟦punctuation.bracket|]⟧⟦punctuation.delimiter|,⟧
+⟦punctuation.bracket|}⟧
+"
+`;
+
+exports[`fixtures less.less: less.less 1`] = `
+"⟦keyword.import|@import⟧ ⟦punctuation.bracket|(⟧⟦constant|reference⟧⟦punctuation.delimiter|,⟧ ⟦constant|optional⟧⟦punctuation.bracket|)⟧ ⟦string|"mixins.less"⟧⟦punctuation.delimiter|;⟧
+⟦keyword.import|@import⟧ ⟦function|url⟧⟦punctuation.bracket|(⟧⟦string|"theme.css"⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+⟦keyword.directive|@plugin⟧ ⟦string|"my-plugin"⟧⟦punctuation.delimiter|;⟧
+
+⟦comment|// Variables⟧
+⟦variable|@primary⟧⟦punctuation.delimiter|:⟧ ⟦constant|#0af⟧⟦punctuation.delimiter|;⟧
+⟦variable|@padding⟧⟦punctuation.delimiter|:⟧ ⟦number|10⟧⟦number.unit|px⟧⟦punctuation.delimiter|;⟧
+⟦variable|@min768⟧⟦punctuation.delimiter|:⟧ ⟦operator|~⟧⟦string|"(min-width: 768px)"⟧⟦punctuation.delimiter|;⟧
+⟦variable|@selector⟧⟦punctuation.delimiter|:⟧ ⟦operator|~⟧⟦string|".banner"⟧⟦punctuation.delimiter|;⟧
+⟦variable|@property⟧⟦punctuation.delimiter|:⟧ ⟦constant|color⟧⟦punctuation.delimiter|;⟧
+⟦variable|@images⟧⟦punctuation.delimiter|:⟧ ⟦string|"../img"⟧⟦punctuation.delimiter|;⟧
+⟦variable|@name⟧⟦punctuation.delimiter|:⟧ ⟦string|"primary"⟧⟦punctuation.delimiter|;⟧
+⟦variable|@list⟧⟦punctuation.delimiter|:⟧ ⟦number|1⟧⟦number.unit|px⟧⟦punctuation.delimiter|,⟧ ⟦number|2⟧⟦number.unit|px⟧⟦punctuation.delimiter|,⟧ ⟦number|3⟧⟦number.unit|px⟧⟦punctuation.delimiter|;⟧
+⟦variable|@enabled⟧⟦punctuation.delimiter|:⟧ ⟦boolean|true⟧⟦punctuation.delimiter|;⟧
+
+⟦comment|/* Maps and detached rulesets */⟧
+⟦variable|@config⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|width⟧⟦punctuation.delimiter|:⟧ ⟦number|100⟧⟦number.unit|px⟧⟦punctuation.delimiter|;⟧
+  ⟦variable|@colors⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|link⟧⟦punctuation.delimiter|:⟧ ⟦constant|blue⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+⟦variable|@detached⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|background⟧⟦punctuation.delimiter|:⟧ ⟦constant|red⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧⟦punctuation.delimiter|;⟧
+
+⟦comment|// Mixins⟧
+⟦function|.bordered⟧⟦punctuation.bracket|(⟧⟦variable.parameter|@width⟧⟦punctuation.delimiter|:⟧ ⟦number|2⟧⟦number.unit|px⟧⟦punctuation.delimiter|;⟧ ⟦variable.parameter|@style⟧⟦punctuation.delimiter|:⟧ ⟦constant|solid⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|border⟧⟦punctuation.delimiter|:⟧ ⟦variable.parameter|@width⟧ ⟦variable.parameter|@style⟧ ⟦constant|black⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦function|.rounded⟧⟦punctuation.bracket|(⟧⟦variable.parameter|@radius⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|@rest⟧⟦operator|...⟧⟦punctuation.bracket|)⟧ ⟦keyword.control|when⟧ ⟦punctuation.bracket|(⟧⟦function|isnumber⟧⟦punctuation.bracket|(⟧⟦variable.parameter|@radius⟧⟦punctuation.bracket|))⟧ ⟦keyword.operator|and⟧ ⟦punctuation.bracket|(⟧⟦variable.parameter|@radius⟧ ⟦operator|>⟧ ⟦number|0⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|,⟧ ⟦punctuation.bracket|(⟧⟦function|default⟧⟦punctuation.bracket|())⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|border-radius⟧⟦punctuation.delimiter|:⟧ ⟦variable.parameter|@radius⟧⟦punctuation.delimiter|;⟧
+  ⟦property|box-shadow⟧⟦punctuation.delimiter|:⟧ ⟦variable|@arguments⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦function|.theme⟧⟦punctuation.bracket|(⟧⟦variable.parameter|@mode⟧⟦punctuation.bracket|)⟧ ⟦keyword.control|when⟧ ⟦punctuation.bracket|(⟧⟦variable.parameter|@mode⟧ ⟦operator|=⟧ ⟦constant|dark⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|color⟧⟦punctuation.delimiter|:⟧ ⟦constant|white⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦function|.loop⟧⟦punctuation.bracket|(⟧⟦variable.parameter|@i⟧⟦punctuation.bracket|)⟧ ⟦keyword.control|when⟧ ⟦punctuation.bracket|(⟧⟦variable.parameter|@i⟧ ⟦operator|>⟧ ⟦number|0⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦selector.class|.w-⟧⟦punctuation.special|@{⟧⟦variable.parameter|i⟧⟦punctuation.special|}⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|width⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|(⟧⟦variable.parameter|@i⟧ ⟦operator|*⟧ ⟦number|100⟧⟦number.unit|%⟧ ⟦operator|/⟧ ⟦number|12⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+  ⟦function|.loop⟧⟦punctuation.bracket|(⟧⟦variable.parameter|@i⟧ ⟦operator|-⟧ ⟦number|1⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦selector.id|#namespace⟧ ⟦punctuation.bracket|{⟧
+  ⟦function|.mixin⟧⟦punctuation.bracket|()⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|color⟧⟦punctuation.delimiter|:⟧ ⟦constant|blue⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+
+⟦punctuation.special|@{⟧⟦variable|selector⟧⟦punctuation.special|}⟧ ⟦punctuation.bracket|{⟧
+  ⟦function|.bordered⟧⟦punctuation.bracket|(⟧⟦number|4⟧⟦number.unit|px⟧⟦punctuation.delimiter|;⟧ ⟦constant|dashed⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+  ⟦function|.rounded⟧⟦punctuation.bracket|(⟧⟦number|5⟧⟦number.unit|px⟧⟦punctuation.bracket|)⟧ ⟦keyword.modifier|!important⟧⟦punctuation.delimiter|;⟧
+  ⟦function|.plain⟧⟦punctuation.delimiter|;⟧
+  ⟦namespace|#namespace⟧ ⟦operator|>⟧ ⟦function|.mixin⟧⟦punctuation.bracket|()⟧⟦punctuation.delimiter|;⟧
+  ⟦namespace|#namespace⟧⟦function|.mixin⟧⟦punctuation.bracket|()⟧⟦punctuation.delimiter|;⟧
+  ⟦variable|@detached⟧⟦punctuation.bracket|()⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.special|@{⟧⟦variable|property⟧⟦punctuation.special|}⟧⟦punctuation.delimiter|:⟧ ⟦variable|@primary⟧⟦punctuation.delimiter|;⟧
+  ⟦property|background-⟧⟦punctuation.special|@{⟧⟦variable|property⟧⟦punctuation.special|}⟧⟦punctuation.delimiter|:⟧ ⟦function|fade⟧⟦punctuation.bracket|(⟧⟦variable|@primary⟧⟦punctuation.delimiter|,⟧ ⟦number|50⟧⟦number.unit|%⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+  ⟦property|background⟧⟦operator|+⟧⟦punctuation.delimiter|:⟧ ⟦function|url⟧⟦punctuation.bracket|(⟧⟦string|"⟧⟦punctuation.special|@{⟧⟦variable|images⟧⟦punctuation.special|}⟧⟦string|/a.png"⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+  ⟦property|background⟧⟦operator|+_⟧⟦punctuation.delimiter|:⟧ ⟦function|url⟧⟦punctuation.bracket|(⟧⟦punctuation.special|@{⟧⟦variable|images⟧⟦punctuation.special|}⟧⟦string.special|/b.png⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+  ⟦property|width⟧⟦punctuation.delimiter|:⟧ ⟦variable|@config⟧⟦punctuation.bracket|[⟧⟦constant|width⟧⟦punctuation.bracket|]⟧⟦punctuation.delimiter|;⟧
+  ⟦property|color⟧⟦punctuation.delimiter|:⟧ ⟦variable|@config⟧⟦punctuation.bracket|[⟧⟦variable|@colors⟧⟦punctuation.bracket|][⟧⟦constant|link⟧⟦punctuation.bracket|]⟧⟦punctuation.delimiter|;⟧
+  ⟦property|height⟧⟦punctuation.delimiter|:⟧ ⟦variable|$width⟧⟦punctuation.delimiter|;⟧
+  ⟦property|border-color⟧⟦punctuation.delimiter|:⟧ ⟦variable|@@name⟧⟦punctuation.delimiter|;⟧
+  ⟦property|margin⟧⟦punctuation.delimiter|:⟧ ⟦operator|-⟧⟦variable|@padding⟧ ⟦punctuation.bracket|(⟧⟦variable|@padding⟧ ⟦operator|*⟧ ⟦number|2⟧⟦punctuation.bracket|)⟧ ⟦operator|~⟧⟦string|"calc(100% - ⟧⟦punctuation.special|@{⟧⟦variable|padding⟧⟦punctuation.special|}⟧⟦string|)"⟧⟦punctuation.delimiter|;⟧
+  ⟦property|filter⟧⟦punctuation.delimiter|:⟧ ⟦operator|~⟧⟦string|"ms:alwaysHasItsOwnSyntax.For.Stuff()"⟧⟦punctuation.delimiter|;⟧
+  ⟦property|content⟧⟦punctuation.delimiter|:⟧ ⟦operator|%⟧⟦punctuation.bracket|(⟧⟦string|"%d/%d"⟧⟦punctuation.delimiter|,⟧ ⟦number|1⟧⟦punctuation.delimiter|,⟧ ⟦number|2⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+  ⟦property|opacity⟧⟦punctuation.delimiter|:⟧ ⟦function|if⟧⟦punctuation.bracket|((⟧⟦variable|@enabled⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|,⟧ ⟦number|1⟧⟦punctuation.delimiter|,⟧ ⟦number|0.5⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+
+  ⟦selector|&⟧⟦selector.pseudo|:extend⟧⟦punctuation.bracket|(⟧⟦selector.class|.alert⟧ ⟦keyword|all⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+  ⟦selector|&⟧⟦selector.pseudo|:hover⟧⟦punctuation.delimiter|,⟧
+  ⟦selector|&⟧⟦selector.class|-suffix⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|color⟧⟦punctuation.delimiter|:⟧ ⟦function|darken⟧⟦punctuation.bracket|(⟧⟦variable|@primary⟧⟦punctuation.delimiter|,⟧ ⟦number|10⟧⟦number.unit|%⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧ ⟦comment|// trailing comment, isn't it⟧
+  ⟦punctuation.bracket|}⟧
+
+  ⟦selector.class|.inner⟧ ⟦keyword.control|when⟧ ⟦punctuation.bracket|(⟧⟦variable|@enabled⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|display⟧⟦punctuation.delimiter|:⟧ ⟦constant|block⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+
+  ⟦keyword.directive|@media⟧ ⟦variable|@min768⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|float⟧⟦punctuation.delimiter|:⟧ ⟦constant|left⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+
+  ⟦keyword.directive|@media⟧ ⟦punctuation.bracket|(⟧⟦property|min-width⟧⟦punctuation.delimiter|:⟧ ⟦number|768⟧⟦number.unit|px⟧⟦punctuation.bracket|)⟧ ⟦keyword.operator|and⟧ ⟦punctuation.bracket|(⟧⟦property|max-width⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|(⟧⟦variable|@padding⟧ ⟦operator|*⟧ ⟦number|100⟧⟦punctuation.bracket|))⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|float⟧⟦punctuation.delimiter|:⟧ ⟦constant|right⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+
+⟦selector.class|.a⟧⟦selector.pseudo|:extend⟧⟦punctuation.bracket|(⟧⟦selector.class|.b⟧⟦punctuation.delimiter|,⟧ ⟦selector.class|.c⟧ ⟦keyword|all⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦function|.theme⟧⟦punctuation.bracket|(⟧⟦constant|dark⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+  ⟦function|.loop⟧⟦punctuation.bracket|(⟧⟦number|3⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦selector.class|.call-with-rules⟧ ⟦punctuation.bracket|{⟧
+  ⟦function|.wrap⟧⟦punctuation.bracket|({⟧
+    ⟦property|color⟧⟦punctuation.delimiter|:⟧ ⟦constant|red⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|})⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦function|each⟧⟦punctuation.bracket|(⟧⟦variable|@list⟧⟦punctuation.delimiter|,⟧ ⟦punctuation.bracket|{⟧
+  ⟦selector.class|.size-⟧⟦punctuation.special|@{⟧⟦variable|key⟧⟦punctuation.special|}⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|width⟧⟦punctuation.delimiter|:⟧ ⟦variable|@value⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|})⟧⟦punctuation.delimiter|;⟧
+
+⟦selector.class|.guard⟧ ⟦keyword.control|when⟧ ⟦punctuation.bracket|(⟧⟦function|ispixel⟧⟦punctuation.bracket|(⟧⟦variable|@padding⟧⟦punctuation.bracket|))⟧ ⟦keyword.operator|and⟧ ⟦keyword.operator|not⟧ ⟦punctuation.bracket|(⟧⟦variable|@padding⟧ ⟦operator|=⟧ ⟦number|0⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦selector.id|#id⟧⟦punctuation.bracket|[⟧⟦attribute|data-x⟧⟦operator|=⟧⟦string|"⟧⟦punctuation.special|@{⟧⟦variable|name⟧⟦punctuation.special|}⟧⟦string|"⟧⟦punctuation.bracket|]⟧ ⟦operator|>⟧ ⟦tag|li⟧ ⟦operator|+⟧ ⟦tag|li⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|padding⟧⟦punctuation.delimiter|:⟧ ⟦variable|@padding⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+"
+`;
+
+exports[`fixtures markdown.md: markdown.md 1`] = `
+"⟦punctuation.special|---⟧
+⟦property|title⟧⟦punctuation.delimiter|:⟧ ⟦string|Release notes⟧
+⟦property|tags⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|[⟧⟦string|runtime⟧⟦punctuation.delimiter|,⟧ ⟦string|bundler⟧⟦punctuation.bracket|]⟧
+⟦property|draft⟧⟦punctuation.delimiter|:⟧ ⟦boolean|false⟧
+⟦punctuation.special|---⟧
+
+⟦punctuation.special|#⟧⟦markup.heading| Bun 1.5 release notes ⟧⟦punctuation.special|#⟧
+
+⟦markup.heading|Setext heading⟧
+⟦punctuation.special|==============⟧
+
+⟦markup.heading|Second level⟧
+⟦punctuation.special|------------⟧
+
+Some ⟦markup.bold|**bold**⟧, ⟦markup.italic|*italic*⟧, ⟦markup.italic|_also italic_⟧, ⟦markup.strikethrough|~~gone~~⟧ and ⟦markup.italic|*⟧⟦markup.bold|**bold with ⟧⟦markup.italic|*nested*⟧⟦markup.bold| italic**⟧⟦markup.italic|*⟧.
+Inline ⟦markup.raw|\`code\`⟧, ⟦markup.raw|\`\`code with a \` backtick\`\`⟧ and math: ⟦markup.raw|$a^2 + b^2$⟧ or ⟦markup.raw|$$c^2$$⟧.
+A hard break with a backslash⟦string.escape|\\⟧
+and one with two spaces  
+end here. Escapes: ⟦string.escape|\\*⟧ ⟦string.escape|\\_⟧ ⟦string.escape|\\#⟧ ⟦string.escape|\\[⟧ and references: ⟦string.escape|&amp;⟧ ⟦string.escape|&#35;⟧ ⟦string.escape|&#x1F600;⟧
+
+⟦punctuation.special|##⟧⟦markup.heading| Links⟧
+
+An ⟦punctuation.bracket|[⟧⟦markup.link|inline link⟧⟦punctuation.bracket|](⟧⟦markup.link.url|https://bun.sh/docs⟧ ⟦string|"The docs"⟧⟦punctuation.bracket|)⟧, one with ⟦punctuation.bracket|[⟧⟦markup.link|angle brackets⟧⟦punctuation.bracket|](⟧⟦markup.link.url|<a b.md>⟧ ⟦string|'title'⟧⟦punctuation.bracket|)⟧
+and an ⟦punctuation.bracket|![⟧⟦markup.link|image **alt**⟧⟦punctuation.bracket|](⟧⟦markup.link.url|./logo.svg⟧ ⟦string|(Logo)⟧⟦punctuation.bracket|)⟧. A ⟦punctuation.bracket|[⟧⟦markup.link|full reference⟧⟦punctuation.bracket|][⟧⟦label|docs⟧⟦punctuation.bracket|]⟧, a ⟦punctuation.bracket|[⟧⟦markup.link|collapsed⟧⟦punctuation.bracket|][]⟧ one
+and a ⟦punctuation.bracket|[⟧⟦markup.link|shortcut⟧⟦punctuation.bracket|]⟧. Autolinks: ⟦markup.link.url|<https://bun.sh>⟧, ⟦markup.link.url|<hi@bun.sh>⟧, ⟦markup.link.url|https://bun.sh/blog?a=1⟧, ⟦markup.link.url|www.bun.sh⟧
+and ⟦markup.link.url|jarred@bun.sh⟧. A footnote⟦label|[^1]⟧ and another⟦label|[^note]⟧. No definition: ⟦punctuation.bracket|[⟧⟦markup.link|text⟧⟦punctuation.bracket|][⟧⟦label|nowhere⟧⟦punctuation.bracket|]⟧.
+
+⟦punctuation.bracket|[⟧⟦label|docs⟧⟦punctuation.bracket|]⟧⟦punctuation.delimiter|:⟧ ⟦markup.link.url|https://bun.sh/docs⟧ ⟦string|"Documentation"⟧
+⟦punctuation.bracket|[⟧⟦label|collapsed⟧⟦punctuation.bracket|]⟧⟦punctuation.delimiter|:⟧ ⟦markup.link.url|<https://bun.sh/a b>⟧
+⟦punctuation.bracket|[⟧⟦label|shortcut⟧⟦punctuation.bracket|]⟧⟦punctuation.delimiter|:⟧ ⟦markup.link.url|./shortcut.md⟧
+  ⟦string|'Title on the next line'⟧
+
+⟦label|[^1]⟧⟦punctuation.delimiter|:⟧ The first footnote.
+⟦label|[^note]⟧⟦punctuation.delimiter|:⟧ The second one has ⟦markup.raw|\`code\`⟧
+
+    and a second paragraph.
+
+⟦punctuation.special|##⟧⟦markup.heading| Quotes and lists⟧
+
+⟦punctuation.special|>⟧ ⟦markup.quote|A quote with ⟧⟦markup.bold|**markup**⟧⟦markup.quote| and a⟧
+⟦markup.quote|lazy line.⟧
+⟦punctuation.special|>⟧
+⟦punctuation.special|>⟧ ⟦punctuation.special|>⟧ ⟦markup.quote|Nested quote⟧
+⟦punctuation.special|>⟧
+⟦punctuation.special|>⟧ ⟦punctuation.special|\`\`\`⟧⟦label|ts⟧
+⟦punctuation.special|>⟧ ⟦keyword|const⟧ ⟦variable|quoted⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|number⟧ ⟦operator|=⟧ ⟦number|1⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.special|>⟧ ⟦comment|/* a comment⟧
+⟦punctuation.special|>⟧⟦comment|    over two lines */⟧
+⟦punctuation.special|>⟧ ⟦punctuation.special|\`\`\`⟧
+⟦punctuation.special|>⟧
+⟦punctuation.special|>⟧ ⟦markup.list|-⟧ ⟦markup.quote|a list in a quote⟧
+
+⟦markup.list|-⟧ dash
+⟦markup.list|*⟧ star
+⟦markup.list|+⟧ plus
+  ⟦markup.list|1.⟧ ordered
+  ⟦markup.list|2)⟧ with a parenthesis
+⟦markup.list|-⟧ ⟦markup.list|[ ]⟧ to do
+⟦markup.list|-⟧ ⟦markup.list|[x]⟧ done
+⟦markup.list|-⟧ code in an item:
+
+  ⟦punctuation.special|\`\`\`⟧⟦label|json⟧
+  ⟦punctuation.bracket|{⟧ ⟦property|"name"⟧⟦punctuation.delimiter|:⟧ ⟦string|"bun"⟧⟦punctuation.delimiter|,⟧ ⟦property|"private"⟧⟦punctuation.delimiter|:⟧ ⟦boolean|true⟧ ⟦punctuation.bracket|}⟧
+  ⟦punctuation.special|\`\`\`⟧
+
+⟦punctuation.special|***⟧
+
+⟦punctuation.special|- - -⟧
+
+⟦punctuation.special|##⟧⟦markup.heading| Tables⟧
+
+⟦punctuation.delimiter||⟧ ⟦markup.heading|Name⟧     ⟦punctuation.delimiter||⟧ ⟦markup.heading|Speed⟧ ⟦punctuation.delimiter||⟧ ⟦markup.heading|Notes⟧          ⟦punctuation.delimiter||⟧
+⟦punctuation.delimiter||⟧ ⟦punctuation.special|:-------⟧ ⟦punctuation.delimiter||⟧ ⟦punctuation.special|:---:⟧ ⟦punctuation.delimiter||⟧ ⟦punctuation.special|-------------:⟧ ⟦punctuation.delimiter||⟧
+⟦punctuation.delimiter||⟧ ⟦markup.raw|\`bun\`⟧    ⟦punctuation.delimiter||⟧ fast  ⟦punctuation.delimiter||⟧ ⟦markup.bold|**very**⟧ ⟦string.escape|\\|⟧ so ⟦punctuation.delimiter||⟧
+⟦punctuation.delimiter||⟧ ⟦punctuation.bracket|[⟧⟦markup.link|node⟧⟦punctuation.bracket|][]⟧ ⟦punctuation.delimiter||⟧ ok    ⟦punctuation.delimiter||⟧                ⟦punctuation.delimiter||⟧
+
+⟦punctuation.bracket|[⟧⟦label|node⟧⟦punctuation.bracket|]⟧⟦punctuation.delimiter|:⟧ ⟦markup.link.url|https://nodejs.org⟧
+
+⟦punctuation.special|##⟧⟦markup.heading| Code⟧
+
+⟦punctuation.special|\`\`\`⟧⟦label|js⟧ title="index.js"
+⟦keyword.import|export⟧ ⟦keyword.import|default⟧ ⟦punctuation.bracket|{⟧ ⟦function.method|fetch⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|()⟧ ⟦operator|=>⟧ ⟦keyword.operator|new⟧ ⟦type|Response⟧⟦punctuation.bracket|(⟧⟦string|"hi"⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|}⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.special|\`\`\`⟧
+
+⟦punctuation.special|~~~⟧⟦label|css⟧
+⟦tag|a⟧⟦selector.pseudo|:hover⟧ ⟦punctuation.bracket|{⟧ ⟦property|color⟧⟦punctuation.delimiter|:⟧ ⟦constant|red⟧⟦punctuation.delimiter|;⟧ ⟦punctuation.bracket|}⟧
+⟦punctuation.special|~~~⟧
+
+⟦punctuation.special|\`\`\`⟧⟦label|unknown-language⟧
+⟦markup.raw|left as it is⟧
+⟦punctuation.special|\`\`\`⟧
+
+⟦punctuation.special|\`\`\`\`⟧⟦label|md⟧
+⟦punctuation.special|#⟧⟦markup.heading| Markdown in Markdown⟧
+
+⟦punctuation.special|\`\`\`⟧⟦label|sh⟧
+⟦markup.raw|echo nested⟧
+⟦punctuation.special|\`\`\`⟧
+⟦punctuation.special|\`\`\`\`⟧
+
+    ⟦markup.raw|indented code⟧
+    ⟦markup.raw|  keeps its indentation⟧
+
+⟦punctuation.special|$$⟧
+⟦markup.raw|\\sum_{i=0}^{n} i⟧
+⟦punctuation.special|$$⟧
+
+⟦punctuation.special|##⟧⟦markup.heading| HTML⟧
+
+⟦tag.delimiter|<⟧⟦tag|details⟧ ⟦attribute|open⟧⟦tag.delimiter|>⟧
+⟦tag.delimiter|<⟧⟦tag|summary⟧⟦tag.delimiter|>⟧Click ⟦tag.delimiter|<⟧⟦tag|b⟧⟦tag.delimiter|>⟧me⟦tag.delimiter|</⟧⟦tag|b⟧⟦tag.delimiter|></⟧⟦tag|summary⟧⟦tag.delimiter|>⟧
+⟦tag.delimiter|</⟧⟦tag|details⟧⟦tag.delimiter|>⟧
+
+⟦comment|<!-- a comment -->⟧
+
+Text with ⟦tag.delimiter|<⟧⟦tag|kbd⟧ ⟦attribute|class⟧⟦operator|=⟧⟦string|"key"⟧⟦tag.delimiter|>⟧Ctrl⟦tag.delimiter|</⟧⟦tag|kbd⟧⟦tag.delimiter|>⟧ and ⟦tag.delimiter|<⟧⟦tag|br⟧⟦tag.delimiter|/>⟧ inline.
+"
+`;
+
+exports[`fixtures mdx.mdx: mdx.mdx 1`] = `
+"⟦punctuation.special|---⟧
+⟦property|title⟧⟦punctuation.delimiter|:⟧ ⟦string|"Components"⟧
+⟦property|description⟧⟦punctuation.delimiter|:⟧ ⟦string|How to use components in MDX⟧
+⟦punctuation.special|---⟧
+
+⟦keyword.import|import⟧ ⟦punctuation.bracket|{⟧ ⟦variable|Chart⟧⟦punctuation.delimiter|,⟧ ⟦variable|Legend⟧ ⟦punctuation.bracket|}⟧ ⟦keyword.import|from⟧ ⟦string|"../components/chart"⟧⟦punctuation.delimiter|;⟧
+⟦keyword.import|import⟧ ⟦variable|Note⟧ ⟦keyword.import|from⟧ ⟦string|"./note.jsx"⟧⟦punctuation.delimiter|;⟧
+
+⟦keyword.import|export⟧ ⟦keyword|const⟧ ⟦variable|meta⟧ ⟦operator|=⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|author⟧⟦punctuation.delimiter|:⟧ ⟦string|"Jarred"⟧⟦punctuation.delimiter|,⟧
+
+  ⟦property|year⟧⟦punctuation.delimiter|:⟧ ⟦number|2026⟧⟦punctuation.delimiter|,⟧
+⟦punctuation.bracket|}⟧⟦punctuation.delimiter|;⟧
+
+⟦keyword.import|export⟧ ⟦keyword|function⟧ ⟦function|Badge⟧⟦punctuation.bracket|({⟧ ⟦variable.parameter|children⟧ ⟦punctuation.bracket|})⟧ ⟦punctuation.bracket|{⟧
+  ⟦keyword.control|return⟧ ⟦tag.delimiter|<⟧⟦tag|span⟧ ⟦attribute|className⟧⟦operator|=⟧⟦string|"badge"⟧⟦tag.delimiter|>⟧⟦punctuation.special|{⟧⟦variable.parameter|children⟧⟦punctuation.special|}⟧⟦tag.delimiter|</⟧⟦tag|span⟧⟦tag.delimiter|>⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦punctuation.special|#⟧⟦markup.heading| Hello, ⟧⟦punctuation.special|{⟧⟦variable|meta⟧⟦punctuation.delimiter|.⟧⟦property|author⟧⟦punctuation.special|}⟧⟦markup.heading|!⟧
+
+⟦comment|{/* A comment that readers don't see */}⟧
+
+Some ⟦markup.bold|**bold**⟧ text, an expression ⟦punctuation.special|{⟧⟦number|1⟧ ⟦operator|+⟧ ⟦number|1⟧⟦punctuation.special|}⟧ and ⟦tag.delimiter|<⟧⟦tag.component|Badge⟧⟦tag.delimiter|>⟧inline ⟦markup.italic|*JSX*⟧⟦tag.delimiter|</⟧⟦tag.component|Badge⟧⟦tag.delimiter|>⟧ in a paragraph.
+Literal braces are ⟦punctuation.special|{⟧⟦string|"{"⟧⟦punctuation.special|}⟧ and ⟦punctuation.special|{⟧⟦string|'}'⟧⟦punctuation.special|}⟧, a template is ⟦punctuation.special|{⟧⟦string|\`a ⟧⟦punctuation.special|\${⟧⟦variable|meta⟧⟦punctuation.delimiter|.⟧⟦property|year⟧⟦punctuation.special|}⟧⟦string| b\`⟧⟦punctuation.special|}⟧.
+
+⟦tag.delimiter|<⟧⟦tag.component|Note⟧ ⟦attribute|type⟧⟦operator|=⟧⟦string|"warning"⟧ ⟦attribute|title⟧⟦operator|=⟧⟦punctuation.special|{⟧⟦string|\`Since ⟧⟦punctuation.special|\${⟧⟦variable|meta⟧⟦punctuation.delimiter|.⟧⟦property|year⟧⟦punctuation.special|}⟧⟦string|\`⟧⟦punctuation.special|}⟧⟦tag.delimiter|>⟧
+  This is ⟦markup.bold|**Markdown**⟧ between two tags, with ⟦markup.raw|\`code\`⟧ and a ⟦punctuation.bracket|[⟧⟦markup.link|link⟧⟦punctuation.bracket|](⟧⟦markup.link.url|https://bun.sh⟧⟦punctuation.bracket|)⟧.
+⟦tag.delimiter|</⟧⟦tag.component|Note⟧⟦tag.delimiter|>⟧
+
+⟦tag.delimiter|<⟧⟦tag.component|Chart⟧
+  ⟦attribute|data⟧⟦operator|=⟧⟦punctuation.special|{⟧⟦punctuation.bracket|[⟧
+    ⟦punctuation.bracket|{⟧ ⟦property|x⟧⟦punctuation.delimiter|:⟧ ⟦number|1⟧⟦punctuation.delimiter|,⟧ ⟦property|y⟧⟦punctuation.delimiter|:⟧ ⟦number|2⟧ ⟦punctuation.bracket|}⟧⟦punctuation.delimiter|,⟧
+
+    ⟦punctuation.bracket|{⟧ ⟦property|x⟧⟦punctuation.delimiter|:⟧ ⟦number|2⟧⟦punctuation.delimiter|,⟧ ⟦property|y⟧⟦punctuation.delimiter|:⟧ ⟦number|4⟧ ⟦punctuation.bracket|}⟧⟦punctuation.delimiter|,⟧
+  ⟦punctuation.bracket|]⟧⟦punctuation.special|}⟧
+  ⟦attribute|color⟧⟦operator|=⟧⟦string|"#fbf0df"⟧
+  ⟦punctuation.special|{⟧⟦operator|...⟧⟦variable|meta⟧⟦punctuation.special|}⟧
+⟦tag.delimiter|/>⟧
+
+⟦tag.delimiter|<⟧⟦tag.component|Chart⟧⟦punctuation.delimiter|.⟧⟦tag.component|Legend⟧ ⟦attribute|position⟧⟦operator|=⟧⟦string|"top"⟧ ⟦tag.delimiter|/>⟧
+
+⟦tag.delimiter|<>⟧
+  A fragment with ⟦tag.delimiter|<⟧⟦tag.component|Legend⟧⟦punctuation.delimiter|.⟧⟦tag.component|Item⟧ ⟦attribute|name⟧⟦operator|=⟧⟦string|"a"⟧ ⟦tag.delimiter|/>⟧.
+⟦tag.delimiter|</>⟧
+
+⟦punctuation.special|{⟧⟦variable|meta⟧⟦punctuation.delimiter|.⟧⟦property|year⟧ ⟦operator|>⟧ ⟦number|2025⟧ ⟦operator|?⟧ ⟦tag.delimiter|<⟧⟦tag|p⟧⟦tag.delimiter|>⟧Don't panic⟦tag.delimiter|</⟧⟦tag|p⟧⟦tag.delimiter|>⟧ ⟦punctuation.delimiter|:⟧ ⟦constant.builtin|null⟧⟦punctuation.special|}⟧
+
+⟦punctuation.special|{⟧
+  ⟦punctuation.bracket|[⟧⟦number|1⟧⟦punctuation.delimiter|,⟧ ⟦number|2⟧⟦punctuation.delimiter|,⟧ ⟦number|3⟧⟦punctuation.bracket|]⟧⟦punctuation.delimiter|.⟧⟦function.method|map⟧⟦punctuation.bracket|(⟧⟦variable.parameter|n⟧ ⟦operator|=>⟧ ⟦punctuation.bracket|(⟧
+    ⟦tag.delimiter|<⟧⟦tag|li⟧ ⟦attribute|key⟧⟦operator|=⟧⟦punctuation.special|{⟧⟦variable.parameter|n⟧⟦punctuation.special|}⟧⟦tag.delimiter|>⟧⟦punctuation.special|{⟧⟦variable.parameter|n⟧ ⟦operator|*⟧ ⟦number|2⟧⟦punctuation.special|}⟧⟦tag.delimiter|</⟧⟦tag|li⟧⟦tag.delimiter|>⟧
+  ⟦punctuation.bracket|))⟧
+⟦punctuation.special|}⟧
+
+⟦tag.delimiter|<⟧⟦tag.component|Tabs⟧⟦tag.delimiter|>⟧
+  ⟦tag.delimiter|<⟧⟦tag.component|Tab⟧ ⟦attribute|label⟧⟦operator|=⟧⟦string|"One"⟧⟦tag.delimiter|>⟧
+
+    Indented by four columns, and still a paragraph with ⟦markup.italic|_emphasis_⟧.
+
+    ⟦markup.list|-⟧ a list
+    ⟦markup.list|-⟧ ⟦markup.list|[x]⟧ a task
+
+  ⟦tag.delimiter|</⟧⟦tag.component|Tab⟧⟦tag.delimiter|>⟧
+⟦tag.delimiter|</⟧⟦tag.component|Tabs⟧⟦tag.delimiter|>⟧
+
+⟦punctuation.special|>⟧ ⟦markup.quote|A quote with ⟧⟦tag.delimiter|<⟧⟦tag.component|Badge⟧⟦tag.delimiter|>⟧⟦markup.quote|JSX⟧⟦tag.delimiter|</⟧⟦tag.component|Badge⟧⟦tag.delimiter|>⟧⟦markup.quote| and ⟧⟦punctuation.special|{⟧⟦variable|meta⟧⟦punctuation.delimiter|.⟧⟦property|author⟧⟦punctuation.special|}⟧⟦markup.quote|.⟧
+
+⟦markup.list|-⟧ An item with ⟦punctuation.special|{⟧⟦variable|meta⟧⟦punctuation.delimiter|.⟧⟦property|year⟧⟦punctuation.special|}⟧
+⟦markup.list|-⟧ ⟦tag.delimiter|<⟧⟦tag.component|Badge⟧⟦tag.delimiter|>⟧An item that starts with a tag⟦tag.delimiter|</⟧⟦tag.component|Badge⟧⟦tag.delimiter|>⟧
+
+⟦punctuation.delimiter||⟧ ⟦markup.heading|Name⟧          ⟦punctuation.delimiter||⟧ ⟦markup.heading|Value⟧         ⟦punctuation.delimiter||⟧
+⟦punctuation.delimiter||⟧ ⟦punctuation.special|-------------⟧ ⟦punctuation.delimiter||⟧ ⟦punctuation.special|-------------⟧ ⟦punctuation.delimiter||⟧
+⟦punctuation.delimiter||⟧ ⟦tag.delimiter|<⟧⟦tag|b⟧⟦tag.delimiter|>⟧author⟦tag.delimiter|</⟧⟦tag|b⟧⟦tag.delimiter|>⟧ ⟦punctuation.delimiter||⟧ ⟦punctuation.special|{⟧⟦variable|meta⟧⟦punctuation.delimiter|.⟧⟦property|author⟧⟦punctuation.special|}⟧ ⟦punctuation.delimiter||⟧
+
+⟦punctuation.special|\`\`\`⟧⟦label|jsx⟧
+⟦tag.delimiter|<⟧⟦tag.component|Chart⟧ ⟦attribute|data⟧⟦operator|=⟧⟦punctuation.special|{⟧⟦punctuation.bracket|[]⟧⟦punctuation.special|}⟧ ⟦tag.delimiter|/>⟧
+⟦punctuation.special|\`\`\`⟧
+
+⟦tag.delimiter|<⟧⟦tag|div⟧ ⟦attribute|style⟧⟦operator|=⟧⟦punctuation.special|{⟧⟦punctuation.bracket|{⟧ ⟦property|color⟧⟦punctuation.delimiter|:⟧ ⟦string|"red"⟧ ⟦punctuation.bracket|}⟧⟦punctuation.special|}⟧⟦tag.delimiter|>⟧text in a div⟦tag.delimiter|</⟧⟦tag|div⟧⟦tag.delimiter|>⟧
+
+Math works too: ⟦markup.raw|$a_{1} + b$⟧ and a footnote⟦label|[^1]⟧.
+
+⟦label|[^1]⟧⟦punctuation.delimiter|:⟧ Rendered by ⟦punctuation.special|{⟧⟦variable|meta⟧⟦punctuation.delimiter|.⟧⟦property|author⟧⟦punctuation.special|}⟧.
+"
+`;
+
+exports[`fixtures scss.scss: scss.scss 1`] = `
+"⟦keyword.import|@use⟧ ⟦string|"sass:math"⟧⟦punctuation.delimiter|;⟧
+⟦keyword.import|@use⟧ ⟦string|"sass:map"⟧ ⟦keyword.import|as⟧ ⟦namespace|m⟧⟦punctuation.delimiter|;⟧
+⟦keyword.import|@use⟧ ⟦string|"config"⟧ ⟦keyword.import|with⟧ ⟦punctuation.bracket|(⟧⟦variable.parameter|$primary⟧⟦punctuation.delimiter|:⟧ ⟦constant|#0af⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|$rounded⟧⟦punctuation.delimiter|:⟧ ⟦boolean|true⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+⟦keyword.import|@forward⟧ ⟦string|"src/list"⟧ ⟦keyword.import|hide⟧ ⟦constant|list-reset⟧⟦punctuation.delimiter|,⟧ ⟦variable|$horizontal-list-gap⟧⟦punctuation.delimiter|;⟧
+⟦keyword.import|@import⟧ ⟦string|"legacy/mixins"⟧⟦punctuation.delimiter|;⟧
+
+⟦comment|// Variables, maps and lists.⟧
+⟦comment.doc|/// The breakpoints of the grid.⟧
+⟦comment.doc|/// @type Map⟧
+⟦variable|$breakpoints⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|(⟧
+  ⟦string|"small"⟧⟦punctuation.delimiter|:⟧ ⟦number|576⟧⟦number.unit|px⟧⟦punctuation.delimiter|,⟧
+  ⟦property|medium⟧⟦punctuation.delimiter|:⟧ ⟦number|768⟧⟦number.unit|px⟧⟦punctuation.delimiter|,⟧
+  ⟦property|large⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|(⟧⟦property|min⟧⟦punctuation.delimiter|:⟧ ⟦number|992⟧⟦number.unit|px⟧⟦punctuation.delimiter|,⟧ ⟦property|max⟧⟦punctuation.delimiter|:⟧ ⟦number|1199.98⟧⟦number.unit|px⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|,⟧
+⟦punctuation.bracket|)⟧ ⟦keyword.modifier|!default⟧⟦punctuation.delimiter|;⟧
+⟦variable|$font-stack⟧⟦punctuation.delimiter|:⟧ ⟦constant|Helvetica⟧⟦punctuation.delimiter|,⟧ ⟦string|"Segoe UI"⟧⟦punctuation.delimiter|,⟧ ⟦constant|sans-serif⟧⟦punctuation.delimiter|;⟧
+⟦variable|$gutter⟧⟦punctuation.delimiter|:⟧ ⟦number|1.5⟧⟦number.unit|rem⟧ ⟦operator|*⟧ ⟦number|2⟧ ⟦keyword.modifier|!global⟧⟦punctuation.delimiter|;⟧
+⟦variable|$enabled⟧⟦punctuation.delimiter|:⟧ ⟦boolean|true⟧⟦punctuation.delimiter|;⟧
+⟦variable|$nothing⟧⟦punctuation.delimiter|:⟧ ⟦constant.builtin|null⟧⟦punctuation.delimiter|;⟧
+
+⟦keyword.directive|@function⟧ ⟦function|rem⟧⟦punctuation.bracket|(⟧⟦variable.parameter|$px⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|$base⟧⟦punctuation.delimiter|:⟧ ⟦number|16⟧⟦number.unit|px⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦keyword.control|@if⟧ ⟦namespace|math⟧⟦punctuation.delimiter|.⟧⟦function|is-unitless⟧⟦punctuation.bracket|(⟧⟦variable.parameter|$px⟧⟦punctuation.bracket|)⟧ ⟦keyword.operator|or⟧ ⟦variable.parameter|$base⟧ ⟦operator|==⟧ ⟦number|0⟧ ⟦punctuation.bracket|{⟧
+    ⟦keyword.directive|@error⟧ ⟦string|"rem() needs a length, got ⟧⟦punctuation.special|#{⟧⟦variable.parameter|$px⟧⟦punctuation.special|}⟧⟦string|"⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+  ⟦keyword.control|@return⟧ ⟦namespace|math⟧⟦punctuation.delimiter|.⟧⟦function|div⟧⟦punctuation.bracket|(⟧⟦variable.parameter|$px⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|$base⟧⟦punctuation.bracket|)⟧ ⟦operator|*⟧ ⟦number|1⟧⟦number.unit|rem⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword.directive|@mixin⟧ ⟦function|respond⟧⟦punctuation.bracket|(⟧⟦variable.parameter|$name⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|$args⟧⟦operator|...⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦variable|$width⟧⟦punctuation.delimiter|:⟧ ⟦namespace|m⟧⟦punctuation.delimiter|.⟧⟦function|get⟧⟦punctuation.bracket|(⟧⟦variable|$breakpoints⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|$name⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+  ⟦keyword.control|@if⟧ ⟦keyword.operator|not⟧ ⟦variable|$width⟧ ⟦punctuation.bracket|{⟧
+    ⟦keyword.directive|@warn⟧ ⟦string|"Unknown breakpoint \`⟧⟦punctuation.special|#{⟧⟦variable.parameter|$name⟧⟦punctuation.special|}⟧⟦string|\`."⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧ ⟦keyword.control|@else⟧ ⟦keyword.control|if⟧ ⟦variable|$width⟧ ⟦operator|!=⟧ ⟦constant.builtin|null⟧ ⟦keyword.operator|and⟧ ⟦variable|$width⟧ ⟦operator|>=⟧ ⟦number|0⟧ ⟦punctuation.bracket|{⟧
+    ⟦keyword.directive|@media⟧ ⟦constant|screen⟧ ⟦keyword.operator|and⟧ ⟦punctuation.bracket|(⟧⟦property|min-width⟧⟦punctuation.delimiter|:⟧ ⟦variable|$width⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+      ⟦keyword.directive|@content⟧⟦punctuation.delimiter|;⟧
+    ⟦punctuation.bracket|}⟧
+  ⟦punctuation.bracket|}⟧ ⟦keyword.control|@else⟧ ⟦punctuation.bracket|{⟧
+    ⟦keyword.directive|@content⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword.directive|@mixin⟧ ⟦function|theme⟧⟦punctuation.bracket|(⟧⟦variable.parameter|$theme⟧⟦punctuation.delimiter|:⟧ ⟦constant|dark⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦keyword.directive|@content⟧ ⟦punctuation.bracket|(⟧⟦variable.parameter|$theme⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦selector.class|%button-base⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|display⟧⟦punctuation.delimiter|:⟧ ⟦constant|inline-flex⟧⟦punctuation.delimiter|;⟧
+  ⟦property|padding⟧⟦punctuation.delimiter|:⟧ ⟦function|rem⟧⟦punctuation.bracket|(⟧⟦number|8⟧⟦number.unit|px⟧⟦punctuation.bracket|)⟧ ⟦function|rem⟧⟦punctuation.bracket|(⟧⟦number|12⟧⟦number.unit|px⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦selector.class|.button⟧ ⟦punctuation.bracket|{⟧
+  ⟦keyword.directive|@extend⟧ ⟦selector.class|%button-base⟧⟦punctuation.delimiter|;⟧
+  ⟦property|font⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|family⟧⟦punctuation.delimiter|:⟧ ⟦variable|$font-stack⟧⟦punctuation.delimiter|;⟧
+    ⟦property|size⟧⟦punctuation.delimiter|:⟧ ⟦number|14⟧⟦number.unit|px⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+  ⟦property|margin⟧⟦punctuation.delimiter|:⟧ ⟦number|0⟧ ⟦constant|auto⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|top⟧⟦punctuation.delimiter|:⟧ ⟦operator|-⟧⟦variable|$gutter⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+  ⟦property|color⟧⟦punctuation.delimiter|:⟧ ⟦namespace|config⟧⟦punctuation.delimiter|.⟧⟦variable|$primary⟧⟦punctuation.delimiter|;⟧
+  ⟦property|width⟧⟦punctuation.delimiter|:⟧ ⟦function|calc⟧⟦punctuation.bracket|(⟧⟦number|100⟧⟦number.unit|%⟧ ⟦operator|-⟧ ⟦punctuation.special|#{⟧⟦variable|$gutter⟧⟦punctuation.special|}⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+  ⟦property|background⟧⟦punctuation.delimiter|:⟧ ⟦function|url⟧⟦punctuation.bracket|(⟧⟦string|"⟧⟦punctuation.special|#{⟧⟦variable|$cdn⟧⟦punctuation.special|}⟧⟦string|/img/bg.png"⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|,⟧ ⟦function|url⟧⟦punctuation.bracket|(⟧⟦punctuation.special|#{⟧⟦variable|$cdn⟧⟦punctuation.special|}⟧⟦string.special|/img/fallback.png⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+
+  ⟦selector|&⟧⟦selector.pseudo|:hover⟧⟦punctuation.delimiter|,⟧
+  ⟦selector|&⟧⟦selector.class|--primary⟧⟦selector.pseudo|:not⟧⟦punctuation.bracket|(⟧⟦selector.class|.is-disabled⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|color⟧⟦punctuation.delimiter|:⟧ ⟦function|darken⟧⟦punctuation.bracket|(⟧⟦variable.parameter|$color⟧⟦punctuation.delimiter|:⟧ ⟦namespace|config⟧⟦punctuation.delimiter|.⟧⟦variable|$primary⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|$amount⟧⟦punctuation.delimiter|:⟧ ⟦number|10⟧⟦number.unit|%⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+
+  ⟦selector|&⟧⟦selector.class|__icon⟧ ⟦operator|+⟧ ⟦selector|&⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|margin-left⟧⟦punctuation.delimiter|:⟧ ⟦namespace|math⟧⟦punctuation.delimiter|.⟧⟦function|percentage⟧⟦punctuation.bracket|(⟧⟦namespace|math⟧⟦punctuation.delimiter|.⟧⟦function|div⟧⟦punctuation.bracket|(⟧⟦number|1⟧⟦punctuation.delimiter|,⟧ ⟦number|3⟧⟦punctuation.bracket|))⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+
+  ⟦selector.class|.no-js⟧ ⟦selector|&⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|display⟧⟦punctuation.delimiter|:⟧ ⟦constant|none⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+
+  ⟦keyword.directive|@include⟧ ⟦function|respond⟧⟦punctuation.bracket|(⟧⟦constant|medium⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|padding⟧⟦punctuation.delimiter|:⟧ ⟦number|10⟧⟦number.unit|px⟧ ⟦operator|+⟧ ⟦number|2⟧ ⟦punctuation.bracket|(⟧⟦number|4⟧⟦number.unit|px⟧ ⟦operator|*⟧ ⟦number|3⟧⟦punctuation.bracket|)⟧ ⟦number|10⟧ ⟦operator|%⟧ ⟦number|3⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+
+  ⟦keyword.directive|@include⟧ ⟦function|theme⟧ ⟦keyword|using⟧ ⟦punctuation.bracket|(⟧⟦variable.parameter|$t⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|content⟧⟦punctuation.delimiter|:⟧ ⟦string|"theme: ⟧⟦punctuation.special|#{⟧⟦variable.parameter|$t⟧ ⟦operator|+⟧ ⟦string|"!"⟧⟦punctuation.special|}⟧⟦string|"⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+
+  ⟦keyword.directive|@at-root⟧ ⟦punctuation.special|#{⟧⟦selector|&⟧⟦punctuation.special|}⟧⟦selector.class|-wrapper⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|position⟧⟦punctuation.delimiter|:⟧ ⟦constant|relative⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword.control|@each⟧ ⟦variable|$name⟧⟦punctuation.delimiter|,⟧ ⟦variable|$width⟧ ⟦keyword.control|in⟧ ⟦punctuation.bracket|(⟧⟦property|narrow⟧⟦punctuation.delimiter|:⟧ ⟦number|20⟧⟦number.unit|em⟧⟦punctuation.delimiter|,⟧ ⟦property|wide⟧⟦punctuation.delimiter|:⟧ ⟦number|60⟧⟦number.unit|em⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦selector.class|.container-⟧⟦punctuation.special|#{⟧⟦variable|$name⟧⟦punctuation.special|}⟧⟦selector.class|-fluid⟧ ⟦punctuation.bracket|{⟧
+    ⟦punctuation.special|#{⟧⟦variable|$name⟧⟦punctuation.special|}⟧⟦property|-width⟧⟦punctuation.delimiter|:⟧ ⟦variable|$width⟧⟦punctuation.delimiter|;⟧
+    ⟦property|border-⟧⟦punctuation.special|#{⟧⟦variable|$name⟧⟦punctuation.special|}⟧⟦punctuation.delimiter|:⟧ ⟦number|1⟧⟦number.unit|px⟧ ⟦constant|solid⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword.control|@for⟧ ⟦variable|$i⟧ ⟦keyword.control|from⟧ ⟦number|1⟧ ⟦keyword.control|through⟧ ⟦number|3⟧ ⟦punctuation.bracket|{⟧
+  ⟦selector.class|.mt-⟧⟦punctuation.special|#{⟧⟦variable|$i⟧⟦punctuation.special|}⟧ ⟦operator|>⟧ ⟦tag|li⟧⟦selector.pseudo|:nth-child⟧⟦punctuation.bracket|(⟧⟦punctuation.special|#{⟧⟦variable|$i⟧⟦punctuation.special|}⟧⟦number.unit|n⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|margin-top⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.special|#{⟧⟦variable|$i⟧ ⟦operator|*⟧ ⟦number|4⟧⟦punctuation.special|}⟧⟦number.unit|px⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+
+⟦variable|$i⟧⟦punctuation.delimiter|:⟧ ⟦number|6⟧⟦punctuation.delimiter|;⟧
+⟦keyword.control|@while⟧ ⟦variable|$i⟧ ⟦operator|>⟧ ⟦number|0⟧ ⟦punctuation.bracket|{⟧
+  ⟦selector.class|.item-⟧⟦punctuation.special|#{⟧⟦variable|$i⟧⟦punctuation.special|}⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|width⟧⟦punctuation.delimiter|:⟧ ⟦number|2⟧⟦number.unit|em⟧ ⟦operator|*⟧ ⟦variable|$i⟧⟦punctuation.delimiter|;⟧ ⟦comment|// narrower every time⟧
+  ⟦punctuation.bracket|}⟧
+  ⟦variable|$i⟧⟦punctuation.delimiter|:⟧ ⟦variable|$i⟧ ⟦operator|-⟧ ⟦number|2⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦comment|/* Plain CSS still works. */⟧
+⟦selector.class|.link⟧ ⟦punctuation.bracket|{⟧
+  ⟦keyword.directive|@extend⟧ ⟦selector.class|.button⟧⟦punctuation.delimiter|,⟧ ⟦selector.class|.missing⟧ ⟦keyword.modifier|!optional⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword.directive|@media⟧ ⟦punctuation.bracket|(⟧⟦property|min-width⟧⟦punctuation.delimiter|:⟧ ⟦function|map-get⟧⟦punctuation.bracket|(⟧⟦variable|$breakpoints⟧⟦punctuation.delimiter|,⟧ ⟦string|"small"⟧⟦punctuation.bracket|))⟧ ⟦keyword.operator|and⟧ ⟦punctuation.bracket|(⟧⟦property|max-width⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.special|#{⟧⟦variable|$max⟧⟦punctuation.special|}⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+  ⟦selector.class|.a⟧⟦punctuation.bracket|[⟧⟦attribute|data-kind⟧⟦operator|=⟧⟦string|"x"⟧⟦punctuation.bracket|]⟧⟦selector.pseudo|::after⟧ ⟦punctuation.bracket|{⟧
+    ⟦keyword.directive|@debug⟧ ⟦string|"nested: ⟧⟦punctuation.special|#{⟧⟦selector|&⟧⟦punctuation.special|}⟧⟦string|"⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+"
+`;
+
+exports[`fixtures svelte.svelte: svelte.svelte 1`] = `
+"⟦tag.delimiter|<⟧⟦tag|svelte:options⟧ ⟦attribute|runes⟧ ⟦tag.delimiter|/>⟧
+
+⟦tag.delimiter|<⟧⟦tag|script⟧ ⟦attribute|module⟧ ⟦attribute|lang⟧⟦operator|=⟧⟦string|"ts"⟧⟦tag.delimiter|>⟧
+  ⟦keyword.import|export⟧ ⟦keyword|type⟧ ⟦type|Todo⟧ ⟦operator|=⟧ ⟦punctuation.bracket|{⟧ ⟦property|id⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|number⟧⟦punctuation.delimiter|;⟧ ⟦property|text⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|string⟧⟦punctuation.delimiter|;⟧ ⟦property|done⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|boolean⟧ ⟦punctuation.bracket|}⟧⟦punctuation.delimiter|;⟧
+⟦tag.delimiter|</⟧⟦tag|script⟧⟦tag.delimiter|>⟧
+
+⟦tag.delimiter|<⟧⟦tag|script⟧ ⟦attribute|lang⟧⟦operator|=⟧⟦string|"ts"⟧ ⟦attribute|generics⟧⟦operator|=⟧⟦string|"⟧⟦type.parameter|T⟧ ⟦keyword|extends⟧ ⟦punctuation.bracket|{⟧ ⟦property|id⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|number⟧ ⟦punctuation.bracket|}⟧⟦string|"⟧⟦tag.delimiter|>⟧
+  ⟦keyword.import|import⟧ ⟦punctuation.bracket|{⟧ ⟦variable|flip⟧ ⟦punctuation.bracket|}⟧ ⟦keyword.import|from⟧ ⟦string|"svelte/animate"⟧⟦punctuation.delimiter|;⟧
+  ⟦keyword.import|import⟧ ⟦punctuation.bracket|{⟧ ⟦variable|fade⟧⟦punctuation.delimiter|,⟧ ⟦variable|fly⟧ ⟦punctuation.bracket|}⟧ ⟦keyword.import|from⟧ ⟦string|"svelte/transition"⟧⟦punctuation.delimiter|;⟧
+  ⟦keyword.import|import⟧ ⟦punctuation.bracket|{⟧ ⟦variable|clickOutside⟧⟦punctuation.delimiter|,⟧ ⟦variable|tooltip⟧ ⟦punctuation.bracket|}⟧ ⟦keyword.import|from⟧ ⟦string|"./actions"⟧⟦punctuation.delimiter|;⟧
+  ⟦keyword.import|import⟧ ⟦variable|Button⟧ ⟦keyword.import|from⟧ ⟦string|"./Button.svelte"⟧⟦punctuation.delimiter|;⟧
+  ⟦keyword.import|import⟧ ⟦operator|*⟧ ⟦keyword.import|as⟧ ⟦namespace|ui⟧ ⟦keyword.import|from⟧ ⟦string|"./ui"⟧⟦punctuation.delimiter|;⟧
+
+  ⟦keyword|let⟧ ⟦punctuation.bracket|{⟧ ⟦variable|title⟧ ⟦operator|=⟧ ⟦string|"Todos"⟧⟦punctuation.delimiter|,⟧ ⟦variable|groups⟧ ⟦operator|=⟧ ⟦punctuation.bracket|{}⟧⟦punctuation.delimiter|,⟧ ⟦variable|children⟧⟦punctuation.delimiter|,⟧ ⟦operator|...⟧⟦variable|rest⟧ ⟦punctuation.bracket|}⟧⟦punctuation.delimiter|:⟧ ⟦type|Props⟧⟦punctuation.bracket|<⟧⟦type|T⟧⟦punctuation.bracket|>⟧ ⟦operator|=⟧ ⟦function|$props⟧⟦punctuation.bracket|()⟧⟦punctuation.delimiter|;⟧
+  ⟦keyword|let⟧ ⟦variable|todos⟧ ⟦operator|=⟧ ⟦function|$state⟧⟦punctuation.bracket|<⟧⟦type|Todo⟧⟦punctuation.bracket|[]>([])⟧⟦punctuation.delimiter|;⟧
+  ⟦keyword|let⟧ ⟦variable|draft⟧ ⟦operator|=⟧ ⟦function|$state⟧⟦punctuation.bracket|(⟧⟦string|""⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+  ⟦keyword|let⟧ ⟦variable|width⟧ ⟦operator|=⟧ ⟦function|$state⟧⟦punctuation.bracket|(⟧⟦number|0⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+  ⟦keyword|let⟧ ⟦variable|remaining⟧ ⟦operator|=⟧ ⟦function|$derived⟧⟦punctuation.bracket|(⟧⟦variable|todos⟧⟦punctuation.delimiter|.⟧⟦function.method|filter⟧⟦punctuation.bracket|((⟧⟦variable.parameter|todo⟧⟦punctuation.bracket|)⟧ ⟦operator|=>⟧ ⟦operator|!⟧⟦variable.parameter|todo⟧⟦punctuation.delimiter|.⟧⟦property|done⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|.⟧⟦property|length⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+  ⟦keyword|const⟧ ⟦variable|request⟧ ⟦operator|=⟧ ⟦function|fetch⟧⟦punctuation.bracket|(⟧⟦string|"/api/todos"⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|.⟧⟦function.method|then⟧⟦punctuation.bracket|((⟧⟦variable.parameter|response⟧⟦punctuation.bracket|)⟧ ⟦operator|=>⟧ ⟦variable.parameter|response⟧⟦punctuation.delimiter|.⟧⟦function.method|json⟧⟦punctuation.bracket|())⟧⟦punctuation.delimiter|;⟧
+
+  ⟦keyword|function⟧ ⟦function|add⟧⟦punctuation.bracket|(⟧⟦variable.parameter|event⟧⟦punctuation.delimiter|:⟧ ⟦type|SubmitEvent⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+    ⟦variable.parameter|event⟧⟦punctuation.delimiter|.⟧⟦function.method|preventDefault⟧⟦punctuation.bracket|()⟧⟦punctuation.delimiter|;⟧
+    ⟦variable|todos⟧⟦punctuation.delimiter|.⟧⟦function.method|push⟧⟦punctuation.bracket|({⟧ ⟦property|id⟧⟦punctuation.delimiter|:⟧ ⟦type|Date⟧⟦punctuation.delimiter|.⟧⟦function.method|now⟧⟦punctuation.bracket|()⟧⟦punctuation.delimiter|,⟧ ⟦property|text⟧⟦punctuation.delimiter|:⟧ ⟦variable|draft⟧⟦punctuation.delimiter|,⟧ ⟦property|done⟧⟦punctuation.delimiter|:⟧ ⟦boolean|false⟧ ⟦punctuation.bracket|})⟧⟦punctuation.delimiter|;⟧
+    ⟦variable|draft⟧ ⟦operator|=⟧ ⟦string|""⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+⟦tag.delimiter|</⟧⟦tag|script⟧⟦tag.delimiter|>⟧
+
+⟦tag.delimiter|<⟧⟦tag|svelte:head⟧⟦tag.delimiter|>⟧
+  ⟦tag.delimiter|<⟧⟦tag|title⟧⟦tag.delimiter|>⟧⟦punctuation.special|{⟧⟦variable|title⟧⟦punctuation.special|}⟧ ⟦string.escape|&middot;⟧ ⟦punctuation.special|{⟧⟦variable|remaining⟧⟦punctuation.special|}⟧ left⟦tag.delimiter|</⟧⟦tag|title⟧⟦tag.delimiter|>⟧
+  ⟦tag.delimiter|<⟧⟦tag|script⟧ ⟦attribute|type⟧⟦operator|=⟧⟦string|"application/ld+json"⟧⟦tag.delimiter|>⟧
+    ⟦punctuation.bracket|{⟧ ⟦property|"@type"⟧⟦punctuation.delimiter|:⟧ ⟦string|"ItemList"⟧⟦punctuation.delimiter|,⟧ ⟦property|"name"⟧⟦punctuation.delimiter|:⟧ ⟦string|"Todos"⟧ ⟦punctuation.bracket|}⟧
+  ⟦tag.delimiter|</⟧⟦tag|script⟧⟦tag.delimiter|>⟧
+  ⟦tag.delimiter|<⟧⟦tag|script⟧ ⟦attribute|src⟧⟦operator|=⟧⟦string|"/js/⟧⟦punctuation.special|{⟧⟦variable|title⟧⟦punctuation.special|}⟧⟦string|.js"⟧ ⟦attribute|defer⟧⟦tag.delimiter|></⟧⟦tag|script⟧⟦tag.delimiter|>⟧
+⟦tag.delimiter|</⟧⟦tag|svelte:head⟧⟦tag.delimiter|>⟧
+
+⟦tag.delimiter|<⟧⟦tag|svelte:window⟧ ⟦attribute|on:keydown|preventDefault⟧⟦operator|=⟧⟦punctuation.special|{⟧⟦punctuation.bracket|()⟧ ⟦operator|=>⟧ ⟦punctuation.bracket|(⟧⟦variable|draft⟧ ⟦operator|=⟧ ⟦string|""⟧⟦punctuation.bracket|)⟧⟦punctuation.special|}⟧ ⟦attribute|bind:innerWidth⟧⟦operator|=⟧⟦punctuation.special|{⟧⟦variable|width⟧⟦punctuation.special|}⟧ ⟦tag.delimiter|/>⟧
+
+⟦comment|<!-- The form: a < b, {not a tag} -->⟧
+⟦tag.delimiter|<⟧⟦tag|form⟧ ⟦attribute|class⟧⟦operator|=⟧⟦string|"new ⟧⟦punctuation.special|{⟧⟦variable|draft⟧ ⟦operator|?⟧ ⟦string|'dirty'⟧ ⟦punctuation.delimiter|:⟧ ⟦string|''⟧⟦punctuation.special|}⟧⟦string| wide"⟧ ⟦attribute|on:submit⟧⟦operator|=⟧⟦punctuation.special|{⟧⟦variable|add⟧⟦punctuation.special|}⟧ ⟦punctuation.special|{⟧⟦operator|...⟧⟦variable|rest⟧⟦punctuation.special|}⟧⟦tag.delimiter|>⟧
+  ⟦tag.delimiter|<⟧⟦tag|input⟧
+    ⟦comment|// the text of the next todo⟧
+    ⟦attribute|bind:value⟧⟦operator|=⟧⟦punctuation.special|{⟧⟦variable|draft⟧⟦punctuation.special|}⟧
+    ⟦attribute|placeholder⟧⟦operator|=⟧⟦string|"What⟧⟦string.escape|&apos;⟧⟦string|s next?"⟧
+    ⟦attribute|type⟧⟦operator|=⟧⟦string|text⟧
+    ⟦comment|/* nothing is suggested */⟧
+    ⟦attribute|autocomplete⟧⟦operator|=⟧⟦string|"off"⟧
+    ⟦punctuation.special|{⟧⟦keyword|@attach⟧ ⟦function|tooltip⟧⟦punctuation.bracket|(⟧⟦string|"Press enter"⟧⟦punctuation.bracket|)⟧⟦punctuation.special|}⟧
+  ⟦tag.delimiter|/>⟧
+  ⟦tag.delimiter|<⟧⟦tag.component|Button⟧ ⟦punctuation.special|{⟧⟦variable|title⟧⟦punctuation.special|}⟧ ⟦attribute|disabled⟧⟦operator|=⟧⟦punctuation.special|{⟧⟦variable|draft⟧⟦punctuation.delimiter|.⟧⟦property|length⟧ ⟦operator|===⟧ ⟦number|0⟧⟦punctuation.special|}⟧ ⟦attribute|let:pressed⟧⟦tag.delimiter|>⟧Add ⟦string.escape|&amp;⟧ close ⟦string.escape|&#x2192;⟧⟦tag.delimiter|</⟧⟦tag.component|Button⟧⟦tag.delimiter|>⟧
+  ⟦tag.delimiter|<⟧⟦tag.component|ui.Icon⟧ ⟦attribute|name⟧⟦operator|=⟧⟦string|"plus"⟧ ⟦attribute|size⟧⟦operator|=⟧⟦punctuation.special|{⟧⟦variable|width⟧ ⟦operator|/⟧ ⟦number|100⟧⟦punctuation.special|}⟧ ⟦tag.delimiter|/>⟧
+⟦tag.delimiter|</⟧⟦tag|form⟧⟦tag.delimiter|>⟧
+⟦tag.delimiter|<⟧⟦tag|p⟧⟦tag.delimiter|>⟧⟦punctuation.special|{⟧⟦keyword.control|#if⟧ ⟦variable|draft⟧⟦punctuation.special|}⟧⟦tag.delimiter|<⟧⟦tag|b⟧⟦tag.delimiter|>⟧⟦punctuation.special|{⟧⟦variable|draft⟧⟦punctuation.special|}⟧⟦tag.delimiter|</⟧⟦tag|b⟧⟦tag.delimiter|>⟧⟦punctuation.special|{⟧⟦keyword.control|/if⟧⟦punctuation.special|}⟧ ⟦punctuation.special|{⟧⟦keyword.control|#each⟧ ⟦punctuation.bracket|{⟧ ⟦property|length⟧⟦punctuation.delimiter|:⟧ ⟦number|3⟧ ⟦punctuation.bracket|}⟧⟦punctuation.delimiter|,⟧ ⟦variable|n⟧⟦punctuation.special|}{⟧⟦variable|n⟧ ⟦operator|+⟧ ⟦number|1⟧⟦punctuation.special|}⟧/3 ⟦punctuation.special|{⟧⟦keyword.control|/each⟧⟦punctuation.special|}⟧⟦tag.delimiter|</⟧⟦tag|p⟧⟦tag.delimiter|>⟧
+
+⟦punctuation.special|{⟧⟦keyword|#snippet⟧ ⟦function|row⟧⟦punctuation.bracket|(⟧⟦variable.parameter|todo⟧⟦punctuation.delimiter|:⟧ ⟦type|Todo⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|index⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|number⟧⟦punctuation.bracket|)⟧⟦punctuation.special|}⟧
+  ⟦punctuation.special|{⟧⟦keyword|@const⟧ ⟦variable|label⟧ ⟦operator|=⟧ ⟦string|\`⟧⟦punctuation.special|\${⟧⟦variable|index⟧ ⟦operator|+⟧ ⟦number|1⟧⟦punctuation.special|}⟧⟦string|. ⟧⟦punctuation.special|\${⟧⟦variable|todo⟧⟦punctuation.delimiter|.⟧⟦property|text⟧⟦punctuation.delimiter|.⟧⟦function.method|replace⟧⟦punctuation.bracket|(⟧⟦string.regexp|/[{}]/g⟧⟦punctuation.delimiter|,⟧ ⟦string|""⟧⟦punctuation.bracket|)⟧⟦punctuation.special|}⟧⟦string|\`⟧⟦punctuation.special|}⟧
+  ⟦tag.delimiter|<⟧⟦tag|label⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|input⟧ ⟦attribute|type⟧⟦operator|=⟧⟦string|"checkbox"⟧ ⟦attribute|bind:checked⟧⟦operator|=⟧⟦punctuation.special|{⟧⟦variable|todo⟧⟦punctuation.delimiter|.⟧⟦property|done⟧⟦punctuation.special|}⟧ ⟦tag.delimiter|/>⟧
+    ⟦punctuation.special|{⟧⟦variable|label⟧⟦punctuation.special|}⟧
+  ⟦tag.delimiter|</⟧⟦tag|label⟧⟦tag.delimiter|>⟧
+⟦punctuation.special|{⟧⟦keyword|/snippet⟧⟦punctuation.special|}⟧
+
+⟦punctuation.special|{⟧⟦keyword.control|#if⟧ ⟦variable|todos⟧⟦punctuation.delimiter|.⟧⟦property|length⟧ ⟦operator|===⟧ ⟦number|0⟧⟦punctuation.special|}⟧
+  ⟦tag.delimiter|<⟧⟦tag|p⟧ ⟦attribute|transition:fade⟧⟦tag.delimiter|>⟧Nothing to do.⟦tag.delimiter|</⟧⟦tag|p⟧⟦tag.delimiter|>⟧
+⟦punctuation.special|{⟧⟦keyword.control|:else⟧ ⟦keyword.control|if⟧ ⟦variable|remaining⟧ ⟦operator|===⟧ ⟦number|0⟧⟦punctuation.special|}⟧
+  ⟦tag.delimiter|<⟧⟦tag|p⟧ ⟦attribute|style⟧⟦operator|=⟧⟦string|"⟧⟦property|color⟧⟦punctuation.delimiter|:⟧⟦string| ⟧⟦constant|green⟧⟦punctuation.delimiter|;⟧⟦string| ⟧⟦property|font-weight⟧⟦punctuation.delimiter|:⟧⟦string| ⟧⟦constant|bold⟧⟦string|"⟧⟦tag.delimiter|>⟧All done!⟦tag.delimiter|</⟧⟦tag|p⟧⟦tag.delimiter|>⟧
+⟦punctuation.special|{⟧⟦keyword.control|:else⟧⟦punctuation.special|}⟧
+  ⟦tag.delimiter|<⟧⟦tag|ul⟧ ⟦attribute|use:clickOutside⟧⟦operator|=⟧⟦punctuation.special|{⟧⟦punctuation.bracket|()⟧ ⟦operator|=>⟧ ⟦punctuation.bracket|(⟧⟦variable|draft⟧ ⟦operator|=⟧ ⟦string|""⟧⟦punctuation.bracket|)⟧⟦punctuation.special|}⟧⟦tag.delimiter|>⟧
+    ⟦punctuation.special|{⟧⟦keyword.control|#each⟧ ⟦variable|todos⟧ ⟦keyword.operator|as⟧ ⟦variable|todo⟧⟦punctuation.delimiter|,⟧ ⟦variable|i⟧ ⟦punctuation.bracket|(⟧⟦variable|todo⟧⟦punctuation.delimiter|.⟧⟦property|id⟧⟦punctuation.bracket|)⟧⟦punctuation.special|}⟧
+      ⟦tag.delimiter|<⟧⟦tag|li⟧
+        ⟦attribute|class:done⟧⟦operator|=⟧⟦punctuation.special|{⟧⟦variable|todo⟧⟦punctuation.delimiter|.⟧⟦property|done⟧⟦punctuation.special|}⟧
+        ⟦attribute|style:--delay⟧⟦operator|=⟧⟦string|"⟧⟦punctuation.special|{⟧⟦variable|i⟧ ⟦operator|*⟧ ⟦number|50⟧⟦punctuation.special|}⟧⟦string|ms"⟧
+        ⟦attribute|animate:flip⟧⟦operator|=⟧⟦punctuation.special|{⟧⟦punctuation.bracket|{⟧ ⟦property|duration⟧⟦punctuation.delimiter|:⟧ ⟦number|200⟧ ⟦punctuation.bracket|}⟧⟦punctuation.special|}⟧
+        ⟦attribute|in:fly⟧⟦operator|=⟧⟦punctuation.special|{⟧⟦punctuation.bracket|{⟧ ⟦property|y⟧⟦punctuation.delimiter|:⟧ ⟦number|20⟧ ⟦punctuation.bracket|}⟧⟦punctuation.special|}⟧
+        ⟦attribute|out:fade|local⟧
+      ⟦tag.delimiter|>⟧
+        ⟦punctuation.special|{⟧⟦keyword|@render⟧ ⟦function|row⟧⟦punctuation.bracket|(⟧⟦variable|todo⟧⟦punctuation.delimiter|,⟧ ⟦variable|i⟧⟦punctuation.bracket|)⟧⟦punctuation.special|}⟧
+      ⟦tag.delimiter|</⟧⟦tag|li⟧⟦tag.delimiter|>⟧
+    ⟦punctuation.special|{⟧⟦keyword.control|:else⟧⟦punctuation.special|}⟧
+      ⟦tag.delimiter|<⟧⟦tag|li⟧⟦tag.delimiter|>⟧Empty⟦tag.delimiter|</⟧⟦tag|li⟧⟦tag.delimiter|>⟧
+    ⟦punctuation.special|{⟧⟦keyword.control|/each⟧⟦punctuation.special|}⟧
+  ⟦tag.delimiter|</⟧⟦tag|ul⟧⟦tag.delimiter|>⟧
+⟦punctuation.special|{⟧⟦keyword.control|/if⟧⟦punctuation.special|}⟧
+
+⟦punctuation.special|{⟧⟦keyword.control|#each⟧ ⟦type|Object⟧⟦punctuation.delimiter|.⟧⟦function.method|entries⟧⟦punctuation.bracket|(⟧⟦variable|groups⟧⟦punctuation.bracket|)⟧ ⟦keyword.operator|as⟧ ⟦punctuation.bracket|[⟧⟦variable|name⟧⟦punctuation.delimiter|,⟧ ⟦punctuation.bracket|{⟧ ⟦variable|count⟧ ⟦operator|=⟧ ⟦number|0⟧ ⟦punctuation.bracket|}]⟧⟦punctuation.special|}⟧
+  ⟦punctuation.special|{⟧⟦keyword|const⟧ ⟦variable|half⟧ ⟦operator|=⟧ ⟦variable|count⟧ ⟦operator|/⟧ ⟦number|2⟧⟦punctuation.special|}⟧
+  ⟦tag.delimiter|<⟧⟦tag|span⟧⟦tag.delimiter|>⟧⟦punctuation.special|{⟧⟦variable|name⟧⟦punctuation.special|}⟧: ⟦punctuation.special|{⟧⟦variable|half⟧⟦punctuation.special|}⟧⟦tag.delimiter|</⟧⟦tag|span⟧⟦tag.delimiter|>⟧
+⟦punctuation.special|{⟧⟦keyword.control|/each⟧⟦punctuation.special|}⟧
+
+⟦punctuation.special|{⟧⟦keyword.control|#await⟧ ⟦variable|request⟧⟦punctuation.special|}⟧
+  ⟦tag.delimiter|<⟧⟦tag|p⟧⟦tag.delimiter|>⟧Loading⟦string.escape|&hellip;⟧⟦tag.delimiter|</⟧⟦tag|p⟧⟦tag.delimiter|>⟧
+⟦punctuation.special|{⟧⟦keyword.control|:then⟧ ⟦variable|data⟧⟦punctuation.special|}⟧
+  ⟦punctuation.special|{⟧⟦keyword|@html⟧ ⟦variable|data⟧⟦punctuation.delimiter|.⟧⟦property|summary⟧⟦punctuation.special|}⟧
+⟦punctuation.special|{⟧⟦keyword.control|:catch⟧ ⟦variable|error⟧⟦punctuation.special|}⟧
+  ⟦tag.delimiter|<⟧⟦tag|p⟧ ⟦attribute|class⟧⟦operator|=⟧⟦string|"error"⟧⟦tag.delimiter|>⟧⟦punctuation.special|{⟧⟦variable|error⟧⟦punctuation.delimiter|.⟧⟦property|message⟧⟦punctuation.special|}⟧⟦tag.delimiter|</⟧⟦tag|p⟧⟦tag.delimiter|>⟧
+⟦punctuation.special|{⟧⟦keyword.control|/await⟧⟦punctuation.special|}⟧
+
+⟦punctuation.special|{⟧⟦keyword.control|#await⟧ ⟦variable|request⟧ ⟦keyword.control|then⟧ ⟦punctuation.bracket|{⟧ ⟦variable|total⟧ ⟦punctuation.bracket|}⟧⟦punctuation.special|}⟧⟦tag.delimiter|<⟧⟦tag|b⟧⟦tag.delimiter|>⟧⟦punctuation.special|{⟧⟦variable|total⟧⟦punctuation.special|}⟧⟦tag.delimiter|</⟧⟦tag|b⟧⟦tag.delimiter|>⟧⟦punctuation.special|{⟧⟦keyword.control|/await⟧⟦punctuation.special|}⟧
+
+⟦punctuation.special|{⟧⟦keyword.control|#key⟧ ⟦variable|remaining⟧⟦punctuation.special|}⟧
+  ⟦tag.delimiter|<⟧⟦tag|svelte:element⟧ ⟦attribute|this⟧⟦operator|=⟧⟦punctuation.special|{⟧⟦variable|remaining⟧ ⟦operator|>⟧ ⟦number|3⟧ ⟦operator|?⟧ ⟦string|"strong"⟧ ⟦punctuation.delimiter|:⟧ ⟦string|"em"⟧⟦punctuation.special|}⟧⟦tag.delimiter|>⟧⟦punctuation.special|{⟧⟦variable|remaining⟧⟦punctuation.special|}⟧⟦tag.delimiter|</⟧⟦tag|svelte:element⟧⟦tag.delimiter|>⟧
+⟦punctuation.special|{⟧⟦keyword.control|/key⟧⟦punctuation.special|}⟧
+
+⟦punctuation.special|{⟧⟦keyword|@debug⟧ ⟦variable|todos⟧⟦punctuation.delimiter|,⟧ ⟦variable|draft⟧⟦punctuation.special|}⟧
+⟦punctuation.special|{⟧⟦keyword|@render⟧ ⟦function|children⟧⟦punctuation.delimiter|?.⟧⟦punctuation.bracket|()⟧⟦punctuation.special|}⟧
+
+⟦tag.delimiter|<⟧⟦tag|style⟧ ⟦attribute|lang⟧⟦operator|=⟧⟦string|"scss"⟧⟦tag.delimiter|>⟧
+  ⟦variable|$accent⟧⟦punctuation.delimiter|:⟧ ⟦constant|#ff3e00⟧⟦punctuation.delimiter|;⟧
+
+  ⟦tag|form⟧⟦selector.class|.new⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|display⟧⟦punctuation.delimiter|:⟧ ⟦constant|flex⟧⟦punctuation.delimiter|;⟧
+
+    ⟦tag|input⟧⟦selector.pseudo|:focus⟧ ⟦punctuation.bracket|{⟧
+      ⟦property|outline⟧⟦punctuation.delimiter|:⟧ ⟦number|2⟧⟦number.unit|px⟧ ⟦constant|solid⟧ ⟦variable|$accent⟧⟦punctuation.delimiter|;⟧
+    ⟦punctuation.bracket|}⟧
+  ⟦punctuation.bracket|}⟧
+⟦tag.delimiter|</⟧⟦tag|style⟧⟦tag.delimiter|>⟧
+"
+`;
+
+exports[`fixtures toml.toml: toml.toml 1`] = `
+"⟦comment|# A package manifest with a bit of everything.⟧
+⟦property|title⟧ ⟦operator|=⟧ ⟦string|"TOML Example"⟧
+⟦property|"quoted key"⟧ ⟦operator|=⟧ ⟦string|'literal \\n stays'⟧
+⟦property|'single'⟧ ⟦operator|=⟧ ⟦string|"tab⟧⟦string.escape|\\t⟧⟦string| quote⟧⟦string.escape|\\"⟧⟦string| backslash⟧⟦string.escape|\\\\⟧⟦string| bell⟧⟦string.escape|\\b⟧⟦string| esc⟧⟦string.escape|\\e⟧⟦string| hex⟧⟦string.escape|\\x41⟧⟦string| ⟧⟦string.escape|\\u00e9⟧⟦string| ⟧⟦string.escape|\\U0001F600⟧⟦string|"⟧
+⟦property|bare-key_1⟧ ⟦operator|=⟧ ⟦boolean|true⟧
+⟦property|1234⟧ ⟦operator|=⟧ ⟦boolean|false⟧
+⟦property|site⟧⟦punctuation.delimiter|.⟧⟦property|"example.com"⟧⟦punctuation.delimiter|.⟧⟦property|port⟧ ⟦operator|=⟧ ⟦number|8080⟧
+
+⟦punctuation.bracket|[⟧⟦namespace|package⟧⟦punctuation.bracket|]⟧
+⟦property|name⟧ ⟦operator|=⟧ ⟦string|"my-app"⟧ ⟦comment|# the name⟧
+⟦property|version⟧ ⟦operator|=⟧ ⟦string|"1.2.3"⟧
+⟦property|authors⟧ ⟦operator|=⟧ ⟦punctuation.bracket|[⟧⟦string|"Ada <ada@example.com>"⟧⟦punctuation.delimiter|,⟧ ⟦string|'Bob'⟧⟦punctuation.bracket|]⟧
+⟦property|private⟧ ⟦operator|=⟧ ⟦boolean|true⟧
+⟦property|description⟧ ⟦operator|=⟧ ⟦string|"""⟧
+⟦string|Several lines, ⟧⟦string.escape|\\⟧
+⟦string|    joined by a backslash.⟧
+⟦string|"Quotes" and ""two quotes"" are fine.⟧⟦string.escape|\\n⟧⟦string|"""⟧
+⟦property|pattern⟧ ⟦operator|=⟧ ⟦string|'''⟧
+⟦string|\\d+\\.\\d+ is not escaped⟧
+⟦string|'''⟧
+
+⟦punctuation.bracket|[⟧⟦namespace|numbers⟧⟦punctuation.bracket|]⟧
+⟦property|int⟧ ⟦operator|=⟧ ⟦number|42⟧
+⟦property|positive⟧ ⟦operator|=⟧ ⟦number|+99⟧
+⟦property|negative⟧ ⟦operator|=⟧ ⟦number|-17⟧
+⟦property|grouped⟧ ⟦operator|=⟧ ⟦number|1_000_000⟧
+⟦property|hex⟧ ⟦operator|=⟧ ⟦number|0xDEAD_beef⟧
+⟦property|octal⟧ ⟦operator|=⟧ ⟦number|0o755⟧
+⟦property|binary⟧ ⟦operator|=⟧ ⟦number|0b1101_0110⟧
+⟦property|float⟧ ⟦operator|=⟧ ⟦number|3.1415⟧
+⟦property|exponent⟧ ⟦operator|=⟧ ⟦number|5e+22⟧
+⟦property|both⟧ ⟦operator|=⟧ ⟦number|-6.626e-34⟧
+⟦property|infinite⟧ ⟦operator|=⟧ ⟦number|inf⟧
+⟦property|minus-infinite⟧ ⟦operator|=⟧ ⟦number|-inf⟧
+⟦property|not-a-number⟧ ⟦operator|=⟧ ⟦number|nan⟧
+⟦property|plus-nan⟧ ⟦operator|=⟧ ⟦number|+nan⟧
+
+⟦punctuation.bracket|[⟧⟦namespace|dates⟧⟦punctuation.bracket|]⟧
+⟦property|offset⟧ ⟦operator|=⟧ ⟦string.special|1979-05-27T07:32:00Z⟧
+⟦property|offset-2⟧ ⟦operator|=⟧ ⟦string.special|1979-05-27T00:32:00.999999-07:00⟧
+⟦property|with-space⟧ ⟦operator|=⟧ ⟦string.special|1979-05-27 07:32:00Z⟧
+⟦property|local⟧ ⟦operator|=⟧ ⟦string.special|1979-05-27T07:32:00⟧
+⟦property|day⟧ ⟦operator|=⟧ ⟦string.special|1979-05-27⟧
+⟦property|time⟧ ⟦operator|=⟧ ⟦string.special|07:32:00⟧
+⟦property|short-time⟧ ⟦operator|=⟧ ⟦string.special|07:32⟧
+
+⟦punctuation.bracket|[⟧⟦namespace|dependencies⟧⟦punctuation.delimiter|.⟧⟦namespace|serde⟧⟦punctuation.bracket|]⟧
+⟦property|version⟧ ⟦operator|=⟧ ⟦string|"1.0"⟧
+⟦property|features⟧ ⟦operator|=⟧ ⟦punctuation.bracket|[⟧
+  ⟦string|"derive"⟧⟦punctuation.delimiter|,⟧ ⟦comment|# a comment in an array⟧
+  ⟦string|"rc"⟧⟦punctuation.delimiter|,⟧
+⟦punctuation.bracket|]⟧
+
+⟦punctuation.bracket|[⟧ ⟦namespace|servers⟧ ⟦punctuation.delimiter|.⟧ ⟦namespace|"alpha beta"⟧ ⟦punctuation.bracket|]⟧
+⟦property|ip⟧ ⟦operator|=⟧ ⟦string|"10.0.0.1"⟧
+⟦property|ports⟧ ⟦operator|=⟧ ⟦punctuation.bracket|[⟧⟦number|8000⟧⟦punctuation.delimiter|,⟧ ⟦number|8001⟧⟦punctuation.delimiter|,⟧ ⟦punctuation.bracket|[⟧⟦number|1⟧⟦punctuation.delimiter|,⟧ ⟦number|2⟧⟦punctuation.bracket|]⟧⟦punctuation.delimiter|,⟧ ⟦punctuation.bracket|{⟧ ⟦property|min⟧ ⟦operator|=⟧ ⟦number|1⟧⟦punctuation.delimiter|,⟧ ⟦property|max⟧ ⟦operator|=⟧ ⟦number|2⟧ ⟦punctuation.bracket|}]⟧
+⟦property|point⟧ ⟦operator|=⟧ ⟦punctuation.bracket|{⟧ ⟦property|x⟧ ⟦operator|=⟧ ⟦number|1⟧⟦punctuation.delimiter|,⟧ ⟦property|y⟧ ⟦operator|=⟧ ⟦number|2.5⟧⟦punctuation.delimiter|,⟧ ⟦property|nested⟧⟦punctuation.delimiter|.⟧⟦property|deep⟧ ⟦operator|=⟧ ⟦punctuation.bracket|{⟧ ⟦property|ok⟧ ⟦operator|=⟧ ⟦boolean|true⟧ ⟦punctuation.bracket|}⟧ ⟦punctuation.bracket|}⟧
+⟦property|empty⟧ ⟦operator|=⟧ ⟦punctuation.bracket|{}⟧
+⟦property|none⟧ ⟦operator|=⟧ ⟦punctuation.bracket|[]⟧
+⟦property|multi-line⟧ ⟦operator|=⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|a⟧ ⟦operator|=⟧ ⟦number|1⟧⟦punctuation.delimiter|,⟧ ⟦comment|# TOML 1.1⟧
+  ⟦property|b⟧ ⟦operator|=⟧ ⟦string|"two"⟧⟦punctuation.delimiter|,⟧
+⟦punctuation.bracket|}⟧
+
+⟦punctuation.bracket|[[⟧⟦namespace|products⟧⟦punctuation.bracket|]]⟧
+⟦property|name⟧ ⟦operator|=⟧ ⟦string|"Hammer"⟧
+⟦property|sku⟧ ⟦operator|=⟧ ⟦number|738594937⟧
+
+⟦punctuation.bracket|[[⟧⟦namespace|products⟧⟦punctuation.bracket|]]⟧ ⟦comment|# the second one⟧
+⟦property|name⟧ ⟦operator|=⟧ ⟦string|"Nail"⟧
+⟦property|color⟧ ⟦operator|=⟧ ⟦string|"gray"⟧
+
+⟦punctuation.bracket|[[⟧⟦namespace|products⟧⟦punctuation.delimiter|.⟧⟦namespace|variants⟧⟦punctuation.bracket|]]⟧
+⟦property|size⟧ ⟦operator|=⟧ ⟦string|'L'⟧
+"
+`;
+
+exports[`fixtures tsx.tsx: tsx.tsx 1`] = `
+"⟦keyword.import|import⟧ ⟦variable|React⟧⟦punctuation.delimiter|,⟧ ⟦punctuation.bracket|{⟧ ⟦function|useState⟧⟦punctuation.delimiter|,⟧ ⟦keyword|type⟧ ⟦type|ReactNode⟧ ⟦punctuation.bracket|}⟧ ⟦keyword.import|from⟧ ⟦string|"react"⟧⟦punctuation.delimiter|;⟧
+⟦keyword.import|import⟧ ⟦variable|styled⟧⟦punctuation.delimiter|,⟧ ⟦punctuation.bracket|{⟧ ⟦function|css⟧ ⟦punctuation.bracket|}⟧ ⟦keyword.import|from⟧ ⟦string|"styled-components"⟧⟦punctuation.delimiter|;⟧
+⟦keyword.import|import⟧ ⟦punctuation.bracket|{⟧ ⟦function|gql⟧ ⟦punctuation.bracket|}⟧ ⟦keyword.import|from⟧ ⟦string|"@apollo/client"⟧⟦punctuation.delimiter|;⟧
+
+⟦keyword|const⟧ ⟦variable|accent⟧ ⟦operator|=⟧ ⟦string|"#f472b6"⟧⟦punctuation.delimiter|;⟧
+
+⟦keyword|const⟧ ⟦type|Button⟧ ⟦operator|=⟧ ⟦variable|styled⟧⟦punctuation.delimiter|.⟧⟦function.method|button⟧⟦punctuation.bracket|<{⟧ ⟦property|$primary⟧⟦operator|?⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|boolean⟧ ⟦punctuation.bracket|}>⟧⟦string|\`⟧
+  ⟦property|color⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.special|\${⟧⟦variable|accent⟧⟦punctuation.special|}⟧⟦punctuation.delimiter|;⟧
+  ⟦property|padding⟧⟦punctuation.delimiter|:⟧ ⟦number|0.25⟧⟦number.unit|em⟧ ⟦number|1⟧⟦number.unit|em⟧⟦punctuation.delimiter|;⟧
+  ⟦selector|&⟧⟦selector.pseudo|:hover⟧ ⟦punctuation.bracket|{⟧ ⟦property|background⟧⟦punctuation.delimiter|:⟧ ⟦function|rgb⟧⟦punctuation.bracket|(⟧⟦number|0⟧ ⟦number|0⟧ ⟦number|0⟧ ⟦operator|/⟧ ⟦number|10⟧⟦number.unit|%⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧ ⟦punctuation.bracket|}⟧
+  ⟦punctuation.special|\${⟧⟦variable.parameter|props⟧ ⟦operator|=>⟧ ⟦variable.parameter|props⟧⟦punctuation.delimiter|.⟧⟦property|$primary⟧ ⟦operator|&&⟧ ⟦function|css⟧⟦string|\`⟧
+    ⟦property|background⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.special|\${⟧⟦variable|accent⟧⟦punctuation.special|}⟧⟦punctuation.delimiter|;⟧
+    ⟦property|color⟧⟦punctuation.delimiter|:⟧ ⟦constant|white⟧⟦punctuation.delimiter|;⟧
+  ⟦string|\`⟧⟦punctuation.special|}⟧
+⟦string|\`⟧⟦punctuation.delimiter|;⟧
+
+⟦keyword|const⟧ ⟦constant|QUERY⟧ ⟦operator|=⟧ ⟦function|gql⟧⟦string|\`⟧
+  ⟦keyword|query⟧ ⟦function|User⟧⟦punctuation.bracket|(⟧⟦variable|$id⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|ID⟧⟦operator|!⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+    ⟦property|user⟧⟦punctuation.bracket|(⟧⟦variable.parameter|id⟧⟦punctuation.delimiter|:⟧ ⟦variable|$id⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧ ⟦property|name⟧⟦punctuation.delimiter|,⟧ ⟦property|friends⟧⟦punctuation.bracket|(⟧⟦variable.parameter|first⟧⟦punctuation.delimiter|:⟧ ⟦number|10⟧⟦punctuation.bracket|)⟧ ⟦decorator|@include⟧⟦punctuation.bracket|(⟧⟦variable.parameter|if⟧⟦punctuation.delimiter|:⟧ ⟦boolean|true⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧ ⟦operator|...⟧⟦function|Friend⟧ ⟦punctuation.bracket|}⟧ ⟦punctuation.bracket|}⟧
+  ⟦punctuation.bracket|}⟧
+⟦string|\`⟧⟦punctuation.delimiter|;⟧
+
+⟦keyword|interface⟧ ⟦type|Props⟧⟦punctuation.bracket|<⟧⟦type.parameter|T⟧⟦punctuation.bracket|>⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|items⟧⟦punctuation.delimiter|:⟧ ⟦type.parameter|T⟧⟦punctuation.bracket|[]⟧⟦punctuation.delimiter|;⟧
+  ⟦function.method|render⟧⟦punctuation.bracket|(⟧⟦variable.parameter|item⟧⟦punctuation.delimiter|:⟧ ⟦type.parameter|T⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|:⟧ ⟦type|ReactNode⟧⟦punctuation.delimiter|;⟧
+  ⟦property|title⟧⟦operator|?⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|string⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword.import|export⟧ ⟦keyword|function⟧ ⟦function|List⟧⟦punctuation.bracket|<⟧⟦type.parameter|T⟧ ⟦keyword|extends⟧ ⟦punctuation.bracket|{⟧ ⟦property|id⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|number⟧ ⟦punctuation.bracket|}>({⟧ ⟦variable.parameter|items⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|render⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|title⟧ ⟦operator|=⟧ ⟦string|"Items"⟧ ⟦punctuation.bracket|}⟧⟦punctuation.delimiter|:⟧ ⟦type|Props⟧⟦punctuation.bracket|<⟧⟦type.parameter|T⟧⟦punctuation.bracket|>)⟧ ⟦punctuation.bracket|{⟧
+  ⟦keyword|const⟧ ⟦punctuation.bracket|[⟧⟦variable|open⟧⟦punctuation.delimiter|,⟧ ⟦function|setOpen⟧⟦punctuation.bracket|]⟧ ⟦operator|=⟧ ⟦function|useState⟧⟦punctuation.bracket|<⟧⟦type.builtin|boolean⟧⟦punctuation.bracket|>(⟧⟦boolean|false⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+  ⟦keyword.control|return⟧ ⟦punctuation.bracket|(⟧
+    ⟦tag.delimiter|<⟧⟦tag|section⟧ ⟦attribute|className⟧⟦operator|=⟧⟦string|"list"⟧ ⟦attribute|data-open⟧⟦operator|=⟧⟦punctuation.special|{⟧⟦variable|open⟧⟦punctuation.special|}⟧ ⟦attribute|aria-label⟧⟦operator|=⟧⟦string|"a ⟧⟦string.escape|&amp;⟧⟦string| b"⟧⟦tag.delimiter|>⟧
+      ⟦tag.delimiter|<⟧⟦tag|h1⟧ ⟦attribute|style⟧⟦operator|=⟧⟦punctuation.special|{⟧⟦punctuation.bracket|{⟧ ⟦property|color⟧⟦punctuation.delimiter|:⟧ ⟦variable|accent⟧ ⟦punctuation.bracket|}⟧⟦punctuation.special|}⟧⟦tag.delimiter|>⟧⟦punctuation.special|{⟧⟦variable.parameter|title⟧⟦punctuation.special|}⟧ ⟦string.escape|&mdash;⟧ "quoted" text⟦tag.delimiter|</⟧⟦tag|h1⟧⟦tag.delimiter|>⟧
+      ⟦punctuation.special|{⟧⟦comment|/* a comment */⟧⟦punctuation.special|}⟧
+      ⟦tag.delimiter|<⟧⟦tag.component|Button⟧ ⟦attribute|$primary⟧ ⟦attribute|onClick⟧⟦operator|=⟧⟦punctuation.special|{⟧⟦punctuation.bracket|()⟧ ⟦operator|=>⟧ ⟦function|setOpen⟧⟦punctuation.bracket|(⟧⟦operator|!⟧⟦variable|open⟧⟦punctuation.bracket|)⟧⟦punctuation.special|}⟧ ⟦punctuation.special|{⟧⟦operator|...⟧⟦punctuation.bracket|{⟧ ⟦property|disabled⟧⟦punctuation.delimiter|:⟧ ⟦boolean|false⟧ ⟦punctuation.bracket|}⟧⟦punctuation.special|}⟧⟦tag.delimiter|>⟧
+        Toggle
+      ⟦tag.delimiter|</⟧⟦tag.component|Button⟧⟦tag.delimiter|>⟧
+      ⟦tag.delimiter|<>⟧
+        ⟦punctuation.special|{⟧⟦variable|open⟧ ⟦operator|&&⟧ ⟦variable.parameter|items⟧⟦punctuation.delimiter|.⟧⟦function.method|map⟧⟦punctuation.bracket|(⟧⟦variable.parameter|item⟧ ⟦operator|=>⟧ ⟦tag.delimiter|<⟧⟦tag|li⟧ ⟦attribute|key⟧⟦operator|=⟧⟦punctuation.special|{⟧⟦variable.parameter|item⟧⟦punctuation.delimiter|.⟧⟦property|id⟧⟦punctuation.special|}⟧⟦tag.delimiter|>⟧⟦punctuation.special|{⟧⟦function|render⟧⟦punctuation.bracket|(⟧⟦variable.parameter|item⟧⟦punctuation.bracket|)⟧⟦punctuation.special|}⟧⟦tag.delimiter|</⟧⟦tag|li⟧⟦tag.delimiter|>⟧⟦punctuation.bracket|)⟧⟦punctuation.special|}⟧
+      ⟦tag.delimiter|</>⟧
+      ⟦tag.delimiter|<⟧⟦tag.component|React⟧⟦punctuation.delimiter|.⟧⟦tag.component|Fragment⟧ ⟦tag.delimiter|/>⟧
+      ⟦tag.delimiter|<⟧⟦tag|svg⟧⟦punctuation.delimiter|:⟧⟦tag|rect⟧ ⟦attribute|xlink⟧⟦punctuation.delimiter|:⟧⟦attribute|href⟧⟦operator|=⟧⟦string|"#a"⟧ ⟦tag.delimiter|/>⟧
+      ⟦tag.delimiter|<⟧⟦tag|my-element⟧⟦tag.delimiter|></⟧⟦tag|my-element⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|</⟧⟦tag|section⟧⟦tag.delimiter|>⟧
+  ⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword|const⟧ ⟦variable|less⟧ ⟦operator|=⟧ ⟦number|1⟧ ⟦operator|<⟧ ⟦number|2⟧ ⟦operator|&&⟧ ⟦number|3⟧ ⟦operator|>⟧ ⟦number|2⟧⟦punctuation.delimiter|;⟧
+⟦keyword|const⟧ ⟦variable|shifted⟧ ⟦operator|=⟧ ⟦punctuation.bracket|(⟧⟦number|1⟧ ⟦operator|<<⟧ ⟦number|2⟧⟦punctuation.bracket|)⟧ ⟦operator|>>⟧ ⟦number|1⟧⟦punctuation.delimiter|;⟧
+⟦keyword|const⟧ ⟦variable|map⟧ ⟦operator|=⟧ ⟦keyword.operator|new⟧ ⟦type|Map⟧⟦punctuation.bracket|<⟧⟦type.builtin|string⟧⟦punctuation.delimiter|,⟧ ⟦type|Array⟧⟦punctuation.bracket|<⟧⟦type|Set⟧⟦punctuation.bracket|<⟧⟦type.builtin|number⟧⟦punctuation.bracket|>>>()⟧⟦punctuation.delimiter|;⟧
+⟦keyword.operator|void⟧ ⟦constant|QUERY⟧⟦punctuation.delimiter|,⟧ ⟦variable|less⟧⟦punctuation.delimiter|,⟧ ⟦variable|shifted⟧⟦punctuation.delimiter|,⟧ ⟦variable|map⟧⟦punctuation.delimiter|;⟧
+"
+`;
+
+exports[`fixtures typescript.ts: typescript.ts 1`] = `
+"⟦keyword.directive|#!/usr/bin/env bun⟧
+⟦keyword.import|import⟧ ⟦punctuation.bracket|{⟧ ⟦function|readFile⟧⟦punctuation.delimiter|,⟧ ⟦keyword|type⟧ ⟦type|Stats⟧ ⟦punctuation.bracket|}⟧ ⟦keyword.import|from⟧ ⟦string|"node:fs/promises"⟧⟦punctuation.delimiter|;⟧
+⟦keyword.import|import⟧ ⟦operator|*⟧ ⟦keyword.import|as⟧ ⟦namespace|path⟧ ⟦keyword.import|from⟧ ⟦string|"node:path"⟧⟦punctuation.delimiter|;⟧
+⟦keyword.import|import⟧ ⟦type|EventEmitter⟧⟦punctuation.delimiter|,⟧ ⟦punctuation.bracket|{⟧ ⟦variable|once⟧ ⟦keyword.import|as⟧ ⟦variable|waitFor⟧ ⟦punctuation.bracket|}⟧ ⟦keyword.import|from⟧ ⟦string|"node:events"⟧⟦punctuation.delimiter|;⟧
+⟦keyword.import|import⟧ ⟦keyword|type⟧ ⟦punctuation.bracket|{⟧ ⟦type|Server⟧ ⟦punctuation.bracket|}⟧ ⟦keyword.import|from⟧ ⟦string|"bun"⟧⟦punctuation.delimiter|;⟧
+⟦keyword.import|import⟧ ⟦variable|config⟧ ⟦keyword.import|from⟧ ⟦string|"./config.json"⟧ ⟦keyword.import|with⟧ ⟦punctuation.bracket|{⟧ ⟦property|type⟧⟦punctuation.delimiter|:⟧ ⟦string|"json"⟧ ⟦punctuation.bracket|}⟧⟦punctuation.delimiter|;⟧
+
+⟦keyword.import|export⟧ ⟦keyword|const⟧ ⟦constant|MAX_RETRIES⟧ ⟦operator|=⟧ ⟦number|3⟧⟦punctuation.delimiter|;⟧
+⟦keyword|const⟧ ⟦keyword|enum⟧ ⟦type|Level⟧ ⟦punctuation.bracket|{⟧
+  ⟦constant|Debug⟧⟦punctuation.delimiter|,⟧
+  ⟦constant|Info⟧ ⟦operator|=⟧ ⟦number|10⟧⟦punctuation.delimiter|,⟧
+  ⟦constant|Error⟧ ⟦operator|=⟧ ⟦constant|Info⟧ ⟦operator|*⟧ ⟦number|2⟧⟦punctuation.delimiter|,⟧
+⟦punctuation.bracket|}⟧
+
+⟦comment.doc|/**⟧
+⟦comment.doc| * Something that can be cached.⟧
+⟦comment.doc| * ⟧⟦keyword|@template⟧⟦comment.doc| ⟧⟦type.parameter|T⟧⟦comment.doc| what is stored⟧
+⟦comment.doc| * ⟧⟦keyword|@param⟧⟦comment.doc| ⟧⟦type|{string}⟧⟦comment.doc| ⟧⟦variable.parameter|key⟧⟦comment.doc| where it is stored⟧
+⟦comment.doc| * ⟧⟦keyword|@returns⟧⟦comment.doc| ⟧⟦type|{Promise<T>}⟧⟦comment.doc| the value⟧
+⟦comment.doc| */⟧
+⟦keyword.import|export⟧ ⟦keyword|interface⟧ ⟦type|Cache⟧⟦punctuation.bracket|<⟧⟦type.parameter|T⟧⟦punctuation.delimiter|,⟧ ⟦type.parameter|K⟧ ⟦keyword|extends⟧ ⟦type.builtin|string⟧ ⟦operator|=⟧ ⟦type.builtin|string⟧⟦punctuation.bracket|>⟧ ⟦punctuation.bracket|{⟧
+  ⟦keyword.modifier|readonly⟧ ⟦property|size⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|number⟧⟦punctuation.delimiter|;⟧
+  ⟦function.method|get⟧⟦punctuation.bracket|(⟧⟦variable.parameter|key⟧⟦punctuation.delimiter|:⟧ ⟦type.parameter|K⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|:⟧ ⟦type|Promise⟧⟦punctuation.bracket|<⟧⟦type.parameter|T⟧ ⟦operator||⟧ ⟦type.builtin|undefined⟧⟦punctuation.bracket|>⟧⟦punctuation.delimiter|;⟧
+  ⟦function.method|set⟧⟦punctuation.bracket|(⟧⟦variable.parameter|key⟧⟦punctuation.delimiter|:⟧ ⟦type.parameter|K⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|value⟧⟦punctuation.delimiter|:⟧ ⟦type.parameter|T⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|ttl⟧⟦operator|?⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|number⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|void⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|[⟧⟦variable|index⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|number⟧⟦punctuation.bracket|]⟧⟦punctuation.delimiter|:⟧ ⟦type.parameter|T⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword|type⟧ ⟦type|Handler⟧⟦punctuation.bracket|<⟧⟦type.parameter|E⟧⟦punctuation.bracket|>⟧ ⟦operator|=⟧ ⟦punctuation.bracket|(⟧⟦variable.parameter|event⟧⟦punctuation.delimiter|:⟧ ⟦type.parameter|E⟧⟦punctuation.delimiter|,⟧ ⟦operator|...⟧⟦variable.parameter|rest⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|unknown⟧⟦punctuation.bracket|[])⟧ ⟦operator|=>⟧ ⟦type.builtin|void⟧ ⟦operator||⟧ ⟦type|Promise⟧⟦punctuation.bracket|<⟧⟦type.builtin|void⟧⟦punctuation.bracket|>⟧⟦punctuation.delimiter|;⟧
+⟦keyword|type⟧ ⟦type|Keys⟧⟦punctuation.bracket|<⟧⟦type.parameter|T⟧⟦punctuation.bracket|>⟧ ⟦operator|=⟧ ⟦punctuation.bracket|{⟧ ⟦keyword.modifier|readonly⟧ ⟦punctuation.bracket|[⟧⟦type.parameter|P⟧ ⟦keyword.operator|in⟧ ⟦keyword.operator|keyof⟧ ⟦type.parameter|T⟧ ⟦keyword.operator|as⟧ ⟦string|\`on⟧⟦punctuation.special|\${⟧⟦type|Capitalize⟧⟦punctuation.bracket|<⟧⟦type.parameter|P⟧ ⟦operator|&⟧ ⟦type.builtin|string⟧⟦punctuation.bracket|>⟧⟦punctuation.special|}⟧⟦string|\`⟧⟦punctuation.bracket|]⟧⟦operator|?⟧⟦punctuation.delimiter|:⟧ ⟦type.parameter|T⟧⟦punctuation.bracket|[⟧⟦type.parameter|P⟧⟦punctuation.bracket|]⟧ ⟦keyword|extends⟧ ⟦keyword.operator|infer⟧ ⟦type.parameter|U⟧ ⟦operator|?⟧ ⟦type.parameter|U⟧ ⟦punctuation.delimiter|:⟧ ⟦type.builtin|never⟧ ⟦punctuation.bracket|}⟧⟦punctuation.delimiter|;⟧
+
+⟦keyword.modifier|declare⟧ ⟦keyword|global⟧ ⟦punctuation.bracket|{⟧
+  ⟦keyword|namespace⟧ ⟦namespace|NodeJS⟧ ⟦punctuation.bracket|{⟧
+    ⟦keyword|interface⟧ ⟦type|ProcessEnv⟧ ⟦punctuation.bracket|{⟧
+      ⟦property|API_URL⟧⟦operator|?⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|string⟧⟦punctuation.delimiter|;⟧
+    ⟦punctuation.bracket|}⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword|function⟧ ⟦function|assertIsString⟧⟦punctuation.bracket|(⟧⟦variable.parameter|value⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|unknown⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|name⟧ ⟦operator|=⟧ ⟦string|"value"⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|:⟧ ⟦keyword.operator|asserts⟧ ⟦variable.parameter|value⟧ ⟦keyword.operator|is⟧ ⟦type.builtin|string⟧ ⟦punctuation.bracket|{⟧
+  ⟦keyword.control|if⟧ ⟦punctuation.bracket|(⟧⟦keyword.operator|typeof⟧ ⟦variable.parameter|value⟧ ⟦operator|!==⟧ ⟦string|"string"⟧⟦punctuation.bracket|)⟧ ⟦keyword.control|throw⟧ ⟦keyword.operator|new⟧ ⟦type|TypeError⟧⟦punctuation.bracket|(⟧⟦string|\`⟧⟦punctuation.special|\${⟧⟦variable.parameter|name⟧⟦punctuation.special|}⟧⟦string| must be a string, got ⟧⟦punctuation.special|\${⟧⟦keyword.operator|typeof⟧ ⟦variable.parameter|value⟧⟦punctuation.special|}⟧⟦string|\`⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦decorator|@sealed⟧
+⟦keyword.import|export⟧ ⟦keyword.modifier|abstract⟧ ⟦keyword|class⟧ ⟦type|Store⟧⟦punctuation.bracket|<⟧⟦type.parameter|T⟧⟦punctuation.bracket|>⟧ ⟦keyword|extends⟧ ⟦type|EventEmitter⟧ ⟦keyword|implements⟧ ⟦type|Cache⟧⟦punctuation.bracket|<⟧⟦type.parameter|T⟧⟦punctuation.bracket|>⟧ ⟦punctuation.bracket|{⟧
+  ⟦keyword.modifier|static⟧ ⟦property|#instances⟧ ⟦operator|=⟧ ⟦number|0⟧⟦punctuation.delimiter|;⟧
+  ⟦property|#items⟧ ⟦operator|=⟧ ⟦keyword.operator|new⟧ ⟦type|Map⟧⟦punctuation.bracket|<⟧⟦type.builtin|string⟧⟦punctuation.delimiter|,⟧ ⟦type.parameter|T⟧⟦punctuation.bracket|>()⟧⟦punctuation.delimiter|;⟧
+  ⟦keyword.modifier|protected⟧ ⟦keyword.modifier|declare⟧ ⟦keyword.modifier|readonly⟧ ⟦property|server⟧⟦operator|?⟧⟦punctuation.delimiter|:⟧ ⟦type|Server⟧⟦punctuation.delimiter|;⟧
+  ⟦keyword.modifier|accessor⟧ ⟦property|dirty⟧ ⟦operator|=⟧ ⟦boolean|false⟧⟦punctuation.delimiter|;⟧
+
+  ⟦keyword|constructor⟧⟦punctuation.bracket|(⟧
+    ⟦keyword.modifier|private⟧ ⟦keyword.modifier|readonly⟧ ⟦variable.parameter|root⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|string⟧⟦punctuation.delimiter|,⟧
+    ⟦keyword.modifier|public⟧ ⟦variable.parameter|level⟧⟦punctuation.delimiter|:⟧ ⟦type|Level⟧ ⟦operator|=⟧ ⟦type|Level⟧⟦punctuation.delimiter|.⟧⟦constant|Info⟧⟦punctuation.delimiter|,⟧
+  ⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+    ⟦variable.builtin|super⟧⟦punctuation.bracket|()⟧⟦punctuation.delimiter|;⟧
+    ⟦type|Store⟧⟦punctuation.delimiter|.⟧⟦property|#instances⟧⟦operator|++⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+
+  ⟦keyword.modifier|get⟧ ⟦function.method|size⟧⟦punctuation.bracket|()⟧ ⟦punctuation.bracket|{⟧
+    ⟦keyword.control|return⟧ ⟦variable.builtin|this⟧⟦punctuation.delimiter|.⟧⟦property|#items⟧⟦punctuation.delimiter|.⟧⟦property|size⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+
+  ⟦decorator|@log⟧⟦punctuation.bracket|(⟧⟦string|"get"⟧⟦punctuation.bracket|)⟧
+  ⟦keyword.modifier|async⟧ ⟦function.method|get⟧⟦punctuation.bracket|(⟧⟦variable.parameter|key⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|string⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|:⟧ ⟦type|Promise⟧⟦punctuation.bracket|<⟧⟦type.parameter|T⟧ ⟦operator||⟧ ⟦type.builtin|undefined⟧⟦punctuation.bracket|>⟧ ⟦punctuation.bracket|{⟧
+    ⟦keyword|const⟧ ⟦variable|file⟧ ⟦operator|=⟧ ⟦namespace|path⟧⟦punctuation.delimiter|.⟧⟦function.method|join⟧⟦punctuation.bracket|(⟧⟦variable.builtin|this⟧⟦punctuation.delimiter|.⟧⟦property|root⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|key⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+    ⟦keyword.control|try⟧ ⟦punctuation.bracket|{⟧
+      ⟦keyword|const⟧ ⟦variable|text⟧ ⟦operator|=⟧ ⟦keyword.control|await⟧ ⟦function|readFile⟧⟦punctuation.bracket|(⟧⟦variable|file⟧⟦punctuation.delimiter|,⟧ ⟦string|"utf8"⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+      ⟦keyword.control|return⟧ ⟦type|JSON⟧⟦punctuation.delimiter|.⟧⟦function.method|parse⟧⟦punctuation.bracket|(⟧⟦variable|text⟧⟦punctuation.bracket|)⟧ ⟦keyword.operator|as⟧ ⟦type.parameter|T⟧⟦punctuation.delimiter|;⟧
+    ⟦punctuation.bracket|}⟧ ⟦keyword.control|catch⟧ ⟦punctuation.bracket|(⟧⟦variable|error⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+      ⟦keyword.control|if⟧ ⟦punctuation.bracket|((⟧⟦variable|error⟧ ⟦keyword.operator|as⟧ ⟦namespace|NodeJS⟧⟦punctuation.delimiter|.⟧⟦type|ErrnoException⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|.⟧⟦property|code⟧ ⟦operator|===⟧ ⟦string|"ENOENT"⟧⟦punctuation.bracket|)⟧ ⟦keyword.control|return⟧ ⟦constant.builtin|undefined⟧⟦punctuation.delimiter|;⟧
+      ⟦keyword.control|throw⟧ ⟦variable|error⟧⟦punctuation.delimiter|;⟧
+    ⟦punctuation.bracket|}⟧ ⟦keyword.control|finally⟧ ⟦punctuation.bracket|{⟧
+      ⟦variable.builtin|this⟧⟦punctuation.delimiter|.⟧⟦function.method|emit⟧⟦punctuation.bracket|(⟧⟦string|"get"⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|key⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+    ⟦punctuation.bracket|}⟧
+  ⟦punctuation.bracket|}⟧
+
+  ⟦function.method|set⟧⟦punctuation.bracket|(⟧⟦variable.parameter|key⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|string⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|value⟧⟦punctuation.delimiter|:⟧ ⟦type.parameter|T⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|ttl⟧ ⟦operator|=⟧ ⟦number|1_000⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+    ⟦variable.builtin|this⟧⟦punctuation.delimiter|.⟧⟦property|#items⟧⟦punctuation.delimiter|.⟧⟦function.method|set⟧⟦punctuation.bracket|(⟧⟦variable.parameter|key⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|value⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+    ⟦variable.builtin|this⟧⟦punctuation.delimiter|.⟧⟦property|dirty⟧ ⟦operator|||=⟧ ⟦boolean|true⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|}⟧
+
+  ⟦keyword.modifier|abstract⟧ ⟦function.method|flush⟧⟦punctuation.bracket|()⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|void⟧⟦punctuation.delimiter|;⟧
+  ⟦punctuation.bracket|[⟧⟦variable|index⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|number⟧⟦punctuation.bracket|]⟧⟦punctuation.delimiter|:⟧ ⟦type.parameter|T⟧⟦punctuation.delimiter|;⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword.import|export⟧ ⟦keyword.modifier|async⟧ ⟦keyword|function⟧⟦operator|*⟧ ⟦function|retry⟧⟦punctuation.bracket|<⟧⟦type.parameter|R⟧⟦punctuation.bracket|>(⟧⟦variable.parameter|task⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|()⟧ ⟦operator|=>⟧ ⟦type|Promise⟧⟦punctuation.bracket|<⟧⟦type.parameter|R⟧⟦punctuation.bracket|>⟧⟦punctuation.delimiter|,⟧ ⟦variable.parameter|times⟧ ⟦operator|=⟧ ⟦constant|MAX_RETRIES⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|:⟧ ⟦type|AsyncGenerator⟧⟦punctuation.bracket|<⟧⟦type.parameter|R⟧⟦punctuation.delimiter|,⟧ ⟦type.builtin|void⟧⟦punctuation.bracket|>⟧ ⟦punctuation.bracket|{⟧
+  ⟦label|outer⟧⟦punctuation.delimiter|:⟧ ⟦keyword.control|for⟧ ⟦punctuation.bracket|(⟧⟦keyword|let⟧ ⟦variable|attempt⟧ ⟦operator|=⟧ ⟦number|0⟧⟦punctuation.delimiter|;⟧ ⟦variable|attempt⟧ ⟦operator|<⟧ ⟦variable.parameter|times⟧⟦punctuation.delimiter|;⟧ ⟦variable|attempt⟧⟦operator|++⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧
+    ⟦keyword.control|for⟧ ⟦keyword.control|await⟧ ⟦punctuation.bracket|(⟧⟦keyword|const⟧ ⟦variable|_⟧ ⟦keyword.operator|of⟧ ⟦punctuation.bracket|[⟧⟦variable|attempt⟧⟦punctuation.bracket|])⟧ ⟦punctuation.bracket|{⟧
+      ⟦keyword.control|if⟧ ⟦punctuation.bracket|(⟧⟦variable|attempt⟧ ⟦operator|%⟧ ⟦number|2⟧ ⟦operator|===⟧ ⟦number|0⟧⟦punctuation.bracket|)⟧ ⟦keyword.control|continue⟧ ⟦label|outer⟧⟦punctuation.delimiter|;⟧
+      ⟦keyword.control|yield⟧ ⟦keyword.control|await⟧ ⟦function|task⟧⟦punctuation.bracket|()⟧⟦punctuation.delimiter|;⟧
+      ⟦keyword.control|break⟧ ⟦label|outer⟧⟦punctuation.delimiter|;⟧
+    ⟦punctuation.bracket|}⟧
+  ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+
+⟦keyword|const⟧ ⟦variable|numbers⟧ ⟦operator|=⟧ ⟦punctuation.bracket|[⟧⟦number|0xff⟧⟦punctuation.delimiter|,⟧ ⟦number|0b1010⟧⟦punctuation.delimiter|,⟧ ⟦number|0o17⟧⟦punctuation.delimiter|,⟧ ⟦number|1e-3⟧⟦punctuation.delimiter|,⟧ ⟦number|12n⟧⟦punctuation.delimiter|,⟧ ⟦number|1_000.5⟧⟦punctuation.delimiter|,⟧ ⟦constant.builtin|NaN⟧⟦punctuation.delimiter|,⟧ ⟦constant.builtin|Infinity⟧⟦punctuation.bracket|]⟧⟦punctuation.delimiter|;⟧
+⟦keyword|const⟧ ⟦variable|pattern⟧ ⟦operator|=⟧ ⟦string.regexp|/^[a-z]+\\/(?<id>\\d+)$/giu⟧⟦punctuation.delimiter|;⟧
+⟦keyword|const⟧ ⟦variable|escaped⟧ ⟦operator|=⟧ ⟦string|"tab⟧⟦string.escape|\\t⟧⟦string| quote⟧⟦string.escape|\\"⟧⟦string| unicode⟧⟦string.escape|\\u{1F600}⟧⟦string| hex⟧⟦string.escape|\\x41⟧⟦string| ⟧⟦string.escape|\\⟧
+⟦string|continued"⟧⟦punctuation.delimiter|;⟧
+⟦keyword|const⟧ ⟦variable|nested⟧ ⟦operator|=⟧ ⟦string|\`a⟧⟦punctuation.special|\${⟧⟦string|\`b⟧⟦punctuation.special|\${⟧⟦variable|numbers⟧⟦punctuation.delimiter|.⟧⟦property|length⟧ ⟦operator|>⟧ ⟦number|2⟧ ⟦operator|?⟧ ⟦string|"c"⟧ ⟦punctuation.delimiter|:⟧ ⟦constant.builtin|null⟧⟦punctuation.special|}⟧⟦string|\`⟧⟦punctuation.special|}⟧⟦string|d\`⟧⟦punctuation.delimiter|;⟧
+⟦keyword|const⟧ ⟦variable|object⟧ ⟦operator|=⟧ ⟦punctuation.bracket|{⟧ ⟦variable|config⟧⟦punctuation.delimiter|,⟧ ⟦namespace|path⟧⟦punctuation.delimiter|,⟧ ⟦string|"quoted key"⟧⟦punctuation.delimiter|:⟧ ⟦number|1⟧⟦punctuation.delimiter|,⟧ ⟦punctuation.bracket|[⟧⟦variable|pattern⟧⟦punctuation.delimiter|.⟧⟦property|source⟧⟦punctuation.bracket|]⟧⟦punctuation.delimiter|:⟧ ⟦number|2⟧⟦punctuation.delimiter|,⟧ ⟦function.method|method⟧⟦punctuation.bracket|()⟧ ⟦punctuation.bracket|{}⟧⟦punctuation.delimiter|,⟧ ⟦keyword.modifier|get⟧ ⟦function.method|size⟧⟦punctuation.bracket|()⟧ ⟦punctuation.bracket|{⟧ ⟦keyword.control|return⟧ ⟦number|0⟧⟦punctuation.delimiter|;⟧ ⟦punctuation.bracket|}⟧⟦punctuation.delimiter|,⟧ ⟦function.method|arrow⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|()⟧ ⟦operator|=>⟧ ⟦punctuation.bracket|{}⟧ ⟦punctuation.bracket|}⟧⟦punctuation.delimiter|;⟧
+⟦keyword|const⟧ ⟦punctuation.bracket|{⟧ ⟦variable|size⟧⟦punctuation.delimiter|,⟧ ⟦string|"quoted key"⟧⟦punctuation.delimiter|:⟧ ⟦variable|renamed⟧ ⟦operator|=⟧ ⟦number|5⟧⟦punctuation.delimiter|,⟧ ⟦operator|...⟧⟦variable|others⟧ ⟦punctuation.bracket|}⟧ ⟦operator|=⟧ ⟦variable|object⟧⟦punctuation.delimiter|;⟧
+⟦keyword|const⟧ ⟦function|generic⟧ ⟦operator|=⟧ ⟦punctuation.bracket|<⟧⟦type.parameter|T⟧⟦punctuation.delimiter|,⟧⟦punctuation.bracket|>(⟧⟦variable.parameter|value⟧⟦punctuation.delimiter|:⟧ ⟦type.parameter|T⟧⟦punctuation.bracket|)⟧ ⟦operator|=>⟧ ⟦variable.parameter|value⟧ ⟦keyword.operator|satisfies⟧ ⟦type.builtin|unknown⟧⟦punctuation.delimiter|;⟧
+⟦keyword|const⟧ ⟦variable|casted⟧ ⟦operator|=⟧ ⟦punctuation.bracket|<⟧⟦type.builtin|number⟧⟦punctuation.bracket|>(<⟧⟦type.builtin|unknown⟧⟦punctuation.bracket|>⟧⟦variable|size⟧⟦punctuation.bracket|)⟧ ⟦operator|+⟧ ⟦variable|renamed⟧⟦operator|!⟧⟦punctuation.delimiter|;⟧
+⟦keyword|let⟧ ⟦variable|type⟧ ⟦operator|=⟧ ⟦number|1⟧⟦punctuation.delimiter|,⟧ ⟦variable|of⟧ ⟦operator|=⟧ ⟦number|2⟧⟦punctuation.delimiter|,⟧ ⟦variable|async⟧ ⟦operator|=⟧ ⟦number|3⟧⟦punctuation.delimiter|;⟧
+⟦keyword|using⟧ ⟦variable|handle⟧ ⟦operator|=⟧ ⟦punctuation.bracket|{⟧ ⟦punctuation.bracket|[⟧⟦type|Symbol⟧⟦punctuation.delimiter|.⟧⟦property|dispose⟧⟦punctuation.bracket|]()⟧ ⟦punctuation.bracket|{}⟧ ⟦punctuation.bracket|}⟧⟦punctuation.delimiter|;⟧
+⟦keyword.operator|void⟧ ⟦variable|waitFor⟧⟦punctuation.delimiter|,⟧ ⟦variable|others⟧⟦punctuation.delimiter|,⟧ ⟦function|generic⟧⟦punctuation.delimiter|,⟧ ⟦variable|casted⟧⟦punctuation.delimiter|,⟧ ⟦variable|type⟧⟦punctuation.delimiter|,⟧ ⟦variable|of⟧⟦punctuation.delimiter|,⟧ ⟦variable|async⟧⟦punctuation.delimiter|,⟧ ⟦variable|handle⟧⟦punctuation.delimiter|,⟧ ⟦variable|nested⟧⟦punctuation.delimiter|,⟧ ⟦variable|escaped⟧⟦punctuation.delimiter|;⟧
+⟦keyword.import|export⟧ ⟦keyword.import|default⟧ ⟦type|Store⟧⟦punctuation.delimiter|;⟧
+⟦keyword.import|export⟧ ⟦punctuation.bracket|{⟧ ⟦function|retry⟧ ⟦keyword.import|as⟧ ⟦variable|again⟧⟦punctuation.delimiter|,⟧ ⟦keyword|type⟧ ⟦type|Handler⟧⟦punctuation.delimiter|,⟧ ⟦keyword|type⟧ ⟦type|Keys⟧ ⟦punctuation.bracket|}⟧⟦punctuation.delimiter|;⟧
+⟦keyword.import|export⟧ ⟦operator|*⟧ ⟦keyword.import|as⟧ ⟦namespace|events⟧ ⟦keyword.import|from⟧ ⟦string|"node:events"⟧⟦punctuation.delimiter|;⟧
+"
+`;
+
+exports[`fixtures vue.vue: vue.vue 1`] = `
+"⟦comment|<!-- A list of todos with a filter. -->⟧
+⟦tag.delimiter|<⟧⟦tag|script⟧ ⟦attribute|lang⟧⟦operator|=⟧⟦string|"ts"⟧⟦tag.delimiter|>⟧
+⟦keyword.import|export⟧ ⟦keyword.import|default⟧ ⟦punctuation.bracket|{⟧ ⟦property|name⟧⟦punctuation.delimiter|:⟧ ⟦string|"TodoList"⟧⟦punctuation.delimiter|,⟧ ⟦property|inheritAttrs⟧⟦punctuation.delimiter|:⟧ ⟦boolean|false⟧ ⟦punctuation.bracket|}⟧⟦punctuation.delimiter|;⟧
+⟦tag.delimiter|</⟧⟦tag|script⟧⟦tag.delimiter|>⟧
+
+⟦tag.delimiter|<⟧⟦tag|script⟧ ⟦attribute|setup⟧ ⟦attribute|lang⟧⟦operator|=⟧⟦string|"ts"⟧ ⟦attribute|generic⟧⟦operator|=⟧⟦string|"⟧⟦type.parameter|T⟧ ⟦keyword|extends⟧ ⟦punctuation.bracket|{⟧ ⟦property|id⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|number⟧⟦punctuation.delimiter|;⟧ ⟦property|title⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|string⟧ ⟦punctuation.bracket|}⟧⟦string|"⟧⟦tag.delimiter|>⟧
+⟦keyword.import|import⟧ ⟦punctuation.bracket|{⟧ ⟦function|computed⟧⟦punctuation.delimiter|,⟧ ⟦function|ref⟧ ⟦punctuation.bracket|}⟧ ⟦keyword.import|from⟧ ⟦string|"vue"⟧⟦punctuation.delimiter|;⟧
+⟦keyword.import|import⟧ ⟦variable|TodoItem⟧ ⟦keyword.import|from⟧ ⟦string|"./TodoItem.vue"⟧⟦punctuation.delimiter|;⟧
+
+⟦keyword|const⟧ ⟦variable|props⟧ ⟦operator|=⟧ ⟦function|defineProps⟧⟦punctuation.bracket|<{⟧ ⟦property|items⟧⟦punctuation.delimiter|:⟧ ⟦type|T⟧⟦punctuation.bracket|[]⟧⟦punctuation.delimiter|;⟧ ⟦property|max⟧⟦operator|?⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|number⟧ ⟦punctuation.bracket|}>()⟧⟦punctuation.delimiter|;⟧
+⟦keyword|const⟧ ⟦variable|emit⟧ ⟦operator|=⟧ ⟦function|defineEmits⟧⟦punctuation.bracket|<{⟧ ⟦property|remove⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|[⟧⟦property|id⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|number⟧⟦punctuation.bracket|]⟧ ⟦punctuation.bracket|}>()⟧⟦punctuation.delimiter|;⟧
+⟦keyword|const⟧ ⟦variable|filter⟧ ⟦operator|=⟧ ⟦function|ref⟧⟦punctuation.bracket|(⟧⟦string|""⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+⟦keyword|const⟧ ⟦variable|count⟧ ⟦operator|=⟧ ⟦function|ref⟧⟦punctuation.bracket|(⟧⟦number|0⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧
+⟦keyword|const⟧ ⟦variable|visible⟧ ⟦operator|=⟧ ⟦function|computed⟧⟦punctuation.bracket|(()⟧ ⟦operator|=>⟧ ⟦variable|props⟧⟦punctuation.delimiter|.⟧⟦property|items⟧⟦punctuation.delimiter|.⟧⟦function.method|filter⟧⟦punctuation.bracket|(⟧⟦variable.parameter|it⟧ ⟦operator|=>⟧ ⟦variable.parameter|it⟧⟦punctuation.delimiter|.⟧⟦property|title⟧⟦punctuation.delimiter|.⟧⟦function.method|includes⟧⟦punctuation.bracket|(⟧⟦variable|filter⟧⟦punctuation.delimiter|.⟧⟦property|value⟧⟦punctuation.bracket|)))⟧⟦punctuation.delimiter|;⟧
+⟦tag.delimiter|</⟧⟦tag|script⟧⟦tag.delimiter|>⟧
+
+⟦tag.delimiter|<⟧⟦tag|template⟧⟦tag.delimiter|>⟧
+  ⟦tag.delimiter|<⟧⟦tag|section⟧ ⟦attribute|class⟧⟦operator|=⟧⟦string|"todos"⟧ ⟦attribute|:class⟧⟦operator|=⟧⟦string|"⟧⟦punctuation.bracket|{⟧ ⟦property|empty⟧⟦punctuation.delimiter|:⟧ ⟦operator|!⟧⟦variable|visible⟧⟦punctuation.delimiter|.⟧⟦property|length⟧⟦punctuation.delimiter|,⟧ ⟦string|'is-full'⟧⟦punctuation.delimiter|:⟧ ⟦variable|visible⟧⟦punctuation.delimiter|.⟧⟦property|length⟧ ⟦operator|>=⟧ ⟦punctuation.bracket|(⟧⟦variable|max⟧ ⟦operator|??⟧ ⟦number|10⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|}⟧⟦string|"⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|h2⟧ ⟦attribute|v-once⟧⟦tag.delimiter|>⟧⟦punctuation.special|{{⟧ ⟦function|$t⟧⟦punctuation.bracket|(⟧⟦string|"title"⟧⟦punctuation.bracket|)⟧ ⟦punctuation.special|}}⟧ ⟦string.escape|&ndash;⟧ ⟦punctuation.special|{{⟧ ⟦variable|visible⟧⟦punctuation.delimiter|.⟧⟦property|length⟧ ⟦punctuation.special|}}⟧ / ⟦punctuation.special|{{⟧ ⟦variable|items⟧⟦punctuation.delimiter|.⟧⟦property|length⟧ ⟦punctuation.special|}}⟧⟦tag.delimiter|</⟧⟦tag|h2⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|input⟧ ⟦attribute|v-model.trim⟧⟦operator|=⟧⟦string|"⟧⟦variable|filter⟧⟦string|"⟧ ⟦attribute|type⟧⟦operator|=⟧⟦string|"search"⟧ ⟦attribute|:placeholder⟧⟦operator|=⟧⟦string|"⟧⟦function|$t⟧⟦punctuation.bracket|(⟧⟦string|'search'⟧⟦punctuation.bracket|)⟧⟦string|"⟧ ⟦attribute|@keyup.esc⟧⟦operator|=⟧⟦string|"⟧⟦variable|filter⟧ ⟦operator|=⟧ ⟦string|''"⟧ ⟦tag.delimiter|/>⟧
+    ⟦tag.delimiter|<⟧⟦tag|p⟧ ⟦keyword.control|v-if⟧⟦operator|=⟧⟦string|"⟧⟦operator|!⟧⟦variable|items⟧⟦punctuation.delimiter|.⟧⟦property|length⟧⟦string|"⟧ ⟦attribute|style⟧⟦operator|=⟧⟦string|"⟧⟦property|color⟧⟦punctuation.delimiter|:⟧ ⟦constant|gray⟧⟦punctuation.delimiter|;⟧ ⟦property|margin⟧⟦punctuation.delimiter|:⟧ ⟦number|0⟧⟦string|"⟧⟦tag.delimiter|>⟧⟦punctuation.special|{{⟧ ⟦function|$t⟧⟦punctuation.bracket|(⟧⟦string|"empty"⟧⟦punctuation.bracket|)⟧ ⟦punctuation.special|}}⟧⟦tag.delimiter|</⟧⟦tag|p⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|p⟧ ⟦keyword.control|v-else-if⟧⟦operator|=⟧⟦string|"⟧⟦operator|!⟧⟦variable|visible⟧⟦punctuation.delimiter|.⟧⟦property|length⟧⟦string|"⟧⟦tag.delimiter|>⟧No match for "⟦punctuation.special|{{⟧ ⟦variable|filter⟧ ⟦punctuation.special|}}⟧".⟦tag.delimiter|</⟧⟦tag|p⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|ul⟧ ⟦keyword.control|v-else⟧ ⟦keyword.control|v-show⟧⟦operator|=⟧⟦string|"⟧⟦variable|count⟧ ⟦operator|>=⟧ ⟦number|0⟧⟦string|"⟧⟦tag.delimiter|>⟧
+      ⟦tag.delimiter|<⟧⟦tag|li⟧ ⟦keyword.control|v-for⟧⟦operator|=⟧⟦string|"⟧⟦punctuation.bracket|(⟧⟦variable|item⟧⟦punctuation.delimiter|,⟧ ⟦variable|index⟧⟦punctuation.bracket|)⟧ ⟦keyword.operator|in⟧ ⟦variable|visible⟧⟦string|"⟧ ⟦attribute|:key⟧⟦operator|=⟧⟦string|"⟧⟦variable|item⟧⟦punctuation.delimiter|.⟧⟦property|id⟧⟦string|"⟧ ⟦attribute|:data-index⟧⟦operator|=⟧⟦string|"⟧⟦variable|index⟧⟦string|"⟧⟦tag.delimiter|>⟧
+        ⟦tag.delimiter|<⟧⟦tag.component|TodoItem⟧
+          ⟦attribute|v-bind⟧⟦operator|=⟧⟦string|"⟧⟦variable|item⟧⟦string|"⟧
+          ⟦attribute|:title⟧⟦operator|=⟧⟦string|"⟧⟦variable|item⟧⟦punctuation.delimiter|.⟧⟦property|title⟧⟦punctuation.delimiter|.⟧⟦function.method|toUpperCase⟧⟦punctuation.bracket|()⟧⟦string|"⟧
+          ⟦attribute|:[\`data-\${index}\`]⟧⟦operator|=⟧⟦string|"⟧⟦boolean|true⟧⟦string|"⟧
+          ⟦attribute|.hidden⟧⟦operator|=⟧⟦string|"⟧⟦boolean|false⟧⟦string|"⟧
+          ⟦attribute|@remove⟧⟦operator|=⟧⟦string|"⟧⟦function|emit⟧⟦punctuation.bracket|(⟧⟦string|'remove'⟧⟦punctuation.delimiter|,⟧ ⟦variable|item⟧⟦punctuation.delimiter|.⟧⟦property|id⟧⟦punctuation.bracket|)⟧⟦string|"⟧
+          ⟦attribute|@click.stop⟧⟦operator|=⟧⟦string|"⟧⟦variable|count⟧⟦operator|++⟧⟦punctuation.delimiter|;⟧ ⟦variable|filter⟧ ⟦operator|=⟧ ⟦string|''"⟧
+          ⟦attribute|@hover⟧⟦operator|=⟧⟦string|"⟧⟦keyword|function⟧ ⟦punctuation.bracket|(⟧⟦variable.parameter|event⟧⟦punctuation.bracket|)⟧ ⟦punctuation.bracket|{⟧ ⟦variable|console⟧⟦punctuation.delimiter|.⟧⟦function.method|log⟧⟦punctuation.bracket|(⟧⟦variable.parameter|event⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧ ⟦punctuation.bracket|}⟧⟦string|"⟧
+          ⟦attribute|v-on:focus⟧⟦operator|=⟧⟦string|"⟧⟦punctuation.bracket|(⟧⟦variable.parameter|event⟧⟦punctuation.delimiter|:⟧ ⟦type|FocusEvent⟧⟦punctuation.bracket|)⟧ ⟦operator|=>⟧ ⟦variable|console⟧⟦punctuation.delimiter|.⟧⟦function.method|log⟧⟦punctuation.bracket|(⟧⟦variable.parameter|event⟧⟦punctuation.delimiter|.⟧⟦property|target⟧⟦punctuation.bracket|)⟧⟦string|"⟧
+        ⟦tag.delimiter|>⟧
+          ⟦tag.delimiter|<⟧⟦tag|template⟧ ⟦attribute|#default⟧⟦operator|=⟧⟦string|"⟧⟦punctuation.bracket|{⟧ ⟦variable|done⟧⟦punctuation.delimiter|,⟧ ⟦variable|toggle⟧ ⟦punctuation.bracket|}⟧⟦string|"⟧⟦tag.delimiter|>⟧
+            ⟦tag.delimiter|<⟧⟦tag|input⟧ ⟦attribute|type⟧⟦operator|=⟧⟦string|"checkbox"⟧ ⟦attribute|:checked⟧⟦operator|=⟧⟦string|"⟧⟦variable|done⟧⟦string|"⟧ ⟦attribute|@change⟧⟦operator|=⟧⟦string|"⟧⟦variable|toggle⟧⟦string|"⟧ ⟦tag.delimiter|/>⟧
+          ⟦tag.delimiter|</⟧⟦tag|template⟧⟦tag.delimiter|>⟧
+          ⟦tag.delimiter|<⟧⟦tag|template⟧ ⟦attribute|v-slot:footer⟧⟦operator|=⟧⟦string|"⟧⟦variable|slotProps⟧⟦string|"⟧⟦tag.delimiter|>⟧
+            ⟦tag.delimiter|<⟧⟦tag|small⟧ ⟦attribute|v-text⟧⟦operator|=⟧⟦string|"⟧⟦variable|slotProps⟧⟦punctuation.delimiter|.⟧⟦property|note⟧⟦string|"⟧ ⟦tag.delimiter|/>⟧
+          ⟦tag.delimiter|</⟧⟦tag|template⟧⟦tag.delimiter|>⟧
+        ⟦tag.delimiter|</⟧⟦tag.component|TodoItem⟧⟦tag.delimiter|>⟧
+      ⟦tag.delimiter|</⟧⟦tag|li⟧⟦tag.delimiter|>⟧
+      ⟦tag.delimiter|<⟧⟦tag|li⟧ ⟦keyword.control|v-for⟧⟦operator|=⟧⟦string|"⟧⟦variable|n⟧ ⟦keyword.operator|of⟧ ⟦number|3⟧⟦string|"⟧ ⟦attribute|:key⟧⟦operator|=⟧⟦string|"⟧⟦variable|n⟧⟦string|"⟧⟦tag.delimiter|>⟧⟦punctuation.special|{{⟧ ⟦variable|n⟧ ⟦punctuation.special|}}⟧⟦tag.delimiter|</⟧⟦tag|li⟧⟦tag.delimiter|>⟧
+      ⟦tag.delimiter|<⟧⟦tag|li⟧ ⟦keyword.control|v-for⟧⟦operator|=⟧⟦string|"⟧⟦punctuation.bracket|{⟧ ⟦variable|id⟧⟦punctuation.delimiter|,⟧ ⟦variable|title⟧ ⟦punctuation.bracket|}⟧ ⟦keyword.operator|in⟧ ⟦variable|items⟧⟦string|"⟧ ⟦attribute|:key⟧⟦operator|=⟧⟦string|"⟧⟦variable|id⟧⟦string|"⟧ ⟦attribute|v-html⟧⟦operator|=⟧⟦string|"⟧⟦variable|title⟧⟦string|"⟧⟦tag.delimiter|></⟧⟦tag|li⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|</⟧⟦tag|ul⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|my-counter⟧ ⟦attribute|:value⟧⟦operator|=⟧⟦string|"⟧⟦variable|count⟧⟦string|"⟧ ⟦attribute|onclick⟧⟦operator|=⟧⟦string|"⟧⟦variable|console⟧⟦punctuation.delimiter|.⟧⟦function.method|log⟧⟦punctuation.bracket|(⟧⟦string|'native'⟧⟦punctuation.bracket|)⟧⟦string|"⟧⟦tag.delimiter|></⟧⟦tag|my-counter⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|component⟧ ⟦attribute|:is⟧⟦operator|=⟧⟦string|"⟧⟦variable|count⟧ ⟦operator|>⟧ ⟦number|1⟧ ⟦operator|?⟧ ⟦string|'b'⟧ ⟦punctuation.delimiter|:⟧ ⟦string|'i'"⟧⟦tag.delimiter|>⟧⟦punctuation.special|{{⟧ ⟦variable|count⟧ ⟦operator|>⟧ ⟦number|1⟧ ⟦operator|?⟧ ⟦string|"many"⟧ ⟦punctuation.delimiter|:⟧ ⟦string|\`only ⟧⟦punctuation.special|\${⟧⟦variable|count⟧⟦punctuation.special|}⟧⟦string|\`⟧ ⟦punctuation.special|}}⟧⟦tag.delimiter|</⟧⟦tag|component⟧⟦tag.delimiter|>⟧
+    ⟦tag.delimiter|<⟧⟦tag|svg⟧ ⟦attribute|viewBox⟧⟦operator|=⟧⟦string|"0 0 4 4"⟧⟦tag.delimiter|><⟧⟦tag|linearGradient⟧ ⟦attribute|id⟧⟦operator|=⟧⟦string|"g"⟧ ⟦tag.delimiter|/></⟧⟦tag|svg⟧⟦tag.delimiter|>⟧
+  ⟦tag.delimiter|</⟧⟦tag|section⟧⟦tag.delimiter|>⟧
+⟦tag.delimiter|</⟧⟦tag|template⟧⟦tag.delimiter|>⟧
+
+⟦tag.delimiter|<⟧⟦tag|style⟧ ⟦attribute|scoped⟧ ⟦attribute|lang⟧⟦operator|=⟧⟦string|"scss"⟧⟦tag.delimiter|>⟧
+⟦variable|$gap⟧⟦punctuation.delimiter|:⟧ ⟦number|8⟧⟦number.unit|px⟧⟦punctuation.delimiter|;⟧
+⟦selector.class|.todos⟧ ⟦punctuation.bracket|{⟧
+  ⟦property|display⟧⟦punctuation.delimiter|:⟧ ⟦constant|grid⟧⟦punctuation.delimiter|;⟧
+  ⟦property|gap⟧⟦punctuation.delimiter|:⟧ ⟦variable|$gap⟧⟦punctuation.delimiter|;⟧
+  ⟦selector|&⟧⟦selector.class|.empty⟧ ⟦punctuation.bracket|{⟧ ⟦property|opacity⟧⟦punctuation.delimiter|:⟧ ⟦number|0.5⟧⟦punctuation.delimiter|;⟧ ⟦punctuation.bracket|}⟧
+  ⟦tag|li⟧⟦selector.pseudo|:hover⟧ ⟦punctuation.bracket|{⟧ ⟦property|color⟧⟦punctuation.delimiter|:⟧ ⟦function|v-bind⟧⟦punctuation.bracket|(⟧⟦string|"theme.color"⟧⟦punctuation.bracket|)⟧⟦punctuation.delimiter|;⟧ ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+⟦tag.delimiter|</⟧⟦tag|style⟧⟦tag.delimiter|>⟧
+
+⟦tag.delimiter|<⟧⟦tag|style⟧⟦tag.delimiter|>⟧
+⟦selector.class|.is-full⟧ ⟦punctuation.bracket|{⟧ ⟦property|border⟧⟦punctuation.delimiter|:⟧ ⟦number|1⟧⟦number.unit|px⟧ ⟦constant|solid⟧ ⟦constant|red⟧⟦punctuation.delimiter|;⟧ ⟦punctuation.bracket|}⟧
+⟦tag.delimiter|</⟧⟦tag|style⟧⟦tag.delimiter|>⟧
+
+⟦tag.delimiter|<⟧⟦tag|style⟧ ⟦attribute|lang⟧⟦operator|=⟧⟦string|"less"⟧⟦tag.delimiter|>⟧
+⟦variable|@pad⟧⟦punctuation.delimiter|:⟧ ⟦number|2⟧⟦number.unit|px⟧⟦punctuation.delimiter|;⟧
+⟦selector.class|.todos⟧ ⟦punctuation.bracket|{⟧ ⟦property|padding⟧⟦punctuation.delimiter|:⟧ ⟦variable|@pad⟧⟦punctuation.delimiter|;⟧ ⟦punctuation.bracket|}⟧
+⟦tag.delimiter|</⟧⟦tag|style⟧⟦tag.delimiter|>⟧
+
+⟦tag.delimiter|<⟧⟦tag|i18n⟧⟦tag.delimiter|>⟧
+⟦punctuation.bracket|{⟧
+  ⟦property|"en"⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|{⟧ ⟦property|"title"⟧⟦punctuation.delimiter|:⟧ ⟦string|"Todos"⟧⟦punctuation.delimiter|,⟧ ⟦property|"search"⟧⟦punctuation.delimiter|:⟧ ⟦string|"Search"⟧⟦punctuation.delimiter|,⟧ ⟦property|"empty"⟧⟦punctuation.delimiter|:⟧ ⟦string|"Nothing to do"⟧ ⟦punctuation.bracket|}⟧
+⟦punctuation.bracket|}⟧
+⟦tag.delimiter|</⟧⟦tag|i18n⟧⟦tag.delimiter|>⟧
+
+⟦tag.delimiter|<⟧⟦tag|i18n⟧ ⟦attribute|lang⟧⟦operator|=⟧⟦string|"yaml"⟧⟦tag.delimiter|>⟧
+⟦property|de⟧⟦punctuation.delimiter|:⟧
+  ⟦property|title⟧⟦punctuation.delimiter|:⟧ ⟦string|Aufgaben⟧
+  ⟦property|empty⟧⟦punctuation.delimiter|:⟧ ⟦string|Nichts zu tun⟧
+⟦tag.delimiter|</⟧⟦tag|i18n⟧⟦tag.delimiter|>⟧
+
+⟦tag.delimiter|<⟧⟦tag|route⟧ ⟦attribute|lang⟧⟦operator|=⟧⟦string|"json5"⟧⟦tag.delimiter|>⟧
+⟦punctuation.bracket|{⟧ ⟦property|path⟧⟦punctuation.delimiter|:⟧ ⟦string|"/todos"⟧⟦punctuation.delimiter|,⟧ ⟦property|meta⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|{⟧ ⟦property|requiresAuth⟧⟦punctuation.delimiter|:⟧ ⟦boolean|true⟧ ⟦punctuation.bracket|}⟧ ⟦punctuation.bracket|}⟧
+⟦tag.delimiter|</⟧⟦tag|route⟧⟦tag.delimiter|>⟧
+
+⟦tag.delimiter|<⟧⟦tag|docs⟧⟦tag.delimiter|>⟧
+Shows a list of todos. This block has no language, so <it> stays {{ plain }}.
+⟦tag.delimiter|</⟧⟦tag|docs⟧⟦tag.delimiter|>⟧
+"
+`;
+
+exports[`fixtures yaml.yaml: yaml.yaml 1`] = `
+"⟦keyword.directive|%YAML 1.2⟧
+⟦keyword.directive|%TAG !e! tag:example.com,2000:app/⟧ ⟦comment|# a handle⟧
+⟦punctuation.special|---⟧ ⟦comment|# the first document⟧
+⟦property|name⟧⟦punctuation.delimiter|:⟧ ⟦string|Build and test⟧
+⟦property|"on"⟧⟦punctuation.delimiter|:⟧
+  ⟦property|push⟧⟦punctuation.delimiter|:⟧
+    ⟦property|branches⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|[⟧⟦string|main⟧⟦punctuation.delimiter|,⟧ ⟦string|"release/**"⟧⟦punctuation.delimiter|,⟧ ⟦string|'say "hi"'⟧⟦punctuation.delimiter|,⟧ ⟦string|"tab⟧⟦string.escape|\\t⟧⟦string|here"⟧⟦punctuation.bracket|]⟧
+  ⟦property|schedule⟧⟦punctuation.delimiter|:⟧
+    ⟦punctuation.delimiter|-⟧ ⟦property|cron⟧⟦punctuation.delimiter|:⟧ ⟦string|"0 4 * * 1"⟧
+
+⟦property|env⟧⟦punctuation.delimiter|:⟧ ⟦label|&defaults⟧
+  ⟦property|CI⟧⟦punctuation.delimiter|:⟧ ⟦boolean|true⟧
+  ⟦property|DEBUG⟧⟦punctuation.delimiter|:⟧ ⟦boolean|False⟧
+  ⟦property|RETRIES⟧⟦punctuation.delimiter|:⟧ ⟦number|3⟧
+  ⟦property|RATIO⟧⟦punctuation.delimiter|:⟧ ⟦number|0.75⟧
+  ⟦property|BIG⟧⟦punctuation.delimiter|:⟧ ⟦number|6.02e+23⟧
+  ⟦property|HEX⟧⟦punctuation.delimiter|:⟧ ⟦number|0xFF⟧
+  ⟦property|OCTAL⟧⟦punctuation.delimiter|:⟧ ⟦number|0o755⟧
+  ⟦property|NEGATIVE⟧⟦punctuation.delimiter|:⟧ ⟦number|-12⟧
+  ⟦property|INFINITE⟧⟦punctuation.delimiter|:⟧ ⟦number|.inf⟧
+  ⟦property|MINUS_INFINITE⟧⟦punctuation.delimiter|:⟧ ⟦number|-.Inf⟧
+  ⟦property|NOT_A_NUMBER⟧⟦punctuation.delimiter|:⟧ ⟦number|.NaN⟧
+  ⟦property|NOTHING⟧⟦punctuation.delimiter|:⟧ ⟦constant.builtin|null⟧
+  ⟦property|TILDE⟧⟦punctuation.delimiter|:⟧ ⟦constant.builtin|~⟧
+  ⟦property|EMPTY⟧⟦punctuation.delimiter|:⟧
+  ⟦property|VERSION⟧⟦punctuation.delimiter|:⟧ ⟦string|1.2.3⟧
+  ⟦property|URL⟧⟦punctuation.delimiter|:⟧ ⟦string|https://example.com/a#b?c=d⟧
+  ⟦property|TIME⟧⟦punctuation.delimiter|:⟧ ⟦string|12:30:45⟧
+
+⟦property|jobs⟧⟦punctuation.delimiter|:⟧
+  ⟦property|test⟧⟦punctuation.delimiter|:⟧
+    ⟦property|runs-on⟧⟦punctuation.delimiter|:⟧ ⟦string|\${{ matrix.os }}⟧
+    ⟦property|env⟧⟦punctuation.delimiter|:⟧
+      ⟦operator|<<⟧⟦punctuation.delimiter|:⟧ ⟦label|*defaults⟧
+      ⟦property|EXTRA⟧⟦punctuation.delimiter|:⟧ ⟦label|&extra⟧ ⟦string|"it's ⟧⟦string.escape|\\"⟧⟦string|quoted⟧⟦string.escape|\\"⟧⟦string| ⟧⟦string.escape|\\\\⟧⟦string| ⟧⟦string.escape|\\x41⟧⟦string| ⟧⟦string.escape|\\u00e9⟧⟦string| ⟧⟦string.escape|\\U0001F600⟧⟦string| ⟧⟦string.escape|\\⟧
+⟦string|        and goes on"⟧
+      ⟦property|SINGLE⟧⟦punctuation.delimiter|:⟧ ⟦string|'it⟧⟦string.escape|''⟧⟦string|s "single"'⟧
+    ⟦property|strategy⟧⟦punctuation.delimiter|:⟧
+      ⟦property|matrix⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|{⟧ ⟦property|os⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|[⟧⟦string|ubuntu-latest⟧⟦punctuation.delimiter|,⟧ ⟦string|macos-latest⟧⟦punctuation.bracket|]⟧⟦punctuation.delimiter|,⟧ ⟦property|node⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.bracket|[⟧⟦number|18⟧⟦punctuation.delimiter|,⟧ ⟦number|20⟧⟦punctuation.bracket|]⟧⟦punctuation.delimiter|,⟧ ⟦property|"fast"⟧⟦punctuation.delimiter|:⟧ ⟦boolean|true⟧ ⟦punctuation.bracket|}⟧
+    ⟦property|steps⟧⟦punctuation.delimiter|:⟧
+      ⟦punctuation.delimiter|-⟧ ⟦property|uses⟧⟦punctuation.delimiter|:⟧ ⟦string|actions/checkout@v4⟧
+      ⟦punctuation.delimiter|-⟧ ⟦property|name⟧⟦punctuation.delimiter|:⟧ ⟦string|Install⟧
+        ⟦property|run⟧⟦punctuation.delimiter|:⟧ ⟦string|bun install⟧
+      ⟦punctuation.delimiter|-⟧ ⟦property|name⟧⟦punctuation.delimiter|:⟧ ⟦string|A long script⟧
+        ⟦property|run⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.special||⟧ ⟦comment|# keep the line breaks⟧
+          ⟦string|echo "key: value"⟧
+⟦string|          # not a comment⟧
+⟦string|          bun test⟧
+      ⟦punctuation.delimiter|-⟧ ⟦property|name⟧⟦punctuation.delimiter|:⟧ ⟦string|Folded⟧
+        ⟦property|description⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.special|>-⟧
+          ⟦string|These lines are⟧
+⟦string|          joined by spaces.⟧
+
+⟦string|          This is a new paragraph.⟧
+      ⟦punctuation.delimiter|-⟧ ⟦property|name⟧⟦punctuation.delimiter|:⟧ ⟦string|Indented⟧
+        ⟦property|text⟧⟦punctuation.delimiter|:⟧ ⟦punctuation.special||2+⟧
+            ⟦string|two more⟧
+
+      ⟦punctuation.delimiter|-⟧ ⟦string|plain text that⟧
+⟦string|        goes on in the next line⟧
+      ⟦punctuation.delimiter|-⟧ ⟦punctuation.delimiter|-⟧ ⟦string|nested⟧
+        ⟦punctuation.delimiter|-⟧ ⟦string|sequence⟧
+      ⟦punctuation.delimiter|-⟧ ⟦punctuation.delimiter|?⟧ ⟦punctuation.delimiter|-⟧ ⟦string|a sequence⟧
+          ⟦punctuation.delimiter|-⟧ ⟦string|as a key⟧
+        ⟦punctuation.delimiter|:⟧ ⟦string|complex value⟧
+      ⟦punctuation.delimiter|-⟧ ⟦punctuation.delimiter|?⟧ ⟦punctuation.special||⟧
+          ⟦string|a block scalar as a key⟧
+        ⟦punctuation.delimiter|:⟧ ⟦type|!!set⟧ ⟦punctuation.bracket|{⟧ ⟦string|x⟧⟦punctuation.delimiter|,⟧ ⟦string|y⟧ ⟦punctuation.bracket|}⟧
+
+⟦property|tagged⟧⟦punctuation.delimiter|:⟧
+  ⟦property|string⟧⟦punctuation.delimiter|:⟧ ⟦type|!!str⟧ ⟦number|123⟧
+  ⟦property|local⟧⟦punctuation.delimiter|:⟧ ⟦type|!shape⟧ ⟦string|circle⟧
+  ⟦property|handle⟧⟦punctuation.delimiter|:⟧ ⟦type|!e!widget⟧ ⟦punctuation.bracket|{⟧ ⟦property|size⟧⟦punctuation.delimiter|:⟧ ⟦number|1⟧ ⟦punctuation.bracket|}⟧
+  ⟦property|verbatim⟧⟦punctuation.delimiter|:⟧ ⟦type|!<tag:yaml.org,2002:int>⟧ ⟦number|5⟧
+  ⟦property|binary⟧⟦punctuation.delimiter|:⟧ ⟦type|!!binary⟧ ⟦punctuation.special||⟧
+    ⟦string|R0lGODlhDAAMAIQAAP⟧
+  ⟦property|anchored⟧⟦punctuation.delimiter|:⟧ ⟦type|!!seq⟧ ⟦label|&list⟧
+    ⟦punctuation.delimiter|-⟧ ⟦label|*extra⟧
+    ⟦punctuation.delimiter|-⟧ ⟦label|*defaults⟧
+⟦punctuation.special|...⟧
+⟦punctuation.special|---⟧
+⟦punctuation.delimiter|-⟧ ⟦string|second document⟧
+⟦punctuation.delimiter|-⟧ ⟦punctuation.bracket|{⟧ ⟦property|a⟧⟦punctuation.delimiter|:⟧ ⟦number|1⟧⟦punctuation.delimiter|,⟧ ⟦string|b⟧⟦punctuation.delimiter|,⟧ ⟦property|c⟧⟦punctuation.delimiter|:⟧ ⟦string|d⟧ ⟦punctuation.bracket|}⟧
+⟦punctuation.delimiter|-⟧ ⟦punctuation.bracket|[]⟧
+⟦punctuation.delimiter|-⟧ ⟦punctuation.bracket|{}⟧
+⟦punctuation.special|---⟧
+⟦string|"a scalar document"⟧
+⟦punctuation.special|---⟧
+⟦punctuation.special||⟧
+  ⟦string|a block scalar document⟧
+⟦punctuation.special|...⟧
+"
+`;

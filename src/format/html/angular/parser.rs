@@ -184,6 +184,26 @@ pub(crate) fn comment_start(input: &[u8]) -> Option<usize> {
     None
 }
 
+/// Whether `tokens`, which are tokens of `input`, start with the parameters of an arrow function and its `=>`.
+pub(super) fn starts_with_arrow_function(input: &[u8], tokens: &[Token]) -> bool {
+    let is_arrow = |token: &Token| {
+        token.kind == Kind::Operator
+            && input.get(token.start as usize..token.end as usize) == Some(b"=>")
+    };
+    match tokens {
+        [first, second, ..] if first.kind == Kind::Identifier => is_arrow(second),
+        [first, rest @ ..] if first.kind == Kind::Character(b'(') => {
+            let parameters = rest
+                .iter()
+                .take_while(|it| matches!(it.kind, Kind::Identifier | Kind::Character(b',')))
+                .count();
+            matches!(rest.get(parameters..), Some([close, arrow, ..])
+                if close.kind == Kind::Character(b')') && is_arrow(arrow))
+        }
+        _ => false,
+    }
+}
+
 pub(crate) struct Parser<'i> {
     pub(super) input: &'i [u8],
     tokens: Vec<Token>,
@@ -983,20 +1003,7 @@ impl<'i> Parser<'i> {
 
     fn is_arrow_function(&self) -> bool {
         let rest = self.tokens.get(self.index..).unwrap_or_default();
-        match rest {
-            [first, second, ..] if first.kind == Kind::Identifier => {
-                self.is_operator_token(*second, b"=>")
-            }
-            [first, rest @ ..] if first.kind == Kind::Character(b'(') => {
-                let parameters = rest
-                    .iter()
-                    .take_while(|it| matches!(it.kind, Kind::Identifier | Kind::Character(b',')))
-                    .count();
-                matches!(rest.get(parameters..), Some([close, arrow, ..])
-                    if close.kind == Kind::Character(b')') && self.is_operator_token(*arrow, b"=>"))
-            }
-            _ => false,
-        }
+        starts_with_arrow_function(self.input, rest)
     }
 
     fn parse_arrow_function(&mut self, start: u32) -> Parsed<Operand> {

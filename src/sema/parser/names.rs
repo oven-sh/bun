@@ -863,7 +863,7 @@ impl Intern for FileAtoms<'_> {
 }
 
 /// Stands where an interner is expected and the atoms are the file's own.
-pub(crate) struct NoInterner;
+pub struct NoInterner;
 
 impl Intern for NoInterner {
     fn intern(&self, _: &[u8]) -> Atom {

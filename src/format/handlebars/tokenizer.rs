@@ -79,7 +79,7 @@ fn is_space(byte: u8) -> bool {
 }
 
 /// What a tag can start with.
-fn starts_tag_name(byte: u8) -> bool {
+pub(super) fn starts_tag_name(byte: u8) -> bool {
     matches!(byte, b'@' | b':') || byte.is_ascii_alphabetic()
 }
 

@@ -1,7 +1,7 @@
 //! Bun REPL - A modern, feature-rich Read-Eval-Print Loop
 //!
 //! This is a native implementation of Bun's REPL with advanced TUI features:
-//! - Syntax highlighting using QuickAndDirtySyntaxHighlighter
+//! - Syntax highlighting using `bun_format::highlight`
 //! - Full line editing with cursor movement (Emacs-style keybindings)
 //! - Persistent history with file storage
 //! - Tab completion for properties and commands
@@ -21,7 +21,7 @@ use bun_collections::VecExt;
 use bun_core::strings;
 #[cfg(unix)]
 use bun_core::tty;
-use bun_core::{Environment, Output, env_var, fmt, identifier};
+use bun_core::{Environment, Output, env_var, identifier};
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
@@ -1590,18 +1590,13 @@ impl<'a> Repl<'a> {
     }
 
     fn write_highlighted(&self, text: &[u8]) {
-        let writer = Output::writer();
-        let highlighter = fmt::QuickAndDirtyJavaScriptSyntaxHighlighter {
-            text,
-            opts: fmt::HighlighterOptions {
-                enable_colors: true,
-                check_for_unhighlighted_write: false,
-                redact_sensitive_information: false,
-            },
-        };
-        if writer.write_fmt(format_args!("{}", highlighter)).is_err() {
-            let _ = writer.write_all(text);
-        }
+        use bun_format::highlight::{self, AnsiStyles, Language, Scratch, Theme};
+        let depth = highlight::terminal_color_depth();
+        let theme = Theme::built_in(bun_md::root::detect_light_background(), depth);
+        let (mut scratch, mut out) = (Scratch::default(), Vec::new());
+        let spans = highlight::highlight(text, Language::Tsx, &mut scratch);
+        highlight::write_ansi(text, spans, &AnsiStyles::new(theme, depth), &mut out);
+        self.write(&out);
     }
 
     // ========================================================================

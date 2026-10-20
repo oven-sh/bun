@@ -16,6 +16,7 @@ mod cursor;
 mod data;
 pub(crate) mod embed;
 mod error;
+pub(crate) mod highlight;
 pub(crate) mod in_js;
 pub(crate) mod js;
 mod lexer;

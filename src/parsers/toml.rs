@@ -207,6 +207,7 @@ impl TOML {
                 log: &mut log,
                 redact: false,
                 keeps_text: true,
+                is_silent: false,
             },
             tokens: Vec::new(),
         };
@@ -220,6 +221,37 @@ impl TOML {
             ),
             None => (b"Syntax error".to_vec(), 0),
         })
+    }
+
+    /// [`TOML::tokens`] of any bytes. At an error, `resume(tokens, stopped_at)` returns the line break to go on from.
+    pub fn tokens_despite_errors(
+        text: &[u8],
+        mut resume: impl FnMut(&mut Vec<Token>, usize) -> usize,
+    ) -> Vec<Token> {
+        let source = Source::init_path_string(b"".as_slice(), text);
+        let mut log = Log::init();
+        let bump = Bump::new();
+        let mut tokenizer = Tokenizer {
+            scanner: Scanner {
+                src: text,
+                pos: 0,
+                bump: &bump,
+                source: &source,
+                log: &mut log,
+                redact: false,
+                keeps_text: true,
+                is_silent: true,
+            },
+            tokens: Vec::new(),
+        };
+        loop {
+            let start = tokenizer.scanner.pos;
+            if tokenizer.expressions().is_ok() {
+                return tokenizer.tokens;
+            }
+            let stopped = tokenizer.scanner.pos;
+            tokenizer.scanner.pos = resume(&mut tokenizer.tokens, stopped).max(start + 1);
+        }
     }
 
     pub fn parse<'a>(
@@ -238,6 +270,7 @@ impl TOML {
                 log,
                 redact: redact_logs,
                 keeps_text: false,
+                is_silent: false,
             },
             bump,
             stack_check: StackCheck::init(),
@@ -304,6 +337,8 @@ struct Scanner<'a, 'log> {
     redact: bool,
     /// The caller goes by the text of a number, so its value need not fit anything.
     keeps_text: bool,
+    /// Errors aren't logged. Logging one finds its line, which reads the text from the start.
+    is_silent: bool,
 }
 
 impl<'a, 'log> Scanner<'a, 'log> {
@@ -314,6 +349,9 @@ impl<'a, 'log> Scanner<'a, 'log> {
     }
 
     fn err_fmt(&mut self, pos: usize, args: core::fmt::Arguments<'_>) -> PErr {
+        if self.is_silent {
+            return PErr::Syntax;
+        }
         self.log.add_error_fmt_opts(
             args,
             bun_ast::AddErrorOptions {
@@ -1575,6 +1613,11 @@ impl<'a> Tokenizer<'a, '_> {
 
     fn document(&mut self) -> PResult<()> {
         self.scanner.init_document()?;
+        self.expressions()
+    }
+
+    /// The expressions from the cursor, which is at the start of a line, to the end of the text.
+    fn expressions(&mut self) -> PResult<()> {
         loop {
             match self.scanner.scan_line_start()? {
                 LineStart::Eof => return Ok(()),

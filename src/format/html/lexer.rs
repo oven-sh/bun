@@ -112,6 +112,8 @@ pub(crate) struct Options {
     pub(crate) can_self_close: bool,
     pub(crate) allow_htm_component_closing_tags: bool,
     pub(crate) allow_start_tag_comments: bool,
+    /// For the highlighter: nothing is an error, and what isn't closed runs to the end of the text.
+    pub(crate) is_tolerant: bool,
 }
 
 /// `getTagContentType(tagName, prefix, hasParent, attrs)`, without the prefix, which nobody looks at.
@@ -147,7 +149,7 @@ enum EndMarker<'a> {
     TagClose(&'a [u8]),
 }
 
-const SUPPORTED_BLOCKS: [&[u8]; 13] = [
+pub(crate) const SUPPORTED_BLOCKS: [&[u8]; 13] = [
     b"@if",
     b"@else",
     b"@for",
@@ -308,6 +310,12 @@ impl<'a> Tokenizer<'a, '_> {
         self.end_token_at(parts, self.pos)
     }
 
+    /// Makes a `kind` of what has been read since `start`, whatever token was begun there.
+    fn end_token_as(&mut self, kind: TokenType, start: usize) -> Result<()> {
+        self.begin_token_at(kind, start);
+        self.end_token(Parts::None).map(|_| ())
+    }
+
     /// `_createError(_unexpectedCharacterErrorMsg(this._cursor.peek()), this._cursor.getSpan(start))`
     fn error(&mut self, start: usize) -> Fail {
         let rest = Span::new(self.pos as u32, self.text.len() as u32);
@@ -327,6 +335,9 @@ impl<'a> Tokenizer<'a, '_> {
         at: u32,
         (kind, named, is_in_expansion_form): (ErrorKind, Span, bool),
     ) {
+        if self.options.is_tolerant {
+            return;
+        }
         self.errors.push(SyntaxError {
             is_in_expansion_form,
             ..SyntaxError::new(at, kind, named.of(self.text))
@@ -446,7 +457,26 @@ impl<'a> Tokenizer<'a, '_> {
     }
 
     fn is_expansion_form_start(&self) -> bool {
-        self.peek() == 123 && !self.peek_str(b"{{")
+        self.peek() == 123
+            && !self.peek_str(b"{{")
+            && (!self.options.is_tolerant || self.is_followed_by_expansion_type())
+    }
+
+    /// Whether this is the `{` of `{a, plural,` or `{a, select,`, or of as much of that as there is before the text ends.
+    /// Angular takes any `{` and reads on to the next comma.
+    fn is_followed_by_expansion_type(&self) -> bool {
+        let rest = self.text.get(self.pos + 1..).unwrap_or_default();
+        let Some(at) = strings::index_of_any(rest, b",{}<") else {
+            return true;
+        };
+        let kind = rest[at + 1..].trim_ascii_start();
+        rest[at] == b','
+            && [&b"plural"[..], b"selectordinal", b"select"]
+                .iter()
+                .any(|name| match kind.strip_prefix(*name) {
+                    Some(rest) => matches!(rest.trim_ascii_start(), [] | [b',', ..]),
+                    None => name.starts_with(kind),
+                })
     }
 
     fn is_tag_start(&self) -> bool {
@@ -498,7 +528,12 @@ impl<'a> Tokenizer<'a, '_> {
     fn tokenize(&mut self) {
         while self.peek() != 0 {
             let start = self.pos;
+            let depth = self.expansion_case_stack.len();
             match self.tokenize_one() {
+                // The highlighter skips a byte that nothing takes, unless an ICU message has just been given up.
+                Ok(()) if self.pos == start && self.options.is_tolerant => {
+                    self.pos += usize::from(self.expansion_case_stack.len() == depth);
+                }
                 // Nothing goes on from here.
                 Ok(()) if self.pos == start => {
                     self.handle_error(start as u32, (ErrorKind::Other, Span::new(0, 0), false));
@@ -507,6 +542,9 @@ impl<'a> Tokenizer<'a, '_> {
                 Ok(()) => {}
                 Err(Fail::Parse(at)) => self.handle_error(at, self.thrown),
                 Err(Fail::Cursor(at)) => {
+                    if self.options.is_tolerant && self.current.is_some() {
+                        let _ = self.end_token(Parts::None);
+                    }
                     self.current = None;
                     let end = Span::new(self.text.len() as u32, self.text.len() as u32);
                     let is_in_expansion_form = self.is_in_expansion_form();
@@ -733,6 +771,10 @@ impl<'a> Tokenizer<'a, '_> {
             return Ok(true);
         }
         if self.peek() != 125 && self.is_in_expansion_form() {
+            if self.options.is_tolerant && !self.is_followed_by_expansion_case() {
+                self.expansion_case_stack.pop();
+                return Ok(false);
+            }
             self.consume_expansion_case_start()?;
             return Ok(true);
         }
@@ -754,6 +796,13 @@ impl<'a> Tokenizer<'a, '_> {
             }
         }
         Ok(false)
+    }
+
+    /// Whether the next bracket, if there is one, is the `{` of `other {`. Angular reads on to the next `{`, whatever is
+    /// before it.
+    fn is_followed_by_expansion_case(&self) -> bool {
+        let rest = self.text.get(self.pos..).unwrap_or_default();
+        strings::index_of_any(rest, b"{}<").is_none_or(|at| rest[at] == b'{')
     }
 
     fn read_until(&mut self, char: u32) -> Result<Span> {
@@ -801,6 +850,9 @@ impl<'a> Tokenizer<'a, '_> {
             let code_start = self.pos;
             self.attempt_char_code_until(is_digit_entity_end)?;
             if self.peek() != 59 {
+                if self.options.is_tolerant {
+                    return self.end_token_as(text_token_type, start);
+                }
                 self.advance()?;
                 let kind = match is_hex {
                     true => ErrorKind::HexadecimalEntityWithoutSemicolon,
@@ -824,6 +876,9 @@ impl<'a> Tokenizer<'a, '_> {
                 );
             }
             if code.is_none_or(|code| code > 0x10FFFF) {
+                if self.options.is_tolerant {
+                    return self.end_token_as(text_token_type, start);
+                }
                 return Err(self.error_of(
                     ErrorKind::UnknownEntity,
                     self.pos,
@@ -846,6 +901,9 @@ impl<'a> Tokenizer<'a, '_> {
         if entity != b"&ngsp;"
             && bun_md::helpers::decode_entity_to_utf8(entity, &mut [0; 8]).is_none()
         {
+            if self.options.is_tolerant {
+                return self.end_token_as(text_token_type, start);
+            }
             let name = Span::new(name_start as u32, self.pos as u32 - 1);
             return Err(self.error_of(ErrorKind::UnknownEntity, start, name));
         }
@@ -869,11 +927,17 @@ impl<'a> Tokenizer<'a, '_> {
                     pos
                 };
                 let pos = skip_whitespace(self.pos + 2);
-                let is_name = self
-                    .text
-                    .get(pos..pos + name.len())
-                    .is_some_and(|it| it.eq_ignore_ascii_case(name));
-                is_name && self.peek_at(skip_whitespace(pos + name.len())) == 62
+                let Some(found) = self.text.get(pos..pos + name.len()) else {
+                    // To the highlighter `</scr` is an end tag if the text ends there.
+                    let rest = self.text.get(pos..).unwrap_or_default();
+                    return self.options.is_tolerant
+                        && (name.get(..rest.len()))
+                            .is_some_and(|it| it.eq_ignore_ascii_case(rest));
+                };
+                found.eq_ignore_ascii_case(name) && {
+                    let next = self.peek_at(skip_whitespace(pos + name.len()));
+                    next == 62 || (next == 0 && self.options.is_tolerant)
+                }
             }
         }
     }
@@ -948,7 +1012,8 @@ impl<'a> Tokenizer<'a, '_> {
                 name_or_prefix_start,
             )
         };
-        self.require_char_code_until(end_predicate, usize::from(prefix.len() > 0))?;
+        let min_len = usize::from(prefix.len() > 0 && !self.options.is_tolerant);
+        self.require_char_code_until(end_predicate, min_len)?;
         Ok(Parts::Name(prefix, self.span_from(name_start)))
     }
 
@@ -1001,6 +1066,12 @@ impl<'a> Tokenizer<'a, '_> {
                     self.consume_start_tag_comment(comment_start, false)?;
                     continue;
                 }
+            }
+            // `<a / b>`
+            if self.options.is_tolerant && self.peek() == 47 && self.peek_at(self.pos + 1) != 62 {
+                self.pos += 1;
+                self.skip_whitespace();
+                continue;
             }
             if is_attribute_terminator(self.peek()) {
                 break;
@@ -1108,7 +1179,13 @@ impl<'a> Tokenizer<'a, '_> {
     fn consume_attribute(&mut self) -> Result<(Span, Option<Span>)> {
         let name_start = self.peek();
         if name_start == 39 || name_start == 34 {
-            return Err(self.error(self.pos));
+            if !self.options.is_tolerant {
+                return Err(self.error(self.pos));
+            }
+            // `<a "b">`: a value without a name.
+            let value = self.consume_quoted_value(name_start)?;
+            self.skip_whitespace();
+            return Ok((Span::default(), Some(value)));
         }
         self.begin_token(TokenType::AttrName);
         let parts = if name_start == 91 {
@@ -1137,31 +1214,39 @@ impl<'a> Tokenizer<'a, '_> {
         self.skip_whitespace();
         if self.attempt_char_code(61) {
             self.skip_whitespace();
-            let (text, interpolation) =
-                (TokenType::AttrValueText, TokenType::AttrValueInterpolation);
             let quote = self.peek();
             value = Some(if quote == 39 || quote == 34 {
-                self.consume_quote(quote)?;
-                let value = self.consume_with_interpolation(
-                    text,
-                    interpolation,
-                    End::Quote(quote),
-                    End::Quote(quote),
-                )?;
-                self.consume_quote(quote)?;
-                value
+                self.consume_quoted_value(quote)?
             } else {
                 // This is a port of Angular's lexer, which ends the value where a name would end: `a=b=c` becomes
                 // `a="b" ="c"`. That's right for Angular templates. Prettier parses HTML and Vue that way too.
-                let end = match self.options.tokenize_angular_blocks {
+                let end = match self.options.tokenize_angular_blocks && !self.options.is_tolerant {
                     true => End::Name,
                     false => End::UnquotedValue,
                 };
-                self.consume_with_interpolation(text, interpolation, end, end)?
+                self.consume_with_interpolation(
+                    TokenType::AttrValueText,
+                    TokenType::AttrValueInterpolation,
+                    end,
+                    end,
+                )?
             });
         }
         self.skip_whitespace();
         Ok((name, value))
+    }
+
+    /// Returns the last piece of text in the value.
+    fn consume_quoted_value(&mut self, quote: u32) -> Result<Span> {
+        self.consume_quote(quote)?;
+        let value = self.consume_with_interpolation(
+            TokenType::AttrValueText,
+            TokenType::AttrValueInterpolation,
+            End::Quote(quote),
+            End::Quote(quote),
+        )?;
+        self.consume_quote(quote)?;
+        Ok(value)
     }
 
     fn consume_quote(&mut self, quote: u32) -> Result<()> {
@@ -1176,18 +1261,26 @@ impl<'a> Tokenizer<'a, '_> {
         self.skip_whitespace();
         if self.options.allow_htm_component_closing_tags && self.attempt_char_code(47) {
             self.skip_whitespace();
-            self.require_char_code(62)?;
+            self.consume_tag_close_end()?;
             self.end_token(Parts::None)?;
             return Ok(());
         }
         let parts = self.consume_prefix_and_name(is_name_end)?;
         self.skip_whitespace();
-        self.require_char_code(62)?;
+        self.consume_tag_close_end()?;
         self.end_token(parts)?;
         if let Parts::Name(prefix, name) = parts {
             self.handle_full_name_stack_for_tag_close(prefix, name);
         }
         Ok(())
+    }
+
+    /// The `>` of an end tag, which the highlighter does without.
+    fn consume_tag_close_end(&mut self) -> Result<()> {
+        if self.options.is_tolerant && self.peek() != 62 {
+            return Ok(());
+        }
+        self.require_char_code(62)
     }
 
     /// Returns the last piece of text.

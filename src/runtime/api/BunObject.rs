@@ -268,6 +268,7 @@ pub(crate) mod bun_object {
         BunObject_lazyPropCb_FetchSession => super::get_fetch_session_constructor,
         BunObject_lazyPropCb_Image => super::get_image_constructor,
         BunObject_lazyPropCb_markdown => super::get_markdown_object,
+        BunObject_lazyPropCb_highlight => super::get_highlight_object,
         BunObject_lazyPropCb_Transpiler => super::get_transpiler_constructor,
         BunObject_lazyPropCb_argv => super::get_argv,
         BunObject_lazyPropCb_cron => super::get_cron_object,
@@ -1514,6 +1515,9 @@ fn get_fetch_session_constructor(global_this: &JSGlobalObject, _: &JSObject) -> 
 
 fn get_markdown_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     crate::api::markdown_object::create(global_this)
+}
+fn get_highlight_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    crate::api::highlight_object::create(global_this)
 }
 
 fn get_archive_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

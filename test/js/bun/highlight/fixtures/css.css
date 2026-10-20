@@ -1,0 +1,120 @@
+@charset "utf-8";
+@import url("reset.css") layer(base) supports(display: grid) screen and (min-width: 40em);
+@namespace svg url(http://www.w3.org/2000/svg);
+@layer base, components, utilities;
+
+/**
+ * Design tokens.
+ */
+:root {
+  --brand: #f472b6;
+  --gap: calc(1rem + 2 * var(--unit, 4px));
+  --font-stack: "Inter var", system-ui, -apple-system, sans-serif;
+  --empty:;
+  color-scheme: light dark;
+}
+
+@property --angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@font-face {
+  font-family: "Inter var";
+  src: url(/fonts/inter.woff2) format("woff2"), url("/fonts/inter.woff") format("woff");
+  unicode-range: U+0000-00FF, U+2000-206F, u+4??;
+  font-display: swap;
+}
+
+/* Every kind of selector. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html, body#app.dark > main ~ aside + footer {
+  margin: 0 auto -1px;
+  font: italic 500 1rem/1.5 var(--font-stack);
+}
+
+a[href^="https://" i]:not(.internal, [data-skip]):hover::after,
+input[type=checkbox]:checked,
+svg|a[xlink|href],
+li:nth-child(2n + 1 of .item):lang(en) {
+  content: "\201C quoted \"text\" \a";
+  color: rgb(0 0 0 / 50%) !important;
+  background: url(data:image/png;base64,iVBORw0KGgo=) no-repeat center / cover, linear-gradient(to right, #fff 0%, transparent 100%);
+  transition: opacity .3s ease-in-out, transform 1.5e-1s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sm\:flex,
+.w-1\/2,
+my-element::part(label) {
+  display: -webkit-box;
+  grid-template-columns: [full-start] minmax(1em, 1fr) [content-start] repeat(3, 20%) [full-end];
+  grid-area: 1 / 2 / span 3 / -1;
+  width: +100.5PX;
+}
+
+.card {
+  padding: var(--gap);
+
+  &:hover,
+  &.is-active {
+    outline: 2px solid currentColor;
+  }
+
+  & > .title {
+    font-weight: bold;
+  }
+
+  .theme-dark & {
+    background: #000c;
+  }
+
+  @media (hover: hover) and (400px <= width <= 700px) {
+    aspect-ratio: 16 / 9;
+  }
+}
+
+@media screen and (min-width: 768px), print and (orientation: landscape), not all and (monochrome) {
+  .sidebar {
+    float: left;
+  }
+}
+
+@supports ((display: grid) and (not (display: inline-grid))) or selector(:has(> img)) {
+  .grid {
+    display: grid;
+  }
+}
+
+@container sidebar (inline-size > 30em) and style(--responsive: true) {
+  .nav {
+    flex-direction: row;
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  50.5% {
+    opacity: 0.5;
+  }
+  to {
+    transform: rotate(1turn) translate3d(0, -50%, 0);
+  }
+}
+
+@scope (.card) to (.content) {
+  img {
+    border: 1px solid black;
+  }
+}
+
+@page :first {
+  margin: 1in;
+}

@@ -2,8 +2,6 @@
 //! markdown documents to the terminal with colors, hyperlinks, syntax
 //! highlighting, and Unicode box drawing.
 
-use std::io::Write as _;
-
 use bun_collections::StringHashMap;
 use bun_core::output::ansi_b;
 
@@ -45,6 +43,11 @@ pub struct Theme<'a> {
     /// this to the markdown file's directory so `![](./img.png)` works
     /// regardless of where `bun ./some/dir/file.md` is invoked from.
     pub image_base_dir: Option<&'a [u8]>,
+    /// Highlights a code block: `highlight(code, language, out)` appends `code`
+    /// with ANSI colors to `out`, each line resetting the styles it sets.
+    /// Returns false, and appends nothing, for a language it doesn't know.
+    /// `bun_md` is below the parsers in the crate graph, so the caller brings it.
+    pub highlight: Option<&'a dyn Fn(&[u8], &[u8], &mut Vec<u8>) -> bool>,
 }
 
 /// Renderer that only collects image URLs — no output. Used by the CLI
@@ -1498,8 +1501,11 @@ impl<'a> AnsiRenderer<'a> {
         self.out.write_byte(b'\n');
         self.last_was_newline = true;
 
-        // Highlight body for JS/TS/JSX/TSX; otherwise print as-is.
-        let is_js = is_js_lang(self.code_lang);
+        let mut highlighted: Vec<u8> = Vec::new();
+        let body: &[u8] = match self.theme.highlight.filter(|_| self.theme.colors) {
+            Some(highlight) if highlight(body, self.code_lang, &mut highlighted) => &highlighted,
+            _ => body,
+        };
         let mut line_start: usize = 0;
         let mut i: usize = 0;
         while i <= body.len() {
@@ -1513,11 +1519,7 @@ impl<'a> AnsiRenderer<'a> {
                 if self.theme.colors {
                     self.out.write(b"\x1b[0m");
                 }
-                if is_js && self.theme.colors {
-                    self.write_highlighted_js(line);
-                } else {
-                    self.out.write(line);
-                }
+                self.out.write(line);
                 self.out.write_byte(b'\n');
                 self.last_was_newline = true;
                 line_start = i + 1;
@@ -1538,22 +1540,6 @@ impl<'a> AnsiRenderer<'a> {
         self.last_was_newline = true;
 
         self.code_buf = src;
-    }
-
-    fn write_highlighted_js(&mut self, line: &[u8]) {
-        let highlighter = bun_core::fmt::QuickAndDirtyJavaScriptSyntaxHighlighter {
-            text: line,
-            opts: bun_core::fmt::HighlighterOptions {
-                enable_colors: true,
-                check_for_unhighlighted_write: false,
-                ..Default::default()
-            },
-        };
-        let mut aw: Vec<u8> = Vec::new();
-        match write!(&mut aw, "{}", highlighter) {
-            Ok(()) => self.out.write(&aw),
-            Err(_) => self.out.write(line),
-        }
     }
 
     // ========================================
@@ -2418,27 +2404,6 @@ fn sanitize_source_text<'b>(bytes: &'b [u8], scratch: &'b mut Vec<u8>) -> &'b [u
         scratch.extend_from_slice(&bytes[start..i]);
     }
     scratch
-}
-
-fn is_js_lang(lang: &[u8]) -> bool {
-    const NAMES: [&[u8]; 10] = [
-        b"js",
-        b"javascript",
-        b"jsx",
-        b"mjs",
-        b"cjs",
-        b"ts",
-        b"typescript",
-        b"tsx",
-        b"mts",
-        b"cts",
-    ];
-    for n in NAMES {
-        if strings::eql_case_insensitive_ascii(lang, n, true) {
-            return true;
-        }
-    }
-    false
 }
 
 fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {

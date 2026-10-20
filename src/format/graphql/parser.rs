@@ -145,7 +145,7 @@ impl Tree {
 type Result<T> = std::result::Result<T, Refused>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum TokenKind {
+pub(crate) enum TokenKind {
     StartOfFile,
     EndOfFile,
     Bang,
@@ -167,13 +167,16 @@ enum TokenKind {
     Float,
     String,
     BlockString,
+    /// The parser never sees these two. They're only in the list that [`parse_tolerant`] fills.
+    Comma,
+    Comment,
 }
 
 #[derive(Copy, Clone, Debug)]
-struct Token {
-    kind: TokenKind,
-    start: u32,
-    end: u32,
+pub(crate) struct Token {
+    pub(crate) kind: TokenKind,
+    pub(crate) start: u32,
+    pub(crate) end: u32,
 }
 
 const fn is_name_start(byte: u8) -> bool {
@@ -229,9 +232,12 @@ pub(crate) fn read_escape(text: &[u8]) -> Option<(char, usize)> {
     }
 }
 
-struct Parser<'t> {
+/// `TOLERANT` is for the highlighter: a byte that starts no token is skipped, and a missing token counts as there.
+struct Parser<'t, const TOLERANT: bool> {
     text: &'t [u8],
     tree: &'t mut Tree,
+    /// If `TOLERANT`: every token in source order, commas and comments too.
+    tokens: &'t mut Vec<Token>,
     refusal: Refusal,
     token: Token,
     /// The token after `token`, if it has been looked at.
@@ -239,20 +245,41 @@ struct Parser<'t> {
     /// Where the token before `token` ends.
     last_end: u32,
     stack_check: bun_core::StackCheck,
+    /// How many of the lists being parsed end with `)`, `]` and `}`. Only [`Parser::items`] counts.
+    awaited: [u32; 3],
+    /// What is in the `{ }` that wasn't where [`Parser::items`] looked for it: `type A implemnts B {`.
+    missing_block: Option<fn(&mut Parser<'t, TOLERANT>) -> Result<()>>,
+    /// `token` and `next`, while [`Parser::leave_for_definition`] has the end of the text in their place.
+    held: Option<(Token, Option<Token>)>,
 }
 
 /// Fills `tree` with the syntax of `text`.
 pub(crate) fn parse(text: &[u8], tree: &mut Tree) -> std::result::Result<(), SyntaxError> {
+    parse_with::<false>(text, tree, &mut Vec::new())
+}
+
+/// [`parse`] for text that may not be GraphQL. The tree is complete anyway, and `tokens` gets every token.
+pub(crate) fn parse_tolerant(text: &[u8], tree: &mut Tree, tokens: &mut Vec<Token>) {
+    let _ = parse_with::<true>(text, tree, tokens);
+}
+
+fn parse_with<const TOLERANT: bool>(
+    text: &[u8],
+    tree: &mut Tree,
+    tokens: &mut Vec<Token>,
+) -> std::result::Result<(), SyntaxError> {
     tree.nodes.clear();
     tree.children.clear();
     tree.comments.clear();
     tree.pending.clear();
+    tokens.clear();
     if u32::try_from(text.len()).is_err() {
         return Err(SyntaxError(Message::TooLarge, 0));
     }
-    let mut parser = Parser {
+    let mut parser = Parser::<TOLERANT> {
         text,
         tree,
+        tokens,
         refusal: Refusal::default(),
         token: Token {
             kind: TokenKind::StartOfFile,
@@ -262,6 +289,9 @@ pub(crate) fn parse(text: &[u8], tree: &mut Tree) -> std::result::Result<(), Syn
         next: None,
         last_end: 0,
         stack_check: crate::stack::check_for_tree(),
+        awaited: [0; 3],
+        missing_block: None,
+        held: None,
     };
     parser.parse_document().map_err(|_| parser.refusal.reason())
 }
@@ -278,7 +308,37 @@ fn expected(kind: TokenKind) -> Message {
     }
 }
 
-impl Parser<'_> {
+/// Whether `name` is the keyword that a definition starts with.
+pub(crate) fn starts_definition(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"schema"
+            | b"scalar"
+            | b"type"
+            | b"interface"
+            | b"union"
+            | b"enum"
+            | b"input"
+            | b"directive"
+            | b"extend"
+            | b"query"
+            | b"mutation"
+            | b"subscription"
+            | b"fragment"
+    )
+}
+
+/// Which of [`Parser::awaited`] counts the lists that `kind` closes.
+fn closer_index(kind: TokenKind) -> Option<usize> {
+    match kind {
+        TokenKind::ParenR => Some(0),
+        TokenKind::BracketR => Some(1),
+        TokenKind::BraceR => Some(2),
+        _ => None,
+    }
+}
+
+impl<const TOLERANT: bool> Parser<'_, TOLERANT> {
     // ───────────────────────────── the lexer ─────────────────────────────
 
     fn byte(&self, position: usize) -> Option<u8> {
@@ -301,6 +361,13 @@ impl Parser<'_> {
             };
             let punctuator = match byte {
                 b'\t' | b' ' | b',' | b'\n' | b'\r' => {
+                    if TOLERANT && byte == b',' {
+                        self.tokens.push(Token {
+                            kind: TokenKind::Comma,
+                            start: position as u32,
+                            end: position as u32 + 1,
+                        });
+                    }
                     position += 1;
                     continue;
                 }
@@ -311,9 +378,17 @@ impl Parser<'_> {
                 b'#' => {
                     let rest = &self.text[position..];
                     let len = bun_core::strings::index_of_any(rest, b"\n\r").unwrap_or(rest.len());
-                    self.tree
-                        .comments
-                        .push(Span::new(position as u32, (position + len) as u32));
+                    if TOLERANT {
+                        self.tokens.push(Token {
+                            kind: TokenKind::Comment,
+                            start: position as u32,
+                            end: (position + len) as u32,
+                        });
+                    } else {
+                        self.tree
+                            .comments
+                            .push(Span::new(position as u32, (position + len) as u32));
+                    }
                     position += len;
                     continue;
                 }
@@ -341,6 +416,10 @@ impl Parser<'_> {
                     );
                 }
                 b'"' => return token(TokenKind::String, position, self.read_string(position)?),
+                b'-' if TOLERANT && !matches!(self.byte(position + 1), Some(b'0'..=b'9')) => {
+                    position += 1;
+                    continue;
+                }
                 b'0'..=b'9' | b'-' => {
                     let (kind, end) = self.read_number(position)?;
                     return token(kind, position, end);
@@ -352,6 +431,10 @@ impl Parser<'_> {
                         .take_while(|&&byte| is_name_continue(byte))
                         .count();
                     return token(TokenKind::Name, position, position + len);
+                }
+                _ if TOLERANT => {
+                    position += 1;
+                    continue;
                 }
                 _ => {
                     return Err(self
@@ -367,6 +450,7 @@ impl Parser<'_> {
     fn read_digits(&self, position: usize) -> Result<usize> {
         let rest = self.text.get(position..).unwrap_or_default();
         match rest.iter().take_while(|byte| byte.is_ascii_digit()).count() {
+            0 if TOLERANT => Ok(position),
             0 => Err(self.refusal.note(Message::ExpectedDigit, position as u32)),
             count => Ok(position + count),
         }
@@ -384,7 +468,10 @@ impl Parser<'_> {
                 .byte(position)
                 .is_some_and(|byte| byte.is_ascii_digit())
             {
-                return Err(self.refusal.note(Message::InvalidNumber, start as u32));
+                if !TOLERANT {
+                    return Err(self.refusal.note(Message::InvalidNumber, start as u32));
+                }
+                position = self.read_digits(position)?;
             }
         } else {
             position = self.read_digits(position)?;
@@ -402,30 +489,37 @@ impl Parser<'_> {
             position = self.read_digits(position)?;
         }
         match self.byte(position) {
-            Some(byte) if byte == b'.' || is_name_start(byte) => {
+            Some(byte) if !TOLERANT && (byte == b'.' || is_name_start(byte)) => {
                 Err(self.refusal.note(Message::InvalidNumber, start as u32))
             }
             _ => Ok((kind, position)),
         }
     }
 
-    /// Where the string that starts at `start` ends.
+    /// Where the string that starts at `start` ends. If `TOLERANT`, an unclosed string runs to the end of the line.
     fn read_string(&self, start: usize) -> Result<usize> {
         let mut position = start + 1;
         loop {
             let rest = self.text.get(position..).unwrap_or_default();
-            position += bun_core::strings::index_of_any(rest, b"\"\\\n\r")
-                .ok_or_else(|| self.refusal.note(Message::UnclosedString, start as u32))?;
+            position += match bun_core::strings::index_of_any(rest, b"\"\\\n\r") {
+                Some(at) => at,
+                None if TOLERANT => return Ok(self.text.len()),
+                None => return Err(self.refusal.note(Message::UnclosedString, start as u32)),
+            };
             match self.byte(position) {
                 Some(b'"') => return Ok(position + 1),
                 Some(b'\\') => {
-                    position += read_escape(&self.text[position..])
-                        .ok_or_else(|| {
-                            self.refusal
-                                .note(Message::InvalidEscapeSequence, position as u32)
-                        })?
-                        .1
+                    position += match read_escape(&self.text[position..]) {
+                        Some((_, len)) => len,
+                        None if TOLERANT => 1,
+                        None => {
+                            return Err(self
+                                .refusal
+                                .note(Message::InvalidEscapeSequence, position as u32));
+                        }
+                    }
                 }
+                _ if TOLERANT => return Ok(position),
                 _ => return Err(self.refusal.note(Message::UnclosedString, start as u32)),
             }
         }
@@ -435,8 +529,11 @@ impl Parser<'_> {
         let mut position = start + 3;
         loop {
             let rest = self.text.get(position..).unwrap_or_default();
-            position += bun_core::strings::index_of(rest, b"\"\"\"")
-                .ok_or_else(|| self.refusal.note(Message::UnclosedString, start as u32))?;
+            position += match bun_core::strings::index_of(rest, b"\"\"\"") {
+                Some(at) => at,
+                None if TOLERANT => return Ok(self.text.len()),
+                None => return Err(self.refusal.note(Message::UnclosedString, start as u32)),
+            };
             // `\"""` is not the end.
             if position > start + 3 && self.byte(position - 1) == Some(b'\\') {
                 position += 3;
@@ -462,6 +559,9 @@ impl Parser<'_> {
             Some(next) => Ok(next),
             None => {
                 let next = self.read_token(self.token.end)?;
+                if TOLERANT {
+                    self.tokens.push(next);
+                }
                 self.next = Some(next);
                 Ok(next)
             }
@@ -492,10 +592,19 @@ impl Parser<'_> {
         self.refusal.note(message, self.token.start)
     }
 
+    /// The formatter refuses the current token with `message`. The highlighter leaves it to whoever comes next.
+    fn refuse(&self, message: Message) -> Result<()> {
+        match TOLERANT {
+            true => Ok(()),
+            false => Err(self.unexpected(message)),
+        }
+    }
+
     fn expect(&mut self, kind: TokenKind) -> Result<Token> {
         let token = self.token;
         if token.kind != kind {
-            return Err(self.unexpected(expected(kind)));
+            self.refuse(expected(kind))?;
+            return Ok(token);
         }
         self.advance()?;
         Ok(token)
@@ -512,7 +621,7 @@ impl Parser<'_> {
     fn expect_keyword(&mut self, keyword: &[u8]) -> Result<()> {
         match self.eat_keyword(keyword)? {
             true => Ok(()),
-            false => Err(self.unexpected(Message::UnexpectedToken)),
+            false => self.refuse(Message::UnexpectedToken),
         }
     }
 
@@ -556,9 +665,11 @@ impl Parser<'_> {
         Ok(())
     }
 
-    fn check_depth(&self) -> Result<()> {
+    /// Whether the stack has room for one more level. If `TOLERANT` and it hasn't, the list around skips the bracket.
+    fn check_depth(&self) -> Result<bool> {
         match self.stack_check.is_safe_to_recurse() {
-            true => Ok(()),
+            true => Ok(true),
+            false if TOLERANT => Ok(false),
             false => Err(self
                 .refusal
                 .note(Message::NestedTooDeeply, self.token.start)),
@@ -572,6 +683,9 @@ impl Parser<'_> {
         item: fn(&mut Self) -> Result<()>,
         close: TokenKind,
     ) -> Result<()> {
+        if TOLERANT {
+            return self.items(open, item, close);
+        }
         self.expect(open)?;
         loop {
             item(self)?;
@@ -579,6 +693,74 @@ impl Parser<'_> {
                 return Ok(());
             }
         }
+    }
+
+    /// `open item* close`. Skips a token that no item starts with, unless it closes a list further out: `{ a(b: 1 }`.
+    fn items(
+        &mut self,
+        open: TokenKind,
+        item: fn(&mut Self) -> Result<()>,
+        close: TokenKind,
+    ) -> Result<()> {
+        if open == TokenKind::BraceL {
+            self.missing_block = (!self.peek(open)).then_some(item);
+        }
+        if !self.eat(open)? {
+            return Ok(());
+        }
+        let own = closer_index(close);
+        if let Some(own) = own {
+            self.awaited[own] += 1;
+        }
+        loop {
+            if close == TokenKind::EndOfFile
+                && let Some(held) = self.held.take()
+            {
+                (self.token, self.next) = held;
+            }
+            if self.eat(close)? || self.peek(TokenKind::EndOfFile) {
+                break;
+            }
+            let start = self.token.start;
+            let tree = &*self.tree;
+            let lens = (tree.nodes.len(), tree.children.len(), tree.pending.len());
+            item(self)?;
+            if self.token.start == start {
+                // Nodes without a token are of no use, and 100 MB of `{` would make 100 million of them.
+                self.tree.nodes.truncate(lens.0);
+                self.tree.children.truncate(lens.1);
+                self.tree.pending.truncate(lens.2);
+                if closer_index(self.token.kind).is_some_and(|outer| self.awaited[outer] > 0) {
+                    break;
+                }
+                // `a(b: 1 {`: the `)` is missing.
+                if close == TokenKind::ParenR && self.peek(TokenKind::BraceL) {
+                    break;
+                }
+                self.advance()?;
+            }
+        }
+        if let Some(own) = own {
+            self.awaited[own] -= 1;
+        }
+        Ok(())
+    }
+
+    /// `type A { b: C` and then `type D {`: where `name:` has to come, that's a new definition. All that is open ends.
+    fn leave_for_definition(&mut self) -> Result<()> {
+        if !TOLERANT || !starts_definition(self.text_of(self.token)) {
+            return Ok(());
+        }
+        if let TokenKind::Name | TokenKind::At | TokenKind::BraceL = self.lookahead()?.kind {
+            let start = self.token.start;
+            self.held = Some((self.token, self.next.take()));
+            self.token = Token {
+                kind: TokenKind::EndOfFile,
+                start,
+                end: start,
+            };
+        }
+        Ok(())
     }
 
     /// The same, if it is there. Returns whether it is.
@@ -589,7 +771,7 @@ impl Parser<'_> {
         close: TokenKind,
     ) -> Result<bool> {
         let is_there = self.peek(open);
-        if is_there {
+        if is_there || TOLERANT {
             self.many(open, item, close)?;
         }
         Ok(is_there)
@@ -602,6 +784,9 @@ impl Parser<'_> {
         item: fn(&mut Self) -> Result<()>,
         close: TokenKind,
     ) -> Result<()> {
+        if TOLERANT {
+            return self.items(open, item, close);
+        }
         self.expect(open)?;
         while !self.eat(close)? {
             item(self)?;
@@ -629,7 +814,7 @@ impl Parser<'_> {
     fn parse_name(&mut self) -> Result<()> {
         match self.peek(TokenKind::Name) {
             true => self.token_as(Kind::Name, 0),
-            false => Err(self.unexpected(Message::ExpectedName)),
+            false => self.refuse(Message::ExpectedName),
         }
     }
 
@@ -645,8 +830,18 @@ impl Parser<'_> {
     }
 
     fn parse_definition(&mut self) -> Result<()> {
+        let missing_block = self.missing_block.take();
         if self.peek(TokenKind::BraceL) {
-            return self.parse_operation_definition();
+            return match missing_block {
+                Some(item) => self.many(TokenKind::BraceL, item, TokenKind::BraceR),
+                None => self.parse_operation_definition(),
+            };
+        }
+        // `type A implemnts B @c(d: 1) {`
+        if TOLERANT && self.peek(TokenKind::At) {
+            self.parse_directives()?;
+            self.missing_block = missing_block;
+            return Ok(());
         }
         let has_description = self.peek_description();
         let keyword = if has_description {
@@ -655,7 +850,8 @@ impl Parser<'_> {
             self.token
         };
         if keyword.kind != TokenKind::Name {
-            return Err(self.unexpected(Message::ExpectedDefinition));
+            self.missing_block = missing_block;
+            return self.refuse(Message::ExpectedDefinition);
         }
         match self.text_of(keyword) {
             b"schema" => self.parse_schema_definition(),
@@ -671,7 +867,10 @@ impl Parser<'_> {
             b"query" | b"mutation" | b"subscription" => self.parse_operation_definition(),
             b"fragment" => self.parse_fragment_definition(),
             b"extend" if !has_description => self.parse_type_system_extension(),
-            _ => Err(self.unexpected(Message::ExpectedDefinition)),
+            _ => {
+                self.missing_block = missing_block;
+                self.refuse(Message::ExpectedDefinition)
+            }
         }
     }
 
@@ -699,6 +898,7 @@ impl Parser<'_> {
             b"query" => Ok(QUERY),
             b"mutation" => Ok(MUTATION),
             b"subscription" => Ok(SUBSCRIPTION),
+            _ if TOLERANT => Ok(QUERY),
             _ => Err(self.refusal.note(Message::ExpectedDefinition, token.start)),
         }
     }
@@ -734,7 +934,9 @@ impl Parser<'_> {
     }
 
     fn parse_selection_set(&mut self) -> Result<()> {
-        self.check_depth()?;
+        if !self.check_depth()? {
+            return Ok(());
+        }
         let begin = self.begin();
         self.many(TokenKind::BraceL, Self::parse_selection, TokenKind::BraceR)?;
         self.finish(Kind::SelectionSet, 0, begin);
@@ -766,6 +968,10 @@ impl Parser<'_> {
 
     /// `name: value`
     fn parse_named_value(&mut self, kind: Kind, value: fn(&mut Self) -> Result<()>) -> Result<()> {
+        self.leave_for_definition()?;
+        if TOLERANT && !self.peek(TokenKind::Name) && !self.peek(TokenKind::Colon) {
+            return Ok(());
+        }
         let begin = self.begin();
         self.parse_name()?;
         self.expect(TokenKind::Colon)?;
@@ -826,7 +1032,7 @@ impl Parser<'_> {
 
     fn parse_fragment_name(&mut self) -> Result<()> {
         match self.is_keyword(self.token, b"on") {
-            true => Err(self.unexpected(Message::ExpectedName)),
+            true => self.refuse(Message::ExpectedName),
             false => self.parse_name(),
         }
     }
@@ -847,14 +1053,18 @@ impl Parser<'_> {
         };
         match self.token.kind {
             TokenKind::BracketL => {
-                self.check_depth()?;
+                if !self.check_depth()? {
+                    return Ok(());
+                }
                 let begin = self.begin();
                 self.any(TokenKind::BracketL, value, TokenKind::BracketR)?;
                 self.finish(Kind::ListValue, 0, begin);
                 Ok(())
             }
             TokenKind::BraceL => {
-                self.check_depth()?;
+                if !self.check_depth()? {
+                    return Ok(());
+                }
                 let begin = self.begin();
                 let field = if is_const {
                     Self::parse_const_object_field
@@ -870,6 +1080,10 @@ impl Parser<'_> {
             TokenKind::String => self.token_as(Kind::StringValue, 0),
             TokenKind::BlockString => self.token_as(Kind::StringValue, IS_BLOCK),
             TokenKind::Name => {
+                // `a(b: , c: 1)`: `c` isn't the value of `b`.
+                if TOLERANT && self.lookahead()?.kind == TokenKind::Colon {
+                    return Ok(());
+                }
                 let kind = match self.text_of(self.token) {
                     b"true" | b"false" => Kind::BooleanValue,
                     b"null" => Kind::NullValue,
@@ -877,8 +1091,8 @@ impl Parser<'_> {
                 };
                 self.token_as(kind, 0)
             }
-            TokenKind::Dollar if !is_const => self.parse_variable(),
-            _ => Err(self.unexpected(Message::ExpectedValue)),
+            TokenKind::Dollar if !is_const || TOLERANT => self.parse_variable(),
+            _ => self.refuse(Message::ExpectedValue),
         }
     }
 
@@ -912,7 +1126,9 @@ impl Parser<'_> {
     }
 
     fn parse_type_reference(&mut self) -> Result<()> {
-        self.check_depth()?;
+        if !self.check_depth()? {
+            return Ok(());
+        }
         let begin = self.begin();
         if self.eat(TokenKind::BracketL)? {
             self.parse_type_reference()?;
@@ -961,6 +1177,7 @@ impl Parser<'_> {
     }
 
     fn parse_operation_type_definition(&mut self) -> Result<()> {
+        self.leave_for_definition()?;
         let begin = self.begin();
         let operation = self.parse_operation_type()?;
         self.expect(TokenKind::Colon)?;
@@ -1011,6 +1228,7 @@ impl Parser<'_> {
     fn parse_field_definition(&mut self) -> Result<()> {
         let begin = self.begin();
         self.parse_description()?;
+        self.leave_for_definition()?;
         self.parse_name()?;
         self.parse_argument_definitions()?;
         self.expect(TokenKind::Colon)?;
@@ -1031,6 +1249,7 @@ impl Parser<'_> {
     fn parse_input_value_definition(&mut self) -> Result<()> {
         let begin = self.begin();
         self.parse_description()?;
+        self.leave_for_definition()?;
         self.parse_name()?;
         self.expect(TokenKind::Colon)?;
         self.parse_type_reference()?;
@@ -1083,7 +1302,7 @@ impl Parser<'_> {
     fn parse_enum_value_definition(&mut self) -> Result<()> {
         let begin = self.begin();
         self.parse_description()?;
-        if matches!(self.text_of(self.token), b"true" | b"false" | b"null") {
+        if !TOLERANT && matches!(self.text_of(self.token), b"true" | b"false" | b"null") {
             return Err(self.unexpected(Message::ExpectedName));
         }
         self.parse_name()?;
@@ -1165,9 +1384,9 @@ impl Parser<'_> {
                 self.parse_name()?;
                 (Kind::DirectiveExtension, self.parse_const_directives()?)
             }
-            _ => return Err(self.unexpected(Message::ExpectedDefinition)),
+            _ => return self.refuse(Message::ExpectedDefinition),
         };
-        if !adds_something {
+        if !adds_something && !TOLERANT {
             return Err(self.refusal.note(Message::EmptyExtension, self.last_end));
         }
         self.finish(kind, 0, begin);
@@ -1219,7 +1438,7 @@ impl Parser<'_> {
         ];
         match LOCATIONS.contains(&self.text_of(self.token)) {
             true => self.parse_name(),
-            false => Err(self.unexpected(Message::ExpectedDirectiveLocation)),
+            false => self.refuse(Message::ExpectedDirectiveLocation),
         }
     }
 }

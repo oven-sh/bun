@@ -1,0 +1,118 @@
+# Schema and operations of a small blog.
+schema @link(url: "https://specs.apollo.dev/federation/v2.3") {
+  query: Query
+  mutation: Mutation
+  subscription: Subscription
+}
+
+"""
+A point in time, as an ISO 8601 string.
+It can say \""" without ending.
+"""
+scalar DateTime @specifiedBy(url: "https://www.rfc-editor.org/rfc/rfc3339")
+
+directive @cost(
+  "How much one call costs."
+  weight: Int! = 1
+  tags: [String!] = ["a", "b"]
+) repeatable on FIELD_DEFINITION | OBJECT
+
+enum Role {
+  ADMIN
+  "Can write posts."
+  AUTHOR @deprecated(reason: "Use \"WRITER\",\nnot C:\\author")
+}
+
+interface Entity implements Node {
+  id: ID!
+  createdAt: DateTime
+}
+
+"Somebody who can log in."
+type User implements Node & Entity @key(fields: "id") {
+  id: ID!
+  createdAt: DateTime
+  name: String!
+  score: Float
+  isActive: Boolean!
+  role: Role!
+  posts(first: Int = 10, after: String, filter: PostFilter = { tags: ["news"], draft: false }): [Post!]!
+    @cost(weight: 5)
+}
+
+type Post implements Node {
+  id: ID!
+  title: String!
+}
+
+union SearchResult = User | Post
+
+input PostFilter @oneOf {
+  tags: [String!] = []
+  draft: Boolean = false
+  minScore: Float = -1.5e3
+  author: ID = null
+  role: Role = ADMIN
+}
+
+type Query {
+  node(id: ID!): Node
+  search(text: String!): [SearchResult!]!
+}
+
+type Mutation {
+  publish(input: PostFilter!): Post
+}
+
+extend schema @link(url: "https://example.com")
+extend scalar DateTime @cost
+extend type Query {
+  me: User
+}
+extend interface Node @cost
+extend union SearchResult = Query
+extend enum Role {
+  GUEST
+}
+extend input PostFilter {
+  limit: Int
+}
+
+query FindUser($id: ID!, $first: Int = 20, $tags: [String!]! = ["a"] @cost, $withPosts: Boolean = true)
+@cost(weight: 2) {
+  user: node(id: $id) {
+    id
+    ...UserFields @include(if: $withPosts)
+    ... on User {
+      recent: posts(first: $first, filter: { tags: $tags, draft: false, author: null, role: AUTHOR }) {
+        title
+      }
+    }
+    ... @skip(if: false) {
+      __typename
+    }
+  }
+}
+
+mutation {
+  publish(input: { tags: [], minScore: 0.5 }) {
+    id
+  }
+}
+
+subscription OnPost {
+  postAdded {
+    title
+  }
+}
+
+fragment UserFields on User {
+  name
+  type: role
+}
+
+{
+  me {
+    name
+  }
+}

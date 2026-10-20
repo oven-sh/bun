@@ -17,6 +17,7 @@
     macro(cwd) \
     macro(embeddedFiles) \
     macro(enableANSIColors) \
+    macro(highlight) \
     macro(inspect) \
     macro(isStandaloneExecutable) \
     macro(origin) \

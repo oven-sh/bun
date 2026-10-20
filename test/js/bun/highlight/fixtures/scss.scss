@@ -1,0 +1,118 @@
+@use "sass:math";
+@use "sass:map" as m;
+@use "config" with ($primary: #0af, $rounded: true);
+@forward "src/list" hide list-reset, $horizontal-list-gap;
+@import "legacy/mixins";
+
+// Variables, maps and lists.
+/// The breakpoints of the grid.
+/// @type Map
+$breakpoints: (
+  "small": 576px,
+  medium: 768px,
+  large: (min: 992px, max: 1199.98px),
+) !default;
+$font-stack: Helvetica, "Segoe UI", sans-serif;
+$gutter: 1.5rem * 2 !global;
+$enabled: true;
+$nothing: null;
+
+@function rem($px, $base: 16px) {
+  @if math.is-unitless($px) or $base == 0 {
+    @error "rem() needs a length, got #{$px}";
+  }
+  @return math.div($px, $base) * 1rem;
+}
+
+@mixin respond($name, $args...) {
+  $width: m.get($breakpoints, $name);
+  @if not $width {
+    @warn "Unknown breakpoint `#{$name}`.";
+  } @else if $width != null and $width >= 0 {
+    @media screen and (min-width: $width) {
+      @content;
+    }
+  } @else {
+    @content;
+  }
+}
+
+@mixin theme($theme: dark) {
+  @content ($theme);
+}
+
+%button-base {
+  display: inline-flex;
+  padding: rem(8px) rem(12px);
+}
+
+.button {
+  @extend %button-base;
+  font: {
+    family: $font-stack;
+    size: 14px;
+  }
+  margin: 0 auto {
+    top: -$gutter;
+  }
+  color: config.$primary;
+  width: calc(100% - #{$gutter});
+  background: url("#{$cdn}/img/bg.png"), url(#{$cdn}/img/fallback.png);
+
+  &:hover,
+  &--primary:not(.is-disabled) {
+    color: darken($color: config.$primary, $amount: 10%);
+  }
+
+  &__icon + & {
+    margin-left: math.percentage(math.div(1, 3));
+  }
+
+  .no-js & {
+    display: none;
+  }
+
+  @include respond(medium) {
+    padding: 10px + 2 (4px * 3) 10 % 3;
+  }
+
+  @include theme using ($t) {
+    content: "theme: #{$t + "!"}";
+  }
+
+  @at-root #{&}-wrapper {
+    position: relative;
+  }
+}
+
+@each $name, $width in (narrow: 20em, wide: 60em) {
+  .container-#{$name}-fluid {
+    #{$name}-width: $width;
+    border-#{$name}: 1px solid;
+  }
+}
+
+@for $i from 1 through 3 {
+  .mt-#{$i} > li:nth-child(#{$i}n) {
+    margin-top: #{$i * 4}px;
+  }
+}
+
+$i: 6;
+@while $i > 0 {
+  .item-#{$i} {
+    width: 2em * $i; // narrower every time
+  }
+  $i: $i - 2;
+}
+
+/* Plain CSS still works. */
+.link {
+  @extend .button, .missing !optional;
+}
+
+@media (min-width: map-get($breakpoints, "small")) and (max-width: #{$max}) {
+  .a[data-kind="x"]::after {
+    @debug "nested: #{&}";
+  }
+}

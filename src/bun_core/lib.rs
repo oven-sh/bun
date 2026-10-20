@@ -15,6 +15,7 @@
 #![warn(unused_must_use)]
 
 pub mod Global;
+pub mod ansi256;
 pub mod atomic_cell;
 pub mod ci_info;
 pub mod comptime_string_map;

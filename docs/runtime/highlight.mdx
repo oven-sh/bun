@@ -1,0 +1,165 @@
+---
+title: Syntax highlighting
+description: Highlight code as HTML or ANSI with Bun's built-in syntax highlighter
+---
+
+<Callout type="note">
+  **Unstable API** — This API is under active development and may change in future versions of Bun.
+</Callout>
+
+`Bun.highlight` turns source code into HTML for a web page or into ANSI-colored text for a terminal.
+
+```ts
+const code = `const greet = (name: string) => "Hello, " + name;`;
+
+Bun.highlight.html(code, "ts"); // HTML with a class name on each token
+
+const theme = new Bun.highlight.Theme();
+theme.ansi(code, "ts"); // ANSI colors, for a terminal
+theme.css(); // the style sheet for the HTML
+```
+
+Bun highlights with the parsers behind `bun format`, `bun lint`, and `bun check`. There are no regular-expression grammars. That has two effects:
+
+- **It knows what a name is.** A parameter has the same color in the signature and in the body. An import that you call is a function. `type` is a keyword in `type A = B` and a variable in `const type = 1`.
+- **It handles broken code.** Code with syntax errors, snippets with `...` in them, and code that stops in the middle of a token are still highlighted.
+
+## Languages
+
+| Language             | Names                                   |
+| -------------------- | --------------------------------------- |
+| JavaScript, JSX      | `javascript`, `js`, `mjs`, `cjs`, `jsx` |
+| TypeScript, TSX      | `typescript`, `ts`, `mts`, `cts`, `tsx` |
+| JSON, JSON5, JSONC   | `json`, `json5`, `jsonc`                |
+| CSS, SCSS, Less      | `css`, `scss`, `less`                   |
+| HTML                 | `html`, `htm`                           |
+| Vue, Svelte, Angular | `vue`, `svelte`, `angular`              |
+| Handlebars           | `handlebars`, `hbs`                     |
+| Markdown, MDX        | `markdown`, `md`, `mdx`                 |
+| YAML, TOML           | `yaml`, `yml`, `toml`                   |
+| GraphQL              | `graphql`, `gql`                        |
+
+Case doesn't matter. For any other language, `html()` and `theme.ansi()` return `null`:
+
+```ts
+Bun.highlight.html(code, lang) ?? Bun.escapeHTML(code);
+```
+
+Bun also highlights code inside code: `<script>` and `<style>` in HTML, fenced code blocks and front matter in Markdown, and `css`, `styled.div`, `html`, `gql`, and `md` template literals in JavaScript.
+
+## `Bun.highlight.html()`
+
+Returns HTML with a `<span>` around each token. The class is `hl-` and the token's name, with `-` for `.`. A token also has the classes of its parents.
+
+```ts
+Bun.highlight.html("if (a) return 1;", "js");
+```
+
+```html
+<span class="hl-keyword hl-keyword-control">if</span> <span class="hl-punctuation hl-punctuation-bracket">(</span
+><span class="hl-variable">a</span><span class="hl-punctuation hl-punctuation-bracket">)</span>
+<span class="hl-keyword hl-keyword-control">return</span> <span class="hl-number">1</span
+><span class="hl-punctuation hl-punctuation-delimiter">;</span>
+```
+
+`&`, `<`, and `>` are escaped. Bun adds no element around the code, so wrap it yourself. Give the wrapper the class `hl` to get the theme's text and background colors:
+
+```ts
+const theme = new Bun.highlight.Theme();
+
+const page = `
+  <style>${theme.css()}</style>
+  <pre class="hl"><code>${Bun.highlight.html(code, "ts")}</code></pre>
+`;
+```
+
+No `<span>` crosses a line break. To add line numbers, split the result on `"\n"`.
+
+You can also write the CSS by hand. `.hl-keyword` matches every keyword, and `.hl-keyword-control` matches only `if`, `return`, and the like.
+
+## `Bun.highlight.Theme`
+
+A theme holds the colors. Bun parses them once, in the constructor, so make a theme once and keep it.
+
+```ts
+new Bun.highlight.Theme(); // adapts to where the code is shown
+new Bun.highlight.Theme("dark");
+new Bun.highlight.Theme("light");
+new Bun.highlight.Theme({ keyword: "#c678dd", string: "#98c379" }); // your own styles
+```
+
+In your own styles, each key is a [token](#tokens) and each value is a CSS color or a style:
+
+```ts
+const theme = new Bun.highlight.Theme({
+  foreground: "#d4d4d4",
+  background: "#1e1e1e",
+  comment: { color: "#6a9955", italic: true },
+  keyword: "#569cd6",
+  "keyword.control": "#c586c0",
+  string: "#ce9178",
+  function: "#dcdcaa",
+  type: "#4ec9b0",
+});
+```
+
+A style has `color`, `bold`, `italic`, `underline`, and `strikethrough`. Colors must be opaque, because a terminal has no transparency.
+
+A token that you leave out looks like its parent: without `"keyword.control"`, `if` gets the style of `keyword`. A token with no style is plain text.
+
+### `theme.ansi()`
+
+Returns the code with ANSI escape sequences.
+
+```ts
+const theme = new Bun.highlight.Theme();
+
+console.log(theme.ansi(await Bun.file("index.ts").text(), "ts"));
+```
+
+Every line resets the styles it sets, so you can split the result on `"\n"`.
+
+Without styles, the theme is dark. It is light if the `COLORFGBG` environment variable says the terminal's background is light.
+
+Bun reads the number of colors from the environment (`NO_COLOR`, `FORCE_COLOR`, `COLORTERM`, `TERM`). To set it yourself, pass `colorDepth`:
+
+```ts
+new Bun.highlight.Theme("dark", { colorDepth: 8 });
+```
+
+| `colorDepth` | Colors                                                    |
+| ------------ | --------------------------------------------------------- |
+| `24`         | 16 million                                                |
+| `8`          | 256. Each color of the theme becomes the closest one      |
+| `4`          | 16. `"dark"` and `"light"` use the terminal's own palette |
+| `1`          | None. `ansi()` returns the code unchanged                 |
+
+These are the values of `process.stdout.getColorDepth()`.
+
+### `theme.css()`
+
+Returns the style sheet for the classes that `html()` writes.
+
+Without styles, the style sheet is light, and dark with `prefers-color-scheme: dark`.
+
+## Tokens
+
+| Token                                                                                            | Examples                                          |
+| ------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
+| `comment`, `comment.doc`                                                                         | `// a`, `/** a */`                                |
+| `string`, `string.escape`, `string.regexp`, `string.special`                                     | `"a"`, `\n`, `/a/g`, the argument of `url()`      |
+| `number`, `number.unit`                                                                          | `10`, the `px` of `10px`                          |
+| `boolean`, `constant`, `constant.builtin`                                                        | `true`, `MAX_SIZE`, `null`                        |
+| `keyword`                                                                                        | `const`, `function`, `class`                      |
+| `keyword.control`, `keyword.import`, `keyword.operator`, `keyword.modifier`, `keyword.directive` | `if`, `import`, `typeof`, `async`, `@media`       |
+| `operator`                                                                                       | `+`, `=>`                                         |
+| `punctuation.bracket`, `punctuation.delimiter`, `punctuation.special`                            | `(`, `;`, `${`                                    |
+| `variable`, `variable.parameter`, `variable.builtin`                                             | `a`, a parameter, `this`                          |
+| `property`                                                                                       | `a.b`, a key in JSON, a property in CSS           |
+| `function`, `function.method`                                                                    | `f()`, `a.f()`                                    |
+| `type`, `type.builtin`, `type.parameter`                                                         | `Map`, `string`, `T`                              |
+| `namespace`, `label`, `decorator`                                                                | `import * as ns`, `outer:`, `@Component`          |
+| `tag`, `tag.component`, `tag.delimiter`, `attribute`                                             | `div`, `Button`, `</`, `href`                     |
+| `selector`, `selector.class`, `selector.id`, `selector.pseudo`                                   | `&`, `.a`, `#a`, `:hover`                         |
+| `markup.heading`, `markup.bold`, `markup.italic`, `markup.strikethrough`                         | `# a`, `**a**`, `*a*`, `~~a~~`                    |
+| `markup.link`, `markup.link.url`, `markup.raw`, `markup.quote`, `markup.list`                    | `[a]`, `(https://bun.com)`, `` `a` ``, `> a`, `-` |

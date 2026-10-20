@@ -2035,43 +2035,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getDefaultConstraintOfConditionalType`
     pub(super) fn default_constraint_of_conditional(&mut self, t: TypeId) -> TypeId {
-        // The flag is true if `t` has `infer` type parameters. The skipped derivation then runs an
-        // inference, which gives the same result as long as nothing in progress can change it.
-        let cell = (links::Kind::Conditional, links::DEFAULT_CONSTRAINT);
-        if let Some((cached_value, infers)) = self.cached_part::<(TypeId, bool)>(t, cell.0, cell.1)
-            && (!infers || self.has_stack_for_cached_part() && !self.has_obstacle_to_skipping())
-        {
-            return cached_value;
-        }
-        self.derive_and_cache_default_constraint_of_conditional(t)
-    }
-
-    /// This is the only reader of `resolvedInferredTrueType`, so that part doesn't have its own cell.
-    #[inline(never)]
-    fn derive_and_cache_default_constraint_of_conditional(&mut self, t: TypeId) -> TypeId {
-        let (file, _, _, nodes) = self.cond_origin(t);
-        // Without `infer` it's the union of two parts.
-        let infers = !self.cond_infer_params(t).is_empty();
-        let is_idle =
-            !infers || !self.has_obstacle_to_skipping() && self.is_settled_for_inference();
-        let ((constraint, _), stored) = self.derive_settled(
-            |c| c.derive_with_inference(|c| c.derive_default_constraint_of_conditional(t)),
-            |c, &(_, has_no_side_effects)| {
-                is_idle
-                    && has_no_side_effects
-                    && (!infers
-                        || c.is_type_node_settled(file, nodes[0])
-                            && c.is_type_node_settled(file, nodes[2]))
-            },
-        );
-        if let Some(stored) = stored {
-            let cell = (t, links::Kind::Conditional, links::DEFAULT_CONSTRAINT);
-            self.cache_part(cell, (constraint, infers), stored);
-        }
-        constraint
-    }
-
-    fn derive_default_constraint_of_conditional(&mut self, t: TypeId) -> TypeId {
+        self.links.note_uncached_derivation();
         let (yes, no) = (self.cond_inferred_true(t), self.cond_false(t));
         // A branch that is `any` would make the whole assignable to anything.
         if self.is_any(yes) {

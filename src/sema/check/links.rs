@@ -1,5 +1,5 @@
 //! Caches the parts of a type that tsgo stores in fields of the type and assigns on first use:
-//! `ConditionalType.checkType`, `extendsType`, `resolvedTrueType`, `resolvedFalseType` and `resolvedDefaultConstraint`,
+//! `ConditionalType.checkType`, `extendsType`, `resolvedTrueType` and `resolvedFalseType`,
 //! `ConditionalRoot.inferTypeParameters`, `MappedType.constraintType` and `resolvedApparentType`, and `Type.alias`. Also
 //! caches the restrictive and permissive instantiations, which tsgo stores per type in `cachedTypes`.
 //!
@@ -19,10 +19,6 @@
 //!     without a cycle, a limit, or a rejection. Also, no instantiation with `mapper` is in progress, because the outer
 //!     of two instantiations with the same key stores last (`is_mapper_idle`).
 //! - A part derived from other parts is cached only if all of them are. See `TypeLinks::uncached_derivations`.
-//! - A part whose derivation runs an inference follows the rules for skipping an inference walk. The derivation must
-//!   start with `has_obstacle_to_skipping` returning false and `is_settled_for_inference` returning true, and it must
-//!   not have an effect that the next derivation would repeat (`derive_with_inference`). The cached part is read only
-//!   while `has_obstacle_to_skipping` returns false.
 //! - Nothing is read while `index_infos_in_instantiation` isn't empty. `instantiate` ignores older results then too.
 //!
 //! Reading a cached part skips the work that `instantiate` does before any lookup: it increments `instantiation_count`,
@@ -37,11 +33,10 @@ use std::sync::atomic::AtomicU32;
 /// `Type.alias.typeArguments`
 pub(super) type AliasArguments = SmallVec<[TypeId; 4]>;
 
-/// Cell index of a conditional type's `resolvedDefaultConstraint`. It follows the `cond_piece` cells.
-pub(super) const DEFAULT_CONSTRAINT: usize = 4;
-/// Cell index of `root.inferTypeParameters`. The cell contains 1 + start * `MAX_INFER_TYPE_PARAMETERS` + length, where
-/// start and length locate the list in `TypeLinks::infer_type_parameters`.
-const INFER_TYPE_PARAMETERS: usize = 5;
+/// Cell index of `root.inferTypeParameters`. It follows the `cond_piece` cells. The cell contains
+/// 1 + start * `MAX_INFER_TYPE_PARAMETERS` + length, where start and length locate the list in
+/// `TypeLinks::infer_type_parameters`.
+const INFER_TYPE_PARAMETERS: usize = 4;
 /// Lists of this length or longer aren't cached.
 const MAX_INFER_TYPE_PARAMETERS: usize = 64;
 
@@ -68,11 +63,6 @@ pub(super) enum FixedMapper {
     Permissive,
     UniqueLiteral,
 }
-
-/// A part whose derivation runs an inference is cached only if the derivation used at most this many bytes of native
-/// stack, and it's read only where that many bytes are free. So no `is_stack_low` check would have cut the skipped
-/// derivation short.
-const MAX_STACK_OF_CACHED_PART: usize = 64 << 10;
 
 /// Number of published types per page of `ByType`.
 const PAGE: usize = 128;
@@ -425,43 +415,6 @@ impl<'p, 's> Checker<'p, 's> {
         (part, stored)
     }
 
-    /// Calls `derive`, which runs an inference. The returned flag is true if `derive` had no effect that a caller could
-    /// notice, apart from the ones that `derive_settled` checks. For that, it must not have marked the variance being
-    /// measured (a hit in `Program::relations` does that every time), its result must not depend on the comparisons or
-    /// variance computations in progress, and it must have used at most `MAX_STACK_OF_CACHED_PART` bytes of stack.
-    pub(super) fn derive_with_inference<V>(
-        &mut self,
-        derive: impl FnOnce(&mut Self) -> V,
-    ) -> (V, bool) {
-        let traces = |c: &Self| {
-            (
-                c.in_progress_variance_reads,
-                c.comparisons_of_deeply_nested_types,
-                c.any_signature_reads,
-            )
-        };
-        let before = traces(self);
-        let in_use = self.stack_base.saturating_sub(stack_pointer());
-        let outer_deepest = self.deepest_stack.replace(0);
-        let outer_reliability = std::mem::take(&mut self.reliability);
-        let part = derive(self);
-        let is_reliable = self.reliability == 0;
-        self.reliability |= outer_reliability;
-        let deepest = self.deepest_stack.get();
-        self.deepest_stack.set(deepest.max(outer_deepest));
-        let has_no_side_effects = is_reliable
-            && traces(self) == before
-            && deepest.saturating_sub(in_use) <= MAX_STACK_OF_CACHED_PART;
-        (part, has_no_side_effects)
-    }
-
-    /// See `MAX_STACK_OF_CACHED_PART`.
-    #[inline]
-    pub(super) fn has_stack_for_cached_part(&self) -> bool {
-        self.stack_base.saturating_sub(stack_pointer()) + MAX_STACK_OF_CACHED_PART
-            <= self.stack_limit
-    }
-
     /// Returns `instantiateType(ty, mapper)` for a fixed mapper if it's cached and may be read now.
     #[inline]
     pub(super) fn cached_with_fixed_mapper(
@@ -594,10 +547,10 @@ mod tests {
         let last = MappedPart::ApparentType as usize;
         links.set_cell(mapped, Kind::Mapped, last, 50, Stored::new());
         links.set_cell(conditional, Kind::Conditional, 0, 60, Stored::new());
-        let row = |ty, kind| [0, 1, 2, 3, 4, 5].map(|at| links.cell(ty, kind, at));
-        assert_eq!(row(conditional, Kind::Conditional), [60, 0, 40, 0, 0, 0]);
+        let row = |ty, kind| [0, 1, 2, 3, 4].map(|at| links.cell(ty, kind, at));
+        assert_eq!(row(conditional, Kind::Conditional), [60, 0, 40, 0, 0]);
         assert_eq!(row(conditional, Kind::Mapped), [0; PARTS]);
-        assert_eq!(row(mapped, Kind::Mapped), [0, 50, 0, 0, 0, 0]);
+        assert_eq!(row(mapped, Kind::Mapped), [0, 50, 0, 0, 0]);
         assert_eq!(row(mapped, Kind::Conditional), [0; PARTS]);
         assert_eq!(row(TypeId(8), Kind::Mapped), [0; PARTS]);
     }

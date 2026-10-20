@@ -95,7 +95,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::Global
 }
 
 // Evaluate `internal/process/pre_execution` before any user code runs.
-// Called from VirtualMachine::reload_entry_point when argv carries a
+// Called from VirtualMachine::reload_entry_point for a node:cluster worker and when argv carries a
 // Node.js `--trace-*` flag. The registry caches the module, so repeat calls
 // (hot reload, workers) are cheap.
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__preExecutionBootstrap(Zig::GlobalObject* globalObject)

@@ -14,6 +14,31 @@ pub trait OpenForWritingInput {
         is_nonblocking: &mut bool,
         openat: &dyn Fn(Fd, &ZStr, i32, Mode) -> bun_sys::Result<Fd>,
     ) -> bun_sys::Result<Fd>;
+
+    /// False when the fd stays the caller's: an error after the open leaves it open.
+    fn owns_fd(&self) -> bool {
+        true
+    }
+}
+
+/// The caller's fd itself, with no duplicate.
+pub struct InPlace(pub Fd);
+
+impl OpenForWritingInput for InPlace {
+    fn open_for_writing_result(
+        &self,
+        _dir: Fd,
+        _input_flags: i32,
+        _mode: Mode,
+        _is_nonblocking: &mut bool,
+        _openat: &dyn Fn(Fd, &ZStr, i32, Mode) -> bun_sys::Result<Fd>,
+    ) -> bun_sys::Result<Fd> {
+        Ok(self.0)
+    }
+
+    fn owns_fd(&self) -> bool {
+        false
+    }
 }
 
 impl OpenForWritingInput for crate::PathOrFileDescriptor<'_> {
@@ -114,7 +139,9 @@ where
     {
         match bun_sys::fstat(fd) {
             Err(err) => {
-                fd.close();
+                if input_path.owns_fd() {
+                    fd.close();
+                }
                 return Err(err);
             }
             Ok(stat) => {
@@ -145,7 +172,9 @@ where
                     let flags = match bun_sys::get_fcntl_flags(fd) {
                         Ok(flags) => flags,
                         Err(err) => {
-                            fd.close();
+                            if input_path.owns_fd() {
+                                fd.close();
+                            }
                             return Err(err);
                         }
                     };

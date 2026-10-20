@@ -2,7 +2,7 @@
 import type { FileSink } from "bun";
 const { Readable, Writable, finished } = require("node:stream");
 const fs = require("node:fs");
-const { read, write, writeSync, fsync, writev } = fs;
+const { read, write, fsync, writev } = fs;
 const { FileHandle, kRef, kUnref, kFd } = (fs.promises as any).$data as {
   FileHandle: { new (): FileHandle };
   readonly kRef: unique symbol;
@@ -44,6 +44,9 @@ const kIoDone = Symbol("kIoDone");
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
 const kFs = Symbol("kFs");
+const openSinkForStream = $newRustFunction("runtime/webcore/FileSink.rs", "openForStream", 1) as (
+  fd: number,
+) => FileSink;
 
 const {
   read: fileHandlePrototypeRead,
@@ -457,19 +460,10 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
     this.pos = start;
   }
 
-  // No writer for this fd (read-only, fd limit, cannot be polled): syncSink fails at write time, the way node does.
-  let fastWriter;
-  if (fastPath && fd != null) {
-    try {
-      fastWriter = Bun.file(fd).writer();
-    } catch {
-      fastWriter = syncSink(fd);
-    }
-  }
-
   // Enable fast path
   if (fastPath) {
-    this[kWriteStreamFastPath] = fd != null ? fastWriter : true;
+    // An fd the sink cannot write to fails at write time, as in node, not here.
+    this[kWriteStreamFastPath] = fd != null ? openSinkForStream(fd) : true;
     this._write = underscoreWriteFast;
     this._writev = undefined;
     this.write = writeFast as any;
@@ -598,41 +592,6 @@ function _write(data, encoding, cb) {
   }
 }
 writeStreamPrototype._write = _write;
-
-// The FileSink calls the fast path makes, on an fd that has no FileSink. Writes are synchronous.
-function syncSink(fd: number) {
-  return {
-    write(data: any) {
-      if (typeof data === "string") data = Buffer.from(data);
-      else if (data instanceof ArrayBuffer) data = new Uint8Array(data);
-      else if (data == null) throw $ERR_STREAM_NULL_VALUES();
-      else if (!ArrayBuffer.isView(data)) {
-        throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "TypedArray", "DataView"], data);
-      }
-      const length = data.byteLength;
-      let offset = 0;
-      let retries = 0;
-      while (offset < length) {
-        let written: number;
-        try {
-          written = writeSync(fd, data, offset, length - offset);
-        } catch (err: any) {
-          if (err?.code !== "EAGAIN") return Promise.$reject(err);
-          // A non-blocking fd with no room: wait for the reader, as a blocking write would.
-          Bun.sleepSync(1);
-          continue;
-        }
-        // Like writeAll: an fd that takes no bytes several times in a row fails the write.
-        if (written > 0) retries = 0;
-        else if (++retries > 5) return Promise.$reject(new Error("write failed"));
-        offset += written;
-      }
-      return length;
-    },
-    flush: () => 0,
-    end: () => 0,
-  };
-}
 
 function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) {
   let fileSink = this[kWriteStreamFastPath];

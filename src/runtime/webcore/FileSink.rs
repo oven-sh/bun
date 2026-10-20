@@ -99,6 +99,47 @@ pub(crate) mod testing_apis {
 // (acronym splitter treats `AP|Is` as two words); alias so both resolve.
 pub(crate) use testing_apis as testing_ap_is;
 
+/// The sink of an `fs.WriteStream` on an fd that is already open. It always starts: a bad fd fails at write time.
+pub(crate) fn open_for_stream(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    use bun_sys_jsc::FdJsc as _;
+    let Some(fd) = Fd::from_js(frame.argument(0)) else {
+        return Err(global.throw_invalid_arguments(format_args!("fd must be a file descriptor")));
+    };
+    let event_loop = EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>());
+
+    #[cfg(windows)]
+    {
+        let sink = FileSink::init(fd, event_loop);
+        let is_stdio = matches!(
+            fd.stdio_tag(),
+            Some(bun_core::Stdio::StdOut) | Some(bun_core::Stdio::StdErr)
+        );
+        sink.writer.with_mut(|w| {
+            w.owns_fd = false;
+            // What libuv cannot open as a stream is written with blocking `WriteFile` calls, like stdout and stderr.
+            if is_stdio || w.start(fd, true).is_err() {
+                let _ = w.start_sync(fd, false);
+            }
+        });
+        // SAFETY: `&mut` scoped to the call.
+        Ok(unsafe { (*sink.as_ptr()).to_js(global) })
+    }
+
+    #[cfg(unix)]
+    {
+        let sink = FileSink::init(Fd::INVALID, event_loop);
+        let start = streams::Start::FileSink(Options {
+            input_path: PathOrFileDescriptor::Fd(fd),
+            must_start: true,
+            ..Default::default()
+        });
+        let started = sink.start(&start, global.bun_vm().context_of_caller(frame));
+        debug_assert!(started.is_ok());
+        // SAFETY: `&mut` scoped to the call.
+        Ok(unsafe { (*sink.as_ptr()).to_js(global) })
+    }
+}
+
 /// `bun_sys` does not yet export
 /// an isPollable helper, so re-derive it locally from `S_IFMT`. Windows always
 /// returns `false`.
@@ -167,6 +208,9 @@ pub struct Options {
     pub(crate) truncate: bool,
     /// `Bun.write(path, stream)`: create missing parent directories.
     pub(crate) mkdirp: bool,
+    /// `open_for_stream`: `setup` cannot fail. An fd it cannot duplicate or poll is written in place.
+    #[cfg(unix)]
+    pub(crate) must_start: bool,
 }
 
 impl Default for Options {
@@ -176,6 +220,8 @@ impl Default for Options {
             mode: 0o664,
             truncate: false,
             mkdirp: false,
+            #[cfg(unix)]
+            must_start: false,
         }
     }
 }
@@ -739,6 +785,18 @@ impl FileSink {
                 }
             }
         }
+        #[cfg(unix)]
+        if let (true, Err(_), PathOrFileDescriptor::Fd(fd)) =
+            (options.must_start, &result, &options.input_path)
+        {
+            result = Ok(self.borrow_fd(
+                *fd,
+                &mut pollable_out,
+                &mut is_socket_out,
+                &mut nonblocking_out,
+                &mut is_tty_out,
+            ));
+        }
         self.pollable.set(pollable_out);
         self.is_socket.set(is_socket_out);
         self.nonblocking.set(nonblocking_out);
@@ -785,6 +843,13 @@ impl FileSink {
 
         // SAFETY(JsCell): `start` is pure I/O setup; no JS.
         match self.writer.with_mut(|w| w.start(fd, self.pollable.get())) {
+            #[cfg(unix)]
+            sys::Result::Err(_) if options.must_start => {
+                // The event loop refused the fd (an `O_PATH` fifo, `/dev/tty` under kqueue, a full watch list).
+                self.pollable.set(false);
+                self.write_without_poll();
+                let _ = self.writer.with_mut(|w| w.start(fd, false));
+            }
             sys::Result::Err(err) => {
                 fd.close();
                 return sys::Result::Err(err);
@@ -795,39 +860,63 @@ impl FileSink {
                 self.writer
                     .with_mut(|w| w.update_ref(self.io_evtloop(), false));
                 #[cfg(unix)]
-                {
+                if let Some(poll) = self.writer.get().get_poll() {
                     if self.nonblocking.get() {
-                        self.writer
-                            .get()
-                            .get_poll()
-                            .unwrap()
-                            .set_flag(bun_io::FilePollFlag::Nonblocking);
+                        poll.set_flag(bun_io::FilePollFlag::Nonblocking);
                     }
 
                     if self.is_socket.get() {
-                        self.writer
-                            .get()
-                            .get_poll()
-                            .unwrap()
-                            .set_flag(bun_io::FilePollFlag::Socket);
+                        poll.set_flag(bun_io::FilePollFlag::Socket);
                     } else if self.is_tty.get() {
-                        self.writer
-                            .get()
-                            .get_poll()
-                            .unwrap()
-                            .set_flag(bun_io::FilePollFlag::Tty);
+                        poll.set_flag(bun_io::FilePollFlag::Tty);
                     } else if self.pollable.get() {
-                        self.writer
-                            .get()
-                            .get_poll()
-                            .unwrap()
-                            .set_flag(bun_io::FilePollFlag::Fifo);
+                        poll.set_flag(bun_io::FilePollFlag::Fifo);
                     }
                 }
             }
         }
 
         sys::Result::Ok(())
+    }
+
+    /// `fd` has no duplicate (the fd table is full, or `fd` is closed): write to `fd` itself and never close it.
+    #[cfg(unix)]
+    fn borrow_fd(
+        &self,
+        fd: Fd,
+        pollable: &mut bool,
+        is_socket: &mut bool,
+        nonblocking: &mut bool,
+        is_tty: &mut bool,
+    ) -> Fd {
+        self.writer.with_mut(|w| w.close_fd = false);
+        let opened = bun_io::open_for_writing(
+            Fd::cwd(),
+            &bun_io::open_for_writing_mod::InPlace(fd),
+            0,
+            0,
+            pollable,
+            is_socket,
+            self.force_sync.get(),
+            nonblocking,
+            is_tty,
+            |tty: &mut bool| *tty = true,
+            is_pollable,
+        );
+        // A poll watches a number. Only 0 to 2 stay with this sink: any other can be closed and reused under it.
+        if opened.is_err() || (*pollable && fd.stdio_tag().is_none()) {
+            *pollable = false;
+            self.write_without_poll();
+        }
+        fd
+    }
+
+    /// No poll drains a buffer: each write goes to the fd at once, so a write that fails says so.
+    #[cfg(unix)]
+    fn write_without_poll(&self) {
+        self.force_sync.set(true);
+        // SAFETY(JsCell): single-field write; does not call into JS.
+        self.writer.with_mut(|w| w.force_sync = true);
     }
 
     pub(crate) fn event_loop(&self) -> EventLoopHandle {

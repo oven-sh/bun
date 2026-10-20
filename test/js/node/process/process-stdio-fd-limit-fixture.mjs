@@ -1,10 +1,10 @@
-// Runs one scenario on process.stdout or process.stderr. With "no-sink" the fd table is full when the stream is first
-// read, so Bun cannot dup the fd for a FileSink. The report goes to the other stdio fd with fs.writeSync.
+// Runs one scenario on process.stdout or process.stderr. With "full" the fd table is full when the stream is first read,
+// so its sink cannot duplicate the fd. The report goes to the other stdio fd with fs.writeSync.
 import fs from "node:fs";
 import { finished } from "node:stream";
 import tty from "node:tty";
 
-const [which, scenario, mode] = process.argv.slice(2);
+const [which, scenario, table] = process.argv.slice(2);
 const fd = which === "stdout" ? 1 : 2;
 const code = e => (e == null ? null : e.code);
 
@@ -12,18 +12,28 @@ const code = e => (e == null ? null : e.code);
 void fs.WriteStream;
 void tty.WriteStream.prototype;
 const held = [];
-if (mode === "no-sink") {
+let writer = "not tried";
+if (table === "full") {
   try {
     for (;;) held.push(fs.openSync("/dev/null", "r"));
   } catch {}
+  // Proof of the state, and the public API keeps its contract: it throws.
+  if (typeof Bun === "object") {
+    try {
+      Bun.file(fd).writer();
+      writer = "opened";
+    } catch (e) {
+      writer = code(e);
+    }
+  }
 }
 const stream = process[which];
 for (const h of held) fs.closeSync(h);
 
 const fastPath = Object.getOwnPropertySymbols(stream).find(s => s.description === "kWriteStreamFastPath");
-const fileSink = stream[fastPath]?.constructor?.name === "FileSink";
+const sink = stream[fastPath]?.constructor?.name;
 const report = extra =>
-  fs.writeSync(fd === 1 ? 2 : 1, JSON.stringify({ type: stream._type, fileSink, ...extra }) + "\n");
+  fs.writeSync(fd === 1 ? 2 : 1, JSON.stringify({ type: stream._type, sink, writer, ...extra }) + "\n");
 const callbacks = [];
 const errors = [];
 stream.on("error", e => errors.push(code(e)));
@@ -75,6 +85,11 @@ if (scenario === "failed-writes") {
   stream.write("written before exit\n");
   report({});
   process.exit(0);
+} else if (scenario === "big-write") {
+  // More than a pipe or a socket holds. The parent reads the stream only after the first report.
+  const ret = stream.write(Buffer.alloc(1 << 20, "x"));
+  report({ ret });
+  stream.once("drain", () => report({ drained: true }));
 } else {
   throw new Error("unknown scenario " + scenario);
 }

@@ -350,6 +350,14 @@ if (typeof process !== "undefined") {
 }
 
 {
+  fetch("https://example.com", { tls: { checkServerIdentity: () => new Error("pin mismatch") } });
+  // @ts-expect-error - `false` approves the certificate at runtime
+  fetch("https://example.com", { tls: { checkServerIdentity: () => false } });
+  // @ts-expect-error - a Promise fails the request at runtime
+  fetch("https://example.com", { tls: { checkServerIdentity: async () => undefined } });
+}
+
+{
   const session = new Bun.FetchSession({
     tls: { ca: "ca", rejectUnauthorized: true, checkServerIdentity: () => undefined },
     proxy: { url: "http://proxy:8080", headers: { "x-proxy": "1" }, respectNoProxy: false },
@@ -375,4 +383,7 @@ if (typeof process !== "undefined") {
   fetch("https://example.com", { session: {} });
   // @ts-expect-error `true` does not name a proxy
   fetch("https://example.com", { proxy: true });
+  fetch("https://example.com", { tls: { ca: "ca", crl: Buffer.from("crl") } });
+  // @ts-expect-error crl takes PEM contents
+  fetch("https://example.com", { tls: { crl: 1 } });
 }

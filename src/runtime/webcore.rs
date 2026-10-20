@@ -7,8 +7,6 @@ use core::ptr::NonNull;
 
 #[path = "webcore/ArrayBufferSink.rs"]
 pub(crate) mod array_buffer_sink;
-#[path = "webcore/BakeResponse.rs"]
-pub(crate) mod bake_response;
 #[path = "webcore/ByteBlobLoader.rs"]
 pub(crate) mod byte_blob_loader;
 #[path = "webcore/ByteStream.rs"]
@@ -33,7 +31,6 @@ pub(crate) mod text_encoder_stream_encoder;
 // ─── flat re-exports ─────────────────────────────────────────────────────────
 pub(crate) use cookie_map::{CookieMap, CookieMapRef};
 pub(crate) use s3_client::S3Client;
-pub(crate) use s3_stat::S3Stat;
 
 #[path = "webcore/ObjectURLRegistry.rs"]
 pub(crate) mod object_url_registry;
@@ -210,7 +207,7 @@ pub(crate) use blob::{Blob, BlobExt, SizeType as BlobSizeType};
 
 #[path = "webcore/Body.rs"]
 pub(crate) mod body;
-pub(crate) use body::{Body, Value as BodyValue};
+pub(crate) use body::Body;
 
 #[path = "webcore/Response.rs"]
 pub(crate) mod response;

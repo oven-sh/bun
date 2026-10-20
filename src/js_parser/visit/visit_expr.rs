@@ -873,6 +873,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if is_call_target {
                         p.call_target = dot.data;
                     }
+                    if is_template_tag {
+                        p.template_tag = dot.data;
+                    }
                     if is_delete_target {
                         p.delete_target = dot.data;
                     }
@@ -1853,7 +1856,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         Data::EImport(nt) if core::ptr::eq(&raw const *e_, &raw const *nt)
                     ),
                 import_options: e_.options,
-                loc: e_.expr.loc,
+                loc: e.loc,
                 import_loader: e_.import_record_loader(),
                 ..Default::default()
             };
@@ -2168,6 +2171,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let state = TransposeState {
                     is_require_immediately_assigned_to_decl: in_.is_immediately_assigned_to_decl
                         && matches!(first.data, Data::EString(..)),
+                    loc: expr.loc,
                     ..Default::default()
                 };
                 match &first.data {
@@ -2229,7 +2233,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     Data::EString(..) => {
                         // require.resolve(FOO) => require.resolve(FOO)
                         // (this will register dependencies)
-                        *e = p.transpose_require_resolve_known_string(first);
+                        *e = p.transpose_require_resolve_known_string(first, expr.loc);
                         return;
                     }
                     Data::EIf(..) => {
@@ -2701,7 +2705,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
         let prev_hook_ctx = p.react_refresh.hook_ctx_storage;
-        p.react_refresh.hook_ctx_storage = Some(core::ptr::NonNull::from(&mut react_hook_data));
+        // A method cannot be wrapped in a call. Like react-refresh/babel, ignore its hook calls.
+        let is_method = e_
+            .func
+            .flags
+            .contains(Flags::Function::IsUniqueFormalParameters);
+        p.react_refresh.hook_ctx_storage = if is_method {
+            None
+        } else {
+            Some(core::ptr::NonNull::from(&mut react_hook_data))
+        };
 
         // For function *expressions* the .function_args scope is pushed at the
         // `function` keyword loc, not at open_parens_loc. (s_function correctly

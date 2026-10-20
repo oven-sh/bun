@@ -84,6 +84,7 @@ use crate::webcore::file_sink::FlushPendingTask as FlushPendingFileSinkTask;
 #[cfg(not(windows))]
 use crate::webcore::file_sink::Poll as FileSinkPoll;
 use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
+use crate::webcore::s3::multipart::WriterCollected as S3UploadWriterCollected;
 use crate::webcore::s3::simple_request::S3HttpSimpleTask;
 use crate::webcore::streams::Pending as StreamPending;
 
@@ -133,6 +134,7 @@ use crate::socket::windows_named_pipe::WindowsNamedPipe;
 use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
 use bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection as MySQLConnection;
 use bun_sql_jsc::postgres::PostgresSQLConnection;
+use bun_sql_jsc::shared::connection_timers::TimedConnection as _;
 
 use crate::test_runner::bun_test::{BunTest, BunTestPtr};
 use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
@@ -485,6 +487,9 @@ pub(crate) fn run_task(
         task_tag::S3HttpDownloadStreamingTask => {
             S3HttpDownloadStreamingTask::on_response(cast_ptr!(S3HttpDownloadStreamingTask));
         }
+        task_tag::S3UploadWriterCollected => {
+            S3UploadWriterCollected::run(cast_ptr!(S3UploadWriterCollected))?;
+        }
 
         // ── napi ─────────────────────────────────────────────────────────
         task_tag::NapiAsyncWork => {
@@ -548,7 +553,8 @@ pub(crate) fn run_task(
         for_each_fs_uv_op!(__fs_pat) => {
             macro_rules! __fs_run {
                 ($($tag:ident $ty:ident;)*) => { match task.tag {
-                    $(task_tag::$tag => cast!(fs_async::$ty).run_from_js_thread()?,)*
+                    // SAFETY: §Dispatch — tag identifies pointee. The task frees itself, so it takes the raw pointer.
+                    $(task_tag::$tag => unsafe { fs_async::$ty::run_from_js_thread(cast_ptr!(fs_async::$ty)) }?,)*
                     // SAFETY: outer arm guard proves one of the table tags matched.
                     _ => unsafe { core::hint::unreachable_unchecked() },
                 }};
@@ -722,7 +728,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 82,
+    task_tag::COUNT == 83,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -973,7 +979,6 @@ unsafe fn __bun_io_pollable_on_io_error(
         }
         bun_io::PollableTag::Empty => {
             debug_assert!(false, "io::Poll on_io_error with Empty tag");
-            let _ = err;
         }
     }
 }
@@ -1454,6 +1459,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::RuntimeTranspilerStore => release!(RuntimeTranspilerStore),
         task_tag::S3HttpDownloadStreamingTask => release!(S3HttpDownloadStreamingTask),
         task_tag::S3HttpSimpleTask => release!(S3HttpSimpleTask),
+        task_tag::S3UploadWriterCollected => release!(S3UploadWriterCollected),
         task_tag::SendQueueDeferred => release!(crate::ipc::SendQueue),
         task_tag::ServerAllConnectionsClosedTask => release!(ServerAllConnectionsClosedTask),
         task_tag::ShellAsync => release!(crate::shell::dispatch_tasks::ShellAsyncTask),

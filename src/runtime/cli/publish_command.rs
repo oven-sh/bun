@@ -1368,32 +1368,36 @@ impl PublishCommand {
             }
         };
 
-        let mut dirs: Vec<(Fd, Box<[u8]>)> = vec![(bin_dir, normalized_bin_dir.as_bytes().into())];
+        let bin_dir = pack::WalkedDir::Owned(bun_sys::Dir::from_fd(bin_dir));
+        // The payload is the subpath as `bin` shows it, which `join` below makes of the one on disk.
+        let shown: &'static [u8] = cli_dupe(normalized_bin_dir.as_bytes());
+        let mut dirs = pack::PendingDirs::new(bin_dir, normalized_bin_dir, shown);
+        // Leaves out a subdirectory that doesn't open, but stops when the process is out of descriptors.
+        let failed = |err: bun_sys::Error, subpath: &ZStr| {
+            if matches!(err.get_errno(), bun_sys::E::EMFILE | bun_sys::E::ENFILE) {
+                pack::fail_open_dir(err.into(), subpath);
+            }
+        };
 
-        while let Some((dir, dir_subpath)) = dirs.pop() {
-            let _close = bun_sys::CloseOnDrop::new(dir);
+        while let Some((handle, disk_subpath, dir_subpath)) = dirs.next(failed) {
+            let dir = handle.dir().fd;
 
             let mut iter = DirIterator::iterate(dir);
-            while let Some(entry) = pack::next_dir_entry(&mut iter, &dir_subpath) {
+            while let Some(entry) = pack::next_dir_entry(&mut iter, dir_subpath) {
                 let name = entry.name.slice_u8();
                 let mut join: Vec<u8> = Vec::new();
                 let _ = write!(
                     &mut join,
                     "{}{}{}\0",
-                    bstr::BStr::new(&dir_subpath),
+                    bstr::BStr::new(dir_subpath),
                     // only using posix separators
                     if dir_subpath.is_empty() { "" } else { "/" },
                     bstr::BStr::new(strings::without_trailing_slash(name)),
                 );
                 let join_len = join.len() - 1;
-                let interned: &'static [u8] = cli_dupe(&join);
-                let subpath = &interned[..join_len];
-                // SAFETY: name is the trailing segment of `interned`, NUL-terminated
-                let name = unsafe {
-                    ZStr::from_raw(interned.as_ptr().add(join_len - name.len()), name.len())
-                };
+                let subpath: &'static [u8] = &cli_dupe(&join)[..join_len];
 
-                if matches!(name.as_bytes(), b"" | b"." | b"..") {
+                if matches!(name, b"" | b"." | b"..") {
                     continue;
                 }
 
@@ -1403,10 +1407,7 @@ impl PublishCommand {
                 ));
 
                 if entry.kind == bun_sys::EntryKind::Directory {
-                    let Ok(subdir) = bun_sys::openat(dir, name, bun_sys::O::DIRECTORY, 0) else {
-                        continue;
-                    };
-                    dirs.push((subdir, subpath.into()));
+                    dirs.push(&handle, pack::entry_subpath(&disk_subpath, name)?, subpath);
                 }
             }
         }

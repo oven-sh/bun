@@ -1,5 +1,16 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isRoot, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isDebug,
+  isRoot,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tls,
+  unprivilegedSpawnOptions,
+  withOpenFileLimit,
+} from "harness";
 import { chmodSync, existsSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -1650,6 +1661,58 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
       }
     },
   );
+
+  // The walk of a folder that is not a package opened every directory when it listed it and kept it open until its
+  // turn. It failed with EMFILE.
+  test.skipIf(isWindows)("folders: more subdirectories than file descriptors", async () => {
+    const names = Array.from({ length: 100 }, (_, i) => `d${i}`);
+    const folder = (changed: string) => ({
+      ...Object.fromEntries(names.map(name => [`${name}/index.js`, "module.exports = 1;\n"])),
+      "d7/index.js": changed,
+    });
+    using dir = tempDir("pm-diff-emfile", { a: folder("module.exports = 1;\n"), b: folder("module.exports = 2;\n") });
+
+    await using p = Bun.spawn({
+      cmd: withOpenFileLimit(64, [bunExe(), "pm", "diff", "./a", "./b", "--name-only"]),
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(l => /^[AMD] /.test(l))).toEqual(["M d7/index.js"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("folders: a folder that does not open is an error", async () => {
+    using dir = tempDir("pm-diff-locked", {
+      "a/index.js": "module.exports = 1;\n",
+      "b/index.js": "module.exports = 1;\n",
+      "b/lib/locked/index.js": "module.exports = 2;\n",
+    });
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
+    const locked = join(String(dir), "b/lib/locked");
+    chmodSync(locked, 0o000);
+    try {
+      await using p = Bun.spawn({
+        cmd: [bunExe(), "pm", "diff", "./a", "./b", "--name-only"],
+        cwd: String(dir),
+        env: { ...bunEnv, NO_COLOR: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+        ...unprivileged,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+      expect({ stdout, stderr: normalizeBunSnapshot(stderr, dir) }).toEqual({
+        stdout: "",
+        stderr: "EACCES: Permission denied: failed to read <dir>/b/lib/locked (open)",
+      });
+      expect(exitCode).toBe(1);
+    } finally {
+      chmodSync(locked, 0o755);
+    }
+  });
 
   test("tarball shapes: .tar, a root folder not called package/, ~/ paths, and `./x.tar 1.0.1`", async () => {
     using dir = tempDir("pm-diff-tars", {});

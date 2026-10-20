@@ -14,6 +14,7 @@ import {
   tempDir,
   tls,
   unprivilegedSpawnOptions,
+  withOpenFileLimit,
   writeBinCommand,
 } from "harness";
 import { delimiter, join } from "path";
@@ -3292,6 +3293,172 @@ describe.concurrent("bin in the published manifest", () => {
     expect(manifest.versions["1.0.0"].bin).toBeUndefined();
     expect(JSON.stringify(manifest.versions)).not.toContain("secret-name");
     expect((await attachedTarball(manifest)).files).toEqual(["package/index.js", "package/package.json"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // pack failed with EMFILE, because a walk opened every subdirectory when it listed its parent and kept it open
+  // until its turn. The listing for the manifest did the same, and left out a subdirectory that did not open.
+  test.skipIf(isWindows)('"directories.bin" with more subdirectories than file descriptors', async () => {
+    const names = Array.from({ length: 100 }, (_, i) => `d${i}`);
+    using mock = mockRegistry();
+    using dir = tempDir("publish-bin-emfile", {
+      "package.json": JSON.stringify({ name: "bin-pkg", version: "1.0.0", directories: { bin: "bins" } }),
+      "bunfig.toml": mockBunfig(mock),
+      ...Object.fromEntries(names.map(name => [`bins/${name}/${name}.js`, "#!/usr/bin/env node\n"])),
+    });
+
+    await using proc = spawn({
+      cmd: withOpenFileLimit(64, [bunExe(), "publish"]),
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toBe("");
+    expect(mock.requests).toEqual([request("PUT", "/bin-pkg")]);
+    expect(mock.requests[0].manifest.versions["1.0.0"].bin).toEqual(
+      Object.fromEntries(
+        names.flatMap(name => [
+          [name, `bins/${name}`],
+          [`${name}.js`, `bins/${name}/${name}.js`],
+        ]),
+      ),
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  // The listing keeps a directory open while it has subdirectories left, so it can still run out of descriptors in a
+  // tree that is deeper than the limit. It left out the directories that did not open then, and the package was
+  // published with the rest.
+  test.skipIf(isWindows)('"directories.bin" with more nested directories than file descriptors', async () => {
+    using mock = mockRegistry();
+    // Each level has the directory that goes on, `n`, and two that do not. A level stays open when its listing has
+    // `n` after one of the two. `n` is the second of the three by name and by age, and a hashed order has it first
+    // in about one level of three, because the names are not the same in each level.
+    const levels: string[] = [];
+    for (let level = 0, path = "bins"; level < 120; level++, path += `/n${level}`) {
+      levels.push(...["a", "n", "s"].map(name => `${path}/${name}${level + 1}/cli.js`));
+    }
+    using dir = tempDir("publish-bin-deep", {
+      "package.json": JSON.stringify({ name: "bin-pkg", version: "1.0.0", directories: { bin: "bins" } }),
+      "bunfig.toml": mockBunfig(mock),
+      // The walks of pack stay out of the directories, so only the listing for the manifest opens them.
+      "bins/.npmignore": "*\n",
+      ...Object.fromEntries(levels.map(path => [path, "#!/usr/bin/env node\n"])),
+    });
+
+    await using proc = spawn({
+      cmd: withOpenFileLimit(64, [bunExe(), "publish"]),
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The process has no descriptor left, so its HTTP thread can be the one that reports it.
+    expect(err).toMatch(/EMFILE: failed to open directory "bins\/[ans0-9/]+" for packing\n|ProcessFdQuotaExceeded/);
+    expect(mock.requests).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+
+  // The listing for the manifest leaves out what is below a subdirectory that does not open.
+  test.skipIf(isWindows)('a subdirectory of "directories.bin" that does not open', async () => {
+    using mock = mockRegistry();
+    using dir = tempDir("publish-bin-locked", {
+      "package.json": JSON.stringify({ name: "bin-pkg", version: "1.0.0", directories: { bin: "bins" } }),
+      "bunfig.toml": mockBunfig(mock),
+      "bins/a.js": "#!/usr/bin/env node\n",
+      "bins/locked/b.js": "#!/usr/bin/env node\n",
+      // The walks of pack stay out of the directory, so only the listing for the manifest opens it.
+      "bins/.npmignore": "locked\n",
+    });
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
+    const locked = join(dir, "bins", "locked");
+    chmodSync(locked, 0o000);
+    try {
+      await using proc = spawn({
+        cmd: [bunExe(), "publish"],
+        cwd: String(dir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        ...unprivileged,
+      });
+      const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).toBe("");
+      expect(mock.requests).toEqual([request("PUT", "/bin-pkg")]);
+      const { bin } = mock.requests[0].manifest.versions["1.0.0"];
+      expect(bin).toMatchObject({ "a.js": "bins/a.js", locked: "bins/locked" });
+      expect(bin).not.toHaveProperty(["b.js"]);
+      expect(exitCode).toBe(0);
+    } finally {
+      chmodSync(locked, 0o755);
+    }
+  });
+
+  // The listing opens a subdirectory by the name that the directory has on disk. It opened a name cut out of the path
+  // that `bin` shows, which is not the same name here: the files of `/etc` were listed.
+  test.skipIf(isWindows)('a subdirectory of "directories.bin" with a name that ends with a backslash', async () => {
+    using mock = mockRegistry();
+    using dir = tempDir("publish-bin-backslash", {
+      "package.json": JSON.stringify({ name: "bin-pkg", version: "1.0.0", directories: { bin: "bins" } }),
+      "bunfig.toml": mockBunfig(mock),
+      "bins/etc\\/own.js": "#!/usr/bin/env node\n",
+    });
+
+    const { err, exitCode } = await publish(env, String(dir));
+    expect(err).toBe("");
+    expect(mock.requests).toEqual([request("PUT", "/bin-pkg")]);
+    expect(Object.keys(mock.requests[0].manifest.versions["1.0.0"].bin).sort()).toEqual(["etc", "own.js"]);
+    expect(exitCode).toBe(0);
+  });
+
+  const bytes = (...parts: (string | number)[]) =>
+    Buffer.concat(parts.map(part => (typeof part === "number" ? Buffer.from([part]) : Buffer.from(part))));
+
+  // `bin` shows U+FFFD for a byte that is not UTF-8. The listing still opens the name on disk.
+  test.skipIf(!isLinux)('"directories.bin" with a name that is not UTF-8', async () => {
+    using mock = mockRegistry();
+    using dir = tempDir("publish-bin-bytes", { "bunfig.toml": mockBunfig(mock) });
+    writeFileSync(
+      join(dir, "package.json"),
+      bytes('{"name":"bin-pkg","version":"1.0.0","directories":{"bin":"caf', 0xe9, '"}}'),
+    );
+    mkdirSync(bytes(join(dir, "caf"), 0xe9, "/ok"), { recursive: true });
+    writeFileSync(bytes(join(dir, "caf"), 0xe9, "/a.js"), "#!/usr/bin/env node\n");
+    writeFileSync(bytes(join(dir, "caf"), 0xe9, "/ok/b.js"), "#!/usr/bin/env node\n");
+
+    const { err, exitCode } = await publish(env, String(dir));
+    expect(err).toBe("");
+    expect(mock.requests).toEqual([request("PUT", "/bin-pkg")]);
+    expect(Object.keys(mock.requests[0].manifest.versions["1.0.0"].bin).sort()).toEqual(["a.js", "b.js", "ok"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The name cut out of the path that `bin` shows is not the name on disk here. That open failed, and the listing
+  // left out what is below the subdirectory.
+  test.skipIf(!isLinux)('a subdirectory of "directories.bin" with a name that is not UTF-8', async () => {
+    using mock = mockRegistry();
+    using dir = tempDir("publish-bin-subdir-bytes", {
+      "package.json": JSON.stringify({ name: "bin-pkg", version: "1.0.0", directories: { bin: "bins" } }),
+      "bunfig.toml": mockBunfig(mock),
+      "bins/a.js": "#!/usr/bin/env node\n",
+    });
+    mkdirSync(bytes(join(dir, "bins/caf"), 0xe9));
+    writeFileSync(bytes(join(dir, "bins/caf"), 0xe9, "/b.js"), "#!/usr/bin/env node\n");
+
+    const { err, exitCode } = await publish(env, String(dir));
+    expect(err).toBe("");
+    expect(mock.requests).toEqual([request("PUT", "/bin-pkg")]);
+    expect(mock.requests[0].manifest.versions["1.0.0"].bin).toEqual({
+      "a.js": "bins/a.js",
+      "caf\uFFFD": "bins/caf\uFFFD",
+      "b.js": "bins/caf\uFFFD/b.js",
+    });
     expect(exitCode).toBe(0);
   });
 });

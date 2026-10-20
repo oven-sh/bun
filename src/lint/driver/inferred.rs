@@ -250,7 +250,6 @@ impl<'e> Inferred<'e> {
             threads: self.threads,
             libs: self.environment.libs,
             progress: None,
-            only: None,
             order: 1,
             plan_options: bun_sema_driver::PlanOptions {
                 only_globals: true,
@@ -263,12 +262,9 @@ impl<'e> Inferred<'e> {
                 prefers_project_typescript_libs: true,
                 ..Default::default()
             },
-            retains_everything: false,
             stops_like_tsc: false,
             uses_typescript_wording: false,
-            loaded: None,
             after_file: None,
-            declaration_file_emitted: None,
         };
         bun_sema_driver::check_provided_then(&request, Provided::default(), |report| {
             let mut tables = Tables {

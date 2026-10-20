@@ -464,16 +464,13 @@ pub enum TaskSize {
 }
 
 /// How a request is run.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct PlanOptions {
     /// Which files share a task normally depends on their cost and on which thread is free. The output doesn't depend
     /// on it, and tests use this and `discards_first_visits` to verify that.
     pub task_size: TaskSize,
     /// The first visit of every file is discarded like one that ends with an invalid commit, so the file is rechecked.
     pub discards_first_visits: bool,
-    /// The maximum number of projects of a `tsc -b` run that are loaded or checked at the same time, if each reads the
-    /// sources of what it references. Otherwise four times as many. Each occupies memory.
-    pub max_concurrent_projects: usize,
     /// `Request::after_file` is only called for the files that are checked, not at the end for the declaration files
     /// and JSON files that aren't. The project's own declaration files, which aren't in the default library or in
     /// `node_modules`, count as checked even with `skipLibCheck`, which still means that nothing is reported for them.
@@ -525,28 +522,6 @@ pub struct PlanOptions {
     /// The memory of the machine, or of the container the process runs in. A request's programs run at the same time as
     /// long as they fit in a quarter of it. 0 means unknown, and they run one after the other.
     pub memory: usize,
-}
-
-impl Default for PlanOptions {
-    fn default() -> PlanOptions {
-        PlanOptions {
-            task_size: TaskSize::ByCost,
-            discards_first_visits: false,
-            max_concurrent_projects: 4,
-            after_file_only_for_checked_files: false,
-            checks_only_requested_paths: false,
-            reads_sources_of_references: false,
-            uses_project_directory_as_cwd: false,
-            skips_file_diagnostics: false,
-            requires_including_project: false,
-            project_is_fallback: false,
-            rejects_broken_configurations: false,
-            prefers_project_typescript_libs: false,
-            shares_every_file: false,
-            only_globals: false,
-            memory: 0,
-        }
-    }
 }
 
 /// The progress of a check. Read from another thread.
@@ -921,31 +896,20 @@ pub struct Request<'a> {
     pub libs: Libs<'a>,
     /// Updated during the check, for a caller that displays progress.
     pub progress: Option<&'a Progress>,
-    /// Of all loaded files, only those whose path contains this are checked. For investigating one file of a large
-    /// project.
-    pub only: Option<&'a [u8]>,
     /// The order in which the files are queued. 1: the largest first. Any other odd number: by index * `order` (mod
     /// 2^32), a fixed permutation. The output doesn't depend on it, and tests use this to verify that.
     pub order: u32,
     pub plan_options: PlanOptions,
-    /// Nothing is freed after it's checked. For a caller that continues to query the program. It uses several times the
-    /// memory.
-    pub retains_everything: bool,
     /// Like `tsc`: if there are parse errors, only those are reported. Otherwise, if the options are inconsistent, only
     /// that is reported. Type errors come only after that.
     pub stops_like_tsc: bool,
     /// Uses TypeScript's wording verbatim where Bun would rephrase it (`bun add -d` for `npm i --save-dev`). For
     /// comparison with TypeScript.
     pub uses_typescript_wording: bool,
-    /// Called with the loaded program, before any of it is checked.
-    pub loaded: Option<&'a (dyn Fn(&Program) + Sync)>,
     /// Called for each file right after it's checked, on the thread that checked it, while the file-local types are
-    /// still alive. This is how to read the type of every expression without `retains_everything`. A discarded task's
-    /// files are rechecked, so this can be called more than once for a file, and the last call counts.
+    /// still alive. This is how to read the type of every expression. A discarded task's files are rechecked, so this
+    /// can be called more than once for a file, and the last call counts.
     pub after_file: Option<&'a (dyn Fn(&mut bun_sema::check::Checker<'_, '_>, FileId) + Sync)>,
-    /// Called with the path and the text of each declaration file that a project of a `tsc -b` run emits for the
-    /// projects that reference it. Nothing is written to disk, so this is the only way to observe them.
-    pub declaration_file_emitted: Option<&'a (dyn Fn(&[u8], &[u8]) + Sync)>,
 }
 
 /// A diagnostic, ready to be formatted.
@@ -3201,10 +3165,7 @@ fn check_with_references(
     let emitted = Emitted::new(count);
     // Each program occupies memory for every declaration file it reaches, however few files the project lists. A
     // program that reads the sources of what it references has all of those files too.
-    let max_concurrent = match reads_sources {
-        true => request.plan_options.max_concurrent_projects,
-        false => request.plan_options.max_concurrent_projects * 4,
-    };
+    let max_concurrent = if reads_sources { 4usize } else { 16 };
     let max_concurrent = max_concurrent
         .clamp(1, host.threads().max(1))
         .min(count.max(1));
@@ -3325,9 +3286,6 @@ fn check_with_references(
             let mut files = Vec::new();
             for (source, emitted_text) in std::mem::take(&mut checked.declaration_files) {
                 let path = declaration_file_path(index, &source);
-                if let Some(declaration_file_emitted) = request.declaration_file_emitted {
-                    declaration_file_emitted(&path, &emitted_text);
-                }
                 files.push((path_of(path), Arc::new(emitted_text)));
             }
             let no_text = Arc::new(Vec::new());
@@ -3878,9 +3836,7 @@ fn check_named_files(
     let included = project.files.len();
     let raw_options = std::mem::take(&mut project.raw_compiler_options);
     let is_true = |name: &[u8]| raw_options.contains(&(name.to_vec(), Json::Bool(true)));
-    project.options.drops_unreferenced = !request.retains_everything;
-    project.options.keeps_comments =
-        request.retains_everything || request.loaded.is_some() || request.after_file.is_some();
+    project.options.keeps_comments = request.after_file.is_some();
     let before = host.times();
     host.spent(Phase::Discover, started.elapsed());
     // Declared before everything that's allocated in it, so it's dropped last.
@@ -3948,9 +3904,6 @@ fn check_named_files(
     let after = host.times();
     for (i, phase) in report.load_phases.iter_mut().enumerate() {
         *phase = after[i] - before[i];
-    }
-    if let Some(loaded) = request.loaded {
-        loaded(program);
     }
     let explains_files = is_true(b"explainFiles");
     let explain_files = |has_made_diagnostics: bool| {
@@ -4042,9 +3995,6 @@ fn check_named_files(
     if let Some(is_owned_elsewhere) = is_owned_elsewhere {
         let path = |f: FileId| program.files.modules[f.idx()].path.text;
         to_check.retain(|&f| !is_owned_elsewhere(path(f)));
-    }
-    if let Some(only) = request.only {
-        to_check.retain(|&f| strings::contains(program.files.modules[f.idx()].file_name(), only));
     }
     let lists_files_only = is_true(b"listFilesOnly") && request.stops_like_tsc;
     if lists_files_only {

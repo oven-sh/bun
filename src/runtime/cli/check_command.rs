@@ -354,15 +354,11 @@ fn request<'a>(
         threads,
         libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
         progress,
-        only: None,
         order: 1,
         plan_options: bun_sema_driver::PlanOptions::default(),
-        retains_everything: false,
         stops_like_tsc: true,
         uses_typescript_wording: false,
-        loaded: None,
         after_file: None,
-        declaration_file_emitted: None,
     }
 }
 

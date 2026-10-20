@@ -5542,41 +5542,38 @@ impl<'s> Files<'s> {
             let (hir, bound) = (&module.hir, &module.bound);
             let targets: Vec<FileId> =
                 (module.edges.iter().chain(module.imports.values()).copied()).collect();
-            let mut may_be_leaf = false;
-            if options.drops_unreferenced {
-                for target in &targets {
-                    is_referred_to[target.idx()].store(true, Ordering::Relaxed);
-                }
-                for declared in hir.modules.iter() {
-                    let ModuleName::String(name) = declared.name else {
-                        continue;
-                    };
-                    let has_one = hir.ids(declared.body).any(|s| match hir[s].kind {
-                        StmtKind::ExportNamed(x) => is_relative_name(hir[x].spec),
-                        StmtKind::ExportStar { spec, .. } => is_relative_name(spec),
-                        _ => false,
-                    });
-                    if has_one {
-                        ambient_with_relative_reexports.lock().push(name);
-                    }
-                }
-                // `getAlternativeContainingModules` searches the exports of every module of the
-                // program for a symbol.
-                let is_alternative_container = options.emits_declarations
-                    && hir.stmts.iter().any(|statement| match statement.kind {
-                        StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } => true,
-                        StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
-                            expression_is_alias(hir, e)
-                        }
-                        StmtKind::ImportEquals(it) => hir[it].flags.contains(Flags::EXPORT),
-                        _ => false,
-                    });
-                // `checkExternalModuleExports` for a file with an `export *` reports in other files,
-                // which look for such a file (`Checker::is_export_of_file_checked_before`).
-                may_be_leaf = module.adds_no_globals
-                    && !is_alternative_container
-                    && bound.export_stars.is_empty();
+            for target in &targets {
+                is_referred_to[target.idx()].store(true, Ordering::Relaxed);
             }
+            for declared in hir.modules.iter() {
+                let ModuleName::String(name) = declared.name else {
+                    continue;
+                };
+                let has_one = hir.ids(declared.body).any(|s| match hir[s].kind {
+                    StmtKind::ExportNamed(x) => is_relative_name(hir[x].spec),
+                    StmtKind::ExportStar { spec, .. } => is_relative_name(spec),
+                    _ => false,
+                });
+                if has_one {
+                    ambient_with_relative_reexports.lock().push(name);
+                }
+            }
+            // `getAlternativeContainingModules` searches the exports of every module of the
+            // program for a symbol.
+            let is_alternative_container = options.emits_declarations
+                && hir.stmts.iter().any(|statement| match statement.kind {
+                    StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } => true,
+                    StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
+                        expression_is_alias(hir, e)
+                    }
+                    StmtKind::ImportEquals(it) => hir[it].flags.contains(Flags::EXPORT),
+                    _ => false,
+                });
+            // `checkExternalModuleExports` for a file with an `export *` reports in other files,
+            // which look for such a file (`Checker::is_export_of_file_checked_before`).
+            let may_be_leaf = module.adds_no_globals
+                && !is_alternative_container
+                && bound.export_stars.is_empty();
             let is_type_only = |&(_, star): &(SymbolId, StmtId)| {
                 matches!(
                     hir[star].kind,
@@ -5659,28 +5656,26 @@ impl<'s> Files<'s> {
         for (target, source) in redirected_from {
             modules[target.idx()].project_reference_source = source;
         }
-        if options.drops_unreferenced {
-            let ambient_with_relative_reexports =
-                std::mem::take(&mut *ambient_with_relative_reexports.lock());
-            let reexports_relatively = |spec: Atom| ambient_with_relative_reexports.contains(&spec);
-            // `Files::new_symbol` adds symbols that no file declares to the first file's symbols, so
-            // the first file is never a leaf.
-            for (i, summary) in summaries.iter().enumerate().skip(1) {
-                if summary.may_be_leaf && !is_referred_to[i].load(Ordering::Relaxed) {
-                    let module = &mut modules[i];
-                    let imports_from_one = !ambient_with_relative_reexports.is_empty()
-                        && (module
+        let ambient_with_relative_reexports =
+            std::mem::take(&mut *ambient_with_relative_reexports.lock());
+        let reexports_relatively = |spec: Atom| ambient_with_relative_reexports.contains(&spec);
+        // `Files::new_symbol` adds symbols that no file declares to the first file's symbols, so
+        // the first file is never a leaf.
+        for (i, summary) in summaries.iter().enumerate().skip(1) {
+            if summary.may_be_leaf && !is_referred_to[i].load(Ordering::Relaxed) {
+                let module = &mut modules[i];
+                let imports_from_one = !ambient_with_relative_reexports.is_empty()
+                    && (module
+                        .hir
+                        .imports
+                        .iter()
+                        .any(|it| reexports_relatively(it.spec))
+                        || module
                             .hir
-                            .imports
+                            .exports
                             .iter()
-                            .any(|it| reexports_relatively(it.spec))
-                            || module
-                                .hir
-                                .exports
-                                .iter()
-                                .any(|it| reexports_relatively(it.spec)));
-                    module.is_leaf = !imports_from_one;
-                }
+                            .any(|it| reexports_relatively(it.spec)));
+                module.is_leaf = !imports_from_one;
             }
         }
         // `tasksSeenByNameIgnoreCase`: only where they are different files.

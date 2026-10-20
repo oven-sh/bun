@@ -1804,17 +1804,13 @@ fn run_one(
             threads: 1,
             libs: bun_sema_driver::Libs::Directory(setup.lib_dir.as_bytes()),
             progress: None,
-            only: None,
             order: 1,
             plan_options: bun_sema_driver::PlanOptions::default(),
-            retains_everything: false,
             script_kinds: &[],
             script_kinds_by_extension: &[],
             conditions: &[],
             stops_like_tsc: false,
             uses_typescript_wording: true,
-            loaded: None,
-            declaration_file_emitted: None,
             after_file,
         };
         let began = std::time::Instant::now();
@@ -1996,21 +1992,17 @@ fn compare_task_groupings(projects: &[String], lib_dir: &str, threads: usize) ->
             threads: 1,
             libs: bun_sema_driver::Libs::Directory(lib_dir.as_bytes()),
             progress: None,
-            only: None,
             order,
             plan_options: bun_sema_driver::PlanOptions {
                 task_size,
                 discards_first_visits,
                 ..Default::default()
             },
-            retains_everything: false,
             script_kinds: &[],
             script_kinds_by_extension: &[],
             conditions: &[],
             stops_like_tsc: true,
             uses_typescript_wording: false,
-            loaded: None,
-            declaration_file_emitted: None,
             after_file: None,
         };
         bun_sema_driver::check_then(&request, |report| {

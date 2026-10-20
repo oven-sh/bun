@@ -636,10 +636,6 @@ pub struct Options {
     pub skip_default_lib_check: bool,
     /// `noCheck`: only syntax errors are reported.
     pub no_check: bool,
-    /// A file that nothing refers to is only parsed when it's checked, and is freed afterwards with
-    /// everything computed about it. Not a TypeScript option. A caller that wants to query such a
-    /// file afterwards leaves it off.
-    pub drops_unreferenced: bool,
     /// Keeps `hir::FileIn::comments`, which the checker doesn't read. Not a TypeScript option. For
     /// a caller that reads the program's files afterwards.
     pub keeps_comments: bool,

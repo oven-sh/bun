@@ -8,19 +8,6 @@ fn variable(name: &bun_core::ZStr) -> Option<String> {
     bun_core::getenv_z(name).map(text)
 }
 
-/// `BUN_SEMA_LIST=<file>`: writes the paths of all loaded files there, one per line.
-fn list_loaded(program: &bun_sema::check::Program) {
-    if let Some(to) = variable(bun_core::zstr!("BUN_SEMA_LIST")) {
-        let paths: Vec<&[u8]> = program
-            .files
-            .modules
-            .iter()
-            .map(|m| m.file_name())
-            .collect();
-        write_debug_file(&to, &paths.join(&b"\n"[..]));
-    }
-}
-
 #[cfg(bun_sema_mimalloc)]
 #[global_allocator]
 static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
@@ -122,36 +109,19 @@ fn run(args: &[String]) {
                     dyn Fn(&mut bun_sema::check::Checker<'_, '_>, bun_sema::program::FileId) + Sync
                 );
             let after_file = has("--error-types").then_some(&note_error_types as AfterFile<'_>);
-            // `--declarations-out=<directory>`: writes the declaration files of a `tsc -b` run, each
-            // at its absolute path inside that directory.
-            let declarations_out =
-                (args.iter()).find_map(|a| a.strip_prefix("--declarations-out="));
-            let write_declaration_file = |path: &[u8], text: &[u8]| {
-                let path = format!(
-                    "{}{}",
-                    declarations_out.unwrap(),
-                    bun_sema::messages::text(path)
-                );
-                write_debug_file(&path, text);
-            };
             let number = |name: &str, default: usize| {
                 let actual = args.iter().find_map(|a| a.strip_prefix(name));
                 actual.map_or(default, |n| n.parse().expect(name))
             };
-            let defaults = bun_sema_driver::PlanOptions::default();
             let plan_options = bun_sema_driver::PlanOptions {
-                max_concurrent_projects: number(
-                    "--projects-at-once=",
-                    defaults.max_concurrent_projects,
-                ),
                 task_size: match args.iter().find_map(|a| a.strip_prefix("--task-size=")) {
-                    None => defaults.task_size,
+                    None => bun_sema_driver::TaskSize::ByCost,
                     Some("one-file") => bun_sema_driver::TaskSize::OneFile,
                     Some("unlimited") => bun_sema_driver::TaskSize::Unlimited,
                     Some(other) => panic!("--task-size={other}"),
                 },
                 discards_first_visits: has("--discard-first-visits"),
-                ..defaults
+                ..Default::default()
             };
             let request = bun_sema_driver::Request {
                 compiler_options: &command_line.compiler_options,
@@ -174,11 +144,6 @@ fn run(args: &[String]) {
                         .as_bytes(),
                 ),
                 progress: progress.as_deref(),
-                only: args
-                    .iter()
-                    .find_map(|a| a.strip_prefix("--only="))
-                    .map(str::as_bytes),
-                retains_everything: args.iter().any(|a| a == "--keep"),
                 order: args
                     .iter()
                     .find_map(|a| a.strip_prefix("--order="))
@@ -190,14 +155,7 @@ fn run(args: &[String]) {
                 conditions: &[],
                 stops_like_tsc: !args.iter().any(|a| a == "--every-stage"),
                 uses_typescript_wording: false,
-                loaded: args
-                    .iter()
-                    .any(|a| a == "--memory")
-                    .then_some(&list_loaded as &(dyn Fn(&bun_sema::check::Program) + Sync)),
                 after_file,
-                declaration_file_emitted: declarations_out
-                    .is_some()
-                    .then_some(&write_declaration_file as &(dyn Fn(&[u8], &[u8]) + Sync)),
             };
             // A binary without the flag silently ignores it, so a script that tests start orders looks for this line.
             if request.order != 1 {

@@ -493,7 +493,6 @@ fn check_and_lint_in(
         threads: context.options.threads,
         libs: environment.libs,
         progress: None,
-        only: None,
         order: 1,
         plan_options: bun_sema_driver::PlanOptions {
             after_file_only_for_checked_files: true,
@@ -511,13 +510,10 @@ fn check_and_lint_in(
             prefers_project_typescript_libs: matches!(project, Project::Nearest),
             ..Default::default()
         },
-        retains_everything: false,
         // A syntax error in one file doesn't stop the others from being linted.
         stops_like_tsc: false,
         uses_typescript_wording: false,
-        loaded: None,
         after_file: Some(&after_file),
-        declaration_file_emitted: None,
     };
     let provided = Provided {
         already_read,

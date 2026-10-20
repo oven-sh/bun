@@ -408,6 +408,16 @@ const read = async s => {
   return out;
 };
 
+// A step that stops waiting (a packet that is never dropped, a destroy that
+// never runs) names itself here instead of ending as a runner timeout with no
+// output. The sockets below keep the loop alive, so an unref'd timer still
+// fires.
+let phase = "connect";
+setTimeout(() => {
+  console.log("STALLED:" + phase);
+  process.exit(1);
+}, 20_000).unref();
+
 let stuck = null;
 let nth = 0;
 const destroyed = Promise.withResolvers();
@@ -471,20 +481,24 @@ await client.opened;
 const headers = { ":method": "POST", ":path": "/", ":scheme": "https", ":authority": "localhost" };
 
 // A is answered in full and then given up on.
+phase = "A";
 const a = quiet(await client.createBidirectionalStream({}));
 a.sendHeaders(headers);
 console.log("A:" + (await read(a)));
 
 // B carries the signal. Its round trip proves its headers reached the server
 // before the relay starts dropping.
+phase = "B";
 const b = quiet(await client.createBidirectionalStream({}));
 b.sendHeaders(headers);
 console.log("B:" + (await read(b)));
 
 // The body packet is dropped; the byte and the FIN behind it arrive.
+phase = "drop";
 gap = true;
 a.writer.writeSync(new Uint8Array(1000).fill(0x41));
 await dropped.promise;
+phase = "destroy";
 a.writer.writeSync(new Uint8Array([0x42]));
 a.writer.endSync();
 b.writer.writeSync(new Uint8Array([0x43]));
@@ -492,6 +506,7 @@ await destroyed.promise;
 
 // One more round trip, so the server ticks while the RESET_STREAM it must
 // not send would be going out.
+phase = "C";
 const c = quiet(await client.createBidirectionalStream({}));
 c.sendHeaders(headers);
 console.log("C:" + (await read(c)));
@@ -508,10 +523,12 @@ process.exit(0);
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.split("\n").filter(Boolean), stderr: stderr.includes("Assertion") ? stderr : "" }).toEqual({
+    // stderr is in the comparison only when the run failed, where it carries
+    // the reason (a debug build aborts in lsquic_packet_out_add_stream).
+    expect({ stdout: stdout.split("\n").filter(Boolean), exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
       stdout: ["A:answer", "B:answer", "C:answer"],
+      exitCode: 0,
       stderr: "",
     });
-    expect(exitCode).toBe(0);
-  }, 30_000);
+  });
 });

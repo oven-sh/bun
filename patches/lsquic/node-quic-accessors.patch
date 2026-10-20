@@ -1918,7 +1918,7 @@
                  handle_early_read_shutdown(stream);
          }
          SM_HISTORY_APPEND(stream, SHE_SHUTDOWN_READ);
-@@ -4442,6 +4464,74 @@ lsquic_stream_close (lsquic_stream_t *stream)
+@@ -4442,6 +4464,70 @@ lsquic_stream_close (lsquic_stream_t *stream)
  }
  
  
@@ -1957,16 +1957,12 @@
 +lsquic_stream_force_reset_ext (struct lsquic_stream *stream,
 +                               uint64_t error_code)
 +{
-+    /* bun: the stream is finished: every byte it sent, the FIN included, is
-+     * acked, and lsquic_stream_force_finish queued SMQF_FREE_STREAM, so
-+     * service_streams() frees it in this tick. A RESET_STREAM queued now is
-+     * written against that stream: generate_rst_stream_frame() stores the
-+     * pointer in the packet (lsquic_packet_out_add_stream asserts
-+     * !STREAM_FINISHED) and the ACK of that packet reads freed memory in
-+     * lsquic_stream_acked(). There is nothing to reset either: RFC 9000
-+     * Section 3.1 forbids RESET_STREAM from the terminal "Data Recvd" state,
-+     * and ngtcp2 returns the same way from conn_shutdown_stream_write when
-+     * ngtcp2_strm_is_all_tx_data_fin_acked() holds. */
++    /* bun: a finished stream is queued with SMQF_FREE_STREAM, so
++     * service_streams() frees it in this tick while the RESET_STREAM packet
++     * still points at it (lsquic_packet_out_add_stream asserts
++     * !STREAM_FINISHED). Every byte and the FIN are acked, so there is
++     * nothing left to reset: RFC 9000 sec 3.1 and ngtcp2's
++     * conn_shutdown_stream_write both refuse here. */
 +    if (stream->stream_flags & STREAM_FINISHED)
 +        return;
 +    /* bun: stream_reset clears every queued sending flag; a STOP_SENDING

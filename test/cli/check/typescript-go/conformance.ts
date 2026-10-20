@@ -90,6 +90,8 @@ export function conformance(shard: number, shards: number) {
   test.concurrent.skipIf(isSkipped)(
     "Errors: the same if every file's first visit is discarded and the file is checked again",
     async () => {
+      // Each run uses every core, so they take turns.
+      await run();
       const stdout = await runWith("--discard-first-visits");
       expect(stdout.split("\n").filter(line => line.startsWith("FAIL Errors "))).toEqual([]);
       expect(stdout).toMatch(/100\.00%  of \d+ Errors, byte for byte/);

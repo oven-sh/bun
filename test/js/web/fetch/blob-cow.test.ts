@@ -74,9 +74,9 @@ test("Response.bytes from a Blob body is not shared with text previously read fr
 
 // On Linux a Blob of 8 MB or more keeps its bytes in a memfd, and a read that
 // must not share them is a copy-on-write map of that memfd. A body that is the
-// last owner of the Blob hands the Blob's own map to JS instead. A write into
-// it must not reach the memfd: the pages of an earlier copy that nobody has
-// written yet still read the memfd.
+// last owner of the Blob gets the Blob's own map instead, and a write into that
+// one goes to the memfd. So it must not be handed out while a copy is alive:
+// the pages of a copy that nobody has written yet still read the memfd.
 describe("two reads of one large Blob body are not shared with each other", () => {
   // Above the 8 MB threshold for copy-on-write without --smol.
   const size = (1024 * 1024 * 8 * 1.5) | 0;
@@ -90,6 +90,25 @@ describe("two reads of one large Blob body are not shared with each other", () =
     mine.fill(written);
     expect(kept.indexOf(written)).toBe(-1);
     expect(mine.indexOf(original)).toBe(-1);
+  }
+
+  type Track = <T extends object>(object: T) => T;
+
+  // Resolves once every object passed to `track` has been finalized, which is
+  // when it releases its reference on the bytes. An object that is never
+  // collected fails the test here and does not hang it.
+  async function afterCollected<T>(make: (track: Track) => T | Promise<T>): Promise<T> {
+    let tracked = 0;
+    let collected = 0;
+    const registry = new FinalizationRegistry(() => collected++);
+    const result = await make(object => {
+      tracked++;
+      registry.register(object, undefined);
+      return object;
+    });
+    for (let tick = 0; collected < tracked && tick < 50; tick++) await gcTick();
+    expect(collected).toBe(tracked);
+    return result;
   }
 
   type Body = Response | Request;
@@ -118,53 +137,6 @@ describe("two reads of one large Blob body are not shared with each other", () =
     });
   });
 
-  // The names of the memfds that hold this process's Blobs.
-  function blobMemfds() {
-    return readdirSync("/proc/self/fd").flatMap(fd => {
-      try {
-        return /^\/memfd:(memfd-num-\d+) \(deleted\)$/.exec(readlinkSync(`/proc/self/fd/${fd}`))?.[1] ?? [];
-      } catch {
-        // The fd that listed the directory is closed by now.
-        return [];
-      }
-    });
-  }
-
-  // Every mapping of one memfd: its permissions, and whether it is exempt from the commit charge.
-  function mappingsOf(memfd: string) {
-    const mappings: { perms: string; noreserve: boolean }[] = [];
-    let perms: string | undefined;
-    for (const line of readFileSync("/proc/self/smaps", "utf8").split("\n")) {
-      if (line.endsWith(`/memfd:${memfd} (deleted)`)) {
-        perms = line.split(" ")[1];
-      } else if (perms !== undefined && line.startsWith("VmFlags:")) {
-        mappings.push({ perms, noreserve: line.split(/\s+/).includes("nr") });
-        perms = undefined;
-      }
-    }
-    return mappings.sort((a, b) => Number(a.noreserve) - Number(b.noreserve));
-  }
-
-  // The cases above compare bytes, so they also pass when no memfd is in use.
-  // Only Linux keeps a Blob in a memfd.
-  test.skipIf(!isLinux)("the bytes of a large body are in a memfd that is only mapped privately", async () => {
-    // The kernel ignores MAP_NORESERVE under vm.overcommit_memory=2.
-    const noreserve = readFileSync("/proc/sys/vm/overcommit_memory", "utf8").trim() !== "2";
-    const storeView = { perms: "rw-p", noreserve };
-    const copyOnWriteView = { perms: "rw-p", noreserve: false };
-
-    const before = new Set(blobMemfds());
-    const response = new Response(parts());
-    const created = blobMemfds().filter(name => !before.has(name));
-    expect(created).toHaveLength(1);
-
-    // The clone's read maps the memfd once more. The last owner gets the store's view.
-    const kept = await response.clone().bytes();
-    const mine = await response.bytes();
-    expect(mappingsOf(created[0])).toEqual([copyOnWriteView, storeView]);
-    expect([kept.length, mine.length]).toEqual([size, size]);
-  });
-
   // A transfer moves the memory of the second copy to another ArrayBuffer.
   const transfers: [string, (buffer: ArrayBuffer) => ArrayBuffer][] = [
     ["buffer.transfer()", buffer => buffer.transfer()],
@@ -182,23 +154,6 @@ describe("two reads of one large Blob body are not shared with each other", () =
   // A body made from a Blob object becomes the last owner once that object has
   // been collected.
   describe("after the Blob object was collected", () => {
-    type Track = <T extends Blob>(blob: T) => T;
-
-    // Resolves once every Blob passed to `track` has been finalized, which is
-    // when it releases its reference on the bytes.
-    async function afterBlobsAreCollected<T>(make: (track: Track) => T | Promise<T>): Promise<T> {
-      let tracked = 0;
-      let collected = 0;
-      const registry = new FinalizationRegistry(() => collected++);
-      const result = await make(blob => {
-        tracked++;
-        registry.register(blob, undefined);
-        return blob;
-      });
-      while (collected < tracked) await gcTick();
-      return result;
-    }
-
     const firstReads: [string, (blob: Blob, track: Track) => Promise<Uint8Array>][] = [
       ["blob.arrayBuffer()", async blob => new Uint8Array(await blob.arrayBuffer())],
       ["blob.bytes()", blob => blob.bytes()],
@@ -208,7 +163,7 @@ describe("two reads of one large Blob body are not shared with each other", () =
 
     test.each(firstReads)("%s, then new Response(blob).bytes()", async (_, readFirst) => {
       let kept!: Uint8Array;
-      const response = await afterBlobsAreCollected(async track => {
+      const response = await afterCollected(async track => {
         const blob = track(new Blob([source()]));
         kept = await readFirst(blob, track);
         return new Response(blob);
@@ -219,11 +174,96 @@ describe("two reads of one large Blob body are not shared with each other", () =
     });
 
     test("response.clone().arrayBuffer(), then response.arrayBuffer()", async () => {
-      const response = await afterBlobsAreCollected(track => new Response(track(new Blob([source()]))));
+      const response = await afterCollected(track => new Response(track(new Blob([source()]))));
       const kept = new Uint8Array(await response.clone().arrayBuffer());
       const mine = new Uint8Array(await response.arrayBuffer());
       expect(mine.length).toBe(size);
       expectKeptAfterWrite(kept, mine);
+    });
+  });
+
+  // The names of the memfds that hold this process's Blobs.
+  function blobMemfds() {
+    return readdirSync("/proc/self/fd").flatMap(fd => {
+      try {
+        return /^\/memfd:(memfd-num-\d+) \(deleted\)$/.exec(readlinkSync(`/proc/self/fd/${fd}`))?.[1] ?? [];
+      } catch {
+        // The fd that listed the directory is closed by now.
+        return [];
+      }
+    });
+  }
+
+  // The permissions of every mapping of one memfd: "rw-s" is the Blob's own
+  // map, "rw-p" is a copy-on-write map.
+  function mappingsOf(memfd: string) {
+    return readFileSync("/proc/self/maps", "utf8")
+      .split("\n")
+      .filter(line => line.endsWith(`/memfd:${memfd} (deleted)`))
+      .map(line => line.split(" ")[1])
+      .sort();
+  }
+
+  // A body whose bytes are in a new memfd, and the name of that memfd.
+  function bodyInMemfd() {
+    const before = new Set(blobMemfds());
+    const response = new Response(parts());
+    const created = blobMemfds().filter(name => !before.has(name));
+    expect(created).toHaveLength(1);
+    return { response, memfd: created[0] };
+  }
+
+  // Only Linux keeps a large Blob in a memfd, and a sandbox can refuse the
+  // memfd or hide /proc. The cases below read the mappings, so they need both.
+  const memfdInUse =
+    isLinux &&
+    (() => {
+      try {
+        const before = new Set(blobMemfds());
+        const probe = new Blob([source()]);
+        const created = blobMemfds().filter(name => !before.has(name));
+        return probe.size === size && created.length === 1 && mappingsOf(created[0]).length === 1;
+      } catch {
+        return false;
+      }
+    })();
+
+  describe.skipIf(!memfdInUse)("the mappings of the memfd", () => {
+    test("the only owner gets the Blob's own map", async () => {
+      const { response, memfd } = bodyInMemfd();
+      const mine = await response.bytes();
+      expect(mappingsOf(memfd)).toEqual(["rw-s"]);
+      expect(mine.length).toBe(size);
+    });
+
+    test("the last owner gets a copy while an earlier copy is alive", async () => {
+      const { response, memfd } = bodyInMemfd();
+      const kept = await response.clone().bytes();
+      const mine = await response.bytes();
+      expect(mappingsOf(memfd)).toEqual(["rw-p", "rw-p", "rw-s"]);
+      expect([kept.length, mine.length]).toEqual([size, size]);
+    });
+
+    test("the last owner gets the Blob's own map after the earlier copy was collected", async () => {
+      const { response, memfd } = await afterCollected(async track => {
+        const body = bodyInMemfd();
+        track(await body.response.clone().bytes());
+        return body;
+      });
+      const mine = await response.bytes();
+      expect(mappingsOf(memfd)).toEqual(["rw-s"]);
+      expect(mine.length).toBe(size);
+    });
+
+    test("the memfd is closed after every copy was collected", async () => {
+      const memfd = await afterCollected(async track => {
+        const body = bodyInMemfd();
+        track(await body.response.clone().bytes());
+        track(await body.response.bytes());
+        return body.memfd;
+      });
+      expect(blobMemfds()).not.toContain(memfd);
+      expect(mappingsOf(memfd)).toEqual([]);
     });
   });
 });

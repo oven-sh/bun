@@ -65,15 +65,17 @@ unsafe extern "C" {
     // (`to_js_buffer_from_memfd`) maps `addr` itself via `bun_sys::mmap`, so
     // the validity proof is discharged at that single call site.
     safe fn JSBuffer__fromMmap(global: &JSGlobalObject, addr: *mut c_void, len: usize) -> JSValue;
-    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); remaining args are by-value scalars.
-    safe fn ArrayBuffer__fromSharedMemfd(
+    // C++ calls `dealloc(_, ctx)` exactly once: when the buffer it made is
+    // freed, or before it returns when it made none.
+    fn ArrayBuffer__fromSharedMemfd(
         fd: i64,
         global: &JSGlobalObject,
         byte_offset: usize,
         byte_length: usize,
         total_size: usize,
         ty: JSType,
+        dealloc: unsafe extern "C" fn(*mut c_void, *mut c_void),
+        ctx: *mut c_void,
     ) -> JSValue;
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle;
     // `&mut *mut u8` is ABI-identical to a non-null `void**` out-param the
@@ -257,21 +259,42 @@ impl ArrayBuffer {
         Ok(buffer_value)
     }
 
+    /// A copy-on-write mapping of `fd` as a JS buffer. `dealloc(_, ctx)` runs
+    /// exactly once: when JS frees that buffer, or before this returns when no
+    /// buffer was made.
+    ///
     /// `Ok(JSValue::ZERO)` means the C++ side declined (length above the
     /// ArrayBuffer limit, `mmap` failed, or Windows) and the caller falls back
     /// to copying; the typed-array allocation can also throw, so empty alone
     /// does not mean "declined".
+    ///
+    /// # Safety
+    /// `dealloc(_, ctx)` must be sound to call once, on any thread.
     #[inline]
-    pub fn to_array_buffer_from_shared_memfd(
+    pub unsafe fn to_array_buffer_from_shared_memfd(
         fd: i64,
         global: &JSGlobalObject,
         byte_offset: usize,
         byte_length: usize,
         total_size: usize,
         ty: JSType,
+        dealloc: unsafe extern "C" fn(*mut c_void, *mut c_void),
+        ctx: *mut c_void,
     ) -> JsResult<JSValue> {
         crate::call_check_slow(global, || {
-            ArrayBuffer__fromSharedMemfd(fd, global, byte_offset, byte_length, total_size, ty)
+            // SAFETY: forwarded verbatim; the caller upholds this method's contract.
+            unsafe {
+                ArrayBuffer__fromSharedMemfd(
+                    fd,
+                    global,
+                    byte_offset,
+                    byte_length,
+                    total_size,
+                    ty,
+                    dealloc,
+                    ctx,
+                )
+            }
         })
     }
 

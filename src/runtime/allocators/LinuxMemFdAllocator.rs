@@ -10,9 +10,9 @@
 //!
 //! Then, to clone the data later, we can just call `mmap` again.
 //!
-//! `create` writes the file once. Every mapping of it is `MAP_PRIVATE`, the
-//! store's own view too, so a write through one mapping never reaches the
-//! file that the other mappings read.
+//! The store's view is the only `MAP_SHARED` mapping of the file. Every copy
+//! is `MAP_PRIVATE` and holds a reference on the store, so the view itself
+//! reaches JS only when nothing else maps the file (`Store::has_one_ref`).
 //!
 //! The big catch is that mmap(), memfd_create(), write() all have overhead. And
 //! often we will re-use virtual memory within the process. This does not reuse
@@ -29,7 +29,8 @@ use bun_core::Fd;
 use bun_sys as sys;
 use bun_sys::FdExt;
 
-use crate::webcore::blob::store::Bytes as BlobStoreBytes;
+use crate::webcore::blob::store::{Bytes as BlobStoreBytes, Data, Store};
+use crate::webcore::jsc::{self as jsc, JSGlobalObject, JSType, JSValue, JsResult};
 
 /// Intrusive thread-safe ref-counted memfd allocator.
 ///
@@ -41,7 +42,7 @@ use crate::webcore::blob::store::Bytes as BlobStoreBytes;
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub(crate) struct LinuxMemFdAllocator {
     ref_count: bun_ptr::ThreadSafeRefCount<LinuxMemFdAllocator>,
-    pub(crate) fd: Fd,
+    fd: Fd,
     pub(crate) size: usize,
 }
 
@@ -118,9 +119,7 @@ impl LinuxMemFdAllocator {
             core::ptr::null_mut(),
             map_len,
             libc::PROT_READ | libc::PROT_WRITE,
-            // `MAP_NORESERVE` keeps this view out of `Committed_AS`: the file's
-            // pages are counted already. `vm.overcommit_memory=2` ignores it.
-            libc::MAP_PRIVATE | libc::MAP_NORESERVE,
+            libc::MAP_SHARED,
             self_fd,
             0,
         ) {
@@ -139,6 +138,40 @@ impl LinuxMemFdAllocator {
             }
             Err(errno) => Err(errno),
         }
+    }
+
+    /// A copy-on-write mapping of the memfd behind `store`, as a JS buffer of
+    /// `byte_length` bytes at `byte_offset`. The buffer holds a reference on
+    /// `store` until JS frees it. `None` when `store` is not in a memfd.
+    pub(crate) fn copy_on_write_js(
+        store: &bun_ptr::RefPtr<Store>,
+        global: &JSGlobalObject,
+        byte_offset: usize,
+        byte_length: usize,
+        ty: JSType,
+    ) -> Option<JsResult<JSValue>> {
+        let Data::Bytes(bytes) = &store.data else {
+            return None;
+        };
+        let this = Self::from(bytes.allocator())?;
+        // SAFETY: `bytes` holds a ref on `*this` through its allocator, and
+        // `store` keeps `bytes` alive across this call.
+        let fd = unsafe { (*this).fd };
+        let total_size = bytes.allocated_slice().len();
+        // SAFETY: the deallocator releases exactly the one `Store` ref that
+        // `into_raw` hands over, and `Store::deref` is sound on any thread.
+        Some(unsafe {
+            jsc::ArrayBuffer::to_array_buffer_from_shared_memfd(
+                fd.native() as i64,
+                global,
+                byte_offset,
+                byte_length,
+                total_size,
+                ty,
+                crate::webcore::blob::blob_store_array_buffer_deallocator,
+                store.clone().into_raw().cast::<c_void>(),
+            )
+        })
     }
 
     pub(crate) fn should_use(bytes: &[u8]) -> bool {

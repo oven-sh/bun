@@ -1563,7 +1563,9 @@ JSC_DEFINE_HOST_FUNCTION(functionReportError,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-extern "C" JSC::EncodedJSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSGlobalObject* globalObject, size_t byteOffset, size_t byteLength, size_t totalLength, JSC::JSType type)
+// `deallocator` runs exactly once with `deallocatorContext`: when the buffer made here
+// is freed, or before this returns when it makes no buffer.
+extern "C" JSC::EncodedJSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSGlobalObject* globalObject, size_t byteOffset, size_t byteLength, size_t totalLength, JSC::JSType type, JSTypedArrayBytesDeallocator deallocator, void* deallocatorContext)
 {
 
 // Windows doesn't have mmap
@@ -1571,17 +1573,20 @@ extern "C" JSC::EncodedJSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSG
 #if !OS(WINDOWS)
     // Empty makes the caller fall back to the copying path, which throws for this length.
     if (byteLength > MAX_ARRAY_BUFFER_SIZE) [[unlikely]] {
+        deallocator(nullptr, deallocatorContext);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
     auto ptr = mmap(nullptr, totalLength, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
 
     if (ptr == MAP_FAILED) {
+        deallocator(nullptr, deallocatorContext);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(reinterpret_cast<char*>(ptr) + byteOffset), byteLength }, createSharedTask<void(void*)>([ptr, totalLength](void* p) {
+    auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(reinterpret_cast<char*>(ptr) + byteOffset), byteLength }, createSharedTask<void(void*)>([ptr, totalLength, deallocator, deallocatorContext](void* p) {
         munmap(ptr, totalLength);
+        deallocator(p, deallocatorContext);
     }));
 
     if (type == JSC::Uint8ArrayType) {
@@ -1602,6 +1607,7 @@ extern "C" JSC::EncodedJSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSG
         RELEASE_ASSERT_NOT_REACHED();
     }
 #else
+    deallocator(nullptr, deallocatorContext);
     return JSC::JSValue::encode(JSC::JSValue {});
 #endif
 }

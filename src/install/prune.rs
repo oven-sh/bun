@@ -953,8 +953,8 @@ struct HoistedTree<'a> {
     quiet: bool,
     kept_mismatched: Cell<bool>,
     kept_contested: Cell<bool>,
-    /// The symlinked `node_modules` folders that a lookup needed and `open_workspace_folder`
-    /// refused to open.
+    /// The symlinked `node_modules` folders that `open_workspace_folder` refused to open when
+    /// `removable` needed them, so it kept an entry.
     linked: RefCell<Vec<Box<[u8]>>>,
     checked: RefCell<DynamicBitSet>,
     matched: RefCell<DynamicBitSet>,
@@ -1255,6 +1255,11 @@ impl<'a> HoistedTree<'a> {
             let resolutions = lockfile.buffers.resolutions.as_slice();
             let mut links: Vec<(&'a [u8], FolderId)> = Vec::new();
             for (id, tree) in self.trees.iter().enumerate() {
+                // Nothing in a workspace outside the project is opened, so what it has there
+                // decides nothing.
+                if is_outside_project(lockfile, id as tree::Id) {
+                    continue;
+                }
                 for &row in tree.dependencies.get(rows) {
                     if let Some(linked) = member_folder(lockfile, resolutions[row as usize]) {
                         links.push((linked, self.folder(id as tree::Id)));
@@ -1413,8 +1418,11 @@ impl<'a> HoistedTree<'a> {
                     self.warn_contested(folder, alias, Some(&join(entry_folder, alias)));
                     return false;
                 }
-                // The caller refuses for `linked`.
-                Installed::Linked => return false,
+                // The caller refuses for `linked`, as it does for a folder it cannot prune.
+                Installed::Linked => {
+                    drop(self.open(folder, &mut self.linked.borrow_mut()));
+                    return false;
+                }
                 Installed::Missing => "is missing",
                 Installed::Mismatch => "is not the version bun.lock expects",
             };
@@ -1505,7 +1513,7 @@ impl<'a> HoistedTree<'a> {
             Installed::Matches => self.matched.borrow_mut().set(row),
             Installed::Missing => self.missing.borrow_mut().set(row),
             Installed::Mismatch | Installed::Contested => {}
-            // Not kept: each lookup that needs the folder is refused for it.
+            // Not kept: `removable` opens the folder again to name the link.
             Installed::Linked => return installed,
         }
         self.checked.borrow_mut().set(row);
@@ -1524,11 +1532,11 @@ impl<'a> HoistedTree<'a> {
         };
         let mut linked: Vec<Box<[u8]>> = Vec::new();
         let Some(folder) = self.open(folder, &mut linked) else {
-            if linked.is_empty() {
-                return Installed::Missing;
-            }
-            self.linked.borrow_mut().append(&mut linked);
-            return Installed::Linked;
+            return if linked.is_empty() {
+                Installed::Missing
+            } else {
+                Installed::Linked
+            };
         };
         let kind = entry_kind_of(&folder, alias);
         if kind == EntryKind::Unknown {
@@ -1606,6 +1614,20 @@ fn tree_workspace(lockfile: &Lockfile, tree: &tree::Tree) -> Option<PackageID> {
 /// The folder of the workspace that owns `tree`, if that workspace is inside the project.
 fn tree_member_folder<'a>(lockfile: &'a Lockfile, tree: &tree::Tree) -> Option<&'a [u8]> {
     member_folder(lockfile, tree_workspace(lockfile, tree)?)
+}
+
+/// Returns true if the tree is the `node_modules` of a workspace outside the project, or is below
+/// it.
+fn is_outside_project(lockfile: &Lockfile, mut tree_id: tree::Id) -> bool {
+    let trees = lockfile.buffers.trees.as_slice();
+    while tree_id != 0 && (tree_id as usize) < trees.len() {
+        let tree = &trees[tree_id as usize];
+        if let Some(owner) = tree_workspace(lockfile, tree) {
+            return member_folder(lockfile, owner).is_none();
+        }
+        tree_id = tree.parent;
+    }
+    false
 }
 
 /// Returns a key for each tree's `node_modules` directory. Two trees have the same key if they are
@@ -1923,9 +1945,12 @@ fn pair_moved_members<'o, 'n>(
         if !new.ids_at(folder).is_empty() {
             continue;
         }
-        // Not free: a workspace of `old` with the same folder, or one that moved there.
+        // Not free: the folder of a workspace that bun.lock had, or one that a workspace moved
+        // to. `old` also lists the workspaces that this run found, after the ones it loaded.
+        let loaded = old.lockfile.loaded_package_count;
         let is_free = |now: &[u8]| {
-            old.member_folder(now).is_none() && !moved.iter().any(|pair| pair.1 == now)
+            !old.ids_at(now).iter().any(|&(_, id)| id < loaded)
+                && !moved.iter().any(|pair| pair.1 == now)
         };
         let names = old.ids_at(folder);
         let mut now = (new.workspaces().iter())

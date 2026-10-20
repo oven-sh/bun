@@ -5022,6 +5022,99 @@ test.concurrent("hoisted: a command goes to the package that stays in the worksp
   expect(exitCode).toBe(0);
 });
 
+// No workspace is self-contained here. The workspace moves to libs/b, takes another name, and a link stays at
+// packages/b. Its no-deps@1.0.0 is still placed, in the folder that the link leads to.
+test.concurrent.each(["install", "update"])(
+  "hoisted: bun %s keeps the packages of a workspace that moved, has another name, and left a link",
+  async command => {
+    const dir = await setupWorkspaces("hoisted", {
+      root: { dependencies: { "no-deps": "2.0.0" } },
+      packages: { b: { dependencies: { "no-deps": "1.0.0" } } },
+    });
+    mkdirSync(join(dir, "libs"));
+    renameSync(join(dir, "packages", "b"), join(dir, "libs", "b"));
+    symlinkSync(join(dir, "libs", "b"), join(dir, "packages", "b"), "junction");
+    await Promise.all([
+      write(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "root", workspaces: ["libs/*"], dependencies: { "no-deps": "2.0.0" } }),
+      ),
+      write(
+        join(dir, "libs", "b", "package.json"),
+        JSON.stringify({ name: "bee", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
+      ),
+    ]);
+
+    const { stderr, exitCode } = await bun(dir, command);
+    expect(stderr).not.toContain("warn:");
+    expect(installedIn(dir, "libs/b")).toEqual({ "no-deps": "1.0.0" });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// Workspace `a` leaves, and the workspace in packages/b, which has no dependency, takes its name. The no-deps in
+// packages/b is not the copy that `a` had: Bun did not place it.
+test.concurrent("hoisted: bun install keeps what is in a workspace that takes the name of one that left", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "no-deps": "2.0.0" } },
+    packages: { a: { dependencies: { "no-deps": "1.0.0" } }, b: {} },
+  });
+  const own = plant(dir, "packages/b/node_modules/no-deps");
+  rmSync(join(dir, "packages", "a"), { recursive: true });
+  await write(join(dir, "packages", "b", "package.json"), JSON.stringify({ name: "a", version: "1.0.0" }));
+
+  await install(dir);
+  expect(existsSync(own)).toBeTrue();
+});
+
+// `<dir>/project` is the project. The workspace in `<dir>/shared` is outside it. It links `b` under a name that the
+// root gives to a registry package, and has its own what-bin. Nothing in its folder is opened, so what it has there
+// keeps nothing in packages/b.
+test.concurrent("hoisted: a stray in a workspace goes whatever a workspace outside the project has", async () => {
+  const { packageDir: dir } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+  const project = join(dir, "project");
+  const member = (name: string, pkg: object = {}) => JSON.stringify({ name, version: "1.0.0", ...pkg });
+  await Promise.all([
+    registry.writeBunfig(project, { linker: "hoisted" }),
+    write(
+      join(project, "package.json"),
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*", "../shared"],
+        dependencies: { "no-deps": "2.0.0", "a-dep": "1.0.1", "what-bin": "1.5.0" },
+      }),
+    ),
+    write(join(project, "packages", "b", "package.json"), member("b")),
+    write(
+      join(dir, "shared", "package.json"),
+      member("shared", { dependencies: { "a-dep": "workspace:b@*", "what-bin": "1.0.0" } }),
+    ),
+  ]);
+  await install(project, "--linker", "hoisted");
+  const copy = plant(project, "packages/b/node_modules/what-bin");
+
+  const { stdout, stderr, exitCode } = await prune(project);
+  expect(stderr).toBe("");
+  expect(lines(stdout)).toEqual([BANNER, "", "- what-bin (packages/b/node_modules)", REMOVED(1, 6)]);
+  expect(existsSync(copy)).toBeFalse();
+  expect(exitCode).toBe(0);
+});
+
+// packages/b/node_modules is a link, and the run is for `b` alone. No package leaves packages/b, so the link stops
+// nothing and the run has nothing to say about it.
+test.concurrent(
+  "hoisted: bun update --filter says nothing about the linked node_modules that nothing leaves",
+  async () => {
+    const dir = await setupWorkspaces("hoisted", twoTrees);
+    const storage = linkToOwnStorage(dir, "b");
+
+    const { stderr, exitCode } = await bun(dir, "update", "--filter", "b");
+    expect(stderr).not.toContain("warn:");
+    expect(readdirSync(storage).filter(name => !name.startsWith("."))).toEqual(["a-dep", "no-deps"]);
+    expect(exitCode).toBe(0);
+  },
+);
+
 test.concurrent("hoisted: an install removes the packages of the last dependency that left package.json", async () => {
   const dir = await setup({ name: "foo", dependencies: { "one-dep": "1.0.0", "what-bin": "1.0.0" } });
   const nm = join(dir, "node_modules");

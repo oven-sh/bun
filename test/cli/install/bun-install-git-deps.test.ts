@@ -552,6 +552,64 @@ test.concurrent("requests a github: dependency as written when its committish ha
   expect(exitCode).toBe(0);
 });
 
+// Bun reads the commit of a GitHub package from the name of its tarball's root directory. Another host behind
+// GITHUB_API_URL can name the root after the repository, and such a name ends in no commit, also when it ends in hex
+// digits. The lockfile then has the ref of package.json, and an install with an empty cache asks for that ref again.
+// bun.lock used to save the end of the name as the commit (`lib`, `deadbeef`), which no host can find.
+test.concurrent.each([
+  ["my-lib", "bun.lock", "hoisted"],
+  ["my-lib", "bun.lockb", "hoisted"],
+  ["my-lib-deadbeef", "bun.lock", "hoisted"],
+  ["my-lib-deadbeef", "bun.lockb", "hoisted"],
+  ["my-lib", "bun.lock", "isolated"],
+] as const)(
+  "installs a github: tarball with the root %s from %s with an empty cache (%s)",
+  async (rootDir, lockfile, linker) => {
+    using dir = tempDir("github-root-without-commit", {});
+    const root = String(dir);
+    const tarball = await tarballOf(rootDir, packageFiles(nameOf("a"), "pkg-a"));
+    const requests: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        requests.push(pathname);
+        return pathname === "/repos/scope/pkg-a/tarball/v1"
+          ? new Response(tarball)
+          : new Response("not found", { status: 404 });
+      },
+    });
+    const project = writeProject(root, { [nameOf("a")]: "github:scope/pkg-a#v1" });
+    writeFileSync(join(project, "bunfig.toml"), `[install]\nsaveTextLockfile = ${lockfile === "bun.lock"}\n`);
+    const env = { GITHUB_API_URL: `http://localhost:${server.port}` };
+    const resolution = "github:scope/pkg-a#v1";
+
+    const first = await runInstall(project, join(root, "cache"), env, `--linker=${linker}`);
+    expectInstalled(first.stdout, { [nameOf("a")]: resolution });
+    if (lockfile === "bun.lock") {
+      expect(await lockedPackages(project)).toEqual({
+        [nameOf("a")]: [`${nameOf("a")}@${resolution}`, {}, rootDir, integrityOf(tarball)],
+      });
+    }
+
+    rmSync(join(project, "node_modules"), { recursive: true, force: true });
+    const again = await runInstall(project, join(root, "empty-cache"), env, `--linker=${linker}`, "--frozen-lockfile");
+    expect(diagnostics(again.stderr)).toEqual([]);
+    expectInstalled(again.stdout, { [nameOf("a")]: resolution });
+    expect({
+      requests,
+      installed: await installedVersions(project, [nameOf("a")]),
+      store: linker === "isolated" ? readdirSync(join(project, "node_modules", ".bun")).sort() : [],
+      exitCode: again.exitCode,
+    }).toEqual({
+      requests: ["/repos/scope/pkg-a/tarball/v1", "/repos/scope/pkg-a/tarball/v1"],
+      installed: markers(["a"]),
+      store: linker === "isolated" ? ["@scope+pkg-a@github+scope+pkg-a+v1", "node_modules"] : [],
+      exitCode: 0,
+    });
+  },
+);
+
 // If a part of a GitHub dependency couldn't be found in the form that the URL parser returns, it was left empty. An
 // empty committish installed the default branch, and an empty owner requested `/repos//<repo>/`. Now such a dependency
 // fails to resolve.

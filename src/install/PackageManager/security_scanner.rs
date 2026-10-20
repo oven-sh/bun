@@ -621,15 +621,12 @@ fn build_package_json(
                 match tag {
                     ResolutionTag::Github => {
                         let repository = pkg_res.github();
-                        let commit = if repository.resolved.is_empty() {
-                            repository.committish.slice(string_buf)
-                        } else {
-                            repository.resolved_commit(string_buf)
-                        };
                         append_without_url_credentials(
                             &mut tarball,
                             &crate::package_manager_real::run_tasks::alloc_github_url_for_ref(
-                                manager, repository, commit,
+                                manager,
+                                repository,
+                                repository.locked_committish(string_buf),
                             ),
                         );
                     }

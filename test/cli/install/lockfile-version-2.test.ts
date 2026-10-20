@@ -398,6 +398,97 @@ it("a github resolution whose committish contains a slash reads back with owner,
   expect(exitCode).toBe(0);
 });
 
+// The tag of a GitHub package is the name of the root directory of its tarball. GitHub names the
+// root `<owner>-<repo>-<commit>`, so the end of such a tag is the commit, and bun.lock saves it
+// after the `#` of the package. The tag of a git package is its commit. Any other tag has no
+// commit, and the package keeps the ref that it has. The hash that bun.lockb stores (`bun pm
+// hash-string`) keeps the text of earlier versions: the tag from its last `-`, commit or not.
+it("saves a commit after the `#` of a git or GitHub package only when its tag has one", async () => {
+  const sha1 = Buffer.alloc(40, "0123456789abcdef").toString();
+  const sha256 = Buffer.alloc(64, "0123456789abcdef").toString();
+  // [name, resolution in bun.lock, tag, resolution that is saved, resolution in the hash]
+  const rows: [string, string, string, string, string?][] = [
+    // 7 digits of a commit, or all of it, at the end of a root directory's name
+    ["short", "github:o/short#main", "o-short-abc1234", "github:o/short#abc1234"],
+    ["full", "github:o/full#main", `o-full-${sha1}`, `github:o/full#${sha1}`],
+    // a commit alone
+    ["whole", "github:o/whole#main", sha1, `github:o/whole#${sha1}`],
+    ["git", "git+http://localhost:1/git.git#main", sha1, `git+http://localhost:1/git.git#${sha1}`],
+    ["sha256", "git+http://localhost:1/sha256.git#main", sha256, `git+http://localhost:1/sha256.git#${sha256}`],
+    // no commit: not hex digits, not at the end of a longer name, or not the length of a commit
+    ["word", "github:o/word#main", "my-package", "github:o/word#main", "github:o/word#package"],
+    ["bare", "github:o/bare#main", "abc1234", "github:o/bare#main", "github:o/bare#abc1234"],
+    ["eight", "github:o/eight#main", "o-eight-abc12345", "github:o/eight#main", "github:o/eight#abc12345"],
+    ["most", "github:o/most#main", `o-most-${sha1.slice(1)}`, "github:o/most#main", `github:o/most#${sha1.slice(1)}`],
+    ["dash", "github:o/dash#main", "my-lib-", "github:o/dash#main", "github:o/dash#"],
+    ["dot", "github:o/dot#main", "pkg.root", "github:o/dot#main", "github:o/dot#pkg.root"],
+    ["ref", "github:o/ref#rel-20240115", "rel-20240115", "github:o/ref#rel-20240115", "github:o/ref#20240115"],
+    ["none", "github:o/none", "my-lib", "github:o/none", "github:o/none#lib"],
+    ["tag", "git+http://localhost:1/tag.git#v1.0.0", "v1.0.0", "git+http://localhost:1/tag.git#v1.0.0"],
+    // Bun before 1.4 misreads these bytes after the `#`, so such a ref is not saved
+    ["slash", "github:o/slash#feature/x", "my-lib", "github:o/slash#lib"],
+    ["plus", "github:o/plus#v1+meta", "my-lib", "github:o/plus#lib"],
+    // saved by an earlier version
+    ["cut", "github:o/cut#lib", "my-lib", "github:o/cut#lib"],
+    // no tag
+    ["untagged", "git+http://localhost:1/untagged.git#main", "", "git+http://localhost:1/untagged.git#main"],
+    ["plain", "git+http://localhost:1/plain.git", "", "git+http://localhost:1/plain.git"],
+  ];
+  const dependencies = Object.fromEntries(rows.map(([name, resolution]) => [name, resolution]));
+
+  const requests: string[] = [];
+  await using github = Bun.serve({
+    port: 0,
+    fetch(req) {
+      requests.push(new URL(req.url).pathname);
+      return new Response("Not Found", { status: 404 });
+    },
+  });
+  using dir = tempDir("lockfile-git-tag-commit", {
+    // A dependency that bun.lock does not have makes the install save it again.
+    "package.json": JSON.stringify({ name: "root", dependencies: { ...dependencies, extra: "file:./extra" } }),
+    "extra/package.json": JSON.stringify({ name: "extra", version: "1.0.0" }),
+    "bun.lock": JSON.stringify({
+      lockfileVersion: 1,
+      configVersion: 1,
+      workspaces: { "": { name: "root", dependencies } },
+      packages: Object.fromEntries(rows.map(([name, resolution, tag]) => [name, [`${name}@${resolution}`, {}, tag]])),
+    }),
+  });
+  const run = async (...args: string[]) => {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: { ...env, GITHUB_API_URL: github.url.origin },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return out;
+  };
+
+  await run("install", "--lockfile-only");
+  const { packages } = Bun.JSONC.parse(await file(join(String(dir), "bun.lock")).text()) as {
+    packages: Record<string, unknown[]>;
+  };
+  const hashed = (await run("pm", "hash-string")).split("\n");
+  expect(
+    Object.fromEntries(
+      rows.map(([name]) => [name, { saved: packages[name], hashed: hashed.find(line => line.startsWith(`${name}@`)) }]),
+    ),
+  ).toEqual(
+    Object.fromEntries(
+      rows.map(([name, , tag, saved, inHash = saved]) => [
+        name,
+        { saved: [`${name}@${saved}`, {}, tag], hashed: `${name}@${inHash}` },
+      ]),
+    ),
+  );
+  expect(requests).toEqual([]);
+});
+
 // The writer must not silently upgrade a lockfile to v2 if doing so would make
 // it fail the v2 parse checks on the next install. A v1 lockfile with an
 // off-registry tarball and no integrity hash must round-trip as v1.

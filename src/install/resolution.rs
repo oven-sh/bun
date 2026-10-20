@@ -17,6 +17,14 @@ use crate::versioned_url::VersionedURLType;
 pub type Resolution = ResolutionType<u64>;
 
 impl Resolution {
+    pub(crate) fn fmt_hashed<'a>(
+        &'a self,
+        string_bytes: &'a [u8],
+        path_sep: PathSep,
+    ) -> HashedFormatter<'a> {
+        HashedFormatter(self.fmt(string_bytes, path_sep))
+    }
+
     /// True when this resolution can satisfy `dep_version`: npm ranges by
     /// semver, git/github by exact repo equality. Any other kind pairing
     /// (workspace, folder, tarball, dist-tag, …) never satisfies. This is
@@ -894,6 +902,24 @@ impl<'a, SemverInt: VersionInt> fmt::Display for Formatter<'a, SemverInt> {
                 BStr::new(res.single_file_module().slice(buf))
             ),
             _ => Ok(()),
+        }
+    }
+}
+
+/// The text of a package in the hash that `bun.lockb` stores.
+pub(crate) struct HashedFormatter<'a>(Formatter<'a, u64>);
+
+impl fmt::Display for HashedFormatter<'_> {
+    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Formatter {
+            resolution, buf, ..
+        } = self.0;
+        match resolution.tag {
+            Tag::Git => fmt::Display::fmt(&resolution.git().fmt_hashed("git+", buf), writer),
+            Tag::Github => {
+                fmt::Display::fmt(&resolution.github().fmt_hashed("github:", buf), writer)
+            }
+            _ => fmt::Display::fmt(&self.0, writer),
         }
     }
 }

@@ -886,6 +886,32 @@ it("loads a lockfile that Bun v0.5 wrote", async () => {
   });
 });
 
+// Bun 1.4.3 saved this bun.lockb for `github:owner/my-lib#v1`, whose tarball has the root directory `my-lib`. That name
+// ends in no commit, so the package is printed with the ref of package.json. The hash that bun.lockb stores covers the
+// text that every release printed, with the end of the name (`#lib`) in the place of a commit. The hash keeps that text,
+// or the lockfile would count as changed.
+it("keeps the hash of a bun.lockb whose GitHub package has a tarball root that names no commit", async () => {
+  using dir = tempDir("lockb-github-root-without-commit", {
+    "bun.lockb": await file(join(import.meta.dir, "fixtures", "github-root-without-commit.lockb")).bytes(),
+    "package.json": JSON.stringify({ name: "app", dependencies: { "my-lib": "github:owner/my-lib#v1" } }),
+  });
+  expect(await run(String(dir), "pm", "ls")).toEqual({
+    stdout: expect.stringContaining("└── my-lib@github:owner/my-lib#v1\n"),
+    stderr: "",
+    exitCode: 0,
+  });
+  expect(await run(String(dir), "pm", "hash-string")).toEqual({
+    stdout: expect.stringContaining("\nmy-lib@github:owner/my-lib#lib\n"),
+    stderr: "",
+    exitCode: 0,
+  });
+  expect(await run(String(dir), "install", "--frozen-lockfile", "--lockfile-only")).toEqual({
+    stdout: expect.stringContaining("bun install"),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // bun.lockb stores a hash of the packages and of the project's lifecycle scripts. Only an install knows the scripts.
 describe.concurrent("--frozen-lockfile after a migration, with a root postinstall", () => {
   const integrity = "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==";

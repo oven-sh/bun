@@ -212,10 +212,10 @@ impl<'p> Checker<'p, '_> {
             .chain(index.of(ExprTag::Dot))
             .map(|&e| {
                 let pos = match hir[e].kind {
-                    ExprKind::Dot { name_pos, .. } => name_pos,
+                    ExprKind::Dot { .. } => hir.name_pos(e),
                     _ => hir[e].pos,
                 };
-                (pos, !matches!(bound.expr_parent[e.idx()], Parent::None))
+                (pos, !matches!(bound.parent_of_expr(e), Parent::None))
             });
         let members = (hir.members.iter().zip(bound.member_owner.iter()))
             .map(|(member, owner)| (member.name_pos, !matches!(owner, MemberOwner::None)));
@@ -263,7 +263,7 @@ impl<'p> Checker<'p, '_> {
         }
         let index = self.exprs_by_kind(file);
         for &e in index.of(ExprTag::PrivateIdentifier) {
-            let (parent, pos) = (bound.expr_parent[e.idx()], hir[e].pos);
+            let (parent, pos) = (bound.parent_of_expr(e), hir[e].pos);
             if bound.is_unchecked(e.idx()) {
                 continue;
             }
@@ -282,7 +282,7 @@ impl<'p> Checker<'p, '_> {
                     Parent::Stmt(s) if s.is_some() => match hir[s].kind {
                         StmtKind::ForIn { .. } => true,
                         StmtKind::Expr(_) => {
-                            matches!(bound.stmt_parent[s.idx()], Parent::Stmt(outer)
+                            matches!(bound.parent_of_stmt(s), Parent::Stmt(outer)
                                     if outer.is_some() && matches!(hir[outer].kind, StmtKind::ForIn { left, .. } if left == s))
                         }
                         _ => false,
@@ -750,7 +750,7 @@ impl<'p> Checker<'p, '_> {
             return None;
         }
         let first = symbol.is_some().then(|| {
-            let declarations = files.decls(files.canonical(files.sym(file, symbol)));
+            let declarations = files.decls_of(files.canonical(files.sym(file, symbol)));
             declarations.into_iter().find_map(|(file, declaration)| {
                 let hir = self.hir(file);
                 let type_params = declaration.type_params_of_class_or_interface(hir)?;
@@ -905,10 +905,19 @@ impl<'p> Checker<'p, '_> {
         {
             return;
         }
-        // `typeToStringEx` returns "?" and `addDiagnostic` discards the diagnostic.
-        let is_discarded = self.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL;
-        let created = self.non_existent_properties.insert((file, e), is_discarded);
-        if created.unwrap_or(is_discarded) {
+        // `typeToStringEx` returns "?" and `addDiagnostic` discards the diagnostic. TypeScript 7.0 never reports it after
+        // that, so what it prints depends on which file or statement gets here first. 7.1 always reports it. So nothing
+        // that was evaluated for the type being printed is cached: not the access, and not the call, array or object
+        // around it. The walk of its file evaluates them again and reports.
+        if self.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL {
+            self.note_error_in(file);
+            let innermost = self.frames.len().saturating_sub(1);
+            let floor = self.printing_floors.last().copied().unwrap_or(innermost);
+            self.mark_tainted_from(floor.min(innermost));
+            return;
+        }
+        let created = self.non_existent_properties.insert((file, e), false);
+        if created == Some(true) {
             self.non_existent_properties.insert((file, e), true);
             return;
         }
@@ -1115,14 +1124,14 @@ impl<'p> Checker<'p, '_> {
     }
 
     /// The classes enclosing `e`, innermost first.
-    pub(super) fn enclosing_classes(&self, file: FileId, e: ExprId) -> Vec<ClassId> {
+    pub(super) fn enclosing_classes(&self, file: FileId, e: ExprId) -> SmallVec<[ClassId; 4]> {
         let hir = self.hir(file);
         Self::classes_from(hir, hir.get_containing_class(hir.node(e)))
     }
 
     /// `class`, then `GetContainingClass` applied repeatedly.
-    fn classes_from(hir: &File, mut class: Node) -> Vec<ClassId> {
-        let mut classes = Vec::new();
+    fn classes_from(hir: &File, mut class: Node) -> SmallVec<[ClassId; 4]> {
+        let mut classes = SmallVec::new();
         while class.is_some() {
             classes.push(hir.class_of(class));
             class = hir.get_containing_class(class);
@@ -1132,7 +1141,7 @@ impl<'p> Checker<'p, '_> {
 
     /// The same for a direct child of `parent`. `Parent::Expr(e)` represents `e` itself: only what
     /// encloses it counts.
-    pub(super) fn classes_around(&self, file: FileId, parent: Parent) -> Vec<ClassId> {
+    pub(super) fn classes_around(&self, file: FileId, parent: Parent) -> SmallVec<[ClassId; 4]> {
         let hir = self.hir(file);
         let innermost = match parent {
             Parent::Expr(e) => hir.get_containing_class(hir.node(e)),
@@ -1246,7 +1255,11 @@ impl<'p> Checker<'p, '_> {
     }
     /// `getContainingClassExcludingClassDecorators`, then `GetContainingClass` applied repeatedly:
     /// the classes in which the private name of `e`, an `a.#b`, is resolved.
-    pub(super) fn classes_around_private_name(&self, file: FileId, e: ExprId) -> Vec<ClassId> {
+    pub(super) fn classes_around_private_name(
+        &self,
+        file: FileId,
+        e: ExprId,
+    ) -> SmallVec<[ClassId; 4]> {
         let hir = self.hir(file);
         Self::classes_from(
             hir,
@@ -1480,7 +1493,7 @@ impl<'p> Checker<'p, '_> {
             Parent::Expr(e) if e.is_some() => self.enclosing_classes(file, e),
             _ => self.classes_around(file, at),
         };
-        let enclosing: Vec<Sym> = classes
+        let enclosing: SmallVec<[Sym; 4]> = classes
             .into_iter()
             .map(|c| self.class_sym(file, c))
             .collect();
@@ -1546,22 +1559,33 @@ impl<'p> Checker<'p, '_> {
                 enclosing_class = Some(target);
             }
         }
+        // For `a.b` the caller passes `getApparentType`. For a pattern it passes the destructured
+        // type. If an intersection has members with a `this` type, its apparent type is a new
+        // intersection without an alias, but `apparent_type` returns the original intersection.
+        let is_apparent_type =
+            matches!(at, Parent::Expr(e) if e.is_some() && hir.node(e) == location);
         let Some(enclosing_class) = enclosing_class else {
             // `getDeclaringClass`: a property synthesized from several declarations has no parent.
             let class = self.declaring_class(first).filter(|_| is_declared_once);
-            let class = class.map_or(containing, |class| self.declared_type(class));
+            let class = match class {
+                Some(class) => self.declared_type(class),
+                None if is_apparent_type => self.apparent_type_of_intersection(containing),
+                None => containing,
+            };
             return self.report_inaccessible(error_node, 2445, first, &[class]);
         };
         if is_static {
             return true;
         }
-        // And only through an instance of that class, which a union is not (`hasBaseType`). The
-        // caller passes `getApparentType`: of `this & X`, which `this is X` narrows `this` to, it
-        // is the intersection of the class and `X`.
+        // Access is also allowed only through an instance of that class, and a union isn't one
+        // (`hasBaseType`). `this is X` narrows `this` to `this & X`, whose apparent type is the
+        // intersection of the class and `X`.
         let through = if self.is_deferred(containing) {
             self.base_constraint(containing)
-        } else {
+        } else if is_apparent_type {
             self.apparent_type_of_intersection(containing)
+        } else {
+            containing
         };
         if self.has_base(through, enclosing_class) {
             return true;

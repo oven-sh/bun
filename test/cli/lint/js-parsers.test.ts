@@ -953,6 +953,14 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
       ["json", "[1,]", "1:3 Trailing commas are not allowed in JSON"],
       ["json", "[1", "1:3 Unterminated array"],
       ["json", "[1 2]", "1:4 Expected ','"],
+      ["json", '{\n  "a": 1\n  "b": 2\n}', "3:3 Expected ','"],
+      ["json", '["a" "b"]', "1:6 Expected ','"],
+      ["json", '{"a":1 2}', "1:8 Expected ','"],
+      ["json", '{"a" "b"}', "1:6 Expected ':' after object key"],
+      ["json", '{"a":}', "1:6 Unexpected token"],
+      ["json", '{"a":,"b":1}', "1:6 Unexpected token"],
+      ["json", "[1,,2]", "1:4 Unexpected token"],
+      ["json", '"a" "b"', "1:5 Unexpected token after JSON value"],
       ["json", "[1}", "1:3 Expected ']'"],
       ["json", '{"a":1]', "1:7 Expected '}'"],
       ["json", "{} {}", "1:4 Unexpected token after JSON value"],
@@ -978,12 +986,19 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
       ["jsonc", "/* c", "1:5 Unterminated multi-line comment"],
       ["jsonc", "[1, // c\n", "2:1 Unexpected end of input"],
       ["jsonc", "{a:1}", "1:2 Keys must be strings in double quotes"],
+      ["jsonc", '{"a": "b" // c\n"d": 1}', "2:1 Expected ','"],
+      ["jsonc", '{"a" /* c */ "b"}', "1:14 Expected ':' after object key"],
+      ["jsonc", '{"a": /* c */ }', "1:15 Unexpected token"],
       ["json5", "{1:1}", "1:2 Invalid identifier start character"],
       ["json5", "0x", "1:3 Invalid hex number"],
       ["json5", "01", "1:1 Leading zeros are not allowed in JSON5"],
       ["json5", "[,]", "1:2 Unexpected token"],
       ["json5", "{a-b:1}", "1:4 Unexpected character"],
       ["json5", "1 2", "1:3 Unexpected token after JSON5 value"],
+      ["json5", "{a: 1 b: 2}", "1:7 Expected ','"],
+      ["json5", "['a' 'b']", "1:6 Expected ','"],
+      ["json5", "{a 'b'}", "1:4 Expected ':' after object key"],
+      ["json5", "{a:}", "1:4 Unexpected token"],
     ];
     const files = cases.map(([language, text], i) => [`${String(i).padStart(2, "0")}.${language}`, text]);
     const result = await lint({ ...json, ...Object.fromEntries(files) }, ["-f", "json", "."]);
@@ -2481,6 +2496,62 @@ describe.concurrent("bun lint with built-in Markdown", () => {
         "paren-in-title.md: 1:2 markdown/no-missing-label-refs Label reference 'a' not found.
         slash-in-value.md: 1:3 markdown/no-html HTML element "a" is not allowed."
       `);
+  });
+
+  describe("markdown/no-space-in-emphasis", () => {
+    const options = `{ files: ["**/*.md"], rules: { "markdown/no-space-in-emphasis": ["error", { checkStrikethrough: true }] } }`;
+    const files = { ...markdownPackage(), "eslint.config.mjs": markdownConfig(options, "[]") };
+
+    // The plugin pairs a paragraph's first marker with the second and the third with the fourth, regardless of the text
+    // around them. It reports every line below through the table, and its fix changes the rendered text: `2 *3* 4`,
+    // `*.ts,*.tsx`.
+    test("ignores stars and underscores that are plain text", async () => {
+      const text = [
+        "The area is 2 * 3 * 4 units.",
+        "x = a * b + c * d",
+        'globs: "*.ts, *.tsx, *.html, *.css"',
+        "Matches **/*.js, **/*.mjs and src/* files.",
+        "Prints [[ cyclic ref *1 ]] and then [[ cyclic ref *2 ]].",
+        "In C: char *a, *b; and x = *p * 2;",
+        "f(*args, **kwargs) and g(*a, **k)",
+        "/* one comment */ and (* another *)",
+        "This is * ambiguous * too.",
+        "Will _flag on _words, and words* with asterisks* after them.",
+        "About ~ 5 or ~ 10.",
+        "# 2 * 3 * 4",
+        "| a * b * c |\n| --------- |\n| 1 * 2 * 3 |",
+        "`*.ts, *.tsx` and `2 * 3 * 4`",
+        "See https://example.com/*/a and https://example.com/*/b.",
+      ].join("\n\n");
+      const result = await lint({ ...files, "a.gfm.md": `${text}\n` }, ["--fix", "-f", "json", "."], ["a.gfm.md"]);
+      expect(summary(result.raw)).toBe("");
+      expect(result.files).toEqual({ "a.gfm.md": `${text}\n` });
+      expect(result.exitCode).toBe(0);
+    });
+
+    test.each([
+      ["This is ** important**.", "This is **important**."],
+      ["This is **important **.", "This is **important**."],
+      ["This is ** important ** too.", "This is **important** too."],
+      ["This is _important _.", "This is _important_."],
+      ["This is _ important _ too.", "This is _important_ too."],
+      ["This is *** very important***.", "This is ***very important***."],
+      ["One-sided *broken emphasis *", "One-sided *broken emphasis*"],
+      ["(*broken *)", "(*broken*)"],
+      ["(* broken*)", "(*broken*)"],
+      ["**`code` **", "**`code`**"],
+      ["Follow ** [a link](b)**", "Follow **[a link](b)**"],
+      ["**Several ** in **one ** line.", "**Several** in **one** line."],
+      ["2 * 3 is ** important**.", "2 * 3 is **important**."],
+      ["This is ~~ gone~~.", "This is ~~gone~~."],
+      ["# A ** heading**", "# A **heading**"],
+    ])("--fix turns %j into emphasis", async (before, after) => {
+      expect(Bun.markdown.html(before)).not.toMatch(/<(em|strong|del)>/);
+      expect(Bun.markdown.html(after)).toMatch(/<(em|strong|del)>/);
+      const result = await lint({ ...files, "a.gfm.md": `${before}\n` }, ["--fix", "."], ["a.gfm.md"]);
+      expect(result.files).toEqual({ "a.gfm.md": `${after}\n` });
+      expect(result.exitCode).toBe(0);
+    });
   });
 
   // The rules are only as good as the tree. `conformance/markdown-trees.mjs` recorded the plugin's trees.

@@ -195,6 +195,39 @@ fn type_declared_in_declare_module<'a>(
     })
 }
 
+/// True if `symbol` has a declaration in a `declare module "name" {}`.
+pub fn is_declared_in_ambient_module(symbol: TsSymbol<'_>, name: &[u8]) -> bool {
+    type_declared_in_declare_module(name, symbol.declarations(), false)
+}
+
+/// True if `declaration` is visible to every file. It has to be at the top level of a declaration file that is a
+/// script, or of a `declare global {}` in a declaration file.
+fn is_global_declaration(declaration: TsNode<'_>) -> bool {
+    let file = declaration.get_source_file();
+    if !file.is_declaration_file() {
+        return false;
+    }
+    for node in declaration.ancestors() {
+        match node.kind() {
+            SyntaxKind::ModuleBlock => {}
+            SyntaxKind::ModuleDeclaration => {
+                return node.flags().intersects(NodeFlags::GLOBAL_AUGMENTATION);
+            }
+            SyntaxKind::SourceFile => return file.symbol().is_none(),
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// True if `ty` is a global class or interface whose name is in `names`. Any declaration file can declare it: a
+/// `lib.*.d.ts`, or one from `@types/node` or `bun-types`. A class with that name in a module isn't the global.
+pub fn is_global_type(ty: Type, names: impl Names) -> bool {
+    ty.get_symbol().is_some_and(|symbol| {
+        names.includes(symbol.name()) && symbol.declarations().any(is_global_declaration)
+    })
+}
+
 /// `checker.getAmbientModules().find(ambientModule => ambientModule.name === '"name"')`
 fn find_ambient_module<'a>(program: Types<'a>, package_name: &[u8]) -> Option<TsSymbol<'a>> {
     program.get_ambient_module(package_name)

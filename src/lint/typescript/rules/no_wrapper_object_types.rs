@@ -68,6 +68,10 @@ impl Rule for NoWrapperObjectTypes {
         cx.report(name, BANNED_CLASS_TYPE)
             .data("preferred", preferred)
             .data("typeName", name)
-            .fix(|fixer| (!is_heritage(ty)).then(|| fixer.replace(name, preferred)));
+            // `Object` accepts a primitive and `object` doesn't, so `const a: object = 1` is an error.
+            .fix_where_safe(
+                || preferred != "object",
+                |fixer| (!is_heritage(ty)).then(|| fixer.replace(name, preferred)),
+            );
     }
 }

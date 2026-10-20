@@ -763,6 +763,23 @@ impl<'a> Report<'a> {
         self.suggest_as(SuggestionKind::DangerousFix, Message::new("", ""), &[], fix)
     }
 
+    /// Attaches a fix that's only correct for some code: [`Report::fix`] if `is_safe` returns true, otherwise
+    /// [`Report::fix_dangerously`]. `--fix` must not change a program's behavior or break type checking, whatever the
+    /// original tool's `--fix` does. `is_safe` is only called if the fix is read, so it can afford to look at scopes.
+    pub fn fix_where_safe<F: IntoFix>(
+        self,
+        is_safe: impl FnOnce() -> bool,
+        fix: impl FnOnce(Fixer<'a>) -> F,
+    ) -> Self {
+        if !self.reads_fixes() {
+            return self;
+        }
+        match is_safe() {
+            true => self.fix(fix),
+            false => self.fix_dangerously(fix),
+        }
+    }
+
     /// oxlint's `diagnostic_with_dangerous_suggestion`.
     pub fn suggest_dangerously<F: IntoFix>(
         self,

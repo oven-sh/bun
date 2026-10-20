@@ -2690,6 +2690,16 @@ pub(crate) mod __gated_printer {
             if IS_BUN_PLATFORM { record.loader } else { None }
         }
 
+        /// Prints `prefix`, the attribute value that names `loader`, then `" }`.
+        /// Out of line: most imports have no `type` attribute.
+        #[cold]
+        #[inline(never)]
+        fn print_type_attribute(&mut self, prefix: Whitespacer, loader: bun_ast::Loader) {
+            self.print_whitespacer(prefix);
+            self.print(loader.import_attribute_type());
+            self.print_whitespacer(ws!(b"\" }"));
+        }
+
         pub(crate) fn is_unbound_identifier(&self, expr: &Expr) -> bool {
             let ExprData::EIdentifier(id) = &expr.data else {
                 return false;
@@ -2974,9 +2984,7 @@ pub(crate) mod __gated_printer {
                 self.print(b"(");
                 self.print_import_record_path(record);
                 if let Some(loader) = type_attribute {
-                    self.print_whitespacer(ws!(b", { type: \""));
-                    self.print(loader.import_attribute_type());
-                    self.print_whitespacer(ws!(b"\" }"));
+                    self.print_type_attribute(ws!(b", { type: \""), loader);
                 }
                 self.print(b")");
 
@@ -6276,9 +6284,7 @@ pub(crate) mod __gated_printer {
 
                     // backwards compatibility: previously, we always stripped type
                     if let Some(loader) = Self::import_type_attribute(record) {
-                        self.print_whitespacer(ws!(b" with { type: \""));
-                        self.print(loader.import_attribute_type());
-                        self.print_whitespacer(ws!(b"\" }"));
+                        self.print_type_attribute(ws!(b" with { type: \""), loader);
                     }
                     self.print_semicolon_after_statement();
 

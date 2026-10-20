@@ -1612,6 +1612,17 @@ describe.concurrent("bun test --isolate=modules", () => {
     expect(lines).toEqual(Array(2).fill(JSON.stringify([true, true, false])));
   });
 
+  test("process.mainModule is the running file's module", async () => {
+    const file = `test("reads it", () => { console.log(JSON.stringify([process.mainModule === module, require.main === module])); });`;
+    const files = {
+      "a.test.mjs": `test("reads it", () => { console.log(JSON.stringify([process.mainModule])); });`,
+      "b.test.cjs": file,
+      "c.test.cjs": file,
+    };
+    const lines = (await passes(files, 3)).split("\n").filter(line => line.startsWith("["));
+    expect(lines).toEqual(["[null]", "[true,true]", "[true,true]"]);
+  });
+
   test("the global object and the builtin modules are the same for every file", async () => {
     const files = {
       "a.test.js": `import fs from "node:fs"; test("a", () => { fs.arrayOfA = Array; });`,

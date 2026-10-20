@@ -32,7 +32,7 @@ const { eventNames, rawListeners, removeListener } = process;
 
 type Properties = Map<PropertyKey, PropertyDescriptor>;
 
-// Reading these creates streams and clients. `argv` and `mainModule` depend on the test file and are computed on first read.
+// Reading these creates streams and clients. `argv` and `mainModule` depend on the test file.
 const skippedKeys = new Set([
   "stdin",
   "stdout",

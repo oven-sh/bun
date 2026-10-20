@@ -4528,32 +4528,22 @@ extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, Encoded
     process->queueNextTick<2>(globalObject, function, { JSValue::decode(arg1), JSValue::decode(arg2) });
 }
 
-// This does the equivalent of
-// return require.cache.get(Bun.main)
-static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
+// `require.cache.get(Bun.main)`. Not cached, because `bun test` runs many main modules in one process.
+JSC_DEFINE_CUSTOM_GETTER(processMainModule, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue, PropertyName))
 {
-    // Lazy property builder: exceptions must not propagate into
-    // reifyStaticProperty, which performs no exception check.
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* globalObject = defaultGlobalObject(processObject->globalObject());
-    auto* bun = globalObject->bunObject();
-    auto& builtinNames = Bun::builtinNames(vm);
-    JSValue mainValue = bun->get(globalObject, builtinNames.mainPublicName());
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        RETURN_IF_EXCEPTION(scope, {});
-        return JSC::jsUndefined();
-    }
-    auto* requireMap = Bun::testFileRequireMap(globalObject);
-    JSValue mainModule = requireMap->get(globalObject, mainValue);
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        RETURN_IF_EXCEPTION(scope, {});
-        return JSC::jsUndefined();
-    }
-    return mainModule;
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSValue main = globalObject->bunObject()->get(globalObject, Bun::builtinNames(vm).mainPublicName());
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::testFileRequireMap(globalObject)->get(globalObject, main)));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setProcessMainModule, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName propertyName))
+{
+    if (auto* process = dynamicDowncast<JSObject>(JSValue::decode(thisValue)))
+        process->putDirect(JSC::getVM(globalObject), propertyName, JSValue::decode(value), 0);
+    return true;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNextTickInDefaultRealm, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -5077,7 +5067,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   hrtime                           constructProcessHrtimeObject                        PropertyCallback
   isBun                            constructIsBun                                      PropertyCallback
   kill                             Process_functionKill                                Function 2
-  mainModule                       constructMainModuleProperty                         PropertyCallback
+  mainModule                       processMainModule                                   CustomAccessor
   memoryUsage                      constructMemoryUsage                                PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                              PropertyCallback
   nextTick                         constructProcessNextTickFn                          PropertyCallback

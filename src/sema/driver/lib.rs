@@ -18,9 +18,7 @@ use bun_paths::resolve_path::dirname;
 use bun_sema::atom::RecentAtoms;
 use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
-use bun_sema::check::{
-    INFERENCE_WALK_COUNTS, MEMBER_COUNTS, Program, Requested, compute_ecma_line_starts,
-};
+use bun_sema::check::{Program, Requested, compute_ecma_line_starts};
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::FileKind;
 use bun_sema::json::Json;
@@ -45,7 +43,7 @@ use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread::ThreadId;
 use std::time::{Duration, Instant};
@@ -941,8 +939,6 @@ pub struct Request<'a> {
     pub uses_typescript_wording: bool,
     /// Called with the loaded program, before any of it is checked.
     pub loaded: Option<&'a (dyn Fn(&Program) + Sync)>,
-    /// Called with the program again once all of it is checked.
-    pub checked: Option<&'a (dyn Fn(&Program) + Sync)>,
     /// Called for each file right after it's checked, on the thread that checked it, while the file-local types are
     /// still alive. This is how to read the type of every expression without `retains_everything`. A discarded task's
     /// files are rechecked, so this can be called more than once for a file, and the last call counts.
@@ -984,27 +980,6 @@ pub struct Diagnostic {
     /// The project of a build that reported it, in build order. A file that two projects include counts as a file of
     /// each, just as it's a `SourceFile` of each program.
     pub project: u32,
-}
-
-/// One pass over the queue of files, as it ran. For `--timing`.
-#[derive(Clone)]
-pub struct RoundReport {
-    pub tasks: usize,
-    pub files: usize,
-    /// Wall time from the start of the first task to the end of the last.
-    pub elapsed: Duration,
-    /// Summed over the tasks: time spent waiting for the commit mutex, holding it, and waiting for variance claims.
-    pub waits: [Duration; 3],
-    /// The discarded tasks: the file each was checking, and why.
-    pub lost: Vec<(Vec<u8>, &'static str)>,
-    /// Time that threads spent without a task before the round ended, summed over the threads.
-    pub idle: Duration,
-    /// The five slowest tasks: wall time, number of files, path of the first file.
-    pub slowest_tasks: Vec<(Duration, usize, Vec<u8>)>,
-    /// Keys that the tasks logged for their commits.
-    pub logged: u64,
-    /// Entries that those commits stored. The other keys were bound, or another task stored them first.
-    pub stored: u64,
 }
 
 /// `taskResult.builder`: how much of a `Report` one task of a build printed.
@@ -1112,8 +1087,6 @@ pub struct Report {
     pub files_not_checked: usize,
     /// The number of tasks that checked them. See `PlanOptions::task_size`.
     pub tasks_run: usize,
-    /// The rounds that ran, in order.
-    pub rounds: Vec<RoundReport>,
     /// Number of projects reported, if `references` are followed. Otherwise 0.
     pub projects_checked: usize,
     /// The configuration file has `references` and no files of its own, and `--build` wasn't given. `tsc` checks
@@ -1128,10 +1101,6 @@ pub struct Report {
     pub load_phases: [Duration; Phase::ALL.len()],
     /// The maximum stack usage of any file, in bytes.
     pub deepest_stack: usize,
-    /// `Checker::inference_walk_counts`, summed over the tasks.
-    pub inference_walks: [u64; INFERENCE_WALK_COUNTS.len()],
-    /// `Checker::member_counts`, summed over the tasks.
-    pub members: [u64; MEMBER_COUNTS.len()],
 }
 
 impl Report {
@@ -1165,18 +1134,11 @@ impl Report {
         self.files_checked += other.files_checked;
         self.files_not_checked += other.files_not_checked;
         self.tasks_run += other.tasks_run;
-        self.rounds.extend(other.rounds);
         self.check_time += other.check_time;
         for (phase, more) in self.load_phases.iter_mut().zip(other.load_phases) {
             *phase += more;
         }
         self.deepest_stack = self.deepest_stack.max(other.deepest_stack);
-        for (sum, more) in self.inference_walks.iter_mut().zip(other.inference_walks) {
-            *sum += more;
-        }
-        for (sum, more) in self.members.iter_mut().zip(other.members) {
-            *sum += more;
-        }
     }
 
     /// `BuildTask.report`
@@ -3917,10 +3879,8 @@ fn check_named_files(
     let raw_options = std::mem::take(&mut project.raw_compiler_options);
     let is_true = |name: &[u8]| raw_options.contains(&(name.to_vec(), Json::Bool(true)));
     project.options.drops_unreferenced = !request.retains_everything;
-    project.options.keeps_comments = request.retains_everything
-        || request.loaded.is_some()
-        || request.checked.is_some()
-        || request.after_file.is_some();
+    project.options.keeps_comments =
+        request.retains_everything || request.loaded.is_some() || request.after_file.is_some();
     let before = host.times();
     host.spent(Phase::Discover, started.elapsed());
     // Declared before everything that's allocated in it, so it's dropped last.
@@ -4127,8 +4087,6 @@ fn check_named_files(
     let emit_diagnostics: Guarded<Vec<Vec<Diagnostic>>> = Guarded::new(Vec::new());
     let incomplete: Guarded<Vec<Incomplete>> = Guarded::new(Vec::new());
     let deepest_stack = AtomicUsize::new(0);
-    let inference_walks = Guarded::new([0u64; INFERENCE_WALK_COUNTS.len()]);
-    let members = Guarded::new([0u64; MEMBER_COUNTS.len()]);
     // `Files::parse_and_bind` retains the text of every file except those of the default library.
     let text_of = |file: FileId| {
         let module = &program.files.modules[file.idx()];
@@ -4261,13 +4219,6 @@ fn check_named_files(
             }
         }
         deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
-        let walks = checker.inference_walk_counts();
-        for (sum, more) in inference_walks.lock().iter_mut().zip(walks) {
-            *sum += more;
-        }
-        for (sum, more) in members.lock().iter_mut().zip(checker.member_counts()) {
-            *sum += more;
-        }
         Outcome {
             checked,
             incomplete,
@@ -4330,9 +4281,6 @@ fn check_named_files(
         _ => threads,
     };
     let tasks_run = AtomicUsize::new(0);
-    let rounds: Guarded<Vec<RoundReport>> = Guarded::new(Vec::new());
-    // For each task of the round: wall time, number of files, index of the first file.
-    let task_times: Guarded<Vec<(Duration, usize, usize)>> = Guarded::new(Vec::new());
     // The files of the discarded tasks.
     let lost: Guarded<Vec<usize>> = Guarded::new(Vec::new());
     // Which files are final, and the length of the final prefix in program order. The task that checks the next file
@@ -4368,15 +4316,6 @@ fn check_named_files(
     .collect();
     // A task that starts with a rechecked file gets its own round number, starting here, so task numbers stay unique.
     const FIRST_RECHECK_ROUND: usize = 2;
-    /// Totals over a round's tasks.
-    #[derive(Default)]
-    struct Sums {
-        tasks: usize,
-        logged: u64,
-        stored: u64,
-        waits: [Duration; 3],
-        lost: Vec<(usize, &'static str)>,
-    }
     // Every thread takes files from one queue until it's empty. `files`: in program order. `is_last_round`: one thread
     // checks them all in that order, in one task, which is trusted.
     //
@@ -4497,15 +4436,12 @@ fn check_named_files(
             }
             Some(file)
         };
-        let sums: Guarded<Sums> = Guarded::new(Sums::default());
-        let (started, busy) = (Instant::now(), AtomicU64::new(0));
         // Each thread's last task leaves its memory here for that thread's next task. The memory comes from the
         // thread's arena, so no other thread reuses it.
         let spares = Guarded::new(Vec::new());
         // Runs one task, which begins with the file `first` and continues with what `next` returns. Returns the file
         // that the thread's next task begins with.
         let run_task = |first: usize, next: &mut dyn FnMut() -> Option<usize>| -> Option<usize> {
-            let began = Instant::now();
             let thread = std::thread::current().id();
             let spare = {
                 let mut spares = spares.lock();
@@ -4521,7 +4457,7 @@ fn check_named_files(
             checker.begin_task(round as u32, first as u32);
             checker.see_commits(is_last_round);
             let mut trees_to_free = Vec::new();
-            let (mut done, mut spent, mut index) = (0, 0, first);
+            let (mut spent, mut index) = (0, first);
             let upcoming = loop {
                 let file = to_check[index];
                 {
@@ -4563,7 +4499,7 @@ fn check_named_files(
                     let bytes = bytes_of(index);
                     progress.bytes_checked.fetch_add(bytes, Ordering::Relaxed);
                 }
-                (done, spent) = (done + 1, spent + size_of(index));
+                spent += size_of(index);
                 let upcoming = next();
                 // A task caches what it evaluated about other files, and a file's own check must not hit what a later
                 // file's check evaluated. So a task only moves forward in program order.
@@ -4606,31 +4542,11 @@ fn check_named_files(
                 }
             };
             deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
-            let walks = checker.inference_walk_counts();
-            for (sum, more) in inference_walks.lock().iter_mut().zip(walks) {
-                *sum += more;
-            }
-            for (sum, more) in members.lock().iter_mut().zip(checker.member_counts()) {
-                *sum += more;
-            }
             tasks_run.fetch_add(1, Ordering::Relaxed);
-            let ended = checker.end_task_after_commits();
-            {
-                let mut sums = sums.lock();
-                sums.tasks += 1;
-                sums.logged += ended.logged;
-                sums.stored += ended.stored;
-                for (sum, more) in sums.waits.iter_mut().zip(ended.waits) {
-                    *sum += more;
-                }
-                (sums.lost).extend(ended.discard_reason.map(|why| (index, why)));
-            }
+            checker.end_task_after_commits();
             // The checker borrows the files' HIR, so it must be gone before their trees are freed.
             spares.lock().push((thread, checker.into_spare()));
             free_trees(trees_to_free);
-            let elapsed = began.elapsed();
-            busy.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
-            task_times.lock().push((elapsed, done, first));
             upcoming
         };
         let first_files_worker = AtomicUsize::new(usize::MAX);
@@ -4769,32 +4685,6 @@ fn check_named_files(
             }
             _ => host.parallel(workers, &|_| work()),
         }
-        let elapsed = started.elapsed();
-        let sums = std::mem::take(&mut *sums.lock());
-        let mut slowest = std::mem::take(&mut *task_times.lock());
-        slowest.shared_sort_by_key(|&(elapsed, _, file)| (Reverse(elapsed), file));
-        slowest.truncate(5);
-        let path_of = |file: usize| {
-            program.files.modules[to_check[file].idx()]
-                .file_name()
-                .to_vec()
-        };
-        rounds.lock().push(RoundReport {
-            slowest_tasks: (slowest.into_iter())
-                .map(|(elapsed, files, file)| (elapsed, files, path_of(file)))
-                .collect(),
-            tasks: sums.tasks,
-            files: files.len(),
-            elapsed,
-            waits: sums.waits,
-            lost: (sums.lost.into_iter())
-                .map(|(file, why)| (path_of(file), why))
-                .collect(),
-            idle: (elapsed * threads as u32)
-                .saturating_sub(Duration::from_nanos(busy.into_inner())),
-            logged: sums.logged,
-            stored: sums.stored,
-        });
     };
     let run_all_rounds = |expected: Requested| {
         let all: Vec<usize> = (0..to_check.len()).collect();
@@ -4958,10 +4848,7 @@ fn check_named_files(
         }
     }
     report.deepest_stack = deepest_stack.into_inner();
-    report.inference_walks = *inference_walks.lock();
-    report.members = *members.lock();
     report.tasks_run = tasks_run.into_inner();
-    report.rounds = std::mem::take(&mut *rounds.lock());
     report.incomplete = std::mem::take(&mut *incomplete.lock());
     report.incomplete.shared_sort();
     report.incomplete.dedup();
@@ -4972,9 +4859,6 @@ fn check_named_files(
     sort_and_deduplicate_with(&mut report.diagnostics, per_file_lists);
     report.check_time = checking.elapsed();
     report.declaration_files = std::mem::take(&mut *declaration_files.lock());
-    if let Some(checked) = request.checked {
-        checked(program);
-    }
     if let Some(room_slot) = in_room {
         room_slot.record_final_size(session.allocated_bytes());
     }

@@ -27,9 +27,7 @@
 
 use super::super::instantiate::PropInstantiation;
 use super::super::*;
-use super::{
-    Built, FEW_MEMBERS, IntersectionBuilder, MemberCount, RECENT_MEMBERS, Resolved, SharedNames,
-};
+use super::{Built, FEW_MEMBERS, IntersectionBuilder, RECENT_MEMBERS, Resolved, SharedNames};
 use crate::util::PositionSet;
 use smallvec::SmallVec;
 
@@ -366,9 +364,7 @@ impl<'p, 's> Checker<'p, 's> {
         unlisted.lookups += 1;
         // Misses count too, because a union looks up every member's names in all the other members.
         let is_looked_up_often = unlisted.lookups * 4 >= unlisted.count;
-        self.tally(MemberCount::UnlistedLookups, 1);
         if is_looked_up_often {
-            self.tally(MemberCount::ListedAfterLookups, 1);
             let _ = self.members(ty);
         }
         if let Some(prop) = found {

@@ -740,8 +740,6 @@ fn is_like_new(task: &mut Task) -> bool {
         cycle_since_idle,
         logged_at_cycles,
         logged_when_idle,
-        committed,
-        waits,
         immediate_tables,
         immediate_tables_after_commit,
         diagnostics_logged_before_stop,
@@ -758,7 +756,7 @@ fn is_like_new(task: &mut Task) -> bool {
         && assignments_walked.get_mut().is_empty()
         && held_back.get() == 0
         && view.is_none()
-        && was_discarded.get().is_none()
+        && !was_discarded.get()
         && !*is_trusted
         && !can_recheck_early.get()
         && !is_first_in_order.get()
@@ -767,8 +765,6 @@ fn is_like_new(task: &mut Task) -> bool {
         && cycle_since_idle.get().is_none()
         && logged_at_cycles.borrow().is_empty()
         && logged_when_idle.get() == [0; 2]
-        && committed.get() == [0; 2]
-        && waits.get() == [Duration::ZERO; 3]
         && immediate_tables.get() == 0
         && *immediate_tables_after_commit == 0
         && diagnostics_logged_before_stop.get() == usize::MAX
@@ -829,7 +825,7 @@ fn ended_task_is_like_new() {
     ends_like_new(&tables, &session, |task| {
         task.view = Some(commits.view(3));
     });
-    check(&|task| task.was_discarded.set(Some("a test")));
+    check(&|task| task.was_discarded.set(true));
     check(&|task| task.is_trusted = true);
     check(&|task| task.can_recheck_early.set(true));
     check(&|task| task.set_first_in_order(true, false));
@@ -838,8 +834,6 @@ fn ended_task_is_like_new() {
     check(&|task| task.cycle_since_idle.set(Some([0; 2])));
     check(&|task| task.logged_at_cycles.borrow_mut().push([[0; 2]; 2]));
     check(&|task| task.logged_when_idle.set([0, 1]));
-    check(&|task| task.count_committed(0, 1));
-    check(&|task| task.count_waits([Duration::ZERO, Duration::ZERO, Duration::from_nanos(1)]));
     check(&|task| task.immediate_tables.set(1));
     check(&|task| task.immediate_tables_after_commit = 1);
     check(&|task| task.diagnostics_logged_before_stop.set(0));
@@ -1188,7 +1182,7 @@ fn immediate_writes_resume_after_next_commit() {
     tables.by_id.insert(&task, NUMBER, NUMBER, from_now(&task));
     assert_eq!(tables.by_id.get(&other, &NUMBER), Some(NUMBER));
     // A discarded task doesn't resume.
-    task.discard("a test");
+    task.discard();
     assert_eq!(commit(&tables, &commits, &task, 2), 0);
     assert!(!task.writes_immediately() && !task.shares_what_it_stores());
 }
@@ -1200,14 +1194,14 @@ fn task_that_hit_a_limit_is_not_rechecked_early() {
     let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
     let task = begin_writing_immediately(&session, &tables, &commits, 0);
     assert!(!task.can_recheck_early());
-    task.discard_until_recheck("a test");
+    task.discard_until_recheck();
     assert!(task.was_discarded() && task.can_recheck_early());
     // Hitting a limit later doesn't matter, because the task was already discarded.
-    task.discard("a limit");
+    task.discard();
     assert!(task.can_recheck_early());
     let other = begin_writing_immediately(&session, &tables, &commits, 1);
-    other.discard("a limit");
-    other.discard_until_recheck("a test");
+    other.discard();
+    other.discard_until_recheck();
     assert!(!other.can_recheck_early());
 }
 

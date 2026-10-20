@@ -2067,8 +2067,7 @@ impl<'p, 's> Checker<'p, 's> {
         // inference, which gives the same result as long as nothing in progress can change it.
         let cell = (links::Kind::Conditional, links::DEFAULT_CONSTRAINT);
         if let Some((cached_value, infers)) = self.cached_part::<(TypeId, bool)>(t, cell.0, cell.1)
-            && (!infers
-                || self.has_stack_for_cached_part() && self.obstacle_to_skipping().is_none())
+            && (!infers || self.has_stack_for_cached_part() && !self.has_obstacle_to_skipping())
         {
             return cached_value;
         }
@@ -2082,7 +2081,7 @@ impl<'p, 's> Checker<'p, 's> {
         // Without `infer` it's the union of two parts.
         let infers = !self.cond_infer_params(t).is_empty();
         let is_idle =
-            !infers || self.obstacle_to_skipping().is_none() && self.is_settled_for_inference();
+            !infers || !self.has_obstacle_to_skipping() && self.is_settled_for_inference();
         let ((constraint, _), stored) = self.derive_settled(
             |c| c.derive_with_inference(|c| c.derive_default_constraint_of_conditional(t)),
             |c, &(_, has_no_side_effects)| {
@@ -2797,11 +2796,7 @@ impl<'p, 's> Checker<'p, 's> {
         // Only a thread that isn't measuring claims or waits. See `commit::Claims` for why.
         let mut has_claim = false;
         if self.task.commits() && !self.in_variance_computation {
-            let wait_start = std::time::Instant::now();
-            let claim = self.p.claim_variances(sym, cuts == 0);
-            let none = std::time::Duration::ZERO;
-            self.task.count_waits([none, none, wait_start.elapsed()]);
-            match claim {
+            match self.p.claim_variances(sym, cuts == 0) {
                 VarianceClaim::Known(variances) => {
                     return self.take_shared_variances(sym, variances);
                 }
@@ -4273,7 +4268,7 @@ impl<'p, 's> Checker<'p, 's> {
             return Ternary::FALSE;
         }
         if r.relation_count <= 0 {
-            self.note_gave_up("the comparison budget");
+            self.note_gave_up();
             r.overflow = true;
             return Ternary::FALSE;
         }
@@ -4292,7 +4287,7 @@ impl<'p, 's> Checker<'p, 's> {
         // discarded, and ends the comparison right away. The results that follow from the answer stay in the task, like
         // those of `REC_BOTH` below.
         if r.source_stack.len() == 100 || r.target_stack.len() == 100 {
-            self.note_gave_up("the comparison depth limit");
+            self.note_gave_up();
             if self.task.was_discarded() {
                 r.overflow = true;
                 return Ternary::FALSE;
@@ -4430,7 +4425,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// of `checkTypeRelatedToEx`. It replaces the plain failure that `recursive_type_related_to` has
     /// stored for the two types.
     fn set_relation_overflow(&mut self, source: TypeId, target: TypeId, relation: Relation) {
-        self.note_gave_up("a comparison overflow");
+        self.note_gave_up();
         let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
         let scope = self.begin_scope();
         if let Ok(stored) = self.end_scope_as(scope, false) {

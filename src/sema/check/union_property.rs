@@ -25,7 +25,7 @@
 //! - A member that needs more than that never gets facts. It gets a full lookup every time.
 //! - Members are always visited in union order.
 
-use super::shape::{LONG_PROP_LIST, MemberCount, PropertyHolder, is_plain_object};
+use super::shape::{LONG_PROP_LIST, PropertyHolder, is_plain_object};
 use super::shortcuts::{TypeNumbers, task_fact};
 use super::*;
 use crate::util::{FxHashSet, PositionSet, SharedSort};
@@ -355,7 +355,6 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<Prop<'s>> {
         let skips_augment = skip_object_function_property_augment;
         let parts = self.parts(containing_type);
-        self.tally(MemberCount::UnionPropertiesCreated, 1);
         let uses_facts =
             parts.len() >= MIN_MEMBERS_FOR_FACTS && !skips_augment && self.are_member_facts_valid();
         let mut walk = Walk {
@@ -558,7 +557,6 @@ impl<'p, 's> Checker<'p, 's> {
         at: usize,
         current: TypeId,
     ) {
-        self.tally(MemberCount::MembersVisited, 1);
         // Only object types and intersections can have facts.
         let may_have_facts =
             walk.uses_facts && self.flags(current) & (tf::OBJECT | tf::INTERSECTION) != 0;
@@ -820,7 +818,6 @@ impl<'p, 's> Checker<'p, 's> {
         at: usize,
         current: TypeId,
     ) -> Option<MemberLookup<'p>> {
-        self.tally(MemberCount::MembersVisitedWithoutFacts, 1);
         let before = self.non_cacheable_mark();
         let t = self.apparent_type(current);
         // An intersection's apparent type is `never` if a member's apparent type is `never`, e.g. a conditional type

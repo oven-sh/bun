@@ -361,7 +361,6 @@ fn request<'a>(
         stops_like_tsc: true,
         uses_typescript_wording: false,
         loaded: None,
-        checked: None,
         after_file: None,
         declaration_file_emitted: None,
     }

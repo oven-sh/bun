@@ -2,7 +2,6 @@
 
 use super::alias::NewAlias;
 use super::related::FileSpan;
-use super::shape::MemberCount;
 use super::shortcuts::task_fact;
 use super::*;
 use crate::bind::Decl;
@@ -2727,7 +2726,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let scope = self.begin_scope();
         let parts = self.parts(ty);
-        self.tally(MemberCount::UnionsMadeObjects, 1);
         let mut shape = Shape::new_in(self.arena);
         let mut checked = crate::util::FxHashSet::default();
         let was_listing = self.union_members.set_listing(true);

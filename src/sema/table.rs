@@ -465,57 +465,6 @@ impl Policy for FileLocal {
     const IS_FILE_LOCAL: bool = true;
 }
 
-/// A table's memory usage, for `--timing`. Computing it reads every cell.
-#[derive(Copy, Clone, Default, Debug)]
-pub struct Footprint {
-    /// Bytes requested from the allocator: cells, map entries, and stored values, excluding the
-    /// memory they point to.
-    pub allocated: usize,
-    /// `allocated` minus the pages of a cell array in which every cell is zero. In a zeroed allocation such a page was
-    /// never written, so it isn't resident.
-    pub touched: usize,
-    /// Nonzero cells, or map entries.
-    pub entries: usize,
-    /// Values stored out of line.
-    pub out_of_line_values: usize,
-}
-
-impl Footprint {
-    const PAGE: usize = 16 << 10;
-
-    fn from_cells<C: Cell>(cells: &[C]) -> Footprint {
-        let mut all = Footprint {
-            allocated: size_of_val(cells),
-            ..Footprint::default()
-        };
-        for page in cells.chunks(Footprint::PAGE / size_of::<C>()) {
-            let entries = (page.iter().filter(|cell| cell.load() != Default::default())).count();
-            all.entries += entries;
-            all.touched += if entries != 0 { size_of_val(page) } else { 0 };
-        }
-        all
-    }
-
-    fn plus(self, other: Footprint) -> Footprint {
-        Footprint {
-            allocated: self.allocated + other.allocated,
-            touched: self.touched + other.touched,
-            entries: self.entries + other.entries,
-            out_of_line_values: self.out_of_line_values + other.out_of_line_values,
-        }
-    }
-
-    fn with_indirect<T, A: Alloc>(self, values: &AppendVec<T, A>) -> Footprint {
-        let bytes = values.len() as usize * size_of::<T>();
-        Footprint {
-            allocated: self.allocated + bytes,
-            touched: self.touched + bytes,
-            out_of_line_values: values.len() as usize,
-            ..self
-        }
-    }
-}
-
 // ───────────────────────────── the tables ─────────────────────────────
 
 /// `number_tables` hasn't assigned a slot yet. A `Frozen` table doesn't need one.
@@ -605,14 +554,6 @@ impl<K: NodeKey, V: Packed, P: Policy, A: Alloc> ByNode<K, V, P, A> {
     fn field(&self, key: K) -> Option<(&V::Cell, u32)> {
         Some(self.field_at(self.bases.at(key.file(), key.index())?))
     }
-
-    pub fn footprint(&self) -> Footprint {
-        let pages = self.cells.written().map(Footprint::from_cells);
-        Footprint {
-            allocated: self.bases.total().div_ceil(Self::PER_CELL) * size_of::<V::Cell>(),
-            ..pages.fold(Footprint::default(), Footprint::plus)
-        }
-    }
 }
 
 /// For a table whose owner defines the bit layout.
@@ -661,10 +602,6 @@ pub struct ByNodeIndirect<K, T, P: Policy = Frozen, A: Alloc = Global> {
 }
 
 impl<K: NodeKey, T, P: Policy, A: Alloc> ByNodeIndirect<K, T, P, A> {
-    pub fn footprint(&self) -> Footprint {
-        self.handles.footprint().with_indirect(&self.values)
-    }
-
     pub fn new_in(bases: &Bases<A>, alloc: A) -> Self {
         ByNodeIndirect {
             handles: ByNode::new_in(bases, alloc.clone()),
@@ -701,11 +638,6 @@ impl<I: Id, V: Packed, P: Policy, A: Alloc> ById<I, V, P, A> {
             slot: NO_SLOT,
             key: PhantomData,
         }
-    }
-
-    pub fn footprint(&self) -> Footprint {
-        let chunks = self.cells.allocated().map(Footprint::from_cells);
-        chunks.fold(Footprint::default(), Footprint::plus)
     }
 
     pub(crate) fn set_slot(&mut self, slot: SlotNumber) {
@@ -745,10 +677,6 @@ impl<I: Id, T, P: Policy, A: Alloc> ByIdIndirect<I, T, P, A> {
 }
 
 impl<I: Id, T, P: Policy, A: Alloc> ByIdIndirect<I, T, P, A> {
-    pub fn footprint(&self) -> Footprint {
-        self.handles.footprint().with_indirect(&self.values)
-    }
-
     pub(crate) fn set_slot(&mut self, slot: SlotNumber) {
         self.in_task = slot.typed();
         self.handles.set_slot_number(self.in_task.number());
@@ -768,18 +696,6 @@ impl<K: std::hash::Hash + Eq, V, P: Policy, A: Alloc> ByKey<K, V, P, A> {
             published: WindowedMap::new_in(alloc),
             slot: Slot::NONE,
             policy: PhantomData,
-        }
-    }
-
-    /// Excludes the map's index, which takes a few bytes per entry.
-    pub fn footprint(&self) -> Footprint {
-        let entries = self.published.entries();
-        let bytes = entries * size_of::<(K, V)>();
-        Footprint {
-            allocated: bytes,
-            touched: bytes,
-            entries,
-            out_of_line_values: 0,
         }
     }
 

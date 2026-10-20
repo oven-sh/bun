@@ -782,6 +782,7 @@ impl<K: Eq, V, A: Allocator + Clone> WindowedMap<K, V, A> {
         &self.entries[shard_among(spread << 32, LISTS)]
     }
 
+    #[cfg(test)]
     pub(crate) fn entries(&self) -> usize {
         self.entries.iter().map(|list| list.len() as usize).sum()
     }

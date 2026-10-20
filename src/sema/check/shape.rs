@@ -18,11 +18,6 @@ mod siblings;
 pub(super) use siblings::SiblingIntersections;
 use siblings::{FactsOfName, Holder};
 
-#[path = "intersection_reduction.rs"]
-mod reduction;
-pub use reduction::MEMBER_COUNTS;
-pub(super) use reduction::{MemberCount, Reductions};
-
 /// `thisAssignmentDeclarationKind`, with its location.
 #[derive(Copy, Clone)]
 pub(super) enum ThisAssignmentDeclaration {
@@ -1673,7 +1668,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if let Origin::Mapped(file, node) = origin {
                     // `resolveMappedTypeMembers` starts with no members in place, regardless of what `resolutionStart`
                     // hides.
-                    if self.reductions.mapped_types_in_progress.contains(&ty)
+                    if self.mapped_types_in_progress.contains(&ty)
                         && !self.stack[self.resolution_start..].contains(&Query::Shape(ty))
                     {
                         self.note_members_in_place();
@@ -1681,9 +1676,9 @@ impl<'p, 's> Checker<'p, 's> {
                         return Some((no_members, MapperId::IDENTITY));
                     }
                     let resolved = self.shape_memo(ty, |c| {
-                        c.reductions.mapped_types_in_progress.push(ty);
+                        c.mapped_types_in_progress.push(ty);
                         let shape = c.build_mapped_shape(file, node, mapper);
-                        c.reductions.mapped_types_in_progress.pop();
+                        c.mapped_types_in_progress.pop();
                         shape
                     });
                     return Some((resolved, MapperId::IDENTITY));
@@ -2984,10 +2979,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// True if a mapped type whose members are being resolved is a base type of the class or interface `sym`, or of one
     /// of its base types. `resolveMappedTypeMembers` starts with no members in place.
     fn has_base_type_in_progress(&mut self, sym: Sym) -> bool {
-        if self.reductions.mapped_types_in_progress.is_empty() {
+        if self.mapped_types_in_progress.is_empty() {
             return false;
         }
-        let in_progress = self.reductions.mapped_types_in_progress.clone();
+        let in_progress = self.mapped_types_in_progress.clone();
         self.has_base_type_among(sym, &in_progress)
     }
 
@@ -4871,8 +4866,6 @@ impl<'p, 's> Checker<'p, 's> {
             };
         }
         if let Some((shape, stored)) = self.list_unlisted_intersection(ty) {
-            self.tally(MemberCount::IntersectionsListed, 1);
-            self.tally(MemberCount::PropertiesListed, shape.props.len());
             return self.cache_shape(ty, shape, stored);
         }
         let q = Query::Properties(ty);
@@ -4893,7 +4886,6 @@ impl<'p, 's> Checker<'p, 's> {
         let left = self.leave(q);
         let shape = match (waiting, left) {
             (Some(waiting), Ok(stored)) if !is_in_place => {
-                self.tally(MemberCount::IntersectionsLeftUnlisted, 1);
                 return self.leave_unlisted(ty, shape, waiting, stored);
             }
             (Some(waiting), _) => {
@@ -4901,8 +4893,6 @@ impl<'p, 's> Checker<'p, 's> {
             }
             (None, _) => shape,
         };
-        self.tally(MemberCount::IntersectionsListed, 1);
-        self.tally(MemberCount::PropertiesListed, shape.props.len());
         match left {
             Ok(_) if is_in_place => self.provisional_shape(shape),
             Ok(stored) => self.cache_shape(ty, shape, stored),
@@ -7688,7 +7678,6 @@ impl<'p, 's> Checker<'p, 's> {
             self.close_cycle_above(self.never_in_progress_from[nth.count()]);
             return false;
         }
-        self.tally(MemberCount::Reduced, 1);
         let scope = self.begin_scope();
         self.never_in_progress.push(ty);
         self.never_in_progress_from.push(self.stack.len());
@@ -7959,7 +7948,6 @@ impl<'p, 's> Checker<'p, 's> {
                 all.push(members);
             }
         }
-        self.tally(MemberCount::WithSharedName, 1);
         // The names in the order of `getPropertiesOfUnionOrIntersectionType`, and for each the members
         // in order. `createUnionOrIntersectionProperty` compares every symbol with the first
         // (`singleProp`, `firstType`), so the cost is linear in the number of members:

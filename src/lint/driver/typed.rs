@@ -516,7 +516,6 @@ fn check_and_lint_in(
         stops_like_tsc: false,
         uses_typescript_wording: false,
         loaded: None,
-        checked: None,
         after_file: Some(&after_file),
         declaration_file_emitted: None,
     };

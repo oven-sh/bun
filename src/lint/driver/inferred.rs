@@ -267,7 +267,6 @@ impl<'e> Inferred<'e> {
             stops_like_tsc: false,
             uses_typescript_wording: false,
             loaded: None,
-            checked: None,
             after_file: None,
             declaration_file_emitted: None,
         };

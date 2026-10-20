@@ -81,7 +81,7 @@
 //!   tables keep what was derived from them for that long.
 //! - Variances don't wait for a commit either. See `Claims`.
 
-use super::task::{Ended, Task, tables_of, tables_written_immediately};
+use super::task::{Task, tables_of, tables_written_immediately};
 use super::{Checker, Program, Spare};
 use crate::local::{Log, node_word};
 use crate::node::Node;
@@ -92,7 +92,6 @@ use crate::util::{FxHashMap, SharedSort};
 use bun_threading::{Condvar, Guarded};
 use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::{Duration, Instant};
 
 /// A field of `Program`.
 pub(super) struct Commits<'s> {
@@ -714,13 +713,13 @@ impl<'s> Checker<'_, 's> {
         if has_missed && !self.task.was_discarded() {
             // That cycle is already committed, so the file can be rechecked right away.
             drop(self.task.take_cycle_members());
-            (self.task).discard_until_recheck("a cycle member that it missed");
+            (self.task).discard_until_recheck();
         }
     }
 
     /// Discards the task the way an invalid commit does. Call it after `check_file`.
     pub fn discard_until_recheck(&self) {
-        self.task.discard_until_recheck("the caller's request");
+        self.task.discard_until_recheck();
     }
 
     /// True if the task is discarded. Its files will be rechecked, and nothing it computes from now on is kept.
@@ -803,14 +802,12 @@ impl<'s> Checker<'_, 's> {
             }
         });
         self.withhold_until_the_file_ends(&mut log, is_between_files);
-        let lock_requested = Instant::now();
         let mut committing = p.commits.committing.lock();
-        let entered = Instant::now();
         let is_invalid = !self.task.is_trusted()
             && (self.task.view()).is_some_and(|view| p.is_invalid(&self.task, view, &committing));
         if is_invalid {
             drop(committing);
-            (self.task).discard_until_recheck("an invalid commit");
+            (self.task).discard_until_recheck();
             return false;
         }
         let number = committing.number + 1;
@@ -828,10 +825,8 @@ impl<'s> Checker<'_, 's> {
             task.view().is_some_and(|view| view.is_own(commit))
         });
         p.publish_reported(task.number(), reported);
-        let stored = (p.commits).store(&tables_of(p), task, &mut log, number, ring);
+        (p.commits).store(&tables_of(p), task, &mut log, number, ring);
         drop(committing);
-        task.count_waits([entered - lock_requested, entered.elapsed(), Duration::ZERO]);
-        task.count_committed(log.len() as u64, stored);
         if let Some(view) = task.view() {
             view.has_committed(number);
         }
@@ -862,7 +857,7 @@ impl<'s> Checker<'_, 's> {
     }
 
     /// Ends a task that `see_commits` was called for, after its last `commit_after_file`, on its own thread.
-    pub fn end_task_after_commits(&mut self) -> Ended {
+    pub fn end_task_after_commits(&mut self) {
         self.task.end(self.p)
     }
 }

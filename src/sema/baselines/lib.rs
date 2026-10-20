@@ -1814,7 +1814,6 @@ fn run_one(
             stops_like_tsc: false,
             uses_typescript_wording: true,
             loaded: None,
-            checked: None,
             declaration_file_emitted: None,
             after_file,
         };
@@ -2011,7 +2010,6 @@ fn compare_task_groupings(projects: &[String], lib_dir: &str, threads: usize) ->
             stops_like_tsc: true,
             uses_typescript_wording: false,
             loaded: None,
-            checked: None,
             declaration_file_emitted: None,
             after_file: None,
         };

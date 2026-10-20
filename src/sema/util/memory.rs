@@ -904,6 +904,7 @@ impl<C: Zeroed, A: Allocator + Clone> FixedCells<C, A> {
     }
 
     /// Iterates over the pages that have been written.
+    #[cfg(test)]
     pub fn written(&self) -> impl Iterator<Item = &[C]> {
         let pages = self.cells.chunks(Self::PER_PAGE).enumerate();
         let written = pages.filter(|&(page, _)| self.is_zeroed(page));
@@ -999,6 +1000,7 @@ impl<C: Zeroed + Sync, A: Allocator + Clone> Cells<C, A> {
     }
 
     /// Iterates over the allocated chunks.
+    #[cfg(test)]
     pub fn allocated(&self) -> impl Iterator<Item = &[C]> {
         (self.chunks.bases.iter().enumerate()).filter_map(|(chunk, base)| {
             let base = base.load(Ordering::Acquire);

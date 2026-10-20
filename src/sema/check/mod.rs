@@ -126,8 +126,7 @@ use symbols::{AliasTarget, ExcludedMeanings};
 use task::{Open, OrderDependent, Stored, Task};
 
 pub use call::ResolvedCall;
-pub use infer::INFERENCE_WALK_COUNTS;
-pub use shape::{MEMBER_COUNTS, Members};
+pub use shape::Members;
 pub use spans::compute_ecma_line_starts;
 
 const RECENT_SIGS: usize = 256;
@@ -537,15 +536,6 @@ type Rechecked = (
 );
 
 impl<'s> Program<'s> {
-    /// Returns the footprint of each table's shared part, with the field name. It reads every cell,
-    /// so it's only for `--timing`.
-    pub fn table_footprints(&self) -> Vec<(&'static str, crate::table::Footprint)> {
-        macro_rules! each {
-            ($($field:ident)*) => { vec![$((stringify!($field), self.$field.footprint())),*] };
-        }
-        buffered_fields!(each)
-    }
-
     pub fn new(session: &'s Session, files: &'s Files<'s>) -> Program<'s> {
         // Nothing that mentions a leaf file's node is published, so the shared part has no capacity
         // for those nodes, and `Bases::at` returns `None` for them. The counts are read in one pass
@@ -934,7 +924,7 @@ impl<'s> Program<'s> {
             union_members: Default::default(),
             unlisted_intersections: Default::default(),
             sibling_intersections: None,
-            reductions: Default::default(),
+            mapped_types_in_progress: Default::default(),
             never_in_progress_from: Vec::new(),
             reverse_mapped_inferences_from: Vec::new(),
             defaults_in_progress: Vec::new(),
@@ -1792,8 +1782,8 @@ pub struct Checker<'p, 's> {
     unlisted_intersections: shape::UnlistedIntersections<'p>,
     /// See check/sibling_intersections.rs. `Some` while `reduced_members` filters a union.
     sibling_intersections: Option<shape::SiblingIntersections<'p>>,
-    /// See check/intersection_reduction.rs.
-    reductions: shape::Reductions,
+    /// Mapped types whose members are being resolved. See `has_base_type_in_progress`.
+    mapped_types_in_progress: smallvec::SmallVec<[TypeId; 4]>,
     /// The height of `stack` at which `is_empty_intersection` began, for each one in progress.
     pub(super) never_in_progress_from: Vec<usize>,
     /// The height of `stack` at which the worker of each `inferReverseMappedType` in progress began.
@@ -2306,7 +2296,7 @@ impl<'p, 's> Checker<'p, 's> {
             cold_path();
             self.ran_out_of_stack.set(true);
             self.times_cut_short.set(self.times_cut_short.get() + 1);
-            self.note_gave_up("the native stack");
+            self.note_gave_up();
             return true;
         }
         false
@@ -3229,7 +3219,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `bailed_out` for the case where the frame at `from` makes the query again. See `starts_over_from_lower`.
     fn bailed_out_from(&mut self, from: usize) {
-        self.note_gave_up("a rejected query");
+        self.note_gave_up();
         self.mark_tainted_from(from);
         self.note_cycle();
         self.rejected_at = self.work;
@@ -3340,7 +3330,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Returns `UNRESOLVED` where the recursion here isn't evidence of recursion in tsgo: after a
     /// rejection, and more than 60 levels of `instantiate` deep under a conditional type.
     pub(super) fn excessively_deep(&mut self) -> TypeId {
-        self.note_gave_up("excessively deep instantiation");
+        self.note_gave_up();
         // Only the call right after a rejected `enter` sees the rejection.
         let is_limit_in_tsgo = match std::mem::replace(&mut self.last_enter, EnterOutcome::Entered)
         {
@@ -3362,7 +3352,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `instantiateTypeWithAlias`: `instantiationDepth == 100`. `instantiation_depth` counts what tsgo counts under a
     /// conditional type too, because `resolve_conditional` follows a tail call in a loop, as `getConditionalType` does.
     pub(super) fn instantiation_too_deep(&mut self) -> TypeId {
-        self.note_gave_up("the instantiation depth limit");
+        self.note_gave_up();
         self.instantiation_limit_hits += 1;
         if std::mem::replace(&mut self.last_enter, EnterOutcome::Entered) == EnterOutcome::Rejected
         {
@@ -3415,7 +3405,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// program, so which task reaches the limit, and at which node, is too.
     #[cold]
     fn error_at_current_node(&mut self, code: u32) {
-        self.note_gave_up("a reported limit");
+        self.note_gave_up();
         // Under `eager`, tsgo evaluates this later or never, with another `currentNode`.
         let is_reported = self.eager.is_empty();
         // Outside of an expression, `c.currentNode` is the statement or declaration that `checkSourceElement`
@@ -3954,12 +3944,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// comparison limit (2859), for lack of native stack, or at a depth at which a query is rejected. The
     /// result then isn't a function of the question alone. How far from the limit a computation begins, and
     /// how much of it is left to do, depends on what was computed before, which for a task that sees commits
-    /// includes what it found there. Such a task is discarded. `limit` is the limit's name, for `--timing`.
+    /// includes what it found there. Such a task is discarded.
     #[cold]
     #[inline(never)]
-    pub(super) fn note_gave_up(&self, limit: &'static str) {
+    pub(super) fn note_gave_up(&self) {
         self.note_state_was_read();
-        self.task.discard(limit);
+        self.task.discard();
     }
 
     /// Increments `cycles`.

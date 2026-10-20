@@ -19,7 +19,6 @@ use crate::table::Publish;
 use crate::types::{OwnStore, TypeStore};
 use crate::util::SharedSort;
 use std::cell::{Cell, RefCell, UnsafeCell};
-use std::time::Duration;
 
 /// Permission to store a finished result. `Checker::leave` and the scopes in check/mod.rs create one that knows when the
 /// computation began.
@@ -77,7 +76,7 @@ pub struct Task<'s> {
     /// `Some`: the task commits while it runs and sees other tasks' commits. See `super::commit`.
     view: Option<View<'s>>,
     /// See `discard`. Set under `&Checker`.
-    was_discarded: Cell<Option<&'static str>>,
+    was_discarded: Cell<bool>,
     /// The task is never discarded. It's the only task of the last round.
     is_trusted: bool,
     /// See `discard_until_recheck`.
@@ -93,10 +92,6 @@ pub struct Task<'s> {
     logged_at_cycles: RefCell<Vec<[[usize; 2]; 2]>>,
     /// `Buffer::log_lengths` when the task was last idle.
     logged_when_idle: Cell<[usize; 2]>,
-    /// Number of keys the task's commits found in the log, and number of entries they stored.
-    committed: Cell<[u64; 2]>,
-    /// Time spent waiting for the commit mutex, holding it, and waiting for variance claims.
-    waits: Cell<[Duration; 3]>,
     /// The tables the task writes to immediately, as a bit set by slot. See `may_write_immediately`. 0 means none, or
     /// none until the next commit (`stop_writing_immediately`).
     immediate_tables: Cell<u128>,
@@ -126,7 +121,7 @@ impl<'s> Task<'s> {
             assignments_walked: RefCell::default(),
             held_back: Cell::new(0),
             view: None,
-            was_discarded: Cell::new(None),
+            was_discarded: Cell::new(false),
             is_trusted: false,
             can_recheck_early: Cell::new(false),
             is_first_in_order: Cell::new(false),
@@ -135,8 +130,6 @@ impl<'s> Task<'s> {
             cycle_since_idle: Cell::new(None),
             logged_at_cycles: RefCell::default(),
             logged_when_idle: Cell::new([0; 2]),
-            committed: Cell::new([0; 2]),
-            waits: Cell::new([Duration::ZERO; 3]),
             immediate_tables: Cell::new(0),
             immediate_tables_after_commit: 0,
             diagnostics_logged_before_stop: Cell::new(usize::MAX),
@@ -246,21 +239,20 @@ impl<'s> Task<'s> {
         self.commits() && !self.was_discarded()
     }
 
-    /// Discards everything the task has done since its last commit and everything it does from now on. `why`: for
-    /// `--timing`.
-    pub(super) fn discard(&self, why: &'static str) {
-        if self.commits() && !self.is_trusted && !self.was_discarded() {
-            self.was_discarded.set(Some(why));
+    /// Discards everything the task has done since its last commit and everything it does from now on.
+    pub(super) fn discard(&self) {
+        if self.commits() && !self.is_trusted {
+            self.was_discarded.set(true);
         }
         self.stop_writing_immediately();
     }
 
     /// Discards the task because of a cycle or an invalid commit. Another task can recheck its files while the others
     /// still run: after a cycle, once a commit resolves that cycle. After an invalid commit, right away.
-    pub(super) fn discard_until_recheck(&self, why: &'static str) {
+    pub(super) fn discard_until_recheck(&self) {
         self.can_recheck_early
             .set(!self.was_discarded() || self.can_recheck_early.get());
-        self.discard(why);
+        self.discard();
     }
 
     pub(super) fn can_recheck_early(&self) -> bool {
@@ -269,7 +261,7 @@ impl<'s> Task<'s> {
 
     #[inline]
     pub(super) fn was_discarded(&self) -> bool {
-        self.was_discarded.get().is_some()
+        self.was_discarded.get()
     }
 
     /// Call before the task visits a file. `is_first`: every earlier file in program order is final, or this task has
@@ -307,7 +299,7 @@ impl<'s> Task<'s> {
             }
             self.stop_writing_immediately();
         } else {
-            self.discard_until_recheck("a cycle that an earlier file may enter");
+            self.discard_until_recheck();
         }
     }
 
@@ -365,22 +357,6 @@ impl<'s> Task<'s> {
         self.is_trusted
     }
 
-    /// Records a commit that found `logged` keys in the log and stored `stored` entries.
-    pub(super) fn count_committed(&self, logged: u64, stored: u64) {
-        let [so_far, stored_so_far] = self.committed.get();
-        (self.committed).set([so_far + logged, stored_so_far + stored]);
-    }
-
-    /// Adds to `waits`.
-    pub(super) fn count_waits(&self, more: [Duration; 3]) {
-        let [for_commits, in_commits, for_claims] = self.waits.get();
-        (self.waits).set([
-            for_commits + more[0],
-            in_commits + more[1],
-            for_claims + more[2],
-        ]);
-    }
-
     /// True if the task has noted a walk that can make its next commit invalid, or is already discarded. Anything it
     /// has computed since then may depend on that.
     pub(super) fn may_be_discarded(&self) -> bool {
@@ -388,17 +364,9 @@ impl<'s> Task<'s> {
     }
 
     /// Ends a task that commits, on its own thread, after its last commit.
-    pub(super) fn end(&mut self, program: &Program<'s>) -> Ended {
+    pub(super) fn end(&mut self, program: &Program<'s>) {
         program.types.reclaim_ids(&self.own);
-        let [logged, stored] = self.committed.get();
-        let ended = Ended {
-            logged,
-            stored,
-            waits: self.waits.get(),
-            discard_reason: self.was_discarded.get(),
-        };
         self.drop_everything();
-        ended
     }
 
     /// Marks the computations in progress as depending on more than their key and the program. That covers every frame
@@ -461,8 +429,6 @@ impl<'s> Task<'s> {
             cycle_since_idle,
             logged_at_cycles,
             logged_when_idle,
-            committed,
-            waits,
             immediate_tables,
             immediate_tables_after_commit,
             diagnostics_logged_before_stop,
@@ -477,7 +443,7 @@ impl<'s> Task<'s> {
         order_dependent_variances.clear();
         assignments_walked.get_mut().clear();
         held_back.set(0);
-        was_discarded.set(None);
+        was_discarded.set(false);
         can_recheck_early.set(false);
         is_first_in_order.set(false);
         is_first_in_component.set(false);
@@ -485,8 +451,6 @@ impl<'s> Task<'s> {
         cycle_since_idle.set(None);
         logged_at_cycles.get_mut().clear();
         logged_when_idle.set([0; 2]);
-        committed.set([0; 2]);
-        waits.set([Duration::ZERO; 3]);
         immediate_tables.set(0);
         *immediate_tables_after_commit = 0;
         diagnostics_logged_before_stop.set(usize::MAX);
@@ -513,18 +477,6 @@ impl<'s> Task<'s> {
         // SAFETY: same as in `buffer`.
         unsafe { &mut *self.file_local.get() }
     }
-}
-
-/// Statistics of a finished task that has committed its results, for `--timing`.
-pub struct Ended {
-    /// Number of keys the task's commits found in the log, and number of entries they stored. The other entries were
-    /// bound, or another task stored first.
-    pub logged: u64,
-    pub stored: u64,
-    /// Time spent waiting for the commit mutex, holding it, and waiting for variance claims.
-    pub waits: [Duration; 3],
-    /// `Some`: why the task was discarded.
-    pub discard_reason: Option<&'static str>,
 }
 
 /// Variances that a task computed during a cycle (`variances_worker` was re-entered for a symbol in progress), so their

@@ -24,7 +24,7 @@
 //! - It follows that the same walk, run later, would hit the same entries and follow the same path without filling any
 //!   table. The task creates, stores, and publishes exactly what it would without the memo. The exception is
 //!   in-progress state that a function checks before it looks in a table. The walk runs in that case
-//!   (`obstacle_to_skipping`).
+//!   (`has_obstacle_to_skipping`).
 //! - Effects that a walk has every time it runs are stored and replayed. See the fields of `Entry`.
 //!
 //! The thresholds and size limits only decide which walks are stored and for how long. They never change a result.
@@ -35,57 +35,6 @@ use super::super::*;
 use super::Inference;
 use crate::util::fx_hash;
 use smallvec::SmallVec;
-
-/// Labels for `Checker::inference_walk_counts`.
-pub const INFERENCE_WALK_COUNTS: [&str; 16] = [
-    "walks",
-    "long",
-    "to a long-walk target",
-    "in an instantiation",
-    "in a variance computation",
-    "otherwise not idle",
-    "keyed",
-    "skipped",
-    "calls skipped",
-    "stale",
-    "unconfirmed",
-    "near a limit",
-    "not settled",
-    "left a trace",
-    "stored",
-    "disturbances",
-];
-
-/// Index into `INFERENCE_WALK_COUNTS`.
-#[derive(Copy, Clone)]
-pub(in super::super) enum Count {
-    /// Walks that got past the fast path in `infer_ex`.
-    Walks,
-    /// Walks that ran and made at least `LONG_WALK` calls.
-    Long,
-    ToLongTarget,
-    /// This and the next two are the obstacles that `obstacle_to_skipping` can return.
-    InInstantiation,
-    InVarianceComputation,
-    NotIdle,
-    Keyed,
-    Skipped,
-    /// Sum of `Entry::calls` over the skipped walks.
-    CallsSkipped,
-    /// The matching entry is older than the last disturbance.
-    Disturbed,
-    /// The matching entry still needs a second walk to confirm it. See `InferenceMemo::store`.
-    NotConfirmed,
-    /// The walk behind the matching entry would hit the `instantiation_count` limit or run out of native stack.
-    NearLimit,
-    /// No entry could be replayed, and `is_settled_for_inference` returned `false`.
-    NotSettled,
-    /// Long walks that weren't stored because they left a trace.
-    LeftTrace,
-    Stored,
-    /// Number of generations that ended.
-    Disturbances,
-}
 
 /// A walk is long if it makes at least this many `infer_types` calls. The first long walk to a target marks the target,
 /// and only walks to a marked target get a key. Building the key, reading the counters twice, and scanning the frames
@@ -214,7 +163,6 @@ pub(in super::super) struct InferenceMemo {
     generation: u64,
     /// `Checker::inference_disturbances` at the start of this generation.
     disturbances: Disturbances,
-    counts: [u64; INFERENCE_WALK_COUNTS.len()],
 }
 
 impl InferenceMemo {
@@ -241,12 +189,6 @@ impl InferenceMemo {
         }
         let bit = Self::bit_of(target);
         self.long_targets[bit / 64] |= 1 << (bit % 64);
-        self.count(Count::Long);
-    }
-
-    #[inline]
-    pub(super) fn count(&mut self, what: Count) {
-        self.counts[what as usize] += 1;
     }
 
     /// `now` is the current `Checker::inference_disturbances`.
@@ -254,7 +196,6 @@ impl InferenceMemo {
         if self.disturbances != *now {
             self.disturbances = *now;
             self.generation += 1;
-            self.count(Count::Disturbances);
         }
     }
 
@@ -268,7 +209,6 @@ impl InferenceMemo {
     /// those of `simplified`. The first walk to compute one of them counts the `instantiate` calls it needs, and the
     /// next walk doesn't. So an entry with a nonzero count is replayed only after a second walk has matched the first.
     fn store(&mut self, hash: u64, mut walked: Entry) {
-        self.count(Count::Stored);
         walked.is_confirmed = walked.instantiations == 0;
         if let Some(slot) = self.slot(hash, walked.key()) {
             let earlier = &self.entries[slot];
@@ -363,12 +303,9 @@ impl<'p, 's> Checker<'p, 's> {
         source: TypeId,
         target: TypeId,
     ) {
-        self.inference_memo.count(Count::ToLongTarget);
-        if let Some(obstacle) = self.obstacle_to_skipping() {
-            self.inference_memo.count(obstacle);
+        if self.has_obstacle_to_skipping() {
             return self.infer_types(n, source, target);
         }
-        self.inference_memo.count(Count::Keyed);
         let (key, state_at) = key_of_walk(n, source, target);
         let hash = fx_hash(&key[..]);
         let disturbances = self.inference_disturbances();
@@ -381,15 +318,7 @@ impl<'p, 's> Checker<'p, 's> {
             let count = (self.instantiation_count).saturating_add(entry.instantiations);
             let has_room = count < 5_000_000
                 && in_use.saturating_add(entry.stack as usize) <= self.stack_limit;
-            let found = match () {
-                _ if is_disturbed => Count::Disturbed,
-                _ if !entry.is_confirmed => Count::NotConfirmed,
-                _ if !has_room => Count::NearLimit,
-                _ => Count::Skipped,
-            };
-            if !matches!(found, Count::Skipped) {
-                self.inference_memo.count(found);
-            } else {
+            if !is_disturbed && entry.is_confirmed && has_room {
                 if !entry.state_after().is_empty() {
                     write_state(entry.state_after(), n);
                     n.clear_cached_inferences();
@@ -398,14 +327,10 @@ impl<'p, 's> Checker<'p, 's> {
                 self.reliability |= entry.reliability;
                 let deepest = (in_use + entry.stack as usize).max(self.deepest_stack.get());
                 self.deepest_stack.set(deepest);
-                let calls = u64::from(entry.calls);
-                self.inference_memo.counts[Count::CallsSkipped as usize] += calls;
-                self.inference_memo.count(Count::Skipped);
                 return;
             }
         }
         if !self.is_settled_for_inference() {
-            self.inference_memo.count(Count::NotSettled);
             return self.infer_types(n, source, target);
         }
         // Same as `begin_scope`, which isn't called here because it would leave a trace in an enclosing walk.
@@ -422,9 +347,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.lowest_taint = self.lowest_taint.min(outer_taint);
         let has_left_no_trace = after.has_no_trace_since(&before);
         if n.calls < LONG_WALK || !has_left_no_trace {
-            if n.calls >= LONG_WALK {
-                self.inference_memo.count(Count::LeftTrace);
-            }
             return;
         }
         let key_len = key.len();
@@ -463,14 +385,9 @@ impl<'p, 's> Checker<'p, 's> {
         )
     }
 
-    /// Returns the counts in `INFERENCE_WALK_COUNTS` order. They depend only on the program and its split into tasks.
-    pub fn inference_walk_counts(&self) -> [u64; INFERENCE_WALK_COUNTS.len()] {
-        self.inference_memo.counts
-    }
-
-    /// Returns the reason no walk can be skipped right now: in-progress state that a walk would read before it looks in
-    /// a table, or would change without leaving a trace. Returns `None` if there isn't any, so a walk whose lookups all
-    /// hit tables would hit them again now. The obstacles are:
+    /// True if no walk can be skipped right now, because of in-progress state that a walk would read before it looks in
+    /// a table, or would change without leaving a trace. If there isn't any, a walk whose lookups all hit tables would
+    /// hit them again now. The obstacles are:
     /// - An instantiation is in progress. While a mapper is active, `instantiate` with that mapper counts each type
     ///   once and marks the type so that the next call doesn't count it, even where `type_of_instantiated_symbol`
     ///   restores the count. The depth is also limited. And `instantiate` and `members` check
@@ -485,17 +402,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// - A comparison or a mapped type was cut short in this file. It isn't evaluated again.
     /// - The declared type of an alias is being resolved. `same_alias` searches `stack` for it.
     /// - No query is in progress at all. Every comparison then starts by resetting `instantiation_count` to 0.
-    pub(in super::super) fn obstacle_to_skipping(&self) -> Option<Count> {
-        if self.instantiation_depth != 0
-            || !self.index_infos_in_instantiation.is_empty()
-            || !self.unresolved_members.is_empty()
-        {
-            return Some(Count::InInstantiation);
-        }
-        if self.in_variance_computation {
-            return Some(Count::InVarianceComputation);
-        }
-        let is_idle = !self.is_rechecking()
+    pub(in super::super) fn has_obstacle_to_skipping(&self) -> bool {
+        let is_idle = self.instantiation_depth == 0
+            && self.index_infos_in_instantiation.is_empty()
+            && self.unresolved_members.is_empty()
+            && !self.in_variance_computation
+            && !self.is_rechecking()
             && !self.pulls_contextual_types()
             && !self.relation_too_complex
             && self.reverse_mapped_source_stack.is_empty()
@@ -506,11 +418,11 @@ impl<'p, 's> Checker<'p, 's> {
             && self.generic_mapped_types_cut_short.is_empty()
             && !self.stack.is_empty()
             && !(self.stack.iter()).any(|q| matches!(q, Query::Declared(_)));
-        (!is_idle).then_some(Count::NotIdle)
+        !is_idle
     }
 
-    /// True if the table entries that a walk hits now are final. Call it only after `obstacle_to_skipping` has
-    /// returned `None`. It requires that:
+    /// True if the table entries that a walk hits now are final. Call it only after `has_obstacle_to_skipping` has
+    /// returned false. It requires that:
     /// - No frame will overwrite an entry that a nested visit of the same query has stored. Type node and conditional
     ///   type queries do that without recording the nested visit, so a frame for one of them always fails the test. The
     ///   other queries that do it record the visit in the frame.
@@ -650,8 +562,6 @@ mod tests {
         disturbed[DISTURBANCES.len() - 1] = 2;
         memo.begin_generation_if_disturbed(&disturbed);
         assert!(!is_replayable(&memo, &key));
-        assert_eq!(memo.counts[Count::Disturbances as usize], 2);
-        assert_eq!(memo.counts[Count::Stored as usize], 1);
     }
 
     #[test]

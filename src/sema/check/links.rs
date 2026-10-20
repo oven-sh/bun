@@ -21,9 +21,9 @@
 //!     of two instantiations with the same key stores last (`is_mapper_idle`).
 //! - A part derived from other parts is cached only if all of them are. See `TypeLinks::uncached_derivations`.
 //! - A part whose derivation runs an inference follows the rules for skipping an inference walk. The derivation must
-//!   start with `obstacle_to_skipping` returning `None` and `is_settled_for_inference` returning true, and it must
+//!   start with `has_obstacle_to_skipping` returning false and `is_settled_for_inference` returning true, and it must
 //!   not have an effect that the next derivation would repeat (`derive_with_inference`). The cached part is read only
-//!   while `obstacle_to_skipping` returns `None`.
+//!   while `has_obstacle_to_skipping` returns false.
 //! - Nothing is read while `index_infos_in_instantiation` isn't empty. `instantiate` ignores older results then too.
 //!
 //! Reading a cached part skips the work that `instantiate` does before any lookup: it increments `instantiation_count`,

@@ -11,7 +11,6 @@ use smallvec::{SmallVec, smallvec};
 
 #[path = "infer_memo.rs"]
 mod memo;
-pub use memo::INFERENCE_WALK_COUNTS;
 pub(super) use memo::{COMMITS, InferenceMemo};
 
 /// The members of a union or an intersection during iteration.
@@ -359,7 +358,6 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return;
         }
-        self.inference_memo.count(memo::Count::Walks);
         if self.inference_memo.has_long_walk_to(target) {
             self.infer_types_with_memo(n, source, target);
         } else {

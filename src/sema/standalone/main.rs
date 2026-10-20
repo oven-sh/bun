@@ -8,20 +8,6 @@ fn variable(name: &bun_core::ZStr) -> Option<String> {
     bun_core::getenv_z(name).map(text)
 }
 
-/// `--timing`: prints the ten tables whose shared parts use the most memory.
-fn list_largest_tables(program: &bun_sema::check::Program) {
-    let mut tables = program.table_footprints();
-    tables.sort_by_key(|table| std::cmp::Reverse(table.1.touched));
-    for (name, footprint) in tables.iter().take(10) {
-        error_line!(
-            "table {name}: {:.1} MB touched, {} entries, {} out of line",
-            footprint.touched as f64 / (1u64 << 20) as f64,
-            footprint.entries,
-            footprint.out_of_line_values
-        );
-    }
-}
-
 /// `BUN_SEMA_LIST=<file>`: writes the paths of all loaded files there, one per line.
 fn list_loaded(program: &bun_sema::check::Program) {
     if let Some(to) = variable(bun_core::zstr!("BUN_SEMA_LIST")) {
@@ -208,8 +194,6 @@ fn run(args: &[String]) {
                     .iter()
                     .any(|a| a == "--memory")
                     .then_some(&list_loaded as &(dyn Fn(&bun_sema::check::Program) + Sync)),
-                checked: is_timed
-                    .then_some(&list_largest_tables as &(dyn Fn(&bun_sema::check::Program) + Sync)),
                 after_file,
                 declaration_file_emitted: declarations_out
                     .is_some()
@@ -312,42 +296,6 @@ fn run(args: &[String]) {
                         "peak while loading {:.2} GB",
                         peak as f64 / (1u64 << 30) as f64
                     );
-                    let walks = bun_sema::check::INFERENCE_WALK_COUNTS.iter();
-                    let walks: Vec<String> = (walks.zip(report.inference_walks))
-                        .map(|(name, count)| format!("{name} {count}"))
-                        .collect();
-                    error_line!("inference walks: {}", walks.join(", "));
-                    let members = bun_sema::check::MEMBER_COUNTS.iter();
-                    let members: Vec<String> = (members.zip(report.members))
-                        .map(|(name, count)| format!("{name} {count}"))
-                        .collect();
-                    error_line!("members: {}", members.join(", "));
-                    for (number, round) in report.rounds.iter().enumerate() {
-                        error_line!(
-                            "round {number}: {} tasks, {} files, {:.3} s, idle {:.3}, keys logged {}, entries stored {}",
-                            round.tasks,
-                            round.files,
-                            round.elapsed.as_secs_f64(),
-                            round.idle.as_secs_f64(),
-                            round.logged,
-                            round.stored
-                        );
-                        let [for_commits, in_commits, for_claims] =
-                            round.waits.map(|it| it.as_secs_f64());
-                        error_line!(
-                            "  summed over the tasks: waiting for the commit mutex {for_commits:.3} s, in commits {in_commits:.3}, waiting for claims {for_claims:.3}"
-                        );
-                        for (path, why) in &round.lost {
-                            error_line!("  discarded because of {why}: {}", text(path));
-                        }
-                        for (elapsed, files, path) in &round.slowest_tasks {
-                            error_line!(
-                                "  task {:.3} s, {files} files, from {}",
-                                elapsed.as_secs_f64(),
-                                text(path)
-                            );
-                        }
-                    }
                 }
                 report
             });

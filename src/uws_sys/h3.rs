@@ -22,6 +22,10 @@ impl ListenSocket {
     pub fn close(&mut self) {
         c::uws_h3_listen_socket_close(self)
     }
+    /// The app has no open UDP socket and no QUIC connection left. Valid on a closed listener until the app is destroyed.
+    pub fn is_released(&mut self) -> bool {
+        c::uws_h3_listen_socket_is_released(self)
+    }
     pub fn get_local_port(&mut self) -> Option<u16> {
         u16::try_from(c::uws_h3_listen_socket_port(self)).ok()
     }
@@ -418,6 +422,11 @@ impl App {
     pub fn close(&mut self) {
         c::uws_h3_app_close(self)
     }
+    /// `cb(user)` runs when [`ListenSocket::is_released`] becomes true; it must not enter the QUIC engine or destroy the app.
+    pub fn on_released(&mut self, cb: unsafe extern "C" fn(user: *mut c_void), user: *mut c_void) {
+        // SAFETY: live handle; cb/user are stored and invoked on this thread.
+        unsafe { c::uws_h3_app_on_released(self, cb, user) }
+    }
     pub fn clear_routes(&mut self) {
         c::uws_h3_app_clear_routes(self)
     }
@@ -595,6 +604,11 @@ mod c {
         ) -> *mut App;
         pub(super) fn uws_h3_app_destroy(app: *mut App);
         pub(super) safe fn uws_h3_app_close(app: &mut App);
+        pub(super) fn uws_h3_app_on_released(
+            app: *mut App,
+            cb: unsafe extern "C" fn(user: *mut c_void),
+            user: *mut c_void,
+        );
         pub(super) safe fn uws_h3_app_clear_routes(app: &mut App);
         pub(super) fn uws_h3_app_add_server_name(
             app: *mut App,
@@ -687,6 +701,7 @@ mod c {
             len: c_int,
         ) -> c_int;
         pub(super) safe fn uws_h3_listen_socket_close(ls: &mut ListenSocket);
+        pub(super) safe fn uws_h3_listen_socket_is_released(ls: &mut ListenSocket) -> bool;
 
         pub(super) safe fn uws_h3_res_state(res: &mut Response) -> State;
         pub(super) fn uws_h3_res_end(res: *mut Response, p: *const u8, n: usize, close: bool);

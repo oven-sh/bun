@@ -51,6 +51,7 @@ uws_h3_app_t* uws_h3_create_app(struct us_bun_socket_context_options_t options, 
 
 void uws_h3_app_destroy(uws_h3_app_t* app) { delete (H3App*)app; }
 void uws_h3_app_close(uws_h3_app_t* app) { ((H3App*)app)->close(); }
+void uws_h3_app_on_released(uws_h3_app_t* app, void (*cb)(void*), void* user) { ((H3App*)app)->onReleased(cb, user); }
 void uws_h3_app_clear_routes(uws_h3_app_t* app) { ((H3App*)app)->clearRoutes(); }
 
 bool uws_h3_app_add_server_name(uws_h3_app_t* app, const char* hostname,
@@ -97,6 +98,7 @@ int uws_h3_listen_socket_local_address(us_quic_listen_socket_t* ls, char* buf, i
     return us_quic_listen_socket_local_address(ls, buf, len);
 }
 void uws_h3_listen_socket_close(us_quic_listen_socket_t* ls) { us_quic_listen_socket_close(ls); }
+bool uws_h3_listen_socket_is_released(us_quic_listen_socket_t* ls) { return us_quic_listen_socket_is_released(ls) != 0; }
 
 /* ───── response ───── */
 

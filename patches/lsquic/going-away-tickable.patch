@@ -1,0 +1,14 @@
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -3385,6 +3385,11 @@
+   end:
+     conn->ifc_flags |= IFC_GOING_AWAY;
+     maybe_close_conn(conn);
++    /* bun: a server connection that has not carried a request skips the
++     * GOAWAY write above, and with it the only call that makes the connection
++     * tickable.  maybe_close_conn() has just scheduled its CONNECTION_CLOSE,
++     * and only a tick sends it. */
++    lsquic_engine_add_conn_to_tickable(conn->ifc_enpub, lconn);
+ }
+ 
+ 

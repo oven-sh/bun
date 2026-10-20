@@ -1031,6 +1031,7 @@ impl<'s> Program<'s> {
             scopes_begun: 0,
             work_trap: WORK_TRAP_DISARMED,
             rejected_expressions: Vec::new(),
+            side_effect_free: Default::default(),
             context_sensitive_functions: Default::default(),
             context_sensitivity_visits: Default::default(),
             unwind_to: usize::MAX,
@@ -2053,6 +2054,8 @@ pub struct Checker<'p, 's> {
     /// The file, start and end of the expressions in which a query was rejected for lack of native
     /// stack. See `reject_for_lack_of_stack`.
     rejected_expressions: Vec<(FileId, u32, u32)>,
+    /// `is_side_effect_free` of the binary expressions with a long chain of binary expressions on their left.
+    side_effect_free: std::cell::RefCell<FxHashMap<(FileId, ExprId), bool>>,
     /// `isContextSensitive` of the functions in a long chain where each function returns nothing but the next one.
     context_sensitive_functions: std::cell::RefCell<FxHashMap<(FileId, FnId), bool>>,
     /// How many functions it has visited.

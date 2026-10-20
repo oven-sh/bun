@@ -251,16 +251,38 @@ impl Checker<'_, '_> {
                 let Branches { yes, no } = hir.branches(branches);
                 self.is_side_effect_free(file, yes) && self.is_side_effect_free(file, no)
             }
-            // Iterates over the left spine, so that a long chain doesn't recurse.
+            // Iterates over the left spine, so that a long chain doesn't recurse. Each `,` of a chain asks about
+            // everything to its left, so for a long chain the result is cached for each part of it.
             ExprKind::Binary { .. } => {
-                let mut leftmost = e;
-                while let ExprKind::Binary { left, right, .. } = hir[leftmost].kind {
-                    if !self.is_side_effect_free(file, right) {
-                        return false;
+                const LONG: usize = 32;
+                let mut spine: Vec<ExprId> = Vec::new();
+                let (mut leftmost, mut known) = (e, None);
+                while let ExprKind::Binary { left, .. } = hir[leftmost].kind {
+                    if spine.len() >= LONG {
+                        known = self
+                            .side_effect_free
+                            .borrow()
+                            .get(&(file, leftmost))
+                            .copied();
+                        if known.is_some() {
+                            break;
+                        }
                     }
+                    spine.push(leftmost);
                     leftmost = left;
                 }
-                self.is_side_effect_free(file, leftmost)
+                let mut is_free = known.unwrap_or_else(|| self.is_side_effect_free(file, leftmost));
+                for &part in spine.iter().rev() {
+                    if let ExprKind::Binary { right, .. } = hir[part].kind {
+                        is_free = is_free && self.is_side_effect_free(file, right);
+                    }
+                    if spine.len() > LONG {
+                        self.side_effect_free
+                            .borrow_mut()
+                            .insert((file, part), is_free);
+                    }
+                }
+                is_free
             }
             _ => false,
         }

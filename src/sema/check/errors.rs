@@ -213,6 +213,7 @@ impl Checker<'_, '_> {
             .begin_file(file, !self.files().module(file).is_leaf);
         self.provisional.clear();
         self.rejected_expressions.clear();
+        self.side_effect_free.get_mut().clear();
         self.context_sensitive_functions.get_mut().clear();
         self.work_trap = WORK_TRAP_DISARMED;
         self.limits_in_earlier_files += self.limits + self.instantiation_limit_hits;

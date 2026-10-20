@@ -8560,6 +8560,654 @@ export function byAssignment(x: { m: string | G; a?: 1 }, g: G) {
       expect(exitCode).toBe(1);
     });
 
+    // Each of these shapes gave a wrong type when the type of a reference at a join was kept from one walk to the next, or
+    // pins something else that a walk depends on.
+    test("narrows each reference by what precedes it, whatever was narrowed before and in whatever order", async () => {
+      using dir = project({
+        "a.ts": `
+type Kind = "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h";
+interface Item { kind: Kind; p?: Item; v: string | number | boolean | null | undefined }
+declare function fail(): never;
+declare function isString(v: unknown): v is string;
+declare function assertNumber(v: unknown): asserts v is number;
+declare const other: Item;
+
+function steps(s: string | undefined, a: Item, k: Kind, u: string | number | boolean | null | undefined, list: Item[]) {
+  let w: string | number | boolean = 1;
+  let late: string | number;
+  const k0: never = k;
+  if (s && a.p && a.p.kind === "a") { const n: never = a.p.kind; }
+  if (k === "a") return;
+  const k1: never = k;
+  if (s && a.p && a.p.kind === "b") { const n: never = a.p; w = "x"; }
+  const w1: never = w;
+  if (k === "b") throw 0;
+  const k2: never = k;
+  if (!a.p) return;
+  const p1: never = a.p.kind;
+  if (s && a.p && a.p.kind === "c") { const n: never = s; return; }
+  const p2: never = a.p.kind;
+  if (a.p.kind === "d") fail();
+  const p3: never = a.p.kind;
+  if (typeof u === "string") return;
+  const u1: never = u;
+  if (s && a.p && a.p.kind === "e") { a.p = other; }
+  const p4: never = a.p.kind;
+  if (u === null) throw 1;
+  const u2: never = u;
+  if (s && a.p && a.p.kind !== "f") { w = true; } else { w = 2; }
+  const w2: never = w;
+  const p5: never = a.p.kind;
+  switch (k) {
+    case "c": return;
+    case "d": w = "d"; break;
+    case "e":
+    case "f": { const n: never = k; break; }
+    default: { const n: never = k; }
+  }
+  const k3: never = k;
+  const w3: never = w;
+  if (s && a.p && a.p.kind === "g") { const n: never = a.p.kind; } else if (a.p.kind === "h") { return; }
+  const p6: never = a.p.kind;
+  for (const item of list) {
+    if (s && item.p && item.p.kind === "a") { const n: never = item.p.kind; continue; }
+    if (typeof w === "boolean") { w = 3; }
+    const w4: never = w;
+    if (item.kind === "b") { a.p = item; break; }
+    const p7: never = a.p.kind;
+    u = item.v;
+  }
+  const u3: never = u;
+  const w5: never = w;
+  const p8: never = a.p.kind;
+  if (isString(u)) return;
+  const u4: never = u;
+  if (s && a.p && a.p.kind === "a") { u = undefined; }
+  const u5: never = u;
+  if (u === undefined || u === null) return;
+  assertNumber(u);
+  const u6: never = u;
+  if (s) { const n: never = s; }
+  late!;
+  const l1: never = late;
+  if (k === "d") { late = 1; } else if (k === "e") { late = "e"; } else { return; }
+  const l2: never = late;
+  const k4: never = k;
+  const isG = a.kind === "g";
+  if (isG) { const n: never = a.kind; }
+  if (s && a.p && a.p.kind === "b") { const n: never = a.p.kind; }
+  if (!isG) { const n: never = a.kind; }
+  try {
+    if (s && a.p && a.p.kind === "c") { w = false; return; }
+    w = "t";
+  } finally {
+    const w6: never = w;
+  }
+  const w7: never = w;
+  const inner = () => {
+    if (s && a.p && a.p.kind === "a") { const n: never = a.p.kind; }
+    const k5: never = k;
+    const p9: never = a.p;
+    const s1: never = s;
+  };
+  a = other;
+  const p10: never = a.p;
+  const s2: never = s;
+  return inner;
+}
+interface Fixed { readonly kind: Kind; readonly q: { readonly kind: Kind } }
+
+function shrinks(s: string | undefined, a: Item, r: Fixed, n: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23) {
+  const isA = r.q.kind === "a";
+  if (s && a.p && a.p.kind === "a") { a.v = n; }
+  if (n === 0) throw n;
+  if (s && a.p && a.p.kind === "b") { a.v = n; }
+  if (n === 1) return;
+  if (s && a.p && a.p.kind === "c") { a.v = n; }
+  if (n === 2) return;
+  if (s && a.p && a.p.kind === "d") { a.v = n; }
+  if (n === 3) throw n;
+  if (s && a.p && a.p.kind === "e") { a.v = n; }
+  if (n === 4) return;
+  if (s && a.p && a.p.kind === "f") { const t: never = n; }
+  if (n === 5) return;
+  if (s && a.p && a.p.kind === "g") { a.v = n; }
+  if (n === 6) throw n;
+  if (s && a.p && a.p.kind === "h") { a.v = n; }
+  if (n === 7) return;
+  const n7: never = n;
+  if (s && a.p && a.p.kind === "a") { a.v = n; }
+  if (n === 8) return;
+  if (s && a.p && a.p.kind === "b") { a.v = n; }
+  if (n === 9) throw n;
+  if (s && a.p && a.p.kind === "c") { a.v = n; }
+  if (n === 10) return;
+  if (s && a.p && a.p.kind === "d") { const t: never = n; }
+  if (n === 11) return;
+  if (isA) { const q: never = r.q.kind; const parenthesized: never = (r.q).kind; }
+  if (s && a.p && a.p.kind === "e") { a.v = n; }
+  if (n === 12) throw n;
+  if (s && a.p && a.p.kind === "f") { a.v = n; }
+  if (n === 13) return;
+  if (s && a.p && a.p.kind === "g") { a.v = n; }
+  if (n === 14) return;
+  if (s && a.p && a.p.kind === "h") { a.v = n; }
+  if (n === 15) throw n;
+  const n15: never = n;
+  if (s && a.p && a.p.kind === "a") { a.v = n; }
+  if (n === 16) return;
+  if (s && a.p && a.p.kind === "b") { const t: never = n; }
+  if (n === 17) return;
+  if (s && a.p && a.p.kind === "c") { a.v = n; }
+  if (n === 18) throw n;
+  if (s && a.p && a.p.kind === "d") { a.v = n; }
+  if (n === 19) return;
+  if (s && a.p && a.p.kind === "e") { a.v = n; }
+  if (n === 20) return;
+  if (s && a.p && a.p.kind === "f") { a.v = n; }
+  if (n === 21) throw n;
+  if (s && a.p && a.p.kind === "g") { a.v = n; }
+  if (n === 22) return;
+  if (s && a.p && a.p.kind === "h") { const t: never = n; }
+  if (n === 23) return;
+  const n23: never = n;
+  if (!isA) { const q: never = r.q.kind; }
+}
+// What an assignment leaves depends on where the reference is: the object of a property access gets the constraint.
+declare function same<V>(v: V): V;
+function generic<T extends string | number>(t: T, s: string | undefined) {
+  let first: string | number | boolean = same(t);
+  if (s) { s.length; }
+  const plain = first;
+  const declared: never = plain;
+  first.toFixed;
+  let second: string | number | boolean = same(t);
+  if (s) { s.length; }
+  second.toFixed;
+  const copy = second;
+  const again: never = copy;
+}
+
+interface Frozen { readonly kind: Kind }
+interface Thawed { kind: Kind; thawed: true }
+
+// A test kept in a constant narrows \\\`r.q.kind\\\` only where \\\`kind\\\` is readonly in the type that \\\`r.q\\\` has there.
+function aliased(r: { readonly q: Frozen | Thawed }, s: string | undefined) {
+  const isA = r.q.kind === "a";
+  if (isA) {
+    if (s) { s.length; }
+    if ("thawed" in r.q) { const n: never = r.q.kind; } else { const n: never = r.q.kind; }
+    if (!("thawed" in r.q)) { const n: never = r.q.kind; } else { const n: never = r.q.kind; }
+  }
+}
+export {};
+`,
+        "b.ts": `
+declare function may(): void;
+declare const c: boolean;
+// The walk from the last line enters the \`finally\` block twice: through \`break out\`, where it sees every way in, and at
+// the block's end, where it sees fewer but reuses the types that it found the first time.
+function read() {
+  let x: string | number | boolean = "s";
+  out: {
+    try {
+      x = 1; may();
+      x = true; may();
+      x = 2;
+    } finally {
+      if (typeof x === "string") {
+        if (c) { }
+        x;
+        break out;
+      }
+    }
+  }
+  const p: never = x;
+}
+function unread() {
+  let x: string | number | boolean = "s";
+  out: {
+    try {
+      x = 1; may();
+      x = true; may();
+      x = 2;
+    } finally {
+      if (typeof x === "string") {
+        if (c) { }
+        break out;
+      }
+    }
+  }
+  const p: never = x;
+}
+function property(o: { p: string | number | boolean }) {
+  o.p;
+  out: {
+    try {
+      o.p = 1; may();
+      o.p = true; may();
+      o.p = 2;
+    } finally {
+      if (typeof o.p === "string") {
+        if (c) { }
+        o.p;
+        break out;
+      }
+    }
+  }
+  const p: never = o.p;
+}
+function assigned() {
+  let x: string | number | boolean = "s";
+  out: {
+    try {
+      x = 1; may();
+      x = true; may();
+      x = 2;
+    } finally {
+      if (typeof x === "string") {
+        if (c) { }
+        x;
+        break out;
+      }
+    }
+  }
+  const p: string | number = x;
+}
+function tested() {
+  let x: string | number | boolean = "s";
+  out: {
+    try {
+      x = 1; may();
+      x = true; may();
+      x = 2;
+    } finally {
+      if (typeof x === "string") {
+        if (c) { }
+        x;
+        break out;
+      }
+    }
+  }
+  if (typeof x === "boolean") { x.valueOf(); }
+}
+function captured() {
+  let x: string | number | boolean = "s";
+  return () => {
+    out: {
+      try {
+        x = 1; may();
+        x = true; may();
+        x = 2;
+      } finally {
+        if (typeof x === "string") {
+          if (c) { }
+          x;
+          break out;
+        }
+      }
+    }
+    const p: never = x;
+  };
+}
+export { read, unread, property, assigned, tested, captured };
+`,
+        "c.ts": `
+type U = string | number | boolean | null | undefined;
+declare const c: boolean;
+
+// Two paths lead from each statement to the joins of the statements before it.
+function joins() {
+  let x: U = "s";
+${repeat("  if (c) { if (c) { } x; }\n  x;\n", 30)}  const p: never = x;
+}
+
+function loops(list: object[], s: string | undefined) {
+  let x: U = 0;
+  let y: U = "s";
+  if (s) { s.length; }
+  while (c) {
+    if (s && typeof x === "number") { x = "a"; }
+    const in1: never = x;
+    if (typeof x === "string") { if (c) break; x = true; }
+    const in2: never = x;
+    if (c) { y = x; continue; }
+    if (x === true) { x = null; }
+  }
+  const after1: never = x;
+  const after2: never = x;
+  if (s) { s.length; }
+  const after3: never = x;
+  const y1: never = y;
+  outer: for (const a of list) {
+    for (const b of list) {
+      if (a === b) { if (typeof y === "string") continue outer; y = 1; }
+      if (c) break outer;
+      const in3: never = y;
+    }
+    if (typeof y === "number") { y = undefined; }
+  }
+  const y2: never = y;
+  const y3: never = y;
+  do {
+    if (x === null) { x = 1; } else if (c) { break; }
+    const in4: never = x;
+  } while (c);
+  const after4: never = x;
+  const after5: never = x;
+}
+type A = { a: 1 };
+type B = { b: 2 };
+type D = { d: 3 };
+declare function more(): boolean;
+declare function use(v: unknown): void;
+declare function next(v: A): B;
+declare function next(v: A | B | D): D;
+
+// The update is checked before the body. Its walk computes the loop and goes on through the joins of the body.
+function update(x: A | B | D, a: A, q1: boolean, q2: boolean) {
+  x = a;
+  for (; more(); use(x)) {
+    if (q1) {
+    } else {
+      x = next(x);
+      if (q2) {
+      } else {
+      }
+      const p: never = x;
+    }
+  }
+}
+
+function later(x: A | B | D, a: A, q1: boolean, q2: boolean) {
+  x = a;
+  while (more()) {
+    let early: typeof v;
+    if (q1) {
+    } else {
+      x = next(x);
+      if (q2) {
+      } else {
+      }
+      const p: never = x;
+    }
+    const v = x;
+  }
+}
+export { joins, loops, update, later };
+`,
+        "d.ts": `
+// \`v\` is resolved first. Its initializer is narrowed by \`a\`, which is one constant deep, and that asks for \`y\`, whose own
+// test is five constants deep.
+function aliases(x: string | number, y: string | number, q: boolean) {
+  v;
+  const b1 = typeof y === "string";
+  const b2 = b1;
+  const b3 = b2;
+  const b4 = b3;
+  const b5 = b4;
+  if (b5) {
+    if (q) {
+    } else {
+    }
+    const p: never = y;
+    const a = x === y;
+    if (a) {
+      var v = x;
+    }
+  }
+}
+
+// The name in a computed key of a class doesn't see what the enclosing functions narrowed. The name after it does.
+declare const s: "a" | "b";
+const constant = (q: boolean) => {
+  const x = s;
+  if (x === "a") {
+    const inner = () => {
+      if (q) {
+      } else {
+      }
+      class C {
+        [x]?: number;
+      }
+      const p: never = x;
+    };
+  }
+};
+const parameter = (x: "a" | "b", q: boolean) => {
+  if (x === "a") {
+    const inner = () => {
+      if (q) {
+      } else {
+      }
+      class C {
+        [x]?: number;
+      }
+      const p: never = x;
+    };
+  }
+};
+export { aliases, constant, parameter };
+`,
+        "e.ts": `
+// \`x!\` counts as initialized, \`x\` doesn't.
+function unassigned(q: boolean, r: boolean) {
+  let x: string | number;
+  if (r) { x = 1; }
+  if (q) { } else { }
+  const a: never = x!;
+  const b: never = x;
+}
+
+class Unset {
+  p: string;
+  constructor(q: boolean) {
+    if (q) { } else { }
+    const { p } = this;
+    const r: never = p;
+  }
+}
+
+type Fixed = { readonly kind: "r"; readonly v: string | number };
+type Loose = { kind: "w"; v: string | number };
+function either(o: Fixed | Loose, q: boolean) {
+  const isString = typeof o.v === "string";
+  if (isString) {
+    if (q) { } else { }
+    if (o.kind === "r") { const p1: never = o.v; }
+    else { const p2: never = o.v; }
+  }
+}
+export { unassigned, Unset, either };
+`,
+        // The assignment ends at an offset between those of the two reads of `g` in g.ts.
+        "f.ts": `export {};
+declare global { let g: string | number; }
+/*${repeat(" ", 97)}*/
+g = 1;
+`,
+        "g.ts": `declare const q: boolean;
+function outer() {
+  if (typeof g === "string") {
+    const f = () => {
+      if (q) { } else { }
+      const p1: never = g;
+      const p2: never = g;
+    };
+  }
+}
+`,
+      });
+      const { stdout } = await check(dir, ["--noErrorTruncation"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(12,9): error TS2322: Type 'Kind' is not assignable to type 'never'.
+          Type '"a"' is not assignable to type 'never'.
+        a.ts(13,45): error TS2322: Type '"a"' is not assignable to type 'never'.
+        a.ts(15,9): error TS2322: Type '"b" | "c" | "d" | "e" | "f" | "g" | "h"' is not assignable to type 'never'.
+          Type '"b"' is not assignable to type 'never'.
+        a.ts(16,45): error TS2322: Type 'Item' is not assignable to type 'never'.
+        a.ts(17,9): error TS2322: Type 'string | number' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        a.ts(19,9): error TS2322: Type '"c" | "d" | "e" | "f" | "g" | "h"' is not assignable to type 'never'.
+          Type '"c"' is not assignable to type 'never'.
+        a.ts(21,9): error TS2322: Type 'Kind' is not assignable to type 'never'.
+          Type '"a"' is not assignable to type 'never'.
+        a.ts(22,45): error TS2322: Type 'string' is not assignable to type 'never'.
+        a.ts(23,9): error TS2322: Type 'Kind' is not assignable to type 'never'.
+          Type '"a"' is not assignable to type 'never'.
+        a.ts(25,9): error TS2322: Type '"a" | "b" | "c" | "e" | "f" | "g" | "h"' is not assignable to type 'never'.
+          Type '"a"' is not assignable to type 'never'.
+        a.ts(27,9): error TS2322: Type 'number | boolean | null | undefined' is not assignable to type 'never'.
+          Type 'undefined' is not assignable to type 'never'.
+        a.ts(29,9): error TS2322: Type 'Kind' is not assignable to type 'never'.
+          Type '"a"' is not assignable to type 'never'.
+        a.ts(31,9): error TS2322: Type 'number | boolean | undefined' is not assignable to type 'never'.
+          Type 'undefined' is not assignable to type 'never'.
+        a.ts(33,9): error TS2322: Type 'number | true' is not assignable to type 'never'.
+          Type 'number' is not assignable to type 'never'.
+        a.ts(34,9): error TS2322: Type 'Kind' is not assignable to type 'never'.
+          Type '"a"' is not assignable to type 'never'.
+        a.ts(39,23): error TS2322: Type '"e" | "f"' is not assignable to type 'never'.
+          Type '"e"' is not assignable to type 'never'.
+        a.ts(40,22): error TS2322: Type '"g" | "h"' is not assignable to type 'never'.
+          Type '"g"' is not assignable to type 'never'.
+        a.ts(42,9): error TS2322: Type '"d" | "e" | "f" | "g" | "h"' is not assignable to type 'never'.
+          Type '"d"' is not assignable to type 'never'.
+        a.ts(43,9): error TS2322: Type 'string | number | true' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        a.ts(44,45): error TS2322: Type '"g"' is not assignable to type 'never'.
+        a.ts(45,9): error TS2322: Type '"a" | "b" | "c" | "d" | "e" | "f" | "g"' is not assignable to type 'never'.
+          Type '"a"' is not assignable to type 'never'.
+        a.ts(47,53): error TS2322: Type '"a"' is not assignable to type 'never'.
+        a.ts(49,11): error TS2322: Type 'string | number' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        a.ts(51,11): error TS2322: Type '"a" | "b" | "c" | "d" | "e" | "f" | "g"' is not assignable to type 'never'.
+          Type '"a"' is not assignable to type 'never'.
+        a.ts(54,9): error TS2322: Type 'string | number | boolean | null | undefined' is not assignable to type 'never'.
+          Type 'undefined' is not assignable to type 'never'.
+        a.ts(55,9): error TS2322: Type 'string | number | true' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        a.ts(56,9): error TS2322: Type 'Kind' is not assignable to type 'never'.
+          Type '"a"' is not assignable to type 'never'.
+        a.ts(58,9): error TS2322: Type 'number | boolean | null | undefined' is not assignable to type 'never'.
+          Type 'undefined' is not assignable to type 'never'.
+        a.ts(60,9): error TS2322: Type 'number | boolean | null | undefined' is not assignable to type 'never'.
+          Type 'undefined' is not assignable to type 'never'.
+        a.ts(63,9): error TS2322: Type 'number' is not assignable to type 'never'.
+        a.ts(64,18): error TS2322: Type 'string' is not assignable to type 'never'.
+        a.ts(66,9): error TS2322: Type 'string | number' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        a.ts(66,21): error TS2454: Variable 'late' is used before being assigned.
+        a.ts(68,9): error TS2322: Type 'string | number' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        a.ts(69,9): error TS2322: Type '"d" | "e"' is not assignable to type 'never'.
+          Type '"d"' is not assignable to type 'never'.
+        a.ts(71,20): error TS2322: Type 'Kind' is not assignable to type 'never'.
+          Type '"a"' is not assignable to type 'never'.
+        a.ts(72,45): error TS2322: Type '"b"' is not assignable to type 'never'.
+        a.ts(73,21): error TS2322: Type 'Kind' is not assignable to type 'never'.
+          Type '"a"' is not assignable to type 'never'.
+        a.ts(78,11): error TS2322: Type 'string | number | boolean' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        a.ts(80,9): error TS2322: Type 'string' is not assignable to type 'never'.
+        a.ts(82,47): error TS2322: Type '"a"' is not assignable to type 'never'.
+        a.ts(83,11): error TS2322: Type '"d" | "e"' is not assignable to type 'never'.
+          Type '"d"' is not assignable to type 'never'.
+        a.ts(84,11): error TS2322: Type 'Item | undefined' is not assignable to type 'never'.
+          Type 'undefined' is not assignable to type 'never'.
+        a.ts(85,11): error TS2322: Type 'string | undefined' is not assignable to type 'never'.
+          Type 'undefined' is not assignable to type 'never'.
+        a.ts(88,9): error TS2322: Type 'Item | undefined' is not assignable to type 'never'.
+          Type 'undefined' is not assignable to type 'never'.
+        a.ts(89,9): error TS2322: Type 'string | undefined' is not assignable to type 'never'.
+          Type 'undefined' is not assignable to type 'never'.
+        a.ts(106,45): error TS2322: Type '5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23' is not assignable to type 'never'.
+          Type '5' is not assignable to type 'never'.
+        a.ts(112,9): error TS2322: Type '8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23' is not assignable to type 'never'.
+          Type '8' is not assignable to type 'never'.
+        a.ts(119,45): error TS2322: Type '11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23' is not assignable to type 'never'.
+          Type '11' is not assignable to type 'never'.
+        a.ts(121,20): error TS2322: Type '"a"' is not assignable to type 'never'.
+        a.ts(121,47): error TS2322: Type 'Kind' is not assignable to type 'never'.
+          Type '"a"' is not assignable to type 'never'.
+        a.ts(130,9): error TS2322: Type '16 | 17 | 18 | 19 | 20 | 21 | 22 | 23' is not assignable to type 'never'.
+          Type '16' is not assignable to type 'never'.
+        a.ts(133,45): error TS2322: Type '17 | 18 | 19 | 20 | 21 | 22 | 23' is not assignable to type 'never'.
+          Type '17' is not assignable to type 'never'.
+        a.ts(145,45): error TS2322: Type '23' is not assignable to type 'never'.
+        a.ts(148,21): error TS2322: Type '"b" | "c" | "d" | "e" | "f" | "g" | "h"' is not assignable to type 'never'.
+          Type '"b"' is not assignable to type 'never'.
+        a.ts(156,9): error TS2322: Type 'string | number | boolean' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        a.ts(157,9): error TS2339: Property 'toFixed' does not exist on type 'string | number'.
+          Property 'toFixed' does not exist on type 'string'.
+        a.ts(160,10): error TS2339: Property 'toFixed' does not exist on type 'string | number'.
+          Property 'toFixed' does not exist on type 'string'.
+        a.ts(162,9): error TS2322: Type 'string | number | boolean' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        a.ts(173,34): error TS2322: Type 'Kind' is not assignable to type 'never'.
+          Type '"a"' is not assignable to type 'never'.
+        a.ts(173,70): error TS2322: Type '"a"' is not assignable to type 'never'.
+        a.ts(174,37): error TS2322: Type '"a"' is not assignable to type 'never'.
+        a.ts(174,73): error TS2322: Type 'Kind' is not assignable to type 'never'.
+          Type '"a"' is not assignable to type 'never'.
+        b.ts(21,9): error TS2322: Type 'string | number | true' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        b.ts(37,9): error TS2322: Type 'string | number | true' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        b.ts(54,9): error TS2322: Type 'string | number | boolean' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        b.ts(71,9): error TS2322: Type 'string | number | true' is not assignable to type 'string | number'.
+          Type 'boolean' is not assignable to type 'string | number'.
+        b.ts(106,11): error TS2322: Type 'string | number | boolean' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        c.ts(68,9): error TS2322: Type 'string' is not assignable to type 'never'.
+        c.ts(77,11): error TS2322: Type 'string | number | true | null' is not assignable to type 'never'.
+          Type 'null' is not assignable to type 'never'.
+        c.ts(79,11): error TS2322: Type 'number | true | null' is not assignable to type 'never'.
+          Type 'null' is not assignable to type 'never'.
+        c.ts(83,9): error TS2322: Type 'string | number | true | null' is not assignable to type 'never'.
+          Type 'null' is not assignable to type 'never'.
+        c.ts(84,9): error TS2322: Type 'string | number | true | null' is not assignable to type 'never'.
+          Type 'null' is not assignable to type 'never'.
+        c.ts(86,9): error TS2322: Type 'string | number | true | null' is not assignable to type 'never'.
+          Type 'null' is not assignable to type 'never'.
+        c.ts(87,9): error TS2322: Type 'string | number | true | null' is not assignable to type 'never'.
+          Type 'null' is not assignable to type 'never'.
+        c.ts(92,13): error TS2322: Type 'string | number | true | null | undefined' is not assignable to type 'never'.
+          Type 'undefined' is not assignable to type 'never'.
+        c.ts(96,9): error TS2322: Type 'string | number | true | null | undefined' is not assignable to type 'never'.
+          Type 'undefined' is not assignable to type 'never'.
+        c.ts(97,9): error TS2322: Type 'string | number | true | null | undefined' is not assignable to type 'never'.
+          Type 'undefined' is not assignable to type 'never'.
+        c.ts(100,11): error TS2322: Type 'string | number | true' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        c.ts(102,9): error TS2322: Type 'string | number | true' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        c.ts(103,9): error TS2322: Type 'string | number | true' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        c.ts(123,13): error TS2322: Type 'D' is not assignable to type 'never'.
+        c.ts(138,13): error TS2322: Type 'D' is not assignable to type 'never'.
+        d.ts(5,3): error TS2454: Variable 'v' is used before being assigned.
+        d.ts(15,11): error TS2322: Type 'string' is not assignable to type 'never'.
+        d.ts(35,13): error TS2322: Type '"a"' is not assignable to type 'never'.
+        d.ts(48,13): error TS2322: Type '"a"' is not assignable to type 'never'.
+        e.ts(7,9): error TS2322: Type 'string | number' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        e.ts(8,9): error TS2322: Type 'string | number' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        e.ts(8,20): error TS2454: Variable 'x' is used before being assigned.
+        e.ts(12,3): error TS2564: Property 'p' has no initializer and is not definitely assigned in the constructor.
+        e.ts(16,11): error TS2322: Type 'string' is not assignable to type 'never'.
+        e.ts(26,33): error TS2322: Type 'string' is not assignable to type 'never'.
+        e.ts(27,18): error TS2322: Type 'string | number' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        g.ts(6,13): error TS2322: Type 'string | number' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        g.ts(7,13): error TS2322: Type 'string' is not assignable to type 'never'."
+      `);
+    });
+
     test("narrowing survives a `finally` block with a sequence of `if` statements", async () => {
       using dir = project({
         "a.ts": `declare function work(): void;

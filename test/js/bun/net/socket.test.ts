@@ -2807,6 +2807,128 @@ it.concurrent.skipIf(isWindows)("setKeepAlive converts ms to seconds and treats 
   void stderr;
 });
 
+// A socket over a node Duplex or over a Windows named pipe arms its own timer
+// for `socket.timeout(seconds)`. 115964117 seconds (3.7 years) is
+// 27 * 2^32 + 8 milliseconds, which is 8 milliseconds in 32 bits.
+// Each test starts a bun process and waits 1 second, which together can take
+// the 5 seconds of the default timeout on a debug build.
+describe.concurrent("socket.timeout() of years on a socket that arms its own timer", () => {
+  // `_handle` of a node:tls socket over a Duplex is the Bun socket.
+  const duplexSockets = /* js */ `
+    import { once } from "node:events";
+    import { duplexPair } from "node:stream";
+    import tls from "node:tls";
+
+    const [clientSide, serverSide] = duplexPair();
+    const { TLS_KEY: key, TLS_CERT: cert } = process.env;
+    const server = new tls.TLSSocket(serverSide, { isServer: true, key, cert });
+    const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
+    for (const [name, socket] of Object.entries({ client, server })) {
+      socket.on("error", error => fail(name + " error: " + error));
+      socket.on("close", () => fail(name + " closed"));
+    }
+    await Promise.all([once(client, "secureConnect"), once(server, "secure")]);
+    client.on("timeout", () => onTimeout("years"));
+    server.on("timeout", () => onTimeout("1 second"));
+    const years = client._handle;
+    const second = server._handle;
+    const close = () => {
+      client.destroy();
+      server.destroy();
+    };
+  `;
+  const namedPipeSockets = /* js */ `
+    const pipe = "\\\\\\\\.\\\\pipe\\\\bun-test-timeout-" + Math.random().toString(36).slice(2);
+    const accepted = Promise.withResolvers();
+    using listener = Bun.listen({
+      unix: pipe,
+      socket: {
+        open(socket) { accepted.resolve(socket); },
+        timeout() { onTimeout("1 second"); },
+        data() {},
+        close() { fail("accepted socket closed"); },
+        error(socket, error) { fail("accepted socket error: " + error); },
+      },
+    });
+    const years = await Bun.connect({
+      unix: pipe,
+      socket: {
+        timeout() { onTimeout("years"); },
+        open() {},
+        data() {},
+        close() { fail("client closed"); },
+        error(socket, error) { fail("client error: " + error); },
+        connectError(socket, error) { fail("connect error: " + error); },
+      },
+    });
+    const second = await accepted.promise;
+    const close = () => {
+      years.end();
+      second.end();
+      listener.stop(true);
+    };
+  `;
+
+  // `sockets` defines `years` and `second`, two sockets of one kind, and `close()`.
+  // The process prints the `timeout` handlers that ran until the one of `second` ran.
+  async function expectOnlyTheOneSecondTimeout(sockets: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const timeouts = [];
+          const { promise: oneSecond, resolve } = Promise.withResolvers();
+          const onTimeout = name => {
+            timeouts.push(name);
+            if (name === "1 second") resolve();
+          };
+          // A socket that closes loses its timer, so it must not close before the end.
+          let step = "connect";
+          const fail = why => {
+            if (step === "done") return;
+            console.log(JSON.stringify({ error: step + ": " + why }));
+            process.exit(1);
+          };
+          ${sockets}
+
+          step = "wait for the timeout of 1 second";
+          // The largest value, then the one that is 8 milliseconds in 32 bits.
+          years.timeout(2147483647);
+          years.timeout(115964117);
+          const armed = performance.now();
+          second.timeout(1);
+          // The write makes each socket arm again from the value it stored.
+          second.write("x");
+          await oneSecond;
+          const elapsed = performance.now() - armed;
+          step = "done";
+          close();
+          console.log(JSON.stringify({ timeouts, elapsed }));
+        `,
+      ],
+      env: { ...bunEnv, TLS_KEY: tls.key, TLS_CERT: tls.cert },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A process that failed says why: report what it printed.
+    const result = exitCode === 0 ? JSON.parse(stdout) : { stdout, stderr };
+    expect({ result, exitCode, signalCode: proc.signalCode ?? null }).toEqual({
+      result: { timeouts: ["1 second"], elapsed: expect.any(Number) },
+      exitCode: 0,
+      signalCode: null,
+    });
+    // 1 second is still 1000 milliseconds. A timer does not run before its
+    // deadline: the 100 milliseconds are for the two clocks.
+    expect(result.elapsed).toBeGreaterThan(900);
+  }
+
+  it("TLS over a node Duplex", () => expectOnlyTheOneSecondTimeout(duplexSockets), 30_000);
+  it.skipIf(!isWindows)("Windows named pipe", () => expectOnlyTheOneSecondTimeout(namedPipeSockets), 30_000);
+});
+
 it("socket handler validation errors throw instead of crashing", async () => {
   // Handlers protects its callbacks only after validation succeeds, so the
   // validation error paths must throw without tearing down a never-protected

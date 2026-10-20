@@ -74,6 +74,48 @@ pub(crate) fn is_valid_blob_type(slice: &[u8]) -> bool {
     slice.iter().all(|&c| matches!(c, 0x20..=0x7E))
 }
 
+/// What [`BlobExt::from_js_without_defer_gc`] does with a part that is neither a string nor a
+/// BufferSource.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PartPolicy {
+    /// `new Blob(parts)`: a Blob is copied, any other value is converted to a string.
+    BlobParts,
+    /// The chunks of a `Response` / `Request` body stream: a `TypeError`.
+    BytesOrString,
+}
+
+/// The only parts a [`PartPolicy::BytesOrString`] walk converts: a primitive string (not a
+/// `String` object) or a BufferSource.
+fn is_bytes_or_string(value: JSValue) -> bool {
+    let kind = value.js_type();
+    kind.is_string() || kind.is_array_buffer_like()
+}
+
+unsafe extern "C" {
+    // safe fn: `&JSGlobalObject` is ABI-identical to a non-null `JSGlobalObject*`.
+    safe fn ReadableStream__throwInvalidChunkType(global: &JSGlobalObject);
+}
+
+/// The `TypeError` of bytes() and arrayBuffer() for a chunk of a default-controller stream that
+/// is not a string or a BufferSource (BunStreamConsumers.cpp owns the message).
+#[cold]
+fn throw_invalid_chunk_type(global: &JSGlobalObject) -> jsc::JsError {
+    bun_jsc::validation_scope!(scope, global);
+    ReadableStream__throwInvalidChunkType(global);
+    scope.assert_exception_presence_matches(true);
+    jsc::JsError::Thrown
+}
+
+/// The end of `new Blob(parts)`: a Blob with no type gets the default one, then moves to the heap.
+fn finish_constructed(blob: Blob) -> *mut Blob {
+    if blob.content_type_slice().is_empty() {
+        blob.content_type.set(BlobContentType::default());
+        blob.content_type_was_set.set(false);
+    }
+    blob.calculate_estimated_byte_size();
+    Blob::new(blob)
+}
+
 /// Result delivered to `ReadBytesHandler::on_read_bytes`.
 pub(crate) enum ReadBytesResult {
     /// global-allocator-owned by the callback.
@@ -354,6 +396,7 @@ pub(crate) trait BlobExt {
     fn from_js_without_defer_gc<const MOVE: bool, const REQUIRE_ARRAY: bool>(
         global: &JSGlobalObject,
         arg: JSValue,
+        policy: PartPolicy,
     ) -> JsResult<Blob>
     where
         Self: Sized;
@@ -2212,16 +2255,10 @@ impl BlobExt for Blob {
                         }
                     }
                 }
-
-                if blob.content_type_slice().is_empty() {
-                    blob.content_type.set(BlobContentType::default());
-                    blob.content_type_was_set.set(false);
-                }
             }
         }
 
-        blob.calculate_estimated_byte_size();
-        Ok(Blob::new(blob))
+        Ok(finish_constructed(blob))
     }
 
     // `finalize` is inherent on `Blob` (bun_jsc::webcore_types) so codegen's
@@ -2990,23 +3027,25 @@ impl BlobExt for Blob {
 
     #[inline]
     fn from_js_move(global: &JSGlobalObject, arg: JSValue) -> JsResult<Blob> {
-        Self::from_js_without_defer_gc::<true, false>(global, arg)
+        Self::from_js_without_defer_gc::<true, false>(global, arg, PartPolicy::BlobParts)
     }
 
     #[inline]
     fn from_js_clone(global: &JSGlobalObject, arg: JSValue) -> JsResult<Blob> {
-        Self::from_js_without_defer_gc::<false, true>(global, arg)
+        Self::from_js_without_defer_gc::<false, true>(global, arg, PartPolicy::BlobParts)
     }
 
     #[inline]
     fn from_js_clone_optional_array(global: &JSGlobalObject, arg: JSValue) -> JsResult<Blob> {
-        Self::from_js_without_defer_gc::<false, false>(global, arg)
+        Self::from_js_without_defer_gc::<false, false>(global, arg, PartPolicy::BlobParts)
     }
 
     fn from_js_without_defer_gc<const MOVE: bool, const REQUIRE_ARRAY: bool>(
         global: &JSGlobalObject,
         arg: JSValue,
+        policy: PartPolicy,
     ) -> JsResult<Blob> {
+        let strict = policy == PartPolicy::BytesOrString;
         let mut current = arg;
         if current.is_undefined_or_null() {
             return Ok(Blob::init_empty(global));
@@ -3037,6 +3076,9 @@ impl BlobExt for Blob {
         }
 
         if might_only_be_one_thing || !MOVE {
+            if strict && might_only_be_one_thing && !is_bytes_or_string(top_value) {
+                return Err(throw_invalid_chunk_type(global));
+            }
             // Fast path: one item, we don't need to join
             match top_value.js_type_loose() {
                 jsc::JSType::Cell
@@ -3162,7 +3204,9 @@ impl BlobExt for Blob {
                     // `new Blob(largeChunks)`. Non-fast arrays are conservatively
                     // treated as able to run user JS.
                     let mut parts_can_run_js = !iter.is_fast() || !stack.is_empty();
-                    if !parts_can_run_js {
+                    // A strict walk needs no prescan: it returns at the top of the loop
+                    // below before it converts a part that can run user JS.
+                    if !parts_can_run_js && !strict {
                         let mut prescan = jsc::JSArrayIterator::init(current, global)?;
                         while let Some(item) = prescan.next()? {
                             if item.is_undefined_or_null() {
@@ -3182,6 +3226,9 @@ impl BlobExt for Blob {
                     }
 
                     while let Some(item) = iter.next()? {
+                        if strict && !is_bytes_or_string(item) {
+                            return Err(throw_invalid_chunk_type(global));
+                        }
                         if item.is_undefined_or_null() {
                             continue;
                         }
@@ -3206,10 +3253,12 @@ impl BlobExt for Blob {
                                         // or resizes this buffer before `done()`.
                                         joiner.push_cloned(buf.byte_slice());
                                     } else {
-                                        // SAFETY: the prescan above proved no remaining
-                                        // part can run user JS, so this buffer (rooted
-                                        // via `_keep`/`arg`) stays attached and valid
-                                        // until `joiner.done()` below.
+                                        // SAFETY: no remaining part can run user JS: the
+                                        // prescan above proved it, or this is a strict
+                                        // walk, which returns before it converts such a
+                                        // part. So this buffer (rooted via `_keep`/`arg`)
+                                        // stays attached and valid until `joiner.done()`
+                                        // below.
                                         joiner.push(unsafe {
                                             bun_ptr::detach_lifetime(buf.byte_slice())
                                         });
@@ -5658,6 +5707,25 @@ pub(crate) extern "C" fn Blob__sharedView(
     *ptr = view.as_ptr();
     *len = view.len();
     true
+}
+
+/// `new Blob(chunks)` for the chunk array of a `Response` / `Request` body stream
+/// (BunStreamConsumers.cpp). A chunk that is not a string or a BufferSource throws a `TypeError`,
+/// and the empty value is returned.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Blob__fromStreamChunks(
+    global: &JSGlobalObject,
+    chunks: JSValue,
+) -> JSValue {
+    jsc::host_fn::to_js_host_call(global, || {
+        let blob = Blob::from_js_without_defer_gc::<false, true>(
+            global,
+            chunks,
+            PartPolicy::BytesOrString,
+        )?;
+        // SAFETY: `finish_constructed` returns the fresh heap Blob whose ref the JS wrapper takes.
+        Ok(unsafe { &*finish_constructed(blob) }.to_js(global))
+    })
 }
 
 /// # Safety

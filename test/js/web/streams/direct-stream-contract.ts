@@ -260,9 +260,15 @@ export const consumers: Record<string, (s: ReadableStream) => Promise<string>> =
   "new Response(s).text()": s => new Response(s).text(),
   "new Response(s).bytes()": async s => decoder.decode(await new Response(s).bytes()),
   "new Response(s).blob()": async s => (await new Response(s).blob()).text(),
+  // Every body of the matrix is one form field name with no value.
+  "new Response(s).formData()": async s => {
+    const headers = { "content-type": "application/x-www-form-urlencoded" };
+    return [...(await new Response(s, { headers }).formData()).keys()].join("");
+  },
   "Bun.readableStreamToText": s => Bun.readableStreamToText(s),
   "Bun.readableStreamToBytes": async s => decoder.decode(await Bun.readableStreamToBytes(s)),
   "Bun.readableStreamToArrayBuffer": async s => decoder.decode(await Bun.readableStreamToArrayBuffer(s)),
+  "Bun.readableStreamToBlob": async s => (await Bun.readableStreamToBlob(s)).text(),
   "Bun.readableStreamToArray": async s => (await Bun.readableStreamToArray(s)).map(text).join(""),
   "getReader() loop": async s => {
     const reader = s.getReader();

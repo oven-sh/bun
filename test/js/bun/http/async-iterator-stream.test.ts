@@ -558,6 +558,24 @@ describe.concurrent("an async-iterable body whose chunk the consumer refuses", (
     expect(await settled(shape)).toEqual(shape.expected);
   });
 
+  // blob() and formData() refuse the chunk where text() does: in the write() that hands it over.
+  // These bodies have an end. A consumer that only checks its chunks there lets the body reach it,
+  // and `calls` then starts with "end".
+  describe.each([
+    ["blob()", (body: AsyncIterable<any>) => new Response(body).blob()],
+    [
+      "formData()",
+      (body: AsyncIterable<any>) =>
+        new Response(body, { headers: { "content-type": "application/x-www-form-urlencoded" } }).formData(),
+    ],
+  ] as const)("read by %s", (_, read) => {
+    test.each(asyncIterableBodyShapes)("%s is closed with return() at the chunk", async (_, make) => {
+      const shape = make({ chunk: refused(), count: 8 });
+      await expect(read(shape.body)).rejects.toBeInstanceOf(TypeError);
+      expect(await settled(shape)).toEqual(shape.expected);
+    });
+  });
+
   test("an iterator with next() and throw() only gets no call", async () => {
     const calls: string[] = [];
     const body = {

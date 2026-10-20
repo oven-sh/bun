@@ -645,8 +645,8 @@ JSC::JSValue readableStreamToArray(JSC::JSGlobalObject*, JSReadableStream*); // 
 JSC::JSValue readableStreamToArrayBuffer(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 JSC::JSValue readableStreamToBytes(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 JSC::JSValue readableStreamToJSON(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
-JSC::JSValue readableStreamToBlob(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
-JSC::JSValue readableStreamToFormData(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue contentType); // userJS: yes — BunStreamConsumers.cpp
+JSC::JSValue readableStreamToBlob(JSC::JSGlobalObject*, JSReadableStream*, BlobChunkPolicy); // userJS: yes — BunStreamConsumers.cpp
+JSC::JSValue readableStreamToFormData(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue contentType, BlobChunkPolicy); // userJS: yes — BunStreamConsumers.cpp
 
 // The buffered fast path: returns the native handle's own .text()/.arrayBuffer()/... promise,
 // or the EMPTY JSValue if the fast path does not apply. `method` is the property name to
@@ -670,7 +670,8 @@ bool appendUTF8WithinStringLimit(const WTF::String&, WTF::Vector<uint8_t>& bytes
 
 // The three *Direct conversion paths.
 JSC::JSValue readableStreamToTextDirect(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
-JSC::JSValue readableStreamToArrayDirect(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
+// BlobChunkPolicy::BytesOrString: the Array sink's write() throws for a value that is not a string or a BufferSource.
+JSC::JSValue readableStreamToArrayDirect(JSC::JSGlobalObject*, JSReadableStream*, BlobChunkPolicy = BlobChunkPolicy::BlobParts); // userJS: yes — BunStreamConsumers.cpp
 // The ONE-SHOT direct→ArrayBuffer/Uint8Array conversion: no persistent controller, no
 // reader. Allocates a WebCore::JSOneShotDirectSink (JSOneShotDirectSink.h) as the throwaway
 // `controller` handed to the user's `pull` exactly once; its start/write/end/close/flush are
@@ -726,6 +727,7 @@ JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObje
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
+// These two read a Response / Request body: BlobChunkPolicy::BytesOrString.
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObject*, JSC::EncodedJSValue stream, JSC::EncodedJSValue contentType); // userJS: yes
 

@@ -2037,3 +2037,258 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     expect(await text).toBe("payload");
   });
 });
+
+// A Response or Request reads its body with the Streams "read all bytes" steps: a chunk that is
+// not bytes is a TypeError, for blob() and formData() as for text() and bytes(). Bun also takes a
+// string chunk. blob() and formData() gave the chunks to `new Blob(chunks)`, which converts any
+// value to a string, so the result held "5" or "[object Object]".
+describe("blob() and formData() reject a stream chunk that is not bytes or a string", () => {
+  type Chunks = unknown[];
+  const stream = (chunks: Chunks) =>
+    new ReadableStream({
+      start(c) {
+        for (const chunk of chunks) c.enqueue(chunk);
+        c.close();
+      },
+    });
+  // Every way a chunk reaches the consumer without native code in between. A direct stream and
+  // an async-iterable body give each chunk to the consumer's write(), which refuses it with an
+  // error code. An async-iterable body does not write null or undefined at all.
+  const bodies: { name: string; make: (chunks: Chunks) => Bun.BodyInit; write?: true; skipsNullish?: true }[] = [
+    { name: "ReadableStream", make: stream },
+    {
+      name: "ReadableStream with an async pull()",
+      make: chunks => {
+        const queue = [...chunks];
+        return new ReadableStream({
+          async pull(c) {
+            await Promise.resolve();
+            if (queue.length) c.enqueue(queue.shift());
+            else c.close();
+          },
+        });
+      },
+    },
+    {
+      name: "TransformStream.readable",
+      make: chunks => {
+        const { readable, writable } = new TransformStream();
+        const writer = writable.getWriter();
+        for (const chunk of chunks) writer.write(chunk);
+        writer.close();
+        return readable;
+      },
+    },
+    { name: "ReadableStream.from()", make: chunks => ReadableStream.from(chunks) },
+    { name: "tee() branch", make: chunks => stream(chunks).tee()[0] },
+    {
+      name: "direct ReadableStream",
+      write: true,
+      make: chunks =>
+        new ReadableStream({
+          type: "direct",
+          pull(c: ReadableStreamDirectController) {
+            for (const chunk of chunks) c.write(chunk as string);
+            c.close();
+          },
+        } as any),
+    },
+    {
+      name: "async generator",
+      write: true,
+      skipsNullish: true,
+      make: chunks =>
+        (async function* () {
+          for (const chunk of chunks) yield chunk;
+        })() as any,
+    },
+  ];
+  const notBytes: [name: string, make: () => unknown][] = [
+    ["number", () => 5],
+    ["double", () => 1.5],
+    ["boolean", () => true],
+    ["bigint", () => 10n],
+    ["null", () => null],
+    ["undefined", () => undefined],
+    ["plain object", () => ({ a: 1 })],
+    ["array", () => [1, 2]],
+    ["symbol", () => Symbol("chunk")],
+    ["Blob", () => new Blob(["blob"])],
+    ["File", () => new File(["file"], "f.txt")],
+    ["String object", () => new String("boxed")],
+    ["String.prototype", () => String.prototype],
+    ["Array.prototype", () => Array.prototype],
+  ];
+  const positions: [name: string, around: (chunk: unknown) => Chunks][] = [
+    ["alone", chunk => [chunk]],
+    ["after bytes", chunk => [new TextEncoder().encode("a="), chunk]],
+    ["before a string", chunk => [chunk, "=b"]],
+    ["twice", chunk => [chunk, chunk]],
+  ];
+  const readers: [
+    name: string,
+    headers: Bun.HeadersInit | undefined,
+    read: (body: Request | Response) => Promise<Blob | FormData>,
+  ][] = [
+    ["blob()", undefined, body => body.blob()],
+    ["formData(), urlencoded", { "content-type": "application/x-www-form-urlencoded" }, body => body.formData()],
+    ["formData(), multipart", { "content-type": "multipart/form-data; boundary=x" }, body => body.formData()],
+  ];
+  // The error's name, its code if it has one, and its message. Or what the read resolved with.
+  const outcome = (read: Promise<Blob | FormData>) =>
+    read.then(
+      async value => `resolved ${JSON.stringify(value instanceof Blob ? await value.text() : [...value])}`,
+      error => `${[error?.name, error?.code].filter(Boolean).join(" ")}: ${error?.message}`,
+    );
+  // A default stream's chunk array is refused with the error of bytes() and arrayBuffer(). A direct
+  // stream and an async-iterable body refuse the chunk in write(), with the error of the byte sink.
+  const refused = "TypeError: Expected an ArrayBuffer, ArrayBufferView, or string chunk";
+  const refusedByWrite = (chunk: unknown) =>
+    `TypeError ${chunk == null ? "ERR_STREAM_NULL_VALUES" : "ERR_INVALID_ARG_TYPE"}: write() expects a string, ArrayBufferView, or ArrayBuffer`;
+
+  for (const { body: owner, fn } of bodyTypes) {
+    describe(owner.name, () => {
+      describe.each(readers)("%s", (_, headers, read) => {
+        test.each(bodies)("$name", async ({ make, write, skipsNullish }) => {
+          const actual: Record<string, string> = {};
+          const expected: Record<string, string> = {};
+          for (const [kind, chunk] of notBytes) {
+            if (skipsNullish && chunk() == null) continue;
+            for (const [position, around] of positions) {
+              const cell = `${kind}, ${position}`;
+              actual[cell] = await outcome(read(fn(make(around(chunk())), headers)));
+              expected[cell] = write ? refusedByWrite(chunk()) : refused;
+            }
+          }
+          expect(actual).toEqual(expected);
+        });
+      });
+    });
+  }
+
+  // clone() reads a direct stream or an async-iterable body through the byte sink, which refuses the chunk.
+  test.each(bodies)("$name: both clone() branches reject", async ({ make, write }) => {
+    const response = new Response(make([new TextEncoder().encode("a"), 5]));
+    const clone = response.clone();
+    const expected = write ? refusedByWrite(5) : refused;
+    expect(await Promise.all([outcome(response.blob()), outcome(clone.blob())])).toEqual([expected, expected]);
+  });
+
+  test.each(bodies)("$name: the chunk's toString() does not run", async ({ make }) => {
+    let calls = 0;
+    const chunk = () => ({ toString: () => (calls++, "a=b") });
+    const results: string[] = [];
+    for (const { fn } of bodyTypes) {
+      for (const [, headers, read] of readers) {
+        for (const [, around] of positions) results.push(await outcome(read(fn(make(around(chunk())), headers))));
+      }
+    }
+    expect({ calls, rejected: results.every(result => result.startsWith("TypeError")) }).toEqual({
+      calls: 0,
+      rejected: true,
+    });
+  });
+
+  // What text() and bytes() take, blob() and formData() take too.
+  test.each(bodies)("$name: every kind of bytes, and strings, still resolve", async ({ make }) => {
+    const encode = (text: string) => new TextEncoder().encode(text);
+    const shared = new Uint8Array(new SharedArrayBuffer(2));
+    shared.set(encode("=7"));
+    const chunks = () => [
+      "a",
+      encode("=1"),
+      Buffer.from("&b"),
+      new DataView(encode("=2").buffer),
+      encode("&c").buffer,
+      new Uint16Array(new Uint8Array(encode("=3")).buffer),
+      new ArrayBuffer(0),
+      "",
+      "&d",
+      shared.buffer,
+    ];
+    for (const { fn } of bodyTypes) {
+      expect(await outcome(fn(make(chunks())).blob())).toBe('resolved "a=1&b=2&c=3&d=7"');
+      expect(
+        await outcome(fn(make(chunks()), { "content-type": "application/x-www-form-urlencoded" }).formData()),
+      ).toBe(
+        `resolved ${JSON.stringify([
+          ["a", "1"],
+          ["b", "2"],
+          ["c", "3"],
+          ["d", "7"],
+        ])}`,
+      );
+    }
+  });
+
+  // A view over part of a larger buffer gives its own window, as the only chunk and among others.
+  test.each(bodies)("$name: a chunk with a byteOffset gives only its own bytes", async ({ make }) => {
+    const backing = new TextEncoder().encode("__a=1&b=2__");
+    const results: string[] = [];
+    for (const { fn } of bodyTypes) {
+      results.push(
+        await outcome(fn(make([backing.subarray(2, 9)])).blob()),
+        await outcome(fn(make([new DataView(backing.buffer, 2, 3), "&", backing.subarray(6, 9)])).blob()),
+        await outcome(
+          fn(make([backing.subarray(2, 5), new Uint8Array(backing.buffer, 5, 4)]), {
+            "content-type": "application/x-www-form-urlencoded",
+          }).formData(),
+        ),
+      );
+    }
+    const expected = ['resolved "a=1&b=2"', 'resolved "a=1&b=2"', 'resolved [["a","1"],["b","2"]]'];
+    expect(results).toEqual([...expected, ...expected]);
+  });
+
+  // text() and bytes() refuse the chunk in the same place: the write() call that hands it over.
+  describe("the chunk is refused when it is written", () => {
+    const consumers: [name: string, read: (body: Bun.BodyInit) => Promise<string>][] = [
+      ["text()", body => new Response(body).text()],
+      ["bytes()", async body => new TextDecoder().decode(await new Response(body).bytes())],
+      ["blob()", async body => (await new Response(body).blob()).text()],
+      [
+        "formData()",
+        async body => {
+          const headers = { "content-type": "application/x-www-form-urlencoded" };
+          return [...(await new Response(body, { headers }).formData()).keys()].join("");
+        },
+      ],
+    ];
+
+    test.each(consumers)("%s: write() throws inside a direct stream's pull()", async (_, read) => {
+      let thrown: any;
+      const body = new ReadableStream({
+        type: "direct",
+        pull(c: ReadableStreamDirectController) {
+          try {
+            c.write(5 as any);
+          } catch (error) {
+            thrown = error;
+          }
+          c.write("ok");
+          c.close();
+        },
+      } as any);
+      // The source caught the error, so the body is what it wrote after that.
+      expect({ body: await read(body), thrown: thrown?.name }).toEqual({ body: "ok", thrown: "TypeError" });
+    });
+
+    test.each(consumers)("%s: an async generator is closed at the chunk", async (_, read) => {
+      const log: string[] = [];
+      async function* body() {
+        try {
+          yield "a";
+          log.push("after a");
+          yield 5;
+          log.push("after 5");
+          yield "b";
+          log.push("after b");
+        } finally {
+          log.push("finally");
+        }
+      }
+      await expect(read(body() as any)).rejects.toBeInstanceOf(TypeError);
+      expect(log).toEqual(["after a", "finally"]);
+    });
+  });
+});

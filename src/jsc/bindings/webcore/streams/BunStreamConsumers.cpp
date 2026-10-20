@@ -43,6 +43,9 @@
 #include <wtf/Vector.h>
 #include <wtf/text/StringBuilder.h>
 
+// Blob.rs: the Blob of a Response / Request body's chunk array. Throws for a chunk that is not a string or a BufferSource.
+extern "C" JSC::EncodedJSValue Blob__fromStreamChunks(JSC::JSGlobalObject*, JSC::EncodedJSValue chunks);
+
 namespace WebCore {
 
 using namespace JSC;
@@ -315,6 +318,19 @@ static JSC::JSUint8Array* encodeStringToUint8Array(JSC::VM& vm, JSGlobalObject* 
     RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, WTF::move(resultBuffer), 0, byteLength));
 }
 
+// bytes(), arrayBuffer() and a body's blob(): a chunk in the array is not a string or a BufferSource.
+static void throwInvalidChunkType(JSGlobalObject* globalObject, ThrowScope& scope)
+{
+    throwTypeError(globalObject, scope, "Expected an ArrayBuffer, ArrayBufferView, or string chunk"_s);
+}
+
+// Blob.rs: the Blob part walker throws this for a chunk that Blob__fromStreamChunks does not take.
+extern "C" void ReadableStream__throwInvalidChunkType(JSC::JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    throwInvalidChunkType(globalObject, scope);
+}
+
 static bool appendChunkBytes(JSC::VM& vm, JSGlobalObject* globalObject, JSValue chunk, WTF::Vector<uint8_t>& bytes)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -343,7 +359,7 @@ static bool appendChunkBytes(JSC::VM& vm, JSGlobalObject* globalObject, JSValue 
         }
         return true;
     }
-    throwTypeError(globalObject, scope, "Expected an ArrayBuffer, ArrayBufferView, or string chunk"_s);
+    throwInvalidChunkType(globalObject, scope);
     return false;
 }
 
@@ -387,7 +403,7 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
             auto* impl = jsBuffer->impl();
             total += (impl && !impl->isDetached()) ? impl->byteLength() : 0;
         } else {
-            throwTypeError(globalObject, scope, "Expected an ArrayBuffer, ArrayBufferView, or string chunk"_s);
+            throwInvalidChunkType(globalObject, scope);
             return {};
         }
     }
@@ -967,13 +983,15 @@ static JSValue directConsumeLoopStep(JSC::VM& vm, JSGlobalObject* globalObject, 
     return derived;
 }
 
-static JSValue consumeDirectStreamBody(JSC::VM& vm, JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, DirectSinkKind kind)
+static JSValue consumeDirectStreamBody(JSC::VM& vm, JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, DirectSinkKind kind, BlobChunkPolicy policy)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     setUpDirectStreamController(globalObject, stream, kind);
     RETURN_IF_EXCEPTION(scope, {});
-    if (auto* controller = dynamicDowncast<JSDirectStreamController>(stream->m_controller.get()))
+    if (auto* controller = dynamicDowncast<JSDirectStreamController>(stream->m_controller.get())) {
         controller->m_closeOnPullSettled = true;
+        controller->m_arraySinkTakesBytesOrString = policy == BlobChunkPolicy::BytesOrString;
+    }
     stream->materializeIfNeeded(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto* reader = acquireReadableStreamDefaultReader(globalObject, stream);
@@ -983,12 +1001,12 @@ static JSValue consumeDirectStreamBody(JSC::VM& vm, JSGlobalObject* globalObject
 }
 
 // This returns a promise (promiseFromSteps): every synchronous abrupt completion is its rejection.
-static JSValue consumeDirectStream(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, DirectSinkKind kind)
+static JSValue consumeDirectStream(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, DirectSinkKind kind, BlobChunkPolicy policy = BlobChunkPolicy::BlobParts)
 {
     return promiseFromSteps(globalObject, [&] -> JSPromise* {
         auto& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
-        JSValue result = consumeDirectStreamBody(vm, globalObject, stream, kind);
+        JSValue result = consumeDirectStreamBody(vm, globalObject, stream, kind, policy);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (auto* promise = dynamicDowncast<JSPromise>(result))
             return promise;
@@ -1001,9 +1019,9 @@ JSValue readableStreamToTextDirect(JSGlobalObject* globalObject, WebCore::JSRead
     return consumeDirectStream(globalObject, stream, DirectSinkKind::Text);
 }
 
-JSValue readableStreamToArrayDirect(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream)
+JSValue readableStreamToArrayDirect(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, BlobChunkPolicy policy)
 {
-    return consumeDirectStream(globalObject, stream, DirectSinkKind::Array);
+    return consumeDirectStream(globalObject, stream, DirectSinkKind::Array, policy);
 }
 
 // The one-shot direct → ArrayBuffer/Uint8Array conversion (RSI:2474-2554).
@@ -1288,7 +1306,7 @@ JSValue readableStreamToJSON(JSGlobalObject* globalObject, WebCore::JSReadableSt
     return derived;
 }
 
-JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream)
+JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, BlobChunkPolicy policy)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1298,7 +1316,8 @@ JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableSt
     RETURN_IF_EXCEPTION(scope, {});
     if (fastPath)
         return fastPath;
-    JSValue arrayResult = readableStreamToArray(globalObject, stream);
+    // A direct stream gives each chunk to the Array sink's write(): the policy applies there, at the chunk.
+    JSValue arrayResult = stream->m_bunMode == BunStreamMode::DirectPending ? readableStreamToArrayDirect(globalObject, stream, policy) : readableStreamToArray(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
     auto* arrayPromise = dynamicDowncast<JSPromise>(arrayResult);
     if (!arrayPromise) [[unlikely]] {
@@ -1306,18 +1325,19 @@ JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableSt
         RETURN_IF_EXCEPTION(scope, {});
     }
     auto* runtime = JSStreamsRuntime::from(globalObject);
+    auto* onFulfilled = policy == BlobChunkPolicy::BytesOrString ? runtime->onReadableStreamToBodyBlobFulfilled() : runtime->onReadableStreamToBlobFulfilled();
     auto* derived = JSPromise::create(vm, globalObject->promiseStructure());
-    arrayPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadableStreamToBlobFulfilled(), jsUndefined(), derived, jsUndefined());
+    arrayPromise->performPromiseThenWithContext(vm, globalObject, onFulfilled, jsUndefined(), derived, jsUndefined());
     return derived;
 }
 
-JSValue readableStreamToFormData(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, JSValue contentType)
+JSValue readableStreamToFormData(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, JSValue contentType, BlobChunkPolicy policy)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (auto* error = unusableStreamError(globalObject, stream))
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
-    JSValue blobResult = readableStreamToBlob(globalObject, stream);
+    JSValue blobResult = readableStreamToBlob(globalObject, stream, policy);
     RETURN_IF_EXCEPTION(scope, {});
     auto* blobPromise = dynamicDowncast<JSPromise>(blobResult);
     if (!blobPromise) [[unlikely]] {
@@ -1403,7 +1423,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReadableStreamToBlob, (JSGlobalObject * globa
     auto* stream = dynamicDowncast<JSReadableStream>(streamValue);
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "stream"_s, "ReadableStream"_s, streamValue);
-    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::WebStreams::readableStreamToBlob(globalObject, stream)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::WebStreams::readableStreamToBlob(globalObject, stream, BlobChunkPolicy::BlobParts)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionReadableStreamToFormData, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -1414,7 +1434,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReadableStreamToFormData, (JSGlobalObject * g
     auto* stream = dynamicDowncast<JSReadableStream>(streamValue);
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "stream"_s, "ReadableStream"_s, streamValue);
-    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::WebStreams::readableStreamToFormData(globalObject, stream, callFrame->argument(1))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::WebStreams::readableStreamToFormData(globalObject, stream, callFrame->argument(1), BlobChunkPolicy::BlobParts)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionTransferToNativeReadableStream, (JSGlobalObject*, CallFrame* callFrame))
@@ -1510,6 +1530,18 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadableStreamToBlobFulfilled, (J
     JSObject* blob = JSC::construct(globalObject, defaultGlobalObject(globalObject)->JSBlobConstructor(), arguments, "Blob is not constructible"_s);
     RETURN_IF_EXCEPTION(scope, {});
     Bun::WebStreams::releaseInternalChunkArray(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(blob);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadableStreamToBodyBlobFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue chunks = callFrame->argument(0);
+    JSValue blob = JSValue::decode(Blob__fromStreamChunks(defaultGlobalObject(globalObject), JSValue::encode(chunks)));
+    RETURN_IF_EXCEPTION(scope, {});
+    Bun::WebStreams::releaseInternalChunkArray(globalObject, chunks);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(blob);
 }

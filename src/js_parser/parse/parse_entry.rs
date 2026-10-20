@@ -1059,10 +1059,10 @@ impl<'a> Parser<'a> {
         // Note that top-level lowered "using" declarations disable tree-shaking
         // because we only do tree-shaking on top-level statements and lowering
         // a top-level "using" declaration moves all top-level statements into a
-        // nested scope. The REPL transform moves them into a function too, where
-        // an import runs as a statement: a class must not move above it.
+        // nested scope.
         if !p.options.tree_shaking
             || p.will_wrap_module_in_try_catch_for_using
+            // The REPL transform moves all top-level statements into a function.
             || p.options.repl_mode
         {
             // When tree shaking is disabled, everything comes in a single part

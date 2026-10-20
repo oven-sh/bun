@@ -386,9 +386,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     };
 
                     if let Some(default_name) = import_data.default_name {
-                        // import X from 'mod' -> var X = (await import('mod')).default
-                        // import X, { a } from 'mod' -> var __ns = await import('mod'); var X = __ns.default; var a = __ns.a;
-                        // import X, * as Y from 'mod' -> var Y = await import('mod'); var X = Y.default;
+                        // import X[, ...] from 'mod' -> X = <the module>.default
                         let module = match module_ref {
                             Some(ref_) => self.new_expr(
                                 E::Identifier {
@@ -536,8 +534,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         bump: &'bump Bump,
         loc: bun_ast::Loc,
     ) -> Result<Ref, bun_alloc::AllocError> {
-        // Store the module in a temporary: var __mod = await import('mod')
-        // The import's namespace symbol prints `import_mod`, a name an input can declare.
+        // var __mod = await import('mod'). Not the import's namespace symbol: an input can declare its name.
         let namespace_ref = self.generate_temp_ref(None);
         let namespace = Binding::alloc(
             bump,
@@ -633,11 +630,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         )
     }
 
-    /// Whether `ref_` is a name the input declared at its top level: the module
-    /// scope's member for that name. Only such a name is hoisted. A lowering's
-    /// temporary or the binding of a helper import is no scope's member. It
-    /// stays in the wrapper, because the next input prints the same name for
-    /// its own.
+    /// Whether the input declared `ref_` at its top level: the module scope's member for its name.
     fn repl_persists(&self, mut ref_: Ref) -> bool {
         // Follow links because "var" declarations may be merged due to hoisting
         loop {

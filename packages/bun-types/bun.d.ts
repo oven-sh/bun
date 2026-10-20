@@ -3059,7 +3059,7 @@ declare module "bun" {
      * - Wraps last expression in { __proto__: null, value: expr } for result capture
      * - Wraps code in sync/async IIFE to avoid parentheses around object literals.
      *   The IIFE is async, and the result is a Promise, if the input has a top-level await or an import,
-     *   or if the transpiler imports helpers for it (decorators, `accessor`, a lowered `using`, automatic JSX).
+     *   or if the transpiler imports helpers for it (decorators, `accessor`, a lowered `using`, JSX with `autoImportJSX`).
      *   An import becomes an `import()` call: with `vm.runInContext`, pass `importModuleDynamically`
      *
      * @default false

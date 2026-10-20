@@ -1123,9 +1123,11 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
   test("a line stopped with Ctrl+C still disposes its own `using`", async () => {
     await withTerminalRepl(async ({ send, waitFor, proc }) => {
       const resource = (name: string) => `{ async [Symbol.asyncDispose]() { log.push("dispose ${name}") } }`;
+      // The immediate runs in the loop that waits for the line, which is where the REPL takes a SIGINT.
       send(
         `globalThis.log = []; globalThis.release = Promise.withResolvers(); await using a = ${resource("a")}; ` +
-          `console.log("hold" + "ing"); await release.promise; log.push("a done")\n`,
+          `await new Promise(resolve => setImmediate(resolve)); console.log("hold" + "ing"); ` +
+          `await release.promise; log.push("a done")\n`,
       );
       await waitFor("holding");
       // The line stays suspended and holds `a`. The next line runs to its end.

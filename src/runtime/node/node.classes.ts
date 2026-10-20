@@ -102,30 +102,6 @@ export default [
     values: ["listener"],
   }),
   define({
-    name: "StatWatcher",
-    construct: false,
-    noConstructor: true,
-    refCounted: true,
-    configurable: false,
-    klass: {},
-    JSType: "0b11101110",
-    proto: {
-      ref: {
-        fn: "doRef",
-        length: 0,
-      },
-      unref: {
-        fn: "doUnref",
-        length: 0,
-      },
-      close: {
-        fn: "doClose",
-        length: 0,
-      },
-    },
-    values: ["listener", "prevStat"],
-  }),
-  define({
     name: "Timeout",
     rustPath: "crate::timer::TimeoutObject",
     construct: true,

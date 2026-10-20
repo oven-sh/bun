@@ -347,6 +347,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "jsc_hooks.bind.ts": null,
   "node_assert_binding.bind.ts": null,
   "node_cluster_binding.bind.ts": null,
+  "node_fs_stat_watcher.bind.ts": null,
   "node_http_binding.bind.ts": null,
   "node_net_binding.bind.ts": null,
   "node_os.bind.ts": null,

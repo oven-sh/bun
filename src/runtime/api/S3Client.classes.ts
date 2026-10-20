@@ -44,6 +44,18 @@ export default [
         fn: "staticStat",
         length: 2,
       },
+      bucketExists: {
+        fn: "staticBucketExists",
+        length: 2,
+      },
+      createBucket: {
+        fn: "staticCreateBucket",
+        length: 2,
+      },
+      deleteBucket: {
+        fn: "staticDeleteBucket",
+        length: 2,
+      },
     },
     JSType: "0b11101110",
     proto: {
@@ -82,6 +94,18 @@ export default [
       },
       stat: {
         fn: "stat",
+        length: 2,
+      },
+      bucketExists: {
+        fn: "bucketExists",
+        length: 2,
+      },
+      createBucket: {
+        fn: "createBucket",
+        length: 2,
+      },
+      deleteBucket: {
+        fn: "deleteBucket",
         length: 2,
       },
     },

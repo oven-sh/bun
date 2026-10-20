@@ -628,9 +628,7 @@ pub fn install_with_manager(
         resolve_pending_tasks(manager, &root, log_level, &mut named)?;
     }
 
-    // The install that wrote the lockfile could not resolve them. The registry may have the
-    // version now. A frozen lockfile is what it is, and an error ends the install, so they are
-    // not worth another round of requests then.
+    // Rows an earlier install could not resolve: the registry may have the version now.
     let mut retried_rows: Vec<DependencyID> = Vec::new();
     if manager.lockfile.has_unresolved_optional_rows
         && !needs_new_lockfile
@@ -644,8 +642,7 @@ pub fn install_with_manager(
         {
             resolve_pending_tasks(manager, &root, log_level, &mut NamedUpdates::default())?;
         }
-        // A row that now resolves to a package the tree already had changes no placement, and
-        // the lockfile would not be saved. Its "unresolved" entry has to go.
+        // A re-bind to a package the tree already has moves nothing, but leaves the "unresolved" list.
         let resolutions = manager.lockfile.buffers.resolutions.as_slice();
         had_any_diffs |=
             (retried_rows.iter()).any(|&row| resolutions[row as usize] != invalid_package_id);
@@ -730,8 +727,7 @@ pub fn install_with_manager(
             // Another package manager's lockfile says nothing about what the scanner has seen.
             let loaded_bun_lockfile = lockfile_before_clean.loaded_package_count > 0
                 && load_result.migrated_from().is_none();
-            // A command that names what it adds scans only that. What a retried row brought is
-            // new to the tree too.
+            // `bun add <name>` scans only what it adds: that includes what a retried row brought.
             let retried: Vec<(DependencyID, PackageID)> = (retried_rows.iter())
                 .map(|&row| (row, invalid_package_id))
                 .collect();
@@ -1809,9 +1805,8 @@ fn reresolve_links_to_dropped_workspaces(manager: &mut PackageManager) -> bool {
     any
 }
 
-/// Optional rows of a loaded package that have no package, queued again behind whatever the
-/// command resolved. Rows of a package that is no longer reached are left to `clean`. Returns the
-/// rows queued.
+/// Queues the unresolved optional rows of the loaded packages still reached from the root, on the
+/// found lane so that a second failure stays a warning. Returns the rows queued.
 #[cold]
 #[inline(never)]
 fn retry_unresolved_optional_rows(manager: &mut PackageManager) -> Vec<DependencyID> {
@@ -1845,8 +1840,6 @@ fn retry_unresolved_optional_rows(manager: &mut PackageManager) -> Vec<Dependenc
 
     let _ = manager.get_cache_directory();
     let _ = manager.get_temporary_directory();
-    // The lane a resolved package's own rows take: one that fails again stays unresolved, and
-    // `verify_resolutions` reports it if it matters.
     for &row in &rows {
         (manager.lockfile.scratch.dependency_list_queue)
             .push(lockfile::QueuedRows {

@@ -3670,7 +3670,10 @@ describe.each(["hoisted", "isolated"] as const)("an unresolved optional dependen
     expect(await file(lockfilePath).text()).toBe(incomplete);
     registry.requests.length = 0;
     await installWithOwnCache(String(dir), "--frozen-lockfile");
+    await installWithOwnCache(String(dir), "--production");
+    await installWithOwnCache(String(dir), "--offline");
     expect(registry.requests).toEqual([]);
+    expect(await file(lockfilePath).text()).toBe(incomplete);
   });
 
   // `bun i -g cli@latest` resolves the parent again, to the package bun.lock has.
@@ -3692,6 +3695,54 @@ describe.each(["hoisted", "isolated"] as const)("an unresolved optional dependen
     expect(registry.requests).toEqual(["/cli", "/cli-1.0.0-native.tgz"]);
     expect(native(String(dir))).not.toBeEmpty();
     expect(await file(join(String(dir), "bun.lock")).text()).toContain('"cli-native": ["cli@1.0.0-native"');
+  });
+
+  // The issue's command. The global directory is the project, with its own bun.lock.
+  it.concurrent("by a global install that asks for the parent again", async () => {
+    const published = manifests();
+    using registry = await serveRegistry(published, latest);
+    using home = tempDir("retry-unresolved-optional-global-", {});
+    const globalDir = join(String(home), ".bun", "install", "global");
+    const install = async () => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "install",
+          "-g",
+          "cli@latest",
+          "--no-cache",
+          `--registry=${registry.url}`,
+          `--linker=${linker}`,
+        ],
+        cwd: String(home),
+        env: {
+          ...env,
+          HOME: String(home),
+          BUN_INSTALL: join(String(home), ".bun"),
+          BUN_INSTALL_GLOBAL_DIR: globalDir,
+          BUN_INSTALL_BIN: join(String(home), ".bun", "bin"),
+          BUN_INSTALL_CACHE_DIR: join(String(home), ".bun-cache"),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [err, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    };
+
+    await install();
+    expect(registry.requests).toEqual(["/cli", "/cli-1.0.0.tgz"]);
+    expect(native(globalDir)).toBeEmpty();
+
+    publishNative(published);
+    registry.requests.length = 0;
+    await install();
+    expect(registry.requests).toEqual(["/cli", "/cli-1.0.0-native.tgz"]);
+    expect(native(globalDir)).not.toBeEmpty();
+    const lockfile = await file(join(globalDir, "bun.lock")).text();
+    expect(lockfile).toContain('"cli": ["cli@1.0.0"');
+    expect(lockfile).toContain('"cli-native": ["cli@1.0.0-native"');
   });
 
   // The rows of a package the command drops are left to the lockfile's clean.
@@ -3741,7 +3792,7 @@ describe.each(["hoisted", "isolated"] as const)("an unresolved optional dependen
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [err, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
     expect(err).toContain("error: GET");
     expect(err).not.toContain("cli-native");
     expect(registry.requests).toEqual(["/does-not-exist"]);
@@ -3750,6 +3801,7 @@ describe.each(["hoisted", "isolated"] as const)("an unresolved optional dependen
   });
 
   // `bun add <name>` scans only what it adds. What a retried row brings is new to the tree too.
+  // The timeout: the scanner is a second bun process inside the install, 2s of startup in a debug build.
   it.concurrent(
     "and the security scanner sees what the retry brings",
     async () => {
@@ -3784,14 +3836,13 @@ describe.each(["hoisted", "isolated"] as const)("an unresolved optional dependen
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [out, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [out, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(out).toContain("scanned: ");
       expect(out).toContain("cli@1.0.0-native");
       expect(out).toContain("Installation aborted due to fatal security advisories");
       expect(native(String(dir))).toBeEmpty();
       expect(await file(lockfilePath).text()).toBe(incomplete);
       expect(exitCode).toBe(1);
-      // The scanner is a second bun process inside the install.
     },
     20_000,
   );

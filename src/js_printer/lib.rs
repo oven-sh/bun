@@ -2920,7 +2920,7 @@ pub(crate) mod __gated_printer {
                     self.print_space_before_identifier();
                     self.print_symbol(self.options.hmr_ref);
                     if record.tag == ImportRecordTag::Builtin {
-                        self.print(b".builtin(");
+                        self.print(b".requireBuiltin(");
                     } else {
                         self.print(b".require(");
                     }

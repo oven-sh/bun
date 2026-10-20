@@ -134,7 +134,7 @@ pub(crate) fn runtime_state() -> *mut RuntimeState {
 /// with no high tier, or `Bun__Timer__getNextID` racing init).
 ///
 /// Returns `*mut` (NOT `&mut`) so callers that are themselves fields of `All`
-/// (`DateHeaderTimer`, `EventLoopDelayMonitor`, `FakeTimers`) can dereference
+/// (`EventLoopDelayMonitor`, `FakeTimers`) can dereference
 /// per-field under `// SAFETY:` without forming an aliased `&mut All` while
 /// `&mut self` is live (raw-ptr-per-field re-entry pattern, see `auto_tick`).
 #[inline]
@@ -981,24 +981,12 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         }
     }
 
-    // ── DateHeaderTimer / imminent-GC ───────────────────────────────────
-    let state = runtime_state();
-    if !state.is_null() {
-        // SAFETY: `state` is the live per-thread `RuntimeState`; `loop_` is the
-        // live per-thread uws loop; `vm` per fn contract. The re-entrant
-        // `All::insert`/`update` inside `DateHeaderTimer::enable` touches only
-        // fields disjoint from `date_header_timer` (raw-ptr-per-field pattern,
-        // same as `Bun__internal_ensureDateHeaderTimerIsEnabled`).
-        unsafe {
-            (*state)
-                .timer
-                .update_date_header_timer_if_necessary(&*loop_, vm)
-        };
-    }
+    // ── imminent-GC ─────────────────────────────────────────────────────
     // SAFETY: `el` is the live per-thread event loop.
     unsafe { (*el).run_imminent_gc_timer() };
 
     // ── poll the I/O loop with the next-timer deadline ──────────────────
+    let state = runtime_state();
     if state.is_null() {
         // No high-tier state (unit test) — fall back to a non-blocking I/O
         // poll. The uws loop must always be polled
@@ -1140,15 +1128,6 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     }
 
     let state = runtime_state();
-    if !state.is_null() {
-        // SAFETY: see the matching call in `auto_tick` above.
-        unsafe {
-            (*state)
-                .timer
-                .update_date_header_timer_if_necessary(&*loop_, vm)
-        };
-    }
-
     if state.is_null() {
         // SAFETY: `loop_` is the live per-thread uws loop.
         unsafe { (*loop_).tick_without_idle() };

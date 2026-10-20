@@ -67,10 +67,6 @@ pub struct InternalLoopData {
 }
 
 impl InternalLoopData {
-    pub(crate) fn should_enable_date_header_timer(&self) -> bool {
-        self.sweep_timer_count > 0
-    }
-
     /// Tag values for `parent_tag`: 1 = `jsc::EventLoop`, 2 = `jsc::MiniEventLoop`.
     /// Low tier stores tag+ptr only; the typed `EventLoopHandle` wrapper
     /// (`get_parent`) lives in the higher-tier crate that can name `bun_jsc`.

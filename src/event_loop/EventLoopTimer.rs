@@ -203,7 +203,6 @@ pub enum Tag {
     DevServerSweepSourceMaps,
     DevServerMemoryVisualizerTick,
     AbortSignalTimeout,
-    DateHeaderTimer,
     BunTest,
     EventLoopDelayMonitor,
     CronJob,

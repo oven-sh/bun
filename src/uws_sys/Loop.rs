@@ -1,5 +1,6 @@
 use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::InternalLoopData;
 use crate::Timespec;
@@ -115,11 +116,6 @@ pub trait LoopHandler {
 // `impl WindowsLoop` block below (same surface, different routing).
 #[cfg(not(windows))]
 impl PosixLoop {
-    pub fn update_date(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::uws_loop_date_header_timer_update(self) };
-    }
-
     pub fn iteration_number(&self) -> u64 {
         self.internal_loop_data.iteration_nr
     }
@@ -293,10 +289,6 @@ impl PosixLoop {
         unsafe { c::us_loop_close_all_groups(self) != 0 }
     }
 
-    pub fn should_enable_date_header_timer(&self) -> bool {
-        self.internal_loop_data.should_enable_date_header_timer()
-    }
-
     /// FFI-destroy: `us_loop_free` frees the C-allocated loop itself.
     /// Not `impl Drop` because the loop is C-owned (created by `us_create_loop`),
     /// never lives as a Rust-owned value.
@@ -326,10 +318,6 @@ pub struct WindowsLoop {
 
 #[cfg(windows)]
 impl WindowsLoop {
-    pub fn should_enable_date_header_timer(&self) -> bool {
-        self.internal_loop_data.should_enable_date_header_timer()
-    }
-
     pub fn get() -> *mut WindowsLoop {
         // SAFETY: uv::Loop::get() returns the libuv default loop; uws wraps it
         unsafe { c::uws_get_loop_with_native(uv::Loop::get() as *mut c_void) }
@@ -470,11 +458,6 @@ impl WindowsLoop {
         unsafe { c::us_loop_close_all_groups(self) != 0 }
     }
 
-    pub fn update_date(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::uws_loop_date_header_timer_update(self) };
-    }
-
     /// # Safety
     /// `this` must have been returned by `us_create_loop`/`uws_get_loop_with_native`
     /// and not yet freed.
@@ -531,7 +514,6 @@ mod c {
         pub(super) safe fn uws_get_loop() -> *mut Loop;
         #[cfg(windows)]
         pub(super) fn uws_get_loop_with_native(native: *mut c_void) -> *mut WindowsLoop;
-        pub(super) fn uws_loop_date_header_timer_update(loop_: *mut Loop);
         pub(super) fn uws_loop_flush_pending_writes(loop_: *mut Loop);
     }
 }
@@ -543,6 +525,34 @@ mod c {
 // `us_wakeup_loop` concurrently; routing either through a `&mut self`
 // receiver would create two live `&mut Loop` to the same singleton (UB).
 pub use c::{us_loop_run, us_wakeup_loop};
+
+/// The loop a signal handler wakes: its poll retries on `EINTR`, so a signal alone does not end it.
+pub struct LoopWaker(AtomicPtr<Loop>);
+
+impl LoopWaker {
+    pub const fn unset() -> Self {
+        Self(AtomicPtr::new(core::ptr::null_mut()))
+    }
+
+    /// `loop_` must live for the rest of the process, as the main thread's loop does.
+    pub unsafe fn set(&self, loop_: *mut Loop) {
+        self.0.store(loop_, Ordering::Release);
+    }
+
+    pub fn clear(&self) {
+        self.0.store(core::ptr::null_mut(), Ordering::Release);
+    }
+
+    /// Async-signal-safe. Does nothing while no loop is set.
+    pub fn wake(&self) {
+        let loop_ = self.0.load(Ordering::Acquire);
+        if !loop_.is_null() {
+            // SAFETY: `set`'s contract keeps the loop valid, and the raw extern is the
+            // thread-safe entry point (no `&mut Loop` is formed off the loop's thread).
+            unsafe { c::us_wakeup_loop(loop_) };
+        }
+    }
+}
 
 unsafe extern "C" {
     // safe: no args; frees this thread's lazily-created uws loop if it exists.

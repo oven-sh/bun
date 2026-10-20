@@ -926,9 +926,6 @@ impl<'s> Program<'s> {
             generic_mapped_types_in_progress: Vec::new(),
             generic_mapped_types_cut_short: Vec::new(),
             recent_members: Box::new([shape::RecentMembers::NONE; shape::RECENT_MEMBERS]),
-            recent_signatures: Box::new(
-                [(TypeId(u32::MAX), &[] as &[SigId]); shape::RECENT_SIGNATURES],
-            ),
             recent_unions: Default::default(),
             recent_unreduced_unions: Default::default(),
             unions_of_union_types: Default::default(),
@@ -1783,10 +1780,8 @@ pub struct Checker<'p, 's> {
     generic_mapped_types_in_progress: Vec<(FileId, TypeNodeId)>,
     /// The ones for which it hit the `instantiation_count` limit since `check_file` began.
     generic_mapped_types_cut_short: Vec<TypeId>,
-    /// The entries most recently found in `Program::members` and in the signature tables, indexed by the low bits of
-    /// the key.
+    /// The entries most recently found in `Program::members`, indexed by the low bits of the key.
     recent_members: Box<[shape::RecentMembers<'p>; shape::RECENT_MEMBERS]>,
-    recent_signatures: Box<[(TypeId, &'p [SigId]); shape::RECENT_SIGNATURES]>,
     /// The most recent results of `union` for two types, the lower id first.
     recent_unions: instantiate::Recent,
     /// The same for `union_unreduced`, in the order of the arguments.

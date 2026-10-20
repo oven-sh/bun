@@ -312,7 +312,6 @@ impl<'p> Members<'p> {
 }
 
 pub(super) const RECENT_MEMBERS: usize = 512;
-pub(super) const RECENT_SIGNATURES: usize = 256;
 
 /// A type, and its entry in `Program::members`.
 #[derive(Copy, Clone)]
@@ -8501,19 +8500,12 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The call or construct signatures of `ty`.
     pub fn signatures(&mut self, ty: TypeId, construct: bool) -> List<'p, SigId> {
-        // Call signatures at the even indexes, construct signatures at the odd ones.
-        let at = (ty.0 as usize * 2 + usize::from(construct)) % RECENT_SIGNATURES;
-        let recent = self.recent_signatures[at];
-        if recent.0 == ty {
-            return List::Permanent(recent.1);
-        }
         let stored_signatures = match construct {
             true => self.p.construct_signatures.get_ref(&self.task, &ty),
             false => self.p.call_signatures.get_ref(&self.task, &ty),
         };
         if let Some(known) = stored_signatures {
             let known: &'p [SigId] = known;
-            self.recent_signatures[at] = (ty, known);
             return List::Permanent(known);
         }
         let scope = self.begin_scope();
@@ -8536,7 +8528,6 @@ impl<'p, 's> Checker<'p, 's> {
                         .1
                 }
             };
-            self.recent_signatures[at] = (ty, known);
             return List::Permanent(known);
         }
         List::Own(signatures.to_vec())

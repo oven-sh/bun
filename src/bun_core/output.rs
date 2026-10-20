@@ -498,6 +498,8 @@ pub mod windows_stdio {
     }
 
     pub(crate) fn restore() {
+        crate::tty::reset_active_dec_modes();
+
         // SAFETY: PEB access is sound on Windows; handles are valid for process
         // lifetime. `peb()` returns a raw pointer because the OS/CRT mutate the
         // PEB out-of-band (`SetStdHandle`, …), so we must not materialize a

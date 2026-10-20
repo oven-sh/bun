@@ -1,6 +1,6 @@
 // Tests for Bun REPL
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isGlibc, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { chmodSync, existsSync, readdirSync, statSync } from "node:fs";
 import path from "path";
 
@@ -156,9 +156,9 @@ class ScreenModel {
       const codePoint = output.codePointAt(i)!;
       if (codePoint === 0x1b) {
         const rest = output.slice(i, i + 24);
-        const seq = /^\x1b\[([\d;]*)([A-Za-z])/.exec(rest);
+        const seq = /^\x1b\[(\??[\d;]*)([A-Za-z])/.exec(rest);
         if (seq === null) {
-          if (/^\x1b(\[[\d;]*)?$/.test(rest)) {
+          if (/^\x1b(\[\??[\d;]*)?$/.test(rest)) {
             this.unfinished = output.slice(i);
             return;
           }
@@ -185,6 +185,8 @@ class ScreenModel {
 
   private control(command: string, params: string, sequence: string): void {
     if (command === "m") return; // colors
+    // Bracketed paste on or off: a mode of the terminal, nothing is drawn.
+    if (params === "?2004" && (command === "h" || command === "l")) return;
     // The line editor only ever sends a single parameter, and never one past a terminal's size.
     if (!/^\d{0,4}$/.test(params)) {
       throw new Error(`ScreenModel: unsupported escape sequence ${JSON.stringify(sequence)}`);
@@ -2050,6 +2052,442 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
     });
   });
 
+  // While it shows the prompt, the REPL has bracketed paste on: the terminal
+  // then sends a paste between ESC[200~ and ESC[201~, with a CR for each line
+  // end. What is between the two markers is text, and none of it a key press.
+  describe("bracketed paste", () => {
+    const DIM = "\x1b[2m";
+    const colorEnv = { NO_COLOR: undefined, FORCE_COLOR: "1" };
+    const PASTE_ON = "\x1b[?2004h";
+    const PASTE_OFF = "\x1b[?2004l";
+    const paste = (text: string) => `\x1b[200~${text}\x1b[201~`;
+    /** The last thing the REPL told the terminal about bracketed paste. */
+    const lastSwitch = (output: string) => output.match(/\x1b\[\?2004[hl]/g)?.at(-1);
+
+    test("a pasted TAB is text: it does not complete, indent or list completions", async () => {
+      await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+        send(paste('"a\tb"') + "\n");
+        await waitFor('"a\\tb"');
+        send(paste("`a\tb`") + "\n");
+        await waitFor('"a\\tb"');
+        // `proc` has one completion, `process`: the Tab key puts it in the place of `proc`.
+        send(paste('var proc\t= 5; typeof proc + "," + typeof process') + "\n");
+        await waitFor('"number,object"');
+        // The Tab key on an empty line reports how many globals there are.
+        send(paste('if (1) {\r\tconsole.log("pas" + "ted")\r}\r') + "\n");
+        await waitFor("pasted");
+        expect(allOutput()).not.toContain("completions");
+      });
+    });
+
+    test("a paste does not accept the ghost suggestion", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send("var proc");
+          await waitFor(`${DIM}ess`);
+          // The Tab key accepts the ghost: the line would become `var process= 5`.
+          send(paste('\t= 5; typeof proc + "," + typeof process') + "\n");
+          await waitFor("number,object");
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("a pasted control byte is text, not an editing key", async () => {
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        // Every C0 byte but LF and CR (the line ends of a paste), and DEL.
+        const bytes = [...Array(32).keys(), 0x7f].filter(byte => byte !== 0x0a && byte !== 0x0d);
+        const items = bytes.map(byte => `"a${String.fromCharCode(byte)}b".charCodeAt(1)`);
+        send(paste(`[${items.join(", ")}].join("+")`) + "\n");
+        await waitFor(`"${bytes.join("+")}"`);
+      });
+    });
+
+    test("bytes of a paste that are not UTF-8 become U+FFFD", async () => {
+      await withTerminalRepl(async ({ terminal, send, waitFor }) => {
+        terminal.write(
+          Buffer.concat([Buffer.from('\x1b[200~"'), Buffer.from([0xff]), Buffer.from('".codePointAt(0)\x1b[201~')]),
+        );
+        send("\n");
+        await waitFor("65533");
+      });
+    });
+
+    // Terminals that ask before they paste several lines stop asking once a
+    // program has bracketed paste on: they expect it not to run the lines.
+    test("a paste of several lines waits for the Enter key and runs as one entry", async () => {
+      await withTerminalRepl(async ({ send, waitForScreen }) => {
+        const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+        // CR, LF and CR LF each are one line end.
+        send(paste("const total = [1, 2, 3]\r\n  .map(x => x * 2)\n  .reduce((a, b) => a + b)\rtotal"));
+        // Each later line is drawn after the continuation prompt.
+        let screen = await waitForScreen(s => s.rows.at(-1) === "... total" && s.cursor.col === 9);
+        expect(screen.rows.slice(top)).toEqual([
+          "> const total = [1, 2, 3]",
+          "...   .map(x => x * 2)",
+          "...   .reduce((a, b) => a + b)",
+          "... total",
+        ]);
+        // What is typed now belongs to the same entry: nothing ran yet.
+        send(" + 1\n");
+        screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.length > top + 5);
+        expect(screen.rows.slice(top + 3)).toEqual(["... total + 1", "13", "> "]);
+      });
+    });
+
+    test("a pasted line comment keeps its line end when the input is colored", async () => {
+      await withTerminalRepl(
+        async ({ send, waitForScreen }) => {
+          const top = (await waitForScreen(s => s.rows.at(-1) === "\u276f ")).rows.length - 1;
+          send(paste("// note\r1 + 1"));
+          // The highlighter takes one line at a time: it drops the line break after a `//` comment.
+          const screen = await waitForScreen(s => s.rows.at(-1) === "... 1 + 1" && s.cursor.col === 9);
+          expect(screen.rows.slice(top)).toEqual(["\u276f // note", "... 1 + 1"]);
+          send("\n");
+          await waitForScreen(s => s.rows.at(-1) === "\u276f " && s.rows.at(-2) === "2");
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("a paste that ends with a line end keeps it and waits for the Enter key", async () => {
+      await withTerminalRepl(async ({ send, waitFor, waitForScreen }) => {
+        send(paste('"one" + 1\r'));
+        // The cursor is on the next line of the same entry.
+        await waitForScreen(s => s.rows.at(-2) === '> "one" + 1' && s.rows.at(-1) === "... " && s.cursor.col === 4);
+        send("+ 2\n");
+        await waitFor('"one12"');
+        // The Enter key on a paste of only a line end is the Enter key on an empty line.
+        send(paste("\r"));
+        await waitForScreen(s => s.rows.at(-2) === "> " && s.rows.at(-1) === "... ");
+        send('\n"st" + "ill"\n');
+        await waitFor('"still"');
+      });
+    });
+
+    test("a second paste starts on the line after the first", async () => {
+      await withTerminalRepl(async ({ send, waitForScreen }) => {
+        send(paste("var first = 1\r"));
+        await waitForScreen(s => s.rows.at(-1) === "... ");
+        send(paste("var second = first + 1; second\r"));
+        const screen = await waitForScreen(s => s.rows.at(-1) === "... " && s.rows.at(-2) !== "> var first = 1");
+        expect(screen.rows.slice(-3)).toEqual(["> var first = 1", "... var second = first + 1; second", "... "]);
+        send("\n");
+        await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "2");
+      });
+    });
+
+    test("a REPL command takes a pasted argument of several lines, but not as a file name", async () => {
+      await withTerminalRepl(async ({ send, waitFor, rawOutput }) => {
+        send(".copy " + paste("[1,\r2].length") + "\n");
+        await waitFor("Copied 1 characters to clipboard");
+        expect(rawOutput()).toContain(`\x1b]52;c;${btoa("2")}\x07`);
+        send(".load " + paste("one.js\rtwo.js") + "\n");
+        await waitFor("The file name must not contain a null byte or a line break: one.js\\ntwo.js");
+      });
+    });
+
+    test("a REPL command in a paste of several lines is not run", async () => {
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        send(paste('.exit\r"not" + "Run"\r') + "\n");
+        await waitFor(/SyntaxError[^]*> /);
+        send('"still" + "Here"\n');
+        await waitFor('"stillHere"');
+      });
+    });
+
+    test("a paste at the `...` prompt and in .editor is text too", async () => {
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        send("globalThis.pastedList = [\n");
+        await waitFor("...");
+        send(paste('\t"a\tb",\r]') + "\n");
+        await waitFor('[ "a\\tb" ]');
+
+        send(".editor\n");
+        await waitFor(/editor mode/i);
+        // A line of only a TAB or only blanks stays as it is.
+        send(paste("var proc\t= 5\rvar text = `a\r\t\r   \rb`;\r[typeof proc, typeof process, text.length].join()"));
+        send("\x04"); // Ctrl+D also takes what was pasted and not entered
+        await waitFor('"number,object,9"');
+      });
+    });
+
+    test("a paste is drawn once, not once for each byte", async () => {
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        const text = `"${Buffer.alloc(40, "x").toString()}"`;
+        send(paste(text));
+        // ESC [ J starts each redraw of the input.
+        const drawn = await waitFor(text);
+        expect(drawn.split("\x1b[J").length - 1).toBe(1);
+      });
+    });
+
+    test("the Tab key still completes what was pasted", async () => {
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        send(paste("JSON.pars"));
+        await waitFor("JSON.pars");
+        // `JSON.pars` has one completion. Without it the line is `JSON.pars === JSON.parse`.
+        send("\t === JSON.parse\n");
+        await waitFor("true");
+      });
+    });
+
+    test("a paste marker that arrives in pieces is still a marker", async () => {
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        const [start, end] = ["\x1b[200~", "\x1b[201~"];
+        for (let cut = 1; cut < start.length; cut++) {
+          // The REPL has read up to the cut once it has drawn what was typed before it.
+          send('"a' + start.slice(0, cut));
+          await waitFor('"a');
+          send(start.slice(cut) + "\tb" + end + '".length\n');
+          await waitFor(/\n\s*3\b/);
+
+          send('"a' + start + "\tb" + end.slice(0, cut));
+          await waitFor('"a');
+          send(end.slice(cut) + '".length\n');
+          await waitFor(/\n\s*3\b/);
+        }
+      });
+    });
+
+    test("a paste marker or a pasted TAB at the end of a read is not lost", async () => {
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        // The REPL reads 256 bytes at a time: the end marker is cut by the end of the first read.
+        for (const length of [245, 246, 247, 248, 249]) {
+          send(paste(`"${Buffer.alloc(length - 10, "x").toString()}\t".length`) + "\n");
+          await waitFor(new RegExp(`\\n\\s*${length - 9}\\b`));
+        }
+        // A TAB that is the last byte of a read.
+        send(paste(`"${Buffer.alloc(248, "x").toString()}\t".length`) + "\n");
+        await waitFor(/\n\s*249\b/);
+      });
+    });
+
+    test("a paste right after the Esc key is still a paste", async () => {
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        // The ESC of the start marker comes right after the ESC of the key. Also after `ESC O`, which starts some keys.
+        send("\x1b" + paste('"a\tb"') + ".length\n");
+        await waitFor(/\n\s*3\b/);
+        send("\x1bO" + paste('"c\td"') + ".length + 1\n");
+        await waitFor(/\n\s*4\b/);
+      });
+    });
+
+    test("Ctrl+C ends a paste whose end marker does not come", async () => {
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        // Everything after the start marker is the paste: no key is a key. A client that goes away in the middle of a paste leaves this.
+        send('\x1b[200~"lo" + "st"\r');
+        // A 0x03 in the middle of a paste has more bytes behind it at once. This one has none.
+        send("\x03");
+        await waitFor("again to exit");
+        send('"ba" + "ck"\n');
+        await waitFor('"back"');
+      });
+    });
+
+    test("draws a pasted TAB as blanks up to the tab stop and spells out other control bytes", async () => {
+      await withTerminalRepl(async ({ send, waitForScreen }) => {
+        send(paste('"a\tb\x1bc"'));
+        // `> "a` fills 4 columns, so the TAB goes to column 8. The cursor is after the line.
+        const drawn = '> "a    b\\x1bc"';
+        await waitForScreen(s => s.rows.at(-1) === drawn && s.cursor.col === drawn.length);
+        // The line holds the 5 bytes that were pasted, not what is drawn.
+        send(".length\n");
+        await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "5");
+        // Up: the history entry is drawn the same way.
+        send("\x1b[A");
+        await waitForScreen(s => s.rows.at(-1) === `${drawn}.length` && s.cursor.col === drawn.length + 7);
+        // On a later line the tab stops count from after the `... ` prompt.
+        send("\x15" + paste("if (1) {\r\tx\r[\t1,\t2]\r}"));
+        const screen = await waitForScreen(s => s.rows.at(-1) === "... }" && s.cursor.col === 5);
+        expect(screen.rows.slice(-4)).toEqual(["> if (1) {", "...     x", "... [   1,      2]", "... }"]);
+      });
+    });
+
+    test("the Down key and Ctrl+C on a paste that waits for the Enter key", async () => {
+      await withTerminalRepl(async ({ send, waitFor, waitForScreen }) => {
+        send('"old"\n');
+        await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === '"old"');
+        // Down with no newer entry leaves the lines where they are.
+        send(paste("[1,\r2,\r3]"));
+        await waitForScreen(s => s.rows.at(-1) === "... 3]");
+        send("\x1b[B.length\n");
+        await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "3");
+        // Up saves them, Down brings them back.
+        send(paste("[4,\r5]"));
+        await waitForScreen(s => s.rows.at(-1) === "... 5]");
+        send("\x1b[A");
+        await waitForScreen(s => s.rows.at(-1)!.endsWith("3].length"));
+        send("\x1b[B");
+        const screen = await waitForScreen(s => s.rows.at(-1) === "... 5]");
+        expect(screen.rows.slice(-2)).toEqual(["> [4,", "... 5]"]);
+        // Ctrl+C at the `...` prompt and in .editor drops what waits on the line with the rest.
+        send('\x15[\n"ty" + "ped"\x03"af" + "ter"\n');
+        await waitFor('"after"');
+        send(".editor\n");
+        await waitFor(/editor mode/i);
+        send(paste('console.log("pas" + "ted")\r') + "\x03");
+        await waitFor("Editor mode cancelled");
+        send('\n"en" + "d"\n');
+        expect(await waitFor('"end"')).not.toContain("pasted\r\n");
+      });
+    });
+
+    test("is on while the prompt is shown and off while a line runs", async () => {
+      await withTerminalRepl(async ({ send, waitFor, rawOutput }) => {
+        expect(lastSwitch(rawOutput())).toBe(PASTE_ON);
+        send('"re" + "sult"\n');
+        // From the Enter key to the next prompt. `prompt()` and child processes
+        // read stdin while a line runs.
+        const ran = await waitFor(/"result"[^]*> /);
+        expect(ran.match(/\x1b\[\?2004[hl]|"result"/g)).toEqual([PASTE_OFF, '"result"', PASTE_ON]);
+      });
+    });
+
+    test("is off while a line runs that was entered with a ghost suggestion shown", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send('globalThis.zzGhost = "re" + "sult"; globalThis.zzGhostLonger = "set" + "Up"\n');
+          await waitFor(/setUp[^]*\u276f/);
+          send("zzGhost");
+          await waitFor(`${DIM}Longer`);
+          send("\n");
+          const ran = await waitFor(/"result"[^]*\u276f/);
+          expect(ran.match(/\x1b\[\?2004[hl]|"result"/g)).toEqual([PASTE_OFF, '"result"', PASTE_ON]);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    // Left on, the shell would get each paste wrapped in the two markers.
+    test.each([
+      [".exit", ".exit\n", 0],
+      ["Ctrl+D on an empty line", "\x04", 0],
+      ["process.exit()", "process.exit(7)\n", 7],
+    ])("is switched off when the REPL ends: %s", async (_name, input, exitCode) => {
+      await withTerminalRepl(async ({ send, waitFor, proc, rawOutput }) => {
+        send('process.on("exit", () => console.log("exit" + "Listener")); "re" + "ady"\n');
+        await waitFor(/"ready"[^]*> /);
+        send(input);
+        // Off before the listeners of the exit run: they can start a child that reads the terminal.
+        expect(await waitFor("exitListener")).toMatch(/\x1b\[\?2004l[^]*exitListener/);
+        expect(await proc.exited).toBe(exitCode);
+        expect(lastSwitch(rawOutput())).toBe(PASTE_OFF);
+      });
+    });
+
+    test("is switched off when the REPL ends: Ctrl+C twice", async () => {
+      await withTerminalRepl(async ({ send, waitFor, proc, rawOutput }) => {
+        send("\x03");
+        // The hint, then the prompt again.
+        await waitFor(/again to exit[^]*\x1b\[\?2004h/);
+        send("\x03");
+        await waitFor(PASTE_OFF);
+        expect(await proc.exited).toBe(0);
+        expect(lastSwitch(rawOutput())).toBe(PASTE_OFF);
+      });
+    });
+
+    test("is switched off when code that completion runs ends the process", async () => {
+      await withTerminalRepl(async ({ send, waitFor, proc, rawOutput }) => {
+        send('globalThis.quits = { get now() { process.exit(3) } }; "re" + "ady"\n');
+        await waitFor(/"ready"[^]*> /);
+        // Tab reads `quits.now` to list its properties, while the prompt is shown.
+        send("quits.now.\t");
+        await waitFor(PASTE_OFF);
+        expect(await proc.exited).toBe(3);
+        expect(lastSwitch(rawOutput())).toBe(PASTE_OFF);
+      });
+    });
+
+    // A line with `await` leaves SIGINT with its default action, so SIGINT is not in the second row.
+    test.each([
+      ["SIGTERM", "at the first prompt"],
+      ["SIGINT", "at the first prompt"],
+      ["SIGTERM", "after an awaited line"],
+    ] as const)("is switched off when %s ends the REPL %s", async (signal, state) => {
+      await withTerminalRepl(async ({ terminal, send, waitFor, proc, rawOutput, localFlagsAtStart }) => {
+        if (state === "after an awaited line") {
+          send("await 1\n");
+          await waitFor(/\n1\r\n[^]*\x1b\[\?2004h/);
+        }
+        proc.kill(signal);
+        await waitFor(PASTE_OFF);
+        await proc.exited;
+        expect({
+          signalCode: proc.signalCode,
+          lastSwitch: lastSwitch(rawOutput()),
+          localFlags: terminal.localFlags,
+        }).toEqual({ signalCode: signal, lastSwitch: PASTE_OFF, localFlags: localFlagsAtStart });
+      });
+    });
+
+    // The 20 s: a debug build takes seconds to load `bun:internal-for-testing` while other tests run beside this one.
+    test("is switched off when the process crashes in code that completion runs", async () => {
+      await withTerminalRepl(
+        async ({ terminal, send, waitFor, proc, localFlagsAtStart }) => {
+          send(
+            'globalThis.crashes = { get now() { require("bun:internal-for-testing").crash_handler.panic() } }; "re" + "ady"\n',
+          );
+          await waitFor(/"ready"[^]*> /);
+          send("crashes.now.\t");
+          // The crash handler restores the terminal before it prints its report.
+          await waitFor(/\x1b\[\?2004l[^]*panic/, 15_000);
+          await proc.exited;
+          expect(terminal.localFlags).toBe(localFlagsAtStart);
+        },
+        {
+          // Debug builds then do not start a symbolizer, and the crash is not reported.
+          cmd: [bunExe(), "repl", "--debug-crash-handler-use-trace-string"],
+          env: { BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
+        },
+      );
+    }, 20_000);
+
+    // The fixture needs job control in a shell script: dash and bash 5 have it, the `sh` of macOS (bash 3.2) does not.
+    test.skipIf(!isGlibc)(
+      "a stopped REPL in the background of a `stty tostop` terminal is reset and ends on SIGTERM",
+      async () => {
+        // A job-control shell runs the REPL as its foreground job (`exec` keeps the pid that was printed).
+        // When the job is stopped, the shell has the terminal again and the job is in the background.
+        // There a write to a `tostop` terminal stops the process with SIGTTOU, unless it blocks SIGTTOU.
+        // In a build with a second thread, that thread can take the SIGTERM. The main thread then reads the
+        // terminal again and the kernel stops the job with SIGTTIN (128 + 21): the shell continues it.
+        const shell = `
+        set -m
+        sh -c 'echo "pid=$$"; exec "$0" repl' "$1"
+        stopped=$?
+        stty tostop
+        kill -TERM %1
+        kill -CONT %1
+        status=$stopped
+        while [ "$status" -eq "$stopped" ] || [ "$status" -eq 149 ]; do
+          if [ "$status" -eq 149 ]; then kill -CONT %1; fi
+          wait %1
+          status=$?
+        done
+        echo "status=$status"
+      `;
+        await withTerminalRepl(
+          async ({ waitFor, allOutput, proc }) => {
+            const pid = Number(/pid=(\d+)/.exec(allOutput())![1]);
+            try {
+              process.kill(pid, "SIGSTOP");
+              // 128 + SIGTERM: the job ended. The reset was written before that.
+              expect(await waitFor(/status=\d+/)).toMatch(/\x1b\[\?2004l[^]*status=143\b/);
+              expect(await proc.exited).toBe(0);
+            } finally {
+              try {
+                process.kill(pid, "SIGKILL");
+              } catch {}
+            }
+          },
+          { cmd: ["sh", "-c", shell, "sh", bunExe()], session: true },
+        );
+      },
+    );
+  });
+
   test("a terminal that refuses raw mode is read as lines of text", async () => {
     // The REPL is in a background process group that has lost its parent shell:
     // there the terminal refuses tcsetattr() and reads. The REPL starts when the
@@ -2087,7 +2525,8 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
         // All of the output can arrive at once, so wait on the screen and not on new output.
         await waitForScreen(s => s.rows.includes("4"));
         expect(await proc.exited).toBe(0);
-        // Nothing is drawn.
+        // Nothing is drawn and no terminal mode is changed.
+        expect(rawOutput()).not.toContain("\x1b[?2004h");
         expect(rawOutput()).not.toContain("\x1b[J");
       },
       // \177 is DEL: on a terminal that byte is the Backspace key.

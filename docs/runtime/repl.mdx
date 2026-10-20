@@ -144,6 +144,10 @@ The REPL supports Emacs-style line editing.
 | `Tab`               | Auto-complete                                            |
 | `Ctrl+C`            | Cancel current input (press twice on empty line to exit) |
 
+Keybindings apply to the keys you press. The REPL inserts pasted text as text: a tab in pasted code stays a tab and does not run completion. Pasted text waits at the prompt until you press `Enter`, also when it ends with a line break. If you paste several lines, the REPL runs them as one entry, as `.editor` does, and prints the result of the last expression.
+
+The REPL knows what you paste when the terminal supports bracketed paste, a terminal mode that marks where a paste starts and ends. The REPL turns bracketed paste on while it shows the prompt. A terminal without bracketed paste sends a paste as key presses.
+
 ---
 
 ## History

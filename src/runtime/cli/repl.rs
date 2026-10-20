@@ -20,7 +20,6 @@ use bstr::BStr;
 
 use bun_collections::VecExt;
 use bun_core::strings;
-#[cfg(unix)]
 use bun_core::tty;
 use bun_core::{Environment, Output, env_var, fmt, identifier};
 use bun_jsc::js_promise::Status as PromiseStatus;
@@ -86,6 +85,20 @@ impl Cursor {
     const CLEAR_SCROLLBACK: &'static str = concat!("\x1b", "[", "3J");
 }
 
+/// DEC private mode 2004: the terminal sends a paste as `ESC [ 200 ~`, the pasted bytes, `ESC [ 201 ~`.
+struct BracketedPaste;
+impl BracketedPaste {
+    /// Switches the mode on and starts a redraw (one write).
+    const ON_THEN_CR: &'static str = concat!("\x1b", "[", "?2004h", "\r");
+    const OFF: &'static str = concat!("\x1b", "[", "?2004l");
+    const OFF_THEN_CR: &'static str = concat!("\x1b", "[", "?2004l", "\r");
+    const CLEAR_BELOW_THEN_OFF: &'static str = concat!("\x1b", "[", "J", "\x1b", "[", "?2004l");
+    /// The CSI parameter of the marker before a paste.
+    const START: u16 = 200;
+    /// What ends the body of a paste.
+    const END: &'static [u8] = concat!("\x1b", "[", "201~").as_bytes();
+}
+
 // ============================================================================
 // Key Codes
 // ============================================================================
@@ -136,6 +149,9 @@ enum Key {
 
     // A full multi-byte UTF-8 sequence (len bytes of the array are valid)
     Text([u8; 4], usize),
+
+    // A bracketed paste; its body is in `Repl::paste`
+    Paste,
 
     // Unknown/unhandled
     Unknown,
@@ -304,22 +320,17 @@ impl History {
         None
     }
 
+    /// `None` when already on the line being entered (nothing to restore).
     fn next(&mut self) -> Option<&[u8]> {
-        if self.position < self.entries.len() {
-            self.position += 1;
-        }
-
         if self.position == self.entries.len() {
-            // Keep ownership in History; reset_position() frees temp_line.
-            // Caller copies the data via set(), so borrowed reference is safe.
-            return self.temp_line.as_deref();
+            return None;
         }
-
-        if self.position < self.entries.len() {
-            return Some(&self.entries[self.position]);
+        self.position += 1;
+        match self.entries.get(self.position) {
+            Some(entry) => Some(entry),
+            // Back on the line being entered; `prev` saved it on the way out.
+            None => self.temp_line.as_deref(),
         }
-
-        None
     }
 
     fn reset_position(&mut self) {
@@ -1015,11 +1026,15 @@ pub(super) struct Repl<'a> {
     /// `Some` on a terminal in raw mode: stdin is key presses. `None`: stdin is lines of text, never redrawn.
     drawing: Option<Drawing>,
     ctrl_c_pressed: bool,
+    /// Bracketed paste is on. `leave_input` turns it off: `prompt()` or a child would read the markers while a line runs.
+    bracketed_paste: bool,
 
     // Buffered stdin
     stdin_buf: [u8; 256],
     stdin_buf_start: usize,
     stdin_buf_end: usize,
+    /// Body of the bracketed paste that `read_key` last returned as `Key::Paste`.
+    paste: Vec<u8>,
 
     // JavaScript VM (JSC_BORROW per LIFETIMES.tsv)
     pub(super) vm: Option<&'a VirtualMachine>,
@@ -1053,9 +1068,11 @@ impl<'a> Repl<'a> {
             use_colors: false,
             drawing: None,
             ctrl_c_pressed: false,
+            bracketed_paste: false,
             stdin_buf: [0u8; 256],
             stdin_buf_start: 0,
             stdin_buf_end: 0,
+            paste: Vec::new(),
             vm: None,
             global: None,
             // `adopt(UNDEFINED)`: no protect taken; drop's unprotect() is a
@@ -1120,6 +1137,10 @@ impl<'a> Repl<'a> {
     }
 
     fn restore_terminal(&mut self) {
+        if core::mem::take(&mut self.bracketed_paste) {
+            self.write(BracketedPaste::OFF.as_bytes());
+            tty::mark_dec_modes_reset(tty::dec::BRACKETED_PASTE);
+        }
         #[cfg(unix)]
         {
             let _ = self
@@ -1299,9 +1320,36 @@ impl<'a> Repl<'a> {
             (b'~', [4]) => Key::End,
             (b'~', [5]) => Key::PageUp,
             (b'~', [6]) => Key::PageDown,
-            // Insert and the function keys.
+            (b'~', [BracketedPaste::START]) => {
+                if self.read_paste() {
+                    Key::Paste
+                } else {
+                    Key::CtrlC
+                }
+            }
+            // Insert, the function keys, and an end marker with no paste before it.
             _ => Key::Unknown,
         }
+    }
+
+    /// Reads the body of a bracketed paste into `paste`, up to its end marker or the end of input. False when Ctrl+C gave up on a paste whose end marker never came.
+    fn read_paste(&mut self) -> bool {
+        self.paste.clear();
+        while let Some(byte) = self.read_byte() {
+            self.paste.push(byte);
+            if byte == b'~' && self.paste.ends_with(BracketedPaste::END) {
+                let body_len = self.paste.len() - BracketedPaste::END.len();
+                self.paste.truncate(body_len);
+                break;
+            }
+            // A terminal sends the rest of a paste at once. A 0x03 with nothing behind it is the Ctrl+C key: the end marker was lost.
+            if byte == 0x03 && self.stdin_buf_start == self.stdin_buf_end && !stdin_has_more_soon()
+            {
+                self.paste.clear();
+                return false;
+            }
+        }
+        true
     }
 
     fn read_key(&mut self) -> Option<Key> {
@@ -1328,8 +1376,16 @@ impl<'a> Repl<'a> {
                 return Some(match third {
                     b'H' => Key::Home,
                     b'F' => Key::End,
+                    27 => {
+                        self.stdin_buf_start -= 1;
+                        Key::Unknown
+                    }
                     _ => Key::Unknown,
                 });
+            } else if second == 27 {
+                // The Esc key, then a sequence of its own (a paste marker, an arrow key): do not cut its ESC off.
+                self.stdin_buf_start -= 1;
+                return Some(Key::Escape);
             } else if second == b'b' {
                 return Some(Key::AltB);
             } else if second == b'd' {
@@ -1457,7 +1513,13 @@ impl<'a> Repl<'a> {
         if drawing.cursor.row > 0 {
             self.print(format_args!("{}{}A", CSI, drawing.cursor.row));
         }
-        self.write(b"\r");
+        if self.bracketed_paste {
+            self.write(b"\r");
+        } else {
+            self.bracketed_paste = true;
+            tty::mark_dec_modes_set(tty::dec::BRACKETED_PASTE);
+            self.write(BracketedPaste::ON_THEN_CR.as_bytes());
+        }
         self.write(Cursor::CLEAR_BELOW.as_bytes());
 
         // Write prompt
@@ -1543,19 +1605,32 @@ impl<'a> Repl<'a> {
         // False once a line that ends exactly at the right edge has left the cursor on a fresh row.
         let mut on_input_row = true;
         if let Some(Drawing { cursor, end, .. }) = self.drawing {
+            // Bracketed paste goes off with a write that happens anyway, before the newline.
+            let paste_off = core::mem::take(&mut self.bracketed_paste);
             if !self.drawn_suggestion().is_empty() {
                 // Nothing but the ghost follows the cursor.
-                self.write(Cursor::CLEAR_BELOW.as_bytes());
+                self.write(if paste_off {
+                    BracketedPaste::CLEAR_BELOW_THEN_OFF.as_bytes()
+                } else {
+                    Cursor::CLEAR_BELOW.as_bytes()
+                });
                 on_input_row = cursor.col > 0;
             } else {
                 if end.row > cursor.row {
                     self.print(format_args!("{}{}B", CSI, end.row - cursor.row));
                 }
-                self.write(b"\r");
+                self.write(if paste_off {
+                    BracketedPaste::OFF_THEN_CR.as_bytes()
+                } else {
+                    b"\r"
+                });
                 if end.col > 0 {
                     self.print(format_args!("{}{}C", CSI, end.col));
                 }
                 on_input_row = end.col > 0;
+            }
+            if paste_off {
+                tty::mark_dec_modes_reset(tty::dec::BRACKETED_PASTE);
             }
         }
         self.write(echo);
@@ -2683,15 +2758,13 @@ impl<'a> Repl<'a> {
                 }
                 Key::ArrowDown | Key::CtrlN => {
                     if let Some(next_line) = self.history.next() {
-                        let next_line = next_line.to_vec();
-                        let _ = self.line_editor.set(&next_line);
-                    } else {
-                        self.line_editor.clear();
+                        let _ = self.line_editor.set(next_line);
+                        self.suggestion.clear();
+                        self.refresh_line();
                     }
-                    self.suggestion.clear();
-                    self.refresh_line();
                 }
                 Key::Tab => self.handle_tab(),
+                Key::Paste => self.handle_paste(),
                 Key::Home => {
                     self.line_editor.move_to_start();
                     self.suggestion.clear();
@@ -2720,6 +2793,17 @@ impl<'a> Repl<'a> {
         Ok(())
     }
 
+    /// Inserts a bracketed paste as text. Also with several lines it waits on the line for the Enter key.
+    fn handle_paste(&mut self) {
+        let mut body = core::mem::take(&mut self.paste);
+        replace_invalid_utf8(&mut body);
+        self.line_editor.insert_text(&strings::crlf_as_lf(&body));
+        self.update_suggestion();
+        self.refresh_line();
+        body.clear();
+        self.paste = body;
+    }
+
     fn handle_enter(&mut self) -> Result<(), crate::Error> {
         self.leave_input(b"");
 
@@ -2734,17 +2818,23 @@ impl<'a> Repl<'a> {
             return Ok(());
         }
 
-        // Check for REPL commands
-        if !line.is_empty() && line[0] == b'.' {
-            // A TAB ends the name too: in text, no Tab key completed the name and added a blank.
-            let space_idx = strings::index_of_any(&line, b" \t");
+        // The line end that ends a paste is not part of a command, and does not make an empty line an entry.
+        let entered = strings::trim_right(&line, b"\n");
+
+        // Check for REPL commands. A TAB ends the name too: in text, no Tab key completed the name and added a blank.
+        let space_idx = strings::index_of_any(entered, b" \t\n");
+        // A name that a line end follows is the first line of pasted code, not a command.
+        if !entered.is_empty()
+            && entered[0] == b'.'
+            && space_idx.is_none_or(|idx| entered[idx] != b'\n')
+        {
             let cmd_name = if let Some(idx) = space_idx {
-                &line[..idx]
+                &entered[..idx]
             } else {
-                &line[..]
+                entered
             };
             let args = if let Some(idx) = space_idx {
-                &line[idx + 1..]
+                &entered[idx + 1..]
             } else {
                 &b""[..]
             };
@@ -2780,7 +2870,8 @@ impl<'a> Repl<'a> {
         }
 
         // Handle empty line
-        if line.is_empty() && self.input_mode != InputMode::Multiline {
+        if entered.is_empty() && self.input_mode != InputMode::Multiline {
+            self.line_editor.clear();
             self.refresh_line();
             return Ok(());
         }
@@ -2829,6 +2920,7 @@ impl<'a> Repl<'a> {
         let cancels_line =
             self.input_mode == InputMode::Normal && !self.line_editor.buffer.is_empty();
         self.leave_input(if cancels_line { b"^C" } else { b"" });
+        self.line_editor.clear();
         match self.input_mode {
             InputMode::Editor => {
                 self.print(format_args!(
@@ -2843,9 +2935,7 @@ impl<'a> Repl<'a> {
                 self.input_mode = InputMode::Normal;
                 self.multiline_buffer.clear();
             }
-            InputMode::Normal if cancels_line => {
-                self.line_editor.clear();
-            }
+            InputMode::Normal if cancels_line => {}
             InputMode::Normal if self.ctrl_c_pressed => {
                 // Second Ctrl+C on empty line - exit
                 self.running = false;
@@ -3104,6 +3194,25 @@ fn replace_invalid_utf8(bytes: &mut Vec<u8>) {
         *bytes = bstr::ByteSlice::to_str_lossy(bytes.as_slice())
             .into_owned()
             .into_bytes();
+    }
+}
+
+/// Waits a moment for more of stdin. False when none came.
+fn stdin_has_more_soon() -> bool {
+    #[cfg(unix)]
+    {
+        const WAIT_MS: c_int = 500;
+        let mut fds = [sys::posix::PollFd {
+            fd: 0,
+            events: sys::posix::POLL_IN,
+            revents: 0,
+        }];
+        sys::posix::poll(&mut fds, WAIT_MS).is_ok_and(|ready| ready > 0)
+    }
+    // The console keeps Ctrl+C a signal (ENABLE_PROCESSED_INPUT): no 0x03 byte gets here from the key.
+    #[cfg(not(unix))]
+    {
+        true
     }
 }
 

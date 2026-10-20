@@ -325,7 +325,7 @@ impl<'a> ExportMaps<'a> {
 
     /// What `parse` reads the file at `path` with. `None`: a parser that is not known here.
     fn language_of(&self, path: &[u8]) -> Option<&LanguageOptions> {
-        let own = self.file.language();
+        let own = self.file.configured_language();
         let other = self.settings.parser_for(path);
         let Some(parser) = other.filter(|it| *it != own.parser) else {
             return Some(own);
@@ -336,12 +336,7 @@ impl<'a> ExportMaps<'a> {
             Parser::TypeScript => typescript,
             Parser::Other => return None,
         };
-        let language: &LanguageOptions = language.get_or_init(|| {
-            Box::new(LanguageOptions {
-                parser,
-                ..own.clone()
-            })
-        });
+        let language: &LanguageOptions = language.get_or_init(|| Box::new(own.with_parser(parser)));
         Some(language)
     }
 

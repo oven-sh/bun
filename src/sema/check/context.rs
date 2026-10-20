@@ -74,7 +74,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getContainingFunctionOrClassStaticBlock`
     #[inline]
     pub fn enclosing_fn_of_expr(&self, file: FileId, e: ExprId) -> Option<FnId> {
-        self.enclosing_fn(file, self.bound(file).expr_parent[e.idx()])
+        self.enclosing_fn(file, self.bound(file).parent_of_expr(e))
     }
 
     /// The same for a direct child of `parent`.
@@ -83,8 +83,8 @@ impl<'p, 's> Checker<'p, 's> {
         loop {
             parent = match parent {
                 // FOR SPEED: most steps are these two.
-                Parent::Expr(e) if e.is_some() => bound.expr_parent[e.idx()],
-                Parent::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
+                Parent::Expr(e) if e.is_some() => bound.parent_of_expr(e),
+                Parent::Stmt(s) if s.is_some() => bound.parent_of_stmt(s),
                 Parent::FnBody(f) => return Some(f),
                 Parent::ParamDefault(p) => return Some(bound.param_fn[p.idx()]),
                 Parent::None | Parent::File => return None,
@@ -108,13 +108,13 @@ impl<'p, 's> Checker<'p, 's> {
         let bound = self.bound(file);
         if self.prepared_exprs.0 != file {
             if self.task.file != Some(file) {
-                return self.prepare_parent(file, bound.expr_parent[e.idx()]);
+                return self.prepare_parent(file, bound.parent_of_expr(e));
             }
-            self.prepared_exprs = (file, vec![false; bound.expr_parent.len()]);
+            self.prepared_exprs = (file, vec![false; self.hir(file).exprs.len()]);
         }
         let mut at = e;
         while !std::mem::replace(&mut self.prepared_exprs.1[at.idx()], true) {
-            at = match bound.expr_parent[at.idx()] {
+            at = match bound.parent_of_expr(at) {
                 Parent::Expr(parent) => parent,
                 Parent::Prop(p) => bound.prop_owner[p.idx()],
                 parent => return self.prepare_parent(file, parent),
@@ -158,7 +158,7 @@ impl<'p, 's> Checker<'p, 's> {
         let bound = self.bound(file);
         let mut at = e;
         for _ in 0..64 {
-            match bound.expr_parent[at.idx()] {
+            match bound.parent_of_expr(at) {
                 Parent::Expr(parent) => match hir[parent].kind {
                     ExprKind::Call(c) | ExprKind::New(c) => {
                         if hir[c].callee != at
@@ -296,7 +296,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let Some(&(crate::bind::Decl::Var(declared) | crate::bind::Decl::Param(declared))) =
-            bound.symbols[sym.id.idx()].decls.first()
+            bound.symbol(sym.id).decls.first()
         else {
             return false;
         };
@@ -668,6 +668,12 @@ impl<'p, 's> Checker<'p, 's> {
         (ty != TypeId::UNRESOLVED).then_some(ty)
     }
 
+    /// `getContextualTypeForDecorator`
+    fn type_of_decorator(&mut self, file: FileId, decorated: DecoratorOwner) -> Option<TypeId> {
+        let sig = self.decorator_call_signature(file, decorated)?;
+        Some(self.type_of_signature(sig, false))
+    }
+
     fn contextual_type_from_parent(
         &mut self,
         file: FileId,
@@ -681,7 +687,7 @@ impl<'p, 's> Checker<'p, 's> {
         if bound.is_in_type_query(e) {
             return None;
         }
-        match bound.expr_parent[e.idx()] {
+        match bound.parent_of_expr(e) {
             Parent::VarInit(d) => {
                 let decl = &hir[d];
                 if decl.ty.is_some() {
@@ -800,11 +806,9 @@ impl<'p, 's> Checker<'p, 's> {
                 )
             }
             Parent::Expr(parent) => self.contextual_type_in_expr(file, e, parent, context_flags),
-            // `getContextualTypeForDecorator`
-            Parent::Decorator(_, owner) => {
-                let sig = self.decorator_call_signature(file, owner)?;
-                Some(self.type_of_signature(sig, false))
-            }
+            Parent::ClassDecorator(c) => self.type_of_decorator(file, DecoratorOwner::Class(c)),
+            Parent::MemberDecorator(m) => self.type_of_decorator(file, DecoratorOwner::Member(m)),
+            Parent::ParamDecorator(p) => self.type_of_decorator(file, DecoratorOwner::Param(p)),
             Parent::PatPropDefault(p) => {
                 self.contextual_type_for_default_of_element(file, hir[p].value, context_flags)
             }
@@ -941,7 +945,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let innermost = self.stack.iter().rposition(|&visit| visit == q);
         if let Some(innermost) = innermost.filter(|&innermost| innermost != outermost)
-            && (self.stack.len() >= MAX_DEPTH / 2 || self.is_half_of_stack_in_use())
+            && self.is_half_of_stack_in_use()
         {
             // The frames of a visit store nothing, up to the first that is not rechecked.
             let is_stored = |in_flight: &Query| match *in_flight {
@@ -961,14 +965,11 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         // Results computed under what is pushed are not valid here, nor these there.
-        let found_outside = (
-            std::mem::take(&mut self.rechecked_exprs),
-            std::mem::take(&mut self.rechecked_members),
-        );
+        let found_outside = self.set_rechecked_aside();
         let outer = self.begin_recheck();
         let ty = self.check_expression_ex(file, initializer, CheckMode::empty());
         self.end_recheck(outer);
-        (self.rechecked_exprs, self.rechecked_members) = found_outside;
+        self.restore_rechecked(found_outside);
         // Of two nested visits the outer one assigns last. A visit that was refused assigns nothing.
         if ty != TypeId::UNRESOLVED {
             match self
@@ -1031,26 +1032,46 @@ impl<'p, 's> Checker<'p, 's> {
         if context.is_never() {
             return Some(context);
         }
+        let parts = self.parts(context);
+        let asked = self.members_to_ask_as_context(context, name);
         let mut types = Parts::new();
-        for &part in self.parts(context) {
-            let found = if self.is_intersection(part) {
-                self.contextual_property_of_intersection(part, name, name_type)
-            } else if !self.is_object_type(part) {
-                None
-            } else if self.is_generic_mapped_without_remapping(part) {
-                self.contextual_property_of_generic_mapped(part, name, name_type)
-            } else {
-                match self.concrete_contextual_property(part, name) {
-                    Some(declared) => Some(declared),
-                    None => self.contextual_type_from_index_infos(part, name, name_type),
+        match &asked {
+            Some(asked) => {
+                for at in asked.iter() {
+                    types.extend(self.contextual_property_of_member(parts[at], name, name_type));
                 }
-            };
-            types.extend(found);
+            }
+            None => {
+                for &part in parts {
+                    types.extend(self.contextual_property_of_member(part, name, name_type));
+                }
+            }
         }
         if types.is_empty() {
             None
         } else {
             Some(self.union_unreduced(&types))
+        }
+    }
+
+    /// The `mapTypeEx` callback in `getTypeOfPropertyOfContextualTypeEx`.
+    fn contextual_property_of_member(
+        &mut self,
+        part: TypeId,
+        name: Atom,
+        name_type: Option<TypeId>,
+    ) -> Option<TypeId> {
+        if self.is_intersection(part) {
+            self.contextual_property_of_intersection(part, name, name_type)
+        } else if !self.is_object_type(part) {
+            None
+        } else if self.is_generic_mapped_without_remapping(part) {
+            self.contextual_property_of_generic_mapped(part, name, name_type)
+        } else {
+            match self.concrete_contextual_property(part, name) {
+                Some(declared) => Some(declared),
+                None => self.contextual_type_from_index_infos(part, name, name_type),
+            }
         }
     }
 
@@ -1109,7 +1130,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `isGenericMappedType(t) && getMappedTypeNameTypeKind(t) != MappedTypeNameTypeKindRemapping`
     fn is_generic_mapped_without_remapping(&mut self, t: TypeId) -> bool {
-        if self.mapped_origin(t).is_none() || !self.is_generic(t) {
+        if !self.is_mapped_type(t) || !self.is_generic(t) {
             return false;
         }
         match self.mapped_name_type(t) {
@@ -1284,7 +1305,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // A type parameter is not cloned with the signature it belongs to: the outer type arguments
         // of the signature are not applied to its constraint.
-        let sig = if self.maybe_type_of_kind(instantiated, Self::is_deferred) {
+        let is_deferred = tf::INSTANTIABLE_NON_PRIMITIVE | tf::INDEX;
+        let sig = if self.maybe_type_of_kind(instantiated, is_deferred) {
             self.get_inference_context(file, e)
                 .and_then(|level| self.inference_contexts[level].context.as_ref()?.sig)
         } else {
@@ -1324,13 +1346,22 @@ impl<'p, 's> Checker<'p, 's> {
         this_argument: TypeId,
     ) -> TypeId {
         let key = (t, this_argument);
-        if let Some(&cached) = self.apparent_types_of_intersections.get(&key) {
+        let cached = match t == this_argument {
+            true => self.apparent_types_of_intersections.get(t),
+            false => self.apparent_types_with_this_argument.get(&key).copied(),
+        };
+        if let Some(cached) = cached {
             return cached;
         }
         let before = self.non_cacheable_mark();
         let result = self.type_with_this_argument_ex(t, this_argument, true);
-        if before == self.non_cacheable_mark() {
-            self.apparent_types_of_intersections.insert(key, result);
+        if before != self.non_cacheable_mark() {
+            return result;
+        }
+        if t == this_argument {
+            self.apparent_types_of_intersections.insert(t, result);
+        } else {
+            (self.apparent_types_with_this_argument).insert(key, result);
         }
         result
     }
@@ -1344,7 +1375,7 @@ impl<'p, 's> Checker<'p, 's> {
         context_flags: ContextFlags,
     ) -> TypeId {
         if self.inference_contexts.is_empty()
-            || !self.maybe_type_of_kind(contextual_type, Self::is_instantiable)
+            || !self.maybe_type_of_kind(contextual_type, tf::INSTANTIABLE)
         {
             return contextual_type;
         }
@@ -1398,17 +1429,47 @@ impl<'p, 's> Checker<'p, 's> {
         Some(result)
     }
 
-    fn take_inference_context(&mut self, level: usize) -> Option<Inference> {
+    fn take_inference_context(&mut self, level: usize) -> Option<Box<Inference>> {
+        self.inference_contexts[level].context.as_ref()?;
+        let mut placeholder = self.spare_inference();
         let context = self.inference_contexts[level].context.as_mut()?;
-        let mut placeholder = Inference::for_params(&[], None);
         placeholder.return_context = context.return_context.take();
         Some(std::mem::replace(context, placeholder))
     }
 
-    fn put_back_inference_context(&mut self, level: usize, mut context: Inference) {
+    fn put_back_inference_context(&mut self, level: usize, mut context: Box<Inference>) {
         let slot = &mut self.inference_contexts[level].context;
         context.return_context = (slot.as_mut()).and_then(|it| it.return_context.take());
-        *slot = Some(context);
+        if let Some(mut placeholder) = slot.replace(context) {
+            placeholder.become_empty();
+            self.spare_inferences.push(placeholder);
+        }
+    }
+
+    /// Empties `rechecked_exprs` and `rechecked_members`. Returns their contents for `restore_rechecked`.
+    pub(super) fn set_rechecked_aside(&mut self) -> Rechecked {
+        let (exprs, members) = self.spare_rechecked.pop().unwrap_or_default();
+        (
+            std::mem::replace(&mut self.rechecked_exprs, exprs),
+            std::mem::replace(&mut self.rechecked_members, members),
+        )
+    }
+
+    /// Discards `rechecked_exprs` and `rechecked_members` and puts back what `set_rechecked_aside` returned.
+    pub(super) fn restore_rechecked(&mut self, (exprs, members): Rechecked) {
+        let mut exprs = std::mem::replace(&mut self.rechecked_exprs, exprs);
+        let mut members = std::mem::replace(&mut self.rechecked_members, members);
+        // Clearing a map costs time proportional to its capacity, so large maps are dropped instead.
+        if exprs.capacity() + members.capacity() <= 1024 {
+            exprs.clear();
+            members.clear();
+            self.spare_rechecked.push((exprs, members));
+        }
+    }
+
+    /// Returns an empty context equal to `Inference::for_params(&[], None)`, reusing a spare one if possible.
+    pub(super) fn spare_inference(&mut self) -> Box<Inference> {
+        (self.spare_inferences.pop()).unwrap_or_else(|| Box::new(Inference::for_params(&[], None)))
     }
 
     /// Takes the context of `returnMapper` out of the slot at `level` of `inference_contexts` while
@@ -1647,7 +1708,7 @@ impl<'p, 's> Checker<'p, 's> {
                 | ExprKind::True
                 | ExprKind::False
                 | ExprKind::Null
-        ) || self.every_type(actual, |c, t| c.is_primitive(t))
+        ) || self.is_every_type_of_kind(actual, tf::PRIMITIVE)
             && self.cached_type_of_expr(file, e) == Some(actual);
         (actual, is_final)
     }
@@ -1779,7 +1840,7 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         match hir[parent].kind {
             ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c) => {
-                if hir[c].callee == e || hir[c].template == e {
+                if hir[c].callee == e || hir.template_of(c) == e {
                     return None;
                 }
                 self.contextual_type_for_argument(file, parent, e)
@@ -1818,7 +1879,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // An expression spread into an array or an argument list has no contextual type. A
             // spread child of an element is a `JsxExpression`.
-            ExprKind::Spread(_) => match self.bound(file).expr_parent[parent.idx()] {
+            ExprKind::Spread(_) => match self.bound(file).parent_of_expr(parent) {
                 Parent::Expr(element) if matches!(hir[element].kind, ExprKind::Jsx(_)) => {
                     self.contextual_type(file, parent, context_flags)
                 }
@@ -1857,7 +1918,7 @@ impl<'p, 's> Checker<'p, 's> {
                     return None;
                 }
                 // `{ a = e }` is a `ShorthandPropertyAssignment`: `getContextualTypeForObjectLiteralElement`.
-                if matches!(self.bound(file).expr_parent[parent.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
+                if matches!(self.bound(file).parent_of_expr(parent), Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
                 {
                     return self.contextual_type(file, parent, context_flags);
                 }
@@ -1988,16 +2049,13 @@ impl<'p, 's> Checker<'p, 's> {
                             )
                     {
                         // An annotated variable provides the contextual types of its properties.
-                        let symbol = bound.expr_symbol[obj.idx()];
+                        let symbol = bound.symbol_of_expr(obj);
                         if symbol.is_some()
                             && let Some(pat) =
-                                bound.symbols[symbol.idx()]
-                                    .decls
-                                    .iter()
-                                    .find_map(|&d| match d {
-                                        crate::bind::Decl::Var(pat) => Some(pat),
-                                        _ => None,
-                                    })
+                                bound.symbol(symbol).decls.iter().find_map(|&d| match d {
+                                    crate::bind::Decl::Var(pat) => Some(pat),
+                                    _ => None,
+                                })
                             && let PatParent::Var(d) = bound.pat_parent[pat.idx()]
                             && hir[d].ty.is_some()
                         {
@@ -2193,7 +2251,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `getApparentType`: a type parameter is replaced by its constraint, also inside an
         // intersection.
         let context = self.map_type_unreduced(context, |c, m| {
-            if c.is_deferred(m) || matches!(c.data(m), TypeData::Intersection(_)) {
+            if c.is_deferred(m) || c.is_intersection(m) {
                 c.base_constraint(m)
             } else {
                 m
@@ -2508,7 +2566,7 @@ impl<'p, 's> Checker<'p, 's> {
         let FnOwner::Expr(e) = bound.fns[func.idx()].owner else {
             return None;
         };
-        let Parent::Expr(call) = bound.expr_parent[e.idx()] else {
+        let Parent::Expr(call) = bound.parent_of_expr(e) else {
             return None;
         };
         if !matches!(hir[call].kind, ExprKind::Call(c) if hir[c].callee == e) {

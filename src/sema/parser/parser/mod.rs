@@ -153,8 +153,9 @@ file_lists! {
     ids, numbers, exprs, stmts, types, pats, pat_props, pat_elems, fns, params, type_params,
     classes, interfaces, aliases, enums, enum_members, modules, members, props, var_decls, calls,
     cases, jsx, imports, import_specs, import_equals, exports, export_specs, tuple_elems, mapped,
-    modifiers, names, parens, non_null_ends, jsx_expressions, body_starts, specifier_uses,
-    decorators, modifiers_of_params, modifiers_of_props, with_bodies, detached_semicolons,
+    modifiers, names, parens, non_null_ends, far_names, tagged_templates,
+    jsx_expressions, body_starts, specifier_uses,
+    decorators, modifiers_of_params, modifiers_of_stmts, modifiers_of_props, with_bodies, detached_semicolons,
     import_attributes,
     deferred_import_calls, import_call_type_args, keyword_identifier_positions, comments,
     mentioned, diagnostics, after_skipped, stray_decorators,
@@ -240,8 +241,8 @@ pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     pub(crate) has_plain_top_level_await: bool,
     /// `statementHasAwaitIdentifier`, as far as recovery asks: see `is_in_some_parsing_context`.
     pub(crate) has_await_in_statement: bool,
-    /// A computed name in the top-level statement that is being parsed has an `await`, which was read outside the await
-    /// context.
+    /// True if the current top-level statement has an `await` that was parsed outside the await context, either in a
+    /// computed name or as the first parameter of an arrow function.
     pub(crate) has_await_in_name: bool,
     /// `statementHasAwaitIdentifier`: an `await` at the top level is a name unless the context makes it a keyword.
     pub(crate) has_await_identifier: bool,
@@ -287,7 +288,7 @@ fn is_an_external_module_indicator(f: &FileBuilder, id: StmtId) -> bool {
         return false;
     };
     let flags = match statement.kind {
-        StmtKind::Var(_) => f.modifiers_to_flags(statement.modifiers),
+        StmtKind::Var(_) => f.modifiers_to_flags(f.stmt_modifiers(id)),
         StmtKind::Fn(x) => f[x].flags,
         StmtKind::Class(x) => f[x].flags,
         StmtKind::Interface(x) => f[x].flags,
@@ -376,6 +377,7 @@ pub(crate) fn run<'a>(
     lx.is_babel = options.dialect.babel;
     lx.is_oxc = options.dialect.oxc;
     lx.is_script = (is_ecmascript || options.dialect.oxc) && options.dialect.script;
+    lx.notes_html_opens = options.dialect.oxc || is_ecmascript && options.dialect.module_or_script;
     let is_flow = options.dialect.flow && options.is_javascript && !options.is_json;
     let is_general = options.recovers || jsdoc.wanted != 0 || is_flow;
     let seed = Seed {
@@ -534,6 +536,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.report_what_the_scanner_flagged();
         if !self.lx.private_names.is_empty() {
             self.f.rare_syntax |= rare::ODD_PRIVATE_NAME;
+        }
+        if self.has_top_level_await {
+            self.f.rare_syntax |= rare::TOP_LEVEL_AWAIT;
         }
         self.note_odd_exports();
         *file = self.f;
@@ -1100,6 +1105,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     pub(crate) fn note_name_in_type(&mut self, atom: Atom, pos: u32) {
         if atom.is_keyword_identifier() {
             self.f.keyword_identifier_positions.push(pos);
+            if atom == known::r#await {
+                self.note_await_as_a_name();
+            }
         }
     }
 
@@ -1256,7 +1264,6 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 kind: StmtKind::Expr(decorator),
                 start,
                 loc: TextRange::default(),
-                modifiers: Span::EMPTY,
             });
         }
         self.s.stray_decorators.truncate(base);

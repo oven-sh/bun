@@ -854,6 +854,8 @@ impl AnyRoute {
                             Utf8Bytes::Borrowed(b".jsx".as_slice()),
                         ],
                         allow_layouts: true,
+                        client_pages: false,
+                        server_exports: Vec::new(),
                     });
 
                 // `@typeInfo(FrameworkRouter.Type.Index).@"enum".tag_type` → the index newtype's backing-int MAX.

@@ -139,7 +139,7 @@ impl Checker<'_, '_> {
             VisitedKind::ImportEqualsName(import, _) => {
                 self.enclosing_scope_of_declaration(file, Decl::ImportEquals(import))
             }
-            VisitedKind::Label(s) => or_file_scope(bound.stmt_scope[s.idx()]),
+            VisitedKind::Label(s) => or_file_scope(bound.scope_of_stmt(s)),
             VisitedKind::LiteralInBindingPropertyName(_)
             | VisitedKind::BindingPropertyName(_)
             | VisitedKind::JsxNamespacedNamePart => ScopeId(0),

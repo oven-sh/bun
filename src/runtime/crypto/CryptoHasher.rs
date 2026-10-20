@@ -575,8 +575,8 @@ macro_rules! for_each_zig_algo {
 }
 
 impl CryptoHasherZig {
-    /// How many bytes of `out` it wrote. `algorithm` is one of these: the
-    /// ones without a BoringSSL `EVP_MD`.
+    /// How many bytes of `out` it wrote. `algorithm` is one of
+    /// `for_each_zig_algo`: the one-shot sends the three without an `EVP_MD`.
     fn hash(algorithm: evp::Algorithm, input: &[u8], out: &mut evp::Digest) -> usize {
         macro_rules! arm {
             ($ty:ty) => {
@@ -593,7 +593,7 @@ impl CryptoHasherZig {
         unreachable!("{algorithm:?} has a BoringSSL EVP_MD");
     }
 
-    /// `None` when `algorithm` has a BoringSSL `EVP_MD`.
+    /// `None` when `algorithm` is not one of `for_each_zig_algo`.
     pub(crate) fn init(algorithm: evp::Algorithm) -> Option<CryptoHasherZig> {
         macro_rules! arm {
             ($ty:ty, $alg:expr) => {

@@ -2871,6 +2871,37 @@ console.log(<div {...obj} key="after" />);`),
   // encoded the value as a UTF-16 surrogate pair. The lexer must reject the
   // entity with the same "JSX entity escape is too big" diagnostic it emits
   // for i32-overflow, instead of forwarding an invalid code point.
+  describe("define with optional chaining", () => {
+    const transpiler = new Bun.Transpiler({
+      loader: "js",
+      define: { "process.env.FOO": '"hello"', "process.env": "{}", "a.b": "1", "x.y": "{}" },
+    });
+    const run = code => transpiler.transformSync(code).trim();
+
+    it.each([
+      "process.env?.FOO",
+      "process?.env.FOO",
+      "process?.env?.FOO",
+      'process?.env?.["FOO"]',
+      'process?.["env"]?.FOO',
+      'process["env"]["FOO"]',
+    ])("replaces %s", code => {
+      expect(run(`use(${code});`)).toBe('use("hello");');
+    });
+
+    it("replaces the part of a chain that matches and keeps the rest", () => {
+      expect(run("use(a?.b, x?.y.z, x?.y?.z, (x?.y).z);")).toBe("use(1, {}.z, {}?.z, {}.z);");
+    });
+
+    it("keeps a chain that matches no define", () => {
+      expect(run("use(a?.c, other?.b);")).toBe("use(a?.c, other?.b);");
+    });
+
+    it("does not replace an assignment target", () => {
+      expect(run('a.b = 2; a["b"] = 3;')).toBe('a.b = 2;\na["b"] = 3;');
+    });
+  });
+
   describe("rejects out-of-range numeric JSX entities without panicking", () => {
     const bun = new Bun.Transpiler({
       loader: "jsx",

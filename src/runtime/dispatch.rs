@@ -84,7 +84,9 @@ use crate::shell::builtins::{
     touch::ShellTouchTask,
     yes::YesTask as ShellYesTask,
 };
-use crate::shell::dispatch_tasks::{ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask};
+use crate::shell::dispatch_tasks::{
+    ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask, ShellStopTask,
+};
 use crate::shell::interpreter::ShellTask;
 #[cfg(not(windows))]
 use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
@@ -545,6 +547,7 @@ pub(crate) fn run_task(
         | task_tag::ShellMvCheckTargetTask
         | task_tag::ShellRmTask
         | task_tag::ShellRmDirTask
+        | task_tag::ShellStopTask
         | task_tag::ShellGlobTask
         | task_tag::ShellYesTask => run_task_cold(task),
 
@@ -866,6 +869,12 @@ fn run_task_cold(task: Task) {
             let t = cast_ptr!(ShellRmDirTask);
             ShellRmDirTask::run_from_main_thread(t);
         }
+        task_tag::ShellStopTask => {
+            // SAFETY: §Dispatch — tag identifies pointee; boxed by
+            // `Interpreter::stop_in_flight`, which holds `finish` (and with it
+            // the interpreter) until this has run.
+            unsafe { ShellStopTask::run_from_main_thread(cast_ptr!(ShellStopTask)) };
+        }
         task_tag::ShellGlobTask => shell_dispatch!(ShellGlobTask),
         task_tag::ShellYesTask => {
             // SAFETY: §Dispatch — tag identifies pointee; enqueued by
@@ -883,7 +892,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 86,
+    task_tag::COUNT == 87,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1797,6 +1806,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::ShellMvCheckTargetTask => release_in!([Shell], ShellMvCheckTargetTask),
         task_tag::ShellRmDirTask => release_in!([Shell], ShellRmDirTask),
         task_tag::ShellRmTask => release_in!([Shell], ShellRmTask),
+        task_tag::ShellStopTask => release_in!([Shell], ShellStopTask),
         task_tag::ShellTouchTask => release_in!([Shell], ShellTouchTask),
         task_tag::StatWatcherTimerUpdate => {
             release_in!(

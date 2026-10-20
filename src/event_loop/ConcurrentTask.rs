@@ -131,6 +131,7 @@ pub mod task_tag {
         ShellMvCheckTargetTask,
         ShellRmDirTask,
         ShellRmTask,
+        ShellStopTask,            // shell.Interpreter (reports the builtins a stop left idle)
         ShellTouchTask,
         StatFS,
         StatWatcherTimerUpdate,

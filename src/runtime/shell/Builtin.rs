@@ -19,6 +19,8 @@ use crate::shell::yield_::Yield;
 
 pub(crate) struct Builtin {
     pub(crate) kind: Kind,
+    /// Set by `Builtin::stop`: it writes nothing more, and its pool tasks (`ShellTask::stop`) do nothing more.
+    pub(crate) stopped: core::sync::atomic::AtomicBool,
     /// argv[1..] as NUL-terminated strings (argv[0] is the builtin name).
     /// Points into the Cmd's `args` storage.
     pub args: Vec<*const c_char>,
@@ -507,6 +509,7 @@ impl Builtin {
 
         interp.as_cmd_mut(cmd).exec = Exec::Builtin(Box::new(Builtin {
             kind,
+            stopped: core::sync::atomic::AtomicBool::new(false),
             args,
             stdin,
             stdout,
@@ -813,6 +816,85 @@ impl Builtin {
         // Output is written through immediately in `write_no_io`, so there
         // is nothing to flush here.
         Cmd::on_exec_done(interp, cmd, exit_code)
+    }
+
+    #[inline]
+    pub(crate) fn is_stopped(&self) -> bool {
+        self.stopped.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The script is stopped while this runs (`Cmd::stop`): give up what names the node, free nothing. Safe to repeat.
+    pub(crate) fn stop(interp: &Interpreter, cmd: NodeId) {
+        let me = Self::of_mut(interp, cmd);
+        me.stopped
+            .store(true, core::sync::atomic::Ordering::Relaxed);
+        let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Builtin);
+        for out in [&me.stdout, &me.stderr] {
+            if let BuiltinIO::Fd(fd) = out {
+                fd.writer.cancel_chunks(child);
+            }
+        }
+        match me.kind {
+            Kind::Cat => crate::shell::builtins::cat::Cat::stop(interp, cmd),
+            // Nothing else names these: queued chunks are cancelled above, and pool tasks read `stopped`.
+            Kind::Yes
+            | Kind::Ls
+            | Kind::Mkdir
+            | Kind::Touch
+            | Kind::Cp
+            | Kind::Rm
+            | Kind::Mv
+            | Kind::True
+            | Kind::False
+            | Kind::Pwd
+            | Kind::Exit
+            | Kind::Basename
+            | Kind::Dirname
+            | Kind::Cd
+            | Kind::Echo
+            | Kind::Export
+            | Kind::Which
+            | Kind::Seq => {}
+        }
+    }
+
+    /// A stop task's turn for a stopped builtin: free what its cancelled chunks left, and say whether nothing else of it is out.
+    pub(crate) fn after_stop(interp: &Interpreter, cmd: NodeId) -> bool {
+        use crate::shell::builtins::{cp, ls, mkdir, mv, rm, touch, yes};
+
+        match Self::kind_of(interp, cmd) {
+            Kind::Yes => yes::Yes::after_stop(interp, cmd),
+            Kind::Ls => ls::Ls::after_stop(interp, cmd),
+            Kind::Mkdir => mkdir::Mkdir::after_stop(interp, cmd),
+            Kind::Touch => touch::Touch::after_stop(interp, cmd),
+            Kind::Cp => cp::Cp::after_stop(interp, cmd),
+            Kind::Rm => rm::Rm::after_stop(interp, cmd),
+            Kind::Mv => mv::Mv::after_stop(interp, cmd),
+            // These had at most a reader entry and one queued chunk out.
+            Kind::Cat
+            | Kind::True
+            | Kind::False
+            | Kind::Pwd
+            | Kind::Exit
+            | Kind::Basename
+            | Kind::Dirname
+            | Kind::Cd
+            | Kind::Echo
+            | Kind::Export
+            | Kind::Which
+            | Kind::Seq => true,
+        }
+    }
+
+    /// Report a stopped builtin that has nothing out, with the exit code of a Ctrl+C when that stopped it.
+    pub(crate) fn done_stopped(interp: &Interpreter, cmd: NodeId) -> Yield {
+        debug_assert!(Self::of(interp, cmd).is_stopped());
+        let exit_code = if interp.as_cmd(cmd).base.interrupted {
+            bun_sys::SignalCode::SIGINT.to_exit_code().into()
+        } else {
+            1
+        };
+        Self::done(interp, cmd, exit_code)
     }
 
     /// Look up the Builtin inside a Cmd's `exec` slot.

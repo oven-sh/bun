@@ -610,8 +610,8 @@ impl Expansion {
         // Child is a Script (command substitution). Its captured stdout lives
         // in the duped `ShellExecEnv` it owns; read it before deinit.
         debug_assert!(matches!(interp.node(child).kind(), StateKind::Script));
-        if interp.failed() {
-            // The script failed: the rest of the word is not expanded.
+        if interp.interrupted(this) {
+            // The script is halted or a Ctrl+C cut the substitution short: the rest of the word is not expanded.
             {
                 let me = interp.as_expansion_mut(this);
                 me.state = ExpansionState::Done;
@@ -685,6 +685,12 @@ impl Expansion {
     ) {
         use crate::shell::dispatch_tasks::ShellGlobErr;
         log!("Expansion {} onGlobWalkDone", this);
+        if interp.halted() {
+            // The walk was cut short (`ShellTask::for_glob`) and the command will not start: no word, no error.
+            interp.as_expansion_mut(this).state = ExpansionState::Done;
+            Yield::Next(this).run(interp);
+            return;
+        }
         let walk_err = match err {
             Some(ShellGlobErr::Syscall(e))
                 if matches!(e.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) =>

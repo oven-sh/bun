@@ -523,6 +523,10 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
     auto scope = DECLARE_THROW_SCOPE(global->vm());
     ASSERT(callFrame->argumentCount() == 2);
     ASSERT(callFrame->uncheckedArgument(0).isString());
+    // Only the main thread writes through to the OS environment (Node: a worker env is a MapKVStore).
+    auto* zigGlobal = defaultGlobalObject(global);
+    auto* context = zigGlobal ? zigGlobal->scriptExecutionContext() : nullptr;
+    bool writesOSEnv = !context || context->isMainThread();
     WTF::String string1 = callFrame->uncheckedArgument(0).toWTFString(global);
     RETURN_IF_EXCEPTION(scope, {});
     JSValue arg2 = callFrame->uncheckedArgument(1);
@@ -532,14 +536,16 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
         RETURN_IF_EXCEPTION(scope, {});
         BunString k = Bun::toString(string1);
         BunString v = Bun::toString(string2);
-        Bun__Process__editWindowsEnvVar(&k, &v);
+        if (writesOSEnv)
+            Bun__Process__editWindowsEnvVar(&k, &v);
         // fetch() reads the proxy variables from the native env map.
         if (isProxyEnvVarName(global->vm(), string1))
             Bun__setEnvValue(global, &k, &v);
     } else {
         BunString k = Bun::toString(string1);
         BunString v = { .tag = BunStringTag::Dead };
-        Bun__Process__editWindowsEnvVar(&k, &v);
+        if (writesOSEnv)
+            Bun__Process__editWindowsEnvVar(&k, &v);
         if (isProxyEnvVarName(global->vm(), string1))
             Bun__setEnvValue(global, &k, &v);
     }

@@ -341,6 +341,29 @@ static void CmykToRgbaImpl(uint8_t* HWY_RESTRICT buf, size_t npx)
     }
 }
 
+// The pixels of `src` that are not fully transparent, one after the other. Returns how many that is.
+static size_t ShownCompactImpl(const uint8_t* HWY_RESTRICT src, size_t n, uint8_t* HWY_RESTRICT dst)
+{
+    const hn::ScalableTag<uint32_t> d32;
+    const hn::Repartition<uint8_t, decltype(d32)> d8;
+    const size_t N = hn::Lanes(d32);
+    const auto visible = hn::Set(d32, 0x01000000u);
+    size_t kept = 0;
+    size_t i = 0;
+    for (; i + N <= n; i += N) {
+        const auto px = hn::BitCast(d32, hn::LoadU(d8, src + i * 4));
+        // CompressStore can write all N lanes: `kept` is at most `i`, so that stays inside the first i + N pixels of `dst`.
+        kept += hn::CompressStore(px, hn::Ge(px, visible), d32, reinterpret_cast<uint32_t*>(dst + kept * 4));
+    }
+    for (; i < n; i++) {
+        if (src[i * 4 + 3] == 0)
+            continue;
+        std::memcpy(dst + kept * 4, src + i * 4, 4);
+        kept++;
+    }
+    return kept;
+}
+
 } // namespace HWY_NAMESPACE
 } // namespace bun_image
 HWY_AFTER_NAMESPACE();
@@ -358,6 +381,7 @@ HWY_EXPORT(FlipVImpl);
 HWY_EXPORT(ModulateImpl);
 HWY_EXPORT(CmykToRgbaImpl);
 HWY_EXPORT(NearestPaletteImpl);
+HWY_EXPORT(ShownCompactImpl);
 
 namespace {
 
@@ -602,6 +626,11 @@ void bun_image_modulate_rgba8(uint8_t* buf, size_t len, float brightness, float 
 void bun_image_cmyk_to_rgba8(uint8_t* buf, size_t len)
 {
     BUN_HWY_DISPATCH(CmykToRgbaImpl)(buf, len / 4);
+}
+
+size_t bun_image_shown_compact(uint8_t* dst, const uint8_t* src, size_t n)
+{
+    return BUN_HWY_DISPATCH(ShownCompactImpl)(src, n, dst);
 }
 
 uint32_t bun_image_nearest_palette(const uint8_t* palette, uint32_t k,

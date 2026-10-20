@@ -281,6 +281,24 @@ impl SSLConfigFromJs for SSLConfig {
     }
 }
 
+/// Sets `SSLConfig::extra_ca` to what node:tls hands over for a `pfx`: the CA certificates of the bundle, as one PEM
+/// string. It is not an option of `TLSOptions`, so `from_js` does not read it.
+pub(crate) fn set_extra_ca(
+    global: &JSGlobalObject,
+    config: &mut SSLConfig,
+    pem: JSValue,
+) -> JsResult<()> {
+    if !pem.is_string() {
+        return Ok(());
+    }
+    let pem = pem.to_utf8(global)?;
+    debug_assert!(config.extra_ca.is_null());
+    if !pem.is_empty() {
+        config.extra_ca = dupe_z(&pem);
+    }
+    Ok(())
+}
+
 /// The `SSLConfig` for the `tls: true` shorthand: every option at its
 /// documented default, unlike `SSLConfig::zero()`.
 pub(crate) fn tls_true_defaults(vm: &VirtualMachine, is_server: bool) -> SSLConfig {

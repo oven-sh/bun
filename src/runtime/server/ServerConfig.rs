@@ -1218,7 +1218,16 @@ impl ServerConfig {
                     }
                 }
             } else {
-                if let Some(ssl_config) = SSLConfig::from_js(vm, global, tls, true)? {
+                if let Some(mut ssl_config) = SSLConfig::from_js(vm, global, tls, true)? {
+                    // node:https hands the CA certificates of a `pfx` under a private name, which no caller of
+                    // Bun.serve() can set: they extend the trust store, where `ca` replaces it.
+                    if args.is_node_http_server && tls.is_object() {
+                        if let Some(extra_ca) =
+                            tls.fast_get(global, bun_jsc::BuiltinName::extraCA)?
+                        {
+                            crate::socket::set_extra_ca(global, &mut ssl_config, extra_ca)?;
+                        }
+                    }
                     args.ssl_config = Some(ssl_config);
                 }
             }

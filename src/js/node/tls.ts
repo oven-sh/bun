@@ -16,6 +16,8 @@ const {
   processPfxOptions,
   stripTls13CipherNames,
   validateSecureContextOptions,
+  caWithPfxCAs,
+  defaultCAs,
   SSL_OP_CIPHER_SERVER_PREFERENCE,
 } = require("internal/tls");
 const {
@@ -450,17 +452,23 @@ function sniName(servername) {
   return nul === -1 ? servername : StringPrototypeSlice.$call(servername, 0, nul);
 }
 
-function newNativeSecureContext(options, cached = false) {
+// `pfxCAs`: the CA certificates of a `pfx` that the caller unsealed itself, as a tls.Server does.
+function newNativeSecureContext(options, cached = false, pfxCAs?: string) {
   maybeWarnAboutExtraCACerts();
   // tls.createSecureContext() with no options still goes through the version
   // translation below so the module-level DEFAULT_MIN/MAX_VERSION apply.
-  options = options == null ? {} : processPfxOptions(options);
+  if (options == null) {
+    options = {};
+  } else {
+    const unsealed = processPfxOptions(options);
+    // Only the copy that processPfxOptions() makes holds the CA certificates of a `pfx`.
+    if (unsealed !== options) pfxCAs = $getByIdDirectPrivate(unsealed, "extraCA");
+    options = unsealed;
+  }
+  // What of `pfxCAs` extends the default roots.
+  let extraCA;
   const servername = options.servername;
   if (sniName(servername) !== servername) options = { ...options, servername: sniName(servername) };
-  // PKCS#12-embedded CAs extend the trust set after the context is built; a
-  // mutated context must not be the shared cached one.
-  const pfxExtraCAs = options._pfxExtraCACerts;
-  if (pfxExtraCAs) cached = false;
   // ALPN protocols given as an array of strings are converted to the
   // length-prefixed wire format before crossing into native, the way Node's
   // convertALPNProtocols normalizes them on the socket options.
@@ -476,6 +484,11 @@ function newNativeSecureContext(options, cached = false) {
     if (normalizedKey !== key) {
       key = normalizedKey;
       options = { ...options, key };
+    }
+    if (pfxCAs) {
+      ca = caWithPfxCAs(ca, pfxCAs);
+      if (ca) options = { ...options, ca };
+      else extraCA = pfxCAs;
     }
     if (!key || !cert || !ca) {
       options = {
@@ -523,25 +536,23 @@ function newNativeSecureContext(options, cached = false) {
       options = { ...options, minVersion, maxVersion };
     }
   }
-  const ctx = (cached ? NativeSecureContext.intern : NativeSecureContext.createPrivate)(options);
-  if (pfxExtraCAs) {
-    for (const pem of pfxExtraCAs) ctx.addCACert(pem);
-  }
-  return ctx;
+  // `extraCA` is in the context from its build, and in its digest: a context with a `pfx` is interned like any other.
+  return (cached ? NativeSecureContext.intern : NativeSecureContext.createPrivate)(options, extraCA);
 }
 
 var InternalSecureContext = class SecureContext {
   context;
   servername;
 
-  constructor(options, cached = false) {
+  constructor(options, cached = false, pfxCAs?: string) {
     // When tls.setDefaultCACertificates() has installed an override and no
     // explicit `ca` was given, use the override as the default CA set so the
     // process-wide default applies on every construction path (the public
     // createSecureContext(), the connect/TLSSocket path, addContext and
     // setSecureContext), matching Node's secure-context default.
-    if (_defaultCACertificatesOverride !== undefined && (options == null || options.ca == null)) {
-      options = { ...options, ca: _defaultCACertificatesOverride };
+    const defaultCAOverride = defaultCAs.override;
+    if (defaultCAOverride !== undefined && (options == null || options.ca == null)) {
+      options = { ...options, ca: defaultCAOverride };
     }
     if (options) {
       validateSecureContextOptions(options);
@@ -567,7 +578,7 @@ var InternalSecureContext = class SecureContext {
     // The native handle (SSL_CTX wrapper) is what's memoised — not this JS
     // object — so per-call fields like `servername` come from THIS call's
     // options while the expensive SSL_CTX is shared.
-    this.context = newNativeSecureContext(options, cached);
+    this.context = newNativeSecureContext(options, cached, pfxCAs);
     this.servername = options?.servername;
   }
 };
@@ -1051,11 +1062,11 @@ let CLIENT_RENEG_LIMIT = 3,
   CLIENT_RENEG_WINDOW = 600;
 
 // Not interned: one SSL_CTX is one session cache and one set of ticket keys, and no other server or client may share them.
-function buildSharedCreds(server, options) {
-  return new InternalSecureContext({
+// `pfxCAs`: the CA certificates of the `pfx` that `server.key` and `server.cert` come from.
+function buildSharedCreds(server, options, pfxCAs) {
+  const creds = {
     ...options,
     pfx: undefined,
-    _pfxExtraCACerts: undefined,
     key: server.key,
     cert: server.cert,
     ca: server.ca,
@@ -1073,7 +1084,8 @@ function buildSharedCreds(server, options) {
     // The verify mode accepted sockets inherit. setSecureContext() does not name them.
     requestCert: server._requestCert === true,
     rejectUnauthorized: server._rejectUnauthorized,
-  });
+  };
+  return new InternalSecureContext(creds, false, pfxCAs);
 }
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1599-L1611
@@ -1171,6 +1183,7 @@ function Server(options, secureConnectionListener): void {
   this.setSecureContext = function (options) {
     const serverTLSOptions = options;
     const next: Record<string, any> = { __proto__: null };
+    let pfxCAs;
     if (options instanceof InternalSecureContext) {
       options = options.context;
     }
@@ -1190,7 +1203,9 @@ function Server(options, secureConnectionListener): void {
         };
       }
       validateSecureContextOptions(options);
-      options = processPfxOptions(options);
+      const unsealed = processPfxOptions(options);
+      if (unsealed !== options) pfxCAs = $getByIdDirectPrivate(unsealed, "extraCA");
+      options = unsealed;
 
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1431-L1474: a falsy key, cert, ca or crl counts as absent
       let cert = options.cert || undefined;
@@ -1208,16 +1223,8 @@ function Server(options, secureConnectionListener): void {
       }
       next.key = key;
 
-      let ca = options.ca || undefined;
-      // InternalSecureContext applies tls.setDefaultCACertificates() itself; a named pipe listener builds from this field.
-      if (_defaultCACertificatesOverride !== undefined && ca == null) {
-        ca = _defaultCACertificatesOverride;
-      }
-      // buildSharedCreds() drops them, so they go into `ca`: an mTLS server verifies clients against the bundle's own CA chain.
-      const pfxExtraCAs = options._pfxExtraCACerts;
-      if (pfxExtraCAs?.length) {
-        ca = ca == null ? pfxExtraCAs : Array.isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
-      }
+      // As in Node, the `ca` of the caller alone: the context adds the default set and the CA certificates of a `pfx`.
+      const ca = options.ca || undefined;
       if (ca) {
         throwOnInvalidTLSArray("options.ca", ca);
       }
@@ -1285,7 +1292,7 @@ function Server(options, secureConnectionListener): void {
     }
     const isContext = serverTLSOptions instanceof InternalSecureContext;
     // Reads the staged fields over the server's own. Throws on material BoringSSL rejects, so it runs before the fields change.
-    const own = buildSharedCreds({ __proto__: this, ...next }, isContext ? undefined : serverTLSOptions);
+    const own = buildSharedCreds({ __proto__: this, ...next }, isContext ? undefined : serverTLSOptions, pfxCAs);
     // Accepted sockets take their verify mode from the context, so the listener's is always this server's own. An instance names no key, as in Node.
     listenerContext = own.context;
     const handle = this._handle;
@@ -1317,7 +1324,7 @@ function Server(options, secureConnectionListener): void {
     return [
       {
         serverName: sniName(this.servername || host || "localhost"),
-        // What a socket listener serves. Only a named pipe's still builds its own from the fields below.
+        // What every listener serves: none builds a context from the fields below.
         secureContext: listenerContext,
         key: normalizePemKeyOption(this.key, this.passphrase),
         cert: this.cert,
@@ -1626,13 +1633,6 @@ function cacheExtraCACertificates(): string[] {
   return extraCACertificates;
 }
 
-// Runtime override for the "default" CA certificate set, installed by
-// tls.setDefaultCACertificates(). undefined = no override (use the real
-// bundled/system default). Only affects type "default"/implicit — "bundled",
-// "system" and "extra" are unchanged.
-// https://github.com/nodejs/node/blob/main/lib/internal/tls/secure-context.js
-let _defaultCACertificatesOverride: Array<string> | undefined;
-
 type CACertInput = string | NodeJS.ArrayBufferView;
 // tls.setDefaultCACertificates(certs)
 // https://github.com/nodejs/node/blob/v25.2.1/lib/tls.js#L202
@@ -1667,7 +1667,7 @@ function setDefaultCACertificates(certs: ReadonlyArray<CACertInput>): void {
   if (normalized.length === 0 && snapshot.length > 0) {
     throw $ERR_CRYPTO_OPERATION_FAILED("No valid certificates found in the provided array");
   }
-  _defaultCACertificatesOverride = normalized;
+  defaultCAs.override = normalized;
 }
 
 function getCACertificates(type = "default") {
@@ -1675,8 +1675,8 @@ function getCACertificates(type = "default") {
 
   switch (type) {
     case "default":
-      if (_defaultCACertificatesOverride !== undefined) {
-        return _defaultCACertificatesOverride.slice();
+      if (defaultCAs.override !== undefined) {
+        return defaultCAs.override.slice();
       }
       return cacheDefaultCACertificates();
     case "bundled":

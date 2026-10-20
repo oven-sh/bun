@@ -74,6 +74,7 @@ namespace uWS {
         unsigned int cert_count = 0;
         const char **ca = nullptr;
         unsigned int ca_count = 0;
+        const char *extra_ca = nullptr;
         unsigned int secure_options = 0;
         int ssl_min_version = 0;
         int ssl_max_version = 0;
@@ -97,6 +98,7 @@ namespace uWS {
     };
 
     static_assert(sizeof(struct us_bun_socket_context_options_t) == sizeof(SocketContextOptions), "Mismatching uSockets/uWebSockets ABI");
+    static_assert(offsetof(struct us_bun_socket_context_options_t, extra_ca) == offsetof(SocketContextOptions, extra_ca), "Mismatching uSockets/uWebSockets ABI");
 
 template <bool SSL>
 struct TemplatedApp {

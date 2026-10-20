@@ -221,6 +221,9 @@ impl SecureContext {
     /// `addCACert` can never affect another context (or the cached
     /// connect/listen contexts). The internal connect/listen paths keep using
     /// `intern` for the per-digest cache.
+    ///
+    /// Like `intern`, it takes the CA certificates of a `pfx` as a second argument (`SSLConfig::extra_ca`): they are
+    /// part of the context from its build, and of its digest.
     pub(crate) fn create_private(
         global: &JSGlobalObject,
         callframe: &CallFrame,
@@ -235,8 +238,12 @@ impl SecureContext {
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();
         // Only a server reads `rejectUnauthorized` back from a context (`server_ctx_rejects_unauthorized`).
-        let config = SSLConfig::from_js(vm, global, opts, true)?.unwrap_or_else(SSLConfig::zero);
+        let mut config =
+            SSLConfig::from_js(vm, global, opts, true)?.unwrap_or_else(SSLConfig::zero);
         // `defer config.deinit()` — handled by Drop.
+        if let Some(&extra_ca) = args.get(1) {
+            crate::socket::set_extra_ca(global, &mut config, extra_ca)?;
+        }
 
         let ctx_opts = config.as_usockets();
         let d = ctx_opts.digest();
@@ -276,8 +283,12 @@ impl SecureContext {
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();
         // Only a server reads `rejectUnauthorized` back from a context (`server_ctx_rejects_unauthorized`).
-        let config = SSLConfig::from_js(vm, global, opts, true)?.unwrap_or_else(SSLConfig::zero);
+        let mut config =
+            SSLConfig::from_js(vm, global, opts, true)?.unwrap_or_else(SSLConfig::zero);
         // `defer config.deinit()` — handled by Drop.
+        if let Some(&extra_ca) = args.get(1) {
+            crate::socket::set_extra_ca(global, &mut config, extra_ca)?;
+        }
 
         let ctx_opts = config.as_usockets();
         let d = ctx_opts.digest();

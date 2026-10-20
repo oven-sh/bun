@@ -151,8 +151,8 @@ long us_ssl_ctx_live_count(void) {
 static int us_ctx_ex_idx = -1;
 static int us_ctx_cache_ex_idx = -1;
 /* Marks an SSL_CTX whose verification store holds user-provided CAs (the
- * ca/caFile options or a later addCACert): the per-socket client attach must
- * not replace such a store with the process-shared default roots. */
+ * ca/caFile options, extra_ca or a later addCACert): the per-socket client
+ * attach must not replace such a store with the process-shared default roots. */
 static int us_ctx_user_ca_ex_idx = -1;
 static int us_ssl_rare_ex_idx = -1;
 /* (SSL) The SSLWrapper (src/uws/lib.rs) that owns this SSL. Not set on the SSL of a us_socket_t. */
@@ -1386,6 +1386,13 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     SSL_CTX_set_cert_store(ssl_context, us_get_shared_default_ca_store());
   }
 
+  /* Extends whichever store the branches above chose: the user CAs, or a private copy of the default roots. */
+  if (options.extra_ca && !us_ssl_ctx_add_ca_cert(ssl_context, options.extra_ca)) {
+    *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA;
+    ssl_ctx_build_fail(ssl_context);
+    return NULL;
+  }
+
   /* After the store is filled: it completes their chains. */
   if (several_identities &&
       !us_ssl_ctx_use_identities(ssl_context, options.cert, options.cert_count, options.key, options.key_count)) {
@@ -1529,16 +1536,17 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   return ssl_context;
 }
 
-/* Whether the context's store was configured from user CAs (ca / addCACert / pfx extras) rather than being the
+/* Whether the context's store was configured from user CAs (ca / extra_ca / addCACert) rather than being the
  * empty SSL_CTX_new() store or the shared default roots. */
 int us_ssl_ctx_has_user_ca(SSL_CTX *ctx) {
   us_ex_idx_ensure();
   return ctx != NULL && SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_ex_idx) != NULL;
 }
 
-/* node:tls `secureContext.context.addCACert(pem)`: append the certificates in
- * `content` to this context's trust store. Returns 0 when the content is not
- * a PEM document or contains a malformed certificate. */
+/* node:tls `secureContext.context.addCACert(pem)`, and `extra_ca` while the
+ * context is built: append the certificates in `content` to this context's
+ * trust store. Returns 0 when the content is not a PEM document or contains a
+ * malformed certificate. */
 int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
   if (!ctx || !content) {
     return 0;
@@ -1550,9 +1558,9 @@ int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
   if (!store) {
     return 0;
   }
-  /* A CA added after the context was built (pfx extras, addCACert) lands in
-   * the store the handshake-time auto-chain walks, so a lone leaf-only cert
-   * picks the intermediate up with no eager re-walk. */
+  /* A CA added after the context was built (addCACert) lands in the store the
+   * handshake-time auto-chain walks, so a lone leaf-only cert picks the
+   * intermediate up with no eager re-walk. */
   return add_ca_cert_to_ctx_store(ctx, content, store);
 }
 

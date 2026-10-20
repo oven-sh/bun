@@ -80,6 +80,7 @@ using namespace JSC;
     macro(expires) \
     macro(exports) \
     macro(extname) \
+    macro(extraCA) \
     macro(fastPath) \
     macro(fatal) \
     macro(fd) \

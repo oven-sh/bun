@@ -323,10 +323,13 @@ impl Listener {
                     ssl: ssl_enabled,
                     listener: Cell::new(ListenerType::None),
                     protos: protos_taken,
+                    // The pipe holds the context, not `secure_ctx`, so its own policy is read here.
                     reject_unauthorized: crate::socket::resolve_reject_unauthorized(
                         vm,
                         ssl_cfg_taken.as_ref(),
                         true,
+                    ) || crate::socket::server_ctx_rejects_unauthorized(
+                        prebuilt_ctx.as_ref().map(|ctx| ctx.as_ptr()),
                     ),
                     pause_on_connect,
                     poll_ref: JsCell::new(KeepAlive::init()),
@@ -355,6 +358,7 @@ impl Listener {
                     &pipe_buf[..pipe_len],
                     511,
                     ssl_cfg_taken.as_ref(),
+                    prebuilt_ctx,
                     this,
                 ) {
                     Ok(named_pipe) => {
@@ -1880,6 +1884,7 @@ impl WindowsNamedPipeListeningContext {
         path: &[u8],
         backlog: i32,
         ssl_config: Option<&SSLConfig>,
+        prebuilt_ctx: Option<boring_sys::OwnedSslCtx>,
         listener: *mut Listener,
     ) -> Result<*mut WindowsNamedPipeListeningContext, ListenPipeError> {
         // Heap-allocate at the final address so libuv can
@@ -1904,7 +1909,10 @@ impl WindowsNamedPipeListeningContext {
             }
         });
 
-        if let Some(ssl_options) = ssl_config {
+        if prebuilt_ctx.is_some() {
+            // SAFETY: `this` was just allocated above; scoped field write.
+            unsafe { (*this).ctx.set(prebuilt_ctx) };
+        } else if let Some(ssl_options) = ssl_config {
             boringssl::load();
 
             let ctx_opts = ssl_options.as_usockets();

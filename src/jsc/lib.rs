@@ -948,6 +948,8 @@ pub enum BuiltinName {
     internal,
     /// Private name (`$sharedFd` in builtins); user code cannot set it.
     sharedFd,
+    /// Private name (`$extraCA` in builtins); user code cannot set it.
+    extraCA,
 }
 
 #[allow(non_upper_case_globals)]

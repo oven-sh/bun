@@ -1,16 +1,16 @@
 // This test ensures that when a TLS connection is established, the server
 // selects the most recently added SecureContext that matches the servername.
 
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { X509Certificate } from "node:crypto";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import http2 from "node:http2";
 import net, { AddressInfo } from "node:net";
 import { join } from "node:path";
-import { Duplex } from "node:stream";
+import { Duplex, Readable } from "node:stream";
 import tls from "node:tls";
 
 function loadPEM(filename: string) {
@@ -1284,6 +1284,206 @@ describe("server certificate chain built from `ca`", () => {
       expect(presentedSerials).toContain(ca3Serial);
     } finally {
       socket.destroy();
+    }
+  });
+});
+
+// Node adds the other certificates of a PKCS#12 bundle to the store of the context, which holds the default roots when
+// there is no `ca`, and configures them as the chain of the identity:
+// https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L2211-L2229
+describe("the CA certificates of a pfx", () => {
+  // The keys of Node's tests. Some of them differ from the ones above with the same names.
+  const keys = join(import.meta.dir, "../test/fixtures/keys");
+  const pem = (name: string) => readFileSync(join(keys, name), "utf8");
+  const ca1 = pem("ca1-cert.pem");
+  // ca2 issued the certificate of the first client, and ca1 that of the second.
+  const clients = [
+    { key: pem("agent3-key.pem"), cert: pem("agent3-cert.pem") },
+    { key: pem("agent1-key.pem"), cert: pem("agent1-cert.pem") },
+  ];
+
+  /** What the server at `address`, a port or a pipe, says about the certificate of `client`. */
+  function ask(route: string, address: number | string, client: (typeof clients)[number]) {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const options = {
+      ...(typeof address === "string" ? { path: address } : { port: address, host: "127.0.0.1" }),
+      servername: "pfx.example",
+      ...client,
+      // The issuer of the certificate of every server here.
+      ca: ca1,
+      checkServerIdentity: () => undefined,
+    };
+    let received = "";
+    const read = (stream: Readable) =>
+      stream
+        .setEncoding("utf8")
+        .on("data", chunk => (received += chunk))
+        // An HTTP/1.1 server says it in the body of its response.
+        .on("end", () => resolve(received.slice(received.indexOf("\r\n\r\n") + 1).trimStart()))
+        .on("error", reject);
+    if (route.startsWith("http2.")) {
+      const session = http2.connect(`https://127.0.0.1:${address}`, options).on("error", reject);
+      read(session.request()).on("close", () => session.close());
+    } else {
+      const socket = tls.connect(options);
+      if (route.startsWith("https.")) socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      read(socket);
+    }
+    return promise;
+  }
+
+  describe("extend the default roots, and join a `ca`", () => {
+    const routes = [
+      "tls.createServer",
+      "tls.Server#setSecureContext",
+      "tls.Server#setSecureContext while listening",
+      "tls.Server#addContext",
+      ...(isWindows ? ["tls.createServer on a named pipe"] : []),
+      "https.createServer",
+      "https.createServer with a servername",
+      "http2.createSecureServer",
+    ];
+    // The servers are in a process of their own, where NODE_EXTRA_CA_CERTS makes ca2 a default root. It starts the
+    // servers of a route when it is sent the name, and answers with their addresses.
+    const started = new Map<string, PromiseWithResolvers<Record<string, number | string>>>();
+    const exited = () =>
+      servers.exited.then(code => Promise.reject(new Error(`the process of the servers exited (${code})`)));
+    let servers: Bun.Subprocess;
+    beforeAll(async () => {
+      started.set("ready", Promise.withResolvers());
+      servers = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "tls-pfx-servers-fixture.mjs")],
+        env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(keys, "ca2-cert.pem") },
+        stdio: ["ignore", "inherit", "inherit"],
+        ipc({ route, addresses }) {
+          started.get(route)!.resolve(addresses);
+        },
+      });
+      await Promise.race([started.get("ready")!.promise, exited()]);
+    });
+    afterAll(() => servers.kill());
+
+    it.each(routes)("%s", async route => {
+      started.set(route, Promise.withResolvers());
+      servers.send(route);
+      const addresses = await Promise.race([started.get(route)!.promise, exited()]);
+      const verdicts: Record<string, string[]> = {};
+      for (const [identity, address] of Object.entries(addresses)) {
+        verdicts[identity] = await Promise.all(clients.map(client => ask(route, address, client)));
+      }
+      expect(verdicts).toEqual({
+        "pfx": ["authorized", "authorized"],
+        // ca3. A `ca` replaces the default roots, so only the client certificate from the bundle's CA is good.
+        "pfx and ca": ["UNABLE_TO_VERIFY_LEAF_SIGNATURE", "authorized"],
+      });
+    });
+  });
+
+  it("are the chain that the identity presents", async () => {
+    // agent10.pfx holds the certificate of agent10, then those of ca4, which issued it, and of ca1, which issued neither.
+    const server = tls.createServer({ pfx: readFileSync(join(keys, "agent10.pfx")), passphrase: "sample" }, socket =>
+      socket.end(),
+    );
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const socket = tls.connect({
+      port: (server.address() as AddressInfo).port,
+      host: "127.0.0.1",
+      rejectUnauthorized: false,
+    });
+    try {
+      await once(socket, "secureConnect");
+      // bun links every certificate that the peer sent to the next one, whoever issued it.
+      const presented: unknown[] = [];
+      for (let c = socket.getPeerCertificate(true); ; c = c.issuerCertificate) {
+        presented.push(c.subject.CN);
+        if (!c.issuerCertificate || c.issuerCertificate === c) break;
+      }
+      expect(presented).toEqual(["agent10.example.com", "ca4", "ca1"]);
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  });
+
+  it("complete the chain of an identity that is only a leaf", async () => {
+    // No bundle in the fixtures holds the issuer of another identity, so this builds the context as node:tls does for
+    // one: the CA certificates go to the native constructor apart from the options.
+    const NativeSecureContext = tls.Server.prototype[Symbol.for("::buntlsnativesecurecontextctor::")];
+    const [rsaLeaf, ca4] = pem("agent10-cert.pem").split(/(?=-----BEGIN CERTIFICATE-----)/);
+    const [ecLeaf, ca6] = pem("ec10-cert.pem").split(/(?=-----BEGIN CERTIFICATE-----)/);
+    const context = NativeSecureContext.createPrivate(
+      { key: [pem("agent10-key.pem"), pem("ec10-key.pem")], cert: [rsaLeaf, ecLeaf] },
+      ca4 + ca6,
+    );
+    const server = tls.createServer({
+      key: agent2Key,
+      cert: agent2Cert,
+      SNICallback: (_, callback) => callback(null, context),
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const presented: Record<string, unknown[]> = {};
+    try {
+      for (const ciphers of ["ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-ECDSA-AES128-GCM-SHA256"]) {
+        const socket = tls.connect({
+          port: (server.address() as AddressInfo).port,
+          host: "127.0.0.1",
+          servername: "pfx.example",
+          // No issuer of ca4 or ca6: the client adds nothing to what the server sent.
+          ca: ca1,
+          rejectUnauthorized: false,
+          maxVersion: "TLSv1.2",
+          ciphers,
+        });
+        try {
+          await once(socket, "secureConnect");
+          const names = (presented[ciphers] = [] as unknown[]);
+          for (let c = socket.getPeerCertificate(true); ; c = c.issuerCertificate) {
+            names.push(c.subject.CN);
+            if (!c.issuerCertificate || c.issuerCertificate === c) break;
+          }
+        } finally {
+          socket.destroy();
+        }
+      }
+    } finally {
+      server.close();
+    }
+    expect(presented).toEqual({
+      "ECDHE-RSA-AES128-GCM-SHA256": ["agent10.example.com", "ca4"],
+      "ECDHE-ECDSA-AES128-GCM-SHA256": ["agent10.example.com", "ca6"],
+    });
+  });
+
+  it("come from a bundle only, never from an option or a property that a caller can set", async () => {
+    // ca1 issued the certificate of this server. It is no default root, and no client below names it as a `ca`.
+    const server = tls.createServer(clients[1], socket => socket.end());
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const connect = (options: object = {}) =>
+      tls.connect({
+        port: (server.address() as AddressInfo).port,
+        host: "127.0.0.1",
+        rejectUnauthorized: false,
+        checkServerIdentity: () => undefined,
+        ...options,
+      });
+    const sockets = [connect({ _pfxExtraCACerts: [ca1] })];
+    Object.defineProperty(Object.prototype, "_pfxExtraCACerts", { value: [ca1], configurable: true });
+    try {
+      // A client reads its options while tls.connect() runs.
+      sockets.push(connect());
+    } finally {
+      delete (Object.prototype as { _pfxExtraCACerts?: unknown })._pfxExtraCACerts;
+    }
+    try {
+      const errors: unknown[] = [];
+      for (const socket of sockets) {
+        await once(socket, "secureConnect");
+        errors.push(socket.authorizationError);
+      }
+      expect(errors).toEqual(["UNABLE_TO_VERIFY_LEAF_SIGNATURE", "UNABLE_TO_VERIFY_LEAF_SIGNATURE"]);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      server.close();
     }
   });
 });

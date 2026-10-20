@@ -278,9 +278,10 @@ const SSL_OP_CIPHER_SERVER_PREFERENCE = 0x00400000;
 let NativeSecureContext;
 
 /**
- * Node's `pfx` option: parse each PKCS#12 blob into PEM key/cert/ca and fold
+ * Node's `pfx` option: parse each PKCS#12 blob into PEM key/cert and fold
  * them into the regular options so every downstream consumer (the native
- * config, the multi-identity check, the CA store) sees plain key/cert/ca.
+ * config, the multi-identity check) sees plain key/cert. The CA certificates
+ * of the bundles stay out of `ca`: caWithPfxCAs() says where they go.
  * Returns the original object untouched when no pfx is present.
  */
 function processPfxOptions(options) {
@@ -289,10 +290,8 @@ function processPfxOptions(options) {
   const out = { ...options };
   const keys = out.key == null ? [] : Array.isArray(out.key) ? [...out.key] : [out.key];
   const certs = out.cert == null ? [] : Array.isArray(out.cert) ? [...out.cert] : [out.cert];
-  const pfxCAs: string[] = [];
+  let pfxCAs = "";
   const entries = Array.isArray(out.pfx) ? out.pfx : [out.pfx];
-  // CAs added after the context is built complete the chain of a lone identity only; several carry theirs, as in Node.
-  const several = entries.length + Math.max(keys.length, certs.length) > 1;
   for (const entry of entries) {
     let buf = entry;
     let passphrase = out.passphrase;
@@ -306,18 +305,34 @@ function processPfxOptions(options) {
     const parsed = NativeSecureContext.parsePkcs12(buf, passphrase);
     const parsedCA = parsed.ca;
     keys.push(parsed.key);
-    certs.push(several && parsedCA ? parsed.cert + parsedCA : parsed.cert);
-    // A CA bundled inside the PKCS#12 EXTENDS the trust set (Node loads it
-    // via addCACert on top of the default roots); folding it into the `ca`
-    // option would instead REPLACE the trust store and break verification
-    // against the default/NODE_EXTRA_CA_CERTS roots for pfx-only clients.
-    if (parsedCA) pfxCAs.push(parsedCA);
+    // The other certificates of a bundle are the chain of its identity, and CA certificates of the context:
+    // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L2211-L2229
+    certs.push(parsedCA ? parsed.cert + parsedCA : parsed.cert);
+    if (parsedCA) pfxCAs += parsedCA;
   }
   out.key = keys.length === 1 ? keys[0] : keys;
   out.cert = certs.length === 1 ? certs[0] : certs;
-  if (pfxCAs.length) out._pfxExtraCACerts = pfxCAs;
+  // One PEM string, under a private name: only this copy holds it, and no option of a caller is ever read as it.
+  if (pfxCAs) $putByIdDirectPrivate(out, "extraCA", pfxCAs);
   out.pfx = undefined;
   return out;
+}
+
+// What tls.setDefaultCACertificates() installed: the set that stands for the default roots, or undefined for the real
+// ones. "bundled", "system" and "extra" of tls.getCACertificates() are unchanged by it. It is kept here because
+// node:http builds the TLS options of its server without node:tls.
+const defaultCAs: { override: string[] | undefined } = { override: undefined };
+
+// Node adds the CA certificates of a PKCS#12 bundle to the store of the context, which a truthy `ca` (an empty array
+// too) fills alone, and the default roots otherwise:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/secure-context.js#L180-L184
+// https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L2223-L2229
+// So they join a `ca`, or the set of tls.setDefaultCACertificates(): that is the `ca` this returns. With neither it
+// returns undefined. A native `ca` replaces the default roots, so the caller then hands them to native apart from it,
+// as the certificates that extend the roots.
+function caWithPfxCAs(ca, pfxCAs: string) {
+  const store = ca || defaultCAs.override;
+  if (store) return $isArray(store) ? [...store, pfxCAs] : [store, pfxCAs];
 }
 
 function hasPemObject(key) {
@@ -368,17 +383,11 @@ function unsealPfxForNative(tls) {
   // processPfxOptions() copies its argument, and a copy of `tls` would only have its own enumerable properties. The
   // native parser also reads inherited and non-enumerable ones, and losing a `ca` or `checkServerIdentity` would loosen
   // the verification. So pass what it needs by name, and let the result inherit the rest from `tls`.
-  const {
-    key,
-    cert,
-    _pfxExtraCACerts: pfxCAs,
-  } = processPfxOptions({ pfx: tls.pfx, passphrase: tls.passphrase, key: tls.key, cert: tls.cert });
+  const pfx = processPfxOptions({ pfx: tls.pfx, passphrase: tls.passphrase, key: tls.key, cert: tls.cert });
+  const pfxCAs = $getByIdDirectPrivate(pfx, "extraCA");
   const { ca } = tls;
-  const unsealed = { __proto__: tls, key, cert, ca, pfx: undefined };
-  if (!pfxCAs) return unsealed;
-  if (ca) unsealed.ca = $isArray(ca) ? [...ca, ...pfxCAs] : [ca, ...pfxCAs];
-  // No addCACert() follows to complete the chain of a lone identity. Several carry theirs already.
-  if (typeof cert === "string") unsealed.cert = cert + pfxCAs[0];
+  const unsealed = { __proto__: tls, key: pfx.key, cert: pfx.cert, ca, pfx: undefined };
+  if (pfxCAs && ca) unsealed.ca = $isArray(ca) ? [...ca, pfxCAs] : [ca, pfxCAs];
   return unsealed;
 }
 
@@ -472,6 +481,8 @@ function tlsHandshakeError(verifyError) {
 
 export {
   SSL_OP_CIPHER_SERVER_PREFERENCE,
+  caWithPfxCAs,
+  defaultCAs,
   nodeClientTlsKeys,
   nodeClientTlsToNative,
   normalizePemKeyOption,

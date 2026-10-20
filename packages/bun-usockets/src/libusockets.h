@@ -512,6 +512,10 @@ struct us_bun_socket_context_options_t {
     unsigned int cert_count;
     const char * const *ca;
     unsigned int ca_count;
+    /* PEM certificates added to the store that `ca` or the default roots filled, and to the client-CA list: with no
+     * `ca` they extend a private copy of the default roots. No JS option sets it: node:tls passes the CA certificates
+     * of a `pfx` here, which Node adds the same way (SecureContext::LoadPKCS12). */
+    const char *extra_ca;
     unsigned int secure_options;
     // Minimum/maximum TLS protocol version (TLS1_VERSION..TLS1_3_VERSION); 0 = unset/default.
     int ssl_min_version;

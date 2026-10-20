@@ -338,10 +338,12 @@ function Server(options, callback): void {
         : undefined;
 
     // Node's https.Server accepts PKCS#12 bundles (pfx [+ passphrase]); fold
-    // them into plain key/cert/ca so the native TLS config sees PEM material.
+    // them into plain key/cert so the native TLS config sees PEM material.
     let tlsOptions = options;
+    let pfxCAs;
     if (options.pfx) {
       tlsOptions = tlsHelpers.processPfxOptions(options);
+      pfxCAs = $getByIdDirectPrivate(tlsOptions, "extraCA");
     }
 
     let cert = tlsOptions.cert;
@@ -355,12 +357,12 @@ function Server(options, callback): void {
     }
 
     let ca = tlsOptions.ca;
-    // PKCS#12-embedded CAs extend the trust set; the server path hands raw
-    // {key, cert, ca} to the native config and has no addCACert hook, so fold
-    // them into `ca` (mirrors tls.Server.setSecureContext).
-    const pfxExtraCAs = tlsOptions._pfxExtraCACerts;
-    if (pfxExtraCAs?.length) {
-      ca = ca == null ? pfxExtraCAs : $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
+    // The CA certificates of a `pfx` join a `ca`. With none they extend the default roots, and Bun.serve() takes them
+    // apart from `ca`, which would replace the roots.
+    let extraCA;
+    if (pfxCAs) {
+      ca = tlsHelpers.caWithPfxCAs(ca, pfxCAs);
+      if (!ca) extraCA = pfxCAs;
     }
     if (ca) {
       tlsHelpers.throwOnInvalidTLSArray("options.ca", ca);
@@ -434,6 +436,8 @@ function Server(options, callback): void {
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
       });
+      // Not an option of Bun.serve(): a private name, which only a builtin can set.
+      if (extraCA) $putByIdDirectPrivate(this[tlsSymbol], "extraCA", extraCA);
     }
   }
 

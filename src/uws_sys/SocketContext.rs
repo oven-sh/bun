@@ -111,6 +111,9 @@ pub struct BunSocketContextOptions {
     pub cert_count: u32,
     pub ca: *const *const c_char,
     pub ca_count: u32,
+    /// PEM certificates that extend the store `ca` or the default roots filled. No JS option sets it: see
+    /// `us_bun_socket_context_options_t` in libusockets.h.
+    pub extra_ca: *const c_char,
     pub secure_options: u32,
     pub ssl_min_version: i32,
     pub ssl_max_version: i32,
@@ -142,6 +145,7 @@ impl Default for BunSocketContextOptions {
             cert_count: 0,
             ca: ptr::null(),
             ca_count: 0,
+            extra_ca: ptr::null(),
             secure_options: 0,
             ssl_min_version: 0,
             ssl_max_version: 0,
@@ -271,6 +275,10 @@ impl BunSocketContextOptions {
         h.update(bun_core::bytes_of(&self.allow_partial_trust_chain));
         feed_z(&mut h, self.sigalgs);
         feed_z(&mut h, self.ecdh_curve);
+        // Last, and only when set: a digest without it costs what it did before the field.
+        if !self.extra_ca.is_null() {
+            feed_z(&mut h, self.extra_ca);
+        }
         let mut out = [0u8; 32];
         h.final_(&mut out);
         out
@@ -297,6 +305,7 @@ impl BunSocketContextOptions {
         sum(self.cert, self.cert_count, &mut n);
         sum(self.ca, self.ca_count, &mut n);
         sum(self.crl, self.crl_count, &mut n);
+        sum(&raw const self.extra_ca, 1, &mut n);
         n
     }
 }

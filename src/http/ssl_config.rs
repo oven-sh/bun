@@ -33,6 +33,9 @@ pub struct SSLConfig {
     pub cert: CStrSlice,
     pub ca: CStrSlice,
     pub crl: CStrSlice,
+    /// PEM certificates that extend the store `ca` or the default roots filled: the CA certificates of a node:tls
+    /// `pfx`. `from_js` never sets it, so no `tls` option reaches it.
+    pub extra_ca: CStrPtr,
 
     pub secure_options: u32,
     pub session_timeout: i32,
@@ -104,6 +107,7 @@ impl SSLConfig {
         cert: None,
         ca: None,
         crl: None,
+        extra_ca: core::ptr::null(),
         secure_options: 0,
         session_timeout: 0,
         allow_partial_trust_chain: false,
@@ -214,6 +218,7 @@ impl SSLConfig {
             ctx_opts.ca = ca.as_ptr();
             ctx_opts.ca_count = ca.len() as u32;
         }
+        ctx_opts.extra_ca = self.extra_ca;
 
         if !self.ssl_ciphers.is_null() {
             ctx_opts.ssl_ciphers = self.ssl_ciphers;
@@ -299,6 +304,7 @@ impl SSLConfig {
         eq_slice!(cert);
         eq_slice!(ca);
         eq_slice!(crl);
+        eq_cstr!(extra_ca);
         if self.secure_options != other.secure_options {
             return false;
         }
@@ -396,6 +402,10 @@ impl SSLConfig {
         hasher.update(&[u8::from(self.requires_custom_request_ctx)]);
         hasher.update(&[u8::from(self.is_using_default_ciphers)]);
         hasher.update(&[u8::from(self.low_memory_mode)]);
+        // Last, and only when set: a config without it hashes as it did before the field.
+        if !self.extra_ca.is_null() {
+            hasher.update(cstr_bytes(self.extra_ca));
+        }
         let hash = hasher.final_();
         // Avoid 0 since it's the sentinel for "not computed"
         let hash = if hash == 0 { 1 } else { hash };
@@ -424,6 +434,7 @@ impl SSLConfig {
         free_strings(&mut self.cert);
         free_strings(&mut self.ca);
         free_strings(&mut self.crl);
+        free_string(&mut self.extra_ca);
         free_string(&mut self.sigalgs);
         free_string(&mut self.ecdh_curve);
         free_string(&mut self.ssl_ciphers);
@@ -479,6 +490,7 @@ impl Clone for SSLConfig {
             cert: clone_strings(&self.cert),
             ca: clone_strings(&self.ca),
             crl: clone_strings(&self.crl),
+            extra_ca: clone_string(self.extra_ca),
             secure_options: self.secure_options,
             session_timeout: self.session_timeout,
             allow_partial_trust_chain: self.allow_partial_trust_chain,

@@ -6,6 +6,7 @@
 import { expect, test } from "bun:test";
 import { X509Certificate } from "node:crypto";
 import { once } from "node:events";
+import https from "node:https";
 import tls from "node:tls";
 // debug-only export
 import { sslCtxLiveCount } from "bun:internal-for-testing";
@@ -317,6 +318,45 @@ test("addCACert on a digest-interned context throws instead of poisoning the cac
   expect(() => a.addCACert((tlsCerts as any).ca)).toThrow("cannot mutate a shared SecureContext");
 });
 
+// node:tls hands the CA certificates of a `pfx` to the native constructor apart from the options: they extend the trust
+// store where `ca` replaces it. Two contexts that differ in them alone are two contexts.
+test("the CA certificates of a pfx are part of the digest of a context", () => {
+  const NativeSecureContext = tls.Server.prototype[Symbol.for("::buntlsnativesecurecontextctor::")];
+  const keys = (f: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", f), "utf8");
+  const identity = { key: keys("agent1-key.pem"), cert: keys("agent1-cert.pem") };
+  const withCA1 = NativeSecureContext.intern(identity, keys("ca1-cert.pem"));
+  expect(NativeSecureContext.intern(identity, keys("ca1-cert.pem"))).toBe(withCA1);
+  expect(NativeSecureContext.intern(identity, keys("ca2-cert.pem"))).not.toBe(withCA1);
+  expect(NativeSecureContext.intern(identity)).not.toBe(withCA1);
+});
+
+// They are in the context from its build, so the connections of one `pfx` share a context like those of one `cert`.
+test("tls.connect() calls with one pfx share one SSL_CTX", async () => {
+  const pfx = readFileSync(join(import.meta.dir, "../test/fixtures/keys/agent1.pfx"));
+  await withServer(async port => {
+    // A socket keeps its context for as long as it is reachable.
+    const sockets: tls.TLSSocket[] = [];
+    const connect = async () => {
+      const socket = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false, pfx, passphrase: "sample" });
+      sockets.push(socket);
+      await once(socket, "secureConnect");
+    };
+    try {
+      await connect();
+      // Drain what earlier tests left for the sweeper: the count then moves with these sockets alone.
+      Bun.gc(true);
+      await new Promise<void>(r => setImmediate(r));
+      Bun.gc(true);
+      const before = sslCtxLiveCount();
+      for (let i = 0; i < 10; i++) await connect();
+      // A context for each socket would be 10.
+      expect(sslCtxLiveCount() - before).toBeLessThanOrEqual(1);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+    }
+  });
+});
+
 // The exported constructor is user-facing too: it must never hand out the
 // digest-interned SSL_CTX, or addCACert on one instance would silently extend
 // the trust store of every context sharing that digest.
@@ -490,6 +530,64 @@ test("setDefaultCACertificates() applies to a server's client-cert verification 
     await once(client, "close");
     server.close();
     await once(server, "close");
+  } finally {
+    tls.setDefaultCACertificates(prevCerts);
+  }
+});
+
+test("setDefaultCACertificates() is the set that the CA certificates of a pfx extend", async () => {
+  // Node adds the CA certificates of a bundle to the store of the context, which holds the default set when there is
+  // no `ca`. An empty `ca` is a `ca`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/secure-context.js#L180-L184
+  const keys = (f: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", f), "utf8");
+  // agent1.pfx holds the key and the certificate of agent1, and the certificate of ca1.
+  const pfx = { pfx: readFileSync(join(import.meta.dir, "../test/fixtures/keys/agent1.pfx")), passphrase: "sample" };
+  // ca2 issued the certificate of the first client, and ca1 that of the second.
+  const clients = [
+    { key: keys("agent3-key.pem"), cert: keys("agent3-cert.pem") },
+    { key: keys("agent1-key.pem"), cert: keys("agent1-cert.pem") },
+  ];
+
+  /** What a server with `identity` makes of the certificate of each client. */
+  async function verdicts(createServer: typeof tls.createServer | typeof https.createServer, identity: object) {
+    const seen: string[] = [];
+    const see = (socket: tls.TLSSocket) =>
+      seen.push(socket.authorized ? "authorized" : String(socket.authorizationError));
+    const options = { ...identity, requestCert: true, rejectUnauthorized: false };
+    const server =
+      createServer === tls.createServer
+        ? tls.createServer(options, socket => void (see(socket), socket.end()))
+        : https.createServer(options, (req, res) => void (see(req.socket as tls.TLSSocket), res.end()));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { port } = server.address() as import("net").AddressInfo;
+      for (const client of clients) {
+        // With a `ca` of its own, a client sends its certificate alone: the default set would complete the chain.
+        const socket = tls.connect({ port, host: "127.0.0.1", ca: keys("ca1-cert.pem"), rejectUnauthorized: false, ...client }); // prettier-ignore
+        if (createServer === https.createServer)
+          socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+        socket.resume();
+        await once(socket, "close");
+      }
+    } finally {
+      server.close();
+    }
+    return seen;
+  }
+
+  const prevCerts = tls.getCACertificates("default");
+  tls.setDefaultCACertificates([keys("ca2-cert.pem")]);
+  try {
+    expect({
+      "tls, pfx": await verdicts(tls.createServer, pfx),
+      "https, pfx": await verdicts(https.createServer, pfx),
+      "tls, pfx and an empty ca": await verdicts(tls.createServer, { ...pfx, ca: [] }),
+      "https, pfx and an empty ca": await verdicts(https.createServer, { ...pfx, ca: [] }),
+    }).toEqual({
+      "tls, pfx": ["authorized", "authorized"],
+      "https, pfx": ["authorized", "authorized"],
+      "tls, pfx and an empty ca": ["UNABLE_TO_VERIFY_LEAF_SIGNATURE", "authorized"],
+      "https, pfx and an empty ca": ["UNABLE_TO_VERIFY_LEAF_SIGNATURE", "authorized"],
+    });
   } finally {
     tls.setDefaultCACertificates(prevCerts);
   }

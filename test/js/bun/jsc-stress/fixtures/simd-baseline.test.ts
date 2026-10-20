@@ -6,7 +6,7 @@
 // to catch both SIGILL and miscompilation from wrong instruction lowering.
 
 import { describe, expect, test } from "bun:test";
-import { deflateSync } from "node:zlib";
+import { deflateSync, inflateSync } from "node:zlib";
 
 // Use Buffer.alloc instead of "x".repeat() — repeat is slow in debug JSC builds.
 const ascii256 = Buffer.alloc(256, "a").toString();
@@ -203,6 +203,25 @@ describe("String search — Highway memMem/indexOfChar", () => {
   });
 });
 
+function crc32(bytes: Uint8Array): number {
+  let crc = ~0 >>> 0;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return ~crc >>> 0;
+}
+
+function pngChunk(type: string, data: Uint8Array): Uint8Array {
+  const chunk = new Uint8Array(12 + data.length);
+  const view = new DataView(chunk.buffer);
+  view.setUint32(0, data.length);
+  chunk.set(Buffer.from(type, "latin1"), 4);
+  chunk.set(data, 8);
+  view.setUint32(8 + data.length, crc32(chunk.subarray(4, 8 + data.length)));
+  return chunk;
+}
+
 describe("JPEG codec: libjpeg-turbo jsimd runtime dispatch", () => {
   // libjpeg-turbo picks its kernels per codec instance from CPUID (simd/jsimd.c; on
   // x64: AVX2, else SSE2; Neon on aarch64). On the emulated baseline CPU the
@@ -211,25 +230,6 @@ describe("JPEG codec: libjpeg-turbo jsimd runtime dispatch", () => {
   // 8-pixel tail; 40 px tall keeps h2v2 chroma downsampling and upsampling busy.
   const width = 72;
   const height = 40;
-
-  function crc32(bytes: Uint8Array): number {
-    let crc = ~0 >>> 0;
-    for (const byte of bytes) {
-      crc ^= byte;
-      for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
-    }
-    return ~crc >>> 0;
-  }
-
-  function pngChunk(type: string, data: Uint8Array): Uint8Array {
-    const chunk = new Uint8Array(12 + data.length);
-    const view = new DataView(chunk.buffer);
-    view.setUint32(0, data.length);
-    chunk.set(Buffer.from(type, "latin1"), 4);
-    chunk.set(data, 8);
-    view.setUint32(8 + data.length, crc32(chunk.subarray(4, 8 + data.length)));
-    return chunk;
-  }
 
   /** 8-bit RGB PNG whose pixel (x, y) is `rgb(x, y)`. */
   function png(rgb: (x: number, y: number) => [number, number, number]): Uint8Array {
@@ -275,5 +275,91 @@ describe("JPEG codec: libjpeg-turbo jsimd runtime dispatch", () => {
       const decoded = await new Bun.Image(jpeg).png().bytes();
       expect(await new Bun.Image(decoded).metadata()).toEqual({ width, height, format: "png" });
     }
+  });
+});
+
+describe("png({ palette }): Highway ShownCompactImpl runtime dispatch", () => {
+  // The kernel copies the pixels that are not fully transparent. 25x7 = 175
+  // pixels: whole vectors at 4, 8 and 16 lanes, and a tail of 3, 7 or 15.
+  const width = 25;
+  const height = 7;
+  type Rgba = [number, number, number, number];
+
+  /** 8-bit RGBA PNG whose pixel number `i` is `rgba(i)`. */
+  function png(rgba: (i: number) => Rgba): Uint8Array {
+    const stride = 1 + width * 4;
+    const raw = new Uint8Array(height * stride);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) raw.set(rgba(y * width + x), y * stride + 1 + x * 4);
+    }
+    const ihdr = new Uint8Array(13);
+    const view = new DataView(ihdr.buffer);
+    view.setUint32(0, width);
+    view.setUint32(4, height);
+    ihdr.set([8, 6, 0, 0, 0], 8); // 8 bits per sample, truecolor with alpha
+    return Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      pngChunk("IHDR", ihdr),
+      pngChunk("IDAT", deflateSync(raw)),
+      pngChunk("IEND", new Uint8Array(0)),
+    ]);
+  }
+
+  /** The palette of an indexed PNG, and the entry of every pixel. */
+  function indexed(file: Uint8Array): { entries: Rgba[]; pixels: Rgba[] } {
+    const view = new DataView(file.buffer, file.byteOffset, file.byteLength);
+    let [plte, trns, depth] = [new Uint8Array(0), new Uint8Array(0), 0];
+    const idat: Uint8Array[] = [];
+    for (let off = 8; off + 8 <= file.length;) {
+      const len = view.getUint32(off);
+      const type = Buffer.from(file.subarray(off + 4, off + 8)).toString("latin1");
+      const data = file.subarray(off + 8, off + 8 + len);
+      if (type === "IHDR") depth = data[8];
+      else if (type === "PLTE") plte = data;
+      else if (type === "tRNS") trns = data;
+      else if (type === "IDAT") idat.push(data);
+      off += 12 + len;
+    }
+    const entries: Rgba[] = [];
+    for (let i = 0; i < plte.length / 3; i++) {
+      entries.push([plte[i * 3], plte[i * 3 + 1], plte[i * 3 + 2], i < trns.length ? trns[i] : 255]);
+    }
+    const raw = inflateSync(Buffer.concat(idat));
+    const stride = 1 + Math.ceil((width * depth) / 8);
+    const pixels: Rgba[] = [];
+    for (let y = 0; y < height; y++) {
+      // Indexed rows are written with filter 0.
+      expect(raw[y * stride]).toBe(0);
+      const row = raw.subarray(y * stride + 1, (y + 1) * stride);
+      for (let x = 0; x < width; x++) {
+        const bit = x * depth;
+        pixels.push(entries[(row[bit >> 3] >> (8 - depth - (bit & 7))) & ((1 << depth) - 1)]);
+      }
+    }
+    return { entries, pixels };
+  }
+
+  const opaque: Rgba[] = [
+    [10, 200, 30, 255],
+    [250, 40, 90, 255],
+    [0, 0, 0, 255],
+  ];
+  // Pixels 0 to 31 are opaque: whole vectors with nothing to drop. After
+  // them every other pixel is fully transparent over a different colour.
+  function source(i: number): Rgba {
+    const v = Math.imul(i + 1, 0x9e3779b1) >>> 0;
+    if (i < 32) return opaque[i % 3];
+    if (i % 2 === 0) return [v & 255, (v >> 8) & 255, (v >> 16) & 255, 0];
+    return opaque[(v >>> 3) % 3];
+  }
+  // 75 distinct RGBA values that show 4 colours. Each has its own entry, so
+  // the palette and every index are exact.
+  const written = (pixel: Rgba): Rgba => (pixel[3] === 0 ? [0, 0, 0, 0] : pixel);
+
+  test.each([false, true])("fully transparent pixels beside opaque ones at colors 16 (dither %p)", async dither => {
+    const out = await new Bun.Image(png(source)).png({ palette: true, colors: 16, dither }).bytes();
+    const { entries, pixels } = indexed(out);
+    expect(new Set(entries.map(String)).size).toBe(4);
+    expect(pixels).toEqual(Array.from({ length: width * height }, (_, i) => written(source(i))));
   });
 });

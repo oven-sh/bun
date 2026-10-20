@@ -6310,11 +6310,6 @@ impl<'p, 's> Checker<'p, 's> {
         // `createUnionOrIntersectionProperty` has `writeTypes` as soon as one constituent's write
         // type differs from its type.
         if let PropSource::Intersected(whole, parts) = &prop.source {
-            let key = (*whole, prop.name, parts.len());
-            if self.props_without_write_types.contains(&key) {
-                return self.type_of_prop(prop, outer);
-            }
-            let before = self.non_cacheable_mark();
             let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
             let mut has_write_types = false;
             // `writeTypes` has no `indexTypes`.
@@ -6327,9 +6322,6 @@ impl<'p, 's> Checker<'p, 's> {
                 types.push(write_type);
             }
             if !has_write_types {
-                if self.non_cacheable_mark() == before {
-                    self.props_without_write_types.insert(key);
-                }
                 return self.type_of_prop(prop, outer);
             }
             let all = if self.is_union(*whole) {

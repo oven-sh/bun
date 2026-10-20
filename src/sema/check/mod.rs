@@ -859,7 +859,6 @@ impl<'s> Program<'s> {
             recent_const_type_variables: Default::default(),
             recent_derived_sigs: Default::default(),
             known_mapped_prop_types: Default::default(),
-            props_without_write_types: Default::default(),
             unresolved_members: Vec::new(),
             unresolved_members_hits: 0,
             members_in_place_hits: 0,
@@ -1612,9 +1611,6 @@ pub struct Checker<'p, 's> {
     /// and its name. It isn't a `Recent` because the properties of a union of a hundred `Omit<..>`
     /// are read in turn, over and over, and there are more of them than a `Recent` has slots.
     known_mapped_prop_types: FxHashMap<(TypeId, MapperId, Atom), TypeId>,
-    /// The properties of unions and intersections where every constituent's write type equals its
-    /// type. Each entry is the union or intersection, the name and the number of constituents.
-    props_without_write_types: crate::util::FxHashSet<(TypeId, Atom, usize)>,
     /// `ObjectFlagsUnresolvedMembers`. `resolveObjectTypeMembers` calls `setStructuredTypeMembers` with the members
     /// that the class or interface declares before it instantiates the base types. A request for the type reference's
     /// members in the meantime finds no inherited members. With `class C<T extends B> extends B<T["p"]>` and `R` =

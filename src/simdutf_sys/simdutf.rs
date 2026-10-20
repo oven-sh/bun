@@ -73,6 +73,10 @@ pub mod validate {
     }
 
     pub fn utf8(input: &[u8]) -> bool {
+        // Miri cannot call foreign functions, and `bun_url`'s unit tests reach this.
+        if cfg!(miri) {
+            return core::str::from_utf8(input).is_ok();
+        }
         // SAFETY: input is a valid slice; FFI reads exactly len bytes.
         unsafe { simdutf__validate_utf8(input.as_ptr(), input.len()) }
     }

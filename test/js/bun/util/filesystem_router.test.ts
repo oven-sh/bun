@@ -880,10 +880,10 @@ it(".params decodes percent escapes in a route segment exactly once", () => {
 });
 
 it("caps the number of parsed query string parameters instead of crashing", async () => {
-  // A query string with more parameters than the iterator's fixed-size visited
-  // bitset (2048 entries) must not be able to take down the process when
-  // `.query` is read. Run in a subprocess so an abort is observable as output
-  // on stderr / a nonzero exit code instead of killing the test runner.
+  // A query string with more parameters than the router reads (2048) must not
+  // be able to take down the process when `.query` is read. Run in a
+  // subprocess so an abort is observable as output on stderr / a nonzero exit
+  // code instead of killing the test runner.
   using dir = tempDir("fsr-many-query-params", {
     "pages/posts.tsx": "export default 1;",
   });
@@ -1153,6 +1153,273 @@ it(".query keeps the route parameter when a percent-encoded query name decodes t
     ["/posts/123?other=1&%2569d=999", { id: "123", other: "1" }],
   ] as const) {
     expect({ input: current, query: router.match(current)!.query }).toEqual({ input: current, query: expected });
+  }
+});
+
+// `.query` groups its pairs by the text of each name. Compares the keys in their order too, for a string and for a
+// Request.
+function expectQuery(router: FileSystemRouter, url: string, query: Record<string, string | string[]>) {
+  const expected = { url, query: Object.entries(query) };
+  expect({ url, query: Object.entries(router.match(url)!.query) }).toEqual(expected);
+  const request = new Request("http://localhost" + url);
+  expect({ url, query: Object.entries(router.match(request)!.query) }).toEqual(expected);
+}
+
+it(".query keeps every value of names that are different bytes and read as one key", () => {
+  const { dir } = make(["posts.tsx", "posts/[id].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  // A name is text, as in URLSearchParams: each part of it that is not UTF-8 reads as U+FFFD.
+  // So %FF and %FE are one key. U+FFFD itself (%EF%BF%BD) and a sequence that is cut short (%E2%82) are that key too.
+  const key = "\ufffd";
+  expectQuery(router, "/posts?%FF=a&%FE=b", { [key]: ["a", "b"] });
+  expectQuery(router, "/posts?%FF=a&%FE=b&%FF=c", { [key]: ["a", "b", "c"] });
+  expectQuery(router, "/posts?%FF=a&x=1&%FE=b&y=2&%FF=c", { [key]: ["a", "b", "c"], x: "1", y: "2" });
+  expectQuery(router, "/posts?%EF%BF%BD=a&%FF=b&%E2%82=c", { [key]: ["a", "b", "c"] });
+  // A "+" makes the query parser copy every pair.
+  expectQuery(router, "/posts?%FF=a&%FE=b&x=1+2", { [key]: ["a", "b"], x: "1+2" });
+  // A route with a parameter.
+  expectQuery(router, "/posts/7?%FF=a&%FE=b&%FF=c", { id: "7", [key]: ["a", "b", "c"] });
+  // What a client that writes Latin-1 sends.
+  expectQuery(router, "/posts?r%E9sum%E9=x&r%E8sum%E8=y", { [`r${key}sum${key}`]: ["x", "y"] });
+  // Names that read as different keys stay different keys.
+  expectQuery(router, "/posts?%FF=a&%FF%FF=b&%C3%28=c", { [key]: "a", [key + key]: "b", [key + "("]: "c" });
+  expectQuery(router, "/posts?%C3%A9=a&%FF=b&%C3%A9=c&e=d", { "\u00e9": ["a", "c"], [key]: "b", e: "d" });
+
+  // Six U+FFFD from a name of 6 bytes and from a name of 16 bytes, with a name between them.
+  const six = "%FF%FF%FF%FF%FF%FF";
+  const sixteen = "%F0%90%80%F0%90%80%F0%90%80%F0%90%80%F0%90%80%F0";
+  const sixKeys = Buffer.alloc(18, key).toString();
+  expectQuery(router, `/posts?${six}=a&${sixteen}=b&x=1&${six}=c&${sixteen}=d`, {
+    [sixKeys]: ["a", "b", "c", "d"],
+    x: "1",
+  });
+  expectQuery(router, `/posts?${sixteen}=a&${six}=b&x=1&${sixteen}=c&${six}=d`, {
+    [sixKeys]: ["a", "b", "c", "d"],
+    x: "1",
+  });
+
+  // With many keys.
+  const many = Array.from({ length: 40 }, (_, i) => ["k" + i, "v" + i]);
+  expectQuery(router, "/posts?%FF=a&" + new URLSearchParams(many) + "&%FE=b&k3=c&%FF=d", {
+    [key]: ["a", "b", "d"],
+    ...Object.fromEntries(many),
+    k3: ["v3", "c"],
+  });
+
+  // Many keys that each come from two names.
+  const numbered = (name: string, value: string) => Array.from({ length: 300 }, (_, i) => `${name}${i}=${value}`);
+  expectQuery(
+    router,
+    "/posts?" + [...numbered("%FF", "a"), ...numbered("%FE", "b")].join("&"),
+    Object.fromEntries(Array.from({ length: 300 }, (_, i) => [key + i, ["a", "b"]])),
+  );
+
+  // More than 256 values of one key, from two names in turn.
+  const values = Array.from({ length: 600 }, (_, i) => "v" + i);
+  const search = values.map((value, i) => (i % 3 ? "%FE=" : "%FF=") + value).join("&");
+  expectQuery(router, "/posts?" + search, { [key]: values });
+  expectQuery(router, "/posts/7?" + search, { id: "7", [key]: values });
+});
+
+it(".query reads a name that is not UTF-8 as URLSearchParams reads it", () => {
+  const { dir } = make(["posts.tsx", "posts/[id].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  for (const name of [
+    "%FF",
+    "%C3", // the first byte of two
+    "%C3%28",
+    "%C0%80", // too long for U+0000
+    "%E2%82", // the first two bytes of three
+    "%E2%82%28",
+    "%E0%80%80", // too long
+    "%ED%A0%80", // a surrogate
+    "%F0%90%80", // the first three bytes of four
+    "%F0%80%80%80", // too long
+    "%F4%90%80%80", // past U+10FFFF
+    "%F8%88%80%80%80", // five bytes
+    "a%FFb%FE%FEc",
+    "%EF%BF%BD", // U+FFFD
+    "%C3%A9t%C3%A9", // UTF-8
+    "%F0%9F%98%80", // UTF-8, four bytes
+  ]) {
+    const keys = [...new URLSearchParams(name + "=1").keys()];
+    expect({ name, keys: Object.keys(router.match("/posts?" + name + "=1")!.query) }).toEqual({ name, keys });
+    // The name twice, with another between: the second one finds the key of the first.
+    const twice = Object.entries(router.match("/posts/7?" + name + "=1&x=2&" + name + "=3")!.query);
+    expect({ name, twice }).toEqual({ name, twice: Object.entries({ id: "7", [keys[0]]: ["1", "3"], x: "2" }) });
+  }
+});
+
+it(".query holds a name that comes again as an array, in the order of the URL", () => {
+  const { dir } = make(["posts.tsx", "posts/[id].tsx", "u/[id]/[id].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  expectQuery(router, "/posts?a=1&a=2", { a: ["1", "2"] });
+  expectQuery(router, "/posts?a=1&b=2&a=3&b=4&c=5&a=6", { a: ["1", "3", "6"], b: ["2", "4"], c: "5" });
+  expectQuery(router, "/posts?a=1&a=&a&a=x+y", { a: ["1", "", "", "x+y"] });
+  // A key is where its name first came. A route parameter comes before the query, and an index before both.
+  expectQuery(router, "/posts/7?b=1&a=2&b=3&1=x&0=y&1=z", { 0: "y", 1: ["x", "z"], id: "7", b: ["1", "3"], a: "2" });
+  // Many keys, each of them twice: two names of each length from 1 to 70 bytes that differ in the last byte.
+  const names = Array.from({ length: 70 }, (_, i) => [Buffer.alloc(i, "n") + "a", Buffer.alloc(i, "n") + "b"]).flat();
+  const twice = [...names.map(name => name + "=a"), ...names.map(name => name + "=b")].join("&");
+  expectQuery(router, "/posts?" + twice, Object.fromEntries(names.map(name => [name, ["a", "b"]])));
+  expectQuery(router, "/posts/7?" + twice, { id: "7", ...Object.fromEntries(names.map(name => [name, ["a", "b"]])) });
+  // UTF-8 names, where one starts with the other.
+  const [word, words] = ["\u30ad\u30fc\u30ef\u30fc\u30c9", "\u30ad\u30fc\u30ef\u30fc\u30c9\u3092"];
+  expectQuery(
+    router,
+    `/posts?${encodeURIComponent(word)}=1&${encodeURIComponent(words)}=2&a=3&${encodeURIComponent(word)}=4&${encodeURIComponent(words)}=5`,
+    { [word]: ["1", "4"], [words]: ["2", "5"], a: "3" },
+  );
+  // Two parameters of one name, with and without a query string.
+  expectQuery(router, "/u/1/2", { id: ["1", "2"] });
+  expectQuery(router, "/u/1/2?x=3&id=9&x=4", { id: ["1", "2"], x: ["3", "4"] });
+});
+
+it(".query holds every value of a name that comes more than 256 times", () => {
+  const { dir } = make(["posts.tsx", "posts/[id].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  const numbered = (count: number) => Array.from({ length: count }, (_, i) => "v" + i);
+  const search = (values: string[]) => values.map(value => "tag=" + value).join("&");
+  // The router reads 2048 pairs and no more. On the route with a parameter, `id` is one of them.
+  for (const count of [256, 257, 2048, 3000]) {
+    const tag = numbered(count);
+    expectQuery(router, "/posts?" + search(tag), { tag: tag.slice(0, 2048) });
+    expectQuery(router, "/posts/7?" + search(tag), { id: "7", tag: tag.slice(0, 2047) });
+  }
+  const other = numbered(300);
+  const mixed = "a=1&" + search(other) + "&x=9&tag=w0&tag=w1&a=2";
+  expectQuery(router, "/posts?" + mixed, { a: ["1", "2"], tag: [...other, "w0", "w1"], x: "9" });
+
+  // The limit is the same where a "+" makes the router decode every value, and where the URL has an escape.
+  const plus = numbered(3000).map(value => value.replace("v", "v+"));
+  expectQuery(router, "/posts?" + search(plus), { tag: plus.slice(0, 2048) });
+  expectQuery(router, "/posts/7?" + search(plus), { id: "7", tag: plus.slice(0, 2047) });
+  // A URL with an escape is cut at 16,384 bytes, so these pairs are short.
+  const ones = Array.from({ length: 3000 }, () => "1");
+  expectQuery(router, "/posts?x=%20&" + ones.map(one => "a=" + one).join("&"), { x: " ", a: ones.slice(0, 2047) });
+});
+
+it(".query and .params read two names that have one 64-bit hash as two keys", () => {
+  // Every one of these names has one seed-0 wyhash (the construction of test/cli/install/wyhash-std-collision.ts).
+  const [A, B] = ["aaaaaaaa", "bbbbbbbb"].map(free => "rs5rgaaaprefixed" + free + "38zu8ai7" + "yyyyyyyy");
+  expect(A).not.toBe(B);
+  expect(Bun.hash.wyhash(A)).toBe(Bun.hash.wyhash(B));
+
+  const { dir } = make(["posts.tsx", `one/[${A}].tsx`, `two/[${A}]/[${B}].tsx`]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  expectQuery(router, `/posts?${A}=1&${B}=2&${A}=3`, { [A]: ["1", "3"], [B]: "2" });
+  // The route parameter is A. It hides a query pair named A and no other pair.
+  expectQuery(router, `/one/7?${B}=2&${A}=8&ok=3`, { [A]: "7", [B]: "2", ok: "3" });
+  // Two route parameters, A and B.
+  expect(Object.entries(router.match("/two/1/2?ok=3")!.params)).toEqual(Object.entries({ [A]: "1", [B]: "2" }));
+  expectQuery(router, "/two/1/2", { [A]: "1", [B]: "2" });
+  expectQuery(router, `/two/1/2?${B}=9&${A}=8&ok=3`, { [A]: "1", [B]: "2", ok: "3" });
+});
+
+it(".query leaves out a pair that a route parameter hides, and the pair takes no place under the limit", () => {
+  const { dir } = make(["posts/[id].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  const hidden = Array.from({ length: 3000 }, (_, i) => "id=" + i).join("&");
+  expectQuery(router, "/posts/7?" + hidden + "&x=1&x=2", { id: "7", x: ["1", "2"] });
+});
+
+it.skipIf(isWindows || isMacOS)(".query and .params group the names of a file that are not UTF-8 by their key", () => {
+  // The parameter of b/[\xFF].tsx and the two of d/[\xFF]/[\xFE].tsx read as the key U+FFFD.
+  using dir = tempDir("fsr-query-byte-ff", { "b/.keep": "", "d/.keep": "" });
+  const name = (...parts: (string | number[])[]) => Buffer.concat(parts.map(part => Buffer.from(part as any)));
+  fs.writeFileSync(name(String(dir) + "/b/[", [0xff], "].tsx"), "export default 1;\n");
+  fs.mkdirSync(name(String(dir) + "/d/[", [0xff], "]"));
+  fs.writeFileSync(name(String(dir) + "/d/[", [0xff], "]/[", [0xfe], "].tsx"), "export default 1;\n");
+  const router = new Bun.FileSystemRouter({ dir: String(dir), style: "nextjs", fileExtensions: [".tsx"] });
+
+  const key = "\ufffd";
+  // A query pair of other bytes and the same key does not take the place of the route parameter.
+  expectQuery(router, "/b/7?%FE=q&%FF=r&%EF%BF%BD=s&x=1", { [key]: "7", x: "1" });
+  expectQuery(router, "/b/7?x=1&%FE=q&%FE=r&y=2", { [key]: "7", x: "1", y: "2" });
+  expectQuery(router, "/d/1/2", { [key]: ["1", "2"] });
+  expectQuery(router, "/d/1/2?%FF=3&x=4", { [key]: ["1", "2"], x: "4" });
+  expect(router.match("/d/1/2")!.params).toEqual({ [key]: ["1", "2"] });
+});
+
+it(".query reads the url of a Response", async () => {
+  const { dir } = make(["posts.tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+  const response = await fetch(new URL("/posts?a=1&%FF=2&a=3&%FE=4", server.url));
+  expect(Object.entries(router.match(response)!.query)).toEqual(
+    Object.entries({ a: ["1", "3"], "\ufffd": ["2", "4"] }),
+  );
+});
+
+it(".query reads the pairs of a URL that matched a catch-all route", () => {
+  const { dir } = make(["c/[...rest].tsx", "o/[[...opt]].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  expectQuery(router, "/c/1/2/3?x=1&rest=9&%72est=8&x=2&%FF=a&%FE=b", {
+    rest: "1/2/3",
+    x: ["1", "2"],
+    "\ufffd": ["a", "b"],
+  });
+  expectQuery(router, "/o?opt=a%20b", { opt: "a b" });
+  expect(router.match("/o?opt=a%20b")!.params).toEqual({});
+  expectQuery(router, "/o/1/2?opt=z&x=1&x=2", { opt: "1/2", x: ["1", "2"] });
+});
+
+it(".query reads a value that is not UTF-8 as U+FFFD, and a name with a NUL as its own key", () => {
+  const { dir } = make(["posts.tsx", "posts/[id].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  const key = "\ufffd";
+  expectQuery(router, "/posts?a=%FF&b=%C3%A9&c=%E2%82&a=%FE", { a: [key, key], b: "\u00e9", c: key });
+  expectQuery(router, "/posts/%FF?a=1", { id: key, a: "1" });
+  expectQuery(router, "/posts?a%00=1&a%00%00=2&a=x%00y&a%00=3", { "a\0": ["1", "3"], "a\0\0": "2", a: "x\0y" });
+});
+
+it(".query groups generated pairs by the text of their name", () => {
+  const { dir } = make(["posts.tsx", "posts/[id].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  // A fixed xorshift: the URLs are the same on every run.
+  let seed = 0x9e3779b9;
+  const random = (below: number) => {
+    seed ^= seed << 13;
+    seed ^= seed >>> 17;
+    seed ^= seed << 5;
+    return (seed >>> 0) % below;
+  };
+  const names = ["a", "b", "tag", "id", "0", "%FF", "%FE", "%C3%A9", "%E2%82", "%EF%BF%BD", "x%FFy", "x%FEy"];
+  const values = ["", "1", "2", "%20x", "%FF", "%C3%A9"];
+  // What JavaScript reads for the bytes of an escaped name or value.
+  const text = (escaped: string) =>
+    new TextDecoder().decode(
+      Buffer.from(
+        escaped.replace(/%(..)/g, (_, hex) => String.fromCharCode(parseInt(hex, 16))),
+        "latin1",
+      ),
+    );
+
+  for (let i = 0; i < 400; i++) {
+    const pairs = Array.from({ length: 1 + random(12) }, () => [
+      names[random(names.length)],
+      values[random(values.length)],
+    ]);
+    const hasParameter = random(2) === 1;
+    const expected = new Map<string, string[]>(hasParameter ? [["id", ["7"]]] : []);
+    for (const [name, value] of pairs) {
+      const key = text(name);
+      if (hasParameter && key === "id") continue;
+      expected.set(key, [...(expected.get(key) ?? []), text(value)]);
+    }
+    const url = (hasParameter ? "/posts/7?" : "/posts?") + pairs.map(pair => pair.join("=")).join("&");
+    const query = Object.fromEntries([...expected].map(([key, list]) => [key, list.length === 1 ? list[0] : list]));
+    expect({ url, query: router.match(url)!.query }).toEqual({ url, query });
   }
 });
 

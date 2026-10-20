@@ -960,11 +960,6 @@ echo two`
       .stdout("one\ntwo\n")
       .runAsTest("trailing comment ends the statement");
 
-    TestBuilder.command /* sh */ `echo one # note \\
-echo two`
-      .stdout("one\ntwo\n")
-      .runAsTest("backslash inside a comment does not continue the line");
-
     TestBuilder.command /* sh */ `rm -rf build   # clean the previous output
 cp -R src build
 ls`
@@ -977,6 +972,42 @@ ls`
       .fileEquals("src/index.js", "keep me\n")
       .fileEquals("build/index.js", "keep me\n")
       .runAsTest("rm with a trailing comment does not take the next line as arguments");
+
+    const nested = (outer: string, next: string) =>
+      `if ${outer}; then\n  if true; then\n    echo both\n  fi # inner\n${next}\n  echo none\nfi`;
+
+    // Each script prints this in bash and in dash (dash has no `[[ ]]`), with nothing on stderr.
+    const scripts: [name: string, script: string, stdout: string][] = [
+      ["CRLF line ends", "echo one # note\r\necho two # note\r\n", "one\ntwo\n"],
+      ["a backslash at the end of the comment", "echo one # note \\\necho two", "one\ntwo\n"],
+      ["`else` after the inner `fi`", nested("false", "else"), "none\n"],
+      ["`else` after the inner `fi`, outer condition true", nested("true", "else"), "both\n"],
+      ["`elif` after the inner `fi`", nested("false", "elif true; then\n  echo elif\nelse"), "elif\n"],
+      ["`else` after a command", "if true; then\n  echo a # note\nelse\n  echo b\nfi", "a\n"],
+      ["`else` after a command, condition false", "if false; then\n  echo a # note\nelse\n  echo b\nfi", "b\n"],
+      ["`fi` after a command", "if true; then\n  echo a # note\nfi", "a\n"],
+      ["`then` after the condition", "if true # note\nthen echo a; fi", "a\n"],
+      ["a command after an assignment", 'FOO=bar # note\necho "[$FOO]"', "[bar]\n"],
+      // The first form of each of the next five worked before, because the comment took its newline with it.
+      ["after `&&`", "echo a && # note\necho b\necho c && # note\n\necho d\necho e &&\necho f", "a\nb\nc\nd\ne\nf\n"],
+      ["after `||`", "false || # note\necho b\nfalse || # note\n\necho d\nfalse ||\necho f", "b\nd\nf\n"],
+      ["after `|`", "echo a | # note\ncat\necho b | # note\n\ncat\necho c |\ncat", "a\nb\nc\n"],
+      [
+        "inside `[[ ]]`",
+        "[[ a == a # note\n]] && echo 1\n[[ # note\n\na == a ]] && echo 2\n[[\n-n a\n]] && echo 3",
+        "1\n2\n3\n",
+      ],
+      [
+        "before a closing backquote",
+        "echo `echo 1 # note\n`\necho `echo 2 # note\n\n`\necho `echo 3\n`\necho `echo 4;`",
+        "1\n2\n3\n4\n",
+      ],
+      ["up to a closing backquote", "echo `echo 1 # note`\necho `echo 2 # note`\necho `echo 3 # note`", "1\n2\n3\n"],
+      ["backslash-newline in backquotes", "echo `echo a # note \\\nb\n`", "a\n"],
+    ];
+    for (const [name, script, stdout] of scripts) {
+      TestBuilder.command`${{ raw: script }}`.stdout(stdout).runAsTest(name);
+    }
   });
 
   describe("glob expansion", () => {

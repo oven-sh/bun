@@ -821,8 +821,8 @@ describe("lex shell", () => {
     expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
   });
 
-  // A comment runs to the end of the line. The newline that ends it still
-  // delimits the statement, like an unquoted newline outside a comment.
+  // A comment ends before the newline that ends its line. That newline still
+  // ends the statement, like a newline with no comment in front of it.
   test.each([
     [
       "trailing comment ends the statement",
@@ -882,8 +882,82 @@ describe("lex shell", () => {
       "echo one # note",
       [{ Text: "echo" }, { Delimit: {} }, { Text: "one" }, { Delimit: {} }, { Eof: {} }],
     ],
+    [
+      "interpreter line",
+      "#!/bin/sh\necho two",
+      [{ Newline: {} }, { Text: "echo" }, { Delimit: {} }, { Text: "two" }, { Delimit: {} }, { Eof: {} }],
+    ],
   ])("comment: %s", (_name, source, expected) => {
     expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
+  });
+
+  // The tokens are those of the same script with the comment text removed.
+  test.each([
+    ["after a word", "echo one # note\necho two", "echo one \necho two"],
+    ["after a variable", "echo $X # note\necho two", "echo $X \necho two"],
+    ["after a closing quote", 'echo "a" # note\necho b', 'echo "a" \necho b'],
+    ["after an assignment", "FOO=bar # note\necho $FOO", "FOO=bar \necho $FOO"],
+    [
+      "after `fi`, before `else`",
+      "if a; then\nif b; then\nc\nfi # note\nelse\nd\nfi",
+      "if a; then\nif b; then\nc\nfi \nelse\nd\nfi",
+    ],
+    ["after `&&`", "echo a && # note\necho b", "echo a && \necho b"],
+    ["after `||`", "echo a || # note\necho b", "echo a || \necho b"],
+    ["after `|`", "echo a | # note\ncat", "echo a | \ncat"],
+    ["after `[[`", "[[ # note\na == a ]]", "[[ \na == a ]]"],
+    ["before `]]`", "[[ a == a # note\n]]", "[[ a == a \n]]"],
+    ["in `( )`", "(echo a # note\n)", "(echo a \n)"],
+    ["in `$( )`", "echo $(echo a # note\n)", "echo $(echo a \n)"],
+    ["`)` is comment text in `$( )`", "echo $(echo a # note)\n)", "echo $(echo a \n)"],
+    ["in backquotes, before a newline", "echo `echo a # note\n`", "echo `echo a \n`"],
+    ["in backquotes, before the closing backquote", "echo `echo a # note`", "echo `echo a `"],
+    [
+      "in backquotes on three lines",
+      "echo `echo 1 # note`\necho `echo 2 # note`\necho `echo 3 # note`",
+      "echo `echo 1 `\necho `echo 2 `\necho `echo 3 `",
+    ],
+    ["backslash-newline ends the comment", "echo one # note \\\necho two", "echo one \necho two"],
+    ["two backslashes, then a newline", "echo one # note \\\\\necho two", "echo one \necho two"],
+    ["backslash-newline in backquotes continues the comment", "echo `echo a # note \\\nmore\n`", "echo `echo a \n`"],
+    [
+      "backslash-newline in `$( )` in backquotes continues the comment",
+      "echo `echo $(echo a # note \\\nmore\n)`",
+      "echo `echo $(echo a \n)`",
+    ],
+    ["escaped backquote in backquotes is comment text", "echo `echo a # note \\` more\n`", "echo `echo a \n`"],
+    ["two backslashes, then the closing backquote", "echo `echo a # note \\\\`", "echo `echo a `"],
+    [
+      "backquote is comment text in `$( )` in backquotes",
+      "echo `echo $(echo a # note ` more\n)`",
+      "echo `echo $(echo a \n)`",
+    ],
+  ])("comment: %s", (_name, commented, plain) => {
+    const expected = JSON.parse(lex({ raw: [plain] }));
+    expect(JSON.parse(lex({ raw: [commented] }))).toEqual(expected);
+    // A character outside ASCII selects the other lexer. `\ö` covers a backslash in front of one.
+    expect(JSON.parse(lex({ raw: [commented.replaceAll("note", "nöte \\ö")] }))).toEqual(expected);
+  });
+
+  // The closing backquote follows the rule of the `)` of `$( )`.
+  test.each([
+    ["newline", "echo `echo a\n`", "echo $(echo a\n)", { Newline: {} }],
+    ["semicolon", "echo `echo a;`", "echo $(echo a;)", { Semicolon: {} }],
+  ])("no delimiter between a %s and the closing backquote", (_name, backquoted, dollarParen, separator) => {
+    const expected = [
+      { Text: "echo" },
+      { Delimit: {} },
+      { CmdSubstBegin: {} },
+      { Text: "echo" },
+      { Delimit: {} },
+      { Text: "a" },
+      { Delimit: {} },
+      separator,
+      { CmdSubstEnd: {} },
+      { Eof: {} },
+    ];
+    expect(JSON.parse(lex({ raw: [backquoted] }))).toEqual(expected);
+    expect(JSON.parse(lex({ raw: [dollarParen] }))).toEqual(expected);
   });
 
   describe("errors", async () => {

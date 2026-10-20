@@ -712,11 +712,15 @@ impl AnyRoute {
                 .global
                 .throw_invalid_arguments(format_args!("Bundled file path is too long")));
         }
-        let bundle_dir = dir.map(|dir| {
-            Box::<[u8]>::from(
-                paths::resolve_path::join_abs_string::<paths::platform::Loose>(&dir, &[b"."]),
-            )
-        });
+        // A CommonJS re-bundle inlines the directory it was built in, which need not exist where
+        // the bundle is deployed. The paths then resolve against the cwd.
+        let bundle_dir = dir
+            .map(|dir| {
+                Box::<[u8]>::from(
+                    paths::resolve_path::join_abs_string::<paths::platform::Loose>(&dir, &[b"."]),
+                )
+            })
+            .filter(|dir| sys::exists(dir));
         let mut iter = files.array_iterator(init_ctx.global)?;
         let mut html_route: Option<AnyRoute> = None;
         while let Some(file_entry) = iter.next()? {

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { renameSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -205,30 +206,31 @@ describe.concurrent("bundler", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The path alone stays under the limit, which `Bun.serve()` rejects with ENAMETOOLONG.
+  const maxPathBytes = isWindows ? 32767 * 3 + 1 : isLinux ? 4096 : 1024;
   test.each([
     { name: "dir", dirLength: 200_000, pathLength: 1 },
-    { name: "dir-and-path", dirLength: 800, pathLength: 800 },
-    { name: "long-dir-and-path", dirLength: 3000, pathLength: 3000 },
+    { name: "dir-and-path", dirLength: 0, pathLength: maxPathBytes - 8 },
   ])("HTMLServerManifestPathTooLong/$name", async ({ dirLength, pathLength }) => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-        const path = "./" + "b".repeat(${pathLength});
+        const path = "./" + Buffer.alloc(${pathLength}, "b").toString();
         try {
           Bun.serve({
             port: 0,
             routes: {
               "/": {
                 index: path,
-                dir: "/" + "a".repeat(${dirLength}),
+                dir: process.cwd() + "/" + Buffer.alloc(${dirLength}, "a").toString(),
                 files: [{ path, loader: "html", isEntry: true, headers: { "content-type": "text/html" } }],
               },
             },
           });
         } catch (error) {
-          console.log(error instanceof Error);
+          console.log(error.message);
         }
         `,
       ],
@@ -236,7 +238,40 @@ describe.concurrent("bundler", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim(), stderr).toBe("true");
+    expect(stdout.trim(), stderr).toBe("Bundled file path is too long");
+    expect(exitCode).toBe(0);
+  });
+
+  // A CommonJS re-bundle inlines `import.meta.dir`, so the manifest names the build machine's directory.
+  test("HTMLServerRebundledToCommonJSAndMoved", async () => {
+    using dir = tempDir("html-server-rebundled", {
+      ...htmlServerFiles,
+      "src/server.ts": `import about from "./pages/about.html";${serveAbout}`,
+    });
+    const first = await Bun.build({
+      entrypoints: [join(String(dir), "src/server.ts")],
+      outdir: join(String(dir), "dist"),
+      target: "bun",
+      format: "esm",
+    });
+    expect(first.success).toBe(true);
+    const second = await Bun.build({
+      entrypoints: [join(String(dir), "dist/server.js")],
+      outdir: join(String(dir), "rebundled"),
+      target: "bun",
+      format: "cjs",
+    });
+    expect(second.success).toBe(true);
+
+    renameSync(join(String(dir), "dist"), join(String(dir), "deployed"));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "rebundled/server.js")],
+      env: bunEnv,
+      cwd: join(String(dir), "deployed"),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim(), stderr).toBe("200 true 200 true 200");
     expect(exitCode).toBe(0);
   });
 

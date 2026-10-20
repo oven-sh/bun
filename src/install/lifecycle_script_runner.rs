@@ -946,8 +946,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     self.discard_packages_with_unfinished_scripts();
                     // De-exit: record the failure before `self` is destroyed so the
                     // top-level exit-code logic reports it, instead of killing the
-                    // process mid-install.
+                    // process mid-install. Decrement the pending count so the install
+                    // completion loop (which waits for it to reach zero) does not hang,
+                    // then destroy the subprocess to avoid leaking the allocation.
                     unsafe { (*self.manager.as_ptr()).any_failed_to_install = true };
+                    self.decrement_pending_script_tasks();
                     // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                     unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                     Output::flush();
@@ -1011,8 +1014,13 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                             );
                             self.discard_packages_with_unfinished_scripts();
                             // De-exit: record the failure so the top-level reports it,
-                            // instead of killing the process mid-install.
+                            // instead of killing the process mid-install. Decrement the
+                            // pending count so the install completion loop does not hang,
+                            // then destroy the subprocess to avoid leaking the allocation.
                             unsafe { (*self.manager.as_ptr()).any_failed_to_install = true };
+                            self.decrement_pending_script_tasks();
+                            // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
+                            unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                             return;
                         }
                     }
@@ -1075,8 +1083,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 self.discard_packages_with_unfinished_scripts();
                 // De-exit: record the failure before `self` is destroyed so the
                 // top-level exit-code logic reports it, instead of killing the
-                // process mid-install.
+                // process mid-install. Decrement the pending count so the install
+                // completion loop does not hang, then destroy the subprocess to
+                // avoid leaking the allocation.
                 unsafe { (*self.manager.as_ptr()).any_failed_to_install = true };
+                self.decrement_pending_script_tasks();
                 // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                 unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                 Output::flush();
@@ -1252,12 +1263,17 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             lss.discard_packages_with_unfinished_scripts();
             // De-exit (groundwork for a programmatic install API, see #5414): a
             // spawn failure must not terminate the process. Record the failure on
-            // the manager so the top-level exit-code logic reports it, and return
-            // an Err the caller (or a future Bun.install) can handle.
+            // the manager so the top-level exit-code logic reports it. Decrement the
+            // pending count so the install completion loop (which waits for it to
+            // reach zero) does not hang, and destroy the subprocess to avoid leaking
+            // the allocation — the caller propagates this Err without cleanup.
             // SAFETY: `lifecycle_subprocess` is the freshly-created, uniquely-owned
             // allocation root (see `spawn_next_script` above); the file's own pattern
             // for mutable manager access (lines 557/634).
             unsafe { (*(*lifecycle_subprocess).manager.as_ptr()).any_failed_to_install = true };
+            lss.decrement_pending_script_tasks();
+            // SAFETY: `lifecycle_subprocess` is uniquely owned here; `lss` only borrowed it.
+            unsafe { Self::destroy(lifecycle_subprocess) };
             return Err(crate::Error::InstallFailed);
         }
 

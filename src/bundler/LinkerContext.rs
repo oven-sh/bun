@@ -218,7 +218,7 @@ impl<'a> LinkerContext<'a> {
     ///
     /// The returned borrow is tied to `&self`. Callers that need to hold a
     /// `&Graph` across a `&mut self` borrow (split-borrow patterns — e.g.
-    /// `process_html_import_files`, TLA-check column caching, or
+    /// TLA-check column caching, or
     /// `generate_isolated_hash`) must continue to deref the raw
     /// `self.parse_graph` field directly.
     #[inline]
@@ -728,46 +728,14 @@ impl<'a> LinkerContext<'a> {
     }
 
     fn process_html_import_files(&mut self) {
-        // SAFETY: `parse_graph` is a backref to `BundleV2.graph`, a sibling
-        // field of `BundleV2.linker` (= `*self`). The two are disjoint, and no
-        // other `&`/`&mut` to `BundleV2.graph` is live for this scope —
-        // `self.graph` below is `LinkerGraph`, a distinct allocation.
-        // Note: go through raw pointers and reborrow per use to avoid holding
-        // overlapping `&`/`&mut` into `parse_graph.html_imports` and
-        // `parse_graph.input_files`.
-        let parse_graph: *mut Graph<'a> = self.parse_graph;
-        // SAFETY: see above; sole accessor of `html_imports` for this scope.
-        let server_len = unsafe { (*parse_graph).html_imports.server_source_indices.len() };
+        let html_imports = &self.parse_graph().html_imports;
+        let server_len = html_imports.server_source_indices.len();
+        debug_assert_eq!(html_imports.html_source_indices.len(), server_len);
         if server_len > 0 {
             let actual_ref = self.graph.runtime_function(b"__jsonParse");
 
-            for i in 0..server_len as usize {
-                // SAFETY: `server_source_indices` is a stable Vec; index
-                // bounded by `server_len`.
-                let html_import: u32 =
-                    unsafe { (*parse_graph).html_imports.server_source_indices.slice()[i] };
-                // SAFETY: `input_files` SoA is append-only; read-only here.
-                let path_text = unsafe {
-                    &(*parse_graph).input_files.items_source()[html_import as usize]
-                        .path
-                        .text
-                };
-                // SAFETY: sole `&mut` into the per-target map for this lookup.
-                let source_index: u32 = unsafe {
-                    (*parse_graph).path_to_source_index_map(Target::Browser)
-                }
-                .get(path_text)
-                .unwrap_or_else(|| {
-                    panic!("Assertion failed: HTML import file not found in pathToSourceIndexMap");
-                });
-
-                // SAFETY: sole `&mut` into `html_source_indices` for this push.
-                unsafe {
-                    (*parse_graph)
-                        .html_imports
-                        .html_source_indices
-                        .push(source_index)
-                };
+            for i in 0..server_len {
+                let html_import: u32 = self.parse_graph().html_imports.server_source_indices[i];
 
                 // S.LazyExport is a call to __jsonParse. Each accessor returns
                 // `Option`; `.unwrap()` panics on shape mismatch.

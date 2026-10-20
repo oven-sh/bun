@@ -2,7 +2,7 @@ use crate::BundledAst as JSAst;
 use bun_alloc::Arena as ThreadLocalArena;
 use bun_alloc::{AstAlloc, AstVec};
 use bun_ast::server_component_boundary;
-use bun_collections::MultiArrayList;
+use bun_collections::{DynamicBitSetUnmanaged, MultiArrayList, index_sort};
 use enum_map::EnumMap;
 
 use crate::IndexStringMap::IndexStringMap;
@@ -99,6 +99,16 @@ pub struct HtmlImports {
     pub(crate) server_source_indices: Vec<IndexInt>,
     /// Source index of the HTML file being imported
     pub(crate) html_source_indices: Vec<IndexInt>,
+    /// The browser files that the scan added to `entry_points` for these imports, in the order it found them in.
+    pub(crate) pages: Vec<IndexInt>,
+}
+
+/// See [`Graph::server_imported_pages`].
+pub(crate) struct ServerImportedPages {
+    /// For [`HtmlImports::html_source_indices`].
+    pub(crate) html_source_indices: Vec<IndexInt>,
+    /// [`HtmlImports::pages`] in import order.
+    pub(crate) entry_points: Vec<Index>,
 }
 
 pub struct InputFile {
@@ -219,6 +229,55 @@ impl<'a> Graph<'a> {
         target: options::Target,
     ) -> &mut PathToSourceIndexMap {
         &mut self.build_graphs[target]
+    }
+
+    /// Takes [`HtmlImports::pages`] out of `entry_points`: `find_reachable_files` adds them again in import order.
+    pub(crate) fn remove_server_imported_pages_from_entry_points(
+        &mut self,
+    ) -> Result<(), bun_alloc::AllocError> {
+        if self.html_imports.pages.is_empty() {
+            return Ok(());
+        }
+        let mut is_page = DynamicBitSetUnmanaged::init_empty(self.input_files.len())?;
+        for &page in &self.html_imports.pages {
+            is_page.set(page as usize);
+        }
+        self.entry_points
+            .retain(|entry_point| !is_page.is_set(entry_point.get() as usize));
+        Ok(())
+    }
+
+    /// [`HtmlImports::pages`] in the order that `reachable` comes to them or to their manifest modules, then by display path.
+    pub(crate) fn server_imported_pages(&self, reachable: &[Index]) -> ServerImportedPages {
+        let sources = self.input_files.items_source();
+        let manifest_modules = self.html_imports.server_source_indices.as_slice();
+        let browser_files = &self.build_graphs[options::Target::Browser];
+        let html_source_indices: Vec<IndexInt> = (manifest_modules.iter())
+            .map(|&manifest_module| {
+                browser_files
+                    .get(sources[manifest_module as usize].path.text)
+                    .expect("the scan made a browser file for each page that server code imports")
+            })
+            .collect();
+
+        let mut position = vec![u32::MAX; sources.len()];
+        for (at, source_index) in reachable.iter().enumerate() {
+            position[source_index.get() as usize] = at as u32;
+        }
+        for (&manifest_module, &page) in manifest_modules.iter().zip(&html_source_indices) {
+            position[page as usize] =
+                position[page as usize].min(position[manifest_module as usize]);
+        }
+        let mut pages = self.html_imports.pages.clone();
+        index_sort::sort_indices(&mut pages, &mut |a, b| {
+            let (a, b) = (a as usize, b as usize);
+            (position[a].cmp(&position[b]))
+                .then_with(|| sources[a].path.pretty.cmp(sources[b].path.pretty))
+        });
+        ServerImportedPages {
+            html_source_indices,
+            entry_points: pages.into_iter().map(Index::init).collect(),
+        }
     }
 
     /// Schedule a task to be run on the JS thread which resolves the promise of

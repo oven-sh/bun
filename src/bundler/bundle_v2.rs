@@ -2353,6 +2353,9 @@ pub mod bv2_impl {
             for entry_point in self.graph.entry_points.iter() {
                 additional_files_needed_outside_css.set(entry_point.get() as usize);
             }
+            // The scan finds pages in an order that changes from build to build, and entry points are numbered by position.
+            self.graph
+                .remove_server_imported_pages_from_entry_points()?;
             let mut additional_files_imported_by_css_and_inlined =
                 DynamicBitSetUnmanaged::init_empty(self.graph.input_files.len())?;
 
@@ -2401,15 +2404,28 @@ pub mod bv2_impl {
             // imported and weird things will happen
             visitor.visit::<false>(Index::RUNTIME, false);
 
-            if self.transpiler.options.code_splitting {
-                for entry_point in self.graph.entry_points.iter().copied() {
-                    visitor.visit::<true>(entry_point, false);
+            let code_splitting = self.transpiler.options.code_splitting;
+            let visit_entry_points = |visitor: &mut ReachableFileVisitor,
+                                      entry_points: &[Index]| {
+                for &entry_point in entry_points {
+                    if code_splitting {
+                        visitor.visit::<true>(entry_point, false);
+                    } else {
+                        visitor.visit::<false>(entry_point, false);
+                    }
                 }
-            } else {
-                for entry_point in self.graph.entry_points.iter().copied() {
-                    visitor.visit::<false>(entry_point, false);
-                }
-            }
+            };
+            visit_entry_points(&mut visitor, &self.graph.entry_points);
+
+            let html_imports = &self.graph.html_imports;
+            let pages =
+                if html_imports.server_source_indices.is_empty() && html_imports.pages.is_empty() {
+                    None
+                } else {
+                    let pages = self.graph.server_imported_pages(&visitor.reachable);
+                    visit_entry_points(&mut visitor, &pages.entry_points);
+                    Some(pages)
+                };
 
             if bun_core::env::IS_DEBUG && ReachableFiles.is_visible() {
                 bun_core::scoped_log!(
@@ -2459,6 +2475,12 @@ pub mod bv2_impl {
                         content_hashes[index] = 0;
                     }
                 }
+            }
+
+            if let Some(pages) = pages {
+                debug_assert_eq!(self.graph.pending_items, 0, "the scan is over");
+                self.graph.html_imports.html_source_indices = pages.html_source_indices;
+                self.graph.entry_points.extend(pages.entry_points);
             }
 
             Ok(reachable.into_boxed_slice())
@@ -7462,6 +7484,7 @@ pub mod bv2_impl {
                         self.graph
                             .entry_points
                             .push(bun_ast::Index(new_source_index));
+                        self.graph.html_imports.pages.push(new_source_index);
                     }
 
                     if self.enqueue_on_load_plugin_if_needed(new_task) {

@@ -157,8 +157,7 @@ impl Targets {
         true
     }
 
-    /// Whether every browser target supports `value`. When one does not, the
-    /// declaration before it stays as the fallback for that target.
+    /// Whether every browser target supports `value`.
     pub(crate) fn supports<T: css::generics::IsCompatible>(&self, value: &T) -> bool {
         self.browsers
             .is_none_or(|browsers| value.is_compatible(&browsers))

@@ -1003,19 +1003,18 @@ impl TransformHandler {
                 let transform_val = &val.0;
                 let vp = val.1;
 
-                // Compute the predicates first, then act, so no borrow of
-                // self.transform is held across the flush.
+                // If two vendor prefixes for the same property have different
+                // values, we need to flush what we have immediately to preserve order.
+                // Compute the predicate first, then act, so no borrow of
+                // self.transform is held across self.flush().
                 let (differs, has_prefix) = match &self.transform {
                     Some(current) => (current.0 != *transform_val, current.1.contains(vp)),
                     None => (false, false),
                 };
                 if differs && !has_prefix {
-                    // If two vendor prefixes for the same property have different
-                    // values, we need to flush what we have immediately to preserve order.
                     self.flush(dest, context);
                 } else if differs && !context.targets.supports(transform_val) {
-                    // The buffered value is the fallback for the targets that do not
-                    // support the new one. The other properties stay buffered.
+                    // The held value is the fallback for the targets that lack the new one.
                     self.flush_transform(dest, context);
                 }
 

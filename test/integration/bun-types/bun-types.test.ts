@@ -322,6 +322,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "JSON5Object.bind.ts": "typeof Bun.JSON5",
   "JSONCObject.bind.ts": "typeof Bun.JSONC",
   "Listener.bind.ts": null,
+  "NodeHTTPResponse.bind.ts": null,
   "NodeModuleModule.bind.ts": null,
   "PasswordObject.bind.ts": "typeof Bun.password",
   "ResourceUsage.bind.ts": null,

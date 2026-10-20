@@ -4,6 +4,7 @@
 
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_ptr::RefPtr;
 use bun_uws_sys::Opcode;
 use bun_uws_sys::response::PerMessageDeflateParams;
 
@@ -82,10 +83,10 @@ pub(crate) fn upgrade_node_http_response_to_web_socket<'a>(
     let UpgradeResponse::Response(response) = response else {
         return Ok(JSValue::UNDEFINED);
     };
-    let global = cx.global();
 
     if !handshake.ends_with(b"\r\n\r\n") {
-        return Err(global
+        return Err(cx
+            .global()
             .throw_invalid_arguments(format_args!("handshake must be a complete response head")));
     }
     let deflate_params = deflate.map(|deflate| PerMessageDeflateParams {
@@ -96,8 +97,9 @@ pub(crate) fn upgrade_node_http_response_to_web_socket<'a>(
     });
 
     Ok(response
+        .with(&cx.payloads, RefPtr::this_ptr)
         .upgrade_for_ws_package(
-            global,
+            cx,
             websocket.to_js(),
             handlers.to_js(),
             handshake,

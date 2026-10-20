@@ -146,6 +146,29 @@ test.concurrent.each([
   expect(JSON.parse(stdout).received).toBeGreaterThan(8 * 1024 * 1024);
 });
 
+test("cork() of the native response takes a missing callback as undefined", async () => {
+  const { promise, resolve } = Promise.withResolvers<unknown>();
+  const server = http.createServer((req, res) => {
+    const handle = res[Object.getOwnPropertySymbols(res).find(s => s.description === "handle")!];
+    try {
+      resolve(handle.cork());
+    } catch (error) {
+      resolve(error);
+    }
+    res.end();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+    expect(await promise).toMatchObject({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "cork" argument must be of type function. Received undefined',
+    });
+  } finally {
+    server.close();
+  }
+});
+
 test("'connection' and 'clientError' callbacks survive GC", async () => {
   // The server's native struct stores these two node:http callbacks on the JS
   // wrapper (GC-visited WriteBarrier slots), not in Strong handles. Force GC

@@ -833,6 +833,10 @@ impl<T: JsPayload> JsWrapperRef<T> {
         self.0.upgrade(heap.global_object());
     }
     #[inline]
+    pub fn set_weak(&mut self, wrapper: JsWrapper<'_, T>) {
+        self.0.set_weak(wrapper.as_value().0);
+    }
+    #[inline]
     pub fn downgrade(&mut self) {
         self.0.downgrade();
     }

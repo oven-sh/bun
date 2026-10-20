@@ -1659,11 +1659,21 @@ where
         if let Some(request) = <Request as bun_jsc::JsClass>::from_js(arguments[0]) {
             // SAFETY: from_js returns a live *mut Request; shared access only.
             let _ = unsafe { (*request).request_context.set_timeout(value) };
-        } else if let Some(response) = <NodeHTTPResponse as bun_jsc::JsClass>::from_js(arguments[0])
-        {
-            // SAFETY: from_js returns a live *mut NodeHTTPResponse
-            unsafe { (*response).set_timeout((value % 255) as u8) };
-        } else {
+            return Ok(JSValue::UNDEFINED);
+        }
+        // SAFETY: a host function runs on the JS thread, with nothing lent by another scope in use.
+        let is_response = unsafe {
+            JsScope::with(global.as_mut_ptr(), |cx| {
+                let Some(response) = NodeHTTPResponse::from_js(&cx.heap, arguments[0]) else {
+                    return false;
+                };
+                response.with(&cx.payloads, |response| {
+                    response.set_timeout((value % 255) as u8)
+                });
+                true
+            })
+        };
+        if !is_response {
             return Err(self
                 .global()
                 .throw_invalid_arguments(format_args!("timeout() requires a Request object")));

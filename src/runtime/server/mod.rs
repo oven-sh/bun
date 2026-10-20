@@ -32,6 +32,7 @@ use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 use bun_uws_sys::app::c as uws_app_c;
 
+use bun_jsc::bindgen::JsScope;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 // ─── httplog ─────────────────────────────────────────────────────────────────
@@ -1259,10 +1260,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// # Safety
     /// `this` must point to a live heap-allocated `NewServer` (the userdata
     /// registered with uWS).
-    pub(crate) fn on_node_http_request(
+    fn on_node_http_request_in_scope(
         this: *mut Self,
         req: &mut uws_sys::Request,
         resp: &mut uws_sys::NewAppResponse<SSL>,
+        cx: &mut JsScope<'_>,
     ) {
         use bun_http_jsc::method_jsc::MethodJsc as _;
         use node_http_response::Flags as NhrFlags;
@@ -1423,11 +1425,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 break 'brk HttpResult::Success;
                             }
 
-                            let strong_self = nhr.get_this_value();
-                            if strong_self.is_empty_or_undefined_or_null() {
+                            let Some(strong_self) = nhr.get_this_value(&cx.heap) else {
                                 strong_promise.deinit();
                                 break 'brk HttpResult::Success;
-                            }
+                            };
 
                             nhr.promise.set(core::mem::replace(
                                 &mut strong_promise,
@@ -1438,7 +1439,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             // is link-only.
                             result.then2(
                                 global,
-                                strong_self,
+                                strong_self.as_value().to_js(),
                                 node_http_response::__jsc_host_node_http_request_on_resolve,
                                 node_http_response::__jsc_host_node_http_request_on_reject,
                             );
@@ -1499,7 +1500,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // An ended response still draining completes from on_drain/on_abort.
                     if !nhr_flags.contains(NhrFlags::ENDED) {
                         nhr.flags.set(nhr.flags.get() | NhrFlags::ENDED);
-                        nhr.on_request_complete();
+                        nhr.on_request_complete(cx);
                     }
                 }
             }
@@ -1519,15 +1520,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
                     // If we ended the response without attaching an ondata handler, we discard the body read stream
                     else if !matches!(http_result, HttpResult::Pending) {
-                        let this_value = nhr.get_this_value();
-                        nhr.maybe_stop_reading_body(this_value);
+                        let this_value = nhr.get_this_value(&cx.heap);
+                        nhr.maybe_stop_reading_body(cx, this_value);
                     }
                 }
                 if nhr_flags.contains(NhrFlags::TUNNELED) {
                     // Raw 'upgrade'/'connect' handoff: the exchange left HTTP, so
                     // release the pending-request accounting now - a half-open
                     // tunnel never closes, which stranded `pending_requests`.
-                    nhr.mark_request_as_done_if_necessary();
+                    nhr.mark_request_as_done_if_necessary(cx);
                 }
             } else if nhr_flags.contains(NhrFlags::IS_REQUEST_PENDING) {
                 // The socket was adopted by the WebSocket context inside the
@@ -1538,7 +1539,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // pending-request counter via `mark_request_as_done()`.
                 // `should_request_be_pending()` returns false once UPGRADED
                 // is set, so this reaches `mark_request_as_done()`.
-                nhr.on_request_complete();
+                nhr.on_request_complete(cx);
             }
         }
 
@@ -1552,6 +1553,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if !is_async && !node_http_response.is_null() {
             // SAFETY: out-param ref taken in C++; synchronous path drops it.
             unsafe { &*node_http_response }.deref();
+        }
+    }
+
+    pub(crate) fn on_node_http_request(
+        this: *mut Self,
+        req: &mut uws_sys::Request,
+        resp: &mut uws_sys::NewAppResponse<SSL>,
+    ) {
+        // SAFETY: `this` is the live server backref registered as the uws userdata.
+        let global = unsafe { &*this }.global_this().as_mut_ptr();
+        // SAFETY: uws dispatches on the JS thread, with nothing lent by another scope in use.
+        unsafe {
+            JsScope::with(global, |cx| {
+                Self::on_node_http_request_in_scope(this, req, resp, cx)
+            })
         }
     }
 

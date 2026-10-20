@@ -174,9 +174,14 @@ pub(crate) fn build_framework(global: &JSGlobalObject, frame: &CallFrame) -> JsR
             Ok(entry)
         },
     )?;
-    let result = JSValue::create_empty_object(global, 2);
+    let result = JSValue::create_empty_object(global, 3);
     result.put(global, b"fileSystemRouterTypes", routers);
     result.put(global, b"builtInModules", modules);
+    result.put(
+        global,
+        b"serverComponents",
+        JSValue::from(framework.server_components.is_some()),
+    );
     Ok(result)
 }
 

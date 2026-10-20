@@ -1478,19 +1478,6 @@ impl JSValue {
     pub fn put_index(self, global: &JSGlobalObject, i: u32, out: JSValue) -> JsResult<()> {
         crate::call_check_slow(global, || JSC__JSValue__putIndex(self, global, i, out))
     }
-    /// `JSValue.putBunStringOneOrArray` — put `key`/`value` into
-    /// `self`. If `key` is already present on the object, create an array for
-    /// the values (used by FrameworkRouter catch-all params).
-    pub fn put_bun_string_one_or_array(
-        self,
-        global: &JSGlobalObject,
-        key: &bun_core::String,
-        value: JSValue,
-    ) -> JsResult<JSValue> {
-        host_fn::from_js_host_call(global, || {
-            JSC__JSValue__upsertBunStringArray(self, global, key, value)
-        })
-    }
 
     /// `JSValue.push` — append to an array-typed JS value.
     #[track_caller]
@@ -2053,12 +2040,6 @@ unsafe extern "C" {
         value: JSValue,
     );
     safe fn JSC__JSValue__putIndex(this: JSValue, global: &JSGlobalObject, i: u32, value: JSValue);
-    safe fn JSC__JSValue__upsertBunStringArray(
-        this: JSValue,
-        global: &JSGlobalObject,
-        key: &bun_core::String,
-        value: JSValue,
-    ) -> JSValue;
     safe fn JSC__JSValue__push(this: JSValue, global: &JSGlobalObject, value: JSValue);
     safe fn JSC__JSValue__putToPropertyKey(
         target: JSValue,

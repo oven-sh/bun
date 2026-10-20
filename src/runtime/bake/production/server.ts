@@ -34,6 +34,8 @@ type Build = {
   frameworkRoutes: FrameworkRoute[];
   /** URL path to file, relative to `dist/`: the `.html` pages, the browser files and `public/`. */
   files: Record<string, string>;
+  /** The URL paths in `files` that are `.html` pages. */
+  htmlPages: string[];
 };
 
 type Kept = {
@@ -196,27 +198,30 @@ export function start(build: Build) {
   for (const [url, file] of Object.entries(build.files)) {
     routes[url] = new Response(Bun.file(new URL(file, import.meta.url)));
   }
+  const pages = new Set(build.htmlPages);
   for (const route of build.frameworkRoutes) {
     const handle = handler(route);
-    for (const pattern of route.patterns) routes[pattern] = handle;
+    for (const pattern of route.patterns) {
+      routes[pattern] = handle;
+      pages.add(pattern);
+    }
   }
-  const app = build.app;
-  const appRoutes = app?.routes ?? app?.static;
+  const { static: staticRoutes, ...app } = build.app ?? {};
+  const appRoutes = app.routes ?? staticRoutes;
   if (appRoutes && typeof appRoutes === "object" && !Array.isArray(appRoutes)) {
     for (const [route, value] of Object.entries(appRoutes)) {
-      if (route in routes) throw new Error(`The route "${route}" of app/server.ts is also a page.`);
+      if (pages.has(route)) throw new Error(`The route "${route}" of app/server.ts is also a page.`);
       routes[route] = value;
     }
   }
 
   const server = Bun.serve({
     ...app,
-    static: undefined,
     routes,
-    fetch: app?.fetch ?? (() => new Response("Not Found", { status: 404 })),
+    fetch: app.fetch ?? (() => new Response("Not Found", { status: 404 })),
     development: false,
-    port: process.env.PORT ?? app?.port ?? 3000,
-    hostname: process.env.HOST ?? app?.hostname ?? app?.host,
+    port: process.env.PORT ?? app.port ?? 3000,
+    hostname: process.env.HOST ?? app.hostname ?? app.host,
   });
   console.log(`Listening on ${server.url}`);
   return server;

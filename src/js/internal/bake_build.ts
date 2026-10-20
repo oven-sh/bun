@@ -190,6 +190,9 @@ async function build(h: Helpers) {
   if (components.length > 0) h.checkReactForPages(cwd);
   const framework =
     config.framework !== undefined || components.length > 0 ? buildFramework(config.framework?.object) : undefined;
+  if (framework?.serverComponents) {
+    throw new h.BakeError(`"bun bake build" does not support the serverComponents option of a framework.`, false);
+  }
 
   let appServer: string | undefined;
   try {
@@ -210,6 +213,11 @@ async function build(h: Helpers) {
     for (const page of pagesOfRouter(router, h)) {
       routes.push({ ...page, router, index: routes.length, ...servePatterns(page, router.prefix, h) });
     }
+  }
+  // As in `bun bake`, a page at a fixed path comes before an optional catch-all that also matches it.
+  const fixedPaths = new Set(routes.filter(route => route.catchAll === null).flatMap(route => route.patterns));
+  for (const route of routes) {
+    if (route.catchAll !== null) route.patterns = route.patterns.filter(pattern => !fixedPaths.has(pattern));
   }
 
   if (htmlPages.length === 0 && routes.length === 0 && appServer === undefined) {
@@ -344,9 +352,18 @@ async function build(h: Helpers) {
       ...(env !== undefined && { env }),
       plugins,
       // The bundler drops these exports from each file, as in `bun bake`, after the plugins load it.
+      // It knows a file by its real path, which for a symlink can be outside the router's folder.
       bakeClientPageDirs: (framework?.fileSystemRouterTypes ?? [])
         .filter(router => router.clientPages)
-        .map(router => ({ dir: path.resolve(cwd, router.root), serverExports: router.clientPages.serverExports })),
+        .flatMap(router => {
+          const root = path.resolve(cwd, router.root);
+          const files = routes
+            .filter(route => route.router === router)
+            .flatMap(route => [route.page, ...route.layouts]);
+          const dirs =
+            files.length > 0 ? [root, fs.realpathSync(root), ...files.map(file => fs.realpathSync(file))] : [root];
+          return dirs.map(dir => ({ dir, serverExports: router.clientPages.serverExports }));
+        }),
       throw: false,
     } as any);
     if (!result.success) throw new h.BakeError(`The browser build failed:\n${formatLogs(result.logs)}`, false);
@@ -356,10 +373,13 @@ async function build(h: Helpers) {
     }
     const metafile = typeof result.metafile === "string" ? JSON.parse(result.metafile) : result.metafile;
     const publicUrl = (output: string) => encodedPath(output.replace(/^\.\//, ""));
-    const urlOfHtmlFile = new Map(htmlPages.map(page => [page.file, page.url]));
+    // By real path, as the bundler reports them. Two symlinks can be one file, with one output.
+    const urlsOfHtmlFile = Map.groupBy(htmlPages, page => fs.realpathSync(page.file));
     for (const [output, info] of Object.entries<any>(metafile.outputs)) {
       if (output.endsWith(".html")) {
-        files[urlOfHtmlFile.get(path.resolve(cwd, info.entryPoint))!] = "./client" + publicUrl(output);
+        const pages = urlsOfHtmlFile.get(fs.realpathSync(path.resolve(cwd, info.entryPoint)));
+        if (pages === undefined) throw new h.BakeError(`No page has the output "${output}" of the build.`, false);
+        for (const page of pages) files[page.url] = "./client" + publicUrl(output);
         continue;
       }
       const entry = /route-(\d+)\.js$/.exec(info.entryPoint ?? "");
@@ -406,6 +426,7 @@ async function build(h: Helpers) {
       app: ${appName !== undefined ? `${appName}.default` : "undefined"},
       frameworkRoutes: [${routeEntries.join(", ")}],
       files: ${JSON.stringify(files)},
+      htmlPages: ${JSON.stringify(htmlPages.map(page => page.url))},
     });
   `;
   const result = await Bun.build({

@@ -1671,9 +1671,8 @@ test.concurrent("bun bake build hydrates a page in the browser, and serves its f
     `,
     "app/pages/logo.png": "not-really-a-png",
     "public/.well-known/security.txt": "dotfile",
-    "hydrate.mjs": hydrateInHappyDom.replace(
-      "happy-dom-registrator",
-      join(import.meta.dir, "../../node_modules/@happy-dom/global-registrator/lib/index.js"),
+    "hydrate.mjs": hydrateInHappyDom.replace('"happy-dom-registrator"', () =>
+      JSON.stringify(join(import.meta.dir, "../../node_modules/@happy-dom/global-registrator/lib/index.js")),
     ),
   });
   linkReact(String(dir));
@@ -2045,6 +2044,153 @@ test.concurrent("bun bake build loads the client entry point of a framework with
   const code = await get(url, module);
   expect(code).toContain("from-client-entry");
   expect(code).not.toContain("server-only-page");
+});
+
+// Creating a symlink on Windows needs a privilege that CI does not have.
+test.concurrent.skipIf(isWindows)(
+  "bun bake build removes the server-only exports of a page reached through a symlink",
+  async () => {
+    const router = (root: string) => `{
+      root: "${root}",
+      style: "nextjs-pages",
+      serverEntryPoint: "./render/server.ts",
+      clientEntryPoint: "./render/client.ts",
+      clientPages: { serverExports: ["serverOnly"] },
+    }`;
+    const page = (name: string) => `
+      export const serverOnly = () => "secret-of-${name}";
+      export default "page-${name}";
+    `;
+    using dir = tempDir("bake-build-symlink-exports", {
+      "bake.config.ts": `export default { plugins: [{ name: "a", framework: {
+        fileSystemRouterTypes: [${router("linked")}, ${router("routes")}],
+      } }] };`,
+      "render/server.ts": `export function render(request, meta) { return Response.json(meta.modules); }`,
+      "render/client.ts": `import { route } from "bun:bake/client"; await route.page();`,
+      "real/in-root.ts": page("in-root"),
+      "routes/plain.ts": page("plain"),
+      "shared/folder/in-folder.ts": page("in-folder"),
+      "shared/file.ts": page("file"),
+    });
+    symlinkSync(join(String(dir), "real"), join(String(dir), "linked"));
+    symlinkSync(join(String(dir), "shared/folder"), join(String(dir), "routes/folder"));
+    symlinkSync(join(String(dir), "shared/file.ts"), join(String(dir), "routes/file.ts"));
+
+    const build = await buildApp(String(dir));
+    expect(build.stderr).toBe("");
+    expect(build.exitCode).toBe(0);
+    const { proc, url } = await startBuild(String(dir));
+    await using _ = proc;
+
+    for (const [path, name] of [
+      ["/in-root", "in-root"],
+      ["/plain", "plain"],
+      ["/folder/in-folder", "in-folder"],
+      ["/file", "file"],
+    ]) {
+      const [module] = await (await fetch(new URL(path, url))).json();
+      const code = await get(url, module);
+      expect(code).toContain(`page-${name}`);
+      expect(code).not.toContain(`secret-of-${name}`);
+    }
+  },
+);
+
+test.concurrent.skipIf(isWindows)("bun bake build serves .html pages reached through a symlink", async () => {
+  using dir = tempDir("bake-build-symlink-html", {
+    "shared/docs/index.html": `<!doctype html><title>docs</title><p>in a linked folder</p>`,
+    "shared/page.html": `<!doctype html><title>page</title><p>a linked file</p>`,
+    "app/pages/.keep": "",
+  });
+  symlinkSync(join(String(dir), "shared/docs"), join(String(dir), "app/pages/docs"));
+  symlinkSync(join(String(dir), "shared/page.html"), join(String(dir), "app/pages/one.html"));
+  symlinkSync(join(String(dir), "shared/page.html"), join(String(dir), "app/pages/two.html"));
+
+  const build = await buildApp(String(dir));
+  expect(build.stderr).toBe("");
+  expect(build.exitCode).toBe(0);
+  const { proc, url } = await startBuild(String(dir));
+  await using _ = proc;
+
+  expect(await get(url, "/docs")).toContain("in a linked folder");
+  expect(await get(url, "/one")).toContain("a linked file");
+  expect(await get(url, "/two")).toContain("a linked file");
+});
+
+test.concurrent("bun bake build lets a route of app/server.ts answer for a file of public/", async () => {
+  using dir = tempDir("bake-build-public-route", {
+    "public/robots.txt": "from public",
+    "public/other.txt": "other file",
+    "app/server.ts": `export default { routes: { "/robots.txt": () => new Response("from the app") } };`,
+  });
+  expect((await buildApp(String(dir))).exitCode).toBe(0);
+  const { proc, url } = await startBuild(String(dir));
+  await using _ = proc;
+
+  expect(await get(url, "/robots.txt")).toBe("200 from the app");
+  expect(await get(url, "/other.txt")).toBe("200 other file");
+});
+
+test.concurrent.each([
+  ["an .html page", { "app/pages/about.html": `<!doctype html><title>about</title>` }],
+  [
+    "a page of a framework",
+    {
+      "bake.config.ts": `export default { plugins: [{ name: "a", framework: {
+        fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "./r.ts" }],
+      } }] };`,
+      "r.ts": `export function render() { return new Response("page"); }`,
+      "routes/about.ts": `export default 1;`,
+    },
+  ],
+])("the server of bun bake build refuses a route of app/server.ts that is also %s", async (_, files) => {
+  using dir = tempDir("bake-build-page-route", {
+    ...files,
+    "app/server.ts": `export default { routes: { "/about": () => new Response("from the app") } };`,
+  });
+  expect((await buildApp(String(dir))).exitCode).toBe(0);
+  await expect(startBuild(String(dir))).rejects.toThrow(`The route "/about" of app/server.ts is also a page.`);
+});
+
+test.concurrent("bun bake build serves a page at a fixed path before an optional catch-all", async () => {
+  using dir = tempDir("bake-build-optional-catch-all", {
+    "bake.config.ts": `export default { plugins: [{ name: "a", framework: {
+      fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "./r.ts" }],
+    } }] };`,
+    "r.ts": `export function render(request, meta) {
+      return Response.json({ page: meta.pageModule.default, params: meta.params });
+    }`,
+    "routes/index.ts": `export default "index";`,
+    "routes/[[...slug]].ts": `export default "catch-all";`,
+    "routes/docs/[[...rest]].ts": `export default "docs";`,
+  });
+  const build = await buildApp(String(dir));
+  expect(build.stderr).toBe("");
+  expect(build.exitCode).toBe(0);
+  const { proc, url } = await startBuild(String(dir));
+  await using _ = proc;
+  const json = async (path: string) => (await fetch(new URL(path, url))).json();
+
+  expect(await json("/")).toEqual({ page: "index", params: null });
+  expect(await json("/a/b")).toEqual({ page: "catch-all", params: { slug: ["a", "b"] } });
+  // With nothing at its fixed path, an optional catch-all still answers there.
+  expect(await json("/docs")).toEqual({ page: "docs", params: null });
+});
+
+test.concurrent("bun bake build refuses a framework with server components", async () => {
+  using dir = tempDir("bake-build-server-components", {
+    "bake.config.ts": `export default { plugins: [{ name: "a", framework: {
+      serverComponents: { separateSSRGraph: false, serverRuntimeImportSource: "./rsc.ts" },
+      fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "./r.ts" }],
+    } }] };`,
+    "rsc.ts": `export function registerClientReference() {}`,
+    "r.ts": `export function render() { return new Response("page"); }`,
+    "routes/index.ts": `export default 1;`,
+  });
+  const { stdout, stderr, exitCode } = await buildApp(String(dir));
+  expect(stderr).toContain(`"bun bake build" does not support the serverComponents option of a framework.`);
+  expect(existsSync(join(String(dir), "dist"))).toBe(false);
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
 });
 
 test.concurrent("bun bake build reports a folder with nothing to serve", async () => {

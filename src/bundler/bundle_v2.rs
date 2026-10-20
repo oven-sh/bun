@@ -480,7 +480,7 @@ pub mod bv2_impl {
         }
         #[derive(Clone)]
         pub struct ClientPageDir {
-            /// Absolute.
+            /// Absolute: a folder, or one file.
             pub dir: Box<[u8]>,
             pub server_exports: Vec<Box<[u8]>>,
         }
@@ -505,17 +505,17 @@ pub mod bv2_impl {
                 }
             }
         }
-        /// The `serverExports` of the `clientPages` router whose folder holds `path`: the
-        /// deepest, when the folders of routers are nested.
+        /// The `serverExports` of the `clientPages` router that has `path`, as a file or in its
+        /// folder: the deepest, when the folders of routers are nested.
         pub(crate) fn client_page_server_exports<'a>(
             dirs: &'a [ClientPageDir],
             path: &[u8],
         ) -> Option<&'a [Box<[u8]>]> {
             dirs.iter()
                 .filter(|cp| {
-                    path.len() > cp.dir.len()
-                        && path.starts_with(&cp.dir)
-                        && bun_core::path_sep::is_sep_any(path[cp.dir.len()])
+                    path.starts_with(&cp.dir)
+                        && (path.len() == cp.dir.len()
+                            || bun_core::path_sep::is_sep_any(path[cp.dir.len()]))
                 })
                 .max_by_key(|cp| cp.dir.len())
                 .map(|cp| &*cp.server_exports)

@@ -196,8 +196,6 @@ pub(super) struct FlowMemo {
     /// The subjects of each test in the file `tests_of`, indexed by the test's flow node.
     tests: Vec<TestSubjects>,
     tests_of: Option<FileId>,
-    /// The same for tests in other files.
-    other_tests: FxHashMap<(FileId, FlowId), TestSubjects>,
     /// `getTypeWithFacts`, keyed by the type and the facts, and `getAdjustedTypeWithFacts`, keyed
     /// by the type and the facts with `ADJUSTED` set.
     types_with_facts: instantiate::Recent,
@@ -2643,16 +2641,8 @@ impl<'p, 's> Checker<'p, 's> {
             return true;
         }
         let memo = &self.flow_memo;
-        let known = if memo.tests_of == Some(file) {
-            memo.tests[flow.idx()]
-        } else {
-            memo.other_tests
-                .get(&(file, flow))
-                .copied()
-                .unwrap_or_default()
-        };
-        if known.state != 0 {
-            return known.concerns(reference);
+        if memo.tests_of == Some(file) && memo.tests[flow.idx()].state != 0 {
+            return memo.tests[flow.idx()].concerns(reference);
         }
         self.analyze_test(file, flow, expr).concerns(reference)
     }
@@ -2674,8 +2664,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if memo.tests_of == Some(file) {
             memo.tests[flow.idx()] = about;
-        } else {
-            memo.other_tests.insert((file, flow), about);
         }
         about
     }

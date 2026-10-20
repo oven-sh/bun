@@ -762,6 +762,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         if !this.track_layers_and_imports {
             return;
         }
+        // Unlike esbuild, `layer_names` keeps these names as well.
         if this.layers_pre_import.is_none() {
             let mut names = Vec::new();
             names.ensure_unused_capacity(this.layer_names.len() as usize);

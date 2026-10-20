@@ -2373,6 +2373,289 @@ c {
     });
   }
 
+  // The bundle has to declare each layer where the source declares it. In Chrome, `.t` gets the
+  // same color from each `out` as from its source files. A `todo` names a case that is still wrong.
+  const layerOrderCases: Record<string, { files: Record<string, string>; out: string; todo?: string }> = {
+    // The first copy of btn.css is replaced by a list of its layers. That list declares "w" ahead of "u".
+    ListForADuplicateImportUnderLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./base.css";
+          @import "./btn.css" layer(w);
+          @import "./other.css";
+          @import "./btn.css" layer(w);
+        `,
+        "/base.css": `.base { color: black }`,
+        "/btn.css": `.t { color: red }`,
+        "/other.css": `@layer u { .t { color: blue } }`,
+      },
+      out: ".base{color:#000}@layer w;@layer u{.t{color:#00f}}@layer w{.t{color:red}}",
+    },
+    ListForADuplicateImportAheadOfAStatement: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./base.css";
+          @import "./btn.css" layer(w);
+          @import "./card.css";
+        `,
+        "/base.css": `.x { color: green }`,
+        "/btn.css": `.t { color: red }`,
+        "/card.css": /* css */ `
+          @layer u;
+          @import "./btn.css" layer(w);
+          @layer u { .t { color: blue } }
+        `,
+      },
+      out: ".x{color:green}@layer w;@layer u;@layer w{.t{color:red}}@layer u{.t{color:#00f}}",
+    },
+    ListForADuplicateImportAheadOfAStatementUnderLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./theme.css";
+          @import "./button.css";
+          @import "./button.css" layer(ui);
+          @import "./lib.css" layer(ui);
+        `,
+        "/theme.css": /* css */ `
+          @layer base { .x { color: green } }
+          @layer components { .y { color: green } }
+        `,
+        "/button.css": /* css */ `
+          @layer components { .t { color: red } }
+          @layer base { .t { color: blue } }
+        `,
+        "/lib.css": /* css */ `
+          @layer base, components;
+          @import "./button.css";
+        `,
+      },
+      out: "@layer base{.x{color:green}}@layer components{.y{color:green}}@layer components{.t{color:red}}@layer base{.t{color:#00f}}@layer ui{@layer components,base;}@layer ui{@layer base,components;}@layer ui{@layer components{.t{color:red}}@layer base{.t{color:#00f}}}@layer ui;",
+    },
+    StatementOfAFileImportedBareAndUnderLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./p.css";
+          @import "./f.css" layer(w);
+          @import "./p.css" layer(w);
+        `,
+        "/p.css": /* css */ `
+          @layer a;
+          @import "./f.css";
+        `,
+        "/f.css": /* css */ `
+          @layer b, a;
+          @layer a { .t { color: red } }
+          @layer b { .t { color: blue } }
+        `,
+      },
+      out: "@layer a;@layer b,a;@layer a{.t{color:red}}@layer b{.t{color:#00f}}@layer w{@layer b,a,a,b;}@layer w{@layer a;}@layer w{@layer b,a;@layer a{.t{color:red}}@layer b{.t{color:#00f}}}@layer w;",
+    },
+    // g.css has the name "a" too, but it does not declare that layer where the statement does.
+    NameDeclaredUnderMediaInAnEarlierFile: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./g.css";
+          @import "./f.css";
+        `,
+        "/g.css": `@media print { @layer a { .g { color: green } } }`,
+        "/f.css": /* css */ `
+          @layer a;
+          @import "./y.css" layer(b);
+          @layer a { .t { color: red } }
+        `,
+        "/y.css": `.t { color: blue }`,
+      },
+      out: "@media print{@layer a{.g{color:green}}}@layer a;@layer b{.t{color:#00f}}@layer a{.t{color:red}}",
+    },
+    NameDeclaredBehindAnAnonymousBlock: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer a;
+          @import "./g.css";
+        `,
+        "/g.css": /* css */ `
+          @layer { .t { color: blue } }
+          @layer a { .t { color: red } }
+        `,
+      },
+      out: "@layer a;@layer{.t{color:#00f}}@layer a{.t{color:red}}",
+    },
+    NameDeclaredInABlockThatMinifyRemoves: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer a;
+          @import "./g.css";
+          @import "./y.css" layer(b);
+          @layer a { .t { color: red } }
+        `,
+        "/g.css": `@layer a { .unused {} }`,
+        "/y.css": `.t { color: blue }`,
+      },
+      out: "@layer a;@layer b{.t{color:#00f}}@layer a{.t{color:red}}",
+    },
+    // The parser accepts an "@import" behind an unknown at-rule statement. The body must not print it again.
+    ImportBehindUnknownAtRule: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer a;
+          @unknown x;
+          @layer b;
+          @import "./x.css";
+          @layer c;
+          .e { c: d }
+        `,
+        "/x.css": `.x { c: d }`,
+      },
+      out: "@layer a,b;.x{c:d}@unknown x;@layer c;.e{c:d}",
+    },
+    ExternalImportBehindUnknownAtRule: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css";
+          @import "https://example.com/f.css";
+        `,
+        "/a.css": /* css */ `
+          @layer first;
+          @unknown x;
+          @import "https://example.com/e.css";
+          .a { c: d }
+        `,
+      },
+      out: '@layer first;@import "https://example.com/e.css";@import "https://example.com/f.css";@unknown x;.a{c:d}',
+    },
+    // An "@import" that closes a cycle is not loaded, but it still declares its layer.
+    CyclicLayeredImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./entry.css" layer(w);
+          @import "./b.css" layer(b);
+          @import "./c.css" layer(w);
+        `,
+        "/b.css": `.t { color: blue }`,
+        "/c.css": `.t { color: red }`,
+      },
+      out: "@layer w;@layer b{.t{color:#00f}}@layer w{.t{color:red}}",
+    },
+    CyclicLayeredImportAheadOfAStatement: {
+      files: {
+        "/entry.css": `@import "./f2.css";`,
+        "/f2.css": /* css */ `
+          @import "./entry.css" layer(w);
+          @import "./f3.css";
+        `,
+        "/f3.css": /* css */ `
+          @layer b;
+          @import "./f4.css" layer(w);
+          @layer b { .t { color: blue } }
+        `,
+        "/f4.css": `.t { color: red }`,
+      },
+      out: "@layer w;@layer b;@layer w{.t{color:red}}@layer b{.t{color:#00f}}",
+    },
+    EmptyLayerBlock: {
+      todo: "the minifier removes the empty block of g.css and its layer with it",
+      files: {
+        "/entry.css": /* css */ `
+          @import "./g.css";
+          @import "./card.css";
+        `,
+        "/g.css": `@layer a {}`,
+        "/card.css": /* css */ `
+          @layer u;
+          @import "./x.css";
+          @layer u { .t { color: blue } }
+        `,
+        "/x.css": `@layer a { .t { color: red } }`,
+      },
+      out: "@layer a;@layer u;@layer a{.t{color:red}}@layer u{.t{color:#00f}}",
+    },
+    NameDeclaredOnlyUnderMedia: {
+      todo: 'g.css counts as a file that declares "a", so the list for the first copy of x.css is removed',
+      files: {
+        "/entry.css": /* css */ `
+          @import "./g.css";
+          @import "./x.css";
+          @import "./card.css";
+        `,
+        "/g.css": `@media print { @layer a { .g { color: green } } }`,
+        "/x.css": `@layer a { .t { color: red } }`,
+        "/card.css": /* css */ `
+          @layer u;
+          @import "./x.css";
+          @layer u { .t { color: blue } }
+        `,
+      },
+      out: "@media print{@layer a{.g{color:green}}}@layer a;@layer u;@layer a{.t{color:red}}@layer u{.t{color:#00f}}",
+    },
+    LayeredCopyBehindABareCopy: {
+      todo: 'the copy of f2.css under "layer(w)" is replaced by a list of its layers, as in esbuild',
+      files: {
+        "/entry.css": /* css */ `
+          @layer a;
+          @import "./f1.css";
+          @layer c { .t { color: red } }
+        `,
+        "/f1.css": /* css */ `
+          @layer c;
+          @import "./f2.css" layer(w);
+          @import "./f2.css";
+        `,
+        "/f2.css": /* css */ `
+          @layer c;
+          @layer a { .t { color: blue } }
+        `,
+      },
+      out: "@layer a;@layer c;@layer w{@layer c;@layer a{.t{color:#00f}}}@layer c;@layer a{.t{color:#00f}}@layer c{.t{color:red}}",
+    },
+    AnonymousCopyBehindABareCopy: {
+      todo: 'the copy of f2.css under "layer" is removed, as in esbuild',
+      files: {
+        "/entry.css": /* css */ `
+          @layer a;
+          @import "./f1.css";
+          @layer c { .t { color: red } }
+        `,
+        "/f1.css": /* css */ `
+          @layer c;
+          @import "./f2.css" layer;
+          @import "./f2.css";
+        `,
+        "/f2.css": /* css */ `
+          @layer c;
+          @layer a { .t { color: blue } }
+        `,
+      },
+      out: "@layer a;@layer c;@layer{@layer c;@layer a{.t{color:#00f}}}@layer c;@layer a{.t{color:#00f}}@layer c{.t{color:red}}",
+    },
+    StatementBehindAnEarlierFileWithExternalImport: {
+      todo: "only the leading statements of the bundle move ahead of the external imports, as in esbuild",
+      files: {
+        "/entry.css": /* css */ `
+          @import "./leaf.css";
+          @import "./mid.css";
+        `,
+        "/leaf.css": `.leaf { c: d }`,
+        "/mid.css": /* css */ `
+          @layer b;
+          @import "https://example.com/e.css" layer(c);
+          @layer b { .m { c: d } }
+        `,
+      },
+      out: '@layer b;@import "https://example.com/e.css" layer(c);.leaf{c:d}@layer b{.m{c:d}}',
+    },
+  };
+  for (const [name, { files, out, todo }] of Object.entries(layerOrderCases)) {
+    itBundled(`css/CSSAtLayerOrder${name}`, {
+      todo: !!todo,
+      files,
+      outfile: "/out.css",
+      minifyWhitespace: true,
+      onAfterBundle(api) {
+        api.expectFile("/out.css").toBe(out + "\n");
+      },
+    });
+  }
+
   // External imports are hoisted to the top, and only "@layer" statements may
   // precede an "@import". Bun rejects an "@import" that follows any other rule,
   // so the second build throws if the first one printed an invalid prologue.
@@ -2408,7 +2691,7 @@ c {
       api
         .expectFile("/out.css")
         .toBe(
-          '@import "https://example.com/e.css" layer(wrap) supports(display:flex);@supports (display:flex){@layer wrap{@layer inner;}}@supports (display:flex){@layer wrap;}\n',
+          '@import "https://example.com/e.css" layer(wrap) supports(display:flex);@supports (display:flex){@layer wrap{@layer inner;}}\n',
         );
       await Bun.build({ entrypoints: [api.outfile], outdir: api.join("again") });
     },

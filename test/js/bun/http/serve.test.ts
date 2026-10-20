@@ -3502,6 +3502,16 @@ it.concurrent(
   40_000,
 );
 
+it.concurrent(
+  "TLS: answers every client of a burst that outwaits the idle timeout in the handshake queue",
+  async () => {
+    const result = await bunRun(join(import.meta.dirname, "serve-tls-parked-handshake-timeout-fixture.ts"));
+    expect(result).toSpawn();
+    expect(JSON.parse(result.stdout)).toEqual({ clients: 40, answered: 40, errors: {} });
+  },
+  40_000,
+);
+
 it.concurrent("#6462", async () => {
   let headers: [string, string | null][] = [];
   using server = Bun.serve({

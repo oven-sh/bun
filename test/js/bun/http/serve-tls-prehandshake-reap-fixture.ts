@@ -1,8 +1,8 @@
 // A burst of TCP connections that never send a byte to a TLS Bun.serve listener
 // must all be reaped by the server's idle timeout. On Linux, TCP_DEFER_ACCEPT
-// releases the whole burst at once and the synthetic readable dispatch parks
-// the overflow in the SSL low-priority queue, which the timer sweep must still
-// be able to see.
+// releases the whole burst at once, past the 5 handshake reads of one loop
+// iteration. The overflow must not wait in the SSL low-priority queue for a
+// read that finds nothing: a timeout does not run there.
 //
 // Prints one JSON line: { opened, held } where held is the count the server
 // had not closed by the deadline.

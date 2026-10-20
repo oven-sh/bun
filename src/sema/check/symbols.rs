@@ -2339,8 +2339,9 @@ impl<'p, 's> Checker<'p, 's> {
             let widened = self.get_widened_property(prop, mapper, context);
             shape.props.push(widened);
         }
+        // The names in the context are distinct, so only the type's own properties can have one of them.
         for &prop in self.get_properties_of_context(context).iter() {
-            if !shape.props.iter().any(|p| p.name == prop.name) {
+            if members.resolved.prop_with_filter(prop.name).is_none() {
                 let undefined = self.get_undefined_property(prop);
                 shape.props.push(undefined);
             }

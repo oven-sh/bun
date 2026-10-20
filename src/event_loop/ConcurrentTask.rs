@@ -88,6 +88,7 @@ pub mod task_tag {
         GraphContextStopAgain,
         GraphContextStopAndFree,
         DeadContextStopAgain,
+        H2FatalWriteClose,        // H2FrameParser (transport close after a fatal write)
         HandledPromise,
         HotReloadTask,
         HTMLRewriterBackgroundPull,

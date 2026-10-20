@@ -1098,6 +1098,101 @@ devTest("barrel optimization: two import statements from the same barrel (#28886
   },
 });
 
+// HMR lowering merges every statement of one import path into the first one
+// and retires the import record of each later statement. A retired record is
+// never resolved. `export *` needs every export of its target, and the barrel
+// pass finds that target through `export_star_import_records`: the list has to
+// name the record that the merged statement uses. When it named the retired
+// record, the target was requested for `a` only and deferred b.js.
+// - The two "star first" modules are controls: there the record of `export *`
+//   is the one that survives.
+// - leaf-three parses, and defers b.js, before wrap-late.ts asks for all of it:
+//   wrap-late.ts is three imports away and starts with a large comment (a
+//   Buffer, because the harness passes string contents through dedent()).
+const mergedBarrel = (name: string, index: string, files: Record<string, string>) => ({
+  [`node_modules/${name}/package.json`]: JSON.stringify({
+    name,
+    version: "1.0.0",
+    main: "./index.js",
+    sideEffects: false,
+  }),
+  [`node_modules/${name}/index.js`]: index,
+  ...Object.fromEntries(Object.entries(files).map(([file, code]) => [`node_modules/${name}/${file}`, code])),
+});
+const leafBarrel = (name: string) =>
+  mergedBarrel(name, `export { a } from './a.js'; export { b } from './b.js';`, {
+    "a.js": `export const a = "A";`,
+    "b.js": `export function b() {}`,
+  });
+
+devTest("barrel optimization: an export star merged into another statement of the same path", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { b as b1 } from 'named-first';
+      import { b as b2 } from 'star-first';
+      import { b as b3 } from './wrap-import-first';
+      import { b as b4 } from './wrap-star-first';
+      import { a } from 'leaf-three';
+      import { b as b5 } from './hop1';
+      console.log('got: ' + [typeof b1, typeof b2, typeof b3, typeof b4, typeof b5].join(' ') + ' ' + a);
+    `,
+    "wrap-import-first.ts": `
+      import { a } from 'leaf-one';
+      export * from 'leaf-one';
+      export const own = a;
+    `,
+    "wrap-star-first.ts": `
+      export * from 'leaf-two';
+      import { a } from 'leaf-two';
+      export const own = a;
+    `,
+    "hop1.ts": `export { b } from './hop2';`,
+    "hop2.ts": `export { b } from './hop3';`,
+    "hop3.ts": `export { b } from './wrap-late';`,
+    "wrap-late.ts": Buffer.from(
+      "// " +
+        Buffer.alloc(4_000_000, "x").toString() +
+        `
+      import { a } from 'leaf-three';
+      export * from 'leaf-three';
+      export const own = a;
+    `,
+    ),
+    ...mergedBarrel(
+      "named-first",
+      `
+        export { a } from './inner.js';
+        export * from './inner.js';
+      `,
+      {
+        "inner.js": `export { a } from './a.js'; export { b } from './b.js';`,
+        "a.js": `export const a = "A";`,
+        "b.js": `export function b() {}`,
+      },
+    ),
+    ...mergedBarrel(
+      "star-first",
+      `
+        export * from './inner.js';
+        export { a } from './inner.js';
+      `,
+      {
+        "inner.js": `export { a } from './a.js'; export { b } from './b.js';`,
+        "a.js": `export const a = "A";`,
+        "b.js": `export function b() {}`,
+      },
+    ),
+    ...leafBarrel("leaf-one"),
+    ...leafBarrel("leaf-two"),
+    ...leafBarrel("leaf-three"),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("got: function function function function function A");
+  },
+});
+
 devTest("barrel optimization: namespace re-export cycle through a star-exported module", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

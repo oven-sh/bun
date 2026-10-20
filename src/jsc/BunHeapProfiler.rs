@@ -2,7 +2,7 @@ use crate::CrateError as Error;
 use bun_core::Output;
 use bun_core::String as BunString;
 use bun_paths::{AutoAbsPathChecked, PathBuffer, resolve_path};
-use bun_sys::{self as sys, E, Fd, FdDirExt};
+use bun_sys::{E, Fd, FdDirExt};
 
 use crate::VM;
 
@@ -54,13 +54,13 @@ pub(crate) fn generate_and_write_profile(
         path_buf.slice_z().as_bytes(),
     );
 
-    // Write the profile to disk using bun.sys.File.writeFile
     // `slice_z()` borrows `path_buf` mutably, so we re-derive it at each call
     // site instead of holding a single binding.
     #[cfg(windows)]
-    let result = sys::File::write_file_os_path(Fd::cwd(), output_path_os, profile_slice.slice());
+    let result = crate::bun_cpu_profiler::write_owner_only(output_path_os, profile_slice.slice());
     #[cfg(not(windows))]
-    let result = sys::File::write_file(Fd::cwd(), path_buf.slice_z(), profile_slice.slice());
+    let result =
+        crate::bun_cpu_profiler::write_owner_only(path_buf.slice_z(), profile_slice.slice());
     if let Err(err) = result {
         // If we got ENOENT, PERM, or ACCES, try creating the directory and retry
         let errno = err.get_errno();
@@ -71,11 +71,15 @@ pub(crate) fn generate_and_write_profile(
                 let _ = Fd::cwd().make_path(dir_path);
                 // Retry write
                 #[cfg(windows)]
-                let retry_result =
-                    sys::File::write_file_os_path(Fd::cwd(), output_path_os, profile_slice.slice());
+                let retry_result = crate::bun_cpu_profiler::write_owner_only(
+                    output_path_os,
+                    profile_slice.slice(),
+                );
                 #[cfg(not(windows))]
-                let retry_result =
-                    sys::File::write_file(Fd::cwd(), path_buf.slice_z(), profile_slice.slice());
+                let retry_result = crate::bun_cpu_profiler::write_owner_only(
+                    path_buf.slice_z(),
+                    profile_slice.slice(),
+                );
                 if retry_result.is_err() {
                     return Err(crate::CrateError::WriteFailed);
                 }

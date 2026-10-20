@@ -3057,15 +3057,15 @@ describe.concurrent("a directory that does not open", () => {
     {
       name: "Bun.build reads a directory again after a build that found a file in its place",
       args: [],
-      then: { directoryAgain: "built" },
+      after: { directoryAgain: "built" },
     },
     {
       // The same on main: the build that finds the file drops the names.
       name: "the runtime does not resolve into a directory after a build found a file in its place",
       args: ["resolve"],
-      then: { runtime: { error: expect.stringContaining("Cannot find module") } },
+      after: { runtime: { error: expect.stringContaining("Cannot find module") } },
     },
-  ])("$name", async ({ args, then }) => {
+  ])("$name", async ({ args, after }) => {
     using dir = tempDir("resolver-open-enotdir-rebuild", aroundAFile);
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build.js", ...args],
@@ -3076,7 +3076,7 @@ describe.concurrent("a directory that does not open", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-      stdout: { directory: "built", file: ['Could not resolve: "./sub/mod.js"'], ...then },
+      stdout: { directory: "built", file: ['Could not resolve: "./sub/mod.js"'], ...after },
       stderr: "",
       exitCode: 0,
     });

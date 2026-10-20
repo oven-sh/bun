@@ -3207,11 +3207,7 @@ pub mod formatter {
         ) -> JSValue;
     }
 
-    /// Call a user `[util.inspect.custom]` / `[Bun.inspect.custom]` function
-    /// with Node's `(depth, options, inspect)` argument shape. `depth` is the
-    /// remaining depth budget and `max_depth` the configured maximum, so the
-    /// hook sees the same values `util.inspect` passes. Propagates a thrown
-    /// exception as `JsError`.
+    /// Calls a user `inspect.custom` hook with Node's `(depth, options, inspect)` arguments.
     pub fn call_custom_inspect(
         global: &JSGlobalObject,
         function: JSValue,

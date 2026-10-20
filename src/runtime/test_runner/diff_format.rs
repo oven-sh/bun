@@ -79,9 +79,7 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
         let diff_config =
             DiffConfig::default(Output::is_ai_agent(), Output::enable_ansi_colors_stderr());
         if !self.not && self.received_string == self.expected_string {
-            // Two different values printed alike (an `inspect.custom` hook on
-            // both, for example). A diff would show nothing; say so, as Jest
-            // and `toBe` do.
+            // Same text on both sides: an empty diff would say nothing.
             let expected = bstr::BStr::new(&self.expected_string);
             return if diff_config.enable_ansi_colors {
                 write!(

@@ -101,10 +101,7 @@ pub(crate) struct FormatOptions {
     pub(crate) add_newline: bool,
     pub flush: bool,
     pub(crate) quote_strings: bool,
-    /// Honour `[Symbol.for("nodejs.util.inspect.custom")]` / `Bun.inspect.custom`
-    /// on a value instead of walking its properties. On for matcher diffs
-    /// (same as `toBe` / `console.log`), off for snapshots so `.snap` bytes
-    /// do not change.
+    /// Honour `inspect.custom` hooks. On for matcher diffs, off for snapshots.
     pub(crate) inspect_custom: bool,
 }
 
@@ -325,10 +322,8 @@ pub(crate) struct Formatter<'a> {
     pub(crate) failed: bool,
     pub(crate) estimated_line_length: usize,
     pub(crate) always_newline_scope: bool,
-    /// See [`FormatOptions::inspect_custom`].
     pub(crate) inspect_custom: bool,
-    /// `(this, hook)` found by [`Formatter::tag_of`] for the value it tagged
-    /// `Tag::CustomFormatted`. Consumed by the matching `format` call.
+    /// `(this, hook)` set by `tag_of`, consumed by the `format` call that follows.
     custom_inspect: Option<(JSValue, JSValue)>,
 }
 
@@ -349,12 +344,8 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    /// [`Tag::get`], plus the `inspect.custom` probe when
-    /// [`Formatter::inspect_custom`] is set. The probe runs after the JSType
-    /// classification and only for tags whose printer walks the value's
-    /// contents, so TypedArray / Buffer, DOM wrappers, Proxy and Date keep
-    /// their current output. A callable hook is stashed for the `format` call
-    /// that follows and the value is tagged [`Tag::CustomFormatted`].
+    /// `Tag::get` plus the `inspect.custom` probe. Probing only the tags whose printer
+    /// walks the value keeps Buffer (whose prototype has a hook) on the per-byte diff.
     pub(crate) fn tag_of(&mut self, value: JSValue, global: &JSGlobalObject) -> JsResult<TagResult> {
         let base = Tag::get(value, global)?;
         if !self.inspect_custom {
@@ -377,13 +368,7 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    /// Print a value tagged [`Tag::CustomFormatted`]: call its hook, write a
-    /// string result verbatim, otherwise format the result. A hook that
-    /// returns `this` falls back to the default printer for that value once
-    /// (same as `util.inspect` and the console formatter).
-    ///
-    /// Kept out of line so `format`'s frame, which sits on the stack once per
-    /// nesting level, does not grow by this function's locals.
+    /// Out of line so `format`'s per-nesting-level stack frame does not grow.
     #[inline(never)]
     fn print_custom_formatted<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
@@ -400,8 +385,7 @@ impl<'a> Formatter<'a> {
         let global = self.global_this;
         let hook = match self.custom_inspect.take() {
             Some((this, hook)) if this == value => hook,
-            // `tag_of` ran for another value in between (a peek before the
-            // loop that prints). Look the hook up again.
+            // A peek site tagged another value in between.
             _ => match value.fast_get(global, jsc::BuiltinName::InspectCustom)? {
                 Some(hook) if hook.is_callable() => hook,
                 _ => {
@@ -506,9 +490,7 @@ pub(crate) enum Tag {
 
     JSX,
     Event,
-    /// The value has a callable `inspect.custom` hook and
-    /// [`Formatter::inspect_custom`] is set. Only [`Formatter::tag_of`]
-    /// produces it.
+    /// Has a callable `inspect.custom` hook. Only `Formatter::tag_of` produces it.
     CustomFormatted,
 }
 
@@ -1198,8 +1180,7 @@ impl<'a> Formatter<'a> {
         // cannot be used here because it would hold `&mut self` across the match body.
         let result: JsResult<()> = (|| {
             match FORMAT {
-                // `Formatter::format` routes this tag to `print_custom_formatted`.
-                Tag::CustomFormatted => unreachable!(),
+                Tag::CustomFormatted => unreachable!("handled in Formatter::format"),
                 Tag::StringPossiblyFormatted => {
                     let str = value.to_utf8(self.global_this)?;
                     let slice = str.slice();

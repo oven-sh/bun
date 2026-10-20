@@ -222,8 +222,7 @@ pub(crate) mod expect {
                 add_newline: false,
                 flush: false,
                 quote_strings: true,
-                // Snapshot bytes must stay stable across bun versions and
-                // match Jest, whose pretty-format ignores the hook.
+                // Off so `.snap` output does not change.
                 inspect_custom: false,
             };
             JestPrettyFormat::format(

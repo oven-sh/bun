@@ -13,12 +13,12 @@ use crate::hir::{self, *};
 use crate::json::Json;
 use crate::resolve::{
     DiagAndArgs, Host, INFERRED_TYPES_CONTAINING_FILE, JsxEmit, ModuleDetection, ModuleKind,
-    Options, PackageId, ParseOptions, Phase, PhaseTimer, ResolvedModule, Resolver, ScriptKind,
-    ScriptTarget, Tracer, ancestors, contains_path, displayed_path, file_extension_is_one_of,
-    file_path, format_by_extension, get_base_file_name, get_lib_file_name,
-    has_ts_implementation_extension, inside, is_javascript, is_javascript_file, is_relative,
-    is_same_path, join, path_is_relative, remove_file_extension, run_with_current_helpers,
-    supported_extensions, to_file_name_lower_case, to_path, to_path_in, typescript_path,
+    Options, PackageId, ParseOptions, ResolvedModule, Resolver, ScriptKind, ScriptTarget, Tracer,
+    ancestors, contains_path, displayed_path, file_extension_is_one_of, file_path,
+    format_by_extension, get_base_file_name, get_lib_file_name, has_ts_implementation_extension,
+    inside, is_javascript, is_javascript_file, is_relative, is_same_path, join, path_is_relative,
+    remove_file_extension, run_with_current_helpers, supported_extensions, to_file_name_lower_case,
+    to_path, to_path_in, typescript_path,
 };
 use crate::session::{
     Arena, ArenaBox, ArenaHashMap, ArenaHashSet, ArenaVec, Session, map_in, set_in, transfer_arena,
@@ -5092,7 +5092,6 @@ impl<'s> Files<'s> {
                             continue;
                         };
                         let mut loaded = *loaded;
-                        let _linking = PhaseTimer::on(host, Phase::Link);
                         sub_tasks.clear();
                         let numbers = loaded.reference_numbers.iter().copied();
                         let numbers = numbers.chain(std::iter::repeat(NOT_NUMBERED));
@@ -5834,7 +5833,6 @@ impl<'s> Files<'s> {
             package_copies: slice_in(&package_copies, arena),
             explained_in_diagnostics: session.keep(explained_in_diagnostics),
         };
-        let merging = PhaseTimer::on(host, Phase::Merge);
         let order: &'s [FileId] = slice_in(&files.declaration_order(&starts, &summaries), arena);
         files.order = order;
         if options.trace_resolution {
@@ -5885,7 +5883,6 @@ impl<'s> Files<'s> {
         host.parallel_while(side_jobs.len(), &|at| side_jobs[at](), &mut || {
             files.merge(host, &declaring);
         });
-        drop(merging);
         files.components = components.lock().take().unwrap_or(Components::EMPTY);
         if let Some((package_jsons, linked_directories)) = package_tables.lock().take() {
             (files.package_jsons, files.linked_directories) = (package_jsons, linked_directories);
@@ -5894,9 +5891,7 @@ impl<'s> Files<'s> {
         // Owns the resolver's paths. Freed on another thread during `link`.
         let resolving = Guarded::new(Some(resolving));
         let free_paths = |_: usize| drop(resolving.lock().take());
-        let linking = PhaseTimer::on(host, Phase::Aliases);
         host.parallel_while(1, &free_paths, &mut || files.link(host));
-        drop(linking);
         let known_names = (0..known::sym_iterator.0).map(Atom);
         files.global_types =
             arena.alloc_slice_fill_iter(known_names.map(|name| files.global_type(name)));
@@ -6280,7 +6275,6 @@ impl<'s> Files<'s> {
             hir.has_module_syntax = is_indicated_by_syntax || is_decreed;
             hir.is_forced_module = !is_indicated_by_syntax && is_decreed;
         }
-        let _binding = PhaseTimer::on(host, Phase::Bind);
         let mut bound = bind::bind(&hir, options.bind, atoms, arena);
         // The same result as when the parser runs out of stack: an empty HIR, which `check_file`
         // reports as not fully checked.
@@ -6505,7 +6499,6 @@ impl<'s> Files<'s> {
             } else {
                 Atom::NONE
             };
-        let _resolving = PhaseTimer::on(host, Phase::Resolve);
         // `optionsForFile`. Program-wide diagnostics still use the options of the program.
         let (program_options, program_resolver) = (options, resolver);
         let (resolver, from) = resolver.redirect_for_resolution(path);

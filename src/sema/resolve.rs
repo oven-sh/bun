@@ -16,54 +16,6 @@ use smallvec::{SmallVec, smallvec};
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
-use std::time::{Duration, Instant};
-
-/// The phases of loading a program, for timing. `Discover`, `Link` and `Merge` run on one thread,
-/// and `Aliases` counts the time of the thread that waits for it. The others run on all threads in
-/// parallel, and every thread's time is counted.
-#[derive(Copy, Clone, Debug)]
-pub enum Phase {
-    /// Reading the configuration files, walking the directories for `include`, and finding the libraries.
-    Discover,
-    Read,
-    Parse,
-    Bind,
-    /// Resolving a file's imports and `/// <reference>`s.
-    Resolve,
-    /// Numbering the files in the order they refer to each other.
-    Link,
-    Merge,
-    /// `Files::link`: the exports and the aliases of every module.
-    Aliases,
-}
-
-impl Phase {
-    pub const ALL: [Phase; 8] = [
-        Phase::Discover,
-        Phase::Read,
-        Phase::Parse,
-        Phase::Bind,
-        Phase::Resolve,
-        Phase::Link,
-        Phase::Merge,
-        Phase::Aliases,
-    ];
-}
-
-/// On drop, reports its lifetime to the host.
-pub struct PhaseTimer<'a>(&'a dyn Host, Phase, Instant);
-
-impl<'a> PhaseTimer<'a> {
-    pub fn on(host: &'a dyn Host, phase: Phase) -> PhaseTimer<'a> {
-        PhaseTimer(host, phase, Instant::now())
-    }
-}
-
-impl Drop for PhaseTimer<'_> {
-    fn drop(&mut self) {
-        self.0.spent(self.1, self.2.elapsed());
-    }
-}
 
 /// Runs `step` on the calling thread until it returns false, while helper threads each run `work` once.
 ///
@@ -111,12 +63,6 @@ pub type Paths = Vec<(Vec<u8>, Vec<Vec<u8>>)>;
 
 /// The file system and the parser. The bundler has its own implementation of both.
 pub trait Host: Sync {
-    /// Records that a thread spent `time` on `phase`. Only a host whose `times` is queried accumulates it.
-    fn spent(&self, _phase: Phase, _time: Duration) {}
-    /// The totals reported to `spent` so far, in the order of `Phase::ALL`.
-    fn times(&self) -> [Duration; Phase::ALL.len()] {
-        [Duration::ZERO; Phase::ALL.len()]
-    }
     /// Returns the file's contents. As in `bun_ast::Source`, a host that already holds them (the
     /// bundler does, for every file it has loaded) lends them without reading or copying anything.
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>>;

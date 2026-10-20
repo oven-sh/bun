@@ -16,18 +16,16 @@ use bun_sema::atom::Interner;
 use bun_sema::hir;
 use bun_sema::json::Json;
 use bun_sema::resolve::{
-    CachedConfig, Host, ModuleDetection, ParseOptions, Paths, Phase, PhaseTimer, ScriptKind,
-    ancestors, case_insensitive_hash, inside, is_declaration_file_name, is_same_path, join,
-    root_length, to_file_name_lower_case, to_path, typescript_path,
+    CachedConfig, Host, ModuleDetection, ParseOptions, Paths, ScriptKind, ancestors,
+    case_insensitive_hash, inside, is_declaration_file_name, is_same_path, join, root_length,
+    to_file_name_lower_case, to_path, typescript_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, FxHashSet, ShardedMap};
 use bun_sys::{EntryKind, ExistsAtType, Fd};
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::{Duration, Instant};
 
 /// TypeScript's `lib.*.d.ts` files embedded in the executable, by name.
 #[derive(Copy, Clone)]
@@ -272,8 +270,6 @@ pub struct Disk {
     pub(crate) ends_the_process: bool,
     /// `Host::drop_before_the_process_ends`
     pub(crate) to_drop_before_the_process_ends: bun_threading::Guarded<Vec<Session>>,
-    /// `Host::times`, in nanoseconds.
-    times: [AtomicU64; Phase::ALL.len()],
     /// The contents of `BUNDLED_LIBS`.
     pub bundled_libs: Option<BundledLibs>,
     /// `Host::script_kind`, by `tspath.Path`.
@@ -524,7 +520,6 @@ impl Disk {
                 .then(|| bun_threading::io_thread_pool::acquire().into()),
             idle_readers: bun_threading::Guarded::new(Vec::new()),
             unreadable: bun_threading::Guarded::new(Vec::new()),
-            times: Default::default(),
             bundled_libs: None,
             script_kinds: Vec::new(),
             script_kinds_by_extension: Vec::new(),
@@ -1354,20 +1349,12 @@ impl Host for Disk {
         interned.insert(Arc::clone(&paths));
         paths
     }
-    fn spent(&self, phase: Phase, time: Duration) {
-        self.times[phase as usize].fetch_add(time.as_nanos() as u64, Ordering::Relaxed);
-    }
-    fn times(&self) -> [Duration; Phase::ALL.len()] {
-        Phase::ALL
-            .map(|phase| Duration::from_nanos(self.times[phase as usize].load(Ordering::Relaxed)))
-    }
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
         if !self.already_read.is_empty()
             && let Some(text) = (self.already_read).get(&*to_path(path, self.case_sensitive))
         {
             return Some(Cow::Owned(text.clone()));
         }
-        let _reading = PhaseTimer::on(self, Phase::Read);
         if is_bundled(path) {
             let (libs, name) = self.bundled(path)?;
             return (libs.read)(name);
@@ -1492,8 +1479,7 @@ impl Host for Disk {
         atoms: &Interner<'s>,
         options: ParseOptions,
     ) -> hir::File<'s> {
-        let began = Instant::now();
-        let file = bun_sema_parser::summarize(
+        bun_sema_parser::summarize(
             arena,
             path,
             self.script_kind(path),
@@ -1501,9 +1487,7 @@ impl Host for Disk {
             atoms,
             options.experimental_decorators,
             options.module_detection == ModuleDetection::Force,
-        );
-        self.spent(Phase::Parse, began.elapsed());
-        file
+        )
     }
     fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
         parse_package_json(arena, text)

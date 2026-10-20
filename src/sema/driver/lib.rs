@@ -29,7 +29,7 @@ use bun_sema::program::{
 };
 pub use bun_sema::resolve::ScriptKind;
 use bun_sema::resolve::{
-    Host, ModuleDetection, Options, Phase, ProjectFile, ProjectFiles, ancestors, contains_path,
+    Host, ModuleDetection, Options, ProjectFile, ProjectFiles, ancestors, contains_path,
     displayed_path, get_relative_path_from_directory, inside, is_declaration_file_name,
     is_javascript, is_javascript_file, is_relative, is_same_path, join,
     output_declaration_file_name, run_with_current_helpers, to_path, to_path_in, typescript_path,
@@ -1061,8 +1061,6 @@ pub struct Report {
     pub declaration_files: Vec<(Vec<u8>, Vec<u8>)>,
     pub load_time: Duration,
     pub check_time: Duration,
-    /// `load_time`, broken down by phase, in the order of `Phase::ALL`.
-    pub load_phases: [Duration; Phase::ALL.len()],
     /// The maximum stack usage of any file, in bytes.
     pub deepest_stack: usize,
 }
@@ -1099,9 +1097,6 @@ impl Report {
         self.files_not_checked += other.files_not_checked;
         self.tasks_run += other.tasks_run;
         self.check_time += other.check_time;
-        for (phase, more) in self.load_phases.iter_mut().zip(other.load_phases) {
-            *phase += more;
-        }
         self.deepest_stack = self.deepest_stack.max(other.deepest_stack);
     }
 
@@ -2769,12 +2764,6 @@ impl WithOutputs<'_> {
 }
 
 impl Host for WithOutputs<'_> {
-    fn spent(&self, phase: Phase, time: Duration) {
-        self.disk.spent(phase, time);
-    }
-    fn times(&self) -> [Duration; Phase::ALL.len()] {
-        self.disk.times()
-    }
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
         match self.emitted_file(path) {
             Some((_, emitted_text)) => Some(Cow::Owned((*emitted_text).clone())),
@@ -3837,8 +3826,6 @@ fn check_named_files(
     let raw_options = std::mem::take(&mut project.raw_compiler_options);
     let is_true = |name: &[u8]| raw_options.contains(&(name.to_vec(), Json::Bool(true)));
     project.options.keeps_comments = request.after_file.is_some();
-    let before = host.times();
-    host.spent(Phase::Discover, started.elapsed());
     // Declared before everything that's allocated in it, so it's dropped last.
     let dropped = Dropped {
         session: Session::new(),
@@ -3900,10 +3887,6 @@ fn check_named_files(
             example: example.clone(),
             load_time: report.load_time,
         });
-    }
-    let after = host.times();
-    for (i, phase) in report.load_phases.iter_mut().enumerate() {
-        *phase = after[i] - before[i];
     }
     let explains_files = is_true(b"explainFiles");
     let explain_files = |has_made_diagnostics: bool| {

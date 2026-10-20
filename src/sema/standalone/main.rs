@@ -126,12 +126,6 @@ fn run(args: &[String]) {
                         report.check_time.as_secs_f64(),
                         bun_sema_standalone::peak_memory() as f64 / (1u64 << 30) as f64
                     );
-                    // Discover, link and merge are one thread's wall time. The others are summed over all threads.
-                    let phases = bun_sema::resolve::Phase::ALL.iter().zip(report.load_phases);
-                    let phases: Vec<String> = phases
-                        .map(|(phase, time)| format!("{phase:?} {:.3}", time.as_secs_f64()))
-                        .collect();
-                    error_line!("load: {}", phases.join(", ").to_lowercase());
                 }
                 report
             });

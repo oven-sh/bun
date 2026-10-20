@@ -384,9 +384,8 @@ fn is_subsequence(some: &[TypeId], all: &[TypeId]) -> bool {
     some.iter().all(|item| rest.any(|it| it == item))
 }
 
-/// A stable sort for `CompareTypes`, which isn't a total order, so `slice::sort_by` may panic. Comparing two
-/// instantiations of one alias is expensive, and the input is often nearly sorted or made of sorted runs, where a
-/// binary insertion sort needs twice as many comparisons.
+/// A stable sort for `CompareTypes`. Comparing two instantiations of one alias is expensive, and the input is often
+/// nearly sorted or made of sorted runs, where a binary insertion sort needs twice as many comparisons.
 fn merge_sort_by<T: Copy>(
     items: &mut [T],
     compare: &mut impl FnMut(&T, &T) -> std::cmp::Ordering,
@@ -601,19 +600,16 @@ impl<'p, 's> Checker<'p, 's> {
         shortcut: Option<Shortcut>,
         first_request: FirstRequest,
     ) -> TypeId {
-        let is_total_order = match shortcut {
-            Some(_) => true,
-            None => self.sort_type_set(actual, &mut members),
-        };
+        if shortcut.is_none() {
+            self.sort_types(&mut members);
+        }
         if members.is_empty() {
             return TypeId::NEVER;
         }
         let union = (self.types()).as_first_request(first_request, || {
             self.union_of_named_unions(actual, &members)
         });
-        if is_total_order {
-            self.note_sorted_runs(union, actual, &members, shortcut);
-        }
+        self.note_sorted_runs(union, actual, &members, shortcut);
         union
     }
 
@@ -777,7 +773,7 @@ impl<'p, 's> Checker<'p, 's> {
                     // Both evaluate something for each member, and evaluation order determines the
                     // creation order of types. tsgo keeps the set sorted from the start.
                     if shortcut.is_none() {
-                        self.sort_type_set(actual, &mut members);
+                        self.sort_types(&mut members);
                     }
                 }
                 if has_pattern {
@@ -1395,7 +1391,7 @@ impl<'p, 's> Checker<'p, 's> {
                             true => self.union_unreduced(&mapped),
                             false => self.union(&mapped),
                         };
-                        kept == union || self.has_compared_without_total_order.get()
+                        kept == union
                     });
                     self.note_part(kept, ty);
                     kept
@@ -2282,15 +2278,16 @@ impl<'p, 's> Checker<'p, 's> {
                 self.compare_type_lists(&arguments(a), &arguments(b))
             }
             (None, None) => std::cmp::Ordering::Equal,
-            // Two symbols with the same name. The later criteria order these two, but they don't order two
-            // instantiations of one alias, so the order of three types can be a cycle.
+            // TypeScript 7.1: two symbols with the same name are ordered by their declarations. In 7.0 they're equal.
             _ => {
-                let has_arguments =
-                    |ty: TypeId| self.alias_of_type(ty).is_some_and(|it| !it.1.is_empty());
-                if has_arguments(a) || has_arguments(b) {
-                    self.has_compared_without_total_order.set(true);
-                }
-                std::cmp::Ordering::Equal
+                let declaration = |ty: TypeId, alias: Option<Sym>| {
+                    let (_, file, pos) = match alias {
+                        Some(alias) => self.symbol_position(alias),
+                        None => self.sort_position(ty),
+                    }?;
+                    Some(self.position_in_program_order(file, pos))
+                };
+                some_first(declaration(a, x), declaration(b, y))
             }
         })
     }
@@ -2768,74 +2765,16 @@ impl<'p, 's> Checker<'p, 's> {
         self.types().content_order(a, b)
     }
 
-    /// `slices.BinarySearchFunc(types, t, CompareTypes)`, with the same probes. Where the order isn't total, the
-    /// resulting index depends on them.
-    fn binary_search_types(&self, types: &[TypeId], t: TypeId) -> (usize, bool) {
-        let (mut i, mut j) = (0, types.len());
-        while i < j {
-            let h = (i + j) / 2;
-            if self.compare_types(types[h], t).is_lt() {
-                i = h + 1;
-            } else {
-                j = h;
-            }
-        }
-        // Only a type and itself compare equal.
-        (i, types.get(i) == Some(&t))
+    /// `slices.BinarySearchFunc(types, t, CompareTypes)`. Only a type and itself compare equal.
+    fn binary_search_types(&self, types: &[TypeId], t: TypeId) -> Result<usize, usize> {
+        types.binary_search_by(|&member| self.compare_types(member, t))
     }
 
     /// `insertType`
     fn insert_type(&self, types: &mut Flat, t: TypeId) {
-        if let (index, false) = self.binary_search_types(types, t) {
+        if let Err(index) = self.binary_search_types(types, t) {
             types.insert(index, t);
         }
-    }
-
-    /// `addTypesToUnion`, without `includes`.
-    fn add_types_to_union(&self, type_set: &mut Flat, types: &[TypeId]) {
-        let mut last_type = None;
-        for &t in types {
-            if last_type == Some(t) {
-                continue;
-            }
-            match self.data(t) {
-                TypeData::Union(members) => self.add_types_to_union(type_set, members),
-                _ => self.add_type_to_union(type_set, t),
-            }
-            last_type = Some(t);
-        }
-    }
-
-    /// `addTypeToUnion`, without `includes`.
-    fn add_type_to_union(&self, type_set: &mut Flat, t: TypeId) {
-        let flags = self.flags(t);
-        if flags & tf::NEVER == 0
-            && (self.p.files.options.strict_null_checks || flags & tf::NULLABLE == 0)
-        {
-            self.insert_type(type_set, t);
-        }
-    }
-
-    /// Sorts `members`, which is what's left of the `typeSet` of `getUnionTypeWorker(actual, ..)`, into that set's
-    /// order. Returns true if `CompareTypes` is a total order on them.
-    fn sort_type_set(&self, actual: &[TypeId], members: &mut Flat) -> bool {
-        // FOR SPEED: with a total order, every sorting method gives the same result.
-        self.sort_types(members);
-        if !self.has_compared_without_total_order.get() {
-            return true;
-        }
-        // A type that the binary search fails to find again is inserted twice.
-        let mut type_set = Flat::new();
-        self.add_types_to_union(&mut type_set, actual);
-        type_set.retain(|t| members.contains(t));
-        // `removeConstrainedTypeVariables` inserts the type variable.
-        for &member in members.iter() {
-            if !type_set.contains(&member) {
-                self.insert_type(&mut type_set, member);
-            }
-        }
-        *members = type_set;
-        false
     }
 
     /// The name, which is the first thing `CompareTypes` orders types with the same `sort_order_flags` by. All string
@@ -2848,10 +2787,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Sorts by `CompareTypes`. Afterwards `has_compared_without_total_order` is false if that's a total order on
-    /// `types`.
-    pub(super) fn sort_types(&self, types: &mut [TypeId]) {
-        self.has_compared_without_total_order.set(false);
+    /// Sorts by `CompareTypes`.
+    fn sort_types(&self, types: &mut [TypeId]) {
         if types.len() < 3 {
             return types.sort_by(|&a, &b| self.compare_types(a, b));
         }
@@ -2860,10 +2797,7 @@ impl<'p, 's> Checker<'p, 's> {
         for (ty, sorted) in types.iter_mut().zip(ranked) {
             *ty = sorted.ty;
         }
-        debug_assert!(
-            self.has_compared_without_total_order.get()
-                || types.is_sorted_by(|&a, &b| self.compare_types(a, b).is_le())
-        );
+        debug_assert!(types.is_sorted_by(|&a, &b| self.compare_types(a, b).is_le()));
     }
 
     fn ranked(&self, ty: TypeId) -> Ranked<'p> {
@@ -2911,16 +2845,10 @@ impl<'p, 's> Checker<'p, 's> {
     ///
     /// Most of the types a union is built from are unions. The members of a union with `Types::is_sorted_run` are a
     /// sorted run, which means two things:
-    /// - Each is less than the next, and comparing the two doesn't set `has_compared_without_total_order`.
-    ///   `CompareTypes` goes through its criteria in the same order for all types, and only the criterion that sets the
-    ///   flag isn't transitive. So it's a total order on all the members, and on any subset.
+    /// - Each is less than the next.
     /// - None is `any` or `unknown`, which absorb the whole union.
     ///
-    /// Anything built here from sorted runs is a sorted run again, because two members end up as neighbors only if they
-    /// were neighbors in a run or were compared here. A total order gives only one result, so it's the result of
-    /// `sort_type_set`.
-    ///
-    /// A subsequence of a sorted run is a sorted run too.
+    /// Anything built here from sorted runs is a sorted run again, and so is a subsequence of a sorted run.
     ///
     /// `found`: see `union_of_parts`.
     fn add_in_order(
@@ -2958,12 +2886,13 @@ impl<'p, 's> Checker<'p, 's> {
             true => self.join_by_position(members, actual),
             false => None,
         };
-        let shortcut = match joined {
+        Some(match joined {
             Some(whole) => Shortcut::Joined(whole),
-            None if self.merge_sorted_runs(members, actual) => Shortcut::Merged,
-            None => return None,
-        };
-        Some(shortcut)
+            None => {
+                self.merge_sorted_runs(members, actual);
+                Shortcut::Merged
+            }
+        })
     }
 
     /// True if the members of the union `whole` are known to be a sorted run.
@@ -3067,10 +2996,8 @@ impl<'p, 's> Checker<'p, 's> {
         Some(positions)
     }
 
-    /// Merges the members of `actual`, each of which is a sorted run or a type that isn't a union. Returns false if
-    /// `CompareTypes` isn't known to be a total order on them. Then `members` is unchanged.
-    fn merge_sorted_runs(&self, members: &mut Flat, actual: &[TypeId]) -> bool {
-        self.has_compared_without_total_order.set(false);
+    /// Merges the members of `actual`, each of which is a sorted run or a type that isn't a union.
+    fn merge_sorted_runs(&self, members: &mut Flat, actual: &[TypeId]) {
         let mut unions: smallvec::SmallVec<[&'p [TypeId]; 4]> = smallvec::SmallVec::new();
         // The types that aren't unions form one run. They're sorted unless they're already in order.
         let (mut singles, mut are_in_order) = (Run::new(), true);
@@ -3102,11 +3029,6 @@ impl<'p, 's> Checker<'p, 's> {
                 members.extend(merged.iter().map(|it| it.ty));
             }
         }
-        if self.has_compared_without_total_order.get() {
-            members.clear();
-            return false;
-        }
-        true
     }
 
     /// Adds the members of `run` and `singles`, two sorted runs, to `members`, deduplicated and in order.
@@ -3323,7 +3245,7 @@ impl<'p, 's> Checker<'p, 's> {
         if types.len() <= 512 {
             return types.contains(&t);
         }
-        self.binary_search_types(types, t).1
+        self.binary_search_types(types, t).is_ok()
     }
 }
 

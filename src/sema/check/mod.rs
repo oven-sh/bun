@@ -970,7 +970,6 @@ impl<'s> Program<'s> {
             checked_leaves: Default::default(),
             links: spare.links,
             signature_links: spare.signature_links,
-            has_compared_without_total_order: std::cell::Cell::new(false),
             reparsed_for_await: None,
             flow_analysis_disabled: Vec::new(),
             inline_level: 0,
@@ -1875,8 +1874,6 @@ pub struct Checker<'p, 's> {
     links: links::TypeLinks,
     /// The derived parts of signatures.
     signature_links: signature_links::SignatureLinks<'p>,
-    /// Set by `compare_type_names` where `CompareTypes` isn't transitive.
-    has_compared_without_total_order: std::cell::Cell<bool>,
     /// `reparseTopLevelAwait`: the statements of that file that end up in an await context. Sorted.
     /// Computed on first use.
     reparsed_for_await: Option<Vec<StmtId>>,

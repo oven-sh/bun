@@ -1329,112 +1329,56 @@ export {};
 (36,20): error TS2322: Type '2' is not assignable to type '1'.
 `,
   },
-  "three types whose ordering is cyclic, among others": {
+  "aliases with the same name, ordered by declaration as in TypeScript 7.1": {
     program: `
 interface A1 { a1: 1 } interface A2 { a2: 1 } interface K { k: 1 } interface M { m: 1 } interface P { p: 1 }
-interface W { w: 1 } interface Y { y: 1 } interface Z { z: 1 }
 interface Box<T> { value: T }
-// N.X<A1, P> comes before N.X<A2, K>, that one before O.X, and that one before N.X<A1, P>.
-namespace N { export type X<T, U> = U & T }
+// TypeScript 7.0 puts N.X<A1, P> before N.X<A2, K>, that one before O.X, and that one before N.X<A1, P>.
 namespace O { export type X = M & A1 }
-type V = W & A1;
-type Y2 = Y & A1;
+namespace N { export type X<T, U> = U & T }
+namespace I { export interface X { x: 1 } }
+namespace B { export type X<T> = Box<T> }
+namespace Again { export type X<T, U> = N.X<T, U> }
 interface Runs {
   both: N.X<A1, P> | N.X<A2, K>;
-  bothAndMore: A1 | N.X<A2, K> | V | Z | N.X<A1, P> | Y2 | "text";
-  bothAndMany: A1 | A2 | K | M | P | W | Y | Z | N.X<A1, P> | N.X<A2, K> | V | Y2;
   third: O.X | A2;
-  thirdAndMore: K | O.X | 1 | V | Y2 | undefined;
-  first: N.X<A1, P> | M;
-  second: N.X<A2, K> | P;
-  firstAndThird: N.X<A1, P> | O.X;
-  all: O.X | N.X<A2, K> | N.X<A1, P>;
-  boxes: Box<N.X<A1, P>> | Box<N.X<A2, K>> | Box<A1> | Box<Z>;
-  box: Box<O.X> | Box<A2>;
+  all: N.X<A2, K> | O.X | N.X<A1, P>;
+  boxes: Box<N.X<A1, P>> | Box<N.X<A2, K>> | Box<A1>;
 }
 const c1: never = null! as Runs["both"] | Runs["third"];
 const c2: never = null! as Runs["third"] | Runs["both"];
-const c3: never = null! as Runs["bothAndMore"] | Runs["thirdAndMore"];
-const c4: never = null! as Runs["thirdAndMore"] | Runs["bothAndMore"];
-const c5: never = null! as Runs["first"] | Runs["second"] | Runs["third"];
-const c6: never = null! as Runs["third"] | Runs["second"] | Runs["first"];
-const c7: never = null! as Runs["second"] | Runs["third"] | Runs["first"];
-const c8: never = null! as Runs["firstAndThird"] | Runs["second"];
-const c9: never = null! as Runs["second"] | Runs["firstAndThird"];
-const c10: never = null! as Runs["all"] | Z;
-const c11: never = null! as A1 | Runs["all"];
-const c12: never = null! as Runs["all"] | Runs["both"];
-const c13: never = null! as Runs["both"] | Runs["all"];
-const c14: never = null! as Runs["bothAndMore"] | O.X;
-const c15: never = null! as O.X | Runs["bothAndMore"];
-const c16: never = null! as Runs["bothAndMany"] | O.X;
-const c17: never = null! as O.X | Runs["bothAndMany"] | 1;
-const c18: never = null! as Runs["bothAndMany"] | Runs["thirdAndMore"] | Runs["all"];
-const c19: never = null! as Runs["boxes"] | Runs["box"];
-const c20: never = null! as Box<O.X> | Runs["boxes"] | Box<M>;
-const c21: never = null! as Runs["boxes"] | Box<M> | Box<O.X>;
-const c22: never = null! as Runs["first"] | Runs["second"] | Runs["third"];
-function narrowed(x: Runs["all"] | Z | W, y: Runs["bothAndMany"] | O.X) {
-  if ("z" in x) return;
-  const withoutZ: never = x;
-  if ("w" in x) x; else x;
+const c3: never = null! as A1 | Runs["all"];
+const c4: never = null! as N.X<A1, P> | O.X | N.X<A2, K>;
+const c5: never = null! as Runs["boxes"] | Box<O.X>;
+const c6: never = null! as B.X<1> | I.X | Box<0>;
+const c7: never = null! as Again.X<A1, K> | N.X<A2, K> | Again.X<A1, A2> | Runs["third"];
+function narrowed(x: Runs["all"] | Box<1>) {
+  if ("value" in x) return;
+  const withoutBox: never = x;
+  if ("m" in x) x; else x;
   const joined: never = x;
-  if ("z" in y || "y" in y) return;
-  const withoutTwo: never = y;
 }
 export {};
 `,
     errors: `
-(23,7): error TS2322: Type 'A2 | O.X | N.X<A1, P> | N.X<A2, K>' is not assignable to type 'never'.
+(16,7): error TS2322: Type 'A2 | O.X | N.X<A1, P> | N.X<A2, K>' is not assignable to type 'never'.
   Type 'A2' is not assignable to type 'never'.
-(24,7): error TS2322: Type 'A2 | O.X | N.X<A1, P> | N.X<A2, K>' is not assignable to type 'never'.
+(17,7): error TS2322: Type 'A2 | O.X | N.X<A1, P> | N.X<A2, K>' is not assignable to type 'never'.
   Type 'A2' is not assignable to type 'never'.
-(25,7): error TS2322: Type '"text" | 1 | A1 | K | Z | V | N.X<A1, P> | N.X<A2, K> | O.X | Y2 | undefined' is not assignable to type 'never'.
-  Type 'undefined' is not assignable to type 'never'.
-(26,7): error TS2322: Type '"text" | 1 | A1 | K | Z | V | N.X<A1, P> | N.X<A2, K> | O.X | Y2 | undefined' is not assignable to type 'never'.
-  Type 'undefined' is not assignable to type 'never'.
-(27,7): error TS2322: Type 'A2 | M | P | N.X<A1, P> | N.X<A2, K> | O.X' is not assignable to type 'never'.
-  Type 'A2' is not assignable to type 'never'.
-(28,7): error TS2322: Type 'A2 | M | P | N.X<A2, K> | O.X | N.X<A1, P>' is not assignable to type 'never'.
-  Type 'A2' is not assignable to type 'never'.
-(29,7): error TS2322: Type 'A2 | M | P | N.X<A2, K> | O.X | N.X<A1, P>' is not assignable to type 'never'.
-  Type 'A2' is not assignable to type 'never'.
-(30,7): error TS2322: Type 'P | N.X<A2, K> | O.X | N.X<A1, P>' is not assignable to type 'never'.
-  Type 'P' is not assignable to type 'never'.
-(31,7): error TS2322: Type 'P | N.X<A2, K> | O.X | N.X<A1, P>' is not assignable to type 'never'.
-  Type 'P' is not assignable to type 'never'.
-(32,7): error TS2322: Type 'Z | N.X<A2, K> | O.X | N.X<A1, P>' is not assignable to type 'never'.
-  Type 'Z' is not assignable to type 'never'.
-(33,7): error TS2322: Type 'A1 | N.X<A1, P> | N.X<A2, K> | O.X' is not assignable to type 'never'.
+(18,7): error TS2322: Type 'A1 | O.X | N.X<A1, P> | N.X<A2, K>' is not assignable to type 'never'.
   Type 'A1' is not assignable to type 'never'.
-(34,7): error TS2322: Type 'N.X<A2, K> | O.X | N.X<A1, P>' is not assignable to type 'never'.
-  Type 'X<A2, K>' is not assignable to type 'never'.
-(35,7): error TS2322: Type 'N.X<A2, K> | O.X | N.X<A1, P>' is not assignable to type 'never'.
-  Type 'X<A2, K>' is not assignable to type 'never'.
-(36,7): error TS2322: Type '"text" | A1 | Z | V | N.X<A1, P> | N.X<A2, K> | O.X | Y2' is not assignable to type 'never'.
-  Type '"text"' is not assignable to type 'never'.
-(37,7): error TS2322: Type '"text" | A1 | Z | V | N.X<A1, P> | N.X<A2, K> | O.X | Y2' is not assignable to type 'never'.
-  Type '"text"' is not assignable to type 'never'.
-(38,7): error TS2322: Type 'A1 | A2 | K | M | P | W | Y | Z | V | O.X | N.X<A1, P> | N.X<A2, K> | Y2' is not assignable to type 'never'.
-  Type 'A1' is not assignable to type 'never'.
-(39,7): error TS2322: Type '1 | A1 | A2 | K | M | P | W | Y | Z | V | O.X | N.X<A1, P> | N.X<A2, K> | Y2' is not assignable to type 'never'.
-  Type '1' is not assignable to type 'never'.
-(40,7): error TS2322: Type '1 | A1 | A2 | K | M | P | W | Y | Z | V | N.X<A2, K> | O.X | N.X<A1, P> | N.X<A2, K> | Y2 | undefined' is not assignable to type 'never'.
-  Type 'undefined' is not assignable to type 'never'.
-(41,7): error TS2322: Type 'Box<A1> | Box<A2> | Box<Z> | Box<X<A1, P>> | Box<X<A2, K>> | Box<X>' is not assignable to type 'never'.
+(19,7): error TS2322: Type 'O.X | N.X<A1, P> | N.X<A2, K>' is not assignable to type 'never'.
+  Type 'X' is not assignable to type 'never'.
+(20,7): error TS2322: Type 'Box<A1> | Box<X> | Box<X<A1, P>> | Box<X<A2, K>>' is not assignable to type 'never'.
   Type 'Box<A1>' is not assignable to type 'never'.
-(42,7): error TS2322: Type 'Box<A1> | Box<M> | Box<Z> | Box<X<A2, K>> | Box<X> | Box<X<A1, P>>' is not assignable to type 'never'.
-  Type 'Box<A1>' is not assignable to type 'never'.
-(43,7): error TS2322: Type 'Box<A1> | Box<M> | Box<Z> | Box<X<A1, P>> | Box<X<A2, K>> | Box<X>' is not assignable to type 'never'.
-  Type 'Box<A1>' is not assignable to type 'never'.
-(44,7): error TS2322: Type 'A2 | M | P | N.X<A1, P> | N.X<A2, K> | O.X' is not assignable to type 'never'.
+(21,7): error TS2322: Type 'Box<0> | I.X | B.X<1>' is not assignable to type 'never'.
+  Type 'Box<0>' is not assignable to type 'never'.
+(22,7): error TS2322: Type 'A2 | O.X | N.X<A2, K> | Again.X<A1, A2> | Again.X<A1, K>' is not assignable to type 'never'.
   Type 'A2' is not assignable to type 'never'.
-(47,9): error TS2322: Type 'W | N.X<A2, K> | O.X | N.X<A1, P>' is not assignable to type 'never'.
-  Type 'W' is not assignable to type 'never'.
-(49,9): error TS2322: Type 'W | N.X<A1, P> | N.X<A2, K> | O.X' is not assignable to type 'never'.
-  Type 'W' is not assignable to type 'never'.
-(51,9): error TS2322: Type 'A1 | A2 | K | M | P | W | V | O.X | N.X<A1, P> | N.X<A2, K>' is not assignable to type 'never'.
-  Type 'A1' is not assignable to type 'never'.
+(25,9): error TS2322: Type 'O.X | N.X<A1, P> | N.X<A2, K>' is not assignable to type 'never'.
+  Type 'X' is not assignable to type 'never'.
+(27,9): error TS2322: Type 'O.X | N.X<A1, P> | N.X<A2, K>' is not assignable to type 'never'.
+  Type 'X' is not assignable to type 'never'.
 `,
   },
   "a union split by narrowing and joined again": {

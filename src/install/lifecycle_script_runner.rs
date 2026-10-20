@@ -944,10 +944,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         exit.code,
                     );
                     self.discard_packages_with_unfinished_scripts();
+                    // De-exit: record the failure before `self` is destroyed so the
+                    // top-level exit-code logic reports it, instead of killing the
+                    // process mid-install.
+                    unsafe { (*self.manager.as_ptr()).any_failed_to_install = true };
                     // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                     unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                     Output::flush();
-                    Global::exit(exit.code as u32);
+                    return;
                 }
 
                 if !self.foreground
@@ -1006,9 +1010,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                                 ),
                             );
                             self.discard_packages_with_unfinished_scripts();
-                            Global::exit(1);
+                            // De-exit: record the failure so the top-level reports it,
+                            // instead of killing the process mid-install.
+                            unsafe { (*self.manager.as_ptr()).any_failed_to_install = true };
+                            return;
                         }
-                        return;
                     }
                 }
 
@@ -1067,10 +1073,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     err,
                 );
                 self.discard_packages_with_unfinished_scripts();
+                // De-exit: record the failure before `self` is destroyed so the
+                // top-level exit-code logic reports it, instead of killing the
+                // process mid-install.
+                unsafe { (*self.manager.as_ptr()).any_failed_to_install = true };
                 // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                 unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                 Output::flush();
-                Global::exit(1);
+                return;
             }
             _ => {
                 Output::panic(format_args!(
@@ -1240,7 +1250,15 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 err.name(),
             );
             lss.discard_packages_with_unfinished_scripts();
-            Global::exit(1);
+            // De-exit (groundwork for a programmatic install API, see #5414): a
+            // spawn failure must not terminate the process. Record the failure on
+            // the manager so the top-level exit-code logic reports it, and return
+            // an Err the caller (or a future Bun.install) can handle.
+            // SAFETY: `lifecycle_subprocess` is the freshly-created, uniquely-owned
+            // allocation root (see `spawn_next_script` above); the file's own pattern
+            // for mutable manager access (lines 557/634).
+            unsafe { (*(*lifecycle_subprocess).manager.as_ptr()).any_failed_to_install = true };
+            return Err(crate::Error::InstallFailed);
         }
 
         Ok(())

@@ -813,8 +813,7 @@ describe("mock()", () => {
           throw error;
         })()),
     );
-    // The reaction that restores the implementation handles the callback's own promise. The caller gets the
-    // promise of that reaction, so a rejection that nothing waits for is still reported.
+    // The caller gets a promise of its own: the restore reaction already handles the callback's promise.
     expect(result).not.toBe(callbackPromise);
     expect(await expectRejects(result)).toBe(error);
     if (isBun) {
@@ -855,8 +854,7 @@ describe("mock()", () => {
       expect(fn()).toBe("1");
     });
 
-    // The result takes that value as the promise of a then() reaction takes the value of its handler: a then() of
-    // the value is called.
+    // The result takes the value as the promise of a then() reaction does: a then() of the value is called.
     test("withImplementation (async) resolves with a value that became a thenable after the promise settled", async () => {
       const fn = jest.fn(() => "1");
       const value = {};
@@ -871,8 +869,7 @@ describe("mock()", () => {
       expect(fn()).toBe("1");
     });
 
-    // Open: the async stack walker of JSC does not go on through the result promise of a reaction, so the async
-    // callers are missing from the stack. The case fails until it does.
+    // Open (#23760): the JSC async stack walker stops at the result promise of a reaction. Fails until it goes on.
     test.failing("withImplementation (async) keeps the async callers in the stack of a failing callback", async () => {
       const fn = jest.fn(() => "1");
       async function caller() {
@@ -940,8 +937,7 @@ describe("mock()", () => {
         expect(fn()).toBe("1");
       });
 
-      // The subclass is adopted in a promise job, as await adopts it. What the caller adds in the same tick
-      // comes before that job.
+      // As await does, the subclass is adopted in a promise job, after what the caller adds in the same tick.
       test("a reaction on the callback's own promise runs before the restore", async () => {
         const fn = jest.fn(() => "1");
         const seen = [];
@@ -1080,8 +1076,7 @@ describe("mock()", () => {
             });
           }
 
-          // Last, because the replacement stays. A promise whose constructor is Promise gets the restore as a
-          // reaction, as with await: its then() is not called, and the restore comes before what the caller adds.
+          // Last, because the replacement stays. As with await, then() of a plain promise is not called.
           let thenCalls = 0;
           const seen = [];
           await row("mock, rejected later, Promise.prototype.then replaced", () => {

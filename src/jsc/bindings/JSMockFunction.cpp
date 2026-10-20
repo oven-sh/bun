@@ -1422,16 +1422,14 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject 
     if (auto promise = tryJSDynamicCast<JSC::JSPromise*>(returnValue)) {
         auto ctx = MockWithImplementationCleanupData::create(globalObject, thisObject, lastImpl, lastTail, lastFallback);
 
-        // As with await: a promise whose constructor is not Promise is adopted through its then(), which can be what
-        // starts its work. Reading the constructor can throw.
+        // PromiseResolve, as await does: a Promise subclass is adopted through its then().
         JSC::JSPromise* source = JSC::JSPromise::resolvedPromise(globalObject, promise);
         if (scope.exception()) [[unlikely]] {
             restoreAfterWithImplementation(vm, ctx);
             return {};
         }
 
-        // The caller gets the promise of the restore reaction, not the callback's own. A reaction marks its promise as
-        // handled, so a rejection that nobody else handles has to come out of the reaction to be reported.
+        // Not `promise` itself: the restore reaction marks that one as handled, which would hide its rejection.
         JSC::JSPromise* result = JSC::JSPromise::create(vm, globalObject->promiseStructure());
         source->performPromiseThenWithContext(vm, globalObject,
             globalObject->mockModule.withImplementationCleanupFunction.getInitializedOnMainThread(globalObject),

@@ -14,7 +14,7 @@ use bun_threading::work_pool::Task as WorkPoolTask;
 use bun_threading::{IntrusiveWorkTask, ThreadPool, WaitGroup};
 
 use crate::package_installer::NodeModulesFolder;
-use crate::patch_install::PatchStamp;
+use crate::patch_install::{PatchName, PatchStamp};
 use crate::{
     BuntagHashBuf, DependencyID, Integrity, Lockfile, Npm, PackageID, PackageManager, Resolution,
     TruncatedPackageNameHash, bun_fs, bun_json, buntaghashbuf_make, initialize_store, resolution,
@@ -45,12 +45,14 @@ pub(crate) struct PackageFiles<'a> {
     pub(crate) cache_dir_subpath: &'a ZStr,
     pub(crate) destination_dir_subpath: &'a ZStr,
     /// The patch that the linked copy is to name, see `PatchStamp::write`. `PatchTask::apply` passes `None`: its copy becomes a cache folder, which names none.
-    pub(crate) patch_hash: Option<u64>,
+    pub(crate) patch: Option<Patch>,
 }
 
 #[derive(Clone, Copy)]
 pub struct Patch {
     pub(crate) contents_hash: u64,
+    /// `PatchStamp::pinned` of the package.
+    pub(crate) pinned: u64,
 }
 
 #[derive(Default)]
@@ -1071,8 +1073,8 @@ pub(crate) struct LinkJob {
     /// thread.
     pub(crate) random: u64,
     pub(crate) resolution_tag: resolution::Tag,
-    /// See `PackageFiles::patch_hash`.
-    pub(crate) patch_hash: Option<u64>,
+    /// See `PackageFiles::patch`.
+    pub(crate) patch: Option<Patch>,
     pub(crate) result: std::sync::OnceLock<InstallResult>,
 }
 
@@ -1105,7 +1107,7 @@ impl LinkBatch {
             cache_dir: job.cache_dir,
             cache_dir_subpath: &job.cache_dir_subpath,
             destination_dir_subpath: &job.destination_dir_subpath,
-            patch_hash: job.patch_hash,
+            patch: job.patch,
         }
         .install(
             self.staging,
@@ -1171,26 +1173,39 @@ impl LinkBatch {
 
 // ───────────────────────────── impl PackageInstall ─────────────────────────────
 
-/// Contains a git package's commit or a tarball's integrity. Both linkers read it.
+/// Line 1 is a git package's commit or a tarball's integrity. Both linkers read it. A patched copy of the hoisted linker has the patch hash on line 2, see `PatchStamp`. Read it with [`BunTag::parse`].
 pub(crate) const BUN_TAG: &[u8] = b".bun-tag";
 
-/// The patch hash that an installed copy names, see `PatchStamp`. Empty when it names none.
-type NamedPatch = bun_core::BoundedArray<u8, 16>;
+/// The lines of a [`BUN_TAG`] file.
+pub(crate) struct BunTag<'a> {
+    /// The commit, or the integrity of the tarball.
+    pub(crate) resolved: &'a [u8],
+    /// Empty when the copy names no patch.
+    pub(crate) patch: &'a [u8],
+}
 
-/// Returns true if an installed tarball's `.bun-tag` matches the integrity in bun.lock.
+impl<'a> BunTag<'a> {
+    pub(crate) fn parse(bytes: &'a [u8]) -> Self {
+        let (resolved, patch) = strings::split_once_char(bytes, b'\n').unwrap_or((bytes, b""));
+        Self { resolved, patch }
+    }
+}
+
+/// Returns true if line 1 of an installed tarball's `.bun-tag` matches the integrity in bun.lock.
 pub(crate) fn tarball_tag_matches(tag: &[u8], integrity: &Integrity, skips_verify: bool) -> bool {
+    let tag = BunTag::parse(tag).resolved;
     // A copy installed with `--no-verify` has an empty tag.
     strings::eql_long(integrity.sri(&mut [0; Integrity::MAX_SRI_LEN]), tag, true)
         || (skips_verify && tag.is_empty())
 }
 
 impl<'a> PackageInstall<'a> {
-    /// `adopt`: the tag of a copy that names no patch. It is named once its marker is found. `None`: the copy names the patch, and fails only on a marker that is a dangling link.
+    /// `unnamed`: the tag of a copy that names no patch, as an older version leaves it. It is named once its marker is found.
     fn verify_patch_hash(
         &mut self,
         patch: Patch,
         root_node_modules_dir: &Dir,
-        adopt: Option<resolution::Tag>,
+        unnamed: Option<resolution::Tag>,
     ) -> bool {
         // hash from the .patch file, to be checked against bun tag
         let patchfile_contents_hash = patch.contents_hash;
@@ -1206,34 +1221,73 @@ impl<'a> PackageInstall<'a> {
             return false;
         };
         #[cfg(unix)]
-        let has_marker = sys::fstatat(&destination_dir, patch_tag_path).is_ok();
+        {
+            if sys::fstatat(&destination_dir, patch_tag_path).is_err() {
+                return false;
+            }
+        }
         #[cfg(not(unix))]
-        let has_marker = sys::openat(&destination_dir, patch_tag_path, sys::O::RDONLY, 0)
-            .map(|fd| fd.close())
-            .is_ok();
-        if !has_marker {
-            let marker = patch_tag_path.as_bytes();
-            return adopt.is_none()
-                && crate::prune::entry_kind(&destination_dir, marker, EntryKind::Unknown)
-                    != EntryKind::SymLink;
+        {
+            match sys::openat(&destination_dir, patch_tag_path, sys::O::RDONLY, 0) {
+                Err(_) => return false,
+                Ok(fd) => fd.close(),
+            }
         }
 
-        adopt.is_none_or(|tag| self.name_patch(&destination_dir, tag, patchfile_contents_hash))
+        unnamed.is_none_or(|tag| self.name_patch(&destination_dir, tag, patch, bunhashtag))
     }
 
-    /// Names the patch in a copy that a version without `PatchStamp` linked: unnamed, it passes for an unpatched copy once the patch is gone.
+    /// Names the patch in a copy that has the marker of the patch and no name, as an older version leaves it. Without a name the copy passes for an unpatched one once the patch is gone. The marker is taken at its word, as before: no file of the copy is compared with the cache. `false` for a copy that is a link, or that holds a `.bun-tag` or a marker of another copy.
     #[cold]
-    fn name_patch(&self, tree_dir: &Dir, tag: resolution::Tag, patch_hash: u64) -> bool {
+    fn name_patch(
+        &self,
+        tree_dir: &Dir,
+        tag: resolution::Tag,
+        patch: Patch,
+        marker: &[u8],
+    ) -> bool {
         let package = self.destination_dir_subpath.as_bytes();
-        if PatchStamp::write(tree_dir.fd(), package, tag, patch_hash).is_ok() {
-            return true;
+        // Through a link, the file to write is in a folder that is not this copy.
+        if crate::prune::entry_kind(tree_dir, package, EntryKind::Unknown) != EntryKind::Directory {
+            return false;
         }
-        // A tree that cannot be written stays installed, as it is for the version that linked it. A copy that lost the file does not.
-        let file = PatchStamp::file(tag).as_bytes();
-        sys::exists_at(
-            tree_dir,
-            path::resolve_path::join_z::<path::platform::Posix>(&[package, file]),
-        )
+        let Ok(copy) = tree_dir.open_at(package) else {
+            return false;
+        };
+        let keeps_bun_tag = PatchStamp::file(tag).as_bytes() == BUN_TAG;
+        let mut entries = sys::iterate_dir(copy.fd());
+        loop {
+            let entry = match entries.next() {
+                Ok(Some(entry)) => entry,
+                Ok(None) => break,
+                Err(_) => return false,
+            };
+            let name = entry.name.slice_u8();
+            // A copy of a registry package has no `.bun-tag` from the linker, and a patched copy has one marker. Any other one is of a package or a patch that was linked over this copy, unless the patched package has that file itself.
+            let is_of_another_copy = (name == BUN_TAG && !keeps_bun_tag)
+                || (name.starts_with(crate::bun_hash_tag) && name != marker);
+            if is_of_another_copy && !self.patched_package_has(name) {
+                return false;
+            }
+        }
+        PatchStamp::write(tree_dir.fd(), package, tag, patch);
+        true
+    }
+
+    /// Whether the patch file adds the file `name` to the package, or the patched folder of the cache has it. `bun patch --commit` of an older version wrote the markers of the earlier patches into the patch file, as new files.
+    #[cold]
+    fn patched_package_has(&self, name: &[u8]) -> bool {
+        let package = self.package_name.slice(&self.lockfile.buffers.string_bytes);
+        let patch_key = [package, b"@", self.package_version].concat();
+        let patch_key_hash = bun_semver::string::Builder::string_hash(&patch_key);
+        PatchStamp::patch_file_adds(self.lockfile, patch_key_hash, name)
+            || sys::exists_at(
+                self.cache_dir,
+                path::resolve_path::join_z::<path::platform::Posix>(&[
+                    self.cache_dir_subpath.as_bytes(),
+                    name,
+                ]),
+            )
     }
 
     // 1. verify that .bun-tag exists (was it installed from bun?)
@@ -1242,7 +1296,7 @@ impl<'a> PackageInstall<'a> {
         &mut self,
         matches: &dyn Fn(&[u8]) -> bool,
         root_node_modules_dir: &Dir,
-        named: &mut NamedPatch,
+        named: &mut PatchName,
     ) -> bool {
         let mut spill = Vec::new();
         let bun_tag_path = path::resolve_path::join_z_spill::<path::platform::Posix>(
@@ -1256,12 +1310,12 @@ impl<'a> PackageInstall<'a> {
         else {
             return false;
         };
-        let bun_tag = bun_tag_file.bytes.as_slice();
-        let Ok(patch_hash) = NamedPatch::from_slice(PatchStamp::bun_tag_patch_hash(bun_tag)) else {
+        let bun_tag = BunTag::parse(&bun_tag_file.bytes);
+        let Ok(patch) = PatchName::from_slice(bun_tag.patch) else {
             return false;
         };
-        *named = patch_hash;
-        matches(PatchStamp::bun_tag_resolved(bun_tag))
+        *named = patch;
+        matches(bun_tag.resolved)
     }
 
     /// Whether the installed copy is the wanted package with the wanted patch. A patched copy names its patch in the file that its arm reads: `PatchStamp`.
@@ -1272,7 +1326,7 @@ impl<'a> PackageInstall<'a> {
         skips_verify: bool,
         root_node_modules_dir: &Dir,
     ) -> bool {
-        let mut named = NamedPatch::default();
+        let mut named = PatchName::default();
         let verified = match resolution.tag {
             resolution::Tag::Git | resolution::Tag::Github => {
                 let lockfile = self.lockfile;
@@ -1312,22 +1366,27 @@ impl<'a> PackageInstall<'a> {
             return false;
         }
 
-        match (self.patch, named.is_empty()) {
-            (None, true) => true,
-            // A package that was published from a patched copy ships the key in its own package.json, and then its cache folder holds it too.
-            (None, false) => PatchStamp::published_with(
-                self.cache_dir,
-                self.cache_dir_subpath.as_bytes(),
-                resolution.tag,
-                named.as_slice(),
-            ),
-            (Some(patch), true) => {
-                self.verify_patch_hash(patch, root_node_modules_dir, Some(resolution.tag))
-            }
-            // A killed `bun patch --commit` leaves the marker outside the copy, so none is needed. A dangling one tells that the cache folder of a `--backend=symlink` copy is gone: only the file that names the patch is in `node_modules`.
-            (Some(patch), false) => {
-                named.as_slice() == PatchStamp::hex(&mut [0; 16], patch.contents_hash)
-                    && self.verify_patch_hash(patch, root_node_modules_dir, None)
+        let (tag, named) = (resolution.tag, named.as_slice());
+        let wanted = self.patch.and_then(|patch| PatchStamp::name(tag, patch));
+        if let (Some(patch), Some(wanted)) = (self.patch, &wanted)
+            && named == wanted.as_slice()
+        {
+            return self.verify_patch_hash(patch, root_node_modules_dir, None);
+        }
+        // The copy names a patch that is not listed, or the listed patch for a tarball with another integrity.
+        if !named.is_empty()
+            && (PatchStamp::is_written(tag, named, integrity)
+                || self
+                    .patch
+                    .is_some_and(|patch| PatchStamp::names_patch(named, patch)))
+        {
+            return false;
+        }
+        match self.patch {
+            None => true,
+            Some(patch) => {
+                let unnamed = wanted.is_some().then_some(tag);
+                self.verify_patch_hash(patch, root_node_modules_dir, unnamed)
             }
         }
     }
@@ -1410,7 +1469,7 @@ impl<'a> PackageInstall<'a> {
     fn verify_package_json_name_and_version(
         &mut self,
         root_node_modules_dir: &Dir,
-        named: &mut NamedPatch,
+        named: &mut PatchName,
     ) -> bool {
         // The first attempt treats a short read as the end of the file, which saves a `read` call.
         // A few file systems return short reads earlier and truncate the JSON, so retry until EOF.
@@ -1424,7 +1483,7 @@ impl<'a> PackageInstall<'a> {
         &mut self,
         root_node_modules_dir: &Dir,
         until_eof: bool,
-        named: &mut NamedPatch,
+        named: &mut PatchName,
     ) -> Option<bool> {
         let mut body_pool = Npm::Registry::BodyPool::get();
         let mutable: &mut MutableString = &mut body_pool;
@@ -1501,8 +1560,7 @@ impl<'a> PackageInstall<'a> {
         {
             return Some(false);
         }
-        *named =
-            NamedPatch::from_slice(package_json_checker.found_patch_hash()).unwrap_or_default();
+        *named = PatchName::from_slice(package_json_checker.found_patch_hash()).unwrap_or_default();
         Some(true)
     }
 }
@@ -2542,7 +2600,7 @@ impl<'a> PackageInstall<'a> {
             cache_dir: self.cache_dir,
             cache_dir_subpath: self.cache_dir_subpath,
             destination_dir_subpath: self.destination_dir_subpath,
-            patch_hash: self.patch.map(|patch| patch.contents_hash),
+            patch: self.patch,
         }
         .install(
             staging_mode,
@@ -2665,6 +2723,14 @@ impl PackageFiles<'_> {
             let _ = destination_dir.delete_tree(staging.as_bytes());
         }
         // No staging (`Staging::Off`, `dest` is occupied, the rename is refused): link in place.
+        if staging_mode != Staging::Off {
+            PatchStamp::remove_named_marker(
+                destination_dir,
+                dest.as_bytes(),
+                resolution_tag,
+                self.patch,
+            );
+        }
         self.install_into(destination_dir, method_, resolution_tag, owner)
     }
 
@@ -2677,18 +2743,11 @@ impl PackageFiles<'_> {
     ) -> InstallResult {
         let result = self.link_files_into(destination_dir, method_, resolution_tag);
         // A copy that does not name its patch passes for an unpatched one once the patch is gone.
-        if let Some(patch_hash) = self.patch_hash
+        if let Some(patch) = self.patch
             && matches!(result, InstallResult::Success)
-            && let Err(err) = PatchStamp::write(
-                destination_dir.fd(),
-                self.destination_dir_subpath.as_bytes(),
-                resolution_tag,
-                patch_hash,
-            )
         {
-            let mut failure = Failure::boxed(err.into(), Step::CopyingFiles);
-            failure.file = PatchStamp::file(resolution_tag).as_bytes().to_vec();
-            return InstallResult::Failure(failure);
+            let package = self.destination_dir_subpath.as_bytes();
+            PatchStamp::write(destination_dir.fd(), package, resolution_tag, patch);
         }
         if resolution_tag == resolution::Tag::Folder
             && matches!(result, InstallResult::Success)

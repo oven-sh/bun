@@ -82,6 +82,18 @@ When the package has no changes left, Bun removes it from `"patchedDependencies"
 
 You can also delete the entry from `"patchedDependencies"` and the patch file yourself, then run `bun install`.
 
+#### A patch that is no longer listed
+
+With the hoisted linker, the installed copy of a patched package records which patch it holds. When `package.json` and the lockfile no longer list that patch, `bun install` (also with `--frozen-lockfile`) and `bun ci` install the package as published again. A `git checkout` of a commit without the patch, a pulled revert and a `git stash` take the patch out of both files in one step.
+
+Bun replaces the whole folder of the package. Edits that you made after `bun patch <pkg>` and did not save with `bun patch --commit <pkg>` are in that folder. Run `bun patch --commit <pkg>` before you switch to a commit without the patch. With `--offline`, the published package has to be in the cache.
+
+How the copy records the patch is internal to Bun and can change between Bun versions. `bun patch --commit` keeps the record out of the patch file.
+
+A copy that an older version of Bun installed has no record. `bun install` adds one while the patch is still listed. If the patch is gone before that, run `bun install --force` once.
+
+An older version of Bun does not read the record, and installs a patched git or tarball package again when this version linked it. If a CI cache stores `node_modules` for more than one Bun version, put the Bun version in the cache key. Run `bun patch --commit` with the version that installed the package: an older version writes the record into the patch file.
+
 #### A missing patch file
 
 `bun install` and `bun patch <pkg>` fail when a file in `"patchedDependencies"` does not exist, and leave `node_modules` alone. While the patched package is still in `node_modules`, `bun patch --commit <pkg>` writes the file again. To start over, delete the entry from `"patchedDependencies"` and run `bun install`.

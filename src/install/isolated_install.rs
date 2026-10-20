@@ -2450,7 +2450,7 @@ pub(crate) fn install_isolated_packages(
                                 store_path.append(crate::package_install::BUN_TAG).assume_ok();
                                 let is_current = sys::File::read_from(Fd::cwd(), store_path.slice()).is_ok_and(|tag| {
                                     crate::package_install::tarball_tag_matches(
-                                        crate::patch_install::PatchStamp::bun_tag_resolved(&tag),
+                                        &tag,
                                         &pkgs.items_meta()[pkg_id as usize].integrity,
                                         installer.manager().skips_verify(pkg_res.tag),
                                     )

@@ -30,7 +30,7 @@ use crate::package_install::{self, PackageInstall};
 use crate::package_manager::{self, Options, PackageManager};
 use crate::package_manager_real::progress_strings::ProgressStrings;
 use crate::package_manager_task as task;
-use crate::patch_install::{self, PatchTask};
+use crate::patch_install::{self, PatchStamp, PatchTask};
 use crate::postinstall_optimizer::{self, PostinstallOptimizer};
 use crate::resolution::{self, Resolution};
 use crate::{
@@ -1847,8 +1847,10 @@ impl<'a> PackageInstaller<'a> {
             cache_dir: Fd::INVALID, // assigned below
             destination_dir_subpath,
             package_name: pkg_name,
-            patch: patch_contents_hash
-                .map(|contents_hash| package_install::Patch { contents_hash }),
+            patch: patch_contents_hash.map(|contents_hash| package_install::Patch {
+                contents_hash,
+                pinned: PatchStamp::pinned(&self.metas[package_id as usize].integrity),
+            }),
             package_version,
             node_modules: node_modules_ref.get(),
             lockfile: self.lockfile(),
@@ -1984,6 +1986,7 @@ impl<'a> PackageInstaller<'a> {
             (tree.inside_replaced_folder, tree.outlived_root);
         let verifying = needs_verify && !self.skip_verify_installed_version_number;
         let needs_install = !verifying
+            // `verify` passes a copy that names no patch, and a copy that an older version linked names none.
             || remove_patch
             || inside_replaced_folder
             || !installer.verify(
@@ -2320,7 +2323,7 @@ impl<'a> PackageInstaller<'a> {
                             skip_delete,
                             random: bun_core::fast_random(),
                             resolution_tag: resolution.tag,
-                            patch_hash: patch_contents_hash,
+                            patch: installer.patch,
                             result: Default::default(),
                         });
                     }

@@ -1152,7 +1152,7 @@ impl<'a> HoistedTree<'a> {
             }
             ResolutionTag::Git | ResolutionTag::Github => {
                 sys::File::read_from(package.fd(), b".bun-tag").is_ok_and(|tag| {
-                    crate::patch_install::PatchStamp::bun_tag_resolved(&tag)
+                    crate::package_install::BunTag::parse(&tag).resolved
                         == res.repository().resolved.slice(buf)
                 })
             }

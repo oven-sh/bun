@@ -232,11 +232,7 @@ impl EVP {
     }
 }
 
-/// The algorithm a name denotes, and its BoringSSL `EVP_MD` when it has one.
-///
-/// `None` for an unknown name. The `EVP_MD` is `None` for the algorithms
-/// that BoringSSL does not implement (`Blake2s256`, `Shake128`, `Shake256`):
-/// `CryptoHasherZig` hashes those.
+/// The algorithm a name denotes, and its BoringSSL `EVP_MD` (`None` for a RustCrypto one).
 pub(crate) fn md_by_name(name: &[u8]) -> Option<(Algorithm, Option<*const boringssl::EVP_MD>)> {
     let algorithm = lookup_ignore_case(name)?;
     Some((algorithm, algorithm.md()))

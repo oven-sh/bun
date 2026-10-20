@@ -575,8 +575,7 @@ macro_rules! for_each_zig_algo {
 }
 
 impl CryptoHasherZig {
-    /// How many bytes of `out` it wrote. `algorithm` is one of
-    /// `for_each_zig_algo`: the one-shot sends the three without an `EVP_MD`.
+    /// How many bytes of `out` it wrote.
     fn hash(algorithm: evp::Algorithm, input: &[u8], out: &mut evp::Digest) -> usize {
         macro_rules! arm {
             ($ty:ty) => {

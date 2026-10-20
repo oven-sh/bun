@@ -116,46 +116,9 @@ pub trait PosixPipeWriter {
         self.try_write_with_write_fn(buf, write_to_blocking_pipe)
     }
 
-    /// A pipe without `O_NONBLOCK` that `pwritev2(RWF_NOWAIT)` does not cover.
-    /// POLLOUT proves one free slot there, so only a write of at most
-    /// `PIPE_BUF` goes to `write(2)`. A larger one takes the no-wait write its
-    /// fd kind has: `splice(2)` for a pipe or FIFO, `send(2)` for a socket. A
-    /// tty has none and keeps the plain write, which Node makes synchronously
-    /// too.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn try_write_blocking_pipe(&self, buf: &[u8]) -> WriteResult {
-        let fd = self.get_fd();
-        if fd == Fd::INVALID {
-            return WriteResult::Done(0);
-        }
-        let nowait = self.nowait();
-        if buf.len() > libc::PIPE_BUF && nowait.how.get() == NoWait::Unknown {
-            match sys::fstat(fd).map(|stat| stat.st_mode as sys::Mode) {
-                Ok(mode) if sys::S::ISFIFO(mode) => nowait.how.set(NoWait::Splice),
-                Ok(mode) if sys::S::ISSOCK(mode) => {
-                    // The parent labelled a socket as a pipe. From here on it is written as a socket.
-                    if let Some(poll) = self.handle().get_poll() {
-                        poll.set_flag(FilePollFlag::Socket);
-                    }
-                    return self.try_write_with_write_fn(buf, write_to_socket);
-                }
-                _ => nowait.how.set(NoWait::Plain),
-            }
-        }
-        match nowait.how.get() {
-            NoWait::Splice if buf.len() > libc::PIPE_BUF || !nowait.staged.is_empty() => {
-                match nowait.staged.write(fd, buf) {
-                    Spliced::Result(rc) => rc,
-                    Spliced::Unavailable(offset) => {
-                        nowait.how.set(NoWait::OneSlot);
-                        self.try_write_with_write_fn(&buf[offset..], write_one_slot_to_pipe)
-                            .after(offset)
-                    }
-                }
-            }
-            NoWait::OneSlot => self.try_write_with_write_fn(buf, write_one_slot_to_pipe),
-            _ => self.try_write_with_write_fn(buf, write_to_blocking_pipe),
-        }
+        write_to_blocking_pipe_without_waiting(self.get_fd(), self.handle(), self.nowait(), buf)
     }
 
     /// `None` if `RWF_NOWAIT` is not usable on this fd (nothing was written).
@@ -184,37 +147,7 @@ pub trait PosixPipeWriter {
         buf: &[u8],
         write_fn: fn(Fd, &[u8]) -> sys::Result<usize>,
     ) -> WriteResult {
-        let fd = self.get_fd();
-        if fd == Fd::INVALID {
-            return WriteResult::Done(0);
-        }
-
-        let mut offset: usize = 0;
-
-        while offset < buf.len() {
-            match write_fn(fd, &buf[offset..]) {
-                sys::Result::Err(err) => {
-                    if err.is_retry() {
-                        return WriteResult::Pending(offset);
-                    }
-
-                    // Return EPIPE as an error so it propagates to JavaScript.
-                    // This ensures process.stdout.write() properly emits an error
-                    // when writing to a broken pipe, matching Node.js behavior.
-
-                    return WriteResult::Err(err);
-                }
-
-                sys::Result::Ok(wrote) => {
-                    offset += wrote;
-                    if wrote == 0 {
-                        return WriteResult::Done(offset);
-                    }
-                }
-            }
-        }
-
-        WriteResult::Wrote(offset)
+        write_with(self.get_fd(), buf, write_fn)
     }
 
     fn on_poll(&mut self, size_hint: isize, received_hup: bool) {
@@ -328,6 +261,82 @@ fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn write_one_slot_to_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
     write_to_blocking_pipe(fd, &buf[..buf.len().min(libc::PIPE_BUF)])
+}
+
+fn write_with(fd: Fd, buf: &[u8], write_fn: fn(Fd, &[u8]) -> sys::Result<usize>) -> WriteResult {
+    if fd == Fd::INVALID {
+        return WriteResult::Done(0);
+    }
+
+    let mut offset: usize = 0;
+
+    while offset < buf.len() {
+        match write_fn(fd, &buf[offset..]) {
+            sys::Result::Err(err) => {
+                if err.is_retry() {
+                    return WriteResult::Pending(offset);
+                }
+
+                // Return EPIPE as an error so it propagates to JavaScript.
+                // This ensures process.stdout.write() properly emits an error
+                // when writing to a broken pipe, matching Node.js behavior.
+
+                return WriteResult::Err(err);
+            }
+
+            sys::Result::Ok(wrote) => {
+                offset += wrote;
+                if wrote == 0 {
+                    return WriteResult::Done(offset);
+                }
+            }
+        }
+    }
+
+    WriteResult::Wrote(offset)
+}
+
+/// A pipe without `O_NONBLOCK` that `pwritev2(RWF_NOWAIT)` does not cover.
+/// POLLOUT proves one free slot there, so only a write of at most `PIPE_BUF`
+/// goes to `write(2)`. A larger one takes the no-wait write its fd kind has:
+/// `splice(2)` for a pipe or FIFO, `send(2)` for a socket. A tty has none and
+/// keeps the plain write, which Node makes synchronously too.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn write_to_blocking_pipe_without_waiting(
+    fd: Fd,
+    handle: &PollOrFd,
+    nowait: &PipeNoWait,
+    buf: &[u8],
+) -> WriteResult {
+    if fd == Fd::INVALID {
+        return WriteResult::Done(0);
+    }
+    if buf.len() > libc::PIPE_BUF && nowait.how.get() == NoWait::Unknown {
+        match sys::fstat(fd).map(|stat| stat.st_mode as sys::Mode) {
+            Ok(mode) if sys::S::ISFIFO(mode) => nowait.how.set(NoWait::Splice),
+            Ok(mode) if sys::S::ISSOCK(mode) => {
+                // The parent labelled a socket as a pipe. From here on it is written as a socket.
+                if let Some(poll) = handle.get_poll() {
+                    poll.set_flag(FilePollFlag::Socket);
+                }
+                return write_with(fd, buf, write_to_socket);
+            }
+            _ => nowait.how.set(NoWait::Plain),
+        }
+    }
+    match nowait.how.get() {
+        NoWait::Splice if buf.len() > libc::PIPE_BUF || !nowait.staged.is_empty() => {
+            match nowait.staged.write(fd, buf) {
+                Spliced::Result(rc) => rc,
+                Spliced::Unavailable(offset) => {
+                    nowait.how.set(NoWait::OneSlot);
+                    write_with(fd, &buf[offset..], write_one_slot_to_pipe).after(offset)
+                }
+            }
+        }
+        NoWait::OneSlot => write_with(fd, buf, write_one_slot_to_pipe),
+        _ => write_with(fd, buf, write_to_blocking_pipe),
+    }
 }
 
 /// Which write that cannot wait a pipe fd has. Only Linux has one per call.

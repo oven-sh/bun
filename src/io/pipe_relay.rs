@@ -82,11 +82,17 @@ impl StagedWrite {
 
     /// Closes the relay with what it holds. Call this when the head of the
     /// writer's buffer is no longer the bytes that were staged.
+    #[inline]
     pub(crate) fn discard(&self) {
         if self.len.get() != 0 {
-            self.len.set(0);
-            drop(self.relay.take());
+            self.close_relay();
         }
+    }
+
+    #[cold]
+    fn close_relay(&self) {
+        self.len.set(0);
+        drop(self.relay.take());
     }
 
     /// Moves `buf` into the pipe `fd` and never waits for it. `buf` starts

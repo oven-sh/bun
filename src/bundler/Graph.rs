@@ -2,7 +2,8 @@ use crate::BundledAst as JSAst;
 use bun_alloc::Arena as ThreadLocalArena;
 use bun_alloc::{AstAlloc, AstVec};
 use bun_ast::server_component_boundary;
-use bun_collections::MultiArrayList;
+use bun_ast::server_component_boundary::ServerComponentBoundaryColumns as _;
+use bun_collections::{DynamicBitSetUnmanaged, MultiArrayList, index_sort};
 use enum_map::EnumMap;
 
 use crate::IndexStringMap::IndexStringMap;
@@ -24,8 +25,15 @@ pub struct Graph<'a> {
     pub pool: bun_ptr::BackRef<ThreadPool, bun_ptr::Mut>,
     pub(crate) heap: &'a ThreadLocalArena,
 
-    /// Mapping user-specified entry points to their Source Index
-    pub entry_points: Vec<Index>,
+    /// The source index of each entry point: the ones the user listed, in that
+    /// order, then the ones the build found. The link step numbers entry points by
+    /// their position here, and gives shared output to the first one that uses it.
+    /// So nothing is added in the order that the scan comes to files in.
+    /// [`Self::add_user_entry_point`] writes the user's part before the scan and
+    /// [`Self::add_derived_entry_points`] the other part after it.
+    entry_points: Vec<Index>,
+    #[cfg(debug_assertions)]
+    entry_point_list: EntryPointList,
     /// Maps entry point source indices to their original specifiers (for virtual entries resolved by plugins)
     pub(crate) entry_point_original_names: IndexStringMap,
     /// Every source index has an associated InputFile
@@ -91,6 +99,25 @@ pub struct Graph<'a> {
     ///
     /// Helps skip a loop.
     pub(crate) has_any_secondary_paths: bool,
+}
+
+/// Whether [`Graph::add_user_entry_point`] may run. Debug builds check it.
+#[cfg(debug_assertions)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum EntryPointList {
+    Closed,
+    /// See [`Graph::open_user_entry_points`].
+    Open,
+    /// See [`Graph::keep_user_entry_points_open_for_dev_server`].
+    OpenForDevServer,
+}
+
+/// See [`Graph::server_imported_pages`].
+pub(crate) struct ServerImportedPages {
+    /// The page of each stub of [`HtmlImports::server_source_indices`].
+    pub(crate) html_source_indices: Vec<IndexInt>,
+    /// The pages that are not entry points yet.
+    pub(crate) new_entry_points: Vec<Index>,
 }
 
 #[derive(Default)]
@@ -163,6 +190,8 @@ impl<'a> Graph<'a> {
             pool: bun_ptr::BackRef::dangling(),
             heap,
             entry_points: Vec::new(),
+            #[cfg(debug_assertions)]
+            entry_point_list: EntryPointList::Closed,
             entry_point_original_names: IndexStringMap::default(),
             input_files: MultiArrayList::default(),
             ast: MultiArrayList::default(),
@@ -219,6 +248,146 @@ impl<'a> Graph<'a> {
         target: options::Target,
     ) -> &mut PathToSourceIndexMap {
         &mut self.build_graphs[target]
+    }
+
+    #[inline]
+    pub fn entry_points(&self) -> &[Index] {
+        &self.entry_points
+    }
+
+    pub(crate) fn reserve_entry_points(&mut self, additional: usize) {
+        self.entry_points.reserve(additional);
+    }
+
+    /// The build goes through the user's list of entry points from here to
+    /// [`Self::close_user_entry_points`].
+    #[inline]
+    pub(crate) fn open_user_entry_points(&mut self) {
+        #[cfg(debug_assertions)]
+        {
+            debug_assert_eq!(self.entry_point_list, EntryPointList::Closed);
+            self.entry_point_list = EntryPointList::Open;
+        }
+    }
+
+    #[inline]
+    pub(crate) fn close_user_entry_points(&mut self) {
+        #[cfg(debug_assertions)]
+        {
+            debug_assert_eq!(self.entry_point_list, EntryPointList::Open);
+            self.entry_point_list = EntryPointList::Closed;
+        }
+    }
+
+    /// The dev server hands an entry point to the `onResolve` plugins and adds it
+    /// when their answer arrives, so its list stays open while the bundle scans.
+    #[inline]
+    pub(crate) fn keep_user_entry_points_open_for_dev_server(&mut self) {
+        #[cfg(debug_assertions)]
+        {
+            debug_assert_eq!(self.entry_point_list, EntryPointList::Closed);
+            self.entry_point_list = EntryPointList::OpenForDevServer;
+        }
+    }
+
+    /// An entry point from the user's list. The callers add them in the order of
+    /// that list.
+    pub(crate) fn add_user_entry_point(&mut self, source_index: Index) {
+        #[cfg(debug_assertions)]
+        debug_assert_ne!(
+            self.entry_point_list,
+            EntryPointList::Closed,
+            "an entry point that the scan finds goes through add_derived_entry_points"
+        );
+        self.entry_points.push(source_index);
+    }
+
+    /// The entry points that the build found. `find_reachable_files` gives them
+    /// after the scan, in an order that follows from the sources alone.
+    pub(crate) fn add_derived_entry_points(&mut self, source_indices: Vec<Index>) {
+        #[cfg(debug_assertions)]
+        debug_assert_eq!(self.entry_point_list, EntryPointList::Closed);
+        self.entry_points.extend(source_indices);
+    }
+
+    /// The positions of `files`, in the order that `reachable` came to each file.
+    /// `reachable` is the walk from the entry points, which follows the import
+    /// records of a file in source order. A file that the walk did not come to
+    /// goes after the others, by path.
+    fn in_walk_order(&self, reachable: &[Index], files: &[IndexInt]) -> Vec<u32> {
+        let sources = self.input_files.items_source();
+        let mut walked_at = vec![u32::MAX; sources.len()];
+        for (at, source_index) in reachable.iter().enumerate() {
+            walked_at[source_index.get() as usize] = at as u32;
+        }
+        let mut order = index_sort::identity(files.len());
+        index_sort::sort_indices(&mut order, &mut |a, b| {
+            let (a, b) = (files[a as usize] as usize, files[b as usize] as usize);
+            (walked_at[a].cmp(&walked_at[b]))
+                .then_with(|| sources[a].path.pretty.cmp(sources[b].path.pretty))
+        });
+        order
+    }
+
+    /// The pages that server code imports, in the order that `reachable` came to
+    /// their stubs. See [`Self::in_walk_order`].
+    pub(crate) fn server_imported_pages(
+        &self,
+        reachable: &[Index],
+    ) -> Result<ServerImportedPages, bun_alloc::AllocError> {
+        let sources = self.input_files.items_source();
+        let stubs = self.html_imports.server_source_indices.as_slice();
+        let browser_files = &self.build_graphs[options::Target::Browser];
+        let html_source_indices: Vec<IndexInt> = (stubs.iter())
+            .map(|&stub| {
+                browser_files
+                    .get(sources[stub as usize].path.text)
+                    .expect("the scan made a browser file for each page that server code imports")
+            })
+            .collect();
+
+        let mut is_entry_point = DynamicBitSetUnmanaged::init_empty(sources.len())?;
+        for entry_point in &self.entry_points {
+            is_entry_point.set(entry_point.get() as usize);
+        }
+        let mut new_entry_points = Vec::with_capacity(stubs.len());
+        for stub in self.in_walk_order(reachable, stubs) {
+            let page = html_source_indices[stub as usize];
+            if !is_entry_point.is_set(page as usize) {
+                is_entry_point.set(page as usize);
+                new_entry_points.push(Index::init(page));
+            }
+        }
+        Ok(ServerImportedPages {
+            html_source_indices,
+            new_entry_points,
+        })
+    }
+
+    /// Each server component boundary is two entry points: the file and its
+    /// server-side render twin. They go in the order that `reachable` came to the
+    /// boundaries. See [`Self::in_walk_order`]. They are not grouped by the user's
+    /// entry points (bake passes each route as one), so two component files of one
+    /// route make two chunks.
+    pub(crate) fn server_component_boundary_entry_points(
+        &self,
+        reachable: &[Index],
+        entry_points: &mut Vec<Index>,
+    ) {
+        let boundaries = self.server_component_boundaries.list.slice();
+        let source_indices = boundaries.items_source_index();
+        let ssr_source_indices = boundaries.items_ssr_source_index();
+        // An import record names the boundary file or its reference module. The
+        // walk goes from the file to the reference module before anything else, so
+        // the reference module is where the walk first came to the boundary.
+        let order = self.in_walk_order(reachable, boundaries.items_reference_source_index());
+        entry_points.reserve(order.len() * 2);
+        for boundary in order {
+            let boundary = boundary as usize;
+            for source_index in [source_indices[boundary], ssr_source_indices[boundary]] {
+                entry_points.push(Index::init(source_index));
+            }
+        }
     }
 
     /// Schedule a task to be run on the JS thread which resolves the promise of

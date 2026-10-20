@@ -1178,11 +1178,11 @@ pub(super) fn finalize_bundle(
 
             // Compute a file name to display
             let file_name: Option<&[u8]> = if current_bundle!().had_reload_event {
-                if !bv2.graph.entry_points.is_empty() {
+                if !bv2.graph.entry_points().is_empty() {
                     Some(dev.relative_path(&mut *buf, {
                         use bun_bundler::Graph::InputFileColumns as _;
                         bv2.graph.input_files.items_source()
-                            [bv2.graph.entry_points[0].get() as usize]
+                            [bv2.graph.entry_points()[0].get() as usize]
                             .path
                             .text
                     }))
@@ -1223,7 +1223,7 @@ pub(super) fn finalize_bundle(
                 }
             };
 
-            let total_count = bv2.graph.entry_points.len();
+            let total_count = bv2.graph.entry_points().len();
             if let Some(name) = file_name {
                 bun_core::pretty_error!("<d>:<r> {}", bstr::BStr::new(name));
                 if total_count > 1 {

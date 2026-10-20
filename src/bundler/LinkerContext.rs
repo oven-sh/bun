@@ -739,6 +739,12 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: see above; sole accessor of `html_imports` for this scope.
         let server_len = unsafe { (*parse_graph).html_imports.server_source_indices.len() };
         if server_len > 0 {
+            // `find_reachable_files` found the page of each stub.
+            debug_assert_eq!(
+                // SAFETY: see above.
+                unsafe { (*parse_graph).html_imports.html_source_indices.len() },
+                server_len
+            );
             let actual_ref = self.graph.runtime_function(b"__jsonParse");
 
             for i in 0..server_len as usize {
@@ -746,28 +752,6 @@ impl<'a> LinkerContext<'a> {
                 // bounded by `server_len`.
                 let html_import: u32 =
                     unsafe { (*parse_graph).html_imports.server_source_indices.slice()[i] };
-                // SAFETY: `input_files` SoA is append-only; read-only here.
-                let path_text = unsafe {
-                    &(*parse_graph).input_files.items_source()[html_import as usize]
-                        .path
-                        .text
-                };
-                // SAFETY: sole `&mut` into the per-target map for this lookup.
-                let source_index: u32 = unsafe {
-                    (*parse_graph).path_to_source_index_map(Target::Browser)
-                }
-                .get(path_text)
-                .unwrap_or_else(|| {
-                    panic!("Assertion failed: HTML import file not found in pathToSourceIndexMap");
-                });
-
-                // SAFETY: sole `&mut` into `html_source_indices` for this push.
-                unsafe {
-                    (*parse_graph)
-                        .html_imports
-                        .html_source_indices
-                        .push(source_index)
-                };
 
                 // S.LazyExport is a call to __jsonParse. Each accessor returns
                 // `Option`; `.unwrap()` panics on shape mismatch.

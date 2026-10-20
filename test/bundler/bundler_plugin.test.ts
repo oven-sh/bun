@@ -2049,4 +2049,99 @@ describe("bundler", () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  // No entry point goes into the graph until onResolve has answered for every
+  // entry point, so the answers decide neither the order of the entry points nor
+  // what an entry point is.
+  test.concurrent("plugin/entry points keep their order when onResolve answers the second one first", async () => {
+    using dir = tempDir("plugin-entry-point-order", {
+      "one.js": `console.log("one");`,
+      "two.js": `console.log("two");`,
+    });
+    const askedForTwo = Promise.withResolvers<void>();
+    const result = await Bun.build({
+      entrypoints: ["one-entry", "two-entry"],
+      outdir: join(String(dir), "out"),
+      throw: false,
+      plugins: [
+        {
+          name: "entries",
+          setup(build) {
+            build.onResolve({ filter: /-entry$/ }, async args => {
+              const name = args.path.slice(0, -"-entry".length);
+              if (name === "two") askedForTwo.resolve();
+              else await askedForTwo.promise;
+              return { path: join(String(dir), name + ".js") };
+            });
+          },
+        },
+      ],
+    });
+    expect({
+      success: result.success,
+      logs: result.logs.map(log => log.message),
+      outputs: result.outputs.map(output => path.basename(output.path)),
+    }).toEqual({ success: true, logs: [], outputs: ["one-entry.js", "two-entry.js"] });
+  });
+
+  // a.js imports b.js, and onResolve has the second entry point, which is b.js.
+  // A bundler that hands a.js to onLoad before it has that answer gets the
+  // answer after a.js imported b.js: b.js is then in the graph as an import.
+  for (const answer of ["declines", "answers"] as const) {
+    test.concurrent(
+      `plugin/an entry point that onResolve ${answer} is an entry point when another one imports it`,
+      async () => {
+        using dir = tempDir("plugin-entry-point-that-is-imported", {
+          "a.js": `import { b } from "./b.js"; console.log("a", b);`,
+          "b.js": `export const b = "b"; if (import.meta.main) console.log("b is the entry point");`,
+        });
+        const b = join(String(dir), "b.js");
+        let loadingA = false;
+        const imported = Promise.withResolvers<void>();
+        const result = await Bun.build({
+          entrypoints: [join(String(dir), "a.js"), answer === "declines" ? b : "b-entry"],
+          outdir: join(String(dir), "out"),
+          target: "bun",
+          throw: false,
+          plugins: [
+            {
+              name: "entries",
+              setup(build) {
+                build.onLoad({ filter: /a\.js$/ }, () => {
+                  loadingA = true;
+                  return undefined;
+                });
+                build.onResolve({ filter: /b(-entry|\.js)$/ }, async args => {
+                  if (args.kind !== "entry-point-build") {
+                    imported.resolve();
+                    return undefined;
+                  }
+                  if (loadingA) await imported.promise;
+                  return answer === "declines" ? undefined : { path: b };
+                });
+              },
+            },
+          ],
+        });
+        expect({
+          success: result.success,
+          logs: result.logs.map(log => log.message),
+          outputs: result.outputs.map(output => path.basename(output.path)),
+        }).toEqual({
+          success: true,
+          logs: [],
+          outputs: ["a.js", answer === "declines" ? "b.js" : "b-entry.js"],
+        });
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), result.outputs[1].path],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "b is the entry point\n", stderr: "", exitCode: 0 });
+      },
+    );
+  }
 });

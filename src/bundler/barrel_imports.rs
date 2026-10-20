@@ -126,7 +126,7 @@ fn apply_barrel_optimization_impl(
     // emit the export clause with the re-exported bindings shaken away.
     if this
         .graph
-        .entry_points
+        .entry_points()
         .iter()
         .any(|ep| ep.get() == source_index)
     {

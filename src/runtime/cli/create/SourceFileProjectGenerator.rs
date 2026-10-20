@@ -448,7 +448,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
     let resolved_exports: &[ResolvedExports] = bundler.linker.graph.meta.items_resolved_exports();
     let sources = input_files.items_source();
 
-    let entry_point_ids = bundler.graph.entry_points.as_slice();
+    let entry_point_ids = bundler.graph.entry_points();
     for entry_point_id in entry_point_ids {
         let loader = loaders[entry_point_id.get() as usize];
         if matches!(loader, bun_ast::Loader::Jsx | bun_ast::Loader::Tsx) {

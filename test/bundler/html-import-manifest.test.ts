@@ -1,7 +1,8 @@
+import type { BunPlugin } from "bun";
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { SourceMapConsumer } from "source-map";
 import { type BundlerTestBundleAPI, itBundled } from "./expectBundled";
 
@@ -523,6 +524,277 @@ console.log("About manifest:", aboutHtml);
       expect(home.files.filter(file => file.loader === "css").map(file => file.path)).toEqual([homeHref]);
       expect(about.files.filter(file => file.loader === "css").map(file => file.path)).toEqual([aboutHref]);
     },
+  });
+
+  // A page that server code imports is an entry point of the browser build.
+  // The build numbers those pages in the order that the server code imports
+  // them in. The first page that uses a shared chunk decides its name and the
+  // order of its modules, so the number must not come from the directory of
+  // the project or from the order that files are parsed in.
+  describe("page order", () => {
+    /**
+     * Makes the bundler finish one file before it starts another: `held` waits
+     * until the bundler asks for `after`, which only the other file imports.
+     */
+    function parseAfter(held: string, after: string): BunPlugin {
+      return {
+        name: "parse-after",
+        setup(builder) {
+          const asked = Promise.withResolvers<void>();
+          builder.onLoad({ filter: /\.(ts|js|html)$/ }, async ({ path }) => {
+            if (basename(path) === after) asked.resolve();
+            if (basename(path) === held) await asked.promise;
+            return undefined;
+          });
+        },
+      };
+    }
+
+    /** The name and text of each output, in output order. */
+    async function outputsOf(build: Bun.BuildOutput) {
+      return Promise.all(build.outputs.map(async output => [basename(output.path), await output.text()] as const));
+    }
+    const pagesOf = (outputs: (readonly [string, string])[]) =>
+      outputs.map(([name]) => name).filter(name => name.endsWith(".html"));
+
+    // Page one runs p.js and then q.js, page two runs them the other way around.
+    const twoPages = {
+      "one.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./shared.css"><script type="module" src="./one.js"></script></head><body></body></html>`,
+      "two.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./shared.css"><script type="module" src="./two.js"></script></head><body></body></html>`,
+      "one.js": `import "./p.js"; import { q } from "./q.js"; console.log("one", q);`,
+      "two.js": `import { q } from "./q.js"; import "./p.js"; console.log("two", q);`,
+      "p.js": `globalThis.P = { v: "P" };`,
+      "q.js": `export const q = "q" + (globalThis.P?.v ?? "-noP");`,
+      "shared.css": `body { margin: 0; }`,
+    };
+
+    // Each page has a file of its own that imports it. The plugin makes the
+    // bundler come to the pages in either order.
+    test.concurrent("is the order of the imports, whichever page the bundler finds first", async () => {
+      using dir = tempDir("html-import-two-importers", {
+        "server.ts": `
+          import { one } from "./routes/one.ts";
+          import { two } from "./routes/two.ts";
+          console.log(one.index, two.index);
+        `,
+        "routes/one.ts": `import one from "../one.html"; export { one };`,
+        "routes/two.ts": `import two from "../two.html"; export { two };`,
+        ...twoPages,
+      });
+      const build = async (found: "one" | "two") =>
+        outputsOf(
+          await Bun.build({
+            entrypoints: [join(String(dir), "server.ts")],
+            target: "bun",
+            splitting: true,
+            naming: { chunk: "[name]-[hash].[ext]" },
+            plugins: [parseAfter(found === "one" ? "two.ts" : "one.ts", found + ".html")],
+          }),
+        );
+      const [oneFirst, twoFirst] = [await build("one"), await build("two")];
+      expect(twoFirst).toEqual(oneFirst);
+
+      expect(pagesOf(oneFirst)).toEqual(["one.html", "two.html"]);
+      // The chunk that both pages share runs its modules in the order of page one,
+      // and the stylesheet that both pages share has the name of page one.
+      const shared = oneFirst.filter(([, text]) => text.includes("// p.js") && text.includes("// q.js"));
+      expect(shared.map(([, text]) => text.indexOf("// p.js") < text.indexOf("// q.js"))).toEqual([true]);
+      expect(oneFirst.map(([name]) => name).filter(name => name.endsWith(".css"))).toEqual([
+        expect.stringMatching(/^one-/),
+      ]);
+    });
+
+    // One file imports every page. The names are not in the order of the
+    // imports, and neither is any order that the paths of the pages give.
+    test.concurrent("is the order of the imports in every directory", async () => {
+      const pages = ["kiwi", "apple", "melon", "cherry", "fig", "banana", "grape", "lemon"];
+      const project = {
+        "server.ts":
+          pages.map(page => `import ${page} from "./${page}.html";`).join("\n") +
+          `\nconsole.log(${pages.map(page => `${page}.index`).join(", ")});\n`,
+        ...Object.fromEntries(
+          pages.map(page => [`${page}.html`, `<!DOCTYPE html><html><body>${page}</body></html>`]),
+        ),
+      };
+      const directories = ["first", "second-directory"];
+      using dir = tempDir(
+        "html-import-directories",
+        Object.fromEntries(
+          directories.flatMap(directory =>
+            Object.entries(project).map(([name, contents]) => [directory + "/" + name, contents]),
+          ),
+        ),
+      );
+      const listings = await Promise.all(
+        directories.map(async directory => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "build", "--target=bun", "--outdir=out", "./server.ts"],
+            cwd: join(String(dir), directory),
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          return { pages: [...stdout.matchAll(/(\w+)\.html/g)].map(match => match[1]), stderr, exitCode };
+        }),
+      );
+      expect(listings).toEqual(directories.map(() => ({ pages, stderr: "", exitCode: 0 })));
+    });
+
+    // A page that is on the user's list keeps its place there.
+    test.concurrent("a page that is also an entry point of the user is not numbered again", async () => {
+      using dir = tempDir("html-import-page-is-entry-point", {
+        "server.ts": `
+          import one from "./one.html";
+          import two from "./two.html";
+          console.log(one.index, two.index);
+        `,
+        ...twoPages,
+      });
+      const build = await Bun.build({
+        entrypoints: [join(String(dir), "two.html"), join(String(dir), "server.ts")],
+        target: "bun",
+      });
+      const outputs = await outputsOf(build);
+      expect(pagesOf(outputs)).toEqual(["two.html", "one.html"]);
+      const server = outputs.find(([name]) => name === "server.js")![1];
+      expect([...server.matchAll(/__jsonParse\(/g)]).toHaveLength(2);
+    });
+
+    // The page of an in-memory file is built like one that is on disk.
+    test.concurrent("a page from the files option is built and has a manifest", async () => {
+      const build = await Bun.build({
+        entrypoints: ["/app/server.ts"],
+        target: "bun",
+        files: {
+          "/app/server.ts": `import page from "./page.html"; console.log(page.index);`,
+          "/app/page.html": `<!DOCTYPE html><html><head><script type="module" src="./client.ts"></script></head><body></body></html>`,
+          "/app/client.ts": `console.log("client");`,
+        },
+      });
+      const outputs = await outputsOf(build);
+      const server = outputs.find(([name]) => name === "server.js")![1];
+      const manifests: Manifest[] = [...server.matchAll(/__jsonParse\("(.+?)"\)/gs)].map(match =>
+        JSON.parse(JSON.parse('"' + match[1] + '"')),
+      );
+      expect(manifests.map(manifest => manifest.files.map(file => file.loader).sort())).toEqual([["html", "js"]]);
+      const names = outputs.map(([name]) => name);
+      for (const file of manifests[0].files) {
+        expect(names).toContain(basename(file.path));
+      }
+    });
+
+    // The file that imports the page is not bundled when an import next to it
+    // does not resolve. The build stops before it looks for the page.
+    test.concurrent("a page next to an import that does not resolve fails the build", async () => {
+      using dir = tempDir("html-import-unresolved", {
+        "server.ts": `
+          import one from "./one.html";
+          import missing from "./missing.ts";
+          console.log(one.index, missing);
+        `,
+        "one.html": `<!DOCTYPE html><html><body>one</body></html>`,
+      });
+      const build = await Bun.build({
+        entrypoints: [join(String(dir), "server.ts")],
+        target: "bun",
+        throw: false,
+      });
+      expect({ success: build.success, logs: build.logs.map(log => log.message) }).toEqual({
+        success: false,
+        logs: [expect.stringContaining("missing.ts")],
+      });
+    });
+
+    // One file imports the page with `import` and another with `import()`. The
+    // bundle is the same and runs, whichever of the two the bundler parses first.
+    test.concurrent("a page with a static and a dynamic import is the same whichever is parsed first", async () => {
+      using dir = tempDir("html-import-static-and-dynamic", {
+        "server.ts": `
+          import { page } from "./static.ts";
+          import { load } from "./dynamic.ts";
+          console.log(page.index, (await load()).default.index);
+        `,
+        "static.ts": `import "./static-dep.ts"; import page from "./page.html"; export { page };`,
+        "dynamic.ts": `import "./dynamic-dep.ts"; export const load = () => import("./page.html");`,
+        "static-dep.ts": `export {};`,
+        "dynamic-dep.ts": `export {};`,
+        "page.html": `<!DOCTYPE html><html><body>page</body></html>`,
+      });
+      const build = async (first: "static" | "dynamic") => {
+        const outdir = join(String(dir), "out-" + first);
+        const build = await Bun.build({
+          entrypoints: [join(String(dir), "server.ts")],
+          outdir,
+          target: "bun",
+          plugins: [parseAfter(first === "static" ? "dynamic.ts" : "static.ts", first + "-dep.ts")],
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), join(outdir, "server.js")],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { outputs: await outputsOf(build), stdout, stderr, exitCode };
+      };
+      const [staticFirst, dynamicFirst] = [await build("static"), await build("dynamic")];
+      expect(dynamicFirst).toEqual(staticFirst);
+      expect({ ...staticFirst, outputs: undefined }).toEqual({
+        outputs: undefined,
+        stdout: "./page.html ./page.html\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  // The import of a page is an import like any other in the metafile.
+  test("html-import/kind-of-the-import-in-the-metafile", async () => {
+    using dir = tempDir("html-import-metafile-kind", {
+      "server.ts": `import page from "./page.html"; console.log(page.index);`,
+      "page.html": `<!DOCTYPE html><html><body>page</body></html>`,
+    });
+    const build = await Bun.build({
+      entrypoints: [join(String(dir), "server.ts")],
+      target: "bun",
+      metafile: true,
+    });
+    const inputs = Object.entries(build.metafile!.inputs);
+    const [, server] = inputs.find(([file]) => basename(file) === "server.ts")!;
+    expect(server.imports.map(({ path, kind }) => ({ path: basename(path), kind }))).toEqual([
+      { path: "page.html", kind: "import-statement" },
+    ]);
+  });
+
+  // The manifest module is a module like any other: `import()` gives its
+  // namespace and `require()` gives the manifest, as they do when Bun runs the
+  // server code without a build.
+  itBundled("html-import/dynamic-import-of-a-page", {
+    outdir: "out/",
+    target: "bun",
+    entryPoints: ["/server.js"],
+    files: {
+      "/server.js": `
+        const page = await import("./page.html");
+        console.log(page.default.index, Array.isArray(page.default.files));
+      `,
+      "/page.html": `<!DOCTYPE html><html><body>page</body></html>`,
+    },
+    run: { stdout: "./page.html true" },
+  });
+  itBundled("html-import/require-of-a-page", {
+    outdir: "out/",
+    target: "bun",
+    entryPoints: ["/server.js"],
+    files: {
+      "/server.js": `
+        const page = require("./page.html");
+        console.log(page.index, Array.isArray(page.files), typeof page.default);
+      `,
+      "/page.html": `<!DOCTYPE html><html><body>page</body></html>`,
+    },
+    run: { stdout: "./page.html true undefined" },
   });
 
   // Past 127 entry points the entry bits switch to a heap-allocated bitset.

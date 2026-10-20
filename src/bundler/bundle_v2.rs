@@ -57,6 +57,22 @@ pub struct PendingImport {
     pub(crate) import_record_index: u32,
 }
 
+/// An entry point of the user's list that waits in [`BundleV2::pending_entry_points`].
+pub(crate) enum PendingEntryPoint {
+    /// No `onResolve` plugin takes it, and the resolver found it.
+    Resolved {
+        resolved: bun_resolver::Result,
+        target: Target,
+    },
+    /// An `onResolve` plugin has it.
+    AtPlugin,
+    /// What the plugin answered.
+    Answered {
+        import_record: api::JSBundler::MiniImportRecord,
+        value: api::JSBundler::ResolveValue,
+    },
+}
+
 pub struct BundleV2<'a> {
     // `ssr_transpiler` may alias this same transpiler when the SSR graph
     // isn't separate, so it stays `*mut`; `transpiler` is `&'a mut` for
@@ -111,6 +127,16 @@ pub struct BundleV2<'a> {
     /// on the bundle thread before its parsing task completes.
     pub(crate) resolve_tasks_waiting_for_import_source_index:
         ArrayHashMap<IndexInt, Vec<PendingImport>>,
+
+    /// With plugins: the entry points of the user's list, in the order of that list,
+    /// until the `onResolve` plugins have answered for each one that they take.
+    /// None of them goes into the graph before then. An entry point that parses
+    /// while another one is at a plugin gets its imports into the graph ahead of
+    /// the answer, which then finds its file there as an import and not as an
+    /// entry point. The answers would also number the entry points.
+    pub(crate) pending_entry_points: Option<Vec<PendingEntryPoint>>,
+    /// How many of them are at a plugin.
+    pub(crate) pending_entry_point_answers: u32,
 
     /// Allocations not tracked by a threadlocal heap.
     pub(crate) free_list: Vec<Box<[u8]>>,
@@ -2378,7 +2404,7 @@ pub mod bv2_impl {
             let all_targets = self.graph.ast.items_target();
 
             let mut visitor = ReachableFileVisitor {
-                reachable: Vec::with_capacity(self.graph.entry_points.len() + 1),
+                reachable: Vec::with_capacity(self.graph.entry_points().len() + 1),
                 visited: DynamicBitSet::init_empty(self.graph.input_files.len())?,
                 redirects: self.graph.ast.items_redirect_import_record_index(),
                 all_import_records,
@@ -2401,14 +2427,30 @@ pub mod bv2_impl {
             // imported and weird things will happen
             visitor.visit::<false>(Index::RUNTIME, false);
 
-            if self.transpiler.options.code_splitting {
-                for entry_point in self.graph.entry_points.iter().copied() {
-                    visitor.visit::<true>(entry_point, false);
+            let code_splitting = self.transpiler.options.code_splitting;
+            let visit_entry_points = |visitor: &mut ReachableFileVisitor,
+                                      entry_points: &[Index]| {
+                for &entry_point in entry_points {
+                    if code_splitting {
+                        visitor.visit::<true>(entry_point, false);
+                    } else {
+                        visitor.visit::<false>(entry_point, false);
+                    }
                 }
-            } else {
-                for entry_point in self.graph.entry_points.iter().copied() {
-                    visitor.visit::<false>(entry_point, false);
-                }
+            };
+            visit_entry_points(&mut visitor, self.graph.entry_points());
+
+            // The scan adds no entry point: the order it comes to files in, which is not
+            // that of the sources, would number them. The entry points that it found
+            // are taken from this walk.
+            let mut derived_entry_points: Vec<Index> = Vec::new();
+            let mut html_source_indices: Vec<IndexInt> = Vec::new();
+            // A page that server code imports is an entry point of the browser build.
+            if !self.graph.html_imports.server_source_indices.is_empty() {
+                let pages = self.graph.server_imported_pages(&visitor.reachable)?;
+                visit_entry_points(&mut visitor, &pages.new_entry_points);
+                html_source_indices = pages.html_source_indices;
+                derived_entry_points = pages.new_entry_points;
             }
 
             if bun_core::env::IS_DEBUG && ReachableFiles.is_visible() {
@@ -2460,6 +2502,13 @@ pub mod bv2_impl {
                     }
                 }
             }
+
+            self.graph.html_imports.html_source_indices = html_source_indices;
+            if self.graph.server_component_boundaries.list.len() > 0 {
+                self.graph
+                    .server_component_boundary_entry_points(&reachable, &mut derived_entry_points);
+            }
+            self.graph.add_derived_entry_points(derived_entry_points);
 
             Ok(reachable.into_boxed_slice())
         }
@@ -2525,7 +2574,7 @@ pub mod bv2_impl {
 
         /// Callers require an entry point, so none after parsing means one was dropped without an error.
         fn fail_if_no_entry_points(&self) -> Result<(), Error> {
-            if !self.graph.entry_points.is_empty() {
+            if !self.graph.entry_points().is_empty() {
                 return Ok(());
             }
             self.transpiler.log_mut().add_error(
@@ -2556,7 +2605,7 @@ pub mod bv2_impl {
             let mut is_named = vec![false; sources.len()];
             // A page that a server imports is in the graph like one that is an entry point.
             let pages = (0..sources.len()).filter(|&index| loaders[index] == Loader::Html);
-            let entry_points = self.graph.entry_points.iter();
+            let entry_points = self.graph.entry_points().iter();
             let mut pending: Vec<usize> = (entry_points.map(|it| it.get() as usize))
                 .chain(pages)
                 .collect();
@@ -3247,8 +3296,7 @@ pub mod bv2_impl {
             }
 
             self.graph
-                .entry_points
-                .push(bun_ast::Index::init(source_index.get()));
+                .add_user_entry_point(bun_ast::Index::init(source_index.get()));
 
             Ok(Some(source_index.get()))
         }
@@ -3283,13 +3331,8 @@ pub mod bv2_impl {
                 owned_client_transpiler: None,
                 ssr_transpiler: ssr_alias,
                 framework: None,
-                graph: Graph {
-                    pool: bun_ptr::BackRef::dangling(), // set below
-                    heap,
-                    kit_referenced_server_data: false,
-                    kit_referenced_client_data: false,
-                    ..Graph::new(heap)
-                },
+                // `pool` is set below.
+                graph: Graph::new(heap),
                 linker: LinkerContext {
                     r#loop: event_loop,
                     graph: LinkerGraph::default(),
@@ -3307,6 +3350,8 @@ pub mod bv2_impl {
                 source_code_length: 0,
                 thread_lock: bun_core::ThreadLock::init_locked(),
                 resolve_tasks_waiting_for_import_source_index: ArrayHashMap::new(),
+                pending_entry_points: None,
+                pending_entry_point_answers: 0,
                 free_list: Vec::new(),
                 unique_key: 0,
                 dynamic_import_entry_points: ArrayHashMap::new(),
@@ -3571,11 +3616,12 @@ pub mod bv2_impl {
 
             // Setup entry points
             let num_entry_points = data.len();
-            self.graph.entry_points.reserve(num_entry_points);
+            self.graph.reserve_entry_points(num_entry_points);
             self.graph
                 .input_files
                 .ensure_unused_capacity(num_entry_points)?;
 
+            self.begin_user_entry_points();
             for entry_point in data {
                 let entry_point: &[u8] = entry_point.as_ref();
                 if self.enqueue_entry_point_on_resolve_plugin_if_needed(
@@ -3590,18 +3636,16 @@ pub mod bv2_impl {
                 if let Some(file_map) = self.file_map {
                     if let Some(file_map_result) = file_map.resolve(self.arena(), b"", entry_point)
                     {
-                        let _ = self.enqueue_entry_item(
-                            &mut { file_map_result },
-                            true,
+                        self.enqueue_listed_entry_point(
+                            file_map_result,
                             self.transpiler.options.target,
-                            None,
                         )?;
                         continue;
                     }
                 }
 
                 // no plugins were matched
-                let mut resolved = match self.transpiler.resolve_entry_point(entry_point) {
+                let resolved = match self.transpiler.resolve_entry_point(entry_point) {
                     Ok(r) => r,
                     Err(_) => continue,
                 };
@@ -3620,8 +3664,9 @@ pub mod bv2_impl {
                     }
                     break 'brk main_target;
                 };
-                let _ = self.enqueue_entry_item(&mut resolved, true, target, None)?;
+                self.enqueue_listed_entry_point(resolved, target)?;
             }
+            self.end_user_entry_points();
             Ok(())
         }
 
@@ -3634,11 +3679,12 @@ pub mod bv2_impl {
             debug_assert!(self.dev_server.is_some());
 
             let num_entry_points = files.set.count();
-            self.graph.entry_points.reserve(num_entry_points);
+            self.graph.reserve_entry_points(num_entry_points);
             self.graph
                 .input_files
                 .ensure_unused_capacity(num_entry_points)?;
 
+            self.graph.keep_user_entry_points_open_for_dev_server();
             debug_assert_eq!(files.set.keys().len(), files.set.values().len());
             for (abs_path, flags) in files.set.keys().iter().zip(files.set.values().iter()) {
                 // Ensure we have the proper conditions set for client-side entrypoints.
@@ -3768,11 +3814,12 @@ pub mod bv2_impl {
             self.reserve_source_indexes_for_bake()?;
 
             let num_entry_points = data.files.count();
-            self.graph.entry_points.reserve(num_entry_points);
+            self.graph.reserve_entry_points(num_entry_points);
             self.graph
                 .input_files
                 .ensure_unused_capacity(num_entry_points)?;
 
+            self.begin_user_entry_points();
             for key in data.files.keys() {
                 let abs_path = key.abs_path();
                 let target = match key.side {
@@ -3785,17 +3832,82 @@ pub mod bv2_impl {
                 }
 
                 // no plugins matched
-                let mut resolved = match self.transpiler.resolve_entry_point(abs_path) {
+                let resolved = match self.transpiler.resolve_entry_point(abs_path) {
                     Ok(r) => r,
                     Err(_) => continue,
                 };
 
                 // TODO: wrap client files so the exports arent preserved.
-                let Some(_) = self.enqueue_entry_item(&mut resolved, true, target, None)? else {
-                    continue;
-                };
+                self.enqueue_listed_entry_point(resolved, target)?;
             }
+            self.end_user_entry_points();
             Ok(())
+        }
+
+        /// The build goes through the user's list of entry points from here to
+        /// `end_user_entry_points`. With plugins, the list waits in
+        /// `BundleV2::pending_entry_points`.
+        fn begin_user_entry_points(&mut self) {
+            if self.plugins_ref().is_some() {
+                self.pending_entry_points = Some(Vec::new());
+            } else {
+                self.graph.open_user_entry_points();
+            }
+        }
+
+        fn end_user_entry_points(&mut self) {
+            if self.pending_entry_points.is_none() {
+                self.graph.close_user_entry_points();
+            } else if self.pending_entry_point_answers == 0 {
+                self.enqueue_pending_entry_points();
+            }
+        }
+
+        /// An entry point of the user's list that no `onResolve` plugin takes.
+        fn enqueue_listed_entry_point(
+            &mut self,
+            mut resolved: _resolver::Result,
+            target: options::Target,
+        ) -> Result<(), Error> {
+            if let Some(pending) = &mut self.pending_entry_points {
+                pending.push(crate::bundle_v2::PendingEntryPoint::Resolved { resolved, target });
+                return Ok(());
+            }
+            self.enqueue_entry_item(&mut resolved, true, target, None)?;
+            Ok(())
+        }
+
+        /// The `onResolve` plugins have answered for each entry point that they took.
+        /// The entry points go into the graph in the order of the user's list.
+        fn enqueue_pending_entry_points(&mut self) {
+            use crate::bundle_v2::PendingEntryPoint;
+            let Some(pending) = self.pending_entry_points.take() else {
+                return;
+            };
+            self.graph.open_user_entry_points();
+            for entry_point in pending {
+                match entry_point {
+                    PendingEntryPoint::Resolved {
+                        mut resolved,
+                        target,
+                    } => {
+                        self.enqueue_entry_item(&mut resolved, true, target, None)
+                            .expect("oom");
+                    }
+                    PendingEntryPoint::Answered {
+                        import_record,
+                        value,
+                    } => {
+                        let mut resolve = jsc_api::JSBundler::Resolve::init(self, import_record);
+                        resolve.value = value;
+                        Self::apply_resolve(&mut resolve, self);
+                    }
+                    PendingEntryPoint::AtPlugin => {
+                        unreachable!("every onResolve plugin has answered")
+                    }
+                }
+            }
+            self.graph.close_user_entry_points();
         }
 
         /// Common prelude shared by all enqueue_entry_points_* variants: add the runtime task.
@@ -3907,12 +4019,24 @@ pub mod bv2_impl {
             });
             let empty_array = server.new_expr(E::Array::default());
 
-            for ((r#use, source_id), ssr_index) in scbs
-                .items_use_directive()
-                .iter()
-                .zip(scbs.items_source_index().iter())
-                .zip(scbs.items_ssr_source_index().iter())
-            {
+            // The list is in the order that the scan came to the boundaries in. The
+            // manifests list them by path.
+            let by_path = {
+                let sources = self.graph.input_files.items_source();
+                let boundaries = scbs.items_source_index();
+                let mut by_path = bun_collections::index_sort::identity(boundaries.len());
+                bun_collections::index_sort::sort_indices(&mut by_path, &mut |a, b| {
+                    let a = &sources[boundaries[a as usize] as usize].path;
+                    let b = &sources[boundaries[b as usize] as usize].path;
+                    a.pretty.cmp(b.pretty)
+                });
+                by_path
+            };
+            for boundary in by_path {
+                let boundary = boundary as usize;
+                let r#use = &scbs.items_use_directive()[boundary];
+                let source_id = &scbs.items_source_index()[boundary];
+                let ssr_index = &scbs.items_ssr_source_index()[boundary];
                 if *r#use == bun_ast::UseDirective::Client {
                     // TODO: this file is being generated far too early. we
                     // don't know which exports are dead and which exports are
@@ -4495,8 +4619,6 @@ pub mod bv2_impl {
 
                 this.process_files_to_copy(&reachable_files)?;
 
-                this.add_server_component_boundaries_as_extra_entry_points()?;
-
                 this.clone_ast()?;
 
                 // SAFETY: `LinkerContext::link` takes `bundle` as a raw `*mut BundleV2` and only
@@ -4506,9 +4628,7 @@ pub mod bv2_impl {
                 // overlapping `&mut`.
                 let mut chunks = unsafe {
                     let bundle_ptr: *mut BundleV2 = &raw mut *this;
-                    // `Graph::entry_points: Vec<Index>` and `link()` takes `&[Index]` —
-                    // both are `crate::Index` (= `bun_ast::Index`), so no cast is needed.
-                    let ep = (*bundle_ptr).graph.entry_points.as_slice();
+                    let ep = (*bundle_ptr).graph.entry_points();
                     // `this.graph.server_component_boundaries` must stay intact for
                     // `StaticRouteVisitor` (generateChunksInParallel) to read via
                     // `parse_graph`. Borrow — do NOT `take`, which would empty the
@@ -4659,8 +4779,6 @@ pub mod bv2_impl {
 
                 this.process_files_to_copy(&reachable_files)?;
 
-                this.add_server_component_boundaries_as_extra_entry_points()?;
-
                 this.clone_ast()?;
 
                 // SAFETY: see `generate_from_cli` — raw-ptr borrow sidestep for
@@ -4668,7 +4786,7 @@ pub mod bv2_impl {
                 // from `this.linker`.
                 let mut chunks = unsafe {
                     let bundle_ptr: *mut BundleV2 = &raw mut *this;
-                    let ep = (*bundle_ptr).graph.entry_points.as_slice();
+                    let ep = (*bundle_ptr).graph.entry_points();
                     // Value-copy (original preserved for `StaticRouteVisitor`).
                     // Borrow — do NOT `take` (see `generate_from_cli`).
                     let scbs = &(*bundle_ptr).graph.server_component_boundaries;
@@ -4692,36 +4810,6 @@ pub mod bv2_impl {
             this.deinit_without_freeing_arena();
 
             result
-        }
-
-        pub(crate) fn add_server_component_boundaries_as_extra_entry_points(
-            &mut self,
-        ) -> Result<(), Error> {
-            // Prepare server component boundaries. Each boundary turns into two
-            // entry points, a client entrypoint and a server entrypoint.
-            //
-            // TODO: This should be able to group components by the user specified
-            // entry points. This way, using two component files in a route does not
-            // create two separate chunks. (note: bake passes each route as an entrypoint)
-            {
-                let scbs = self.graph.server_component_boundaries.slice();
-                self.graph.entry_points.reserve(scbs.list.len() * 2);
-                debug_assert_eq!(
-                    scbs.list.items_source_index().len(),
-                    scbs.list.items_ssr_source_index().len()
-                );
-                for (original_index, ssr_index) in scbs
-                    .list
-                    .items_source_index()
-                    .iter()
-                    .zip(scbs.list.items_ssr_source_index().iter())
-                {
-                    for idx in [*original_index, *ssr_index] {
-                        self.graph.entry_points.push(bun_ast::Index::init(idx));
-                    }
-                }
-            }
-            Ok(())
         }
 
         pub(crate) fn process_files_to_copy(
@@ -5256,6 +5344,25 @@ pub mod bv2_impl {
             // `helpCatchMemoryIssues` was a mimalloc TLH probe; bumpalo has no equivalent.
             let _ = FeatureFlags::HELP_CATCH_MEMORY_ISSUES;
 
+            if resolve.import_record.kind == ImportKind::EntryPointBuild
+                && let Some(pending) = &mut this.pending_entry_points
+            {
+                let position = resolve.import_record.import_record_index as usize;
+                pending[position] = crate::bundle_v2::PendingEntryPoint::Answered {
+                    import_record: core::mem::take(&mut resolve.import_record),
+                    value: resolve.value.consume(),
+                };
+                this.pending_entry_point_answers -= 1;
+                if this.pending_entry_point_answers == 0 {
+                    this.enqueue_pending_entry_points();
+                }
+                return;
+            }
+            Self::apply_resolve(resolve, this);
+        }
+
+        /// What the `onResolve` plugins answered for `resolve.import_record`.
+        fn apply_resolve(resolve: &mut jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
             match resolve.value.consume() {
                 jsc_api::JSBundler::ResolveValue::NoMatch => {
                     // If it's a file namespace, we should run it through the resolver like normal.
@@ -5510,8 +5617,7 @@ pub mod bv2_impl {
                     if let Some(source_index) = out_source_index {
                         if resolve.import_record.kind == ImportKind::EntryPointBuild {
                             this.graph
-                                .entry_points
-                                .push(bun_ast::Index::init(source_index.get()));
+                                .add_user_entry_point(bun_ast::Index::init(source_index.get()));
 
                             // Store the original entry point name for virtual entries
                             // This preserves the original name for output file naming
@@ -5725,13 +5831,11 @@ pub mod bv2_impl {
 
             self.process_files_to_copy(&reachable_files)?;
 
-            self.add_server_component_boundaries_as_extra_entry_points()?;
-
             // SAFETY: see `generate_from_cli` — repr(transparent) Index slice cast +
             // raw-ptr borrow sidestep for `&mut self.linker` / `&mut *self`.
             let mut chunks = unsafe {
                 let bundle_ptr: *mut BundleV2 = self;
-                let ep = (*bundle_ptr).graph.entry_points.as_slice();
+                let ep = (*bundle_ptr).graph.entry_points();
                 // Value-copy (original preserved for `StaticRouteVisitor`).
                 // Borrow — do NOT `take` (see `generate_from_cli`).
                 let scbs = &(*bundle_ptr).graph.server_component_boundaries;
@@ -6080,7 +6184,7 @@ pub mod bv2_impl {
                 // failed files do not remember their loader, and plugins can
                 // asynchronously decide a file is CSS.
                 let css = asts.items_css();
-                for entry_point in &self.graph.entry_points {
+                for entry_point in self.graph.entry_points() {
                     if css[entry_point.get() as usize].is_some() {
                         start.css_entry_points.put(
                             Index::init(entry_point.get()),
@@ -6121,7 +6225,7 @@ pub mod bv2_impl {
             // are `#[repr(transparent)]` u32 — see `generate_from_cli` for the slice cast.
             unsafe {
                 let bundle_ptr: *mut BundleV2 = self;
-                let ep = (*bundle_ptr).graph.entry_points.as_slice();
+                let ep = (*bundle_ptr).graph.entry_points();
                 // Value-copy (original preserved). Borrow — do NOT `take`.
                 let scbs = &(*bundle_ptr).graph.server_component_boundaries;
                 // Project `.linker` via `bundle_ptr` so no `&mut *self` reborrow
@@ -6357,6 +6461,16 @@ pub mod bv2_impl {
                         bstr::BStr::new(entry_point)
                     );
 
+                    // The answer goes to the place of the entry point in the user's list.
+                    let position = match &mut self.pending_entry_points {
+                        Some(pending) => {
+                            pending.push(crate::bundle_v2::PendingEntryPoint::AtPlugin);
+                            self.pending_entry_point_answers += 1;
+                            pending.len() - 1
+                        }
+                        None => 0,
+                    };
+
                     // Arena-owned.
                     // SAFETY: arena outlives the bundle pass.
                     let resolve: &mut jsc_api::JSBundler::Resolve =
@@ -6371,7 +6485,7 @@ pub mod bv2_impl {
                             namespace: (&b"file"[..]).into(),
                             specifier: entry_point.into(),
                             importer_source_index: u32::MAX, // Sentinel value for entry points
-                            import_record_index: 0,
+                            import_record_index: u32::try_from(position).expect("int cast"),
                             range: bun_ast::Range::NONE,
                             original_target: target,
                             loader,
@@ -6897,6 +7011,9 @@ pub mod bv2_impl {
                         });
                         import_record.loader = Some(import_record_loader);
 
+                        let is_html_entrypoint =
+                            self.is_server_html_import(import_record_loader, target);
+
                         if let Some(id) =
                             self.path_to_source_index_map(target).get(path_primary.text)
                         {
@@ -6936,13 +7053,26 @@ pub mod bv2_impl {
                             ParseTask::init(&file_map_result, bun_ast::Index::INVALID, self);
                         // SAFETY: arena outlives the bundle pass.
                         let resolve_task: &mut ParseTask = self.arena_create(resolve_task_val);
-                        resolve_task.known_target = target;
+                        resolve_task.known_target = if is_html_entrypoint {
+                            Target::Browser
+                        } else {
+                            target
+                        };
                         // Use transpiler JSX options, applying force_node_env like the disk path does
                         resolve_task.jsx = transpiler.options.jsx.clone();
                         resolve_task.jsx.development = transpiler.options.forced_jsx_development();
                         resolve_task.loader = Some(import_record_loader);
                         resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
                         *resolve_entry.value_ptr = resolve_task;
+                        if is_html_entrypoint {
+                            self.generate_server_html_module(
+                                &path_primary,
+                                target,
+                                import_record,
+                                path_primary.text,
+                            )
+                            .expect("unreachable");
+                        }
                         continue;
                     }
                 }
@@ -7284,9 +7414,7 @@ pub mod bv2_impl {
                 };
                 import_record.loader = Some(import_record_loader);
 
-                let is_html_entrypoint = import_record_loader == Loader::Html
-                    && target.is_server_side()
-                    && self.dev_server.is_none();
+                let is_html_entrypoint = self.is_server_html_import(import_record_loader, target);
 
                 if let Some(id) = self.path_to_source_index_map(target).get(path.text) {
                     if self.dev_server.is_some() && loader != Loader::Html {
@@ -7296,10 +7424,6 @@ pub mod bv2_impl {
                         import_record.source_index = Index::init(id);
                     }
                     continue;
-                }
-
-                if is_html_entrypoint {
-                    import_record.kind = ImportKind::HtmlManifest;
                 }
 
                 let resolve_entry = resolve_queue.get_or_put(path.text).expect("oom");
@@ -7323,7 +7447,7 @@ pub mod bv2_impl {
                 // SAFETY: arena outlives the bundle pass.
                 let resolve_task: &mut ParseTask = self.arena_create(resolve_task_val);
 
-                resolve_task.known_target = if import_record.kind == ImportKind::HtmlManifest {
+                resolve_task.known_target = if is_html_entrypoint {
                     Target::Browser
                 } else {
                     target
@@ -7366,8 +7490,8 @@ pub mod bv2_impl {
             let mut diff: i32 = 0;
             // reshaped for borrowck — `graph` and the
             // path map are both needed across the loop body. We (a) capture a raw self ptr for
-            // ParseTask.ctx, (b) hoist dev_server check, and (c) scope the map
-            // borrow to the get_or_put so later `self.graph.*` writes don't overlap.
+            // ParseTask.ctx and (b) scope the map borrow to the get_or_put so later
+            // `self.graph.*` writes don't overlap.
             // SAFETY: write provenance from `ptr::from_mut`; outlives every ParseTask.
             let self_ptr: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>> =
                 Some(unsafe {
@@ -7375,7 +7499,6 @@ pub mod bv2_impl {
                         std::ptr::from_mut::<Self>(self).cast::<BundleV2<'static>>(),
                     )
                 });
-            let dev_server_is_none = self.dev_server.is_none();
             for (key, value) in resolve_queue.iter() {
                 let value: *mut ParseTask = *value;
                 // SAFETY: ParseTask was arena-allocated in `resolve_import_records`;
@@ -7387,8 +7510,7 @@ pub mod bv2_impl {
                         .loader(&self.transpiler.options.loaders)
                         .unwrap_or(Loader::File)
                 });
-                let is_html_entrypoint =
-                    loader == Loader::Html && target.is_server_side() && dev_server_is_none;
+                let is_html_entrypoint = self.is_server_html_import(loader, target);
                 // Select map and perform get_or_put, capturing the slot as a raw ptr
                 // so the &mut on self.graph is released before we touch other fields.
                 let (found_existing, value_ptr): (bool, *mut IndexInt) = {
@@ -7445,9 +7567,6 @@ pub mod bv2_impl {
 
                     if is_html_entrypoint {
                         self.ensure_client_transpiler();
-                        self.graph
-                            .entry_points
-                            .push(bun_ast::Index(new_source_index));
                     }
 
                     if self.enqueue_on_load_plugin_if_needed(new_task) {
@@ -7576,6 +7695,14 @@ pub mod bv2_impl {
                     }
                 }
             }
+        }
+
+        /// Whether code for `target` that imports a file with `loader` imports a page.
+        /// The page is bundled for the browser as an entry point of its own, and the
+        /// import binds to a module of `target` that holds the page's manifest.
+        #[inline]
+        fn is_server_html_import(&self, loader: Loader, target: options::Target) -> bool {
+            loader == Loader::Html && target.is_server_side() && self.dev_server.is_none()
         }
 
         fn generate_server_html_module(

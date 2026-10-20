@@ -1568,9 +1568,6 @@ where
         }
 
         // Before `req.signal` fires: an abort listener must not write to the response that is gone.
-        if let Some(wrapper) = this.sink_mut() {
-            wrapper.sink.revoke_response();
-        }
         this.detach_response();
         let any_js_calls = core::cell::Cell::new(false);
         let global_this = server.global_this();
@@ -2541,6 +2538,10 @@ where
         self.request_body_buf.set(Vec::new());
 
         if let Some(resp) = self.resp.take() {
+            // The sink writes through its own handle to the response.
+            if let Some(wrapper) = self.sink_mut() {
+                wrapper.sink.revoke_response();
+            }
             if self.flags.request_body_paused() {
                 self.flags.set_request_body_paused(false);
                 resp.resume();

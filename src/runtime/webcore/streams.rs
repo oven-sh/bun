@@ -1987,6 +1987,8 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     }
 
     /// The response is gone: this sink never writes again. Stores only: [`Self::abort`] tells the source.
+    #[cold]
+    #[inline(never)]
     pub(crate) fn revoke_response(&mut self) {
         self.state = HTTPServerWritableState::Aborted;
         self.res = None;

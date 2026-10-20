@@ -127,3 +127,15 @@ test.concurrent.skipIf(isWindows)(
     expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
   },
 );
+
+// Not an abort: the worker that owns the server is terminated while `pull()`
+// spins, and the server ends the request with an empty response. The stream's
+// sink still held a chunk and its own handle to the response, and sent the
+// chunk behind the complete response when the request was freed.
+test.concurrent("a direct stream of a terminated worker does not write behind the response", async () => {
+  const { stdout, stderr, exitCode, signalCode } = await runFixture("serve-stopped-worker-stream-fixture.ts");
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ statusLine: "HTTP/1.1 200 OK", afterHead: "" });
+  expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+});

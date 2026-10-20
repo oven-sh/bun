@@ -3677,6 +3677,66 @@ mod posix_impl {
         }
     }
 
+    /// `sendfile(2)` of macOS and FreeBSD. EAGAIN or EINTR after some bytes is a short count.
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    pub fn sendfile(src: Fd, dest: Fd, offset: &mut i64, len: usize) -> Maybe<usize> {
+        // A length of 0 asks these kernels for the whole rest of the file.
+        if len == 0 {
+            return Ok(0);
+        }
+        let len = len.min(i64::MAX as usize);
+        loop {
+            #[cfg(target_os = "macos")]
+            let (rc, sent) = {
+                let mut sent = len as i64;
+                // SAFETY: `src`/`dest` are live fds; `sent` is a live in/out
+                // count; a null `sf_hdtr` sends no headers or trailers.
+                let rc = unsafe {
+                    libc::sendfile(
+                        src.native(),
+                        dest.native(),
+                        *offset,
+                        &raw mut sent,
+                        core::ptr::null_mut(),
+                        0,
+                    )
+                };
+                (rc, sent)
+            };
+            #[cfg(target_os = "freebsd")]
+            let (rc, sent) = {
+                let mut sent: i64 = 0;
+                // SAFETY: `src`/`dest` are live fds; `sent` is a live out
+                // count; a null `sf_hdtr` sends no headers or trailers.
+                let rc = unsafe {
+                    libc::sendfile(
+                        src.native(),
+                        dest.native(),
+                        *offset,
+                        len,
+                        core::ptr::null_mut(),
+                        &raw mut sent,
+                        0,
+                    )
+                };
+                (rc, sent)
+            };
+            if rc == 0 {
+                *offset += sent;
+                return Ok(sent as usize);
+            }
+            let e = last_errno();
+            if (e == libc::EAGAIN || e == libc::EINTR) && sent > 0 {
+                *offset += sent;
+                return Ok(sent as usize);
+            }
+            if e == libc::EINTR {
+                continue;
+            }
+            return Err(Error::from_code_int(e, Tag::sendfile).with_fd(src));
+        }
+    }
+
     /// `copy_file_range(2)`. An offset of `None` uses and advances the file position.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn copy_file_range(
@@ -5210,7 +5270,7 @@ macro_rules! syslog {
 
 // ── `bun.c` — raw libc surface (no `Maybe` wrapping). ──
 pub mod c {
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    #[cfg(target_os = "macos")]
     use core::ffi::c_int;
     #[cfg(unix)]
     use core::ffi::{c_char, c_void};
@@ -5374,37 +5434,6 @@ pub mod c {
     #[inline]
     pub fn _dyld_get_image_header(image_index: u32) -> *const super::macho::mach_header_64 {
         dyld_get_image_header_raw(image_index).cast()
-    }
-
-    /// Darwin `sendfile(fd, s, off, *len, *hdtr, flags)`.
-    /// NOTE: on `EINTR`/`EAGAIN` the kernel still writes the
-    /// bytes-sent count back through `*len` before returning -1 — callers MUST
-    /// advance their offset by `*len` even on error. This wrapper is raw (no
-    /// EINTR retry); the caller owns the offset bookkeeping.
-    #[cfg(target_os = "macos")]
-    pub unsafe fn sendfile(
-        fd: c_int,
-        s: c_int,
-        off: i64,
-        len: *mut i64,
-        hdtr: *mut c_void,
-        flags: c_int,
-    ) -> c_int {
-        // SAFETY: caller contract (`unsafe fn`) — all pointers forwarded verbatim.
-        unsafe { libc::sendfile(fd, s, off, len, hdtr.cast(), flags) }
-    }
-    /// FreeBSD `sendfile(fd, s, off, nbytes, *hdtr, *sbytes, flags)`.
-    #[cfg(target_os = "freebsd")]
-    pub unsafe fn sendfile(
-        fd: c_int,
-        s: c_int,
-        off: i64,
-        nbytes: usize,
-        hdtr: *mut c_void,
-        sbytes: *mut i64,
-        flags: c_int,
-    ) -> c_int {
-        unsafe { libc::sendfile(fd, s, off, nbytes, hdtr.cast(), sbytes, flags) }
     }
 
     // ── Darwin libproc — process introspection (`<libproc.h>`). ──

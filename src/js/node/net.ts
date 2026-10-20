@@ -51,6 +51,7 @@ const {
   kStandaloneWrap,
   kUpgradeClientTLS,
   kVerifyError,
+  kupgraded,
 } = require("internal/net/symbols");
 const { addServerAbortSignalOption } = require("internal/net/server_abort_signal");
 
@@ -308,7 +309,6 @@ const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
 const kOnUpgradedClose = Symbol("kOnUpgradedClose");
-const kupgraded = Symbol("kupgraded");
 // On the raw handle of an adopted fd: the TLS socket that adopted it.
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
 // On that TLS socket: the fd closed, and the socket it wraps waits to be closed with it.

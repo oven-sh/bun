@@ -32,6 +32,7 @@ const { STATUS_CODES, utcDate } = require("internal/http");
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const tls = require("node:tls");
 const net = require("node:net");
+const { kupgraded } = require("internal/net/symbols");
 const fs = require("node:fs");
 const { $data } = require("node:fs/promises");
 const FileHandle = $data.FileHandle;
@@ -94,8 +95,6 @@ const StringPrototypeStartsWith = String.prototype.startsWith;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 
 const H2FrameParser = $rust("h2_frame_parser.rs", "H2FrameParserConstructor");
-const { upgradeRawSocketToH2 } = require("node:_http2_upgrade");
-type UpgradableSecureServer = Parameters<typeof upgradeRawSocketToH2>[1];
 
 const kSettingIds: Record<number, string> = {
   0x1: "headerTableSize",
@@ -2076,6 +2075,21 @@ const kWriteFlushedWithoutCallback = 0x10;
 // (test-http2-backpressure). Chosen once per session.
 function deferWriteCallbackForSocket(nativeSocket) {
   return nativeSocket ? process.nextTick : setImmediate;
+}
+// Whether the session of `socket` writes its frames through the socket and not through the socket's handle: the TLS
+// listener of `server` wrapped `socket` for a socket the server was handed. A graceful close over the handle drops what
+// the handle has not taken yet.
+function writesThroughSocket(socket, server) {
+  return server !== undefined && socket.server === server && socket[kupgraded] != null;
+}
+// Node's session does not learn what its socket writes return, and it does not read while one is in progress. So a
+// peer that goes away under a response closes the session with no error. A session that writes through its socket
+// gets that as the socket's error: the write that failed, or the reset that the read saw first.
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L1789-L1826
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L1862-L1872
+function isPeerGoneUnderWrite(socket, error: Error): boolean {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  return code === "EPIPE" || code === "ERR_SOCKET_CLOSED" || (code === "ECONNRESET" && socket.writableLength > 0);
 }
 // Whether this chunk is the writable's last: end() ran, nothing queued behind it (writableLength
 // includes the in-flight chunk, string chunks in code units), no trailers pending (END_STREAM
@@ -4378,6 +4392,11 @@ class ServerHttp2Session extends Http2Session {
       this.destroy();
       return;
     }
+    const socket = this[bunHTTP2Socket];
+    if (socket && writesThroughSocket(socket, this[kServer]) && isPeerGoneUnderWrite(socket, error)) {
+      // The socket's 'close' follows, and ends the session as a close by the peer does.
+      return;
+    }
     if (this.listenerCount("error") === 0 && (error as NodeJS.ErrnoException)?.code === "ECONNRESET") {
       // An unobserved transport teardown (the peer dropped a connection
       // nobody is listening to anymore): destroy quietly - the destroy still
@@ -4496,7 +4515,7 @@ class ServerHttp2Session extends Http2Session {
       this.#alpnProtocol = "h2c";
     }
     this[bunHTTP2Socket] = socket;
-    const nativeSocket = socket._handle;
+    const nativeSocket = writesThroughSocket(socket, server) ? undefined : socket._handle;
     this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
     this.#encrypted = socket instanceof TLSSocket;
 
@@ -6639,7 +6658,6 @@ function onErrorSecureServerSession(err, socket) {
 function emitFrameErrorEventNT(stream, frameType, errorCode) {
   stream.emit("frameError", frameType, errorCode);
 }
-interface Http2SecureServer extends UpgradableSecureServer {}
 class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase) {
   declare keepAliveTimeout: number | undefined;
   declare headersTimeout: number | undefined;
@@ -6684,15 +6702,6 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
       this.on("request", onRequestHandler);
     }
     this.on("tlsClientError", onErrorSecureServerSession);
-  }
-  emit(event: string, ...args: any[]) {
-    if (event === "connection") {
-      const socket = args[0];
-      if (socket && !(socket instanceof TLSSocket)) {
-        return upgradeRawSocketToH2(connectionListener, this, socket);
-      }
-    }
-    return super.emit(event, ...args);
   }
   setTimeout(ms, callback) {
     if (callback !== undefined && typeof callback !== "function") {

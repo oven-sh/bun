@@ -10,6 +10,8 @@ export default {
   // 'secureConnect' (node parity), so internal deferrals park on this instead.
   kSecureConnectDone: Symbol("kSecureConnectDone"),
   kVerifyError: Symbol("kVerifyError"),
+  // On a TLS socket: the stream it wraps.
+  kupgraded: Symbol("kupgraded"),
   // net.Socket.prototype method behind the client-side `new tls.TLSSocket(socket)`.
   kUpgradeClientTLS: Symbol("kUpgradeClientTLS"),
   // True on a client-side `new tls.TLSSocket(socket)`. The TLSSocket constructor sets it.

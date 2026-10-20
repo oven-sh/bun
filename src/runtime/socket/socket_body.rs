@@ -4823,9 +4823,8 @@ pub(crate) fn js_upgrade_duplex_to_tls(
         },
         reject_unauthorized,
     };
-    // Client duplex upgrades come from net.ts, whose JS layer owns
-    // server-identity policy; http2's server upgrade also lands here, where
-    // the deferral is meaningless.
+    // Duplex upgrades come from net.ts, whose JS layer owns the
+    // server-identity policy of a client. A server has none to defer.
     let initial_flags = Flags::initial(reject_unauthorized)
         | if is_server {
             Flags::empty()

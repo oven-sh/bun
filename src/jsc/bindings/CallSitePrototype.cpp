@@ -142,8 +142,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetLineNumber, (JSGlobalObject * globa
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetColumnNumber, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
-    // https://github.com/mozilla/source-map/blob/60adcb064bf033702d954d6d3f9bc3635dcb744b/lib/source-map-consumer.js#L488-L489
-    return JSC::JSValue::encode(jsNumber(std::max(callSite->columnNumber().zeroBasedInt(), 0)));
+    return JSC::JSValue::encode(jsNumber(std::max(callSite->columnNumber().oneBasedInt(), 1)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetScriptId, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -250,7 +249,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncToJSON, (JSGlobalObject * globalObject
     JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
     Bun::putDirectNamed(vm, obj, "sourceURL"_s, callSite->sourceURL());
     Bun::putDirectNamed(vm, obj, "lineNumber"_s, jsNumber(callSite->lineNumber().oneBasedInt()));
-    Bun::putDirectNamed(vm, obj, "columnNumber"_s, jsNumber(callSite->columnNumber().zeroBasedInt()));
+    Bun::putDirectNamed(vm, obj, "columnNumber"_s, jsNumber(callSite->columnNumber().oneBasedInt()));
     Bun::putDirectNamed(vm, obj, "functionName"_s, callSite->functionName());
     return JSC::JSValue::encode(obj);
 }

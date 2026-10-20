@@ -1,5 +1,6 @@
 import { bindgen as bindings } from "bun:internal-for-testing";
 import { describe as describeAlways, expect, it as itAlways } from "bun:test";
+import { runWithError } from "harness";
 import { BlockList, SocketAddress } from "node:net";
 import { rustIdent } from "../../src/codegen/bindgen-lib-internal.ts";
 import * as b from "../../src/codegen/bindgen-lib.ts";
@@ -167,6 +168,18 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   ]) {
     expect(() => b.fn({ args: { value } })).toThrow("value: .asBigInt is a result; an argument is b.u64.allowBigInt");
   }
+  expect(() => b.f64.loose.asDate).toThrow(".asDate follows b.f64");
+  expect(() => b.string.loose.local).toThrow(".local follows b.string");
+  expect(() => b.fn({ args: { value: b.f64.asDate.optional } })).toThrow("value: .asDate is a result");
+  expect(() => b.fn({ args: { value: b.array(b.string.local) } })).toThrow("an array is a Vec");
+  expect(() => b.fn({ args: { value: b.string.local } })).toThrow("value: .local is a result");
+  expect(() => b.fn({ args: { value: b.record(b.bool) } })).toThrow("value: b.record is a result");
+  for (const value of [b.any, b.string.local, b.bufferSource]) {
+    expect(() => b.record(value)).toThrow("the pairs of a record can be a Vec, where the GC does not see JS values");
+  }
+  expect(() => b.class({ rustPath: "T", proto: { when: { getter: b.f64.asDate, setter: true } } })).toThrow(
+    "when: .asDate is a result",
+  );
   expect(() => b.namespace({ f: {} }, { call: "g" })).toThrow("call: g is not one of its functions");
   for (const element of [b.any, b.bufferSource, b.dictionary({ value: b.any }), b.class({ rustPath: "T" })]) {
     expect(() => b.array(element)).toThrow("an array is a Vec, where the GC does not see JS values");
@@ -388,18 +401,19 @@ describe("strings", () => {
     "nul \0 inside",
   ];
 
+  const invalid = "TypeError ERR_INVALID_ARG_TYPE: ";
+  const thrower =
+    (f: (...args: any[]) => unknown) =>
+    (...args: unknown[]) => {
+      const error: any = runWithError(() => f(...args));
+      return error && `${error.name} ${error.code}: ${error.message}`;
+    };
+
   it("expected: a value of the wrong type throws Node's ERR_INVALID_ARG_TYPE", () => {
     const f = bindgen.expectedByNode;
     expect(f("abc", "de", true)).toBe(6);
     expect(f("abc", new Uint8Array(2))).toBe(5);
-    const thrownBy = (...args: unknown[]) => {
-      try {
-        f(...args);
-      } catch (error: any) {
-        return `${error.name} ${error.code}: ${error.message}`;
-      }
-    };
-    const invalid = "TypeError ERR_INVALID_ARG_TYPE: ";
+    const thrownBy = thrower(f);
     expect(thrownBy()).toBe(`${invalid}The "text" argument must be of type string. Received undefined`);
     expect(thrownBy(1)).toBe(`${invalid}The "text" argument must be of type string. Received type number (1)`);
     expect(thrownBy({})).toBe(`${invalid}The "text" argument must be of type string. Received an instance of Object`);
@@ -407,6 +421,42 @@ describe("strings", () => {
       `${invalid}The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received null`,
     );
     expect(thrownBy("abc", "de", 1)).toBe(`${invalid}flag must be a boolean`);
+  });
+
+  it("expected: a string is the whole message, and a dictionary is reported as the argument", () => {
+    const f = bindgen.expectedMessage;
+    expect(f(new Uint8Array(2))).toBe(2);
+    expect(f(new Uint8Array(2), null, { flag: 1 })).toBe(3);
+    expect(f(new Uint8Array(2), { flag: 1 }, { flag: 1 })).toBe(4);
+    const thrownBy = thrower(f);
+    const trap = () => {
+      throw new Error("looked at");
+    };
+    for (const value of [undefined, "ab", {}, new Proxy({}, { get: trap, getOwnPropertyDescriptor: trap })]) {
+      expect(thrownBy(value)).toBe(`${invalid}data is not a buffer.`);
+    }
+    expect(thrownBy(new Uint8Array(2), 1)).toBe(
+      `${invalid}The "options" argument must be of type object. Received type number (1)`,
+    );
+    expect(thrownBy(new Uint8Array(2), {}, 1)).toBe(`${invalid}TestFlag must be an object`);
+  });
+
+  it("an argument that throws stops the next from being converted", () => {
+    const notRead = {
+      get flag() {
+        return expect.unreachable();
+      },
+      toString: () => expect.unreachable(),
+    };
+    const throws = {
+      get flag() {
+        throw new Error("the first");
+      },
+    };
+    expect(() => bindgen.expectedMessage(1, notRead)).toThrow("data is not a buffer.");
+    expect(() => bindgen.expectedMessage(new Uint8Array(2), 1, notRead)).toThrow('The "options" argument');
+    expect(() => bindgen.expectedMessage(new Uint8Array(2), throws, notRead)).toThrow("the first");
+    expect(() => bindgen.sumBytesIfAny(1, notRead)).toThrow("bytes must be a string");
   });
 
   it.each(texts)("round trips %j", text => {
@@ -603,6 +653,14 @@ describe("dictionaries", () => {
   it("returns one that holds only strings", () => {
     expect(bindgen.names("ana bé c")).toStrictEqual({ first: "ana", nickname: "bé", all: ["ana", "bé", "c"] });
     expect(bindgen.names("")).toStrictEqual({ first: "", nickname: null, all: [] });
+  });
+
+  it("returns one with no prototype", () => {
+    const bare = bindgen.bare(7);
+    expect(Object.getPrototypeOf(bare)).toBeNull();
+    expect(Object.getOwnPropertyDescriptors(bare)).toEqual({
+      id: { value: 7, writable: true, enumerable: true, configurable: true },
+    });
   });
 
   it("returns ordinary objects", () => {
@@ -966,6 +1024,12 @@ describe("unions", () => {
     expect(() => b.union({ none: b.null, flag: b.bool }).nullable).toThrow("already takes undefined");
     b.union({ text: b.string, boxed: b.string.utf8 });
   });
+
+  it("is returned as what its alternative is", () => {
+    expect(bindgen.textOrBytes("h\u00e9", 0)).toBe("h\u00e9");
+    expect(bindgen.textOrBytes("hi", 1)).toEqual(new Uint8Array([0x68, 0x69]));
+    expect(bindgen.textOrBytes("hi", 2)).toBeNull();
+  });
 });
 
 describe("overloads", () => {
@@ -1018,6 +1082,53 @@ describe("overloads", () => {
     b.overloads({ args: { a: b.string, b: b.bool } }, { args: { a: b.string } });
     b.overloads({ args: { a: b.string, b: b.f64 } }, { args: { a: b.string, b: b.bool } });
     b.overloads({ args: { a: b.bool } }, { args: { a: b.any } });
+  });
+});
+
+describe("what is only a result", () => {
+  it("b.f64.asDate is a Date", () => {
+    expect(bindgen.dateOf(86_400_000)).toEqual(new Date(86_400_000));
+    expect(bindgen.dateOf(NaN).getTime()).toBeNaN();
+  });
+
+  it("b.string.local is the string the body made", () => {
+    expect(bindgen.latin1(new Uint8Array([0x61, 0xe9, 0xff]))).toBe("a\u00e9\u00ff");
+    expect(bindgen.latin1(new Uint8Array())).toBe("");
+  });
+
+  it("b.record has a property for each pair", () => {
+    const positions = bindgen.positions("bb a \u00e9 ccc");
+    expect(Object.getPrototypeOf(positions)).toBe(Object.prototype);
+    expect(Object.entries(positions)).toEqual([
+      ["bb", 0],
+      ["a", 1],
+      ["\u00e9", 2],
+      ["ccc", 3],
+    ]);
+    expect(Object.getOwnPropertyDescriptor(positions, "a")).toEqual({
+      value: 1,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    expect(bindgen.positions("")).toStrictEqual({});
+  });
+
+  it("b.record takes any key as an own property", () => {
+    const positions = bindgen.positions("__proto__ 10 constructor 2");
+    expect(Object.getPrototypeOf(positions)).toBe(Object.prototype);
+    expect(Reflect.ownKeys(positions)).toEqual(["2", "10", "__proto__", "constructor"]);
+    expect(Object.getOwnPropertyDescriptor(positions, "__proto__")!.value).toBe(0);
+    expect(positions[10]).toBe(1);
+    expect(delete positions[10]).toBe(true);
+    expect(Reflect.ownKeys(positions)).toEqual(["2", "__proto__", "constructor"]);
+  });
+
+  it("b.record keeps the last value of a key, where the key first came", () => {
+    expect(Object.entries(bindgen.positions("a b a"))).toEqual([
+      ["a", 2],
+      ["b", 1],
+    ]);
   });
 });
 
@@ -1565,8 +1676,10 @@ describe("classes", () => {
       "count",
       "label",
       "tag",
+      "sameTag",
       "increment",
       "add",
+      "forgetTag",
       "listen",
       "notify",
       "plus",
@@ -1629,6 +1742,48 @@ describe("classes", () => {
     Bun.gc(true);
     expect(counter.tag).toBe(tag);
     expect(new TestCounter(3).tag).not.toBe(tag);
+  });
+
+  it("a cached getter is computed again once Rust sets its field to undefined", () => {
+    const counter = new TestCounter(3);
+    const tag = counter.tag;
+    counter.increment();
+    counter.forgetTag();
+    expect(counter.tag).toEqual([4]);
+    expect(counter.tag).toBe(counter.tag);
+    expect(tag).toEqual([3]);
+    const untouched = new TestCounter(5);
+    untouched.forgetTag();
+    Bun.gc(true);
+    expect(untouched.tag).toEqual([5]);
+  });
+
+  it("two cached getters can return one field", () => {
+    const counter = new TestCounter(3);
+    expect(counter.sameTag).toBe(counter.tag);
+    const other = new TestCounter(4);
+    expect(other.tag).toBe(other.sameTag);
+    other.forgetTag();
+    expect(other.sameTag).toEqual([4]);
+    const named = (internalFields: string[]) =>
+      b.class({ rustPath: "crate::X", internalFields, proto: { a: { getter: b.i32, cache: "held" } } });
+    expect(() => named([])).toThrow("a: there is no internal field held");
+    expect(() => named(["held"])).not.toThrow();
+  });
+
+  it("a heap snapshot names the internal fields", () => {
+    const counter = new TestCounter(3);
+    counter.listen(() => {});
+    counter.tag;
+    const { nodes, nodeClassNames, edges, edgeTypes, edgeNames } = Bun.generateHeapSnapshot();
+    const counters = new Set<number>();
+    for (let i = 0; i < nodes.length; i += 4)
+      if (nodeClassNames[nodes[i + 2]] === "TestCounter") counters.add(nodes[i]);
+    const names = new Set<string>();
+    for (let i = 0; i < edges.length; i += 4) {
+      if (counters.has(edges[i]) && edgeTypes[edges[i + 2]] === "Property") names.add(edgeNames[edges[i + 3]]);
+    }
+    expect([...names].sort()).toEqual(["listener", "tag"]);
   });
 
   it("checks the receiver", () => {

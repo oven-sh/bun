@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
-import { integersThatNeedRounding } from "harness";
+import { bunEnv, bunExe, integersThatNeedRounding, tempDir } from "harness";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import vm from "node:vm";
 
 // JSC turns a string of binary, base-4, octal, hex or base-32 digits into a number in one function,
@@ -7,7 +9,8 @@ import vm from "node:vm";
 // string, and the literals JSC lexes itself (eval, new Function, node:vm) all end there. From 2^53 on
 // the result must be the nearest double, ties to even. Number(BigInt) is the reference: a BigInt holds
 // the digits exactly and its conversion rounds once. A literal in a file is read by the transpiler,
-// whose half is in test/bundler/transpiler/transpiler.test.js.
+// whose half is in test/bundler/transpiler/transpiler.test.js. The transpiler also folds a string
+// with unary + or - into a number, and asks the same JSC function for it.
 
 const radixOfPrefix: Record<string, number> = { x: 16, o: 8, b: 2 };
 
@@ -114,4 +117,64 @@ test("parseInt gives the nearest double in a hot loop", () => {
     if (parse(digits, radix) !== nearest[i % inputs.length]) wrong++;
   }
   expect(wrong).toBe(0);
+});
+
+test("the transpiler folds a string of long hex, octal or binary digits to the nearest double", () => {
+  expect(+"0x97b89d834f82bbef").toBe(10932661282742122496);
+  expect(-"0b10100000000000000000000000000000000000000000000000000101").toBe(-45035996273704968);
+
+  const transpiler = new Bun.Transpiler();
+  const wrong: object[] = [];
+  for (const [text, exact] of integersThatNeedRounding()) {
+    // Number() of a string takes no separators.
+    if (text.includes("_")) continue;
+    const printed = transpiler.transformSync(`x = +"${text}";`).trim();
+    const value = printed === "x = 1 / 0;" ? Infinity : Number(printed.slice("x = ".length, -1));
+    if (!Object.is(value, Number(exact))) wrong.push({ text, printed, nearest: Number(exact) });
+  }
+  expect(wrong).toEqual([]);
+});
+
+test("a transpiler cache entry from before that fold changed is not restored", async () => {
+  // The fold above is in the transpiler's output, and the runtime transpiler cache keeps that output
+  // on disk. An entry of version 36 can hold the number that the engine gave before.
+  const padding = Array.from({ length: 400 }, (_, i) => `const pad_${i} = ${i};`).join("\n");
+  using dir = tempDir("pow2-radix-cache", {
+    "fold.js": `console.log(+"0x97b89d834f82bbef");\n${padding}\n`,
+  });
+  const cachePath = join(String(dir), ".bun-cache");
+  const run = async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fold.js"],
+      env: {
+        ...bunEnv,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: cachePath,
+        BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+  const versions = () =>
+    readdirSync(cachePath)
+      .filter(name => name.endsWith(".pile"))
+      .map(name => readFileSync(join(cachePath, name)).readUInt32LE(0));
+
+  expect(await run()).toEqual({ stdout: "10932661282742122000\n", stderr: "", exitCode: 0 });
+  const written = versions();
+  expect(written.length).toBeGreaterThan(0);
+  for (const version of written) expect(version).toBeGreaterThan(36);
+
+  // Make every entry look like one of version 36. The next run must translate the file again
+  // and write the entry again, not restore it.
+  for (const name of readdirSync(cachePath).filter(name => name.endsWith(".pile"))) {
+    const bytes = readFileSync(join(cachePath, name));
+    bytes.writeUInt32LE(36, 0);
+    writeFileSync(join(cachePath, name), bytes);
+  }
+  expect(await run()).toEqual({ stdout: "10932661282742122000\n", stderr: "", exitCode: 0 });
+  expect(versions()).toEqual(written);
 });

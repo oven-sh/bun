@@ -1147,8 +1147,6 @@ fn parse_digits_of_bits(digits: &[u8], bits: u32) -> Option<f64> {
 }
 
 /// `Number(text)` of JavaScript, for UTF-8: ECMAScript's `StringToNumber`. NaN if `text` is no number.
-/// `JSC::jsToNumber` adds up the digits of `0b` and `0o` in a double, which is not the nearest one
-/// from 2^53 on.
 pub fn js_string_to_number(text: &[u8]) -> f64 {
     let text = strings::trim_js_whitespace(text);
     let bits = match text {

@@ -1970,15 +1970,6 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `root.inferTypeParameters`
     pub(super) fn cond_infer_params(&mut self, t: TypeId) -> SmallVec<[TypeId; 4]> {
-        if let Some(cached_value) = self.links.infer_type_parameters(t) {
-            return cached_value;
-        }
-        let params = self.derive_cond_infer_params(t);
-        self.links.cache_infer_type_parameters(t, &params);
-        params
-    }
-
-    fn derive_cond_infer_params(&mut self, t: TypeId) -> SmallVec<[TypeId; 4]> {
         let (file, _, _, nodes) = self.cond_origin(t);
         let mut params = Vec::new();
         self.collect_infer_params(file, nodes[1], &mut params);

@@ -1,7 +1,7 @@
 //! Caches the parts of a type that tsgo stores in fields of the type and assigns on first use:
-//! `ConditionalType.checkType`, `extendsType`, `resolvedTrueType` and `resolvedFalseType`,
-//! `ConditionalRoot.inferTypeParameters`, `MappedType.constraintType` and `resolvedApparentType`, and `Type.alias`. Also
-//! caches the restrictive and permissive instantiations, which tsgo stores per type in `cachedTypes`.
+//! `ConditionalType.checkType`, `extendsType`, `resolvedTrueType` and `resolvedFalseType`, `MappedType.constraintType`
+//! and `resolvedApparentType`, and `Type.alias`. Also caches the restrictive and permissive instantiations, which tsgo
+//! stores per type in `cachedTypes`.
 //!
 //! In this checker a conditional or mapped type is a type node plus a mapper. Deriving a part means looking up the type
 //! of a node and instantiating it. `TypeLinks` caches the derived part per type, so the next read is a single load.
@@ -10,8 +10,8 @@
 //! task. Skipping the derivation is then unobservable, except for the two effects described at the end. The rules:
 //! - The cache belongs to one checker, and so to one task. Other tasks can't see it, and none of its ids outlive the
 //!   task. A task publishes the same things with and without it.
-//! - A part that only needs interning is cached immediately. It depends only on the type's interning key and the
-//!   program. This covers the `infer` type parameters and an alias.
+//! - An alias only needs interning, so it's cached immediately. It depends only on the type's interning key and the
+//!   program.
 //! - Any other part is `instantiate(declared, mapper)`. It's cached if both steps read a final entry (`derive_part`):
 //!   - `declared` is in a table, and no computation in progress will overwrite it. If a type node is in progress
 //!     several times, the outermost evaluation stores last (`is_type_node_settled`).
@@ -33,13 +33,6 @@ use std::sync::atomic::AtomicU32;
 /// `Type.alias.typeArguments`
 pub(super) type AliasArguments = SmallVec<[TypeId; 4]>;
 
-/// Cell index of `root.inferTypeParameters`. It follows the `cond_piece` cells. The cell contains
-/// 1 + start * `MAX_INFER_TYPE_PARAMETERS` + length, where start and length locate the list in
-/// `TypeLinks::infer_type_parameters`.
-const INFER_TYPE_PARAMETERS: usize = 4;
-/// Lists of this length or longer aren't cached.
-const MAX_INFER_TYPE_PARAMETERS: usize = 64;
-
 #[derive(Copy, Clone, Debug)]
 pub(super) enum MappedPart {
     ConstraintType,
@@ -54,7 +47,7 @@ pub(super) enum Kind {
 }
 
 /// Number of cells in a row. A conditional type uses all of them.
-const PARTS: usize = INFER_TYPE_PARAMETERS + 1;
+const PARTS: usize = 4;
 
 /// `restrictiveMapper`, `permissiveMapper` and `uniqueLiteralMapper`, which are the same for every type.
 #[derive(Copy, Clone, Debug)]
@@ -146,8 +139,6 @@ pub(super) struct TypeLinks {
     /// Each cell is a `Packed` value, or 0 if it's empty. A conditional type's cells are indexed by the `which`
     /// argument of `cond_piece`, a mapped type's by `MappedPart`.
     parts: Vec<[u32; PARTS]>,
-    /// See `INFER_TYPE_PARAMETERS`.
-    infer_type_parameters: Vec<TypeId>,
     /// 0 if nothing is cached for the type. Otherwise 1 + the index of its row in `with_fixed_mappers`.
     fixed_mapper_rows: ByType,
     /// `cachedTypes[CachedTypeKindRestrictiveInstantiation]`, `cachedTypes[CachedTypeKindPermissiveInstantiation]` and
@@ -171,7 +162,6 @@ impl TypeLinks {
         let TypeLinks {
             rows,
             parts,
-            infer_type_parameters,
             fixed_mapper_rows,
             with_fixed_mappers,
             restrictive_resets,
@@ -186,7 +176,6 @@ impl TypeLinks {
         } = aliases.get_mut();
         rows.clear();
         parts.clear();
-        infer_type_parameters.clear();
         fixed_mapper_rows.clear();
         with_fixed_mappers.clear();
         (*restrictive_resets, *uncached_derivations) = (0, 0);
@@ -221,37 +210,6 @@ impl TypeLinks {
     #[inline]
     pub(super) fn note_uncached_derivation(&mut self) {
         self.uncached_derivations += 1;
-    }
-
-    /// Returns `root.inferTypeParameters` of the conditional type `ty` if `cache_infer_type_parameters` has cached
-    /// them.
-    #[inline]
-    pub(super) fn infer_type_parameters(&self, ty: TypeId) -> Option<SmallVec<[TypeId; 4]>> {
-        let encoded =
-            (self.cell(ty, Kind::Conditional, INFER_TYPE_PARAMETERS) as usize).checked_sub(1)?;
-        let (start, len) = (
-            encoded / MAX_INFER_TYPE_PARAMETERS,
-            encoded % MAX_INFER_TYPE_PARAMETERS,
-        );
-        let cached = self.infer_type_parameters.get(start..start + len)?;
-        Some(SmallVec::from_slice(cached))
-    }
-
-    /// Caches `parameters`. It doesn't need permission because deriving them only needs interning.
-    pub(super) fn cache_infer_type_parameters(&mut self, ty: TypeId, parameters: &[TypeId]) {
-        // Most lists are empty, and an empty list adds nothing to `infer_type_parameters`.
-        let start = match parameters.is_empty() {
-            true => 0,
-            false => self.infer_type_parameters.len(),
-        };
-        let encoded = start * MAX_INFER_TYPE_PARAMETERS + parameters.len();
-        if parameters.len() < MAX_INFER_TYPE_PARAMETERS
-            && let Ok(encoded) = u32::try_from(encoded + 1)
-        {
-            self.infer_type_parameters.extend_from_slice(parameters);
-            let cell = INFER_TYPE_PARAMETERS;
-            self.set_cell(ty, Kind::Conditional, cell, encoded, Stored::new());
-        }
     }
 
     /// Returns 0 if the instantiation isn't cached.
@@ -453,9 +411,7 @@ impl<'p, 's> Checker<'p, 's> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ByType, FixedMapper, Kind, MAX_INFER_TYPE_PARAMETERS, MappedPart, PAGE, PARTS, TypeLinks,
-    };
+    use super::{ByType, FixedMapper, Kind, MappedPart, PAGE, PARTS, TypeLinks};
     use crate::bind::SymbolId;
     use crate::check::task::Stored;
     use crate::local::LOCAL;
@@ -516,7 +472,6 @@ mod tests {
             links.cache_alias_symbol(ty, Some(symbol));
             links.cache_alias_type_arguments(ty, &types);
         }
-        links.cache_infer_type_parameters(TypeId(8), &types);
         links.forget_restrictive_instantiations();
         links.note_uncached_derivation();
         links.note_circular_mapped_constraint();
@@ -527,7 +482,6 @@ mod tests {
             assert_eq!(links.alias_symbol(ty), None);
             assert_eq!(links.alias_type_arguments(ty), None);
         }
-        assert_eq!(links.infer_type_parameters(TypeId(8)), None);
         assert_eq!(
             (links.restrictive_resets, links.uncached_derivations),
             (0, 0)
@@ -547,10 +501,10 @@ mod tests {
         let last = MappedPart::ApparentType as usize;
         links.set_cell(mapped, Kind::Mapped, last, 50, Stored::new());
         links.set_cell(conditional, Kind::Conditional, 0, 60, Stored::new());
-        let row = |ty, kind| [0, 1, 2, 3, 4].map(|at| links.cell(ty, kind, at));
-        assert_eq!(row(conditional, Kind::Conditional), [60, 0, 40, 0, 0]);
+        let row = |ty, kind| [0, 1, 2, 3].map(|at| links.cell(ty, kind, at));
+        assert_eq!(row(conditional, Kind::Conditional), [60, 0, 40, 0]);
         assert_eq!(row(conditional, Kind::Mapped), [0; PARTS]);
-        assert_eq!(row(mapped, Kind::Mapped), [0, 50, 0, 0, 0]);
+        assert_eq!(row(mapped, Kind::Mapped), [0, 50, 0, 0]);
         assert_eq!(row(mapped, Kind::Conditional), [0; PARTS]);
         assert_eq!(row(TypeId(8), Kind::Mapped), [0; PARTS]);
     }
@@ -577,27 +531,6 @@ mod tests {
         assert_eq!(row(&links, b), [0, 0, 60]);
         links.cache_with_fixed_mapper(FixedMapper::Restrictive, a, 80, Stored::new());
         assert_eq!(row(&links, a), [80, 50, 0]);
-    }
-
-    #[test]
-    fn infer_type_parameters() {
-        let types = [1, 2, LOCAL, LOCAL | 1, LOCAL | 2].map(TypeId);
-        let [none, one, five, too_many, not_requested] = types;
-        let mut links = TypeLinks::default();
-        links.cache_infer_type_parameters(five, &types);
-        links.cache_infer_type_parameters(none, &[]);
-        links.cache_infer_type_parameters(one, &[five]);
-        links.cache_infer_type_parameters(too_many, &[one; MAX_INFER_TYPE_PARAMETERS]);
-        let cached = |ty| links.infer_type_parameters(ty).map(|it| it.to_vec());
-        assert_eq!(cached(none), Some(vec![]));
-        assert_eq!(cached(one), Some(vec![five]));
-        assert_eq!(cached(five), Some(types.to_vec()));
-        assert_eq!(cached(too_many), None);
-        assert_eq!(cached(not_requested), None);
-        let most = [one; MAX_INFER_TYPE_PARAMETERS - 1];
-        links.cache_infer_type_parameters(not_requested, &most);
-        let cached = links.infer_type_parameters(not_requested);
-        assert_eq!(cached.map(|it| it.to_vec()), Some(most.to_vec()));
     }
 
     #[test]

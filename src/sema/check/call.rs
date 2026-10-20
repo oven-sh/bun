@@ -503,11 +503,6 @@ impl<'p, 's> Checker<'p, 's> {
             // `resolveCall` reported from the temporary types stay.
             self.reported.extend(reported);
         }
-        // `getResolvedSignature` assigns `links.resolvedSignature = result` only with an empty
-        // `flowLoopStack`. This handles a result that isn't stored in `Program::calls`.
-        if !self.is_in_flow_loop() {
-            self.resolved_signatures.insert((file, call));
-        }
         resolved
     }
 

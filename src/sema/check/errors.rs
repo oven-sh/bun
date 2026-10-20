@@ -175,7 +175,6 @@ impl Checker<'_, '_> {
         self.thisless_members.retain(|key, _| is_kept(key.file));
         self.permanently_early_bound
             .retain(|key| is_kept(key.0.file));
-        self.resolved_signatures.retain(|key| is_kept(key.0));
         self.context_checked_here.retain(|key| is_kept(key.0));
         self.prepared.retain(|key| is_kept(key.0));
         self.circular_before_parameter_symbol
@@ -198,7 +197,6 @@ impl Checker<'_, '_> {
             + self.late_bound_members.len()
             + self.thisless_members.len()
             + self.permanently_early_bound.len()
-            + self.resolved_signatures.len()
             + self.context_checked_here.len()
             + self.prepared.len()
             + self.circular_before_parameter_symbol.len()

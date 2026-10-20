@@ -119,10 +119,9 @@ impl<'s> Checker<'_, 's> {
             // the aliases among its candidates, and `getTargetOfAliasLikeExpression` checks.
             self.report_unresolved_identifiers();
             unvisited.append(&mut self.unvisited_exprs);
-            let (visited, rest): (Vec<_>, Vec<_>) = unvisited.into_iter().partition(|&(_, e)| {
-                self.cached_type_of_expr(file, e).is_some()
-                    || self.checked_with_contextual_type.contains(&(file, e))
-            });
+            let (visited, rest): (Vec<_>, Vec<_>) = unvisited
+                .into_iter()
+                .partition(|&(_, e)| self.cached_type_of_expr(file, e).is_some());
             unvisited = rest;
             if visited.is_empty() {
                 break;
@@ -147,19 +146,6 @@ impl<'s> Checker<'_, 's> {
         never_checked
             .iter()
             .any(|&(from, to)| (from..to).contains(&pos))
-    }
-
-    /// Records that `getTypeFromBindingElement` has checked `initializer`, in the parameter `root`.
-    pub(super) fn note_checked_with_contextual_type(
-        &mut self,
-        file: FileId,
-        root: ParamId,
-        initializer: ExprId,
-    ) {
-        let func = self.bound(file).param_fn[root.idx()];
-        if func.is_some() && !has_body(&self.hir(file)[func]) {
-            self.checked_with_contextual_type.push((file, initializer));
-        }
     }
 
     /// `checkSourceElements`

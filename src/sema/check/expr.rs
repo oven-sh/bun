@@ -1727,7 +1727,6 @@ impl<'p, 's> Checker<'p, 's> {
                 if self
                     .check_mode()
                     .contains(CheckMode::SKIP_GENERIC_FUNCTIONS)
-                    && !self.resolved_signatures.contains(&(file, e))
                     && self.p.calls.get(&self.task, &(file, e)).is_none()
                     && self.defers_call_of_generic_function(file, e)
                 {

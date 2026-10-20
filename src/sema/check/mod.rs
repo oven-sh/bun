@@ -1029,7 +1029,6 @@ impl<'s> Program<'s> {
             reported_unreachable_nodes: Vec::new(),
             renamed_binding_elements_in_types: Vec::new(),
             unvisited_exprs: Vec::new(),
-            checked_with_contextual_type: Vec::new(),
             contextual_signatures_at_check: Vec::new(),
             call_resolution_errors: None,
             is_call_re_resolved: false,
@@ -1038,7 +1037,6 @@ impl<'s> Program<'s> {
             assigned_unknown: Vec::new(),
             context_checking: Vec::new(),
             context_checked_here: Default::default(),
-            resolved_signatures: Default::default(),
             in_check_identifier: Vec::new(),
             resolved_meanwhile: Vec::new(),
             signatures_resolved_within: Vec::new(),
@@ -1989,9 +1987,6 @@ pub struct Checker<'p, 's> {
     /// (`checkVariableLikeDeclaration`), operands of `yield` (`checkYieldExpression`). Such an
     /// expression is checked only if the type of a declaration is computed from it.
     unvisited_exprs: Vec<(u32, ExprId)>,
-    /// The initializers in the parameters of functions without a body that `getTypeFromBindingElement`
-    /// has checked. `checkExpressionWithContextualType` doesn't store a type.
-    checked_with_contextual_type: Vec<(FileId, ExprId)>,
     /// `getContextualSignature` as `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` got it, before the
     /// inference context instantiates it, for the functions for which `contextual_param_type_at_check` is requested.
     contextual_signatures_at_check: Vec<((FileId, FnId), SigId)>,
@@ -2021,10 +2016,6 @@ pub struct Checker<'p, 's> {
     /// The patterns of the parameters whose `links.resolvedType` is `unknown` while
     /// `assignParameterType` computes the type of the pattern to replace it.
     assigned_unknown: Vec<(FileId, PatId)>,
-    /// `links.resolvedSignature != nil` for the calls that this checker has resolved and that
-    /// `Program::calls` may not have. tsgo caches a signature that was resolved inside a cycle, and
-    /// `calls` doesn't. Whether a call is deferred under `CheckModeSkipGenericFunctions` depends on both.
-    resolved_signatures: crate::util::FxHashSet<(FileId, ExprId)>,
     /// The functions whose first check is in progress, see `context_checked`. They're published to
     /// `Program::context_checked`, for every thread, only together with the results of the first check.
     /// A thread that found one without the other would continue without doing its own first check. The

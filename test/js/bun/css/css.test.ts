@@ -225,34 +225,36 @@ describe("css tests", () => {
     // A keyframe with such a selector is dropped. Chrome drops a keyframe whose selector is a math function.
     minify_test(`@keyframes k { calc(50% + 1) { color: red } to { color: blue } }`, `@keyframes k{to{color:#00f}}`);
     minify_test(`@keyframes k { calc(50% + 25%) { color: red } }`, `@keyframes k{75%{color:red}}`);
-    // A typed `initial-value` has no unparsed form: the rule is an error.
     const property = (syntax: string, value: string) =>
       cssInternals.minifyTest(`@property --p { syntax: '${syntax}'; inherits: false; initial-value: ${value}; }`, "");
-    test("@property with an initial-value that adds a <number> to a <percentage>", () => {
-      expect(() => property("<percentage>", "calc(50% + 1)")).toThrow("Unexpected token: calc(");
-      expect(() => property("<color>", "rgb(calc(10 + 10%) 0 0)")).toThrow("Unexpected token: rgb(");
-      expect(() => property("<image>", "linear-gradient(rgb(calc(10 + 10%) 0 0), red)")).toThrow(
-        "Unexpected token: linear-gradient(",
-      );
-      expect(() => property("<transform-function>", "scale(calc(50% + 1))")).toThrow("Unexpected token: scale(");
-      expect(() => property("<transform-list>", "scale(calc(50% + 1))")).toThrow("Unexpected token: scale(");
-      expect(property("<percentage>", "calc(50% + 25%)")).toBe(
-        '@property --p{syntax:"<percentage>";inherits:false;initial-value:75%}',
-      );
+    const rule = (syntax: string, value: string) =>
+      `@property --p{syntax:"${syntax}";inherits:false;initial-value:${value}}`;
+    test("@property with an initial-value that is a sum of percentages", () => {
+      expect(property("<percentage>", "calc(50% + 25%)")).toBe(rule("<percentage>", "75%"));
       // The universal syntax has no type, so the value stays as written.
-      expect(property("*", "calc(50% + 1)")).toBe(
-        '@property --p{syntax:"*";inherits:false;initial-value:calc(50% + 1)}',
-      );
+      expect(property("*", "calc(50% + 1)")).toBe(rule("*", "calc(50% + 1)"));
     });
-    // These two values are valid, and fail with `Unexpected token: hsl(` and `Unexpected token: calc(`.
-    // https://github.com/oven-sh/bun/pull/45807 keeps a typed value that no component matches as written.
-    test.todo("@property with a valid initial-value that is not reduced", () => {
-      expect(property("<color>", "hsl(from blue h s calc(l + 20))")).toBe(
-        '@property --p{syntax:"<color>";inherits:false;initial-value:hsl(from blue h s calc(l + 20))}',
-      );
-      expect(property("<percentage>", "calc(50% + abs(-10%))")).toBe(
-        '@property --p{syntax:"<percentage>";inherits:false;initial-value:calc(50% + abs(-10%))}',
-      );
+    // A typed `initial-value` has no unparsed form, so each of these is an `Unexpected token` error.
+    // https://github.com/oven-sh/bun/pull/45806 keeps a typed value that no component matches as written.
+    test.todo("@property with a typed initial-value that is not reduced", () => {
+      expect({
+        "<percentage>": property("<percentage>", "calc(50% + 1)"),
+        "<color>": property("<color>", "rgb(calc(10 + 10%) 0 0)"),
+        "<image>": property("<image>", "linear-gradient(rgb(calc(10 + 10%) 0 0), red)"),
+        "<transform-function>": property("<transform-function>", "scale(calc(50% + 1))"),
+        "<transform-list>": property("<transform-list>", "scale(calc(50% + 1))"),
+        // The next two values are valid.
+        "<color>, relative": property("<color>", "hsl(from blue h s calc(l + 20))"),
+        "<percentage>, abs()": property("<percentage>", "calc(50% + abs(-10%))"),
+      }).toEqual({
+        "<percentage>": rule("<percentage>", "calc(50% + 1)"),
+        "<color>": rule("<color>", "rgb(calc(10 + 10%)0 0)"),
+        "<image>": rule("<image>", "linear-gradient(rgb(calc(10 + 10%)0 0),red)"),
+        "<transform-function>": rule("<transform-function>", "scale(calc(50% + 1))"),
+        "<transform-list>": rule("<transform-list>", "scale(calc(50% + 1))"),
+        "<color>, relative": rule("<color>", "hsl(from blue h s calc(l + 20))"),
+        "<percentage>, abs()": rule("<percentage>", "calc(50% + abs(-10%))"),
+      });
     });
   });
   describe("a calculation that is NaN in a color channel", () => {

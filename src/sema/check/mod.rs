@@ -1026,8 +1026,6 @@ impl<'s> Program<'s> {
             left_a_renamed_param_unchanged: Default::default(),
             instantiating_generic_argument: None,
             prepared: Default::default(),
-            last_prepared: (FileId(u32::MAX), FnId::NONE),
-            prepared_exprs: (FileId(u32::MAX), Vec::new()),
             stack_base: stack_pointer(),
             stack_limit: 6 << 20,
             work: 0,
@@ -2044,9 +2042,6 @@ pub struct Checker<'p, 's> {
     instantiating_generic_argument: Option<(FileId, ExprId, usize)>,
     /// Functions whose context `prepare_enclosing` has already prepared.
     prepared: crate::util::FxHashSet<(FileId, FnId)>,
-    last_prepared: (FileId, FnId),
-    /// A file, and which of its expressions `prepare_ancestors` has processed.
-    prepared_exprs: (FileId, Vec<bool>),
     /// The stack pointer when the checker was created, and how far below that it may go.
     stack_base: usize,
     stack_limit: usize,

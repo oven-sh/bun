@@ -96,29 +96,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// outermost first, so that a query about something inside doesn't become circular through
     /// them.
     pub fn prepare_enclosing(&mut self, file: FileId, e: ExprId) {
-        self.prepare_ancestors(file, e);
+        self.prepare_parent(file, self.bound(file).parent_of_expr(e));
         self.prepare_context(file, e);
-    }
-
-    /// `prepare_parent` for the ancestors of `e`. In the file being checked, `e` and its ancestor
-    /// expressions are marked on the way up. A descendant of a marked expression is in the same
-    /// function, which has already been through `prepare_outermost_first`.
-    fn prepare_ancestors(&mut self, file: FileId, e: ExprId) {
-        let bound = self.bound(file);
-        if self.prepared_exprs.0 != file {
-            if self.task.file != Some(file) {
-                return self.prepare_parent(file, bound.parent_of_expr(e));
-            }
-            self.prepared_exprs = (file, vec![false; self.hir(file).exprs.len()]);
-        }
-        let mut at = e;
-        while !std::mem::replace(&mut self.prepared_exprs.1[at.idx()], true) {
-            at = match bound.parent_of_expr(at) {
-                Parent::Expr(parent) => parent,
-                Parent::Prop(p) => bound.prop_owner[p.idx()],
-                parent => return self.prepare_parent(file, parent),
-            };
-        }
     }
 
     /// Same for a query about the parameters or the return type of `func`.
@@ -135,9 +114,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Prepares the functions enclosing `func` first. If `func` has been through here before, all
     /// of them are already prepared.
     fn prepare_outermost_first(&mut self, file: FileId, func: FnId) {
-        // Consecutive queries are about the same function.
-        if self.last_prepared == (file, func) || !self.prepared.insert((file, func)) {
-            self.last_prepared = (file, func);
+        if !self.prepared.insert((file, func)) {
             return;
         }
         let info = &self.bound(file).fns[func.idx()];
@@ -148,7 +125,6 @@ impl<'p, 's> Checker<'p, 's> {
         if let FnOwner::Expr(owner) = owner {
             self.prepare_context(file, owner);
         }
-        self.last_prepared = (file, func);
     }
 
     /// If `e` is (part of) an argument, resolves the call.

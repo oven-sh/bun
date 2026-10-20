@@ -277,8 +277,11 @@ describe("css tests", () => {
     minify_test(`a { line-height: hypot(3, 4) }`, `a{line-height:5}`);
     minify_test(`a { width: hypot(3px, 4px) }`, `a{width:5px}`);
     minify_test(`a { line-height: calc(hypot(3e30, 4e30) / 1e30) }`, `a{line-height:5}`);
-    minify_test(`a { line-height: hypot(infinity, NaN) }`, `a{line-height:3.40282e38}`);
-    minify_test(`a { line-height: hypot(NaN, infinity) }`, `a{line-height:3.40282e38}`);
+    minify_test(`a { line-height: hypot(infinity, 5) }`, `a{line-height:3.40282e38}`);
+    minify_test(`a { line-height: hypot(5, -infinity) }`, `a{line-height:3.40282e38}`);
+    // In CSS a NaN wins over an infinity, unlike in C: WPT css/css-values/hypot-pow-sqrt-computed.html.
+    minify_test(`a { line-height: hypot(infinity, NaN) }`, `a{line-height:0}`);
+    minify_test(`a { line-height: hypot(NaN, infinity) }`, `a{line-height:0}`);
     minify_test(`a { line-height: log(0.125, 0.5) }`, `a{line-height:3}`);
     minify_test(`a { line-height: log(infinity, 2) }`, `a{line-height:3.40282e38}`);
     minify_test(`a { line-height: log(0, 2) }`, `a{line-height:-3.40282e38}`);

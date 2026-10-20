@@ -30,10 +30,6 @@ pub(crate) fn log(x: f32, base: f32) -> f32 {
 /// The squares of two `f32` are exact in `f64`, and their sum does not overflow.
 #[inline(never)]
 pub(crate) fn hypot(x: f32, y: f32) -> f32 {
-    // C99 F.10.4.3: an infinity wins over a NaN.
-    if x.is_infinite() || y.is_infinite() {
-        return f32::INFINITY;
-    }
     let (x, y) = (f64::from(x), f64::from(y));
     (x * x + y * y).sqrt() as f32
 }

@@ -44,20 +44,6 @@ fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
         .set(blob::BlobContentType::from(mime_type));
 }
 
-/// A name in the MIME table is interned, so `slice()` keeps it as it keeps
-/// the same name from `options.type`. The value `MimeType::init` gives stays.
-fn mime_type_from_header(value: &[u8]) -> MimeType {
-    let mime_type = MimeType::init(value, true, None);
-    if matches!(mime_type.value, std::borrow::Cow::Owned(_)) {
-        if let Some(interned) = bun_http_types::MimeType::by_name_static(value) {
-            if *interned.value == *mime_type.value {
-                return interned;
-            }
-        }
-    }
-    mime_type
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // Local shims for upstream-gated `JsClass` impls / `AnyPromise` methods.
 // These adapt call sites in this file without editing `bun_jsc` (orphan rule).
@@ -1170,7 +1156,7 @@ impl Value {
                                 fetch_headers.fast_get(HTTPHeaderName::ContentType)
                             {
                                 let content_slice = content_type.to_utf8();
-                                let mime_type = mime_type_from_header(content_slice.slice());
+                                let mime_type = MimeType::init(content_slice.slice(), true, None);
                                 set_blob_content_type(blob, mime_type);
                             }
                         }
@@ -2200,7 +2186,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
                 if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
                     let content_slice = content_type.to_utf8();
-                    let mime_type = mime_type_from_header(content_slice.slice());
+                    let mime_type = MimeType::init(content_slice.slice(), true, None);
                     set_blob_content_type(blob, mime_type);
                 }
             }

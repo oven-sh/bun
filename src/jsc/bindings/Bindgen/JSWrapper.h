@@ -57,7 +57,28 @@ protected:
 };
 
 template<typename Traits>
-using JSWrapperBase = std::conditional_t<Traits::refCounted, JSRefCountedWrapperBase<Traits>, JSC::JSDestructibleObject>;
+using JSFieldlessWrapperBase = std::conditional_t<Traits::refCounted, JSRefCountedWrapperBase<Traits>, JSC::JSDestructibleObject>;
+
+// A base class, so that the method table of a class without internal fields keeps JSObject::visitChildren and analyzeHeap.
+template<typename Traits>
+class JSInternalFieldsWrapperBase : public JSFieldlessWrapperBase<Traits> {
+public:
+    using Base = JSFieldlessWrapperBase<Traits>;
+
+    DECLARE_VISIT_CHILDREN;
+
+    static void analyzeHeap(JSC::JSCell* cell, JSC::HeapAnalyzer& analyzer)
+    {
+        Base::analyzeHeap(cell, analyzer);
+        analyzeInternalFields(cell, analyzer, uncheckedDowncast<JSWrapper<Traits>>(cell)->internalFields(), Traits::internalFieldNames);
+    }
+
+protected:
+    using Base::Base;
+};
+
+template<typename Traits>
+using JSWrapperBase = std::conditional_t<Traits::internalFieldNames.empty(), JSFieldlessWrapperBase<Traits>, JSInternalFieldsWrapperBase<Traits>>;
 
 // JSDestructibleObject | WriteBarrier internalFields[numberOfInternalFields] | the Rust payload
 template<typename Traits>
@@ -70,13 +91,6 @@ public:
     static constexpr unsigned numberOfInternalFields = Traits::internalFieldNames.size();
 
     DECLARE_INFO;
-    DECLARE_VISIT_CHILDREN;
-
-    static void analyzeHeap(JSC::JSCell* cell, JSC::HeapAnalyzer& analyzer)
-    {
-        Base::analyzeHeap(cell, analyzer);
-        analyzeInternalFields(cell, analyzer, uncheckedDowncast<JSWrapper>(cell)->internalFields(), Traits::internalFieldNames);
-    }
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -121,7 +135,11 @@ public:
     static void destroy(JSC::JSCell* cell)
     {
         STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSWrapper);
-        Traits::finalize(static_cast<JSWrapper*>(cell)->payload());
+        auto* thisObject = static_cast<JSWrapper*>(cell);
+        if constexpr (Traits::refCounted)
+            Traits::finalize(thisObject->wrapped());
+        else
+            Traits::finalize(thisObject->payload());
     }
 
     static constexpr size_t offsetOfInternalFields() { return sizeof(Base); }
@@ -163,16 +181,18 @@ private:
 
 template<typename Traits>
 template<typename Visitor>
-void JSWrapper<Traits>::visitChildrenImpl(JSC::JSCell* cell, Visitor& visitor)
+void JSInternalFieldsWrapperBase<Traits>::visitChildrenImpl(JSC::JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = uncheckedDowncast<JSWrapper>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    auto* thisObject = uncheckedDowncast<JSWrapper<Traits>>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, JSWrapper<Traits>::info());
     Base::visitChildren(thisObject, visitor);
     // Hidden: `analyzeHeap` reports them by name.
-    visitor.appendValuesHidden(thisObject->internalFields().data(), numberOfInternalFields);
+    [&]<size_t... index>(std::index_sequence<index...>) {
+        (visitor.appendHidden(thisObject->internalField(index)), ...);
+    }(std::make_index_sequence<JSWrapper<Traits>::numberOfInternalFields>());
 }
 
-DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<typename Traits>, JSWrapper<Traits>);
+DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<typename Traits>, JSInternalFieldsWrapperBase<Traits>);
 
 template<typename Traits>
 const JSC::ClassInfo JSWrapper<Traits>::s_info = { Traits::className, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWrapper) };

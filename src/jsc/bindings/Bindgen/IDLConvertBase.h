@@ -13,7 +13,7 @@ struct ContextBase : Bun::IDLConversionContextBase<Derived> {
     void throwGenericTypeError(
         JSC::JSGlobalObject& global,
         JSC::ThrowScope& scope,
-        String&& message)
+        String&& message) const
     {
         Bun::throwError(
             &global,
@@ -26,7 +26,7 @@ struct ContextBase : Bun::IDLConversionContextBase<Derived> {
     void throwGenericRangeError(
         JSC::JSGlobalObject& global,
         JSC::ThrowScope& scope,
-        String&& message)
+        String&& message) const
     {
         Bun::throwError(&global, scope, ErrorCode::ERR_OUT_OF_RANGE, std::forward<String>(message));
     }
@@ -41,7 +41,7 @@ struct ElementOf : ContextBase<ElementOf<Parent>> {
     {
     }
 
-    auto source()
+    auto source() const
     {
         return WTF::makeString("element of "_s, m_parent.source());
     }
@@ -62,7 +62,7 @@ struct LiteralConversionContext : Detail::ContextBase<LiteralConversionContext> 
     {
     }
 
-    auto source()
+    auto source() const
     {
         return m_name;
     }
@@ -86,13 +86,13 @@ struct NodeArgumentContext : Detail::ContextBase<NodeArgumentContext> {
     {
     }
 
-    auto source()
+    auto source() const
     {
         return m_name;
     }
 
     template<typename String>
-    void throwGenericTypeError(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, String&&)
+    void throwGenericTypeError(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, String&&) const
     {
         Bun::ERR::INVALID_ARG_TYPE(scope, &global, m_name, m_expected, m_actual);
     }
@@ -113,13 +113,13 @@ struct ArgumentMessageContext : Detail::ContextBase<ArgumentMessageContext> {
     {
     }
 
-    auto source()
+    auto source() const
     {
         return m_name;
     }
 
     template<typename String>
-    void throwGenericTypeError(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, String&&)
+    void throwGenericTypeError(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, String&&) const
     {
         Bun::throwError(&global, scope, ErrorCode::ERR_INVALID_ARG_TYPE, m_message);
     }

@@ -467,7 +467,7 @@ template<> std::optional<${type.cpp}> WebCore::parseEnumeration<${type.cpp}>(JSC
 
 /** Made of literals, so it is static and a call stores nothing for it. */
 const cppStaticContext = (variable: string, context: string) =>
-  `[[maybe_unused]] static constinit auto ${variable} = Bun::Bindgen::${context};`;
+  `[[maybe_unused]] static constexpr auto ${variable} = Bun::Bindgen::${context};`;
 
 function cppSourceForDictionary(type: DictionaryType): string {
   if (!type.accepted) return "";
@@ -1506,14 +1506,7 @@ bindgen::host_fn_return(cx, result, |heap, value| ${getter.type.rustToJS("value"
     );
   }
 
-  const finalize = `#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(payload: *mut ${refCounted ? `bun_ptr::RefPtr<${rustPath}>` : rustPath}) {
-    // SAFETY: the sweeper calls this once, on an initialized payload nothing refers to.
-    unsafe {${type.finalize ? `\n        ${callee}::finalize(&*payload);` : ""}
-        core::ptr::drop_in_place(payload)
-    }
-}`;
-  if (refCounted) return `${rustForRefCounted(type)}${finalize}\n${thunks}`;
+  if (refCounted) return `${rustForRefCounted(type)}${thunks}`;
 
   const fieldDeclarations = type.internalFields
     .map(field => {
@@ -1561,7 +1554,11 @@ unsafe impl bindgen::JsPayload for ${rustPath} {
 const _: () = assert!(align_of::<${rustPath}>() <= 8);
 #[unsafe(no_mangle)]
 pub static ${symbolName(type, "payloadSize")}: usize = size_of::<${rustPath}>();
-${finalize}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(payload: *mut ${rustPath}) {
+    // SAFETY: the sweeper calls this once, on an initialized payload nothing refers to.
+    unsafe { core::ptr::drop_in_place(payload) }
+}
 ${
   type.internalFields.length > 0
     ? `/// The JS values a \`${name}\` holds.
@@ -1612,6 +1609,13 @@ unsafe extern "C" {
 }
 #[unsafe(no_mangle)]
 pub static ${symbolName(type, "wrappedSize")}: usize = size_of::<${rustPath}>();
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(wrapped: *mut ${rustPath}) {
+    // SAFETY: the sweeper calls this once, with the ref the object owns.
+    unsafe {${type.finalize ? `\n        ${rustPath}::finalize(&*wrapped);` : ""}
+        drop(bun_ptr::RefPtr::from_raw(wrapped))
+    }
+}
 impl ${rustPath} {
     /// A new JS object that owns the caller's ref on \`ptr\`.
     ///

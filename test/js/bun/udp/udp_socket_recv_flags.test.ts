@@ -15,7 +15,7 @@ describe("udpSocket() receive flags", () => {
         data(_socket, _data, _port, _address, flags) {
           resolve(flags);
         },
-        error(_socket, err) {
+        error(err) {
           reject(err);
         },
       },
@@ -58,7 +58,7 @@ describe("udpSocket() receive flags", () => {
           error(err: Error & { code?: string }) {
             resolveErr(err);
           },
-        } as any,
+        },
       });
 
       // Send to a closed port on localhost. The kernel replies with ICMP

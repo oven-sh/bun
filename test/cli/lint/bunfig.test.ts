@@ -1072,6 +1072,64 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
     }
   });
 
+  describe("without a config file, ignorePatterns are .gitignore lines, as with an .oxlintrc.json", () => {
+    const configs = [{}, { ".oxlintrc.json": `{ "rules": { "no-debugger": "error" } }` }];
+    const withCode = (...paths: string[]) => Object.fromEntries(paths.map(path => [path, "debugger;\n"]));
+    const found = (...paths: string[]) => paths.map(path => `${path}:1 no-debugger`);
+
+    test("a leading / is bunfig.toml's directory, and a ! keeps a directory", async () => {
+      const files = {
+        "bunfig.toml": `[lint]\nignorePatterns = ["/*", "!/src", "/src/*", "!/src/js"]\n`,
+        ...withCode("top.js", "src/a.js", "src/js/b.js", "src/js/deep/c.js", "src/other/d.js", "packages/src/js/e.js"),
+        // An ignored directory isn't entered, so the config files in it aren't read.
+        "packages/.eslintrc.json": "{ not JSON",
+      };
+      for (const config of configs) {
+        for (const cwd of [".", "src/js"]) {
+          expect(await lintIn(cwd, { ...files, ...config }, [])).toMatchObject({
+            found: found("src/js/b.js", "src/js/deep/c.js"),
+            exitCode: 1,
+          });
+        }
+      }
+    });
+
+    test("a pattern without a / in the middle matches in every directory", async () => {
+      const files = {
+        "bunfig.toml": `[lint]\nignorePatterns = ["vendor/", "*.gen.{js,ts}", "!keep.gen.js"]\n`,
+        ...withCode("vendor/a.js", "pkg/vendor/b.js", "pkg/c.gen.js", "pkg/d.gen.ts", "pkg/keep.gen.js", "pkg/e.js"),
+      };
+      for (const config of configs) {
+        for (const cwd of [".", "pkg"]) {
+          expect((await lintIn(cwd, { ...files, ...config }, [])).found).toEqual(found("pkg/e.js", "pkg/keep.gen.js"));
+        }
+      }
+      // With an eslint.config.js they're added to its `ignores`, which are globs relative to bunfig.toml.
+      const eslint = {
+        "eslint.config.js": `export default [{ files: ["**/*.{js,ts}"], rules: { "no-debugger": "error" } }];`,
+      };
+      expect((await lintIn(".", { ...files, ...eslint }, ["pkg", "vendor/a.js"])).found).toEqual(
+        found("pkg/c.gen.js", "pkg/d.gen.ts", "pkg/e.js", "pkg/keep.gen.js", "pkg/vendor/b.js"),
+      );
+    });
+
+    test("a file or a directory passed as an argument is ignored too", async () => {
+      const files = {
+        "bunfig.toml": `[lint]\nignorePatterns = ["vendor/"]\n`,
+        ...withCode("pkg/vendor/deep/a.js", "pkg/b.js"),
+      };
+      const [file, directory, all] = await Promise.all([
+        lintIn(".", files, ["pkg/vendor/deep/a.js", "pkg/b.js"]),
+        lintIn(".", files, ["pkg/vendor/deep"]),
+        lintIn(".", files, ["--no-ignore", "pkg/vendor/deep"]),
+      ]);
+      expect(file.found).toEqual(found("pkg/b.js"));
+      expect(directory.stderr).toContain(`all of the files matching the glob pattern "pkg/vendor/deep" are ignored`);
+      expect(directory.exitCode).toBe(2);
+      expect(all.found).toEqual(found("pkg/vendor/deep/a.js"));
+    });
+  });
+
   test.each([
     ["./other", "./another"],
     // Exactly the same options as the flag.

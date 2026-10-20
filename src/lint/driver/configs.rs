@@ -633,7 +633,8 @@ fn without_global_ignores(mut json: Json) -> Json {
         }
         Json::Object(entries) => {
             let is_meta = |key: &[u8]| matches!(key, b"name" | b"basePath");
-            let is_ignores = |key: &[u8]| matches!(key, b"ignores" | b"$ignorePatterns");
+            let is_ignores =
+                |key: &[u8]| matches!(key, b"ignores" | b"$ignorePatterns" | b"$gitignoreLines");
             if entries.iter().any(|it| is_ignores(&it.0))
                 && entries.iter().filter(|it| !is_meta(&it.0)).count() == 1
             {
@@ -1203,11 +1204,18 @@ impl<'l> Loader<'l> {
     /// [`Loader::override_config`].
     fn added(&self, base_path: &[u8], shape: Shape) -> Vec<Json> {
         let mut added = Vec::new();
-        for (start, patterns) in self.ignore_patterns() {
+        // Without a config file, bunfig.toml's patterns are `.gitignore` lines, as they are with every config file but an
+        // `eslint.config.*`.
+        let bunfig_key: &[u8] = match shape {
+            Shape::Native => b"$gitignoreLines",
+            _ => b"ignores",
+        };
+        let keys = [bunfig_key, b"ignores"];
+        for ((start, patterns), key) in self.ignore_patterns().into_iter().zip(keys) {
             if !patterns.is_empty() {
                 added.push(object(vec![
                     (b"basePath", Json::String(start)),
-                    (b"ignores", strings_of(patterns)),
+                    (key, strings_of(patterns)),
                 ]));
             }
         }

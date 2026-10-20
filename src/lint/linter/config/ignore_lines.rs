@@ -1,11 +1,12 @@
-//! `ignorePatterns` from `.oxlintrc.json` and from ESLint 8 config files. Both are lists of `.gitignore`-style lines.
+//! `ignorePatterns` from `.oxlintrc.json`, from ESLint 8 config files, and from a bunfig.toml without a config file. All
+//! are lists of `.gitignore`-style lines.
 //! [`crate::ignore`] does the matching. This module calls it the way each tool does.
 
 use crate::ignore::{IgnoreOptions, IgnoreRules, Verdict};
 
 pub(super) struct IgnoreLines {
     rules: IgnoreRules,
-    /// Otherwise they're ESLint 8's.
+    /// They're from an `.oxlintrc.json`.
     is_oxlint: bool,
 }
 
@@ -19,6 +20,15 @@ impl IgnoreLines {
         IgnoreLines {
             rules: IgnoreRules::from_lines(lines.iter().copied(), options),
             is_oxlint: true,
+        }
+    }
+
+    /// Returns lines that are matched like those of a `.gitignore` that oxlint reads. That's how bunfig.toml's
+    /// `ignorePatterns` are matched with an oxlint config too.
+    pub(super) fn of_bunfig(lines: &[&[u8]]) -> IgnoreLines {
+        IgnoreLines {
+            is_oxlint: false,
+            ..IgnoreLines::of_oxlint(lines)
         }
     }
 

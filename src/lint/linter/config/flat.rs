@@ -316,8 +316,8 @@ fn validate_object(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> {
                 _ => expected_object(),
             },
             // Bun's own keys. See `Config::from_flat_json_with_plugins`.
-            b"$changesLinter" | b"$defaultOptions" | b"$framework" | b"$globsOfBun" | b"$ignorePatterns"
-            | b"$jsPlugins" | b"$otherPlugins" | b"$packageType" | b"$parser" | b"$pluginModules" | b"$processor"
+            b"$changesLinter" | b"$defaultOptions" | b"$framework" | b"$gitignoreLines" | b"$globsOfBun"
+            | b"$ignorePatterns" | b"$jsPlugins" | b"$otherPlugins" | b"$packageType" | b"$parser" | b"$pluginModules" | b"$processor"
             | b"$severityByKind" | b"$source"
             | b"$withoutWarnings" => None,
             b"rules" if !is_object(value) => expected_object(),
@@ -654,6 +654,10 @@ impl Reader<'_> {
         }
         if let Some(lines) = json.get(b"$ignorePatterns") {
             object.ignore_lines = Some(IgnoreLines::of_eslint_8(&strings_of(Some(lines))));
+            object.is_global_ignores = true;
+        }
+        if let Some(lines) = json.get(b"$gitignoreLines") {
+            object.ignore_lines = Some(IgnoreLines::of_bunfig(&strings_of(Some(lines))));
             object.is_global_ignores = true;
         }
         if let Some(message) = validate_object(entries).or_else(|| uncloneable_option(json)) {

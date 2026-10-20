@@ -49,6 +49,25 @@ pub struct ZigException {
 }
 
 impl ZigException {
+    /// An exception over `stack` with no name, message or code yet.
+    pub(crate) fn with_stack(stack: ZigStackTrace) -> Self {
+        ZigException {
+            r#type: JSErrorCode(255),
+            runtime_type: JSRuntimeType::NOTHING,
+            name: String::EMPTY,
+            message: String::EMPTY,
+            exception: ptr::null_mut(),
+            stack,
+            errno: 0,
+            syscall: String::EMPTY,
+            system_code: String::EMPTY,
+            path: String::EMPTY,
+            remapped: false,
+            fd: -1,
+            browser_url: String::EMPTY,
+        }
+    }
+
     pub(crate) fn collect_source_lines(&mut self, value: JSValue, global: &JSGlobalObject) {
         ZigException__collectSourceLines(value, global, self);
     }
@@ -118,13 +137,8 @@ impl Holder {
     }
 
     pub fn zig_exception(&mut self) -> &mut ZigException {
-        self.zig_exception.get_or_insert_with(|| ZigException {
-            r#type: JSErrorCode(255),
-            runtime_type: JSRuntimeType::NOTHING,
-            name: String::EMPTY,
-            message: String::EMPTY,
-            exception: ptr::null_mut(),
-            stack: ZigStackTrace {
+        self.zig_exception.get_or_insert_with(|| {
+            ZigException::with_stack(ZigStackTrace {
                 source_lines_ptr: self.source_lines.as_mut_ptr(),
                 source_lines_numbers: self.source_line_numbers.as_mut_ptr(),
                 source_lines_len: Self::SOURCE_LINES_COUNT as u8,
@@ -133,14 +147,7 @@ impl Holder {
                 frames_len: 0,
                 frames_cap: Self::FRAME_COUNT as u8,
                 referenced_source_provider: None,
-            },
-            errno: 0,
-            syscall: String::EMPTY,
-            system_code: String::EMPTY,
-            path: String::EMPTY,
-            remapped: false,
-            fd: -1,
-            browser_url: String::EMPTY,
+            })
         })
     }
 }

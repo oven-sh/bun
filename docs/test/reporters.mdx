@@ -85,6 +85,20 @@ It includes the following environment variables when available:
 | `GITHUB_SHA`, `CI_COMMIT_SHA`, `GIT_SHA`                                | `commit`      | Git commit identifiers |
 | System hostname                                                         | `hostname`    | Machine hostname       |
 
+#### Failures Outside of a Test
+
+A failure that is not a finished test is a failed `<testcase>` in the suite of its file. Its name is in parentheses:
+
+| Test case             | The failure                                                                                  |
+| --------------------- | -------------------------------------------------------------------------------------------- |
+| `(load error)`        | The file failed to load: a syntax error, a failed import or an error thrown at the top level |
+| `(describe callback)` | The callback of a `describe` block threw an error                                            |
+| `(unhandled error)`   | An error that no running test owns, for example a rejection that nothing handles             |
+| `(worker crashed)`    | `--parallel`: the worker process died while it ran the file                                  |
+| `(aborted)`           | `--parallel`: the file was running when another worker crashed                               |
+
+The `failures` attributes count these test cases and the failed tests. A run with no test case to record does not write the report file. With `--parallel`, a file that no worker started before the run stopped has no `<testsuite>`.
+
 #### Current Limitations
 
 The JUnit reporter does not include:

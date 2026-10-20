@@ -7,7 +7,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
-import { parseJunitFileSuites } from "../../scripts/buildkite.ts";
+import { isAbortedFileSuite, parseJunitFileSuites } from "../../scripts/buildkite.ts";
 
 const parse = (xml: string) => Object.fromEntries(parseJunitFileSuites(xml));
 
@@ -95,6 +95,49 @@ describe("parseJunitFileSuites", () => {
   test("reports nothing for a report without file suites", () => {
     expect(parse("")).toEqual({});
     expect(parse(`<testsuites name="bun test" tests="0" failures="0" time="0">\n</testsuites>\n`)).toEqual({});
+  });
+
+  test("tells a file that a worker panic aborted from a file that failed", () => {
+    // What bun test --parallel writes when a worker panics: every file that was still
+    // running gets "(aborted)" after the cases it finished, and the file of the worker
+    // that died gets "(worker crashed)".
+    const xml = `<testsuites name="bun test" tests="6" assertions="2" failures="5" skipped="0" time="1">
+  <testsuite name="test/nothing-finished.test.ts" file="test/nothing-finished.test.ts" tests="1" assertions="0" failures="1" skipped="0" time="0">
+    <testcase name="(aborted)" classname="" time="0" file="test/nothing-finished.test.ts" assertions="0">
+      <failure type="Error" message="aborted: sibling worker panicked" />
+    </testcase>
+  </testsuite>
+  <testsuite name="test/passed-so-far.test.ts" file="test/passed-so-far.test.ts" tests="2" assertions="1" failures="1" skipped="0" time="0">
+    <testcase name="passes first" classname="" time="0.001" file="test/passed-so-far.test.ts" line="4" assertions="1" />
+    <testcase name="(aborted)" classname="" time="0" file="test/passed-so-far.test.ts" assertions="0">
+      <failure type="Error" message="aborted: sibling worker panicked" />
+    </testcase>
+  </testsuite>
+  <testsuite name="test/failed-already.test.ts" file="test/failed-already.test.ts" tests="2" assertions="1" failures="2" skipped="0" time="0">
+    <testcase name="fails first" classname="" time="0.001" file="test/failed-already.test.ts" line="4" assertions="1">
+      <failure type="AssertionError" message="expect(received).toBe(expected)" />
+    </testcase>
+    <testcase name="(aborted)" classname="" time="0" file="test/failed-already.test.ts" assertions="0">
+      <failure type="Error" message="aborted: sibling worker panicked" />
+    </testcase>
+  </testsuite>
+  <testsuite name="test/panicked.test.ts" file="test/panicked.test.ts" tests="1" assertions="0" failures="1" skipped="0" time="0.2">
+    <testcase name="(worker crashed)" classname="" time="0" file="test/panicked.test.ts" assertions="0">
+      <failure type="Error" message="worker process crashed before reporting results" />
+    </testcase>
+  </testsuite>
+</testsuites>
+`;
+    const aborted = Object.fromEntries(
+      [...parseJunitFileSuites(xml)].map(([file, suite]) => [file, isAbortedFileSuite(suite)]),
+    );
+    // Only a file with no failure of its own is run again alone.
+    expect(aborted).toEqual({
+      "test/nothing-finished.test.ts": true,
+      "test/passed-so-far.test.ts": true,
+      "test/failed-already.test.ts": false,
+      "test/panicked.test.ts": false,
+    });
   });
 });
 

@@ -278,6 +278,7 @@ pub fn e_from_negated(errno: core::ffi::c_int) -> E {
 /// when a file system lacks an operation, 102 (`EOPNOTSUPP`) is for sockets. Linux, FreeBSD and
 /// Windows have one value, where a pattern that names both is unreachable.
 #[inline]
+#[allow(deprecated)] // the one place that means both values
 pub fn is_not_supported(errno: E) -> bool {
     errno == E::ENOTSUP || errno == E::EOPNOTSUPP
 }

@@ -203,8 +203,7 @@ pub(super) mod ffi {
         // Swaps the cert/key/chain (and session-related state) this connection
         // serves to those of `ctx`; takes its own reference to `ctx`.
         pub(crate) fn SSL_set_SSL_CTX(ssl: *mut SSL, ctx: *mut SSL_CTX) -> *mut SSL_CTX;
-        /// `SSL_set_SSL_CTX` for a server (openssl.c): `ctx` also gets the select-certificate callback.
-        /// Returns 0 and switches nothing once BoringSSL has begun to pick the cipher, the certificate and the session.
+        /// openssl.c: `SSL_set_SSL_CTX` for a server, which also gives `ctx` the select-certificate callback. Returns 0 when it is too late to switch.
         pub(crate) fn us_ssl_set_server_ctx(ssl: *mut SSL, ctx: *mut SSL_CTX) -> core::ffi::c_int;
         /// openssl.c then hands the ALPN protocols of this SSL's ClientHello to `us_dispatch_alpn_offer`.
         pub(crate) safe fn us_ssl_on_alpn_offer(ssl: &SSL);

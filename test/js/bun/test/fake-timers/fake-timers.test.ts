@@ -1410,6 +1410,19 @@ describe("the functions useFakeTimers() replaces", () => {
     expect(await slept).toBe("slept");
   });
 
+  test.concurrent("useRealTimers() doesn't crash after Date.prototype.constructor was deleted", async () => {
+    expect(
+      await run([
+        "-e",
+        `const { jest } = Bun.jest();
+         jest.useFakeTimers();
+         delete Date.prototype.constructor;
+         jest.useRealTimers();
+         console.log("done");`,
+      ]),
+    ).toEqual({ stdout: "done\n", stderr: "", exitCode: 0, signalCode: null });
+  });
+
   test.concurrent(
     "node:timers and node:timers/promises are real when they are first loaded under fake timers",
     async () => {

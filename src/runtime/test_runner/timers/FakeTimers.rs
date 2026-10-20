@@ -112,8 +112,13 @@ impl Api {
     }
 
     fn put(self, global: &JSGlobalObject, function: JSValue) {
+        let owner = self.owner(global);
+        // A test can delete `Date.prototype.constructor`.
+        if !owner.is_object() {
+            return;
+        }
         let name = bun_core::String::static_(self.property());
-        Bun__FakeTimers__putDirect(global, self.owner(global), &name, function);
+        Bun__FakeTimers__putDirect(global, owner, &name, function);
     }
 
     fn owner(self, global: &JSGlobalObject) -> JSValue {
@@ -837,11 +842,11 @@ impl FakeTimers {
         if restore == Restore::WhereStillInstalled {
             let _reading = ReadingGlobals::begin();
             deactivated.replaced.retain(|replaced| {
-                match replaced
-                    .api
-                    .owner(global)
-                    .get(global, replaced.api.property())
-                {
+                let owner = replaced.api.owner(global);
+                if !owner.is_object() {
+                    return false;
+                }
+                match owner.get(global, replaced.api.property()) {
                     Ok(installed) => installed == Some(replaced.fake.get()),
                     Err(err) => {
                         crate::dispatch::fold(Err(err));

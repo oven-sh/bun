@@ -87,6 +87,89 @@ it("console.dir treats a BigInt depth like the same number", async () => {
   expect(exitCode).toBe(0);
 });
 
+// Each row is a console call and the line that the call prints.
+type ConsoleRow = [call: string, printed: string];
+
+async function runConsoleRows(rows: ConsoleRow[], env: NodeJS.Dict<string> = bunEnv) {
+  const script = rows.map(([call]) => call).join(";\n");
+  await using proc = spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+const printedBy = (rows: ConsoleRow[]) => rows.map(([, line]) => line + "\n").join("");
+
+it.concurrent("%o and %O print a string in quotes", async () => {
+  const stdout: ConsoleRow[] = [
+    [`console.log("%O", "str")`, `"str"`],
+    [`console.log("%o", "str")`, `"str"`],
+    [`console.log("%O|%O", 1, "a b")`, `1|"a b"`],
+    [`console.log("[%O]", "")`, `[""]`],
+    [String.raw`console.log("%O", "two\nlines")`, String.raw`"two\nlines"`],
+    [String.raw`console.log("%O", "\x1b[31mred")`, String.raw`"\u001B[31mred"`],
+    // The same text as inside an array: https://github.com/oven-sh/bun/issues/25234
+    [String.raw`console.log("%O", 'say "hi"')`, String.raw`"say \"hi\""`],
+    [String.raw`console.log("%O", "caf\u00e9")`, `"café"`],
+    [String.raw`console.log("%O", "\u{1F44B} wave")`, `"👋 wave"`],
+    [`console.log("%s is %O", "name", "str")`, `name is "str"`],
+    [`console.log("%O then %s", "a", "b")`, `"a" then b`],
+    [`console.log("%O", "a", "b")`, `"a" b`],
+    [`console.log("%O %O", "only")`, `"only" %O`],
+    [`console.info("%O", "str")`, `"str"`],
+    [`console.debug("%o", "str")`, `"str"`],
+    [`console.dirxml("%O", "str")`, `"str"`],
+    [`console.group("%O", "label"), console.groupEnd()`, `"label"`],
+    // Message text stays bare.
+    [`console.log("%s", "str")`, `str`],
+    [`console.log("str", "str")`, `str str`],
+    // Every other value prints as before.
+    [`console.log("%O", new String("boxed"))`, `[String: "boxed"]`],
+    [`console.log("%O", /re/g)`, `/re/g`],
+    [`console.log("%O", ["str"])`, `[ "str" ]`],
+  ];
+  const stderr: ConsoleRow[] = [
+    [`console.warn("%O", "str")`, `"str"`],
+    [`console.error("%o", "str")`, `"str"`],
+  ];
+  expect(await runConsoleRows([...stdout, ...stderr])).toEqual({
+    stdout: printedBy(stdout),
+    stderr: printedBy(stderr),
+    exitCode: 0,
+  });
+});
+
+it.concurrent("console.dir prints a string in quotes", async () => {
+  const stdout: ConsoleRow[] = [
+    [`console.dir("str")`, `"str"`],
+    [`console.dir("")`, `""`],
+    [String.raw`console.dir("two\nlines")`, String.raw`"two\nlines"`],
+    [`console.dir("str", { depth: 0 })`, `"str"`],
+    [`console.dir("%O", "not an argument")`, `"%O"`],
+    // console.dirxml is console.log.
+    [`console.dirxml("str")`, `str`],
+    // Every other value prints as before.
+    [`console.dir(new String("boxed"))`, `[String: "boxed"]`],
+    [`console.dir(/re/g)`, `/re/g`],
+    [`console.dir(["str"])`, `[ "str" ]`],
+  ];
+  expect(await runConsoleRows(stdout)).toEqual({ stdout: printedBy(stdout), stderr: "", exitCode: 0 });
+});
+
+it.concurrent("%O and console.dir print a string in green when colors are on", async () => {
+  const green = `\x1b[0m\x1b[32m"str"\x1b[0m`;
+  const stdout: ConsoleRow[] = [
+    [`console.log("%O", "str")`, green],
+    [`console.dir("str")`, green],
+    [`console.dir("str", { colors: false })`, `"str"`],
+    [`console.log("%s", "str")`, `str`],
+  ];
+  expect(await runConsoleRows(stdout, { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" })).toEqual({
+    stdout: printedBy(stdout),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("console.group", async () => {
   const filepath = join(import.meta.dir, "console-group.fixture.js").replaceAll("\\", "/");
   const proc = Bun.spawnSync({

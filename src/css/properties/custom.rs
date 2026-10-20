@@ -990,7 +990,7 @@ impl UnresolvedColor {
             }),
             b"hsl" => return input.parse_nested_block(|input2| {
                 parser.parse_relative::<HSL, UnresolvedColor, _>(input2, |i, p| {
-                    let (h, s, l, is_legacy) = parse_hsl_hwb_components::<HSL>(i, p, false)?;
+                    let (h, s, l, is_legacy) = parse_hsl_hwb_components(i, p, true)?;
                     if is_legacy {
                         return Err(i.new_custom_error(ParserError::invalid_value));
                     }

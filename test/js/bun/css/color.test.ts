@@ -769,3 +769,63 @@ describe("conversions between color spaces", () => {
     );
   });
 });
+
+// Every output format of `input`, next to the same formats of the color it must be.
+const everyFormat = (input: string) =>
+  Object.fromEntries(
+    (
+      [
+        "css",
+        "hex",
+        "HEX",
+        "rgb",
+        "rgba",
+        "hsl",
+        "lab",
+        "number",
+        "{rgb}",
+        "{rgba}",
+        "[rgb]",
+        "[rgba]",
+        "ansi-16",
+        "ansi-256",
+        "ansi-16m",
+      ] as const
+    ).map(format => [format, color(input, format)]),
+  );
+
+describe("hwb() whiteness and blackness above 100%", () => {
+  // From 100% in sum the color is the gray W / (W + B). Each value is what Chrome 153 computes.
+  test.each([
+    ["hwb(210 150% 40%)", "#c9c9c9"],
+    ["hwb(210 20% 140%)", "#202020"],
+    ["hwb(210 150% 140%)", "#848484"],
+    ["hwb(0 200% 100%)", "#aaa"],
+    ["hwb(0 100% 200%)", "#555"],
+    ["hwb(210 1000% 10%)", "#fcfcfc"],
+    ["hwb(210 150% 40% / 0.5)", "#c9c9c980"],
+    ["hwb(from #336699 h 150% b)", "#c9c9c9"],
+    ["hwb(from hwb(none 150% 40%) h w b)", "#c9c9c9"],
+    ["color-mix(in hwb, hwb(none 150% 40%), red)", "#ccbfbf"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+    expect(everyFormat(input)).toEqual(everyFormat(expected));
+  });
+
+  // A color with `none` keeps float channels, so its hsl and lab strings are not the ones of the hex.
+  test.each([
+    ["hwb(none 150% 40%)", "#c9c9c9"],
+    ["hwb(90 150% none)", "#fff"],
+    ["hwb(90 none 150%)", "#000"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  test.each([
+    ["hwb(210 20% 40%)", "#369"],
+    ["hwb(210 -20% 40%)", "#004d99"],
+    ["hwb(210 20% -40%)", "#39f"],
+  ])("%s is still %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+});

@@ -2348,7 +2348,10 @@ impl<'p, 's> Checker<'p, 's> {
                     InstantiationClass::Unchanged => default,
                     InstantiationClass::TypeParameter => {
                         if places.is_empty() {
-                            places.extend(params.iter().copied().zip(0..));
+                            // The first of two equal parameters counts, as in a search from the start.
+                            for (at, &param) in params.iter().enumerate() {
+                                places.entry(param).or_insert(at);
+                            }
                         }
                         let target = places.get(&default).map(|&at| filled[at]);
                         self.instantiate_type_parameter_once(default, target)

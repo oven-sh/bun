@@ -38,6 +38,15 @@ impl IndexConstraints<'_> {
     }
 }
 
+/// See `Checker::interface_declarations`.
+pub(super) struct InterfaceDeclarations {
+    /// `ast.GetDeclarationOfKind(t.symbol, ast.KindInterfaceDeclaration)`
+    first: Option<(FileId, InterfaceId)>,
+    /// The first in program order among the files whose semantic errors are reported.
+    first_checked: Option<(FileId, InterfaceId)>,
+    first_in_file: FxHashMap<FileId, InterfaceId>,
+}
+
 impl Checker<'_, '_> {
     pub(super) fn check_class_heritage(&mut self, file: FileId, c: ClassId) {
         let hir = self.hir(file);
@@ -737,31 +746,47 @@ impl Checker<'_, '_> {
             )
     }
 
-    pub(super) fn check_interface_heritage(&mut self, file: FileId, i: InterfaceId) {
-        let sym = self
-            .files()
-            .sym(file, self.bound(file).interface_symbol[i.idx()]);
+    fn interface_declarations(&mut self, sym: Sym) -> std::rc::Rc<InterfaceDeclarations> {
+        if let Some(known) = self.interface_declarations.get(&sym) {
+            return known.clone();
+        }
         let decls = self.files().decls_of(sym);
         let interfaces = decls.iter().filter_map(|&(f, d)| match d {
             Decl::Interface(id) => Some((f, id)),
             _ => None,
         });
-        // `interfaceChecked`: once per interface, at the first of its declarations that's checked. `decls` is in merge
-        // order, where the scripts come before every `declare global`.
+        // `decls` is in merge order, where the scripts come before every `declare global`.
         let order = |&(f, id): &(FileId, InterfaceId)| {
             self.position_in_program_order(f, self.hir(f)[id].name_pos)
         };
-        let first = (interfaces.clone())
+        let first_checked = (interfaces.clone())
             .filter(|&(f, _)| self.reports_semantic_errors(f))
             .min_by_key(order);
-        let is_first = first == Some((file, i));
-        let is_first_in_file = interfaces
-            .clone()
-            .filter(|it| it.0 == file)
-            .min_by_key(order)
-            == Some((file, i));
-        // `ast.GetDeclarationOfKind(t.symbol, ast.KindInterfaceDeclaration)`
-        let interface_declaration = interfaces.clone().next();
+        let mut first_in_file: FxHashMap<FileId, InterfaceId> = FxHashMap::default();
+        for (f, id) in interfaces.clone() {
+            let first = first_in_file.entry(f).or_insert(id);
+            if order(&(f, id)) < order(&(f, *first)) {
+                *first = id;
+            }
+        }
+        let all = std::rc::Rc::new(InterfaceDeclarations {
+            first: interfaces.clone().next(),
+            first_checked,
+            first_in_file,
+        });
+        self.interface_declarations.insert(sym, all.clone());
+        all
+    }
+
+    pub(super) fn check_interface_heritage(&mut self, file: FileId, i: InterfaceId) {
+        let sym = self
+            .files()
+            .sym(file, self.bound(file).interface_symbol[i.idx()]);
+        let all = self.interface_declarations(sym);
+        // `interfaceChecked`: once per interface, at the first of its declarations that's checked.
+        let is_first = all.first_checked == Some((file, i));
+        let is_first_in_file = all.first_in_file.get(&file) == Some(&i);
+        let interface_declaration = all.first;
         let ty = self.declared_type(sym);
         let name_pos = self.hir(file)[i].name_pos;
         let bases = self.base_types(sym);
@@ -790,11 +815,14 @@ impl Checker<'_, '_> {
         } else if !self.check_inherited_properties_are_identical(sym, ty, &bases, None) {
             return;
         }
-        let locals = self.members_of_declarations(sym);
-        // `check_index_constraints` only reports what's in `file`.
-        if !is_first_in_file {
+        // `check_index_constraints` only reports what's in `file`, and nothing for a type without index signatures.
+        if !is_first_in_file
+            || (self.members(ty))
+                .is_none_or(|members| self.structured(members).index_infos().is_empty())
+        {
             return;
         }
+        let locals = self.members_of_declarations(sym);
         // There's no `interfaceDeclaration` if a class has the same name, because the type is then the class's
         // (`ObjectFlagsInterface`).
         let is_class = self.files().flags(sym).contains(SymFlags::CLASS);

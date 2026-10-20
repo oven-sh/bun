@@ -440,6 +440,9 @@ impl Checker<'_, '_> {
     /// same file.
     fn check_namespace_merge_order(&mut self, file: FileId, sym: Sym) {
         let files = self.files();
+        if !(files.flags(sym)).intersects(SymFlags::CLASS | SymFlags::FUNCTION) {
+            return;
+        }
         let mut decls: Vec<Declaration> = Vec::new();
         for &part in files.parts(sym).iter() {
             for &decl in files.symbol(part).decls {
@@ -575,8 +578,16 @@ impl Checker<'_, '_> {
                 }
                 _ => !matches!(decl, Decl::Interface(_)),
             };
-            let counted = declarations.iter().filter(|it| is_not_overload(self, it));
-            let count = counted.filter(|it| is_counted(self, it)).count();
+            // Every file that declares the module gets here, and the symbol can have a declaration in each of them.
+            let count = match self.counted_export_declarations.get(&symbol) {
+                Some(&known) => known,
+                None => {
+                    let counted = declarations.iter().filter(|it| is_not_overload(self, it));
+                    let count = counted.filter(|it| is_counted(self, it)).count();
+                    self.counted_export_declarations.insert(symbol, count);
+                    count
+                }
+            };
             // "it is legal to merge type alias with other values"
             if count < 2 || flags.contains(SymFlags::TYPE_ALIAS) && count == 2 {
                 continue;

@@ -949,6 +949,9 @@ impl<'s> Program<'s> {
             defaults_in_progress: Vec::new(),
             identical_base_types_in_progress: Vec::new(),
             names_of_small_numbers: Default::default(),
+            interface_declarations: Default::default(),
+            counted_export_declarations: Default::default(),
+            type_parameter_lists_are_identical: Default::default(),
             generic_mapped_types_in_progress: Vec::new(),
             generic_mapped_types_cut_short: Vec::new(),
             recent_members: Box::new([shape::RecentMembers::NONE; shape::RECENT_MEMBERS]),
@@ -1811,6 +1814,13 @@ pub struct Checker<'p, 's> {
     identical_base_types_in_progress: Vec<(TypeId, usize)>,
     /// `number_name` of each index, or `NONE` if it hasn't been requested.
     names_of_small_numbers: std::cell::RefCell<Vec<Atom>>,
+    /// What the check of one declaration of an interface needs to know about all of them. An interface can have a
+    /// declaration in every file, so no check of a single declaration may look at all the others.
+    interface_declarations: FxHashMap<Sym, std::rc::Rc<errors_heritage::InterfaceDeclarations>>,
+    /// For `check_external_module_exports`: how many declarations of an exported symbol count as duplicates.
+    counted_export_declarations: FxHashMap<Sym, usize>,
+    /// `areTypeParametersIdentical` for the declarations of a class or an interface that has several.
+    type_parameter_lists_are_identical: FxHashMap<Sym, bool>,
     /// The mapped types with an `as` clause for which `isGenericMappedType` is in progress.
     generic_mapped_types_in_progress: Vec<(FileId, TypeNodeId)>,
     /// The ones for which it hit the `instantiation_count` limit since `check_file` began.

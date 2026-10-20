@@ -115,8 +115,12 @@ impl Checker<'_, '_> {
                 // `getClassOrInterfaceDeclarationsOfSymbol`
                 let is_class_or_interface =
                     |d: &&(FileId, Decl)| matches!(d.1, Decl::Class(_) | Decl::Interface(_));
-                if decls.iter().filter(is_class_or_interface).count() > 1 {
-                    self.check_type_parameter_lists_identical(file, sym, &decls);
+                if self.type_parameter_lists_are_identical.get(&sym) == Some(&true) {
+                    continue;
+                }
+                match decls.iter().filter(is_class_or_interface).nth(1) {
+                    Some(_) => self.check_type_parameter_lists_identical(file, sym, &decls),
+                    None => _ = (self.type_parameter_lists_are_identical).insert(sym, true),
                 }
             }
         }
@@ -180,6 +184,7 @@ impl Checker<'_, '_> {
                 }
             }
         }
+        (self.type_parameter_lists_are_identical).insert(sym, identical);
         if !identical {
             for l in lists.iter().filter(|l| l.0 == file) {
                 match l.2 {

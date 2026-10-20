@@ -3197,8 +3197,11 @@ impl<'p, 's> Checker<'p, 's> {
             Decl::Interface(i) => bound.interface_symbol[i.idx()],
             _ => return true,
         };
-        let whole = self.files().canonical(sym);
-        own.is_none() || self.files().parts(whole).contains(&Sym { file, id: own })
+        let (whole, own_symbol) = (self.files().canonical(sym), Sym { file, id: own });
+        // A symbol that was merged into `whole` is one of its parts, of which there can be thousands.
+        own.is_none()
+            || self.files().canonical(own_symbol) == whole
+            || self.files().parts(whole).contains(&own_symbol)
     }
 
     /// The declaration of class `sym` that has the `extends` clause.

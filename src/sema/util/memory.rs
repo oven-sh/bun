@@ -1017,6 +1017,8 @@ impl<A: Allocator + Clone> Block<A> {
     /// not be 0. If there isn't enough room left, the memory is in a new block.
     fn take<T>(&mut self, len: usize) -> (NonNull<T>, NonNull<BlockHeader<A>>) {
         const { assert!(align_of::<T>() <= align_of::<BlockHeader<A>>()) };
+        // A list that takes no room would look for a block with room forever.
+        const { assert!(size_of::<T>() != 0) };
         let room = Self::room_for::<T>(len);
         match self.header {
             Some(header) if room <= self.free.len() => {

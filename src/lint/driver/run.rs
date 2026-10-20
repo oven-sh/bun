@@ -1503,6 +1503,8 @@ impl Run<'_> {
             false => max_warnings,
         };
         let has_too_many_warnings = max_warnings >= 0 && counts.warnings as i64 > max_warnings;
+        let fails_on_problems =
+            counts.errors > 0 || has_too_many_warnings || (denies_warnings && counts.warnings > 0);
         // Only these two formats print files without problems.
         if !matches!(format, Format::Json | Format::JsonWithMetadata) {
             results.retain(|it| !it.messages.is_empty());
@@ -1630,7 +1632,8 @@ impl Run<'_> {
                 self.began.elapsed().as_secs_f64() * 1000.0,
             );
         }
-        if format.is_human_readable() && !options.quiet && !options.silent {
+        // In a run that passes, advice is noise. `--doctor` always prints it.
+        if fails_on_problems && format.is_human_readable() && !options.quiet && !options.silent {
             for line in std::mem::take(&mut *loader.advice.lock()) {
                 pretty!(
                     &mut self.out.stderr,
@@ -1639,6 +1642,9 @@ impl Run<'_> {
                     BStr::new(&line)
                 );
             }
+        }
+        if !fails_on_problems && format.is_human_readable() {
+            not_built_in.about_layout.clear();
         }
         for note in not_built_in.notes().filter(|_| !options.silent) {
             pretty!(
@@ -1685,12 +1691,7 @@ impl Run<'_> {
             // oxlint exits 0 once it has saved the suppressions file, even if problems remain.
             0
         } else {
-            u8::from(
-                counts.errors > 0
-                    || has_too_many_warnings
-                    || (denies_warnings && counts.warnings > 0)
-                    || (has_no_files && options.error_on_unmatched_pattern),
-            )
+            u8::from(fails_on_problems || (has_no_files && options.error_on_unmatched_pattern))
         };
         self.out
     }
@@ -1844,7 +1845,8 @@ impl Run<'_> {
 
 /// Rules that `bun lint` leaves out on purpose but that the linted files' configs or comments turn on: deprecated
 /// formatting rules, whose job `bun fmt` does, and plugins with no rules here, whose rules oxlint's `categories` turn
-/// on without naming them. Every format prints a note that they didn't run.
+/// on without naming them. Every format prints a note that they didn't run. The formats for people only mention the
+/// formatting rules if the run fails.
 #[derive(Default)]
 struct NotBuiltIn {
     /// [`formatting_rule`]

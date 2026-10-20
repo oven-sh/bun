@@ -1079,8 +1079,10 @@ test.concurrent("import/ignore with a RegExp object instead of a string: the pac
 });
 
 describe.concurrent("the note about an older installed version of a built-in plugin", () => {
+  // The note is only printed if the run fails.
+  const fails = ["--rule", "no-debugger: error"];
   const notes = async (files: Record<string, string>, ...flags: string[]) =>
-    (await lint({ "a.js": "export {};\n", ...files }, ["-f", "stylish", ...flags, "a.js"])).stderr
+    (await lint({ "a.js": "debugger;\n", ...files }, ["-f", "stylish", ...fails, ...flags, "a.js"])).stderr
       .split("\n")
       .filter(it => it.startsWith("note: "));
   const flat = (plugins: Record<string, { name?: string; version?: string }>) => ({
@@ -1145,6 +1147,16 @@ describe.concurrent("the note about an older installed version of a built-in plu
     for (const flags of [["--quiet"], ["--silent"], ["-f", "json"], ["-f", "unix"]]) {
       expect([flags, await notes(typescript("8.43.0"), ...flags)]).toEqual([flags, []]);
     }
+  });
+
+  test("isn't printed if the run passes: with no problems, or with only warnings", async () => {
+    const note =
+      "note: @typescript-eslint/eslint-plugin 8.43.0 is installed, but bun lint's built-in rules match 8.71.1";
+    const warns = ["--rule", "no-debugger: warn"];
+    expect(await notes({ ...typescript("8.43.0"), "a.js": "export {};\n" })).toEqual([]);
+    expect(await notes(typescript("8.43.0"), ...warns)).toEqual([]);
+    expect(await notes(typescript("8.43.0"), ...warns, "--max-warnings", "1")).toEqual([]);
+    expect(await notes(typescript("8.43.0"), ...warns, "--max-warnings", "0")).toEqual([note]);
   });
 
   test("with an .eslintrc.json, reads the version from the package", async () => {
@@ -2632,12 +2644,14 @@ describe.concurrent("an .oxlintrc.json", () => {
     const rule = `{ create: () => ({}) }`;
     const files = {
       "bun.js": `export default { meta: { name: "bun" }, rules: { "no-array-just-to-count": ${rule}, own: ${rule}, other: ${rule} } };`,
-      "a.js": "export {};\n",
+      "a.js": "debugger;\n",
     };
-    const advice = async (config: object) => {
-      const all = { categories: { correctness: "off" }, ...config };
+    // The note is only printed if the run fails.
+    const advice = async (config: { jsPlugins?: unknown[]; rules: object }) => {
+      const rules = { ...config.rules, "no-debugger": "error" };
+      const all = { categories: { correctness: "off" }, ...config, rules };
       const result = await lint({ ...files, ".oxlintrc.json": JSON.stringify(all) }, ["-f", "stylish", "a.js"]);
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(1);
       return result.stderr.split("\n").filter(it => it.startsWith("  To use "));
     };
     const builtIn = { "bun/no-array-just-to-count": "error" };
@@ -5842,26 +5856,30 @@ describe.concurrent("deprecated formatting rules", () => {
   const notes = (stderr: string) => stderr.split("\n").filter(it => it.startsWith("note: "));
   const note = (count: number, names: string) => `note: ${count} deprecated formatting rules did not run: ${names}`;
 
-  test.each(flavors)("%s: they don't run, which prints a note and isn't an error", async (name, config) => {
+  test.each(flavors)("%s: they don't run, and only a run that fails prints a note", async (name, config) => {
     const files = { [name]: config(rules), "a.js": untidy };
-    const [found, stylish, clean] = await Promise.all([
+    const [found, stylish, clean, warned] = await Promise.all([
       lint(files),
       lint(files, stylishArgs),
       lint({ ...files, "a.js": "   x = 'y'\n" }, stylishArgs),
+      lint({ ...files, [name]: config({ ...rules, "no-debugger": "warn" }) }, stylishArgs),
     ]);
     expect(found.problems).toEqual(["a.js:1:1 no-debugger"]);
     expect(found.exitCode).toBe(1);
     expect(notes(stylish.stderr)).toEqual([note(3, "indent, quotes, semi")]);
-    expect(notes(clean.stderr)).toEqual([note(3, "indent, quotes, semi")]);
+    expect(notes(clean.stderr)).toEqual([]);
     expect(clean.exitCode).toBe(0);
+    expect(warned.raw).toContain("1 problem (0 errors, 1 warning)");
+    expect(notes(warned.stderr)).toEqual([]);
+    expect(warned.exitCode).toBe(0);
   });
 
   test("prints one note for all files and config files, with the first three rule names", async () => {
     const on = (...names: string[]) => flavors[0][1](Object.fromEntries(names.map(it => [it, "error"])));
     const { stderr, exitCode } = await lint(
       {
-        "a/eslint.config.mjs": on("semi", "eol-last"),
-        "a/a.js": "a",
+        "a/eslint.config.mjs": on("semi", "eol-last", "no-debugger"),
+        "a/a.js": "debugger",
         "a/b.js": "b",
         "b/eslint.config.mjs": on("semi", "comma-dangle", "arrow-parens"),
         "b/c.js": "/* eslint yield-star-spacing: 2 */ c",
@@ -5869,11 +5887,12 @@ describe.concurrent("deprecated formatting rules", () => {
       ["-f", "stylish", "a", "b"],
     );
     expect(notes(stderr)).toEqual([note(5, "arrow-parens, comma-dangle, eol-last, ..")]);
-    expect(exitCode).toBe(0);
+    expect(exitCode).toBe(1);
   });
 
   test("the note uses the singular for one rule", async () => {
-    const { stderr } = await lint({ "eslint.config.mjs": flavors[0][1]({ semi: 2 }), "a.js": "a" }, stylishArgs);
+    const config = flavors[0][1]({ semi: 2, "no-debugger": 2 });
+    const { stderr } = await lint({ "eslint.config.mjs": config, "a.js": "debugger" }, stylishArgs);
     expect(notes(stderr)).toEqual(["note: 1 deprecated formatting rule did not run: semi"]);
   });
 
@@ -5891,9 +5910,10 @@ describe.concurrent("deprecated formatting rules", () => {
       },
     ],
   ])("%s: prints no note for a rule that ends up off", async (_, config) => {
-    const { stderr, exitCode } = await lint({ ...config, "a.js": `/* eslint quotes: "off" */ a` }, stylishArgs);
+    const code = `/* eslint quotes: "off", no-debugger: "error" */ debugger`;
+    const { stderr, exitCode } = await lint({ ...config, "a.js": code }, stylishArgs);
     expect(notes(stderr)).toEqual([]);
-    expect(exitCode).toBe(0);
+    expect(exitCode).toBe(1);
   });
 
   test("rules turned on by --rule or an inline config comment don't run either, and are in the note", async () => {
@@ -6080,7 +6100,7 @@ describe.concurrent("deprecated formatting rules", () => {
     };
     const [builtIn, stylish, withPackageRules] = await Promise.all([
       lint(files, ["a.js"]),
-      lint(files, ["-f", "stylish", "a.js"]),
+      lint({ ...files, "a.js": "debugger\n" }, ["-f", "stylish", "--rule", "no-debugger: error", "a.js"]),
       lint(files, ["--no-native-plugin-rules", "a.js"]),
     ]);
     expect(builtIn.problems).toEqual([]);

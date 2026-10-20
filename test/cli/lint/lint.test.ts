@@ -9298,7 +9298,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       "b.ts": `export async function later() {}\nexport const text: string = "";\n`,
     };
 
-    test("prints a note if the installed typescript is older than the version bun lint emulates", async () => {
+    test("a run that fails prints a note if the installed typescript is older than the version bun lint emulates", async () => {
       const notes = async (version: string, more: Record<string, string> = {}, ...flags: string[]) => {
         const installed = { "node_modules/typescript/package.json": JSON.stringify({ name: "typescript", version }) };
         const { stderr } = await lint({ ...files, ...installed, ...more }, ["-f", "stylish", ...flags]);
@@ -9309,9 +9309,12 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       ]);
       expect(await notes("7.0.2")).toEqual([]);
       expect(await notes("5.8.3", {}, "--quiet")).toEqual([]);
+      // The run passes, because there are only warnings.
+      const warns = files["eslint.config.js"].replaceAll(`"error"`, `"warn"`);
+      expect(await notes("5.8.3", { "eslint.config.js": warns })).toEqual([]);
       // No rule needs types.
       const untyped = files["eslint.config.js"].replace(/rules: \{.*\}/, `rules: { "no-debugger": "error" }`);
-      expect(await notes("5.8.3", { "eslint.config.js": untyped })).toEqual([]);
+      expect(await notes("5.8.3", { "eslint.config.js": untyped, "a.ts": "debugger;\n" })).toEqual([]);
     });
 
     // `Element.textContent` is `string | null` up to TypeScript 5.8 and `string` after that. Removing a `!` that's

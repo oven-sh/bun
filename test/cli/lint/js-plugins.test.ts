@@ -740,11 +740,12 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
     );
 
     test(
-      "isn't printed in quiet or machine-readable output, or if no such rule ran",
+      "isn't printed in quiet or machine-readable output, if the run passes, or if no such rule ran",
       async () => {
         for (const flags of [["--quiet"], ["--silent"], ["-f", "json"], ["-f", "unix"], ["-f", "github"]]) {
           expect([flags, await notes(pluginN, { rules }, ...flags)]).toEqual([flags, []]);
         }
+        expect(await notes(pluginN, { rules: { "n/no-path-concat": "warn" } })).toEqual([]);
         expect(await notes(pluginN, { rules: { "n/only-there": "error" } })).toEqual([]);
         expect(await notes(pluginN, { rules: { "n/no-path-concat": "off", "node/no-path-concat": "error" } })).toEqual(
           [],

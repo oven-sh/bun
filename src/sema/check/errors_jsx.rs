@@ -5,11 +5,11 @@
 //!
 //! Follows `checkJsxOpeningLikeElementOrOpeningFragment`, `checkJsxPreconditions`,
 //! `getIntrinsicTagSymbol`, `getJsxNamespace`, `getJsxFactoryEntity`,
-//! `getJsxNamespaceContainerForImplicitImport`, `getJSXFragmentType`,
-//! `resolveJsxOpeningLikeElement`, `elaborateJsxComponents` and
+//! `getJSXFragmentType`, `resolveJsxOpeningLikeElement`, `elaborateJsxComponents` and
 //! `checkJsxReturnAssignableToAppropriateBound` of TypeScript 7.0.2's jsx.go, and
 //! `markJsxAliasReferenced`, `checkSpreadPropOverrides`, `getTypeArgumentArityError` and
-//! `getCandidateForOverloadFailure` of its checker.go.
+//! `getCandidateForOverloadFailure` of its checker.go. `getJsxNamespaceContainerForImplicitImport`
+//! follows TypeScript 7.1.
 
 use super::call::{CallLike, ExpectsReturn};
 use super::errors_names_and_exports::is_valid_type_only_alias_use_site;
@@ -18,7 +18,7 @@ use super::jsx::{JsxName, JsxReferenceKind};
 use super::relate::Relation;
 use super::symbols::IterationUse;
 use super::*;
-use crate::bind::ScopeId;
+use crate::bind::{Parent, ScopeId};
 use crate::resolve::JsxEmit;
 use crate::util::SharedSort;
 
@@ -70,29 +70,55 @@ impl Checker<'_, '_> {
         ) && (specifies_factory || hir.jsx_pragmas.factory.is_some())
             && options.jsx_fragment_factory.is_empty()
             && hir.jsx_pragmas.fragment_factory.is_none();
-        let mut elements: Vec<ExprId> = self
-            .exprs_by_kind(file)
-            .of(ExprTag::Jsx)
-            .iter()
-            .copied()
-            .filter(|e| !bound.is_unchecked(e.idx()))
-            .collect();
+        let mut elements: Vec<ExprId> = self.exprs_by_kind(file).of(ExprTag::Jsx).to_vec();
+        elements.retain(|&e| !matches!(bound.parent_of_expr(e), Parent::None));
         elements.shared_sort_unstable_by_key(|&e| hir[e].pos);
-        // An error reported once per file is reported on the element that is checked first.
-        // Elements the walk does not reach come last, in source order.
-        let (mut first, mut first_fragment) = (None, None);
-        if runtime.is_some() || checks_fragment_type {
-            // Only this task stores the entry of a JSX element of the file (`is_noted_for_check_file`), so it has evaluated each itself.
-            let reached = match self.first_jsx {
-                (of, first, first_fragment) if of == file => (first, first_fragment),
-                _ => (None, None),
+        let first_jsx_tag_in_file = elements.first().copied();
+        elements.retain(|e| !bound.is_unchecked(e.idx()));
+        // `getJsxNamespaceContainerForImplicitImport` of TypeScript 7.1. Whichever element triggers
+        // the error, it is reported at `firstJSXTagInFile`, even if that tag is never checked.
+        if let (Some(spec), Some(first)) = (runtime, first_jsx_tag_in_file)
+            && let ExprKind::Jsx(j) = hir[first].kind
+            && (elements.iter()).any(|&e| !self.is_never_checked(hir[e].pos))
+        {
+            // The error spans the whole element, or only the opening of a fragment.
+            let has_closing_element = hir[j].tag.is_some() && hir[j].close_pos != u32::MAX;
+            let end = if has_closing_element {
+                hir[j].end
+            } else {
+                hir[j].opening_end
             };
-            let is_fragment =
-                |e: &ExprId| matches!(hir[*e].kind, ExprKind::Jsx(j) if hir[j].tag.is_none());
-            first = reached.0.or_else(|| elements.first().copied());
-            first_fragment = reached
-                .1
-                .or_else(|| elements.iter().copied().find(is_fragment));
+            // `getJSXRuntimeImportSpecifier`. The loader added this specifier as a synthetic
+            // import. It has no import clause and doesn't appear in the source text.
+            let specifier = SpecifierUse {
+                spec,
+                pos: u32::MAX,
+                kind: SpecifierKind::Import,
+                mode: self.files().module(file).default_mode,
+            };
+            let (site, location) = (SpecifierSite::default(), (file, hir[first].pos, end));
+            let since = self.reported.len();
+            self.resolve_external_module_at(file, specifier, site, location, Some(2875));
+            for diagnostic in &mut self.reported[since..] {
+                diagnostic.by_another_node = true;
+            }
+        }
+        // `getJSXFragmentType` reports once per file, on the fragment that is checked first.
+        // Fragments that the walk doesn't reach come last, in source order.
+        let is_fragment =
+            |e: &ExprId| matches!(hir[*e].kind, ExprKind::Jsx(j) if hir[j].tag.is_none());
+        let mut first_fragment = None;
+        if checks_fragment_type {
+            let mut fragments = elements.iter().copied().filter(is_fragment);
+            let (in_source_order, is_only_one) = (fragments.next(), fragments.next().is_none());
+            if !is_only_one {
+                self.follow_check(file, false, &mut |_, _, e, _| {
+                    let is_sought = is_fragment(&e) && !bound.is_unchecked(e.idx());
+                    first_fragment = is_sought.then_some(e);
+                    is_sought
+                });
+            }
+            first_fragment = first_fragment.or(in_source_order);
         }
         for e in elements {
             let ExprKind::Jsx(j) = hir[e].kind else {
@@ -110,26 +136,6 @@ impl Checker<'_, '_> {
             }
             self.resolved_signature(file, e);
             self.report_call_resolution(file, e);
-            if first == Some(e)
-                && let Some(spec) = runtime
-            {
-                // `checkJsxElement` passes the whole element to `getJsxElementTypeAt`. In a file that is emitted before it is checked,
-                // `MarkLinkedReferencesRecursively` comes first, where `markJsxAliasReferenced` passes the opening element.
-                let is_whole_element = self.p.files.options.no_emit
-                    && element.tag.is_some()
-                    && element.close_pos != u32::MAX;
-                let end = if is_whole_element { element.end } else { end };
-                // `getJSXRuntimeImportSpecifier`: the specifier of the synthetic import the loader
-                // added, which has no import clause and is nowhere in the text.
-                let specifier = SpecifierUse {
-                    spec,
-                    pos: u32::MAX,
-                    kind: SpecifierKind::Import,
-                    mode: self.files().module(file).default_mode,
-                };
-                let (site, location) = (SpecifierSite::default(), (file, start, end));
-                self.resolve_external_module_at(file, specifier, site, location, Some(2875));
-            }
             // `resolveName`, starting at `jsxFactoryLocation`: the tag name, or the opening fragment.
             let scope = bound.expr_scope.get(&e).copied().unwrap_or(ScopeId(0));
             let jsx_factory_sym = checks_factory
@@ -560,7 +566,7 @@ impl Checker<'_, '_> {
         e: ExprId,
         signature: SigId,
         check_mode: CheckMode,
-        context: &mut Inference,
+        context: &mut Box<Inference>,
     ) -> MapperId {
         let param_type = self.jsx_effective_first_argument(file, e, signature);
         let check_attr_type = self.check_jsx_attributes_with_contextual_type(
@@ -582,7 +588,7 @@ impl Checker<'_, '_> {
         file: FileId,
         e: ExprId,
         contextual_type: TypeId,
-        inference_context: Option<&mut Inference>,
+        inference_context: Option<&mut Box<Inference>>,
         check_mode: CheckMode,
         is_checked_once: bool,
     ) -> TypeId {

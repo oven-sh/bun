@@ -434,14 +434,11 @@ WTF::String formatStackTrace(
 
         if (!sourceURLForFrame.isEmpty()) {
             sb.append(sourceURLForFrame);
-            if (displayLine.zeroBasedInt() > 0 || displayColumn.zeroBasedInt() > 0) {
+            if (frame.hasLineAndColumnInfo()) {
                 sb.append(':');
                 sb.append(displayLine.oneBasedInt());
-
-                if (displayColumn.zeroBasedInt() > 0) {
-                    sb.append(':');
-                    sb.append(displayColumn.oneBasedInt());
-                }
+                sb.append(':');
+                sb.append(displayColumn.oneBasedInt());
             }
         }
 

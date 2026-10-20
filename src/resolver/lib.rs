@@ -1416,7 +1416,8 @@ pub mod fs {
         }
     }
 
-    /// How `stat()` fails on a link to nothing or a loop; other errors surface when the entry is read.
+    /// Returns true for the errors that `stat()` returns for a dangling symlink or a symlink loop.
+    /// Other errors surface when the entry is read.
     fn is_dangling_link_error(errno: bun_sys::E) -> bool {
         matches!(
             errno,

@@ -348,7 +348,7 @@ impl<'a> Stmt<'a> {
     #[inline]
     pub fn modifiers(self) -> List<'a, Modifier<'a>> {
         match self.try_raw() {
-            Some(raw) => List::run(self.file, raw.modifiers),
+            Some(_) => List::run(self.file, self.file.hir.stmt_modifiers(self.id)),
             None => List::empty(self.file),
         }
     }
@@ -859,8 +859,7 @@ impl super::File<'_> {
         if !matches!(self.hir.stmts.get(id.idx())?.kind, hir::StmtKind::Expr(_)) {
             return None;
         }
-        let Some(&bun_sema::bind::Parent::Stmt(parent)) = self.bound.stmt_parent.get(id.idx())
-        else {
+        let bun_sema::bind::Parent::Stmt(parent) = self.bound.parent_of_stmt(id) else {
             return None;
         };
         let raw = self.hir.stmts.get(parent.idx())?;

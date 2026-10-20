@@ -42,6 +42,7 @@
 #include "GeneratedCryptoHasher.h"
 #include "GeneratedCsrfJsc.h"
 #include "GeneratedDns.h"
+#include "GeneratedFilesystemRouter.h"
 #include "GeneratedGlob.h"
 #include "GeneratedHashObject.h"
 #include "GeneratedJSON5Object.h"
@@ -927,7 +928,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     CryptoHasher                                   Bun::Bindgen::Generated::CryptoHasher::getCryptoHasherConstructor   DontDelete|PropertyCallback
     FFI                                            BunObject_lazyPropCb_wrap_FFI                                       DontDelete|PropertyCallback
     FetchSession                                   BunObject_lazyPropCb_wrap_FetchSession                              DontDelete|PropertyCallback
-    FileSystemRouter                               BunObject_lazyPropCb_wrap_FileSystemRouter                          DontDelete|PropertyCallback
+    FileSystemRouter                               Bun::Bindgen::Generated::FilesystemRouter::getFileSystemRouterConstructor DontDelete|PropertyCallback
     Glob                                           Bun::Bindgen::Generated::Glob::getGlobConstructor                   DontDelete|PropertyCallback
     Image                                          BunObject_lazyPropCb_wrap_Image                                     DontDelete|PropertyCallback
     MD4                                            Bun::Bindgen::Generated::CryptoHasher::getMD4Constructor            DontDelete|PropertyCallback

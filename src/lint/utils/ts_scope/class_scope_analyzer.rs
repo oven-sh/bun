@@ -679,12 +679,12 @@ impl<'a> Analyzer<'a> {
     /// The `this` of `pattern = this`, if `this` is that.
     fn this_expression(&mut self, this: Expr<'a>) {
         let file = self.file;
-        let pat = match file.bound.expr_parent.get(this.id().idx()) {
-            Some(&Parent::VarInit(it)) => Some(VarDecl::new(file, it).pat()),
-            Some(&Parent::ParamDefault(it)) => Some(Param::new(file, it).pat()),
-            Some(&Parent::PatPropDefault(it)) => Some(PatProp::new(file, it).value()),
-            Some(&Parent::PatElemDefault(it)) => PatElem::new(file, it).pat(),
-            Some(&Parent::Expr(parent)) => {
+        let pat = match file.bound.parent_of_expr(this.id()) {
+            Parent::VarInit(it) => Some(VarDecl::new(file, it).pat()),
+            Parent::ParamDefault(it) => Some(Param::new(file, it).pat()),
+            Parent::PatPropDefault(it) => Some(PatProp::new(file, it).value()),
+            Parent::PatElemDefault(it) => PatElem::new(file, it).pat(),
+            Parent::Expr(parent) => {
                 if let Some((_, target, value)) = Expr::new(file, parent).as_assign()
                     && value == this
                     && let Some(props) = target.as_object()
@@ -758,15 +758,10 @@ pub fn analyze_class_member_usage<'a>(
     };
     let tag_of = |e: hir::ExprId| file.hir.exprs.get(e.idx()).map(|it| it.kind.tag());
     for e in file.exprs_of_kind(ExprTag::Dot) {
-        let Some(hir::ExprKind::Dot {
-            obj,
-            name,
-            name_pos,
-            ..
-        }) = e.try_raw().map(|it| it.kind)
-        else {
+        let Some(hir::ExprKind::Dot { obj, name, .. }) = e.try_raw().map(|it| it.kind) else {
             continue;
         };
+        let name_pos = file.hir.name_pos(e.id());
         if !names.contains(name) {
             continue;
         }

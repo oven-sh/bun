@@ -52,7 +52,6 @@ const {
 const {
   pbkdf2,
   pbkdf2Sync,
-  timingSafeEqual,
   randomInt,
   randomUUID,
   randomUUIDv7,
@@ -71,6 +70,7 @@ const {
 } = $rust("node_crypto_binding.rs", "createNodeCryptoBindingZig");
 
 const normalizeEncoding = $bindgen("node_util_binding.bind.ts", "normalizeEncoding");
+const timingSafeEqual = $bindgen("Crypto.bind.ts", "timingSafeEqual");
 
 const {
   validateFunction,

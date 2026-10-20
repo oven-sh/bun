@@ -55,6 +55,7 @@ describe.concurrent("bundler", () => {
     { name: "subdirectory-cjs", format: "cjs", ...inSubfolder },
     { name: "publicPath", format: "esm", publicPath: "/", ...inSubfolder },
     { name: "publicPath-cjs", format: "cjs", publicPath: "/", ...inSubfolder },
+    { name: "naming-starts-with-dot", format: "esm", naming: { entry: "./[dir]/[name].[ext]" }, ...inSubfolder },
     // The page's files land under the server entry's folder, and the HTML names them from the outdir.
     {
       name: "publicPath-files-below-entry",

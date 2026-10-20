@@ -6749,10 +6749,10 @@ declare module "bun" {
     index: string;
 
     /**
-     * The output directory of the build. `index` and each `files[].path` are relative to it.
+     * The output directory of the build, which can end in `../`. `index` and each `files[].path` are relative to it.
      * This only exists when built ahead of time with `Bun.build` or `bun build`, `target: "bun"` and `format: "esm"` or `"cjs"`. It is not enumerable.
      */
-    dir?: string;
+    readonly dir?: string;
 
     /** Array of generated output files with metadata. This only exists when built ahead of time with `Bun.build` or `bun build` */
     files?: Array<{

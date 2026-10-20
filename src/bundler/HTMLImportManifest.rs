@@ -218,12 +218,12 @@ pub(crate) fn write<W: Write + ?Sized>(
     writer.write_all(b"{")?;
 
     if options.html_manifest_has_module_dir() && !from_chunk_dir.is_empty() {
-        let depth = 1
-            + strings::count_char(from_chunk_dir, b'/')
-            + strings::count_char(from_chunk_dir, b'\\');
         writer.write_all(b"\"root\":\"")?;
-        for _ in 0..depth {
-            writer.write_all(b"../")?;
+        // A naming template can start with `./`.
+        for segment in strings::split(from_chunk_dir, b"/") {
+            if !segment.is_empty() && segment != b"." {
+                writer.write_all(b"../")?;
+            }
         }
         writer.write_all(b"\",")?;
     }

@@ -2398,6 +2398,37 @@ long syscall(long nr, ...) {
     });
   });
 
+  // The module that failed to load keeps its error. The resolver keeps nothing.
+  it("a static import fails on one failed read, and a new import of the module loads the file", async () => {
+    using dir = tempDir("resolver-readdir-fault-static-import", {
+      "entry.mjs": `
+        const failure = e => ({ error: e.message });
+        console.log(
+          JSON.stringify({
+            first: await import("./importer.mjs").then(m => m.default, failure),
+            again: await import("./importer.mjs?again").then(m => m.default, failure),
+          }),
+        );
+      `,
+      "importer.mjs": `import dep from "dep";\nexport default dep;\n`,
+      ...packageWithMain("real.js"),
+    });
+    const root = realpathSync(String(dir));
+    const result = await runWithFault(["entry.mjs"], root, {
+      dir: join(root, "node_modules/dep"),
+      hide: "package.json",
+      count: 1,
+    });
+    expect({ ...result, stdout: JSON.parse(result.stdout || "null") }).toEqual({
+      stdout: {
+        first: { error: cannotRead(join(root, "node_modules/dep"), "EIO", "dep") },
+        again: "the main of package.json",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // An open that fails with one of these says that no directory is there. A
   // read of a directory that opened, and that still opens, does not.
   it.each(["ENOENT", "ENOTDIR"] as const)("a read that fails with %s is not a directory that is gone", async errno => {

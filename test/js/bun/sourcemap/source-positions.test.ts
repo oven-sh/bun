@@ -364,7 +364,10 @@ describe("bun test --coverage", () => {
       const [hit, found] = functions.split("/").map(Number);
       const want = [
         (found ? (hit / found) * 100 : 100).toFixed(2),
-        ((executable.filter(count => count !== " 0").length / executable.length) * 100).toFixed(2),
+        (executable.length
+          ? (executable.filter(count => count !== " 0").length / executable.length) * 100
+          : 100
+        ).toFixed(2),
         ranges.join(","),
       ];
       const got = row

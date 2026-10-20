@@ -33,6 +33,17 @@ export const cases: Record<string, Case> = {
  1|called();
 `,
   },
+  // A file with nothing to run is listed.
+  "only-types.ts": {
+    functions: "0/0",
+    lines: `
+ -|// a comment
+ -|export type T = number;
+ -|export interface I {
+ -|  a: T;
+ -|}
+`,
+  },
   // How often, not how many characters.
   "counts.ts": {
     functions: "1/1",
@@ -263,6 +274,14 @@ export const cases: Record<string, Case> = {
  1|do {
  3|  n++;
  3|} while (n < 3);
+ 1|if (n === 0)
+ 0|  do {
+ 0|    n++;
+ 0|  } while (n < 3);
+ 1|if (n === 3)
+ 1|  do {
+ 2|    n++;
+ 2|  } while (n < 5);
  1|out: {
  1|  if (n)
  1|    break out;

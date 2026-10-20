@@ -12239,7 +12239,9 @@ export declare const a4: A4; export const n4: never = a4;
     });
 
     test("computes keyof of a mapped type with an `as` clause again after the intersection it reads is reduced", async () => {
-      const filler = [0, 1, 2].map(i => `type F${i}<T> = T extends any ? { v${i}: T } : never;\ndeclare let f${i}: F${i}<N>;\n`);
+      const filler = [0, 1, 2].map(
+        i => `type F${i}<T> = T extends any ? { v${i}: T } : never;\ndeclare let f${i}: F${i}<N>;\n`,
+      );
       using dir = project({
         "a.ts": `declare let x: X;
 x.k;

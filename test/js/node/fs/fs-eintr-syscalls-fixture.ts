@@ -7,14 +7,15 @@ import module from "node:module";
 import os from "node:os";
 import path from "node:path";
 
-const { EINTR, ENOSPC, ENOTSUP } = os.constants.errno;
+const { EAGAIN, EINTR, EIO, ENOSPC, ENOTSUP } = os.constants.errno;
 // ENOTSUPP. The kernel has it, the table of errno names in bun does not.
 const ENOTSUPP = 524;
 
 const log = process.env.FS_FAULT_LOG!;
 const text = Buffer.alloc(10000, "0123456789").toString();
 // macOS clones a file of more than 128 KB. fetch uses sendfile for one of 32 KB or more.
-const large = Buffer.alloc(200_000, "0123456789").toString();
+// The numbers from 0 up have no period, so bytes from a wrong offset show.
+const large = Array.from({ length: 40_000 }, (_, i) => i).join(" ");
 const out: Record<string, unknown> = {};
 
 function fileIn(dir: string, content = text) {
@@ -64,6 +65,50 @@ function copied(dir: string, copy: (from: string, to: string) => unknown, conten
   const same = () => fs.readFileSync(to, "utf8") === content;
   return done instanceof Promise ? done.then(same) : same();
 }
+
+function contentLength(request: Buffer) {
+  const head = request.toString("latin1", 0, request.indexOf("\r\n\r\n"));
+  return Number(/^content-length: (\d+)/im.exec(head)?.[1]);
+}
+
+/**
+ * Uploads `body` with fetch to a socket that keeps every byte of the request.
+ * True if Content-Length and the bytes after the head are exactly `expected`.
+ */
+async function uploaded(body: Blob, expected: string) {
+  const { promise, resolve } = Promise.withResolvers<Buffer>();
+  using server = Bun.listen<{ request: Buffer; answered: boolean }>({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        socket.data = { request: Buffer.alloc(0), answered: false };
+      },
+      data(socket, chunk) {
+        const state = socket.data;
+        state.request = Buffer.concat([state.request, chunk]);
+        const head = state.request.indexOf("\r\n\r\n");
+        if (state.answered || head === -1) return;
+        if (state.request.length - head - 4 < contentLength(state.request)) return;
+        state.answered = true;
+        socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+      },
+      // The client closes after the answer. Every byte that it sent has arrived by then.
+      close(socket) {
+        resolve(socket.data.request);
+      },
+    },
+  });
+  const response = await fetch(`http://127.0.0.1:${server.port}/`, { method: "POST", body });
+  await response.arrayBuffer();
+  const request = await promise;
+  const sent = request.subarray(request.indexOf("\r\n\r\n") + 4);
+  const length = contentLength(request);
+  return (length === expected.length && sent.toString() === expected) || { contentLength: length, sent: sent.length };
+}
+
+const uploadedFile = (dir: string) => uploaded(Bun.file(fileIn(dir, large)), large);
+const uploadedSlice = (dir: string) => uploaded(Bun.file(fileIn(dir, large)).slice(10, 110), large.slice(10, 110));
 
 const modes = {
   async interrupted() {
@@ -166,14 +211,10 @@ const modes = {
       if ("error" in outcome!) throw outcome.error;
       return { written: outcome!.written, received: bytes.toString("utf8", 0, received) };
     });
-    await row("fetchFile", { sendfile: EINTR }, async dir => {
-      using server = Bun.serve({
-        port: 0,
-        fetch: async request => new Response(String((await request.arrayBuffer()).byteLength)),
-      });
-      const response = await fetch(server.url, { method: "POST", body: Bun.file(fileIn(dir, large)) });
-      return Number(await response.text());
-    });
+    await row("fetchFile", { sendfile: EINTR }, uploadedFile);
+    await row("fetchFileSlice", { sendfile: EINTR }, uploadedSlice);
+    // No call fails here. The shim cuts each sendfile to 7777 bytes, so the upload takes many calls.
+    await row("fetchFileInParts", { sendfile_most: 7777 }, uploadedFile);
   },
 
   // The shim answers the FICLONE after the one it fails with success. It clones nothing.
@@ -198,6 +239,7 @@ const modes = {
     );
     await row("unlinkSync", { unlink: ENOTSUPP }, dir => fs.unlinkSync(fileIn(dir)));
     await row("accessSync", { access: ENOTSUPP }, dir => fs.accessSync(fileIn(dir)));
+    await row("fetchFile", { sendfile: EIO }, dir => uploadedFile(dir).catch(error => error.code));
   },
 
   async darwin() {
@@ -213,6 +255,17 @@ const modes = {
     await row("bunWriteWithoutClone", { clonefile: ENOTSUP, fcopyfile: EINTR }, dir =>
       copied(dir, (from, to) => Bun.write(Bun.file(to), Bun.file(from))),
     );
+    await row("fetchFile", { sendfile: EINTR }, uploadedFile);
+    await row("fetchFileSlice", { sendfile: EINTR }, uploadedSlice);
+    await row("fetchFileAfterSomeBytes", { sendfile_some: EINTR }, uploadedFile);
+    await row("fetchFileBufferFull", { sendfile_sent: EAGAIN }, uploadedFile);
+    await row("fetchFileEmptySlice", { sendfile: EINTR }, dir =>
+      uploaded(Bun.file(fileIn(dir, large)).slice(1000, 1000), ""),
+    );
+  },
+
+  async darwinFailed() {
+    await row("fetchFile", { sendfile: EIO }, dir => uploadedFile(dir).catch(error => error.code));
   },
 };
 

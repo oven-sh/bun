@@ -90,6 +90,16 @@ static int fault_fd(const char *fn, int fd) {
   return fault(fn, fd_path(fd, path));
 }
 
+// The count for a sendfile from \`fd\`: at most the "sendfile_most=<bytes>" of its directory. The first cut is logged.
+static size_t most(int fd, size_t count) {
+  char path[PATH_MAX];
+  const char *dir;
+  int limit = armed("sendfile_most", fd_path(fd, path), &dir);
+  if (limit <= 0 || count <= (size_t)limit) return count;
+  fault("sendfile_most", path);
+  return limit;
+}
+
 #define NEXT(fn) ({ static __typeof__(&fn) next; if (!next) next = dlsym(RTLD_NEXT, #fn); next; })
 
 int unlink(const char *path) { return fault("unlink", path) ? -1 : NEXT(unlink)(path); }
@@ -103,7 +113,7 @@ char *realpath(const char *path, char *resolved) { return fault("realpath", path
 // No <sys/stat.h> here: an old glibc defines stat() inline in it.
 int stat(const char *path, void *buf) { return fault("stat", path) ? -1 : NEXT(stat)(path, buf); }
 ssize_t sendfile(int out, int in, off_t *offset, size_t count) {
-  return fault_fd("sendfile", in) ? -1 : NEXT(sendfile)(out, in, offset, count);
+  return fault_fd("sendfile", in) ? -1 : NEXT(sendfile)(out, in, offset, most(in, count));
 }
 
 #ifdef __GLIBC__
@@ -114,7 +124,7 @@ int stat64(const char *path, void *buf) { return fault("stat", path) ? -1 : NEXT
 int __xstat(int version, const char *path, void *buf) { return fault("stat", path) ? -1 : NEXT(__xstat)(version, path, buf); }
 int __xstat64(int version, const char *path, void *buf) { return fault("stat", path) ? -1 : NEXT(__xstat64)(version, path, buf); }
 ssize_t sendfile64(int out, int in, off64_t *offset, size_t count) {
-  return fault_fd("sendfile", in) ? -1 : NEXT(sendfile64)(out, in, offset, count);
+  return fault_fd("sendfile", in) ? -1 : NEXT(sendfile64)(out, in, offset, most(in, count));
 }
 #else
 typedef off_t splice_offset;
@@ -140,7 +150,10 @@ long syscall(long nr, ...) {
   char path[PATH_MAX];
   const char *dir;
   if (nr == SYS_copy_file_range && fault_fd("copy_file_range", (int)a1)) return -1;
-  if (nr == SYS_sendfile && fault_fd("sendfile", (int)a2)) return -1;
+  if (nr == SYS_sendfile) {
+    if (fault_fd("sendfile", (int)a2)) return -1;
+    a4 = (long)most((int)a2, (size_t)a4);
+  }
   // The clone after the failed one succeeds, as on a file system that has clones. Nothing is cloned.
   if (nr == SYS_ioctl && (unsigned long)a2 == FICLONE && armed("ioctl_ficlone", fd_path((int)a1, path), &dir))
     return fault("ioctl_ficlone", path) ? -1 : 0;
@@ -152,7 +165,15 @@ const macShim = /* c */ `
 #include <copyfile.h>
 #include <stdint.h>
 #include <sys/clonefile.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/uio.h>
 ${fault}
+static int fault_fd(const char *fn, int fd) {
+  char path[PATH_MAX];
+  return fcntl(fd, F_GETPATH, path) == 0 && fault(fn, path);
+}
+
 static int shim_access(const char *path, int mode) { return fault("access", path) ? -1 : access(path, mode); }
 static int shim_faccessat(int dir, const char *path, int mode, int flag) {
   return fault("faccessat", path) ? -1 : faccessat(dir, path, mode, flag);
@@ -164,9 +185,26 @@ static int shim_copyfile(const char *from, const char *to, copyfile_state_t stat
   return fault("copyfile", from) ? -1 : copyfile(from, to, state, flags);
 }
 static int shim_fcopyfile(int from, int to, copyfile_state_t state, copyfile_flags_t flags) {
-  char path[PATH_MAX];
-  if (fcntl(from, F_GETPATH, path) == 0 && fault("fcopyfile", path)) return -1;
-  return fcopyfile(from, to, state, flags);
+  return fault_fd("fcopyfile", from) ? -1 : fcopyfile(from, to, state, flags);
+}
+// The kernel reports in *sent the bytes that it sent before it failed.
+static int shim_sendfile(int file, int to, off_t offset, off_t *sent, struct sf_hdtr *headers, int flags) {
+  // The call fails before it sends a byte.
+  if (fault_fd("sendfile", file)) {
+    *sent = 0;
+    return -1;
+  }
+  // The call fails after it sent 4096 bytes.
+  if (fault_fd("sendfile_some", file)) {
+    int error = errno;
+    *sent = 4096;
+    if (sendfile(file, to, offset, sent, headers, flags) == 0) errno = error;
+    return -1;
+  }
+  off_t asked = *sent;
+  int result = sendfile(file, to, offset, sent, headers, flags);
+  // The call fails although it sent the whole count. XNU does so with EAGAIN when the last chunk fills the socket buffer.
+  return *sent == asked && fault_fd("sendfile_sent", file) ? -1 : result;
 }
 
 __attribute__((used, section("__DATA,__interpose"))) static const struct {
@@ -177,6 +215,7 @@ __attribute__((used, section("__DATA,__interpose"))) static const struct {
   {(const void *)shim_clonefile, (const void *)clonefile},
   {(const void *)shim_copyfile, (const void *)copyfile},
   {(const void *)shim_fcopyfile, (const void *)fcopyfile},
+  {(const void *)shim_sendfile, (const void *)sendfile},
 };
 `;
 
@@ -226,7 +265,8 @@ describe.skipIf(!supported)("under a shim that fails a libc call once", () => {
   // Without the clone, every copy below reaches copy_file_range on every file system.
   const noClone = { BUN_CONFIG_DISABLE_ioctl_ficlonerange: "1" };
 
-  test.concurrent.skipIf(!isLinux)("a call that fails with EINTR runs again", async () => {
+  // One child at a time: debug builds that start together take most of the 5 seconds of a test each.
+  test.skipIf(!isLinux)("a call that fails with EINTR runs again", async () => {
     const { rows, exitCode } = await run("interrupted");
     expect(rows).toEqual({
       unlinkSync: { result: [], shim: ["unlink"] },
@@ -248,7 +288,7 @@ describe.skipIf(!supported)("under a shim that fails a libc call once", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent.skipIf(!isLinux)("a copy that fails with EINTR runs again", async () => {
+  test.skipIf(!isLinux)("a copy that fails with EINTR runs again", async () => {
     const { rows, exitCode } = await run("interruptedCopy", noClone);
     expect(rows).toEqual({
       cpSync: { result: true, shim: ["copy_file_range"] },
@@ -258,20 +298,22 @@ describe.skipIf(!supported)("under a shim that fails a libc call once", () => {
       bunWrite: { result: { written: 10000, same: true }, shim: ["copy_file_range"] },
       bunWriteToDevice: { result: 10000, shim: ["sendfile"] },
       bunWriteFifo: { result: { written: 10, received: "0123456789" }, shim: ["splice"] },
-      fetchFile: { result: 200000, shim: ["sendfile"] },
+      fetchFile: { result: true, shim: ["sendfile"] },
+      fetchFileSlice: { result: true, shim: ["sendfile"] },
+      fetchFileInParts: { result: true, shim: ["sendfile_most"] },
     });
     expect(exitCode).toBe(0);
   });
 
   // Each row fails its first clone. The row after it shows that the failure did not turn clones off.
-  test.concurrent.skipIf(!isLinux)("a clone that fails with EINTR runs again", async () => {
+  test.skipIf(!isLinux)("a clone that fails with EINTR runs again", async () => {
     const { rows, exitCode } = await run("cloned");
     const cloned = { result: "cloned", shim: ["ioctl_ficlone"] };
     expect(rows).toEqual({ forced: cloned, copyFileSync: cloned, cpSync: cloned, cp: cloned, last: cloned });
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent.skipIf(!isLinux)("a call that fails with another errno reports it", async () => {
+  test.skipIf(!isLinux)("a call that fails with another errno reports it", async () => {
     const { rows, exitCode } = await run("failed", noClone);
     expect(rows).toEqual({
       // Node names this syscall "copyfile" too, with both paths.
@@ -290,6 +332,7 @@ describe.skipIf(!supported)("under a shim that fails a libc call once", () => {
       // 524 is the errno of the kernel. EUNKNOWN is the name for a number that bun has no name for.
       unlinkSync: { result: { code: "EUNKNOWN", errno: -524, syscall: "unlink", path: "file.txt" }, shim: ["unlink"] },
       accessSync: { result: { code: "EUNKNOWN", errno: -524, syscall: "access", path: "file.txt" }, shim: ["access"] },
+      fetchFile: { result: "EIO", shim: ["sendfile"] },
     });
     expect(exitCode).toBe(0);
   });
@@ -307,7 +350,21 @@ describe.skipIf(!supported)("under a shim that fails a libc call once", () => {
       // A file system without clones: clonefile fails with ENOTSUP, and copyfile() or fcopyfile() runs again.
       copyFileWithoutClone: { result: true, shim: ["clonefile", "copyfile"] },
       bunWriteWithoutClone: { result: true, shim: ["clonefile", "fcopyfile"] },
+      fetchFile: { result: true, shim: ["sendfile"] },
+      fetchFileSlice: { result: true, shim: ["sendfile"] },
+      // The rest of the file goes out from where the first call stopped.
+      fetchFileAfterSomeBytes: { result: true, shim: ["sendfile_some"] },
+      // The upload is complete. It is not an error.
+      fetchFileBufferFull: { result: true, shim: ["sendfile_sent"] },
+      // A count of 0 asks the kernel for the rest of the file. No call is made.
+      fetchFileEmptySlice: { result: true, shim: [] },
     });
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(!isMacOS)("a macOS sendfile that fails with another errno reports it", async () => {
+    const { rows, exitCode } = await run("darwinFailed");
+    expect(rows).toEqual({ fetchFile: { result: "EIO", shim: ["sendfile"] } });
     expect(exitCode).toBe(0);
   });
 });

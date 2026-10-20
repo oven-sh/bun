@@ -895,6 +895,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
         match self.end_scope_by_counters(scope) {
             Ok(stored) if !hit_the_limit && self.index_infos_in_instantiation.is_empty() => {
+                // tsgo computes it again on the next request. A result that read something in progress without a mark
+                // (`Task::hold_back`) isn't what that request gets, so it isn't stored anywhere.
+                if !is_cached_by_tsgo && self.task.has_held_back_since(stored) {
+                    return result;
+                }
                 // `data.instantiations[key] = result`. When two instantiations with the same key
                 // nest, the outer one assigns last.
                 let (table, key) = (&self.p.instantiations, (ty, mapper));

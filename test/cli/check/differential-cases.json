@@ -4248,7 +4248,8 @@
     "files": {
       "a.ts": "declare const rec: Record<string, string | undefined>;\nfunction outer() { let n: number; function inc(k: string) { if (rec[k]) rec[k]; n++; } n = 0; }\nconst sentinel: number = \"\";\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
-    }
+    },
+    "theirs": ["a.ts(3,7): error TS2322: Type 'string' is not assignable to type 'number'."]
   },
   "21-C11": {
     "files": {

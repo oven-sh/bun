@@ -6151,10 +6151,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Not in tsgo. True if a symbol's `markedAssignmentSymbolLinks` in `file` can depend on which
     /// function `ensureAssignmentsMarked` walks first. In any other file, whenever the links are
     /// read they're what walking the symbol's declaring function produces. The order matters in
-    /// three cases:
-    /// - Walking a function nested in the declaring one sets `lastAssignmentPos`, after which the
-    ///   symbol gets no more walks. If that walk only finds `x++` or `x += 1`,
-    ///   `hasDefiniteAssignment` stays unset. That flag is read for a `let` without an initializer.
+    /// two cases:
     /// - A function below a node that no walk enters is walked if no enclosing function has the
     ///   flag yet.
     /// - Only a walk resolves the `unchecked_assignment_targets`, so which walks happen is
@@ -6232,38 +6229,21 @@ impl<'p, 's> Checker<'p, 's> {
         }) {
             return true;
         }
-        if bound.assignments.is_empty() {
-            return false;
-        }
         // An initializer in an enum, the `ExpressionWithTypeArguments` that a class extends.
         let has_skipped_expressions = hir.enum_members.iter().any(|it| it.init.is_some())
             || (hir.classes.iter())
                 .any(|it| it.extends.is_some() && !is_entity_name_expression(hir, it.extends));
-        bound.assignments.iter().any(|&(symbol, assignment)| {
-            let node = hir.node(assignment);
-            let is_skipped = |n: Node| is_skipped_by_mark_node_assignments(hir.kind(n));
-            if has_skipped_expressions && hir.find_ancestor(node, is_skipped).is_some() {
-                return true;
-            }
-            if bound.get_assignment_target_kind(hir, assignment) != AssignmentKind::Compound {
-                return false;
-            }
-            let declaration = self.name_of_value_declaration(file, symbol);
-            declaration.is_some_and(|pat| {
-                matches!(bound.pat_parent[pat.idx()], PatParent::Var(d)
-                    if hir[d].kind == VarKind::Let && hir[d].init.is_none())
-                    && function_or_source_file_of(hir, node)
-                        != function_or_source_file_of(hir, hir.node(pat))
-            })
-        })
+        let is_skipped = |n: Node| is_skipped_by_mark_node_assignments(hir.kind(n));
+        has_skipped_expressions
+            && (bound.assignments.iter())
+                .any(|&(_, it)| hir.find_ancestor(hir.node(it), is_skipped).is_some())
     }
 
-    /// `ensureAssignmentsMarked`
+    /// `ensureAssignmentsMarked`, as of TypeScript 7.1: a symbol that already has a
+    /// `lastAssignmentPos` gets the walk of its declaring function too.
     fn ensure_assignments_marked(&self, file: FileId, symbol: SymbolId) {
         // FOR SPEED: treat the declaring function's walk as done.
-        if !self.has_order_dependent_assignment_marks(file)
-            || self.last_assignment_pos(file, symbol) != 0
-        {
+        if !self.has_order_dependent_assignment_marks(file) {
             return;
         }
         let Some(pat) = self.name_of_value_declaration(file, symbol) else {

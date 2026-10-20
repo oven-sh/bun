@@ -1098,6 +1098,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.type_check = config
             .check
             .then_some(crate::cli::check_command::check_for_bun_build as options::TypeCheck);
+        transpiler.options.css_target = config.css_target;
         let compile_to_standalone_html = 'brk: {
             if config.compile.is_none() || config.target != bun_ast::Target::Browser {
                 break 'brk false;

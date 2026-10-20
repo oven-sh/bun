@@ -125,6 +125,8 @@ pub struct Blob {
     pub charset: Cell<AsciiStatus>,
     /// Was it created via the `File` constructor?
     pub is_jsdom_file: Cell<bool>,
+    /// A view of a `File`: it has no name, and its store's path must not stand in for one.
+    pub name_detached: Cell<bool>,
     /// `bun.ptr.RawRefCount(u32, .single_threaded)` — counts in-flight `*Blob`
     /// borrows handed to async readers; not the JS GC retain count. Zero while
     /// the JS cell is the sole owner.
@@ -137,6 +139,10 @@ pub struct Blob {
     /// Only used by `<input type="file">` / `File` (issue #10178).
     pub name: bun_ptr::JsCell<bun_core::String>,
 }
+
+// Release only: `RawRefCount` carries a debug-only `ThreadLock`.
+#[cfg(not(debug_assertions))]
+const _: () = assert!(core::mem::size_of::<Blob>() == 104);
 
 // SAFETY: `global_this` is dereferenced only on its owning JS thread; blobs
 // that cross threads (object-URL registry entries, the standalone-graph
@@ -161,6 +167,7 @@ impl Default for Blob {
             content_type_was_set: Cell::new(false),
             charset: Cell::new(AsciiStatus::Unknown),
             is_jsdom_file: Cell::new(false),
+            name_detached: Cell::new(false),
             ref_count: bun_ptr::RawRefCount::init(0),
             global_this: Cell::new(core::ptr::null()),
             last_modified: Cell::new(0.0),
@@ -336,7 +343,7 @@ impl Blob {
         self.store.set(None);
     }
 
-    /// New view onto the same store, +1 ref.
+    /// New view onto the same store, +1 ref. The view of a `File` is a plain Blob.
     #[inline]
     pub fn dupe(&self) -> Blob {
         self.dupe_with_content_type(false)
@@ -353,7 +360,28 @@ impl Blob {
     /// `content_type` so freeing one side does not dangle the other (the old
     /// borrow path was removed because it dropped user-supplied parameters
     /// like multipart boundaries on a static-mime miss).
+    #[inline]
     pub fn dupe_with_content_type(&self, _include_content_type: bool) -> Blob {
+        if self.is_jsdom_file.get() {
+            return self.dupe_file_as_blob();
+        }
+        self.copy_fields(true)
+    }
+
+    /// Exact copy, for a holder that gives the same `File` back to JS.
+    pub fn dupe_with_identity(&self) -> Blob {
+        self.copy_fields(true)
+    }
+
+    /// Out of line: the copy of a Blob that is not a `File` stays as small as it was.
+    #[inline(never)]
+    fn dupe_file_as_blob(&self) -> Blob {
+        self.copy_fields(false)
+    }
+
+    /// `identity` is a constant at each call site.
+    #[inline(always)]
+    fn copy_fields(&self, identity: bool) -> Blob {
         Blob {
             reported_estimated_size: Cell::new(self.reported_estimated_size.get()),
             size: Cell::new(self.size.get()),
@@ -362,11 +390,30 @@ impl Blob {
             content_type: JsCell::new(self.content_type.get().clone()),
             content_type_was_set: Cell::new(self.content_type_was_set.get()),
             charset: Cell::new(self.charset.get()),
-            is_jsdom_file: Cell::new(self.is_jsdom_file.get()),
+            is_jsdom_file: Cell::new(identity && self.is_jsdom_file.get()),
+            name_detached: Cell::new(!identity || self.name_detached.get()),
             ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
             global_this: Cell::new(self.global_this.get()),
-            last_modified: Cell::new(self.last_modified.get()),
-            name: self.name.clone(),
+            last_modified: Cell::new(if identity {
+                self.last_modified.get()
+            } else {
+                0.0
+            }),
+            name: if identity {
+                self.name.clone()
+            } else {
+                bun_ptr::JsCell::new(bun_core::String::DEAD)
+            },
+        }
+    }
+
+    /// A `File` that leaves its holder by move becomes a plain Blob, in place.
+    pub fn strip_file_identity(&self) {
+        if self.is_jsdom_file.get() {
+            self.is_jsdom_file.set(false);
+            self.name_detached.set(true);
+            self.last_modified.set(0.0);
+            self.name.set(bun_core::String::DEAD);
         }
     }
 
@@ -417,16 +464,30 @@ impl Blob {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 
-    /// A usable filename: a non-empty `name`, else [`store_path`]. (`file.name`
+    /// A usable filename: a non-empty `name`, else [`store_name`]. (`file.name`
     /// itself may be `""`; that is not a filename.)
     ///
-    /// [`store_path`]: Self::store_path
+    /// [`store_name`]: Self::store_name
     pub fn get_file_name(&self) -> Option<bun_core::Utf8Bytes<'_>> {
         let name = self.name.get();
         if !name.is_empty() {
             return Some(name.to_utf8());
         }
-        self.store_path().map(bun_core::Utf8Bytes::Borrowed)
+        self.store_name().map(bun_core::Utf8Bytes::Borrowed)
+    }
+
+    /// [`Self::store_path`] as a name. `None` for a view of a `File`.
+    pub fn store_name(&self) -> Option<&[u8]> {
+        if self.name_detached.get() {
+            return None;
+        }
+        self.store_path()
+    }
+
+    /// True when a Blob rebuilt from a stream of these bytes has no name.
+    #[inline]
+    pub fn is_file_or_view(&self) -> bool {
+        self.is_jsdom_file.get() || self.name_detached.get()
     }
 
     /// `Bytes.stored_name`, the file path, or the S3 key, ignoring `name`.

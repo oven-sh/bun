@@ -129,6 +129,7 @@ test("Worker on a revoked blob still works", async () => {
 test("object URL created in one worker is usable and revocable across threads", async () => {
   using dir = tempDir("worker-object-url", {
     "main.mjs": `import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
+      import { resolveObjectURL } from "node:buffer";
       if (isMainThread) {
         const a = new Worker(new URL(import.meta.url), { workerData: "a" });
         const b = new Worker(new URL(import.meta.url), { workerData: "b" });
@@ -156,7 +157,10 @@ test("object URL created in one worker is usable and revocable across threads", 
         parentPort.on("message", async urls => {
           let count = 0, ok = true;
           for (const url of urls) {
-            const blob = await (await fetch(url)).blob();
+            // Body.blob() returns a plain Blob; resolveObjectURL hands back the registered File.
+            const fetched = await (await fetch(url)).blob();
+            ok &&= fetched.name === undefined && (await fetched.text()) === "x";
+            const blob = resolveObjectURL(url);
             const o = {};
             o[blob.name] = 1; // use the name as a property key on this thread
             ok &&= blob.name.startsWith("nm");

@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
 
 describe("FormData", () => {
@@ -38,7 +38,7 @@ describe("FormData", () => {
     const formData = new FormData();
     formData.append("foo", blob);
     // @ts-expect-error
-    expect(formData.get("foo").name).toBeUndefined();
+    expect(formData.get("foo").name).toBe("blob");
     formData.append("foo2", new File([blob], "foo.txt"));
     // @ts-expect-error
     expect(formData.get("foo2").name).toBe("foo.txt");
@@ -52,15 +52,255 @@ describe("FormData", () => {
 
     let b1 = form.get("foo") as any;
     expect(blob.name).toBeUndefined();
-    expect(b1.name).toBeUndefined();
+    expect(b1.name).toBe("blob");
 
     form.set("foo", b1, "foo.txt");
     expect(blob.name).toBeUndefined();
-    expect(b1.name).toBeUndefined();
+    expect(b1.name).toBe("blob");
 
     b1 = form.get("foo") as Blob;
     expect(blob.name).toBeUndefined();
     expect(b1.name).toBe("foo.txt");
+  });
+
+  // https://xhr.spec.whatwg.org/#create-an-entry
+  describe("entry File name", () => {
+    async function entry(form: FormData, key: string) {
+      const value = form.get(key) as File;
+      return { isFile: value instanceof File, name: value.name, type: value.type, text: await value.text() };
+    }
+
+    it("append/set honor the filename argument when value is already a File", async () => {
+      const origA = new File(["x"], "orig-a.txt", { type: "text/plain" });
+      const origB = new File(["x"], "orig-b.txt");
+      const origC = new File([], "orig-c.txt");
+      const fd = new FormData();
+
+      fd.append("a", origA, "over-a.txt");
+      fd.set("b", origB, "over-b.txt");
+      fd.append("c", origC, "over-c.txt");
+      fd.append("shared1", origA, "shared-1.txt");
+      fd.append("shared2", origA, "shared-2.txt");
+      fd.append("emptyblob", new Blob([]), "empty-blob.txt");
+
+      expect({
+        a: (fd.get("a") as File).name,
+        b: (fd.get("b") as File).name,
+        c: (fd.get("c") as File).name,
+        shared1: (fd.get("shared1") as File).name,
+        shared2: (fd.get("shared2") as File).name,
+        emptyblob: (fd.get("emptyblob") as File).name,
+        getAllA: (fd.getAll("a") as File[]).map(f => f.name),
+        iter: [...fd].map(([k, v]) => [k, (v as File).name]),
+      }).toEqual({
+        a: "over-a.txt",
+        b: "over-b.txt",
+        c: "over-c.txt",
+        shared1: "shared-1.txt",
+        shared2: "shared-2.txt",
+        emptyblob: "empty-blob.txt",
+        getAllA: ["over-a.txt"],
+        iter: [
+          ["a", "over-a.txt"],
+          ["b", "over-b.txt"],
+          ["c", "over-c.txt"],
+          ["shared1", "shared-1.txt"],
+          ["shared2", "shared-2.txt"],
+          ["emptyblob", "empty-blob.txt"],
+        ],
+      });
+
+      // The caller's original File must not be mutated.
+      expect([origA.name, origB.name, origC.name]).toEqual(["orig-a.txt", "orig-b.txt", "orig-c.txt"]);
+      expect(await entry(fd, "a")).toEqual({
+        isFile: true,
+        name: "over-a.txt",
+        type: "text/plain;charset=utf-8",
+        text: "x",
+      });
+      expect(fd.get("a")).not.toBe(origA);
+      expect(fd.get("emptyblob") instanceof File).toBe(true);
+
+      const filenames = [...(await new Response(fd).text()).matchAll(/filename="([^"]*)"/g)].map(m => m[1]);
+      expect(filenames).toEqual([
+        "over-a.txt",
+        "over-b.txt",
+        "over-c.txt",
+        "shared-1.txt",
+        "shared-2.txt",
+        "empty-blob.txt",
+      ]);
+    });
+
+    it("a Blob without a filename argument becomes a File named 'blob'", async () => {
+      const form = new FormData();
+      form.append("a", new Blob(["x"]));
+      form.set("b", new Blob(["y"], { type: "text/plain" }));
+      expect(await entry(form, "a")).toEqual({ isFile: true, name: "blob", type: "", text: "x" });
+      expect(await entry(form, "b")).toEqual({
+        isFile: true,
+        name: "blob",
+        type: "text/plain;charset=utf-8",
+        text: "y",
+      });
+    });
+
+    it("an empty filename argument gives the File an empty name", async () => {
+      const form = new FormData();
+      form.append("file", new File(["x"], "orig.txt"), "");
+      form.append("blob", new Blob(["y"]), "");
+      expect((form.get("file") as File).name).toBe("");
+      expect((form.get("blob") as File).name).toBe("");
+    });
+
+    it("an undefined filename argument keeps the File's own name", async () => {
+      const form = new FormData();
+      form.append("named", new File(["x"], "orig.txt"), undefined);
+      form.append("empty", new File(["x"], ""), undefined);
+      expect((form.get("named") as File).name).toBe("orig.txt");
+      expect((form.get("empty") as File).name).toBe("");
+    });
+
+    it("append/set without a filename keep the File's own name", async () => {
+      using dir = tempDir("formdata-file-name", { "payload.bin": "payload" });
+      const onDisk = join(String(dir), "payload.bin");
+
+      const fileBacked = new File([Bun.file(onDisk)], "display.txt");
+      expect(fileBacked.name).toBe("display.txt");
+
+      const renamed = new File(["abc"], "one.txt") as File & { name: string };
+      renamed.name = "two.txt";
+      expect(renamed.name).toBe("two.txt");
+
+      const fd = new FormData();
+      fd.append("file", fileBacked);
+      fd.set("renamed", renamed);
+
+      expect({
+        file: (fd.get("file") as File).name,
+        renamed: (fd.get("renamed") as File).name,
+      }).toEqual({
+        file: "display.txt",
+        renamed: "two.txt",
+      });
+
+      const body = await new Response(fd).text();
+      expect(body).toContain('Content-Disposition: form-data; name="file"; filename="display.txt"\r\n');
+      expect(body).toContain('Content-Disposition: form-data; name="renamed"; filename="two.txt"\r\n');
+    });
+
+    it("append() and set() both replace a lone surrogate in the File's own name", () => {
+      const file = new File(["x"], "a\uD800.txt");
+      const form = new FormData();
+      form.append("appended", file);
+      form.set("set", file);
+      expect({
+        appended: (form.get("appended") as File).name,
+        set: (form.get("set") as File).name,
+      }).toEqual({ appended: "a\uFFFD.txt", set: "a\uFFFD.txt" });
+    });
+
+    it("a parsed part with an empty filename is a File with an empty name", async () => {
+      const body = ["--X", 'Content-Disposition: form-data; name="empty"; filename=""', "", "abc", "--X--", ""].join(
+        "\r\n",
+      );
+      const form = await new Response(body, {
+        headers: { "content-type": "multipart/form-data; boundary=X" },
+      }).formData();
+      const value = form.get("empty") as File;
+      expect({ isFile: value instanceof File, name: value.name, text: await value.text() }).toEqual({
+        isFile: true,
+        name: "",
+        text: "abc",
+      });
+      // The empty name is a name: the entry does not go out again as "blob".
+      expect((await new Response(form).text()).match(/filename="[^"]*"/g)).toEqual(['filename=""']);
+    });
+
+    it("Bun.serve sends the name of an entry File as the Content-Disposition filename", async () => {
+      const type = "application/octet-stream";
+      const form = new FormData();
+      form.append("unnamed", new Blob(["x"], { type }));
+      form.append("named", new Blob(["y"], { type }), "report.bin");
+      await using server = Bun.serve({
+        port: 0,
+        fetch: req => new Response(form.get(new URL(req.url).pathname.slice(1)) as File),
+      });
+      const disposition = async (key: string) =>
+        (await fetch(new URL(key, server.url))).headers.get("content-disposition");
+      expect({ unnamed: await disposition("unnamed"), named: await disposition("named") }).toEqual({
+        unnamed: 'filename="blob"',
+        named: 'filename="report.bin"',
+      });
+    });
+
+    it("serializes the entry name, not the original File name", async () => {
+      const form = new FormData();
+      form.append("over", new File(["abc"], "orig.txt"), "override.txt");
+      form.append("blob", new Blob(["x"]));
+      const text = await new Response(form).text();
+      expect(text.match(/filename="[^"]*"/g)).toEqual(['filename="override.txt"', 'filename="blob"']);
+    });
+
+    it("a slice of a File is a Blob, so its entry is named 'blob'", async () => {
+      const file = new File(["0123456789"], "report.pdf", { type: "application/pdf", lastModified: 1234 });
+      const form = new FormData();
+      form.append("chunk", file.slice(0, 5));
+      form.append("whole", file);
+
+      expect(await entry(form, "chunk")).toEqual({
+        isFile: true,
+        name: "blob",
+        type: "application/pdf",
+        text: "01234",
+      });
+      const whole = form.get("whole") as File;
+      expect({ name: whole.name, lastModified: whole.lastModified, text: await whole.text() }).toEqual({
+        name: "report.pdf",
+        lastModified: 1234,
+        text: "0123456789",
+      });
+      const text = await new Response(form).text();
+      expect(text.match(/filename="[^"]*"/g)).toEqual(['filename="blob"', 'filename="report.pdf"']);
+    });
+
+    it("a WebSocket Blob message has no name, so its entry is named 'blob'", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        websocket: {
+          open(ws) {
+            ws.sendBinary(new Uint8Array([1, 2, 3]));
+          },
+          message() {},
+        },
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response("Upgrade failed", { status: 500 });
+        },
+      });
+      const ws = new WebSocket(`ws://localhost:${server.port}`);
+      ws.binaryType = "blob" as any;
+      const { promise, resolve, reject } = Promise.withResolvers<Blob>();
+      ws.onmessage = event => resolve(event.data);
+      ws.onerror = reject;
+      ws.onclose = () => reject(new Error("closed before a message arrived"));
+      try {
+        const message = await promise;
+        const form = new FormData();
+        form.append("message", message);
+        expect({
+          messageName: (message as any).name,
+          entryName: (form.get("message") as File).name,
+          filename: (await new Response(form).text()).match(/filename="[^"]*"/g),
+        }).toEqual({
+          messageName: undefined,
+          entryName: "blob",
+          filename: ['filename="blob"'],
+        });
+      } finally {
+        ws.close();
+      }
+    });
   });
 
   const multipartFormDataFixturesRawBody = [

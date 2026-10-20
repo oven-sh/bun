@@ -193,7 +193,7 @@ impl StaticRoute {
                             !blob.is_heap_allocated(),
                             "expected blob not to be heap-allocated",
                         );
-                        *body_value = BodyValue::Blob(blob.dupe());
+                        *body_value = BodyValue::Blob(blob.dupe_with_identity());
 
                         break 'brk AnyBlob::Blob(blob);
                     }

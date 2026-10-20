@@ -97,9 +97,15 @@ void DOMFormData::append(const String& name, const String& value)
     m_items.append(createStringEntry(name, value));
 }
 
+// Null means "not a FormData entry" to toJS(Blob&), so an entry's filename is never null.
+static String sanitizedFileName(const String& filename)
+{
+    return filename.isNull() ? emptyString() : replaceUnpairedSurrogatesWithReplacementCharacter(String(filename));
+}
+
 void DOMFormData::append(const String& name, RefPtr<Blob> blob, const String& filename)
 {
-    blob->setFileName(replaceUnpairedSurrogatesWithReplacementCharacter(String(filename)));
+    blob->setFileName(sanitizedFileName(filename));
     m_items.append({ replaceUnpairedSurrogatesWithReplacementCharacter(String(name)), blob });
 }
 void DOMFormData::remove(const StringView name)
@@ -148,7 +154,7 @@ void DOMFormData::set(const String& name, const String& value)
 
 void DOMFormData::set(const String& name, RefPtr<Blob> blob, const String& filename)
 {
-    blob->setFileName(filename);
+    blob->setFileName(sanitizedFileName(filename));
     set(name, { name, blob });
 }
 

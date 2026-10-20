@@ -729,7 +729,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Returns the walk's key, or `None` if an identical walk is remembered. Its priority has been applied in that
     /// case.
     fn begin_argument_walk(
-        &mut self,
+        &self,
         n: &mut Inference,
         source: TypeId,
         target: TypeId,
@@ -753,10 +753,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if let Some(&priority) = repeated.priorities.get(&key) {
             n.inference_priority = n.inference_priority.min(priority);
-            self.inference_memo.count(memo::Count::ArgumentWalksSkipped);
             return None;
         }
-        self.inference_memo.count(memo::Count::ArgumentWalksRun);
         Some(key)
     }
 

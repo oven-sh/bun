@@ -37,7 +37,7 @@ use crate::util::fx_hash;
 use smallvec::SmallVec;
 
 /// Labels for `Checker::inference_walk_counts`.
-pub const INFERENCE_WALK_COUNTS: [&str; 18] = [
+pub const INFERENCE_WALK_COUNTS: [&str; 16] = [
     "walks",
     "long",
     "to a long-walk target",
@@ -54,8 +54,6 @@ pub const INFERENCE_WALK_COUNTS: [&str; 18] = [
     "left a trace",
     "stored",
     "disturbances",
-    "argument walks run in long walks",
-    "argument walks skipped",
 ];
 
 /// Index into `INFERENCE_WALK_COUNTS`.
@@ -87,8 +85,6 @@ pub(in super::super) enum Count {
     Stored,
     /// Number of generations that ended.
     Disturbances,
-    ArgumentWalksRun,
-    ArgumentWalksSkipped,
 }
 
 /// A walk is long if it makes at least this many `infer_types` calls. The first long walk to a target marks the target,

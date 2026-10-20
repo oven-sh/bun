@@ -2346,7 +2346,7 @@ impl<'p, 's> Checker<'p, 's> {
                     InstantiationClass::Unchanged => default,
                     InstantiationClass::TypeParameter => {
                         if places.is_empty() {
-                            // Of two equal parameters the first one counts, as in a search from the start.
+                            // Like a mapper, keep the first of two equal parameters.
                             for (at, &param) in params.iter().enumerate() {
                                 places.entry(param).or_insert(at);
                             }

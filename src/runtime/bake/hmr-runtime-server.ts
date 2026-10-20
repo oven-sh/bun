@@ -51,7 +51,8 @@ server_exports = {
 
     const response = await serverRenderer(req, {
       styles: styles,
-      modules: [clientEntryUrl],
+      // No client entry: no bundle for the browser to load.
+      modules: clientEntryUrl ? [clientEntryUrl] : [],
       layouts,
       pageModule,
       modulepreload: [],

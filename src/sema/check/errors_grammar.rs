@@ -248,7 +248,8 @@ impl Checker<'_, '_> {
             } => true,
             // An element, not a fragment.
             ExprKind::Jsx(j) => hir[j].tag.is_some(),
-            ExprKind::Cond { yes, no, .. } => {
+            ExprKind::Cond { branches, .. } => {
+                let Branches { yes, no } = hir.branches(branches);
                 self.is_side_effect_free(file, yes) && self.is_side_effect_free(file, no)
             }
             // Iterates over the left spine, so that a long chain does not recurse. Each `,` of a chain asks about all that
@@ -392,7 +393,7 @@ impl Checker<'_, '_> {
                 continue;
             };
             // The binder visits every node of the tree, whether or not the checker does.
-            if matches!(bound.expr_parent[id.idx()], Parent::None) {
+            if matches!(bound.parent_of_expr(id), Parent::None) {
                 continue;
             }
             match hir[operand].kind {

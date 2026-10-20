@@ -1,4 +1,4 @@
-//! `node:crypto` native binding — `pbkdf2`/`scrypt`/`random*`/`timingSafeEqual`
+//! `node:crypto` native binding — `pbkdf2`/`scrypt`/`random*`
 //! plus the `ExternCryptoJob` / `CryptoJob<Ctx>` work-pool plumbing.
 
 use core::ffi::{c_char, c_void};
@@ -1186,49 +1186,6 @@ mod _impl {
     }
 
     #[bun_jsc::host_fn]
-    pub(crate) fn timing_safe_equal(
-        global: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let [l_value, r_value] = call_frame.arguments_as_array::<2>();
-
-        let Some(l_buf) = l_value.as_array_buffer(global) else {
-            return Err(global
-            .err(
-                ErrorCode::INVALID_ARG_TYPE,
-                format_args!(
-                    "The \"buf1\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView."
-                ),
-            )
-            .throw());
-        };
-        let l = l_buf.byte_slice();
-
-        let Some(r_buf) = r_value.as_array_buffer(global) else {
-            return Err(global
-            .err(
-                ErrorCode::INVALID_ARG_TYPE,
-                format_args!(
-                    "The \"buf2\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView."
-                ),
-            )
-            .throw());
-        };
-        let r = r_buf.byte_slice();
-
-        if l.len() != r.len() {
-            return Err(global
-                .err(
-                    ErrorCode::CRYPTO_TIMING_SAFE_EQUAL_LENGTH,
-                    format_args!("Input buffers must have the same byte length"),
-                )
-                .throw());
-        }
-
-        Ok(JSValue::from(boringssl::c::constant_time_eq(l, r)))
-    }
-
-    #[bun_jsc::host_fn]
     fn secure_heap_used(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Ok(JSValue::UNDEFINED)
     }
@@ -1640,17 +1597,6 @@ mod _impl {
                 Default::default(),
             ),
         );
-        crypto.put(
-            global,
-            b"timingSafeEqual",
-            JSFunction::create(
-                global,
-                "timingSafeEqual",
-                __jsc_host_timing_safe_equal,
-                2,
-                Default::default(),
-            ),
-        );
 
         crypto.put(
             global,
@@ -1747,4 +1693,4 @@ mod _impl {
     }
 } // mod _impl
 
-pub(crate) use _impl::{create_node_crypto_binding_zig, timing_safe_equal};
+pub(crate) use _impl::create_node_crypto_binding_zig;

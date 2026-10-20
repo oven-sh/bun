@@ -239,12 +239,14 @@ export default function compose(...streams) {
     let quiet = false;
     if (inner !== undefined) {
       const nodeTail = isNodeStream(tail);
+      const finalCalled = d._writableState.finalCalled;
       // 'finish' proves that the tail is done. 'end' alone does not: the tail, and a writable side, must have got their last input.
-      const inputEnded = (!nodeTail || tail.writableEnded) && (!writable || d._writableState.finalCalled);
+      const inputEnded = (!nodeTail || tail.writableEnded) && (!writable || finalCalled);
       const completed = (writable && d.writableFinished) || (readable && d.readableEnded && inputEnded);
-      early = !completed;
       // Node gives the AbortError of a destroy() with no error to a node tail only. Behind another tail it reports none when the inner pipeline ends by itself.
       quiet = !given && !nodeTail;
+      // A web sink that has all its input is left to finish it, as on Node: a quiet stop would drop that input with no report.
+      early = !completed && !(quiet && !readable && finalCalled);
     }
 
     if (isNodeStream(tail)) {

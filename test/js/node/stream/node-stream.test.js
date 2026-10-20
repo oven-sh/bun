@@ -2674,6 +2674,18 @@ describe("compose() with a web stream or a function stage: destroy() ends the in
   // These cases settle on Node v26.3.0 too: its destroy() stops nothing, so the members run to their end.
   // Bun stops them. With no error given and a web tail it reports no error, as Node does.
   describe("destroy() after the input is complete and before 'end' drops the rest of the output", () => {
+    const recordInto = state => ({
+      write(chunk) {
+        state.written.push(String(chunk));
+      },
+      close() {
+        state.closed = true;
+      },
+      abort(reason) {
+        state.aborted = reason;
+      },
+    });
+
     // Node: 'end', 'close'.
     it("destroy() inside the 'data' listener of the last chunk", async () => {
       const composed = Stream.compose(new PassThrough(), new TransformStream());
@@ -2704,25 +2716,38 @@ describe("compose() with a web stream or a function stage: destroy() ends the in
       expect(events).toEqual(["close"]);
     });
 
-    // Node: 'close' and no error. The sink gets the chunk and closes.
-    it("end(chunk), then destroy(), with a WritableStream as the last member", async () => {
+    // The sink has all its input when destroy() runs. It finishes that input, as on Node: a stop with no
+    // error to report would drop the chunk in silence. This passes without the fix.
+    it("end(chunk), then destroy(), with a WritableStream as the last member: the sink gets the chunk", async () => {
       const state = { written: [], closed: false, aborted: undefined };
-      const composed = Stream.compose(
-        new PassThrough(),
-        new WritableStream({
-          write(chunk) {
-            state.written.push(String(chunk));
-          },
-          close() {
-            state.closed = true;
-          },
-          abort(reason) {
-            state.aborted = reason;
-          },
-        }),
-      );
+      const composed = Stream.compose(new PassThrough(), new WritableStream(recordInto(state)));
       const events = watch(composed);
       composed.end("x");
+      composed.destroy();
+      await turnsUntil(closed(events));
+      expect(events).toEqual(["close"]);
+      expect(state).toEqual({ written: ["x"], closed: true, aborted: undefined });
+    });
+
+    // An error is given, so there is something to report: the sink is aborted with it. Node drops the error.
+    it("end(chunk), then destroy(error), with a WritableStream as the last member: the sink is aborted", async () => {
+      const state = { written: [], closed: false, aborted: undefined };
+      const composed = Stream.compose(new PassThrough(), new WritableStream(recordInto(state)));
+      const events = watch(composed);
+      const boom = new Error("boom");
+      composed.end("x");
+      composed.destroy(boom);
+      await turnsUntil(closed(events));
+      expect(events).toEqual([boom, "close"]);
+      expect(state).toEqual({ written: [], closed: false, aborted: boom });
+    });
+
+    // The input has not ended, so this destroy() is an abort. Node never closes here.
+    it("write(chunk), then destroy(), with a WritableStream as the last member: the sink is aborted", async () => {
+      const state = { written: [], closed: false, aborted: undefined };
+      const composed = Stream.compose(new PassThrough(), new WritableStream(recordInto(state)));
+      const events = watch(composed);
+      composed.write("x");
       composed.destroy();
       await turnsUntil(closed(events));
       expect(events).toEqual(["close"]);

@@ -231,9 +231,9 @@ function pipelineImpl(streams, callback, opts?, inner?) {
     }
   }
 
-  // Bun only, Node has no such hook: compose() calls stop() when its Duplex is destroyed before the pipeline has ended.
   if (inner !== undefined) {
-    inner.stop = (err, always, quiet) => {
+    // Bun only, Node has no such hook: compose() calls stop() when its Duplex is destroyed before the pipeline has ended.
+    inner.stop = function stop(err, always, quiet) {
       // stop() records no error: the members report. An error from before keeps its place, unless it is abort-class.
       if (
         (!error || error.name === "AbortError" || error.code === "ERR_STREAM_PREMATURE_CLOSE") &&
@@ -243,24 +243,24 @@ function pipelineImpl(streams, callback, opts?, inner?) {
         // A quiet stop reports what the pipeline had before it: nothing, or an abort of its own.
         const result = quiet ? error : err;
         // Until the pipeline has ended, `result` replaces a failure (with `quiet`, an abort-class one only), and with `always` any result.
-        callback = (e, val) =>
-          done(
-            always || (e && (!quiet || e.name === "AbortError" || e.code === "ERR_STREAM_PREMATURE_CLOSE"))
-              ? result
-              : e,
-            val,
-          );
+        callback = function report(e, val) {
+          const replace =
+            always || (e && (!quiet || e.name === "AbortError" || e.code === "ERR_STREAM_PREMATURE_CLOSE"));
+          done(replace ? result : e, val);
+        };
       }
       while (destroys.length) {
         destroys.shift()?.(err);
       }
       // finishImpl runs this entry before its own abort: a signal that is still open then gets `err` as its reason.
-      const abort = () => ac.abort(err);
-      destroys.push(abort);
+      function abortStages() {
+        ac.abort(err);
+      }
+      destroys.push(abortStages);
       // The native function: a program can replace the global one (fake timers).
       setImmediate ??= $newCppFunction("node/NodeTimers.cpp", "functionSetImmediate", 1);
       // Next turn: the 'error' of a destroyed member (nextTick) reaches the pipeline before a stage sees the signal.
-      setImmediate(abort);
+      setImmediate(abortStages);
     };
   }
 

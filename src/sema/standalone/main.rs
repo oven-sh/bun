@@ -1,5 +1,5 @@
 use bun_sema::messages::text;
-use bun_sema_baselines::{error_line, write_debug_file};
+use bun_sema_baselines::error_line;
 use std::io::Write;
 
 fn variable(name: &bun_core::ZStr) -> Option<String> {
@@ -139,6 +139,7 @@ fn run(args: &[String]) {
         #[cfg(unix)]
         Some("each") => {
             use bun_core::Fd;
+            use bun_sema_baselines::write_debug_file;
             let option = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
             let out = option("--out=").expect("--out=");
             let jobs: usize = option("--jobs=").map_or(8, |n| n.parse().expect("--jobs="));

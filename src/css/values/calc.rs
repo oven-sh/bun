@@ -391,11 +391,8 @@ impl<V: CalcValue> Calc<V> {
                     i,
                     (),
                     |_, a, b| {
-                        // Floored modulo: result takes the sign of the divisor.
-                        // Equivalent to `a - b * floor(a / b)`. Rust `%` is truncated (sign of
-                        // dividend) and `rem_euclid` is non-negative, so neither matches for
-                        // negative `b` — use the explicit floor formula.
-                        a - b * (a / b).floor()
+                        // Not `a % b`: the f32 operands are rounded, so `rem(25%, 5%)` would be 5%.
+                        a - b * (a / b).trunc()
                     },
                     |_, a, b| MathFunction::Rem {
                         dividend: a,

@@ -3306,6 +3306,7 @@ pub(crate) mod args {
     /// UTF-8 fast paths, which hand both to C++ for any target:
     /// https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L432-L437 (readFileSync)
     /// https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2398-L2411 (writeFileSync)
+    #[inline]
     fn get_encoding_and_converts_open_options(
         object: JSValue,
         global_object: &JSGlobalObject,
@@ -3315,17 +3316,36 @@ pub(crate) mod args {
         may_take_utf8_fast_path: bool,
     ) -> JsResult<(Encoding, bool)> {
         let opens = matches!(target, PathOrFileDescriptor::Path(_));
-        let Some(value) = object.fast_get(global_object, bun_jsc::BuiltinName::Encoding)? else {
-            return Ok((default, opens));
-        };
-        // Node tests `options.encoding === 'utf8' || options.encoding === 'utf-8'`.
-        if !opens && may_take_utf8_fast_path && value.is_string_literal() {
-            let spelling = value.to_js_string_view(global_object)?;
-            if spelling.eq_ascii(b"utf8") || spelling.eq_ascii(b"utf-8") {
-                return Ok((Encoding::Utf8, true));
-            }
+        if opens || !may_take_utf8_fast_path {
+            return Ok((get_encoding(object, global_object, default)?, opens));
         }
-        Ok((Encoding::assert(value, global_object, default)?, opens))
+        get_encoding_and_takes_utf8_fast_path(object, global_object, default)
+    }
+
+    /// Node tests `options.encoding === 'utf8' || options.encoding === 'utf-8'`.
+    fn get_encoding_and_takes_utf8_fast_path(
+        object: JSValue,
+        global_object: &JSGlobalObject,
+        default: Encoding,
+    ) -> JsResult<(Encoding, bool)> {
+        let Some(value) = object.fast_get(global_object, bun_jsc::BuiltinName::Encoding)? else {
+            return Ok((default, false));
+        };
+        if !value.is_string_literal() {
+            return Ok((Encoding::assert(value, global_object, default)?, false));
+        }
+        // The string is read once, for the comparison and for the encoding.
+        let spelling = value.to_js_string_view(global_object)?;
+        if spelling.eq_ascii(b"utf8") || spelling.eq_ascii(b"utf-8") {
+            return Ok((Encoding::Utf8, true));
+        }
+        if spelling.is_empty() {
+            return Ok((default, false));
+        }
+        match Encoding::from_bun_string(&spelling) {
+            Some(encoding) => Ok((encoding, false)),
+            None => Err(Encoding::throw_encoding_error(global_object, value)),
+        }
     }
 
     /// Consume the next positional argument as a Node.js fs `encoding` option.

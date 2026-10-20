@@ -603,3 +603,96 @@ test("error.stack doesnt lose frames", () => {
   // We allow it to differ by the existence of <anonymous> as a string. But that's it.
   expect(no.split("\n").slice(0, -2).join("\n").trim()).toBe(yes.split("\n").slice(0, -2).join("\n").trim());
 });
+
+// Expanding a stream reader or writer in a debugger sends Runtime.getProperties
+// with generatePreview. The preview invokes the native `closed` and `ready`
+// getters on the prototype, which reject with a TypeError. That rejection must
+// not surface as an unhandled rejection that exits the debuggee.
+test("Runtime.getProperties preview of stream readers and writers does not exit the debuggee", async () => {
+  using dir = tempDir("inspect-stream-preview", {
+    "inspectee.js": `
+      globalThis.defaultReader = new ReadableStream({}).getReader();
+      globalThis.byobReader = new ReadableStream({ type: "bytes" }).getReader({ mode: "byob" });
+      globalThis.writer = new WritableStream({}).getWriter();
+      setInterval(() => {}, 1000);
+    `,
+  });
+  await using inspectee = spawn({
+    cwd: String(dir),
+    cmd: [bunExe(), "--inspect=127.0.0.1:0/", "inspectee.js"],
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+
+  let url: URL | undefined;
+  let stderr = "";
+  const decoder = new TextDecoder();
+  const reader = inspectee.stderr.getReader();
+  while (!url) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    stderr += decoder.decode(value);
+    for (const line of stderr.split("\n")) {
+      try {
+        const candidate = new URL(line.trim());
+        if (candidate.protocol === "ws:") url = candidate;
+      } catch {}
+    }
+  }
+  if (!url) {
+    throw new Error("Unable to find listening URL: " + stderr);
+  }
+
+  const webSocket = new WebSocket(url);
+  const opened = Promise.withResolvers<void>();
+  webSocket.addEventListener("open", () => opened.resolve());
+  webSocket.addEventListener("error", cause => opened.reject(new Error("WebSocket error", { cause })));
+  await opened.promise;
+
+  const pending = new Map<number, PromiseWithResolvers<any>>();
+  webSocket.addEventListener("message", ({ data }) => {
+    const message = JSON.parse(data.toString());
+    if (typeof message.id === "number") pending.get(message.id)?.resolve(message);
+  });
+  webSocket.addEventListener("close", ({ code }) => {
+    for (const { reject } of pending.values()) reject(new Error(`WebSocket closed with code ${code}`));
+  });
+  let nextId = 1;
+  const send = (method: string, params?: object) => {
+    const id = nextId++;
+    const resolvers = Promise.withResolvers<any>();
+    pending.set(id, resolvers);
+    const { promise } = resolvers;
+    webSocket.send(JSON.stringify({ id, method, params }));
+    return promise;
+  };
+
+  for (const expression of ["defaultReader", "byobReader", "writer"]) {
+    const evaluated = await send("Runtime.evaluate", { expression });
+    const { objectId } = evaluated.result.result;
+    const properties = await send("Runtime.getProperties", { objectId, ownProperties: true, generatePreview: true });
+    expect(properties.error).toBeUndefined();
+    expect(properties.result.properties.map((p: any) => p.name)).toContain("__proto__");
+  }
+
+  // The debuggee is still alive after the previews.
+  const alive = await send("Runtime.evaluate", { expression: "1 + 1" });
+  expect(alive.result.result.value).toBe(2);
+
+  // Read the rest of stderr, then exit the debuggee on our own terms.
+  const rest = (async () => {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stderr += decoder.decode(value);
+    }
+  })();
+  send("Runtime.evaluate", { expression: "process.exit(42)" }).catch(() => {});
+  const exitCode = await inspectee.exited;
+  await rest;
+  webSocket.close();
+
+  expect(stderr).not.toContain("TypeError");
+  expect(exitCode).toBe(42);
+});

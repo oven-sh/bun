@@ -107,21 +107,9 @@ impl Checker<'_, '_> {
             if sym.file == file && sym.id.idx() != i {
                 continue;
             }
-            let decls = self.files().decls_of(sym);
-            if symbol
-                .flags
-                .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
-            {
-                // `getClassOrInterfaceDeclarationsOfSymbol`
-                let is_class_or_interface =
-                    |d: &&(FileId, Decl)| matches!(d.1, Decl::Class(_) | Decl::Interface(_));
-                if self.type_parameter_lists_are_identical.get(&sym) == Some(&true) {
-                    continue;
-                }
-                match decls.iter().filter(is_class_or_interface).nth(1) {
-                    Some(_) => self.check_type_parameter_lists_identical(file, sym, &decls),
-                    None => _ = (self.type_parameter_lists_are_identical).insert(sym, true),
-                }
+            if !self.has_identical_type_parameter_lists.contains(&sym) {
+                let decls = self.files().decls_of(sym);
+                self.check_type_parameter_lists_identical(file, sym, &decls);
             }
         }
     }
@@ -133,7 +121,8 @@ impl Checker<'_, '_> {
         sym: Sym,
         decls: &[(FileId, Decl)],
     ) {
-        // Each with its `declaration.Name()`, which is nil for `export default class {}`.
+        // `getClassOrInterfaceDeclarationsOfSymbol`. Each with its `declaration.Name()`, which is nil for
+        // `export default class {}`.
         let lists: Vec<(FileId, Span<TypeParamId>, Option<u32>)> = decls
             .iter()
             .filter_map(|&(f, d)| match d {
@@ -149,6 +138,7 @@ impl Checker<'_, '_> {
             })
             .collect();
         if lists.len() < 2 {
+            self.has_identical_type_parameter_lists.insert(sym);
             return;
         }
         let targets = self.type_params_of_symbol(sym);
@@ -184,8 +174,9 @@ impl Checker<'_, '_> {
                 }
             }
         }
-        (self.type_parameter_lists_are_identical).insert(sym, identical);
-        if !identical {
+        if identical {
+            self.has_identical_type_parameter_lists.insert(sym);
+        } else {
             for l in lists.iter().filter(|l| l.0 == file) {
                 match l.2 {
                     Some(name) => {

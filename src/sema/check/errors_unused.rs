@@ -800,7 +800,7 @@ impl Checker<'_, '_> {
                 continue;
             }
             match hir.exprs[i].kind {
-                ExprKind::Dot { obj, name, .. } if is_private(name) => {
+                ExprKind::Dot { obj, name, .. } => {
                     let receiver = self.type_of_expr(file, obj);
                     let receiver = self.non_nullable(receiver);
                     self.note_property(file, u, receiver, name, Some(e), None);

@@ -114,7 +114,13 @@ pub(crate) struct Distinct<K> {
 }
 
 impl<K> Distinct<K> {
-    const FEW: usize = 8;
+    /// `orderedSetMapThreshold`
+    const FEW: usize = 16;
+
+    /// Returns the keys in the order they were added.
+    pub(crate) fn into_keys(self) -> SmallVec<[K; Distinct::<()>::FEW]> {
+        self.keys
+    }
 }
 
 impl<K> Default for Distinct<K> {

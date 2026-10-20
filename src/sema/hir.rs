@@ -2946,13 +2946,6 @@ macro_rules! long_lists {
     };
 }
 
-/// The lists that `file_in_arena` passes to `$long` and that aren't in `long_lists`, except for the comments.
-macro_rules! other_copied_lists {
-    ($each:ident) => {
-        $each!(mentioned, modifiers_of_params);
-    };
-}
-
 /// Returns the room that `list` takes up in a `Block`.
 pub(crate) fn room_for<T>(list: &[T]) -> usize {
     Block::room_for::<T>(list.len())
@@ -3111,7 +3104,8 @@ impl FileBuilder {
             ($($f:ident),*) => { $(room += room_for(&self.$f);)* };
         }
         long_lists!(each);
-        other_copied_lists!(each);
+        // `file_in_arena` passes these to `$long` too.
+        each!(mentioned, modifiers_of_params);
         let mut block = Block::with_room_in(room, arena);
         macro_rules! copied {
             ($list:expr) => {

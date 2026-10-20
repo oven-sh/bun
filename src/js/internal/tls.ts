@@ -470,8 +470,23 @@ function tlsHandshakeError(verifyError) {
   return new (require("internal/shared").ConnResetException)("socket hang up");
 }
 
+// The methods the TLS engine calls on the stream it wraps. Node's JSStreamSocket takes whatever it is given and calls
+// them when it needs them: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L49-L253
+function hasStreamMethods(stream) {
+  return (
+    typeof stream.pause === "function" &&
+    typeof stream.resume === "function" &&
+    typeof stream.on === "function" &&
+    typeof stream.once === "function" &&
+    typeof stream.write === "function" &&
+    typeof stream.end === "function" &&
+    typeof stream.destroy === "function"
+  );
+}
+
 export {
   SSL_OP_CIPHER_SERVER_PREFERENCE,
+  hasStreamMethods,
   nodeClientTlsKeys,
   nodeClientTlsToNative,
   normalizePemKeyOption,

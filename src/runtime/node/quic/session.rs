@@ -354,8 +354,8 @@ pub(crate) struct QuicSession {
     /// the session as that conn's ctx from its first packet
     /// (`QuicEndpoint::on_new_mini_conn`) until it promotes the conn
     /// (`bind_conn`) or the handshake fails (`on_mini_conn_failed`). It is not
-    /// `conn`: lsquic accepts only the ctx accessors,
-    /// `lsquic_conn_get_sockaddr` and `abort_silent` on a mini conn.
+    /// `conn`: lsquic accepts only the ctx accessors and
+    /// `lsquic_conn_get_sockaddr` on a mini conn.
     mini_conn: Cell<*mut lsquic::lsquic_conn>,
     /// The owning endpoint (raw pointer; the JS-side Strong keeps it alive).
     endpoint: Cell<*mut QuicEndpoint>,
@@ -1853,16 +1853,13 @@ impl QuicSession {
             unsafe { lsquic::lsquic_conn_set_ctx(conn, null_mut()) };
         }
         let mini = self.mini_conn.replace(null_mut());
-        // SAFETY: lsquic frees a mini conn only after it cleared `mini_conn`
-        // through `bind_conn` or `on_mini_conn_failed`.
-        if let Some(handshake) = unsafe { lsquic::Conn::from_raw(mini) } {
+        if !mini.is_null() {
             // The handshake has no session now. Without the ctx its key log
-            // and its later callbacks reach none, and it stops here without a
-            // CONNECTION_CLOSE (node parity: Session::Destroy).
-            // SAFETY: as above.
+            // reaches none, and `QuicEndpoint::on_new_conn` drops the conn
+            // if lsquic promotes it.
+            // SAFETY: lsquic frees a mini conn only after it cleared
+            // `mini_conn` through `bind_conn` or `on_mini_conn_failed`.
             unsafe { lsquic::lsquic_conn_set_ctx(mini, null_mut()) };
-            handshake.abort_silent();
-            self.schedule_process();
         }
         self.events.with_mut(Vec::clear);
         let ep = self.endpoint.replace(null_mut());

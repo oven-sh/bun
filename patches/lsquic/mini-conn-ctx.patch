@@ -14,9 +14,9 @@
 +     * callbacks), on_new_conn() finds it on the promoted connection, and
 +     * on_mini_conn_failed() receives it if the handshake dies first.  The
 +     * callback may refuse the connection with lsquic_conn_abort_error().
-+     * After it returns, only lsquic_conn_get_ctx(), lsquic_conn_set_ctx(),
-+     * lsquic_conn_get_sockaddr() and lsquic_conn_abort_silent() are valid
-+     * on the mini connection.  bun addition.
++     * After it returns, only lsquic_conn_get_ctx(), lsquic_conn_set_ctx()
++     * and lsquic_conn_get_sockaddr() are valid on the mini connection.  bun
++     * addition.
       */
 -    void (*on_mini_conn_failed)(void *stream_if_ctx,
 -                                const struct sockaddr *peer_sa,
@@ -143,46 +143,3 @@
      LSQ_DEBUG("Calling on_new_conn callback");
      conn->ifc_conn.cn_conn_ctx = conn->ifc_enpub->enp_stream_if->on_new_conn(
                          conn->ifc_enpub->enp_stream_if_ctx, &conn->ifc_conn);
-@@ -3066,8 +3070,9 @@
- 
- /* bun: abort without a CONNECTION_CLOSE.  The peer discovers the death via
-  * stateless reset (the CIDs purge as PUTY_CONN_DELETED thanks to
-- * LSCONN_IMMED_CLOSE) or its idle timeout.  No-op difference from
-- * lsquic_conn_abort for mini/non-IETF conns.
-+ * LSCONN_IMMED_CLOSE) or its idle timeout.  A mini conn does the same in
-+ * ietf_mini_conn_ci_abort.  No-op difference from lsquic_conn_abort for
-+ * non-IETF conns.
-  */
- void
- lsquic_conn_abort_silent (struct lsquic_conn *lconn)
---- a/src/liblsquic/lsquic_mini_conn_ietf.c
-+++ b/src/liblsquic/lsquic_mini_conn_ietf.c
-@@ -2418,6 +2418,20 @@
- }
- 
- 
-+/* bun: lsquic_conn_abort_silent() on a mini conn: the application dropped
-+ * the context on_new_mini_conn gave it.  As for a corrupt first packet,
-+ * IMC_CLOSE_RECVD makes the next tick close the conn without a
-+ * CONNECTION_CLOSE.  Nothing else makes an errored mini conn tickable. */
-+static void
-+ietf_mini_conn_ci_abort (struct lsquic_conn *lconn)
-+{
-+    struct ietf_mini_conn *conn = (struct ietf_mini_conn *) lconn;
-+    LSQ_INFO("abort");
-+    conn->imc_flags |= IMC_ERROR|IMC_CLOSE_RECVD;
-+    lsquic_engine_add_conn_to_tickable(conn->imc_enpub, lconn);
-+}
-+
-+
- static struct network_path *
- ietf_mini_conn_ci_get_path (struct lsquic_conn *lconn,
-                                                     const struct sockaddr *sa)
-@@ -2482,6 +2496,7 @@
- 
- 
- static const struct conn_iface mini_conn_ietf_iface = {
-+    .ci_abort                =  ietf_mini_conn_ci_abort,
-     .ci_abort_error          =  ietf_mini_conn_ci_abort_error,
-     .ci_client_call_on_new   =  ietf_mini_conn_ci_client_call_on_new,
-     .ci_count_garbage        =  ietf_mini_conn_ci_count_garbage,

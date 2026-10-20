@@ -1668,16 +1668,24 @@ impl QuicEndpoint {
     }
 
     /// lsquic promoted a mini conn whose handshake is complete. `conn` has
-    /// the ctx `on_new_mini_conn` gave that mini conn.
+    /// the ctx `on_new_mini_conn` gave that mini conn, unless the session was
+    /// destroyed since.
     pub(super) fn on_new_conn(&self, conn: *mut lsquic::lsquic_conn) -> *mut QuicSession {
         // SAFETY: `conn` is the live conn lsquic just created.
         let ctx = unsafe { lsquic::lsquic_conn_get_ctx(conn) };
         // SAFETY: `ctx_ref` documents the shim's context-pointer contract.
         let Some(session) = (unsafe { ctx_ref::<QuicSession>(ctx) }) else {
-            // No session owns this handshake. Node's dead server goes silent,
-            // and `lsquic_conn_abort` sends a CONNECTION_CLOSE.
             // SAFETY: `conn` is the live conn lsquic just created.
-            if let Some(c) = unsafe { lsquic::Conn::from_raw(conn) } {
+            let Some(c) = (unsafe { lsquic::Conn::from_raw(conn) }) else {
+                return null_mut();
+            };
+            if self.closing.get() {
+                // CONNECTION_REFUSED (not a code-0 close) is what makes the
+                // client of a closing endpoint reject.
+                c.abort_error(false, QUIC_TRANSPORT_CONNECTION_REFUSED, c"");
+            } else {
+                // Node's dead server goes silent, and `lsquic_conn_abort`
+                // sends a CONNECTION_CLOSE.
                 c.abort_silent();
             }
             return null_mut();

@@ -138,8 +138,7 @@ export const lsquic: Dependency = {
     // node:quic found the session of a handshake again by peer address or by
     // SSL address. on_new_mini_conn gives the mini conn its context before
     // its first packet, promotion carries it to the full conn, and
-    // on_mini_conn_failed hands it back. lsquic_conn_abort_silent works on a
-    // mini conn.
+    // on_mini_conn_failed hands it back.
     "patches/lsquic/mini-conn-ctx.patch",
   ],
 

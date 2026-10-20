@@ -150,7 +150,7 @@ fn run(args: &[String]) {
         }
         Some("cli") => {
             // cli [paths..] [@<response file>] [-b] [-p <project>] [--<compiler option> [value]]
-            // [--threads=n] [--plain] [--no-color] [--github]: behaves like `bun check`.
+            // [--threads=n] [--plain] [--agent] [--json] [--no-color] [--github]: behaves like `bun check`.
             use bun_sema_driver::format::{Layout, Style, write_diagnostics, write_summary};
             let has = |flag: &str| args.iter().any(|a| a == flag);
             let cwd = std::env::current_dir()
@@ -340,10 +340,15 @@ fn run(args: &[String]) {
                         Layout::Plain
                     } else if has("--agent") {
                         Layout::Agent
+                    } else if has("--json") {
+                        Layout::Json
                     } else {
                         Layout::Pretty
                     },
-                    color: !has("--no-color") && !has("--plain") && !has("--agent"),
+                    color: !has("--no-color")
+                        && !has("--plain")
+                        && !has("--agent")
+                        && !has("--json"),
                     cwd: &cwd,
                     is_case_sensitive: report.is_case_sensitive,
                     github_annotations: has("--github"),

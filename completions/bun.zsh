@@ -795,6 +795,8 @@ _bun_check_completion() {
         '--build[Check the projects in references too, like tsc -b]' \
         '-b[Check the projects in references too, like tsc -b]' \
         '--no-pretty[One line per error]' \
+        '--format[pretty, plain, agent or json]:format:(pretty plain agent json)' \
+        '-f[pretty, plain, agent or json]:format:(pretty plain agent json)' \
         '--all[Show every error]' \
         '--threads[Number of threads]:threads' \
         '--timing[Print load and check times]' \

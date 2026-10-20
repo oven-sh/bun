@@ -7,6 +7,7 @@
 
 use crate::{Category, Diagnostic, Report, TaskOutput};
 use bstr::{BStr, BString, ByteSlice};
+use bun_core::printer::json_stringify;
 use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
@@ -36,6 +37,8 @@ pub enum Layout {
     /// One tag per error that contains the surrounding source, so that the reader does not have to
     /// open the file.
     Agent,
+    /// One JSON document with every field of each diagnostic, for programs.
+    Json,
 }
 
 #[derive(Copy, Clone)]
@@ -444,12 +447,141 @@ fn write_github_annotation(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
     let _ = writeln!(out, "title=TS{}::{}", d.code, text.as_bstr());
 }
 
+/// The report as one object: `diagnostics` in order, never grouped, then what the other layouts
+/// print around them.
+fn write_json(out: &mut Vec<u8>, report: &Report, style: &Style) {
+    fn comma(out: &mut Vec<u8>, i: usize) {
+        if i > 0 {
+            out.push(b',');
+        }
+    }
+    out.extend_from_slice(b"{\"diagnostics\":[");
+    // `QuietDiagnosticReporter`
+    let diagnostics: &[Diagnostic] = if report.is_quiet {
+        &[]
+    } else {
+        &report.diagnostics
+    };
+    for (i, d) in diagnostics.iter().enumerate() {
+        comma(out, i);
+        write_json_diagnostic(out, d, style, true);
+    }
+    out.extend_from_slice(b"],\"incomplete\":[");
+    for (i, file) in report.incomplete.iter().enumerate() {
+        comma(out, i);
+        let path = relative_path(&file.path, style.cwd, style);
+        out.extend_from_slice(b"{\"file\":");
+        json_stringify(&path, out);
+        out.extend_from_slice(b",\"message\":");
+        json_stringify(&file.message(&path), out);
+        out.push(b'}');
+    }
+    out.extend_from_slice(b"],\"resolutionTrace\":[");
+    for (i, line) in report.resolution_trace.iter().enumerate() {
+        comma(out, i);
+        json_stringify(line, out);
+    }
+    out.extend_from_slice(b"],\"listedFiles\":[");
+    for (i, line) in report.listed_files.iter().enumerate() {
+        comma(out, i);
+        json_stringify(line, out);
+    }
+    out.extend_from_slice(b"]}\n");
+}
+
+/// One diagnostic as an object. Its position is null without a file. `with_related`: related
+/// information has none of its own.
+fn write_json_diagnostic(out: &mut Vec<u8>, d: &Diagnostic, style: &Style, with_related: bool) {
+    out.extend_from_slice(b"{\"file\":");
+    if d.path.is_empty() {
+        out.extend_from_slice(
+            b"null,\"line\":null,\"column\":null,\"endLine\":null,\"endColumn\":null,\"byteStart\":null,\"byteEnd\":null",
+        );
+    } else {
+        json_stringify(&relative_path(&d.path, style.cwd, style), out);
+        let _ = write!(
+            out,
+            ",\"line\":{},\"column\":{},\"endLine\":{},\"endColumn\":{},\"byteStart\":{},\"byteEnd\":{}",
+            d.line,
+            d.column,
+            d.end_line,
+            d.end_column,
+            d.start,
+            d.end.max(d.start)
+        );
+    }
+    // Bun's own diagnostics have no code.
+    match d.code {
+        0 => out.extend_from_slice(b",\"code\":null"),
+        code => {
+            let _ = write!(out, ",\"code\":{code}");
+        }
+    }
+    let _ = write!(out, ",\"category\":\"{}\",\"message\":", d.category.name());
+    json_stringify(&head_text(d), out);
+    out.extend_from_slice(b",\"text\":");
+    json_stringify(&d.text, out);
+    out.extend_from_slice(b",\"messageChain\":");
+    write_json_chain(out, &d.message_chain);
+    if with_related {
+        out.extend_from_slice(b",\"related\":[");
+        for (i, note) in d.related.iter().enumerate() {
+            if i > 0 {
+                out.push(b',');
+            }
+            write_json_diagnostic(out, note, style, false);
+        }
+        out.push(b']');
+    }
+    out.push(b'}');
+}
+
+/// The message of `d` without its chain, rendered as `Explained::new` renders it: the first line
+/// of `d.text` is not it when an argument has a line break.
+fn head_text(d: &Diagnostic) -> std::borrow::Cow<'_, [u8]> {
+    if d.code == 0 {
+        return std::borrow::Cow::Borrowed(&d.text);
+    }
+    let (_, template) =
+        bun_sema::messages::message(d.code).unwrap_or((Category::Error, "Unknown error."));
+    let mut text = Vec::new();
+    bun_sema::messages::format(&mut text, template, &d.args);
+    std::borrow::Cow::Owned(crate::in_terms_of_bun(text))
+}
+
+/// The lines under the first of a message, as a tree: each with its own text.
+fn write_json_chain(out: &mut Vec<u8>, chain: &[crate::MessageChain]) {
+    out.push(b'[');
+    for (i, element) in chain.iter().enumerate() {
+        if i > 0 {
+            out.push(b',');
+        }
+        let mut text = Vec::new();
+        element.write_text(&mut text);
+        let _ = write!(
+            out,
+            "{{\"code\":{},\"category\":\"{}\",\"text\":",
+            element.code,
+            element.category().name()
+        );
+        json_stringify(&crate::in_terms_of_bun(text), out);
+        out.extend_from_slice(b",\"messageChain\":");
+        write_json_chain(out, &element.message_chain);
+        out.push(b'}');
+    }
+    out.push(b']');
+}
+
 /// Writes the diagnostics, in order.
 pub fn write_diagnostics(out: &mut Vec<u8>, report: &Report, style: &Style) {
     fn take<'a, T>(rest: &mut &'a [T], count: usize) -> &'a [T] {
         let (taken, after) = rest.split_at(count.min(rest.len()));
         *rest = after;
         taken
+    }
+    // The document has a place for what the other layouts print between the diagnostics.
+    if style.layout == Layout::Json {
+        return write_json(out, report, style);
     }
     // A group is of the whole report.
     let is_grouped = !report.is_quiet && should_group(report, style);
@@ -491,6 +623,7 @@ pub fn write_diagnostics(out: &mut Vec<u8>, report: &Report, style: &Style) {
                         write_plain(out, d, last.1.as_bstr());
                     }
                     Layout::Agent => write_agent(out, d, &[], style),
+                    Layout::Json => unreachable!("written above"),
                 }
             }
         }
@@ -521,9 +654,11 @@ fn summary_line(text: &[u8]) -> &[u8] {
         .unwrap_or(first)
 }
 
-/// Plain output is never grouped: tools parse it.
+/// Plain and JSON output are never grouped: tools parse them.
 fn should_group(report: &Report, style: &Style) -> bool {
-    style.layout != Layout::Plain && !style.show_all && report.diagnostics.len() > GROUP_THRESHOLD
+    !matches!(style.layout, Layout::Plain | Layout::Json)
+        && !style.show_all
+        && report.diagnostics.len() > GROUP_THRESHOLD
 }
 
 /// Groups diagnostics by (code, message) and prints the largest groups first, each once with its number of occurrences per file.
@@ -840,7 +975,7 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
         .max()
         .unwrap_or(1);
     for (first, count) in &by_file {
-        let path = if style.layout == Layout::Plain {
+        let path = if matches!(style.layout, Layout::Plain | Layout::Json) {
             relative_path(&first.path, style.cwd, style)
         } else {
             display_path(&first.path, style)

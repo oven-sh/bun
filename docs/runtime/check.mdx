@@ -501,6 +501,70 @@ Found 1 error in 1 file, checked 2 files [14.00ms]
 src/index.ts(3,25): error TS2322: Type 'string' is not assignable to type 'number'.
 ```
 
+### For programs
+
+`bun check --format json` prints one JSON object to stdout and nothing else there. The summary still goes to stderr, and the exit code is the same as for the other formats. A tool that maps errors to other files, such as a `.vue` component, gets the whole span of each error and the message chain as a tree.
+
+```bash terminal icon="terminal"
+bun check --format json > report.json
+```
+
+```json
+{
+  "diagnostics": [
+    {
+      "file": "src/index.ts",
+      "line": 3,
+      "column": 25,
+      "endLine": 3,
+      "endColumn": 27,
+      "byteStart": 57,
+      "byteEnd": 59,
+      "code": 2322,
+      "category": "error",
+      "message": "Type 'string' is not assignable to type 'number'.",
+      "text": "Type 'string' is not assignable to type 'number'.",
+      "messageChain": [],
+      "related": [
+        {
+          "file": "src/user.ts",
+          "line": 2,
+          "column": 3,
+          "endLine": 2,
+          "endColumn": 5,
+          "byteStart": 26,
+          "byteEnd": 28,
+          "code": 6500,
+          "category": "message",
+          "message": "The expected type comes from property 'id' which is declared here on type 'User'",
+          "text": "The expected type comes from property 'id' which is declared here on type 'User'",
+          "messageChain": []
+        }
+      ]
+    }
+  ],
+  "incomplete": [],
+  "resolutionTrace": [],
+  "listedFiles": []
+}
+```
+
+| Field                                    | Meaning                                                                                                                                 |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `file`                                   | The path from the working directory, as in the one-line format. `null` for an error without a file, such as an invalid compiler option. |
+| `line`, `column`, `endLine`, `endColumn` | The span of the error, 1-based. Columns count UTF-16 code units, as TypeScript's do. `null` when `file` is.                             |
+| `byteStart`, `byteEnd`                   | The span as offsets into the UTF-8 text of the file, without a byte order mark. `null` when `file` is.                                  |
+| `code`                                   | The number of the TypeScript error, `2322` for TS2322. `null` for an error that is Bun's own.                                           |
+| `category`                               | `error`, `warning`, `suggestion` or `message`.                                                                                          |
+| `message`                                | The message alone, without the chain below it.                                                                                          |
+| `text`                                   | The message and the chain below it, indented, as `tsc` prints it. For display: `message` and `messageChain` are the parts.              |
+| `messageChain`                           | The chain below the message as a tree. Each element has its own `code`, `category`, `text` and `messageChain`.                          |
+| `related`                                | Related information, such as where a type or a parameter is declared. Each entry has the fields above, except `related`.                |
+| `incomplete`                             | Files whose errors may be missing, each with the reason. If there are any, the exit code is `1`.                                        |
+| `resolutionTrace`, `listedFiles`         | What `--traceResolution`, `--listFiles`, `--listFilesOnly` and `--explainFiles` print, one line per element.                            |
+
+Every error is in the document: they are never grouped, and `--quiet` leaves `diagnostics` empty. GitHub Actions annotations are not printed in this format. If `package.json` has a `check` script, pass `--no-script` as well.
+
 ### More than 50 errors
 
 In a terminal, `bun check` shows each distinct error once. Below it, `bun check` prints how many times the error occurs and in which files. The most frequent error comes first.
@@ -673,16 +737,17 @@ These differences are intentional:
 bun check [flags] [...files or directories]
 ```
 
-| Flag                     | Description                                                         |
-| ------------------------ | ------------------------------------------------------------------- |
-| `-p`, `--project <path>` | Path to a `tsconfig.json` or its directory                          |
-| `-b`, `--build`          | Check the projects in `references` too, like `tsc -b`               |
-| `--pretty`               | Show source code around each error. Default in a terminal           |
-| `--no-pretty`            | One line per error, like `tsc --pretty false`. Default when piped   |
-| `--all`                  | Show every error. Without it, identical errors are grouped above 50 |
-| `--threads <n>`          | Number of threads. Default: one per CPU core                        |
-| `--timing`               | Print how long loading and checking took                            |
-| `--cwd <path>`           | Set the working directory                                           |
-| `--no-script`            | Run the type checker even if the project has a `check` script       |
-| `--strict`, `--target`…  | Any compiler option, as for `tsc`. Overrides `tsconfig.json`        |
-| `-h`, `--help`           | Print the help menu                                                 |
+| Flag                     | Description                                                             |
+| ------------------------ | ----------------------------------------------------------------------- |
+| `-p`, `--project <path>` | Path to a `tsconfig.json` or its directory                              |
+| `-b`, `--build`          | Check the projects in `references` too, like `tsc -b`                   |
+| `--pretty`               | Show source code around each error. Default in a terminal               |
+| `--no-pretty`            | One line per error, like `tsc --pretty false`. Default when piped       |
+| `-f`, `--format <name>`  | `pretty`, `plain`, `agent` or `json`. See [For programs](#for-programs) |
+| `--all`                  | Show every error. Without it, identical errors are grouped above 50     |
+| `--threads <n>`          | Number of threads. Default: one per CPU core                            |
+| `--timing`               | Print how long loading and checking took                                |
+| `--cwd <path>`           | Set the working directory                                               |
+| `--no-script`            | Run the type checker even if the project has a `check` script           |
+| `--strict`, `--target`…  | Any compiler option, as for `tsc`. Overrides `tsconfig.json`            |
+| `-h`, `--help`           | Print the help menu                                                     |

@@ -54,12 +54,22 @@ impl MessageChain {
         chain.collect()
     }
 
+    /// The category of this element's message: `chainDiagnosticMessages`.
+    pub fn category(&self) -> Category {
+        messages::message(self.code).map_or(Category::Error, |m| m.0)
+    }
+
+    /// The text of this element alone, without those under it.
+    pub fn write_text(&self, text: &mut Vec<u8>) {
+        let template = messages::message(self.code).map_or("", |m| m.1);
+        messages::format(text, template, &self.args);
+    }
+
     /// `flattenDiagnosticMessageChain`
     pub fn flatten(&self, text: &mut Vec<u8>, level: usize) {
         text.push(b'\n');
         text.extend(std::iter::repeat_n(b' ', 2 * level));
-        let template = messages::message(self.code).map_or("", |m| m.1);
-        messages::format(text, template, &self.args);
+        self.write_text(text);
         for child in &self.message_chain {
             child.flatten(text, level + 1);
         }

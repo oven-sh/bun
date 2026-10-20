@@ -1467,7 +1467,6 @@ impl<'a> Transpiler<'a> {
                     keep_directives: false,
                     preserve_unused_imports_ts: false,
                     use_define_for_class_fields: this_parse.use_define_for_class_fields,
-                    suppress_warnings_about_weird_code: true,
                     features: js_ast::RuntimeFeatures::default(),
                     tree_shaking: self.options.tree_shaking,
                     bundle: false,

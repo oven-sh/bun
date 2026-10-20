@@ -1392,14 +1392,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(Continuation::Done);
         }
 
-        // Warn about "!a in b" instead of "!(a in b)"
-        if let ExprData::EUnary(unary) = &left.data {
-            if unary.op == OpCode::UnNot {
-                // TODO:
-                // p.log.addRangeWarning(source: ?Source, r: Range, text: string)
-            }
-        }
-
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
@@ -1420,16 +1412,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(Continuation::Done);
         }
 
-        // Warn about "!a instanceof b" instead of "!(a instanceof b)". Here's an
-        // example of code with this problem: https://github.com/mrdoob/three.js/pull/11182.
-        if !p.options.suppress_warnings_about_weird_code {
-            if let ExprData::EUnary(unary) = &left.data {
-                if unary.op == OpCode::UnNot {
-                    // TODO:
-                    // p.log.addRangeWarning(source: ?Source, r: Range, text: string)
-                }
-            }
-        }
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;

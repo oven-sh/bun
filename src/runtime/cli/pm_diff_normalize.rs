@@ -328,7 +328,6 @@ fn parse_js<'a>(
     opts.features.top_level_await = true;
     opts.features.standard_decorators = !loader.is_typescript();
     opts.transform_only = true;
-    opts.suppress_warnings_about_weird_code = true;
     let define: &'a bun_js_parser::Define = arena.alloc(bun_js_parser::Define::default());
     let mut log = bun_ast::Log::init();
     let parser = bun_js_parser::Parser::init(opts, &mut log, source, define, arena).ok()?;

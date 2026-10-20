@@ -1015,20 +1015,6 @@ pub struct File {
     pub quoted_source_contents: Option<bun_alloc::AstVec<u8>>,
 }
 
-impl Default for File {
-    fn default() -> Self {
-        Self {
-            // Note: empty static-arm bitset; load() overwrites before any read.
-            entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
-            input_file: Index::source(0u32),
-            entry_point_kind: EntryPoint::Kind::None,
-            entry_point_chunk_index: u32::MAX,
-            line_offset_table: bun_sourcemap::line_offset_table::List::new_in(bun_alloc::AstAlloc),
-            quoted_source_contents: None,
-        }
-    }
-}
-
 pub(crate) type FileList = MultiArrayList<File>;
 
 bun_collections::multi_array_columns! {

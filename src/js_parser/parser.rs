@@ -214,6 +214,10 @@ pub mod Runtime {
 
         pub replace_exports: ReplaceableExportMap,
 
+        /// The browser copy of a page: `replace_exports` deletes exports by their exported name,
+        /// and what only they used goes with them (`server_only_code.rs`).
+        pub remove_server_only_code: bool,
+
         /// Scan for '// @bun' at the top of this file, halting a parse if it is
         /// seen. This is used in `bun run` after a `bun build --target=bun`,
         /// and you know the contents is already correct.
@@ -297,6 +301,7 @@ pub mod Runtime {
                 trim_unused_imports: false,
                 auto_polyfill_require: false,
                 replace_exports: ReplaceableExportMap::default(),
+                remove_server_only_code: false,
                 dont_bundle_twice: false,
                 unwrap_commonjs_packages: &[],
                 commonjs_at_runtime: false,

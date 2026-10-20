@@ -547,6 +547,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// with them, also in JavaScript, where an unused import otherwise stays for its side effects.
     /// Few: the data functions of a page and what they use.
     pub(crate) used_by_deleted_exports: Vec<u32>,
+    pub(crate) declaration_parts: Vec<crate::server_only_code::DeclarationPart>,
     /// Fill `scope_uses` (bundling with the number renamer).
     pub(crate) track_scope_uses: bool,
     /// Next `Scope::visit_span` pre-order index. The module scope is 0.
@@ -1801,7 +1802,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.deoptimize_common_js_named_exports();
     }
 
-    fn clear_symbol_usages_from_dead_part(&mut self, part: &js_ast::Part) {
+    pub(crate) fn clear_symbol_usages_from_dead_part(&mut self, part: &js_ast::Part) {
         let symbol_use_refs = part.symbol_uses.keys();
         let symbol_use_values = part.symbol_uses.values();
         let symbols = self.symbols.as_mut_slice();
@@ -9808,6 +9809,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             is_control_flow_dead: false,
             in_deleted_export: false,
             used_by_deleted_exports: Default::default(),
+            declaration_parts: Default::default(),
             track_scope_uses,
             visit_scope_count: 0,
             field_init_class_bodies: Vec::new(),

@@ -252,6 +252,7 @@ impl<'a> Options<'a> {
                 trim_unused_imports: f.trim_unused_imports,
                 auto_polyfill_require: f.auto_polyfill_require,
                 replace_exports: Default::default(),
+                remove_server_only_code: false,
                 dont_bundle_twice: f.dont_bundle_twice,
                 unwrap_commonjs_packages: f.unwrap_commonjs_packages,
                 commonjs_at_runtime: f.commonjs_at_runtime,
@@ -1060,7 +1061,15 @@ impl<'a> Parser<'a> {
         // because we only do tree-shaking on top-level statements and lowering
         // a top-level "using" declaration moves all top-level statements into a
         // nested scope.
-        if !p.options.tree_shaking || p.will_wrap_module_in_try_catch_for_using {
+        //
+        // Removing server-only code needs a part per statement, even for HMR, whose
+        // `ConvertESMExportsForHmr` merges the parts back into one.
+        let remove_server_only_code = p.options.features.remove_server_only_code
+            && p.options.bundle
+            && !p.will_wrap_module_in_try_catch_for_using;
+        if (!p.options.tree_shaking && !remove_server_only_code)
+            || p.will_wrap_module_in_try_catch_for_using
+        {
             // When tree shaking is disabled, everything comes in a single part
             p.append_part(&mut parts, stmts)?;
         } else {
@@ -1124,12 +1133,14 @@ impl<'a> Parser<'a> {
                                     }),
                                 };
                                 let new_stmt = p.s(_local, stmt.loc);
-                                let sliced = arena.alloc_slice_copy(&[new_stmt]);
-                                p.append_part(&mut parts, sliced)?;
+                                p.append_statement_part(
+                                    &mut parts,
+                                    new_stmt,
+                                    remove_server_only_code,
+                                )?;
                             }
                         } else {
-                            let sliced = arena.alloc_slice_copy(&[*stmt]);
-                            p.append_part(&mut parts, sliced)?;
+                            p.append_statement_part(&mut parts, *stmt, remove_server_only_code)?;
                         }
                     }
                     js_ast::StmtData::SImport(_)
@@ -1162,8 +1173,7 @@ impl<'a> Parser<'a> {
                         // https://github.com/kysely-org/kysely/issues/412
                         let should_move = !p.options.bundle && class.class.can_be_moved();
 
-                        let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(&mut parts, sliced)?;
+                        p.append_statement_part(&mut parts, *stmt, remove_server_only_code)?;
 
                         if should_move {
                             // `Part` isn't `Copy`; pop+push instead of last+truncate.
@@ -1205,11 +1215,14 @@ impl<'a> Parser<'a> {
                         p.scope_order_to_visit = &p.scope_order_to_visit[enum_scope_count..];
                     }
                     _ => {
-                        let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(&mut parts, sliced)?;
+                        p.append_statement_part(&mut parts, *stmt, remove_server_only_code)?;
                     }
                 }
             }
+        }
+
+        if remove_server_only_code {
+            p.remove_server_only_code(&mut parts);
         }
 
         visit_tracer.end();

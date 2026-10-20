@@ -1374,6 +1374,381 @@ test.concurrent("bun bake runs the data functions of a page of the default frame
   expect(bundle).not.toContain("server-only-secret");
 });
 
+async function getPageBundle(url: string, path: string) {
+  const html = await (await fetch(new URL(path, url))).text();
+  const bundleUrl = html.match(/<script type="module" src="([^"]+)"/)?.[1];
+  if (!bundleUrl) throw new Error(`No browser bundle in the HTML of ${path}:\n${html.slice(0, 1500)}`);
+  const bundle = await (await fetch(new URL(bundleUrl, url))).text();
+  // Whatever was removed, the rest of the code must still parse.
+  new Bun.Transpiler({ loader: "js" }).scan(bundle);
+  return { html, bundle };
+}
+
+test.concurrent("the browser build of a page leaves out the top-level code only its data functions used", async () => {
+  using dir = tempDir("bake-command-server-only-code", {
+    "app/db.js": `export class Client { query(token) { return "db-module-secret " + token; } }`,
+    "app/helper.js": `export const helper = () => "helper-module-secret";`,
+    "app/side-effect.js": `console.log("kept-side-effect-module"); export default 1;`,
+    "app/bare.js": `console.log("kept-bare-module");`,
+    "app/pages/index.jsx": `
+      import { Client } from "../db.js";
+      import { helper } from "../helper.js";
+      import unused from "../side-effect.js";
+      import "../bare.js";
+      const db = new Client();
+      const token = helper();
+      function loadRows() { return db.query(token); }
+      console.log("kept-top-level-statement");
+      export const getServerSideProps = async () => ({ props: { rows: loadRows() } });
+      export default function Page({ rows }) { return <h1>{"kept-page " + rows}</h1>; }
+    `,
+    // Fast Refresh registers components and their hooks in statements of its own.
+    "app/pages/refresh.jsx": `
+      import { useState } from "react";
+      import { helper } from "../helper.js";
+      function ServerOnlyPanel() { useState(helper()); return null; }
+      const ServerOnlyArrow = () => { useState(0); return <ServerOnlyPanel />; };
+      export const getServerSideProps = async () => ({ props: { name: ServerOnlyArrow.name } });
+      export default function Page({ name }) { return <h1>{"kept-refresh " + name}</h1>; }
+    `,
+  });
+  linkReact(String(dir));
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  const { html, bundle } = await getPageBundle(url, "/");
+  // The server has all of it.
+  expect(html).toContain("<h1>kept-page db-module-secret helper-module-secret</h1>");
+  for (const kept of ["kept-side-effect-module", "kept-bare-module", "kept-top-level-statement", "kept-page"]) {
+    expect(bundle).toContain(kept);
+  }
+  for (const gone of ["db-module-secret", "helper-module-secret", "new Client", "helper()", "loadRows"]) {
+    expect(bundle).not.toContain(gone);
+  }
+
+  const refresh = await getPageBundle(url, "/refresh");
+  expect(refresh.html).toContain("<h1>kept-refresh ServerOnlyArrow</h1>");
+  expect(refresh.bundle).toContain("$RefreshReg$");
+  expect(refresh.bundle).toContain("kept-refresh");
+  for (const gone of ["helper-module-secret", "ServerOnlyPanel", "ServerOnlyArrow"]) {
+    expect(refresh.bundle).not.toContain(gone);
+  }
+});
+
+test.concurrent("the browser build of a page removes server-only code of every form", async () => {
+  const view = (text: string) => `export default () => ${text};`;
+  // Each page lists the text its browser bundle must not have, and the text it must have.
+  const pages = {
+    chain: {
+      source: `
+        import { secret } from "../secret.js";
+        const first = secret("chain-a");
+        const second = () => first + "chain-b";
+        function third() { return second() + "chain-c"; }
+        class Fourth { value = third() + "chain-d"; }
+        export const getServerSideProps = async () => ({ props: { value: new Fourth().value } });
+        ${view(`"kept-page"`)}
+      `,
+      gone: ["chain-a", "chain-b", "chain-c", "chain-d", "secret-module", "Fourth"],
+      kept: ["kept-page"],
+    },
+    // Each function calls the other, so neither use count ever reaches zero.
+    cycle: {
+      source: `
+        import { secret } from "../secret.js";
+        function ping(n) { return n ? pong(n - 1) : secret("cycle-ping"); }
+        function pong(n) { return ping(n) + "cycle-pong"; }
+        export const getServerSideProps = async () => ({ props: { value: ping(1) } });
+        ${view(`"kept-page"`)}
+      `,
+      gone: ["cycle-ping", "cycle-pong", "secret-module"],
+      kept: ["kept-page"],
+    },
+    destructuring: {
+      source: `
+        import { secret } from "../secret.js";
+        const { all, nested: [deep = "pattern-default"] } = { all: secret("pattern-object"), nested: [] };
+        const [first, ...others] = [secret("pattern-array")];
+        const { shown, property: hiddenLocal } = { shown: "kept-shown", property: 1 };
+        const [, shownItem, hiddenItem] = [0, "kept-item", 2];
+        const { keepsRest, ...rest } = { keepsRest: "kept-before-rest" };
+        export const getServerSideProps = async () => ({
+          props: { value: [all, deep, first, others, hiddenLocal, hiddenItem, keepsRest] },
+        });
+        ${view(`shown + shownItem + rest.a`)}
+      `,
+      gone: ["pattern-object", "pattern-array", "pattern-default", "secret-module", "hiddenLocal", "hiddenItem"],
+      kept: ["kept-shown", "kept-item", "kept-before-rest", "keepsRest"],
+    },
+    mixed: {
+      source: `
+        import { secret } from "../secret.js";
+        const shown = "kept-mixed", hidden = secret("mixed-hidden"), unusedSibling = "kept-unused-sibling";
+        export const getServerSideProps = async () => ({ props: { value: hidden } });
+        ${view(`shown`)}
+      `,
+      gone: ["mixed-hidden", "secret-module"],
+      kept: ["kept-mixed", "kept-unused-sibling"],
+    },
+    // Live code keeps what it uses, and an initializer nothing reads stays for its side effects.
+    live: {
+      source: `
+        import { secret, other } from "../secret.js";
+        const shared = other("kept-shared");
+        const neverRead = other("kept-never-read");
+        function neverCalled() { return "kept-never-called"; }
+        export const getServerSideProps = async () => ({ props: { value: shared + secret("live-hidden") } });
+        ${view(`shared`)}
+      `,
+      gone: ["live-hidden"],
+      kept: ["kept-shared", "kept-never-read", "kept-never-called", "other-module"],
+    },
+    "export-from": {
+      source: `
+        export { getServerSideProps } from "../data-module.js";
+        ${view(`"kept-page"`)}
+      `,
+      gone: ["data-module-secret"],
+      kept: ["kept-page"],
+    },
+    "export-from-partly": {
+      source: `
+        export { getServerSideProps, shownValue } from "../data-module.js";
+        ${view(`"kept-page"`)}
+      `,
+      gone: [],
+      kept: ["kept-page", "shownValue", "data-module-secret"],
+    },
+    "export-star-as": {
+      source: `
+        export * as getStaticProps from "../data-module.js";
+        ${view(`"kept-page"`)}
+      `,
+      gone: ["data-module-secret"],
+      kept: ["kept-page"],
+    },
+    "alias-deleted": {
+      source: `
+        import { secret } from "../secret.js";
+        async function getProps() { return { props: { value: secret("alias-hidden") } }; }
+        export { getProps as getServerSideProps };
+        ${view(`"kept-page"`)}
+      `,
+      gone: ["alias-hidden", "secret-module", "getProps"],
+      kept: ["kept-page"],
+    },
+    "alias-of-import-deleted": {
+      source: `
+        import { getServerSideProps as fromModule } from "../data-module.js";
+        export { fromModule as getServerSideProps };
+        ${view(`"kept-page"`)}
+      `,
+      gone: ["data-module-secret"],
+      kept: ["kept-page"],
+    },
+    "alias-kept": {
+      source: `
+        function getServerSideProps() { return "kept-alias"; }
+        export { getServerSideProps as other };
+        ${view(`"kept-page"`)}
+      `,
+      gone: [],
+      kept: ["kept-alias", "kept-page"],
+    },
+    "namespace-property": {
+      source: `
+        import * as ns from "../secret.js";
+        export const getServerSideProps = async () => ({ props: { value: ns.secret("ns-property") } });
+        ${view(`"kept-page"`)}
+      `,
+      gone: ["ns-property", "secret-module"],
+      kept: ["kept-page"],
+    },
+    "namespace-through-function": {
+      source: `
+        import * as ns from "../secret.js";
+        function read() { return ns.secret("ns-function"); }
+        export const getServerSideProps = async () => ({ props: { value: read() } });
+        ${view(`"kept-page"`)}
+      `,
+      gone: ["ns-function", "secret-module"],
+      kept: ["kept-page"],
+    },
+    "namespace-value": {
+      source: `
+        import * as ns from "../secret.js";
+        const copy = { ...ns };
+        export const getServerSideProps = async () => ({ props: { value: copy.secret("ns-value") } });
+        ${view(`"kept-page"`)}
+      `,
+      gone: ["ns-value", "secret-module"],
+      kept: ["kept-page"],
+    },
+    "namespace-live": {
+      source: `
+        import * as ns from "../secret.js";
+        function read() { return ns.secret("ns-removed-read"); }
+        export const getServerSideProps = async () => ({ props: { value: read() } });
+        ${view(`ns.other("kept-ns-live")`)}
+      `,
+      gone: ["ns-removed-read"],
+      kept: ["kept-ns-live", "other-module"],
+    },
+    "require-and-import": {
+      source: `
+        const required = require("../data-module.js");
+        const imported = () => import("../other-data-module.js");
+        export const getServerSideProps = async () => ({ props: { value: [required, await imported()].length } });
+        ${view(`"kept-page"`)}
+      `,
+      gone: ["data-module-secret", "other-data-module-secret"],
+      kept: ["kept-page"],
+    },
+  };
+
+  using dir = tempDir("bake-command-server-only-forms", {
+    "app/secret.js": `
+      export const secret = value => "secret-module " + value;
+      export const other = value => "other-module " + value;
+    `,
+    "app/data-module.js": `
+      console.log("data-module-secret");
+      export const getServerSideProps = async () => ({ props: {} });
+      export const shownValue = 1;
+    `,
+    "app/other-data-module.js": `console.log("other-data-module-secret");`,
+    ...Object.fromEntries(Object.entries(pages).map(([name, page]) => [`app/pages/${name}.js`, page.source])),
+    "render/server.ts": `export function render(request, meta) {
+      return new Response(meta.modules[0]);
+    }`,
+    "render/client.ts": `import { route } from "bun:bake/client"; route.page();`,
+    "bake.config.ts": `export default {
+      plugins: [{
+        name: "fw",
+        framework: {
+          fileSystemRouterTypes: [{
+            root: "app/pages",
+            style: "nextjs-pages",
+            serverEntryPoint: "./render/server.ts",
+            clientEntryPoint: "./render/client.ts",
+            extensions: [".js"],
+            clientPages: { serverExports: ["getServerSideProps", "getStaticProps"] },
+          }],
+        },
+      }],
+    };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  const results = await Promise.all(
+    Object.entries(pages).map(async ([name, { gone, kept }]) => {
+      const response = await fetch(new URL(`/${name}`, url));
+      const bundleUrl = await response.text();
+      expect([name, response.status]).toEqual([name, 200]);
+      const bundle = await (await fetch(new URL(bundleUrl, url))).text();
+      new Bun.Transpiler({ loader: "js" }).scan(bundle);
+      return {
+        name,
+        leaked: gone.filter(text => bundle.includes(text)),
+        missing: kept.filter(text => !bundle.includes(text)),
+      };
+    }),
+  );
+  expect(results).toEqual(Object.keys(pages).map(name => ({ name, leaked: [], missing: [] })));
+});
+
+test.concurrent("the browser build of a page removes what the serverExports of any framework used", async () => {
+  using dir = tempDir("bake-command-server-only-framework", {
+    "app/secret.js": `export const secret = () => "server-only-secret";`,
+    "app/reexported.js": `export const action = () => "reexported-secret";`,
+    // `getServerSideProps` is not a server export of this framework, so it and what it uses stay.
+    "app/pages/index.js": `
+      import { secret } from "../secret.js";
+      const value = secret();
+      const read = () => value;
+      const keptValue = "kept-value";
+      export const loader = () => read().length;
+      export { action } from "../reexported.js";
+      export const getServerSideProps = () => keptValue;
+      export default () => "home-page-module";
+    `,
+    "render/server.ts": `export function render(request, meta) {
+      return new Response(meta.pageModule.loader() + " " + meta.pageModule.action() + " " + meta.modules.join(" "));
+    }`,
+    "render/client.ts": `import { route } from "bun:bake/client"; route.page();`,
+    "bake.config.ts": `export default {
+      plugins: [{
+        name: "fw",
+        framework: {
+          fileSystemRouterTypes: [{
+            root: "app/pages",
+            style: "nextjs-pages",
+            serverEntryPoint: "./render/server.ts",
+            clientEntryPoint: "./render/client.ts",
+            extensions: [".js"],
+            clientPages: { serverExports: ["loader", "action"] },
+          }],
+        },
+      }],
+    };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  // The server still has both.
+  const [status, length, action, bundleUrl] = (await get(url, "/")).split(" ");
+  expect([status, length, action]).toEqual(["200", "18", "reexported-secret"]);
+  const bundle = await (await fetch(new URL(bundleUrl, url))).text();
+  expect(bundle).toContain("home-page-module");
+  expect(bundle).toContain("kept-value");
+  expect(bundle).not.toContain("server-only-secret");
+  expect(bundle).not.toContain("reexported-secret");
+});
+
+test.concurrent("Fast Refresh does not register a function that serverExports deleted", async () => {
+  using dir = tempDir("bake-command-server-only-refresh", {
+    "refresh-runtime.js": `export const register = () => {};
+      export const createSignatureFunctionForTransform = () => component => component;`,
+    "app/pages/index.js": `
+      export function ServerLoader() { return "from-loader"; }
+      export default function Shown() { return "home-page-module"; }
+    `,
+    "render/server.ts": `export function render(request, meta) {
+      return new Response(meta.pageModule.ServerLoader() + " " + meta.modules[0]);
+    }`,
+    "render/client.ts": `import { route } from "bun:bake/client"; route.page();`,
+    "bake.config.ts": `export default {
+      plugins: [{
+        name: "fw",
+        framework: {
+          reactFastRefresh: { importSource: "./refresh-runtime.js" },
+          fileSystemRouterTypes: [{
+            root: "app/pages",
+            style: "nextjs-pages",
+            serverEntryPoint: "./render/server.ts",
+            clientEntryPoint: "./render/client.ts",
+            extensions: [".js"],
+            clientPages: { serverExports: ["ServerLoader"] },
+          }],
+        },
+      }],
+    };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  const [status, loaded, bundleUrl] = (await get(url, "/")).split(" ");
+  expect([status, loaded]).toEqual(["200", "from-loader"]);
+  const bundle = await (await fetch(new URL(bundleUrl, url))).text();
+  expect(bundle).toContain("$RefreshReg$(Shown");
+  expect(bundle).not.toContain("ServerLoader");
+});
+
 test.concurrent("the default framework sends the browser bundle before a slow Suspense boundary", async () => {
   using dir = tempDir("bake-command-bootstrap", {
     // The boundary waits until the test requests /release.

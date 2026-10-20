@@ -2659,6 +2659,7 @@ pub mod parse_worker {
             .and_then(|f| f.client_page_server_exports(task.path.text))
             .filter(|names| !names.is_empty())
         {
+            opts.features.remove_server_only_code = true;
             for name in server_exports {
                 bun_core::handle_oom(
                     opts.features

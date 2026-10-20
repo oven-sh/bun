@@ -184,11 +184,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let symbol = p.find_symbol(items[i].alias_loc, name)?;
                 let ref_ = symbol.r#ref;
 
+                let by_exported_name = p.options.features.remove_server_only_code;
+                let key = if by_exported_name {
+                    items[i].alias.slice()
+                } else {
+                    name
+                };
                 // reshaped for borrowck — get_ptr borrows options; clone the
                 // small enum payload so `inject_replacement_export(&mut self, ...)` can run.
-                if let Some(entry) = p.options.features.replace_exports.get_ptr(name).cloned() {
+                if let Some(entry) = p.options.features.replace_exports.get_ptr(key).cloned() {
                     if !entry.is_replace() {
                         p.ignore_usage(symbol.r#ref);
+                        if by_exported_name {
+                            p.note_used_by_deleted_export(symbol.r#ref);
+                        }
                     }
                     let _ = p.inject_replacement_export(stmts, symbol.r#ref, stmt.loc, &entry);
                     any_replaced = true;
@@ -281,6 +290,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let items = data.items.slice_mut();
 
         if p.options.features.replace_exports.count() > 0 {
+            let had_items = !items.is_empty();
             let mut j: usize = 0;
             // This is a re-export and the symbols created here are used to reference
             for i in 0..items.len() {
@@ -307,6 +317,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Truncate `data.items` to `j` by reslicing the arena view.
             data.items.truncate(j);
+
+            if had_items && j == 0 && p.options.features.remove_server_only_code {
+                p.import_records.items_mut()[data.import_record_index as usize]
+                    .flags
+                    .insert(bun_ast::ImportRecordFlags::IS_UNUSED);
+                return Ok(());
+            }
         } else {
             // This is a re-export and the symbols created here are used to reference
             for item in items.iter_mut() {
@@ -354,6 +371,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .expect("unreachable");
                     let _ =
                         p.inject_replacement_export(stmts, declared, bun_ast::Loc::EMPTY, &entry);
+                    if p.options.features.remove_server_only_code {
+                        p.import_records.items_mut()[data.import_record_index as usize]
+                            .flags
+                            .insert(bun_ast::ImportRecordFlags::IS_UNUSED);
+                    }
                     return Ok(());
                 }
             }
@@ -1009,7 +1031,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let mut rr: Result<(), Error> = Ok(());
-        if p.options.features.react_fast_refresh {
+        // A deleted function has no declaration left for these to reference.
+        let is_deleted = mark_as_dead && p.options.features.remove_server_only_code;
+        if p.options.features.react_fast_refresh && !is_deleted {
             if let Some(hook) = react_hook_data.as_mut() {
                 let signature_cb = hook.signature_cb;
                 stmts.push(p.get_react_refresh_hook_signal_decl(signature_cb));

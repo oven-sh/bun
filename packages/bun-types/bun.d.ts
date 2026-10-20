@@ -10271,6 +10271,9 @@ declare module "bun" {
      * - Negative patterns (prefixed with `!`): Entries matching these patterns are excluded.
      *   Negative patterns are applied after positive patterns.
      *
+     * A pattern that begins with `!(` is a group, as in {@link Bun.Glob}, and a positive pattern.
+     * To exclude a name that begins with `(`, write `!\(`.
+     *
      * If not specified, all entries are extracted.
      *
      * @example
@@ -10514,8 +10517,8 @@ declare module "bun" {
      * File contents are loaded into memory, so for large archives consider using `extract()` instead.
      *
      * @param glob - Optional glob pattern(s) to filter files. Supports the same syntax as {@link Bun.Glob},
-     *   including negation patterns (prefixed with `!`). Patterns are matched against paths normalized
-     *   to use forward slashes (`/`).
+     *   including negation patterns (prefixed with `!`). A pattern that begins with `!(` is a group and
+     *   a positive pattern. Patterns are matched against paths normalized to use forward slashes (`/`).
      * @returns A promise that resolves with a Map where keys are file paths (always using forward slashes `/` as separators) and values are File objects
      *
      * @example

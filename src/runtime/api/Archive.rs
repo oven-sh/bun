@@ -1230,17 +1230,17 @@ pub(crate) fn is_safe_path(pathname: &[u8]) -> bool {
 
 /// One pattern of the `glob` option.
 pub(crate) struct GlobPattern {
-    /// It started with `!`, which isn't part of `glob`.
+    /// It started with a `!` that negates, which isn't part of `glob`. The `!` of `!(a)` starts a group and is.
     is_negative: bool,
     glob: glob::Prepared<Box<[u8]>>,
 }
 
 impl GlobPattern {
     fn new(pattern: &[u8]) -> GlobPattern {
-        let positive = pattern.strip_prefix(b"!");
+        let is_negative = glob::matcher::negations(pattern) > 0;
         GlobPattern {
-            is_negative: positive.is_some(),
-            glob: glob::Prepared::new(positive.unwrap_or(pattern).into()),
+            is_negative,
+            glob: glob::Prepared::new(pattern[usize::from(is_negative)..].into()),
         }
     }
 }

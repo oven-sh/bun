@@ -2255,6 +2255,82 @@ describe("Bun.Archive", () => {
     });
   });
 
+  describe("glob entries that begin with `!`", () => {
+    const names = [
+      "(a).txt",
+      "a.txt",
+      "b.txt",
+      "index.test.ts",
+      "index.ts",
+      "lib/util.ts",
+      "src/main.ts",
+      "src/test.ts",
+    ];
+    const archive = new Bun.Archive(Object.fromEntries(names.map(name => [name, name])));
+    const except = (...excluded: string[]) => names.filter(name => !excluded.includes(name));
+
+    const rows: [entries: string[], selected: string[]][] = [
+      // The `!` of `!(` starts a group, as in `Bun.Glob`. The entry selects what the group matches.
+      [["!(a).txt"], ["(a).txt", "b.txt"]],
+      [["!(a|b).txt"], ["(a).txt"]],
+      [["!(*.test).ts"], ["index.ts"]],
+      [["!(src)/**"], ["lib/util.ts"]],
+      [
+        ["*.txt", "!(a).txt"],
+        ["(a).txt", "a.txt", "b.txt"],
+      ],
+      [
+        ["src/**", "!(a).txt"],
+        ["(a).txt", "b.txt", "src/main.ts", "src/test.ts"],
+      ],
+      // Any other leading `!` is the exclude marker. The rest of the entry is the pattern.
+      [["!a.txt"], except("a.txt")],
+      [["!\\(a).txt"], except("(a).txt")],
+      [["![(]a).txt"], except("(a).txt")],
+      [["**", "!src/**"], except("src/main.ts", "src/test.ts")],
+      [["!!(a).txt"], except("(a).txt", "b.txt")],
+      [["!!a.txt"], ["a.txt"]],
+      [["**", "!!a.txt"], ["a.txt"]],
+      [["b.txt", "!!a.txt"], []],
+      [["!"], names],
+      [["a.txt", "!"], ["a.txt"]],
+    ];
+
+    test.each(rows)("%j selects %j", async (entries, selected) => {
+      const forms: (string | string[])[] = entries.length === 1 ? [entries[0], entries] : [entries];
+      for (const glob of forms) {
+        expect([...(await archive.files(glob)).keys()].sort()).toEqual(selected);
+
+        using dir = tempDir("archive-glob-bang", {});
+        expect(await archive.extract(String(dir), { glob })).toBe(selected.length);
+        expect(names.filter(name => existsSync(join(String(dir), name)))).toEqual(selected);
+      }
+    });
+
+    test("an unclosed `!(` and an escaped `!` are plain characters", async () => {
+      const archive = new Bun.Archive({ "!(a.txt": "", "(a.txt": "", "!(a).txt": "", "(a).txt": "", "b.txt": "" });
+
+      expect([...(await archive.files("!(a.txt")).keys()]).toEqual(["!(a.txt"]);
+      expect([...(await archive.files("\\!(a).txt")).keys()]).toEqual(["!(a).txt"]);
+    });
+
+    test("extract() with `!(config).json` keeps a config.json that is already there", async () => {
+      const archive = new Bun.Archive({
+        "config.json": "from the archive",
+        "data.json": "{}",
+        "readme.md": "# Hello",
+      });
+
+      using dir = tempDir("archive-glob-group-extract", { "config.json": "already there" });
+      expect(await archive.extract(String(dir), { glob: "!(config).json" })).toBe(1);
+      expect({
+        "config.json": await Bun.file(join(String(dir), "config.json")).text(),
+        "data.json": await Bun.file(join(String(dir), "data.json")).text(),
+        "readme.md": existsSync(join(String(dir), "readme.md")),
+      }).toEqual({ "config.json": "already there", "data.json": "{}", "readme.md": false });
+    });
+  });
+
   describe("concurrent operations", () => {
     test("multiple extract operations run correctly", async () => {
       const archive = new Bun.Archive({

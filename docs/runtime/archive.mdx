@@ -175,6 +175,18 @@ const srcCount = await archive.extract("./extracted", {
 });
 ```
 
+Bun reads a pattern that begins with `!(` as a group, the same way [`Bun.Glob`](/runtime/glob) does. A group is a positive pattern. To exclude a name that begins with `(`, write `!\(`:
+
+```ts
+// Extract the top-level JSON files except config.json
+const jsonCount = await archive.extract("./extracted", { glob: "!(config).json" });
+
+// Extract everything except the (drafts) directory
+const publishedCount = await archive.extract("./extracted", {
+  glob: ["**", "!\\(drafts)/**"],
+});
+```
+
 ## Reading Archive Contents
 
 ### Get All Files
@@ -290,7 +302,8 @@ Supported glob patterns (subset of [Bun.Glob](/runtime/glob) syntax):
 - `?` - Match single character
 - `[abc]` - Match character set
 - `{a,b}` - Match alternatives
-- `!pattern` - Exclude files matching pattern (negation). When you pass only negative patterns, Bun includes all files not matching them.
+- `@(a|b)`, `!(a|b)` - Match one of the patterns, or anything in a path segment except the patterns
+- `!pattern` - Exclude files matching pattern (negation). When you pass only negative patterns, Bun includes all files not matching them. A pattern that begins with `!(` is a group.
 
 See [Bun.Glob](/runtime/glob) for the full glob syntax including escaping and advanced patterns.
 

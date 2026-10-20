@@ -3509,7 +3509,7 @@ it.concurrent(
     expect(result).toSpawn();
     expect(JSON.parse(result.stdout)).toEqual({ clients: 40, answered: 40, errors: {} });
   },
-  40_000,
+  60_000,
 );
 
 it.concurrent("#6462", async () => {

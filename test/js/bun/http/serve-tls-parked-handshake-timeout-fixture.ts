@@ -22,7 +22,9 @@ const N = 40;
 // LIBUS_TIMEOUT_GRANULARITY (packages/bun-usockets/src/libusockets.h) plus a margin.
 const TICK_MS = 4100;
 const TICKS = 3;
+// Well inside the test's own timeout, so a step that stalls still ends in a summary or an error.
 const STEP_DEADLINE_MS = 20_000;
+const CLIENT_DEADLINE_MS = TICKS * TICK_MS + STEP_DEADLINE_MS;
 
 type Summary = { clients: number; answered: number; errors: Record<string, number> };
 
@@ -128,6 +130,8 @@ async function client(port: number, everyHelloSent: string) {
     }).catch(error => settle(code(error)));
   }
 
-  await settled.promise;
+  await Promise.race([settled.promise, Bun.sleep(CLIENT_DEADLINE_MS)]);
+  if (pending > 0) summary.errors["no answer"] = pending;
   console.log(JSON.stringify(summary));
+  process.exit(0);
 }

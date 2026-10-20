@@ -21,8 +21,52 @@ using namespace JSC;
 // '+' into ' ', and runs decodeURIComponent on every part that holds a %XX escape.
 // When decodeURIComponent throws, Node falls back to its byte-wise unescapeBuffer.
 // This host function covers the first three steps and the successful decode. It
-// returns undefined as soon as decodeURIComponent would throw, and the JS loop in
-// querystring.ts parses the whole string again with the fallback.
+// returns undefined when any escape would make decodeURIComponent throw, and the
+// JS loop in querystring.ts parses the string with the fallback.
+
+// One escape sequence of ECMA-262 Decode: `%XX`, or the `%XX%XX..` run of one
+// UTF-8 encoded code point. Returns the number of characters it spans, or 0
+// where decodeURIComponent throws a URIError.
+template<typename CharType>
+static ALWAYS_INLINE size_t decodeEscape(std::span<const CharType> part, size_t k, char32_t& character)
+{
+    const size_t size = part.size();
+    if (k + 3 > size || !isASCIIHexDigit(part[k + 1]) || !isASCIIHexDigit(part[k + 2]))
+        return 0;
+    uint8_t sequence[U8_MAX_LENGTH];
+    sequence[0] = toASCIIHexValue(part[k + 1], part[k + 2]);
+    const int sequenceLength = 1 + U8_COUNT_TRAIL_BYTES(sequence[0]);
+    if (k + sequenceLength * 3 > size)
+        return 0;
+    for (int i = 1; i < sequenceLength; ++i) {
+        const CharType* q = part.data() + k + i * 3;
+        if (q[0] != '%' || !isASCIIHexDigit(q[1]) || !isASCIIHexDigit(q[2]))
+            return 0;
+        sequence[i] = toASCIIHexValue(q[1], q[2]);
+    }
+    int32_t offset = 0;
+    U8_NEXT(sequence, offset, sequenceLength, character);
+    if (character == static_cast<char32_t>(U_SENTINEL))
+        return 0;
+    return sequenceLength * 3;
+}
+
+// True when decodeURIComponent accepts every escape in `characters`. Checked
+// once over the whole query before anything is allocated, so a malformed
+// escape costs one scan and not a parse that is thrown away.
+template<typename CharType>
+static bool escapesAreWellFormed(std::span<const CharType> characters)
+{
+    size_t k = WTF::find(characters, static_cast<CharType>('%'));
+    while (k != WTF::notFound) {
+        char32_t character;
+        size_t length = decodeEscape(characters, k, character);
+        if (!length)
+            return false;
+        k = WTF::find(characters, static_cast<CharType>('%'), k + length);
+    }
+    return true;
+}
 
 // ECMA-262 Decode with an empty reservedSet, the algorithm of decodeURIComponent.
 // Appends the decoded part to `builder`. Returns false where decodeURIComponent
@@ -35,23 +79,9 @@ static bool appendDecoded(std::span<const CharType> part, StringBuilder& builder
     while (k < size) {
         CharType c = part[k];
         if (c == '%') {
-            if (k + 3 > size || !isASCIIHexDigit(part[k + 1]) || !isASCIIHexDigit(part[k + 2]))
-                return false;
-            uint8_t sequence[U8_MAX_LENGTH];
-            sequence[0] = toASCIIHexValue(part[k + 1], part[k + 2]);
-            const int sequenceLength = 1 + U8_COUNT_TRAIL_BYTES(sequence[0]);
-            if (k + sequenceLength * 3 > size)
-                return false;
-            for (int i = 1; i < sequenceLength; ++i) {
-                const CharType* q = part.data() + k + i * 3;
-                if (q[0] != '%' || !isASCIIHexDigit(q[1]) || !isASCIIHexDigit(q[2]))
-                    return false;
-                sequence[i] = toASCIIHexValue(q[1], q[2]);
-            }
             char32_t character;
-            int32_t offset = 0;
-            U8_NEXT(sequence, offset, sequenceLength, character);
-            if (character == static_cast<char32_t>(U_SENTINEL))
+            size_t length = decodeEscape(part, k, character);
+            if (!length)
                 return false;
             if (U_IS_BMP(character)) {
                 builder.append(static_cast<char16_t>(character));
@@ -59,7 +89,7 @@ static bool appendDecoded(std::span<const CharType> part, StringBuilder& builder
                 builder.append(U16_LEAD(character));
                 builder.append(U16_TRAIL(character));
             }
-            k += sequenceLength * 3;
+            k += length;
             continue;
         }
         if (plusIsSpace && c == '+')
@@ -92,6 +122,8 @@ public:
     JSValue parse(double pairs)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
+        if (!escapesAreWellFormed(m_characters))
+            return jsUndefined();
         JSObject* object = constructEmptyObject(m_vm, m_globalObject->nullPrototypeObjectStructure());
         const size_t size = m_characters.size();
         size_t position = 0;
@@ -119,7 +151,8 @@ public:
     }
 
 private:
-    // One key/value pair. Returns false when a part has a malformed escape.
+    // One key/value pair. Returns false when a part has a malformed escape,
+    // which escapesAreWellFormed() has already ruled out.
     bool addPair(JSObject* object, std::span<const CharType> key, size_t valueStart, size_t valueLength)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);

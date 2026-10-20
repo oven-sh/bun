@@ -391,8 +391,10 @@ var require_src = __commonJS((exports, module) => {
     const customDecode = decode !== qsUnescape;
 
     if (!sep && !eq && !customDecode) {
-      // Returns undefined for a malformed %XX escape, which the loop below
-      // handles through the unescapeBuffer fallback in qsUnescape.
+      // The native parser and the loop below must agree on every input. The
+      // fuzz in test/js/node/querystring/querystring.test.ts checks that.
+      // The native parser returns undefined for a malformed %XX escape, which
+      // the loop handles through the unescapeBuffer fallback in qsUnescape.
       const parsed = parseQueryStringNative(qs, pairs);
       if (parsed !== undefined) return parsed;
     }
@@ -475,8 +477,9 @@ var require_src = __commonJS((exports, module) => {
             if (lastPos < i) key += StringPrototypeSlice.$call(qs, lastPos, i);
             key += plusChar;
             lastPos = i + 1;
-            continue;
           }
+          // Don't let key characters affect value encoding.
+          continue;
         }
         if (code === 43 /* + */) {
           if (lastPos < i) value += StringPrototypeSlice.$call(qs, lastPos, i);

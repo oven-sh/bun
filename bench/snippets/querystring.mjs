@@ -9,6 +9,9 @@ const q100 = Array.from({ length: 100 }, (_, i) => `key${i}=value${i}`).join("&"
 const qUtf16 = "name=\u4e2d\u6587&city=M\u00fcnchen&q=%E4%B8%AD";
 const qPlus = "first+name=John+Smith&q=hello+world";
 const qMalformed = "a=%zz&b=%E4&c=ok";
+const qLateMalformed = q100 + "&pct=100%";
+const q3Custom = q3.replaceAll("&", ";").replaceAll("=", ":");
+const q7Custom = q7.replaceAll("&", ";").replaceAll("=", ":");
 const o3 = querystring.parse(q3);
 const o7 = querystring.parse(q7);
 
@@ -19,7 +22,9 @@ bench("querystring.parse, 100 pairs", () => querystring.parse(q100));
 bench("querystring.parse, 16-bit input", () => querystring.parse(qUtf16));
 bench("querystring.parse, '+' in key and value", () => querystring.parse(qPlus));
 bench("querystring.parse, malformed escape (fallback)", () => querystring.parse(qMalformed));
-bench("querystring.parse, custom separator", () => querystring.parse(q3, ";", ":"));
+bench("querystring.parse, 100 pairs then a malformed escape", () => querystring.parse(qLateMalformed));
+bench("querystring.parse, custom separators, 3 pairs", () => querystring.parse(q3Custom, ";", ":"));
+bench("querystring.parse, custom separators, 7 pairs with escapes", () => querystring.parse(q7Custom, ";", ":"));
 bench("querystring.parse, custom decoder", () => querystring.parse(q7, null, null, { decodeURIComponent: s => s }));
 bench("querystring.parse, empty string", () => querystring.parse(""));
 bench("querystring.stringify, 3 pairs", () => querystring.stringify(o3));

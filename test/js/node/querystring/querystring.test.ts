@@ -1,74 +1,44 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import qs from "node:querystring";
+import nodeResults from "./querystring-node-results.json";
 
-// [input, Node's parse result, Node's key order]. Generated with node v26.
-// Inputs with a malformed escape take the unescapeBuffer fallback, which writes
-// each UTF-16 unit into a byte, so "\u4e2d" becomes "-" (0x2d) there.
-const nodeParseResults: [string, Record<string, string | string[]>, string[]][] = [
-  ["__proto__=1", JSON.parse('{"__proto__":"1"}'), ["__proto__"]],
-  ["foo=bar&foo=quux", { foo: ["bar", "quux"] }, ["foo"]],
-  ["my+weird+field=q1%212%22%27w%245%267%2Fz8%29%3F", { "my weird field": "q1!2\"'w$5&7/z8)?" }, ["my weird field"]],
-  ["foo=baz=bar", { foo: "baz=bar" }, ["foo"]],
-  [
-    "str=foo&arr=1&arr=2&arr=3&somenull=&undef=",
-    { str: "foo", arr: ["1", "2", "3"], somenull: "", undef: "" },
-    ["str", "arr", "somenull", "undef"],
-  ],
-  ["foo=%zx", { foo: "%zx" }, ["foo"]],
-  ["foo=%EF%BF%BD", { foo: "\ufffd" }, ["foo"]],
-  ["foo&bar=baz", { foo: "", bar: "baz" }, ["foo", "bar"]],
-  ["a=b&=c&d=e", { a: "b", "": "c", d: "e" }, ["a", "", "d"]],
-  ["&&foo=bar&&", { foo: "bar" }, ["foo"]],
-  ["&=&=", { "": ["", ""] }, [""]],
-  ["=", { "": "" }, [""]],
-  ["+", { " ": "" }, [" "]],
-  ["=+", { "": " " }, [""]],
-  ["a+&", { "a ": "" }, ["a "]],
-  ["=%20+&", { "": "  " }, [""]],
-  ["a=%E4\u00e9", { a: "\ufffd\ufffd" }, ["a"]],
-  ["%2sf%2a\u4e2d", { "%2sf*-": "" }, ["%2sf*-"]],
-  ["a=%zz\u4e2d", { a: "%zz\u4e2d" }, ["a"]],
-  ["a=%2+0\u4e2d", { a: "%2 0-" }, ["a"]],
-  ["%2+0\u4e2d=1", { "%2 0\u4e2d": "1" }, ["%2 0\u4e2d"]],
-  ["%", { "%": "" }, ["%"]],
-  ["q=100%", { q: "100%" }, ["q"]],
-  ["%E2%82", { "\ufffd": "" }, ["\ufffd"]],
-  ["%ED%A0%80", { "\ufffd\ufffd\ufffd": "" }, ["\ufffd\ufffd\ufffd"]],
-  ["%C0%80", { "\ufffd\ufffd": "" }, ["\ufffd\ufffd"]],
-  ["a=\ud800", { a: "\ud800" }, ["a"]],
-  ["a=\ud800%41", { a: "\ud800A" }, ["a"]],
-  ["0=1", { "0": "1" }, ["0"]],
-  ["0=a&0=b", { "0": ["a", "b"] }, ["0"]],
-  ["1=a&0=b&x=y", { "0": "b", "1": "a", x: "y" }, ["0", "1", "x"]],
-  ["a=b&", { a: "b" }, ["a"]],
-  ["%41%42=%zz\u4e2d", { AB: "%zz-" }, ["AB"]],
-  ["%41%42=100%", { AB: "100%" }, ["AB"]],
-  ["a=%F0%9F%98%80&b=%E4%B8%AD%E6%96%87", { a: "\ud83d\ude00", b: "\u4e2d\u6587" }, ["a", "b"]],
-  ["a=%F4%90%80%80", { a: "\ufffd\ufffd\ufffd\ufffd" }, ["a"]],
-  ["a=%E0%9F%BF", { a: "\ufffd\ufffd\ufffd" }, ["a"]],
-  ["x=%2G", { x: "%2G" }, ["x"]],
-  ["x=%", { x: "%" }, ["x"]],
-  ["x=%4", { x: "%4" }, ["x"]],
-  ["4294967295=a", { "4294967295": "a" }, ["4294967295"]],
-  ["4294967294=a", { "4294967294": "a" }, ["4294967294"]],
-  ["01=a", { "01": "a" }, ["01"]],
-  ["a=b&a=c&a=d", { a: ["b", "c", "d"] }, ["a"]],
-  ["k%E4%B8%AD=v&k%E4%B8%AD=w", { "k\u4e2d": ["v", "w"] }, ["k\u4e2d"]],
-  ["\u00e9=\u00e9&\u00e9=x", { "\u00e9": ["\u00e9", "x"] }, ["\u00e9"]],
-  ["a%2Bb=c%2Bd", { "a+b": "c+d" }, ["a+b"]],
-];
+const serialize = (result: object) =>
+  JSON.stringify(result) + "|" + Object.keys(result).join("\u0001") + "|" + (Object.getPrototypeOf(result) === null);
 
 function plain(result: object) {
   return JSON.parse(JSON.stringify(result));
 }
 
 describe("querystring.parse", () => {
-  test.each(nodeParseResults)("parse(%j) matches Node", (input, expected, keys) => {
-    const result = qs.parse(input);
-    expect(Object.getPrototypeOf(result)).toBe(null);
-    expect(plain(result)).toEqual(expected);
-    expect(Object.keys(result)).toEqual(keys);
+  // querystring-node-results.json is the output of querystring-node-oracle.mjs
+  // under node v26.12.0: an edge matrix, the maxKeys forms, and 800 seeded
+  // inputs in the default form, with { maxKeys } and with (input, null, null).
+  test(`matches node ${nodeResults.version} on every oracle input`, () => {
+    expect(nodeResults.results.length).toBeGreaterThan(800);
+    const mismatches: string[] = [];
+    for (const { input, sep, eq, options, expected } of nodeResults.results) {
+      const opts =
+        options && typeof options.maxKeys === "string"
+          ? { ...options, maxKeys: Number(options.maxKeys.slice(1)) }
+          : options;
+      const actual = serialize(qs.parse(input, sep, eq, opts));
+      if (actual !== expected) {
+        mismatches.push(
+          `parse(${JSON.stringify(input)}, ${sep}, ${eq}, ${JSON.stringify(opts)})\n  bun:  ${actual}\n  node: ${expected}`,
+        );
+      }
+    }
+    expect(mismatches).toEqual([]);
+  });
+
+  test("a malformed escape in the value does not inherit the key's decoding (nodejs/node#66553)", () => {
+    const expected = { "\u00e4": "caf\u00e9%" };
+    expect(plain(qs.parse("%C3%A4=caf\u00e9%"))).toEqual(expected);
+    expect(plain(qs.parse("%C3%A4=caf\u00e9%", undefined, undefined, { maxKeys: 1000 }))).toEqual(expected);
+    expect(plain(qs.parse("%C3%A4=caf\u00e9%", null, null))).toEqual(expected);
+    expect(plain(qs.parse("%C3%A4=caf\u00e9%", "&", "="))).toEqual(expected);
+    expect(plain(qs.parse("%41%42=%zz\u4e2d"))).toEqual({ AB: "%zz\u4e2d" });
   });
 
   test("__proto__ is an own property", () => {
@@ -117,8 +87,6 @@ describe("querystring.parse", () => {
       "12",
       " ",
     ];
-    const serialize = (r: object) =>
-      JSON.stringify(r) + "|" + Object.keys(r).join("\u0001") + "|" + (Object.getPrototypeOf(r) === null);
     for (let i = 0; i < 2000; i++) {
       const length = rand() % 12;
       let input = "";
@@ -134,11 +102,8 @@ describe("querystring.parse", () => {
 
   test("maxKeys counts every '&', the same as Node", () => {
     expect(plain(qs.parse("a=1&b=1&c=1", undefined, undefined, { maxKeys: 1 }))).toEqual({ a: "1" });
-    expect(plain(qs.parse("a=1&b=1&c=1", undefined, undefined, { maxKeys: 2 }))).toEqual({ a: "1", b: "1" });
-    expect(plain(qs.parse("&a", undefined, undefined, { maxKeys: 1 }))).toEqual({});
     expect(plain(qs.parse("&&a=b&c=d", undefined, undefined, { maxKeys: 2 }))).toEqual({});
     expect(plain(qs.parse("&&a=b&c=d", undefined, undefined, { maxKeys: 3 }))).toEqual({ a: "b" });
-    expect(plain(qs.parse("a=1&a=2&a=3&b=4", undefined, undefined, { maxKeys: 3 }))).toEqual({ a: ["1", "2", "3"] });
     for (const maxKeys of [0, -1, 1.5, Infinity, NaN, 2 ** 33]) {
       expect(plain(qs.parse("a=1&b=1&c=1", undefined, undefined, { maxKeys }))).toEqual({ a: "1", b: "1", c: "1" });
     }
@@ -188,7 +153,144 @@ describe("querystring.parse", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("the default form allocates one string per value and none per key", async () => {
+    // The generic loop also slices a key string per pair. This tells the
+    // native parser apart from the loop, which produce the same values.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { heapStats } from "bun:jsc";
+         const qs = require("node:querystring");
+         const q3 = "X-Amz-Expires=900&versionId=abc&x-id=GetObject";
+         const keep = [];
+         for (let i = 0; i < 200; i++) keep.push(qs.parse(q3));
+         Bun.gc(true);
+         const before = heapStats().objectTypeCounts.string;
+         for (let i = 0; i < 1000; i++) keep.push(qs.parse(q3));
+         const after = heapStats().objectTypeCounts.string;
+         console.log(keep.length, (after - before) / 1000);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const [kept, stringsPerCall] = stdout.trim().split(" ").map(Number);
+    expect(kept).toBe(1200);
+    expect(stringsPerCall).toBeLessThanOrEqual(4);
+    expect(exitCode).toBe(0);
+  });
+
   test("decode is parse", () => {
     expect(qs.decode).toBe(qs.parse);
+  });
+});
+
+describe("querystring.unescape", () => {
+  // qs.unescape is decodeURIComponent with the unescapeBuffer fallback. The
+  // decoder is native, so pin it to the engine's decodeURIComponent.
+  function reference(s: string) {
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      return qs.unescapeBuffer(s).toString();
+    }
+  }
+
+  test("matches decodeURIComponent with the unescapeBuffer fallback", () => {
+    const inputs: string[] = [];
+    for (let byte = 0; byte < 256; byte++) {
+      const hex = byte.toString(16).padStart(2, "0");
+      inputs.push(`%${hex.toUpperCase()}\u4e2d`, `%${hex}\u00e9`, `a%${hex}`);
+    }
+    inputs.push(
+      "%C0%80",
+      "%C1%BF",
+      "%E0%80%80",
+      "%E0%9F%BF",
+      "%ED%A0%80",
+      "%ED%BF%BF",
+      "%F0%80%80%80",
+      "%F0%8F%BF%BF",
+      "%F4%90%80%80",
+      "%F5%80%80%80",
+      "%F8%80%80%80%80",
+      "%FF",
+      "%80",
+      "%BF",
+      "%E4%B8%41",
+      "%E4%B8",
+      "%E4",
+      "%F0%9F%98",
+      "%u0041",
+      "%u00e9",
+      "%",
+      "%4",
+      "%4G",
+      "%G4",
+      "a+b",
+      "a%20b",
+      "%2B",
+      "%25",
+      "%2525",
+      "%E4%B8%AD",
+      "%e4%b8%ad",
+      "%F0%9F%98%80",
+      "%f0%9f%98%80",
+      "%F4%8F%BF%BF",
+      "%F0%90%80%80",
+      "%EF%BF%BD",
+      "\ud800%41",
+      "%41\udc00",
+      "\u00e9%E4",
+      "\u4e2d%zz",
+    );
+    let seed = 7;
+    const rand = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff);
+    const pieces = [
+      "%",
+      "%4",
+      "%41",
+      "%E4",
+      "%B8",
+      "%AD",
+      "%F0",
+      "%9F",
+      "%98",
+      "%80",
+      "%ED",
+      "%A0",
+      "%C0",
+      "%zz",
+      "a",
+      "+",
+      "\u00e9",
+      "\u4e2d",
+      "\ud83d",
+      "\ude00",
+    ];
+    for (let i = 0; i < 3000; i++) {
+      const length = rand() % 6;
+      let input = "";
+      for (let j = 0; j < length; j++) input += pieces[rand() % pieces.length];
+      inputs.push(input);
+    }
+    const mismatches: string[] = [];
+    for (const input of inputs) {
+      const actual = qs.unescape(input);
+      const expected = reference(input);
+      if (actual !== expected) {
+        mismatches.push(`${JSON.stringify(input)}: ${JSON.stringify(actual)} !== ${JSON.stringify(expected)}`);
+      }
+    }
+    expect(mismatches).toEqual([]);
+  });
+
+  test("decodeSpaces applies to the fallback only, as in Node", () => {
+    expect(qs.unescape("a+b", true)).toBe("a+b");
+    expect(qs.unescape("a+b%zz", true)).toBe("a b%zz");
+    expect(qs.unescape("a+b%zz")).toBe("a+b%zz");
+    expect(qs.unescape(123 as any)).toBe("123");
   });
 });

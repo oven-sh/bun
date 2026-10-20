@@ -701,6 +701,7 @@ impl SystemErrno {
             W::SIGNAL_REFUSED => SystemErrno::EIO,
             W::WSAEISCONN => SystemErrno::EISCONN,
             W::CANT_RESOLVE_FILENAME => SystemErrno::ELOOP,
+            W::REPARSE_POINT_ENCOUNTERED => SystemErrno::ELOOP,
             W::TOO_MANY_OPEN_FILES => SystemErrno::EMFILE,
             W::WSAEMFILE => SystemErrno::EMFILE,
             W::WSAEMSGSIZE => SystemErrno::EMSGSIZE,

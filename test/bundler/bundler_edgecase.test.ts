@@ -2951,7 +2951,8 @@ describe("bundler", () => {
   });
 
   // A CommonJS file that is imported statically has its `exports.x = v`
-  // converted to a declaration, which is relocated like the other ones.
+  // converted to a declaration. The declaration leaves the try without its
+  // value, and the store keeps its place.
   itBundled("edgecase/LoweredTopLevelUsingCommonJSExportsStaticImport", {
     target: "node",
     files: {
@@ -2967,6 +2968,157 @@ describe("bundler", () => {
     },
     run: {
       stdout: "[42,43]",
+    },
+  });
+
+  // Inside `__commonJS` the linker turns each converted `exports.x = v` back
+  // into a store and reads one declarator per export: a minifier that joins
+  // the declarations loses every export after the first.
+  for (const [target, backend] of [
+    ["node", "cli"],
+    ["browser", "api"],
+  ] as const) {
+    for (const minify of ["", "MinifySyntax", "Minify"] as const) {
+      itBundled(
+        `edgecase/LoweredTopLevelUsingCommonJSExportsRequired${target === "node" ? "Node" : "Browser"}${minify}`,
+        {
+          target,
+          backend,
+          minifySyntax: minify !== "",
+          minifyWhitespace: minify === "Minify",
+          minifyIdentifiers: minify === "Minify",
+          files: {
+            "/entry.cjs": /* js */ `
+              const lib = require("./lib.cjs");
+              console.log("lib has " + JSON.stringify(lib));
+            `,
+            "/lib.cjs": /* js */ `
+              using r = { [Symbol.dispose]() {} };
+              exports.a = 1; exports.b = 2; exports.c = 3;
+            `,
+          },
+          onAfterBundle(api) {
+            // A wrapped file stores to `exports` and declares nothing for it.
+            if (minify !== "Minify") api.expectFile("/out.js").not.toContain("$");
+          },
+          run: {
+            stdout: 'lib has {"a":1,"b":2,"c":3}',
+          },
+        },
+      );
+    }
+  }
+
+  // Beside a lowered `using`, a converted `exports.x = v` runs where the
+  // source has it. `named.cjs` is printed without a wrapper and `held.cjs`
+  // inside `__commonJS`.
+  const loweredTopLevelUsingCommonJSLib = (name: string) => /* js */ `
+    using r = { [Symbol.dispose]() {} };
+    console.log("${name}: a is " + peek());
+    exports.a = 1;
+    exports.b = Math.max(2, 1);
+    exports.f = f;
+    function f() { return 7; }
+    function peek() { return exports.a; }
+  `;
+  for (const minify of ["", "MinifySyntax", "Minify"] as const) {
+    itBundled(`edgecase/LoweredTopLevelUsingCommonJSExportsKeepTheirPlace${minify}`, {
+      target: "node",
+      minifySyntax: minify !== "",
+      minifyWhitespace: minify === "Minify",
+      minifyIdentifiers: minify === "Minify",
+      // Full minify removes the path comments that this check reads.
+      cjs2esm: minify === "Minify" ? undefined : { unhandled: ["/held.cjs"] },
+      files: {
+        "/entry.js": /* js */ `
+          import { a, b, f } from "./named.cjs";
+          import held from "./held.cjs";
+          console.log(JSON.stringify([a, b, f()]));
+          console.log(JSON.stringify(Object.keys(held)), held.a, held.b, held.f());
+        `,
+        "/named.cjs": loweredTopLevelUsingCommonJSLib("named"),
+        "/held.cjs": loweredTopLevelUsingCommonJSLib("held"),
+      },
+      run: {
+        stdout: 'named: a is undefined\nheld: a is undefined\n[1,2,7]\n["a","b","f"] 1 2 7',
+      },
+    });
+  }
+
+  // The same file inside `__esm`: the declarations leave the wrapper and the
+  // stores stay in it.
+  for (const minify of ["", "MinifySyntax"] as const) {
+    itBundled(`edgecase/LoweredTopLevelUsingCommonJSExportsInEsmWrapper${minify}`, {
+      target: "node",
+      minifySyntax: minify !== "",
+      files: {
+        "/entry.cjs": /* js */ `
+          console.log(JSON.stringify(require("./esm.mjs").got));
+        `,
+        "/esm.mjs": /* js */ `
+          import { a, b, f } from "./wrapped.cjs";
+          export const got = [a, b, f()];
+        `,
+        "/wrapped.cjs": loweredTopLevelUsingCommonJSLib("wrapped"),
+      },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toContain("var init_wrapped = __esm(");
+      },
+      run: {
+        stdout: "wrapped: a is undefined\n[1,2,7]",
+      },
+    });
+  }
+
+  // `module.exports.x = v` stays a store to `module.exports` after the file
+  // replaces that object, and `exports.z = v` stays a store to `exports`.
+  itBundled("edgecase/LoweredTopLevelUsingCommonJSExportsKeepModuleExportsBase", {
+    target: "node",
+    files: {
+      "/entry.cjs": /* js */ `
+        console.log(JSON.stringify(require("./reassigned.cjs")));
+        console.log(JSON.stringify(require("./rebound.cjs")));
+      `,
+      "/reassigned.cjs": /* js */ `
+        using r = { [Symbol.dispose]() {} };
+        swap();
+        module.exports.x = 1;
+        exports.z = 3;
+        function swap() { module.exports = { y: 2 }; }
+      `,
+      "/rebound.cjs": /* js */ `
+        using r = { [Symbol.dispose]() {} };
+        exports = {};
+        module.exports.x = 1;
+        exports.z = 3;
+      `,
+    },
+    run: {
+      stdout: '{"y":2,"x":1}\n{"x":1}',
+    },
+  });
+
+  // A store below a `using` declaration does not run when its initializer throws.
+  itBundled("edgecase/LoweredTopLevelUsingCommonJSExportsBelowThrowingInitializer", {
+    target: "node",
+    files: {
+      "/entry.cjs": /* js */ `
+        try {
+          require("./lib.cjs");
+        } catch (e) {
+          console.log(e.message, JSON.stringify(globalThis.captured));
+        }
+      `,
+      "/lib.cjs": /* js */ `
+        globalThis.captured = exports;
+        exports.early = 1;
+        using r = (() => { throw new Error("boom"); })();
+        exports.late = 2;
+        exports.later = 3;
+      `,
+    },
+    run: {
+      stdout: 'boom {"early":1}',
     },
   });
 

@@ -213,6 +213,8 @@ pub(super) struct FlowMemo {
     context_free_types_in_loops: FxHashMap<(FileId, ExprId), TypeId>,
     /// The depth of `stack` when each `ExhaustiveState::Computing` was set, the innermost last.
     exhaustive_states_computing: SmallVec<[usize; 2]>,
+    /// `last_assignment_pos`
+    last_assignment_positions: std::cell::RefCell<FxHashMap<(FileId, SymbolId), u32>>,
 }
 
 /// `FlowLoopKey`, without the reference.
@@ -5975,6 +5977,17 @@ impl<'p, 's> Checker<'p, 's> {
     /// `class C extends mix(function () {})`, if it gets there before it has walked an enclosing
     /// function. That depends on the order of the checks, and isn't done here.
     fn last_assignment_pos(&self, file: FileId, symbol: SymbolId) -> u32 {
+        let known = &self.flow_memo.last_assignment_positions;
+        if let Some(&known) = known.borrow().get(&(file, symbol)) {
+            return known;
+        }
+        let position = self.find_last_assignment_pos(file, symbol);
+        known.borrow_mut().insert((file, symbol), position);
+        position
+    }
+
+    /// Computes `last_assignment_pos`.
+    fn find_last_assignment_pos(&self, file: FileId, symbol: SymbolId) -> u32 {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let Some(pat) = self.name_of_value_declaration(file, symbol) else {
             return 0;

@@ -272,8 +272,6 @@ impl<'p> Printer<'_, 'p, '_> {
         if accessor.is_none() && (requires_widening || !self.c.iso_has_inferred_type(file, node)) {
             return self.type_to_node(ty);
         }
-        // `addSymbolTypeToContext`
-        self.c.get_symbol_id_of_node(file, node);
         let pt = match accessor {
             Some(func) => self.c.iso_pseudo_of_accessor(file, func),
             None => self.c.iso_pseudo_of_declaration(file, node),
@@ -538,8 +536,6 @@ impl<'p> Printer<'_, 'p, '_> {
         declaration: hir::Node,
         try_reuse: bool,
     ) -> Node {
-        // `enclosingSymbolTypes`
-        self.c.get_symbol_id_of_node(file, declaration);
         let Some(ty) = self.c.iso_type_of_declared(file, declaration) else {
             return Node::simple(b"any");
         };
@@ -2061,7 +2057,7 @@ impl<'p> Printer<'_, 'p, '_> {
         };
         let scope = self.c.enclosing_scope_of_expr(file, name);
         let node = hir.node(name);
-        let computed_property_name = hir.node(self.c.bound(file).expr_parent[name.idx()]);
+        let computed_property_name = hir.node(self.c.bound(file).parent_of_expr(name));
         let existing = self.range_of_node(file, computed_property_name);
         self.try_reuse_existing_node_helper(file, existing, |printer| {
             let introduces_error =

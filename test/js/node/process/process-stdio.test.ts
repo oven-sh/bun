@@ -573,7 +573,7 @@ describe.concurrent.skipIf(isWindows)("process.stdout/stderr when the sink canno
     expect(await proc.exited).toBe(0);
   });
 
-  // A pipe or a socket on fd 1 stays asynchronous: the sink polls fd 1 itself.
+  // A pipe or a socket on fd 1 stays asynchronous: at the first full pipe the sink takes a descriptor and a poll.
   test("process.stdout: a write larger than the pipe returns false and emits 'drain'", async () => {
     await using proc = spawn({
       cmd: atFdLimit(fixture, "stdout", "big-write", "full"),
@@ -661,16 +661,15 @@ describe.concurrent.skipIf(isWindows)("process.stdout/stderr when the sink canno
     const report = value => fs.writeSync(2, JSON.stringify({ type: "report", ...value }) + "\\n");
   `;
 
-  // epoll refuses a second watch on fd 1, so the second stream writes without a poll: write() returns when every byte
-  // is out. kqueue accepts the second watch.
-  test.skipIf(!isLinux)("a second stream on fd 1 that the event loop refuses delivers every byte", async () => {
+  // The first full pipe is when the sink needs a poll, and a poll needs a descriptor of its own. With none to spare
+  // the write finishes without a poll: write() returns when every byte is out.
+  test("process.stdout: a write larger than the pipe is delivered while the fd table is still full", async () => {
     const script = /* js */ `${fillFdTable}
-      const first = process.stdout;
-      const second = new tty.WriteStream(1);
-      freeFdTable();
+      const stdout = process.stdout;
       let callback = "not called";
-      const ret = second.write(Buffer.alloc(1 << 20, "x"), e => (callback = e?.code ?? null));
-      first.write("tail");
+      const ret = stdout.write(Buffer.alloc(1 << 20, "x"), e => (callback = e?.code ?? null));
+      freeFdTable();
+      stdout.write("tail");
       process.on("exit", () => report({ ret, callback }));
     `;
     await using proc = spawn({
@@ -687,55 +686,7 @@ describe.concurrent.skipIf(isWindows)("process.stdout/stderr when the sink canno
     expect(exitCode).toBe(0);
   });
 
-  // The sink polls fd 1 itself. Once fd 1 names another file, epoll refuses to watch it again for this sink. The
-  // bytes that waited for the poll are still owed to fd 1.
-  test.skipIf(!isLinux)("process.stdout writes to the file that replaced fd 1", async () => {
-    using dir = tempDir("stdio-fd-limit", {});
-    const fifo = path.join(String(dir), "fifo");
-    mkfifo(fifo);
-    const script = /* js */ `${fillFdTable}
-      const stdout = process.stdout;
-      freeFdTable();
-      stdout.write("before");
-      fs.closeSync(1);
-      // Read-write: Linux opens a FIFO that has no reader yet. Non-blocking: the write stops when the FIFO is full.
-      if (fs.openSync(process.argv[1], fs.constants.O_RDWR | fs.constants.O_NONBLOCK) !== 1) {
-        throw new Error("the fifo did not land on fd 1");
-      }
-      report({ replaced: true });
-      let callback = "not called";
-      const ret = stdout.write(Buffer.alloc(1 << 20, "x"), e => (callback = e?.code ?? null));
-      process.on("exit", () => report({ ret, callback }));
-    `;
-    await using proc = spawn({
-      // The shell gives the child a real pipe on fd 1. `cat` reads it.
-      cmd: ["/bin/sh", "-c", 'ulimit -n 64 && "$0" -e "$1" "$2" | cat', bunExe(), script, fifo],
-      env: bunEnv,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const reports = reportsFrom(proc.stderr);
-    expect(await reports.first(1)).toEqual([{ type: "report", replaced: true }]);
-    // The FIFO gets its reader only now. It holds less than the write.
-    await using reader = spawn({ cmd: ["cat", fifo], stdin: "ignore", stdout: "pipe", stderr: "inherit" });
-    const [received, stdout, all, exitCode] = await Promise.all([
-      reader.stdout.bytes(),
-      proc.stdout.text(),
-      reports.all(),
-      proc.exited,
-    ]);
-    // Without a poll, write() returns when every byte is out.
-    expect(all).toEqual([
-      { type: "report", replaced: true },
-      { type: "report", ret: true, callback: null },
-    ]);
-    expect(stdout).toBe("before");
-    expect(Buffer.from(received).equals(Buffer.alloc(1 << 20, "x"))).toBe(true);
-    expect(exitCode).toBe(0);
-  });
-
-  // Any other fd can be closed and its number reused while the stream lives, so its sink takes no poll in place.
+  // The sink writes to fd 3 itself and must leave it open: it is the caller's.
   test.each(["full", "free"] as const)(
     "tty.WriteStream on a pipe, fd table %s: writes, and leaves the fd open",
     async table => {

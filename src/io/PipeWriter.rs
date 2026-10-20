@@ -128,10 +128,6 @@ pub trait PosixPipeWriter {
             match write_fn(fd, &buf[offset..]) {
                 sys::Result::Err(err) => {
                     if err.is_retry() {
-                        // No poll will drain an fd that is written without one: wait for room, as a blocking write does.
-                        if matches!(self.handle(), PollOrFd::Fd(_)) && wait_writable(fd) {
-                            continue;
-                        }
                         return WriteResult::Pending(offset);
                     }
 
@@ -854,8 +850,6 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         // SAFETY: parent BACKREF set via set_parent; outlives this writer.
         let loop_ = unsafe { Parent::loop_(self.parent()) }.cast();
         match poll.register_with_fd(loop_, FilePollKind::Writable, poll.fd()) {
-            // The caller's fd number can be closed or name another file by now. The bytes are still owed to it.
-            sys::Result::Err(_) if !self.close_fd => self.finish_without_poll(),
             sys::Result::Err(err) => {
                 // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
                 // `Parent::on_error` (e.g. `FileSink::on_error`) re-enters via
@@ -874,16 +868,17 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         }
     }
 
-    /// Drops the poll and writes what is buffered now; `try_write` waits for room from here on.
-    fn finish_without_poll(&mut self) {
-        let fd = self.get_fd();
-        self.handle.close_without_closing_fd();
-        self.handle = PollOrFd::Fd(fd);
-        match self.drain_buffered_data(usize::MAX, false) {
-            WriteResult::Err(err) => self._on_error(err),
-            WriteResult::Pending(wrote) => self._on_write(wrote, WriteStatus::Pending),
-            WriteResult::Wrote(wrote) | WriteResult::Done(wrote) => {
-                self._on_write(wrote, WriteStatus::Drained)
+    /// For a writer with no poll, after EAGAIN: nothing else writes the rest, so wait for room as a blocking write does.
+    #[cold]
+    pub fn drain_without_poll(&mut self) -> WriteResult {
+        let mut total = 0;
+        loop {
+            match self.flush() {
+                WriteResult::Pending(wrote) if wait_writable(self.get_fd()) => total += wrote,
+                WriteResult::Pending(wrote) => return WriteResult::Pending(total + wrote),
+                WriteResult::Wrote(wrote) => return WriteResult::Wrote(total + wrote),
+                WriteResult::Done(wrote) => return WriteResult::Done(total + wrote),
+                WriteResult::Err(err) => return WriteResult::Err(err),
             }
         }
     }

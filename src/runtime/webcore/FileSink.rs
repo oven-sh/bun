@@ -786,16 +786,16 @@ impl FileSink {
             }
         }
         #[cfg(unix)]
-        if let (true, Err(_), PathOrFileDescriptor::Fd(fd)) =
-            (options.must_start, &result, &options.input_path)
-        {
-            result = Ok(self.borrow_fd(
-                *fd,
-                &mut pollable_out,
-                &mut is_socket_out,
-                &mut nonblocking_out,
-                &mut is_tty_out,
-            ));
+        if result.is_err() && options.must_start {
+            if let PathOrFileDescriptor::Fd(fd) = options.input_path {
+                result = Ok(self.borrow_fd(
+                    fd,
+                    &mut pollable_out,
+                    &mut is_socket_out,
+                    &mut nonblocking_out,
+                    &mut is_tty_out,
+                ));
+            }
         }
         self.pollable.set(pollable_out);
         self.is_socket.set(is_socket_out);
@@ -903,12 +903,46 @@ impl FileSink {
             |tty: &mut bool| *tty = true,
             is_pollable,
         );
-        // A poll watches a number. Only 0 to 2 stay with this sink: any other can be closed and reused under it.
-        if opened.is_err() || (*pollable && fd.stdio_tag().is_none()) {
+        // No poll in place: a poll watches a number, and the caller can close this one and reuse it.
+        if opened.is_err() || *pollable {
             *pollable = false;
             self.write_without_poll();
         }
         fd
+    }
+
+    /// A write to the caller's fd stopped at EAGAIN. A descriptor may be free by now: `setup` again, for a duplicate and a poll.
+    #[cfg(unix)]
+    #[cold]
+    fn take_poll(&self) -> bool {
+        let Some(global) = self.js_global() else {
+            return false;
+        };
+        let bun_io::pipes::PollOrFd::Fd(borrowed) = self.writer.get().handle else {
+            return false;
+        };
+        // `setup` leaves a sink that pipes a stream as it is.
+        if self.pipe.get().has_stream() {
+            return false;
+        }
+        let options = Options {
+            input_path: PathOrFileDescriptor::Fd(borrowed),
+            ..Default::default()
+        };
+        // `setup` makes the fd of a force_sync sink blocking. This fd stays non-blocking, as it is for a sink that starts with a poll.
+        let force_sync = self.force_sync.replace(false);
+        let result = self.setup(&options, global.bun_vm().context_of_caller_no_frame());
+        self.force_sync.set(force_sync);
+        if result.is_err() {
+            let _ = self.writer.with_mut(|w| w.start(borrowed, false));
+            return false;
+        }
+        self.writer.with_mut(|w| w.close_fd = true);
+        if self.writer.get().get_poll().is_none() {
+            return false;
+        }
+        self.update_ref(true);
+        true
     }
 
     /// No poll drains a buffer: each write goes to the fd at once, so a write that fails says so.
@@ -1682,6 +1716,12 @@ impl FileSink {
                 streams::Writable::Err(err)
             }
             WriteResult::Pending(_) => {
+                #[cfg(unix)]
+                if self.force_sync.get() && self.writer.get().get_poll().is_none() {
+                    if self.writer.get().close_fd || !self.take_poll() {
+                        return self.write_rest_without_poll(accepted);
+                    }
+                }
                 if !self.must_be_kept_alive_until_eof.get() {
                     self.must_be_kept_alive_until_eof.set(true);
                     self.ref_();
@@ -1703,6 +1743,22 @@ impl FileSink {
                     p.result = streams::Writable::Owned(p.consumed);
                 });
                 streams::Writable::Pending(self.pending.as_ptr())
+            }
+        }
+    }
+
+    /// A write stopped at EAGAIN and no poll will finish it: the sink finishes it before the write returns.
+    #[cfg(unix)]
+    #[cold]
+    fn write_rest_without_poll(&self, accepted: u64) -> streams::Writable {
+        // SAFETY(JsCell): `drain_without_poll` is pure I/O; no callback runs while the `&mut IOWriter` is held.
+        match self.writer.with_mut(|w| w.drain_without_poll()) {
+            WriteResult::Err(err) => self.to_result(WriteResult::Err(err), 0),
+            WriteResult::Done(written)
+            | WriteResult::Wrote(written)
+            | WriteResult::Pending(written) => {
+                self.written.set(self.written.get() + written);
+                streams::Writable::Owned(accepted)
             }
         }
     }

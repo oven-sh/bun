@@ -36,7 +36,10 @@ bun_core::declare_scope!(react_compiler, hidden);
 use crate::collections::IndexMap;
 use crate::compile_result::{CompileDiagnostic, CompileOutput};
 use crate::hir::VariableBinding;
-use crate::imports::{ProgramContext, add_imports_to_program, validate_restricted_imports};
+use crate::imports::{
+    ProgramContext, add_imports_to_program, is_react_compiler_runtime_module,
+    validate_restricted_imports,
+};
 use crate::lowering::FunctionNode;
 use crate::pipeline;
 
@@ -188,17 +191,35 @@ pub fn has_module_scope_opt_out(stmts: &[Stmt]) -> bool {
     find_directive_disabling_memoization(&collect_body_directives(stmts)).is_some()
 }
 
+/// What [`collect_import_bindings`] makes of the top-level imports of a file.
+pub enum ImportBindings {
+    /// Upstream `should_skip_compilation`: the file imports `c` from the compiler runtime.
+    AlreadyCompiled,
+    Bindings(IndexMap<Ref, VariableBinding>),
+}
+
+/// Upstream `has_memo_cache_function_import`, asked of one import statement and for every target.
+fn has_memo_cache_function_import(import: &S::Import, record: &ImportRecord) -> bool {
+    is_react_compiler_runtime_module(record.path.text)
+        && import
+            .items
+            .slice()
+            .iter()
+            .any(|item| item.alias.slice() == b"c")
+}
+
 /// Build the `Ref → ImportSpecifier/Default/Namespace` map from the module's
 /// top-level `SImport` statements. `HirBuilder::resolve_identifier` consults
 /// this when `Symbol::namespace_alias` is absent (the common case during the
 /// visit pass — `scan_imports` populates that field only after visiting), so
 /// imported bindings reach `Environment::resolve_module_type` instead of
 /// degrading to `Global`.
+/// Also answers upstream's `should_skip_compilation`: see [`ImportBindings::AlreadyCompiled`].
 pub fn collect_import_bindings(
     stmts: &[Stmt],
     records: &[ImportRecord],
     symbols: &[Symbol],
-) -> IndexMap<Ref, VariableBinding> {
+) -> ImportBindings {
     let mut out = IndexMap::new();
     for stmt in stmts {
         let StmtData::SImport(import) = &stmt.data else {
@@ -208,6 +229,9 @@ pub fn collect_import_bindings(
         let Some(record) = records.get(import.import_record_index as usize) else {
             continue;
         };
+        if has_memo_cache_function_import(import, record) {
+            return ImportBindings::AlreadyCompiled;
+        }
         let module = crate::hir::StoreStr::new(record.path.text);
         let local_name = |ref_: Ref| -> Option<crate::hir::StoreStr> {
             symbols
@@ -248,7 +272,7 @@ pub fn collect_import_bindings(
             );
         }
     }
-    out
+    ImportBindings::Bindings(out)
 }
 
 fn find_directive_enabling_memoization<'a>(directives: &[&'a [u8]]) -> Option<&'a [u8]> {

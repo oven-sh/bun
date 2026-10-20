@@ -330,3 +330,9 @@ fn get_react_compiler_runtime_module(target: Option<&str>) -> &'static str {
         _ => "react/compiler-runtime",
     }
 }
+
+/// Whether `module` is the runtime module of a target. Upstream asks for its own target's, and no option sets one here.
+pub(crate) fn is_react_compiler_runtime_module(module: &[u8]) -> bool {
+    module == get_react_compiler_runtime_module(Some("19")).as_bytes()
+        || module == get_react_compiler_runtime_module(Some("18")).as_bytes()
+}

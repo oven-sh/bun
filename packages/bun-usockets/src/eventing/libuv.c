@@ -53,7 +53,7 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
   /* UV_DISCONNECT (Windows AFD): the peer closed its write side. A FIN
    * arriving after this side already half-closed and stopped reading never
    * fires another readable poll, and the socket (and server.close()) waits
-   * forever - so DISCONNECT is armed unconditionally in us_poll_start/change
+   * forever - so DISCONNECT is armed unconditionally in us_poll_start_rc/change
    * and surfaced as a readable dispatch: the read loop's recv() discovers
    * the true end of stream (0) after consuming whatever is still queued.
    * It is mapped to the eof hint ONLY for sockets whose write side we
@@ -62,7 +62,7 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
    * is still in flight, and an unconditional eof mapping closed connections
    * at a mid-stream EAGAIN (truncated bodies across the fetch/backpressure
    * suites). One-shot: AFD keeps reporting DISCONNECT once signaled, so
-   * re-arm without it - us_poll_start/us_poll_change add it back on the next
+   * re-arm without it - us_poll_start_rc/us_poll_change add it back on the next
    * poll change.
    * https://github.com/libuv/libuv/blob/v1.x/docs/src/poll.rst (UV_DISCONNECT
    * is Windows-only and best-effort; readable polling stays the primary
@@ -240,10 +240,6 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
   return 0;
 }
 
-void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
-  us_poll_start_rc(p, loop, events);
-}
-
 int us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
   if(!p->uv_p) return 0;
   if (us_poll_events(p) != events) {
@@ -328,7 +324,7 @@ struct us_loop_t *us_create_loop(void *hint,
   loop->uv_check->data = loop;
 
   // here we create two unreffed handles - timer and async
-  // Cannot fail here: this backend's us_internal_create_async acquires no OS resource.
+  // Cannot fail here: this backend's wakeup async acquires no OS resource.
   (void)us_internal_loop_data_init(loop, wakeup_cb, pre_cb, post_cb);
 
   // if we do not own this loop, we need to integrate and set up timer
@@ -526,17 +522,19 @@ void us_internal_async_close(struct us_internal_async *a) {
   uv_close((uv_handle_t *)uv_async, close_cb_free);
 }
 
-void us_internal_async_set(struct us_internal_async *a,
-                           void (*cb)(struct us_internal_async *)) {
+int us_internal_async_set(struct us_internal_async *a,
+                          void (*cb)(struct us_internal_async *)) {
   struct us_internal_callback_t *internal_cb =
       (struct us_internal_callback_t *)a;
 
   internal_cb->cb = (void (*)(struct us_internal_callback_t *))cb;
 
   uv_async_t *uv_async = (uv_async_t *)(internal_cb + 1);
+  // Always 0 on Windows: uv_async_init registers nothing with the OS there.
   uv_async_init(internal_cb->loop->uv_loop, uv_async, async_cb);
   uv_unref((uv_handle_t *)uv_async);
   uv_async->data = internal_cb;
+  return 0;
 }
 
 void us_internal_async_wakeup(struct us_internal_async *a) {

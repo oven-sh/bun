@@ -2017,8 +2017,9 @@ fn spawn_maybe_sync(
 }
 
 fn throw_spawn_sync_loop_init_failed(global_this: &JSGlobalObject) -> JsError {
-    // us_create_loop returns NULL without the errno; EMFILE is the common cause.
-    let err = SystemError {
+    // The fallback when the cause has no errno (Windows, a mach_port_* call on macOS).
+    #[cfg_attr(windows, allow(unused_mut))]
+    let mut err = SystemError {
         message: BunString::static_(
             b"spawnSync failed to initialize its event loop (system resource exhaustion)",
         ),
@@ -2035,6 +2036,15 @@ fn throw_spawn_sync_loop_init_failed(global_this: &JSGlobalObject) -> JsError {
         fd: -1,
         dest: BunString::EMPTY,
     };
+    #[cfg(not(windows))]
+    if let Some((syscall, errno)) = bun_uws::Loop::create_error()
+        && errno != 0
+        && let Some(code) = sys::SystemErrno::init(i64::from(errno))
+    {
+        err.code = BunString::static_(<&'static str>::from(code));
+        err.errno = -errno;
+        err.syscall = BunString::static_(syscall.to_bytes());
+    }
     global_this.throw_value(err.to_error_instance(global_this))
 }
 

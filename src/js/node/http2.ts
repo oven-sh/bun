@@ -5432,6 +5432,16 @@ class ClientHttp2Session extends Http2Session {
   #onConnect() {
     const socket = this[bunHTTP2Socket];
     if (!socket) return;
+    this.#ready = true;
+    const settingsBeforeConnect = this.#settingsBeforeConnect;
+    if (settingsBeforeConnect !== null) {
+      this.#settingsBeforeConnect = null;
+      for (let i = 0; i < settingsBeforeConnect.length; i++) {
+        this.#parser.settings(settingsBeforeConnect[i][0], settingsBeforeConnect[i][1], settingsAcked);
+      }
+      // Not connected yet for the parser: it queues these frames behind the preface, for one write.
+      this.#parser.flush();
+    }
     this.#connected = true;
     // check if h2 is supported only for TLSSocket
     if (socket instanceof TLSSocket) {
@@ -5451,14 +5461,6 @@ class ClientHttp2Session extends Http2Session {
       this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
     }
     process.nextTick(emitConnectNT, this, socket);
-    this.#ready = true;
-    const settingsBeforeConnect = this.#settingsBeforeConnect;
-    if (settingsBeforeConnect !== null) {
-      this.#settingsBeforeConnect = null;
-      for (let i = 0; i < settingsBeforeConnect.length; i++) {
-        this.#parser.settings(settingsBeforeConnect[i][0], settingsBeforeConnect[i][1], settingsAcked);
-      }
-    }
     this.#parser.flush();
     if (this.#closed) {
       // close() was called while the socket was still connecting: requests made in the meantime

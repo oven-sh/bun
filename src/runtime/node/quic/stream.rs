@@ -36,6 +36,7 @@ pub(crate) struct StreamState {
     pub(crate) wants_headers: u8,
     pub(crate) wants_reset: u8,
     pub(crate) wants_trailers: u8,
+    pub(crate) wants_stop_sending: u8,
     pub(crate) received_early_data: u8,
     pub(crate) write_desired_size: u32,
     pub(crate) high_water_mark: u32,
@@ -119,6 +120,8 @@ pub(crate) struct QuicStream {
     inbound: JsCell<Inbound>,
     wakeup: JsCell<Option<Strong>>,
     peer_stop_sending_code: Cell<Option<u64>>,
+    /// Set when `open_stream` returned before lsquic bound the stream.
+    was_pending: Cell<bool>,
     wrote_to_lsquic: Cell<bool>,
     headers_received: Cell<bool>,
     /// RFC 9218 (urgency, incremental).
@@ -151,6 +154,7 @@ impl QuicStream {
             inbound: JsCell::new(Inbound::default()),
             wakeup: JsCell::new(None),
             peer_stop_sending_code: Cell::new(None),
+            was_pending: Cell::new(false),
             wrote_to_lsquic: Cell::new(false),
             headers_received: Cell::new(false),
             priority: Cell::new(DEFAULT_PRIORITY),
@@ -334,6 +338,17 @@ impl QuicStream {
     pub(super) fn pre_reset_code(&self) -> Option<u64> {
         self.with_state(|s| (s.reset != 0).then_some(s.reset_code))
     }
+    pub(super) fn peer_stop_sending_code(&self) -> Option<u64> {
+        self.peer_stop_sending_code.get()
+    }
+    pub(super) fn mark_pending_if_unbound(&self) {
+        if self.raw.get().is_null() {
+            self.was_pending.set(true);
+        }
+    }
+    pub(super) fn was_pending(&self) -> bool {
+        self.was_pending.get()
+    }
     pub(super) fn release_close_root(&self) {
         self.this_value.with_mut(|r| r.downgrade());
     }
@@ -461,6 +476,9 @@ impl QuicStream {
     }
     pub(super) fn wants_block(&self) -> bool {
         self.with_state(|s| s.wants_block != 0)
+    }
+    pub(super) fn wants_stop_sending(&self) -> bool {
+        self.with_state(|s| s.wants_stop_sending != 0)
     }
     fn note_write_blocked(&self) {
         if self.blocked_reported.replace(true) {

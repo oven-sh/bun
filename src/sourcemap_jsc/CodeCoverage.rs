@@ -723,7 +723,9 @@ impl ByteRangeMapping {
                     mapping.original.lines.zero_based(),
                     mapping.original.columns.zero_based(),
                 );
-                if previous_original.replace(original) == Some(original) {
+                if previous_original.replace(original) == Some(original)
+                    && mapping.generated.columns.zero_based() == 0
+                {
                     return;
                 }
                 let (Ok(line), Some(offset)) = (

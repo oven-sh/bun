@@ -1595,18 +1595,12 @@ impl<'a> Transpiler<'a> {
                 // the real `parse` lives on `crate::cache::JavaScript`. Both
                 // are stateless unit structs, so calling the bundler-crate one
                 // directly is equivalent.
-                let mut parsed = match crate::cache::JavaScript::init()
+                let parsed = match crate::cache::JavaScript::init()
                     .parse(arena, opts, define, log, source)
                 {
                     Ok(Some(r)) => r,
                     Ok(None) | Err(_) => return None,
                 };
-                // Only a text that is not the file's own can come with a map of the file.
-                if this_parse.virtual_source.is_none()
-                    && let js_ast::Result::Ast(ast) = &mut parsed
-                {
-                    ast.source_mapping_url = None;
-                }
                 return Some(match parsed {
                     js_ast::Result::Ast(value) => ParseResult {
                         ast: *value,

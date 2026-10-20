@@ -246,19 +246,31 @@ This plugin transforms all imports of the form `import env from "env"` into a Ja
 
 #### Source maps
 
-A runtime plugin that rewrites a file can end `contents` with an inline source map of that file. Bun then reports positions in the file instead of positions in `contents`. This applies to stack traces, error previews, and `bun test --coverage`.
+A plugin that you register with `Bun.plugin()` can end `contents` with an inline source map of the file it rewrote. Bun then reports stack traces and `bun test --coverage` lines at their positions in the file instead of their positions in `contents`.
 
-```ts
-build.onLoad({ filter: /\.tsx$/ }, async ({ path }) => {
-  const { code, map } = await compile(await Bun.file(path).text(), { filename: path });
-  return {
-    contents: `${code}\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(map)).toString("base64")}`,
-    loader: "js",
-  };
+```ts plugin.ts icon="/icons/typescript.svg"
+import MagicString from "magic-string";
+import { basename } from "node:path";
+
+Bun.plugin({
+  name: "banner",
+  setup(build) {
+    build.onLoad({ filter: /\.ts$/ }, async ({ path }) => {
+      const code = new MagicString(await Bun.file(path).text());
+      code.prepend("/* generated */\n");
+      const map = code.generateMap({ source: basename(path), hires: true });
+      return {
+        contents: `${code}\n//# sourceMappingURL=${map.toUrl()}`,
+        loader: "ts",
+      };
+    });
+  },
 });
 ```
 
-The file must be the only entry in the map's `sources`. Write it as an absolute path or as a path relative to the file's directory. Bun ignores any other map.
+The map's `sources` must have exactly one entry: the name of the file or its absolute path. Bun ignores any other map. Code that the map does not cover has no position in the file, so coverage leaves it out.
+
+`Bun.build()` does not read the comment.
 
 #### `.defer()`
 

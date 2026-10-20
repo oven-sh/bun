@@ -6390,9 +6390,9 @@ declare module "bun" {
      *
      * In a runtime plugin, `contents` can end with a
      * `//# sourceMappingURL=data:application/json;base64,...` comment. If the
-     * only entry in that map's `sources` is the file being loaded, stack
-     * traces, error previews and `bun test --coverage` report positions in the
-     * file instead of positions in `contents`.
+     * only entry in that map's `sources` is the name or the absolute path of
+     * the file being loaded, stack traces and `bun test --coverage` report
+     * positions in the file instead of positions in `contents`.
      */
     contents: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer;
     /**

@@ -67,8 +67,7 @@ bun_core::declare_scope!(cache, visible);
 /// Version 35: Long hexadecimal, octal and binary literals are rounded to the nearest double.
 /// Version 36: `export`, `require()`, `import()`, a JSX element, an exported async function and
 /// an abstract class are mapped elsewhere.
-/// Version 37: Mappings go through the inline source map a module comes with.
-const EXPECTED_VERSION: u32 = 37;
+const EXPECTED_VERSION: u32 = 36;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

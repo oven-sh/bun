@@ -10,6 +10,15 @@ describe("require", () => {
     expect(body).toBe("<!--[--><h1>Hello world!</h1><!--]-->");
   });
 
+  it("has the positions in the .svelte file in error.stack", () => {
+    const { default: App } = require("./throws.svelte");
+    expect(() => svelteRender(App)).toThrow(
+      expect.objectContaining({
+        stack: expect.stringMatching(/at boom \(.*throws\.svelte:4:\d+\)\n.*throws\.svelte:6:\d+\)/),
+      }),
+    );
+  });
+
   it("works if you require it 1,000 times", () => {
     const prev = Bun.unsafe.gcAggressionLevel();
     Bun.unsafe.gcAggressionLevel(0);

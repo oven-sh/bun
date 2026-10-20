@@ -835,7 +835,8 @@ pub(crate) fn parse_url(
                         else {
                             break 'try_data_url;
                         };
-                        if &after[..comma] != b"base64" {
+                        // Babel and magic-string write `charset=utf-8;base64`.
+                        if after[..comma].rsplit(|c| *c == b';').next() != Some(b"base64") {
                             break 'try_data_url;
                         }
                         let base64_data = &after[comma + 1..];
@@ -860,21 +861,19 @@ pub(crate) fn parse_url(
     parse_json(json_bytes, hint)
 }
 
-/// The map in the `//# sourceMappingURL=data:` comment of what an `onLoad` plugin
-/// returned for the file at `path`, when that file is its only source.
-pub fn parse_input_source_map(url: &[u8], path: &[u8]) -> Option<std::sync::Arc<ParsedSourceMap>> {
-    // The AST of the module is alive, and `parse_json` resets the store it is in.
-    let mut allocator = bun_ast::ASTMemoryAllocator::default();
-    let _scope = allocator.enter();
+/// The map at the end of what an `onLoad` plugin returned for a file, when that
+/// file is its only source.
+pub fn parse_input_source_map(source: &bun_ast::Source) -> Option<std::sync::Arc<ParsedSourceMap>> {
+    let url = find_source_mapping_url_u8(source.contents())?;
     let arena = bun_alloc::Arena::new();
-    let map = parse_url(&arena, url, ParseUrlResultHint::MappingsOnly)
+    let map = parse_url(&arena, url.slice(), ParseUrlResultHint::MappingsOnly)
         .ok()?
         .map?;
     let [name] = map.external_source_names.as_slice() else {
         return None;
     };
-    let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(path);
-    (bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(dir, name) == path)
+    let path = source.path.text;
+    (**name == *path || name.strip_prefix(b"./").unwrap_or(name) == bun_paths::basename(path))
         .then_some(map)
 }
 

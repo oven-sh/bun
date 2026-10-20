@@ -2,7 +2,6 @@ use bun_ast::{Loc, Source};
 use bun_core::{MutableString, strings};
 use bun_paths::fs::FileSystem;
 use bun_ptr::RawSlice;
-use std::sync::Arc;
 
 use crate::{
     InternalSourceMap, LineOffsetTable, Ordinal, ParsedSourceMap, SourceMapState,
@@ -387,7 +386,7 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
 
     /// The map the source came with. Each mapping goes through it, back to the
     /// text the source was made from.
-    pub input_source_map: Option<Arc<ParsedSourceMap>>,
+    pub input_source_map: Option<&'a ParsedSourceMap>,
 }
 
 impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
@@ -611,7 +610,7 @@ impl NewBuilder<'_, VLQSourceMap> {
 
     #[inline(always)]
     pub(crate) fn append_mapping(&mut self, mut current_state: SourceMapState) {
-        if let Some(input) = &self.input_source_map {
+        if let Some(input) = self.input_source_map {
             let Some(mapping) = input.find_mapping(
                 Ordinal::from_zero_based(current_state.original_line),
                 Ordinal::from_zero_based(current_state.original_column),

@@ -2239,6 +2239,10 @@ fn transpile_source_code_of_any_provenance(
             bun_ast::Expr::data_store_reset();
             bun_ast::Stmt::data_store_reset();
 
+            let input_source_map = args
+                .virtual_source
+                .and_then(bun_sourcemap::parse_input_source_map);
+
             let hash = bun_watcher::Watcher::get_hash(path.text);
             // SAFETY: per fn contract.
             let (main, main_hash) = unsafe { ((*jsc_vm).main(), (*jsc_vm).main_hash) };
@@ -2630,7 +2634,10 @@ fn transpile_source_code_of_any_provenance(
                     keep_json_and_toml_as_one_statement: true,
                     allow_bytecode_cache: true,
                     set_breakpoint_on_first_line,
+                    // The key of the cache is the text, and with an input source
+                    // map the mappings depend on the path as well.
                     runtime_transpiler_cache: if !disable_transpilying
+                        && input_source_map.is_none()
                         && !<RuntimeTranspilerCache as bun_bundler::RuntimeTranspilerCacheExt>::disabled()
                     {
                         Some(&mut cache)
@@ -3099,6 +3106,7 @@ fn transpile_source_code_of_any_provenance(
                     // is bounded by the block.
                     let mut mapper =
                         unsafe { (*jsc_vm).source_map_handler((*extra).source_code_printer) };
+                    mapper.input_source_map = input_source_map.as_deref();
                     // SAFETY: per fn contract — `jsc_vm` / `extra.source_code_printer`
                     // are live; the printer borrow is scoped to this call.
                     let print_result = unsafe {

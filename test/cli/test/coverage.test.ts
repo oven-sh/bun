@@ -1060,20 +1060,31 @@ test("b", () => {
   });
 });
 
-describe("a text with an inline source map", () => {
-  const moved = `export function ran() {
-  return 1;
-}
-export function never() {
+describe("a module that ends with an inline source map", () => {
+  const moved = `export function never() {
   return 2;
+}
+export function ran() {
+  return [
+    { one: 1 },
+  ];
 }
 export function throws() {
   throw new Error("here");
 }
 `;
 
-  /** Three lines above the text and four spaces before each of its lines, with one mapping for each character. */
-  function rewrite(source: string, mapSource: string, sourcesContent: boolean) {
+  type Rewrite = {
+    /** `sources[0]`. The absolute path of the file when it is `null`. */
+    source: string | null;
+    sourcesContent?: boolean;
+    mediaType?: string;
+    /** One mapping for each character of the file, or one for each line. */
+    mappings?: "character" | "line";
+  };
+
+  /** Three lines above the text, which the map does not cover, and four spaces before each of its lines. */
+  function rewrite(text: string, { source, sourcesContent = true, mediaType = "", mappings = "character" }: Rewrite) {
     const digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     function vlq(n: number) {
       let rest = n < 0 ? (-n << 1) | 1 : n << 1;
@@ -1085,28 +1096,31 @@ export function throws() {
       } while (rest);
       return out;
     }
-    const lines = source.split("\n");
+    const lines = text.split("\n");
     let column = 0;
-    const mappings = lines.map((line, i) =>
-      Array.from(line, (_, j) => {
-        const segment = vlq(j ? 1 : 4) + "A" + vlq(j || !i ? 0 : 1) + vlq(j - column);
-        column = j;
-        return segment;
-      }).join(","),
-    );
     const map = {
       version: 3,
-      sources: [mapSource],
-      sourcesContent: sourcesContent ? [source] : undefined,
+      sources: [source],
+      sourcesContent: sourcesContent ? [text] : undefined,
       names: [],
-      mappings: ";;;" + mappings.join(";"),
+      mappings:
+        ";;;" +
+        lines
+          .map((line, i) =>
+            Array.from(mappings === "line" ? line.slice(0, 1) : line, (_, j) => {
+              const segment = vlq(j ? 1 : 4) + "A" + vlq(j || !i ? 0 : 1) + vlq(j - column);
+              column = j;
+              return segment;
+            }).join(","),
+          )
+          .join(";"),
     };
-    return `// 1\n// 2\n// 3\n${lines.map(line => "    " + line).join("\n")}
-//# sourceMappingURL=data:application/json;base64,${btoa(JSON.stringify(map))}`;
+    return `// 1\n// 2\nglobalThis.injected = 1;\n${lines.map(line => "    " + line).join("\n")}
+//# sourceMappingURL=data:application/json${mediaType};base64,${btoa(JSON.stringify(map))}`;
   }
 
-  /** Without a `mapSource`, the map has the absolute path. */
-  async function report(movedOnDisk: string, rewriteArguments?: [mapSource: string | null, sourcesContent: boolean]) {
+  /** `plugin` is what a plugin does to `moved.ts`. Without it there is no plugin. */
+  async function report(movedOnDisk: string, plugin?: Rewrite) {
     using dir = tempDir("cov-input-source-map", {
       "moved.ts": movedOnDisk,
       "plugin.js": `
@@ -1114,9 +1128,9 @@ export function throws() {
         Bun.plugin({
           name: "rewrite",
           setup(build) {
-            const [mapSource, sourcesContent] = ${JSON.stringify(rewriteArguments ?? [])};
+            const options = ${JSON.stringify(plugin)};
             build.onLoad({ filter: /moved\\.ts$/ }, async ({ path }) => ({
-              contents: rewrite(await Bun.file(path).text(), mapSource ?? path, sourcesContent),
+              contents: rewrite(await Bun.file(path).text(), { ...options, source: options.source ?? path }),
               loader: "ts",
             }));
           },
@@ -1138,7 +1152,7 @@ export function throws() {
       cmd: [
         bunExe(),
         "test",
-        ...(rewriteArguments ? ["--preload", "./plugin.js"] : []),
+        ...(plugin ? ["--preload", "./plugin.js"] : []),
         "--coverage",
         "--coverage-reporter=lcov",
         "moved.test.ts",
@@ -1146,48 +1160,58 @@ export function throws() {
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8");
     return {
       thrownAt: stdout.split("\n").find(line => line.startsWith("moved.ts")),
       lines: lcov
         .slice(lcov.indexOf("SF:moved.ts"))
         .split("end_of_record")[0]
-        .match(/^DA:.*$/gm),
-      stderr,
+        .match(/^DA:.*$/gm)
+        ?.join(" "),
       exitCode,
     };
   }
 
   const inTheFile = {
-    thrownAt: "moved.ts:8:13",
-    lines: ["DA:1,1", "DA:2,1", "DA:4,0", "DA:5,0", "DA:7,1", "DA:8,1"],
-    stderr: expect.any(String),
+    thrownAt: "moved.ts:10:13",
+    lines: "DA:1,0 DA:2,0 DA:4,1 DA:5,1 DA:6,1 DA:7,1 DA:9,1 DA:10,1",
     exitCode: 0,
   };
   const inTheText = {
-    thrownAt: "moved.ts:11:17",
-    lines: ["DA:4,1", "DA:5,1", "DA:7,0", "DA:8,0", "DA:10,1", "DA:11,1"],
-    stderr: expect.any(String),
+    thrownAt: "moved.ts:13:17",
+    lines: "DA:3,1 DA:4,0 DA:5,0 DA:7,1 DA:8,1 DA:9,1 DA:10,1 DA:12,1 DA:13,1",
     exitCode: 0,
   };
 
-  test.concurrent.each([
-    ["moved.ts", true],
-    ["./moved.ts", true],
-    [null, true],
-    ["moved.ts", false],
-  ] as const)("from a plugin, of the file as %s, sourcesContent: %p", async (...rewriteArguments) => {
-    expect(await report(moved, rewriteArguments)).toEqual(inTheFile);
+  test.concurrent("the file without a plugin", async () => {
+    expect(await report(moved)).toEqual(inTheFile);
+  });
+
+  test.concurrent.each<[string, Rewrite]>([
+    ["the name of the file", { source: "moved.ts" }],
+    ["the name of the file after ./", { source: "./moved.ts" }],
+    ["the absolute path of the file", { source: null }],
+    ["no sourcesContent", { source: "moved.ts", sourcesContent: false }],
+    ["charset=utf-8", { source: "moved.ts", mediaType: ";charset=utf-8" }],
+  ])("from a plugin, of the file: %s", async (_, plugin) => {
+    expect(await report(moved, plugin)).toEqual(inTheFile);
+  });
+
+  test.concurrent("from a plugin, of the file: one mapping for each line", async () => {
+    expect(await report(moved, { source: "moved.ts", mappings: "line" })).toEqual({
+      ...inTheFile,
+      thrownAt: "moved.ts:10:1",
+    });
   });
 
   test.concurrent("from a plugin, of another file", async () => {
-    expect(await report(moved, ["another.ts", true])).toEqual(inTheText);
+    expect(await report(moved, { source: "another.ts" })).toEqual(inTheText);
   });
 
-  test.concurrent("from the file, of the file", async () => {
-    expect(await report(rewrite(moved, "moved.ts", true))).toEqual(inTheText);
+  test.concurrent("from the file itself", async () => {
+    expect(await report(rewrite(moved, { source: "moved.ts" }))).toEqual(inTheText);
   });
 });

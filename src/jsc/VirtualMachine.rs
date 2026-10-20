@@ -1704,6 +1704,7 @@ impl VirtualMachine {
         SourceMapHandlerGetter {
             vm: self,
             printer,
+            input_source_map: None,
             _marker: core::marker::PhantomData,
         }
     }
@@ -3789,6 +3790,8 @@ pub fn process_fetch_log(
 pub struct SourceMapHandlerGetter<'a> {
     vm: *mut VirtualMachine,
     printer: *mut bun_js_printer::BufferPrinter,
+    /// The map the source came with.
+    pub input_source_map: Option<&'a bun_sourcemap::ParsedSourceMap>,
     _marker: core::marker::PhantomData<&'a mut ()>,
 }
 
@@ -3808,6 +3811,7 @@ impl<'a> SourceMapHandlerGetter<'a> {
         Self {
             vm,
             printer,
+            input_source_map: None,
             _marker: core::marker::PhantomData,
         }
     }
@@ -3865,13 +3869,17 @@ impl<'a> SourceMapHandlerGetter<'a> {
             self.vm_debugger(),
             Some(d) if d.mode != crate::debugger::Mode::Connect
         );
-        if !wants_inline_source_map {
+        let input_source_map = self.input_source_map;
+        let mut handler = if !wants_inline_source_map {
             // `source_mappings` is a value field on the VM, exclusively
             // borrowed for the returned handler's lifetime (bounded by
             // `&mut self`).
-            return bun_js_printer::SourceMapHandler::for_(self.vm_source_mappings_mut());
-        }
-        bun_js_printer::SourceMapHandler::for_(self)
+            bun_js_printer::SourceMapHandler::for_(self.vm_source_mappings_mut())
+        } else {
+            bun_js_printer::SourceMapHandler::for_(self)
+        };
+        handler.input_source_map = input_source_map;
+        handler
     }
 }
 
@@ -3884,10 +3892,29 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         chunk: bun_sourcemap::Chunk,
         source: &bun_ast::Source,
     ) -> bun_js_printer::Result<()> {
+        // With an input source map the mappings are to the file, not to `source`.
+        let file = self.input_source_map.map(|_| {
+            bun_sys::File::read_from(bun_sys::Fd::cwd(), source.path.text).map(|contents| {
+                bun_ast::Source {
+                    path: source.path.clone(),
+                    contents: contents.into(),
+                    ..Default::default()
+                }
+            })
+        });
+        let (mapped_source, include_sources_contents) = match &file {
+            None => (source, true),
+            Some(Ok(file)) => (file, true),
+            Some(Err(_)) => (source, false),
+        };
         let mut temp_json_buffer = bun_core::MutableString::init_empty();
         // `defer temp_json_buffer.deinit()` → Drop.
         chunk
-            .print_source_map_contents_from_internal::<true>(source, &mut temp_json_buffer, true)
+            .print_source_map_contents_from_internal::<true>(
+                mapped_source,
+                &mut temp_json_buffer,
+                include_sources_contents,
+            )
             .map_err(|_| bun_js_printer::Error::WriteFailed)?;
         const SOURCE_MAP_URL_PREFIX_START: &[u8] =
             b"//# sourceMappingURL=data:application/json;base64,";

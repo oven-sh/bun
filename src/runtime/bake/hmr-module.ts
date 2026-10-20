@@ -14,6 +14,7 @@ import {
   __legacyMetadataTS,
   __MEMO_CACHE_SENTINEL,
   __name,
+  __rawTemplate,
   __using,
 } from "../../runtime.bun";
 // This import is different based on client vs server side.
@@ -943,6 +944,7 @@ registerSynthetic("bun:wrap", {
   __legacyMetadataTS,
   __using,
   __callDispose,
+  __rawTemplate,
   __MEMO_CACHE_SENTINEL,
   __EARLY_RETURN_SENTINEL,
 });

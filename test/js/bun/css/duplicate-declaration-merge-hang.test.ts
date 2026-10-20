@@ -53,6 +53,12 @@ const script = `
       Array.from({ length: n }, (_, i) => \`.a\${i}{color:red}\`).join(""),
       { chrome: 80 << 16 },
     ],
+    "text-decoration": [repeat(".a{text-decoration:underline dotted}.a{text-decoration:underline}"), { safari: 14 << 16 }],
+    // No rule here is a duplicate of another one: each has its own custom property name, and its own bucket in the duplicate-rule table.
+    "distinct-custom-props-apart": [
+      Array.from({ length: 8 * n }, (_, i) => \`.a{--x\${i}:1}.b\${i}{color:red}\`).join(""),
+      undefined,
+    ],
   };
   for (const [name, [src, targets]] of Object.entries(floods)) {
     const out = targets === undefined ? c.minifyTest(src, "") : c._test(src, "", targets);
@@ -85,6 +91,8 @@ test("duplicate declarations across merged rules minify in linear time instead o
       "OK:clamp",
       "OK:distinct-custom-props",
       "OK:distinct-selectors",
+      "OK:text-decoration",
+      "OK:distinct-custom-props-apart",
       "",
     ].join("\n"),
     stderr: "",

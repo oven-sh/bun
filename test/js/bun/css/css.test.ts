@@ -11,11 +11,11 @@ import {
   indoc,
   minify_error_test_with_options,
   minify_test,
+  minifyTest as minify_test_output,
   minifyTestWithOptions as minify_test_with_options,
   ParserFlags,
   ParserOptions,
   prefix_test,
-  prefixTest as prefix_test_output,
 } from "./util";
 
 function Some(n: number): number {
@@ -5353,8 +5353,8 @@ describe("css tests", () => {
       ".foo{-moz-text-decoration:underline dotted #ff0}",
     );
 
-    // lightningcss has these two with no browser list. Bun folds unprefixed declarations only for a browser list.
-    prefix_test(
+    // lightningcss prints `text-decoration: underline 2px dotted #ff0`. Bun folds no longhand: see the tests below.
+    cssTest(
       `
       .foo {
         text-decoration-line: underline;
@@ -5365,15 +5365,16 @@ describe("css tests", () => {
       `,
       indoc`
       .foo {
-        text-decoration: underline 2px dotted #ff0;
+        text-decoration-line: underline;
+        text-decoration-style: dotted;
+        text-decoration-color: #ff0;
+        text-decoration-thickness: 2px;
       }
       `,
-      {
-        chrome: Some(90 << 16),
-      },
     );
 
-    prefix_test(
+    // lightningcss prints `text-decoration: underline dotted`.
+    cssTest(
       `
       .foo {
         text-decoration: underline;
@@ -5382,12 +5383,10 @@ describe("css tests", () => {
       `,
       indoc`
       .foo {
-        text-decoration: underline dotted;
+        text-decoration: underline;
+        text-decoration-style: dotted;
       }
       `,
-      {
-        chrome: Some(90 << 16),
-      },
     );
 
     cssTest(
@@ -5405,6 +5404,7 @@ describe("css tests", () => {
       `,
     );
 
+    // lightningcss prints `-webkit-text-decoration: underline dotted`.
     cssTest(
       `
       .foo {
@@ -5414,7 +5414,8 @@ describe("css tests", () => {
       `,
       indoc`
       .foo {
-        -webkit-text-decoration: underline dotted;
+        -webkit-text-decoration: underline;
+        -webkit-text-decoration-style: dotted;
       }
       `,
     );
@@ -5547,6 +5548,7 @@ describe("css tests", () => {
       },
     );
 
+    // lightningcss prints `underline double` with both names. Safari 16 reads the unprefixed `text-decoration-style`.
     prefix_test(
       `
       .foo {
@@ -5556,8 +5558,8 @@ describe("css tests", () => {
       `,
       indoc`
       .foo {
-        -webkit-text-decoration: underline double;
-        text-decoration: underline double;
+        text-decoration: underline;
+        text-decoration-style: double;
       }
       `,
       {
@@ -5565,6 +5567,7 @@ describe("css tests", () => {
       },
     );
 
+    // lightningcss prints `underline red` with both names. Safari 16 reads the unprefixed `text-decoration-color`.
     prefix_test(
       `
       .foo {
@@ -5574,8 +5577,8 @@ describe("css tests", () => {
       `,
       indoc`
       .foo {
-        -webkit-text-decoration: underline red;
-        text-decoration: underline red;
+        text-decoration: underline;
+        text-decoration-color: red;
       }
       `,
       {
@@ -5784,21 +5787,56 @@ describe("css tests", () => {
       },
     );
 
+    // A declaration stays where it is: Bun folds no longhand and moves no declaration. lightningcss prints `color: red; text-decoration: underline dotted`.
+    prefix_test(
+      ".foo { text-decoration: underline; color: red; text-decoration-style: dotted }",
+      indoc`
+      .foo {
+        text-decoration: underline;
+        color: red;
+        text-decoration-style: dotted;
+      }
+      `,
+      { chrome: Some(90 << 16) },
+    );
+    minify_test(
+      ".foo { margin: 0; text-decoration: none; cursor: pointer }",
+      ".foo{text-decoration:none;cursor:pointer;margin:0}",
+    );
+    // Each longhand gets the prefixes of its own feature, so the browsers that need them read it.
+    prefix_test(
+      ".foo { text-decoration: underline; text-decoration-style: double }",
+      indoc`
+      .foo {
+        text-decoration: underline;
+        -webkit-text-decoration-style: double;
+        text-decoration-style: double;
+      }
+      `,
+      { safari: Some(8 << 16) },
+    );
+
     // lightningcss replaces the prefixes that an author wrote with the ones that the targets need. Bun keeps them.
     minify_test(
       ".foo { -webkit-text-decoration: underline dotted; text-decoration: underline dotted }",
       ".foo{-webkit-text-decoration:underline dotted;text-decoration:underline dotted}",
     );
-    minify_test(
+    prefix_test(
       ".foo { -moz-text-decoration: underline dotted; text-decoration: underline dotted }",
-      ".foo{-moz-text-decoration:underline dotted;text-decoration:underline dotted}",
+      indoc`
+      .foo {
+        -moz-text-decoration: underline dotted;
+        text-decoration: underline dotted;
+      }
+      `,
+      { chrome: Some(90 << 16) },
     );
     prefix_test(
       ".foo { -moz-text-decoration: underline dotted; text-decoration: underline dotted }",
       indoc`
       .foo {
-        -webkit-text-decoration: underline dotted;
         -moz-text-decoration: underline dotted;
+        -webkit-text-decoration: underline dotted;
         text-decoration: underline dotted;
       }
       `,
@@ -5860,27 +5898,7 @@ describe("css tests", () => {
       { safari: Some(14 << 16) },
     );
 
-    // A value with fewer prefixes does not replace the value of the other prefixes. lightningcss prints one `overline` line.
-    minify_test(
-      ".foo { -webkit-text-decoration-line: underline; text-decoration-line: underline; -webkit-text-decoration-line: overline }",
-      ".foo{-webkit-text-decoration-line:underline;text-decoration-line:underline;-webkit-text-decoration-line:overline}",
-    );
-    minify_test(
-      ".foo { -webkit-text-decoration: underline dotted; text-decoration: underline dotted; text-decoration-style: wavy }",
-      ".foo{-webkit-text-decoration:underline dotted;text-decoration:underline dotted;text-decoration-style:wavy}",
-    );
-
-    // The shorthand is for the prefixes that every longhand has. lightningcss prints `text-decoration: underline 2px dotted red`.
-    minify_test(
-      ".foo { -webkit-text-decoration-line: underline; text-decoration-style: dotted; text-decoration-color: red; text-decoration-thickness: 2px }",
-      ".foo{-webkit-text-decoration-line:underline;text-decoration-style:dotted;text-decoration-color:red;text-decoration-thickness:2px}",
-    );
-    minify_test(
-      ".foo { text-decoration: underline dotted; -webkit-text-decoration-line: underline }",
-      ".foo{text-decoration:underline dotted;-webkit-text-decoration-line:underline}",
-    );
-
-    // A second value of one property is a new declaration, so a fallback stays (normalize.css). lightningcss keeps the last.
+    // A later value replaces no earlier one, so a fallback that the author wrote stays (normalize.css). lightningcss keeps the last value.
     minify_test(
       ".foo { text-decoration: underline; text-decoration: underline dotted }",
       ".foo{text-decoration:underline;text-decoration:underline dotted}",
@@ -5897,90 +5915,102 @@ describe("css tests", () => {
       { safari: Some(14 << 16) },
     );
     minify_test(
-      ".foo { text-decoration-color: red; text-decoration-color: blue }",
-      ".foo{text-decoration-color:red;text-decoration-color:#00f}",
+      ".foo { -webkit-text-decoration-line: underline; text-decoration-line: underline; -webkit-text-decoration-line: overline }",
+      ".foo{-webkit-text-decoration-line:underline;text-decoration-line:underline;-webkit-text-decoration-line:overline}",
     );
-    // A longhand after its shorthand is not a second value of one property. It is folded, as in lightningcss.
+
+    // In WebKit the unprefixed shorthand is the line alone: it resets no style and no color. After one of those, a line alone gets the prefix too.
     prefix_test(
-      ".foo { text-decoration-color: red; text-decoration: underline; text-decoration-color: blue }",
-      ".foo { text-decoration: underline #00f; }",
+      ".foo { text-decoration: underline dotted; text-decoration: overline; text-decoration: underline }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline dotted;
+        text-decoration: underline dotted;
+        -webkit-text-decoration: overline;
+        text-decoration: overline;
+        text-decoration: underline;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+    prefix_test(
+      ".foo { text-decoration-color: red; text-decoration: underline }",
+      indoc`
+      .foo {
+        text-decoration-color: red;
+        -webkit-text-decoration: underline;
+        text-decoration: underline;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+    prefix_test(
+      ".foo { text-decoration: underline dotted; text-decoration: overline }",
+      ".foo { text-decoration: underline dotted; text-decoration: overline; }",
+      { chrome: Some(90 << 16) },
+    );
+    // After `all` or a prefixed value that the author wrote, the line alone stays bare.
+    prefix_test(
+      ".foo { text-decoration: underline dotted; all: unset; text-decoration: underline }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline dotted;
+        text-decoration: underline dotted;
+        all: unset;
+        text-decoration: underline;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+    prefix_test(
+      ".foo { text-decoration: underline dotted; -webkit-text-decoration: overline wavy; text-decoration: underline }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline dotted;
+        text-decoration: underline dotted;
+        -webkit-text-decoration: overline wavy;
+        text-decoration: underline;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+
+    // An earlier unprefixed value is the fallback that the author wrote, so Bun adds none. lightningcss prints `#ee00be` in place of `red`.
+    prefix_test(
+      ".foo { text-decoration-color: red; text-decoration-color: lch(50.998% 135.363 338) }",
+      indoc`
+      .foo {
+        text-decoration-color: red;
+        text-decoration-color: lch(50.998% 135.363 338);
+      }
+      `,
+      { chrome: Some(90 << 16) },
+    );
+    // A prefixed value is no fallback for the unprefixed name.
+    prefix_test(
+      ".foo { -webkit-text-decoration-color: red; text-decoration-color: lch(50.998% 135.363 338) }",
+      indoc`
+      .foo {
+        -webkit-text-decoration-color: red;
+        text-decoration-color: #ee00be;
+        text-decoration-color: lch(50.998% 135.363 338);
+      }
+      `,
+      { chrome: Some(90 << 16) },
+    );
+    // The shorthand sets the line and the style too, so a color alone is no fallback for it.
+    prefix_test(
+      ".foo { text-decoration-color: red; text-decoration: underline lch(50.998% 135.363 338) }",
+      indoc`
+      .foo {
+        text-decoration-color: red;
+        text-decoration: underline #ee00be;
+        text-decoration: underline lch(50.998% 135.363 338);
+      }
+      `,
       { chrome: Some(90 << 16) },
     );
 
-    // Unprefixed declarations are folded only when the browsers that need `-webkit-text-decoration` get it. lightningcss always folds them.
-    minify_test(
-      ".foo { text-decoration: underline; text-decoration-color: red }",
-      ".foo{text-decoration:underline;text-decoration-color:red}",
-    );
-    minify_test(
-      ".foo { text-decoration-line: underline; text-decoration-style: dotted; text-decoration-color: yellow; text-decoration-thickness: 2px }",
-      ".foo{text-decoration-line:underline;text-decoration-style:dotted;text-decoration-color:#ff0;text-decoration-thickness:2px}",
-    );
-    minify_test(
-      ".foo { text-decoration: underline; text-decoration-thickness: 2px }",
-      ".foo{text-decoration:underline;text-decoration-thickness:2px}",
-    );
-    prefix_test(
-      ".foo { text-decoration: underline; text-decoration-color: red }",
-      indoc`
-      .foo {
-        -webkit-text-decoration: underline red;
-        text-decoration: underline red;
-      }
-      `,
-      { safari: Some(14 << 16) },
-    );
-    prefix_test(
-      ".foo { -webkit-text-decoration: overline wavy; text-decoration: underline; text-decoration-color: red }",
-      indoc`
-      .foo {
-        -webkit-text-decoration: overline wavy;
-        text-decoration: underline;
-        text-decoration-color: red;
-      }
-      `,
-      { safari: Some(14 << 16) },
-    );
-
-    // The buffer is written before `all` and before an unknown name, which can be one more spelling of the property.
-    prefix_test(
-      ".foo { text-decoration: underline dotted; all: unset }",
-      indoc`
-      .foo {
-        -webkit-text-decoration: underline dotted;
-        text-decoration: underline dotted;
-        all: unset;
-      }
-      `,
-      { safari: Some(14 << 16) },
-    );
-    prefix_test(
-      ".foo { all: unset; text-decoration: underline dotted }",
-      indoc`
-      .foo {
-        all: unset;
-        -webkit-text-decoration: underline dotted;
-        text-decoration: underline dotted;
-      }
-      `,
-      { safari: Some(14 << 16) },
-    );
-    prefix_test(
-      ".foo { text-decoration: underline dotted; -khtml-text-decoration: none; text-decoration: underline }",
-      indoc`
-      .foo {
-        -webkit-text-decoration: underline dotted;
-        text-decoration: underline dotted;
-        -khtml-text-decoration: none;
-        text-decoration: underline;
-      }
-      `,
-      { safari: Some(14 << 16) },
-    );
-    minify_test(
-      ".foo { text-decoration-line: underline; cursor: pointer; text-decoration-style: dotted }",
-      ".foo{text-decoration-line:underline;cursor:pointer;text-decoration-style:dotted}",
-    );
     // `all` sets the prefixed names too, so a declaration after it gets its prefix again.
     prefix_test(
       ".foo { -webkit-text-decoration: underline dotted; all: unset; text-decoration: overline dotted }",
@@ -5994,17 +6024,29 @@ describe("css tests", () => {
       `,
       { safari: Some(14 << 16) },
     );
-    // A custom property and a property of another handler are no barrier.
     prefix_test(
-      ".foo { text-decoration: underline; --x: 1; color: red; text-decoration-color: blue }",
+      ".foo { -webkit-text-decoration: underline dotted; ALL: unset; text-decoration: overline dotted }",
       indoc`
       .foo {
-        --x: 1;
-        color: red;
-        text-decoration: underline #00f;
+        -webkit-text-decoration: underline dotted;
+        ALL: unset;
+        -webkit-text-decoration: overline dotted;
+        text-decoration: overline dotted;
       }
       `,
-      { chrome: Some(90 << 16) },
+      { safari: Some(14 << 16) },
+    );
+    // An unknown name can be one more spelling of the property. No declaration moves across it, and it resets no prefix.
+    prefix_test(
+      ".foo { -webkit-text-decoration: overline wavy; -khtml-text-decoration: none; text-decoration: underline dotted }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: overline wavy;
+        -khtml-text-decoration: none;
+        text-decoration: underline dotted;
+      }
+      `,
+      { safari: Some(14 << 16) },
     );
 
     // A value that browsers reject stays as it is. lightningcss prints `none`, `underline` and `underline` for these three.
@@ -6026,11 +6068,6 @@ describe("css tests", () => {
     minify_test(".foo { text-decoration: 2px }", ".foo{text-decoration:2px}");
     minify_test(".foo { text-decoration: none red }", ".foo{text-decoration:red}");
     minify_test(".foo { text-decoration: solid currentColor }", ".foo{text-decoration:none}");
-    prefix_test(
-      ".foo { text-decoration-line: none; text-decoration-thickness: auto; text-decoration-style: solid; text-decoration-color: red }",
-      ".foo { text-decoration: red; }",
-      { chrome: Some(90 << 16) },
-    );
 
     // An unparsed longhand gets the prefixes of its own feature, as its typed value does. lightningcss uses the shorthand's.
     prefix_test(".foo { text-decoration-color: var(--c) }", ".foo { text-decoration-color: var(--c); }", {
@@ -6043,6 +6080,20 @@ describe("css tests", () => {
         -webkit-text-decoration-color: var(--c);
         -moz-text-decoration-color: var(--c);
         text-decoration-color: var(--c);
+      }
+      `,
+      { safari: Some(8 << 16), firefox: Some(30 << 16) },
+    );
+    prefix_test(
+      ".foo { text-decoration-line: var(--l); text-decoration-style: var(--s) }",
+      indoc`
+      .foo {
+        -webkit-text-decoration-line: var(--l);
+        -moz-text-decoration-line: var(--l);
+        text-decoration-line: var(--l);
+        -webkit-text-decoration-style: var(--s);
+        -moz-text-decoration-style: var(--s);
+        text-decoration-style: var(--s);
       }
       `,
       { safari: Some(8 << 16), firefox: Some(30 << 16) },
@@ -6080,11 +6131,7 @@ describe("css tests", () => {
       `,
       { safari: Some(14 << 16) },
     );
-    // A thickness is not folded into a prefixed shorthand. lightningcss prints `-webkit-text-decoration: underline 2px dotted`.
-    minify_test(
-      ".foo { -webkit-text-decoration: underline dotted; text-decoration-thickness: 2px }",
-      ".foo{-webkit-text-decoration:underline dotted;text-decoration-thickness:2px}",
-    );
+    // The prefixed copy and the color fallbacks have no thickness. It is in the longhand.
     prefix_test(
       ".foo { text-decoration: underline 2px dotted }",
       indoc`
@@ -6095,6 +6142,19 @@ describe("css tests", () => {
       }
       `,
       { safari: Some(14 << 16), chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { text-decoration: underline 2px lch(50.998% 135.363 338) }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline #ee00be;
+        text-decoration: underline #ee00be;
+        -webkit-text-decoration: underline lch(50.998% 135.363 338);
+        text-decoration: underline lch(50.998% 135.363 338);
+        text-decoration-thickness: 2px;
+      }
+      `,
+      { safari: Some(8 << 16) },
     );
 
     // `!important` declarations are a list of their own. A prefix that the other list writes is not added.
@@ -6131,14 +6191,40 @@ describe("css tests", () => {
       { safari: Some(14 << 16) },
     );
 
-    // Two rules with one selector are merged and minified again. The output of the first pass is stable.
+    // An `!important` line alone resets no style of the normal list in WebKit, so it gets the prefix too.
+    prefix_test(
+      ".foo { text-decoration: overline !important; text-decoration: underline dotted }",
+      indoc`
+      .foo {
+        -webkit-text-decoration: underline dotted;
+        text-decoration: underline dotted;
+        -webkit-text-decoration: overline !important;
+        text-decoration: overline !important;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
+
+    // Two rules with one selector are merged and minified again. That pass adds the prefix of a line alone, and changes nothing else.
+    prefix_test(
+      ".a { text-decoration: underline dotted } .a { text-decoration: underline }",
+      indoc`
+      .a {
+        -webkit-text-decoration: underline dotted;
+        text-decoration: underline dotted;
+        -webkit-text-decoration: underline;
+        text-decoration: underline;
+      }
+      `,
+      { safari: Some(14 << 16) },
+    );
     prefix_test(
       ".a { text-decoration: underline dotted } .a { color: red }",
       indoc`
       .a {
-        color: red;
         -webkit-text-decoration: underline dotted;
         text-decoration: underline dotted;
+        color: red;
       }
       `,
       { safari: Some(14 << 16) },
@@ -6216,6 +6302,8 @@ describe("css tests", () => {
       ".c{text-decoration:underline}.q{top:0}.c{cursor:pointer}",
       ".c{text-decoration:underline}.q{top:0}.c{cursor:pointer}",
     );
+    minify_test(".a{--x:1}.q{top:0}.a{--y:2}", ".a{--x:1}.q{top:0}.a{--y:2}");
+    minify_test(".a{cursor:pointer}.q{top:0}.a{cursor:default}", ".q{top:0}.a{cursor:default}");
     prefix_test(
       ".a{text-decoration:underline dotted;cursor:pointer}.q{top:0}.a{-webkit-text-decoration:underline dotted;text-decoration:underline dotted;vertical-align:middle}",
       indoc`
@@ -6250,6 +6338,11 @@ describe("css tests", () => {
       ".foo { transition: -webkit-text-decoration .3s, text-decoration .3s; }",
       { safari: Some(14 << 16) },
     );
+    prefix_test(
+      ".foo { transition-property: text-decoration-line, text-decoration-style, text-emphasis, text-emphasis-style, text-emphasis-position }",
+      ".foo { transition-property: -webkit-text-decoration-line, -moz-text-decoration-line, text-decoration-line, -webkit-text-decoration-style, -moz-text-decoration-style, text-decoration-style, -webkit-text-emphasis, text-emphasis, -webkit-text-emphasis-style, text-emphasis-style, -webkit-text-emphasis-position, text-emphasis-position; }",
+      { safari: Some(8 << 16), firefox: Some(30 << 16), chrome: Some(30 << 16) },
+    );
 
     // The prefix of a condition of `@import` is printed.
     cssTest(
@@ -6276,6 +6369,7 @@ describe("css tests", () => {
     minify_test(".foo { text-emphasis: filled yellow }", ".foo{text-emphasis:filled #ff0}");
     minify_test(".foo { text-emphasis: dot filled yellow }", ".foo{text-emphasis:dot #ff0}");
 
+    // lightningcss prints `text-emphasis: filled #ff0` for this test and the next one. Bun folds no longhand.
     cssTest(
       `
       .foo {
@@ -6285,7 +6379,8 @@ describe("css tests", () => {
       `,
       indoc`
       .foo {
-        text-emphasis: filled #ff0;
+        text-emphasis-style: filled;
+        text-emphasis-color: #ff0;
       }
       `,
     );
@@ -6299,7 +6394,8 @@ describe("css tests", () => {
       `,
       indoc`
       .foo {
-        text-emphasis: filled #ff0;
+        text-emphasis: filled red;
+        text-emphasis-color: #ff0;
       }
       `,
     );
@@ -6362,6 +6458,7 @@ describe("css tests", () => {
       },
     );
 
+    // lightningcss prints no prefixed line here. Bun gives the prefixed name the vertical keyword: see the tests below.
     prefix_test(
       `
       .foo {
@@ -6370,6 +6467,7 @@ describe("css tests", () => {
       `,
       indoc`
       .foo {
+        -webkit-text-emphasis-position: over;
         text-emphasis-position: over left;
       }
       `,
@@ -6514,7 +6612,7 @@ describe("css tests", () => {
       { chrome: Some(80 << 16) },
     );
 
-    // The shorthand is for the prefixes that both longhands have. lightningcss prints `text-emphasis: dot red` with both names.
+    // Each longhand gets its own prefixes. lightningcss prints `text-emphasis: dot red` with both names.
     prefix_test(
       ".foo { -webkit-text-emphasis-style: dot; text-emphasis-color: red }",
       indoc`
@@ -6526,12 +6624,24 @@ describe("css tests", () => {
       `,
       { chrome: Some(80 << 16) },
     );
-    minify_test(
-      ".foo { -webkit-text-emphasis-style: dot; text-emphasis-color: red }",
-      ".foo{-webkit-text-emphasis-style:dot;text-emphasis-color:red}",
-    );
 
-    // The prefixed name does not read a horizontal keyword. A written one stays. lightningcss prints it unprefixed.
+    // The prefixed name reads no horizontal keyword. It gets the vertical one alone, so it keeps no earlier position. lightningcss leaves `under` there.
+    prefix_test(
+      ".foo { text-emphasis-position: under; text-emphasis-position: over left }",
+      indoc`
+      .foo {
+        -webkit-text-emphasis-position: under;
+        text-emphasis-position: under;
+        -webkit-text-emphasis-position: over;
+        text-emphasis-position: over left;
+      }
+      `,
+      { chrome: Some(80 << 16) },
+    );
+    prefix_test(".foo { text-emphasis-position: over left }", ".foo { text-emphasis-position: over left; }", {
+      firefox: Some(78 << 16),
+    });
+    // A prefixed declaration that the author wrote stays as it is. lightningcss prints it unprefixed.
     prefix_test(
       ".foo { -webkit-text-emphasis-position: over left }",
       ".foo { -webkit-text-emphasis-position: over left; }",
@@ -6548,30 +6658,31 @@ describe("css tests", () => {
       { chrome: Some(80 << 16) },
     );
 
-    // A color with no style is printed, and an empty value stays as it is. lightningcss prints `none` for all four.
+    // A color with no style is printed, and an empty value stays as it is. lightningcss prints `none` for these three.
     minify_test(".foo { text-emphasis: red }", ".foo{text-emphasis:red}");
     minify_test(".foo { text-emphasis: none red }", ".foo{text-emphasis:red}");
-    minify_test(".foo { text-emphasis-style: none; text-emphasis-color: red }", ".foo{text-emphasis:red}");
     minify_test(".foo { text-emphasis: dot; text-emphasis: ; }", ".foo{text-emphasis:dot;text-emphasis: }");
 
-    // A second value of one property is a new declaration. A longhand after its shorthand is folded.
+    // A later value replaces no earlier one. lightningcss prints only `circle` for these two.
     minify_test(".foo { text-emphasis: dot; text-emphasis: circle }", ".foo{text-emphasis:dot;text-emphasis:circle}");
-    minify_test(".foo { text-emphasis: dot; text-emphasis-style: circle }", ".foo{text-emphasis:circle}");
-
-    // Unprefixed declarations are not folded in a block that has a prefix that the targets need. lightningcss folds them.
-    prefix_test(
-      ".foo { -webkit-text-emphasis: circle; text-emphasis-style: dot; text-emphasis-color: red }",
-      indoc`
-      .foo {
-        -webkit-text-emphasis: circle;
-        text-emphasis-style: dot;
-        text-emphasis-color: red;
-      }
-      `,
-      { chrome: Some(80 << 16) },
+    minify_test(
+      ".foo { text-emphasis: dot; text-emphasis-style: circle }",
+      ".foo{text-emphasis:dot;text-emphasis-style:circle}",
     );
 
-    // The buffer is written before `all` and before an unknown name.
+    // The shorthand before it is the fallback that the author wrote for the color, so Bun adds none.
+    prefix_test(
+      ".foo { text-emphasis: dot red; text-emphasis-color: lch(50.998% 135.363 338) }",
+      indoc`
+      .foo {
+        text-emphasis: dot red;
+        text-emphasis-color: lch(50.998% 135.363 338);
+      }
+      `,
+      { firefox: Some(48 << 16) },
+    );
+
+    // No declaration moves across an unknown name, which can be one more spelling of the property.
     prefix_test(
       ".foo { text-emphasis: dot; -epub-text-emphasis: circle; text-emphasis-color: red }",
       indoc`
@@ -6593,12 +6704,17 @@ describe("css tests", () => {
       { chrome: Some(80 << 16) },
     );
     prefix_test(
+      ".foo { text-emphasis-style: var(--s) }",
+      ".foo { -webkit-text-emphasis-style: var(--s); text-emphasis-style: var(--s); }",
+      { chrome: Some(80 << 16) },
+    );
+    prefix_test(
       ".foo { -webkit-text-emphasis: var(--x); text-emphasis: var(--x) }",
       ".foo { -webkit-text-emphasis: var(--x); text-emphasis: var(--x); }",
       { chrome: Some(80 << 16) },
     );
 
-    // Two rules with one selector are merged and minified again.
+    // Two rules with one selector are merged and minified again. That pass changes nothing.
     prefix_test(
       ".a { text-emphasis: dot lch(50.998% 135.363 338) } .a { top: 0 }",
       indoc`
@@ -6629,10 +6745,10 @@ describe("css tests", () => {
       ".a { text-emphasis-position: over } .a { text-emphasis: dot }",
       indoc`
       .a {
-        -webkit-text-emphasis: dot;
-        text-emphasis: dot;
         -webkit-text-emphasis-position: over;
         text-emphasis-position: over;
+        -webkit-text-emphasis: dot;
+        text-emphasis: dot;
       }
       `,
       { chrome: Some(80 << 16) },
@@ -6819,8 +6935,10 @@ describe("css tests", () => {
       ".foo { text-emphasis-style: dot; text-emphasis-color: red; text-emphasis-position: over right }",
       indoc`
       .foo {
-        -webkit-text-emphasis: dot red;
-        text-emphasis: dot red;
+        -webkit-text-emphasis-style: dot;
+        text-emphasis-style: dot;
+        -webkit-text-emphasis-color: red;
+        text-emphasis-color: red;
         -webkit-text-emphasis-position: over;
         text-emphasis-position: over;
       }
@@ -6870,115 +6988,133 @@ describe("css tests", () => {
       defaults,
     );
 
+    // A declaration as numbers: the values that it sets (four bits each), and the mask of those values.
     type Declaration = {
-      // The name with no prefix.
-      name: string;
       prefixed: boolean;
-      // The value is one word.
-      alone: boolean;
-      // The three values that the declaration sets. `undefined` is a value that it does not set.
-      values: (string | undefined)[];
-      // The third kind of browser of `expectSameValues` reads the declaration.
-      read: boolean;
-      // The prefixed copy that the third kind of browser needs.
-      copy?: Declaration;
+      all: boolean;
+      // In a browser that reads all of the declaration.
+      mask: number;
+      bits: number;
+      // In the third kind of browser of `expectSameValues`. A mask of 0: that browser drops the declaration.
+      nativeMask: number;
+      nativeBits: number;
     };
-    // Every block of up to four of the declarations: its lines as Bun prints them, and its text in the sheet.
-    const blocksOf = (atoms: string[]) => {
-      const blocks: { lines: string[]; text: string }[] = [];
-      for (let length = 1, last = [{ lines: [] as string[], text: "" }]; length <= 4; length++) {
-        const next: typeof last = [];
-        for (const block of last)
-          for (const atom of atoms)
-            next.push({ lines: [...block.lines, `  ${atom.replace(":", ": ")};`], text: block.text + atom + ";" });
-        for (const block of next) blocks.push(block);
-        last = next;
-      }
-      return blocks;
-    };
-    // The lines of the declarations of each rule `.r<i>` of a printed sheet.
-    const rulesOf = (output: string, count: number) => {
-      const rules = new Array<string[]>(count).fill([]);
-      for (const rule of output.split("\n}\n")) {
-        const lines = rule.split("\n");
-        const selectors = lines.findIndex(line => line.length !== 0);
-        if (selectors === -1) continue;
-        for (const selector of lines[selectors].slice(0, -2).split(", "))
-          rules[Number(selector.slice(2))] = lines.slice(selectors + 1);
-      }
-      return rules;
-    };
+    // An initial value is 0, as a value that no declaration sets.
+    const valueIds = new Map([
+      ["none", 0],
+      ["solid", 0],
+      ["currentcolor", 0],
+      ["auto", 0],
+      ["unset", 0],
+    ]);
     // Checks the values that three kinds of browser apply, for every block of up to four of `atoms`.
     const expectSameValues = (
       atoms: string[],
-      // The values that a declaration sets.
+      // The values that a declaration sets. `undefined` is a value that it does not set.
       longhands: (name: string, words: string[]) => (string | undefined)[],
-      // The first kind of browser reads the unprefixed names, and the second kind reads every name. This is the third kind.
-      reads: (declaration: Declaration) => boolean,
-      // The third kind gets a prefixed copy of these declarations, until the block writes a prefixed name.
-      copied: (declaration: Declaration) => boolean,
+      // The first kind of browser reads the unprefixed names, and the second kind reads every name. This gives the values that the third kind reads.
+      native: (
+        name: string,
+        prefixed: boolean,
+        words: string[],
+        values: (string | undefined)[],
+      ) => (string | undefined)[],
     ) => {
-      const blocks = blocksOf(atoms);
-      const output = prefix_test_output(blocks.map((block, i) => `.r${i}{${block.text}}`).join("\n"), "", defaults);
-      const rules = rulesOf(output, blocks.length);
-
-      const parsed: Record<string, Declaration> = {};
-      const parse = (line: string) => {
-        if (parsed[line]) return parsed[line];
-        const [name, value] = line.slice(2, -1).split(": ");
-        const [prefixed, words] = [name.startsWith("-webkit-"), value.split(" ")];
-        const declaration: Declaration = {
-          name: prefixed ? name.slice(8) : name,
-          prefixed,
-          alone: words.length === 1 && !value.startsWith("var("),
-          values: [],
-          read: false,
-        };
-        declaration.values = longhands(declaration.name, words);
-        declaration.read = reads(declaration);
-        if (!prefixed && copied(declaration)) declaration.copy = { ...declaration, prefixed: true, read: true };
-        return (parsed[line] = declaration);
-      };
-      // The values that a browser applies: each declaration that it reads sets them, in order. Every browser reads `all`.
-      const applied = (declarations: Declaration[], kind: number, copies: boolean) => {
-        let [first, second, third, all, cursor] = ["", "", "", "", "auto"];
-        let written = false;
-        // An indexed loop with no call: a debug build runs this body about 50,000 times.
-        for (let i = 0; i < declarations.length; i++) {
-          let declaration = declarations[i];
-          if (declaration.name === "all") {
-            first = second = third = "";
-            all = cursor = "all";
-            written = false;
-          } else if (declaration.name === "cursor") cursor = declaration.values[0]!;
-          else {
-            if (declaration.prefixed) written = true;
-            else if (copies && !written && declaration.copy) declaration = declaration.copy;
-            if (kind === 0 ? declaration.prefixed : kind === 2 && !declaration.read) continue;
-            first = declaration.values[0] ?? first;
-            second = declaration.values[1] ?? second;
-            third = declaration.values[2] ?? third;
-          }
+      const pack = (values: (string | undefined)[]) => {
+        let [mask, bits] = [0, 0];
+        for (let i = 0; i < values.length; i++) {
+          const value = values[i];
+          if (value === undefined) continue;
+          if (!valueIds.has(value)) valueIds.set(value, valueIds.size);
+          mask |= 15 << (4 * i);
+          bits |= valueIds.get(value)! << (4 * i);
         }
-        return all + " " + cursor + " " + first + " " + second + " " + third;
+        return { mask, bits };
+      };
+      const parsed = new Map<string, Declaration>();
+      const parse = (text: string) => {
+        let declaration = parsed.get(text);
+        if (declaration) return declaration;
+        const [prefixed, colon] = [text.startsWith("-webkit-"), text.indexOf(":")];
+        const [name, words] = [text.slice(prefixed ? 8 : 0, colon), text.slice(colon + 1).split(" ")];
+        // `all` sets every value, and `cursor` is the fourth one.
+        const values =
+          name === "all"
+            ? ["unset", "unset", "unset", "unset"]
+            : name === "cursor"
+              ? [, , , words[0]]
+              : longhands(name, words);
+        const { mask, bits } = pack(values);
+        const read = name === "all" || name === "cursor" ? { mask, bits } : pack(native(name, prefixed, words, values));
+        declaration = { prefixed, all: name === "all", mask, bits, nativeMask: read.mask, nativeBits: read.bits };
+        parsed.set(text, declaration);
+        return declaration;
       };
 
-      const wrong = blocks.filter((block, i) => {
-        const [printed, written] = [rules[i].map(parse), block.lines.map(parse)];
-        for (let kind = 0; kind < 3; kind++)
-          if (applied(printed, kind, false) !== applied(written, kind, kind === 2)) return true;
-        return false;
-      });
-      expect(wrong.map(block => block.text)).toEqual([]);
+      // Every block of up to four of the atoms, with the values that each kind of browser has to apply after it.
+      // The third kind has to get every unprefixed declaration in full, until the block has a prefixed name.
+      type Block = { parent?: Block; text: string; applied: number[]; written: boolean; plain: boolean };
+      const declarations = atoms.map(parse);
+      const blocks: Block[] = [];
+      // The second sheet has each block after a rule that Bun merges it into, or as two rules that Bun merges.
+      let [sheet, merged] = ["", ""];
+      for (
+        let length = 1, last: Block[] = [{ text: "", applied: [0, 0, 0], written: false, plain: true }];
+        length <= 4;
+        length++
+      ) {
+        const next: Block[] = [];
+        for (const parent of last)
+          for (let atom = 0; atom < atoms.length; atom++) {
+            const declaration = declarations[atom];
+            const block: Block = {
+              parent,
+              text: parent.text + atoms[atom] + ";",
+              applied: [
+                declaration.prefixed ? parent.applied[0] : (parent.applied[0] & ~declaration.mask) | declaration.bits,
+                (parent.applied[1] & ~declaration.mask) | declaration.bits,
+                declaration.prefixed || !parent.written
+                  ? (parent.applied[2] & ~declaration.mask) | declaration.bits
+                  : (parent.applied[2] & ~declaration.nativeMask) | declaration.nativeBits,
+              ],
+              written: !declaration.all && (parent.written || declaration.prefixed),
+              plain: parent.plain && !declaration.prefixed,
+            };
+            const selector = ".r" + blocks.length + "{";
+            sheet += selector + block.text + "}\n";
+            // Each of two rules gets its prefixes alone, so only a block with no prefixed name is in the sheet as two rules.
+            const first = !block.plain || length === 1 ? "--z:1" : (length === 2 ? parent : parent.parent!).text;
+            const second = first === "--z:1" ? block.text : block.text.slice(first.length);
+            merged += selector + first + "}" + selector + second + "}\n";
+            next.push(block);
+            blocks.push(block);
+          }
+        last = next;
+      }
+      const output = minify_test_output(sheet, "", defaults);
+      // Bun minifies a rule again after it merges a rule into it. That pass changes nothing.
+      expect(minify_test_output(merged, "", defaults).replaceAll("--z:1;", "")).toBe(output);
 
-      // Bun minifies a rule again after it merges a second rule into it. Neither that pass nor a new build changes the output.
-      expect(prefix_test_output(output, "", defaults)).toBe(output);
-      const merged = blocks.map((block, i) => `.r${i}{${block.text}}.r${i}{--z:1}`).join("\n");
-      expect(prefix_test_output(merged, "", defaults).replaceAll("  --z: 1;\n", "")).toBe(output);
+      const rules = output.split("}");
+      const wrong: string[] = [];
+      // Indexed loops with no call but `parse`: a debug build runs the inner body about 10,000 times.
+      for (let i = 0; i < blocks.length; i++) {
+        const printed = rules[i].slice(rules[i].indexOf("{") + 1).split(";");
+        let [unprefixed, both, third] = [0, 0, 0];
+        for (let d = 0; d < printed.length; d++) {
+          const declaration = parse(printed[d]);
+          if (!declaration.prefixed) unprefixed = (unprefixed & ~declaration.mask) | declaration.bits;
+          both = (both & ~declaration.mask) | declaration.bits;
+          third = (third & ~declaration.nativeMask) | declaration.nativeBits;
+        }
+        const applied = blocks[i].applied;
+        if (unprefixed !== applied[0] || both !== applied[1] || third !== applied[2]) wrong.push(blocks[i].text);
+      }
+      expect(wrong).toEqual([]);
       return blocks.length;
     };
 
-    test("the prefixes and the folds of text-decoration change no value that a browser applies", () => {
+    test("the prefixes of text-decoration change no value that a browser applies", () => {
       const blocks = expectSameValues(
         [
           "text-decoration:underline",
@@ -6988,6 +7124,7 @@ describe("css tests", () => {
           "all:unset",
           "cursor:pointer",
         ],
+        // The line, the style and the color.
         (name, words) =>
           name === "text-decoration"
             ? [
@@ -6995,18 +7132,15 @@ describe("css tests", () => {
                 words.find(word => word === "dotted" || word === "wavy") ?? "solid",
                 words.find(word => word === "red") ?? "currentcolor",
               ]
-            : name === "text-decoration-color"
-              ? [undefined, undefined, words[0]]
-              : [words[0], undefined, undefined],
-        // Safari 14 reads the prefixed shorthand, the unprefixed shorthand when it is a line alone, and the unprefixed longhands.
-        declaration => declaration.prefixed || declaration.name !== "text-decoration" || declaration.alone,
-        // Safari needs a prefixed copy of each shorthand that it does not read.
-        declaration => declaration.name === "text-decoration" && !declaration.alone,
+            : [undefined, undefined, words[0]],
+        // Safari 14 reads the prefixed shorthand and the unprefixed longhands. Its unprefixed shorthand is the line alone, and it drops any other value.
+        (name, prefixed, words, values) =>
+          prefixed || name !== "text-decoration" ? values : words.length === 1 ? [values[0]] : [],
       );
       expect(blocks).toBe(1554);
-    }, 30_000);
+    });
 
-    test("the prefixes and the folds of text-emphasis change no value that a browser applies", () => {
+    test("the prefixes of text-emphasis change no value that a browser applies", () => {
       const blocks = expectSameValues(
         [
           "text-emphasis:dot",
@@ -7016,30 +7150,35 @@ describe("css tests", () => {
           "text-emphasis-color:red",
           "all:unset",
         ],
+        // The style and the color.
         (name, words) =>
           name === "text-emphasis-color"
-            ? [undefined, words[0], undefined]
-            : name !== "text-emphasis"
-              ? [words[0], undefined, undefined]
-              : words[0] === "var(--v)"
-                ? [words[0], words[0], undefined]
-                : [
-                    words.find(word => word === "dot" || word === "circle") ?? "none",
-                    words.find(word => word === "red") ?? "currentcolor",
-                    undefined,
-                  ],
+            ? [undefined, words[0]]
+            : words[0] === "var(--v)"
+              ? [words[0], words[0]]
+              : [
+                  words.find(word => word === "dot" || word === "circle") ?? "none",
+                  words.find(word => word === "red") ?? "currentcolor",
+                ],
         // Chrome 80 reads only the prefixed names of this family.
-        declaration => declaration.prefixed,
-        // Chrome 80 needs a prefixed copy of each unprefixed declaration.
-        () => true,
+        (name, prefixed, words, values) => (prefixed ? values : []),
       );
       expect(blocks).toBe(1554);
-    }, 30_000);
+    });
 
-    test("bun build writes the prefixes for the browser target and none for the bun target", async () => {
-      using dir = tempDir("css-text-decoration", {
-        "a.css": ".a { text-decoration: underline wavy red; }\n.b { text-emphasis: dot red; }\n",
-      });
+    // The strings of `image-set()` are imports, as a `url()` is. Bun inlines these two small files.
+    const bundled = {
+      "a.css": [
+        ".a { text-decoration: underline wavy red; }",
+        ".b { text-emphasis: dot red; }",
+        '.c { list-style-image: image-set("./a.png" 1x, "./b.png" 2x); }',
+      ].join("\n"),
+      "a.png": "a",
+      "b.png": "b",
+    };
+
+    test("Bun.build writes the prefixes for the browser target and none for the bun target", async () => {
+      using dir = tempDir("css-text-decoration", bundled);
       // The first line of the output is a comment with the path of the sheet.
       const build = async (target: "browser" | "bun") => {
         const { outputs } = await Bun.build({ entrypoints: [join(String(dir), "a.css")], target });
@@ -7055,6 +7194,11 @@ describe("css tests", () => {
           -webkit-text-emphasis: dot red;
           text-emphasis: dot red;
         }
+
+        .c {
+          list-style-image: -webkit-image-set(url("data:image/png;base64,YQ==") 1x, url("data:image/png;base64,Yg==") 2x);
+          list-style-image: image-set("data:image/png;base64,YQ==" 1x, "data:image/png;base64,Yg==" 2x);
+        }
       `);
       expect(await build("bun")).toBe(indoc`
         .a {
@@ -7064,10 +7208,35 @@ describe("css tests", () => {
         .b {
           text-emphasis: dot red;
         }
+
+        .c {
+          list-style-image: image-set("data:image/png;base64,YQ==" 1x, "data:image/png;base64,Yg==" 2x);
+        }
       `);
     });
 
-    // No browser list (`--target=bun`): nothing is added, and no unprefixed declaration is folded.
+    test("bun build writes the prefixes with its default target", async () => {
+      using dir = tempDir("css-text-decoration-cli", bundled);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "a.css", "--minify"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout:
+          ".a{-webkit-text-decoration:underline wavy red;text-decoration:underline wavy red}" +
+          ".b{-webkit-text-emphasis:dot red;text-emphasis:dot red}" +
+          ".c{list-style-image:-webkit-image-set(url(data:image/png;base64,YQ==) 1x,url(data:image/png;base64,Yg==) 2x);" +
+          'list-style-image:image-set("data:image/png;base64,YQ==" 1x,"data:image/png;base64,Yg==" 2x)}',
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // No browser list (`--target=bun`): nothing is added.
     minify_test(".foo { text-decoration: underline wavy red }", ".foo{text-decoration:underline wavy red}");
     minify_test(".foo { text-emphasis: dot red }", ".foo{text-emphasis:dot red}");
     minify_test(

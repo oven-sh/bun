@@ -68,6 +68,7 @@ impl<'bump> DeclarationBlock<'bump> {
         #[inline]
         fn handle<'bump>(
             decls: &mut DeclarationList<'bump>,
+            other: &DeclarationList<'bump>,
             ctx: &mut css::PropertyHandlerContext,
             hndlr: &mut DeclarationHandler<'bump>,
             important: bool,
@@ -75,7 +76,7 @@ impl<'bump> DeclarationBlock<'bump> {
             for prop in decls.iter_mut() {
                 ctx.is_important = important;
 
-                let handled = hndlr.handle_property(prop, ctx);
+                let handled = hndlr.handle_property(prop, other, ctx);
 
                 if !handled {
                     // Move the value out and overwrite the slot with a
@@ -88,19 +89,21 @@ impl<'bump> DeclarationBlock<'bump> {
             }
         }
 
-        // The `!important` list has its own handler. Each one has to know what the other list wrote.
-        if !self.important_declarations.is_empty() {
-            handler.text.see_other_list(&self.important_declarations);
-            important_handler.text.see_other_list(&self.declarations);
-        }
-
+        // Each list has its own handler, and a handler can read the other list.
         handle(
             &mut self.important_declarations,
+            &self.declarations,
             context,
             important_handler,
             true,
         );
-        handle(&mut self.declarations, context, handler, false);
+        handle(
+            &mut self.declarations,
+            &self.important_declarations,
+            context,
+            handler,
+            false,
+        );
 
         handler.finalize(context);
         important_handler.finalize(context);
@@ -441,6 +444,7 @@ impl<'bump> DeclarationHandler<'bump> {
     pub(crate) fn handle_property(
         &mut self,
         property: &css::Property,
+        other: &DeclarationList<'bump>,
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
         // return this.background.handleProperty(property, &this.decls, context);
@@ -475,7 +479,7 @@ impl<'bump> DeclarationHandler<'bump> {
                 .handle_property(property, &mut self.decls, context)
             || self
                 .text
-                .handle_property(property, &mut self.decls, context)
+                .handle_property(property, other, &mut self.decls, context)
             || self
                 .inset
                 .handle_property(property, &mut self.decls, context)

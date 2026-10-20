@@ -41,13 +41,18 @@ impl<R> StyleRule<R> {
         self.selectors.hash(&mut hasher);
         // Inlined `DeclarationBlock::hash_property_ids`: hash just the u16
         // property-id tag bytes.
-        for decl in self.declarations.declarations.iter() {
+        let declarations = &self.declarations;
+        for decl in declarations
+            .declarations
+            .iter()
+            .chain(declarations.important_declarations.iter())
+        {
             let tag = decl.property_id().tag() as u16;
             hasher.update(&tag.to_ne_bytes());
-        }
-        for decl in self.declarations.important_declarations.iter() {
-            let tag = decl.property_id().tag() as u16;
-            hasher.update(&tag.to_ne_bytes());
+            // Two unknown names have one tag, so the name is a part of the key. Rules that `is_duplicate` keeps apart then have their own buckets.
+            if let css::css_properties::Property::Custom(custom) = decl {
+                hasher.update(custom.name.as_str());
+            }
         }
         hasher.final_()
     }
@@ -474,8 +479,11 @@ impl<R> StyleRule<R> {
 
 /// Two unknown names have one `PropertyId` tag, so the names have to be equal too.
 fn same_property(a: &css::css_properties::Property, b: &css::css_properties::Property) -> bool {
-    let (a, b) = (a.property_id(), b.property_id());
-    a == b && a.name() == b.name()
+    use css::css_properties::Property;
+    match (a, b) {
+        (Property::Custom(a), Property::Custom(b)) => a.name.as_str() == b.name.as_str(),
+        _ => a.property_id() == b.property_id(),
+    }
 }
 
 // ─── deep_clone ───────────────────────────────────────────────────────────

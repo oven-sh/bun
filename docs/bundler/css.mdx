@@ -713,7 +713,7 @@ CSS has introduced several shorthand properties that combine multiple longhand p
 }
 ```
 
-For browsers that don't support these shorthands, Bun converts them to their component longhand properties:
+For browsers that don't support these shorthands, Bun converts them to their component longhand properties, or to the prefixed shorthand:
 
 ```css title="styles.css" icon="file-code"
 .flex-container {
@@ -737,10 +737,9 @@ For browsers that don't support these shorthands, Bun converts them to their com
 }
 
 .fancy-link {
-  /* Individual text decoration properties */
-  text-decoration-line: underline;
-  text-decoration-style: dotted;
-  text-decoration-color: blue;
+  /* Safari reads the style and the color in the prefixed shorthand, and the thickness in its longhand */
+  -webkit-text-decoration: underline dotted #00f;
+  text-decoration: underline dotted #00f;
   text-decoration-thickness: 2px;
 }
 

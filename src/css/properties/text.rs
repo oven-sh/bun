@@ -5,7 +5,6 @@ use crate::CSSStringFns;
 use crate::PrintErr;
 use crate::Printer;
 use crate::VendorPrefix;
-use crate::css_properties::custom::CustomPropertyName;
 use crate::css_properties::{Property, PropertyIdTag};
 use crate::css_values::calc::{Calc, MathFunction};
 use crate::css_values::color::CssColor;
@@ -181,7 +180,7 @@ impl TextDecorationLine {
         !self.is_empty() && !self.intersects(Self::SPELLING_ERROR.union(Self::GRAMMAR_ERROR))
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         if self.is_empty() {
             return dest.write_str("none");
         }
@@ -548,7 +547,7 @@ pub enum TextEmphasisPositionHorizontal {
 }
 
 /// A value for the [text-emphasis-position](https://www.w3.org/TR/2020/WD-css-text-decor-4-20200506/#text-emphasis-position-property) property.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct TextEmphasisPosition {
     /// The vertical position.
     pub(crate) vertical: TextEmphasisPositionVertical,
@@ -576,7 +575,7 @@ impl TextEmphasisPosition {
         }
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.vertical.to_css(dest)?;
         if self.horizontal != TextEmphasisPositionHorizontal::Right {
             dest.write_char(b' ')?;
@@ -598,594 +597,367 @@ pub enum Direction {
 }
 
 bitflags::bitflags! {
-    /// A set of the properties that `TextDecorationHandler` takes.
-    #[derive(Clone, Copy, Default)]
-    struct Names: u16 {
+    /// The longhands of `text-decoration` and `text-emphasis` that have a prefixed name.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    struct Longhands: u8 {
         const LINE              = 1 << 0;
         const STYLE             = 1 << 1;
         const COLOR             = 1 << 2;
         const EMPHASIS_STYLE    = 1 << 3;
         const EMPHASIS_COLOR    = 1 << 4;
         const EMPHASIS_POSITION = 1 << 5;
-        const THICKNESS         = 1 << 6;
-        const DECORATION        = 1 << 7;
-        const EMPHASIS          = 1 << 8;
+        const DECORATION        = Self::LINE.bits() | Self::STYLE.bits() | Self::COLOR.bits();
+        const EMPHASIS          = Self::EMPHASIS_STYLE.bits() | Self::EMPHASIS_COLOR.bits();
     }
 }
 
-/// The count of longhands that have a prefixed name. They are the low bits of `Names`.
-const PREFIXED_LONGHANDS: usize = 6;
+impl Longhands {
+    const COUNT: usize = 6;
 
-impl Names {
-    fn of(tag: PropertyIdTag) -> Option<Names> {
+    /// The longhands that a declaration of a property sets. `None` is a property that the handler does not take.
+    fn of(tag: PropertyIdTag) -> Option<Longhands> {
         Some(match tag {
-            PropertyIdTag::TextDecorationLine => Names::LINE,
-            PropertyIdTag::TextDecorationThickness => Names::THICKNESS,
-            PropertyIdTag::TextDecorationStyle => Names::STYLE,
-            PropertyIdTag::TextDecorationColor => Names::COLOR,
-            PropertyIdTag::TextDecoration => Names::DECORATION,
-            PropertyIdTag::TextEmphasisStyle => Names::EMPHASIS_STYLE,
-            PropertyIdTag::TextEmphasisColor => Names::EMPHASIS_COLOR,
-            PropertyIdTag::TextEmphasis => Names::EMPHASIS,
-            PropertyIdTag::TextEmphasisPosition => Names::EMPHASIS_POSITION,
+            PropertyIdTag::TextDecorationLine => Longhands::LINE,
+            PropertyIdTag::TextDecorationThickness => Longhands::empty(),
+            PropertyIdTag::TextDecorationStyle => Longhands::STYLE,
+            PropertyIdTag::TextDecorationColor => Longhands::COLOR,
+            PropertyIdTag::TextDecoration => Longhands::DECORATION,
+            PropertyIdTag::TextEmphasisStyle => Longhands::EMPHASIS_STYLE,
+            PropertyIdTag::TextEmphasisColor => Longhands::EMPHASIS_COLOR,
+            PropertyIdTag::TextEmphasis => Longhands::EMPHASIS,
+            PropertyIdTag::TextEmphasisPosition => Longhands::EMPHASIS_POSITION,
             _ => return None,
         })
     }
+}
 
-    /// The longhands that a declaration of these properties sets.
-    fn longhands(self) -> Names {
-        let mut longhands = self;
-        if self.contains(Names::DECORATION) {
-            longhands |= Names::LINE | Names::STYLE | Names::COLOR;
+/// The prefixes of the declarations that set each of the `Longhands`. `NONE` is an unprefixed declaration.
+type Prefixes = [VendorPrefix; Longhands::COUNT];
+
+/// Records a declaration that the author wrote. One with a prefix and `NONE` is an unprefixed one with the copies of an earlier pass.
+fn record(prefixes: &mut Prefixes, longhands: Longhands, vp: VendorPrefix) {
+    let vp = if vp.contains(VendorPrefix::NONE) {
+        VendorPrefix::NONE
+    } else {
+        vp
+    };
+    for (i, prefixes) in prefixes.iter_mut().enumerate() {
+        if longhands.bits() & (1 << i) != 0 {
+            prefixes.insert(vp);
         }
-        if self.contains(Names::EMPHASIS) {
-            longhands |= Names::EMPHASIS_STYLE | Names::EMPHASIS_COLOR;
-        }
-        longhands
     }
 }
 
-/// Folds the `text-decoration` and `text-emphasis` longhands and writes the prefixes that the targets need.
+/// Writes the prefixes, color fallbacks and thickness longhand that the targets need. Unlike lightningcss: a declaration stays where it is and no longhand is folded, so a second pass changes nothing.
 #[derive(Default)]
 pub struct TextDecorationHandler {
-    line: Option<TextDecorationLine>,
-    thickness: Option<TextDecorationThickness>,
-    style: Option<TextDecorationStyle>,
-    color: Option<CssColor>,
-    /// The prefixes of the declarations that set the four values above.
-    decoration: VendorPrefix,
-    emphasis_style: Option<TextEmphasisStyle>,
-    emphasis_color: Option<CssColor>,
-    /// The prefixes of the declarations that set the two values above.
-    emphasis: VendorPrefix,
-    emphasis_position: Option<(TextEmphasisPosition, VendorPrefix)>,
-    /// The properties whose declarations set the values in the buffer.
-    buffered: Names,
-    /// The properties that the handler wrote to the block since `all`.
-    flushed: Names,
-    /// The prefixes that the author wrote for each longhand since `all`.
-    written: [VendorPrefix; PREFIXED_LONGHANDS],
-    /// The prefixes that the author wrote for each longhand in the other list of the block (`!important` or not).
-    elsewhere: [VendorPrefix; PREFIXED_LONGHANDS],
-}
-
-/// How a declaration relates to the values of its group in the buffer.
-struct Relation {
-    /// The declaration sets the longhands that the buffer has, to the values that the buffer has.
-    same: bool,
-    /// The declaration sets a longhand that the buffer has to another value.
-    differs: bool,
+    /// What the author wrote in the block since `all`.
+    written: Prefixes,
+    /// What the author wrote in the other list of the block (`!important` or not).
+    elsewhere: Prefixes,
+    /// The length of the list after the last declaration of this handler. `None`: the block has none yet.
+    mark: Option<usize>,
+    /// WebKit can have a decoration style or color that a line alone does not reset: see `styles`.
+    stale: bool,
 }
 
 impl TextDecorationHandler {
+    /// Inlined into the handler chain, so a declaration that this handler does not take costs one test of its tag.
+    #[inline(always)]
     pub(crate) fn handle_property(
         &mut self,
         property: &Property,
+        other: &css::DeclarationList,
         dest: &mut css::DeclarationList,
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
-        macro_rules! relation {
-            ($($slot:ident: $val:expr),+) => {{
-                let mut relation = Relation { same: true, differs: false };
-                $(match (&self.$slot, $val) {
-                    (Some(old), Some(new)) if old != new => {
-                        relation.same = false;
-                        relation.differs = true;
-                    }
-                    (Some(_), None) | (None, Some(_)) => relation.same = false,
-                    _ => {}
-                })+
-                relation
-            }};
-        }
-
-        macro_rules! set {
-            ($($slot:ident ($longhand:expr): $val:expr),+) => {
-                $(if let Some(val) = $val {
-                    if self.$slot.as_ref().is_some_and(|old| old != val) {
-                        self.buffered.remove($longhand);
-                    }
-                    self.$slot = Some(val.clone());
-                })+
-            };
-        }
-
-        macro_rules! decoration {
-            ($name:expr, $vp:expr, $line:expr, $thickness:expr, $style:expr, $color:expr) => {{
-                let (name, vp) = ($name, $vp);
-                let relation =
-                    relation!(line: $line, thickness: $thickness, style: $style, color: $color);
-                if !self.decoration.is_empty()
-                    && !self.joins_decoration(name, vp, &relation, &context.targets)
-                {
-                    self.flush(dest, context);
-                }
-                set!(line(Names::LINE): $line, thickness(Names::THICKNESS): $thickness, style(Names::STYLE): $style, color(Names::COLOR): $color);
-                self.decoration.insert(vp);
-                self.buffered.insert(name);
-                self.wrote(name, vp);
-            }};
-        }
-
-        macro_rules! emphasis {
-            ($name:expr, $vp:expr, $style:expr, $color:expr) => {{
-                let (name, vp) = ($name, $vp);
-                let relation = relation!(emphasis_style: $style, emphasis_color: $color);
-                let shorthand = (Names::EMPHASIS, Feature::TextEmphasis);
-                if !self.emphasis.is_empty()
-                    && !self.joins(self.emphasis, name, vp, &relation, shorthand, &context.targets)
-                {
-                    self.flush(dest, context);
-                }
-                set!(emphasis_style(Names::EMPHASIS_STYLE): $style, emphasis_color(Names::EMPHASIS_COLOR): $color);
-                self.emphasis.insert(vp);
-                self.buffered.insert(name);
-                self.wrote(name, vp);
-            }};
-        }
-
-        const NO_LINE: Option<&TextDecorationLine> = None;
-        const NO_THICKNESS: Option<&TextDecorationThickness> = None;
-        const NO_STYLE: Option<&TextDecorationStyle> = None;
-        const NO_EMPHASIS_STYLE: Option<&TextEmphasisStyle> = None;
-        const NO_COLOR: Option<&CssColor> = None;
-
         match property {
-            Property::TextDecorationLine(v) => {
-                decoration!(
-                    Names::LINE,
-                    v.1,
-                    Some(&v.0),
-                    NO_THICKNESS,
-                    NO_STYLE,
-                    NO_COLOR
-                )
+            Property::TextDecorationLine(_)
+            | Property::TextDecorationThickness(_)
+            | Property::TextDecorationStyle(_)
+            | Property::TextDecorationColor(_)
+            | Property::TextDecoration(_)
+            | Property::TextEmphasisStyle(_)
+            | Property::TextEmphasisColor(_)
+            | Property::TextEmphasis(_)
+            | Property::TextEmphasisPosition(_) => self.handle(property, other, dest, context),
+            Property::Unparsed(unparsed) if Longhands::of(unparsed.property_id.tag()).is_some() => {
+                self.handle(property, other, dest, context)
             }
-            Property::TextDecorationThickness(v) => {
-                decoration!(
-                    Names::THICKNESS,
-                    VendorPrefix::NONE,
-                    NO_LINE,
-                    Some(v),
-                    NO_STYLE,
-                    NO_COLOR
-                )
-            }
-            Property::TextDecorationStyle(v) => {
-                decoration!(
-                    Names::STYLE,
-                    v.1,
-                    NO_LINE,
-                    NO_THICKNESS,
-                    Some(&v.0),
-                    NO_COLOR
-                )
-            }
-            Property::TextDecorationColor(v) => {
-                decoration!(
-                    Names::COLOR,
-                    v.1,
-                    NO_LINE,
-                    NO_THICKNESS,
-                    NO_STYLE,
-                    Some(&v.0)
-                )
-            }
-            Property::TextDecoration(v) => decoration!(
-                Names::DECORATION,
-                v.1,
-                Some(&v.0.line),
-                Some(&v.0.thickness),
-                Some(&v.0.style),
-                Some(&v.0.color)
-            ),
-            Property::TextEmphasisStyle(v) => {
-                emphasis!(Names::EMPHASIS_STYLE, v.1, Some(&v.0), NO_COLOR)
-            }
-            Property::TextEmphasisColor(v) => {
-                emphasis!(Names::EMPHASIS_COLOR, v.1, NO_EMPHASIS_STYLE, Some(&v.0))
-            }
-            Property::TextEmphasis(v) => {
-                emphasis!(Names::EMPHASIS, v.1, Some(&v.0.style), Some(&v.0.color))
-            }
-            Property::TextEmphasisPosition(v) => {
-                match &mut self.emphasis_position {
-                    Some((position, prefixes)) if *position == v.0 => prefixes.insert(v.1),
-                    position => {
-                        // A second value is a new declaration, as for the other properties.
-                        if position.is_some() {
-                            self.flush(dest, context);
-                        }
-                        self.emphasis_position = Some(*v);
-                    }
-                }
-                self.buffered.insert(Names::EMPHASIS_POSITION);
-                self.wrote(Names::EMPHASIS_POSITION, v.1);
-            }
-            Property::Unparsed(unparsed) => {
-                let tag = unparsed.property_id.tag();
-                let Some(name) = Names::of(tag) else {
-                    if tag == PropertyIdTag::All {
-                        self.see_other(true, dest, context);
-                    }
-                    return false;
-                };
-                self.flush(dest, context);
-
-                let written = unparsed.property_id.prefix().or_none();
-                let mut prefixes = written;
-                // Unlike lightningcss: an unparsed longhand gets the prefixes of its own feature, as its typed value does.
-                if let Some(feature) = tag.prefix_feature() {
-                    prefixes = self.prefixes(written, name, feature, &context.targets);
-                }
-                self.flushed.insert(name);
-                self.wrote(name, written);
-
-                let arena = dest.bump();
-                let mut unparsed =
-                    unparsed.with_property_id(arena, unparsed.property_id.with_prefix(prefixes));
-                context.add_unparsed_fallbacks(arena, &mut unparsed);
-                dest.push(Property::Unparsed(unparsed));
-            }
-            Property::All(_) => {
-                self.see_other(true, dest, context);
-                return false;
-            }
-            Property::Custom(custom) => {
-                match &custom.name {
-                    CustomPropertyName::Custom(_) => {}
-                    name => {
-                        self.see_other(name.as_str().eq_ignore_ascii_case(b"all"), dest, context)
-                    }
-                }
-                return false;
-            }
-            _ => return false,
+            _ => false,
         }
-
-        true
     }
 
-    /// Whether a declaration can go into a buffer that has values of its group with the prefixes `buffered`.
-    fn joins(
-        &self,
-        buffered: VendorPrefix,
-        name: Names,
-        vp: VendorPrefix,
-        relation: &Relation,
-        shorthand: (Names, Feature),
-        targets: &css::targets::Targets,
+    #[inline(never)]
+    fn handle(
+        &mut self,
+        property: &Property,
+        other: &css::DeclarationList,
+        dest: &mut css::DeclarationList,
+        context: &mut css::PropertyHandlerContext,
     ) -> bool {
-        if relation.same {
-            return true;
-        }
-        // Unlike lightningcss: a declaration with other prefixes replaces nothing, so each prefix keeps its values.
-        if vp != buffered {
-            return false;
-        }
-        // Unlike lightningcss: a second value of one property is a new declaration, so a fallback value stays.
-        if relation.differs && self.buffered.contains(name) {
-            return false;
-        }
-        // Unlike lightningcss: unprefixed declarations fold only when the block has no prefix that the targets need. A second pass sees the prefixes of the first one, and folds nothing more.
-        !vp.contains(VendorPrefix::NONE)
-            || !targets
-                .prefixes(VendorPrefix::NONE, shorthand.1)
-                .intersects(self.covered(shorthand.0))
-    }
-
-    fn joins_decoration(
-        &self,
-        name: Names,
-        vp: VendorPrefix,
-        relation: &Relation,
-        targets: &css::targets::Targets,
-    ) -> bool {
-        if relation.same {
-            // A thickness has no prefixed longhand, so a shorthand with a thickness keeps its own prefixes.
-            return vp == self.decoration
-                || matches!(self.thickness, None | Some(TextDecorationThickness::Auto));
-        }
-        // Unlike lightningcss: nothing folds with no browser list. Safari reads a style or a color only in the prefixed shorthand, and it reads the unprefixed longhands.
-        (!vp.contains(VendorPrefix::NONE) || targets.browsers.is_some())
-            && self.joins(
-                self.decoration,
-                name,
-                vp,
-                relation,
-                (Names::DECORATION, Feature::TextDecoration),
-                targets,
-            )
-    }
-
-    /// Takes `all`, which sets every property, or an unknown name, which can be one more spelling of a property in the buffer.
-    fn see_other(
-        &mut self,
-        all: bool,
-        dest: &mut css::DeclarationList,
-        context: &mut css::PropertyHandlerContext,
-    ) {
-        // Unlike lightningcss: the buffer is written before a declaration that can override it.
-        self.flush(dest, context);
-        if all {
-            self.flushed = Names::empty();
-            self.written = Default::default();
-        }
-    }
-
-    /// Records the prefixed names in the other list of the block (`!important` or not).
-    pub(crate) fn see_other_list(&mut self, declarations: &css::DeclarationList) {
-        for declaration in declarations.iter() {
-            let id = declaration.property_id();
-            if let Some(name) = Names::of(id.tag()) {
-                Self::record(&mut self.elsewhere, name, id.prefix());
-            }
-        }
-    }
-
-    pub(crate) fn finalize(
-        &mut self,
-        dest: &mut css::DeclarationList,
-        context: &mut css::PropertyHandlerContext,
-    ) {
-        self.flush(dest, context);
-        self.flushed = Names::empty();
-        self.written = Default::default();
-        self.elsewhere = Default::default();
-    }
-
-    /// Records the prefixes of a declaration that the author wrote.
-    fn wrote(&mut self, name: Names, prefixes: VendorPrefix) {
-        Self::record(&mut self.written, name, prefixes);
-    }
-
-    fn record(
-        written: &mut [VendorPrefix; PREFIXED_LONGHANDS],
-        name: Names,
-        prefixes: VendorPrefix,
-    ) {
-        let longhands = name.longhands().bits();
-        for (i, written) in written.iter_mut().enumerate() {
-            if longhands & (1 << i) != 0 {
-                written.insert(prefixes.difference(VendorPrefix::NONE));
-            }
-        }
-    }
-
-    /// The prefixes that the author wrote for a longhand that a declaration of `name` sets.
-    fn covered(&self, name: Names) -> VendorPrefix {
-        let longhands = name.longhands().bits();
-        let mut covered = VendorPrefix::empty();
-        for i in 0..PREFIXED_LONGHANDS {
-            if longhands & (1 << i) != 0 {
-                covered.insert(self.written[i] | self.elsewhere[i]);
-            }
-        }
-        covered
-    }
-
-    /// The prefixes to write a declaration with: the written ones, and the ones that the targets need.
-    fn prefixes(
-        &self,
-        written: VendorPrefix,
-        name: Names,
-        feature: Feature,
-        targets: &css::targets::Targets,
-    ) -> VendorPrefix {
-        if !written.contains(VendorPrefix::NONE) {
-            return written;
-        }
-        // Unlike lightningcss: a written prefix stays, and a prefix that the block has for a longhand is not added.
-        written
-            | targets
-                .prefixes(VendorPrefix::NONE, feature)
-                .difference(self.covered(name))
-    }
-
-    fn flush(
-        &mut self,
-        dest: &mut css::DeclarationList,
-        context: &mut css::PropertyHandlerContext,
-    ) {
-        if self.buffered.is_empty() {
-            return;
-        }
-
         let arena = dest.bump();
         let targets = context.targets;
 
-        // A declaration equal to the one before it joins that one, as it does in the buffer. So a second pass finds no pair to merge.
-        macro_rules! push {
-            ($prop:ident, $val:expr, $prefixes:expr) => {{
-                let (val, prefixes) = ($val, $prefixes);
-                match dest.last_mut() {
-                    Some(Property::$prop(last)) if last.0 == val => last.1.insert(prefixes),
-                    _ => dest.push(Property::$prop((val, prefixes))),
+        match self.mark {
+            None => self.see_other_list(other, context.is_important),
+            // `all` sets every property, so what the block has before it counts no more. `all` has no row: it is an unknown name.
+            Some(mark) => {
+                let all = dest[mark..].iter().any(|property| match property {
+                    Property::All(_) => true,
+                    Property::Unparsed(unparsed) => {
+                        unparsed.property_id.tag() == PropertyIdTag::All
+                    }
+                    Property::Custom(custom) => custom.name.as_str().eq_ignore_ascii_case(b"all"),
+                    _ => false,
+                });
+                if all {
+                    self.written = Prefixes::default();
+                    self.stale = false;
                 }
+            }
+        }
+        let stale = self.stale;
+        self.stale |= Self::styles(property);
+
+        macro_rules! longhand {
+            ($prop:ident, $longhands:ident, $v:expr) => {{
+                let prefixes = self.take(Longhands::$longhands, $v.1, Feature::$prop, &targets);
+                dest.push(Property::$prop(($v.0.clone(), prefixes)));
             }};
         }
 
-        macro_rules! single_property {
-            ($val:expr, $written:expr, $prop:ident, $name:expr) => {
-                if let Some(val) = $val {
-                    let prefixes = self.prefixes($written, $name, Feature::$prop, &targets);
-                    push!($prop, val, prefixes);
-                }
-            };
-        }
-
-        macro_rules! color {
-            ($val:expr, $written:expr, $prop:ident, $name:expr) => {
-                if let Some(mut val) = $val {
-                    let prefixes = self.prefixes($written, $name, Feature::$prop, &targets);
-                    if prefixes.contains(VendorPrefix::NONE) && !self.flushed.contains($name) {
-                        let fallbacks = val.get_fallbacks(arena, &targets);
-                        for fallback in fallbacks.to_owned_slice().into_vec() {
-                            push!($prop, fallback, prefixes);
-                        }
+        macro_rules! with_fallbacks {
+            ($prop:ident, $longhands:ident, $v:expr, $fallbacks:expr) => {{
+                let first = self.needs_fallbacks(Longhands::$longhands);
+                let prefixes = self.take(Longhands::$longhands, $v.1, Feature::$prop, &targets);
+                let mut val = $v.0.clone();
+                if first && prefixes.contains(VendorPrefix::NONE) {
+                    for fallback in $fallbacks(&mut val) {
+                        dest.push(Property::$prop((fallback, prefixes)));
                     }
-                    push!($prop, val, prefixes);
                 }
-            };
+                dest.push(Property::$prop((val, prefixes)));
+            }};
         }
 
-        macro_rules! thickness {
-            ($val:expr) => {
-                let val = match $val {
-                    // A percentage is a part of 1em. Targets that do not read one get a calc().
-                    TextDecorationThickness::LengthPercentage(LengthPercentage::Percentage(p))
-                        if targets.should_compile_same(
-                            css::compat::Feature::TextDecorationThicknessPercent,
-                        ) =>
-                    {
-                        let em =
-                            Calc::Value(Box::new(LengthPercentage::Dimension(Length::Em(1.0))));
-                        let calc = Calc::Function(Box::new(MathFunction::Calc(Calc::Product {
-                            number: p.v,
-                            expression: Box::new(em),
-                        })));
-                        TextDecorationThickness::LengthPercentage(LengthPercentage::Calc(
-                            Box::new(calc),
-                        ))
-                    }
-                    val => val,
-                };
-                if !matches!(dest.last(), Some(Property::TextDecorationThickness(last)) if *last == val)
-                {
-                    dest.push(Property::TextDecorationThickness(val));
-                }
-            };
-        }
+        let color_fallbacks = |color: &mut CssColor| {
+            color
+                .get_fallbacks(arena, &targets)
+                .to_owned_slice()
+                .into_vec()
+        };
 
-        let written = core::mem::take(&mut self.decoration);
-        match (
-            self.line.take(),
-            self.thickness.take(),
-            self.style.take(),
-            self.color.take(),
-        ) {
-            (Some(line), Some(thickness), Some(style), Some(color)) => {
-                let mut prefixes = written;
-                let mut decoration = TextDecoration {
-                    line,
-                    thickness,
-                    style,
-                    color,
-                };
+        match property {
+            Property::TextDecorationLine(v) => longhand!(TextDecorationLine, LINE, v),
+            Property::TextDecorationStyle(v) => longhand!(TextDecorationStyle, STYLE, v),
+            Property::TextDecorationColor(v) => {
+                with_fallbacks!(TextDecorationColor, COLOR, v, color_fallbacks)
+            }
+            Property::TextDecorationThickness(thickness) => {
+                dest.push(Self::thickness(thickness.clone(), &targets));
+            }
+            Property::TextDecoration(v) => {
+                let mut decoration = v.0.clone();
+                let mut prefixes = v.1;
                 let mut thickness = None;
 
-                if written.contains(VendorPrefix::NONE) {
-                    // Only add prefixes if one of the new sub-properties was used
-                    if decoration.style != TextDecorationStyle::Solid
-                        || decoration.color != CssColor::CurrentColor
-                    {
-                        prefixes = self.prefixes(
-                            written,
-                            Names::DECORATION,
-                            Feature::TextDecoration,
-                            &targets,
-                        );
-                        if !self.flushed.contains(Names::DECORATION) {
-                            for fallback in decoration.get_fallbacks(arena, &targets) {
-                                push!(TextDecoration, fallback, prefixes);
-                            }
-                        }
-                    }
-
+                // Unlike lightningcss: a prefixed shorthand stays as it is. The thickness longhand has no prefixed name.
+                if prefixes.contains(VendorPrefix::NONE) {
                     // Some browsers don't support thickness in the shorthand property yet.
                     if decoration.thickness != TextDecorationThickness::Auto
-                        && !(prefixes == VendorPrefix::NONE
-                            && targets.is_compatible(
-                                css::compat::Feature::TextDecorationThicknessShorthand,
-                            ))
+                        && !targets
+                            .is_compatible(css::compat::Feature::TextDecorationThicknessShorthand)
                     {
                         thickness = Some(core::mem::replace(
                             &mut decoration.thickness,
                             TextDecorationThickness::Auto,
                         ));
                     }
-                }
 
-                match dest.last_mut() {
-                    // A shorthand with a thickness keeps its own prefixes here too: see `joins_decoration`.
-                    Some(Property::TextDecoration(last))
-                        if last.0 == decoration
-                            && (last.1 == prefixes
-                                || decoration.thickness == TextDecorationThickness::Auto) =>
-                    {
-                        last.1.insert(prefixes)
+                    // Only add prefixes if one of the new sub-properties was used
+                    let new_sub_property = decoration.style != TextDecorationStyle::Solid
+                        || decoration.color != CssColor::CurrentColor;
+                    // Unlike lightningcss: a line alone gets the prefixes too when WebKit can have a style or a color from before it.
+                    if new_sub_property || stale {
+                        let first = new_sub_property && self.needs_fallbacks(Longhands::DECORATION);
+                        prefixes = self.prefixes(
+                            Longhands::DECORATION,
+                            prefixes,
+                            Feature::TextDecoration,
+                            &targets,
+                        );
+                        if first {
+                            for fallback in decoration.get_fallbacks(arena, &targets) {
+                                dest.push(Property::TextDecoration((fallback, prefixes)));
+                            }
+                        }
                     }
-                    _ => dest.push(Property::TextDecoration((decoration, prefixes))),
+                    self.stale = new_sub_property;
                 }
-                if let Some(thickness) = thickness {
-                    thickness!(thickness);
-                }
-            }
-            (line, thickness, style, color) => {
-                single_property!(line, written, TextDecorationLine, Names::LINE);
-                single_property!(style, written, TextDecorationStyle, Names::STYLE);
-                color!(color, written, TextDecorationColor, Names::COLOR);
-                if let Some(thickness) = thickness {
-                    thickness!(thickness);
-                }
-            }
-        }
 
-        let written = core::mem::take(&mut self.emphasis);
-        match (self.emphasis_style.take(), self.emphasis_color.take()) {
-            (Some(style), Some(color)) => {
-                let prefixes =
-                    self.prefixes(written, Names::EMPHASIS, Feature::TextEmphasis, &targets);
-                let mut emphasis = TextEmphasis { style, color };
-                if prefixes.contains(VendorPrefix::NONE) && !self.flushed.contains(Names::EMPHASIS)
-                {
-                    for fallback in emphasis.get_fallbacks(arena, &targets) {
-                        push!(TextEmphasis, fallback, prefixes);
-                    }
+                record(&mut self.written, Longhands::DECORATION, v.1);
+                dest.push(Property::TextDecoration((decoration, prefixes)));
+                if let Some(thickness) = thickness {
+                    dest.push(Self::thickness(thickness, &targets));
                 }
-                push!(TextEmphasis, emphasis, prefixes);
             }
-            (style, color) => {
-                single_property!(style, written, TextEmphasisStyle, Names::EMPHASIS_STYLE);
-                color!(color, written, TextEmphasisColor, Names::EMPHASIS_COLOR);
+            Property::TextEmphasisStyle(v) => longhand!(TextEmphasisStyle, EMPHASIS_STYLE, v),
+            Property::TextEmphasisColor(v) => {
+                with_fallbacks!(TextEmphasisColor, EMPHASIS_COLOR, v, color_fallbacks)
             }
-        }
-
-        if let Some((position, written)) = self.emphasis_position.take() {
-            // Unlike lightningcss: a written prefix stays. The prefixed name does not read a horizontal keyword.
-            let prefixes = if position.horizontal == TextEmphasisPositionHorizontal::Right {
-                self.prefixes(
-                    written,
-                    Names::EMPHASIS_POSITION,
+            Property::TextEmphasis(v) => {
+                with_fallbacks!(TextEmphasis, EMPHASIS, v, |emphasis: &mut TextEmphasis| {
+                    emphasis.get_fallbacks(arena, &targets)
+                })
+            }
+            Property::TextEmphasisPosition(v) => {
+                let prefixes = self.take(
+                    Longhands::EMPHASIS_POSITION,
+                    v.1,
                     Feature::TextEmphasisPosition,
                     &targets,
-                )
-            } else {
-                written
-            };
-            push!(TextEmphasisPosition, position, prefixes);
+                );
+                let added = prefixes.difference(v.1);
+                if v.0.horizontal == TextEmphasisPositionHorizontal::Right || added.is_empty() {
+                    dest.push(Property::TextEmphasisPosition((v.0, prefixes)));
+                } else {
+                    // Unlike lightningcss: the prefixed name reads no horizontal keyword, so it gets the vertical one alone and keeps no earlier position.
+                    let vertical = TextEmphasisPosition {
+                        vertical: v.0.vertical,
+                        horizontal: TextEmphasisPositionHorizontal::Right,
+                    };
+                    dest.push(Property::TextEmphasisPosition((vertical, added)));
+                    dest.push(Property::TextEmphasisPosition((v.0, v.1)));
+                }
+            }
+            Property::Unparsed(unparsed) => {
+                let tag = unparsed.property_id.tag();
+                let Some(longhands) = Longhands::of(tag) else {
+                    return false;
+                };
+                let mut prefixes = unparsed.property_id.prefix().or_none();
+                // Unlike lightningcss: an unparsed longhand gets the prefixes of its own feature, as its typed value does.
+                if let Some(feature) = tag.prefix_feature() {
+                    prefixes = self.take(longhands, prefixes, feature, &targets);
+                }
+                let mut unparsed =
+                    unparsed.with_property_id(arena, unparsed.property_id.with_prefix(prefixes));
+                context.add_unparsed_fallbacks(arena, &mut unparsed);
+                dest.push(Property::Unparsed(unparsed));
+            }
+            _ => return false,
         }
 
-        self.flushed.insert(core::mem::take(&mut self.buffered));
+        self.mark = Some(dest.len());
+        true
+    }
+
+    /// Whether an unprefixed declaration gives WebKit a decoration style or color. There, the unprefixed shorthand is the line alone.
+    fn styles(property: &Property) -> bool {
+        let (styles, vp) = match property {
+            Property::TextDecoration((decoration, vp)) => (
+                decoration.style != TextDecorationStyle::Solid
+                    || decoration.color != CssColor::CurrentColor,
+                *vp,
+            ),
+            Property::TextDecorationStyle((_, vp)) | Property::TextDecorationColor((_, vp)) => {
+                (true, *vp)
+            }
+            Property::Unparsed(unparsed) => (
+                matches!(
+                    unparsed.property_id.tag(),
+                    PropertyIdTag::TextDecoration
+                        | PropertyIdTag::TextDecorationStyle
+                        | PropertyIdTag::TextDecorationColor
+                ),
+                unparsed.property_id.prefix().or_none(),
+            ),
+            _ => return false,
+        };
+        styles && vp.contains(VendorPrefix::NONE)
+    }
+
+    /// Reads the other list of the block (`!important` or not), when this list has its first declaration for the handler.
+    fn see_other_list(&mut self, other: &css::DeclarationList, important: bool) {
+        for declaration in other.iter() {
+            let id = declaration.property_id();
+            if let Some(longhands) = Longhands::of(id.tag()) {
+                record(&mut self.elsewhere, longhands, id.prefix().or_none());
+                // An `!important` line alone does not reset a style or a color of the normal list in WebKit.
+                self.stale |= important && Self::styles(declaration);
+            }
+        }
+    }
+
+    pub(crate) fn finalize(
+        &mut self,
+        _dest: &mut css::DeclarationList,
+        _context: &mut css::PropertyHandlerContext,
+    ) {
+        if self.mark.is_some() {
+            *self = Self::default();
+        }
+    }
+
+    /// Records a declaration and returns the prefixes to write it with.
+    fn take(
+        &mut self,
+        longhands: Longhands,
+        vp: VendorPrefix,
+        feature: Feature,
+        targets: &css::targets::Targets,
+    ) -> VendorPrefix {
+        let prefixes = self.prefixes(longhands, vp, feature, targets);
+        record(&mut self.written, longhands, vp);
+        prefixes
+    }
+
+    /// The prefixes to write a declaration with: its own ones, and the ones that the targets need.
+    fn prefixes(
+        &self,
+        longhands: Longhands,
+        vp: VendorPrefix,
+        feature: Feature,
+        targets: &css::targets::Targets,
+    ) -> VendorPrefix {
+        if !vp.contains(VendorPrefix::NONE) {
+            return vp;
+        }
+        let mut covered = VendorPrefix::empty();
+        for i in 0..Longhands::COUNT {
+            if longhands.bits() & (1 << i) != 0 {
+                covered.insert(self.written[i] | self.elsewhere[i]);
+            }
+        }
+        // Unlike lightningcss: a written prefix stays, and a prefix that the author wrote for a longhand is not added.
+        vp | targets
+            .prefixes(VendorPrefix::NONE, feature)
+            .difference(covered)
+    }
+
+    /// Unlike lightningcss: an earlier unprefixed value of every longhand is the fallback, as for `color` in `FallbackHandler`. So a second pass adds none.
+    fn needs_fallbacks(&self, longhands: Longhands) -> bool {
+        (0..Longhands::COUNT).any(|i| {
+            longhands.bits() & (1 << i) != 0 && !self.written[i].contains(VendorPrefix::NONE)
+        })
+    }
+
+    fn thickness(thickness: TextDecorationThickness, targets: &css::targets::Targets) -> Property {
+        Property::TextDecorationThickness(match thickness {
+            // A percentage is a part of 1em. Targets that do not read one get a calc().
+            TextDecorationThickness::LengthPercentage(LengthPercentage::Percentage(p))
+                if targets
+                    .should_compile_same(css::compat::Feature::TextDecorationThicknessPercent) =>
+            {
+                let em = Calc::Value(Box::new(LengthPercentage::Dimension(Length::Em(1.0))));
+                let calc = Calc::Function(Box::new(MathFunction::Calc(Calc::Product {
+                    number: p.v,
+                    expression: Box::new(em),
+                })));
+                TextDecorationThickness::LengthPercentage(LengthPercentage::Calc(Box::new(calc)))
+            }
+            thickness => thickness,
+        })
     }
 }

@@ -117,7 +117,7 @@ impl FallbackHandler {
                 let mut image = image.deep_clone(arena);
                 let written = this.list_style_image;
                 // Unlike lightningcss: an earlier image stays, and a fallback gets no prefix that the block already has.
-                if !image.has_vendor_prefix() {
+                if image.get_vendor_prefix() == VendorPrefix::NONE {
                     let fallbacks = image.get_fallbacks(arena, &context.targets);
                     for fallback in fallbacks.to_owned_slice().into_vec() {
                         let prefix = fallback.get_vendor_prefix();

@@ -268,9 +268,11 @@ Bun.plugin({
 });
 ```
 
-The map's `sources` must have exactly one entry: the name of the file or its absolute path. Bun ignores any other map. Code that the map does not cover has no position in the file, so coverage leaves it out.
+The map's `sources` must have exactly one entry: the name of the file or its absolute path. Bun ignores any other map.
 
-`Bun.build()` does not read the comment.
+Code that the map does not cover has no position in the file. Coverage leaves it out, and a stack frame in it keeps its position in `contents`.
+
+`Bun.build()` does not read the comment. With `--inspect`, the debugger shows `contents`, so all positions stay in `contents`.
 
 #### `.defer()`
 

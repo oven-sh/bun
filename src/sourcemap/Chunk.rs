@@ -385,7 +385,8 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
     pub prepend_count: bool,
 
     /// The map the source came with. Each mapping goes through it, back to the
-    /// text the source was made from.
+    /// text the source was made from, which is source 0. What the map does not
+    /// cover stays a position in the source, which is source 1.
     pub input_source_map: Option<&'a ParsedSourceMap>,
 }
 
@@ -611,14 +612,16 @@ impl NewBuilder<'_, VLQSourceMap> {
     #[inline(always)]
     pub(crate) fn append_mapping(&mut self, mut current_state: SourceMapState) {
         if let Some(input) = self.input_source_map {
-            let Some(mapping) = input.find_mapping(
+            if let Some(mapping) = input.find_mapping(
                 Ordinal::from_zero_based(current_state.original_line),
                 Ordinal::from_zero_based(current_state.original_column),
-            ) else {
-                return;
-            };
-            current_state.original_line = mapping.original.lines.zero_based();
-            current_state.original_column = mapping.original.columns.zero_based();
+            ) {
+                current_state.source_index = 0;
+                current_state.original_line = mapping.original.lines.zero_based();
+                current_state.original_column = mapping.original.columns.zero_based();
+            } else {
+                current_state.source_index = 1;
+            }
         }
         self.append_mapping_without_remapping(current_state);
     }

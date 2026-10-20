@@ -1115,7 +1115,7 @@ export function throws() {
           )
           .join(";"),
     };
-    return `// 1\n// 2\nglobalThis.injected = 1;\n${lines.map(line => "    " + line).join("\n")}
+    return `// 1\n// 2\nglobalThis.injected = function injected() { return new Error().stack; };\n${lines.map(line => "    " + line).join("\n")}
 //# sourceMappingURL=data:application/json${mediaType};base64,${btoa(JSON.stringify(map))}`;
   }
 
@@ -1143,8 +1143,9 @@ export function throws() {
           try {
             throws();
           } catch (e) {
-            console.log(/moved\\.ts:\\d+:\\d+/.exec(e.stack)[0]);
+            console.log("thrown at", /moved\\.ts:\\d+:\\d+/.exec(e.stack)[0]);
           }
+          console.log("injected at", /moved\\.ts:\\d+:\\d+/.exec(globalThis.injected?.())?.[0]);
         });
       `,
     });
@@ -1165,29 +1166,32 @@ export function throws() {
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8");
     return {
-      thrownAt: stdout.split("\n").find(line => line.startsWith("moved.ts")),
+      positions: stdout.match(/^(thrown|injected) at .*$/gm)?.join(", "),
       lines: lcov
         .slice(lcov.indexOf("SF:moved.ts"))
         .split("end_of_record")[0]
-        .match(/^DA:.*$/gm)
+        .match(/^(DA|FNF|FNH):.*$/gm)
         ?.join(" "),
       exitCode,
     };
   }
 
   const inTheFile = {
-    thrownAt: "moved.ts:10:13",
-    lines: "DA:1,0 DA:2,0 DA:4,1 DA:5,1 DA:6,1 DA:7,1 DA:9,1 DA:10,1",
+    positions: "thrown at moved.ts:10:13, injected at moved.ts:3:56",
+    lines: "FNF:3 FNH:2 DA:1,0 DA:2,0 DA:4,1 DA:5,1 DA:6,1 DA:7,1 DA:9,1 DA:10,1",
     exitCode: 0,
   };
   const inTheText = {
-    thrownAt: "moved.ts:13:17",
-    lines: "DA:3,1 DA:4,0 DA:5,0 DA:7,1 DA:8,1 DA:9,1 DA:10,1 DA:12,1 DA:13,1",
+    positions: "thrown at moved.ts:13:17, injected at moved.ts:3:56",
+    lines: "FNF:4 FNH:3 DA:3,1 DA:4,0 DA:5,0 DA:7,1 DA:8,1 DA:9,1 DA:10,1 DA:12,1 DA:13,1",
     exitCode: 0,
   };
 
   test.concurrent("the file without a plugin", async () => {
-    expect(await report(moved)).toEqual(inTheFile);
+    expect(await report(moved)).toEqual({
+      ...inTheFile,
+      positions: "thrown at moved.ts:10:13, injected at undefined",
+    });
   });
 
   test.concurrent.each<[string, Rewrite]>([
@@ -1203,7 +1207,7 @@ export function throws() {
   test.concurrent("from a plugin, of the file: one mapping for each line", async () => {
     expect(await report(moved, { source: "moved.ts", mappings: "line" })).toEqual({
       ...inTheFile,
-      thrownAt: "moved.ts:10:1",
+      positions: "thrown at moved.ts:10:1, injected at moved.ts:3:56",
     });
   });
 

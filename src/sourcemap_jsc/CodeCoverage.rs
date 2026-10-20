@@ -728,6 +728,10 @@ impl ByteRangeMapping {
                 {
                     return;
                 }
+                // Code that a plugin added to the file.
+                if mapping.source_index != 0 {
+                    return;
+                }
                 let (Ok(line), Some(offset)) = (
                     usize::try_from(mapping.original.lines.zero_based()),
                     self.offset_of(mapping.generated),
@@ -754,7 +758,9 @@ impl ByteRangeMapping {
         if let Some(source_map) = source_map.as_deref() {
             functions.retain(|function| {
                 let (line, column) = self.line_and_column_of(function.range.start);
-                source_map.find_mapping(line, column).is_some()
+                source_map
+                    .find_mapping(line, column)
+                    .is_some_and(|mapping| mapping.source_index == 0)
             });
         }
 

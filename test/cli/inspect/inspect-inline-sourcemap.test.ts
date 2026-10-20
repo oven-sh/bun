@@ -99,7 +99,7 @@ test("--inspect inline sourcemap sources[0] is a valid path under cwd", async ()
   expect(map.sourcesContent[0]).toBe(source);
 });
 
-test("--inspect inline sourcemap has the file that a plugin rewrote with a source map", async () => {
+test("--inspect inline sourcemap is of what a plugin returned, with or without a source map", async () => {
   const map = JSON.parse(
     await inlineSourceMap(
       {
@@ -128,7 +128,7 @@ test("--inspect inline sourcemap has the file that a plugin rewrote with a sourc
   );
 
   expect(map.sources[0]).toBe("/sub/target.mjs");
-  expect(map.sourcesContent[0]).toBe(source);
+  expect(map.sourcesContent[0]).toStartWith("// 1\n// 2\n// 3\n" + source);
   const entries = Array.from({ length: 8 }, (_, line) => new SourceMap(map).findEntry(line, 0).originalLine);
-  expect(entries.filter(line => line !== undefined)).toEqual([1]);
+  expect(entries.filter(line => line !== undefined)).toEqual([4]);
 });

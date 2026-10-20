@@ -1080,9 +1080,13 @@ pub(crate) fn node_test_file_flags(
         let child_directory =
             bun_sys::realpath(&bun_core::ZBox::from_bytes(child_directory), &mut resolved)
                 .unwrap_or(child_directory);
-        let startup_directory = caller
-            .startup_directory
-            .filter(|directory| *directory != child_directory);
+        // On Windows the startup directory keeps the spelling the process was started with.
+        let mut respelled = bun_paths::path_buffer_pool::get();
+        let startup_directory = caller.startup_directory.filter(|directory| {
+            *directory != child_directory
+                && !bun_sys::realpath(&bun_core::ZBox::from_bytes(directory), &mut respelled)
+                    .is_ok_and(|directory| directory == child_directory)
+        });
         let walked = clap::walk_typed(tag_table(cmd), parse_options(cmd, None), &mut |arg| {
             // A flag after `test` is not in `process.execArgv`. The child has it after `test` too.
             let is_after_test = is_test && arg.positionals > 0;

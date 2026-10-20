@@ -609,12 +609,17 @@ describe("run() starts each file with the runtime flags of its caller", () => {
   async function result(
     files: Record<string, string>,
     cmd: string[],
-    given: { env?: Record<string, string>; stdin?: string; directory?: string } = {},
+    given: {
+      env?: Record<string, string>;
+      stdin?: string;
+      directory?: string;
+      spelling?: (directory: string) => string;
+    } = {},
   ) {
     using dir = tempDir(given.directory ?? "node-test-run-flags", { ...fixture, ...files });
     await using proc = spawn({
       cmd,
-      cwd: String(dir),
+      cwd: given.spelling ? given.spelling(String(dir)) : String(dir),
       env: { ...env, ...given.env },
       stdin: given.stdin === undefined ? "ignore" : new Blob([given.stdin]),
       stdout: "pipe",
@@ -1126,6 +1131,21 @@ describe("run() starts each file with the runtime flags of its caller", () => {
         expect(other).toMatchObject({ probes: [{ ...read, execArgv: resolved }], fail: 0 });
       }
       expect({ others: others.length, exitCode }).toEqual({ others: isWindows ? 1 : 2, exitCode: 0 });
+    },
+    60_000,
+  );
+
+  // Windows keeps the spelling of the directory that a process is started in. The child starts
+  // in that same directory, so it is given the values as they were typed.
+  test.skipIf(!isWindows).concurrent(
+    "a caller that was started in its directory under another spelling hands the values on as typed",
+    async () => {
+      const typed = ["--env-file=./other.env", "--preload=./pre.mjs"];
+      const { children, exitCode } = await result(elsewhere, [bunExe(), ...typed, "runner.mjs"], {
+        spelling: directory => directory.toUpperCase(),
+      });
+      expect(children[0]).toMatchObject({ probes: [{ execArgv: typed, envFile: "1", preloaded: true }], fail: 0 });
+      expect(exitCode).toBe(0);
     },
     60_000,
   );

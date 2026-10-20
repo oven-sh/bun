@@ -9,40 +9,8 @@
  */
 import assert from "node:assert";
 import { describe, test } from "node:test";
-import {
-  setImmediate as immediate,
-  setInterval as interval,
-  scheduler,
-  setTimeout as sleep,
-} from "node:timers/promises";
 import { aborted, inspect, types } from "node:util";
-
-// Microtask ticks only. A turn of the event loop would run the immediate before abort().
-async function microtaskTicks() {
-  for (let i = 0; i < 10; i++) await undefined;
-}
-
-// How the promise settles and on which microtask tick a reaction of it runs: "fulfilled on tick 3".
-// A Promise.resolve().then() chain counts the ticks. It starts before `trigger` runs, so a promise
-// that is already settled gives tick 1.
-function settlement(trigger: () => Promise<unknown>) {
-  return new Promise<string>((resolve, reject) => {
-    let tick = 0;
-    let settled = false;
-    const step = () => {
-      tick++;
-      if (settled) return;
-      if (tick < 100) Promise.resolve().then(step);
-      else reject(new Error("the promise did not settle in 100 ticks"));
-    };
-    Promise.resolve().then(step);
-    const mark = (state: string) => () => {
-      settled = true;
-      resolve(`${state} on tick ${tick}`);
-    };
-    trigger().then(mark("fulfilled"), mark("rejected"));
-  });
-}
+import { microtaskTicks, settlement, timers } from "../promise-settlement-tick.ts";
 
 describe("util.aborted() rejects the promise and does not throw", () => {
   test("for an invalid signal", async () => {
@@ -153,12 +121,6 @@ test("a call after abort() does not settle before a call that waited for the abo
 // Each of these promises rejects with an AbortError when its signal aborts. util.aborted() settles first,
 // so a Promise.race() of the two on the same signal fulfils.
 describe("util.aborted() settles before a timers/promises promise on the same signal rejects", () => {
-  const timers: [string, (signal: AbortSignal) => Promise<unknown>][] = [
-    ["setTimeout()", signal => sleep(60_000, undefined, { signal })],
-    ["setImmediate()", signal => immediate(undefined, { signal })],
-    ["scheduler.wait()", signal => scheduler.wait(60_000, { signal })],
-    ["setInterval().next()", signal => interval(60_000, undefined, { signal })[Symbol.asyncIterator]().next()],
-  ];
   for (const [name, start] of timers) {
     for (const position of ["first", "second"]) {
       for (const timing of ["in the same turn", "later"]) {

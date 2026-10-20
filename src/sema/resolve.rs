@@ -66,6 +66,45 @@ impl Drop for Spent<'_> {
     }
 }
 
+/// Runs `step` on the calling thread until it returns false, while helper threads each run `work` once.
+///
+/// Polls `Host::helpers_now` before every step. When it allows more helpers than are running, the extra ones start and
+/// the calling thread keeps stepping. In a build with project references, this lets the threads of finished projects
+/// join the remaining ones. `helpers` is the number of helpers that are already running.
+pub fn run_with_current_helpers(
+    host: &dyn Host,
+    mut helpers: usize,
+    step: &mut (dyn FnMut() -> bool + Send),
+    work: &(dyn Fn() + Sync),
+) {
+    loop {
+        let allowed = host.helpers_now().unwrap_or(0);
+        if allowed <= helpers {
+            if !step() {
+                return;
+            }
+            continue;
+        }
+        let extra = allowed - helpers;
+        let caller = std::thread::current().id();
+        let pending = bun_threading::Guarded::new(Some(&mut *step));
+        host.with_helpers(extra, extra + 1, &|_| {
+            let is_caller = std::thread::current().id() == caller;
+            let step = pending.lock().take_if(|_| is_caller);
+            match step {
+                Some(step) => run_with_current_helpers(host, allowed, step, work),
+                None => work(),
+            }
+        });
+        // Helpers that find nothing to do can claim every index before the calling thread gets one. Its steps aren't
+        // finished then.
+        if pending.lock().is_none() {
+            return;
+        }
+        helpers = allowed;
+    }
+}
+
 /// The file system, and the parser. The bundler has its own of both.
 /// What only who has made it can read.
 pub type Kept = std::sync::Arc<dyn std::any::Any + Send + Sync>;
@@ -155,24 +194,37 @@ pub trait Host: Sync {
     }
     /// Calls `work` with every index below `count`, on any number of threads.
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync));
+    /// `parallel`, and `meanwhile` on the calling thread: at the same time if `parallel` leaves the calling thread with
+    /// nothing to do but wait, and else when `work` is done. So `meanwhile` may wait for what `work` does, and `work` must
+    /// not wait for `meanwhile`. It returns when both are done.
+    fn parallel_while(
+        &self,
+        count: usize,
+        work: &(dyn Fn(usize) + Sync),
+        meanwhile: &mut dyn FnMut(),
+    ) {
+        self.parallel(count, work);
+        meanwhile();
+    }
     /// Whether `parallel` would run on the calling thread alone now, whatever the number of threads asked for.
     fn is_of_one_thread(&self) -> bool {
         false
+    }
+    /// Returns true if the process exits right after this host's program is checked and reported: no other program of the
+    /// request is running or will run. `has_a_run` is true if the program shares a `Run` with other programs.
+    fn ends_the_process(&self, _has_a_run: bool) -> bool {
+        false
+    }
+    /// Returns how many other threads a `parallel` call would use if it started now. `None` unless `parallel` also runs on
+    /// the calling thread and the host's share of the threads changes over time.
+    fn helpers_now(&self) -> Option<usize> {
+        None
     }
     /// `parallel`, on the calling thread and on at most `helpers` others.
     fn with_helpers(&self, _helpers: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
         for index in 0..count {
             work(index);
         }
-    }
-    /// `parallel` for a program that `blocked` other programs are waiting for. It may use their threads too.
-    fn parallel_while_others_wait(
-        &self,
-        _blocked: usize,
-        count: usize,
-        work: &(dyn Fn(usize) + Sync),
-    ) {
-        self.parallel(count, work);
     }
     /// A program is loaded, and `parse` is not called again before it is checked: what the threads
     /// retain for the next file can be freed. Outside `parallel`.
@@ -331,190 +383,6 @@ pub enum ModuleDetection {
 }
 
 impl Options {
-    /// Appends every option that could change what checking a declaration file reports, given the files it refers to.
-    ///
-    /// The checker sees the configuration only through this struct, so a `compilerOptions` entry without a field here cannot
-    /// matter. Every field is part of the key unless it is listed below with the reason it cannot matter. When in doubt a field
-    /// belongs in the key: there it can only cost a repeated check, while a field that is wrongly left out hides an error.
-    pub fn write_check_key(&self, key: &mut Vec<u8>) {
-        use std::io::Write;
-        // No `..`: a new option does not compile until it is put in one of the groups.
-        let Options {
-            // Only used to find the file an import or a reference leads to, which `Files::global_part` describes, and to spell import
-            // paths in emitted declaration files. Nothing is emitted for a declaration file.
-            base_dir: _,
-            paths: _,
-            paths_base_dir: _,
-            base_url: _,
-            root_dirs: _,
-            type_roots: _,
-            // Which projects are referenced. That too only decides which file an import leads to.
-            referenced_outputs: _,
-            project_files: _,
-            referenced_projects: _,
-            referenced_options: _,
-            // Which files are the roots of the program.
-            files: _,
-            file_specs: _,
-            include_specs: _,
-            is_default_include_spec: _,
-            own_roots: _,
-            // Where output goes, and whether it is kept. Besides emit, the checker reads `out_dir`, `root_dir` and `config_path` for an
-            // import that leads into a referenced project, and `global_part` has no file of a referenced project.
-            out_dir: _,
-            root_dir: _,
-            declaration_dir: _,
-            build_info_file_name: _,
-            writes_declaration_files: _,
-            config_path: _,
-            // Errors in the configuration file itself. They are reported apart from the files.
-            errors: _,
-            problems: _,
-            // In the key.
-            skip_lib_check,
-            skip_default_lib_check,
-            no_check,
-            drops_unreferenced,
-            captures_suggestions,
-            emits_first,
-            current_directory,
-            lib_dir,
-            libs,
-            no_lib,
-            lib_replacement,
-            trace_resolution,
-            types,
-            no_resolve,
-            imports_of_sources_add_no_file,
-            custom_conditions,
-            resolve_package_json_exports,
-            resolve_package_json_imports,
-            module_suffixes,
-            preserve_symlinks,
-            no_unchecked_indexed_access,
-            no_property_access_from_index_signature,
-            strict_builtin_iterator_return,
-            exact_optional_property_types,
-            experimental_decorators,
-            strict_null_checks,
-            no_implicit_any,
-            specifies_no_implicit_any,
-            strict_function_types,
-            strict_bind_call_apply,
-            use_unknown_in_catch_variables,
-            strict_property_initialization,
-            no_implicit_this,
-            allow_unreachable_code,
-            allow_unused_labels,
-            no_implicit_returns,
-            no_implicit_override,
-            no_fallthrough_cases_in_switch,
-            no_unused_locals,
-            no_unused_parameters,
-            resolve_json_module,
-            no_unchecked_side_effect_imports,
-            retains_duplicate_packages,
-            force_consistent_casing_in_file_names,
-            specifies_lib,
-            allow_js,
-            max_node_module_js_depth,
-            check_js,
-            has_config_file,
-            suppress_output_path_check,
-            use_case_sensitive_file_names,
-            no_emit,
-            emit_declaration_only,
-            composite,
-            writes_source_maps,
-            writes_declaration_maps,
-            specifies_source_or_map_root,
-            target,
-            module,
-            resolves_like_node,
-            resolves_like_node16,
-            specifies_module_resolution,
-            is_classic,
-            forbids_self_name_references,
-            forbids_synthetic_default_imports,
-            module_detection,
-            jsx_import_source,
-            jsx_runtime,
-            jsx,
-            use_define_for_class_fields,
-            emit_standard_class_fields,
-            isolated_modules,
-            isolated_modules_reported,
-            preserve_const_enums,
-            verbatim_module_syntax,
-            allow_importing_ts_extensions,
-            rewrite_relative_import_extensions,
-            allow_umd_global_access,
-            erasable_syntax_only,
-            isolated_declarations,
-            emits_declarations,
-            no_emit_on_error,
-            remove_comments,
-            is_incremental,
-            is_build,
-            no_error_truncation,
-            emit_decorator_metadata,
-            strips_internal_declarations,
-            import_helpers,
-            allow_arbitrary_extensions,
-            jsx_factory,
-            jsx_fragment_factory,
-            react_namespace,
-        } = self;
-        let _ = write!(
-            key,
-            "{skip_lib_check:?} {skip_default_lib_check:?} {no_check:?} {drops_unreferenced:?} {captures_suggestions:?} {emits_first:?} {current_directory:?} {lib_dir:?} "
-        );
-        let _ = write!(
-            key,
-            "{libs:?} {no_lib:?} {lib_replacement:?} {trace_resolution:?} {types:?} {no_resolve:?} {imports_of_sources_add_no_file:?} {custom_conditions:?} "
-        );
-        let _ = write!(
-            key,
-            "{resolve_package_json_exports:?} {resolve_package_json_imports:?} {module_suffixes:?} {preserve_symlinks:?} {no_unchecked_indexed_access:?} {no_property_access_from_index_signature:?} {strict_builtin_iterator_return:?} {exact_optional_property_types:?} "
-        );
-        let _ = write!(
-            key,
-            "{experimental_decorators:?} {strict_null_checks:?} {no_implicit_any:?} {specifies_no_implicit_any:?} {strict_function_types:?} {strict_bind_call_apply:?} {use_unknown_in_catch_variables:?} {strict_property_initialization:?} "
-        );
-        let _ = write!(
-            key,
-            "{no_implicit_this:?} {allow_unreachable_code:?} {allow_unused_labels:?} {no_implicit_returns:?} {no_implicit_override:?} {no_fallthrough_cases_in_switch:?} {no_unused_locals:?} {no_unused_parameters:?} "
-        );
-        let _ = write!(
-            key,
-            "{resolve_json_module:?} {no_unchecked_side_effect_imports:?} {retains_duplicate_packages:?} {force_consistent_casing_in_file_names:?} {specifies_lib:?} {allow_js:?} {max_node_module_js_depth:?} {check_js:?} "
-        );
-        let _ = write!(
-            key,
-            "{has_config_file:?} {suppress_output_path_check:?} {use_case_sensitive_file_names:?} {no_emit:?} {emit_declaration_only:?} {composite:?} {writes_source_maps:?} {writes_declaration_maps:?} "
-        );
-        let _ = write!(
-            key,
-            "{specifies_source_or_map_root:?} {target:?} {module:?} {resolves_like_node:?} {resolves_like_node16:?} {specifies_module_resolution:?} {is_classic:?} {forbids_self_name_references:?} "
-        );
-        let _ = write!(
-            key,
-            "{forbids_synthetic_default_imports:?} {module_detection:?} {jsx_import_source:?} {jsx_runtime:?} {jsx:?} {use_define_for_class_fields:?} {emit_standard_class_fields:?} {isolated_modules:?} "
-        );
-        let _ = write!(
-            key,
-            "{isolated_modules_reported:?} {preserve_const_enums:?} {verbatim_module_syntax:?} {allow_importing_ts_extensions:?} {rewrite_relative_import_extensions:?} {allow_umd_global_access:?} {erasable_syntax_only:?} {isolated_declarations:?} "
-        );
-        let _ = write!(
-            key,
-            "{emits_declarations:?} {no_emit_on_error:?} {remove_comments:?} {is_incremental:?} {is_build:?} {no_error_truncation:?} {emit_decorator_metadata:?} {strips_internal_declarations:?} "
-        );
-        let _ = write!(
-            key,
-            "{import_helpers:?} {allow_arbitrary_extensions:?} {jsx_factory:?} {jsx_fragment_factory:?} {react_namespace:?} "
-        );
-    }
-
     /// `getParseFileRedirect`: `OutputDts`, which is read in place of the file at `path` if that is a source of a referenced project.
     pub fn parse_file_redirect(&self, path: &[u8]) -> Option<&[u8]> {
         let output = self.referenced_source(path)?.output_dts.as_slice();
@@ -660,6 +528,10 @@ pub struct Dialect {
     /// With `oxc`: the parser says whether a name may be declared twice in a scope (`rare::MAY_REDECLARE`). It is for a caller
     /// that would make the scopes of the file for nothing else.
     pub oxc_names: bool,
+    /// Nothing outside the file says whether it's a module or a script, so its syntax decides. It's read as a module. If that
+    /// fails or the text has a `<!--`, and the file has no `import`, `export` or `import.meta`, it's read again as a script,
+    /// where `await` is a name and `<!--` starts a comment. Not with `script` or `oxc`.
+    pub module_or_script: bool,
 }
 
 impl Dialect {
@@ -673,6 +545,7 @@ impl Dialect {
             flow: false,
             oxc: false,
             oxc_names: false,
+            module_or_script: false,
         }
     }
 
@@ -737,6 +610,8 @@ pub struct ParseOptions {
     /// The source text of TypeScript's own libraries is only consulted where they are checked. With `libReplacement` a
     /// library can be any file.
     pub keeps_the_text_of_libraries: bool,
+    /// `Options::keeps_comments`
+    pub keeps_comments: bool,
     pub bind: crate::bind::BindOptions,
 }
 
@@ -759,6 +634,9 @@ pub struct Options {
     /// everything computed about it. Not a TypeScript option. A caller that wants to query such a
     /// file afterwards leaves it off.
     pub drops_unreferenced: bool,
+    /// `hir::FileIn::comments` are kept, which the checker does not read. Not a TypeScript option. For a caller that goes on
+    /// to read the files of the program.
+    pub keeps_comments: bool,
     /// `GetSuggestionDiagnostics` are reported as well. Not a TypeScript option: its tests use
     /// `@captureSuggestions`.
     pub captures_suggestions: bool,
@@ -988,6 +866,7 @@ impl Options {
             jsx_imports_its_factory: matches!(self.jsx, JsxEmit::ReactJsx | JsxEmit::ReactJsxDev),
             keeps_the_text_of_libraries: self.lib_replacement
                 || !(self.skip_lib_check || self.skip_default_lib_check),
+            keeps_comments: self.keeps_comments,
             bind: crate::bind::BindOptions {
                 emit_standard_class_fields: self.emit_standard_class_fields,
                 before_es2020: is_before(ScriptTarget::ES2020),
@@ -1857,7 +1736,8 @@ fn normalize_path_for_cjs_resolution(containing_directory: &[u8], module_name: &
 }
 
 struct Package<'h> {
-    json: Json,
+    /// A program keeps those of its packages when the resolver is gone.
+    json: std::sync::Arc<Json>,
     /// `Name` and `Version`, if both are strings: without them `getPackageId` makes no id.
     name_and_version: Option<(&'h [u8], &'h [u8])>,
     /// `readPackageJsonPeerDependencies`
@@ -2675,8 +2555,14 @@ impl<'h> Resolver<'h> {
         }
         let mut not_linked: Vec<Vec<u8>> = Vec::new();
         let mut seen: Vec<&[u8]> = Vec::new();
+        // The directories of the files so far: thousands of files are in hundreds of directories.
+        let mut asked: FxHashSet<&[u8]> = FxHashSet::default();
         for path in emitted {
-            let Some((directory, package)) = self.package_scope(dirname::<Posix>(path)) else {
+            let of_file = dirname::<Posix>(path);
+            if !asked.insert(of_file) {
+                continue;
+            }
+            let Some((directory, package)) = self.package_scope(of_file) else {
                 continue;
             };
             if seen.contains(&directory) {
@@ -2780,7 +2666,7 @@ impl<'h> Resolver<'h> {
             let kept = |name: &[u8]| Some(self.keep(json.get(name)?.as_str()?));
             Package {
                 name_and_version: kept(b"name").zip(kept(b"version")),
-                json,
+                json: std::sync::Arc::new(json),
                 peer_dependencies: Default::default(),
             }
         });
@@ -2808,8 +2694,9 @@ impl<'h> Resolver<'h> {
     }
 
     /// The `package.json` in `dir`, if one exists.
-    pub fn package_json(&self, dir: &[u8]) -> Option<Json> {
-        self.package(dir).map(|package| package.json.clone())
+    pub fn package_json(&self, dir: &[u8]) -> Option<std::sync::Arc<Json>> {
+        self.package(dir)
+            .map(|package| std::sync::Arc::clone(&package.json))
     }
 
     /// `Resolver.GetPackageScopeForPath`: the nearest `package.json` in `dir` or an ancestor
@@ -3973,7 +3860,7 @@ impl<'h> Resolver<'h> {
         look: Look,
     ) -> Option<Vec<u8>> {
         if look.as_require {
-            let json = package.filter(|_| is_package_dir).map(|it| &it.json);
+            let json = package.filter(|_| is_package_dir).map(|it| &*it.json);
             let named = |field: &[u8]| {
                 let entry = get_package_json_path_field(json?, field, candidate, look)?;
                 let entry = strings::without_trailing_slash(&entry);

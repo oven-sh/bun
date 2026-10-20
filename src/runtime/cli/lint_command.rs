@@ -12,6 +12,7 @@ use bun_sys::File;
 
 use super::check_command::working_directory;
 use super::command::{ContextData, Tag};
+use super::script_or_command::{arguments_before, directory_of_cwd, place_of_command};
 use bun_bunfig::Above;
 
 pub(crate) struct LintCommand;
@@ -24,7 +25,7 @@ const HAS_TEST_RUNNER: bool = bun_core::Environment::IS_CANARY || bun_core::Envi
 
 fn change_directory(cwd: &[u8]) {
     // The copy is freed here: `exit` does not return, so nothing would free it afterwards.
-    let changed = bun_sys::chdir(&bun_core::ZBox::from_bytes(cwd));
+    let changed = bun_sys::chdir(&bun_core::ZBox::from_vec(directory_of_cwd(cwd)));
     if let bun_sys::Result::Err(err) = changed {
         Output::err(
             err,
@@ -38,11 +39,8 @@ fn change_directory(cwd: &[u8]) {
 /// `--cwd` among the flags of `bun`, which precede `command`.
 fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
     let mut found = None;
-    let mut args = bun_core::argv().into_iter();
+    let mut args = arguments_before(command).into_iter();
     while let Some(arg) = args.next() {
-        if arg == command {
-            break;
-        }
         let given = match arg.strip_prefix(b"--cwd") {
             Some(b"") => args.next(),
             Some(rest) => rest.strip_prefix(b"="),
@@ -55,13 +53,12 @@ fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
 
 /// `--config=<path>` among the flags of `bun`, which precede `command`. Without the `=` the path is taken for the command.
 fn bunfig_before(command: &[u8]) -> Option<&'static [u8]> {
-    let flags = (bun_core::argv().into_iter()).take_while(|arg| *arg != command);
-    flags
+    (arguments_before(command).into_iter())
         .filter_map(|arg| {
             arg.strip_prefix(b"--config=")
                 .or_else(|| arg.strip_prefix(b"-c="))
         })
-        .last()
+        .next_back()
 }
 
 /// Has `read` read the bunfig.toml files that can say something to `command`, each with its path from the working directory
@@ -95,7 +92,9 @@ pub(crate) fn read_bunfigs(
 /// the configuration files.
 fn disallow_code_generation_before(command: &[u8]) {
     let argv = bun_core::argv().to_vec();
-    let flags = argv.iter().take_while(|it| it.as_bytes() != command);
+    let flags = argv
+        .iter()
+        .take(place_of_command(command).unwrap_or(argv.len()));
     super::arguments::disallow_code_generation_from_strings_as_compiled(
         &flags.copied().collect::<Vec<_>>(),
     );
@@ -253,6 +252,28 @@ pub(crate) fn usage_error(command: &str, message: &[u8]) -> ! {
     Global::exit(2);
 }
 
+/// Prints what `bun lint`, `bun fmt` or `bun check` has to say, and returns the exit code. `stdout` is what was asked for: the
+/// formatted text, the report, a list. `Output` drops write errors, and with exit code 0 a script like
+/// `bun fmt --stdin-filepath f < f > f.tmp && mv f.tmp f` would then lose `f` on a full disk. So that's an error here. A reader
+/// that has gone away (`| head`) isn't.
+pub(crate) fn print(stdout: &[u8], stderr: &[u8], exit_code: u8) -> u8 {
+    let written = bun_sys::write_all_to_stdio(bun_core::Fd::stdout(), stdout);
+    let _ = Output::error_writer().write_all(stderr);
+    let exit_code = match written {
+        Err(error) if error.get_errno() != bun_sys::E::EPIPE => {
+            let why = error.msg().unwrap_or(b"unknown error");
+            Output::err_generic(
+                "Cannot write standard output: {}: {}",
+                (BStr::new(error.name()), BStr::new(why)),
+            );
+            2
+        }
+        _ => exit_code,
+    };
+    Output::flush();
+    exit_code
+}
+
 /// Calls `run` with what it takes from this process, prints what it returns, and exits.
 /// `command`: `lint` or `format`. `cwd`: its `--cwd`.
 pub(crate) fn run_and_exit(
@@ -304,11 +325,9 @@ pub(crate) fn run_and_exit(
     };
     let outcome = run(&environment);
     // The report is the output. Everything else is printed separately.
-    let _ = Output::writer().write_all(&outcome.stdout);
-    let _ = Output::error_writer().write_all(&outcome.stderr);
-    Output::flush();
+    let exit_code = print(&outcome.stdout, &outcome.stderr, outcome.exit_code);
     js_engine.end_all();
-    Global::exit(u32::from(outcome.exit_code));
+    Global::exit(u32::from(exit_code));
 }
 
 impl LintCommand {

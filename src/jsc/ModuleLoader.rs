@@ -259,19 +259,32 @@ pub(crate) fn plugin_namespace_and_path(specifier: &[u8]) -> Option<(&[u8], &[u8
 /// The `namespace:` prefix of `specifier`, or `b""` if it has none
 /// (Windows drive-letter prefixes are not namespaces).
 fn extract_namespace(specifier: &[u8]) -> &[u8] {
-    let Some(colon) = bun_core::strings::index_of_char_usize(specifier, b':') else {
-        return b"";
-    };
-    if cfg!(windows)
-        && colon == 1
-        && specifier.len() > 3
-        && bun_paths::resolve_path::is_sep_any(specifier[2])
-        && ((specifier[0] > b'a' && specifier[0] < b'z')
-            || (specifier[0] > b'A' && specifier[0] < b'Z'))
-    {
-        return b"";
+    match namespace_colon(specifier) {
+        Some(colon) => &specifier[..colon],
+        None => b"",
     }
-    &specifier[..colon]
+}
+
+/// Where the `namespace:` of a bare `specifier` ends. A colon in a path or in a query starts no namespace.
+fn namespace_colon(specifier: &[u8]) -> Option<usize> {
+    if !bun_paths::is_package_path(specifier) {
+        return None;
+    }
+    let colon = bun_core::strings::index_of_char_usize(specifier, b':')?;
+    (colon < without_query(specifier).len()).then_some(colon)
+}
+
+/// `specifier` up to its query, cut where the resolver and the loader cut it.
+fn without_query(specifier: &[u8]) -> &[u8] {
+    let mut query: &[u8] = b"";
+    crate::virtual_machine::normalize_specifier_for_resolution(specifier, &mut query)
+}
+
+/// Whether an ASCII letter or a non-ASCII byte follows the last `.` of `specifier`.
+fn letter_follows_last_dot(specifier: &[u8]) -> bool {
+    bun_core::strings::last_index_of_char(specifier, b'.')
+        .and_then(|dot| specifier.get(dot + 1))
+        .is_some_and(|&c| c.is_ascii_alphabetic() || c > 127)
 }
 
 /// Cheap pre-filter before calling into a plugin: has a file extension or a `namespace:`.
@@ -287,8 +300,16 @@ fn could_be_plugin(specifier: &[u8]) -> bool {
             return true;
         }
     }
-    !bun_paths::is_absolute(specifier)
-        && bun_core::strings::index_of_char_usize(specifier, b':').is_some()
+    if namespace_colon(specifier).is_some() {
+        return true;
+    }
+    // A query cannot make the answer no: the test above, on the specifier without it.
+    let path = without_query(specifier);
+    if path.len() < specifier.len() && letter_follows_last_dot(path) {
+        return true;
+    }
+    // The extension of a file may start with a digit ("video.3gp"). In a bare name that is a version ("zod@3.0.0").
+    !bun_paths::is_package_path(specifier) && bun_paths::fs::PathName::init(path).ext.len() > 1
 }
 
 /// C++ entry point: runs the plugin for a virtual-module specifier, returning its exports (or zero when no plugin serves it).

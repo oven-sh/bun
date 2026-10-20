@@ -973,6 +973,88 @@ describe("spawn()", () => {
         exitCode: 0,
       });
     });
+
+    // Each row is a script that ends with `stdin` closed; the events it logs
+    // must match node's.
+    const catChild = `const child = spawn("cat", [], { stdio: ["pipe", "ignore", "ignore"] }); const stdin = child.stdin;`;
+    const logEvents = `
+      const events = [];
+      const code = e => (e ? e.code ?? e.message : null);
+      stdin.on("error", e => events.push("error:" + code(e)));
+      stdin.on("finish", () => events.push("finish"));
+      stdin.on("close", () => { console.log(JSON.stringify(events)); child.kill("SIGKILL"); });
+    `;
+    it.each([
+      [
+        "a first write of 64 KiB (written inline, not buffered) calls back",
+        `${catChild}${logEvents} stdin.write(Buffer.alloc(65536, 0x61), e => { events.push("cb:" + code(e)); stdin.destroy(); });`,
+        ["cb:null"],
+      ],
+      [
+        "an empty chunk calls back",
+        `${catChild}${logEvents} stdin.write("", e => { events.push("cb:" + code(e)); stdin.destroy(); });`,
+        ["cb:null"],
+      ],
+      [
+        "end(empty chunk, cb) finishes",
+        `${catChild}${logEvents} stdin.end("", e => events.push("cb:" + code(e)));`,
+        ["cb:null", "finish"],
+      ],
+      [
+        "destroy() after a buffered write settles its callback with null",
+        `${catChild}${logEvents} stdin.write("a", e => events.push("a:" + code(e))); stdin.destroy();`,
+        ["a:null"],
+      ],
+      [
+        "destroy(err) after a buffered write: the callback gets null, the stream gets err",
+        `${catChild}${logEvents} stdin.write("a", e => events.push("a:" + code(e))); stdin.destroy(new Error("boom"));`,
+        ["a:null", "error:boom"],
+      ],
+      [
+        "a backpressured write and a buffered write call back in order",
+        `${catChild}${logEvents} stdin.write(Buffer.alloc(1 << 20, 0x61), e => events.push("big:" + code(e))); stdin.write("x", e => { events.push("small:" + code(e)); stdin.destroy(); });`,
+        ["big:null", "small:null"],
+      ],
+      [
+        "a child killed after the flush: the callback gets null and there is no 'error'",
+        `const child = spawn("sleep", ["30"], { stdio: ["pipe", "ignore", "ignore"] }); const stdin = child.stdin; ${logEvents}
+         stdin.write("x", e => events.push("cb:" + code(e))); setImmediate(() => child.kill("SIGKILL"));`,
+        ["cb:null"],
+      ],
+    ])("%s", async (_name, script, expected) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `const { spawn } = require("node:child_process"); ${script}`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify(expected),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("write callbacks keep their async context and 'error' fires under the failing write's", async () => {
+      const als = new AsyncLocalStorage<string>();
+      const child = await spawnChildWithClosedStdin();
+      try {
+        const seen: string[] = [];
+        const done = Promise.withResolvers<void>();
+        child.stdin!.on("error", () => {
+          seen.push("error:" + als.getStore());
+          done.resolve();
+        });
+        for (const name of ["first", "second"]) {
+          als.run(name, () => child.stdin!.write("x", () => seen.push(`cb:${name}:${als.getStore()}`)));
+        }
+        await done.promise;
+        expect(seen).toEqual(["cb:first:first", "cb:second:second", "error:first"]);
+      } finally {
+        child.kill("SIGKILL");
+      }
+    });
   });
 });
 

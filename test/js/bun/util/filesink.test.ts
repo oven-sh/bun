@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
+import tty from "node:tty";
 
 describe("FileSink", () => {
   const fixturesInput = [
@@ -528,6 +529,27 @@ it("close() does not leak the native FileSink", async () => {
   for (let i = 0; i < 50; i++) {
     Bun.gc(true);
     if (fileSinkInternals.liveCount() <= baseline) break;
+    await Bun.sleep(10);
+  }
+  expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
+});
+
+// A tty.WriteStream on a non-TTY fd is an fs.WriteStream fast path whose sink
+// answers its writes through a hook that closes over the stream. The sink holds
+// that hook weakly while it owes nothing, so a stream that is dropped (this one
+// has autoClose: false, so end() never destroys it) is collected with its sink.
+it("a dropped tty.WriteStream on a file fd does not leak the native FileSink", async () => {
+  const dir = tmpdirSync();
+  const baseline = fileSinkInternals.liveCount();
+  const iterations = 16;
+  for (let i = 0; i < iterations; i++) {
+    const stream = new tty.WriteStream(fs.openSync(join(dir, `tty-leak-${i}.txt`), "w"));
+    stream.write("hi", () => {});
+    stream.end();
+  }
+  for (let i = 0; i < 50; i++) {
+    Bun.gc(true);
+    if (fileSinkInternals.liveCount() <= baseline + 1) break;
     await Bun.sleep(10);
   }
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);

@@ -108,6 +108,7 @@ pub mod task_tag {
         Read,
         Readv,
         FlushPendingFileSinkTask,
+        DispatchOwnerHookFileSinkTask,
         RunTestsTask,
         RuntimeTranspilerStore,
         S3HttpDownloadStreamingTask,

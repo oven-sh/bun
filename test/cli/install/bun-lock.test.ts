@@ -4381,8 +4381,7 @@ it.each<OrderedShape>([
     z: { "z": "z@1.0.0" },
   },
   {
-    // No version satisfies both, so they share one copy. The first package in declaration order decides which one, not
-    // the first manifest to arrive.
+    // No version satisfies both, so they share one copy: the newest of the versions that satisfy the most ranges.
     shape: "a peers z@^1.0.0 next to b peers z@^2.0.0",
     manifests: {
       a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
@@ -4394,7 +4393,7 @@ it.each<OrderedShape>([
       "a's manifest last": [{ manifest: "a", until: "/b" }],
       "b's manifest last": [{ manifest: "b", until: "/a-1.0.0.tgz" }],
     },
-    z: { "z": "z@1.1.0" },
+    z: { "z": "z@2.0.0" },
   },
   {
     // m is itself installed as a peer, so its range may not be known yet when z is first picked. Once it is, all three
@@ -4562,6 +4561,103 @@ it.each<OrderedShape>([
     z: { "z": "z@1.1.0", "h/z": "z@1.0.0", "h/y/z": "z@1.0.5" },
   },
 ])("a fresh install writes the same bun.lock whichever manifest arrives last: $shape", writesTheSameLockInEveryOrder);
+
+// Renames every package in `value`, where the names are keys: of the manifests and of the dependency groups.
+function respell<T>(value: T, names: Record<string, string>): T {
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, inner]) => [names[key] ?? key, respell(inner, names)]),
+  ) as T;
+}
+
+// Peers are resolved in the order of the names of the packages that declare them. Each project is installed twice, the
+// second time with the names of the two packages in `swap` exchanged.
+// `z` lists the versions of z that get installed.
+it.each<{ shape: string; manifests: OrderedManifests; root: string[]; swap: [string, string]; z: string[] }>([
+  {
+    shape: "no version satisfies both ranges",
+    manifests: {
+      a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
+      b: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
+      z: zVersions,
+    },
+    root: ["a", "b"],
+    swap: ["a", "b"],
+    z: ["2.0.0"],
+  },
+  {
+    shape: "no version satisfies all three ranges, one satisfies two",
+    manifests: {
+      a: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
+      b: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
+      c: { "1.0.0": { peerDependencies: { z: "~1.0.0" } } },
+      z: zVersions,
+    },
+    root: ["a", "b", "c"],
+    swap: ["a", "c"],
+    z: ["1.0.5"],
+  },
+  {
+    // A package uses the copy of the package above it, so the one above has to be resolved first.
+    shape: "a package and the package that depends on it have the same peer dependency",
+    manifests: {
+      child: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
+      parent: { "1.0.0": { dependencies: { child: "1.0.0" }, peerDependencies: { z: "latest" } } },
+      z: zVersions,
+    },
+    root: ["parent"],
+    swap: ["child", "parent"],
+    z: ["2.0.0"],
+  },
+  {
+    // z@1.0.5 is above f only through its own peer dependency on c, which is resolved together with f's on z.
+    shape: "a package is above another one only through a peer dependency",
+    manifests: {
+      c: { "1.0.0": { dependencies: { i: "1.0.0" } } },
+      f: { "1.0.0": { peerDependencies: { z: "1.0.0" } } },
+      g: { "1.0.0": { dependencies: { z: "~1.0.5" } } },
+      i: { "1.0.0": { dependencies: { f: "1.0.0" } } },
+      k: { "1.0.0": { dependencies: { f: "1.0.0" } } },
+      z: { "1.0.0": {}, "1.0.5": { peerDependencies: { c: "*" } } },
+    },
+    root: ["c", "g", "k"],
+    swap: ["f", "z"],
+    z: ["1.0.0", "1.0.5"],
+  },
+  {
+    // b uses the provider's version wherever it's loaded, so its range doesn't choose a version for a.
+    shape: "one of two ranges belongs to a package that has a provider in one place",
+    manifests: {
+      a: { "1.0.0": { peerDependencies: { z: "~1.0.0" } } },
+      b: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } },
+      provider: { "1.0.0": { dependencies: { b: "1.0.0", z: "1.1.0" } } },
+      z: zVersions,
+    },
+    root: ["a", "b", "provider"],
+    swap: ["a", "b"],
+    z: ["1.0.5", "1.1.0"],
+  },
+])("a fresh install resolves peers the same way whatever the packages are called: $shape", async shape => {
+  const [x, y] = shape.swap;
+  for (const names of [{}, { [x]: y, [y]: x }] as Record<string, string>[]) {
+    using server = (await registryWithHolds(respell(shape.manifests, names))).server;
+    const dependencies = Object.fromEntries(shape.root.map(name => [name, "1.0.0"]));
+    const lock = await freshInstallLock(server, { "package.json": respell({ name: "foo", dependencies }, names) });
+    const installed = Object.values(instancesOf(lock, names.z ?? "z")).map(id => id.slice(id.indexOf("@", 1) + 1));
+    expect({ names, z: [...new Set(installed)].sort() }).toEqual({ names, z: shape.z });
+  }
+});
+
+// The workspace is above e only through its peer dependency on it, which is resolved together with e's on z.
+it("a package that a workspace has a peer dependency on uses the workspace's copy of its own peer", async () => {
+  using server = (await registryWithHolds({ e: { "1.0.0": { peerDependencies: { z: "^2.0.0" } } }, z: zVersions }))
+    .server;
+  const lock = await freshInstallLock(server, {
+    "package.json": { name: "foo", workspaces: ["packages/*"], dependencies: { e: "1.0.0" } },
+    "packages/w/package.json": { name: "w", dependencies: { z: "1.0.0" }, peerDependencies: { e: "*" } },
+  });
+  expect(instancesOf(lock, "z")).toEqual({ "z": "z@1.0.0" });
+});
 
 // The collapse chooses among the versions the install added, and j's row adds its own best match (1.5.0) only
 // when it is resolved before k's 1.0.9 is in place. With 1.5.0 the two versions kept are 1.5.0 and 1.0.9,

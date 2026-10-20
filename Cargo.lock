@@ -1654,6 +1654,7 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_core",
+ "bun_js_parser",
  "bun_sema",
  "bun_sema_baselines",
  "bun_sema_driver",

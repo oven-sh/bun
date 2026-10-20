@@ -28,14 +28,14 @@ pub struct ImportRecord {
     // &'static [u8] as a placeholder.
     pub original_path: &'static [u8],
 
-    /// Pack all boolean flags into 2 bytes to reduce padding overhead.
+    /// Pack all boolean flags into 4 bytes to reduce padding overhead.
     /// Previously 15 separate bool fields caused ~14-16 bytes of padding waste.
     pub flags: Flags,
 }
 
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
-    pub struct Flags: u16 {
+    pub struct Flags: u32 {
         /// require() / await import() / require.resolve() inside the try or
         /// catch body of a try/catch, or import('x').catch(..) / .then(_, ..):
         /// don't fail the build when the path can't be resolved.
@@ -80,19 +80,33 @@ bitflags::bitflags! {
         /// If true, this import can be removed if it's unused
         const IS_EXTERNAL_WITHOUT_SIDE_EFFECTS = 1 << 11;
 
-        /// Tell the printer to print the record as "foo:my-path" instead of "path"
-        /// where "foo" is the namespace
-        ///
-        /// Used to prevent running resolve plugins multiple times for the same path
-        const PRINT_NAMESPACE_IN_PATH = 1 << 12;
-
-        const WRAP_WITH_TO_ESM = 1 << 13;
-        const WRAP_WITH_TO_COMMONJS = 1 << 14;
+        const WRAP_WITH_TO_ESM = 1 << 12;
+        const WRAP_WITH_TO_COMMONJS = 1 << 13;
 
         /// "import defer * as ns from 'path'" — defer evaluation of the
         /// imported module until a property on the namespace object is
         /// accessed. Requires `CONTAINS_IMPORT_STAR`.
-        const PHASE_DEFER = 1 << 15;
+        const PHASE_DEFER = 1 << 14;
+
+        /// The linker pointed `path` at another output chunk (a split
+        /// `import()` / `require()`): `text` is its path, `pretty` its id; `source_index` is cleared.
+        const IMPORTS_CHUNK = 1 << 15;
+
+        /// `import()` / `require()` whose value nothing reads: the linker bound
+        /// every name read off it to an export, so it evaluates to `{}`.
+        const NAMESPACE_UNUSED = 1 << 16;
+
+        /// A split `require()` whose target is CommonJS at link time: the
+        /// chunk's namespace is `{ default: module.exports }`, so the call
+        /// reads `.default` to return `module.exports`.
+        const CROSS_CHUNK_REQUIRE_DEFAULT = 1 << 17;
+
+        /// Barrel optimization deferred this record: it set `IS_UNUSED` so the
+        /// target does not load until an importer requests one of its exports.
+        /// Only a record with this flag can be un-deferred. The parser sets
+        /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
+        /// import), and those records must never be resolved.
+        const IS_BARREL_DEFERRED = 1 << 18;
     }
 }
 

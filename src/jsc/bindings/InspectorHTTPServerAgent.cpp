@@ -39,7 +39,7 @@ void InspectorHTTPServerAgent::didCreateFrontendAndBackend()
 
 void InspectorHTTPServerAgent::willDestroyFrontendAndBackend(DisconnectReason)
 {
-    disable();
+    (void)disable();
 }
 
 Protocol::ErrorStringOr<void> InspectorHTTPServerAgent::enable()

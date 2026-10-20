@@ -66,7 +66,7 @@ function open(port?: number, host?: string, wait?: boolean) {
     },
   };
 
-  let resolvedUrl: string | null;
+  let resolvedUrl: string | null | EvalError;
   try {
     resolvedUrl = openNodeInspector(requestedUrl, !!wait);
   } catch (e) {
@@ -77,6 +77,10 @@ function open(port?: number, host?: string, wait?: boolean) {
     const detail = raw.startsWith(prefix) ? raw.slice(prefix.length) : raw;
     process.stderr.write(`Starting inspector on ${hostname}:${portNumber} failed: ${detail}\n`);
     return disposable;
+  }
+  if (typeof resolvedUrl === "object" && resolvedUrl !== null) {
+    // --disallow-code-generation-from-strings=strict
+    throw resolvedUrl;
   }
   if (resolvedUrl === null) {
     // A prior inspector.open() success is caught by the top guard above, so
@@ -136,7 +140,7 @@ function waitForDebugger() {
 const runtimeEnabledSessions: Set<Session> = new SafeSet();
 const hookedConsoleMethods: Array<[string, Function, Function]> = [];
 
-const CONSOLE_API_TYPES: Record<string, string> = {
+const CONSOLE_API_TYPES = {
   __proto__: null,
   log: "log",
   info: "info",
@@ -303,13 +307,10 @@ function buildScriptCoverageList(
       url = pathToFileURL(url).href;
     }
 
-    // Outer functions before nested ones, so a stack-based sweep below sees
-    // enclosing ranges first. Zero-width entries are dropped: V8 never emits
-    // startOffset === endOffset, and @bcoe/v8-coverage recurses forever on one.
-    const functions = script.functions
-      .filter(([start, end]) => start >= 0 && end > start)
-      .sort((a, b) => a[0] - b[0] || b[1] - a[1]);
-    const blocks = script.blocks.filter(([start, end]) => start >= 0 && end > start).sort((a, b) => a[0] - b[0]);
+    // Outer ranges before nested ones, so a stack-based sweep below sees
+    // enclosing ranges first.
+    const functions = script.functions.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+    const blocks = script.blocks.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
 
     // Assign each basic block to the innermost function range containing it.
     const blocksPerFunction: Array<Array<[number, number, number]>> = functions.map(() => []);
@@ -317,13 +318,18 @@ function buildScriptCoverageList(
     const stack: number[] = [];
     let nextFunction = 0;
     for (const block of blocks) {
+      // The script's own, which is not in a function that is the whole script.
+      if (block[0] === 0 && block[1] === sourceLength) {
+        topLevelBlocks.push(block);
+        continue;
+      }
       while (nextFunction < functions.length && functions[nextFunction][0] <= block[0]) {
         stack.push(nextFunction);
         nextFunction++;
       }
       // Functions that ended before this block started can no longer contain
       // this block or any later one (blocks are sorted by start).
-      while (stack.length > 0 && functions[stack[stack.length - 1]][1] < block[0]) {
+      while (stack.length > 0 && functions[stack[stack.length - 1]][1] <= block[0]) {
         stack.pop();
       }
       // The stack is a nesting chain (siblings get popped above), so ends
@@ -349,19 +355,25 @@ function buildScriptCoverageList(
     const scriptExecuted = blocks.some(([, , count]) => count > 0) ? 1 : 0;
     const entries: object[] = [];
 
-    const toRange = ([startOffset, endOffset, count]: [number, number, number]) => ({
-      startOffset,
-      endOffset,
-      count: callCount ? count : count > 0 ? 1 : 0,
-    });
+    // As in V8, a range is listed only where its count is not that of the range it is in.
+    const toRanges = (outer: [number, number, number], inner: Array<[number, number, number]>) => {
+      const ranges: Array<{ startOffset: number; endOffset: number; count: number }> = [];
+      const enclosing: typeof ranges = [];
+      for (const [startOffset, endOffset, blockCount] of detailed ? [outer, ...inner] : [outer]) {
+        while (enclosing.length > 0 && enclosing[enclosing.length - 1].endOffset <= startOffset) enclosing.pop();
+        const count = callCount ? blockCount : blockCount > 0 ? 1 : 0;
+        if (enclosing.length > 0 && enclosing[enclosing.length - 1].count === count) continue;
+        const range = { startOffset, endOffset, count };
+        ranges.push(range);
+        enclosing.push(range);
+      }
+      return ranges;
+    };
 
     // Whole-script entry. V8 always reports one covering the entire source.
     entries.push({
       functionName: "",
-      ranges: [
-        { startOffset: 0, endOffset: sourceLength, count: scriptExecuted },
-        ...(detailed ? topLevelBlocks.map(toRange) : []),
-      ],
+      ranges: toRanges([0, sourceLength, scriptExecuted], topLevelBlocks),
       isBlockCoverage: detailed,
     });
 
@@ -391,10 +403,7 @@ function buildScriptCoverageList(
       }
       entries.push({
         functionName: "",
-        ranges: [
-          { startOffset, endOffset, count: callCount ? count : count > 0 ? 1 : 0 },
-          ...(detailed ? ownBlocks.map(toRange) : []),
-        ],
+        ranges: toRanges([startOffset, endOffset, count], ownBlocks),
         isBlockCoverage: detailed,
       });
     }
@@ -482,7 +491,7 @@ class Session extends EventEmitter {
 
   post(
     method: string,
-    params?: object | ((err: Error | null, result?: any) => void),
+    params?: Record<string, unknown> | ((err: Error | null, result?: any) => void),
     callback?: (err: Error | null, result?: any) => void,
   ) {
     validateString(method, "method");

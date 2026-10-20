@@ -285,10 +285,9 @@ impl ModuleInfoDeserialized {
     }
 
     /// The self-contained form (a module's own string table followed by its
-    /// body, as the runtime transpiler cache stores it). The bytes are copied
-    /// once; the record views the copy.
-    pub(crate) fn create(source: &[u8]) -> Result<Box<ModuleInfoDeserialized>, ModuleInfoError> {
-        let owned: Box<[u8]> = source.into();
+    /// body, as the runtime transpiler cache stores it). The record views
+    /// `owned` in place; nothing is copied.
+    pub fn create_owned(owned: Box<[u8]>) -> Result<Box<ModuleInfoDeserialized>, ModuleInfoError> {
         // SAFETY: `owned` is moved into the returned struct and never
         // reallocated, so views into its heap buffer stay valid for `self`'s
         // lifetime; the `'static` is an erased self-borrow, not exposed.
@@ -305,10 +304,10 @@ impl ModuleInfoDeserialized {
         }))
     }
 
-    /// Wrapper around `create` for use when loading from a cache. Returns
-    /// `None` on corrupt/truncated data.
-    pub fn create_from_cached_record(source: &[u8]) -> Option<Box<ModuleInfoDeserialized>> {
-        Self::create(source).ok()
+    /// `create_owned` over the `esm_record` of a transpiler cache entry.
+    /// Returns `None` on corrupt/truncated data.
+    pub fn create_from_cached_record(record: Box<[u8]>) -> Option<Box<ModuleInfoDeserialized>> {
+        Self::create_owned(record).ok()
     }
 
     /// A body inside the executable whose ids index the slot table the
@@ -503,6 +502,16 @@ impl ModuleInfoSlotTableBuilder {
         }
         ids
     }
+    /// Interns one string (a module key the pre-resolved graph names); returns its table id.
+    pub fn intern(&mut self, s: &[u8], slot_for: impl Fn(&[u8]) -> u32) -> u32 {
+        if let Some(&id) = self.ids.get(s) {
+            return id;
+        }
+        let id = u32::try_from(self.slots.len()).expect("int cast");
+        self.slots.push(slot_for(s));
+        self.ids.insert(s.into(), id);
+        id
+    }
     pub fn count(&self) -> u32 {
         self.slots.len() as u32
     }
@@ -520,19 +529,6 @@ impl ModuleInfoSlotTableBuilder {
 // Extension shims over the printer-crate types
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Extension constructor: `StringID::from_raw(u32)` — used by
-/// `linker_context::generateChunksInParallel` when rewriting cross-chunk
-/// specifier IDs.
-pub(crate) trait StringIDExt {
-    fn from_raw(raw: u32) -> StringID;
-}
-impl StringIDExt for StringID {
-    #[inline]
-    fn from_raw(raw: u32) -> StringID {
-        StringID(raw)
-    }
-}
-
 /// Bridges the printer-crate `ModuleInfo` builder to the serialized view
 /// JSC consumes.
 pub trait ModuleInfoExt {
@@ -543,9 +539,10 @@ pub trait ModuleInfoExt {
 
 impl ModuleInfoExt for ModuleInfo {
     fn into_deserialized(mut self: Box<Self>) -> Box<ModuleInfoDeserialized> {
-        let bytes = bun_js_printer::serialize_module_info(Some(&mut self))
+        let bytes = self
+            .take_serialized()
             .expect("finalize cannot fail after printing");
-        ModuleInfoDeserialized::create(&bytes).expect("just serialized")
+        ModuleInfoDeserialized::create_owned(bytes).expect("just serialized")
     }
 }
 

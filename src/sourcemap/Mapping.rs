@@ -391,7 +391,7 @@ impl Lookup {
 
             let name: &[u8] = &source_map.external_source_names[index];
 
-            let mut buf = bun_paths::PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             // `platform::Auto` is
             // cfg-selected (Posix on unix, Windows on windows).
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
@@ -439,7 +439,6 @@ pub fn parse(
     bytes: &[u8],
     estimated_mapping_count: Option<usize>,
     sources_count: i32,
-    input_line_count: usize,
     options: ParseOptions,
 ) -> ParseResult {
     scoped_log!(SourceMap, "parse mappings ({} bytes)", bytes.len());
@@ -725,7 +724,6 @@ pub fn parse(
 
     let mut psm = ParsedSourceMap::default();
     psm.mappings = mapping;
-    psm.input_line_count = input_line_count;
     Ok(psm)
 }
 

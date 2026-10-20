@@ -359,10 +359,16 @@ impl Writer<'_, '_> {
 /// `JSON.stringify` of the value of the template `source`, which has no substitutions.
 #[cold]
 fn write_template_as_string(source: &[u8], out: &mut Vec<u8>) {
-    use bun_core::printer::json_stringify;
     let raw = source
         .get(1..source.len().saturating_sub(1))
         .unwrap_or_default();
+    bun_core::printer::json_stringify(&cooked(raw), out);
+}
+
+/// The value of a string or a template, as WTF-8. `raw`: what is between its quotes.
+#[cold]
+pub(super) fn cooked(raw: &[u8]) -> Vec<u8> {
+    use bun_core::strings::push_codepoint_wtf8_joined as push_codepoint;
     let mut cooked = Vec::with_capacity(raw.len());
     let mut rest = raw;
     let hex = |digits: &[u8]| {
@@ -392,25 +398,25 @@ fn write_template_as_string(source: &[u8], out: &mut Vec<u8>) {
             b'\n' => {}
             b'x' => {
                 if let Some(value) = rest.get(..2).and_then(hex) {
-                    bun_core::strings::push_codepoint_wtf8(&mut cooked, value);
+                    push_codepoint(&mut cooked, value);
                     rest = &rest[2..];
                 }
             }
             b'u' if rest.first() == Some(&b'{') => {
                 let len = rest.iter().take_while(|b| **b != b'}').count();
                 if let Some(value) = rest.get(1..len).and_then(hex) {
-                    bun_core::strings::push_codepoint_wtf8(&mut cooked, value);
+                    push_codepoint(&mut cooked, value);
                 }
                 rest = rest.get(len + 1..).unwrap_or_default();
             }
             b'u' => {
                 if let Some(value) = rest.get(..4).and_then(hex) {
-                    bun_core::strings::push_codepoint_wtf8(&mut cooked, value);
+                    push_codepoint(&mut cooked, value);
                     rest = &rest[4..];
                 }
             }
             _ => cooked.push(escaped),
         }
     }
-    json_stringify(&cooked, out);
+    cooked
 }

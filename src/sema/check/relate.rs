@@ -2153,34 +2153,13 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// True if `mapped_mapper(t)` is cached and `is_mapper_idle`.
-    fn is_mapped_mapper_idle(&self, t: TypeId) -> bool {
-        self.cached_part::<MapperId>(t, links::Kind::Mapped, MappedPart::Mapper as usize)
-            .is_some_and(|mapper| self.is_mapper_idle(mapper))
-    }
-
     /// `getTemplateTypeFromMappedType`: with the missing type added when the mapped type makes
     /// properties optional.
     pub(super) fn mapped_template(&mut self, t: TypeId) -> TypeId {
-        let part = MappedPart::TemplateType;
-        if let Some(cached_value) = self.cached_part(t, links::Kind::Mapped, part as usize) {
-            return cached_value;
-        }
         let Some((file, node, _)) = self.mapped_origin(t) else {
             return TypeId::UNRESOLVED;
         };
-        let declared = self.mapped_decl(file, node).ty;
-        self.derive_part(
-            (t, links::Kind::Mapped, part as usize),
-            |c| c.derive_mapped_template(t),
-            |c| c.is_mapped_mapper_idle(t) && c.is_type_node_settled(file, declared),
-        )
-    }
-
-    fn derive_mapped_template(&mut self, t: TypeId) -> TypeId {
-        let Some((file, node, _)) = self.mapped_origin(t) else {
-            return TypeId::UNRESOLVED;
-        };
+        self.links.note_uncached_derivation();
         let mapped = self.mapped_decl(file, node);
         if mapped.ty.is_none() {
             return TypeId::ERROR;
@@ -2198,18 +2177,6 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getTypeParameterFromMappedType`. An instantiated mapped type has a fresh type parameter,
     /// which ranges over the instantiated keys (`instantiateAnonymousType`).
     pub(super) fn mapped_type_param(&mut self, t: TypeId) -> TypeId {
-        let part = MappedPart::TypeParameter;
-        if let Some(cached_value) = self.cached_part(t, links::Kind::Mapped, part as usize) {
-            return cached_value;
-        }
-        let param = self.derive_mapped_type_param(t);
-        if self.mapped_origin(t).is_some() {
-            self.cache_interned_part(t, part as usize, param);
-        }
-        param
-    }
-
-    fn derive_mapped_type_param(&mut self, t: TypeId) -> TypeId {
         let Some((file, node, mapper)) = self.mapped_origin(t) else {
             return TypeId::UNRESOLVED;
         };
@@ -2220,18 +2187,6 @@ impl<'p, 's> Checker<'p, 's> {
     /// `MappedType.mapper`: maps the outer type parameters of the mapped type `t`, and maps the
     /// declared type parameter to `t`'s own.
     fn mapped_mapper(&mut self, t: TypeId) -> MapperId {
-        let part = MappedPart::Mapper;
-        if let Some(cached_value) = self.cached_part(t, links::Kind::Mapped, part as usize) {
-            return cached_value;
-        }
-        let mapper = self.derive_mapped_mapper(t);
-        if self.mapped_origin(t).is_some() {
-            self.cache_interned_part(t, part as usize, mapper);
-        }
-        mapper
-    }
-
-    fn derive_mapped_mapper(&mut self, t: TypeId) -> MapperId {
         let Some((file, node, mapper)) = self.mapped_origin(t) else {
             return MapperId::IDENTITY;
         };
@@ -2282,25 +2237,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getNameTypeFromMappedType`
     pub(super) fn mapped_name_type(&mut self, t: TypeId) -> Option<TypeId> {
-        let part = MappedPart::NameType;
-        if let Some(cached_value) = self.cached_part(t, links::Kind::Mapped, part as usize) {
-            return cached_value;
-        }
         let (file, node, _) = self.mapped_origin(t)?;
-        let declared = self.mapped_decl(file, node).name_ty;
-        if declared.is_none() {
-            self.cache_interned_part(t, part as usize, None::<TypeId>);
+        if self.mapped_decl(file, node).name_ty.is_none() {
             return None;
         }
-        self.derive_part(
-            (t, links::Kind::Mapped, part as usize),
-            |c| c.derive_mapped_name_type(t),
-            |c| c.is_mapped_mapper_idle(t) && c.is_type_node_settled(file, declared),
-        )
-    }
-
-    fn derive_mapped_name_type(&mut self, t: TypeId) -> Option<TypeId> {
-        let (file, node, _) = self.mapped_origin(t)?;
+        self.links.note_uncached_derivation();
         let declared = self.declared_name_type_of_mapped(file, node);
         let mapper = self.mapped_mapper(t);
         Some(self.instantiate(declared, mapper))
@@ -2315,20 +2256,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getModifiersTypeFromMappedType`. `None` means `unknown`.
     pub(super) fn mapped_modifiers_type(&mut self, t: TypeId) -> Option<TypeId> {
-        let part = MappedPart::ModifiersType;
-        if let Some(cached_value) = self.cached_part(t, links::Kind::Mapped, part as usize) {
-            return cached_value;
-        }
         let (file, node, mapper) = self.mapped_origin(t)?;
-        self.derive_part(
-            (t, links::Kind::Mapped, part as usize),
-            |c| c.derive_mapped_modifiers_type(t),
-            |c| c.is_mapper_idle(mapper) && c.is_mapped_modifiers_source_settled(file, node),
-        )
-    }
-
-    fn derive_mapped_modifiers_type(&mut self, t: TypeId) -> Option<TypeId> {
-        let (file, node, mapper) = self.mapped_origin(t)?;
+        self.links.note_uncached_derivation();
         let (declared, _) = self.mapped_modifiers_source(file, node)?;
         Some(self.instantiate(declared, mapper))
     }

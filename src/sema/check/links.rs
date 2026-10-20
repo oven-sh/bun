@@ -1,8 +1,7 @@
 //! Caches the parts of a type that tsgo stores in fields of the type and assigns on first use:
 //! `ConditionalType.checkType`, `extendsType`, `resolvedTrueType`, `resolvedFalseType` and `resolvedDefaultConstraint`,
-//! `ConditionalRoot.inferTypeParameters`, `MappedType.typeParameter`, `mapper`, `constraintType`, `templateType`,
-//! `nameType`, `modifiersType` and `resolvedApparentType`, and `Type.alias`. Also caches the restrictive and permissive
-//! instantiations, which tsgo stores per type in `cachedTypes`.
+//! `ConditionalRoot.inferTypeParameters`, `MappedType.constraintType` and `resolvedApparentType`, and `Type.alias`. Also
+//! caches the restrictive and permissive instantiations, which tsgo stores per type in `cachedTypes`.
 //!
 //! In this checker a conditional or mapped type is a type node plus a mapper. Deriving a part means looking up the type
 //! of a node and instantiating it. `TypeLinks` caches the derived part per type, so the next read is a single load.
@@ -12,7 +11,7 @@
 //! - The cache belongs to one checker, and so to one task. Other tasks can't see it, and none of its ids outlive the
 //!   task. A task publishes the same things with and without it.
 //! - A part that only needs interning is cached immediately. It depends only on the type's interning key and the
-//!   program. This covers a mapped type's type parameter and mapper, and an alias.
+//!   program. This covers the `infer` type parameters and an alias.
 //! - Any other part is `instantiate(declared, mapper)`. It's cached if both steps read a final entry (`derive_part`):
 //!   - `declared` is in a table, and no computation in progress will overwrite it. If a type node is in progress
 //!     several times, the outermost evaluation stores last (`is_type_node_settled`).
@@ -48,12 +47,7 @@ const MAX_INFER_TYPE_PARAMETERS: usize = 64;
 
 #[derive(Copy, Clone, Debug)]
 pub(super) enum MappedPart {
-    TypeParameter,
-    Mapper,
     ConstraintType,
-    TemplateType,
-    NameType,
-    ModifiersType,
     ApparentType,
 }
 
@@ -64,8 +58,8 @@ pub(super) enum Kind {
     Mapped,
 }
 
-/// Number of cells in a row, one per `MappedPart`.
-const PARTS: usize = 7;
+/// Number of cells in a row. A conditional type uses all of them.
+const PARTS: usize = INFER_TYPE_PARAMETERS + 1;
 
 /// `restrictiveMapper`, `permissiveMapper` and `uniqueLiteralMapper`, which are the same for every type.
 #[derive(Copy, Clone, Debug)]
@@ -377,16 +371,6 @@ impl<'p, 's> Checker<'p, 's> {
         (raw != 0 && self.index_infos_in_instantiation.is_empty()).then(|| V::unpack(raw))
     }
 
-    /// Caches a part of a mapped type that only needs interning.
-    pub(super) fn cache_interned_part<V: Packed<Cell = AtomicU32>>(
-        &mut self,
-        ty: TypeId,
-        at: usize,
-        part: V,
-    ) {
-        (self.links).set_cell(ty, Kind::Mapped, at, part.pack(), Stored::new());
-    }
-
     /// Caches a part. `stored` is the permission that `derive_settled` returned with it.
     pub(super) fn cache_part<V: Packed<Cell = AtomicU32>>(
         &mut self,
@@ -608,13 +592,12 @@ mod tests {
         let mut links = TypeLinks::default();
         links.set_cell(conditional, Kind::Conditional, 2, 40, Stored::new());
         let last = MappedPart::ApparentType as usize;
-        assert_eq!(last + 1, PARTS);
         links.set_cell(mapped, Kind::Mapped, last, 50, Stored::new());
         links.set_cell(conditional, Kind::Conditional, 0, 60, Stored::new());
-        let row = |ty, kind| [0, 1, 2, 3, 4, 5, 6].map(|at| links.cell(ty, kind, at));
-        assert_eq!(row(conditional, Kind::Conditional), [60, 0, 40, 0, 0, 0, 0]);
+        let row = |ty, kind| [0, 1, 2, 3, 4, 5].map(|at| links.cell(ty, kind, at));
+        assert_eq!(row(conditional, Kind::Conditional), [60, 0, 40, 0, 0, 0]);
         assert_eq!(row(conditional, Kind::Mapped), [0; PARTS]);
-        assert_eq!(row(mapped, Kind::Mapped), [0, 0, 0, 0, 0, 0, 50]);
+        assert_eq!(row(mapped, Kind::Mapped), [0, 50, 0, 0, 0, 0]);
         assert_eq!(row(mapped, Kind::Conditional), [0; PARTS]);
         assert_eq!(row(TypeId(8), Kind::Mapped), [0; PARTS]);
     }

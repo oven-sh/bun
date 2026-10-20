@@ -1,6 +1,8 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, gcTick, isWindows } from "harness";
+import { once } from "node:events";
+import net from "node:net";
 import path from "path";
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
@@ -383,4 +385,47 @@ it.skipIf(isWindows)("advanced serialization advertises wire format version 2", 
   const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
   expect(JSON.parse(stdout.trim())).toEqual([1, 2, 0, 0, 0]);
   expect(exitCode).toBe(0);
+});
+
+// Subprocess.disconnect() takes the same native path as node:child_process: a handle send that is
+// still queued postpones the close until the handle is acked and the queue is flushed.
+// Not on Windows: the backlog here comes from a POSIX socket buffer, and the onDisconnect tests in
+// spawn.test.ts do not pass there yet.
+it.skipIf(isWindows)("disconnect() delivers a handle send still queued behind an unfinished write", async () => {
+  const childSource = [
+    `const received = [];`,
+    `process.on("message", (message, handle) => {`,
+    `  received.push((typeof message === "string" ? message : "big") + (handle ? "+handle" : ""));`,
+    `  if (handle) handle.close();`,
+    `});`,
+    `process.on("disconnect", () => console.log(JSON.stringify(received)));`,
+  ].join("\n");
+  const server = net.createServer().listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    let disconnects = 0;
+    const { promise: disconnected, resolve: sawDisconnect } = Promise.withResolvers<void>();
+    await using child = spawn([bunExe(), "-e", childSource], {
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "inherit"],
+      ipc() {},
+      onDisconnect() {
+        disconnects++;
+        sawDisconnect();
+      },
+    });
+    // 2 MiB does not fit in the IPC socket buffer, so the server behind it is still unwritten when disconnect() runs.
+    child.send({ pad: Buffer.alloc(2 * 1024 * 1024, "x").toString() });
+    child.send("server", server);
+    child.send("after");
+    child.disconnect();
+    const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited, disconnected]);
+    expect({ received: JSON.parse(stdout), disconnects }).toEqual({
+      received: ["big", "server+handle", "after"],
+      disconnects: 1,
+    });
+    expect(exitCode).toBe(0);
+  } finally {
+    server.close();
+  }
 });

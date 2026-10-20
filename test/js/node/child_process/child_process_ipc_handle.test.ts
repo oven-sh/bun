@@ -704,7 +704,11 @@ process.on('message', (m, sock) => {
     });
     expect(exitCode).toBe(0);
   });
+});
 
+// The first two tests send the handle and disconnect in the same tick, with nothing queued ahead of the
+// handle. A Windows pipe write completes later, so there the handle is still queued when disconnect() runs.
+describe("process.send(message, handle) followed by disconnect()", () => {
   // node: a sent socket is detached from the sender's net.Socket (no 'end'/'close' there when the
   // receiver finishes with it), and disconnect() waits for the messages queued behind an un-acked
   // handle to be delivered. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js
@@ -813,5 +817,231 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
       stderr: "",
     });
     expect(exitCode).toBe(0);
+  });
+
+  // node holds a disconnect() back from the moment it submits a handle until that handle is acked:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L861-L864
+  // Every fixture here sends a 2 MiB message first, so the sends behind it are still unwritten when
+  // disconnect() runs in the same tick: the message does not fit in a POSIX IPC socket buffer, and a
+  // Windows pipe write completes later whatever its size.
+  describe("disconnect() with sends still queued behind an unfinished write", () => {
+    const disconnectedState = {
+      connected: false,
+      secondDisconnect: "ERR_IPC_DISCONNECTED",
+      lateSend: "ERR_IPC_CHANNEL_CLOSED",
+    };
+
+    test.concurrent.each([
+      { serialization: "json", order: "big,socket,after", childReceived: ["big", "socket+handle", "after"] },
+      { serialization: "advanced", order: "big,socket,after", childReceived: ["big", "socket+handle", "after"] },
+      // The handle rides on the message that is only partly written.
+      { serialization: "json", order: "big+socket,after", childReceived: ["big+handle", "after"] },
+      // The second handle also waits for the ack of the first.
+      {
+        serialization: "json",
+        order: "big,socket,mid,socket,after",
+        childReceived: ["big", "socket+handle", "mid", "socket+handle", "after"],
+      },
+    ])(
+      "subprocess.disconnect() after $order ($serialization) delivers every send and calls back with null",
+      async ({ serialization, order, childReceived }) => {
+        using dir = tempDir("ipc-handle-queued-disconnect", {
+          "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const { text } = require('node:stream/consumers');
+const [serialization, order] = process.argv.slice(2);
+const steps = order.split(',');
+const server = net.createServer();
+const sockets = [];
+const wanted = steps.filter(step => step.includes('socket')).length;
+server.listen(0, '127.0.0.1', () => {
+  for (let i = 0; i < wanted; i++) {
+    net.connect(server.address().port, '127.0.0.1', function () {
+      sockets.push(this);
+      if (sockets.length === wanted) run();
+    }).on('error', () => {});
+  }
+});
+async function run() {
+  // Forked in the same tick as the sends: the child cannot read yet, so the first write stops at the socket buffer.
+  const child = fork('child.js', { stdio: ['ignore', 'pipe', 'inherit', 'ipc'], serialization });
+  const childDone = Promise.all([text(child.stdout), new Promise(resolve => child.on('exit', resolve))]);
+  const pad = Buffer.alloc(2 * 1024 * 1024, 'x').toString();
+  const callbacks = steps.map(() => 'never called');
+  steps.forEach((step, i) => {
+    const done = err => { callbacks[i] = err; };
+    if (step === 'big') child.send({ pad }, done);
+    else if (step === 'big+socket') child.send({ pad }, sockets.pop(), done);
+    else if (step === 'socket') child.send(step, sockets.pop(), done);
+    else child.send(step, done);
+  });
+  child.disconnect();
+  const state = { connected: child.connected };
+  child.once('error', err => { state.secondDisconnect = err.code; });
+  child.disconnect();
+  child.send('late', err => { state.lateSend = err.code; });
+  const [childReceived] = await childDone;
+  console.log(JSON.stringify({ callbacks, state, childReceived: JSON.parse(childReceived) }));
+  process.exit(0);
+}
+`,
+          "child.js": `
+const received = [];
+process.on('message', (message, handle) => {
+  received.push((typeof message === 'string' ? message : 'big') + (handle ? '+handle' : ''));
+  if (handle) handle.destroy();
+});
+process.on('disconnect', () => console.log(JSON.stringify(received)));
+`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "parent.js", serialization, order],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+          out: { callbacks: childReceived.map(() => null), state: disconnectedState, childReceived },
+          stderr: "",
+        });
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test.concurrent.each(["json", "advanced"])(
+      "process.disconnect() after big,server,after (%s) delivers every send and calls back with null",
+      async serialization => {
+        using dir = tempDir("ipc-handle-queued-child-disconnect", {
+          "parent.js": `
+const { fork } = require('node:child_process');
+const { text } = require('node:stream/consumers');
+const child = fork('child.js', { stdio: ['ignore', 'inherit', 'pipe', 'ipc'], serialization: process.argv[2] });
+const received = [];
+child.on('message', (message, handle) => {
+  received.push((typeof message === 'string' ? message : 'big') + (handle ? '+handle' : ''));
+  if (handle) handle.close();
+});
+const disconnected = new Promise(resolve => child.on('disconnect', resolve));
+const exited = new Promise(resolve => child.on('exit', resolve));
+Promise.all([text(child.stderr), exited, disconnected]).then(([childReport, code]) => {
+  console.log(JSON.stringify({ received, code, child: JSON.parse(childReport) }));
+});
+`,
+          "child.js": `
+const net = require('node:net');
+const server = net.createServer().listen(0, '127.0.0.1', () => {
+  const pad = Buffer.alloc(2 * 1024 * 1024, 'x').toString();
+  const callbacks = ['never called', 'never called', 'never called'];
+  process.send({ pad }, err => { callbacks[0] = err; });
+  process.send('server', server, err => { callbacks[1] = err; });
+  process.send('after', err => { callbacks[2] = err; });
+  process.disconnect();
+  const state = { connected: process.connected };
+  process.once('error', err => { state.secondDisconnect = err.code; });
+  process.disconnect();
+  process.send('late', err => { state.lateSend = err.code; });
+  process.on('disconnect', () => { process.stderr.write(JSON.stringify({ callbacks, state })); server.close(); });
+});
+`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "parent.js", serialization],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+          out: {
+            received: ["big", "server+handle", "after"],
+            code: 0,
+            child: { callbacks: [null, null, null], state: disconnectedState },
+          },
+          stderr: "",
+        });
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    // The wait ends when the peer dies. Which send callbacks run on that close is not pinned here.
+    test.concurrent("a postponed subprocess.disconnect() ends when the peer is killed", async () => {
+      using dir = tempDir("ipc-handle-queued-disconnect-kill", {
+        "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const server = net.createServer();
+server.listen(0, '127.0.0.1', () => {
+  net.connect(server.address().port, '127.0.0.1', function () {
+    const child = fork('child.js');
+    let disconnects = 0;
+    child.on('disconnect', () => { disconnects++; });
+    child.send({ pad: Buffer.alloc(2 * 1024 * 1024, 'x').toString() });
+    child.send('socket', this);
+    child.send('after');
+    child.disconnect();
+    const connected = child.connected;
+    child.kill('SIGKILL');
+    child.on('close', (code, signal) => {
+      console.log(JSON.stringify({ connected, disconnects, signal }));
+      process.exit(0);
+    });
+  }).on('error', () => {});
+});
+`,
+        "child.js": `process.on('message', () => {});`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+        out: { connected: false, disconnects: 1, signal: "SIGKILL" },
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // Only a handle postpones the close. This peer blocks on its stdin pipe until the parent kills it, so
+    // it never reads the channel, and a disconnect() that waited for the queue would never finish.
+    // Not on Windows: a close there waits for the write in progress, which this peer never lets complete.
+    test.concurrent.skipIf(isWindows)(
+      "subprocess.disconnect() does not wait for queued sends that carry no handle",
+      async () => {
+        using dir = tempDir("ipc-plain-queued-disconnect", {
+          "parent.js": `
+const { fork } = require('node:child_process');
+const child = fork('child.js', { stdio: ['pipe', 'inherit', 'inherit', 'ipc'] });
+let disconnects = 0;
+child.send({ pad: Buffer.alloc(2 * 1024 * 1024, 'x').toString() });
+child.send('after');
+child.disconnect();
+child.on('disconnect', () => { disconnects++; child.kill('SIGKILL'); });
+child.on('close', (code, signal) => console.log(JSON.stringify({ disconnects, signal })));
+`,
+          "child.js": `require('node:fs').readSync(0, Buffer.alloc(1));`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "parent.js"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+          out: { disconnects: 1, signal: "SIGKILL" },
+          stderr: "",
+        });
+        expect(exitCode).toBe(0);
+      },
+    );
   });
 });

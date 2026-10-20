@@ -868,6 +868,8 @@ pub(crate) struct WindowsState {
     /// field never frees.
     pub(crate) windows_write: Option<*mut WindowsWrite>,
     pub(crate) try_close_after_write: bool,
+    /// The peer's reply to a handle message, read before libuv reported that message's write complete; `on_write_complete` applies it.
+    pub(crate) early_ack_nack: Option<AckNack>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -915,7 +917,7 @@ pub(crate) struct SendQueue {
 
     pub(crate) deferred_scheduled: Cell<bool>,
     pub(crate) pending_close: Cell<bool>,
-    /// A user disconnect() waiting for the handle queue to flush; reported as disconnected meanwhile, cleared by any real close.
+    /// A user disconnect() waiting for a handle send not yet acked (queued or written) and the queue behind it; reported as disconnected meanwhile, cleared by any real close.
     pub(crate) close_after_flush: Cell<bool>,
     pub(crate) pending_after_close: Cell<bool>,
     pub(crate) write_in_progress: Cell<bool>,
@@ -1262,12 +1264,15 @@ impl SendQueue {
         self.schedule_deferred();
     }
 
-    /// User disconnect(): reports disconnected now but, like node, closes only once a handle awaiting its ack and the queue behind it have gone out.
+    /// node's `_handleQueue !== null`, a handle send the peer has not acked yet, still queued or already written: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L861-L864
+    fn has_unacked_handle(&self) -> bool {
+        self.waiting_for_ack.get().is_some()
+            || self.queue.get().iter().any(|item| item.handle.is_some())
+    }
+
+    /// User disconnect(): reports disconnected now but, like node, closes only once a handle send not yet acked and the queue behind it have gone out.
     pub(crate) fn disconnect(&self) {
-        if self.socket_is_open()
-            && !self.pending_close.get()
-            && self.waiting_for_ack.get().is_some()
-        {
+        if self.socket_is_open() && !self.pending_close.get() && self.has_unacked_handle() {
             self.close_after_flush.set(true);
             return;
         }
@@ -1341,6 +1346,19 @@ impl SendQueue {
             Some(item) => Some(item.handle.is_some()),
         });
         let Some(has_handle) = waiting else {
+            // uv_write completes later, so the reply can be read before `on_write_complete` parks the message in `waiting_for_ack`.
+            #[cfg(windows)]
+            if self.write_in_progress.get()
+                && self
+                    .queue
+                    .get()
+                    .first()
+                    .is_some_and(|first| first.handle.is_some())
+            {
+                log!("onAckNack: ack/nack arrived before the handle message's write completed");
+                self.windows.with_mut(|w| w.early_ack_nack = Some(ack_nack));
+                return;
+            }
             log!("onAckNack: ack received but not waiting for ack");
             return;
         };
@@ -1531,6 +1549,8 @@ impl SendQueue {
             return;
         }
         self.write_in_progress.set(false);
+        #[cfg(windows)]
+        let early_ack_nack = self.windows.with_mut(|w| w.early_ack_nack.take());
         let global_this = self.get_global_this();
 
         enum Done {
@@ -1575,6 +1595,10 @@ impl SendQueue {
         });
         match done {
             Done::AwaitAck => {
+                #[cfg(windows)]
+                if let Some(ack_nack) = early_ack_nack {
+                    return self.on_ack_nack(&global_this, ack_nack);
+                }
                 self.continue_send(&global_this, ContinueSendReason::OnWritable);
             }
             Done::Completed(item) => {

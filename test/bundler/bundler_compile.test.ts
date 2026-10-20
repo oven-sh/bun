@@ -872,6 +872,162 @@ describe("bundler", () => {
       setCwd: true,
     },
   });
+  // `__dirname` / `__filename` must not be inlined as the build machine's
+  // absolute file path when producing a standalone executable. They should
+  // resolve to the same virtual `/$bunfs/root/...` path that `import.meta.dir`
+  // and `import.meta.path` return at runtime.
+  //
+  // ESM output reads them from `import.meta`, which uses the platform
+  // separator. CJS output (`--format=cjs`, or `--bytecode`, which implies it)
+  // leaves them to the module wrapper's parameters, which are the standalone
+  // graph key: forward-slashed on every platform, including Windows.
+  const bunfsEsm = isWindows ? ["B:\\~BUN\\root", "B:\\~BUN\\root\\out"] : ["/$bunfs/root", "/$bunfs/root/out"];
+  const bunfsCjs = isWindows ? ["B:/~BUN/root", "B:/~BUN/root/out"] : ["/$bunfs/root", "/$bunfs/root/out"];
+
+  for (const bytecode of [false, true]) {
+    itBundled(`compile/DirnameFilenameUsesVirtualPath${bytecode ? "Bytecode" : ""}`, {
+      compile: true,
+      // With --bytecode the chunk is never parsed by JSC at runtime: the module
+      // record only gets import.meta because the printer saw the synthesized
+      // `import.meta.dir` and flagged the chunk, so that path is covered too.
+      bytecode,
+      format: "esm",
+      files: {
+        "/entry.ts": /* js */ `
+          import "./nested.cjs";
+          console.log("entry __dirname:", __dirname);
+          console.log("entry __filename:", __filename);
+          if (__dirname !== import.meta.dir) throw new Error("__dirname !== import.meta.dir");
+          if (__filename !== import.meta.path) throw new Error("__filename !== import.meta.path");
+        `,
+        "/nested.cjs": /* js */ `
+          console.log("nested __dirname:", __dirname);
+          console.log("nested __filename:", __filename);
+          module.exports = 1;
+        `,
+      },
+      run: {
+        stdout: [
+          `nested __dirname: ${bunfsEsm[0]}`,
+          `nested __filename: ${bunfsEsm[1]}`,
+          `entry __dirname: ${bunfsEsm[0]}`,
+          `entry __filename: ${bunfsEsm[1]}`,
+        ].join("\n"),
+      },
+    });
+  }
+  // The `--bytecode` (implied CJS) variant is in compile-asset-bunfs.test.ts so
+  // that it also runs on Windows, where the wrapper's separator handling matters.
+  itBundled("compile/DirnameFilenameUsesVirtualPathCJS", {
+    compile: true,
+    format: "cjs",
+    files: {
+      "/entry.ts": /* js */ `
+        const nested = require("./nested.cjs");
+        console.log("entry __dirname:", __dirname);
+        console.log("entry __filename:", __filename);
+        console.log("entry import.meta.dir:", import.meta.dir);
+        console.log("entry import.meta.path:", import.meta.path);
+        if (__dirname !== import.meta.dir) throw new Error("__dirname !== import.meta.dir");
+        if (__filename !== import.meta.path) throw new Error("__filename !== import.meta.path");
+        if (__dirname !== import.meta.dirname) throw new Error("__dirname !== import.meta.dirname");
+        if (__filename !== import.meta.filename) throw new Error("__filename !== import.meta.filename");
+        nested.report();
+      `,
+      "/nested.cjs": /* js */ `
+        module.exports.report = function () {
+          console.log("nested __dirname:", __dirname);
+          console.log("nested __filename:", __filename);
+        };
+      `,
+    },
+    run: {
+      stdout: [
+        `entry __dirname: ${bunfsCjs[0]}`,
+        `entry __filename: ${bunfsCjs[1]}`,
+        `entry import.meta.dir: ${bunfsCjs[0]}`,
+        `entry import.meta.path: ${bunfsCjs[1]}`,
+        `nested __dirname: ${bunfsCjs[0]}`,
+        `nested __filename: ${bunfsCjs[1]}`,
+      ].join("\n"),
+    },
+  });
+  // An entry that uses none of `require` / `module` / `exports` / `import` is
+  // classified as ESM by the parser. The CJS wrapper is applied per chunk by
+  // the linker, so `__dirname` / `__filename` still bind to its parameters.
+  itBundled("compile/DirnameFilenameCJSEntryWithoutRequire", {
+    compile: true,
+    format: "cjs",
+    files: {
+      "/entry.ts": /* js */ `
+        console.log(__dirname);
+        console.log(__filename);
+        console.log(import.meta.dir === __dirname && import.meta.path === __filename);
+      `,
+    },
+    run: {
+      stdout: [bunfsCjs[0], bunfsCjs[1], "true"].join("\n"),
+    },
+  });
+  // Browser-side chunks produced by the client transpiler for HTML imports
+  // must keep the string-literal lowering for `__dirname`/`__filename`;
+  // `import.meta.dir`/`.path` are Bun-only and undefined in a real browser.
+  test("compile/DirnameFilenameInBrowserChunk", async () => {
+    using dir = tempDir("compile-dirname-browser", {
+      "frontend.tsx": `
+        console.log("browser __dirname=" + __dirname);
+        console.log("browser __filename=" + __filename);
+      `,
+      "index.html": `<!doctype html>
+        <html><head><script type="module" src="./frontend.tsx" async></script></head>
+        <body><div id="root"></div></body></html>`,
+      "entry.tsx": `
+        import index from "./index.html";
+        const server = Bun.serve({ port: 0, routes: { "/*": index }, development: false });
+        const html = await (await fetch(server.url)).text();
+        const m = html.match(/src="([^"]+\\.js)"/);
+        if (!m) { console.error("no browser JS chunk in HTML"); process.exit(1); }
+        const js = await (await fetch(new URL(m[1], server.url))).text();
+        await server.stop();
+        if (js.includes("import.meta.dir") || js.includes("import.meta.path")) {
+          console.error("browser chunk contains import.meta.dir/path");
+          console.error(js);
+          process.exit(1);
+        }
+        console.log("server __dirname:", __dirname);
+        console.log("browser chunk inlines __dirname as string:", typeof js === "string" && /__dirname\\s*=\\s*"/.test(js));
+      `,
+    });
+    const ext = isWindows ? ".exe" : "";
+    const outfile = join(String(dir), "app" + ext);
+    {
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", join(String(dir), "entry.tsx"), "--outfile", outfile],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      if (exitCode !== 0) console.error(stdout, stderr);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    }
+    await using proc = Bun.spawn({
+      cmd: [outfile],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const bunfsRoot = isWindows ? "B:\\~BUN\\root" : "/$bunfs/root";
+    expect({ stderr, stdout: stdout.trim() }).toEqual({
+      stderr: "",
+      stdout: ["server __dirname: " + bunfsRoot, "browser chunk inlines __dirname as string: true"].join("\n"),
+    });
+    expect(exitCode).toBe(0);
+  }, 60_000);
   itBundled("compile/VariousBunAPIs", {
     compile: true,
     files: {

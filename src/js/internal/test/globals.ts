@@ -19,6 +19,11 @@ const deleteOwnProperty: (object: object, key: PropertyKey) => boolean = $newCpp
   2,
 );
 
+// Builtin modules are loaded once and shared by all files. These two patch `Performance.prototype` and
+// `MessagePort.prototype` on load, so load them before the snapshot. Otherwise the restore would remove their patches.
+require("node:perf_hooks");
+require("node:worker_threads");
+
 // This module is evaluated before any test file runs. Test files can patch builtins later,
 // so only use what's captured here, $-private names, index loops and null-prototype descriptors.
 const { getPrototypeOf, getOwnPropertyDescriptor, defineProperty, getOwnPropertyNames } = Object;
@@ -119,10 +124,10 @@ function restoreProperties(object: object, properties: Properties, size: number)
     }
     const current = getOwnPropertyDescriptor(object, key)!;
     if (isSame(current, saved)) continue;
-    if (!$getByIdDirect(current, "configurable") && !$getByIdDirect(current, "writable")) {
+    if (!$getByIdDirect(current, "configurable")) {
+      if (saved.configurable) deleteOwnProperty(object, key);
       // Some builtins have a read-only property that gives a new value each time it's read.
-      if (!saved.configurable) continue;
-      deleteOwnProperty(object, key);
+      else if (!$getByIdDirect(current, "writable")) continue;
     }
     defineProperty(object, key, saved);
   }

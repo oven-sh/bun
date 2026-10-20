@@ -1532,6 +1532,70 @@ describe.concurrent("bun test --isolate=modules", () => {
     expect(lines).toEqual(Array(2).fill(JSON.stringify([false, false, "function", true, false])));
   });
 
+  test("restores a global that a file redefined as writable but not configurable, and the properties after it", async () => {
+    const state = `JSON.stringify([fetch.name, Object.getOwnPropertyDescriptor(globalThis, "fetch").configurable, "addedLater" in globalThis])`;
+    const files = {
+      "a.test.js": `test("a", () => {
+        console.log(${state});
+        Object.defineProperty(globalThis, "fetch", { value: function stub() {}, writable: true, configurable: false });
+        globalThis.addedLater = 1;
+      });`,
+      "b.test.js": `test("b", () => { console.log(${state}); });`,
+    };
+    const lines = (await passes(files, 2)).split("\n").filter(line => line.startsWith("["));
+    expect(lines).toEqual(Array(2).fill(JSON.stringify(["fetch", true, false])));
+  });
+
+  test("keeps what node:perf_hooks and node:worker_threads add to the builtins when they load", async () => {
+    const file = `
+      import "node:perf_hooks";
+      import "node:worker_threads";
+      test("reads the additions", () => {
+        const { timerify, eventLoopUtilization, nodeTiming } = performance;
+        // The native close() has no parameters.
+        console.log(JSON.stringify([typeof timerify, typeof eventLoopUtilization, typeof nodeTiming, MessagePort.prototype.close.length]));
+      });
+    `;
+    const lines = (await passes({ "a.test.js": file, "b.test.js": file }, 2))
+      .split("\n")
+      .filter(line => line.startsWith("["));
+    expect(lines).toEqual(Array(2).fill(JSON.stringify(["function", "function", "object", 1])));
+  });
+
+  // If this fails, load the module before the snapshot in src/js/internal/test/globals.ts.
+  test("no other builtin module patches a global class when it loads", async () => {
+    const files = {
+      "a.test.js": `test("loads every builtin module", () => {
+        const objects = Object.getOwnPropertyNames(globalThis)
+          .map(name => Object.getOwnPropertyDescriptor(globalThis, name).value)
+          .filter(value => typeof value === "function")
+          .flatMap(value => [value, value.prototype])
+          .filter(object => object != null);
+        const functionsOf = object =>
+          new Map(
+            Reflect.ownKeys(object).map(key => {
+              const { value, get, set } = Object.getOwnPropertyDescriptor(object, key);
+              return [key, [typeof value === "function" ? value : undefined, get, set]];
+            }),
+          );
+        const before = objects.map(functionsOf);
+        const patched = [];
+        for (const id of require("node:module").builtinModules) {
+          if (/^bun|^_|^(wasi|repl|inspector|trace_events)/.test(id)) continue;
+          require(id);
+          objects.forEach((object, i) => {
+            for (const [key, functions] of functionsOf(object)) {
+              if (functions.some((fn, j) => fn !== before[i].get(key)?.[j]) || !before[i].has(key)) patched.push(id + ": " + String(key));
+              before[i].set(key, functions);
+            }
+          });
+        }
+        console.log(JSON.stringify(patched));
+      });`,
+    };
+    expect((await passes(files, 1)).split("\n").filter(line => line.startsWith("["))).toEqual(["[]"]);
+  });
+
   test("the global object and the builtin modules are the same for every file", async () => {
     const files = {
       "a.test.js": `import fs from "node:fs"; test("a", () => { fs.arrayOfA = Array; });`,

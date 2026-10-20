@@ -23,8 +23,7 @@ fn is_valid_radix_value(value: f64) -> bool {
     value.fract() == 0.0 && (2.0..=36.0).contains(&value)
 }
 
-/// ESLint's `isValidRadix`: anything but a literal that is not an integer between 2 and 36, and
-/// `undefined`.
+/// ESLint's `isValidRadix`: false only for `undefined` and for a literal that isn't an integer between 2 and 36.
 fn is_valid_radix(radix: Expr) -> bool {
     match radix.kind() {
         ExprKind::Unary { op: op @ (UnOp::Minus | UnOp::Plus), operand } => match operand.kind() {
@@ -38,7 +37,7 @@ fn is_valid_radix(radix: Expr) -> bool {
 }
 
 /// oxlint's `is_valid_radix`: an integer between 2 and 36, or a name other than `undefined`.
-fn is_valid_radix_for_oxlint(radix: Expr) -> bool {
+fn oxlint_is_valid_radix(radix: Expr) -> bool {
     match radix.kind() {
         _ if radix.is_parenthesized() => false,
         ExprKind::Number(value) => is_valid_radix_value(value),
@@ -67,7 +66,7 @@ impl Rule for Radix {
         let (callee, is_oxlint) = (call.callee(), cx.language().is_oxlint);
         let global = match callee.kind() {
             ExprKind::Ident(name) if name.is("parseInt") => callee,
-            // oxlint knows `Number["parseInt"]` only as the whole of an optional chain.
+            // oxlint only recognizes `Number["parseInt"]` as the root of an optional chain.
             ExprKind::Index { .. } if is_oxlint && !callee.is_chain_root() => return,
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }
                 if ast_utils::is_specific_member_access(callee, Some("Number"), Some("parseInt")) =>
@@ -83,7 +82,7 @@ impl Rule for Radix {
         if !is_global {
             return;
         }
-        // For oxlint `...a` is an argument like another, and no radix.
+        // oxlint treats `...a` like any other argument, and as an invalid radix.
         let args = call.args();
         if !is_oxlint && args.iter().take(2).any(|arg| arg.tag() == ExprTag::Spread) {
             return;
@@ -106,7 +105,7 @@ impl Rule for Radix {
                 });
             }
             (Some(_), Some(radix)) => {
-                if !(if is_oxlint { is_valid_radix_for_oxlint(radix) } else { is_valid_radix(radix) }) {
+                if !(if is_oxlint { oxlint_is_valid_radix(radix) } else { is_valid_radix(radix) }) {
                     // oxlint points at the radix.
                     cx.report(if is_oxlint { radix.outer_span() } else { e.span() }, INVALID_RADIX);
                 }

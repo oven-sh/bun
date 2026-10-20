@@ -4,7 +4,7 @@ use bun_lint::utils::{ast_utils, text};
 
 /// Enforce a maximum number of statements allowed in function blocks.
 pub struct MaxStatements {
-    /// `None`: `{ "maximum": 0 }`, which upstream compares with `undefined`.
+    /// `None` for `{ "maximum": 0 }`, where upstream compares against `undefined`.
     max: Option<usize>,
     ignore_top_level_functions: bool,
 }
@@ -16,16 +16,16 @@ const EXCEED: Message = Message::new(
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// By the number of a function or a static block: the sum of the lengths of the `BlockStatement`s in it, without its body and
-    /// without those of the functions and the static blocks in it.
+    /// By the index of a function or static block: the total length of the `BlockStatement`s in it, not counting its
+    /// own body or anything in nested functions and static blocks.
     in_blocks: Vec<u32>,
-    /// The function or the static block that a block is in.
-    around: AncestorMemo<'a, Func<'a>>,
-    /// With `ignoreTopLevelFunctions`: how many functions are in no other function or static block.
+    /// The function or static block that contains a block.
+    enclosing_functions: AncestorMemo<'a, Func<'a>>,
+    /// With `ignoreTopLevelFunctions`: how many functions aren't inside another function or static block.
     count: usize,
-    /// Those with too many statements, and how many.
+    /// The functions with too many statements, and how many each has.
     exceeding: Vec<(Func<'a>, usize)>,
-    /// What is in a function or a static block.
+    /// Caches the nodes that are inside a function or static block.
     enclosed: AncestorMemo<'a, ()>,
 }
 
@@ -33,21 +33,21 @@ impl MaxStatements {
     #[cold]
     #[inline(never)]
     fn report<'a>(func: Func<'a>, count: usize, max: usize, cx: &Cx<'a, Self>) {
-        // oxlint points at the function, and knows the name that the function itself has.
-        let (name, place) = match (cx.language().is_oxlint, func.name()) {
+        // oxlint reports the whole function, and only uses the function's own name.
+        let (name, report_span) = match (cx.language().is_oxlint, func.name()) {
             (true, Some(name)) => ([&b"function `"[..], name.bytes(), b"`"].concat(), func.estree_span()),
             (true, None) => (b"function".to_vec(), func.estree_span()),
             (false, _) => {
                 let name = ast_utils::get_function_name_with_kind(func);
-                // Before ESLint 10 it is the whole function.
-                let place = match cx.language().eslint_major < 10 {
+                // Before ESLint 10, the report covers the whole function.
+                let report_span = match cx.language().eslint_major < 10 {
                     true => func.estree_span(),
                     false => ast_utils::get_function_head_loc(func),
                 };
-                (text::upper_case_first(&name).into_owned(), place)
+                (text::upper_case_first(&name).into_owned(), report_span)
             }
         };
-        cx.report(place, EXCEED)
+        cx.report(report_span, EXCEED)
             .data("name", name)
             .data("count", count)
             .data("max", max);
@@ -83,7 +83,7 @@ impl Rule for MaxStatements {
         // A `with` statement has the same tag.
         let len = block.as_block().map_or(0, List::len);
         if len > 0
-            && let Some(func) = cx.state.around.find(Node::Stmt(block), |_, parent| parent.as_func())
+            && let Some(func) = cx.state.enclosing_functions.find(Node::Stmt(block), |_, parent| parent.as_func())
         {
             let at = func.id().idx();
             if at >= cx.state.in_blocks.len() {
@@ -100,7 +100,7 @@ impl Rule for MaxStatements {
             return;
         }
         let is_oxlint = cx.language().is_oxlint;
-        // For oxlint what is in a class is in something.
+        // For oxlint, code inside a class isn't at the top level either.
         let encloses = |it: Node<'a>| matches!(it, Node::Func(_)) || is_oxlint && matches!(it, Node::Class(_));
         let is_top_level = self.ignore_top_level_functions
             && cx.state.enclosed.find(Node::Func(func), |_, it| encloses(it).then_some(())).is_none();
@@ -112,7 +112,7 @@ impl Rule for MaxStatements {
         };
         let in_blocks = cx.state.in_blocks.get(func.id().idx()).map_or(0, |it| *it as usize);
         let body = func.body_statements();
-        // oxlint does not count directives.
+        // oxlint doesn't count directives.
         let directives = match is_oxlint {
             true => body.map_or(0, |it| it.iter().take_while(|it| it.directive().is_some()).count()),
             false => 0,
@@ -127,12 +127,12 @@ impl Rule for MaxStatements {
         }
     }
 
-    /// A single top level function is taken for the wrapper of a module.
+    /// A single top-level function is assumed to be a module wrapper.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let Some(max) = self.max else {
             return;
         };
-        // oxlint asks how many have too many statements.
+        // oxlint counts the functions that have too many statements instead.
         let count = if cx.language().is_oxlint { cx.state.exceeding.len() } else { cx.state.count };
         if count == 1 {
             return;

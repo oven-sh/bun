@@ -25,8 +25,7 @@ impl<'a> ObjectLike<'a> {
         }
     }
 
-    /// It is the type of the only parameter of a function:
-    /// `const fn = ({ foo }: { foo: string }) => {}`.
+    /// True if it's the type of a function's only parameter: `const fn = ({ foo }: { foo: string }) => {}`.
     pub(crate) fn should_hug(&self, f: &Formatter<'a>) -> bool {
         let Self::TSTypeLiteral(ty, _) = *self else {
             return false;
@@ -47,8 +46,8 @@ impl<'a> ObjectLike<'a> {
         }
     }
 
-    /// `({⏎ a⏎}: {⏎ /* comment */⏎}) => {}`: for Prettier a type with nothing but block comments in it is no group
-    /// of its own where it is hugged.
+    /// `({⏎ a⏎}: {⏎ /* comment */⏎}) => {}`: in Prettier a hugged type that contains only block comments doesn't get
+    /// its own group.
     fn breaks_with_pattern(&self, f: &Formatter<'a>) -> bool {
         if f.options().flavor.is_oxfmt() || f.is_quiet() {
             return false;
@@ -83,7 +82,7 @@ impl<'a> Format<'a> for ObjectLike<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         write!(f, "{");
         if let Some(first_member_start) = self.first_member_start() {
-            // An object that has a line break after its `{` in the source stays broken.
+            // An object with a line break after its `{` in the source stays broken.
             let before_first = Span::new(self.span().start, first_member_start);
             let should_expand = f.options().expand == Expand::Auto
                 && match f.options().flavor.is_oxfmt() {

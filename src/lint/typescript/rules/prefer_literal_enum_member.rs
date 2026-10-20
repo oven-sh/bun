@@ -47,10 +47,10 @@ fn is_self_enum_member<'a>(declaration: Enum<'a>, e: Expr<'a>) -> bool {
 
 impl PreferLiteralEnumMember {
     fn is_allowed_initializer<'a>(&self, declaration: Enum<'a>, initializer: Expr<'a>) -> bool {
-        // What has to be allowed, each with whether it is part of a bitwise computation.
+        // Operands still to check, each with a flag for being part of a bitwise computation.
         let mut operands: SmallVec<[(Expr<'a>, bool); 8]> = smallvec::smallvec![(initializer, false)];
         while let Some((e, is_part_of_bitwise_computation)) = operands.pop() {
-            // `C = B` is not allowed, `C = A | B` is.
+            // `C = B` isn't allowed, but `C = A | B` is.
             if is_part_of_bitwise_computation && is_self_enum_member(declaration, e) {
                 continue;
             }
@@ -124,7 +124,7 @@ impl Rule for PreferLiteralEnumMember {
             return;
         };
         cx.report(
-            // oxlint points at the member.
+            // oxlint reports the whole member.
             if cx.language().is_oxlint { member.span() } else { key.inner_span(cx.file()) },
             match self.allow_bitwise_expressions {
                 true => NOT_LITERAL_OR_BITWISE_EXPRESSION,

@@ -151,6 +151,14 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         ..BundlerStyleSheet::empty()
                     };
                     wrap_rules_with_conditions(&mut ast, bump, &entry.conditions);
+                    debug_assert!(
+                        !entry.prints_as_layer_statements()
+                            || ast
+                                .rules
+                                .v
+                                .iter()
+                                .all(|rule| matches!(rule, BundlerCssRule::LayerStatement(_)))
+                    );
                     css_chunk.asts[i] = ast;
                 }
                 CssImportOrderKind::ExternalPath(p) => {

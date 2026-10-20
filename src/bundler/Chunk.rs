@@ -1412,14 +1412,21 @@ pub enum Layers {
     /// Borrowed from another `CssImportOrder`'s `Layers` or the parsed stylesheet.
     Borrowed(bun_ptr::BackRef<Vec<bun_css::LayerName>>),
     Owned(Vec<bun_css::LayerName>),
+    /// A masked external "@import". `find_imported_files_in_css_order` never returns this arm.
+    Masked {
+        path: bun_fs::Path<'static>,
+        conditions_len: u32,
+    },
 }
 
 impl Layers {
     #[inline]
     pub(crate) fn inner(&self) -> &Vec<bun_css::LayerName> {
+        const NONE: &Vec<bun_css::LayerName> = &Vec::new();
         match self {
             Layers::Borrowed(p) => p.get(),
             Layers::Owned(b) => b,
+            Layers::Masked { .. } => NONE,
         }
     }
 
@@ -1452,12 +1459,29 @@ impl Layers {
         }
         match self {
             Layers::Owned(b) => b,
-            Layers::Borrowed(_) => unreachable!(),
+            Layers::Borrowed(_) | Layers::Masked { .. } => unreachable!(),
         }
     }
 }
 
 impl CssImportOrder {
+    /// Whether this entry prints only "@layer" statements, which may precede an "@import".
+    pub(crate) fn prints_as_layer_statements(&self) -> bool {
+        let CssImportOrderKind::Layers(layers) = &self.kind else {
+            return false;
+        };
+        match self.conditions.slice() {
+            [] => true,
+            [only] => {
+                layers.inner().is_empty()
+                    && only.layer.as_ref().is_some_and(|layer| layer.v.is_some())
+                    && only.supports.is_none()
+                    && only.media.media_queries.is_empty()
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn hash<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
         // TODO: conditions, condition_import_records
 

@@ -378,6 +378,20 @@ export const dep = [typeof readFileSync, os.cpus().length > 0, semver.satisfies(
       expect((await import(join(String(dir), "out", "cli.js"))).dep).toEqual(["function", true, true]);
     });
 
+    // #25767: the pragma tells Bun that every file in the bundle was printed for it.
+    it.each([
+      { name: "no target", target: undefined },
+      { name: "target node", target: "node" as const },
+      { name: "target browser", target: "browser" as const },
+    ])(`${backend}: text that is not ASCII in a dependency of a hashbang entry, with $name`, async ({ target }) => {
+      using dir = tempDir("hashbang-target", {
+        "cli.js": `${hashbang}\nexport { symbols } from "./dep.js";\n`,
+        "dep.js": `export const symbols = "✓ ✗ ⚠";\n`,
+      });
+      await build(backend, String(dir), ["cli.js"], { target });
+      expect((await import(join(String(dir), "out", "cli.js"))).symbols).toBe("✓ ✗ ⚠");
+    });
+
     // The resolver completes these: the hashbang is in the file that is loaded.
     it.each([
       { name: "without its extension", entry: "./cli" },

@@ -36,7 +36,6 @@ export const H2FrameParser = b.class({
     altsvc: { ...js, args: { origin: b.any, value: b.any, streamId: b.any } },
     bufferSize: { returns: b.f64 },
     detach: { capability: "js", rustName: "detach_from_js" },
-    emitAbortToAllStreams: { capability: "js" },
     emitErrorToAllStreams: { ...js, args: { code: b.any } },
     flush: { returns: b.usize, capability: "js", rustName: "flush_from_js" },
     forEachStream: { args: { callback: b.any, thisArg: b.any }, capability: "js" },

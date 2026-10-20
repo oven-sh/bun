@@ -6331,39 +6331,6 @@ impl H2FrameParser {
         }
     }
 
-    pub(crate) fn emit_abort_to_all_streams(&self, _: &mut JsScope<'_>) {
-        // R-2: StreamResumableIterator stores a `ParentRef`; `streams` is `JsCell`-backed,
-        // so the loop body can keep using `self` directly.
-        let mut it = StreamResumableIterator::init(self);
-        while let Some(stream_ptr) = it.next() {
-            // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for
-            // the lifetime of the entry. Separate heap allocation from `self`, so no aliasing.
-            let stream = unsafe { &mut *stream_ptr };
-            // this is the oposite logic of emitErrorToallStreams, in this case we wanna to cancel this streams
-            if self.is_server.get() {
-                if stream.id % 2 == 0 {
-                    continue;
-                }
-            } else if stream.id % 2 != 0 {
-                continue;
-            }
-            if stream.state != StreamState::CLOSED {
-                let old_state = stream.state;
-                stream.state = StreamState::CLOSED;
-                stream.rst_code = ErrorCode::CANCEL.0;
-                let identifier = stream.get_identifier();
-                identifier.ensure_still_alive();
-                stream.free_resources::<false>(self);
-                self.dispatch_with_2_extra(
-                    js::on_aborted_get_cached,
-                    identifier,
-                    JSValue::UNDEFINED,
-                    JSValue::js_number(old_state as u8 as f64),
-                );
-            }
-        }
-    }
-
     pub(crate) fn emit_error_to_all_streams(
         &self,
         cx: &mut JsScope<'_>,

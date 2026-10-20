@@ -657,6 +657,8 @@ describe.concurrent("bun run", () => {
     ["npm run", "run"],
     ["npx", "x"],
     ["pnpm run", "run"],
+    // pnpm's `-w` is `--workspace-root`, which `bun run` does not have.
+    ["pnpm run -w", "passthrough"],
     ["pnpm dlx", "x"],
     ["pnpx", "x"],
   ];
@@ -701,19 +703,27 @@ describe.concurrent("bun run", () => {
 
   // https://github.com/oven-sh/bun/issues/33796
   describe("npm workspace flags in scripts", () => {
-    // `start` is the script under test. Only apps/app has `hello`, only the root has `greet`.
-    async function runStart(start: string) {
+    // `start` is the script under test. Only apps/app has `hello`, only the root has `greet`, and
+    // no package has the name of the folder `client`.
+    async function runStart(start: string, cmd = ["run", "start"], script = "start") {
       const dir = tempDir("npm-workspace-flags", {
         "package.json": JSON.stringify({
           private: true,
-          workspaces: ["apps/*"],
-          scripts: { start, greet: "echo greet-done" },
+          workspaces: ["apps/*", "client"],
+          scripts: { [script]: start, greet: "echo greet-done" },
         }),
-        "apps/app/package.json": JSON.stringify({ name: "app", scripts: { hello: "echo workspace-ok" } }),
+        "apps/app/package.json": JSON.stringify({
+          name: "app",
+          scripts: { hello: "echo workspace-ok", start: "cd ../.. && npm run build -w client" },
+        }),
         "apps/scoped/package.json": JSON.stringify({ name: "@apps/scoped", scripts: { scoped: "echo scoped-ok" } }),
+        "client/package.json": JSON.stringify({
+          name: "@scope/web",
+          scripts: { build: "echo client-ok", hello: "echo client-hello" },
+        }),
       });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", "start"],
+        cmd: [bunExe(), ...cmd],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -726,19 +736,21 @@ describe.concurrent("bun run", () => {
     }
 
     it.each([
-      ["npm run hello -w app", " run --filter=app hello\n", "workspace-ok"],
-      ["npm run -w app hello", " run --filter=app hello\n", "workspace-ok"],
-      ["npm run hello --workspace app", " run --filter=app hello\n", "workspace-ok"],
-      ["npm run hello --workspace=app", " run --filter=app hello\n", "workspace-ok"],
-      ["npm run hello -w=app", " run --filter=app hello\n", "workspace-ok"],
-      ["npm run hello -w apps/app", " run --filter=./apps/app hello\n", "workspace-ok"],
-      ["npm run hello -w ./apps/app", " run --filter=./apps/app hello\n", "workspace-ok"],
-      ["npm run hello --workspace=apps/app", " run --filter=./apps/app hello\n", "workspace-ok"],
-      ["npm run scoped -w @apps/scoped", " run --filter=@apps/scoped scoped\n", "scoped-ok"],
+      ["npm run hello -w app", " run -w app hello\n", "workspace-ok"],
+      ["npm run -w app hello", " run -w app hello\n", "workspace-ok"],
+      ["npm run hello --workspace app", " run -w app hello\n", "workspace-ok"],
+      ["npm run hello --workspace=app", " run -w=app hello\n", "workspace-ok"],
+      ["npm run hello -w=app", " run -w=app hello\n", "workspace-ok"],
+      ["npm run hello -w apps/app", " run -w apps/app hello\n", "workspace-ok"],
+      ["npm run hello -w ./apps/app", " run -w ./apps/app hello\n", "workspace-ok"],
+      ["npm run hello --workspace=apps/app", " run -w=apps/app hello\n", "workspace-ok"],
+      ["npm run scoped -w @apps/scoped", " run -w @apps/scoped scoped\n", "scoped-ok"],
+      ["npm run build -w client", " run -w client build\n", "client-ok"],
+      ["npm run hello -w apps --if-present", " run -w apps --if-present hello\n", "workspace-ok"],
       ["npm run hello --ws --if-present", " run --workspaces --if-present hello\n", "workspace-ok"],
       ["npm run hello --workspaces --if-present", " run --workspaces --if-present hello\n", "workspace-ok"],
       ["echo chained && npm run hello --if-present --ws", " run --if-present --workspaces hello\n", "workspace-ok"],
-      ["npm run hello -w app && echo chained", " run --filter=app hello && echo chained\n", "chained"],
+      ["npm run hello -w app && echo chained", " run -w app hello && echo chained\n", "chained"],
     ])("%s runs the script of the workspace", async (start, rewritten, output) => {
       const { dir, stdout, stderr, exitCode } = await runStart(start);
       using _ = dir;
@@ -759,7 +771,8 @@ describe.concurrent("bun run", () => {
     ])("%s still runs the root's script", async start => {
       const { dir, stdout, stderr, exitCode } = await runStart(start);
       using _ = dir;
-      expect(stderr).not.toContain("--filter");
+      // A flag that was moved stands between `run` and the name.
+      expect(stderr).toContain(" run greet");
       expect(stdout).toContain("greet-done");
       expect(exitCode).toBe(0);
     });
@@ -767,7 +780,7 @@ describe.concurrent("bun run", () => {
     it("doesn't change a redirect that's attached to the workspace name", async () => {
       const { dir, stderr, exitCode } = await runStart("npm run greet -w app>out.txt");
       using _ = dir;
-      expect(stderr).not.toContain("--filter");
+      expect(stderr).toContain(" run greet");
       expect(await Bun.file(join(String(dir), "out.txt")).text()).toContain("greet-done");
       expect(exitCode).toBe(0);
     });
@@ -775,8 +788,32 @@ describe.concurrent("bun run", () => {
     it.skipIf(isWindows)("doesn't change an `npm run` that's only quoted text", async () => {
       const { dir, stdout, exitCode } = await runStart("echo 'step: npm run build -w app' && echo 'ok; done'");
       using _ = dir;
-      expect(stdout).toContain("-w app");
-      expect(stdout).not.toContain("--filter");
+      expect(stdout).toContain(" run build -w app");
+      expect(exitCode).toBe(0);
+    });
+
+    // Each command that runs a script rewrites it. `apps/app` has the script
+    // `cd ../.. && npm run build -w client`. Only bun's runner prints the name of the package.
+    it.each([
+      [["start"], "start"],
+      [["run", "--parallel", "start"], "start"],
+      [["run", "--filter", "app", "start"], "unused"],
+      [["install"], "postinstall"],
+    ])("bun %j runs the script of the folder", async (cmd, script) => {
+      const { dir, stdout, exitCode } = await runStart("npm run build -w client", cmd, script);
+      using _ = dir;
+      expect(stdout).toContain("@scope/web build: client-ok");
+      expect(exitCode).toBe(0);
+    });
+
+    // The value stays one word with its flag, so the shell makes two flags of it.
+    it("npm run hello --workspace={app,client} runs both packages", async () => {
+      const start = "npm run hello --workspace={app,client}";
+      const { dir, stdout, stderr, exitCode } = await runStart(start, ["run", "--shell=bun", "start"]);
+      using _ = dir;
+      expect(stderr).toContain(" run -w={app,client} hello\n");
+      expect(stdout).toContain("app hello: workspace-ok");
+      expect(stdout).toContain("@scope/web hello: client-hello");
       expect(exitCode).toBe(0);
     });
   });

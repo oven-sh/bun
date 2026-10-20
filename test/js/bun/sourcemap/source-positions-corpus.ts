@@ -439,6 +439,97 @@ export const cases: Record<string, Case> = {
 `,
   },
   // What is a function to the engine alone: not one of the file's functions, and not run until it is.
+  // What is after a statement that the function was left at, and did not come back to.
+  "suspended.ts": {
+    functions: "4/4",
+    lines: `
+ 2|function* generator() {
+ 2|  at();
+ 2|  yield 1;
+ 1|  at();
+ 1|  yield 2;
+ 0|  at();
+ -|}
+ 1|const resumed = generator();
+ 1|resumed.next();
+ 1|resumed.next();
+ 1|generator().next();
+ 1|async function stuck() {
+ 1|  at();
+ 1|  await new Promise(() => {});
+ 0|  at();
+ -|}
+ 1|stuck();
+ 1|async function rejected() {
+ 1|  try {
+ 1|    await Promise.reject(new Error());
+ 0|    at();
+ 1|  } catch {
+ 1|    at();
+ -|  }
+ 1|  at();
+ -|}
+ 1|rejected();
+`,
+  },
+  // What `?.`, a logical assignment and a value that is there skip.
+  "skipped.ts": {
+    functions: "8/8",
+    lines: `
+ 4|function one() {
+ 4|  at();
+ 4|  return 1;
+ -|}
+ 2|function chain(o?: { a(n: number): void }) {
+ 2|  o
+ 1|    ?.a(
+ 1|      one(),
+ 1|    );
+ -|}
+ 1|chain();
+ 1|chain({ a() {} });
+ 2|function call(f?: (n: number) => void) {
+ 2|  f
+ -|    ?.(
+ 1|      one(),
+ 1|    );
+ -|}
+ 1|call();
+ 1|call(() => {});
+ 2|function assign(o: Record<string, number | null>) {
+ 2|  o.a ||=
+ 1|    one();
+ 2|  o.b &&=
+ 0|    one();
+ 2|  o.c ??=
+ 0|    one();
+ -|}
+ 1|assign({ a: 1, b: 0, c: 0 });
+ 1|assign({ a: 0, b: 0, c: 0 });
+ 2|function parameter(
+ 2|  v =
+ 1|    one(),
+ -|) {
+ 2|  at();
+ -|}
+ 1|parameter();
+ 1|parameter(1);
+ 1|function pattern({
+ 1|  v =
+ 0|    one(),
+ -|}: { v?: number }) {
+ 1|  at();
+ -|}
+ 1|pattern({ v: 1 });
+ 1|let node: any = { next: { next: {} } };
+ 3|while (node?.next) {
+ 2|  node = node.next;
+ -|}
+ 1|switch (2 as number) {
+ 0|  case node?.next: at();
+ -|}
+`,
+  },
   "engine-functions.ts": {
     functions: "5/6",
     lines: `

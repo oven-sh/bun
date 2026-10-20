@@ -336,6 +336,89 @@ test.concurrent("onNavigationFailed can retry navigate() immediately", async () 
   expect(result).toBe("retry was accepted and failed too");
 });
 
+// Chrome answers most commands that are in flight when the main frame commits
+// another document. It can drop these two, with no reply ever, and both hold
+// the Misc slot that click, type, press, scroll, scrollTo and resize share.
+// The runtime resolves them at the commit instead, or the slot stays taken
+// for the life of the view.
+const droppedAtCommit = [
+  ["scroll(0, 100)", "Input.dispatchMouseEvent:mouseWheel"],
+  ['type("x")', "Input.insertText"],
+] as const;
+
+test.concurrent.each(droppedAtCommit)(
+  "a %s that Chrome drops at a navigation resolves at the commit and frees its slot",
+  async (call, command) => {
+    const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/a");
+    await view.evaluate("__fake_drop_next('${command}')");
+    let dropped = "pending";
+    view.${call}.then(() => { dropped = "resolved"; }, e => { dropped = "rejected: " + e.message; });
+    await view.navigate("http://fake/b");
+    let next;
+    try {
+      next = await outcome(view.${call});
+    } catch (e) {
+      next = "threw " + e.code;
+    }
+    print({ dropped, next });
+    view.close();
+  `);
+    expect(result).toEqual({ dropped: "resolved", next: {} });
+  },
+);
+
+// A subframe commit keeps the main document and its renderer, and Chrome
+// answers what is in flight across one, usually after the commit. That reply
+// must be the one that settles the call.
+test.concurrent.each(droppedAtCommit)(
+  "a subframe commit leaves an in-flight %s to Chrome's reply",
+  async (call, command) => {
+    const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/a");
+    await view.evaluate("__fake_hold_next('${command}')");
+    let state = "pending";
+    const settled = view.${call}.then(() => { state = "resolved"; }, e => { state = "rejected: " + e.message; });
+    await view.evaluate(\`__fake_emit("Page.frameNavigated", {
+      frame: { id: "child", parentId: "F", loaderId: "LC", url: "http://fake/child", mimeType: "text/html" },
+      type: "Navigation",
+    })\`);
+    const afterSubframeCommit = state;
+    await view.evaluate("__fake_release()");
+    await settled;
+    print({ afterSubframeCommit, final: state });
+    view.close();
+  `);
+    expect(result).toEqual({ afterSubframeCommit: "pending", final: "resolved" });
+  },
+);
+
+// Chrome does answer some of these commands after the commit, once the new
+// document has taken the input. By then the call has resolved and another
+// operation can hold the Misc slot; the late reply must not settle that one.
+test.concurrent("a reply that comes after the commit does not settle the next operation", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/a");
+    await view.evaluate("__fake_hold_next('Input.insertText')");
+    let first = "pending";
+    view.type("x").then(() => { first = "resolved"; }, e => { first = "rejected: " + e.message; });
+    await view.navigate("http://fake/b");
+    await view.evaluate("__fake_hold_next('Input.dispatchKeyEvent:keyUp')");
+    let second = "pending";
+    const pressed = view.press("Enter").then(() => { second = "resolved"; }, e => { second = "rejected: " + e.message; });
+    await view.evaluate("__fake_release(1)"); // the late Input.insertText reply
+    const afterLateReply = second;
+    await view.evaluate("__fake_release()"); // the keyUp reply
+    await pressed;
+    print({ first, afterLateReply, second });
+    view.close();
+  `);
+  expect(result).toEqual({ first: "resolved", afterLateReply: "pending", second: "resolved" });
+});
+
 // `bun test --isolate` replaces the global object between files. The transport
 // is bound to the global that spawned the browser, so it has to go with that
 // file: its open views are closed, their pending promises rejected, and the

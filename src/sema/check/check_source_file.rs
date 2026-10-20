@@ -63,7 +63,6 @@ impl<'s> Checker<'_, 's> {
         self.task.own.set_sharing(Sharing::Publishes);
 
         self.order_dependent.clear();
-        self.order_dependent_owners.clear();
         self.order_dependent_filter = 0;
     }
 

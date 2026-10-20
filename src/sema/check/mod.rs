@@ -924,9 +924,6 @@ impl<'s> Program<'s> {
             variances_measured: Vec::new(),
             failed_type_argument: 0,
             order_dependent: Default::default(),
-            order_dependent_owners: Vec::new(),
-            variance_keys: Default::default(),
-            owners_of_variance_keys: Default::default(),
             order_dependent_filter: 0,
             order_dependent_uses: 0,
             simplified: spare.simplified,
@@ -1755,13 +1752,7 @@ pub struct Checker<'p, 's> {
     failed_type_argument: u32,
     /// The index of each symbol in `Task::order_dependent_variances`.
     order_dependent: FxHashMap<Sym, u32>,
-    /// The symbols that have a type parameter in `order_dependent`. See `variance_keys`.
-    order_dependent_owners: Vec<Sym>,
-    /// Cache for the method of the same name.
-    variance_keys: FxHashMap<Sym, Option<&'s [Sym]>>,
-    /// For each symbol in a value of `variance_keys`, the key.
-    owners_of_variance_keys: FxHashMap<Sym, Sym>,
-    /// A 64-bit Bloom filter for the keys of `order_dependent` and for `order_dependent_owners`.
+    /// A 64-bit Bloom filter for the keys of `order_dependent`.
     order_dependent_filter: u64,
     /// How many times variances in `order_dependent` were used.
     order_dependent_uses: u64,

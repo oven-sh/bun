@@ -417,8 +417,7 @@ impl View<'_> {
 /// symbol, with no ids in it. So one thread measures, the others wait, and the result is shared when the measurement
 /// ends, not when its task commits.
 ///
-/// - A thread that's about to start an outermost measurement claims the symbol (`Program::claim_variances`). That's the
-///   symbol of a type parameter if its variance is measured alone (`Checker::variance_keys`).
+/// - A thread that's about to start an outermost measurement claims the symbol (`Program::claim_variances`).
 /// - A thread that finds the symbol claimed waits, and then takes the result.
 /// - When an outermost measurement ends, its results are shared immediately if `Checker::share_measured_variances`
 ///   allows it. They go to `Program::serial_variances`, which `variances_worker` checks before it measures and which

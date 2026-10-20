@@ -53,10 +53,19 @@ const script = `
       Array.from({ length: n }, (_, i) => \`.a\${i}{color:red}\`).join(""),
       { chrome: 80 << 16 },
     ],
+    // Each repetition makes the transform handler flush once in the deferred
+    // pass. The output ends with the last unprefixed value and the last
+    // -ms- value, in source order.
+    "prefixed-redeclared": [
+      repeat(".a{-ms-transform:rotate(1deg)}.a{transform:rotate(1deg)}.a{-ms-transform:rotate(2deg)}"),
+      { chrome: 80 << 16 },
+      /transform: rotate\\(1deg\\);\\s*-ms-transform: rotate\\(2deg\\);\\s*}\\s*$/,
+    ],
   };
-  for (const [name, [src, targets]] of Object.entries(floods)) {
+  for (const [name, [src, targets, tail]] of Object.entries(floods)) {
     const out = targets === undefined ? c.minifyTest(src, "") : c._test(src, "", targets);
     if (typeof out !== "string" || out.length === 0) throw new Error(name + " produced no output");
+    if (tail && !tail.test(out)) throw new Error(name + " ends with " + JSON.stringify(out.slice(-80)));
     console.log("OK:" + name);
   }
 `;
@@ -85,6 +94,7 @@ test("duplicate declarations across merged rules minify in linear time instead o
       "OK:clamp",
       "OK:distinct-custom-props",
       "OK:distinct-selectors",
+      "OK:prefixed-redeclared",
       "",
     ].join("\n"),
     stderr: "",

@@ -82,9 +82,34 @@ export function attrTest(source: string, expected: string, minify: boolean, targ
   return __attrTest(source, expected, minify, targets);
 }
 
+/** The declarations that printed CSS gives each selector, in document order. */
+export function printedDeclarations(css: string): Map<string, [name: string, value: string][]> {
+  const bySelector = new Map<string, [string, string][]>();
+  for (const [, selectors, body] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const declarations = body
+      .split(";")
+      .map(declaration => declaration.trim())
+      .filter(Boolean)
+      .map((declaration): [string, string] => {
+        const colon = declaration.indexOf(":");
+        return [declaration.slice(0, colon).trim(), declaration.slice(colon + 1).trim()];
+      });
+    for (const selector of selectors.split(",")) {
+      const key = selector.trim();
+      bySelector.set(key, [...(bySelector.get(key) ?? []), ...declarations]);
+    }
+  }
+  return bySelector;
+}
+
+/** The value a browser applies: the last declaration whose name it reads. */
+export function winner(declarations: [name: string, value: string][], names: string[]): string | undefined {
+  return declarations.findLast(([name]) => names.includes(name))?.[1];
+}
+
 //
 export function indoc(...args: Parameters<typeof dedent>) {
   return dedent(...args);
 }
 
-export { minifyTestWithOptions };
+export { _test, minifyTestWithOptions };

@@ -3,9 +3,10 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
+  _test,
   cssTest,
   cssTestTodo,
   indoc,
@@ -15,6 +16,8 @@ import {
   ParserFlags,
   ParserOptions,
   prefix_test,
+  printedDeclarations,
+  winner,
 } from "./util";
 
 function Some(n: number): number {
@@ -7416,6 +7419,286 @@ describe("css tests", () => {
     );
   });
 
+  // A browser applies the last declaration whose name it reads. A property
+  // handler buffers one value for a set of vendor prefixes, so a declaration
+  // of one name with another value must not change what the other names print.
+  describe("vendor prefix declared again with another value", () => {
+    // The browser targets of `bun build`.
+    const defaultTargets = { chrome: 80 << 16, edge: 80 << 16, firefox: 78 << 16, safari: 14 << 16, opera: 67 << 16 };
+    const rule = (...declarations: string[]) => `.a { ${declarations.map(d => d + ";").join(" ")} }`;
+
+    // [property, prefixes, first value, second value]. Each value prints as written.
+    type Row = [property: string, prefixes: string[], first: string, second: string];
+    const transitionPrefixes = ["-webkit-", "-moz-", "-ms-"];
+    // `flush` prints a written prefix of these properties as written, and the prefixes of the targets once the unprefixed name is declared.
+    const standard: Row[] = [
+      ["transform", ["-webkit-", "-moz-", "-ms-", "-o-"], "rotate(1deg)", "rotate(2deg)"],
+      ["box-shadow", ["-webkit-", "-moz-"], "0 0 1px red", "0 0 2px red"],
+      ["flex-direction", ["-webkit-", "-ms-"], "column", "row-reverse"],
+      ["flex-wrap", ["-webkit-", "-ms-"], "wrap", "wrap-reverse"],
+      ["flex-flow", ["-webkit-", "-ms-"], "column wrap", "row-reverse wrap"],
+      ["flex-grow", ["-webkit-"], "2", "3"],
+      ["flex-shrink", ["-webkit-"], "2", "3"],
+      ["flex-basis", ["-webkit-"], "1px", "2px"],
+      ["flex", ["-webkit-", "-ms-"], "2 2 1px", "3 3 2px"],
+      ["order", ["-webkit-"], "1", "2"],
+      ["transition", transitionPrefixes, "opacity 1s", "opacity 2s"],
+      ["transition-property", transitionPrefixes, "opacity", "color"],
+      ["transition-duration", transitionPrefixes, "1s", "2s"],
+      ["transition-delay", transitionPrefixes, "1s", "2s"],
+      ["transition-timing-function", transitionPrefixes, "ease-in", "ease-out"],
+    ];
+    // `AlignHandler::flush` prints no written prefix once the unprefixed name is declared, also without targets.
+    const align: Row[] = [
+      ["align-content", ["-webkit-"], "center", "flex-end"],
+      ["justify-content", ["-webkit-"], "center", "flex-end"],
+      ["align-self", ["-webkit-"], "center", "flex-end"],
+      ["align-items", ["-webkit-"], "center", "flex-end"],
+    ];
+    // The 2009 and 2012 flexbox names. `flush` prints each prefix as written.
+    const legacy: Row[] = [
+      ["box-orient", ["-webkit-", "-moz-"], "vertical", "horizontal"],
+      ["box-direction", ["-webkit-", "-moz-"], "reverse", "normal"],
+      ["box-ordinal-group", ["-webkit-", "-moz-"], "2", "3"],
+      ["box-flex", ["-webkit-", "-moz-"], "2", "3"],
+      ["box-lines", ["-webkit-", "-moz-"], "multiple", "single"],
+      ["box-pack", ["-webkit-", "-moz-"], "center", "end"],
+      ["box-align", ["-webkit-", "-moz-"], "center", "end"],
+      ["flex-positive", ["-ms-"], "2", "3"],
+      ["flex-negative", ["-ms-"], "2", "3"],
+      ["flex-preferred-size", ["-ms-"], "1px", "2px"],
+      ["flex-order", ["-ms-"], "2", "3"],
+      ["flex-line-pack", ["-ms-"], "center", "end"],
+      ["flex-pack", ["-ms-"], "center", "end"],
+      ["flex-item-align", ["-ms-"], "center", "end"],
+      ["flex-align", ["-ms-"], "center", "end"],
+    ];
+
+    // Every block of one to three declarations of one property, for every set
+    // of names that a browser can read. The first value is fixed.
+    describe("the last declaration of each name wins", () => {
+      const subsets = (names: string[]) =>
+        Array.from({ length: (1 << names.length) - 1 }, (_, bits) => names.filter((_, i) => (bits + 1) & (1 << i)));
+      const tables: [kind: string, rows: Row[], withTargets: "all" | "standard", withoutTargets: "all" | "standard"][] =
+        [
+          ["standard", standard, "standard", "all"],
+          ["align", align, "standard", "standard"],
+          ["legacy", legacy, "all", "all"],
+        ];
+      for (const [kind, rows, withTargets, withoutTargets] of tables) {
+        for (const [property, prefixes, first, second] of rows) {
+          const names = [...prefixes.map(prefix => prefix + property), property];
+          const choices = names.flatMap((name): [string, string][] => [
+            [name, first],
+            [name, second],
+          ]);
+          const blocks: [string, string][][] = [];
+          for (const name of names) {
+            blocks.push([[name, first]]);
+            for (const b of choices) {
+              blocks.push([[name, first], b]);
+              for (const c of choices) blocks.push([[name, first], b, c]);
+            }
+          }
+          const readers = {
+            all: subsets(names),
+            standard: subsets(names).filter(reader => reader.includes(property)),
+          };
+          const forms: [string, (selector: string, block: [string, string][]) => string][] = [
+            ["one rule", (selector, block) => `${selector}{${block.map(d => d.join(":")).join(";")}}`],
+            ["a run of rules", (selector, block) => block.map(d => `${selector}{${d.join(":")}}`).join("")],
+          ];
+          for (const [form, print] of forms) {
+            for (const [label, targets, which] of [
+              ["default targets", defaultTargets, withTargets],
+              ["no targets", undefined, withoutTargets],
+            ] as const) {
+              test(`${kind} ${property}, ${form}, ${label}`, () => {
+                const source = blocks.map((block, i) => print(`.b${i}`, block)).join("\n");
+                const printed = printedDeclarations(_test(source, "", targets));
+                const wrong: string[] = [];
+                blocks.forEach((block, i) => {
+                  const output = printed.get(`.b${i}`) ?? [];
+                  for (const reader of readers[which]) {
+                    const want = winner(block, reader);
+                    const got = winner(output, reader);
+                    if (want !== got && wrong.length < 5) {
+                      wrong.push(`${print(".a", block)} read as ${reader}: ${got}, not ${want}`);
+                    }
+                  }
+                });
+                expect({ blocks: blocks.length, wrong }).toEqual({
+                  blocks: names.length * (1 + 2 * names.length + 4 * names.length ** 2),
+                  wrong: [],
+                });
+              });
+            }
+          }
+        }
+      }
+    });
+
+    describe("default targets", () => {
+      for (const [property, prefixes, first, second] of [...standard, ...align]) {
+        for (const prefix of prefixes) {
+          const P1 = `${prefix}${property}: ${first}`;
+          const U1 = `${property}: ${first}`;
+          const P2 = `${prefix}${property}: ${second}`;
+          const U2 = `${property}: ${second}`;
+
+          // The prefixed property is declared again: the unprefixed value stays.
+          // lightningcss 1.33.0 prints these bytes for the run of three rules.
+          prefix_test(`.a { ${P1}; ${U1}; ${P2} }`, rule(U1, P2), defaultTargets);
+          prefix_test(`.a { ${P1} } .a { ${U1}; ${P2} }`, rule(U1, P2), defaultTargets);
+          prefix_test(`.a { ${P1} } .a { ${U1} } .a { ${P2} }`, rule(U1, P2), defaultTargets);
+          prefix_test(`.a { ${U1} } .a { ${P1} } .a { ${P2} }`, rule(U1, P2), defaultTargets);
+
+          // The unprefixed property is declared again: it replaces the group,
+          // because the targets decide which prefixes the group prints.
+          prefix_test(`.a { ${P1}; ${U1}; ${U2} }`, rule(U2), defaultTargets);
+          prefix_test(`.a { ${U1} } .a { ${P1} } .a { ${U2} }`, rule(U2), defaultTargets);
+        }
+      }
+
+      // lightningcss 1.33.0 prints the same for this run of four rules. The first value has no effect.
+      prefix_test(
+        ".a { -ms-transform: rotate(1deg) } .a { transform: rotate(1deg) } .a { -ms-transform: rotate(2deg) } .a { transform: rotate(2deg) }",
+        rule("transform: rotate(1deg)", "transform: rotate(2deg)"),
+        defaultTargets,
+      );
+
+      prefix_test(
+        ".a { -ms-transform: rotate(1deg) !important } .a { transform: rotate(1deg) !important } .a { -ms-transform: rotate(2deg) !important }",
+        rule("transform: rotate(1deg) !important", "-ms-transform: rotate(2deg) !important"),
+        defaultTargets,
+      );
+      prefix_test(
+        "@supports (display: grid) { .a { -ms-transform: rotate(1deg) } .a { transform: rotate(1deg) } .a { -ms-transform: rotate(2deg) } }",
+        `@supports (display: grid) { ${rule("transform: rotate(1deg)", "-ms-transform: rotate(2deg)")} }`,
+        defaultTargets,
+      );
+      prefix_test(
+        "@media print { .a { -ms-transform: rotate(1deg) } } @media print { .a { transform: rotate(1deg) } } @media print { .a { -ms-transform: rotate(2deg) } }",
+        `@media print { ${rule("transform: rotate(1deg)", "-ms-transform: rotate(2deg)")} }`,
+        defaultTargets,
+      );
+
+      // Framework7 1.7.1 (framework7.material.css): `flex-shrink: 0` printed as `flex-shrink: 1`.
+      prefix_test(
+        ".a { -webkit-box-flex: 0; -webkit-flex-shrink: 0; -ms-flex: 0 0 auto; flex-shrink: 0; -ms-flex: 0 }",
+        rule("-ms-flex: none", "flex-shrink: 0", "-ms-flex: 0"),
+        defaultTargets,
+      );
+
+      // Only the first flush of a block prints the prefixes of the targets, so the `-moz-` value stays.
+      prefix_test(
+        ".a { -moz-box-shadow: 0 0 1px red; box-shadow: 0 0 1px red; -moz-box-shadow: 0 0 2px red; box-shadow: 0 0 2px red; box-shadow: 0 0 3px red }",
+        rule(
+          "box-shadow: 0 0 1px red",
+          "-moz-box-shadow: 0 0 2px red",
+          "box-shadow: 0 0 2px red",
+          "box-shadow: 0 0 3px red",
+        ),
+        defaultTargets,
+      );
+
+      // The autoprefixer output for `transition: transform 1s` (foundation.css has 9 such rules).
+      prefix_test(
+        ".a { -webkit-transition: -webkit-transform 1s; transition: -webkit-transform 1s; transition: transform 1s; transition: transform 1s, -webkit-transform 1s }",
+        rule("transition: transform 1s, -webkit-transform 1s"),
+        defaultTargets,
+      );
+
+      // The duplicate-rule check removes the first `.a` rule here until #33684 compares the names of unknown properties.
+      cssTestTodo(
+        ".a { -ms-transform: rotate(1deg); transform: rotate(1deg); cursor: pointer; -ms-transform: rotate(2deg) } .b { top: 0 } .a { z-index: 2; transform: rotate(3deg); -ms-transform: rotate(4deg) }",
+        `${rule("cursor: pointer", "transform: rotate(1deg)", "-ms-transform: rotate(2deg)")} .b { top: 0; } ${rule("z-index: 2", "transform: rotate(3deg)", "-ms-transform: rotate(4deg)")}`,
+        defaultTargets,
+      );
+    });
+
+    // Without targets every written prefix prints, so the flush keeps both
+    // values of the prefixed property in source order.
+    describe("no targets", () => {
+      const transform = rule("-ms-transform: rotate(1deg)", "transform: rotate(1deg)", "-ms-transform: rotate(2deg)");
+      cssTest(".a { -ms-transform: rotate(1deg); transform: rotate(1deg); -ms-transform: rotate(2deg) }", transform);
+      cssTest(
+        ".a { -ms-transform: rotate(1deg) } .a { transform: rotate(1deg) } .a { -ms-transform: rotate(2deg) }",
+        transform,
+      );
+      // An unprefixed declaration does not change the value of `-ms-transform`.
+      cssTest(
+        ".a { -ms-transform: rotate(1deg); transform: rotate(1deg); transform: rotate(2deg) }",
+        rule("-ms-transform: rotate(1deg)", "transform: rotate(1deg)", "transform: rotate(2deg)"),
+      );
+      // A prefixed declaration does not change the value of another prefix.
+      cssTest(
+        ".a { -ms-transform: rotate(1deg); -webkit-transform: rotate(1deg); -ms-transform: rotate(2deg) }",
+        rule("-webkit-transform: rotate(1deg)", "-ms-transform: rotate(1deg)", "-ms-transform: rotate(2deg)"),
+      );
+      // The align properties print no written prefix for a group that has the unprefixed name.
+      cssTest(
+        ".a { -webkit-justify-content: center; justify-content: center; -webkit-justify-content: flex-end }",
+        rule("justify-content: center", "-webkit-justify-content: flex-end"),
+      );
+      cssTest(
+        ".a { -webkit-justify-content: center; justify-content: center; justify-content: flex-end }",
+        rule("justify-content: flex-end"),
+      );
+      // The autoprefixer output for `transition: transform 1s` keeps the value of `-webkit-transition`.
+      cssTest(
+        ".a { -webkit-transition: -webkit-transform 1s; transition: -webkit-transform 1s; transition: transform 1s; transition: transform 1s, -webkit-transform 1s }",
+        rule(
+          "-webkit-transition: -webkit-transform 1s",
+          "transition: -webkit-transform 1s",
+          "transition: transform 1s, -webkit-transform 1s",
+        ),
+      );
+    });
+
+    describe("targets that need the prefix", () => {
+      prefix_test(
+        ".a { -ms-transform: rotate(1deg); transform: rotate(1deg); -ms-transform: rotate(2deg) }",
+        rule("-ms-transform: rotate(1deg)", "transform: rotate(1deg)", "-ms-transform: rotate(2deg)"),
+        { ie: 9 << 16 },
+      );
+      // The unprefixed declaration is prefixed for the targets, so it replaces the group.
+      prefix_test(
+        ".a { -ms-transform: rotate(1deg); transform: rotate(1deg); transform: rotate(2deg) }",
+        rule("-ms-transform: rotate(2deg)", "transform: rotate(2deg)"),
+        { ie: 9 << 16 },
+      );
+      prefix_test(
+        ".a { -webkit-transition-duration: 1s; transition-duration: 1s; -webkit-transition-duration: 2s }",
+        rule("-webkit-transition-duration: 1s", "transition-duration: 1s", "-webkit-transition-duration: 2s"),
+        { safari: 6 << 16 },
+      );
+      prefix_test(
+        ".a { transition-duration: 1s; transition-duration: 2s }",
+        rule("-webkit-transition-duration: 2s", "transition-duration: 2s"),
+        { safari: 6 << 16 },
+      );
+    });
+
+    // Internet Explorer 10 reads a 2012 name as a longhand of `-ms-flex`, or as `-ms-flex-order`.
+    describe("2012 flex names after the standard name", () => {
+      // Element UI 2.15.14, `.el-main`.
+      cssTest(
+        ".a { -webkit-box-flex: 1; -ms-flex: 1; flex: 1; -ms-flex-preferred-size: auto; flex-basis: auto }",
+        rule("-webkit-box-flex: 1", "-ms-flex: 1", "flex: 1", "-ms-flex-preferred-size: auto", "flex-basis: auto"),
+      );
+      cssTest(".a { -ms-flex: 1; -ms-flex-positive: 2 }", rule("-ms-flex: 1", "-ms-flex-positive: 2"));
+      cssTest(".a { -ms-flex: 1; -ms-flex-negative: 2 }", rule("-ms-flex: 1", "-ms-flex-negative: 2"));
+      cssTest(
+        ".a { -ms-flex: 1; -ms-flex-preferred-size: auto }",
+        rule("-ms-flex: 1", "-ms-flex-preferred-size: auto"),
+      );
+      prefix_test(".a { order: 1; -ms-flex-order: 3 }", rule("-ms-flex-order: 1", "order: 1", "-ms-flex-order: 3"), {
+        ie: 10 << 16,
+      });
+    });
+  });
+
   // https://github.com/parcel-bundler/lightningcss/pull/1340
   describe("individual transforms", () => {
     for (const [property, value, identity] of [
@@ -8321,5 +8604,31 @@ console.log(line.length - line.trimStart().length);`,
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("300");
     expect(exitCode).toBe(0);
+  });
+
+  // No current browser reads `-ms-transform`, so this stylesheet renders rotate(1deg).
+  const prefixedRun =
+    ".a { -ms-transform: rotate(1deg) }\n.a { transform: rotate(1deg) }\n.a { -ms-transform: rotate(2deg) }\n";
+  const prefixedRunMinified = ".a{transform:rotate(1deg);-ms-transform:rotate(2deg)}\n";
+
+  test("bun build keeps the unprefixed value when a later rule declares the prefixed property again", async () => {
+    using dir = tempDir("css-prefixed-run-cli", { "t.css": prefixedRun });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./t.css", "--minify"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(prefixedRunMinified);
+    expect(exitCode).toBe(0);
+  });
+
+  test("Bun.build keeps the unprefixed value when a later rule declares the prefixed property again", async () => {
+    using dir = tempDir("css-prefixed-run-api", { "t.css": prefixedRun });
+    const result = await Bun.build({ entrypoints: [join(String(dir), "t.css")], minify: true });
+    expect(await result.outputs[0].text()).toBe(prefixedRunMinified);
   });
 });

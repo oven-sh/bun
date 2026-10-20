@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, LineReader, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -927,4 +927,81 @@ it.each([
     stdout: ["first load", "collected", "third load", ""],
     stderr: [],
   });
+});
+
+// A save can reload twice, so a line that was already seen is skipped.
+const nextRun = (stdout: LineReader, ...seen: string[]) =>
+  stdout.until(line => line.startsWith("RUN") && !seen.includes(line));
+
+it("--hot reloads when a missing import is created", async () => {
+  writeFileSync(join(cwd, "missing-entry.js"), `import { a } from "./missing-dep.js"; console.log("RUN", a);`);
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "missing-entry.js"],
+    env: bunEnv,
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stdout = new LineReader(runner.stdout);
+  const stderr = new LineReader(runner.stderr);
+
+  await stderr.until(line => line.includes("Cannot find module"));
+
+  writeFileSync(join(cwd, "missing-dep.js"), "export const a = 10;");
+  expect(await nextRun(stdout)).toBe("RUN 10");
+
+  writeFileSync(join(cwd, "missing-dep.js"), "export const a = 20;");
+  expect(await nextRun(stdout, "RUN 10")).toBe("RUN 20");
+});
+
+// Each shape deletes dep.ts and brings it back. `failedReload` resolves once the reload for the delete has failed.
+type Recreate = (dep: string, failedReload: () => Promise<string>) => Promise<void>;
+const recreateDeletedImport: Record<string, Recreate> = {
+  "written again after the failed reload": async (dep, failedReload) => {
+    rmSync(dep);
+    await failedReload();
+    writeFileSync(dep, `export default "B";`);
+  },
+  // The write can land on either side of the failed reload. Both orders must end at B.
+  "written again 10 ms later": async dep => {
+    rmSync(dep);
+    await Bun.sleep(10);
+    writeFileSync(dep, `export default "B";`);
+  },
+  "renamed into place after the failed reload": async (dep, failedReload) => {
+    writeFileSync(dep + ".tmp", `export default "B";`);
+    rmSync(dep);
+    await failedReload();
+    renameSync(dep + ".tmp", dep);
+  },
+};
+
+it.each(Object.entries(recreateDeletedImport))("--hot loads an import that was deleted and %s", async (_, recreate) => {
+  using dir = tempDir("hot-recreated-import", {
+    "dep.ts": `export default "A";`,
+    "entry.ts": `import dep from "./dep.ts"; console.log("RUN", dep);`,
+  });
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "entry.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stdout = new LineReader(runner.stdout);
+  const stderr = new LineReader(runner.stderr);
+  const dep = join(String(dir), "dep.ts");
+
+  expect(await nextRun(stdout)).toBe("RUN A");
+  // One reload first. Without it the 10 ms shape passes most of the time on a build that has the bug.
+  writeFileSync(dep, `export default "A2";`);
+  expect(await nextRun(stdout, "RUN A")).toBe("RUN A2");
+
+  await recreate(dep, () => stderr.until(line => line.includes("Cannot find module")));
+  expect(await nextRun(stdout, "RUN A2")).toBe("RUN B");
+  // A plain save must reload too: the recreated file is watched again.
+  writeFileSync(dep, `export default "C";`);
+  expect(await nextRun(stdout, "RUN B")).toBe("RUN C");
 });

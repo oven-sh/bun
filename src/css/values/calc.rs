@@ -467,7 +467,7 @@ impl<V: CalcValue> Calc<V> {
             }),
             CalcUnit::Abs => input.parse_nested_block(|i| {
                 let v = Self::parse_sum(i, parse_ident)?;
-                Ok(if let Some(vv) = Self::apply_map(&v, absf) {
+                Ok(if let Some(vv) = Self::abs(&v) {
                     vv
                 } else {
                     Calc::Function(Box::new(MathFunction::Abs(v)))
@@ -891,17 +891,12 @@ impl<V: CalcValue> Calc<V> {
         None
     }
 
-    pub(crate) fn apply_map(this: &Self, op: fn(f32) -> f32) -> Option<Self> {
+    fn abs(this: &Self) -> Option<Self> {
         match this {
-            Calc::Number(n) => return Some(Calc::Number(op(*n))),
-            Calc::Value(v) => {
-                if let Some(new_v) = v.try_map(op) {
-                    return Some(Calc::Value(Box::new(new_v)));
-                }
-            }
-            _ => {}
+            Calc::Number(n) => Some(Calc::Number(n.abs())),
+            Calc::Value(v) => Some(Calc::Value(Box::new(v.try_abs()?))),
+            _ => None,
         }
-        None
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -1426,10 +1421,6 @@ impl Constant {
             Constant::Nan => f32::NAN,
         }
     }
-}
-
-fn absf(a: f32) -> f32 {
-    a.abs()
 }
 
 // ───────────────────────── CalcValue impls ─────────────────────────────────

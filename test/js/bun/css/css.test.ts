@@ -319,6 +319,24 @@ describe("css tests", () => {
     });
   });
 
+  describe("abs() folding", () => {
+    // abs() folds when hypot() of one argument does: the sign of the value has to be known.
+    minify_test(`a { margin-left: abs(-3px) }`, `a{margin-left:3px}`);
+    minify_test(`a { line-height: abs(-3) }`, `a{line-height:3}`);
+    minify_test(`a { margin-left: abs(-30%) }`, `a{margin-left:abs(-30%)}`);
+    minify_test(`a { opacity: abs(-50%) }`, `a{opacity:.5}`);
+    minify_test(`a { opacity: calc(10% + abs(50%)) }`, `a{opacity:.6}`);
+    // A registered <percentage> is computed before it is substituted, so it is a number too.
+    minify_test(
+      `@property --p { syntax: "<percentage>"; inherits: false; initial-value: abs(-30%) }`,
+      `@property --p{syntax:"<percentage>";inherits:false;initial-value:30%}`,
+    );
+    minify_test(
+      `@property --p { syntax: "<percentage>"; inherits: false; initial-value: hypot(-30%) }`,
+      `@property --p{syntax:"<percentage>";inherits:false;initial-value:30%}`,
+    );
+  });
+
   describe("calc edge case", () => {
     // https://github.com/oven-sh/bun/issues/18064
     minify_test(

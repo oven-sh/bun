@@ -881,6 +881,15 @@ impl Lockfile {
         self.get_workspace_pkg_if_workspace_dep(id) != invalid_package_id
     }
 
+    /// Returns true if one of the root package's own dependencies resolves to the package. With
+    /// `-g`, the root package is the global package.json.
+    pub(crate) fn is_root_dependency(&self, package_id: PackageID) -> bool {
+        (self.packages.items_resolutions().first()).is_some_and(|root| {
+            root.get(self.buffers.resolutions.as_slice())
+                .contains(&package_id)
+        })
+    }
+
     /// Returns the packages with this name, highest version first (see `get_or_put_id`). Empty if
     /// there are none.
     pub(crate) fn packages_named(&self, name_hash: PackageNameHash) -> &[PackageID] {

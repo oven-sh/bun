@@ -2680,16 +2680,41 @@ pub(crate) fn remove_planted_link(dir: &Dir, path: &ZStr) -> sys::Maybe<()> {
 }
 
 /// For each component of `path` (absolute, or from the cwd) after `path[..real_len]`.
-pub(crate) fn remove_planted_links(path: &[u8], mut real_len: usize) -> sys::Maybe<()> {
+pub(crate) fn remove_planted_links(path: &[u8], real_len: usize) -> sys::Maybe<()> {
+    let failed = find_in_components_after(path, real_len, |component| {
+        remove_planted_link(&Dir::cwd(), component).err()
+    });
+    failed.map_or(Ok(()), Err)
+}
+
+/// Returns true if a component of `path` after `path[..real_len]` is a symlink. Nothing is
+/// removed. See `remove_planted_links`.
+pub(crate) fn has_planted_link(path: &[u8], real_len: usize) -> bool {
+    let is_link = crate::isolated_install::installer::is_link;
+    find_in_components_after(path, real_len, |component| {
+        (is_link(component) == Some(true)).then_some(())
+    })
+    .is_some()
+}
+
+/// Calls `find` with `path` up to each of its components after `path[..real_len]`, until `find`
+/// returns a value.
+fn find_in_components_after<T>(
+    path: &[u8],
+    mut real_len: usize,
+    mut find: impl FnMut(&ZStr) -> Option<T>,
+) -> Option<T> {
     let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
     let mut buf = bun_paths::path_buffer_pool::get();
     while real_len < path.len() {
         let rest = &path[real_len + 1..];
         real_len += 1 + strings::index_of_any(rest, separators).unwrap_or(rest.len());
         let component = bun_paths::resolve_path::z(&path[..real_len], &mut buf);
-        remove_planted_link(&Dir::cwd(), component)?;
+        if let Some(found) = find(component) {
+            return Some(found);
+        }
     }
-    Ok(())
+    None
 }
 
 fn execute(plan: &Plan, quiet: bool) -> usize {

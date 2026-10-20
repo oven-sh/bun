@@ -258,9 +258,7 @@ function newWritableStreamFromStreamWritable(streamWritable) {
         closed.reject(error);
         closed = undefined;
       }
-      // close() clears the controller when the stream already ended, so the
-      // 'close' event can arrive after the WritableStream is closed.
-      // https://github.com/nodejs/node/pull/64161
+      // close() may have cleared the controller: https://github.com/nodejs/node/pull/64161
       controller?.error(error);
       controller = undefined;
       return;
@@ -561,8 +559,7 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
     streamReadable.pause();
 
     streamReadable.on("data", function onData(chunk) {
-      // Buffered data still flows after cancel() destroys the stream.
-      // https://github.com/nodejs/node/pull/62773
+      // Buffered data still flows after cancel(): https://github.com/nodejs/node/pull/62773
       if (wasCanceled) return;
       // Copy the Buffer to detach it from the pool.
       if (Buffer.isBuffer(chunk) && !objectMode) chunk = new Uint8Array(chunk);

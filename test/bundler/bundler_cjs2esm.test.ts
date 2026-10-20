@@ -2508,7 +2508,14 @@ describe("bundler", () => {
           import twice from "./twice.cjs";
           import rest from "./rest.cjs";
           import lifted from "./lifted.cjs";
+          import pair from "./pair.cjs";
+          import keptThenRemoved from "./keptThenRemoved.cjs";
+          import alias from "./alias.cjs";
+          import aliasRemoved from "./aliasRemoved.cjs";
+          import call from "./call.cjs";
           console.log(before.kind, after.kind, twice.kinds.join(), rest.keys, lifted.a);
+          console.log(pair.kind, keptThenRemoved.b, alias.a, alias.get(), aliasRemoved.kind);
+          console.log(call.seen, typeof call.f);
         `,
         "/before.cjs": /* js */ `
           exports.a = 1;
@@ -2537,10 +2544,50 @@ describe("bundler", () => {
           exports.a = 1;
           if (module.exports.a) {}
         `,
+        // One removed statement with two reads.
+        "/pair.cjs": /* js */ `
+          exports.a = 1;
+          exports.b = 2;
+          if (module.exports.a && module.exports.b) {}
+          exports.kind = typeof module;
+        `,
+        // The read in the kept statement still counts: the file lifts.
+        "/keptThenRemoved.cjs": /* js */ `
+          exports.a = 1;
+          exports.b = module.exports.a + 1;
+          if (module.exports.a) {}
+        `,
+        // The minifier moves `module` into `m.exports` and the read is
+        // found on the second visit: in a kept statement, then a removed one.
+        "/alias.cjs": /* js */ `
+          exports.a = 1;
+          exports.get = function () { const m = module; return m.exports.a + 1; };
+        `,
+        "/aliasRemoved.cjs": /* js */ `
+          exports.a = 1;
+          (function () { const m = module; return m.exports.a + 1; });
+          exports.kind = typeof module;
+        `,
+        // The removed call of `exports.f` is no use of `exports`. The one in `Object.keys` stays.
+        "/call.cjs": /* js */ `
+          exports.f = function () { return 1; };
+          exports.seen = Object.keys(exports).join();
+          (function () { exports.f(); });
+        `,
       },
       minifySyntax: true,
-      cjs2esm: { unhandled: ["/before.cjs", "/after.cjs", "/twice.cjs", "/rest.cjs"] },
-      run: { stdout: "object object object,object b,c 1" },
+      cjs2esm: {
+        unhandled: [
+          "/before.cjs",
+          "/after.cjs",
+          "/twice.cjs",
+          "/rest.cjs",
+          "/pair.cjs",
+          "/aliasRemoved.cjs",
+          "/call.cjs",
+        ],
+      },
+      run: { stdout: "object object object,object b,c 1\nobject 2 1 2 object\nf function" },
     });
 
     // `require` is the only CommonJS sign of these files. A folded
@@ -2626,6 +2673,36 @@ describe("bundler", () => {
         "/node_modules/react/index.js": `exports.version = "19.0.0"; exports.createElement = function () {};`,
       },
       run: { stdout: "a,b a,b version,createElement" },
+    });
+
+    // `var module = require()` becomes an import too, and `module` is then
+    // the namespace, not the variable of the CommonJS wrapper: also for a
+    // use in a function above the declaration, and for `module.id`.
+    itBundled(`cjs2esm/VarModuleIsTheUnwrappedRequireNamespace_${backend}`, {
+      backend,
+      files: {
+        "/entry.js": /* js */ `
+          import above from "react-dom/above.js";
+          import "react-dom/property.js";
+          import "react-dom/member.js";
+          console.log(above.keys, globalThis.property, globalThis.member);
+        `,
+        "/node_modules/react-dom/above.js": /* js */ `
+          function keys() { return Object.keys(module).join(); }
+          var module = require("./impl.js");
+          exports.keys = keys();
+        `,
+        "/node_modules/react-dom/property.js": /* js */ `
+          var exports = require("./impl.js");
+          globalThis.property = typeof exports.a;
+        `,
+        "/node_modules/react-dom/member.js": /* js */ `
+          var module = require("./impl.js");
+          globalThis.member = [module.id, typeof module.exports].join();
+        `,
+        "/node_modules/react-dom/impl.js": `exports.a = 1; exports.id = "impl"; exports.exports = "impl";`,
+      },
+      run: { stdout: "a,id,exports number impl,string" },
     });
   }
   // Module code makes a top-level function declaration lexical, so a `var`

@@ -4801,7 +4801,7 @@ describe("bundler", () => {
     });
 
     // The removed statement before or after the use, a use above the
-    // declaration, and one removed test for each use.
+    // declaration, one removed test for each use, and two in one statement.
     itBundled(`dynamic_import_dce/RemovedTestOrderAndCount_${backend}`, {
       backend,
       files: {
@@ -4836,7 +4836,12 @@ describe("bundler", () => {
           const exported = await import("./exported.js");
           !exported;
 
-          console.log(beforeKeys, afterKeys, above(), onceKeys, twiceKeys, arrowKeys, spread());
+          const pair = await import("./pair.js");
+          !pair, typeof pair;
+          (() => [pair.a, pair.b]);
+          const pairKeys = Object.keys(pair).join() + Object.keys({ ...pair }).join();
+
+          console.log(beforeKeys, afterKeys, above(), onceKeys, twiceKeys, arrowKeys, spread(), pairKeys);
         `,
         "/before.js": `export const a = 1, b = 2;`,
         "/after.js": `export const a = 1, b = 2;`,
@@ -4845,41 +4850,89 @@ describe("bundler", () => {
         "/twice.js": `export const a = 1, b = 2;`,
         "/arrow.js": `export const a = 1, b = 2;`,
         "/exported.js": `export const a = 1, b = 2;`,
+        "/pair.js": `export const a = 1, b = 2;`,
       },
-      run: { stdout: "a,b a,b a,b a,ba,b a,ba,b a,b a,b" },
+      run: { stdout: "a,b a,b a,b a,ba,b a,ba,b a,b a,b a,ba,b" },
     });
 
-    // A removed statement keeps no export alive by itself.
-    itBundled(`dynamic_import_dce/RemovedStatementStillNarrows_${backend}`, {
-      backend,
-      files: {
-        "/entry.js": /* js */ `
-          const whole = await import("./whole.js");
-          !whole;
-          console.log(Object.keys(whole).join());
+    // Nothing that a removed statement read stays alive because of it: a
+    // tested namespace, a name of a pattern and a property of that name, a
+    // namespace that `--minify-syntax` moved into its only use. A read in a
+    // kept statement keeps its export (`liveA`, the namespace of `viaSwitch`).
+    for (const minifySyntax of [false, true]) {
+      const mode = minifySyntax ? "MinifySyntax" : "";
+      itBundled(`dynamic_import_dce/RemovedStatementStillNarrows${mode}_${backend}`, {
+        backend,
+        files: {
+          "/entry.js": /* js */ `
+            const whole = await import("./whole.js");
+            !whole;
+            console.log(Object.keys(whole).join());
 
-          const unused = await import("./unused.js");
-          !unused;
+            const unused = await import("./unused.js");
+            !unused;
 
-          const bare = await import("./bare.js");
-          console.log(bare.a);
-          bare;
+            const bare = await import("./bare.js");
+            console.log(bare.a);
+            bare;
 
-          (async () => { const { a } = await import("./callback.js"); return a; });
-          const { b } = await import("./callback.js");
-          console.log(b);
-        `,
-        "/whole.js": marked("WHOLE"),
-        "/unused.js": marked("UNUSED"),
-        "/bare.js": marked("BARE"),
-        "/callback.js": marked("CALLBACK"),
-      },
-      run: { stdout: "a,b\nBARE_A\nCALLBACK_B" },
-      onAfterBundle(api) {
-        const kept = api.readFile("/out.js").match(/[A-Z]+_[AB]\b/g)!;
-        expect([...new Set(kept)].sort()).toEqual(["BARE_A", "CALLBACK_B", "WHOLE_A", "WHOLE_B"]);
-      },
-    });
+            (async () => { const { a } = await import("./callback.js"); return a; });
+            const { b } = await import("./callback.js");
+            console.log(b);
+
+            const mixed = await import("./mixed.js");
+            console.log(mixed.a);
+            !mixed;
+
+            (function () { const { a } = require("./property.js"); return a.length; });
+            const { b: propertyB } = require("./property.js");
+            console.log(propertyB);
+
+            const { a: outsideA, b: outsideB } = require("./outside.js");
+            (function () { return outsideA.length + outsideA.name + outsideA.length; });
+            console.log(outsideB);
+
+            const { a: liveA, b: liveB } = require("./live.js");
+            console.log(liveA.length);
+            (function () { return liveA.length + liveB.length; });
+
+            (function () { const items = require("./items.js"); return items.a.length; });
+            const { b: itemsB } = require("./items.js");
+            console.log(itemsB);
+
+            (function () { const escaped = require("./escaped.js"); return escaped; });
+            const { b: escapedB } = require("./escaped.js");
+            console.log(escapedB);
+
+            function viaSwitch(k) {
+              switch (k) {
+                case 1: const ns = require("./switch.js"); return ns;
+                case 2: return typeof ns;
+              }
+            }
+            console.log(Object.keys(viaSwitch(1)).join());
+          `,
+          "/whole.js": marked("WHOLE"),
+          "/unused.js": marked("UNUSED"),
+          "/bare.js": marked("BARE"),
+          "/callback.js": marked("CALLBACK"),
+          "/mixed.js": marked("MIXED"),
+          "/property.js": marked("PROPERTY"),
+          "/outside.js": marked("OUTSIDE"),
+          "/live.js": marked("LIVE"),
+          "/items.js": marked("ITEMS"),
+          "/escaped.js": marked("ESCAPED"),
+          "/switch.js": marked("SWITCH"),
+        },
+        minifySyntax,
+        run: { stdout: "a,b\nBARE_A\nCALLBACK_B\nMIXED_A\nPROPERTY_B\nOUTSIDE_B\n6\nITEMS_B\nESCAPED_B\na,b" },
+        onAfterBundle(api) {
+          const kept = api.readFile("/out.js").match(/[A-Z]+_[AB]\b/g)!;
+          const live = ["WHOLE_A", "WHOLE_B", "BARE_A", "CALLBACK_B", "MIXED_A", "PROPERTY_B", "OUTSIDE_B", "LIVE_A"];
+          expect([...new Set(kept)].sort()).toEqual([...live, "ITEMS_B", "ESCAPED_B", "SWITCH_A", "SWITCH_B"].sort());
+        },
+      });
+    }
 
     // The statements that `--minify-syntax`, `--drop` and `--define` remove.
     itBundled(`dynamic_import_dce/RemovedTestFromBuildFlags_${backend}`, {

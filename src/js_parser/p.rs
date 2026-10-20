@@ -238,31 +238,41 @@ pub enum ReactRefreshExportKind {
 /// Notes beside a symbol's `use_count_estimate`. A part left empty takes its own back (`revert_dead_part`).
 #[derive(Default, Clone, Copy)]
 pub(crate) struct AccountedUses {
+    /// `u32::MAX` is not a count: it says "more uses than accounted for".
     pub(crate) total: u32,
-    /// The notes in `total` from the part `part_generation` names.
+    /// The share of `total` from the part `part_generation` names.
     in_part: u32,
     part_generation: u32,
 }
 
 impl AccountedUses {
     pub(crate) fn note(&mut self, part_generation: u32) {
+        if self.total == u32::MAX {
+            return;
+        }
         if self.part_generation != part_generation {
             self.part_generation = part_generation;
             self.in_part = 0;
         }
         self.in_part += 1;
-        self.total = self.total.saturating_add(1);
+        self.total += 1;
+    }
+
+    /// The open part holds a use that nothing accounts for. `total` is 0 before.
+    pub(crate) fn mark_escaped(&mut self, part_generation: u32) {
+        debug_assert_eq!(self.total, 0);
+        *self = Self {
+            total: u32::MAX,
+            in_part: u32::MAX,
+            part_generation,
+        };
     }
 
     fn revert(&mut self, part_generation: u32) {
-        if self.part_generation != part_generation {
-            return;
-        }
-        // `u32::MAX` marks "more uses than accounted for"; it is not a count.
-        if self.total != u32::MAX {
+        if self.part_generation == part_generation {
             self.total = self.total.saturating_sub(self.in_part);
+            self.in_part = 0;
         }
-        self.in_part = 0;
     }
 }
 
@@ -1847,7 +1857,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 tracked.revert(part_generation);
             }
         }
+        // `record_import_property_use` moved these reads out of `part_uses`. `exports` lists calls, not reads.
+        for (ref_, reads) in self.import_symbol_property_uses.iter() {
+            if *ref_ != self.exports_ref {
+                let count: u32 = reads.values().map(|read| read.count_estimate).sum();
+                let symbol = &mut self.symbols[ref_.inner_index() as usize];
+                symbol.use_count_estimate = symbol.use_count_estimate.saturating_sub(count);
+            }
+        }
         self.module_exports_rewrites.revert(part_generation);
+        // `var module = require()` made the wrapper's variable an import namespace: a use above it is not of the wrapper's.
+        for declared in self.declared_symbols.refs() {
+            if *declared == self.module_ref || *declared == self.exports_ref {
+                self.symbols[declared.inner_index() as usize].use_count_estimate = 0;
+            }
+        }
         self.part_uses.clear();
         self.part_generation += 1;
         self.declared_symbols.clear_retaining_capacity();

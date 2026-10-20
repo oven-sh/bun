@@ -1972,7 +1972,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 == 0
                         {
                             // Read as "more uses than accounted for" when finalizing.
-                            p.namespace_tracked_uses.entry(id).or_default().total = u32::MAX;
+                            p.namespace_tracked_uses
+                                .entry(id)
+                                .or_default()
+                                .mark_escaped(p.part_generation);
                         }
                         match local.decls.len_u32() {
                             1 => {

@@ -1621,23 +1621,19 @@ impl<'p, 's> Checker<'p, 's> {
         self.declared_type(sym)
     }
 
-    /// `core.AppendIfUnique` in `getTypeParametersFromDeclaration` and `appendTypeParameters`: true
-    /// if `tp` has the same name, and therefore the same symbol, as an earlier type parameter in
-    /// `params`.
-    fn is_repeated_type_param(
+    /// `core.AppendIfUnique` in `getTypeParametersFromDeclaration` and `appendTypeParameters`: `params`
+    /// without those that have the same name, and therefore the same symbol, as an earlier one.
+    fn distinct_type_params(
         &self,
         file: FileId,
         params: Span<TypeParamId>,
-        tp: TypeParamId,
-    ) -> bool {
+    ) -> impl Iterator<Item = TypeParamId> + use<'p, 's> {
         let hir = self.hir(file);
-        let name = hir[tp].name;
-        name != Atom::NONE
-            && name != known::empty
-            && params
-                .iter()
-                .take_while(|&earlier| earlier != tp)
-                .any(|earlier| hir[earlier].name == name)
+        let mut names = Distinct::default();
+        params.iter().filter(move |&tp| {
+            let name = hir[tp].name;
+            name == Atom::NONE || name == known::empty || names.add(name).1
+        })
     }
 
     /// `getLocalTypeParametersOfClassOrInterfaceOrTypeAlias`: the type parameters of all the
@@ -1650,19 +1646,13 @@ impl<'p, 's> Checker<'p, 's> {
     /// Same, for callers that only read them.
     pub(super) fn local_type_params_of_symbol(&self, sym: Sym) -> SmallVec<[TypeId; 4]> {
         if let Some((file, params)) = self.files().only_type_param_list(sym) {
-            return params
-                .iter()
-                .filter(|&tp| !self.is_repeated_type_param(file, params, tp))
-                .map(|tp| self.type_param(file, tp))
-                .collect();
+            let distinct = self.distinct_type_params(file, params);
+            return distinct.map(|tp| self.type_param(file, tp)).collect();
         }
         let lists = self.files().type_param_lists(sym);
         if let [(file, params)] = lists[..] {
-            return params
-                .iter()
-                .filter(|&tp| !self.is_repeated_type_param(file, params, tp))
-                .map(|tp| self.type_param(file, tp))
-                .collect();
+            let distinct = self.distinct_type_params(file, params);
+            return distinct.map(|tp| self.type_param(file, tp)).collect();
         }
         // Each declaration has its own type parameters here. They're taken from a single
         // declaration as far as it has them, so that whatever a constraint or a default references
@@ -1682,21 +1672,27 @@ impl<'p, 's> Checker<'p, 's> {
         let Some((best_file, best, _)) = best else {
             return SmallVec::new();
         };
-        let mut all: SmallVec<[(Atom, TypeId); 4]> = SmallVec::new();
+        // For each name in `best`, the first type parameter that has it.
+        let (mut names_in_best, mut first_in_best) =
+            (Distinct::default(), SmallVec::<[_; 4]>::new());
+        for b in best.iter() {
+            if names_in_best.add(self.hir(best_file)[b].name).1 {
+                first_in_best.push(b);
+            }
+        }
+        let (mut names, mut all) = (Distinct::default(), SmallVec::new());
         for &(file, params) in &lists {
             for tp in params.iter() {
                 let name = self.hir(file)[tp].name;
-                if all.iter().any(|known| known.0 == name) {
-                    continue;
+                if names.add(name).1 {
+                    all.push(match names_in_best.number_of(name) {
+                        Some(number) => self.type_param(best_file, first_in_best[number]),
+                        None => self.type_param(file, tp),
+                    });
                 }
-                let param = match best.iter().find(|&b| self.hir(best_file)[b].name == name) {
-                    Some(b) => self.type_param(best_file, b),
-                    None => self.type_param(file, tp),
-                };
-                all.push((name, param));
             }
         }
-        all.into_iter().map(|known| known.1).collect()
+        all
     }
 
     /// The scope that the declaration `i` of an interface creates.
@@ -2335,6 +2331,8 @@ impl<'p, 's> Checker<'p, 's> {
         filled.extend_from_slice(&args[..actual]);
         // Invalid forward references in default types are mapped to the error type.
         filled.resize(params.len(), TypeId::ERROR);
+        // Where each parameter is in `params`, once a default needs to know.
+        let mut places: FxHashMap<TypeId, usize> = FxHashMap::default();
         for i in actual..params.len() {
             filled[i] = match self.default_of_type_param(params[i]) {
                 Some(default)
@@ -2344,10 +2342,22 @@ impl<'p, 's> Checker<'p, 's> {
                 {
                     TypeId::ANY
                 }
-                Some(default) => {
-                    let mapper = self.mapper_from(params, &filled);
-                    self.instantiate(default, mapper)
-                }
+                // A mapper of all parameters would be a new one for every default, because `filled` has changed. Most
+                // defaults don't need it.
+                Some(default) => match self.types().instantiation_class(default) {
+                    InstantiationClass::Unchanged => default,
+                    InstantiationClass::TypeParameter => {
+                        if places.is_empty() {
+                            places.extend(params.iter().copied().zip(0..));
+                        }
+                        let target = places.get(&default).map(|&at| filled[at]);
+                        self.instantiate_type_parameter_once(default, target)
+                    }
+                    InstantiationClass::Other => {
+                        let mapper = self.mapper_from(params, &filled);
+                        self.instantiate(default, mapper)
+                    }
+                },
                 None if is_js => TypeId::ANY,
                 None => TypeId::UNKNOWN,
             };
@@ -4501,12 +4511,8 @@ impl<'p, 's> Checker<'p, 's> {
             SigData::Decl { file, func, mapper } => {
                 let (file, mapper) = (*file, *mapper);
                 let params = self.hir(file)[*func].type_params;
-                params
-                    .iter()
+                self.distinct_type_params(file, params)
                     .filter_map(|tp| {
-                        if self.is_repeated_type_param(file, params, tp) {
-                            return None;
-                        }
                         let declared = self.type_param(file, tp);
                         match self.types().map(mapper, declared) {
                             None => Some(declared),

@@ -105,6 +105,54 @@ pub fn number_repeated<K: Copy + Eq + std::hash::Hash>(keys: &[K]) -> FxHashMap<
     numbers
 }
 
+/// Distinct keys, numbered in order of first occurrence. A few keys are searched one by one. Once there are more, a
+/// hash map finds them, so that adding `n` keys never takes `n * n` steps.
+pub(crate) struct Distinct<K> {
+    keys: SmallVec<[K; Distinct::<()>::FEW]>,
+    /// Empty while there are at most `FEW` keys.
+    numbers: FxHashMap<K, u32>,
+}
+
+impl<K> Distinct<K> {
+    const FEW: usize = 8;
+}
+
+impl<K> Default for Distinct<K> {
+    fn default() -> Self {
+        Distinct {
+            keys: SmallVec::new(),
+            numbers: FxHashMap::default(),
+        }
+    }
+}
+
+impl<K: Copy + Eq + std::hash::Hash> Distinct<K> {
+    /// Returns the number of `key`, if it has been added.
+    #[inline]
+    pub(crate) fn number_of(&self, key: K) -> Option<usize> {
+        match self.numbers.is_empty() {
+            true => self.keys.iter().position(|&known| known == key),
+            false => self.numbers.get(&key).map(|&number| number as usize),
+        }
+    }
+
+    /// Returns the number of `key`, and true if this call added it.
+    #[inline]
+    pub(crate) fn add(&mut self, key: K) -> (usize, bool) {
+        if let Some(number) = self.number_of(key) {
+            return (number, false);
+        }
+        let number = self.keys.len();
+        self.keys.push(key);
+        if number == Self::FEW {
+            self.numbers.extend(self.keys.iter().copied().zip(0..));
+        } else if number > Self::FEW {
+            self.numbers.insert(key, number as u32);
+        }
+        (number, true)
+    }
+}
+
 /// A bit set of positions in a list. Methods that combine two sets expect both to be for lists of the same length. Sets
 /// of up to 128 positions are stored inline.
 #[derive(Clone, Default)]

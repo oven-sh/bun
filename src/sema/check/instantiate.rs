@@ -679,6 +679,22 @@ impl<'p, 's> Checker<'p, 's> {
         self.instantiate_cached(ty, mapper, serial, IS_CACHED_BY_TSGO)
     }
 
+    /// `instantiate` of the type parameter `param` with a mapper that tsgo creates for this one call, so it isn't an
+    /// active mapper. `target` is what it maps `param` to, if anything. No mapper is created here.
+    pub(super) fn instantiate_type_parameter_once(
+        &mut self,
+        param: TypeId,
+        target: Option<TypeId>,
+    ) -> TypeId {
+        if (self.instantiation_depth >= 100 || self.instantiation_count >= 5_000_000)
+            && !self.reset_instantiation_count_if_idle()
+        {
+            return self.instantiation_too_deep();
+        }
+        self.instantiation_count += 1;
+        target.unwrap_or(param)
+    }
+
     /// Returns `instantiate(ty, mapper)` if nothing has to be computed for it.
     pub(super) fn instantiation_if_known(
         &mut self,

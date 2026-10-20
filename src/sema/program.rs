@@ -26,7 +26,7 @@ use crate::session::{
 };
 use crate::table::{Bases, ByNode, ByNodeIndirect, Frozen, RawWord};
 use crate::util::SharedSort;
-use crate::util::{FxBuild, FxHashMap, FxHashSet, List, ShardedMap};
+use crate::util::{Distinct, FxBuild, FxHashMap, FxHashSet, List, ShardedMap};
 use crate::verify::{ConfigLocation, Problem};
 use bstr::ByteSlice;
 use bun_core::strings;
@@ -8327,23 +8327,30 @@ impl<'s> Files<'s> {
         // `appendTypeParameters`, `getMinTypeArgumentCount`, `hasTypeParameterDefault`: type
         // parameters with the same name are one symbol, even within one list (`<T, T>`), and it has
         // a default if any of its declarations has one.
-        let mut all: SmallVec<[(Atom, bool); 4]> = SmallVec::new();
+        let mut has_default_by_symbol: SmallVec<[bool; 4]> = SmallVec::new();
+        // The names, and where each one's symbol is in the list above.
+        let (mut names, mut places) = (Distinct::default(), SmallVec::<[usize; 4]>::new());
         for (file, params) in lists {
             let hir = self.hir(file);
             for tp in params.iter() {
                 let (name, has_default) = (hir[tp].name, hir[tp].default.is_some());
                 let is_named = !is_single_list || (name != Atom::NONE && name != known::empty);
-                match all.iter_mut().find(|seen| is_named && seen.0 == name) {
-                    Some(seen) => seen.1 |= has_default,
-                    None => all.push((name, has_default)),
+                if is_named {
+                    let (number, is_new) = names.add(name);
+                    if !is_new {
+                        has_default_by_symbol[places[number]] |= has_default;
+                        continue;
+                    }
+                    places.push(has_default_by_symbol.len());
                 }
+                has_default_by_symbol.push(has_default);
             }
         }
         (
-            all.iter()
-                .rposition(|known| !known.1)
+            (has_default_by_symbol.iter())
+                .rposition(|has_default| !has_default)
                 .map_or(0, |last| last + 1),
-            all.len(),
+            has_default_by_symbol.len(),
         )
     }
 

@@ -1,7 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, bunEnv as harnessEnv, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
+import { startNpmjs } from "./migration-harness";
+
+const npmjs = await startNpmjs();
+afterAll(() => npmjs.stop());
+const bunEnv = { ...harnessEnv, ...npmjs.env };
 
 describe("pnpm comprehensive migration tests", () => {
   test("large single package with many dependencies", async () => {
@@ -927,10 +932,12 @@ packages:
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // Should fail with error message
+    expect(normalizeBunSnapshot(stderr, tmpDir)).toMatchInlineSnapshot(`
+      "error: cannot migrate pnpm-lock.yaml: unsupported lockfileVersion 6.0
+      note: pnpm install --lockfile-only"
+    `);
+    expect(stdout).toBe("");
     expect(exitCode).toBe(1);
-    expect(stderr).toContain("pnpm-lock.yaml version is too old");
-    expect(stderr).toContain("Please upgrade using 'pnpm install");
   });
 
   test("pnpm with peer dependencies and auto-install-peers", async () => {

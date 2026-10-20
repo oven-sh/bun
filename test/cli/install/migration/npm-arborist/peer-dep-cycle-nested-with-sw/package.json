@@ -1,0 +1,8 @@
+{
+  "name": "@isaacs/peer-dep-nested",
+  "version": "1.0.0",
+  "description": "dep -> a -> b -> c -> a",
+  "dependencies": {
+    "@isaacs/peer-dep-cycle": "1"
+  }
+}

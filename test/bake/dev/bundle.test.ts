@@ -201,6 +201,60 @@ devTest("default export same-scope handling", {
     c.expectMessage("TWO", "FOUR", "FIVE", "SEVEN", "EIGHT", "NINE", "ELEVEN");
   },
 });
+// An anonymous `export default class` that cannot be moved into the exports
+// object (it has an `extends` clause, a static block, or a computed key) has to
+// stay a class statement, which needs a name. It used to crash the dev server
+// with `called Option::unwrap() on a None value` while visiting the file.
+devTest("anonymous export default class that must stay a statement", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import.meta.hot.accept();
+      import { Base } from "./base";
+      import Derived from "./derived";
+      import StaticBlock from "./static-block";
+      import ComputedKey from "./computed-key";
+      console.log("extends: " + (new Derived() instanceof Base) + " " + new Derived().tag);
+      console.log("static block: " + StaticBlock.initialized);
+      console.log("computed key: " + new ComputedKey().computed);
+    `,
+    "base.ts": `
+      export class Base {
+        tag = "base";
+      }
+    `,
+    "derived.ts": `
+      import { Base } from "./base";
+      export default class extends Base {
+        tag = "derived";
+      }
+    `,
+    "static-block.ts": `
+      export default class {
+        static initialized = false;
+        static {
+          this.initialized = true;
+        }
+      }
+    `,
+    "computed-key.ts": `
+      const key = "computed";
+      export default class {
+        [key] = "value";
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("extends: true derived", "static block: true", "computed key: value");
+
+    await dev.patch("derived.ts", { find: '"derived"', replace: '"updated"' });
+    await c.expectMessage("extends: true updated", "static block: true", "computed key: value");
+  },
+});
 devTest("directory cache bust case #17576", {
   files: {
     "web/index.html": emptyHtmlFile({
@@ -272,6 +326,51 @@ devTest("deleting imported file shows error then recovers", {
     await c.expectNoWebSocketActivity(async () => {
       await dev.delete("unrelated.ts");
     });
+  },
+});
+// Without a separate SSR graph, the server bundle keeps a "use client" module
+// and the parser wraps its exported values in `registerClientReference(value,
+// file, name)`. The parser chose `file` by the JSX development flag. A
+// `@jsxRuntime react-jsx` pragma turns that flag off for one file, and the
+// parser then aborted the process in a branch that was written for production
+// builds.
+devTest('a "use client" module with a @jsxRuntime pragma keeps its client references', {
+  framework: minimalFramework,
+  files: {
+    "components/Button.ts": `
+      "use client";
+      export function Button() {}
+      export const label = "label";
+      export default class Panel {}
+    `,
+    "routes/index.ts": `
+      import Panel, { Button, label } from '../components/Button';
+      export default function (req, meta) {
+        return Response.json(
+          [Panel, Button, label].map(ref => ({ file: ref.file.replaceAll("\\\\", "/"), uid: ref.uid })),
+        );
+      }
+    `,
+  },
+  async test(dev) {
+    const references = [
+      { file: "components/Button.ts", uid: "default" },
+      { file: "components/Button.ts", uid: "Button" },
+      { file: "components/Button.ts", uid: "label" },
+    ];
+    await dev.fetch("/").equals(references);
+
+    await dev.write(
+      "components/Button.ts",
+      `
+        "use client";
+        /** @jsxRuntime react-jsx */
+        export function Button() {}
+        export const label = "label";
+        export default class Panel {}
+      `,
+    );
+    await dev.fetch("/").equals(references);
   },
 });
 // Regression test: DirectoryWatchStore.Dep.source_file_path borrows the key
@@ -356,6 +455,190 @@ devTest("removing 'use client' from a component with a pending resolution failur
     // The server must still be alive and responding.
     const res = await dev.fetch("/");
     expect(res).toBeInstanceOf(Response);
+  },
+});
+// The bundler has no transform for a module that starts with "use server".
+// Bundling one used to abort the process from a bundler thread (the parser
+// panics on `registerServerReference`), so saving a server-action file took
+// down every route.
+const useServerError = (file: string) => `${file}:1:1: error: "use server" is not supported yet`;
+devTest('saving a "use server" module is a build error', {
+  framework: minimalFramework,
+  files: {
+    "actions.ts": `
+      export async function save() {
+        return "saved";
+      }
+    `,
+    "routes/index.ts": `
+      import { save } from '../actions';
+      export default async function (req, meta) {
+        return new Response('Hello, ' + (await save()) + '!');
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("Hello, saved!");
+
+    await dev.write(
+      "actions.ts",
+      `
+        "use server";
+        export async function save() {
+          return "saved";
+        }
+      `,
+    );
+    {
+      await using c = await dev.client("/", { errors: [useServerError("actions.ts")] });
+    }
+
+    await dev.write(
+      "actions.ts",
+      `
+        export async function save() {
+          return "saved again";
+        }
+      `,
+    );
+    await dev.fetch("/").equals("Hello, saved again!");
+  },
+});
+devTest('a "use server" module that exists at startup is a build error', {
+  framework: minimalFramework,
+  files: {
+    "actions.ts": `
+      "use server";
+      export async function save() {
+        return "saved";
+      }
+    `,
+    "routes/index.ts": `
+      import { save } from '../actions';
+      export default async function (req, meta) {
+        return new Response('Hello, ' + (await save()) + '!');
+      }
+    `,
+    "routes/other.ts": `
+      export default function (req, meta) {
+        return new Response('other');
+      }
+    `,
+  },
+  async test(dev) {
+    {
+      await using c = await dev.client("/", { errors: [useServerError("actions.ts")] });
+    }
+    // A route that does not import the module still works.
+    await dev.fetch("/other").equals("other");
+  },
+});
+// With a separate SSR graph, a "use server" module with nothing to wrap got
+// past the parser and aborted on the bundler's main thread instead.
+devTest('a "use server" module with no exports is a build error', {
+  framework: {
+    ...minimalFramework,
+    serverComponents: {
+      ...minimalFramework.serverComponents!,
+      separateSSRGraph: true,
+    },
+  },
+  files: {
+    "setup.ts": `
+      "use server";
+      globalThis.didSetup = true;
+    `,
+    "routes/index.ts": `
+      import '../setup';
+      export default function (req, meta) {
+        return new Response('setup: ' + globalThis.didSetup);
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { errors: [useServerError("setup.ts")] });
+  },
+});
+// The browser graph and the SSR graph bundle what a client component imports.
+// Neither has the stubs that would call the server in place of the module.
+devTest('a "use server" module imported by a client component is a build error', {
+  framework: {
+    ...minimalFramework,
+    serverComponents: {
+      ...minimalFramework.serverComponents!,
+      separateSSRGraph: true,
+    },
+  },
+  files: {
+    "actions.ts": `
+      "use server";
+      export async function save() {
+        return "saved";
+      }
+    `,
+    "components/Comp.ts": `
+      "use client";
+      import { save } from '../actions';
+      export function Button() {
+        return save;
+      }
+    `,
+    "routes/index.ts": `
+      import * as Comp from '../components/Comp';
+      export default function (req, meta) {
+        return new Response('page: ' + (typeof Comp.Button));
+      }
+    `,
+  },
+  async test(dev) {
+    {
+      // One entry for each graph that bundles the module.
+      await using c = await dev.client("/", {
+        errors: [useServerError("actions.ts"), useServerError("actions.ts")],
+      });
+    }
+
+    await dev.write(
+      "actions.ts",
+      `
+        export async function save() {
+          return "saved";
+        }
+      `,
+    );
+    await dev.fetch("/").equals("page: object");
+  },
+});
+// Every loader got the scan for a use directive. A text file that starts with
+// the same bytes hit the "use server" abort, or became a client component
+// reference for "use client".
+devTest("a file that is not JavaScript does not carry a use directive", {
+  framework: {
+    ...minimalFramework,
+    serverComponents: {
+      ...minimalFramework.serverComponents!,
+      separateSSRGraph: true,
+    },
+  },
+  files: {
+    "actions.ts": `"use server"; export async function save() {}`,
+    "server-note.txt": `"use server" marks the exports of a module as server actions.`,
+    "client-note.txt": `"use client" marks a module as a client component.`,
+    "routes/index.ts": `
+      import source from '../actions.ts' with { type: 'text' };
+      import serverNote from '../server-note.txt';
+      import clientNote from '../client-note.txt';
+      export default function (req, meta) {
+        return new Response(JSON.stringify({ source, serverNote, clientNote }));
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals({
+      source: `"use server"; export async function save() {}`,
+      serverNote: `"use server" marks the exports of a module as server actions.`,
+      clientNote: `"use client" marks a module as a client component.`,
+    });
   },
 });
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
@@ -863,5 +1146,26 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
   async test(dev) {
     await using c = await dev.client("/");
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
+  },
+});
+// The dev server's runtime threw `$ERR_SSR_RESPONSE_EXPECTED(...)`, a name only src/js resolves: what the
+// user saw was "ReferenceError: $ERR_SSR_RESPONSE_EXPECTED is not defined".
+devTest("a render() that does not return a Response is reported as that", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      export default function () {
+        return "not a response";
+      }
+    `,
+  },
+  async test(dev) {
+    const response = await dev.fetch("/");
+    const text = await response.text();
+    expect({
+      status: response.status,
+      saysWhatIsWrong: text.includes("was expected to return a Response object"),
+      referenceError: text.includes("is not defined"),
+    }).toEqual({ status: 500, saysWhatIsWrong: true, referenceError: false });
   },
 });

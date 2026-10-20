@@ -342,7 +342,7 @@ let dockerInitPromise: Promise<boolean> | null = null;
 let id = Math.trunc(Math.random() * 1000000);
 // Initialize test context with TCP client by d efault
 export const context: TestContext = {
-  redis: undefined,
+  redis: undefined!,
   initialized: false,
   keyPrefix: TEST_KEY_PREFIX,
   generateKey: testKey,

@@ -511,9 +511,9 @@ async function end(scope: Scope, commit: boolean, grace: number | undefined) {
         try {
           await send(scope, ROLLBACK, dispatchOwn.bind(scope));
         } catch (rollbackError) {
-          // Nobody gets the transaction that it was left in.
+          // The transaction is still there, and the status that release() reads may not show it.
           scope.connection?.close();
-          throw rollbackError;
+          throw commit ? withCause(rollbackError, err) : rollbackError;
         }
         if (commit) {
           throw err;

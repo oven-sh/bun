@@ -82,10 +82,7 @@ class MySQLAdapter extends BaseSQLAdapter<$ZigGeneratedClasses.MySQLConnection, 
   }
 
   /// Only an answer that proves a ROLLBACK ONLY branch of this session: XA ROLLBACK works by name, also on a prepared branch of another session.
-  isRollbackOwed(error: unknown): boolean {
-    if (!(error instanceof MySQLError)) {
-      return false;
-    }
+  isRollbackOwed(error: any): boolean {
     switch (error.errno) {
       case 1402: // XA_RBROLLBACK
       case 1613: // XA_RBTIMEOUT

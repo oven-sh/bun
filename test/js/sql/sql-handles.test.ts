@@ -1595,6 +1595,31 @@ describe("mysql: the server refuses XA END", () => {
     );
   });
 
+  // The answer to XA END and the goodbye of the server in one read: there is no connection for XA ROLLBACK.
+  describe.each(rolledBack)("the server leaves behind its answer to XA END ($server)", ({ kind, by, end }) => {
+    test.each([
+      { callback: "throws", throws: true },
+      { callback: "returns", throws: false },
+    ])("the callback $callback: begin() rejects with that answer, and nothing follows", ({ throws }) =>
+      scenario(kind, {}, async ({ sql, leaveAfter, log, closed }) => {
+        leaveAfter("XA END 'x'");
+        const begin = await errorOf(
+          sql.beginDistributed("x", async tx => {
+            await errorOf(tx.unsafe(by));
+            if (throws) throw failure;
+          }),
+        );
+        expect({ ...answerOf(begin), log: log(), closed: closed() }).toEqual({
+          errno: end[0],
+          sqlState: end[1],
+          cause: throws ? failure : undefined,
+          log: ["XA START 'x'", by, "XA END 'x'"],
+          closed: 1,
+        });
+      }),
+    );
+  });
+
   test("sql.distributed() is the same call", () =>
     scenario("mysql", {}, async ({ sql, log }) => {
       expect(await errorOf(sql.distributed("x", deadlockThen(fail)))).toBe(failure);
@@ -1668,17 +1693,33 @@ describe("mysql: the server refuses XA END", () => {
     { refusal: "1400", rollback: [1400, "XAE09", "XAER_OUTSIDE: Some work is done outside global transaction"] },
   ])("the server refuses that XA ROLLBACK too ($refusal)", ({ rollback }) => {
     test.each([
-      { callback: "throws", throws: true },
-      { callback: "returns", throws: false },
-    ])("the callback $callback: the connection is closed, and begin() rejects with that refusal", ({ throws }) =>
+      { callback: "throws", throws: true, then: [] },
+      { callback: "returns", throws: false, then: [] },
+      // After the OK of one more statement the pool would keep the connection: only end() closes it.
+      { callback: "runs one more statement and throws", throws: true, then: ["SELECT 'after'"] },
+      { callback: "runs one more statement and returns", throws: false, then: ["SELECT 'after'"] },
+    ])("the callback $callback: the connection is closed, and begin() rejects with that refusal", ({ throws, then }) =>
       scenario("mariadb", { rollback }, async ({ sql, received, closed }) => {
-        const begin = await errorOf(sql.beginDistributed("x", deadlockThen(throws ? fail : () => {})));
-        await sql.unsafe("SELECT 'next'");
+        let next!: Promise<unknown>;
+        const begin = await errorOf(
+          sql.beginDistributed("x", async tx => {
+            await errorOf(tx.unsafe("SELECT 'DEADLOCK'"));
+            for (const text of then) await tx.unsafe(text);
+            // It waits for the one connection of the pool.
+            next = sql.unsafe("SELECT 'next'").execute();
+            if (throws) throw failure;
+          }),
+        );
+        await next;
         expect({ ...answerOf(begin), received, closed: closed() }).toEqual({
           errno: rollback[0],
           sqlState: rollback[1],
-          cause: throws ? failure : undefined,
-          received: [...on(0, ...rolledBackLog), ...on(1, "SELECT 'next'")],
+          // When the callback returned, the answer to XA END says why a rollback was sent.
+          cause: throws ? failure : expect.objectContaining({ errno: 1399, sqlState: "XAE07" }),
+          received: [
+            ...on(0, "XA START 'x'", "SELECT 'DEADLOCK'", ...then, "XA END 'x'", "XA ROLLBACK 'x'"),
+            ...on(1, "SELECT 'next'"),
+          ],
           closed: 1,
         });
       }),

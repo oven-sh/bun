@@ -354,6 +354,25 @@ function asyncContext({ open }: ReturnType<typeof whatStaysInTheTable>, connect:
 
 type Connect = (options?: Bun.SQL.Options) => Promise<SQL>;
 
+/** What a beginDistributed() that the server rolled back left on `handle`, the pool or the reservation it ran on. */
+async function leftBy(admin: SQL, handle: any, connection: number, name: string, table: string) {
+  return {
+    connection: await handle.unsafe("SELECT CONNECTION_ID() AS id").then(
+      (rows: any) => (Number(rows[0].id) === connection ? "the same" : "another"),
+      (err: any) => err?.code,
+    ),
+    // The server refuses it on a session that holds a ROLLBACK ONLY branch.
+    tableStatement: await outcome(handle.unsafe(`SELECT id FROM ${table}`)),
+    // The server refuses the name for as long as a session holds a branch with it.
+    name: await outcome(
+      admin
+        .unsafe(`XA START '${name}'`)
+        .then(() => admin.unsafe(`XA END '${name}'`))
+        .then(() => admin.unsafe(`XA ROLLBACK '${name}'`)),
+    ),
+  };
+}
+
 /**
  * Two beginDistributed() update the same two rows in opposite order. The server breaks the deadlock: it rolls the work
  * of one XA branch back, and from then on only XA ROLLBACK ends that branch. `onDeadlock` is the catch clause of the
@@ -401,10 +420,6 @@ async function deadlockedBranch(connect: Connect, onDeadlock: (tx: any, error: a
     const begin = settled[victim];
     // The other branch got both rows and is prepared. It holds its locks until it is rolled back.
     const other = await outcome(handles[1 - victim].rollbackDistributed(names[1 - victim]));
-    const connection = await handle.unsafe("SELECT CONNECTION_ID() AS id").then(
-      (rows: any) => (Number(rows[0].id) === connections[victim] ? "the same" : "another"),
-      (err: any) => err?.code,
-    );
     return {
       server: String((await admin.unsafe("SELECT VERSION() AS version"))[0].version),
       deadlock: deadlocks[victim]?.errno,
@@ -415,18 +430,9 @@ async function deadlockedBranch(connect: Connect, onDeadlock: (tx: any, error: a
             ? "the deadlock error"
             : { errno: begin.reason?.errno, sqlState: begin.reason?.sqlState, message: begin.reason?.message },
       other,
-      connection,
+      ...(await leftBy(admin, handle, connections[victim], names[victim], table)),
       closes: closes[victim],
-      // The server refuses it on a session that holds a ROLLBACK ONLY branch.
-      tableStatement: await outcome(handle.unsafe(`SELECT id FROM ${table}`)),
       nextTransaction: reserve ? await outcome(handle.begin((tx: any) => tx.unsafe(`SELECT id FROM ${table}`))) : null,
-      // The server refuses the name for as long as a session holds a branch with it.
-      name: await outcome(
-        admin
-          .unsafe(`XA START '${names[victim]}'`)
-          .then(() => admin.unsafe(`XA END '${names[victim]}'`))
-          .then(() => admin.unsafe(`XA ROLLBACK '${names[victim]}'`)),
-      ),
       rows: (await admin.unsafe(`SELECT id, v FROM ${table} ORDER BY id`)).map((row: any) => [row.id, row.v]),
     };
   } finally {
@@ -436,7 +442,7 @@ async function deadlockedBranch(connect: Connect, onDeadlock: (tx: any, error: a
   }
 }
 
-function deadlocks(connect: Connect) {
+function rolledBackBranches(connect: Connect, snapshotIsolation: boolean) {
   const left = {
     server: expect.any(String),
     deadlock: 1213,
@@ -485,6 +491,61 @@ function deadlocks(connect: Connect) {
     };
     expect(await deadlockedBranch(connect, rethrow, true)).toEqual({ ...left, nextTransaction: "resolved" });
   });
+
+  // MariaDB from 11.6.2 (innodb_snapshot_isolation): a write to a row that another session changed since the snapshot
+  // rolls the transaction back with errno 1020. MySQL 8.4 has no such error.
+  test.skipIf(!snapshotIsolation)(
+    "a write conflict in beginDistributed() leaves no branch on the connection",
+    async () => {
+      await using admin = await connect();
+      const table = `xa_${randomUUIDv7("hex").replaceAll("-", "")}`;
+      const name = `xa_${randomUUIDv7("hex")}`;
+      await admin.unsafe(`CREATE TABLE ${table} (id INT PRIMARY KEY, v INT) ENGINE = InnoDB`);
+      try {
+        await admin.unsafe(`INSERT INTO ${table} VALUES (0, 0)`);
+        let closes = 0;
+        await using sql = await connect({ onclose: () => void closes++ });
+        let connection = 0;
+        let conflict: any;
+        const begin = await sql
+          .beginDistributed(name, async tx => {
+            connection = Number((await tx.unsafe("SELECT CONNECTION_ID() AS id"))[0].id);
+            await tx.unsafe(`SELECT v FROM ${table}`);
+            await admin.unsafe(`UPDATE ${table} SET v = 1`);
+            try {
+              await tx.unsafe(`UPDATE ${table} SET v = 2`);
+            } catch (error) {
+              conflict = error;
+              // The server answers it with "not in a transaction", and the branch is still there.
+              await tx.unsafe("SELECT 1 AS x");
+              throw error;
+            }
+          })
+          .then(
+            () => "resolved",
+            error => (error === conflict ? "the conflict error" : error),
+          );
+        expect({
+          conflict: conflict?.errno,
+          begin,
+          ...(await leftBy(admin, sql, connection, name, table)),
+          closes,
+          rows: (await admin.unsafe(`SELECT id, v FROM ${table}`)).map((row: any) => [row.id, row.v]),
+        }).toEqual({
+          conflict: 1020,
+          begin: "the conflict error",
+          connection: "the same",
+          tableStatement: "resolved",
+          name: "resolved",
+          closes: 0,
+          rows: [[0, 1]],
+        });
+      } finally {
+        await outcome(admin.rollbackDistributed(name));
+        await admin.unsafe(`DROP TABLE ${table}`);
+      }
+    },
+  );
 }
 
 // Some programs define the hook so that `instanceof Array` holds for the arrays of another realm. A result is an Array.
@@ -526,7 +587,7 @@ for (const { image, prefix, scheme } of servers) {
     const shared = whatStaysInTheTable(prefix, connect);
     reservations(shared);
     asyncContext(shared, connect);
-    if (prefix === "MYSQL") deadlocks(connect);
+    if (prefix === "MYSQL") rolledBackBranches(connect, image === "mariadb_plain");
 
     test("Array[Symbol.hasInstance] of the program makes no array of queries or of results a result", async () => {
       await container.ready;

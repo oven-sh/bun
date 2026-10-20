@@ -12238,21 +12238,28 @@ export declare const a4: A4; export const n4: never = a4;
       expect(exitCode).toBe(1);
     });
 
-    test("reports TS2589 because keyof of a mapped type counts its `as` clause on every request", async () => {
-      const keys = Array.from({ length: 1000 }, (_, i) => `"k${i}"`).join(" | ");
-      let name = "K";
-      for (let i = 0; i < 50; i++) name = `${i % 2 ? "Lowercase" : "Uppercase"}<${name}>`;
+    test("computes keyof of a mapped type with an `as` clause again after the intersection it reads is reduced", async () => {
+      const filler = [0, 1, 2].map(i => `type F${i}<T> = T extends any ? { v${i}: T } : never;\ndeclare let f${i}: F${i}<N>;\n`);
       using dir = project({
-        "a.ts": `type Keys = ${keys};
-type M = { [K in Keys as ${name}]: 0 };
-type Loop<N extends number, A extends 0[] = [], B = {}, Last = never> = A["length"] extends N ? Last : Loop<N, [...A, 0], M & { x: A }, keyof B>;
-export type R = Loop<600>;
+        "a.ts": `declare let x: X;
+x.k;
+type X = { k: "a"; q: "foo"; p: keyof M } & { k: "b"; p: string };
+type M = { [K in "q" as X[K]]: 1 };
+type D = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+type N = \`\${D}\${D}\${D}\${D}\`;
+${filler.join("")}type R = keyof M;
+const r1: R = "foo";
+const r2: R = "bar";
+export {};
 `,
       });
-      const { stdout, exitCode } = await check(dir);
-      expect(stdout).toMatchInlineSnapshot(
-        `"a.ts(4,17): error TS2589: Type instantiation is excessively deep and possibly infinite."`,
-      );
+      const { stdout, exitCode } = await check(dir, ["--threads", "1"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(2,3): error TS2339: Property 'k' does not exist on type 'never'.
+          The intersection 'X' was reduced to 'never' because property 'k' has conflicting types in some constituents.
+        a.ts(14,7): error TS2322: Type '"foo"' is not assignable to type 'never'.
+        a.ts(15,7): error TS2322: Type '"bar"' is not assignable to type 'never'."
+      `);
       expect(exitCode).toBe(1);
     });
 

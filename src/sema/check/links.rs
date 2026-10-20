@@ -55,8 +55,6 @@ pub(super) enum MappedPart {
     NameType,
     ModifiersType,
     ApparentType,
-    /// 1 + the index in `TypeLinks::index_types`.
-    IndexType,
     /// 1 + the index in `TypeLinks::generic_names`.
     HasGenericName,
 }
@@ -69,7 +67,7 @@ pub(super) enum Kind {
 }
 
 /// Number of cells in a row, one per `MappedPart`.
-const PARTS: usize = 9;
+const PARTS: usize = 8;
 
 /// `restrictiveMapper`, `permissiveMapper` and `uniqueLiteralMapper`, which are the same for every type.
 #[derive(Copy, Clone, Debug)]
@@ -203,8 +201,6 @@ pub(super) struct TypeLinks {
     parts: Vec<[u32; PARTS]>,
     /// See `INFER_TYPE_PARAMETERS`.
     infer_type_parameters: Vec<TypeId>,
-    /// `getIndexTypeForMappedType` of mapped types that have a name type.
-    index_types: Vec<WithSideEffects<TypeId>>,
     /// True if `isGenericMappedType` considers the mapped type's name type generic.
     generic_names: Vec<WithSideEffects<bool>>,
     /// 0 if nothing is cached for the type. Otherwise 1 + the index of its row in `with_fixed_mappers`.
@@ -231,7 +227,6 @@ impl TypeLinks {
             rows,
             parts,
             infer_type_parameters,
-            index_types,
             generic_names,
             fixed_mapper_rows,
             with_fixed_mappers,
@@ -248,7 +243,6 @@ impl TypeLinks {
         rows.clear();
         parts.clear();
         infer_type_parameters.clear();
-        index_types.clear();
         generic_names.clear();
         fixed_mapper_rows.clear();
         with_fixed_mappers.clear();
@@ -315,27 +309,6 @@ impl TypeLinks {
             let cell = INFER_TYPE_PARAMETERS;
             self.set_cell(ty, Kind::Conditional, cell, encoded, Stored::new());
         }
-    }
-
-    /// Returns the entry of `index_types` for the mapped type `ty`.
-    #[inline]
-    pub(super) fn index_type(&self, ty: TypeId) -> Option<WithSideEffects<TypeId>> {
-        let at = self.cell(ty, Kind::Mapped, MappedPart::IndexType as usize) as usize;
-        Some(self.index_types[at.checked_sub(1)?])
-    }
-
-    pub(super) fn cache_index_type(
-        &mut self,
-        ty: TypeId,
-        entry: WithSideEffects<TypeId>,
-        stored: Stored,
-    ) {
-        self.index_types.push(entry);
-        let (cell, encoded) = (
-            MappedPart::IndexType as usize,
-            self.index_types.len() as u32,
-        );
-        self.set_cell(ty, Kind::Mapped, cell, encoded, stored);
     }
 
     /// Returns the entry of `generic_names` for the mapped type `ty`.
@@ -772,13 +745,13 @@ mod tests {
         assert_eq!(last + 1, PARTS);
         links.set_cell(mapped, Kind::Mapped, last, 50, Stored::new());
         links.set_cell(conditional, Kind::Conditional, 0, 60, Stored::new());
-        let row = |ty, kind| [0, 1, 2, 3, 4, 5, 6, 7, 8].map(|at| links.cell(ty, kind, at));
+        let row = |ty, kind| [0, 1, 2, 3, 4, 5, 6, 7].map(|at| links.cell(ty, kind, at));
         assert_eq!(
             row(conditional, Kind::Conditional),
-            [60, 0, 40, 0, 0, 0, 0, 0, 0]
+            [60, 0, 40, 0, 0, 0, 0, 0]
         );
         assert_eq!(row(conditional, Kind::Mapped), [0; PARTS]);
-        assert_eq!(row(mapped, Kind::Mapped), [0, 0, 0, 0, 0, 0, 0, 0, 50]);
+        assert_eq!(row(mapped, Kind::Mapped), [0, 0, 0, 0, 0, 0, 0, 50]);
         assert_eq!(row(mapped, Kind::Conditional), [0; PARTS]);
         assert_eq!(row(TypeId(8), Kind::Mapped), [0; PARTS]);
     }

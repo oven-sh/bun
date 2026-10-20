@@ -7,6 +7,7 @@
 //!    graph (transitive imports) without linking or emitting code.
 //! 3. Starting from each changed file that appears in the graph, walk the
 //!    reverse import edges to find every test entry point that can reach it.
+//!    Sources that share a path are one file in this walk.
 //!
 //! Only those test entry points are returned.
 
@@ -192,14 +193,11 @@ pub(crate) fn filter<'a>(
     let sources = bundle.graph.input_files.items_source();
     let import_records = bundle.graph.ast.items_import_records();
 
-    // Map absolute source path -> source index for paths that participate in
-    // the graph. This lets us look up changed-file paths quickly.
+    // Absolute source path -> first source index of that path. The keys borrow from `sources`.
     let mut path_to_index: StringHashMap<u32> = StringHashMap::new();
     path_to_index.reserve(sources.len());
 
-    // Reverse graph: for each source index, the list of source indexes that
-    // import it. Built once, then used for a backward BFS from every changed
-    // file.
+    // Reverse graph for the BFS: per source, its importers and the other sources of its path.
     let mut importers: Vec<Vec<u32>> = vec![Vec::new(); sources.len()];
 
     // Reserve once so the dupe+append below cannot leak a duped path if the
@@ -211,7 +209,7 @@ pub(crate) fn filter<'a>(
         if index.is_runtime() {
             continue;
         }
-        let path_text: &[u8] = source.path.text;
+        let path_text: &'static [u8] = source.path.text;
         if path_text.is_empty() {
             continue;
         }
@@ -222,7 +220,14 @@ pub(crate) fn filter<'a>(
         }
         // All scanned entry points are absolute, and the resolver emits
         // absolute file paths as well.
-        path_to_index.put_assume_capacity(path_text, u32::try_from(idx).unwrap());
+        let hash = path_to_index.hash_key(path_text);
+        if let Some(&first) = path_to_index.get_hashed(hash, path_text) {
+            // Same file again: a browser-target copy, or the page behind an HTML import's stand-in.
+            importers[first as usize].push(index.get());
+            importers[idx].push(first);
+            continue;
+        }
+        bun_core::handle_oom(path_to_index.put_static_key_hashed(hash, path_text, index.get()));
         // Copy out of the bundler's arena so the caller can use these paths
         // after the BundleV2 heap is gone.
         graph_files.push(Box::<[u8]>::from(path_text));
@@ -265,6 +270,8 @@ pub(crate) fn filter<'a>(
             }
         }
     }
+    // The keys must not outlive the graph that owns the path bytes.
+    drop(path_to_index);
 
     while let Some(idx) = queue.pop() {
         for &importer in &importers[idx as usize] {

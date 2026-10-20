@@ -3536,7 +3536,103 @@ describe("expect()", () => {
         expect(Bun.deepMatch({ a: 1, b: 2 }, { a: 1 })).toBe(false);
         expect(Bun.deepMatch({ a: 1 }, { a: 1, b: 2 })).toBe(true);
       });
+
+      // https://github.com/oven-sh/bun/issues/45950
+      test("Bun.deepMatch only compares the subset's own enumerable properties", () => {
+        function Model(/** @type {object} */ fields) {
+          Object.assign(this, fields);
+        }
+        Model.prototype.save = function () {};
+
+        expect(Bun.deepMatch(["x"], Object.setPrototypeOf(["x"], null))).toBe(true);
+        expect(Bun.deepMatch(Object.setPrototypeOf(["x"], null), ["x"])).toBe(true);
+        expect(Bun.deepMatch(new Model({ id: 1 }), { id: 1 })).toBe(true);
+        expect(Bun.deepMatch(new Model({ id: 1 }), { id: 2 })).toBe(false);
+        expect(Bun.deepMatch(Object.create({ inherited: 1 }), {})).toBe(true);
+        expect(Bun.deepMatch([], {})).toBe(false);
+
+        class Secret {
+          #value;
+          constructor(/** @type {number} */ value) {
+            this.#value = value;
+          }
+        }
+        expect(Bun.deepMatch(new Secret(1), new Secret(2))).toBe(true);
+        expect(Bun.deepMatch(new Secret(1), {})).toBe(true);
+
+        // A URL pattern is compared by href, as in toEqual.
+        expect(Bun.deepMatch(new URL("https://example.com/a"), new URL("https://example.com/a"))).toBe(true);
+        expect(Bun.deepMatch(new URL("https://example.com/a"), new URL("https://example.com/b"))).toBe(false);
+      });
+
+      // Jest matches two URLs vacuously. Bun compares them by href, as toEqual does.
+      test("compares a URL pattern by href", () => {
+        expect({ u: new URL("https://example.com/a") }).toMatchObject({ u: new URL("https://example.com/a") });
+        expect({ u: new URL("https://example.com/a") }).not.toMatchObject({ u: new URL("https://example.com/b") });
+        expect(new URL("https://example.com/a")).toMatchObject(new URL("https://example.com/a"));
+        expect(new URL("https://example.com/a")).not.toMatchObject(new URL("https://example.com/b"));
+        expect(new URL("https://example.com/a")).toMatchObject({ href: "https://example.com/a" });
+        expect(new URL("https://example.com/a")).not.toMatchObject({ href: "https://example.com/b" });
+      });
     }
+
+    // https://github.com/oven-sh/bun/issues/45950
+    test("ignores private fields of the expected value", () => {
+      // Like toEqual, a #field is not an enumerable own property.
+      class Secret {
+        #value;
+        visible = 1;
+        constructor(/** @type {number} */ value) {
+          this.#value = value;
+        }
+      }
+      expect(new Secret(1)).toMatchObject(new Secret(2));
+      expect({ visible: 1 }).toMatchObject(new Secret(2));
+      expect({ visible: 2 }).not.toMatchObject(new Secret(2));
+      expect(new Secret(1)).toEqual(expect.objectContaining(new Secret(2)));
+    });
+
+    // https://github.com/oven-sh/bun/issues/45950
+    test("ignores inherited properties of the expected value", () => {
+      // An array without a prototype has the same own properties as a normal array.
+      expect(Object.setPrototypeOf(["x"], null)).toMatchObject(["x"]);
+      expect(["x"]).toMatchObject(Object.setPrototypeOf(["x"], null));
+      expect(Object.setPrototypeOf(["x"], null)).not.toMatchObject(["y"]);
+      expect(Object.setPrototypeOf(["x"], null)).not.toMatchObject(["x", "y"]);
+
+      // A prototype that adds an enumerable field is not part of the pattern.
+      const arrayPrototype = Object.assign(Object.create(Array.prototype), { extra: 1 });
+      expect(Object.setPrototypeOf(["x"], arrayPrototype)).toMatchObject(["x"]);
+      expect(["x"]).toMatchObject(Object.setPrototypeOf(["x"], arrayPrototype));
+
+      // An old-style class: `save` on the prototype is enumerable.
+      function Model(/** @type {object} */ fields) {
+        Object.assign(this, fields);
+      }
+      Model.prototype.save = function () {};
+      expect({ id: 1 }).toMatchObject(new Model({ id: 1 }));
+      expect({ id: 1 }).not.toMatchObject(new Model({ id: 2 }));
+      expect({ id: 1 }).not.toMatchObject(new Model({ id: 1, name: "a" }));
+      expect(new Model({ id: 1 })).toMatchObject({ id: 1 });
+      expect(new Model({ id: 1 })).toMatchObject({ save: expect.any(Function) });
+
+      // Defaults held by the prototype of the expected value are not checked.
+      const defaults = { color: "red" };
+      expect({ size: 1 }).toMatchObject(Object.assign(Object.create(defaults), { size: 1 }));
+      expect({ size: 1, color: "blue" }).toMatchObject(Object.assign(Object.create(defaults), { size: 1 }));
+
+      // Own properties of the expected array still have to match.
+      const withOwnKey = ["x"];
+      withOwnKey.foo = 1;
+      expect(["x"]).not.toMatchObject(withOwnKey);
+      expect(withOwnKey).not.toMatchObject(["x"]);
+      expect(Object.setPrototypeOf(["x"], null)).not.toMatchObject(withOwnKey);
+
+      // An array pattern only matches an array.
+      expect({ 0: "x", length: 1 }).not.toMatchObject(["x"]);
+      expect({}).not.toMatchObject([]);
+      expect(Object.setPrototypeOf({ 0: "x" }, Array.prototype)).not.toMatchObject(["x"]);
+    });
     test("with expect matcher", () => {
       const f = Symbol.for("foo");
       const b = Symbol.for("bar");

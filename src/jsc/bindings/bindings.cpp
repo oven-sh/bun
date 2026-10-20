@@ -2226,8 +2226,25 @@ bool Bun__deepMatch(
     JSObject* obj = objValue.getObject();
     JSObject* subsetObj = subsetValue.getObject();
 
-    PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
-    subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
+    // A URL, URLSearchParams or Headers pattern keeps its state in the native object,
+    // not in own properties. Compare that state the way deepEquals does.
+    uint8_t subsetType = subsetObj->type();
+    if ((subsetType == JSDOMWrapperType || subsetType == JSAsJSONType) && obj->type() == subsetType) {
+        Vector<std::pair<JSValue, JSValue>, 16> stack;
+        MarkedArgumentBuffer specialGCBuffer;
+        std::optional<bool> specialEqual = specialObjectsDequal<false, enableAsymmetricMatchers, false>(globalObject, specialGCBuffer, stack, throwScope, subsetObj, obj);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        if (specialEqual.has_value()) return *specialEqual;
+        specialEqual = specialObjectsDequal<false, enableAsymmetricMatchers, false>(globalObject, specialGCBuffer, stack, throwScope, obj, subsetObj);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        if (specialEqual.has_value()) return *specialEqual;
+    }
+
+    // Like Jest, only the subset's own enumerable properties are compared.
+    // Inherited properties and private symbols (ES #fields and JSC builtin names)
+    // are not part of the pattern. deepEquals made the same choice in #3484.
+    PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    subsetObj->methodTable()->getOwnPropertyNames(subsetObj, globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(throwScope, false);
 
     // TODO: add fast paths for:
@@ -2235,17 +2252,21 @@ bool Bun__deepMatch(
     // - two "simple" arrays
     // similar to what is done in deepEquals (canPerformFastPropertyEnumerationForIterationBun)
 
-    // arrays should match exactly
-    bool objIsArray = isArray(globalObject, objValue);
-    RETURN_IF_EXCEPTION(throwScope, false);
-    bool subsetIsArray = objIsArray && isArray(globalObject, subsetValue);
+    // An array pattern only matches an array, and the two arrays should match exactly.
+    // An object pattern may still be satisfied by an array.
+    bool subsetIsArray = isArray(globalObject, subsetValue);
     RETURN_IF_EXCEPTION(throwScope, false);
     if (subsetIsArray) {
+        bool objIsArray = isArray(globalObject, objValue);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        if (!objIsArray) {
+            return false;
+        }
         if (obj->getArrayLength() != subsetObj->getArrayLength()) {
             return false;
         }
-        PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
-        obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
+        PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+        obj->methodTable()->getOwnPropertyNames(obj, globalObject, objProps, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(throwScope, false);
         if (objProps.size() != subsetProps.size()) {
             return false;

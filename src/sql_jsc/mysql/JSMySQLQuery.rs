@@ -100,10 +100,9 @@ impl JSMySQLQuery {
                 "run must be called with 2 arguments connection and target"
             )));
         }
-        let Some(connection) = MySQLConnection::with_js(arguments[0], RefPtr::this_ptr) else {
+        let Some(connection) = arguments[0].as_class_ref::<MySQLConnection>() else {
             return Err(global_object.throw(format_args!("connection must be a MySQLConnection")));
         };
-        let connection: &MySQLConnection = &connection;
         let target = arguments[1];
         if !target.is_object() {
             return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));

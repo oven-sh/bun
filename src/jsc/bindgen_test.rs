@@ -11,9 +11,10 @@ use crate::bindgen::{
 use crate::generated_bindgen::bindgen_test::{
     TestAnything, TestBare, TestChoice, TestColor, TestColorOrRest, TestCounterClass,
     TestCounterInternalFields as _, TestFailure, TestFlag, TestHolderClass, TestNames, TestOptions,
-    TestOptionsEcho, TestOuter, TestRefCountedClass, TestRefCountedInternalFields as _,
-    TestTextOrBytes, TestTokenClass, TestValue,
+    TestOptionsEcho, TestOuter, TestTextOrBytes, TestTokenClass, TestValue, js_TestRefCounted,
 };
+use crate::{JSGlobalObject, JSValue, JsResult};
+use bun_ptr::AsCtxPtr as _;
 
 // This example should be kept in sync with bindgen's documentation
 pub(crate) fn add<'a>(heap: &JsHeap<'a>, a: i32, b: i32) -> bindgen::Result<'a, i32> {
@@ -512,14 +513,12 @@ impl Drop for TestRefCounted {
     }
 }
 
-impl TestRefCountedClass for TestRefCounted {
-    type Error<'a> = bindgen::Error<'a>;
-
-    fn finalize(&self) {
+impl TestRefCounted {
+    pub(crate) fn finalize(&self) {
         self.finalized.set(true);
     }
 
-    fn constructor(value: i32) -> RefPtr<Self> {
+    pub(crate) fn constructor(value: i32) -> RefPtr<Self> {
         REF_COUNTED_ALIVE.fetch_add(1, Ordering::SeqCst);
         RefPtr::new(TestRefCounted {
             ref_count: Cell::new(1),
@@ -528,95 +527,82 @@ impl TestRefCountedClass for TestRefCounted {
         })
     }
 
-    fn value(&self) -> i32 {
+    pub(crate) fn get_value(&self) -> i32 {
         self.value.get()
     }
 
-    fn set_value(&self, value: i32) {
+    pub(crate) fn set_value(&self, value: i32) {
         self.value.set(value);
     }
 
-    fn listener<'a>(&self, this: JsWrapper<'a, RefPtr<Self>>, heap: &JsHeap<'a>) -> JsLocal<'a> {
-        this.listener_field(heap)
+    pub(crate) fn get_listener(&self, this_value: JSValue, _: &JSGlobalObject) -> JSValue {
+        js_TestRefCounted::listener_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
     }
 
-    fn set_listener<'a>(
+    pub(crate) fn set_listener(
         &self,
-        this: JsWrapper<'a, RefPtr<Self>>,
-        heap: &JsHeap<'a>,
-        value: JsLocal<'a>,
+        this_value: JSValue,
+        global: &JSGlobalObject,
+        value: JSValue,
     ) {
-        this.set_listener_field(heap, value);
+        js_TestRefCounted::listener_set_cached(this_value, global, value);
     }
 
-    fn notify<'a>(
-        &self,
-        this: JsWrapper<'a, RefPtr<Self>>,
-        cx: &mut JsScope<'a>,
-    ) -> bindgen::Result<'a, i32> {
-        if let Some(listener) = this.listener_field(&cx.heap).as_callable() {
-            listener.call(cx, this.as_value(), &[])?;
+    pub(crate) fn notify(&self, this_value: JSValue, global: &JSGlobalObject) -> JsResult<i32> {
+        if let Some(listener) = js_TestRefCounted::listener_get_cached(this_value)
+            && listener.is_callable()
+        {
+            listener.call(global, this_value, &[])?;
         }
         Ok(self.value.get())
     }
 
-    fn keep<'a>(&self, this: JsWrapper<'a, RefPtr<Self>>, cx: &mut JsScope<'a>) {
-        KEPT.set(Some(this.with(&cx.payloads, RefPtr::clone)));
+    pub(crate) fn keep(&self) {
+        // SAFETY: `self` is live.
+        KEPT.set(Some(unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }));
     }
 
-    fn dispose(&self) {
+    pub(crate) fn dispose(&self) {
         self.value.set(-1);
     }
 
-    fn to_primitive(&self) -> i32 {
+    pub(crate) fn to_primitive(&self) -> i32 {
         self.value.get()
     }
 
-    fn value_or_undefined(&self) -> i32 {
+    pub(crate) fn value_or_undefined(&self) -> i32 {
         self.value.get()
     }
 
-    fn or_undefined<'a>(
-        &self,
-        this: JsWrapper<'a, RefPtr<Self>>,
-    ) -> Option<JsWrapper<'a, RefPtr<Self>>> {
-        (self.value.get() >= 0).then_some(this)
+    pub(crate) fn or_undefined(&self, this_value: JSValue) -> Option<JSValue> {
+        (self.value.get() >= 0).then_some(this_value)
     }
 
-    fn or_null<'a>(
-        &self,
-        this: JsWrapper<'a, RefPtr<Self>>,
-    ) -> Option<JsWrapper<'a, RefPtr<Self>>> {
-        self.or_undefined(this)
+    pub(crate) fn or_null(&self, this_value: JSValue) -> Option<JSValue> {
+        self.or_undefined(this_value)
     }
 
-    fn is_same<'a>(
-        &self,
-        this: JsWrapper<'a, RefPtr<Self>>,
-        _: &JsHeap<'a>,
-        other: Option<JsWrapper<'a, RefPtr<Self>>>,
-    ) -> bool {
-        other.is_some_and(|other| other.as_value().to_js() == this.as_value().to_js())
+    pub(crate) fn is_same(&self, other: Option<&Self>) -> bool {
+        other.is_some_and(|other| core::ptr::eq(self, other))
     }
 
-    fn kept() -> impl IntoIterator<Item = i32> {
+    pub(crate) fn kept() -> Vec<i32> {
         KEPT.with_borrow(|kept| match kept {
             Some(kept) => vec![kept.value.get(), i32::from(kept.finalized.get())],
             None => Vec::new(),
         })
     }
 
-    fn release() {
+    pub(crate) fn release() {
         KEPT.set(None);
     }
 
-    fn alive() -> usize {
+    pub(crate) fn alive() -> usize {
         REF_COUNTED_ALIVE.load(Ordering::SeqCst)
     }
 
-    fn value_from_js<'a>(cx: &mut JsScope<'a>, object: JsLocal<'a>) -> Option<i32> {
-        let wrapper = Self::from_js(&cx.heap, object.to_js())?;
-        Some(wrapper.with(&cx.payloads, |payload| payload.value.get()))
+    pub(crate) fn value_from_js(object: JSValue) -> Option<i32> {
+        Some(object.as_class_ref::<Self>()?.value.get())
     }
 }
 

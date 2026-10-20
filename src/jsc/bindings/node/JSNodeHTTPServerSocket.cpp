@@ -1058,12 +1058,12 @@ static JSNodeHTTPResponse* getNodeHTTPResponse(us_socket_t* socket)
     return serverSocket->currentResponse();
 }
 
-extern "C" JSC::JSCell* Bun__getNodeHTTPResponseThisValue(bool is_ssl, us_socket_t* socket)
+extern "C" JSC::EncodedJSValue Bun__getNodeHTTPResponseThisValue(bool is_ssl, us_socket_t* socket)
 {
     if (is_ssl) {
-        return getNodeHTTPResponse<true>(socket);
+        return JSValue::encode(getNodeHTTPResponse<true>(socket));
     }
-    return getNodeHTTPResponse<false>(socket);
+    return JSValue::encode(getNodeHTTPResponse<false>(socket));
 }
 
 extern "C" JSC::EncodedJSValue Bun__getNodeHTTPServerSocketThisValue(bool is_ssl, us_socket_t* socket)

@@ -128,8 +128,13 @@ private:
     JSWrapper(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
     {
-        for (auto& field : internalFields())
-            new (NotNull, &field) JSC::WriteBarrier<JSC::Unknown>(JSC::UndefinedWriteBarrierTag);
+        // Rust reads a field of a refCounted class as an Option, which is None until it is set.
+        for (auto& field : internalFields()) {
+            if constexpr (Traits::refCounted)
+                new (NotNull, &field) JSC::WriteBarrier<JSC::Unknown>();
+            else
+                new (NotNull, &field) JSC::WriteBarrier<JSC::Unknown>(JSC::UndefinedWriteBarrierTag);
+        }
     }
 
     DECLARE_DEFAULT_FINISH_CREATION;

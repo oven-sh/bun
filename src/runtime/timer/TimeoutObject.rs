@@ -1,43 +1,14 @@
-use bun_jsc::JSValue;
-use bun_jsc::bindgen::{JsHeap, JsLocal, JsWrapper};
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_ptr::RefPtr;
+use bun_jsc::{JSGlobalObject, JSValue};
 
-use super::{Kind, TimerObjectInternals};
-use crate::generated_bindgen::timer::{TimeoutClass, TimeoutInternalFields as _};
+use crate::generated_bindgen::timer::js_Timeout as js;
 
-// The struct, its `RefCounted` impl and the methods shared with `ImmediateObject` come from `impl_timer_object!` (timer/mod.rs).
-super::impl_timer_object!(TimeoutObject, TimeoutObject, "Timeout", TimeoutClass, {
-    fn do_refresh<'a>(
-        &self,
-        this: JsWrapper<'a, RefPtr<Self>>,
-        heap: &JsHeap<'a>,
-    ) -> JsWrapper<'a, RefPtr<Self>> {
-        TimerObjectInternals::do_refresh(self, this, heap);
-        this
-    }
+use super::Kind;
 
-    fn close<'a>(&self, this: JsWrapper<'a, RefPtr<Self>>) -> JsWrapper<'a, RefPtr<Self>> {
-        self.internals.cancel(VirtualMachine::get_mut_ptr());
-        this
-    }
-
-    fn idle_start<'a>(&self, this: JsWrapper<'a, RefPtr<Self>>, heap: &JsHeap<'a>) -> JsLocal<'a> {
-        this.idle_start_field(heap)
-    }
-
-    fn set_idle_start<'a>(
-        &self,
-        this: JsWrapper<'a, RefPtr<Self>>,
-        heap: &JsHeap<'a>,
-        value: JsLocal<'a>,
-    ) {
-        if let Some(ms) = value.to_js().get_number() {
-            self.internals.set_idle_start(ms);
-        }
-        this.set_idle_start_field(heap, value);
-    }
-});
+// Struct + `RefCounted`/`Default` impls + the forwarder host-fns
+// (`to_primitive`/`do_ref`/`do_unref`/`has_ref`/`get_destroyed`/`dispose`/
+// `constructor`/`finalize`/`ref_`/`deref`/`deinit`/`init_with`) — see
+// `impl_timer_object!` in `super` (timer/mod.rs).
+super::impl_timer_object!(TimeoutObject, TimeoutObject, "Timeout");
 
 impl TimeoutObject {
     pub(crate) fn init(
@@ -49,5 +20,34 @@ impl TimeoutObject {
         arguments: JSValue,
     ) -> JSValue {
         Self::init_with(cx, id, kind, interval, callback, arguments)
+    }
+
+    pub(crate) fn do_refresh(this: &Self, this_value: JSValue, global: &JSGlobalObject) -> JSValue {
+        this.internals.do_refresh(global, this_value)
+    }
+
+    pub(crate) fn close(this: &Self, this_value: JSValue, global: &JSGlobalObject) -> JSValue {
+        this.internals.cancel(global.bun_vm_ptr());
+        this_value
+    }
+
+    pub(crate) fn get_idle_start(
+        _this: &Self,
+        this_value: JSValue,
+        _global: &JSGlobalObject,
+    ) -> JSValue {
+        js::idle_start_get_cached(this_value).unwrap()
+    }
+
+    pub(crate) fn set_idle_start(
+        this: &Self,
+        this_value: JSValue,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) {
+        if let Some(ms) = value.get_number() {
+            this.internals.set_idle_start(ms);
+        }
+        js::idle_start_set_cached(this_value, global, value);
     }
 }

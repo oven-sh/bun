@@ -1597,19 +1597,23 @@ impl<'a> Formatter<'a> {
                         return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
                             writer.ctx, value, JSType::Event,
                         );
-                    } else if let Some((id, kind)) = crate::timer::TimeoutObject::with_js(value, |timeout| {
-                        (timeout.internals.id, timeout.internals.flags.get().kind())
-                    }) {
-                        self.add_for_new_line(b"Timeout(# ) ".len() + bun_fmt::digit_count(id.max(0)));
-                        if kind == crate::timer::Kind::SetInterval {
-                            self.add_for_new_line(b"repeats ".len() + bun_fmt::digit_count(id.max(0)));
+                    } else if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
+                        self.add_for_new_line(
+                            b"Timeout(# ) ".len()
+                                + bun_fmt::digit_count(timer.internals.id.max(0)),
+                        );
+                        if timer.internals.flags.get().kind() == crate::timer::Kind::SetInterval {
+                            self.add_for_new_line(
+                                b"repeats ".len()
+                                    + bun_fmt::digit_count(timer.internals.id.max(0)),
+                            );
                             writer.print(format_args!(
                                 "{}Timeout{} {}(#{}{}{}{}, repeats){}",
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<yellow>"),
-                                id,
+                                timer.internals.id,
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
@@ -1621,7 +1625,7 @@ impl<'a> Formatter<'a> {
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<yellow>"),
-                                id,
+                                timer.internals.id,
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
@@ -1629,16 +1633,20 @@ impl<'a> Formatter<'a> {
                         }
 
                         return Ok(());
-                    } else if let Some(id) = crate::timer::ImmediateObject::with_js(value, |immediate| immediate.internals.id)
+                    } else if let Some(immediate) =
+                        value.as_class_ref::<crate::timer::ImmediateObject>()
                     {
-                        self.add_for_new_line(b"Immediate(# ) ".len() + bun_fmt::digit_count(id.max(0)));
+                        self.add_for_new_line(
+                            b"Immediate(# ) ".len()
+                                + bun_fmt::digit_count(immediate.internals.id.max(0)),
+                        );
                         writer.print(format_args!(
                             "{}Immediate{} {}(#{}{}{}{}){}",
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<yellow>"),
-                            id,
+                            immediate.internals.id,
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),

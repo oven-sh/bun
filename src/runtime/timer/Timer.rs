@@ -10,7 +10,7 @@
 use bun_core::String as BunString;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, StringJsc as _};
 use bun_uws::Loop as UwsLoop;
 
 use super::{
@@ -333,7 +333,7 @@ impl All {
         let context = global_this.bun_vm().context_of_caller_no_frame();
         let all = timer_all_mut();
 
-        let timer: *mut TimerObjectInternals = 'brk: {
+        let timer: Option<*mut TimerObjectInternals> = 'brk: {
             if timer_id_value.is_number() {
                 // Node.js looks the id up by value (`knownTimersById[id]`): a double holding an
                 // integer names the same timer as the int32. Anything else clears nothing.
@@ -345,7 +345,7 @@ impl All {
                     return Ok(());
                 };
                 // SAFETY: t is a valid TimeoutObject pointer
-                break 'brk unsafe { core::ptr::addr_of_mut!((*t).internals) };
+                break 'brk Some(unsafe { core::ptr::addr_of_mut!((*t).internals) });
             } else if timer_id_value.is_string_literal() {
                 // Primitive string only (JSType::String) — boxed `new String(..)`
                 // must fall through to `from_js` below and be a no-op, matching
@@ -403,27 +403,31 @@ impl All {
                     return Ok(());
                 };
                 // SAFETY: t is a valid TimeoutObject pointer
-                break 'brk unsafe { core::ptr::addr_of_mut!((*t).internals) };
+                break 'brk Some(unsafe { core::ptr::addr_of_mut!((*t).internals) });
             }
 
-            let is_timeout = TimeoutObject::with_js(timer_id_value, |timeout| {
+            if let Some(timeout) = TimeoutObject::from_js(timer_id_value) {
                 // clearImmediate should be a noop if anything other than an Immediate is passed to it.
                 if kind != Kind::SetImmediate {
-                    timeout.internals.cancel(vm);
+                    // SAFETY: `timeout` is a valid TimeoutObject pointer
+                    break 'brk Some(unsafe { core::ptr::addr_of_mut!((*timeout).internals) });
+                } else {
+                    return Ok(());
                 }
-            })
-            .is_some();
-            if !is_timeout {
-                ImmediateObject::with_js(timer_id_value, |immediate| {
-                    // setImmediate can only be cleared by clearImmediate, not by clearTimeout or clearInterval.
-                    if kind == Kind::SetImmediate {
-                        immediate.internals.cancel(vm);
-                    }
-                });
+            } else if let Some(immediate) = ImmediateObject::from_js(timer_id_value) {
+                // setImmediate can only be cleared by clearImmediate, not by clearTimeout or clearInterval.
+                if kind == Kind::SetImmediate {
+                    // SAFETY: `immediate` is a valid ImmediateObject pointer
+                    break 'brk Some(unsafe { core::ptr::addr_of_mut!((*immediate).internals) });
+                } else {
+                    return Ok(());
+                }
+            } else {
+                break 'brk None;
             }
-            return Ok(());
         };
 
+        let Some(timer) = timer else { return Ok(()) };
         // SAFETY: timer points to a live TimerObjectInternals
         unsafe { (*timer).cancel(vm) };
         Ok(())
@@ -451,6 +455,11 @@ impl All {
 // ════════════════════════════════════════════════════════════════════════════
 // Method bodies on canonical sibling types (`mod.rs` definitions).
 // ════════════════════════════════════════════════════════════════════════════
+
+// `TimeoutObject::{init, from_js}` and `ImmediateObject::{init, from_js}` now
+// live in `super::{timeout_object, immediate_object}`; the inherent `init`
+// constructor and the `JsClass`-derived `from_js` are re-exported via
+// `super::{TimeoutObject, ImmediateObject}`.
 
 impl DateHeaderTimer {
     /// Schedule the "Date" header timer.

@@ -13,6 +13,6 @@ export const CronJob = b.class({
     ref: { ...chainable, rustName: "do_ref" },
     stop: chainable,
     unref: { ...chainable, rustName: "do_unref" },
-    "@@dispose": chainable,
+    "@@dispose": { ...chainable, rustName: "stop" },
   },
 });

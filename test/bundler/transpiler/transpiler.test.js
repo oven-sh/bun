@@ -5083,23 +5083,6 @@ console.log(foo, array);
     );
   });
 
-  it("a buffer detached by the loader's toString() reads as empty", () => {
-    const transpiler = new Bun.Transpiler();
-    const transferred = [];
-    const call = method => {
-      const code = new TextEncoder().encode(`export const a = 1; import "x";`);
-      const loader = new String("js");
-      loader.toString = () => {
-        transferred.push(code.buffer.transfer());
-        return "js";
-      };
-      return transpiler[method](code, loader);
-    };
-    expect(call("scan")).toEqual({ exports: [], imports: [] });
-    expect(call("scanImports")).toEqual([]);
-    expect(call("transformSync")).toBe("");
-  });
-
   it("preserves exotic directives", () => {
     expect(
       new Bun.Transpiler().transformSync(`"use client";

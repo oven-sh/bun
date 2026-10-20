@@ -14,7 +14,7 @@ const contentOp = (returns: b.Type) =>
     ...chainable(returns),
     args: { content: string, options: ContentOptions.nullable.default({}) },
     expected: { content: "Expected string" },
-    capability: "heap",
+    capability: "js",
     throws: true,
   }) as const;
 
@@ -37,7 +37,7 @@ export const TextChunk = b.class({
 });
 
 /** `null` if the doctype has none, `undefined` after the handler returns. */
-const identifier = { getter: b.any, cache: true, capability: "heap", throws: true } as const;
+const identifier = { getter: b.any, cache: true, capability: "js", throws: true } as const;
 
 export const DocType = b.class({
   rustPath: "crate::api::html_rewriter::DocType",
@@ -87,16 +87,13 @@ export const EndTag = b.class({
   },
 });
 
-/** `value` is an own property even when `done` is true. */
-export const AttributeIteratorResult = b.dictionary({ value: b.any, done: b.bool });
-
 export const AttributeIterator = b.class({
   rustPath: "crate::api::html_rewriter::AttributeIterator",
   refCounted: true,
   finalize: true,
   configurable: false,
   proto: {
-    next: { returns: AttributeIteratorResult, capability: "heap", throws: true },
+    next: { returns: b.any, capability: "js", throws: true },
     "@@iterator": { ...chainable(b.self), rustName: "get_this" },
   },
 });
@@ -110,18 +107,18 @@ export const Element = b.class({
   proto: {
     after: contentOp(b.self.optional),
     append: contentOp(b.self.optional),
-    attributes: { getter: AttributeIterator.optional, capability: "heap" },
+    attributes: { getter: AttributeIterator.optional, capability: "js" },
     before: contentOp(b.self.optional),
     canHaveContent: { getter: b.bool.optional },
     getAttribute: { ...named, returns: b.string.utf8.nullable },
-    hasAttribute: { ...named, returns: b.bool, capability: "heap", throws: true },
+    hasAttribute: { ...named, returns: b.bool, capability: "js", throws: true },
     namespaceURI: { getter: b.string.utf8.optional, cache: true },
     /** `b.any`: after the element handler returns, `handler` is not type-checked. */
-    onEndTag: { ...chainable(b.self.nullable), args: { handler: b.any }, capability: "heap", throws: true },
+    onEndTag: { ...chainable(b.self.nullable), args: { handler: b.any }, capability: "js", throws: true },
     prepend: contentOp(b.self.optional),
     remove: chainable(b.self.optional),
     removeAndKeepContent: chainable(b.self.optional),
-    removeAttribute: { ...chainable(b.self.optional), ...named, capability: "heap", throws: true },
+    removeAttribute: { ...chainable(b.self.optional), ...named, capability: "js", throws: true },
     removed: { getter: b.bool.optional },
     replace: contentOp(b.self.optional),
     selfClosing: { getter: b.bool.optional },
@@ -129,7 +126,7 @@ export const Element = b.class({
       ...chainable(b.self.optional),
       args: { name: string, value: string },
       expected: { name: "Expected string", value: "Expected string" },
-      capability: "heap",
+      capability: "js",
       throws: true,
     },
     setInnerContent: contentOp(b.self.optional),

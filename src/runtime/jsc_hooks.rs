@@ -22,7 +22,6 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr;
 
-use bun_jsc::bindgen::JsPayload as _;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::module_loader::{ArenaResetGuard, FetchFlags, TranspileArgs, TranspileExtra};
@@ -2015,12 +2014,12 @@ fn console_print_runtime_object_inner<const C: bool>(
         }
         // Spec falls through (no `return`) when `toJSON` is absent.
     }
-    if let Some((id, kind)) = crate::timer::TimeoutObject::with_js(value, |timeout| {
-        (timeout.internals.id, timeout.internals.flags.get().kind())
-    }) {
+    if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
+        let internals = &timer.internals;
+        let id = internals.id;
         formatter.add_for_new_line("Timeout(# ) ".len() + bun_core::fmt::digit_count(id.max(0)));
         let mut w = AsFmt::new(writer_);
-        if kind == crate::timer::Kind::SetInterval {
+        if internals.flags.get().kind() == crate::timer::Kind::SetInterval {
             formatter.add_for_new_line("repeats ".len() + bun_core::fmt::digit_count(id.max(0)));
             let _ = write!(
                 w,
@@ -2050,9 +2049,8 @@ fn console_print_runtime_object_inner<const C: bool>(
         }
         return Ok(true);
     }
-    if let Some(id) =
-        crate::timer::ImmediateObject::with_js(value, |immediate| immediate.internals.id)
-    {
+    if let Some(immediate) = value.as_class_ref::<crate::timer::ImmediateObject>() {
+        let id = immediate.internals.id;
         formatter.add_for_new_line("Immediate(# ) ".len() + bun_core::fmt::digit_count(id.max(0)));
         let mut w = AsFmt::new(writer_);
         let _ = write!(
@@ -3358,7 +3356,7 @@ fn transpile_source_code_of_any_provenance(
             let html_bundle = crate::api::HTMLBundle::init(global_object, path.text);
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
             Ok(ResolvedSource {
-                jsvalue_for_export: html_bundle.into_js_value(global_object),
+                jsvalue_for_export: crate::api::HTMLBundle::to_js(html_bundle, global_object),
                 source_url: input_specifier.create_if_different(path.text),
                 tag: ResolvedSourceTag::ExportDefaultObject,
                 ..Default::default()

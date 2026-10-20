@@ -755,7 +755,7 @@ impl AnyRoute {
         init_ctx: &mut ServerInitContext,
     ) -> JsResult<Option<AnyRoute>> {
         use bun_collections::zig_hash_map::MapEntry as StdEntry;
-        if let Some(html_bundle) = HTMLBundle::with_js(argument, RefPtr::this_ptr) {
+        if let Some(html_bundle) = argument.as_class_this_ptr::<HTMLBundle>() {
             let entry = init_ctx
                 .dedupe_html_bundle_map
                 .entry(html_bundle.as_ptr().cast_const());
@@ -1651,12 +1651,11 @@ where
         if let Some(request) = <Request as bun_jsc::JsClass>::from_js(arguments[0]) {
             // SAFETY: from_js returns a live *mut Request; shared access only.
             let _ = unsafe { (*request).request_context.set_timeout(value) };
-            return Ok(JSValue::UNDEFINED);
-        }
-        let response = NodeHTTPResponse::with_js(arguments[0], |response| {
-            response.set_timeout((value % 255) as u8)
-        });
-        if response.is_none() {
+        } else if let Some(response) = <NodeHTTPResponse as bun_jsc::JsClass>::from_js(arguments[0])
+        {
+            // SAFETY: from_js returns a live *mut NodeHTTPResponse
+            unsafe { (*response).set_timeout((value % 255) as u8) };
+        } else {
             return Err(self
                 .global()
                 .throw_invalid_arguments(format_args!("timeout() requires a Request object")));

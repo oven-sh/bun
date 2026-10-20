@@ -264,13 +264,13 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     "x: mutates is not allowed in a refCounted class",
   );
   expect(() => b.class({ rustPath: "T", finalize: true })).toThrow("finalize requires refCounted");
-  expect(() => b.class({ rustPath: "T", proto: { x: { returns: b.self } } })).toThrow(
-    "or passThis to return the object itself",
+  expect(() => b.class({ rustPath: "T", fromJS: true })).toThrow("fromJS requires refCounted");
+  expect(() => b.class({ rustPath: "T", refCounted: true, proto: { x: { capability: "heap" } } })).toThrow(
+    'capability: in a refCounted class it is "js", which passes the global object, or "none"',
   );
-  // @ts-expect-error
-  expect(() => b.class({ rustPath: "T", construct: {}, static: { x: { returns: b.self, passThis: true } } })).toThrow(
-    "or passThis to return the object itself",
-  );
+  expect(() =>
+    b.class({ rustPath: "T", refCounted: true, proto: { x: { getter: b.i32, capability: "heap" } } }),
+  ).toThrow('x: capability: in a refCounted class it is "js", which passes the global object, or "none"');
   expect(() => b.string.allowStringObject.loose).toThrow(".loose already takes a String object");
   expect(() => b.string.loose.allowStringObject).toThrow(".loose already takes a String object");
   // No overload can have the argument left out, so `undefined` goes to the one that reports its own error.
@@ -2074,7 +2074,7 @@ describe("classes", () => {
       expect(() => object.isSame({})).toThrow(TypeError);
     });
 
-    it("from_js returns the wrapper only for instances", () => {
+    it("from_js returns the struct only for instances", () => {
       expect(TestRefCounted.valueFromJS(new TestRefCounted(9))).toBe(9);
       class Derived extends TestRefCounted {}
       expect(TestRefCounted.valueFromJS(new Derived(10))).toBe(10);

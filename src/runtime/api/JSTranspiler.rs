@@ -5,7 +5,6 @@ use bun_options_types::TargetExt as _;
 use std::io::Write as _;
 
 use crate::Error;
-use crate::generated_bindgen::transpiler::TranspilerClass;
 use crate::node::{StringOrBuffer, ThreadIsolated};
 use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
 use bun_ast::Expr;
@@ -19,21 +18,19 @@ use bun_js_parser::parser::Runtime;
 use bun_js_parser::parser::ScanPassResult;
 use bun_js_parser::{self as JSAst};
 use bun_js_printer as JSPrinter;
-use bun_jsc::bindgen::{self, JsBytes, JsLocal, JsScope, JsWrapper, StringOrJsBytes};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, ComptimeStringMapExt, JSArrayIterator, JSGlobalObject, JSPromise,
-    JSPropertyIterator, JSPropertyIteratorOptions, JSString, JSValue, JsCell, JsResult, LogJsc,
-    StringJsc,
+    JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell, JsResult, LogJsc, StringJsc,
 };
-use bun_ptr::RefPtr;
 use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
 // `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
 use bun_collections::ArrayHashMapExt;
 use bun_core::{EncodedSlice, String as BunString};
 use bun_options_types::schema::api;
+use bun_ptr::RefPtr;
 
 // Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `JsCell` (= `UnsafeCell` projector). `JsCell` is
@@ -48,7 +45,7 @@ pub(crate) struct JSTranspiler {
     pub(crate) scan_pass_result: JsCell<ScanPassResult>,
     pub(crate) buffer_writer: JsCell<Option<JSPrinter::BufferWriter>>,
     // Arena bulk-frees the config strings. Boxed so its
-    // address is stable across the move into `JSTranspiler` —
+    // address is stable across the move into `Box<JSTranspiler>` —
     // `transpiler.arena` holds a `&'static Arena` pointing into it.
     pub(crate) _arena: Box<Arena>,
     pub(crate) ref_count: bun_ptr::RefCount<JSTranspiler>,
@@ -117,7 +114,7 @@ impl Default for Config {
 // `transpiler-utf16-loader.test.ts`.
 // ──────────────────────────────────────────────────────────────────────────
 
-use bun_bundler_jsc::options_jsc::{loader_from_js, loader_from_utf8, target_from_js};
+use bun_bundler_jsc::options_jsc::{loader_from_js, target_from_js};
 use bun_collections::index_sort;
 
 fn source_map_option_from_js(
@@ -928,14 +925,26 @@ fn export_replacement_value(
 }
 
 impl JSTranspiler {
-    fn init(global: &JSGlobalObject, config_arg: JSValue) -> JsResult<RefPtr<JSTranspiler>> {
-        // `config` and `transpiler` are built on the stack and moved into the allocation, then `set_log` re-points `transpiler.log`.
+    pub(crate) fn constructor(
+        global: &JSGlobalObject,
+        config_arg: JSValue,
+    ) -> JsResult<RefPtr<JSTranspiler>> {
+        // NOTE: a non-POD field cannot be left uninitialized in a live Box
+        // (zeroed()/assume_init() on Transpiler is UB), so build `config` + `transpiler` on the
+        // stack first, then move both into the Box. Nothing observes the
+        // `Box<JSTranspiler>` address before construction completes. The
+        // address-sensitive pointers are `transpiler.arena` (points into the
+        // separately-boxed `arena`, whose address is move-stable) and
+        // `transpiler.log` (initially points at the stack-local `config.log`;
+        // it is re-pointed via `set_log` once the Box exists — see the NOTE
+        // below), so no up-front allocation / `MaybeUninit` in-place init is
+        // needed.
         let mut config = Config {
             log: bun_ast::Log::init(),
             ..Default::default()
         };
         let arena = Box::new(Arena::new());
-        // SAFETY: `arena` is heap-allocated and moved (as a Box) into the `JSTranspiler` below;
+        // SAFETY: `arena` is heap-allocated and moved (as a Box) into `Box<JSTranspiler>` below;
         // its address is stable for the lifetime of the JSTranspiler. `Transpiler<'static>` forces
         // the borrow to 'static, so launder through a raw ptr.
         let arena_ref: &'static Arena =
@@ -975,7 +984,7 @@ impl JSTranspiler {
             }
         };
 
-        let this = RefPtr::new(JSTranspiler {
+        let this: Box<JSTranspiler> = Box::new(JSTranspiler {
             config: JsCell::new(config),
             _arena: arena,
             transpiler: JsCell::new(transpiler),
@@ -983,16 +992,16 @@ impl JSTranspiler {
             buffer_writer: JsCell::new(None),
             ref_count: bun_ptr::RefCount::init(),
         });
-        // errdefer past this point → `this` drops its only ref and runs Drop for JSTranspiler.
+        // errdefer past this point → `this: Box<_>` drops and runs Drop for JSTranspiler.
 
-        // NOTE: `config` was built on the stack and moved into the allocation, so
+        // NOTE: `config` was built on the stack and moved into the Box, so
         // `transpiler.log` (a `*mut Log`) still points at the moved-from
-        // stack slot. Re-point it at the heap-stable field.
-        // SAFETY: `this` is exclusively owned (init-time, before the JS
+        // stack slot. Re-point it at the heap-stable field now that the Box exists.
+        // SAFETY: `this: Box<_>` is exclusively owned (init-time, before the JS
         // wrapper exists) so projecting `&mut`/`*mut` from the JsCells is trivially
         // alias-free.
         let config = unsafe { this.config.get_mut() };
-        // SAFETY: same exclusive-ownership invariant as the line above — `this`
+        // SAFETY: same exclusive-ownership invariant as the line above — `this: Box<_>`
         // is uniquely owned at init time, so `&mut` projection is alias-free.
         let transpiler = unsafe { this.transpiler.get_mut() };
         transpiler.set_log(&raw mut config.log);
@@ -1039,7 +1048,8 @@ impl JSTranspiler {
         transpiler.options.react_fast_refresh = false;
         transpiler.options.repl_mode = config.repl_mode;
 
-        Ok(this)
+        // SAFETY: a fresh allocation whose `ref_count` is the one ref handed over.
+        Ok(unsafe { RefPtr::from_raw(bun_core::heap::into_raw(this)) })
     }
 }
 
@@ -1087,7 +1097,7 @@ impl TranspilerStateGuard {
     ///
     /// SAFETY: `self.transpiler` is always non-null — every construction site
     /// initializes it from `js_transpiler.transpiler.as_ptr()` (the
-    /// `JsCell<Transpiler>` in the heap-stable `JSTranspiler`), which
+    /// `JsCell<Transpiler>` in the heap-stable `Box<JSTranspiler>`), which
     /// outlives this stack-local guard. The guard is held as
     /// `let _restore = ...;` and never touched between construction and `Drop`,
     /// so no other `&mut Transpiler` projection from that `JsCell` is live when
@@ -1095,7 +1105,7 @@ impl TranspilerStateGuard {
     #[inline]
     fn transpiler_mut(&mut self) -> &mut Transpiler::Transpiler<'static> {
         // SAFETY: `self.transpiler` is non-null (set from `JsCell::as_ptr()` on the
-        // heap-stable `JSTranspiler`); the guard holds the only live `&mut`
+        // heap-stable `Box<JSTranspiler>`); the guard holds the only live `&mut`
         // projection of that `JsCell` between construction and `Drop`.
         unsafe { &mut *self.transpiler }
     }
@@ -1113,7 +1123,7 @@ impl TranspilerStateGuard {
 impl Drop for TranspilerStateGuard {
     fn drop(&mut self) {
         // `transpiler` and `restore_log` point into the heap-stable
-        // `JSTranspiler` (`self.transpiler` / `self.config.log`) which
+        // `Box<JSTranspiler>` (`self.transpiler` / `self.config.log`) which
         // outlives this stack frame. The guard is declared after the temporary
         // arena/log and so drops before them (reverse-decl order), ensuring the
         // Transpiler never observes a dangling `&'static Arena`.
@@ -1244,28 +1254,20 @@ impl JSTranspiler {
         // SAFETY: see `transpiler_mut` — `parse` may re-enter JS via macros.
         unsafe { self.transpiler_mut() }.parse(parse_options, None)
     }
-}
 
-impl TranspilerClass for JSTranspiler {
-    type Error<'a> = bindgen::Error<'a>;
-
-    fn constructor<'a>(
-        cx: &mut JsScope<'a>,
-        options: JsLocal<'a>,
-    ) -> bindgen::Result<'a, RefPtr<Self>> {
-        Ok(Self::init(cx.global(), options.to_js())?)
-    }
-
-    fn scan<'a>(
+    pub(crate) fn scan(
         &self,
-        cx: &mut JsScope<'a>,
-        code: JsBytes<'a>,
-        loader: Option<&'a [u8]>,
-    ) -> bindgen::Result<'a, JsLocal<'a>> {
-        let loader: Option<Loader> = match loader {
-            Some(loader) => loader_from_utf8(cx.global(), loader)?,
-            None => None,
+        global: &JSGlobalObject,
+        code_arg: JSValue,
+        loader_arg: JSValue,
+    ) -> JsResult<JSValue> {
+        jsc::mark_binding();
+        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+            return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
         };
+        let code = code_holder.slice();
+
+        let loader: Option<Loader> = loader_from_js(global, loader_arg)?;
 
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
@@ -1290,23 +1292,17 @@ impl TranspilerClass for JSTranspiler {
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        let parse_result =
-            self.get_parse_result(arena_ref, code.get(&cx.heap), loader, MacroJSCtx::ZERO);
-        let global = cx.global();
+        let parse_result = self.get_parse_result(arena_ref, code, loader, MacroJSCtx::ZERO);
         let log_ref = self.transpiler.get().log_mut();
         let Some(mut parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {
-                return Err(global
-                    .throw_value(log_ref.to_js(global, format_args!("Parse error"))?)
-                    .into());
+                return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
             }
-            return Err(global.throw(format_args!("Failed to parse")).into());
+            return Err(global.throw(format_args!("Failed to parse")));
         };
 
         if (log_ref.warnings + log_ref.errors) > 0 {
-            return Err(global
-                .throw_value(log_ref.to_js(global, format_args!("Parse error"))?)
-                .into());
+            return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
         }
 
         let exports_label = EncodedSlice::latin1(b"exports");
@@ -1319,78 +1315,103 @@ impl TranspilerClass for JSTranspiler {
 
         let named_exports_value = named_exports_to_js(global, &mut parse_result.ast.named_exports)?;
 
-        let result = JSValue::create_object2(
+        JSValue::create_object2(
             global,
             &imports_label,
             &exports_label,
             named_imports_value,
             named_exports_value,
-        )?;
-        Ok(JsLocal::new(&cx.heap, result))
+        )
     }
 
-    fn transform<'a>(
+    pub(crate) fn transform(
         &self,
-        this: JsWrapper<'a, RefPtr<Self>>,
-        cx: &mut JsScope<'a>,
-        code: StringOrJsBytes<'a>,
-        loader: JsLocal<'a>,
-    ) -> bindgen::Result<'a, JsLocal<'a>> {
-        let code = match code {
-            StringOrJsBytes::Bytes(buffer) => {
-                let bytes = buffer.get(&cx.heap).to_vec();
-                cx.global().vm().report_extra_memory(bytes.len());
-                StringOrBuffer::owned_isolated(bytes)
-            }
-            StringOrJsBytes::String(code) => StringOrBuffer::string_isolated(cx.global(), code),
+        this_value: JSValue,
+        global: &JSGlobalObject,
+        code_arg: JSValue,
+        loader_arg: JSValue,
+    ) -> JsResult<JSValue> {
+        let cx = global.js_thread_of_caller_no_frame();
+        jsc::mark_binding();
+        let code = if let Some(buffer) = code_arg.as_array_buffer(global) {
+            let bytes = buffer.byte_slice().to_vec();
+            global.vm().report_extra_memory(bytes.len());
+            StringOrBuffer::owned_isolated(bytes)
+        } else if let Some(code) = StringOrBuffer::from_js_async(global, code_arg)? {
+            code
+        } else {
+            return Err(global.throw_invalid_argument_type(
+                "transform",
+                "code",
+                "string or Uint8Array",
+            ));
         };
 
-        let loader: Option<Loader> = loader_from_js(cx.global(), loader.to_js())?;
+        let loader: Option<Loader> = loader_from_js(global, loader_arg)?;
 
         let default_loader = self.config.get().default_loader;
-        let promise = TransformTask::schedule(
+        Ok(TransformTask::schedule(
             self,
-            this.as_value().to_js(),
+            this_value,
             code,
-            &cx.js_thread(),
+            &cx,
             loader.unwrap_or(default_loader),
-        );
-        Ok(JsLocal::new(&cx.heap, promise))
+        ))
     }
 
-    fn transform_sync<'a>(
+    pub(crate) fn transform_sync(
         &self,
-        cx: &mut JsScope<'a>,
-        code: JsBytes<'a>,
-        loader_or_context: JsLocal<'a>,
-        context: JsLocal<'a>,
-    ) -> bindgen::Result<'a, JsLocal<'a, JSString>> {
+        global: &JSGlobalObject,
+        code_arg: JSValue,
+        loader_or_context: JSValue,
+        context: JSValue,
+    ) -> JsResult<JSValue> {
+        jsc::mark_binding();
+
         let arena = Arena::new();
+        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+            return Err(global.throw_invalid_argument_type(
+                "transformSync",
+                "code",
+                "string or Uint8Array",
+            ));
+        };
+        let code = code_holder.slice();
+        code_arg.ensure_still_alive();
+        let _keep0 = bun_jsc::EnsureStillAlive(code_arg);
 
         let mut js_ctx_value: JSValue = JSValue::ZERO;
         let loader: Option<Loader> = 'brk: {
-            let arg = loader_or_context.to_js();
-            if arg.is_number() || arg.is_string() {
-                break 'brk loader_from_js(cx.global(), arg)?;
+            if loader_or_context.is_number() || loader_or_context.is_string() {
+                break 'brk loader_from_js(global, loader_or_context)?;
             }
 
-            if arg.is_object() {
-                js_ctx_value = arg;
+            if loader_or_context.is_object() {
+                js_ctx_value = loader_or_context;
             }
             break 'brk None;
         };
 
         if !context.is_undefined() {
-            let arg = context.to_js();
-            if arg.is_object() {
-                js_ctx_value = arg;
+            if context.is_object() {
+                js_ctx_value = context;
             } else {
-                return Err(cx
-                    .global()
-                    .throw_invalid_argument_type("transformSync", "context", "object or loader")
-                    .into());
+                return Err(global.throw_invalid_argument_type(
+                    "transformSync",
+                    "context",
+                    "object or loader",
+                ));
             }
         }
+        if !js_ctx_value.is_empty() {
+            js_ctx_value.ensure_still_alive();
+        }
+
+        let _keep_ctx = if !js_ctx_value.is_empty() {
+            Some(bun_jsc::EnsureStillAlive(js_ctx_value))
+        } else {
+            None
+        };
 
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
@@ -1423,30 +1444,22 @@ impl TranspilerClass for JSTranspiler {
 
         // `MacroJSCtx` carries the encoded `JSValue` bits (`#[repr(transparent)] i64`).
         let macro_js_ctx: MacroJSCtx = MacroJSCtx(js_ctx_value.0 as i64);
-        let code = code.get(&cx.heap);
-        let code_len = code.len();
         let parse_result = self.get_parse_result(arena_ref, code, loader, macro_js_ctx);
         let log_ref = self.transpiler.get().log_mut();
         let Some(parse_result) = parse_result else {
-            let global = cx.global();
             if (log_ref.warnings + log_ref.errors) > 0 {
-                return Err(global
-                    .throw_value(log_ref.to_js(global, format_args!("Parse error"))?)
-                    .into());
+                return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
             }
-            return Err(global.throw(format_args!("Failed to parse code")).into());
+            return Err(global.throw(format_args!("Failed to parse code")));
         };
 
         if (log_ref.warnings + log_ref.errors) > 0 {
-            let global = cx.global();
-            return Err(global
-                .throw_value(log_ref.to_js(global, format_args!("Parse error"))?)
-                .into());
+            return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
         }
 
         let mut buffer_writer = self.buffer_writer.replace(None).unwrap_or_else(|| {
             let mut writer = JSPrinter::BufferWriter::init();
-            bun_core::handle_oom(writer.buffer.grow_if_needed(code_len));
+            bun_core::handle_oom(writer.buffer.grow_if_needed(code.len()));
             writer
         });
 
@@ -1461,121 +1474,14 @@ impl TranspilerClass for JSTranspiler {
             Transpiler::transpiler::PrintFormat::EsmAscii,
         ) {
             self.buffer_writer.set(Some(printer.ctx));
-            return Err(cx.global().throw_error(err, "Failed to print code").into());
+            return Err(global.throw_error(err, "Failed to print code"));
         }
 
         // TODO: benchmark if pooling this way is faster or moving is faster
         buffer_writer = printer.ctx;
-        let result = cx.heap.create_utf8_string(buffer_writer.written());
+        let result = bun_string_jsc::create_utf8_for_js(global, buffer_writer.written());
         self.buffer_writer.set(Some(buffer_writer));
         result
-    }
-
-    fn scan_imports<'a>(
-        &self,
-        cx: &mut JsScope<'a>,
-        code: JsBytes<'a>,
-        loader: Option<&'a [u8]>,
-    ) -> bindgen::Result<'a, JsLocal<'a>> {
-        let loader: Loader = match loader {
-            Some(loader) => loader_from_utf8(cx.global(), loader)?,
-            None => None,
-        }
-        .unwrap_or_else(|| self.config.get().default_loader);
-
-        if !loader.is_java_script_like() {
-            return Err(cx.heap.invalid_arguments(format_args!(
-                "Only JavaScript-like files support this fast path",
-            )));
-        }
-
-        let arena = Arena::new();
-        let mut log = bun_ast::Log::init();
-        // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
-        // `_restore` (declared after `arena`/`log`, so dropped first) restores
-        // `prev_arena` and `&self.config.log` before either local drops.
-        // `with_mut` borrow is closure-scoped; no JS re-entry inside.
-        let prev_arena = self.transpiler.with_mut(|t| {
-            let prev = t.arena;
-            // SAFETY: `arena` outlives every use through `t` — `_restore` below
-            // restores `prev_arena` before `arena` drops (reverse-decl order).
-            t.set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
-            t.set_log(&raw mut log);
-            prev
-        });
-        let _restore = TranspilerStateGuard {
-            transpiler: self.transpiler.as_ptr(),
-            prev_arena,
-            restore_log: self.config_log_ptr(),
-            prev_macro_context: None,
-        };
-
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-        let _ast_scope = ast_memory_allocator.enter();
-
-        let source = bun_ast::Source::init_path_string(loader.stdin_name(), code.get(&cx.heap));
-        let jsx = match self.config.get().tsconfig.as_deref() {
-            Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone()),
-            None => self.transpiler.get().options.jsx.clone(),
-        };
-
-        let mut opts = bun_js_parser::ParserOptions::init(jsx, loader);
-        // SAFETY: see `transpiler_mut`. The `&mut Transpiler` is reborrowed
-        // disjointly for `macro_context` (stored in `opts`) and `options.define`
-        // (raw-addr read) below; both end when `opts` is consumed by `scan()`.
-        let transpiler = unsafe { self.transpiler_mut() };
-        if transpiler.macro_context.is_none() {
-            let mc = JSAst::Macro::MacroContext::init(transpiler);
-            transpiler.macro_context = Some(mc);
-        }
-        opts.macro_context = transpiler.macro_context.as_mut();
-
-        // `options.define` is `Box<Define>` owned by the long-lived `Transpiler`;
-        // the parser borrows it for the arena lifetime.
-        let define = &*transpiler.options.define;
-
-        // NOTE: spec calls `transpiler.resolver.caches.js.scan`. The
-        // resolver-side `cache::JavaScript` is a fieldless shell with
-        // no `scan` body; the real `scan` lives on `bun_bundler::cache::JavaScript`.
-        // Both are stateless unit structs, so calling the bundler-crate one
-        // directly is equivalent.
-        // SAFETY: `scan_pass_result` JsCell — `scan()` does not re-enter JS.
-        let scan_result = bun_bundler::cache::JavaScript::init().scan(
-            &arena,
-            unsafe { self.scan_pass_result.get_mut() },
-            opts,
-            define,
-            &mut log,
-            &source,
-        );
-
-        // `scan_pass_result` must be reset on every exit past this point
-        // (including the error paths). Compute the result, then reset
-        // unconditionally before returning.
-        let global = cx.global();
-        let result = (|| -> JsResult<JSValue> {
-            if let Err(err) = scan_result {
-                if (log.warnings + log.errors) > 0 {
-                    return Err(global
-                        .throw_value(log.to_js(global, format_args!("Failed to scan imports"))?));
-                }
-                return Err(global.throw_error(err, "Failed to scan imports"));
-            }
-
-            if (log.warnings + log.errors) > 0 {
-                return Err(
-                    global.throw_value(log.to_js(global, format_args!("Failed to scan imports"))?)
-                );
-            }
-
-            named_imports_to_js(
-                global,
-                self.scan_pass_result.get().import_records.as_slice(),
-                self.config.get().trim_unused_imports.unwrap_or(false),
-            )
-        })();
-        self.scan_pass_result.with_mut(|s| s.reset());
-        Ok(JsLocal::new(&cx.heap, result?))
     }
 }
 
@@ -1587,7 +1493,8 @@ fn named_exports_to_js(
         return JSValue::create_empty_array(global, 0);
     }
 
-    // `StringArrayHashMap` has no in-place sort.
+    // NOTE: `StringArrayHashMap` has no in-place sort, so collect the keys, sort them
+    // lexicographically, then emit `BunString`s in that order.
     let mut keys: Vec<&[u8]> = Vec::with_capacity(named_exports.count());
     let mut named_exports_iter = named_exports.iterator();
     while let Some(entry) = named_exports_iter.next() {
@@ -1639,6 +1546,122 @@ fn named_imports_to_js(
     }
 
     Ok(array)
+}
+
+impl JSTranspiler {
+    pub(crate) fn scan_imports(
+        &self,
+        global: &JSGlobalObject,
+        code_arg: JSValue,
+        loader_arg: JSValue,
+    ) -> JsResult<JSValue> {
+        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+            return Err(global.throw_invalid_argument_type(
+                "scanImports",
+                "code",
+                "string or Uint8Array",
+            ));
+        };
+        let code = code_holder.slice();
+
+        let mut loader: Loader = self.config.get().default_loader;
+        if let Some(l) = loader_from_js(global, loader_arg)? {
+            loader = l;
+        }
+
+        if !loader.is_java_script_like() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Only JavaScript-like files support this fast path",
+            )));
+        }
+
+        let arena = Arena::new();
+        let mut log = bun_ast::Log::init();
+        // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
+        // `_restore` (declared after `arena`/`log`, so dropped first) restores
+        // `prev_arena` and `&self.config.log` before either local drops.
+        // `with_mut` borrow is closure-scoped; no JS re-entry inside.
+        let prev_arena = self.transpiler.with_mut(|t| {
+            let prev = t.arena;
+            // SAFETY: `arena` outlives every use through `t` — `_restore` below
+            // restores `prev_arena` before `arena` drops (reverse-decl order).
+            t.set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
+            t.set_log(&raw mut log);
+            prev
+        });
+        let _restore = TranspilerStateGuard {
+            transpiler: self.transpiler.as_ptr(),
+            prev_arena,
+            restore_log: self.config_log_ptr(),
+            prev_macro_context: None,
+        };
+
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+        let _ast_scope = ast_memory_allocator.enter();
+
+        let source = bun_ast::Source::init_path_string(loader.stdin_name(), code);
+        let jsx = match self.config.get().tsconfig.as_deref() {
+            Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone()),
+            None => self.transpiler.get().options.jsx.clone(),
+        };
+
+        let mut opts = bun_js_parser::ParserOptions::init(jsx, loader);
+        // SAFETY: see `transpiler_mut`. The `&mut Transpiler` is reborrowed
+        // disjointly for `macro_context` (stored in `opts`) and `options.define`
+        // (raw-addr read) below; both end when `opts` is consumed by `scan()`.
+        let transpiler = unsafe { self.transpiler_mut() };
+        if transpiler.macro_context.is_none() {
+            let mc = JSAst::Macro::MacroContext::init(transpiler);
+            transpiler.macro_context = Some(mc);
+        }
+        opts.macro_context = transpiler.macro_context.as_mut();
+
+        // `options.define` is `Box<Define>` owned by the long-lived `Transpiler`;
+        // the parser borrows it for the arena lifetime.
+        let define = &*transpiler.options.define;
+
+        // NOTE: spec calls `transpiler.resolver.caches.js.scan`. The
+        // resolver-side `cache::JavaScript` is a fieldless shell with
+        // no `scan` body; the real `scan` lives on `bun_bundler::cache::JavaScript`.
+        // Both are stateless unit structs, so calling the bundler-crate one
+        // directly is equivalent.
+        // SAFETY: `scan_pass_result` JsCell — `scan()` does not re-enter JS.
+        let scan_result = bun_bundler::cache::JavaScript::init().scan(
+            &arena,
+            unsafe { self.scan_pass_result.get_mut() },
+            opts,
+            define,
+            &mut log,
+            &source,
+        );
+
+        // `scan_pass_result` must be reset on every exit past this point
+        // (including the error paths). Compute the result, then reset
+        // unconditionally before returning.
+        let result = (|| -> JsResult<JSValue> {
+            if let Err(err) = scan_result {
+                if (log.warnings + log.errors) > 0 {
+                    return Err(global
+                        .throw_value(log.to_js(global, format_args!("Failed to scan imports"))?));
+                }
+                return Err(global.throw_error(err, "Failed to scan imports"));
+            }
+
+            if (log.warnings + log.errors) > 0 {
+                return Err(
+                    global.throw_value(log.to_js(global, format_args!("Failed to scan imports"))?)
+                );
+            }
+
+            named_imports_to_js(
+                global,
+                self.scan_pass_result.get().import_records.as_slice(),
+                self.config.get().trim_unused_imports.unwrap_or(false),
+            )
+        })();
+        self.scan_pass_result.with_mut(|s| s.reset());
+        result
+    }
 }
 
 /// Heuristic used by the REPL: returns true if `code` starts with `{` (after

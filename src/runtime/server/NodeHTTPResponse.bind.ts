@@ -1,9 +1,10 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
-const callback = { getter: b.any, setter: true, passThis: true, capability: "heap" } as const;
+const callback = { getter: b.any, setter: true, passThis: true, capability: "js" } as const;
 const head = { statusCode: b.any, statusMessage: b.any, headers: b.any };
 const autoHeaders = { autoHeaderBits: b.any, keepAliveTimeoutSecs: b.any };
-const write = { returns: b.any, passThis: true, capability: "js", throws: true } as const;
+const write = { returns: b.any, capability: "js", throws: true } as const;
+const body = { chunk: b.any, encoding: b.any, callback: b.any, strictContentLength: b.any };
 
 /** The native handle shared by a `node:http` `ServerResponse` and its `IncomingMessage`: `kHandle` in `src/js/internal/http.ts`. */
 export const NodeHTTPResponse = b.class({
@@ -18,44 +19,37 @@ export const NodeHTTPResponse = b.class({
     aborted: { getter: b.bool },
     bufferedAmount: { getter: b.u64 },
     cork: { args: { callback: b.any }, returns: b.any, capability: "js", throws: true, length: 1 },
-    end: {
-      ...write,
-      args: { chunk: b.any, encoding: b.any, callback: b.any, strictContentLength: b.any },
-      length: 2,
-    },
+    end: { ...write, passThis: true, args: body, length: 2 },
     finished: { getter: b.bool },
     flags: { getter: b.i32 },
     flushHeaders: {},
     getBytesWritten: { returns: b.usize },
     hasBody: { getter: b.i32 },
-    headersObject: { returns: b.any, capability: "heap" },
+    headersObject: { returns: b.any, capability: "js" },
     notifyWhenReadParsed: { returns: b.bool },
-    onabort: callback,
-    ondata: { ...callback, capability: "js" },
-    onwritable: callback,
+    onabort: { ...callback, rustName: "on_abort" },
+    ondata: { ...callback, rustName: "on_data" },
+    onwritable: { ...callback, rustName: "on_writable" },
     pause: { returns: b.bool, rustName: "do_pause" },
     pauseReads: { rustName: "pause_socket_reads" },
-    ref: { rustName: "do_ref" },
-    resume: { returns: b.bool, capability: "js", rustName: "do_resume" },
-    takeRawHeaders: { args: { headers: b.any }, returns: b.any, capability: "heap", throws: true, length: 1 },
+    ref: { capability: "js", rustName: "js_ref" },
+    resume: { returns: b.bool, rustName: "do_resume" },
+    takeRawHeaders: { args: { headers: b.any }, returns: b.any, capability: "js", throws: true, length: 1 },
     takeRequestTrailers: {
       args: { useInsecureHTTPParser: b.bool.loose },
       returns: b.any,
-      capability: "heap",
+      capability: "js",
       throws: true,
       length: 0,
     },
-    unref: { rustName: "do_unref" },
+    unref: { capability: "js", rustName: "js_unref" },
     upgraded: { getter: b.bool },
-    write: {
-      ...write,
-      args: { chunk: b.any, encoding: b.any, callback: b.any, strictContentLength: b.any },
-      length: 3,
-    },
-    writeContinue: { capability: "heap", throws: true },
+    write: { ...write, args: body, length: 3 },
+    writeContinue: { capability: "js", throws: true },
     writeHead: { args: { ...head, ...autoHeaders }, capability: "js", throws: true, length: 3 },
     writeHeadAndEnd: {
       ...write,
+      passThis: true,
       args: { ...head, chunk: b.any, encoding: b.any, strictContentLength: b.any, ...autoHeaders },
       length: 8,
     },

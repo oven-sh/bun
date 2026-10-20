@@ -246,20 +246,20 @@ export const TestRefCounted = b.class({
   internalFields: ["listener"],
   proto: {
     value: { getter: b.i32, setter: true },
-    listener: { getter: b.any, setter: true, capability: "heap", passThis: true },
+    listener: { getter: b.any, setter: true, capability: "js", passThis: true },
     sameListener: { internalField: "listener", setter: true },
     readOnlyListener: { internalField: "listener" },
     /** Calls the listener, which may call back into this object, then returns the value. */
     notify: { returns: b.i32, capability: "js", passThis: true, throws: true },
     /** Makes Rust hold a ref until `TestRefCounted.release()`. */
-    keep: { capability: "js", passThis: true },
+    keep: {},
     "@@dispose": {},
     "@@toPrimitive": { returns: b.i32, name: "" },
     valueOrUndefined: { returns: b.i32, invalidThis: "undefined" },
     /** Returns `this`, or nothing if the value is negative. */
     orUndefined: { returns: b.self.optional, passThis: true },
     orNull: { returns: b.self.nullable, passThis: true },
-    isSame: { args: { other: b.self.nullable }, returns: b.bool, passThis: true, capability: "heap" },
+    isSame: { args: { other: b.self.nullable }, returns: b.bool },
   },
   static: {
     /** The instance kept by `keep()`, as `[value, finalized]`. */
@@ -267,7 +267,7 @@ export const TestRefCounted = b.class({
     release: {},
     alive: { returns: b.usize },
     /** `object.value` read through `from_js`, or `null` if `object` is not an instance. */
-    valueFromJS: { args: { object: b.any }, returns: b.i32.nullable, capability: "js" },
+    valueFromJS: { args: { object: b.any }, returns: b.i32.nullable },
   },
 });
 

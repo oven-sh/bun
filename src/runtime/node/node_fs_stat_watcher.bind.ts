@@ -7,7 +7,7 @@ export const StatWatcher = b.class({
   configurable: false,
   internalFields: ["listener", "prevStat"],
   proto: {
-    close: { rustName: "do_close" },
+    close: {},
     ref: { rustName: "do_ref" },
     unref: { rustName: "do_unref" },
   },

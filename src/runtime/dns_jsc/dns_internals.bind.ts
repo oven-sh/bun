@@ -44,7 +44,3 @@ export const DNSResolver = b.class({
     setServers: { args: { servers: b.any }, ...method },
   },
 });
-
-export const ResolverOptions = b.dictionary({ timeout: b.i32, tries: b.i32 });
-
-export const newResolver = b.fn({ args: { options: ResolverOptions }, returns: DNSResolver, capability: "heap" });

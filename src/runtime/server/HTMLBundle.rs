@@ -21,8 +21,7 @@ use crate::api::js_bundle_completion_task::JSBundleCompletionTask;
 use crate::api::js_bundler::js_bundler::{self as JSBundler, Config as JSBundlerConfig};
 use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::bake::dev_server::route_bundle;
-use crate::generated_bindgen::html_bundle::HTMLBundleClass;
-use crate::server::jsc::JSGlobalObject;
+use crate::server::jsc::{JSGlobalObject, JSValue};
 use crate::server::server_config::MethodOptional;
 use crate::server::{AnyRoute, AnyServer, GetOrStartLoadResult, ServePluginsCallback, StaticRoute};
 use crate::webcore::AnyBlob;
@@ -46,6 +45,11 @@ pub(crate) struct HTMLBundle {
 }
 
 impl HTMLBundle {
+    /// The JS wrapper takes over `this`' ref.
+    pub(crate) fn to_js(this: RefPtr<HTMLBundle>, global: &JSGlobalObject) -> JSValue {
+        Self::to_js_nonnull(this.into_non_null(), global)
+    }
+
     /// Initialize an HTMLBundle given a path.
     pub(crate) fn init(global: &JSGlobalObject, path: &[u8]) -> RefPtr<HTMLBundle> {
         RefPtr::new(HTMLBundle {
@@ -53,6 +57,10 @@ impl HTMLBundle {
             global: bun_ptr::BackRef::new(global),
             path: Box::<[u8]>::from(path),
         })
+    }
+
+    pub(crate) fn get_index(this: &Self) -> &[u8] {
+        &this.path
     }
 
     /// For `Route::on_complete` and the dev server's `finalize_bundle`, when a build has no page for the file.
@@ -67,12 +75,6 @@ impl HTMLBundle {
             ),
         );
         log
-    }
-}
-
-impl HTMLBundleClass for HTMLBundle {
-    fn index(&self) -> impl AsRef<[u8]> {
-        &self.path
     }
 }
 

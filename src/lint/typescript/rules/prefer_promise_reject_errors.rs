@@ -16,7 +16,7 @@ pub struct PreferPromiseRejectErrors {
 const REJECT_AN_ERROR: Message =
     Message::new("rejectAnError", "Expected the Promise rejection reason to be an Error.");
 
-/// Whether tsgolint's `checker.getAccessedPropertyName(callee)` is `reject`: `a.#reject` is named
+/// True if tsgolint's `checker.getAccessedPropertyName(callee)` is `reject`. For `a.#reject` it's
 /// `#reject`.
 fn is_access_of_reject(callee: Expr<'_>) -> bool {
     match callee.kind() {
@@ -55,7 +55,7 @@ impl PreferPromiseRejectErrors {
         let Some(call) = node.as_call() else {
             return;
         };
-        let callee = call.callee();
+        let callee = call.callee().with_jsdoc_cast();
         let Some(obj) = callee.object() else {
             return;
         };
@@ -78,10 +78,10 @@ impl PreferPromiseRejectErrors {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
-        // tsgolint starts at the call of a parameter: it asks neither which argument the function
-        // is, nor whether the parameter has a default or is a rest parameter.
+        // tsgolint starts from the call of a parameter. It doesn't check which argument the
+        // function is, or whether the parameter has a default or is a rest parameter.
         let arguments = new.args().iter().take(if is_oxlint { usize::MAX } else { 1 });
-        for executor in arguments.filter_map(Expr::as_fn) {
+        for executor in arguments.filter_map(|it| it.with_jsdoc_cast().as_fn()) {
             let Some(reject_param) = executor.params_with_this().nth(1) else {
                 continue;
             };
@@ -100,7 +100,7 @@ impl PreferPromiseRejectErrors {
                 if let Some(identifier) = reference.expr()
                     && let Node::Expr(parent) = identifier.parent()
                     && let Some(call) = parent.as_call()
-                    && call.callee() == identifier
+                    && call.callee().with_jsdoc_cast() == identifier
                 {
                     self.check_reject_call(parent, call, cx);
                 }

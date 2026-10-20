@@ -13,19 +13,19 @@ const MISMATCH: Message = Message::new(
 );
 
 /// The function of a `MethodDefinition` or a `TSMethodSignature` of this `kind`. An abstract
-/// accessor is a `TSAbstractMethodDefinition`, which upstream does not look at and tsgolint does.
+/// accessor is a `TSAbstractMethodDefinition`, which upstream skips and tsgolint checks.
 fn accessor(member: Member<'_>, kind: MemberKind) -> Option<Func<'_>> {
     let is_abstract = || member.flags().contains(Flags::ABSTRACT);
     (member.kind() == kind && (!is_abstract() || member.file().language().is_oxlint))
         .then(|| member.func())?
 }
 
-/// The return type of a getter that has one.
+/// The getter's return type, if it has one.
 fn getter_type(member: Member<'_>) -> Option<TypeNode<'_>> {
     accessor(member, MemberKind::Getter)?.return_type()
 }
 
-/// The parameter of a setter that has exactly one.
+/// The setter's parameter, if it has exactly one.
 fn setter_param(member: Member<'_>) -> Option<Param<'_>> {
     let mut params = accessor(member, MemberKind::Setter)?.params_with_this();
     let only = params.next()?;
@@ -40,9 +40,9 @@ fn type_of_param(param: Param<'_>) -> Type<'_> {
     }
 }
 
-/// tsgolint's `GetNameFromMember`: a string, a number, a `bigint`, a regular expression or a
-/// template without substitutions in brackets is named by its value, in double quotes unless that
-/// is an identifier. Any other name that is not an identifier is its text, with its quotes or
+/// tsgolint's `GetNameFromMember`. A string, number, `bigint`, regular expression or template
+/// without substitutions in brackets is named by its value, in double quotes unless that's an
+/// identifier. Any other name that isn't an identifier is its source text, including quotes or
 /// brackets.
 fn tsgolint_name_of(member: Member<'_>) -> Option<Cow<'_, [u8]>> {
     let (key, file) = (member.key()?, member.file());
@@ -85,8 +85,8 @@ impl RelatedGetterSetterPairs {
         }
     }
 
-    /// tsgolint's `checkMembers`: an accessor is checked against the one of the other kind that is
-    /// kept under its name, and is kept itself only when there is none.
+    /// tsgolint's `checkMembers`. An accessor is checked against the stored accessor of the other
+    /// kind with the same name, and it's only stored itself if there's no such accessor.
     fn check_members<'a>(members: List<'a, Member<'a>>, cx: &Cx<'a, Self>) {
         let mut accessors = FxHashMap::<Cow<'a, [u8]>, Accessor<'a>>::default();
         for member in members {
@@ -121,7 +121,7 @@ impl RelatedGetterSetterPairs {
         if cx.language().is_oxlint {
             return Self::check_members(members, cx);
         }
-        // The last getter and the last setter of a name are the pair.
+        // The last getter and the last setter with a name form the pair.
         let mut pairs =
             FxHashMap::<Cow<'a, [u8]>, (Option<Member<'a>>, Option<Param<'a>>)>::default();
         for member in members {
@@ -137,13 +137,13 @@ impl RelatedGetterSetterPairs {
                     .1 = Some(param);
             }
         }
-        let place = |it: &(Option<Member<'a>>, Option<Param<'a>>)| {
+        let start_offsets = |it: &(Option<Member<'a>>, Option<Param<'a>>)| {
             (
                 it.0.map(|it| it.span().start),
                 it.1.map(|it| it.span().start),
             )
         };
-        for pair in utils::sort::in_order_of(pairs.into_values(), place) {
+        for pair in utils::sort::collect_sorted_by_key(pairs.into_values(), start_offsets) {
             if let (Some(getter), Some(param)) = pair {
                 Self::check_accessors_pair(getter, param, cx);
             }

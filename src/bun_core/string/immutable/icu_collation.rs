@@ -1,7 +1,7 @@
 //! The order of texts as people expect it: ICU's collator for English, which is CLDR's root
 //! collation. It is what `localeCompare` and `Intl.Collator` go by.
 
-use super::{wtf8_has_surrogate, wtf8_to_utf16};
+use super::{is_valid_utf8, wtf8_decoded_units};
 use core::cmp::Ordering;
 
 unsafe extern "C" {
@@ -22,8 +22,10 @@ unsafe extern "C" {
 }
 
 fn collate(a: &[u8], b: &[u8], is_numeric_and_base: bool) -> Ordering {
-    let order = if wtf8_has_surrogate(a) || wtf8_has_surrogate(b) {
-        let (a, b) = (wtf8_to_utf16(a), wtf8_to_utf16(b));
+    // What a text is must not depend on the text that it is compared with, so ICU gets no bytes to read in a way of its own.
+    let order = if !is_valid_utf8(a) || !is_valid_utf8(b) {
+        let a: Vec<u16> = wtf8_decoded_units(a).collect();
+        let b: Vec<u16> = wtf8_decoded_units(b).collect();
         // SAFETY: two live slices, which are read and not kept.
         unsafe {
             Bun__collateUTF16(
@@ -49,7 +51,7 @@ fn collate(a: &[u8], b: &[u8], is_numeric_and_base: bool) -> Ordering {
     order.cmp(&0)
 }
 
-/// `a.localeCompare(b, "en")`, for WTF-8. 50 ns for two module specifiers.
+/// `a.localeCompare(b, "en")`, for WTF-8. Other bytes are what `TextDecoder` makes of them. 50 ns for two module specifiers.
 pub fn locale_compare(a: &[u8], b: &[u8]) -> Ordering {
     collate(a, b, false)
 }

@@ -6,6 +6,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   analyze,
+  cppClasses,
   cppCounts,
   cppHeader,
   cppSource,
@@ -18,6 +19,7 @@ import {
   FunctionDefinition,
   ModuleDefinition,
   NamedType,
+  NamespaceDefinition,
   type Origin,
   pascalCase,
   snakeCase,
@@ -30,7 +32,7 @@ async function load(source: string): Promise<SchemaFile> {
   const file = source.slice(crate.length + 1);
   const stem = path.basename(file, ".bind.ts");
   const origin: Origin = { stem, namespace: pascalCase(stem), rustModule: snakeCase(stem), crate };
-  const result: SchemaFile = { origin, moduleDefinition: null, types: [], functions: [] };
+  const result: SchemaFile = { origin, moduleDefinition: null, types: [], functions: [], namespaces: [] };
   const exports: Record<string, unknown> = await import(pathToFileURL(file).href).catch(error => {
     throw new Error(`${file}: ${error.message}`, { cause: error });
   });
@@ -42,15 +44,23 @@ async function load(source: string): Promise<SchemaFile> {
       value.name = name;
       value.origin = origin;
       result.functions.push(value);
+    } else if (value instanceof NamespaceDefinition) {
+      value.name = name;
+      for (const fn of value.functions) {
+        fn.origin = origin;
+        result.functions.push(fn);
+      }
+      result.namespaces.push(value);
     } else if (value instanceof NamedType) {
       // Re-exporting an import is fine; the first file to export a type owns it.
       if (value.origin) continue;
-      assert(/^[A-Z][A-Za-z0-9]*$/.test(name), `${stem}.bind.ts: type names are PascalCase: ${name}`);
+      // As rustc's lint has it, digits can be separated: SHA512_256.
+      assert(/^[A-Z][A-Za-z0-9]*(?:(?<=\d)_\d+)*$/.test(name), `${stem}.bind.ts: type names are PascalCase: ${name}`);
       value.name = name;
       value.origin = origin;
       result.types.push(value);
     } else {
-      throw new TypeError(`${stem}.bind.ts: export ${name} is not a type, a function or b.module()`);
+      throw new TypeError(`${stem}.bind.ts: export ${name} is not a type, a function, a namespace or b.module()`);
     }
   }
   return result;
@@ -104,6 +114,7 @@ for (const file of files) {
 }
 writeIfNotChanged(path.join(codegenPath, "GeneratedBindings+Tables.h"), cppTables(tables));
 writeIfNotChanged(path.join(codegenPath, "GeneratedBindings+Counts.h"), cppCounts(tables));
+writeIfNotChanged(path.join(codegenPath, "GeneratedBindings+Classes.h"), cppClasses(tables));
 for (const [crate, crateFiles] of Map.groupBy(files, file => file.origin.crate)) {
   writeIfNotChanged(path.join(codegenPath, `generated_bindgen_${crate}.rs`), rustForCrate(crateFiles));
 }

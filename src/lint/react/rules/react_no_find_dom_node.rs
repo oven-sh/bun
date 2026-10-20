@@ -22,7 +22,7 @@ impl Rule for NoFindDomNode {
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        // oxlint passes over `a.#findDOMNode()`.
+        // oxlint skips `a.#findDOMNode()`.
         let is_mentioned =
             file.find_name("findDOMNode").is_some() || (!file.language().is_oxlint && file.mentions("#findDOMNode"));
         if is_mentioned { Self::ON } else { On::new() }
@@ -42,7 +42,7 @@ impl Rule for NoFindDomNode {
             }
             return;
         }
-        // oxlint looks through parentheses and TypeScript's wrappers, knows three objects, and points at the name.
+        // oxlint looks through parentheses and TypeScript wrappers, only accepts three objects, and reports the name.
         let ident = get_inner_expression(callee);
         if ident.tag() == ExprTag::Ident {
             if ident.is_ident("findDOMNode") {

@@ -11,9 +11,9 @@ const NO_LOSS_OF_PRECISION: Message = Message::new(
     "This number literal will lose precision at runtime.",
 );
 
-/// Whether the integer with these `digits` of `bits_per_digit` bits each is not a double.
+/// True if the integer with these `digits`, of `bits_per_digit` bits each, isn't exactly representable as a double.
 fn not_base_ten_loses_precision(digits: &[u8], bits_per_digit: u32) -> bool {
-    // The positions of the first and of the last bit that is set, counted from the first bit.
+    // The positions of the first and last set bits, counted from the first bit.
     let (mut first, mut last) = (None, 0);
     let mut at = 0;
     for digit in digits
@@ -33,10 +33,10 @@ fn not_base_ten_loses_precision(digits: &[u8], bits_per_digit: u32) -> bool {
     })
 }
 
-/// oxlint writes `value as u64`, which is `u64::MAX` from 2^64, in the base of the literal, and reports a literal that
-/// does not end with these digits: `0x10000000000000000` is reported, `0xFFFFFFFFFFFFFFFFFFFF` is not.
+/// oxlint formats `value as u64`, which saturates to `u64::MAX` from 2^64 up, in the literal's base. It reports a
+/// literal that doesn't end with those digits: `0x10000000000000000` is reported, `0xFFFFFFFFFFFFFFFFFFFF` isn't.
 fn not_base_ten_loses_precision_in_oxlint(digits: &[u8], bits_per_digit: u32) -> bool {
-    // The integers from here are 2^64 or more as a double.
+    // Integers from here up round to 2^64 or more as a double.
     const ROUNDS_TO_TWO_POW_64: u128 = 0xFFFF_FFFF_FFFF_FC00;
     let integer = digits
         .iter()
@@ -63,8 +63,8 @@ fn not_base_ten_loses_precision_in_oxlint(digits: &[u8], bits_per_digit: u32) ->
         .eq(max.iter().rev().copied())
 }
 
-/// `value.toPrecision(precision)` of a finite `value > 0`, for a precision from 1 to 100: the digits, and the exponent
-/// of the first.
+/// `value.toPrecision(precision)` for a finite `value > 0` and a precision from 1 to 100. Returns the digits and the
+/// exponent of the first digit.
 fn to_precision(value: f64, precision: usize) -> (Vec<u8>, i64) {
     let mut buffer = [0; 124];
     let text =
@@ -98,7 +98,7 @@ fn base_ten_loses_precision(raw: &[u8]) -> bool {
             .count(),
         None => count,
     };
-    // Those of `1.00` are asked for, those of `100` and of `100.` are not.
+    // The trailing zeros of `1.00` count towards the precision. Those of `100` and `100.` don't.
     let trailing_zeros = match integer_digits == count {
         true => digits().rev().take_while(|digit| *digit == b'0').count(),
         false => 0,
@@ -112,8 +112,7 @@ fn base_ten_loses_precision(raw: &[u8]) -> bool {
     });
     let magnitude = (integer_digits as i64 - 1 - leading_zeros as i64)
         .saturating_add(if is_negative { -exponent } else { exponent });
-    // Every number with 15 digits that is not next to the limits of a double is told apart from
-    // the others by the nearest double.
+    // Every number with up to 15 digits that isn't near a double's limits round-trips through the nearest double.
     if precision <= f64::DIGITS as usize && (-307..=307).contains(&magnitude) {
         return false;
     }
@@ -134,9 +133,9 @@ fn base_ten_loses_precision(raw: &[u8]) -> bool {
     magnitude != stored_magnitude || !digits().skip(leading_zeros).take(precision).eq(stored)
 }
 
-/// Whether the number literal `raw` is not the number that it is at run time.
+/// True if the number literal `raw` isn't the number it evaluates to at run time.
 fn loses_precision(raw: &[u8], is_oxlint: bool) -> bool {
-    // At most 15 decimal digits, or 13 digits of 4 bits, and no exponent.
+    // Fast path: at most 15 decimal digits, or 13 digits of 4 bits, and no exponent.
     let has_radix = matches!(raw, [b'0', b'x' | b'X' | b'o' | b'O' | b'b' | b'B', ..]);
     if raw.len() <= f64::DIGITS as usize
         && (has_radix || strings::index_of_any(raw, b"eE").is_none())
@@ -160,8 +159,8 @@ fn loses_precision(raw: &[u8], is_oxlint: bool) -> bool {
     }
 }
 
-/// Whether the number has a fractional part at run time. Then the digits that don't fit only round it, as the author expects of
-/// `3.14159265358979323846`. An integer such as a 64-bit ID becomes a different integer.
+/// True if the number has a fractional part at run time. Then the digits that don't fit only round it, as the author
+/// expects of `3.14159265358979323846`. An integer such as a 64-bit ID becomes a different integer.
 fn is_decimal(raw: &[u8]) -> bool {
     let text: Vec<u8> = raw.iter().copied().filter(|it| *it != b'_').collect();
     let value = std::str::from_utf8(&text)
@@ -178,7 +177,7 @@ pub fn ignores_decimals(options: &Options) -> bool {
 #[inline]
 pub fn check<'a, R: Rule>(literal: Literal<'a>, ignore_decimals: bool, cx: &Cx<'a, R>) {
     let raw = literal.text();
-    // An exponent takes three characters.
+    // An exponent needs at least three characters.
     if raw.len() > 2 && !raw.ends_with(b"n") && loses_precision(raw, cx.language().is_oxlint) {
         report(literal, ignore_decimals, cx);
     }

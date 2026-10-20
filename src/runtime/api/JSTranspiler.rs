@@ -129,6 +129,27 @@ fn level_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<bun
     bun_ast::Level::MAP.from_js(global, value)
 }
 
+/// Reads the `code` argument. Copies a buffer because the loader's `toString()` and macros run JS that can
+/// write to, shrink or detach it. Skips the copy when the parser will reject the buffer for its length anyway.
+fn code_from_js(
+    global: &JSGlobalObject,
+    value: JSValue,
+) -> JsResult<Option<StringOrBuffer<'static>>> {
+    let parsed = StringOrBuffer::from_js(global, value)?;
+    let Some(StringOrBuffer::Buffer(buffer)) = &parsed else {
+        return Ok(parsed);
+    };
+    if !buffer.buffer.can_change_under_borrow()
+        && buffer.buffer.byte_len > bun_ast::Source::MAX_PARSEABLE_LEN
+    {
+        return Ok(parsed);
+    }
+    match buffer.buffer.try_copy_bytes() {
+        Some(copy) => Ok(Some(StringOrBuffer::owned(copy))),
+        None => Err(global.throw_out_of_memory()),
+    }
+}
+
 /// Deep-clone a [`MacroMap`]. The keys are `Box<[u8]>`, so an owned copy
 /// is needed wherever the map is assigned by value.
 fn clone_macro_map(src: &MacroMap) -> MacroMap {
@@ -878,6 +899,9 @@ fn export_replacement_value(
     global: &JSGlobalObject,
     arena: &Arena,
 ) -> JsResult<Option<bun_ast::Expr>> {
+    // The result outlives every parse, so don't allocate it in the thread-local store.
+    let _guard = bun_ast::expr::Disabler::scope();
+
     if value.is_boolean() {
         return Ok(Some(Expr {
             data: bun_ast::ExprData::EBoolean(bun_ast::E::Boolean {
@@ -916,7 +940,8 @@ fn export_replacement_value(
         // `E::EString::init` erases the borrow to `'static` per the AST
         // crate's `Str` convention (see ast/E.rs).
         let data = arena.alloc_slice_copy(utf8.slice());
-        return Ok(Some(Expr::init(
+        return Ok(Some(Expr::allocate(
+            arena,
             bun_ast::E::EString::init(data),
             bun_ast::Loc::EMPTY,
         )));
@@ -1011,6 +1036,8 @@ impl JSTranspiler {
         // is uniquely owned at init time, so `&mut` projection is alias-free.
         let transpiler = unsafe { this.transpiler.get_mut() };
         transpiler.set_log(&raw mut config.log);
+        // `set_log` doesn't update `options.log`, which `configure_defines` logs to.
+        transpiler.options.log = &raw mut config.log;
 
         transpiler.options.no_macros = config.no_macros;
         transpiler.configure_linker_with_auto_jsx(false);
@@ -1270,7 +1297,7 @@ impl JSTranspiler {
             return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
         };
 
-        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+        let Some(code_holder) = code_from_js(global, code_arg)? else {
             return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
         };
         let code = code_holder.slice();
@@ -1412,7 +1439,7 @@ impl JSTranspiler {
         };
 
         let arena = Arena::new();
-        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+        let Some(code_holder) = code_from_js(global, code_arg)? else {
             return Err(global.throw_invalid_argument_type(
                 "transformSync",
                 "code",
@@ -1615,7 +1642,7 @@ impl JSTranspiler {
             ));
         };
 
-        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+        let Some(code_holder) = code_from_js(global, code_arg)? else {
             return Err(global.throw_invalid_argument_type(
                 "scanImports",
                 "code",

@@ -1,7 +1,10 @@
 // these tests involve ensuring react (html loader + single page app) works
 // react is big and we do lots of stuff like fast refresh.
-import { expect } from "bun:test";
-import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { symlinkSync } from "node:fs";
+import { join } from "node:path";
+import { Client, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 /** To test react refresh's registration system */
 const reactAndRefreshStub = {
@@ -897,4 +900,84 @@ devTest("react component with hooks and mutual recursion renders without error",
       "PASS",
     );
   },
+});
+
+test("bun bake hydrates a .tsx page, and Fast Refresh keeps its state after an edit", async () => {
+  const page = (label: string) => `
+    import { useState } from "react";
+    export default function Home() {
+      const [count, setCount] = useState(0);
+      return <button onClick={() => setCount(count + 1)}>{"${label} " + count}</button>;
+    }
+  `;
+  using dir = tempDir("bake-hydrate", { "app/pages/index.tsx": page("count") });
+  // The React of the test suite. A junction needs no privilege on Windows.
+  symlinkSync(join(import.meta.dir, "../../node_modules"), join(String(dir), "node_modules"), "junction");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "bake", "--port=0"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1", NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  let text = "";
+  const decoder = new TextDecoder();
+  for await (const chunk of proc.stdout) {
+    text += decoder.decode(chunk);
+    if (/url: \S+/.test(text)) break;
+  }
+  const url = text.match(/url: (\S+)/)![1];
+
+  await using client = new Client(url, { hmr: true });
+  await client.waitForPageLoad();
+  // Clicks work only once React has hydrated the server's HTML.
+  await client.click("button");
+  await client.click("button");
+  await client.expectElemText("button", "count 2");
+
+  await Bun.write(join(String(dir), "app/pages/index.tsx"), page("clicks"));
+  // A full reload would reset the count to 0.
+  await client.expectElemText("button", "clicks 2");
+});
+
+test("bun bake hydrates a page with server props, and loads it again when only its data changes", async () => {
+  using dir = tempDir("bake-hydrate-props", {
+    "app/data.ts": `export const start = 5;`,
+    "app/pages/index.tsx": `
+      import { useState } from "react";
+      import { start } from "../data.ts";
+      export const getServerSideProps = async () => ({ props: { start } });
+      export default function Home({ start }) {
+        const [count, setCount] = useState(start);
+        return <button onClick={() => setCount(count + 1)}>{"count " + count}</button>;
+      }
+    `,
+  });
+  symlinkSync(join(import.meta.dir, "../../node_modules"), join(String(dir), "node_modules"), "junction");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "bake", "--port=0"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1", NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  let text = "";
+  const decoder = new TextDecoder();
+  for await (const chunk of proc.stdout) {
+    text += decoder.decode(chunk);
+    if (/url: \S+/.test(text)) break;
+  }
+  const url = text.match(/url: (\S+)/)![1];
+
+  await using client = new Client(url, { hmr: true });
+  await client.waitForPageLoad();
+  // The browser gets the props of the server: a click goes on from 5.
+  await client.click("button");
+  await client.expectElemText("button", "count 6");
+
+  // Only the server imports app/data.ts, so the browser loads the page again for the new props.
+  await client.expectReload(async () => {
+    await Bun.write(join(String(dir), "app/data.ts"), `export const start = 10;`);
+  });
+  await client.expectElemText("button", "count 10");
 });

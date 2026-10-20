@@ -15,7 +15,7 @@ const EXTRA_ARGUMENTS: &str = "Replace it with a `for…of` loop that preserves 
 
 const IGNORED_OBJECTS: [&str; 3] = ["Children", "r", "pIteration"];
 
-/// The `a` of `a.b[c].d`.
+/// The `a` in `a.b[c].d`.
 fn leftmost_identifier_reference(e: Expr<'_>) -> Option<Expr<'_>> {
     let mut at = e;
     while let Some(member) = as_member_expression(at) {
@@ -55,7 +55,7 @@ impl Rule for NoArrayForEach {
         {
             return;
         }
-        // By the parameters of the callback.
+        // The help text depends on the callback's parameters.
         let first = e.as_call().and_then(|it| it.args().first());
         let params = first.map(get_inner_expression).and_then(Expr::as_fn).map(Func::params);
         cx.report(name, NO_ARRAY_FOR_EACH).help(match params {

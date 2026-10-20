@@ -2,13 +2,14 @@ use bun_core::strings;
 use bun_lint_oxlint::text::find_next_token_within;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::utils::visible::is_module_without_empty_exports;
 
 /// Enforce a non-empty specifier list in `import` and `export` statements.
 pub struct RequireModuleSpecifiers;
 
 const EMPTY_SPECIFIER: Message = Message::new("", "Empty {{statement_type}} specifier is not allowed");
 
-/// The first `{` and the next `}` in `span`, if there is nothing but whitespace between them.
+/// The first `{` and the next `}` in `span`, if there's only whitespace between them.
 fn find_empty_braces_in_span<'a>(file: &'a File<'a>, span: Span) -> Option<Span> {
     let open_brace = find_next_token_within(file, span, b"{")?;
     let close_brace = find_next_token_within(file, Span::new(open_brace + 1, span.end), b"}")?;
@@ -51,7 +52,7 @@ impl RequireModuleSpecifiers {
             let from = find_next_token_within(file, Span::new(comma, span.end), b"from")?;
             let default_part = file.slice(Span::new(span.start, comma));
             let from_part = file.slice(Span::new(from, span.end));
-            Some(fixer.replace(span, [default_part, b" ", from_part].concat()))
+            Some(fixer.replace(span, [default_part, b" ", from_part].concat())).filter(|it| fixer.keeps_comments(it))
         });
     }
 
@@ -65,6 +66,12 @@ impl RequireModuleSpecifiers {
         let braces = find_empty_braces_in_span(cx.file(), stmt.span()).unwrap_or_else(|| stmt.span());
         cx.report(braces, EMPTY_SPECIFIER)
             .data("statement_type", "export")
-            .fix(|fixer| (!export.has_from()).then(|| fixer.remove(stmt)));
+            // `export {}` makes a file a module when it has no other `import` or `export`. Without it, `declare global`
+            // is an error and top-level names become global. In a declaration file it also stops everything else from
+            // being exported.
+            .fix_where_safe(
+                || is_module_without_empty_exports(cx.file()) && !cx.file().is_declaration_file(),
+                |fixer| (!export.has_from()).then(|| fixer.remove(stmt)),
+            );
     }
 }

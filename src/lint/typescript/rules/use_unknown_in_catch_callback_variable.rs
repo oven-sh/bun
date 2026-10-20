@@ -55,7 +55,7 @@ const THEN: PromiseMethod = PromiseMethod {
 
 fn is_flaggable_handler_type(ty: Type) -> bool {
     for union_part in union_constituents(ty) {
-        // What is not a function is not the problem of this rule.
+        // This rule doesn't care about anything that isn't a function.
         for call_signature in get_call_signatures_of_type(union_part) {
             let Some(first_param) = call_signature.parameters().first() else {
                 continue;
@@ -78,7 +78,7 @@ fn is_flaggable_handler_type(ty: Type) -> bool {
     false
 }
 
-/// tsgolint replaces the type alone, typescript-eslint the annotation from its colon.
+/// tsgolint only replaces the type. typescript-eslint replaces the annotation, starting at its colon.
 fn replace_type_annotation<'a>(fixer: Fixer<'a>, ty: TypeNode<'a>, unknown: &str) -> Fix {
     match fixer.file().language().is_oxlint {
         true => fixer.replace(ty.outer_span(), unknown),
@@ -86,8 +86,7 @@ fn replace_type_annotation<'a>(fixer: Fixer<'a>, ty: TypeNode<'a>, unknown: &str
     }
 }
 
-/// Reports `argument`, a function whose first parameter is known not to be `unknown`, at that
-/// parameter.
+/// Reports `argument`, a function whose first parameter is known not to be `unknown`, at that parameter.
 fn report<'a>(argument: Func<'a>, info: PromiseMethod, cx: &Cx<'a, UseUnknownInCatchCallbackVariable>) {
     let Some(catch_variable) = argument.params_with_this().next() else {
         return;
@@ -110,7 +109,8 @@ fn report<'a>(argument: Func<'a>, info: PromiseMethod, cx: &Cx<'a, UseUnknownInC
         (PatTag::Ident, None) => at_variable(USE_UNKNOWN).suggest(ADD_UNKNOWN_TYPE_ANNOTATION_SUGGESTION, |fixer| {
             let inner = catch_variable.binding_span();
             let file = fixer.file();
-            // For tsgolint only `a => b`, where the `=>` follows the parameter, has no parentheses: `(a,) => b` has.
+            // tsgolint only treats `a => b`, where the `=>` follows the parameter, as having no parentheses.
+            // `(a,) => b` has them.
             let is_parenless = match file.language().is_oxlint {
                 true => argument.arrow_span().is_some_and(|arrow| skip_trivia(file.text(), inner.end) == arrow.start),
                 false => argument.is_arrow() && is_parenless_arrow_function(argument),
@@ -133,7 +133,7 @@ fn check_call<'a>(node: Expr<'a>, cx: &Cx<'a, UseUnknownInCatchCallbackVariable>
     let Some(call) = node.as_call() else {
         return;
     };
-    let callee = call.callee();
+    let callee = call.callee().with_jsdoc_cast();
     let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = callee.kind() else {
         return;
     };
@@ -154,7 +154,7 @@ fn check_call<'a>(node: Expr<'a>, cx: &Cx<'a, UseUnknownInCatchCallbackVariable>
         _ => return,
     };
 
-    // The argument to check and all before it have to be ordinary arguments, not spread ones.
+    // The argument to check and all arguments before it must not be spreads.
     let Some(arg_to_check) = call.args().get(info.arg_index_to_check) else {
         return;
     };
@@ -168,6 +168,7 @@ fn check_call<'a>(node: Expr<'a>, cx: &Cx<'a, UseUnknownInCatchCallbackVariable>
     let mut pending: SmallVec<[Expr<'a>; 4]> = SmallVec::new();
     pending.push(arg_to_check);
     while let Some(candidate) = pending.pop() {
+        let candidate = candidate.with_jsdoc_cast();
         match candidate.kind() {
             ExprKind::Binary {
                 op: BinOp::And | BinOp::Or | BinOp::Nullish,

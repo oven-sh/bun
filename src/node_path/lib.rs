@@ -188,7 +188,11 @@ fn without_trailing_slash(s: &[u8]) -> &[u8] {
 #[cfg(not(windows))]
 #[inline]
 fn without_trailing_slash(s: &[u8]) -> &[u8] {
-    strings::without_trailing_slash(s)
+    let mut end = s.len();
+    while end > 1 && s[end - 1] == CHAR_FORWARD_SLASH {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 fn get_cwd_u8(buf: &mut [u8]) -> MaybeBuf<'_, u8> {
@@ -2327,13 +2331,10 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             {
                 // Translated from the following JS code:
                 //   path = `${resolvedDevice}\\`;
-                buf_size = resolved_device_len;
-                memmove(&mut buf2[0..buf_size], &tmp_buf[0..resolved_device_len]);
-                buf_offset = buf_size;
-                buf_size += 1;
-                buf2[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-                path_ptr = buf2.as_ptr();
-                path_len = buf_size;
+                // Append to the device in tmp_buf because buf2 backs resolvedTail.
+                tmp_buf[resolved_device_len] = T::from_u8(CHAR_BACKWARD_SLASH);
+                path_ptr = tmp_buf.as_ptr();
+                path_len = resolved_device_len + 1;
             }
         }
 
@@ -2510,8 +2511,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             }
             buf_size = slice_len;
             if slice_len > 0 {
-                // path may alias buf2 (drive-mismatch fallback); use ptr::copy.
-                // SAFETY: handles overlap.
+                // SAFETY: path has len elements and buf2 has room for the tail.
                 unsafe {
                     core::ptr::copy(path_ptr.add(root_end), buf2.as_mut_ptr(), slice_len);
                 }

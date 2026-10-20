@@ -127,7 +127,6 @@ enum {
 /* SNI tree leaf — stored as the void* user in sni_tree.cpp. */
 struct sni_node_t {
   SSL_CTX *ctx;
-  void *user;
 };
 
 static _Atomic long ssl_ctx_live = 0;
@@ -140,7 +139,6 @@ long us_ssl_ctx_live_count(void) {
  *   - us_ctx_ex_idx (SSL_CTX): packed reneg {limit:u32,window:u32}; its
  *     free_func also decrements ssl_ctx_live so the counter tracks ACTUAL
  *     destruction (refcount→0), not every SSL_CTX_free.
- *   - us_sni_ex_idx (SSL_CTX): per-domain userdata (uWS HttpRouter*).
  *   - us_ssl_rare_ex_idx (SSL): us_ssl_rare_t.
  *   - us_ssl_wrapper_ex_idx (SSL): the owner of an SSL that no us_socket_t drives.
  *
@@ -151,7 +149,6 @@ long us_ssl_ctx_live_count(void) {
  * internal-only, so use the platform primitive directly; root_certs.cpp does
  * the same via std::call_once.) */
 static int us_ctx_ex_idx = -1;
-static int us_sni_ex_idx = -1;
 static int us_ctx_cache_ex_idx = -1;
 /* Marks an SSL_CTX whose verification store holds user-provided CAs (the
  * ca/caFile options or a later addCACert): the per-socket client attach must
@@ -373,7 +370,6 @@ extern void bun_ssl_ctx_cache_on_free(void *parent, void *ptr, CRYPTO_EX_DATA *a
 
 static void us_ex_idx_init(void) {
   us_ctx_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, us_ctx_ex_free);
-  us_sni_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ctx_cache_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, bun_ssl_ctx_cache_on_free);
   us_ctx_user_ca_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ctx_sni_policy_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
@@ -606,6 +602,7 @@ static void ssl_discard_spill(struct loop_ssl_data *loop_ssl_data, struct us_soc
   if (!s->ssl_spilled) return;
   struct us_ssl_rare_t *rare = us_ssl_rare(s_ssl(s));
   loop_ssl_data->ssl_batch_spills -= rare->spill->is_batch;
+  if (rare->spill->offset != rare->spill->length) s->ssl_spill_dropped = 1;
   us_free(rare->spill);
   rare->spill = NULL;
   s->ssl_spilled = 0;
@@ -1787,6 +1784,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl_fatal_error = 0;
   s->ssl_raw_tap = 0;
   s->ssl_spilled = 0;
+  s->ssl_spill_dropped = 0;
   s->ssl_shutdown_after_spill = 0;
   s->ssl_close_after_spill = 0;
   s->ssl_end_delivered = 0;
@@ -3392,7 +3390,7 @@ static int sni_cb(SSL *ssl, int *al, void *arg) {
 
 void us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
                                       const char *hostname_pattern,
-                                      SSL_CTX *ctx, void *user) {
+                                      SSL_CTX *ctx) {
   SSL_CTX *default_ctx = ls->ssl_ctx;
   if (!default_ctx) return;
 
@@ -3406,20 +3404,9 @@ void us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
 
   struct sni_node_t *node = us_malloc(sizeof(struct sni_node_t));
   node->ctx = ctx;
-  node->user = user;
   SSL_CTX_up_ref(ctx);
-  /* Stash userdata on the SSL_CTX too so per-socket lookup via
-   * SSL_get_SSL_CTX works regardless of which ctx the SNI cb selected. */
-  us_ex_idx_ensure();
-  SSL_CTX_set_ex_data(ctx, us_sni_ex_idx, user);
 
   sni_node_destructor(sni_add(names->tree, hostname_pattern, node));
-}
-
-void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
-                                                 const char *hostname_pattern) {
-  struct sni_node_t *node = us_server_names_find(ls->server_names, hostname_pattern);
-  return node ? node->user : NULL;
 }
 
 /* Returns the SSL_CTX registered for `hostname_pattern` via
@@ -3477,11 +3464,6 @@ void us_socket_on_server_name(struct us_socket_t *s) {
    * stay a no-op on any SSL carrying neither resolver. */
   SSL_CTX *ctx = SSL_get_SSL_CTX(ssl);
   if (ctx) SSL_CTX_set_select_certificate_cb(ctx, us_select_cert_cb);
-}
-
-void *us_socket_server_name_userdata(struct us_socket_t *s) {
-  if (!s->ssl || !s_ssl(s) || us_sni_ex_idx < 0) return NULL;
-  return SSL_CTX_get_ex_data(SSL_get_SSL_CTX(s_ssl(s)), us_sni_ex_idx);
 }
 
 const char *us_internal_ssl_sni_servername(struct us_socket_t *s) {

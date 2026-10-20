@@ -16,8 +16,6 @@ use crate::timer::EventLoopTimerState;
 
 use super::{ChunkKind, DevServer, EventLoopTimer, Magic, TimerTag, packed_map};
 
-bun_output::define_scoped_log!(map_log, crate::bake::dev_server_body::SourceMapStore);
-
 /// See `SourceId` for what the content of u64 is.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Default)]
@@ -677,7 +675,6 @@ impl SourceMapStore {
             &vlq_bytes,
             None,
             i32::try_from(entry.paths.len()).expect("int cast"),
-            0, // unused
             Default::default(),
         ) {
             Err(fail) => {

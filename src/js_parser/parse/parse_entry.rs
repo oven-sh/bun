@@ -111,6 +111,8 @@ pub struct Parser<'a> {
 pub struct Options<'a> {
     pub jsx: options::JSX::Pragma,
     pub ts: bool,
+    /// ".mts" and ".cts" files reject the JSX-ambiguous "<T>x" cast and "<T>() => {}" arrow
+    pub ts_no_ambiguous_less_than: bool,
     pub keep_names: bool,
     pub ignore_dce_annotations: bool,
     /// Keeps every directive in the AST, in its original position and with its original text.
@@ -171,6 +173,7 @@ impl<'a> Default for Options<'a> {
         Options {
             jsx: options::JSX::Pragma::default(),
             ts: false,
+            ts_no_ambiguous_less_than: false,
             keep_names: true,
             ignore_dce_annotations: false,
             keep_directives: false,
@@ -223,6 +226,7 @@ impl<'a> Options<'a> {
         Options {
             jsx: self.jsx.clone(),
             ts: self.ts,
+            ts_no_ambiguous_less_than: self.ts_no_ambiguous_less_than,
             keep_names: self.keep_names,
             ignore_dce_annotations: self.ignore_dce_annotations,
             keep_directives: self.keep_directives,
@@ -308,6 +312,10 @@ impl<'a> Options<'a> {
             hasher.update(b"NO_TS");
         }
 
+        if self.ts_no_ambiguous_less_than {
+            hasher.update(b"TS_NO_AMBIGUOUS_LESS_THAN");
+        }
+
         if self.ignore_dce_annotations {
             hasher.update(b"no_dce");
         }
@@ -330,6 +338,7 @@ impl<'a> Options<'a> {
         // (see field comment); caller overwrites before use.
         let mut opts = Options {
             ts: loader.is_typescript(),
+            ts_no_ambiguous_less_than: false,
             jsx,
             keep_names: true,
             ignore_dce_annotations: false,

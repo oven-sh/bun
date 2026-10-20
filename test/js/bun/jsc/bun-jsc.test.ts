@@ -709,7 +709,7 @@ describe("deserialize rejects a CryptoKey record whose key bytes do not import",
   const ec = { name: "ECDSA", namedCurve: "P-256" };
   let rsaKeys: Promise<CryptoKeyPair> | undefined;
   const generateRsa = () => (rsaKeys ??= subtle.generateKey(rsa, true, ["sign", "verify"]));
-  const exported = async (format: "raw" | "raw-public" | "pkcs8", key: CryptoKey) =>
+  const exported = async (format: "raw" | "raw-public" | "raw-secret" | "pkcs8", key: CryptoKey) =>
     Buffer.from(await subtle.exportKey(format, key));
   const jwkField = async (key: CryptoKey, name: "n" | "p") =>
     Buffer.from((await subtle.exportKey("jwk", key))[name]!, "base64url");
@@ -767,6 +767,14 @@ describe("deserialize rejects a CryptoKey record whose key bytes do not import",
         return [publicKey, bytes, bytes.subarray(1)];
       },
     ],
+    [
+      "a ChaCha20-Poly1305 key of 31 bytes",
+      async () => {
+        const key = (await subtle.generateKey("ChaCha20-Poly1305", true, ["encrypt"])) as CryptoKey;
+        const bytes = await exported("raw-secret", key);
+        return [key, bytes, bytes.subarray(1)];
+      },
+    ],
   ];
   // BoringSSL parses these key bytes. It queues an error when it rejects them.
   const parsedCases: Case[] = [
@@ -822,10 +830,19 @@ describe("deserialize rejects a CryptoKey record whose key bytes do not import",
     algorithm: key.algorithm,
     jwk: await subtle.exportKey("jwk", key),
   });
+  // toThrow(error) compares the message only. This also compares the class.
+  const outcome = (payload: Buffer) => {
+    try {
+      return { returned: deserialize(payload) };
+    } catch (error: any) {
+      return { threw: `${error.name}: ${error.message}` };
+    }
+  };
+  const rejected = { threw: "TypeError: Unable to deserialize data." };
 
   it.each([...cases, ...parsedCases])("%s", async (_name, make) => {
     const { key, intact, malformed } = await build(make);
-    expect(() => deserialize(malformed)).toThrow(new TypeError("Unable to deserialize data."));
+    expect(outcome(malformed)).toEqual(rejected);
     expect(await describeKey(deserialize(intact))).toEqual(await describeKey(key));
   });
 
@@ -847,7 +864,7 @@ describe("deserialize rejects a CryptoKey record whose key bytes do not import",
       holder.subarray(at + intact.length - 5),
     ]);
 
-    expect(() => deserialize(broken)).toThrow(new TypeError("Unable to deserialize data."));
+    expect(outcome(broken)).toEqual(rejected);
     const [first, second, { key: third }] = deserialize(holder);
     expect(await describeKey(first)).toEqual(await describeKey(key));
     expect(second).toBe(first);

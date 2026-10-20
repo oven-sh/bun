@@ -1106,15 +1106,10 @@ pub(crate) fn scan_imports_and_exports(
                     let import_record_index = col_ref!(parts_list)[id].as_slice()[part_index]
                         .import_record_indices
                         .slice()[iri];
-                    let (kind, rec_source_index, rec_flags, rec_require_alias) = {
+                    let (kind, rec_source_index, rec_flags) = {
                         let record = &col_ref!(import_records_list)[id].as_slice()
                             [import_record_index as usize];
-                        (
-                            record.kind,
-                            record.source_index,
-                            record.flags,
-                            record.require_alias,
-                        )
+                        (record.kind, record.source_index, record.flags)
                     };
                     let other_id = rec_source_index.value() as usize;
 
@@ -1144,7 +1139,10 @@ pub(crate) fn scan_imports_and_exports(
                             // An `import()` is printed as-is and never becomes `__require()`,
                             // nor does a split `require()` (`import.meta.require`).
                             if kind != ImportKind::Dynamic && !is_external_dyn {
-                                if let Some(alias) = rec_require_alias.get() {
+                                let require_alias = col_ref!(import_records_list)[id].as_slice()
+                                    [import_record_index as usize]
+                                    .require_alias;
+                                if let Some(alias) = require_alias.get() {
                                     // The call stays for run time as a call of the variable that it names.
                                     this.graph.generate_symbol_import_and_use(
                                         source_index,

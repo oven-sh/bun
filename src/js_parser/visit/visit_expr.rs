@@ -2586,7 +2586,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// Makes the call `e`, which Bun wrote through `import.meta.require`, a `require("x")` when it has one string argument. `alias` is the variable that the call names.
     fn read_as_require_call(p: &mut Self, e: &mut Expr, alias: Option<Ref>) -> bool {
-        let call = e.data.e_call().expect("infallible: variant checked");
+        let mut call = e.data.e_call().expect("infallible: variant checked");
         if call.optional_chain.is_some()
             || call.args.len_u32() != 1
             || !p.options.features.allow_runtime
@@ -2594,6 +2594,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return false;
         }
         let first = Self::fold_specifier(p, call.args.slice()[0]);
+        call.args.slice_mut()[0] = first;
         if !matches!(first.data, Data::EString(..)) {
             return false;
         }
@@ -2628,13 +2629,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         true
     }
 
-    /// The fold that `e_call` forces on the argument of `require()`, for an argument that is already visited.
+    /// The fold that `e_call` forces on the argument of `require()`, for an argument that is already visited. The fold can change a node in place, so each result goes back into its parent.
     fn fold_specifier(p: &Self, expr: Expr) -> Expr {
         use bun_ast::fold_string_addition::{FoldStringAdditionKind, fold_string_addition};
+        if !p.stack_check.is_safe_to_recurse() {
+            return expr;
+        }
         match expr.data {
-            Data::EBinary(binary) if binary.op == Op::BinAdd => {
-                let left = Self::fold_specifier(p, binary.left);
-                let right = Self::fold_specifier(p, binary.right);
+            Data::EBinary(mut binary) if binary.op == Op::BinAdd => {
+                binary.left = Self::fold_specifier(p, binary.left);
+                binary.right = Self::fold_specifier(p, binary.right);
+                let (left, right) = (binary.left, binary.right);
                 fold_string_addition(left, right, p.arena, FoldStringAdditionKind::Normal)
                     .unwrap_or(expr)
             }

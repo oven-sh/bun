@@ -1091,18 +1091,22 @@ error: Hello World`,
       "/prelude.js":
         "var {require}=import.meta;console.log(require('./lib/' + 'a.cjs').x, require(`./lib/${'b'}.cjs`).x);export {};",
       "/helper.js":
-        "// @bun\nvar __require = import.meta.require;\nconsole.log(__require(`./lib/${process.env.FLAVOR}.cjs`).x);",
+        "// @bun\nvar __require = import.meta.require;\nconst part = 'e';\nconsole.log(__require(`./lib/${process.env.FLAVOR}.cjs`).x, __require(`./lib/${part}` + '.cjs').x);",
       "/inline.js": "// @bun\nconsole.log(import.meta.require('./lib/' + 'd' + '.cjs').x);",
       "/lib/a.cjs": `exports.x = "a";`,
       "/lib/b.cjs": `exports.x = "b";`,
       "/lib/c.cjs": `exports.x = "c";`,
       "/lib/d.cjs": `exports.x = "d";`,
+      "/lib/e.cjs": `exports.x = "at run time";`,
     },
     target: "bun",
     define: { "process.env.FLAVOR": '"c"' },
-    run: { stdout: "a b\nc\nd" },
+    run: { stdout: "a b\nc at run time\nd" },
     onAfterBundle(api) {
-      api.expectFile("/out.js").not.toContain("import.meta");
+      const out = api.readFile("/out.js");
+      // A string with a part that has no value at build time stays one call. The parts that fold are in one piece.
+      expect(out).toContain("__require(`./lib/${part}.cjs`)");
+      expect(out).not.toContain("at run time");
     },
   });
   // The function keeps the text that Bun wrote, so `toString()` of it is still code for a place with no `import.meta`.

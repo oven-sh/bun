@@ -2953,6 +2953,7 @@ pub(crate) mod __gated_printer {
                     }
                     self.print(b"import.meta.require");
                 } else if let Some(alias) = record.require_alias.get() {
+                    // A call that Bun wrote through a variable of this file is a call of that variable.
                     self.print_symbol(Ref::new(
                         alias.get(),
                         self.options.source_index,

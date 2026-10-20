@@ -200,12 +200,12 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     if (length) {
       if (!chunked) {
         writeToSocket(buf, callback);
-      } else if (callback && length <= 16 * 1024 && $isTypedArrayView(buf) && buf.BYTES_PER_ELEMENT === 1) {
+      } else if (callback && length <= 16 * 1024 && buf.BYTES_PER_ELEMENT === 1 && $isTypedArrayView(buf)) {
         // Like the native handle, where uWS copies a write of up to 16 KiB into its cork (CORK_COPY_MAX): one write, so the callback costs one completion of the socket and one packet, not three. Only an array of bytes is copied element by element.
         const head = length.toString(16) + "\r\n";
         const frame = Buffer.allocUnsafe(head.length + length + 2);
         frame.write(head, 0, "latin1");
-        frame.set(buf, head.length);
+        frame.set(buf as Uint8Array, head.length);
         frame.write("\r\n", head.length + length, "latin1");
         writeToSocket(frame, callback);
       } else {

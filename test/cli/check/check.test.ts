@@ -11827,6 +11827,70 @@ export class D9 { x = { a: { ...new D9() } }; y = 1; }
       expect(exitCode).toBe(1);
     });
 
+    // A property of an intersection is optional if every member, method or accessor among its parts is. A variable of
+    // `globalThis` or of a module is none of those, and its type has no `undefined`. The type of a property is complete
+    // once it is resolved: a spread, a rest element, an intersection or an `await` that reads it must not add `undefined`.
+    test("the type of a property that is optional but has no undefined is kept through a spread, a rest, an intersection and an await", async () => {
+      using dir = project({
+        "a.ts": `declare global { var flags: {}; }
+declare const w: { flags?: {} } & typeof globalThis;
+declare const r: { flags?: string };
+const v1: typeof globalThis = { ...w };
+const v2: typeof globalThis = { ...w, ...w };
+const v3: typeof globalThis = { ...w, ...r };
+const v4: typeof globalThis = { ...w } as const;
+const v5: typeof globalThis = { ...w, flags: undefined };
+declare const u: { flags?: {} } & typeof globalThis | { flags?: {} } & typeof globalThis & { z: 1 };
+const v6: typeof globalThis = { ...u };
+function f<T extends { flags?: {} }>(t: T) { const v7: typeof globalThis = { ...w, ...t }; }
+const { ...rest } = w;
+const v8: typeof globalThis = rest;
+declare namespace M { var flags: {}; }
+declare const m: { flags?: {} } & typeof M;
+const v9: typeof M = { ...m };
+declare function pick<T>(x: { flags?: T }): T;
+const v10: {} = pick({ ...w });
+const v11: {} = pick(rest);
+declare const s: typeof globalThis & { flags?: string };
+const v12: typeof globalThis = s;
+declare const w2: { flags?: {} } & typeof globalThis & { flags?: string };
+const v13: typeof globalThis = { ...w2 };
+function g({ a = 2 } = { a: 1 }) {}
+g({ a: undefined });
+declare global { var then: (onfulfilled: (value: number) => void) => void; }
+declare const p: { then?: (onfulfilled: (value: number) => void) => void } & typeof globalThis;
+async function h() { const v14: number = await p; }
+declare function mapv<X>(o: { [P in "flags"]: X }): X;
+const v15: {} = mapv({ ...m });
+declare const c: typeof rest & { flags?: string };
+const v16: typeof globalThis = c;
+declare function infv<T>(o: { [P in keyof T]: T[P] }): T;
+const v17: { flags: {} } = infv({ ...m });
+export {};
+`,
+        "b.tsx": `declare var React: { createElement: any };
+declare namespace JSX { interface Element {} interface ElementAttributesProperty { props: {} } }
+declare global { var flags: {}; }
+declare const w: { flags?: {} } & typeof globalThis;
+declare function C(p: typeof globalThis): JSX.Element;
+const e = <C {...w} />;
+const e2 = <C {...w} flags={undefined} />;
+export {};
+`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--jsx", "react"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(8,39): error TS2322: Type 'undefined' is not assignable to type '{}'.
+        a.ts(25,5): error TS2322: Type 'undefined' is not assignable to type 'number'.
+        a.ts(30,22): error TS2345: Argument of type '{ flags?: {}; }' is not assignable to parameter of type '{ flags: {}; }'.
+          Property 'flags' is optional in type '{ flags?: {}; }' but required in type '{ flags: {}; }'.
+        a.ts(34,7): error TS2322: Type '{ flags?: {}; }' is not assignable to type '{ flags: {}; }'.
+          Property 'flags' is optional in type '{ flags?: {}; }' but required in type '{ flags: {}; }'.
+        b.tsx(7,22): error TS2322: Type 'undefined' is not assignable to type '{}'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("inference from an instance of the class whose field is being resolved", async () => {
       using dir = project({
         "a.ts": `declare function obj(v: object): 1; declare function ovl(v: object): 1; declare function ovl(v: {}): 2;

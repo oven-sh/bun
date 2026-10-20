@@ -32,6 +32,7 @@ on:
       - "test/tsconfig.json"
       - "test/_util/**"
       - "test/internal/source-lints/**"
+      - "test/js/web/workers/crypto-key-clone-table.ts"
       - ".github/workflows/*.yml"
       - ".github/actions/setup-bun/**"
   pull_request:
@@ -56,6 +57,7 @@ on:
       - "test/tsconfig.json"
       - "test/_util/**"
       - "test/internal/source-lints/**"
+      - "test/js/web/workers/crypto-key-clone-table.ts"
       - ".github/workflows/*.yml"
       - ".github/actions/setup-bun/**"
   merge_group:

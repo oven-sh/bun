@@ -231,6 +231,11 @@ export const cases: Record<string, Case> = {
  1|    one: 1,
  -|  },
  1|);
+ 1|Object.assign(["https://bun.com"],
+ 1|  {
+ 1|    url: 1,
+ -|  },
+ 1|);
  2|for (const item of list) ({
  2|  two: item.two,
  2|}).two;

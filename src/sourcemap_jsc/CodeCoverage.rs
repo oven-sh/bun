@@ -834,13 +834,16 @@ fn scan(units: impl ExactSizeIterator<Item = u16>) -> (Vec<u32>, Bitset) {
     let mut executable = bun_core::handle_oom(Bitset::init_empty(units.len()));
     let mut units = units.enumerate().peekable();
     let mut previous = 0;
-    let mut in_line_comment = false;
+    let mut seen_slashes = false;
     while let Some((i, unit)) = units.next() {
         match unit {
             0x0D if units.peek().is_some_and(|&(_, next)| next == 0x0A) => {}
             0x0A | 0x0D | 0x2028 | 0x2029 => {
                 starts.push(u32::try_from(i + 1).expect("int cast"));
-                in_line_comment = false;
+                // The line may have ended in a comment.
+                if core::mem::take(&mut seen_slashes) {
+                    previous = 0;
+                }
             }
             _ => {}
         }
@@ -857,10 +860,8 @@ fn scan(units: impl ExactSizeIterator<Item = u16>) -> (Vec<u32>, Bitset) {
         if is_executable {
             executable.set(i);
         }
-        in_line_comment |= unit == 0x2F && previous == 0x2F;
-        if !in_line_comment {
-            previous = unit;
-        }
+        seen_slashes |= unit == 0x2F && previous == 0x2F;
+        previous = unit;
     }
     (starts, executable)
 }

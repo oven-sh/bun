@@ -8160,7 +8160,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getApparentTypeOfIntersectionType`: the intersection of the apparent types of the members of
     /// `ty`. `apparent_type` returns an intersection unchanged if its members are all their own
     /// apparent types. `getTypeWithThisArgument` also replaces a member that's a reference with a
-    /// `this` type. The new reference prints like the old one, and the new intersection has no alias.
+    /// `this` type. Neither the new reference nor the new intersection has an alias.
     pub(super) fn apparent_type_of_intersection(&mut self, ty: TypeId) -> TypeId {
         let TypeData::Intersection(parts) = self.data(ty) else {
             return ty;
@@ -8175,6 +8175,8 @@ impl<'p, 's> Checker<'p, 's> {
             .map(|&p| {
                 if self.intersection_member_has_other_apparent_type(p) {
                     self.apparent_type(p)
+                } else if self.takes_this_argument(p) {
+                    self.without_alias_of_reference(p)
                 } else {
                     p
                 }

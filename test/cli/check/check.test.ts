@@ -5145,6 +5145,80 @@ export {};
       `);
     });
 
+    test("prints the apparent type of an intersection without the aliases of its members", async () => {
+      using dir = project({
+        "a.ts": `
+interface Pair<A, B> { a: A; b: B }
+type AP<A, B> = Pair<A, B>;
+type AT<A, B> = [A, B];
+type AR<A> = A[];
+type DP = Pair<1, 2>;
+declare const s: AP<1, 2> & { c: 3 };
+s.zzz;
+s["yyy"];
+const { www } = s;
+const p1: { a: 1; b: 2; c: 3; d: 4 } = s;
+const p2: { a: 1; b: 2; c: 3; d: 4; e: 5 } = s;
+const p3: { a: string } = s;
+declare const t: AT<1, 2> & { c: 3 };
+t.zzz;
+const q1: { c: 3; d: 4 } = t;
+declare const r: AR<1> & { c: 3 };
+r.zzz;
+const q2: { c: 3; d: 4 } = r;
+type Both = AP<1, 2> & { c: 3 };
+declare const b: Both;
+b.zzz;
+const q4: { c: 3; d: 4 } = b;
+new s();
+s();
+declare const d: DP & { c: 3 };
+d["yyy"];
+const q6: { c: 3; d: 4 } = d;
+declare function f(x: Promise<number>): void;
+f(s); f(d); f(t);
+export {};
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(8,3): error TS2339: Property 'zzz' does not exist on type 'AP<1, 2> & { c: 3; }'.
+        a.ts(9,1): error TS7053: Element implicitly has an 'any' type because expression of type '"yyy"' can't be used to index type 'Pair<1, 2> & { c: 3; }'.
+          Property 'yyy' does not exist on type 'Pair<1, 2> & { c: 3; }'.
+        a.ts(10,9): error TS2339: Property 'www' does not exist on type 'Pair<1, 2> & { c: 3; }'.
+        a.ts(11,7): error TS2322: Type 'AP<1, 2> & { c: 3; }' is not assignable to type '{ a: 1; b: 2; c: 3; d: 4; }'.
+          Property 'd' is missing in type 'Pair<1, 2> & { c: 3; }' but required in type '{ a: 1; b: 2; c: 3; d: 4; }'.
+        a.ts(12,7): error TS2322: Type 'AP<1, 2> & { c: 3; }' is not assignable to type '{ a: 1; b: 2; c: 3; d: 4; e: 5; }'.
+          Type 'Pair<1, 2> & { c: 3; }' is missing the following properties from type '{ a: 1; b: 2; c: 3; d: 4; e: 5; }': d, e
+        a.ts(13,7): error TS2322: Type 'AP<1, 2> & { c: 3; }' is not assignable to type '{ a: string; }'.
+          Types of property 'a' are incompatible.
+            Type 'number' is not assignable to type 'string'.
+        a.ts(15,3): error TS2339: Property 'zzz' does not exist on type 'AT<1, 2> & { c: 3; }'.
+        a.ts(16,7): error TS2322: Type 'AT<1, 2> & { c: 3; }' is not assignable to type '{ c: 3; d: 4; }'.
+          Property 'd' is missing in type '[1, 2] & { c: 3; }' but required in type '{ c: 3; d: 4; }'.
+        a.ts(18,3): error TS2339: Property 'zzz' does not exist on type 'AR<1> & { c: 3; }'.
+        a.ts(19,7): error TS2322: Type 'AR<1> & { c: 3; }' is not assignable to type '{ c: 3; d: 4; }'.
+          Property 'd' is missing in type '1[] & { c: 3; }' but required in type '{ c: 3; d: 4; }'.
+        a.ts(22,3): error TS2339: Property 'zzz' does not exist on type 'Both'.
+        a.ts(23,7): error TS2322: Type 'Both' is not assignable to type '{ c: 3; d: 4; }'.
+          Property 'd' is missing in type 'Pair<1, 2> & { c: 3; }' but required in type '{ c: 3; d: 4; }'.
+        a.ts(24,5): error TS2351: This expression is not constructable.
+          Type 'Pair<1, 2> & { c: 3; }' has no construct signatures.
+        a.ts(25,1): error TS2349: This expression is not callable.
+          Type 'Pair<1, 2> & { c: 3; }' has no call signatures.
+        a.ts(27,1): error TS7053: Element implicitly has an 'any' type because expression of type '"yyy"' can't be used to index type 'Pair<1, 2> & { c: 3; }'.
+          Property 'yyy' does not exist on type 'Pair<1, 2> & { c: 3; }'.
+        a.ts(28,7): error TS2322: Type 'DP & { c: 3; }' is not assignable to type '{ c: 3; d: 4; }'.
+          Property 'd' is missing in type 'Pair<1, 2> & { c: 3; }' but required in type '{ c: 3; d: 4; }'.
+        a.ts(30,3): error TS2345: Argument of type 'AP<1, 2> & { c: 3; }' is not assignable to parameter of type 'Promise<number>'.
+          Type 'Pair<1, 2> & { c: 3; }' is missing the following properties from type 'Promise<number>': then, catch, [Symbol.toStringTag], finally
+        a.ts(30,9): error TS2345: Argument of type 'DP & { c: 3; }' is not assignable to parameter of type 'Promise<number>'.
+          Type 'Pair<1, 2> & { c: 3; }' is missing the following properties from type 'Promise<number>': then, catch, [Symbol.toStringTag], finally
+        a.ts(30,15): error TS2345: Argument of type 'AT<1, 2> & { c: 3; }' is not assignable to parameter of type 'Promise<number>'.
+          Type '[1, 2] & { c: 3; }' is missing the following properties from type 'Promise<number>': then, catch, [Symbol.toStringTag], finally"
+      `);
+    });
+
     // Per-node caches of files that nothing imports are freed in batches of several files.
     test.each(["", "--threads=1"])("reports every error in 60 files that nothing imports %s", async threads => {
       const leaf = (i: number) => `import { call, type Shape } from "./shared";

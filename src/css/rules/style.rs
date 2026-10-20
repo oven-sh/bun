@@ -41,18 +41,11 @@ impl<R> StyleRule<R> {
         self.selectors.hash(&mut hasher);
         // Inlined `DeclarationBlock::hash_property_ids`: hash just the u16
         // property-id tag bytes.
-        let declarations = &self.declarations;
-        for decl in declarations
-            .declarations
-            .iter()
-            .chain(declarations.important_declarations.iter())
-        {
-            let tag = decl.property_id().tag() as u16;
-            hasher.update(&tag.to_ne_bytes());
-            // Two unknown names have one tag, so the name is a part of the key. Rules that `is_duplicate` keeps apart then have their own buckets.
-            if let css::css_properties::Property::Custom(custom) = decl {
-                hasher.update(custom.name.as_str());
-            }
+        for decl in self.declarations.declarations.iter() {
+            hash_property(&mut hasher, decl);
+        }
+        for decl in self.declarations.important_declarations.iter() {
+            hash_property(&mut hasher, decl);
         }
         hasher.final_()
     }
@@ -474,6 +467,15 @@ impl<R> StyleRule<R> {
         same_properties(&a.declarations, &b.declarations)
             && same_properties(&a.important_declarations, &b.important_declarations)
             && self.selectors.eql(&other.selectors)
+    }
+}
+
+/// Two unknown names have one `PropertyId` tag, so the name is their key. Rules that `is_duplicate` keeps apart then have their own buckets.
+#[inline]
+fn hash_property(hasher: &mut bun_wyhash::Wyhash, decl: &css::css_properties::Property) {
+    match decl {
+        css::css_properties::Property::Custom(custom) => hasher.update(custom.name.as_str()),
+        _ => hasher.update(&(decl.property_id().tag() as u16).to_ne_bytes()),
     }
 }
 

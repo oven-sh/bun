@@ -256,7 +256,7 @@ impl TextDecoration {
         let mut style = None;
         let mut color = None;
 
-        loop {
+        while !input.is_exhausted() {
             macro_rules! prop {
                 ($key:ident, $ty:ty) => {
                     if $key.is_none()

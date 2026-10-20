@@ -21,9 +21,11 @@ const {
 const {
   ConnResetException,
   ErrnoException,
+  ExceptionWithHostPort,
   hasObserver,
   startPerf,
   stopPerf,
+  kClusterOwner,
   kInternalSendOptions,
   isStoppedModuleGraphRunning,
 } = require("internal/shared");
@@ -68,6 +70,7 @@ const {
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
+const NumberIsInteger = Number.isInteger;
 
 const { IncomingMessage, kReqShouldKeepAlive } = require("node:_http_incoming");
 const {
@@ -87,6 +90,10 @@ const kTrackedConnections = Symbol("http.server.trackedConnections");
 const kPendingDrainClose = Symbol("http.server.pendingDrainClose");
 const kPendingCloseGenerations = Symbol("http.server.pendingCloseGenerations");
 const kListenerGeneration = Symbol("http.server.listenerGeneration");
+const kListenFd = Symbol("http.server.listenFd");
+// Workers only. listen() and close() bump the id, so a primary reply that carries an older one is stale.
+const kClusterHandle = Symbol("http.server.clusterHandle");
+const kClusterListeningId = Symbol("http.server.clusterListeningId");
 // Set on the 'connect'/'upgrade' handoff; closeAll/closeIdleConnections() skip these, as in Node.
 const kHandedOff = Symbol("http.server.socketHandedOff");
 function closeHandle(handle) {
@@ -272,6 +279,19 @@ function emitListenErrorNextTick(self, err) {
   self.emit("error", err);
 }
 
+// Node reports each of these as EINVAL: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1905-L1911
+function listenFdError(code) {
+  if (code !== "EINVAL" && code !== "EBADF" && code !== "ENOTSOCK" && code !== "EOPNOTSUPP" && code !== "ENOTSUP") {
+    return undefined;
+  }
+  const err: any = new Error("listen EINVAL: invalid argument");
+  err.errno = process.platform === "win32" ? -4071 : -22; // UV_EINVAL
+  err.code = "EINVAL";
+  err.syscall = "listen";
+  err.address = null;
+  return err;
+}
+
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1367-L1368
 function normalizeServerTls(tls) {
   tls.requestCert = tls.requestCert === true;
@@ -322,6 +342,9 @@ function Server(options, callback): void {
   this[kPendingDrainClose] = false;
   this[kPendingCloseGenerations] = new Set();
   this[kListenerGeneration] = undefined;
+  this[kListenFd] = false;
+  this[kClusterHandle] = undefined;
+  this[kClusterListeningId] = 0;
   this[tlsSymbol] = null;
   this.noDelay = true;
   if (typeof options === "function") {
@@ -560,6 +583,11 @@ Server.prototype.close = function (optionalCallback?) {
   // even when the server was never listening.
   clearInterval(this[kConnectionsCheckingInterval]);
   http1Fallback?.closeIdleHttp1Connections(this);
+  if (!isPrimary) {
+    // Also cancels a listen() whose reply from the primary has not arrived yet.
+    this[kClusterListeningId]++;
+    releaseClusterHandle(this);
+  }
   if (!server) {
     if (typeof optionalCallback === "function") process.nextTick(optionalCallback, $ERR_SERVER_NOT_RUNNING());
     // Like Node.js's net.Server#close, close() returns the server.
@@ -613,7 +641,13 @@ Server.prototype[Symbol.asyncDispose] = function () {
 
 Server.prototype.address = function () {
   if (!this[serverSymbol]) return null;
-  return this[serverSymbol].address;
+  const address = this[serverSymbol].address;
+  if (typeof address !== "string") return address;
+  // In node a unix socket that came as a descriptor has no address.
+  if (this[kListenFd]) return null;
+  // The primary binds the shortest spelling of the path. The worker reports the one it asked for, as in node.
+  const clusterPath = this[kClusterHandle]?.path;
+  return clusterPath !== undefined ? clusterPath : address;
 };
 
 Server.prototype.listen = function () {
@@ -622,6 +656,9 @@ Server.prototype.listen = function () {
   const server = this;
   let port, host;
   let socketPath;
+  let fd: number | undefined;
+  let exclusive = false;
+  let reusePort = false;
   let tls = this[tlsSymbol];
 
   // This logic must align with:
@@ -632,9 +669,22 @@ Server.prototype.listen = function () {
     if (($isObject(arg0) || $isCallable(arg0)) && arg0 !== null) {
       // (options[...][, cb])
       addServerAbortSignalOption(this, arg0);
-      port = arg0.port;
-      host = arg0.host;
-      socketPath = arg0.path;
+      const fdOption = arg0.fd;
+      // fd wins, as in node: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2140-L2143
+      if (typeof fdOption === "number" && fdOption >= 0) {
+        fd = fdOption;
+      } else {
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2222-L2227
+        if ("fd" in arg0 && !("port" in arg0) && !("path" in arg0)) {
+          throw $ERR_INVALID_ARG_VALUE("options", arg0, 'must have the property "port" or "path"');
+        }
+        port = arg0.port;
+        host = arg0.host;
+        socketPath = arg0.path;
+        // A worker with reusePort binds its own socket: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2213-L2215
+        reusePort = arg0.reusePort === true;
+        exclusive = reusePort || !!arg0.exclusive;
+      }
 
       const otherTLS = arg0.tls;
       if (otherTLS && $isObject(otherTLS)) {
@@ -654,7 +704,7 @@ Server.prototype.listen = function () {
 
   // Bun defaults to port 3000.
   // Node defaults to port 0.
-  if (port === undefined && !socketPath) {
+  if (port === undefined && !socketPath && fd === undefined) {
     port = 0;
   }
 
@@ -672,42 +722,177 @@ Server.prototype.listen = function () {
   }
 
   try {
-    // listenInCluster
+    if (fd !== undefined && (!NumberIsInteger(fd) || fd > 0x7fffffff)) throw listenFdError("EINVAL");
 
+    // listenInCluster
     if (isPrimary) {
-      server[kRealListen](tls, port, host, socketPath, false);
+      listenOnOwnSocket(server, tls, port, host, socketPath, reusePort, fd);
       return this;
     }
 
     if (cluster === undefined) cluster = require("node:cluster");
+    // Any listen() makes the primary's answer to an earlier one stale, as node's _listeningId does.
+    const listeningId = ++server[kClusterListeningId];
 
-    server.once("listening", () => {
-      // No channel (NODE_UNIQUE_ID inherited by a plain child, or already disconnected): nothing to notify.
-      if (!process.connected) return;
-      cluster.worker.state = "listening";
-      const address = server.address();
-      const isObjectAddress = address !== null && typeof address === "object";
-      const boundHost = host && isObjectAddress ? address : null;
-      const message = {
-        cmd: "NODE_CLUSTER",
-        act: "listening",
-        port: socketPath ? -1 : (isObjectAddress && address.port) || port,
-        data: null,
-        address: socketPath ?? (boundHost && boundHost.address) ?? null,
-        addressType: socketPath ? -1 : boundHost && boundHost.family === "IPv6" ? 6 : 4,
-      };
-      process.send!(message, undefined, kInternalSendOptions);
-    });
+    // exclusive (or reusePort, which implies it) binds in the worker, as in node.
+    if (exclusive) {
+      listenOnOwnSocket(server, tls, port, host, socketPath, reusePort, fd);
+      return this;
+    }
+    // No channel (NODE_UNIQUE_ID without a primary), or Windows, where accept() on copies of one socket blocks.
+    if (!process.connected || process.platform === "win32" || !primaryCanBind(port, host, socketPath, fd)) {
+      listenOnOwnSocketInWorker(server, tls, port, host, socketPath, fd);
+      return this;
+    }
 
-    server[kRealListen](tls, port, host, socketPath, true);
+    listenInCluster(server, listeningId, tls, port, host, socketPath, fd);
   } catch (err) {
+    // A listener that Bun.serve() created before the failure must not stay up behind the 'error'.
+    if (server[serverSymbol]) server.close();
     process.nextTick(emitListenErrorNextTick, server, err);
   }
 
   return this;
 };
 
-Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort) {
+function listenOnOwnSocket(server, tls, port, host, socketPath, reusePort, fd) {
+  if (fd === undefined) {
+    server[kRealListen](tls, port, host, socketPath, reusePort, undefined);
+    return;
+  }
+  try {
+    server[kRealListen](tls, undefined, undefined, undefined, false, fd);
+  } catch (err: any) {
+    throw (err?.syscall === "listen" && listenFdError(err.code)) || err;
+  }
+}
+
+function primaryCanBind(port, host, socketPath, fd) {
+  if (fd !== undefined) return true;
+  if (socketPath) return typeof socketPath === "string";
+  if (host != null && typeof host !== "string") return false;
+  return typeof port === "number" && port === (port | 0) && port >= 0 && port <= 65535;
+}
+
+// The worker binds its own socket (SO_REUSEPORT) and reports it, so cluster.on("listening") fires.
+function listenOnOwnSocketInWorker(server, tls, port, host, socketPath, fd) {
+  listenOnOwnSocket(server, tls, port, host, socketPath, true, fd);
+  notifyPrimaryWhenListening(server, port, host, socketPath);
+}
+
+function notifyPrimaryWhenListening(server, port, host, socketPath) {
+  server.once("listening", () => {
+    if (!process.connected) return;
+    cluster.worker.state = "listening";
+    const address = server.address();
+    const isObjectAddress = address !== null && typeof address === "object";
+    const boundHost = host && isObjectAddress ? address : null;
+    const message = {
+      cmd: "NODE_CLUSTER",
+      act: "listening",
+      port: socketPath ? -1 : (isObjectAddress && address.port) || port,
+      data: null,
+      address: socketPath ?? (boundHost && boundHost.address) ?? null,
+      addressType: socketPath ? -1 : boundHost && boundHost.family === "IPv6" ? 6 : 4,
+    };
+    process.send!(message, undefined, kInternalSendOptions);
+  });
+}
+
+// net.Server's listenInCluster, always sharedOnly (as for TLS there): Bun.serve accepts natively.
+function listenInCluster(server, listeningId, tls, port, host, socketPath, fd) {
+  // The (address, port, addressType, fd) tuple keys the primary's handles, so it must match net.Server's.
+  if (fd !== undefined) {
+    queryPrimary(server, listeningId, tls, port, host, socketPath, fd, null, null, null);
+    return;
+  }
+  if (socketPath) {
+    queryPrimary(server, listeningId, tls, port, host, socketPath, fd, socketPath, -1, -1);
+    return;
+  }
+  if (!host) {
+    queryPrimary(server, listeningId, tls, port, host, socketPath, fd, null, port, 4);
+    return;
+  }
+  // Bun.serve() accepts "[::1]"; the primary's bind (and isIP) want it bare.
+  const address =
+    host.length > 2 && host.charCodeAt(0) === 0x5b /* [ */ && host.charCodeAt(host.length - 1) === 0x5d /* ] */
+      ? host.slice(1, -1)
+      : host;
+  const addressType = isIP(address);
+  if (addressType !== 0) {
+    queryPrimary(server, listeningId, tls, port, host, socketPath, fd, address, port, addressType);
+    return;
+  }
+  // The primary binds addresses, not names. https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2259-L2278
+  require("node:dns").lookup(address, (err, ip, family) => {
+    if (listeningId !== server[kClusterListeningId]) return;
+    if (err) {
+      server.emit("error", err);
+      return;
+    }
+    queryPrimary(server, listeningId, tls, port, host, socketPath, fd, ip, port, family === 6 ? 6 : 4);
+  });
+}
+
+function queryPrimary(server, listeningId, tls, port, host, socketPath, fd, address, queryPort, addressType) {
+  const serverQuery = { address, port: queryPort, addressType, fd, flags: 0, sharedOnly: true };
+  cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle, reply) {
+    // close(), another listen() or a disconnect came first: give the primary's handle straight back.
+    if (listeningId !== server[kClusterListeningId] || cluster.worker.exitedAfterDisconnect) {
+      handle?.close();
+      return;
+    }
+    const sharedFd = handle?.sharedFd;
+    let hint = reply?.bunHint;
+    if (!err && typeof sharedFd !== "number") {
+      // A round-robin handle despite sharedOnly: a primary that is not bun.
+      handle?.close();
+      err = process.binding("uv").UV_EINVAL;
+      hint =
+        "a bun http worker accepts on a shared socket; set cluster.schedulingPolicy = cluster.SCHED_NONE in the primary";
+    }
+    if (err) {
+      const ex = new ExceptionWithHostPort(err, "bind", address, queryPort);
+      if (typeof hint === "string") ex.message += `\n  note: ${hint}`;
+      server.emit("error", ex);
+      return;
+    }
+    server[kClusterHandle] = handle;
+    // worker.disconnect() closes this server along with the worker's other servers.
+    handle[kClusterOwner] = server;
+    // The listener owns the descriptor now: the handle's close() only tells the primary.
+    handle.adopted = true;
+    if (socketPath) handle.path = socketPath;
+    try {
+      server[kRealListen](tls, port, host, socketPath, false, sharedFd);
+      // address() follows the explicit-fd rules for a descriptor of the primary as well.
+      server[kListenFd] = fd !== undefined;
+    } catch (err: any) {
+      if (server[serverSymbol]) {
+        // The listener took the descriptor: close() stops it and releases the handle.
+        server.close();
+      } else {
+        // Nothing took the descriptor, so it closes with the handle.
+        handle.adopted = false;
+        releaseClusterHandle(server);
+      }
+      const listenError = fd !== undefined && err?.syscall === "listen" ? listenFdError(err.code) || err : err;
+      process.nextTick(emitListenErrorNextTick, server, listenError);
+    }
+  });
+}
+
+// The primary keeps the socket bound (and the unix socket file) until every worker has let go.
+function releaseClusterHandle(server) {
+  const handle = server[kClusterHandle];
+  if (handle === undefined) return;
+  server[kClusterHandle] = undefined;
+  handle[kClusterOwner] = null;
+  handle.close();
+}
+
+Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, fd?: number) {
   {
     // What the first connection and the first request need, so that neither waits for it.
     getNodeHTTPServerSocket();
@@ -722,12 +907,14 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     if (tls) {
       this.serverName = tls.serverName || host || "localhost";
     }
-    this[serverSymbol] = Bun.serve<any>({
+    // A descriptor is bound already: Bun.serve refuses a second listen target beside it.
+    const bindsItself = fd === undefined;
+    const serveOptions: Bun.Serve.NodeHTTPServeOptions<any> = {
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
       tls,
-      port,
-      hostname: host,
-      unix: socketPath,
+      port: bindsItself ? port : undefined,
+      hostname: bindsItself ? host : undefined,
+      unix: bindsItself ? socketPath : undefined,
       reusePort,
       maxRequestBodySize: Number.MAX_SAFE_INTEGER,
 
@@ -1138,11 +1325,15 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
         return pendingPromise;
       },
-    });
+    };
+    // Only a listen on a descriptor adds the key, so every other listen passes the same object shape.
+    if (fd !== undefined) serveOptions.fd = fd;
+    this[serverSymbol] = Bun.serve<any>(serveOptions);
+    this[kListenFd] = fd !== undefined;
 
     const handle = this[serverSymbol];
     listenerGeneration = {
-      isUnix: !!socketPath,
+      isUnix: fd === undefined ? !!socketPath : handle.port === undefined,
       nativeClosed: false,
       drainedAtClose: false,
     };

@@ -45,7 +45,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
-🟢 Fully implemented. `http.Server` does not extend `net.Server`. Bun ignores `listen(handle)` and the `fd`, `ipv6Only` and `signal` options of `listen()`. `keepAlive`/`keepAliveInitialDelay` on the server are no-ops.
+🟢 Fully implemented. `http.Server` does not extend `net.Server`. `listen({ fd })` serves on the file descriptor on Linux and macOS. In a `node:cluster` worker the number names a file descriptor of the primary, as in Node.js. Bun ignores `listen(handle)` and the `ipv6Only` and `signal` options of `listen()`. `keepAlive`/`keepAliveInitialDelay` on the server are no-ops.
 
 ### [`node:https`](https://nodejs.org/api/https.html)
 
@@ -105,7 +105,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:cluster`](https://nodejs.org/api/cluster.html)
 
-🟡 `net` and `dgram` servers in workers are shared through the primary as in Node.js (`SCHED_RR` and `SCHED_NONE`), and handles can be passed with `worker.send()`. `node:http`/`node:https` servers in workers each bind their own socket instead, so load-balancing HTTP requests across processes is only supported on Linux (through `SO_REUSEPORT`). Otherwise, implemented but not battle-tested.
+🟡 `net` and `dgram` servers in workers are shared through the primary as in Node.js (`SCHED_RR` and `SCHED_NONE`), and handles can be passed with `worker.send()`. `node:http`/`node:https` servers in workers share one socket that the primary binds, as Node.js does under `SCHED_NONE`: every worker accepts on it, and the kernel picks the worker. `SCHED_RR` is not applied to them. On Windows they each bind their own socket instead. Otherwise, implemented but not battle-tested.
 
 ### [`node:crypto`](https://nodejs.org/api/crypto.html)
 

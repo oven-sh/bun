@@ -38,6 +38,9 @@ fn integer_value(digits: &[u8], radix: u32) -> Option<f64> {
     if radix == 10 {
         return Some(decimal_value(digits));
     }
+    if radix.is_power_of_two() {
+        return bun_core::fmt::parse_digits_of_bits(digits, radix.trailing_zeros());
+    }
     let mut value: u128 = 0;
     for &digit in digits {
         let digit = char::from(digit).to_digit(radix)?;

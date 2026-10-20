@@ -1,0 +1,73 @@
+/*
+ * Copyright (C) 2006-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2006 Samuel Weinig <sam.weinig@gmail.com>
+ * Copyright (C) 2017 Google Inc. All rights reserved.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public License
+ * along with this library; see the file COPYING.LIB.  If not, write to
+ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
+ */
+
+// https://w3c.github.io/uievents/#idl-keyboardevent
+
+[
+    Exposed=Window
+] interface KeyboardEvent : UIEvent {
+    constructor([AtomString] DOMString type, optional KeyboardEventInit eventInitDict = {});
+
+    const unsigned long DOM_KEY_LOCATION_STANDARD = 0x00;
+    const unsigned long DOM_KEY_LOCATION_LEFT = 0x01;
+    const unsigned long DOM_KEY_LOCATION_RIGHT = 0x02;
+    const unsigned long DOM_KEY_LOCATION_NUMPAD = 0x03;
+
+    readonly attribute DOMString key;
+    readonly attribute DOMString code;
+    readonly attribute unsigned long location;
+
+    readonly attribute boolean ctrlKey;
+    readonly attribute boolean shiftKey;
+    readonly attribute boolean altKey;
+    readonly attribute boolean metaKey;
+
+    readonly attribute boolean repeat;
+    readonly attribute boolean isComposing;
+
+    boolean getModifierState(DOMString keyArg);
+
+    // Everything below is legacy.
+    readonly attribute [AtomString] DOMString keyIdentifier;
+    readonly attribute unsigned long charCode;
+    readonly attribute unsigned long keyCode;
+
+    // FIXME: this does not match the version in the DOM spec.
+    undefined initKeyboardEvent([AtomString] DOMString type, optional boolean canBubble = false, optional boolean cancelable = false,
+        optional Window? view = null, optional [AtomString] DOMString keyIdentifier = "undefined", optional unsigned long location = 0,
+        optional boolean ctrlKey = false, optional boolean altKey = false, optional boolean shiftKey = false, optional boolean metaKey = false);
+};
+
+// https://w3c.github.io/uievents/#idl-keyboardeventinit
+dictionary KeyboardEventInit : EventModifierInit {
+    DOMString key = "";
+    DOMString code = "";
+    unsigned long location = 0;
+    boolean repeat = false;
+    boolean isComposing = false;
+
+    // This members are not in the specification but are needed to initialize the corresponding legacy
+    // attributes we still support on KeyboardEvent for backward compatibility.
+    [AtomString] DOMString keyIdentifier = "";
+    unsigned long charCode = 0;
+    unsigned long keyCode = 0;
+    unsigned long which = 0;
+};

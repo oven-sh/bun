@@ -4,6 +4,7 @@ use super::DiffFormatter;
 use super::throw;
 use super::{Expect, get_signature};
 
+#[optimize(size)]
 pub(crate) fn to_have_been_last_called_with(
     this: &Expect,
     global: &JSGlobalObject,

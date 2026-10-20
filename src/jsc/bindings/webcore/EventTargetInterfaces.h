@@ -27,16 +27,23 @@
 
 namespace WebCore {
 
-enum EventTargetInterface {
-    EventTargetInterfaceType = 45,
-    AbortSignalEventTargetInterfaceType = 46,
-    BroadcastChannelEventTargetInterfaceType = 47,
-    DOMWindowEventTargetInterfaceType = 50,
-    MessagePortEventTargetInterfaceType = 61,
-    PerformanceEventTargetInterfaceType = 63,
-    WebSocketEventTargetInterfaceType = 70,
-    WorkerEventTargetInterfaceType = 71,
-    BunWebViewEventTargetInterfaceType = 75,
+enum class EventTargetInterfaceType : uint8_t {
+    Invalid = 0,
+    EventTarget = 1,
+    AbortSignal = 2,
+    BroadcastChannel = 3,
+    BunWebView = 4,
+    DOMWindow = 6,
+    MessagePort = 7,
+    Node = 8,
+    Performance = 9,
+    WebSocket = 10,
+    Window = 11,
+    Worker = 12,
+    MediaQueryList = 13,
+    FileReader = 14,
+    XMLHttpRequest = 15,
+    XMLHttpRequestUpload = 16,
 };
 
 } // namespace WebCore

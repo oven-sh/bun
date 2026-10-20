@@ -32,9 +32,10 @@
 
 #pragma once
 
-#include "ContextDestructionObserver.h"
+#include "ContextDestructionObserverInlines.h"
 // #include "DOMHighResTimeStamp.h"
 #include "EventTarget.h"
+#include "EventTargetInterfaces.h"
 #include "ExceptionOr.h"
 // #include "ReducedResolutionSeconds.h"
 #include "ScriptExecutionContext.h"
@@ -73,7 +74,7 @@ class Performance final : public RefCounted<Performance>, public ContextDestruct
     WTF_MAKE_TZONE_ALLOCATED(Performance);
 
 public:
-    static Ref<Performance> create(ScriptExecutionContext* context, MonotonicTime timeOrigin) { return adoptRef(*new Performance(context, timeOrigin)); }
+    static Ref<Performance> create(ScriptExecutionContext* context) { return adoptRef(*new Performance(context)); }
     ~Performance();
 
     DOMHighResTimeStamp now() const;
@@ -93,7 +94,7 @@ public:
     ExceptionOr<Ref<PerformanceMark>> mark(JSC::JSGlobalObject&, const String& markName, std::optional<PerformanceMarkOptions>&&);
     void clearMarks(const String& markName);
 
-    using StartOrMeasureOptions = std::variant<String, PerformanceMeasureOptions>;
+    using StartOrMeasureOptions = Variant<String, PerformanceMeasureOptions>;
     ExceptionOr<Ref<PerformanceMeasure>> measure(JSC::JSGlobalObject&, const String& measureName, std::optional<StartOrMeasureOptions>&&, const String& endMark);
     void clearMeasures(const String& measureName);
 
@@ -108,7 +109,8 @@ public:
 
     static Seconds reduceTimeResolution(Seconds);
 
-    MonotonicTime monotonicTimeFromRelativeTime(DOMHighResTimeStamp) const;
+    // What now() would have returned at that time.
+    DOMHighResTimeStamp relativeTimeFromTimeOrigin(MonotonicTime) const;
 
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
 
@@ -118,11 +120,11 @@ public:
     USING_CAN_MAKE_WEAKPTR(EventTarget);
 
 private:
-    Performance(ScriptExecutionContext*, MonotonicTime timeOrigin);
+    Performance(ScriptExecutionContext*);
 
     void contextDestroyed() override;
 
-    EventTargetInterface eventTargetInterface() const final { return PerformanceEventTargetInterfaceType; }
+    enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::Performance; }
 
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
@@ -137,7 +139,7 @@ private:
 
     bool m_hasScheduledTimingBufferDeliveryTask { false };
 
-    MonotonicTime m_timeOrigin;
+    MonotonicTime m_monotonicTimeOrigin;
 
     std::unique_ptr<PerformanceUserTiming> m_userTiming;
 

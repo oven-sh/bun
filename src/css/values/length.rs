@@ -274,7 +274,12 @@ impl LengthValue {
                     return Ok(v);
                 }
             }
-            Token::Number(num) => return Ok(Self::Px(num.value)),
+            Token::Number(num)
+                if num.value == 0.0
+                    || !input.flags.contains(css::ParserOpts::NO_UNITLESS_LENGTHS) =>
+            {
+                return Ok(Self::Px(num.value));
+            }
             _ => {}
         }
         Err(location.new_unexpected_token_error(token))
@@ -285,7 +290,7 @@ impl LengthValue {
 
         // The unit can be omitted if the value is zero, except inside calc()
         // expressions, where unitless numbers won't be parsed as dimensions.
-        if !dest.in_calc && value == 0.0 {
+        if !dest.in_calc && value == 0.0 && dest.cssom.is_none() {
             return dest.write_char(b'0');
         }
 

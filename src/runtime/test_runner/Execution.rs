@@ -38,16 +38,21 @@
 use core::ptr::NonNull;
 
 use bun_core::{Timespec, TimespecMockMode};
-use bun_jsc::{JSGlobalObject, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsClass as _, JsResult, Strong};
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::scoped_log;
 
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
-    group_begin, AddedInPhase, BunTest, BunTestPtr, EntryData, ExecutionEntry,
+    group_begin, AddedInPhase, Around, AroundPhase, BunTest, BunTestPtr, Calling, EntryData, ExecutionEntry,
     HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
 };
+use super::expect::expect_deferred::ExpectDeferred;
+use super::test_context::{self, TestContext};
+use super::test_context_around::{self, AroundHook};
+use super::test_context_fixtures::{Next as NextFixture, TestFixtures};
+use super::test_context_parameter::ContextParameter;
 use crate::cli::test_command;
 
 // ── local shims for upstream Timespec methods not yet ported ───────────────
@@ -89,17 +94,9 @@ pub(crate) struct Execution {
     /// the entries themselves are owned by BunTest, which owns Execution.
     pub(crate) sequences: Box<[ExecutionSequence]>,
     pub(crate) group_index: usize,
-    /// The entry whose callback is synchronously on the stack right now. Set
-    /// around `run_test_callback` so code re-entered from a test body (e.g.
-    /// spawnSync's wait loop) can read the calling entry's own deadline.
-    pub(crate) on_stack_entry: core::cell::Cell<Option<NonNull<ExecutionEntry>>>,
-    /// The (group_index, sequence_index, entry, repeat) for `on_stack_entry`,
-    /// set/restored alongside it. `get_current_state_data()` can't name a
-    /// sequence inside a concurrent group; this can, for code re-entered from
-    /// the microtask drain inside `run_test_callback` (node:test's runtime
-    /// `t.skip()`/`t.todo()` mark lands there before the DoneCallback is
-    /// stamped).
-    pub(crate) on_stack_entry_data: core::cell::Cell<Option<super::bun_test::EntryData>>,
+    /// The entry whose callback is on the stack, which `get_current_state_data()` can't name in a concurrent group.
+    /// Cleared before the call's microtasks drain, because those can resume other tests in the group.
+    pub(crate) on_stack: core::cell::Cell<Option<EntryData>>,
 }
 
 pub(crate) struct ConcurrentGroup {
@@ -111,6 +108,8 @@ pub(crate) struct ConcurrentGroup {
     pub(crate) remaining_incomplete_entries: usize,
     /// used by beforeAll to skip directly to afterAll if it fails
     pub(crate) failure_skip_to: usize,
+    /// Like `ExecutionSequence::pending_matchers`, for matchers whose calling sequence isn't known.
+    pub(crate) pending_matchers: u32,
 }
 
 impl ConcurrentGroup {
@@ -122,6 +121,7 @@ impl ConcurrentGroup {
             remaining_incomplete_entries: sequence_end - sequence_start,
             failure_skip_to: next_index,
             next_sequence_index: 0,
+            pending_matchers: 0,
         }
     }
 
@@ -159,6 +159,7 @@ pub(crate) struct ExecutionSequence {
     pub(crate) test_entry: Option<NonNull<ExecutionEntry>>,
     pub(crate) remaining_repeat_count: u32,
     pub(crate) remaining_retry_count: u32,
+    pub(crate) attempt: u32,
     pub(crate) result: Result,
     pub(crate) executing: bool,
     pub(crate) started_at: Timespec,
@@ -167,6 +168,13 @@ pub(crate) struct ExecutionSequence {
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
     pub(crate) expect_assertions: ExpectAssertions,
     pub(crate) maybe_skip: bool,
+    pub(crate) context: Option<Strong>,
+    /// Matchers the active entry called that still wait on a promise. The entry can't end until they've run.
+    pub(crate) pending_matchers: u32,
+    /// The active entry's callback is done, and only `pending_matchers` keeps the entry open.
+    pub(crate) callback_done: bool,
+    /// Names `Snapshots::add_count` counted during this attempt, for `reset_sequence` to undo.
+    pub(crate) counted_snapshots: Vec<Box<[u8]>>,
 }
 
 impl ExecutionSequence {
@@ -183,13 +191,24 @@ impl ExecutionSequence {
             remaining_repeat_count: repeat_count,
             remaining_retry_count: retry_count,
             // defaults:
+            attempt: 0,
             result: Result::Pending,
             executing: false,
             started_at: Timespec::EPOCH,
             expect_call_count: 0,
             expect_assertions: ExpectAssertions::NotSet,
             maybe_skip: false,
+            context: None,
+            pending_matchers: 0,
+            callback_done: false,
+            counted_snapshots: Vec::new(),
         }
+    }
+
+    /// Call once the active entry's callback is done. An entry that already errored doesn't wait.
+    fn waits_for_matchers(&mut self) -> bool {
+        self.callback_done = self.pending_matchers > 0 && !self.maybe_skip;
+        self.callback_done
     }
 
     fn entry_mode(&self) -> ScopeMode {
@@ -198,6 +217,119 @@ impl ExecutionSequence {
             return unsafe { entry.as_ref() }.base.mode;
         }
         ScopeMode::Normal
+    }
+
+    pub(crate) fn context(
+        &mut self,
+        global: &JSGlobalObject,
+        buntest: &BunTestPtr,
+        group_index: usize,
+        sequence_index: usize,
+    ) -> JSValue {
+        if let Some(context) = &self.context {
+            return context.get();
+        }
+        let context = TestContext::create(global, buntest, group_index, sequence_index);
+        self.context = Some(Strong::create(context, global));
+        // SAFETY: arena-owned entry
+        if let Some(fixtures) = self.test_entry.and_then(|test| unsafe { test.as_ref() }.fixtures.as_ref()) {
+            test_context::js::fixtures_set_cached(context, global, fixtures.get());
+        }
+        context
+    }
+
+    fn has_vitest_entry(&self) -> bool {
+        let mut next = self.first_entry;
+        while let Some(entry) = next {
+            // SAFETY: arena-owned entry
+            let entry = unsafe { entry.as_ref() };
+            if entry.calling.is_vitest() {
+                return true;
+            }
+            next = nn(entry.next);
+        }
+        false
+    }
+
+    pub(crate) fn test_follows(&self, entry: NonNull<ExecutionEntry>) -> bool {
+        // SAFETY: arena-owned entries
+        let mut next = nn(unsafe { entry.as_ref() }.next);
+        while let Some(entry) = next {
+            if Some(entry) == self.test_entry {
+                return true;
+            }
+            // SAFETY: as above
+            next = nn(unsafe { entry.as_ref() }.next);
+        }
+        false
+    }
+
+    /// Whether an `aroundEach` hook has yet to start. The active entry may be setting up a fixture for it.
+    pub(crate) fn is_before_run_test(&self) -> bool {
+        let mut next = self.active_entry;
+        while let Some(entry) = next {
+            // SAFETY: arena-owned entry
+            let entry = unsafe { entry.as_ref() };
+            if entry.around == Some((Around::Each, AroundPhase::SetUp)) {
+                return true;
+            }
+            next = nn(entry.next);
+        }
+        false
+    }
+
+    /// For `test.failing`, `Result::Pass` means the callback threw, which is a failed attempt here.
+    fn attempt_failed(&self) -> bool {
+        match self.entry_mode() {
+            ScopeMode::Failing => self.result == Result::Pass,
+            _ => self.result.is_fail(),
+        }
+    }
+
+    /// Vitest's `task.result.state`
+    pub(crate) fn state(&self) -> &'static str {
+        if self.result == Result::Skip {
+            "skip"
+        } else if self.attempt_failed() {
+            "fail"
+        } else if self.active_entry.is_some_and(|entry| Some(entry) == self.test_entry || self.test_follows(entry)) {
+            "run"
+        } else {
+            "pass"
+        }
+    }
+
+    fn take_deferred(&self) -> Option<NonNull<ExecutionEntry>> {
+        let context = TestContext::from_js(self.context.as_ref()?.get())?;
+        // SAFETY: `self.context` keeps the wrapper, which owns the payload, alive.
+        unsafe { &*context }.take_deferred(self.attempt_failed())
+    }
+
+    /// Vitest's `test.fails` passes if anything in the attempt failed, hooks, fixtures and timeouts included.
+    fn flip_fails(&mut self) {
+        if self.entry_mode() != ScopeMode::Fails || self.result == Result::Skip {
+            return;
+        }
+        self.check_expect_assertions();
+        self.expect_assertions = ExpectAssertions::NotSet;
+        self.result = if self.result.is_fail() { Result::Pass } else { Result::FailBecauseFailsTestPassed };
+    }
+
+    fn check_expect_assertions(&mut self) {
+        let failure = match self.expect_assertions {
+            ExpectAssertions::NotSet => return,
+            ExpectAssertions::AtLeastOne if self.expect_call_count == 0 => Result::FailBecauseExpectedHasAssertions,
+            ExpectAssertions::Exact(expected) if self.expect_call_count != expected => {
+                Result::FailBecauseExpectedAssertionCount
+            }
+            ExpectAssertions::AtLeastOne | ExpectAssertions::Exact(_) => {
+                self.expect_assertions = ExpectAssertions::NotSet;
+                return;
+            }
+        };
+        if self.result.is_pass(PendingIs::PendingIsPass) && self.result != Result::Skip {
+            self.result = failure;
+        }
     }
 }
 
@@ -216,6 +348,7 @@ pub enum Result {
     FailBecauseHookTimeout,
     FailBecauseHookTimeoutWithDoneCallback,
     FailBecauseFailingTestPassed,
+    FailBecauseFailsTestPassed,
     FailBecauseTodoPassed,
     FailBecauseExpectedHasAssertions,
     FailBecauseExpectedAssertionCount,
@@ -247,6 +380,7 @@ impl Result {
             | Result::FailBecauseHookTimeout
             | Result::FailBecauseHookTimeoutWithDoneCallback
             | Result::FailBecauseFailingTestPassed
+            | Result::FailBecauseFailsTestPassed
             | Result::FailBecauseTodoPassed
             | Result::FailBecauseExpectedHasAssertions
             | Result::FailBecauseExpectedAssertionCount => Basic::Fail,
@@ -266,6 +400,16 @@ impl Result {
     pub(crate) fn is_fail(self) -> bool {
         !self.is_pass(PendingIs::PendingIsPass)
     }
+
+    pub(crate) fn is_timeout(self) -> bool {
+        matches!(
+            self,
+            Result::FailBecauseTimeout
+                | Result::FailBecauseTimeoutWithDoneCallback
+                | Result::FailBecauseHookTimeout
+                | Result::FailBecauseHookTimeoutWithDoneCallback
+        )
+    }
 }
 
 // Recover the parent `BunTest` from `&mut self`. Returns `*mut BunTest` (not
@@ -280,8 +424,7 @@ impl Execution {
             groups: Box::default(),
             sequences: Box::default(),
             group_index: 0,
-            on_stack_entry: core::cell::Cell::new(None),
-            on_stack_entry_data: core::cell::Cell::new(None),
+            on_stack: core::cell::Cell::new(None),
         }
     }
 
@@ -373,6 +516,10 @@ impl Execution {
 
                 // SAFETY: sequence_ptr points into this.sequences; valid while BunTest is alive.
                 debug_assert!(unsafe { sequence_ptr.as_ref() }.active_entry.is_some());
+                // SAFETY: as above; the only reference to that element here.
+                if unsafe { &mut *sequence_ptr.as_ptr() }.waits_for_matchers() {
+                    return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
+                }
                 Execution::advance_sequence(buntest_ptr, sequence_ptr, group_ptr);
 
                 let sequence_result =
@@ -478,9 +625,9 @@ impl Execution {
             return None;
         }
         let sequence = &mut self.sequences[seq_abs];
-        if i64::from(sequence.remaining_repeat_count) != entry_data.remaining_repeat_count {
+        if sequence.attempt != entry_data.attempt {
             group_log::log(format_args!(
-                "runOneCompleted: the data is for a previous repeat count (outdated)",
+                "runOneCompleted: the data is for a previous retry or repeat (outdated)",
             ));
             return None;
         }
@@ -512,6 +659,11 @@ impl Execution {
         let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
 
         debug_assert!(sequence.executing);
+        if core::mem::take(&mut sequence.pending_matchers) > 0 {
+            // SAFETY: a field that neither `sequence` nor `group_ptr` points into.
+            unsafe { (*buntest.as_ptr()).unclaimed.some_ended = true };
+        }
+        sequence.callback_done = false;
         if let Some(entry_ptr) = sequence.active_entry {
             // SAFETY: arena-owned entry, alive for lifetime of BunTest
             let entry = unsafe { entry_ptr.as_ref() };
@@ -527,26 +679,47 @@ impl Execution {
             } else {
                 sequence.active_entry = nn(entry.next);
             }
+            if entry.calling.is_vitest() {
+                if Some(entry_ptr) == sequence.test_entry {
+                    sequence.check_expect_assertions();
+                }
+                let left_around_all = entry.around == Some((Around::All, AroundPhase::TearDown));
+                if let (true, Some(scope)) = (left_around_all, entry.base.parent) {
+                    // SAFETY: a hook's scope outlives it.
+                    unsafe { (*scope).async_context = None };
+                }
+                if entry.added_in_phase == AddedInPhase::Execution || left_around_all {
+                    // SAFETY: arena-owned entry; `entry` is not used again.
+                    unsafe { (*entry_ptr.as_ptr()).callback = None };
+                }
+            }
         } else {
             debug_assert!(false, "can't call advanceSequence on a completed sequence");
         }
 
         if sequence.active_entry.is_none() {
+            sequence.active_entry = sequence.take_deferred();
+        }
+
+        if sequence.active_entry.is_none() {
             // just completed the sequence
+            sequence.flip_fails();
             let test_failed = sequence.result.is_fail();
             let test_passed = sequence.result.is_pass(PendingIs::PendingIsPass);
 
             // Handle retry logic: if test failed and we have retries remaining, retry it
             if test_failed && sequence.remaining_retry_count > 0 {
                 sequence.remaining_retry_count -= 1;
-                Execution::discard_junit_failure(buntest);
+                Execution::save_attempt_failure(buntest, sequence);
                 Execution::reset_sequence(sequence);
                 return;
             }
 
             // Handle repeat logic: if test passed and we have repeats remaining, repeat it
-            if test_passed && sequence.remaining_repeat_count > 0 {
+            if test_passed && sequence.remaining_repeat_count > 0 && sequence.result != Result::Skip {
                 sequence.remaining_repeat_count -= 1;
+                // SAFETY: arena-owned entry
+                sequence.remaining_retry_count = sequence.test_entry.map_or(0, |test| unsafe { test.as_ref() }.retry_count);
                 Execution::discard_junit_failure(buntest);
                 Execution::reset_sequence(sequence);
                 return;
@@ -554,6 +727,7 @@ impl Execution {
 
             // Only report the final result after all retries/repeats are done
             Execution::on_sequence_completed(buntest, sequence);
+            sequence.context = None;
 
             // No more retries or repeats; mark sequence as complete
             // SAFETY: group_ptr points into `buntest.execution.groups`, disjoint from `sequence`.
@@ -580,7 +754,7 @@ impl Execution {
         }
     }
 
-    fn on_sequence_started(sequence: &mut ExecutionSequence) {
+    fn on_sequence_started(global_this: &JSGlobalObject, sequence: &mut ExecutionSequence) {
         if let Some(entry) = sequence.test_entry {
             // SAFETY: arena-owned entry
             if unsafe { entry.as_ref() }.callback.is_none() {
@@ -599,6 +773,7 @@ impl Execution {
                 // `BStr`'s `Debug` impl quotes and escapes for display.
                 bstr::BStr::new(entry.base.name.as_deref().unwrap_or(b"(unnamed)"))
             );
+            super::vi_utils::before_each_attempt(global_this, entry.calling.is_vitest());
 
             if entry.base.test_id_for_debugger != 0 {
                 // SAFETY: VirtualMachine::get() returns the live singleton.
@@ -634,23 +809,7 @@ impl Execution {
         } else {
             sequence.started_at.since_now_force_real_time()
         };
-        match sequence.expect_assertions {
-            ExpectAssertions::NotSet => {}
-            ExpectAssertions::AtLeastOne => {
-                if sequence.expect_call_count == 0
-                    && sequence.result.is_pass(PendingIs::PendingIsPass)
-                {
-                    sequence.result = Result::FailBecauseExpectedHasAssertions;
-                }
-            }
-            ExpectAssertions::Exact(expected) => {
-                if sequence.expect_call_count != expected
-                    && sequence.result.is_pass(PendingIs::PendingIsPass)
-                {
-                    sequence.result = Result::FailBecauseExpectedAssertionCount;
-                }
-            }
-        }
+        sequence.check_expect_assertions();
         if sequence.result == Result::Pending {
             sequence.result = match sequence.entry_mode() {
                 ScopeMode::Failing => Result::FailBecauseFailingTestPassed,
@@ -694,6 +853,7 @@ impl Execution {
                                 Result::Todo => S::Todo,
                                 Result::SkippedBecauseLabel => S::SkippedBecauseLabel,
                                 Result::FailBecauseFailingTestPassed => S::Fail,
+                                Result::FailBecauseFailsTestPassed => S::Fail,
                                 Result::FailBecauseTodoPassed => S::Fail,
                                 Result::FailBecauseExpectedHasAssertions => S::Fail,
                                 Result::FailBecauseExpectedAssertionCount => S::Fail,
@@ -717,7 +877,30 @@ impl Execution {
         if let Some(reporter) = unsafe { (*buntest.as_ptr()).reporter } {
             // SAFETY: `reporter` is a `NonNull<CommandLineReporter>` with write
             // provenance (see BunTest docs); single-threaded, no other borrow.
-            unsafe { (*reporter.as_ptr()).test_failure = None };
+            unsafe {
+                (*reporter.as_ptr()).test_failure = None;
+                (*reporter.as_ptr()).earlier_test_failures.clear();
+            }
+        }
+    }
+
+    /// Saves a failed attempt's failure before a retry, so it's reported with the test's final result.
+    fn save_attempt_failure(buntest: NonNull<BunTest>, sequence: &ExecutionSequence) {
+        // SAFETY: as in `discard_junit_failure`.
+        if let Some(reporter) = unsafe { (*buntest.as_ptr()).reporter } {
+            // SAFETY: as in `discard_junit_failure`.
+            let reporter = unsafe { &mut *reporter.as_ptr() };
+            let failure = reporter
+                .test_failure
+                .take()
+                .or_else(|| {
+                    test_command::TestFailure::from_result(
+                        sequence.result,
+                        sequence.expect_call_count,
+                    )
+                })
+                .unwrap_or_default();
+            reporter.earlier_test_failures.push(failure);
         }
     }
 
@@ -744,24 +927,25 @@ impl Execution {
             }
         }
 
-        // Preserve retry/repeat counts across reset
-        *sequence = ExecutionSequence::init(
-            sequence.first_entry,
-            sequence.test_entry,
-            sequence.remaining_retry_count,
-            sequence.remaining_repeat_count,
-        );
-
         // Snapshot counters are keyed by full test name and incremented on every
-        // toMatchSnapshot() call. Without this reset, retries / repeats would
+        // toMatchSnapshot() call. Without this, retries / repeats would
         // increment the counter to N on attempt N and look for a key that does
         // not exist (https://github.com/oven-sh/bun/issues/23705).
-        // Zeroing all entries matches Jest (SnapshotState.clear() on test_retry,
-        // jestjs/jest#7493). Concurrent tests never touch the counts map — see
-        // SnapshotInConcurrentGroup in expect.rs.
         if let Some(runner) = super::jest::Jest::runner() {
-            runner.snapshots.reset_counts();
+            runner.snapshots.undo_counts(&sequence.counted_snapshots);
         }
+
+        // Preserve retry/repeat counts across reset
+        *sequence = ExecutionSequence {
+            attempt: sequence.attempt.wrapping_add(1),
+            context: sequence.context.take(),
+            ..ExecutionSequence::init(
+                sequence.first_entry,
+                sequence.test_entry,
+                sequence.remaining_retry_count,
+                sequence.remaining_repeat_count,
+            )
+        };
     }
 
     pub(crate) fn handle_uncaught_exception(
@@ -780,6 +964,16 @@ impl Execution {
         let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
 
         sequence.maybe_skip = true;
+        if sequence.result == Result::Skip && sequence.context.is_some() {
+            // Vitest reports a test that called `skip()` as skipped, whatever it throws.
+            return HandleUncaughtExceptionResult::HideError;
+        }
+        if sequence.entry_mode() == ScopeMode::Fails {
+            if sequence.result == Result::Pending {
+                sequence.result = Result::Fail;
+            }
+            return HandleUncaughtExceptionResult::HideError;
+        }
         if sequence.active_entry != sequence.test_entry {
             // executing hook
             if sequence.result == Result::Pending {
@@ -809,6 +1003,27 @@ impl Execution {
             }
         }
     }
+
+    pub(crate) fn record_error(
+        &mut self,
+        global: &JSGlobalObject,
+        user_data: &RefDataValue,
+        thrown: JSValue,
+    ) -> JsResult<()> {
+        let Some((sequence, _)) = self.get_current_and_valid_execution_sequence(user_data) else {
+            return Ok(());
+        };
+        // SAFETY: points into self.sequences; `self` is not accessed for the remainder of this function.
+        let sequence = unsafe { sequence.as_ref() };
+        let Some(context) = sequence.context.as_ref().map(Strong::get) else {
+            return Ok(());
+        };
+        if sequence.result == Result::Skip {
+            return Ok(());
+        }
+        TestContext::record_error(context, global, thrown)?;
+        TestContext::sync_result(context, global, sequence)
+    }
 }
 
 fn step_group(
@@ -825,7 +1040,7 @@ fn step_group(
         // inside step_group_one.
         let group_ptr: NonNull<ConcurrentGroup> = match this.active_group() {
             Some(g) => NonNull::from(g),
-            None => return Ok(StepResult::Complete),
+            None => return Ok(ExpectDeferred::step_file_end(buntest_strong, global_this, now)),
         };
         {
             // SAFETY: group_ptr points into this.groups; only this scope holds a `&mut` to it.
@@ -848,6 +1063,20 @@ fn step_group(
 
         // SAFETY: re-deref after step_group_one; disjoint from this.sequences read below.
         let group = unsafe { &mut *group_ptr.as_ptr() };
+        if group.pending_matchers > 0 {
+            // Any test in the group may have called them, so wait until the latest test deadline.
+            let timeout = this.sequences[group.sequence_start..group.sequence_end]
+                .iter()
+                .filter_map(|sequence| sequence.test_entry)
+                // SAFETY: arena-owned entry
+                .map(|entry| unsafe { entry.as_ref() }.timespec)
+                .fold(Timespec::EPOCH, |latest, timespec| if timespec.order(&latest).is_gt() { timespec } else { latest });
+            if timeout.eql(&Timespec::EPOCH) || timeout.order(now).is_gt() {
+                return Ok(StepResult::Waiting { timeout });
+            }
+            group.pending_matchers = 0;
+            ExpectDeferred::group_timed_out(buntest_strong, global_this, this.group_index);
+        }
         group.executing = false;
         Execution::on_group_completed(global_this);
 
@@ -890,7 +1119,8 @@ fn step_group_one(
     let mut final_status = AdvanceStatus::Done;
     let concurrent_limit: usize = if let Some(reporter) = buntest.reporter {
         // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
-        unsafe { reporter.as_ref() }.jest.max_concurrency as usize
+        let runner = &unsafe { reporter.as_ref() }.jest;
+        runner.vi_config.max_concurrency.unwrap_or(runner.max_concurrency) as usize
     } else {
         debug_assert!(false); // probably can't get here because reporter is only set null when the file is exited
         20
@@ -925,6 +1155,21 @@ fn step_group_one(
     Ok(final_status)
 }
 
+/// `evaluate_timeout` leaves the failure of an around hook that timed out to this error, which says what the reporter can't.
+fn report_around_timeout(
+    buntest_strong: &BunTestPtr,
+    global_this: &JSGlobalObject,
+    entry: &ExecutionEntry,
+    data: &RefDataValue,
+) -> JsResult<()> {
+    let Some((around, phase)) = entry.around else {
+        return Ok(());
+    };
+    let error = around.timeout_error(global_this, phase, entry.timeout)?;
+    buntest_strong.get().on_uncaught_exception(global_this, Some(error), false, data);
+    Ok(())
+}
+
 enum AdvanceSequenceStatus {
     /// the entire sequence is completed.
     Done,
@@ -957,6 +1202,9 @@ fn step_sequence_one(
     now: &mut Timespec,
 ) -> JsResult<Option<AdvanceSequenceStatus>> {
     let _g = group_begin!();
+    if core::mem::take(&mut buntest_strong.get().unclaimed.some_ended) {
+        ExpectDeferred::settle_ended(buntest_strong, global_this)?;
+    }
     let buntest = buntest_strong.get();
     let buntest_ptr = NonNull::from(&mut *buntest);
     let this = &mut buntest.execution;
@@ -979,6 +1227,20 @@ fn step_sequence_one(
         // SAFETY: arena-owned entry
         let active_entry = unsafe { &mut *active_entry_ptr.as_ptr() };
         if active_entry.evaluate_timeout(sequence, now) {
+            if let Some(context) = sequence.context.as_ref().map(Strong::get) {
+                TestContext::abort_signal(context, global_this);
+            }
+            let entry_data = EntryData {
+                sequence_index,
+                entry: active_entry_ptr.as_ptr() as *const (),
+                attempt: sequence.attempt,
+            };
+            report_around_timeout(
+                buntest_strong,
+                global_this,
+                active_entry,
+                &RefDataValue::Execution { group_index: this.group_index, entry_data: Some(entry_data) },
+            )?;
             Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
             return Ok(None); // run again
         }
@@ -998,8 +1260,9 @@ fn step_sequence_one(
     // SAFETY: arena-owned entry
     let next_item = unsafe { &mut *next_item_ptr.as_ptr() };
     sequence.executing = true;
-    if Some(next_item_ptr) == sequence.first_entry {
-        Execution::on_sequence_started(sequence);
+    // The first entry becomes active again after its fixture setup entries, so `started_at` guards against a second start.
+    if Some(next_item_ptr) == sequence.first_entry && sequence.started_at.eql(&Timespec::EPOCH) {
+        Execution::on_sequence_started(global_this, sequence);
     }
     Execution::on_entry_started(next_item);
 
@@ -1009,7 +1272,7 @@ fn step_sequence_one(
         let entry_data = EntryData {
             sequence_index,
             entry: next_item_ptr.as_ptr() as *const (),
-            remaining_repeat_count: sequence.remaining_repeat_count as i64,
+            attempt: sequence.attempt,
         };
         let callback_data = RefDataValue::Execution {
             group_index: this.group_index,
@@ -1017,22 +1280,98 @@ fn step_sequence_one(
         };
         group_log::log(format_args!("runSequence queued callback: {}", callback_data));
 
-        let prev_on_stack = this.on_stack_entry.replace(Some(next_item_ptr));
-        let prev_on_stack_data = this.on_stack_entry_data.replace(Some(entry_data));
-        let on_stack_cell = &raw const this.on_stack_entry;
-        let on_stack_data_cell = &raw const this.on_stack_entry_data;
-        // SAFETY: both cells point into `buntest.execution`, which is
-        // never moved during execution (arena-owned BunTest behind an Rc).
-        let _restore = scopeguard::guard((), move |()| unsafe {
-            (*on_stack_cell).set(prev_on_stack);
-            (*on_stack_data_cell).set(prev_on_stack_data);
-        });
+        if sequence.test_entry.is_some()
+            && (next_item.calling.is_vitest()
+                || (Some(next_item_ptr) == sequence.first_entry && sequence.has_vitest_entry()))
+        {
+            sequence.context(global_this, buntest_strong, this.group_index, sequence_index);
+        }
+        let context = sequence.context.as_ref().map(Strong::get);
+        if let Some(context) = context {
+            TestContext::sync_result(context, global_this, sequence)?;
+        }
+        let mut args = [JSValue::UNDEFINED; 2];
+        let args: &[JSValue] = match (next_item.calling, context, next_item.base.parent) {
+            (Calling::Vitest { context: true }, Some(context), _) => {
+                args[0] = context;
+                &args[..1]
+            }
+            (Calling::Vitest { context: true }, None, Some(scope)) => {
+                args[0] = match &next_item.fixtures {
+                    Some(fixtures) => TestFixtures::suite_hook_context(fixtures.get(), global_this)?,
+                    None => JSValue::create_empty_object(global_this, 0),
+                };
+                args[1] = test_context::suite_task(global_this, buntest_strong.get(), scope)?;
+                &args
+            }
+            _ => &[],
+        };
 
+        let (fixtures, fixtures_scope) = match (context, sequence.test_entry) {
+            // SAFETY: arena-owned entry
+            (Some(context), Some(test)) => (test_context::js::fixtures_get_cached(context), unsafe { test.as_ref() }.base.parent),
+            _ => (next_item.fixtures.as_ref().map(Strong::get), next_item.base.parent),
+        };
+        if let Some(fixtures) = fixtures
+            && let Some(parameter) = &next_item.parameter
+        {
+            // An around hook's first parameter is `runTest` or `runSuite`.
+            let parameter = parameter.get_or_init(|| ContextParameter::of(cb.get(), usize::from(next_item.around.is_some())));
+            let into = context.or_else(|| args.first().copied()).unwrap_or(JSValue::UNDEFINED);
+            match TestFixtures::next(fixtures, global_this, into, fixtures_scope, parameter, next_item.timeout) {
+                Ok(NextFixture::Ready) => {}
+                Ok(NextFixture::SetUp(set_up)) => {
+                    let set_up = buntest_strong.get().create_vitest_entry(set_up, next_item.timeout, false);
+                    // SAFETY: just allocated.
+                    unsafe {
+                        (*set_up.as_ptr()).next = Some(next_item_ptr.as_ptr());
+                        (*set_up.as_ptr()).failure_skip_past = next_item.failure_skip_past;
+                    }
+                    sequence.active_entry = Some(set_up);
+                    sequence.executing = false;
+                    return Ok(None); // run again
+                }
+                Err(err) => {
+                    let thrown = global_this.take_exception(err);
+                    buntest_strong.get().on_uncaught_exception(global_this, Some(thrown), false, &callback_data);
+                    Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
+                    return Ok(None); // run again
+                }
+            }
+        }
+
+        // SAFETY: arena-owned entry
+        let scope = sequence.test_entry.map_or(next_item.base.parent, |test| unsafe { test.as_ref() }.base.parent);
+        let mut callback = cb.get();
+        if let Some(captured) = test_context_around::captured_async_context(context, scope) {
+            callback = test_context_around::in_async_context(global_this, captured, callback)?;
+        }
+        let set_up_args: [JSValue; 4];
+        let args = if let Some((around, AroundPhase::SetUp)) = next_item.around {
+            let suite = match (args.get(1), scope) {
+                (Some(&suite), _) => suite,
+                (None, Some(scope)) => test_context::suite_task(global_this, buntest_strong.get(), scope)?,
+                (None, None) => JSValue::UNDEFINED,
+            };
+            set_up_args = [
+                AroundHook::create(global_this, buntest_strong, callback_data, around, next_item.timeout),
+                callback,
+                args.first().copied().unwrap_or(JSValue::UNDEFINED),
+                suite,
+            ];
+            callback = AroundHook::set_up_function(global_this);
+            &set_up_args[..]
+        } else {
+            args
+        };
+
+        global_this.bun_vm().as_mut().is_running_vitest_entry = next_item.calling.is_vitest();
         if BunTest::run_test_callback(
             buntest_strong,
             global_this,
-            cb.get(),
-            next_item.has_done_parameter,
+            callback,
+            args,
+            next_item.calling == Calling::Jest { done: true },
             callback_data,
             &next_item.timespec,
         )
@@ -1042,7 +1381,16 @@ fn step_sequence_one(
             // SAFETY: re-deref after run_test_callback; sequence_ptr still valid (sequences is a
             // Box<[ExecutionSequence]>, never reallocated during execution).
             let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
-            let _ = next_item.evaluate_timeout(sequence, now);
+            if next_item.evaluate_timeout(sequence, now) {
+                if let Some(context) = context {
+                    TestContext::abort_signal(context, global_this);
+                }
+                report_around_timeout(buntest_strong, global_this, next_item, &callback_data)?;
+            } else if sequence.waits_for_matchers() {
+                return Ok(Some(AdvanceSequenceStatus::Execute {
+                    timeout: next_item.timespec,
+                }));
+            }
 
             // the result is available immediately; advance the sequence and run again.
             Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
@@ -1076,7 +1424,8 @@ fn step_sequence_one(
                         .active_entry
                         .map_or(0, |p| p.as_ptr() as usize)
                 ));
-                debug_assert!(false);
+                // A `DescribeScope::teardown_slot` whose hook returned no function, or `BunTest::file_end`.
+                debug_assert!(sequence.test_entry.is_none());
             }
         }
         Execution::advance_sequence(buntest_ptr, sequence_ptr, group);

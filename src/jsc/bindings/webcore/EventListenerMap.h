@@ -32,49 +32,102 @@
 
 #pragma once
 
+#include "PlatformExportMacros.h"
 #include "RegisteredEventListener.h"
 #include <atomic>
+#include <limits>
 #include <memory>
 #include <wtf/Assertions.h>
+#include <wtf/CheckedArithmetic.h>
+#include <wtf/Compiler.h>
+#include <wtf/CurrentThread.h>
 #include <wtf/Forward.h>
 #include <wtf/Lock.h>
-#include <wtf/Threading.h>
+#include <wtf/Locker.h>
+#include <wtf/Platform.h>
+#include <wtf/Vector.h>
 #include <wtf/text/AtomString.h>
+
+#if PLATFORM(IOS_FAMILY)
+#include "WebCoreThread.h"
+#endif
 
 namespace WebCore {
 
-using EventListenerVector = Vector<RefPtr<RegisteredEventListener>, 1, CrashOnOverflow, 2>;
+class EventTarget;
+
+using EventListenerVector = Vector<Ref<RegisteredEventListener>, 1, CrashOnOverflow, 2>;
 
 class EventListenerMap {
 public:
-    EventListenerMap();
+    WEBCORE_EXPORT EventListenerMap();
 
     bool isEmpty() const { return m_entries.isEmpty(); }
     bool contains(const AtomString& eventType) const { return find(eventType); }
-    bool containsActive(const AtomString& eventType) const;
+    bool LEGACY_NODELETE containsCapturing(const AtomString& eventType) const;
+    bool LEGACY_NODELETE containsActive(const AtomString& eventType) const;
 
     void clear();
+    void clearEntriesForTearDown()
+    {
+        releaseAssertOrSetThreadUID();
+        m_entries.clear();
+    }
 
+    void replacePreservingOptions(const AtomString& eventType, EventListener& oldListener, Ref<EventListener>&& newListener, bool useCapture = false);
     RegisteredEventListener* add(const AtomString& eventType, Ref<EventListener>&&, const RegisteredEventListener::Options&);
     bool remove(const AtomString& eventType, EventListener&, bool useCapture);
-    WEBCORE_EXPORT EventListenerVector* find(const AtomString& eventType);
+    WEBCORE_EXPORT EventListenerVector* LEGACY_NODELETE find(const AtomString& eventType);
     const EventListenerVector* find(const AtomString& eventType) const { return const_cast<EventListenerMap*>(this)->find(eventType); }
     Vector<AtomString> eventTypes() const;
 
-    template<typename Visitor> void visitJSEventListeners(Visitor&);
-    Lock& lock() { return m_lock; }
+    template<typename CallbackType>
+    void enumerateEventListenerTypes(NOESCAPE const CallbackType& callback) const
+    {
+        for (auto& entry : m_entries) {
+            uint32_t capturingCount = 0;
+            uint32_t bubblingCount = 0;
+            for (auto& listener : entry.second) {
+                if (listener->useCapture())
+                    ++capturingCount;
+                else
+                    ++bubblingCount;
+            }
+            callback(entry.first, std::min<uint32_t>(capturingCount, std::numeric_limits<uint16_t>::max()), std::min<uint32_t>(bubblingCount, std::numeric_limits<uint16_t>::max()));
+        }
+    }
+
+    template<typename CallbackType>
+    bool containsMatchingEventListener(NOESCAPE const CallbackType& callback) const
+    {
+        for (auto& entry : m_entries) {
+            if (callback(entry.first, m_entries))
+                return true;
+        }
+        return false;
+    }
+
+    void removeFirstEventListenerCreatedFromMarkup(const AtomString& eventType);
+    void copyEventListenersNotCreatedFromMarkupToTarget(EventTarget*);
+
+    template<typename Visitor> void visitJSEventListenersInGCThread(Visitor&);
+    Lock& lock() LIFETIME_BOUND { return m_lock; }
 
 private:
     void releaseAssertOrSetThreadUID()
     {
+#if PLATFORM(IOS_FAMILY)
+        if (WebThreadIsEnabled())
+            return;
+#endif
         if (!m_threadUID) {
-            ASSERT(!Thread::mayBeGCThread());
-            m_threadUID = Thread::currentSingleton().uid();
+            ASSERT(!currentThreadMayBeGCThread());
+            m_threadUID = currentThreadID();
             return;
         }
-        if (m_threadUID == Thread::currentSingleton().uid()) [[likely]]
+        if (m_threadUID == currentThreadID()) [[likely]]
             return;
-        RELEASE_ASSERT(Thread::mayBeGCThread());
+        RELEASE_ASSERT(currentThreadMayBeGCThread());
     }
 
     Vector<std::pair<AtomString, EventListenerVector>, 0, CrashOnOverflow, 4> m_entries;
@@ -83,12 +136,12 @@ private:
 };
 
 template<typename Visitor>
-void EventListenerMap::visitJSEventListeners(Visitor& visitor)
+void EventListenerMap::visitJSEventListenersInGCThread(Visitor& visitor)
 {
     Locker locker { m_lock };
     for (auto& entry : m_entries) {
         for (auto& eventListener : entry.second)
-            eventListener->callback().visitJSFunction(visitor);
+            eventListener->callback().visitJSFunctionInGCThread(visitor);
     }
 }
 

@@ -377,7 +377,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_getEntriesByTyp
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return Bun::ERR::MISSING_ARGS(throwScope, lexicalGlobalObject, "The \"type\" argument must be specified"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto type = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
+    String type = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLInterface<PerformanceEntry>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.getEntriesByType(WTF::move(type)))));
 }
@@ -397,10 +397,10 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_getEntriesByNam
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return Bun::ERR::MISSING_ARGS(throwScope, lexicalGlobalObject, "The \"name\" argument must be specified"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto name = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
+    String name = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
-    auto type = argument1.value().isUndefined() ? String() : convert<IDLDOMString>(*lexicalGlobalObject, argument1.value());
+    String type = argument1.value().isUndefined() ? ConversionResult<IDLDOMString> { String() } : convert<IDLDOMString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLInterface<PerformanceEntry>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.getEntriesByName(WTF::move(name), WTF::move(type)))));
 }
@@ -458,10 +458,10 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_markBody(JSC::J
     // Node reports the V8 wording here; JSC's own message differs.
     if (argument0.value().isSymbol()) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot convert a Symbol value to a string"_s);
-    auto markName = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
+    String markName = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
-    auto markOptions = convert<IDLDictionary<PerformanceMarkOptions>>(*lexicalGlobalObject, argument1.value());
+    PerformanceMarkOptions markOptions = convert<IDLDictionary<PerformanceMarkOptions>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     auto result = impl.mark(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(markName), WTF::move(markOptions));
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -483,7 +483,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_clearMarksBody(
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     if (argument0.value().isSymbol()) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot convert a Symbol value to a string"_s);
-    auto markName = argument0.value().isUndefined() ? String() : convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
+    String markName = argument0.value().isUndefined() ? ConversionResult<IDLDOMString> { String() } : convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.clearMarks(WTF::move(markName)); })));
 }
@@ -503,13 +503,13 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_measureBody(JSC
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto measureName = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
+    String measureName = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto startOrMeasureOptions = argument1.value().isUndefined() ? std::optional<Converter<IDLUnion<IDLDOMString, IDLDictionary<PerformanceMeasureOptions>>>::ReturnType>() : std::optional<Converter<IDLUnion<IDLDOMString, IDLDictionary<PerformanceMeasureOptions>>>::ReturnType>(convert<IDLUnion<IDLDOMString, IDLDictionary<PerformanceMeasureOptions>>>(*lexicalGlobalObject, argument1.value()));
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument2 = callFrame->argument(2);
-    auto endMark = argument2.value().isUndefined() ? String() : convert<IDLDOMString>(*lexicalGlobalObject, argument2.value());
+    String endMark = argument2.value().isUndefined() ? ConversionResult<IDLDOMString> { String() } : convert<IDLDOMString>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     auto result = impl.measure(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(measureName), WTF::move(startOrMeasureOptions), WTF::move(endMark));
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -531,7 +531,7 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_clearMeasuresBo
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     if (argument0.value().isSymbol()) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot convert a Symbol value to a string"_s);
-    auto measureName = argument0.value().isUndefined() ? String() : convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
+    String measureName = argument0.value().isUndefined() ? ConversionResult<IDLDOMString> { String() } : convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.clearMeasures(WTF::move(measureName)); })));
 }

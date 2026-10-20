@@ -25,6 +25,6 @@
 
 namespace WebCore {
 
-template<> EventInit convertDictionary<EventInit>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> ConversionResult<IDLDictionary<EventInit>> convertDictionary<EventInit>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

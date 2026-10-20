@@ -424,8 +424,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject * globalObj
 }
 
 // Extern declarations for the native timer implementation
-extern "C" void Timer_enableEventLoopDelayMonitoring(void* vm, JSC::EncodedJSValue histogram, int32_t resolution);
-extern "C" void Timer_disableEventLoopDelayMonitoring();
+// Both return whether the state changed.
+extern "C" bool Timer_enableEventLoopDelayMonitoring(void* vm, JSC::EncodedJSValue histogram, int32_t resolution);
+extern "C" bool Timer_disableEventLoopDelayMonitoring();
 
 // Create histogram for event loop delay monitoring
 JSC_DEFINE_HOST_FUNCTION(jsFunction_monitorEventLoopDelay, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -483,13 +484,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_enableEventLoopDelay, (JSGlobalObject * glob
     int32_t resolution = callFrame->argument(1).toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Reset histogram data on enable
-    histogram->reset();
-
     // Enable the event loop delay monitor in the native timer implementation
-    Timer_enableEventLoopDelayMonitoring(bunVM(globalObject), JSValue::encode(histogram), resolution);
-
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+    bool wasDisabled = Timer_enableEventLoopDelayMonitoring(bunVM(globalObject), JSValue::encode(histogram), resolution);
+    if (wasDisabled)
+        histogram->reset();
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(wasDisabled)));
 }
 
 // Disable event loop delay monitoring
@@ -512,9 +511,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_disableEventLoopDelay, (JSGlobalObject * glo
     }
 
     // Call into native code to disable monitoring
-    Timer_disableEventLoopDelayMonitoring();
-
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsBoolean(Timer_disableEventLoopDelayMonitoring()));
 }
 
 // Extern function for native code to record delays

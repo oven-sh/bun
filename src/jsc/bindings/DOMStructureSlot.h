@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DOMBindingsStructureSlots.h"
 #include <cstdint>
 
 namespace WebCore {
@@ -69,11 +70,13 @@ namespace WebCore {
 
 #define DOM_STRUCTURE_SLOT_FORWARD_DECLARE(name) class name;
 FOR_EACH_DOM_STRUCTURE_SLOT(DOM_STRUCTURE_SLOT_FORWARD_DECLARE)
+FOR_EACH_DOM_BINDINGS_STRUCTURE_SLOT(DOM_STRUCTURE_SLOT_FORWARD_DECLARE)
 #undef DOM_STRUCTURE_SLOT_FORWARD_DECLARE
 
-enum class DOMStructureSlot : uint8_t {
+enum class DOMStructureSlot : uint16_t {
 #define DOM_STRUCTURE_SLOT_ENUMERATE(name) name,
     FOR_EACH_DOM_STRUCTURE_SLOT(DOM_STRUCTURE_SLOT_ENUMERATE)
+        FOR_EACH_DOM_BINDINGS_STRUCTURE_SLOT(DOM_STRUCTURE_SLOT_ENUMERATE)
 #undef DOM_STRUCTURE_SLOT_ENUMERATE
     // TU-local JSDOMIterator subclasses; each specializes DOMStructureSlotOf next to its definition.
     CookieMapIterator,
@@ -90,6 +93,7 @@ template<typename WrapperClass> struct DOMStructureSlotOf;
         static constexpr DOMStructureSlot value = DOMStructureSlot::name; \
     };
 FOR_EACH_DOM_STRUCTURE_SLOT(DOM_STRUCTURE_SLOT_SPECIALIZE)
+FOR_EACH_DOM_BINDINGS_STRUCTURE_SLOT(DOM_STRUCTURE_SLOT_SPECIALIZE)
 #undef DOM_STRUCTURE_SLOT_SPECIALIZE
 
 } // namespace WebCore

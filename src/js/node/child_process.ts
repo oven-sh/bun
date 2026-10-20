@@ -1992,26 +1992,14 @@ function validatePath(path, propName = "path") {
 }
 
 function getValidatedPath(fileURLOrPath, propName = "path") {
-  const path = toPathIfFileURL(fileURLOrPath);
+  const path =
+    typeof fileURLOrPath === "string" ? fileURLOrPath : require("internal/url").toPathIfFileURL(fileURLOrPath);
   validatePath(path, propName);
   return path;
 }
 
 function isUint8Array(value) {
-  return typeof value === "object" && value !== null && value instanceof Uint8Array;
-}
-
-//------------------------------------------------------------------------------
-// Section 6. Random utilities
-//------------------------------------------------------------------------------
-
-function isURLInstance(fileURLOrPath) {
-  return fileURLOrPath != null && fileURLOrPath.href && fileURLOrPath.origin;
-}
-
-function toPathIfFileURL(fileURLOrPath) {
-  if (!isURLInstance(fileURLOrPath)) return fileURLOrPath;
-  return Bun.fileURLToPath(fileURLOrPath);
+  return typeof value === "object" && value !== null && require("node:util/types").isUint8Array(value);
 }
 
 //------------------------------------------------------------------------------

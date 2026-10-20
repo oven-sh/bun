@@ -25,23 +25,27 @@
 
 #pragma once
 
+#include <JavaScriptCore/JSString.h>
+#include "BunIDLConvertBase.h"
 #include "IDLTypes.h"
 #include "JSDOMConvertBase.h"
 #include "JSDOMGlobalObject.h"
-#include "BunIDLConvertBase.h"
+#include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
 // Specialized by generated code for IDL enumeration conversion.
-template<typename T> std::optional<T> parseEnumeration(JSC::JSGlobalObject&, JSC::JSValue);
-template<typename T> std::optional<T> parseEnumerationFromView(const StringView&);
 template<typename T> std::optional<T> parseEnumerationFromString(const String&);
+template<typename T> std::optional<T> parseEnumerationFromView(const StringView&);
+template<typename T> std::optional<T> parseEnumeration(JSC::JSGlobalObject&, JSC::JSValue);
 template<typename T> ASCIILiteral expectedEnumerationValues();
 
 // Specialized by generated code for IDL enumeration conversion.
-template<typename T> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, T);
+template<typename T> JSC::JSString* convertEnumerationToJS(JSC::VM&, T);
 
 template<typename T> struct Converter<IDLEnumeration<T>> : DefaultConverter<IDLEnumeration<T>> {
+    using Result = ConversionResult<IDLEnumeration<T>>;
+
     static constexpr bool takesContext = true;
 
     // When converting with Context, the conversion is stricter: non-strings are disallowed.
@@ -56,28 +60,27 @@ template<typename T> struct Converter<IDLEnumeration<T>> : DefaultConverter<IDLE
         }
         auto result = parseEnumeration<T>(lexicalGlobalObject, value);
         RETURN_IF_EXCEPTION(throwScope, {});
-        if (result.has_value()) {
-            return std::move(*result);
-        }
+        if (result.has_value())
+            return WTF::move(*result);
         ctx.template throwBadEnumerationValue<IDLEnumeration<T>>(lexicalGlobalObject, throwScope);
         return {};
     }
 
     template<typename ExceptionThrower = DefaultExceptionThrower>
         requires(!Bun::IDLConversionContext<std::decay_t<ExceptionThrower>>)
-    static T convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower = ExceptionThrower())
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, NOESCAPE ExceptionThrower&& exceptionThrower = ExceptionThrower())
     {
         auto& vm = JSC::getVM(&lexicalGlobalObject);
         auto throwScope = DECLARE_THROW_SCOPE(vm);
 
         auto result = parseEnumeration<T>(lexicalGlobalObject, value);
-        RETURN_IF_EXCEPTION(throwScope, {});
+        RETURN_IF_EXCEPTION(throwScope, Result::exception());
 
         if (!result) [[unlikely]] {
             exceptionThrower(lexicalGlobalObject, throwScope);
-            return {};
+            return Result::exception();
         }
-        return result.value();
+        return Result { WTF::move(result.value()) };
     }
 };
 
@@ -87,7 +90,7 @@ template<typename T> struct JSConverter<IDLEnumeration<T>> {
 
     static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, T value)
     {
-        return convertEnumerationToJS(lexicalGlobalObject, value);
+        return convertEnumerationToJS(lexicalGlobalObject.vm(), value);
     }
 };
 

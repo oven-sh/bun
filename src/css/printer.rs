@@ -130,6 +130,9 @@ pub struct Printer<'a> {
     /// keeping the output linear in nesting depth instead of exponential.
     pub(crate) skip_prefixed_nested_rules: bool,
     pub(crate) in_calc: bool,
+    /// Set by `crate::dom`: values are written as the CSSOM serializes them (`0px`, `0.5`, `rgb(1, 2, 3)`) and not in the
+    /// shortest form. The list has the color keywords the author wrote, which the CSSOM keeps.
+    pub(crate) cssom: Option<&'a [(css_values::color::RGBA, &'a [u8])]>,
     pub(crate) css_module: Option<css::CssModule<'a>>,
     pub(crate) dependencies: Option<BumpVec<'a, css::Dependency>>,
     pub(crate) remove_imports: bool,
@@ -307,6 +310,7 @@ impl<'a> Printer<'a> {
             vendor_prefix: css::VendorPrefix::default(),
             skip_prefixed_nested_rules: false,
             in_calc: false,
+            cssom: None,
             css_module: None,
             ctx: None,
             nesting_expansions: 0,

@@ -1,7 +1,7 @@
 use bun_jsc::JSValue;
 use bun_jsc::virtual_machine::VirtualMachine;
 
-use super::{Kind, TimerObjectInternals};
+use super::{Clock, Kind, TimerObjectInternals};
 
 // `jsc.Codegen.JSImmediate` — the C++ JSCell wrapper stays generated; this
 // struct is the `m_ctx` payload. Struct + `RefCounted`/`Default` impls + the
@@ -16,8 +16,9 @@ impl ImmediateObject {
         id: i32,
         callback: JSValue,
         arguments: JSValue,
+        clock: Clock,
     ) -> JSValue {
-        Self::init_with(cx, id, Kind::SetImmediate, 0, callback, arguments)
+        Self::init_with(cx, id, Kind::SetImmediate, 0, callback, arguments, clock)
     }
 
     /// Thin forwarder to

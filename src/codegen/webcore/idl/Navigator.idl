@@ -1,0 +1,36 @@
+// https://html.spec.whatwg.org/multipage/system-state.html#the-navigator-object
+// The members of upstream's mixins that need no page, no frame and no permission. They are the ones jsdom has.
+[
+    GenerateIsReachable=ImplDocument,
+    GenerateAddOpaqueRoot=document,
+    Exposed=Window
+] interface Navigator {
+    // NavigatorID
+    readonly attribute DOMString appCodeName;
+    readonly attribute DOMString appName;
+    readonly attribute DOMString appVersion;
+    readonly attribute DOMString platform;
+    readonly attribute DOMString product;
+    readonly attribute DOMString productSub;
+    readonly attribute DOMString userAgent;
+    readonly attribute DOMString vendor;
+    readonly attribute DOMString vendorSub;
+
+    // NavigatorLanguage
+    [CallWith=CurrentGlobalObject] readonly attribute DOMString language;
+    [CustomGetter] readonly attribute FrozenArray<DOMString> languages;
+
+    // NavigatorOnLine
+    readonly attribute boolean onLine;
+
+    // NavigatorCookies
+    readonly attribute boolean cookieEnabled;
+
+    // NavigatorPlugins
+    [SameObject] readonly attribute DOMPluginArray plugins;
+    [SameObject] readonly attribute DOMMimeTypeArray mimeTypes;
+    boolean javaEnabled();
+
+    // NavigatorConcurrentHardware
+    readonly attribute unsigned long long hardwareConcurrency;
+};

@@ -156,6 +156,8 @@ public:
     // Executes the task on context's thread asynchronously.
     void postTask(EventLoopTask* task);
     void postTaskAfterYield(Function<void(ScriptExecutionContext&)>&& lambda);
+    // Changes every time the loop polls.
+    uint64_t loopIterationNumber() const;
 
     JSC::VM& vm() { return *realm().m_vm; }
     ScriptExecutionContextIdentifier identifier() const { return m_identifier; }

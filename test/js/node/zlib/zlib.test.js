@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import { resolve } from "node:path";
 import * as stream from "node:stream";
 import * as util from "node:util";
+import * as vm from "node:vm";
 import * as zlib from "node:zlib";
 
 describe("prototype and name and constructor", () => {
@@ -159,6 +160,25 @@ describe("zlib.gunzip", () => {
         resolve(true);
       });
     });
+  });
+});
+
+describe.each(["ArrayBuffer", "SharedArrayBuffer"])("%s of another realm", name => {
+  function fromOtherRealm(text) {
+    return vm.runInNewContext(
+      `const array = new Uint8Array(new ${name}(bytes.length)); array.set(bytes); array.buffer`,
+      { bytes: Buffer.from(text) },
+    );
+  }
+
+  it("is input", async () => {
+    expect(zlib.gunzipSync(zlib.gzipSync(fromOtherRealm("abc"))).toString()).toBe("abc");
+    expect(zlib.gunzipSync(await util.promisify(zlib.gzip)(fromOtherRealm("abc"))).toString()).toBe("abc");
+  });
+
+  it("is a dictionary", () => {
+    const deflated = zlib.deflateSync("abcabc", { dictionary: fromOtherRealm("abc") });
+    expect(zlib.inflateSync(deflated, { dictionary: fromOtherRealm("abc") }).toString()).toBe("abcabc");
   });
 });
 

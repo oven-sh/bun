@@ -29,13 +29,14 @@
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/ArrayBufferView.h>
 #include <wtf/RefPtr.h>
-#include <variant>
+#include <wtf/StdLibExtras.h>
+#include <wtf/Variant.h>
 
 namespace WebCore {
 
 class BufferSource {
 public:
-    using VariantType = std::variant<RefPtr<JSC::ArrayBufferView>, RefPtr<JSC::ArrayBuffer>>;
+    using VariantType = Variant<RefPtr<JSC::ArrayBufferView>, RefPtr<JSC::ArrayBuffer>>;
 
     BufferSource() {}
     BufferSource(VariantType&& variant)
@@ -43,11 +44,16 @@ public:
     {
     }
 
+    BufferSource(Variant<Ref<JSC::ArrayBufferView>, Ref<JSC::ArrayBuffer>>&& variant)
+        : m_variant(WTF::switchOn(WTF::move(variant), [](auto&& buffer) -> VariantType { return RefPtr { WTF::move(buffer) }; }))
+    {
+    }
+
     const VariantType& variant() const { return m_variant; }
 
     const uint8_t* data() const
     {
-        return std::visit([](auto& buffer) -> const uint8_t* {
+        return WTF::visit([](auto& buffer) -> const uint8_t* {
             return buffer ? static_cast<const uint8_t*>(buffer->data()) : nullptr;
         },
             m_variant);
@@ -55,7 +61,7 @@ public:
 
     size_t length() const
     {
-        return std::visit([](auto& buffer) -> size_t {
+        return WTF::visit([](auto& buffer) -> size_t {
             return buffer ? buffer->byteLength() : 0;
         },
             m_variant);

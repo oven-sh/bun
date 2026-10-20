@@ -25,6 +25,6 @@
 
 namespace WebCore {
 
-template<> EventListenerOptions convertDictionary<EventListenerOptions>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> ConversionResult<IDLDictionary<EventListenerOptions>> convertDictionary<EventListenerOptions>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

@@ -888,7 +888,7 @@ export class OptionalType extends Type {
     return `if (${present}) {\n${indent(body, 4)}\n}`;
   }
   toCpp(value: unknown): string {
-    return value == null ? `${this.idlType}::nullValue()` : this.inner.toCpp(value);
+    return value == null ? `${this.inner.idlType}::nullValue()` : this.inner.toCpp(value);
   }
   cppAssign(target: string, value: unknown): string {
     if (!this.convertsInPlace) return super.cppAssign(target, value);

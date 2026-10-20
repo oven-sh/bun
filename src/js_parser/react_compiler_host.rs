@@ -10,6 +10,18 @@ use bun_collections::VecExt;
 use crate::JSXImport;
 use crate::p::P;
 
+/// What [`P::enter_react_compiler_candidate`] decided about a function.
+#[derive(Clone, Copy)]
+pub(crate) struct ReactCompilerCandidate {
+    pub(crate) prev_may_replace_body: bool,
+    /// The function is handed to the compiler once its body has been visited.
+    pub(crate) is_taken: bool,
+    /// The binding that names it: its own declaration, or the `A` in `const A = () => {}`.
+    pub(crate) binding: Option<js_ast::Ref>,
+    pub(crate) in_react_hoc: bool,
+    pub(crate) is_top_level: bool,
+}
+
 pub struct ReactCompilerHost<'p, 'a, const TS: bool, const SCAN_ONLY: bool> {
     p: &'p mut P<'a, TS, SCAN_ONLY>,
 }
@@ -32,6 +44,21 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     }
     fn import_records(&self) -> &[js_ast::ImportRecord] {
         self.p.import_records.items()
+    }
+    fn is_module_level(&self, ref_: js_ast::Ref) -> bool {
+        let Some(symbol) = self.p.symbols.get(ref_.inner_index() as usize) else {
+            return false;
+        };
+        let name = symbol.original_name.slice();
+        // `current_scope` is the body of the function being compiled, and its parent holds the arguments.
+        let mut outer = self.p.current_scope().parent.and_then(|args| args.parent);
+        while let Some(scope) = outer {
+            if (scope.members.get(name)).is_some_and(|member| member.ref_ == ref_) {
+                return true;
+            }
+            outer = scope.parent;
+        }
+        false
     }
     fn namespace_of_import_item(&self, item: js_ast::Ref) -> Option<js_ast::Ref> {
         let symbol = self.p.symbols.get(item.inner_index() as usize)?;
@@ -189,38 +216,54 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         }
     }
 
-    /// Sets `react_compiler_may_replace_body` for the visit of the pending candidate. Returns the old value.
+    /// Call this before visiting any part of a function. Upstream considers every function that isn't a method, isn't in a
+    /// class, and isn't inside a function it already compiles. The surrounding statement only gives the function its name.
+    ///
+    /// Consumes `react_compiler_candidate_name`, so that a function in a default argument can't pick it up, and sets
+    /// `react_compiler_may_replace_body` for the visit.
     pub(crate) fn enter_react_compiler_candidate(
         &mut self,
-        name: Option<js_ast::Ref>,
+        is_method: bool,
+        is_top_level: bool,
         has_react_hooks_suppression: bool,
+        args: &[js_ast::G::Arg],
+        has_rest_arg: bool,
         body: &[js_ast::Stmt],
-    ) -> bool {
-        let prev = self.react_compiler_may_replace_body;
-        if !prev
-            && let Some(candidate) = self.react_compiler_candidate_name
-            && let Some(rc) = self.react_compiler.as_deref()
+    ) -> ReactCompilerCandidate {
+        let prev_may_replace_body = self.react_compiler_may_replace_body;
+        let binding = (self.react_compiler_candidate_name.take()).filter(|r| r.is_valid());
+        let in_react_hoc = core::mem::take(&mut self.react_compiler_in_react_hoc);
+        let mut is_taken = false;
+        if !is_method
+            && !prev_may_replace_body
+            && self.enclosing_class_keyword.len == 0
+            && let Some(rc) = self.react_compiler.take()
         {
-            let name = name
-                .filter(|r| r.is_valid())
-                .or(Some(candidate))
-                .filter(|r| *r != js_ast::Ref::NONE)
-                .map(|r| self.load_name_from_ref(r));
-            self.react_compiler_may_replace_body = rc.may_compile(
+            let name = binding.map(|r| self.load_name_from_ref(r));
+            is_taken = rc.may_compile(
+                &ReactCompilerHost::new(self),
                 name,
-                self.react_compiler_in_react_hoc,
+                in_react_hoc,
+                is_top_level,
                 has_react_hooks_suppression,
+                args,
+                has_rest_arg,
                 body,
             );
+            self.react_compiler_may_replace_body = is_taken;
+            self.react_compiler = Some(rc);
         }
-        prev
+        ReactCompilerCandidate {
+            prev_may_replace_body,
+            is_taken,
+            binding,
+            in_react_hoc,
+            is_top_level,
+        }
     }
 
-    /// Port of upstream `findFunctionDeclarationOrExpression` for the
-    /// expression positions (decl init / `export default` / expression
-    /// statement). Returns `Some(in_react_hoc)` only for the shapes the
-    /// Babel plugin accepts, so `react_compiler_candidate_name` cannot leak
-    /// into an unrelated nested arrow.
+    /// Whether `expr` is a function, or `memo(fn)` / `forwardRef(fn)`, in which case this returns `Some(true)`. Anything
+    /// else returns `None`, so that a name can't reach an unrelated function somewhere inside `expr`.
     pub(crate) fn react_compiler_candidate_expr(&self, expr: &js_ast::Expr) -> Option<bool> {
         use js_ast::expr::Data;
         match &expr.data {

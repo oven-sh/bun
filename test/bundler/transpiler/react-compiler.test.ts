@@ -3574,6 +3574,442 @@ describe("bundler", () => {
       `,
     },
   });
+
+  // The expected sizes come from babel-plugin-react-compiler 1.0.0 and 0.0.0-experimental-a1856f3-20260507 on this file.
+  // Only a declaration or a `const` names a function: upstream has code for `{ Property: fn }` and `Assigned = fn` too,
+  // but it never matches.
+  itBundled("react-compiler/WhichFunctionsAreCompiled", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { forwardRef, memo } from "react";
+
+        function makeDeclared(colour) {
+          function Declared({ depth }) {
+            const style = { top: depth };
+            return <li style={style}>{colour}</li>;
+          }
+          return Declared;
+        }
+        function makeArrow(colour) {
+          const Arrow = ({ depth }) => {
+            const style = { top: depth };
+            return <li style={style}>{colour}</li>;
+          };
+          return Arrow;
+        }
+        // These are named like a component and a hook but are neither, so the functions inside them are still considered.
+        function MakeInner(colour) {
+          function Inner({ depth }) {
+            const style = { top: depth };
+            return <li style={style}>{colour}</li>;
+          }
+          return Inner;
+        }
+        function useMakeInner(colour) {
+          const Inner = ({ depth }) => {
+            const style = { top: depth };
+            return <li style={style}>{colour}</li>;
+          };
+          return Inner;
+        }
+        let InABlock;
+        {
+          const Block = ({ depth }) => {
+            const style = { top: depth };
+            return <li style={style} />;
+          };
+          InABlock = Block;
+        }
+        const InMemo = memo(
+          forwardRef((props, ref) => {
+            const style = { top: props.depth };
+            return <li ref={ref} style={style} />;
+          }),
+        );
+        const InObjectAssign = Object.assign(
+          forwardRef(function (props, ref) {
+            const style = { top: props.depth };
+            return <li ref={ref} style={style} />;
+          }),
+          { displayName: "InObjectAssign" },
+        );
+        const NamedByTheDeclarator = function helper({ depth }) {
+          const style = { top: depth };
+          return <li style={style} />;
+        };
+        const [optedIn] = [
+          function () {
+            "use memo";
+            return [1, 2, 3];
+          },
+        ];
+        const WithADefault = ({ depth, render = () => <b /> }) => {
+          const style = { top: depth };
+          return <li style={style}>{render()}</li>;
+        };
+        function Outer({ depth }) {
+          function Nested({ top }) {
+            const style = { top };
+            return <li style={style} />;
+          }
+          return <Nested top={depth} />;
+        }
+
+        class Dock {
+          make() {
+            function InAClass({ depth }) {
+              const style = { top: depth };
+              return <li style={style} />;
+            }
+            return InAClass;
+          }
+        }
+        const object = {
+          Method({ depth }) {
+            "use memo";
+            const style = { top: depth };
+            return <li style={style} />;
+          },
+          Property: ({ depth }) => {
+            const style = { top: depth };
+            return <li style={style} />;
+          },
+        };
+        let Assigned;
+        Assigned = ({ depth }) => {
+          const style = { top: depth };
+          return <li style={style} />;
+        };
+        const returned = (() => {
+          return function Returned({ depth }) {
+            const style = { top: depth };
+            return <li style={style} />;
+          };
+        })();
+
+        const all = {
+          Declared: makeDeclared("red"),
+          Arrow: makeArrow("red"),
+          InnerOfMakeInner: MakeInner("red"),
+          InnerOfUseMakeInner: useMakeInner("red"),
+          makeDeclared,
+          MakeInner,
+          useMakeInner,
+          InABlock,
+          InMemo,
+          InObjectAssign,
+          NamedByTheDeclarator,
+          optedIn,
+          WithADefault,
+          Outer,
+          InAClass: new Dock().make(),
+          Method: object.Method,
+          Property: object.Property,
+          Assigned,
+          returned,
+        };
+        // Prints the memo cache sizes found in each function's source text.
+        console.log(
+          JSON.stringify(
+            Object.fromEntries(
+              Object.entries(all).map(([name, fn]) => [name, [...String(fn).matchAll(/\\$\\d* = [\\w$]+\\((\\d+)\\)/g)].map(m => +m[1])]),
+            ),
+          ),
+        );
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `
+        exports.memo = exports.forwardRef = fn => fn;
+        exports.createElement = (type, props) => ({ type, props });
+      `,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    run: {
+      stdout: JSON.stringify({
+        Declared: [2],
+        Arrow: [2],
+        InnerOfMakeInner: [2],
+        InnerOfUseMakeInner: [2],
+        makeDeclared: [2],
+        MakeInner: [2],
+        useMakeInner: [2],
+        InABlock: [2],
+        InMemo: [5],
+        InObjectAssign: [5],
+        NamedByTheDeclarator: [2],
+        optedIn: [1],
+        // The arrow function in the default argument used to be compiled as if it were the component.
+        WithADefault: [],
+        Outer: [3],
+        InAClass: [],
+        Method: [],
+        Property: [],
+        Assigned: [],
+        returned: [],
+      }),
+    },
+  });
+
+  // A callback that uses nothing from its component is moved out of it. It can still use variables of the function that
+  // encloses the component, so it has to stay next to the component. Upstream only does that for function declarations.
+  // It moves the rest to the end of the module, where calling them throws a ReferenceError.
+  itBundled("react-compiler/OutlinedFromANestedComponentStaysInScope", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function makeBuoys(colour, log) {
+          const Arrow = ({ depth }) => {
+            const onClick = () => log("arrow " + colour);
+            return <li onClick={onClick}>{depth}</li>;
+          };
+          function Declared({ depth }) {
+            const onClick = () => log("declared " + colour);
+            return <li onClick={onClick}>{depth}</li>;
+          }
+          if (colour) {
+            const shade = "dark " + colour;
+            const InABlock = ({ depth }) => {
+              const onClick = () => log("block " + shade);
+              return <li onClick={onClick}>{depth}</li>;
+            };
+            return [Arrow, Declared, InABlock];
+          }
+        }
+        const makeInAnExpression = (colour, log) => [({ depth }) => depth].concat(function () {
+          const Inner = ({ depth }) => <li onClick={() => log("expression " + colour)}>{depth}</li>;
+          return Inner;
+        }());
+        for (const colour of ["red", "green"]) {
+          for (const Buoy of [...makeBuoys(colour, console.log), makeInAnExpression(colour, console.log)[1]]) {
+            Buoy({ depth: 1 }).props.onClick();
+          }
+        }
+        console.log(JSON.stringify([...String(makeBuoys).matchAll(/\\$\\d* = [\\w$]+\\((\\d+)\\)/g)].map(m => +m[1])));
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `
+        exports.memo = exports.forwardRef = fn => fn;
+        exports.createElement = (type, props) => ({ type, props });
+      `,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    run: {
+      stdout: [
+        ...["red", "green"].flatMap(colour => [
+          `arrow ${colour}`,
+          `declared ${colour}`,
+          `block dark ${colour}`,
+          `expression ${colour}`,
+        ]),
+        "[2,2,2]",
+      ].join("\n"),
+    },
+  });
+
+  // A local whose name ends in "Ref" is taken for a ref once its `.current` is read. Listing it in an effect's dependencies
+  // used to be reported as reading a ref during render, unless it was initialized in one of a few ways. The expected sizes
+  // come from babel-plugin-react-compiler 0.0.0-experimental-a1856f3-20260507, which only refuses `pier.bollard`.
+  describe("react-compiler/ALocalNamedLikeARef", () => {
+    const remove = "bollardRef.current.remove();";
+    test.each([
+      ["const bollardRef = pier?.bollard;", "bollardRef?.current?.remove();", 4],
+      ["const bollardRef = pier?.bollard;", remove, 4],
+      ["const bollardRef = pier?.bollard;", "bollardRef?.current.remove();", 4],
+      ["const bollardRef = pier?.bollard;", "bollardRef.current?.remove();", 4],
+      ["const bollardRef = pier?.bollard;", "const x = bollardRef?.current; x;", 3],
+      ["const bollardRef = pier?.bollard;", "const x = bollardRef.current; x;", 2],
+      ["const bollardRef = pier ? pier.bollard : undefined;", remove, 4],
+      ["const bollardRef = pier && pier.bollard;", remove, 4],
+      ["const bollardRef = pier?.a?.bollard;", remove, 4],
+      ["const bollardRef = pier?.[0];", remove, 4],
+      ["const bollardRef = pier?.();", remove, 6],
+      ["const bollardRef = pier;", remove, 3],
+      ["let bollardRef; bollardRef = pier.bollard;", remove, 6],
+      ["let bollardRef = null; if (pier) bollardRef = pier.bollard;", remove, 6],
+      ["const bollardRef = pier.bollard;", remove, null],
+      ["const bollardRef = pier.bollard;", "bollardRef?.current?.remove();", null],
+    ])("%s %s", async (declaration, effect, size) => {
+      using dir = tempDir("react-compiler-ref-named-local", {
+        "entry.js": `
+          import { useEffect } from "react";
+          export function useMooring(pier) {
+            ${declaration}
+            useEffect(() => {
+              ${effect}
+            }, [bollardRef]);
+          }
+        `,
+      });
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "entry.js")],
+        packages: "external",
+        reactCompiler: true,
+      });
+      const output = await result.outputs[0].text();
+      expect(output.match(/_c\((\d+)\)/)?.[1] ?? null).toBe(size === null ? null : String(size));
+    });
+  });
+
+  // The parser drops a test that is always true. The compiler refused a `for` without a test, so it also refused
+  // `for (let i = 0; true; i++)`, which babel-plugin-react-compiler compiles, with a cache of 6 for this hook.
+  // It refuses the other three, which mean the same as `while (true)`.
+  itBundled("react-compiler/ForWithoutATest", {
+    files: {
+      "/entry.js": /* js */ `
+        import { useCallback, useState } from "react";
+        ${["let i = 0; true; i++", "let i = 0; ; i++", "; true; ", ";;"]
+          .map(
+            (head, n) => `
+              function usePages${n}(fetchPage) {
+                const [pages, setPages] = useState([]);
+                const run = useCallback(async () => {
+                  let cursor = 0;
+                  for (${head}) {
+                    const page = await fetchPage(cursor);
+                    setPages(page.items);
+                    if (page.next === undefined) break;
+                    if (page.skip) continue;
+                    cursor = page.next;
+                  }
+                  return cursor;
+                }, [fetchPage]);
+                return { pages, run };
+              }
+            `,
+          )
+          .join("")}
+        const book = [{ items: "a", next: 1 }, { items: "b", next: 2 }, { items: "c" }];
+        for (const usePages of [usePages0, usePages1, usePages2, usePages3]) {
+          const seen = [];
+          const last = await usePages(async cursor => (seen.push(cursor), book[cursor])).run();
+          console.log(JSON.stringify([seen, last, String(usePages).match(/\\$ = [\\w$]+\\((\\d+)\\)/)?.[1]]));
+        }
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `
+        exports.useState = value => [value, () => {}];
+        exports.useCallback = fn => fn;
+      `,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    run: { stdout: Array(4).fill(`[[0,1,2],2,"6"]`).join("\n") },
+  });
+
+  // The parser inlines a spread object literal into the props.
+  itBundled("react-compiler/JsxSpreadWithAComputedKey", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const KEY = "title";
+        function Computed({ n }) {
+          return <b {...{ [KEY]: n }} />;
+        }
+        function Between({ n }) {
+          return <b id="a" {...{ lang: "en", [KEY]: n, 1: "one" }} title="last" />;
+        }
+        // \`key\` after a spread makes this a createElement() call.
+        function KeyAfterSpread({ n, rest }) {
+          return <b {...rest} {...{ [KEY]: n }} key="k" />;
+        }
+        const sizes = fn => [...String(fn).matchAll(/\\$\\d* = [\\w$]+\\((\\d+)\\)/g)].map(m => +m[1]);
+        console.log(JSON.stringify([Computed({ n: 1 }).props, sizes(Computed)]));
+        console.log(JSON.stringify([Between({ n: 2 }).props, sizes(Between)]));
+        console.log(JSON.stringify([KeyAfterSpread({ n: 3, rest: { id: "r" } }).props, sizes(KeyAfterSpread)]));
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `
+        exports.memo = exports.forwardRef = fn => fn;
+        exports.createElement = (type, props) => ({ type, props });
+      `,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    bundleWarnings: {
+      "/entry.jsx": [`"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.`],
+    },
+    run: {
+      stdout: [
+        `[{"title":1},[2]]`,
+        `[{"1":"one","id":"a","lang":"en","title":"last"},[2]]`,
+        `[{"id":"r","title":3,"key":"k"},[5]]`,
+      ].join("\n"),
+    },
+  });
+
+  // With `minify: { syntax: true }`, and always at runtime, the parser joins these into one template literal or string
+  // before the compiler sees them. The joined text is a rope.
+  itBundled("react-compiler/TextJoinedByTheParser", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import { useState } from "react";
+        const enum Route { Users = "users" }
+        export function useJoined(v: string) {
+          const [k] = useState("k");
+          return [
+            \`\${k}-\` + "b",
+            \`\${k}-\` + "b" + "c",
+            \`\${k}\` + "z",
+            "a" + \`-\${k}\`,
+            "a" + "b" + \`-\${k}\`,
+            \`\${k}-\` + \`+\${v}\` + "z",
+            \`\${k}-\` + "m" + \`\${v}\`,
+            \`\${k}-\` + 1,
+            \`\${k}-\` + null,
+            (() => \`\${k}-\` + "b")(),
+            \`a\${"b"}c/\${k}\`,
+            \`\${k}/x\${"y"}z\`,
+            \`\${Route.Users}/\${k}\`,
+            \`n\${1 + 2}m/\${k}\`,
+            Object.keys({ ["a" + "b"]: k }).join(),
+          ];
+        }
+        console.log(useJoined("v").join(" "));
+      `,
+      "/node_modules/react/index.js": `exports.useState = value => [value, () => {}];`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    minifySyntax: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "k-b k-bc kz a-k ab-k k-+vz k-mv k-1 k-null k-b abc/k k/xyz users/k n3m/k ab" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(/\$\[\d+\]/);
+    },
+  });
+
+  // The argument of import() is joined without `minify: { syntax: true }` too.
+  itBundled("react-compiler/ImportSpecifierJoinedByTheParser", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        const enum Dir { Pages = "./pages" }
+        export function Link({ name }: { name: string }) {
+          return <a onClick={() => import(Dir.Pages + \`/\${name}.js\`)}>{name}</a>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    external: ["react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/\$\[\d+\]/);
+      expect(out).toContain("import(`./pages/${name}.js`)");
+    },
+  });
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

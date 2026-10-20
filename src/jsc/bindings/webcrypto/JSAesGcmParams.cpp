@@ -36,7 +36,7 @@ using namespace JSC;
 
 #if ENABLE(WEB_CRYPTO)
 
-template<> CryptoAlgorithmAesGcmParams convertDictionary<CryptoAlgorithmAesGcmParams>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+template<> ConversionResult<IDLDictionary<CryptoAlgorithmAesGcmParams>> convertDictionary<CryptoAlgorithmAesGcmParams>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -69,7 +69,7 @@ template<> CryptoAlgorithmAesGcmParams convertDictionary<CryptoAlgorithmAesGcmPa
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!additionalDataValue.isUndefined()) {
-        result.additionalData = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(lexicalGlobalObject, additionalDataValue);
+        result.additionalData = BufferSource(convert<IDLBufferSource>(lexicalGlobalObject, additionalDataValue)).variant();
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     JSValue ivValue;
@@ -80,7 +80,7 @@ template<> CryptoAlgorithmAesGcmParams convertDictionary<CryptoAlgorithmAesGcmPa
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!ivValue.isUndefined()) {
-        result.iv = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(lexicalGlobalObject, ivValue);
+        result.iv = convert<IDLBufferSource>(lexicalGlobalObject, ivValue);
         RETURN_IF_EXCEPTION(throwScope, {});
     } else {
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "iv"_s, "AesGcmParams"_s, "(ArrayBufferView or ArrayBuffer)"_s);

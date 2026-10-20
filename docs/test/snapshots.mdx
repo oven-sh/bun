@@ -116,6 +116,23 @@ test("error snapshot", () => {
 });
 ```
 
+## File Snapshots
+
+`.toMatchFileSnapshot()` compares a value with a snapshot stored in its own file. The file can have the right extension, so you can open it like any other file. The path is relative to the test file.
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect } from "bun:test";
+
+test("renders the page", async () => {
+  await expect(render(page)).toMatchFileSnapshot("./snapshots/page.html");
+});
+```
+
+- A string is compared with the file's contents as is.
+- Any other value is printed first. Bun always prints it the way Vitest does ([`pretty-format`](#snapshots-from-jest-and-vitest)), even when `test` is imported from `"bun:test"`.
+- If the file doesn't exist, Bun creates it, except in CI.
+- `--update-snapshots` rewrites a file that doesn't match.
+
 ## Advanced Snapshot Usage
 
 ### Complex Objects
@@ -235,6 +252,51 @@ exports[`snapshot with dynamic values 1`] = `
 }
 `;
 ```
+
+## Custom Serializers
+
+Use `expect.addSnapshotSerializer()` to change how snapshot matchers print certain values. It applies to those values at any depth in a snapshot:
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect } from "bun:test";
+
+expect.addSnapshotSerializer({
+  test: value => value instanceof Money,
+  serialize: value => `${value.amount} ${value.currency}`,
+});
+
+test("price", () => {
+  expect({ price: new Money(5, "EUR") }).toMatchInlineSnapshot(`
+    {
+      "price": 5 EUR,
+    }
+  `);
+});
+```
+
+A serializer is a [`pretty-format` plugin](https://github.com/jestjs/jest/tree/main/packages/pretty-format#writing-plugins), so serializers written for Jest and Vitest work. To print the values nested inside `value`, call the `printer` argument of `serialize(value, config, indentation, depth, refs, printer)`.
+
+The last serializer added is tried first. A serializer added in a test file applies until that file ends. A serializer added in a [preload script](/test/configuration#preload-scripts), or in a module that test files import, applies to every file after it.
+
+## Snapshots from Jest and Vitest
+
+Bun reads and writes each snapshot file in the format of the runner that created it. The file's first line names that runner. `.snap` files from a Jest or Vitest project keep passing, and both runners can still read them after Bun adds or updates entries.
+
+| First line              | Keys              | Values          | `toThrowErrorMatchingSnapshot()` |
+| ----------------------- | ----------------- | --------------- | -------------------------------- |
+| `// Bun Snapshot v1`    | `outer inner 1`   | Bun's format    | the error message                |
+| `// Jest Snapshot v1`   | `outer inner 1`   | `pretty-format` | the error message                |
+| `// Vitest Snapshot v1` | `outer > inner 1` | `pretty-format` | the error                        |
+
+Bun's format and `pretty-format` print most values the same way. They differ on functions (`[Function: name]` in Bun's format, `[Function]` in Jest's and Vitest's), classes, mock functions, regular expressions, symbol keys, React elements and a few others.
+
+A new snapshot file uses Vitest's format if `test` is imported from `"vitest"`, and Bun's format otherwise.
+
+Inline snapshots don't record which runner wrote them, so Bun accepts a match in any runner's format. It writes and updates them in the format of the runner that `test` is imported from.
+
+With `--update-snapshots`, Bun removes entries that no test uses anymore from a file in Jest's or Vitest's format. It keeps entries for tests that were skipped, filtered out or failed. A file in Bun's format keeps only the entries of tests that ran.
+
+Earlier versions of Bun printed `[native code]` for an accessor instead of its value, included non-enumerable own properties, and printed DOM nodes as plain objects. Snapshots written that way still pass. Bun leaves them alone until `--update-snapshots` rewrites them.
 
 ## Best Practices
 

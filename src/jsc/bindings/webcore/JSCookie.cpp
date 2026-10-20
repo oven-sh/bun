@@ -57,7 +57,7 @@ static int64_t getExpiresValue(JSGlobalObject* lexicalGlobalObject, JSC::ThrowSc
     }
 
     if (expiresValue.isString()) {
-        auto expiresStr = convert<IDLUSVString>(*lexicalGlobalObject, expiresValue);
+        String expiresStr = convert<IDLUSVString>(*lexicalGlobalObject, expiresValue);
         RETURN_IF_EXCEPTION(throwScope, Cookie::emptyExpiresAtValue);
         auto nullTerminatedSpan = expiresStr.utf8();
         if (auto parsed = WTF::parseDate(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(nullTerminatedSpan.data()), nullTerminatedSpan.length()))) {
@@ -303,7 +303,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
     // Static method: parse(cookieString)
     if (callFrame->argumentCount() == 1 && callFrame->argument(0).isString()) {
         // new Bun.Cookie.parse("foo=bar")
-        auto cookieString = convert<IDLUSVString>(*lexicalGlobalObject, callFrame->argument(0));
+        String cookieString = convert<IDLUSVString>(*lexicalGlobalObject, callFrame->argument(0));
         RETURN_IF_EXCEPTION(throwScope, {});
 
         if (!WebCore::isValidHTTPHeaderValue(cookieString)) [[unlikely]] {
@@ -520,7 +520,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionParse, (JSGlobalObject * lexicalG
     if (callFrame->argumentCount() < 1)
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
 
-    auto cookieString = convert<IDLUSVString>(*lexicalGlobalObject, callFrame->uncheckedArgument(0));
+    String cookieString = convert<IDLUSVString>(*lexicalGlobalObject, callFrame->uncheckedArgument(0));
     RETURN_IF_EXCEPTION(throwScope, {});
 
     if (cookieString.isEmpty()) {
@@ -557,7 +557,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
     if (callFrame->argumentCount() < 2)
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
 
-    auto name = convert<IDLUSVString>(*lexicalGlobalObject, callFrame->uncheckedArgument(0));
+    String name = convert<IDLUSVString>(*lexicalGlobalObject, callFrame->uncheckedArgument(0));
     RETURN_IF_EXCEPTION(throwScope, {});
 
     if (name.isEmpty()) {
@@ -565,7 +565,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
         return {};
     }
 
-    auto value = convert<IDLUSVString>(*lexicalGlobalObject, callFrame->uncheckedArgument(1));
+    String value = convert<IDLUSVString>(*lexicalGlobalObject, callFrame->uncheckedArgument(1));
     RETURN_IF_EXCEPTION(throwScope, {});
 
     CookieInit cookieInit { name, value };
@@ -619,7 +619,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_value, (JSGlobalObject * lexica
     if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "value"_s);
     auto& impl = thisObject->wrapped();
-    auto value = convert<IDLUSVString>(*lexicalGlobalObject, JSValue::decode(encodedValue));
+    String value = convert<IDLUSVString>(*lexicalGlobalObject, JSValue::decode(encodedValue));
     RETURN_IF_EXCEPTION(throwScope, false);
     impl.setValue(value);
     return true;
@@ -644,7 +644,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_domain, (JSGlobalObject * lexic
     if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "domain"_s);
     auto& impl = thisObject->wrapped();
-    auto value = convert<IDLUSVString>(*lexicalGlobalObject, JSValue::decode(encodedValue));
+    String value = convert<IDLUSVString>(*lexicalGlobalObject, JSValue::decode(encodedValue));
     RETURN_IF_EXCEPTION(throwScope, false);
     WebCore::propagateException(*lexicalGlobalObject, throwScope, impl.setDomain(value));
     return true;
@@ -669,7 +669,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_path, (JSGlobalObject * lexical
     if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "path"_s);
     auto& impl = thisObject->wrapped();
-    auto value = convert<IDLUSVString>(*lexicalGlobalObject, JSValue::decode(encodedValue));
+    String value = convert<IDLUSVString>(*lexicalGlobalObject, JSValue::decode(encodedValue));
     RETURN_IF_EXCEPTION(throwScope, false);
     WebCore::propagateException(*lexicalGlobalObject, throwScope, impl.setPath(value));
     return true;
@@ -759,7 +759,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_sameSite, (JSGlobalObject * lex
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "sameSite"_s);
     auto& impl = thisObject->wrapped();
 
-    auto sameSiteStr = convert<IDLUSVString>(*lexicalGlobalObject, JSValue::decode(encodedValue));
+    String sameSiteStr = convert<IDLUSVString>(*lexicalGlobalObject, JSValue::decode(encodedValue));
     RETURN_IF_EXCEPTION(throwScope, false);
 
     CookieSameSite sameSite;

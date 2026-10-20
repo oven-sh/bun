@@ -277,12 +277,12 @@ public:
         StringView line = stack.substring(start, end - start);
         offset = end;
 
-        // the proper singular spelling is parenthesis
-        auto openingParentheses = line.reverseFind('(');
-        auto closingParentheses = line.reverseFind(')');
-
-        if (openingParentheses > closingParentheses)
-            openingParentheses = WTF::notFound;
+        // A path can have parentheses of its own. The location is in parentheses only if the line ends with one,
+        // and they open after the function's name.
+        auto closingParentheses = line.endsWith(')') ? line.length() - 1 : WTF::notFound;
+        auto openingParentheses = closingParentheses == WTF::notFound ? WTF::notFound : line.find(" ("_s);
+        if (openingParentheses != WTF::notFound)
+            openingParentheses++;
 
         if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
             // Special case: "unknown" frames don't have parentheses but are valid
@@ -496,15 +496,12 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
     if (except.type == SYNTAX_ERROR_CODE) {
         except.message = Bun::toStringRef(err->sanitizedMessageString(global));
 
-    } else if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
-        RETURN_IF_EXCEPTION(scope, );
-        except.message = Bun::toStringRef(global, message);
+    } else {
+        JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message);
+        // A `message` getter that throws counts as no message.
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
-    } else {
-        RETURN_IF_EXCEPTION(scope, );
-
-        except.message = Bun::toStringRef(err->sanitizedMessageString(global));
+        except.message = message ? Bun::toStringRef(global, message) : Bun::toStringRef(err->sanitizedMessageString(global));
     }
 
     if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
@@ -826,9 +823,8 @@ extern "C" void JSC__Exception__getStackTrace(JSC::Exception* arg0, JSC::JSGloba
     populateStackTrace(arg0->vm(), arg0->stackForReporting(arg0->vm()), *trace, PopulateStackTraceFlags::OnlyPosition);
 }
 
-extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)
+static void toZigException(JSC::JSValue value, JSC::JSGlobalObject* global, ZigException* exception)
 {
-    JSC::JSValue value = JSC::JSValue::decode(jsException);
     if (value == JSC::JSValue {}) {
         exception->type = JSErrorCodeError;
         exception->name = Bun::toStringRef("Error"_s);
@@ -859,6 +855,14 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::Enc
     }
 
     exceptionFromString(*exception, value, global);
+}
+
+extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(global));
+    toZigException(JSC::JSValue::decode(jsException), global, exception);
+    // The caller prints whatever could be read, so drop anything the error's getters threw.
+    (void)scope.clearExceptionExceptTermination();
 }
 
 extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)

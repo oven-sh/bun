@@ -28,6 +28,7 @@
 
 #pragma once
 
+#include "DeleteCallbackDataTask.h"
 #include "JSDOMBinding.h"
 #include "ScriptExecutionContext.h"
 #include <JavaScriptCore/JSObject.h>
@@ -36,6 +37,8 @@
 #include <wtf/Threading.h>
 
 namespace WebCore {
+
+template<typename ImplementationClass> struct JSDOMCallbackConverterTraits;
 
 // We have to clean up this data on the context thread because unprotecting a
 // JSObject on the wrong thread without synchronization would corrupt the heap
@@ -54,6 +57,12 @@ public:
     {
     }
 
+    // Upstream's signature. Bun takes the global object from the callback when it is needed.
+    JSCallbackData(JSC::JSObject* callback, JSDOMGlobalObject*, void* owner)
+        : m_callback(callback, &m_weakOwner, owner)
+    {
+    }
+
     ~JSCallbackData()
     {
 #if !PLATFORM(IOS_FAMILY)
@@ -62,8 +71,9 @@ public:
     }
 
     JSC::JSObject* callback() { return m_callback.get(); }
+    JSDOMGlobalObject* globalObject();
 
-    template<typename Visitor> void visitJSFunction(Visitor&);
+    template<typename Visitor> void visitJSFunctionInGCThread(Visitor&);
 
     WEBCORE_EXPORT static JSC::JSValue invokeCallback(JSC::VM&, JSC::JSObject* callback, JSC::JSValue thisValue, JSC::MarkedArgumentBuffer&, CallbackType, JSC::PropertyName functionName, NakedPtr<JSC::Exception>& returnedException);
 
@@ -71,6 +81,8 @@ public:
     {
         return JSCallbackData::invokeCallback(vm, callback(), thisValue, args, callbackType, functionName, returnedException);
     }
+
+    JSC::JSValue invokeCallback(JSC::JSValue thisValue, JSC::MarkedArgumentBuffer&, CallbackType, JSC::PropertyName functionName, NakedPtr<JSC::Exception>& returnedException);
 
 private:
     class WeakOwner : public JSC::WeakHandleOwner {

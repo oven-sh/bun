@@ -1138,7 +1138,7 @@ impl RadixInteger {
 
 /// The integer whose digits, of `bits` bits each, are `digits`, as the nearest `f64`. `None` if there
 /// is no digit, or a byte that is none in that radix.
-fn parse_digits_of_bits(digits: &[u8], bits: u32) -> Option<f64> {
+pub fn parse_digits_of_bits(digits: &[u8], bits: u32) -> Option<f64> {
     let mut integer = RadixInteger::default();
     for &c in digits {
         integer.push_digit(bits, char::from(c).to_digit(1 << bits)?);
@@ -3179,9 +3179,11 @@ pub struct TrimmedPrecisionFormatter<const PRECISION: usize> {
 
 impl<const PRECISION: usize> Display for TrimmedPrecisionFormatter<PRECISION> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let whole = self.num.trunc();
+        let scale = 10f64.powi(PRECISION as i32);
+        let num = (self.num * scale).round() / scale;
+        let whole = num.trunc();
         write!(f, "{}", whole)?;
-        let rem = self.num - whole;
+        let rem = num - whole;
         if rem != 0.0 {
             // buf size = "0." + PRECISION digits
             // Const-generic array length arithmetic is unstable, so use a small

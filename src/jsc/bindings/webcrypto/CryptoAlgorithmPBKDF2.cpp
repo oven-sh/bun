@@ -69,11 +69,11 @@ void CryptoAlgorithmPBKDF2::importKey(CryptoKeyFormat format, KeyData&& data, co
         return;
     }
     if (usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey | CryptoKeyUsageKemMask)) {
-        exceptionCallback(SyntaxError, "Unsupported key usage for a PBKDF2 key"_s);
+        exceptionCallback(JSSyntaxError, "Unsupported key usage for a PBKDF2 key"_s);
         return;
     }
     if (extractable) {
-        exceptionCallback(SyntaxError, "PBKDF2 keys are not extractable"_s);
+        exceptionCallback(JSSyntaxError, "PBKDF2 keys are not extractable"_s);
         return;
     }
 

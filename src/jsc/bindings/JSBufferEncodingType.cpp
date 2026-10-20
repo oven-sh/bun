@@ -28,9 +28,9 @@
 namespace WebCore {
 using namespace JSC;
 
-template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject, BufferEncodingType enumerationValue)
+template<> JSString* convertEnumerationToJS(VM& vm, BufferEncodingType enumerationValue)
 {
-    auto& commonStrings = Bun::commonStrings(lexicalGlobalObject.vm());
+    auto& commonStrings = Bun::commonStrings(vm);
     // clang-format off
     switch (enumerationValue) {
     case BufferEncodingType::utf8:      return commonStrings.utf8String();
@@ -45,7 +45,7 @@ template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject,
     }
     // clang-format on
     ASSERT_NOT_REACHED();
-    return jsEmptyString(lexicalGlobalObject.vm());
+    return jsEmptyString(vm);
 }
 
 template<bool allowBuffer>

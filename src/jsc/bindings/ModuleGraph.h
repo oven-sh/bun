@@ -10,6 +10,7 @@
 #include <JavaScriptCore/WeakGCMap.h>
 #include <JavaScriptCore/WriteBarrier.h>
 #include "ScriptExecutionContext.h"
+#include <wtf/Deque.h>
 
 namespace Zig {
 class GlobalObject;
@@ -18,6 +19,7 @@ class GlobalObject;
 namespace JSC {
 class JSLexicalEnvironment;
 class JSPromise;
+class ModuleProgramExecutable;
 class ThrowScope;
 }
 
@@ -62,7 +64,12 @@ public:
     JSC::JSValue requireCache() const { return m_requireCache.get(); }
     void setRequireCache(JSC::VM& vm, JSC::JSValue cache) { m_requireCache.set(vm, this, cache); }
 
-    JSC::JSPromise* import(Zig::GlobalObject*, JSC::JSValue specifier);
+    // The linked wrapper function of a CommonJS module this graph evaluated (ModuleGraphState::commonJSWrappers).
+    void keepCommonJSWrapper(JSC::VM&, JSC::CodeBlock*);
+    // Keeps an ES module's executable alive, along with the key JSC looks it up by. A finished record doesn't hold it.
+    void keepModuleExecutable(JSC::VM&, JSC::ModuleProgramExecutable*, WTF::UniquedStringImpl* key);
+
+    JSC::JSPromise* import(Zig::GlobalObject*, JSC::JSValue specifier, bool mayBecomeMain = true);
     void dispose(Zig::GlobalObject*);
 
 private:
@@ -76,6 +83,8 @@ private:
     JSC::WriteBarrier<JSC::JSObject> m_onError;
     JSC::WriteBarrier<JSModuleGraph> m_maker;
     JSC::WriteBarrier<JSC::JSString> m_mainPath;
+    WTF::UncheckedKeyHashSet<JSC::CodeBlock*> m_commonJSWrappers; // cellLock()
+    WTF::Vector<std::pair<JSC::ModuleProgramExecutable*, RefPtr<WTF::UniquedStringImpl>>> m_moduleExecutables; // cellLock()
     unsigned m_overlayShape { 0 };
 };
 
@@ -90,6 +99,7 @@ struct ModuleGraphState {
 public:
     explicit ModuleGraphState(JSC::VM& vm)
         : overlaySymbolTables(vm)
+        , commonJSWrappers(vm)
     {
     }
     // Sorted `globals` names -> the SymbolTable the overlays of the graphs made with that name
@@ -99,13 +109,24 @@ public:
     // The same keys -> JSModuleGraph::overlayShape(). Never forgets, so a number is never reused
     // for another name set while code compiled under the first may still be cached.
     WTF::HashMap<WTF::String, unsigned> overlayShapes;
+    // <overlay shape>:<URL> -> the linked wrapper function of that CommonJS module. It owns the executables of the
+    // functions in the module, so a graph that calls the same wrapper runs their JIT code. Weak: alive while
+    // a graph that evaluated the module is.
+    JSC::WeakGCMap<WTF::String, JSC::CodeBlock> commonJSWrappers;
     // The async context native code entered from the top of the event loop
     // (VirtualMachine::enter_context): what a microtask checkpoint there goes back to.
     JSC::Strong<JSC::Unknown> enteredFromEventLoop;
+    // bun test --isolate=modules: the graph of the running test file.
+    JSC::Strong<JSModuleGraph> testFile;
+    // Disposed graphs of the most recent files, kept only for their compiled code, which would otherwise be collected
+    // with the last graph that ran it. Code that files keep loading stays alive. Code only one file used ages out.
+    WTF::Deque<JSC::Strong<JSModuleGraph>, 8> finishedTestFiles;
 };
 
 void initJSModuleGraphClassStructure(JSC::LazyClassStructure::Initializer&);
 JSC::Structure* createModuleGraphFrameStructure(JSC::VM&, JSC::JSGlobalObject*);
+// A frame of the async context on top of `previous`. `storage` is not an AsyncLocalStorage, so no getStore() finds it.
+JSC::JSObject* createAsyncContextFrame(Zig::GlobalObject*, JSC::JSObject* storage, JSC::JSValue previous);
 
 // ── Which graph ──────────────────────────────────────────────────────────────────────
 // The graph `loader` is the loader of; null for the global object's own.
@@ -114,6 +135,8 @@ JSModuleGraph* moduleGraphOfLoader(JSC::JSGlobalObject*, JSC::JSModuleLoader*);
 JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject*);
 // The innermost graph that the current async context is inside of; null in the host's.
 JSModuleGraph* currentModuleGraph(Zig::GlobalObject*);
+// The graph of the module that `function` was defined in, or null if it isn't in a graph.
+JSModuleGraph* moduleGraphForFunction(JSC::JSObject* function);
 // The frame the running script's Bun.ModuleGraph context was entered with; null when it is in none.
 JSC::JSObject* currentModuleGraphFrame(Zig::GlobalObject*);
 
@@ -127,6 +150,12 @@ JSC::JSModuleLoader* moduleLoaderOf(JSC::JSGlobalObject*, JSC::ThrowScope&, JSMo
 // dispose() of the graph `context` was made for (its context is stopped with it); just the stop
 // if the graph has been collected.
 void disposeModuleGraphOfContext(WebCore::ScriptExecutionContext&);
+
+// ── bun test --isolate=modules ───────────────────────────────────────────────────────
+// What the runner and module mocks use to load modules: the running test file's graph if there is one, otherwise the global object.
+JSModuleGraph* testFileModuleGraph(Zig::GlobalObject*);
+JSC::JSModuleLoader* testFileModuleLoader(Zig::GlobalObject*);
+JSC::JSMap* testFileRequireMap(Zig::GlobalObject*);
 
 // ── The graph's context ──────────────────────────────────────────────────────────────
 // What runs while this is alive runs inside a graph's context: an async context frame naming

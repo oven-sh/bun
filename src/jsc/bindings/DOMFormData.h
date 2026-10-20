@@ -53,7 +53,7 @@ public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-    using FormDataEntryValue = std::variant<String, RefPtr<Blob>>;
+    using FormDataEntryValue = Variant<String, RefPtr<Blob>>;
 
     struct Item {
         String name;
@@ -61,7 +61,9 @@ public:
     };
 
     static Ref<DOMFormData> create(ScriptExecutionContext*);
+    static ExceptionOr<Ref<DOMFormData>> create(ScriptExecutionContext&, HTMLFormElement*, HTMLElement* submitter);
     static Ref<DOMFormData> create(ScriptExecutionContext*, const StringView& urlEncodedString);
+    Ref<DOMFormData> clone() const;
 
     const Vector<Item>& items() const { return m_items; }
 

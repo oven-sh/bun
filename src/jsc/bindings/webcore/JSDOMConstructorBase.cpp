@@ -25,6 +25,8 @@
 
 #include "WebCoreJSClientData.h"
 #include "ErrorCode.h"
+#include "Window.h"
+#include <JavaScriptCore/PropertyNameArray.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -62,6 +64,54 @@ JSC::GCClient::IsoSubspace* JSDOMConstructorBase::subspaceForImpl(JSC::VM& vm)
 {
     return &static_cast<JSVMClientData*>(vm.clientData)->domConstructorSpace();
 }
+
+Document* JSDOMConstructorBase::document() const
+{
+    return m_window ? m_window->document() : nullptr;
+}
+
+JSDOMConstructorBase* JSDOMConstructorBase::createForWindow(VM& vm, JSDOMConstructorBase& constructor, Window& window, JSObject& windowWrapper)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = constructor.globalObject();
+
+    // Every JSDOMConstructor<T> has JSDOMConstructorBase's layout (see subspaceFor()), and the Structure carries T's ClassInfo.
+    auto* structure = Structure::create(vm, globalObject, constructor.getPrototypeDirect(), constructor.structure()->typeInfo(), constructor.classInfo());
+    auto* copy = new (NotNull, allocateCell<JSDOMConstructorBase>(vm)) JSDOMConstructorBase(vm, structure, nullptr, nullptr, constructor.m_errorCode);
+    copy->Base::finishCreation(vm);
+    copy->m_functionForCall = constructor.m_functionForCall;
+    copy->m_functionForConstruct = constructor.m_functionForConstruct;
+    copy->m_window = &window;
+    copy->m_windowWrapper.set(vm, copy, &windowWrapper);
+    copy->m_originalName.set(vm, copy, constructor.m_originalName.get());
+
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+    JSObject::getOwnPropertyNames(&constructor, globalObject, names, DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    for (auto& name : names) {
+        unsigned attributes = 0;
+        JSValue value = constructor.getDirect(vm, name, attributes);
+        if (!value)
+            continue;
+        if (attributes & PropertyAttribute::CustomAccessorOrValue)
+            copy->putDirectCustomAccessor(vm, name, value, attributes);
+        else if (attributes & PropertyAttribute::Accessor)
+            copy->putDirectNonIndexAccessor(vm, name, uncheckedDowncast<GetterSetter>(value), attributes);
+        else
+            copy->putDirect(vm, name, value, attributes);
+    }
+    return copy;
+}
+
+template<typename Visitor>
+void JSDOMConstructorBase::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSDOMConstructorBase>(cell);
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_windowWrapper);
+}
+
+DEFINE_VISIT_CHILDREN(JSDOMConstructorBase);
 
 void JSDOMConstructorBase::initializeBaseProperties(JSC::VM& vm, unsigned length, ASCIILiteral name, JSC::JSObject* prototype)
 {

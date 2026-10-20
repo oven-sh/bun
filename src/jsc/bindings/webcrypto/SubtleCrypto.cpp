@@ -29,6 +29,7 @@
 
 #if ENABLE(WEB_CRYPTO)
 
+#include "ContextDestructionObserverInlines.h"
 #include "CryptoAlgorithm.h"
 #include "CryptoAlgorithmRegistry.h"
 #include "CryptoAlgorithmX25519Params.h"
@@ -119,7 +120,7 @@ static bool isAcceptableVectorSource(const std::optional<BufferSource::VariantTy
 {
     if (!data)
         return true;
-    auto length = std::visit([](auto& buffer) -> size_t { return buffer ? buffer->byteLength() : 0; }, *data);
+    auto length = WTF::visit([](auto& buffer) -> size_t { return buffer ? buffer->byteLength() : 0; }, *data);
     return WTF::isValidCapacityForVector<uint8_t>(length);
 }
 
@@ -144,7 +145,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
 
     auto& value = std::get<JSC::Strong<JSC::JSObject>>(algorithmIdentifier);
 
-    auto params = convertDictionary<CryptoAlgorithmParameters>(state, value.get());
+    CryptoAlgorithmParameters params = convertDictionary<CryptoAlgorithmParameters>(state, value.get());
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
 
     auto identifier = CryptoAlgorithmRegistry::singleton().identifier(params.name);
@@ -159,7 +160,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5:
             return Exception { NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
         case CryptoAlgorithmIdentifier::RSA_OAEP: {
-            auto params = convertDictionary<CryptoAlgorithmRsaOaepParams>(state, value.get());
+            CryptoAlgorithmRsaOaepParams params = convertDictionary<CryptoAlgorithmRsaOaepParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             if (!isAcceptableVectorSource(params.label))
                 return Exception { OperationError, "Input data is too large"_s };
@@ -168,7 +169,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         }
         case CryptoAlgorithmIdentifier::AES_CBC:
         case CryptoAlgorithmIdentifier::AES_CFB: {
-            auto params = convertDictionary<CryptoAlgorithmAesCbcCfbParams>(state, value.get());
+            CryptoAlgorithmAesCbcCfbParams params = convertDictionary<CryptoAlgorithmAesCbcCfbParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             if (!isAcceptableVectorSource(params.iv))
                 return Exception { OperationError, "Input data is too large"_s };
@@ -176,7 +177,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             break;
         }
         case CryptoAlgorithmIdentifier::AES_CTR: {
-            auto params = convertDictionary<CryptoAlgorithmAesCtrParams>(state, value.get());
+            CryptoAlgorithmAesCtrParams params = convertDictionary<CryptoAlgorithmAesCtrParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             if (!isAcceptableVectorSource(params.counter))
                 return Exception { OperationError, "Input data is too large"_s };
@@ -184,7 +185,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             break;
         }
         case CryptoAlgorithmIdentifier::AES_GCM: {
-            auto params = convertDictionary<CryptoAlgorithmAesGcmParams>(state, value.get());
+            CryptoAlgorithmAesGcmParams params = convertDictionary<CryptoAlgorithmAesGcmParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             if (!isAcceptableVectorSource(params.iv) || !isAcceptableVectorSource(params.additionalData))
                 return Exception { OperationError, "Input data is too large"_s };
@@ -192,7 +193,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             break;
         }
         case CryptoAlgorithmIdentifier::ChaCha20_Poly1305: {
-            auto params = convertDictionary<CryptoAlgorithmAeadParams>(state, value.get());
+            CryptoAlgorithmAeadParams params = convertDictionary<CryptoAlgorithmAeadParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             if (!isAcceptableVectorSource(params.iv) || !isAcceptableVectorSource(params.additionalData))
                 return Exception { OperationError, "Input data is too large"_s };
@@ -212,7 +213,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         case CryptoAlgorithmIdentifier::ECDSA: {
-            auto params = convertDictionary<CryptoAlgorithmEcdsaParams>(state, value.get());
+            CryptoAlgorithmEcdsaParams params = convertDictionary<CryptoAlgorithmEcdsaParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
@@ -222,7 +223,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             break;
         }
         case CryptoAlgorithmIdentifier::RSA_PSS: {
-            auto params = convertDictionary<CryptoAlgorithmRsaPssParams>(state, value.get());
+            CryptoAlgorithmRsaPssParams params = convertDictionary<CryptoAlgorithmRsaPssParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             result = makeUnique<CryptoAlgorithmRsaPssParams>(params);
             break;
@@ -230,7 +231,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::ML_DSA_44:
         case CryptoAlgorithmIdentifier::ML_DSA_65:
         case CryptoAlgorithmIdentifier::ML_DSA_87: {
-            auto params = convertDictionary<CryptoAlgorithmMlDsaParams>(state, value.get());
+            CryptoAlgorithmMlDsaParams params = convertDictionary<CryptoAlgorithmMlDsaParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             if (!isAcceptableVectorSource(params.context))
                 return Exception { OperationError, "Input data is too large"_s };
@@ -264,7 +265,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
         case CryptoAlgorithmIdentifier::RSA_PSS:
         case CryptoAlgorithmIdentifier::RSA_OAEP: {
-            auto params = convertDictionary<CryptoAlgorithmRsaHashedKeyGenParams>(state, value.get());
+            CryptoAlgorithmRsaHashedKeyGenParams params = convertDictionary<CryptoAlgorithmRsaHashedKeyGenParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             if (!isAcceptableVectorSource(params.publicExponent))
                 return Exception { OperationError, "Input data is too large"_s };
@@ -280,13 +281,13 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::AES_GCM:
         case CryptoAlgorithmIdentifier::AES_CFB:
         case CryptoAlgorithmIdentifier::AES_KW: {
-            auto params = convertDictionary<CryptoAlgorithmAesKeyParams>(state, value.get());
+            CryptoAlgorithmAesKeyParams params = convertDictionary<CryptoAlgorithmAesKeyParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             result = makeUnique<CryptoAlgorithmAesKeyParams>(params);
             break;
         }
         case CryptoAlgorithmIdentifier::HMAC: {
-            auto params = convertDictionary<CryptoAlgorithmHmacKeyParams>(state, value.get());
+            CryptoAlgorithmHmacKeyParams params = convertDictionary<CryptoAlgorithmHmacKeyParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
@@ -297,7 +298,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         }
         case CryptoAlgorithmIdentifier::ECDSA:
         case CryptoAlgorithmIdentifier::ECDH: {
-            auto params = convertDictionary<CryptoAlgorithmEcKeyParams>(state, value.get());
+            CryptoAlgorithmEcKeyParams params = convertDictionary<CryptoAlgorithmEcKeyParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             result = makeUnique<CryptoAlgorithmEcKeyParams>(params);
             break;
@@ -331,7 +332,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             newValue->putDirect(vm, vm.propertyNames->name, nameValue);
             newValue->putDirect(vm, Identifier::fromString(vm, "publicKey"_s), publicValue);
 
-            auto params = convertDictionary<CryptoAlgorithmEcdhKeyDeriveParams>(state, newValue);
+            CryptoAlgorithmEcdhKeyDeriveParams params = convertDictionary<CryptoAlgorithmEcdhKeyDeriveParams>(state, newValue);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             result = makeUnique<CryptoAlgorithmEcdhKeyDeriveParams>(params);
             break;
@@ -347,13 +348,13 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             newValue->putDirect(vm, vm.propertyNames->name, nameValue);
             newValue->putDirect(vm, Identifier::fromString(vm, "publicKey"_s), publicValue);
 
-            auto params = convertDictionary<CryptoAlgorithmX25519Params>(state, newValue);
+            CryptoAlgorithmX25519Params params = convertDictionary<CryptoAlgorithmX25519Params>(state, newValue);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             result = makeUnique<CryptoAlgorithmX25519Params>(params);
             break;
         }
         case CryptoAlgorithmIdentifier::HKDF: {
-            auto params = convertDictionary<CryptoAlgorithmHkdfParams>(state, value.get());
+            CryptoAlgorithmHkdfParams params = convertDictionary<CryptoAlgorithmHkdfParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             if (!isAcceptableVectorSource(params.salt) || !isAcceptableVectorSource(params.info))
                 return Exception { OperationError, "Input data is too large"_s };
@@ -365,7 +366,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             break;
         }
         case CryptoAlgorithmIdentifier::PBKDF2: {
-            auto params = convertDictionary<CryptoAlgorithmPbkdf2Params>(state, value.get());
+            CryptoAlgorithmPbkdf2Params params = convertDictionary<CryptoAlgorithmPbkdf2Params>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             if (!isAcceptableVectorSource(params.salt))
                 return Exception { OperationError, "Input data is too large"_s };
@@ -387,7 +388,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5:
         case CryptoAlgorithmIdentifier::RSA_PSS:
         case CryptoAlgorithmIdentifier::RSA_OAEP: {
-            auto params = convertDictionary<CryptoAlgorithmRsaHashedImportParams>(state, value.get());
+            CryptoAlgorithmRsaHashedImportParams params = convertDictionary<CryptoAlgorithmRsaHashedImportParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
@@ -412,7 +413,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         case CryptoAlgorithmIdentifier::HMAC: {
-            auto params = convertDictionary<CryptoAlgorithmHmacKeyParams>(state, value.get());
+            CryptoAlgorithmHmacKeyParams params = convertDictionary<CryptoAlgorithmHmacKeyParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
@@ -423,7 +424,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         }
         case CryptoAlgorithmIdentifier::ECDSA:
         case CryptoAlgorithmIdentifier::ECDH: {
-            auto params = convertDictionary<CryptoAlgorithmEcKeyParams>(state, value.get());
+            CryptoAlgorithmEcKeyParams params = convertDictionary<CryptoAlgorithmEcKeyParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             result = makeUnique<CryptoAlgorithmEcKeyParams>(params);
             break;
@@ -474,13 +475,13 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::AES_GCM:
         case CryptoAlgorithmIdentifier::AES_CFB:
         case CryptoAlgorithmIdentifier::AES_KW: {
-            auto params = convertDictionary<CryptoAlgorithmAesKeyParams>(state, value.get());
+            CryptoAlgorithmAesKeyParams params = convertDictionary<CryptoAlgorithmAesKeyParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             result = makeUnique<CryptoAlgorithmAesKeyParams>(params);
             break;
         }
         case CryptoAlgorithmIdentifier::HMAC: {
-            auto params = convertDictionary<CryptoAlgorithmHmacKeyParams>(state, value.get());
+            CryptoAlgorithmHmacKeyParams params = convertDictionary<CryptoAlgorithmHmacKeyParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             auto hashIdentifier = toHashIdentifier(state, params.hash);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
@@ -557,7 +558,7 @@ static void rejectWithException(Ref<DeferredPromise>&& passedPromise, ExceptionC
     case NotSupportedError:
         passedPromise->reject(ec, "The algorithm is not supported"_s);
         return;
-    case SyntaxError:
+    case JSSyntaxError:
         passedPromise->reject(ec, "A required parameter was missing or out-of-range"_s);
         return;
     case InvalidStateError:
@@ -600,7 +601,7 @@ static std::optional<KeyData> toKeyData(SubtleCrypto::KeyFormat format, SubtleCr
     case SubtleCrypto::KeyFormat::RawSecret:
     case SubtleCrypto::KeyFormat::RawPublic:
     case SubtleCrypto::KeyFormat::RawSeed:
-        return std::visit(
+        return WTF::visit(
             WTF::makeVisitor(
                 [&promise](JsonWebKey&) -> std::optional<KeyData> {
                     // The importKey binding rejects object keyData for buffer
@@ -619,7 +620,7 @@ static std::optional<KeyData> toKeyData(SubtleCrypto::KeyFormat format, SubtleCr
                 }),
             keyDataVariant);
     case SubtleCrypto::KeyFormat::Jwk:
-        return std::visit(
+        return WTF::visit(
             WTF::makeVisitor(
                 [](JsonWebKey& webKey) -> std::optional<KeyData> {
                     normalizeJsonWebKey(webKey);
@@ -999,18 +1000,18 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis](KeyOrKeyPair&& keyOrKeyPair) mutable {
         if (auto promise = getPromise(index, weakThis)) {
-            std::visit(
+            WTF::visit(
                 WTF::makeVisitor(
                     [&promise](RefPtr<CryptoKey>& key) {
                         if ((key->type() == CryptoKeyType::Private || key->type() == CryptoKeyType::Secret) && !key->usagesBitmap()) {
-                            rejectWithException(promise.releaseNonNull(), SyntaxError, "Usages cannot be empty when creating a key."_s);
+                            rejectWithException(promise.releaseNonNull(), JSSyntaxError, "Usages cannot be empty when creating a key."_s);
                             return;
                         }
                         promise->resolve<IDLInterface<CryptoKey>>(*key);
                     },
                     [&promise](CryptoKeyPair& keyPair) {
                         if (!keyPair.privateKey->usagesBitmap()) {
-                            rejectWithException(promise.releaseNonNull(), SyntaxError, "Usages cannot be empty when creating a key."_s);
+                            rejectWithException(promise.releaseNonNull(), JSSyntaxError, "Usages cannot be empty when creating a key."_s);
                             return;
                         }
                         promise->resolve<IDLDictionary<CryptoKeyPair>>(keyPair);
@@ -1090,7 +1091,7 @@ void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& a
         auto callback = [index, weakThis](CryptoKey& key) mutable {
             if (auto promise = getPromise(index, weakThis)) {
                 if ((key.type() == CryptoKeyType::Private || key.type() == CryptoKeyType::Secret) && !key.usagesBitmap()) {
-                    rejectWithException(promise.releaseNonNull(), SyntaxError,
+                    rejectWithException(promise.releaseNonNull(), JSSyntaxError,
                         key.type() == CryptoKeyType::Private
                             ? "Usages cannot be empty when importing a private key."_s
                             : "Usages cannot be empty when importing a secret key."_s);
@@ -1271,7 +1272,7 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
     auto callback = [index, weakThis](CryptoKey& key) mutable {
         if (auto promise = getPromise(index, weakThis)) {
             if ((key.type() == CryptoKeyType::Private || key.type() == CryptoKeyType::Secret) && !key.usagesBitmap()) {
-                rejectWithException(promise.releaseNonNull(), SyntaxError,
+                rejectWithException(promise.releaseNonNull(), JSSyntaxError,
                     key.type() == CryptoKeyType::Private
                         ? "Usages cannot be empty when importing a private key."_s
                         : "Usages cannot be empty when importing a secret key."_s);
@@ -1569,7 +1570,7 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                         promise->reject(DataError, "WrappedKey cannot be converted to a JSON object"_s);
                         return;
                     }
-                    auto jwk = convert<IDLDictionary<JsonWebKey>>(state, jwkObject);
+                    JsonWebKey jwk = convert<IDLDictionary<JsonWebKey>>(state, jwkObject);
                     if (scope.exception()) [[unlikely]] {
                         weakThis->m_pendingPromises.remove(index);
                         promise->reject(Exception { ExistingExceptionError });
@@ -1585,7 +1586,7 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                 auto callback = [index, weakThis](CryptoKey& key) mutable {
                     if (auto promise = getPromise(index, weakThis)) {
                         if ((key.type() == CryptoKeyType::Private || key.type() == CryptoKeyType::Secret) && !key.usagesBitmap()) {
-                            rejectWithException(promise.releaseNonNull(), SyntaxError,
+                            rejectWithException(promise.releaseNonNull(), JSSyntaxError,
                                 key.type() == CryptoKeyType::Private
                                     ? "Usages cannot be empty when importing a private key."_s
                                     : "Usages cannot be empty when importing a secret key."_s);
@@ -1790,7 +1791,7 @@ void SubtleCrypto::encapsulateKey(JSC::JSGlobalObject& state, AlgorithmIdentifie
         auto keyCallback = [index, weakThis, ciphertext = WTF::move(ciphertext)](CryptoKey& sharedKey) mutable {
             if (auto promise = getPromise(index, weakThis)) {
                 if ((sharedKey.type() == CryptoKeyType::Private || sharedKey.type() == CryptoKeyType::Secret) && !sharedKey.usagesBitmap()) {
-                    rejectWithException(promise.releaseNonNull(), SyntaxError, "Usages cannot be empty when importing a secret key."_s);
+                    rejectWithException(promise.releaseNonNull(), JSSyntaxError, "Usages cannot be empty when importing a secret key."_s);
                     return;
                 }
                 auto ciphertextBuffer = ArrayBuffer::tryCreate(ciphertext.span());
@@ -1915,7 +1916,7 @@ void SubtleCrypto::decapsulateKey(JSC::JSGlobalObject& state, AlgorithmIdentifie
         auto keyCallback = [index, weakThis](CryptoKey& sharedKey) mutable {
             if (auto promise = getPromise(index, weakThis)) {
                 if ((sharedKey.type() == CryptoKeyType::Private || sharedKey.type() == CryptoKeyType::Secret) && !sharedKey.usagesBitmap()) {
-                    rejectWithException(promise.releaseNonNull(), SyntaxError, "Usages cannot be empty when importing a secret key."_s);
+                    rejectWithException(promise.releaseNonNull(), JSSyntaxError, "Usages cannot be empty when importing a secret key."_s);
                     return;
                 }
                 promise->resolve<IDLInterface<CryptoKey>>(sharedKey);

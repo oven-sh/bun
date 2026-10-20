@@ -27,7 +27,7 @@
 
 namespace WebCore {
 
-template<> CryptoAlgorithmX25519Params convertDictionary<CryptoAlgorithmX25519Params>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> ConversionResult<IDLDictionary<CryptoAlgorithmX25519Params>> convertDictionary<CryptoAlgorithmX25519Params>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore
 

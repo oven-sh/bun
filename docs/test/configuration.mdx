@@ -85,6 +85,81 @@ mock.module("./external-api", () => ({
 }));
 ```
 
+### Environment
+
+`environment` sets the DOM that test files run with. It can be `"happy-dom"`, `"jsdom"`, or `"node"` for no DOM (the default). The package has to be installed in your project. See [DOM testing](/test/dom#test-environments).
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+environment = "happy-dom"
+```
+
+The `--environment` flag does the same thing and overrides `bunfig.toml`:
+
+```bash terminal icon="terminal"
+bun test --environment=happy-dom
+```
+
+A `// @vitest-environment <name>` comment in a test file overrides both. So does a `/** @jest-environment <name> */` comment at the very top of the file.
+
+### Globals
+
+By default, `test`, `expect` and the other globals come from `"bun:test"`. A file that imports anything from `"vitest"` gets them from `"vitest"` instead. If that file is a test file or a preload script, so do the modules it loads.
+
+Set `globals = "vitest"` to get them from `"vitest"` in every file, like `globals: true` in a Vitest project. See [what differs](/test/writing-tests#importing-from-vitest).
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+globals = "vitest" # default "bun"
+```
+
+The `--globals` flag overrides `bunfig.toml`. Write it with `=`, as in `--globals=vitest`.
+
+- With `globals = "vitest"`, the names are also properties of `globalThis`, as in Vitest. Some packages look for `globalThis.afterEach` there.
+- Imports from `"bun:test"` and `"@jest/globals"` keep those modules' behavior.
+- `true` and `false`, the values Vitest takes, are accepted and change nothing. So is `--globals` without a value.
+- If a preload script sets one of these globals itself (`globalThis.expect = chai.expect`), files that import from `"bun:test"`, `"@jest/globals"` or `"vitest"` keep the preload's value.
+- As in Vitest, the `"vitest"` globals don't include `jest`, `xit`, `xtest` or `xdescribe`.
+- A module keeps the globals it was first loaded with. With `--isolate`, it keeps them until the next file. So a library loaded by a preload script sees `jest`, unless that script imports from `"vitest"` or `globals = "vitest"` is set.
+
+Libraries such as `@testing-library/dom` look for a global `jest` and use it to advance fake timers while they wait. Without one, they leave the clock alone. To make them advance it, use `vi.useFakeTimers({ shouldAdvanceTime: true })` or set `globalThis.jest = { advanceTimersByTime: ms => vi.advanceTimersByTime(ms) }`.
+
+### React Compiler
+
+`bun test` can compile your components and hooks with Bun's built-in [React Compiler](https://react.dev/learn/react-compiler), so that your tests run what your build ships. The compiled code imports `react/compiler-runtime`, which React 19 has. This option is experimental.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+reactCompiler = true # default false
+```
+
+Bun compiles every JavaScript and TypeScript file except test files, preload scripts and `node_modules`. It leaves alone a file or a function that has the `"use no memo"` directive, and a function that breaks the [Rules of React](https://react.dev/reference/rules).
+
+To compile part of a project, list folders or glob patterns. They are relative to the directory you run `bun test` in.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+reactCompiler = ["src", "packages/ui"]
+```
+
+Use a table to leave out some of what's in them:
+
+```toml title="bunfig.toml" icon="settings"
+[test.reactCompiler]
+include = ["src", "packages/ui"]
+exclude = ["**/*.stories.*", "**/__mocks__/**"]
+```
+
+- A folder includes everything inside it. `"."` is the directory you run `bun test` in, and `"../../packages/ui"` is a folder outside of it.
+- A glob pattern is matched against the file's path relative to that directory. `**` also matches `..`, so `**/*.stories.*` applies to the folders outside of it too.
+- A workspace package that is linked into `node_modules` is compiled. List it by its real path, like `"../../packages/ui"`.
+
+The `--react-compiler` flag turns the compiler on for one run. It compiles what `bunfig.toml` includes, or every file if `bunfig.toml` doesn't say.
+
+- What `importOriginal()` and `vi.importActual()` load is compiled like any other import of that file.
+- A module that isn't a file, like a `data:` URL, isn't compiled.
+- To check that a function was compiled, look for its cache in the source: `/\$\d*\[\d+\]/.test(String(Component))`.
+
 ### Path Ignore Patterns
 
 `pathIgnorePatterns` excludes files and directories from test discovery entirely, using glob patterns. Unlike `coveragePathIgnorePatterns`, which only affects coverage reports, `pathIgnorePatterns` prevents Bun from discovering matching paths and running them as tests.
@@ -255,6 +330,21 @@ Re-run each test file multiple times to identify flaky tests:
 [test]
 rerunEach = 3
 ```
+
+#### clearMocks, mockReset, restoreMocks, unstubEnvs, unstubGlobals
+
+Clean up the previous test's mocks and stubs. The cleanup runs before each test and each retry, ahead of the `beforeEach` hooks. The option names and the order they run in are the same as Vitest's:
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+restoreMocks = true   # mock.restore() / vi.restoreAllMocks()
+mockReset = true      # vi.resetAllMocks()
+clearMocks = true     # mock.clearAllMocks()
+unstubEnvs = true     # vi.unstubAllEnvs()
+unstubGlobals = true  # vi.unstubAllGlobals()
+```
+
+They're all off by default, except that `clearMocks` is on for tests that use `test` from `"vitest"`, like in Vitest 5. Set `clearMocks = false` to turn that off. `vi.setConfig({ clearMocks: true })` changes an option for the rest of the test file.
 
 ## Coverage Options
 

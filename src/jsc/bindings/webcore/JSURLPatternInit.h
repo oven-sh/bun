@@ -25,7 +25,7 @@
 
 namespace WebCore {
 
-template<> URLPatternInit convertDictionary<URLPatternInit>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> ConversionResult<IDLDictionary<URLPatternInit>> convertDictionary<URLPatternInit>(JSC::JSGlobalObject&, JSC::JSValue);
 
 JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject&, JSDOMGlobalObject&, const URLPatternInit&);
 

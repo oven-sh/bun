@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include "JSDOMClassSetup.h"
 #include "JSDOMConstructorBase.h"
 #include "ErrorCode.h"
 
@@ -38,7 +39,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject& globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, &globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return createDOMStructure(vm, &globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
     DECLARE_INFO;

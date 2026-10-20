@@ -19,7 +19,10 @@ use bun_parsers::toml::TOML;
 use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::LoaderExt as _;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
-use bun_options_types::context::{MacroImportReplacementMap, MacroMap, MacroOptions};
+use bun_options_types::context::{
+    MacroImportReplacementMap, MacroMap, MacroOptions, RESETS_BEFORE_EACH_TEST, ReactCompilerScope,
+    TestEnvironment, TestGlobals,
+};
 use bun_options_types::global_cache::GlobalCache;
 use bun_options_types::offline_mode::PREFER as OFFLINE_PREFER;
 use bun_options_types::schema::api;
@@ -168,6 +171,28 @@ pub(crate) enum Counts {
 }
 
 impl<'a> Parser<'a, '_> {
+    /// A string or an array of strings.
+    fn strings(&mut self, expr: &Expr, error: &'static [u8]) -> crate::Result<Vec<Box<[u8]>>> {
+        match &expr.data {
+            ExprData::EString(s) => Ok(vec![estring_to_owned(s, self.bump)]),
+            ExprData::EArray(array) => {
+                let mut strings = Vec::with_capacity(array.items.slice().len());
+                for item in array.items.slice() {
+                    let ExprData::EString(s) = &item.data else {
+                        self.add_error(item.loc, error)?;
+                        unreachable!();
+                    };
+                    strings.push(estring_to_owned(s, self.bump));
+                }
+                Ok(strings)
+            }
+            _ => {
+                self.add_error(expr.loc, error)?;
+                unreachable!();
+            }
+        }
+    }
+
     fn add_error(&mut self, loc: bun_ast::Loc, text: &'static [u8]) -> crate::Result<()> {
         self.log.add_error_opts(
             text,
@@ -462,6 +487,79 @@ impl<'a> Parser<'a, '_> {
                         expr.as_bool().expect("infallible: type checked");
                 }
 
+                if let Some(expr) = test.get(b"environment") {
+                    self.expect_string(&expr)?;
+                    let name = expr.as_string(self.bump).unwrap_or(b"");
+                    let Some(environment) = TestEnvironment::from_name(name) else {
+                        return self.add_error_format(
+                            expr.loc,
+                            format_args!(
+                                "expected \"environment\" to be \"node\", \"jsdom\" or \"happy-dom\" but received \"{}\"",
+                                bstr::BStr::new(name)
+                            ),
+                        );
+                    };
+                    // --environment is parsed first and wins.
+                    if self.ctx.test_options.environment.is_none() {
+                        self.ctx.test_options.environment = Some(environment);
+                    }
+                }
+
+                // Vitest's `globals` is a boolean, and Bun always defines the globals.
+                if let Some(expr) = test.get(b"globals")
+                    && !matches!(expr.data, ExprData::EBoolean(_))
+                {
+                    self.expect_string(&expr)?;
+                    let name = expr.as_string(self.bump).unwrap_or(b"");
+                    let Some(globals) = TestGlobals::from_name(name) else {
+                        return self.add_error_format(
+                            expr.loc,
+                            format_args!(
+                                "expected \"globals\" to be \"bun\" or \"vitest\" but received \"{}\"",
+                                bstr::BStr::new(name)
+                            ),
+                        );
+                    };
+                    // --globals is parsed first and wins.
+                    if self.ctx.test_options.globals.is_none() {
+                        self.ctx.test_options.globals = Some(globals);
+                    }
+                }
+
+                if let Some(expr) = test.get(b"reactCompiler") {
+                    let mut scope = ReactCompilerScope::default();
+                    match &expr.data {
+                        // --react-compiler is parsed first and wins.
+                        ExprData::EBoolean(enabled) => {
+                            if enabled.value && self.ctx.test_options.react_compiler.is_none() {
+                                self.ctx.test_options.react_compiler = Some(scope);
+                            }
+                        }
+                        ExprData::EObject(_) => {
+                            if let Some(include) = expr.get(b"include") {
+                                scope.include = self.strings(
+                                    &include,
+                                    b"reactCompiler.include must be a string or array of strings",
+                                )?;
+                            }
+                            if let Some(exclude) = expr.get(b"exclude") {
+                                scope.exclude = self.strings(
+                                    &exclude,
+                                    b"reactCompiler.exclude must be a string or array of strings",
+                                )?;
+                            }
+                            self.ctx.test_options.react_compiler = Some(scope);
+                        }
+                        _ => {
+                            scope.include = self.strings(
+                                &expr,
+                                b"reactCompiler must be a boolean, an array of folders, or a table with \"include\" and \"exclude\"",
+                            )?;
+                            self.ctx.test_options.react_compiler = Some(scope);
+                        }
+                    }
+                }
+
                 if let Some(expr) = test.get(b"coverage") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.coverage.enabled =
@@ -485,6 +583,26 @@ impl<'a> Parser<'a, '_> {
                                     Some(estring_to_owned(s, self.bump));
                             }
                         }
+                    }
+                    if let Some(suites_expr) = expr.get(b"junitSuites") {
+                        self.expect_string(&suites_expr)?;
+                        let name = suites_expr.as_string(self.bump).unwrap_or(b"");
+                        let Some(suites) = bun_options_types::context::JunitSuites::from_name(name)
+                        else {
+                            return self.add_error_format(
+                                suites_expr.loc,
+                                format_args!(
+                                    "expected \"junitSuites\" to be \"nested\" or \"flat\" but received \"{}\"",
+                                    bstr::BStr::new(name)
+                                ),
+                            );
+                        };
+                        // --reporter-junit-suites is parsed first and wins.
+                        self.ctx
+                            .test_options
+                            .reporters
+                            .junit_suites
+                            .get_or_insert(suites);
                     }
                     if let Some(dots_expr) = expr.get(b"dots").or_else(|| expr.get(b"dot")) {
                         self.expect(&dots_expr, ExprTag::EBoolean)?;
@@ -569,6 +687,13 @@ impl<'a> Parser<'a, '_> {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.coverage.skip_test_files =
                         expr.as_bool().expect("infallible: type checked");
+                }
+
+                for (index, name) in RESETS_BEFORE_EACH_TEST.iter().enumerate() {
+                    if let Some(expr) = test.get(name.as_bytes()) {
+                        self.expect(&expr, ExprTag::EBoolean)?;
+                        self.ctx.test_options.resets_before_each_test[index] = expr.as_bool();
+                    }
                 }
 
                 let mut randomize_from_config: Option<bool> = None;

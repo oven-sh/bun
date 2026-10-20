@@ -25,14 +25,12 @@ pub(crate) fn to_be_instance_of(
     }
 
     this.increment_expect_call_counter();
-    let mut formatter = super::make_formatter(global);
-    // `defer formatter.deinit()` → handled by Drop.
 
     let expected_value = arguments[0];
     if !expected_value.is_constructor() {
         return Err(global.throw(format_args!(
             "Expected value must be a function: {}",
-            expected_value.to_fmt(&mut formatter),
+            expected_value.to_fmt(&mut super::make_formatter(global)),
         )));
     }
     expected_value.ensure_still_alive();
@@ -52,6 +50,7 @@ pub(crate) fn to_be_instance_of(
     // handle failure
     // Two live `to_fmt(&mut Formatter)` wrappers alias the same formatter under
     // borrowck — use a second Formatter for the second value (matches toBe.rs / toInclude.rs).
+    let mut formatter = super::make_formatter(global);
     let mut formatter2 = super::make_formatter(global);
     let expected_fmt = expected_value.to_fmt(&mut formatter);
     let value_fmt = value.to_fmt(&mut formatter2);

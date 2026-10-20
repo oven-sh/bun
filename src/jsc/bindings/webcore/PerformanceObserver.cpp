@@ -28,6 +28,7 @@
 
 #include "Performance.h"
 #include "PerformanceObserverEntryList.h"
+#include "ZigGlobalObject.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {

@@ -12,7 +12,9 @@ const failing = (name: string) =>
 
 // The hostname and the time attributes differ per run. Everything else is stable.
 function normalizeJUnit(xml: string) {
-  return xml.replace(/ time="[^"]*"/g, ' time="<time>"').replace(/ hostname="[^"]*"/g, ' hostname="<hostname>"');
+  return xml
+    .replace(/ time="[^"]*"/g, ' time="<time>"')
+    .replace(/ hostname="[^"]*" timestamp="[^"]*"/g, ' hostname="<hostname>"');
 }
 
 // The reporter adds a <properties> block to each testsuite when one of these is set.

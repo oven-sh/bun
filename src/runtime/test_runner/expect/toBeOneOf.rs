@@ -32,6 +32,7 @@ extern "C" fn same_value_iterator(
 
 // Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
 // `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
+#[optimize(size)]
 pub(crate) fn to_be_one_of(
     this: &Expect,
     global_this: &JSGlobalObject,

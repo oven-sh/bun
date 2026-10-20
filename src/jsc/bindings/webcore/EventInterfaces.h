@@ -27,12 +27,39 @@
 
 namespace WebCore {
 
-enum EventInterface {
-    CloseEventInterfaceType = 54,
-    CustomEventInterfaceType = 56,
-    ErrorEventInterfaceType = 58,
-    EventInterfaceType = 59,
-    MessageEventInterfaceType = 67,
+enum class EventInterfaceType : uint8_t {
+    Invalid = 0,
+    Event = 1,
+    BeforeUnloadEvent = 2,
+    ClipboardEvent = 3,
+    CloseEvent = 4,
+    CommandEvent = 5,
+    CompositionEvent = 6,
+    CustomEvent = 7,
+    DragEvent = 8,
+    ErrorEvent = 9,
+    FocusEvent = 10,
+    FormDataEvent = 11,
+    HashChangeEvent = 12,
+    InputEvent = 13,
+    KeyboardEvent = 14,
+    MessageEvent = 15,
+    MouseEvent = 16,
+    MutationEvent = 17,
+    PageTransitionEvent = 18,
+    PointerEvent = 19,
+    PopStateEvent = 20,
+    ProgressEvent = 21,
+    PromiseRejectionEvent = 22,
+    StorageEvent = 23,
+    SubmitEvent = 24,
+    TextEvent = 25,
+    ToggleEvent = 26,
+    UIEvent = 27,
+    WheelEvent = 28,
+    CSSAnimationEvent = 29,
+    CSSTransitionEvent = 30,
+    TouchEvent = 31,
 };
 
 } // namespace WebCore

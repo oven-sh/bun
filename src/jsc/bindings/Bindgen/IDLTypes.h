@@ -9,6 +9,14 @@
 
 namespace Bun {
 struct MimallocMalloc;
+
+// Like `WebCore::IDLSequence`, but the caller picks the container.
+template<typename IDL, typename VectorType>
+struct IDLSequenceWithStorage : WebCore::IDLType<VectorType> {
+    using InnerType = IDL;
+    using ParameterType = const VectorType&;
+    using NullableParameterType = const std::optional<VectorType>&;
+};
 }
 
 namespace Bun::Bindgen {
@@ -40,7 +48,7 @@ struct IDLLooseInteger : IDLStrictInteger<T> {};
 
 namespace Detail {
 template<typename IDL>
-using IDLMimallocSequence = WebCore::IDLSequence<
+using IDLMimallocSequence = IDLSequenceWithStorage<
     IDL,
     WTF::Vector<
         typename IDL::SequenceStorageType,
@@ -59,6 +67,7 @@ template<typename T, typename RefDerefTraits = WTF::DefaultRefDerefTraits<T>>
 struct IDLRef : WebCore::IDLType<WTF::RefPtr<T, WTF::RawPtrTraits<T>, RefDerefTraits>> {
     using NullableType = WTF::RefPtr<T, WTF::RawPtrTraits<T>, RefDerefTraits>;
     using NullableInnerParameterType = NullableType;
+    using NullableConversionResultType = NullableType;
 
     static inline std::nullptr_t nullValue() { return nullptr; }
 };
@@ -85,6 +94,7 @@ struct IDLStrictUTF8String : WebCore::IDLType<JSStringUTF8View> {
     using SequenceStorageType = void;
     using NullableType = JSStringUTF8View;
     using NullableInnerParameterType = JSStringUTF8View;
+    using NullableConversionResultType = JSStringUTF8View;
     static JSStringUTF8View nullValue() { return {}; }
 };
 // `ToString`.
@@ -97,6 +107,7 @@ struct IDLBufferSourceBytes : WebCore::IDLType<std::span<const uint8_t>> {
     using SequenceStorageType = void;
     using NullableType = std::span<const uint8_t>;
     using NullableInnerParameterType = std::span<const uint8_t>;
+    using NullableConversionResultType = std::span<const uint8_t>;
     static NullableType nullValue() { return {}; }
 };
 
@@ -111,6 +122,7 @@ struct IDLRawInterface : WebCore::IDLType<JSClass*> {
     using SequenceStorageType = void;
     using NullableType = JSClass*;
     using NullableInnerParameterType = JSClass*;
+    using NullableConversionResultType = JSClass*;
     static JSClass* nullValue() { return nullptr; }
 };
 

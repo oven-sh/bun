@@ -30,7 +30,7 @@
 namespace WebCore {
 using namespace JSC;
 
-template<> AddEventListenerOptions convertDictionary<AddEventListenerOptions>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+template<> ConversionResult<IDLDictionary<AddEventListenerOptions>> convertDictionary<AddEventListenerOptions>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -84,8 +84,9 @@ template<> AddEventListenerOptions convertDictionary<AddEventListenerOptions>(JS
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!signalValue.isUndefined()) {
-        result.signal = convert<IDLInterface<AbortSignal>>(lexicalGlobalObject, signalValue);
+        auto signalConversionResult = convert<IDLInterface<AbortSignal>>(lexicalGlobalObject, signalValue);
         RETURN_IF_EXCEPTION(throwScope, {});
+        result.signal = signalConversionResult.releaseReturnValue();
     }
     // Bun extension, keyed off a private symbol that only internal modules can
     // reach. See AddEventListenerOptions::resistStopPropagation.

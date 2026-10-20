@@ -103,7 +103,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
     // Check arguments
     JSValue initValue = callFrame->argument(0);
 
-    std::variant<Vector<Vector<String>>, HashMap<String, String>, String> init;
+    Variant<Vector<Vector<String>>, HashMap<String, String>, String> init;
 
     String initString;
     if (initValue.isString()) {
@@ -167,7 +167,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
             Vector<Vector<String>> seqSeq;
 
             PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-            JSObject::getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Include);
+            object->methodTable()->getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Exclude);
             RETURN_IF_EXCEPTION(throwScope, {});
 
             for (const auto& propertyName : propertyNames) {
@@ -311,7 +311,7 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_getBody(JSC::JSGl
     JSValue arg0 = callFrame->uncheckedArgument(0);
 
     // Handle single string argument (name)
-    auto name = convert<IDLUSVString>(*lexicalGlobalObject, arg0);
+    String name = convert<IDLUSVString>(*lexicalGlobalObject, arg0);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     std::optional<WTF::String> value = impl.get(name);
@@ -361,7 +361,7 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_hasBody(JSC::JSGl
     if (callFrame->argumentCount() < 1)
         return JSValue::encode(jsBoolean(false));
 
-    auto name = convert<IDLUSVString>(*lexicalGlobalObject, callFrame->uncheckedArgument(0));
+    String name = convert<IDLUSVString>(*lexicalGlobalObject, callFrame->uncheckedArgument(0));
     RETURN_IF_EXCEPTION(throwScope, {});
 
     return JSValue::encode(jsBoolean(impl.has(name)));

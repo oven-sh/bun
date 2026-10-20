@@ -46,6 +46,56 @@ test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID
   expect(c2).toBe(0);
 });
 
+test.each([
+  ["--parallel=2", ["a.test.js", "b.test.js", "c.test.js"], /^(1,1,1,1|2,2,2,2)$/],
+  // These two fall back to a serial run.
+  ["--parallel=1", ["a.test.js", "b.test.js"], /^1,1,1,1$/],
+  ["--parallel=4", ["a.test.js"], /^1,1,1,1$/],
+])("%s: VITEST_POOL_ID and VITEST_WORKER_ID are the worker's index too", async (flag, files, ids) => {
+  const fixture = `console.log("IDS=" + [process.env.JEST_WORKER_ID, process.env.VITEST_POOL_ID, process.env.VITEST_WORKER_ID, import.meta.env.VITEST_POOL_ID]);`;
+  using dir = tempDir("parallel-vitest-ids", Object.fromEntries(files.map(file => [file, fixture])));
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", flag],
+    // Inherited values must be overwritten.
+    env: { ...bunEnv, VITEST_POOL_ID: "inherited", VITEST_WORKER_ID: "inherited" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const seen = [...(stdout + stderr).matchAll(/IDS=(.*)/g)].map(match => match[1]);
+  expect(seen).toEqual(files.map(() => expect.stringMatching(ids)));
+  expect(exitCode).toBe(0);
+});
+
+test.each([[[]], [["--isolate"]]])(
+  "without --parallel VITEST_POOL_ID and VITEST_WORKER_ID are 1 and JEST_WORKER_ID is not set: %j",
+  async flags => {
+    const fixture = `console.log("IDS=" + JSON.stringify([process.env.JEST_WORKER_ID, process.env.BUN_TEST_WORKER_ID, process.env.VITEST_POOL_ID, process.env.VITEST_WORKER_ID, import.meta.env.VITEST_POOL_ID]));`;
+    using dir = tempDir("serial-vitest-ids", { "a.test.js": fixture, "b.test.js": fixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...flags],
+      env: {
+        ...bunEnv,
+        JEST_WORKER_ID: undefined,
+        BUN_TEST_WORKER_ID: undefined,
+        VITEST_POOL_ID: "inherited",
+        VITEST_WORKER_ID: "inherited",
+      },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const seen = [...(stdout + stderr).matchAll(/IDS=(.*)/g)].map(match => JSON.parse(match[1]));
+    expect(seen).toEqual([
+      [null, null, "1", "1", "1"],
+      [null, null, "1", "1", "1"],
+    ]);
+    expect(exitCode).toBe(0);
+  },
+);
+
 test("--parallel runs files across workers and aggregates totals", async () => {
   using dir = tempDir("parallel-basic", {
     "a.test.js": `import {test,expect} from "bun:test"; test("a1",()=>expect(1).toBe(1)); test("a2",()=>expect(1).toBe(1));`,
@@ -201,6 +251,37 @@ test("--parallel forwards -t to workers", async () => {
   // Only keep_a and keep_c run; drop_* tests would fail if executed.
   expect(stderr).toContain("2 pass");
   expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
+test("--parallel: the workers read the file that --config names, and not ./bunfig.toml", async () => {
+  const file = `
+    import { expect, test, vi } from "vitest";
+    const fn = vi.fn();
+    test("first", () => void fn());
+    test("second", () => { console.log(JSON.stringify([fn.mock.calls.length, globalThis.preloads])); });
+  `;
+  using dir = tempDir("parallel-config", {
+    "a.test.js": file,
+    "b.test.js": file,
+    "bunfig.toml": `[test]\npreload = ["./not-named.js"]`,
+    "other/named.toml": `[test]\nclearMocks = false\npreload = ["./named.js"]`,
+    "not-named.js": `(globalThis.preloads ??= []).push("not named");`,
+    "named.js": `(globalThis.preloads ??= []).push("named");`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--config=other/named.toml", "test", "--parallel=2"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // What a worker prints comes out with the report.
+  expect((stdout + stderr).split("\n").filter(line => line.startsWith("["))).toEqual(Array(2).fill(`[1,["named"]]`));
+  expect(stderr).toContain("4 pass");
   expect(exitCode).toBe(0);
 });
 
@@ -398,6 +479,57 @@ test.skipIf(isWindows)(
   isASAN || isDebug ? 60_000 : 20_000,
 );
 
+test.skipIf(isWindows)(
+  "--parallel: the JUnit report has a failure for every file that an abort cut short or left out",
+  async () => {
+    const passes = `import {test} from "bun:test"; test("passes", () => {});`;
+    using dir = tempDir("parallel-abort-junit", {
+      "a-cut-short.test.js": `import {test} from "bun:test"; import {writeFileSync} from "node:fs";
+        test("finished", () => {});
+        test("hang", async () => { writeFileSync("one-finished", ""); await new Promise(() => {}); }, 999999);`,
+      // The first worker never gets past the file above, so some of these are never started.
+      "b1.test.js": passes,
+      "b2.test.js": passes,
+      "b3.test.js": passes,
+      "b4.test.js": passes,
+      "z-fastfail.test.js": `import {test} from "bun:test"; import {existsSync} from "node:fs"; import { crash_handler } from "bun:internal-for-testing";
+        test("fastfail", async () => { while (!existsSync("one-finished")) await Bun.sleep(1); crash_handler.fastfail(); }, 999999);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--reporter=junit", "--reporter-outfile=junit.xml"],
+      env: {
+        ...bunEnv,
+        BUN_TEST_PARALLEL_SCALE_MS: "0",
+        BUN_CRASH_REPORT_URL: "",
+        BUN_ENABLE_CRASH_REPORTING: "0",
+      },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const aborted = [...stderr.matchAll(/ (\S+\.test\.js) \((aborted: [^)]+)\)/g)].map(([, file, reason]) => [
+      file,
+      reason,
+    ]);
+    expect(aborted).toContainEqual(["a-cut-short.test.js", "aborted: sibling worker panicked"]);
+    expect(aborted.map(([, reason]) => reason)).toContain("aborted: worker panicked");
+
+    const xml = await Bun.file(path.join(String(dir), "junit.xml")).text();
+    const suites = Object.fromEntries(
+      xml.split("<testsuite ").map(suite => [suite.match(/^name="([^"]+)"/)?.[1], suite]),
+    );
+    for (const [file, reason] of aborted) {
+      expect(suites[file]).toContain(`<testcase name="(aborted)"`);
+      expect(suites[file]).toContain(`message="${reason}"`);
+    }
+    expect(suites["a-cut-short.test.js"]).toContain(`<testcase name="finished"`);
+    expect(suites["a-cut-short.test.js"]).toMatch(/^name="a-cut-short.test.js" [^>]*tests="2" [^>]*failures="1"/);
+    expect(exitCode).not.toBe(0);
+  },
+  isASAN || isDebug ? 60_000 : 20_000,
+);
+
 test("--parallel prints per-test lines under their file's header", async () => {
   using dir = tempDir("parallel-output", {
     "a.test.js": `import {test,expect} from "bun:test";
@@ -570,7 +702,7 @@ test("--parallel --reporter=junit writes the same document as a serial run", asy
     // Per-file <testsuite> blocks keyed by file, with timings and hostname masked.
     const suites: Record<string, string> = {};
     for (const m of xml
-      .replace(/ (time|hostname)="[^"]*"/g, "")
+      .replace(/ (time|hostname|timestamp)="[^"]*"/g, "")
       .matchAll(/^  <testsuite name="([^"]+)"[^]*?^  <\/testsuite>\n/gm)) {
       suites[m[1]] = m[0];
     }
@@ -769,6 +901,38 @@ test("--parallel --dots prints one status character per test", async () => {
   expect(stderr).toContain("6 pass");
   expect(stderr).toContain("1 skip");
   expect(stderr).toContain("1 fail");
+  expect(exitCode).toBe(1);
+});
+
+test("--parallel prints what a file printed under that file's name", async () => {
+  const files: Record<string, string> = {};
+  for (let i = 10; i < 50; i++) {
+    files[`f${i}.test.js`] = `import {test} from "bun:test";
+      test("fails", () => { throw new Error("thrown in f${i}"); });
+      test("logs", () => { console.log("logged in f${i}"); console.error("warned in f${i}"); });`;
+  }
+  using dir = tempDir("parallel-output-of-a-file", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=4"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  let file = "";
+  let count = 0;
+  const misplaced: string[] = [];
+  for (const line of stderr.split("\n")) {
+    const printed = line.match(/^(?:error: thrown|logged|warned) in (f\d+)$/);
+    file = line.match(/^(f\d+)\.test\.js:$/)?.[1] ?? file;
+    if (!printed) continue;
+    count++;
+    if (printed[1] !== file) misplaced.push(`"${line}" under ${file}`);
+  }
+  expect(misplaced).toEqual([]);
+  expect(count).toBe(120);
   expect(exitCode).toBe(1);
 });
 
@@ -1421,6 +1585,53 @@ test.skipIf(isWindows).each([
   expect(stderr).toContain("Interrupted");
   expect(exitCode).toBe(code);
 });
+
+test.skipIf(isWindows)(
+  "--parallel: the JUnit report tells an interrupted file from one that never started",
+  async () => {
+    const slow = `
+    import { test } from "bun:test";
+    import { appendFileSync } from "fs";
+    test("finished", () => {});
+    test("slow", async () => {
+      appendFileSync(process.env.PIDS, "started\\n");
+      await Bun.sleep(60000);
+    });
+  `;
+    using dir = tempDir("parallel-signal-junit", {
+      "a.test.ts": slow,
+      "b.test.ts": slow,
+      "c.test.ts": slow,
+      "d.test.ts": slow,
+    });
+    const pids = String(dir) + "/pids.txt";
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=0", "--reporter=junit", "--reporter-outfile=out.xml"],
+      env: { ...bunEnv, PIDS: pids },
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    while (
+      [
+        ...(
+          await Bun.file(pids)
+            .text()
+            .catch(() => "")
+        ).matchAll(/^started$/gm),
+      ].length < 2
+    )
+      await Bun.sleep(5);
+    proc.kill("SIGTERM");
+    await proc.exited;
+
+    const xml = await Bun.file(String(dir) + "/out.xml").text();
+    const cases = [...xml.matchAll(/<testcase name="([^"]+)"/g)].map(match => match[1]).sort();
+    expect(cases).toEqual(["(aborted)", "(aborted)", "(interrupted)", "(interrupted)", "finished", "finished"]);
+    expect(xml).toContain(`<testsuites name="bun test" tests="6" assertions="0" failures="4"`);
+  },
+);
 
 test.skipIf(isWindows)(
   "--parallel: a worker that dies mid-file takes the processes its test spawned with it",

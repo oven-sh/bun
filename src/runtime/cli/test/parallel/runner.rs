@@ -32,9 +32,25 @@ use bun_sourcemap_jsc::code_coverage;
 /// module load alone can exceed the production 5ms threshold.
 const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
 
+/// All set to the worker's 1-based index. Vitest instead increments VITEST_WORKER_ID for every file.
+const WORKER_ID_VARIABLES: [&[u8]; 4] = [
+    b"JEST_WORKER_ID",
+    b"BUN_TEST_WORKER_ID",
+    b"VITEST_POOL_ID",
+    b"VITEST_WORKER_ID",
+];
+
+/// Vitest sets these even without workers. JEST_WORKER_ID stays unset because libraries use it to detect Jest.
+pub(crate) fn set_ids_without_workers(env: &mut bun_dotenv::Loader) {
+    for name in [b"VITEST_POOL_ID".as_slice(), b"VITEST_WORKER_ID"] {
+        let _ = env.map.put(name, b"1");
+    }
+}
+
 /// Returns true if files were actually run via the worker pool, false if it
 /// fell back to the sequential path (≤1 effective worker). The caller uses
 /// this to decide whether to run the serial coverage/JUnit reporters.
+#[optimize(size)]
 pub(crate) fn run_as_coordinator(
     reporter: &mut CommandLineReporter,
     vm: *mut VirtualMachine,
@@ -53,8 +69,11 @@ pub(crate) fn run_as_coordinator(
     if k <= 1 {
         // Jest sets JEST_WORKER_ID=1 even with --maxWorkers=1; match that so
         // tests can rely on the var whenever --parallel is passed.
-        let _ = env.map.put(b"JEST_WORKER_ID", b"1");
-        let _ = env.map.put(b"BUN_TEST_WORKER_ID", b"1");
+        for name in WORKER_ID_VARIABLES {
+            let _ = env.map.put(name, b"1");
+        }
+        // SAFETY: see vm_ptr note above.
+        crate::run_command::start_profilers(unsafe { &mut *vm_ptr }, ctx);
         // SAFETY: see vm_ptr note above.
         TestCommand::run_all_tests(reporter, unsafe { &mut *vm_ptr }, files);
         return Ok(false);
@@ -74,8 +93,9 @@ pub(crate) fn run_as_coordinator(
     for i in 0..k {
         let mut id = Vec::new();
         write!(&mut id, "{}", i + 1).unwrap();
-        let _ = env.map.put(b"JEST_WORKER_ID", &id);
-        let _ = env.map.put(b"BUN_TEST_WORKER_ID", &id);
+        for name in WORKER_ID_VARIABLES {
+            let _ = env.map.put(name, &id);
+        }
         envps.push(env.map.create_null_delimited_env_map()?);
     }
     let argv = build_worker_argv(ctx)?;
@@ -184,7 +204,6 @@ pub(crate) fn run_as_coordinator(
         files_done: 0,
         spawned_count: 0,
         live_workers: 0,
-        crashed_files: Vec::new(),
         aborted: None,
         stop_reason: None,
         last_printed_dot: false,
@@ -261,7 +280,16 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     );
     argv.push(lit(b"test\0"));
     argv.push(lit(b"--test-worker\0"));
-    argv.push(if opts.isolate {
+    // Not everything in the file has a flag below.
+    if let Some(config_file) = &opts.config_file {
+        argv.push(print_z(format_args!(
+            "--config={}",
+            bstr::BStr::new(config_file)
+        ))?);
+    }
+    argv.push(if opts.isolate_modules {
+        lit(b"--isolate=modules\0")
+    } else if opts.isolate {
         lit(b"--isolate\0")
     } else {
         lit(b"--no-isolate\0")
@@ -315,6 +343,36 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     if let Some(pattern) = &opts.test_filter_pattern {
         argv.push(lit(b"-t\0"));
         argv.push(dupe_z(pattern));
+    }
+    // No `--cpu-prof-name` or `--heap-prof-name`: every worker writes a profile, and the default names have the pid in them.
+    let cpu_prof = &ctx.runtime_options.cpu_prof;
+    if cpu_prof.enabled {
+        if cpu_prof.json_format {
+            argv.push(lit(b"--cpu-prof\0"));
+        }
+        if cpu_prof.md_format {
+            argv.push(lit(b"--cpu-prof-md\0"));
+        }
+        if !cpu_prof.dir.is_empty() {
+            argv.push(lit(b"--cpu-prof-dir\0"));
+            argv.push(dupe_z(&cpu_prof.dir));
+        }
+        argv.push(print_z(format_args!(
+            "--cpu-prof-interval={}",
+            cpu_prof.interval
+        ))?);
+    }
+    let heap_prof = &ctx.runtime_options.heap_prof;
+    if heap_prof.enabled {
+        argv.push(lit(if heap_prof.text_format {
+            b"--heap-prof-md\0"
+        } else {
+            b"--heap-prof\0"
+        }));
+        if !heap_prof.dir.is_empty() {
+            argv.push(lit(b"--heap-prof-dir\0"));
+            argv.push(dupe_z(&heap_prof.dir));
+        }
     }
     for preload in ctx.preloads.iter() {
         argv.push(lit(b"--preload\0"));
@@ -421,6 +479,19 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     }
     if opts.coverage.enabled {
         argv.push(lit(b"--coverage\0"));
+    }
+    if let Some(environment) = opts.environment {
+        argv.push(print_z(format_args!(
+            "--environment={}",
+            environment.name()
+        ))?);
+    }
+    if let Some(globals) = opts.globals {
+        argv.push(print_z(format_args!("--globals={}", globals.name()))?);
+    }
+    // Each worker reads `include` and `exclude` from bunfig.toml itself.
+    if opts.react_compiler.is_some() {
+        argv.push(lit(b"--react-compiler\0"));
     }
 
     argv.push(core::ptr::null());
@@ -618,6 +689,7 @@ impl<'a> WorkerLoop<'a> {
                 after.expectations - before.expectations,
                 after.skipped_because_label - before.skipped_because_label,
                 after.files - before.files,
+                after.shuffled - before.shuffled,
                 self.reporter.jest.unhandled_errors_between_tests - before_unhandled,
             ] {
                 wf.u32(v);
@@ -646,6 +718,7 @@ pub(crate) fn run_as_worker(
     // SAFETY: caller guarantees `vm` is a valid live VM pointer for the duration.
     let vm_ref = unsafe { &mut *vm };
     vm_ref.test_isolation_enabled = ctx.test_options.isolate;
+    vm_ref.test_isolation_state.shares_global = ctx.test_options.isolate_modules;
     vm_ref.auto_killer.enabled = ctx.test_options.isolate;
 
     // `vm.arena` is currently a write-only backref: the `MimallocArena.gc()`
@@ -669,18 +742,30 @@ pub(crate) fn run_as_worker(
     };
     vm_ref.run_with_api_lock(|| wloop.begin());
 
+    // Test hook, like BUN_TEST_WORKER_EXIT_BEFORE_READY. A test can't otherwise reproduce a crash during exit.
+    if cfg!(any(debug_assertions, bun_asan))
+        && vm_ref
+            .env_loader()
+            .get(b"BUN_TEST_WORKER_ABORT_AFTER_SHUTDOWN")
+            .is_some()
+    {
+        std::process::abort();
+    }
+
     worker_flush_aggregates(wloop.reporter, vm_ref, ctx, &mut wloop.cmds);
     // Drain any backpressure-buffered frames before exit so the coordinator
     // sees repeat_bufs / coverage_file.
-    while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done.get() {
-        // SAFETY: event_loop pointer is valid while vm lives.
-        unsafe { (*vm_ref.event_loop()).tick() };
-        if !wloop.cmds.channel.has_pending_writes() || wloop.cmds.channel.done.get() {
-            break;
+    vm_ref.run_with_api_lock(|| {
+        while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done.get() {
+            // SAFETY: caller guarantees `vm` is a valid live VM pointer; its event_loop pointer is valid while it lives.
+            unsafe { (*(*vm).event_loop()).tick() };
+            if !wloop.cmds.channel.has_pending_writes() || wloop.cmds.channel.done.get() {
+                break;
+            }
+            // SAFETY: as above.
+            unsafe { (*(*vm).event_loop()).auto_tick() };
         }
-        // SAFETY: event_loop pointer is valid while vm lives.
-        unsafe { (*vm_ref.event_loop()).auto_tick() };
-    }
+    });
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
     vm_ref.exit_handler.exit_code = 0;
@@ -698,6 +783,7 @@ pub(crate) fn run_as_worker(
     }
 }
 
+#[optimize(size)]
 fn worker_flush_aggregates(
     reporter: &mut CommandLineReporter,
     vm: &mut VirtualMachine,
@@ -749,6 +835,7 @@ static WORKER_CMDS: bun_core::RacyCell<Option<*mut WorkerCommands>> = bun_core::
 /// codes), which the coordinator prints verbatim so output matches serial, and,
 /// when the coordinator asked for it (`--reporter`), the structured result it
 /// replays into its own reporters.
+#[optimize(size)]
 pub(crate) fn worker_emit_test_done(
     file_idx: u32,
     formatted_line: &[u8],
@@ -783,14 +870,14 @@ fn encode_test_case(wf: &mut Frame, t: &test_command::TestCaseReport<'_>) {
         wf.str(name);
         wf.u32(line);
     }
-    match &t.failure {
-        None => wf.u32(0),
-        Some(f) => {
-            wf.u32(1);
-            wf.str(&f.name);
-            wf.str(&f.message);
-            wf.str(&f.body);
-        }
+    // Earlier attempts' failures first, then the last attempt's if it failed.
+    wf.u32(u32::from(t.failure.is_some()));
+    wf.u32(u32::try_from(t.earlier_failures.len()).expect("int cast"));
+    for f in t.earlier_failures.iter().chain(&t.failure) {
+        wf.str(&f.name);
+        wf.str(&f.message);
+        wf.str(&f.body);
+        wf.u32(u32::from(f.uncaught));
     }
 }
 
@@ -815,11 +902,16 @@ pub(crate) fn decode_test_case<'a>(
     for _ in 0..n {
         scopes.push((rd.str(), rd.u32()));
     }
-    let failure = (rd.u32() != 0).then(|| test_command::TestFailure {
+    let has_failure = rd.u32() != 0;
+    let earlier = rd.u32() as usize;
+    let mut read_failure = || test_command::TestFailure {
         name: rd.str().to_vec(),
         message: rd.str().to_vec(),
         body: rd.str().to_vec(),
-    });
+        uncaught: rd.u32() != 0,
+    };
+    let earlier_failures: Vec<_> = (0..earlier).map(|_| read_failure()).collect();
+    let failure = has_failure.then(read_failure);
     Some(test_command::TestCaseReport {
         file,
         scopes,
@@ -829,5 +921,6 @@ pub(crate) fn decode_test_case<'a>(
         elapsed_ns,
         line_number,
         failure,
+        earlier_failures,
     })
 }

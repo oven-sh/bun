@@ -346,3 +346,7 @@ expectType<BunConsumerConvenienceMethods>();
   expectType(a.slice()).is<Blob>();
   expectType(a.slice(1, 2, "text/plain")).is<Blob>();
 }
+
+expectType(navigator).is<Navigator>();
+expectType(Navigator.prototype).is<Navigator>();
+expectType(navigator instanceof Navigator).is<boolean>();

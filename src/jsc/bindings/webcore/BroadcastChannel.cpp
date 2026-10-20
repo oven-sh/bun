@@ -29,6 +29,7 @@
 #include "BunBroadcastChannelRegistry.h"
 #include "BunClientData.h"
 #include "EventNames.h"
+#include "EventTargetInlines.h"
 #include "MessageEvent.h"
 #include "SerializedScriptValue.h"
 #include <wtf/TZoneMallocInlines.h>

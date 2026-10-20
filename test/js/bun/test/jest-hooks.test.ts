@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 let hooks_run: string[] = [];
 
@@ -247,5 +248,85 @@ describe("test jest hooks in bun-test", () => {
       expect(beforeEachCalled).toEqual(2); // Called once just before this test
       expect(afterEachCalled).toEqual(1);
     });
+  });
+});
+
+describe("registered inside AsyncLocalStorage.run()", () => {
+  const storage = new AsyncLocalStorage<string>();
+  const seen: (string | undefined)[] = [];
+  storage.run("store", () => {
+    beforeAll(() => void seen.push(storage.getStore()));
+    beforeEach(() => void seen.push(storage.getStore()));
+
+    it("a callback without a parameter isn't waited for as one that takes done", (...args) => {
+      expect(args).toEqual([]);
+      expect([...seen, storage.getStore()]).toEqual(["store", "store", "store"]);
+    });
+
+    it("a callback with a parameter is given done", done => {
+      expect(storage.getStore()).toBe("store");
+      done();
+    });
+
+    it.each([[1, 2]])("so is one with a parameter past the row's values", (a, b, done) => {
+      expect([a, b, storage.getStore()]).toEqual([1, 2, "store"]);
+      done();
+    });
+  });
+});
+
+describe("afterEach runs before any other pending callback", () => {
+  let where = "";
+  let fired = Promise.withResolvers<void>();
+  const seen: string[] = [];
+  const callback = () => {
+    seen.push(where);
+    fired.resolve();
+  };
+  const untilTimersAreDue = () => {
+    const start = performance.now();
+    while (performance.now() - start < 2);
+  };
+
+  afterEach(async () => {
+    where = "afterEach";
+    await fired.promise;
+    fired = Promise.withResolvers<void>();
+  });
+
+  it("runs before a due timer when setImmediate resumed the test", async () => {
+    await new Promise(resolve => setImmediate(resolve));
+    setTimeout(callback, 0);
+    untilTimersAreDue();
+    where = "after the test";
+  });
+
+  it("runs before a due timer when setImmediate called done()", done => {
+    setImmediate(() => {
+      setTimeout(callback, 0);
+      untilTimersAreDue();
+      where = "after the test";
+      done();
+    });
+  });
+
+  it("runs before the next due timer when a timer resumed the test", async () => {
+    const first = new Promise(resolve => setTimeout(resolve, 1));
+    setTimeout(callback, 1);
+    untilTimersAreDue();
+    await first;
+    where = "after the test";
+  });
+
+  it("runs before the next immediate when setImmediate resumed the test", async () => {
+    const first = new Promise(resolve => setImmediate(resolve));
+    setImmediate(callback);
+    await first;
+    where = "after the test";
+  });
+
+  it("every callback fired during afterEach", () => {
+    fired.resolve();
+    expect(seen).toEqual(["afterEach", "afterEach", "afterEach", "afterEach"]);
   });
 });

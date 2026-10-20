@@ -381,6 +381,10 @@ impl FontFamily {
                 // CSS wide keywords, as well as "default", must also be quoted.
                 // https://www.w3.org/TR/css-fonts-4/#family-name-syntax
 
+                if dest.cssom.is_some() && bun_core::strings::contains_char(val, b' ') {
+                    return dest.serialize_string(val);
+                }
+
                 if !val.is_empty()
                     && !css::parse_utility::parse_string::<GenericFontFamily>(
                         dest.arena,
@@ -400,6 +404,10 @@ impl FontFamily {
                         }
                         // `ArenaVec<u8>: WriteAll<Error = Infallible>` — cannot fail.
                         let _ = css::serializer::serialize_identifier(slice, &mut id);
+                    }
+                    // The CSSOM writes an identifier only if that takes no escapes.
+                    if dest.cssom.is_some() && &id[..] != val {
+                        return dest.serialize_string(val);
                     }
                     if id.len() < val.len() + 2 {
                         return dest.write_str(&id[..]);

@@ -17,7 +17,9 @@ use bun_core::{self, FeatureFlags, Global, Output, env_var};
 use bun_jsc::RegularExpression;
 use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
-use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
+use bun_options_types::context::{
+    Debugger, DebuggerEnable, HotReload, MacroOptions, Shard, TestEnvironment, TestGlobals,
+};
 use bun_options_types::schema::api;
 use bun_paths::platform;
 use bun_paths::resolve_path;
@@ -620,6 +622,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--reporter-outfile <STR>         Output file path for the reporter format (required with --reporter)."
     ),
     parse_param!(
+        "--reporter-junit-suites <STR>    How --reporter=junit writes describe blocks: 'nested' (default) gives each block its own \\<testsuite\\>, 'flat' prefixes test names with the block names."
+    ),
+    parse_param!(
         "--dots                           Enable dots reporter. Shorthand for --reporter=dots."
     ),
     parse_param!(
@@ -633,7 +638,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--changed <STR>?                 Only run test files affected by changed files according to git. Optionally pass a commit or branch to compare against."
     ),
     parse_param!(
-        "--isolate                        Run each test file in a fresh global object. Leaked handles from one file cannot affect another."
+        "--isolate <STR>?                 Run each test file in a fresh global object. Leaked handles from one file cannot affect another. \"modules\": keep the global object and load each file's modules afresh (faster; files can see each other's changes to globals)."
     ),
     parse_param!(
         "--no-isolate                     With --parallel: let each worker keep one global and module registry across the files it runs (faster; files can see each other's leftovers)."
@@ -655,6 +660,15 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     ),
     parse_param!(
         "--update-timings                 After the run, write measured per-file durations to the first --timings file (only this shard's files under --shard; merged with what was read otherwise)."
+    ),
+    parse_param!(
+        "--environment <STR>              DOM for test files: 'node' (default, no DOM), 'jsdom' or 'happy-dom'. A '@vitest-environment' or '@jest-environment' comment in a file overrides it."
+    ),
+    parse_param!(
+        "--globals <STR>?                 Module that 'test', 'expect' and the other globals come from: 'bun' (default) uses \"vitest\" in files that import from it and \"bun:test\" elsewhere, 'vitest' uses it everywhere."
+    ),
+    parse_param!(
+        "--react-compiler                 Compile components and hooks with the React Compiler. Test files, preloads and node_modules are left alone"
     ),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(
@@ -1848,6 +1862,17 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         ctx.test_options.reporter_outfile = Some(reporter_outfile.into());
     }
 
+    if let Some(name) = args.option(b"--reporter-junit-suites") {
+        let Some(suites) = bun_options_types::context::JunitSuites::from_name(name) else {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --reporter-junit-suites expects 'nested' or 'flat', received \"{}\"",
+                BStr::new(name)
+            );
+            Global::exit(1);
+        };
+        ctx.test_options.reporters.junit_suites = Some(suites);
+    }
+
     if let Some(reporter) = args.option(b"--reporter") {
         if reporter == b"junit" {
             // A `--parallel` worker only collects for the coordinator's file.
@@ -2027,6 +2052,31 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         );
         Global::exit(1);
     }
+    if let Some(name) = args.option(b"--environment") {
+        let Some(environment) = TestEnvironment::from_name(name) else {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --environment expects 'node', 'jsdom' or 'happy-dom', received \"{}\"",
+                BStr::new(name)
+            );
+            Global::exit(1);
+        };
+        ctx.test_options.environment = Some(environment);
+    }
+    // Vitest's --globals is a boolean, and Bun always defines the globals.
+    let globals = args.option(b"--globals");
+    if let Some(name) = globals.filter(|name| !matches!(*name, b"" | b"true" | b"false")) {
+        let Some(globals) = TestGlobals::from_name(name) else {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --globals expects 'bun' or 'vitest', received \"{}\"",
+                BStr::new(name)
+            );
+            Global::exit(1);
+        };
+        ctx.test_options.globals = Some(globals);
+    }
+    if args.flag(b"--react-compiler") {
+        ctx.test_options.react_compiler = Some(Default::default());
+    }
     ctx.test_options.update_snapshots = args.flag(b"--update-snapshots");
     ctx.test_options.run_todo = args.flag(b"--todo");
     ctx.test_options.only = args.flag(b"--only");
@@ -2034,7 +2084,19 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     ctx.test_options.concurrent = args.flag(b"--concurrent");
     ctx.test_options.randomize = args.flag(b"--randomize");
     let no_isolate = args.flag(b"--no-isolate");
-    ctx.test_options.isolate = args.flag(b"--isolate") && !no_isolate;
+    let isolate = args.option(b"--isolate");
+    ctx.test_options.isolate = isolate.is_some() && !no_isolate;
+    ctx.test_options.isolate_modules = match isolate {
+        None | Some(b"" | b"global") => false,
+        Some(b"modules") => !no_isolate,
+        Some(other) => {
+            bun_core::pretty_errorln!(
+                "<red>error<r>: --isolate expects \"global\" or \"modules\", received \"{}\"",
+                BStr::new(other)
+            );
+            Global::exit(1);
+        }
+    };
     ctx.test_options.test_worker = args.flag(b"--test-worker");
 
     if let Some(parallel_str) = args.option(b"--parallel") {
@@ -2076,7 +2138,8 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
 
     if let Some(seed_str) = args.option(b"--seed") {
-        ctx.test_options.randomize = true;
+        // A --parallel worker always gets --seed, so for a worker it doesn't imply --randomize.
+        ctx.test_options.randomize |= !ctx.test_options.test_worker;
         ctx.test_options.seed = match strings::parse_int::<u32>(seed_str, 10) {
             Ok(v) => Some(v),
             Err(_) => {

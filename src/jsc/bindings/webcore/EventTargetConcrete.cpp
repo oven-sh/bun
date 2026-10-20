@@ -25,6 +25,8 @@
 
 #include "config.h"
 #include "EventTargetConcrete.h"
+
+#include "ContextDestructionObserverInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -39,6 +41,11 @@ Ref<EventTargetConcrete> EventTargetConcrete::create(ScriptExecutionContext& con
 EventTargetConcrete::EventTargetConcrete(ScriptExecutionContext& context)
     : ContextDestructionObserver(&context)
 {
+}
+
+ScriptExecutionContext* EventTargetConcrete::scriptExecutionContext() const
+{
+    return ContextDestructionObserver::scriptExecutionContext();
 }
 
 } // namespace WebCore

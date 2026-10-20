@@ -103,7 +103,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototype_inspectCustom, (JS
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = callFrame->thisValue();
+    JSValue thisValue = callFrame->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict());
     auto* thisObject = dynamicDowncast<JSReadableStreamBYOBRequest>(thisValue);
     if (!thisObject) [[unlikely]]
         return JSValue::encode(thisValue);
@@ -222,7 +222,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototypeFunction_respond, (
     if (!request) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStreamBYOBRequest"_s);
 
-    uint64_t bytesWritten = convertToIntegerEnforceRange<uint64_t>(*lexicalGlobalObject, callFrame->argument(0));
+    uint64_t bytesWritten = convertToIntegerEnforceRange<IDLUnsignedLongLong>(*lexicalGlobalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!request->m_controller)

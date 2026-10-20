@@ -1,0 +1,17 @@
+// https://html.spec.whatwg.org/multipage/nav-history-apis.html#the-history-interface
+[
+    GenerateIsReachable=ImplDocument,
+    GenerateAddOpaqueRoot=document,
+    JSCustomMarkFunction,
+    Exposed=Window
+] interface History {
+    readonly attribute unsigned long length;
+    [Custom] readonly attribute any state;
+
+    undefined back();
+    undefined forward();
+    undefined go(optional long delta = 0);
+
+    undefined pushState(SerializedScriptValue data, DOMString unused, optional USVString? url = null);
+    undefined replaceState(SerializedScriptValue data, DOMString unused, optional USVString? url = null);
+};

@@ -18,10 +18,10 @@ function makeDir(prefix: string) {
   });
 }
 
-async function runParallel(dir: string, mode: string) {
+async function runParallel(dir: string, mode: string, hook = "BUN_TEST_WORKER_EXIT_BEFORE_READY") {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=2"],
-    env: { ...bunEnv, BUN_TEST_WORKER_EXIT_BEFORE_READY: mode },
+    env: { ...bunEnv, [hook]: mode },
     cwd: dir,
     stderr: "pipe",
     stdout: "pipe",
@@ -87,6 +87,20 @@ test.skipIf(!hasHook)(
     expect(stderr).toContain("a.test.js");
     expect(stderr).toContain("b.test.js");
     expect(stderr).not.toContain("retrying");
+    expect(exitCode).not.toBe(0);
+  },
+  60_000,
+);
+
+test.skipIf(!hasHook)(
+  "--parallel fails the run when a worker crashes after its last file",
+  async () => {
+    using dir = makeDir("parallel-crash-on-exit");
+    const [, stderr, exitCode] = await runParallel(String(dir), "1", "BUN_TEST_WORKER_ABORT_AFTER_SHUTDOWN");
+    expect(stderr).toContain("crashed with");
+    expect(stderr).toContain("while it was not running a test file");
+    // The files had passed, and are not blamed.
+    expect(stderr).toContain(" 2 pass\n 0 fail\n 1 error\n");
     expect(exitCode).not.toBe(0);
   },
   60_000,

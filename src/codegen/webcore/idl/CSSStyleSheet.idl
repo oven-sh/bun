@@ -1,0 +1,49 @@
+/*
+ * Copyright (C) 2006-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2006 Samuel Weinig <sam.weinig@gmail.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public License
+ * along with this library; see the file COPYING.LIB.  If not, write to
+ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
+ */
+
+// https://drafts.csswg.org/cssom/#cssstylesheet
+[
+    Exposed=Window,
+    JSGenerateToNativeObject
+] interface CSSStyleSheet : StyleSheet {
+    constructor(optional CSSStyleSheetInit options = {});
+
+    readonly attribute CSSRule? ownerRule;
+
+    // FIXME: Add [SameObject] below after https://webkit.org/b/163414
+    [ImplementedAs=cssRulesForBindings] readonly attribute CSSRuleList cssRules;
+
+    unsigned long insertRule(DOMString rule, optional unsigned long index = 0);
+    undefined deleteRule(unsigned long index);
+
+    undefined replaceSync(USVString text);
+
+    // https://drafts.csswg.org/cssom/#legacy-css-style-sheet-members.
+    readonly attribute CSSRuleList rules;
+    long addRule(optional DOMString selector = "undefined", optional DOMString style = "undefined", optional unsigned long index);
+    undefined removeRule(optional unsigned long index = 0);
+};
+
+// https://drafts.csswg.org/cssom/#dictdef-cssstylesheetinit
+dictionary CSSStyleSheetInit {
+    DOMString baseURL = null;
+    (MediaList or DOMString) media = "";
+    boolean disabled = false;
+};

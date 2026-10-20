@@ -4,6 +4,7 @@ use super::DiffFormatter;
 use super::throw;
 use super::{Expect, get_signature};
 
+#[optimize(size)]
 pub(crate) fn to_have_nth_returned_with(
     this: &Expect,
     global: &JSGlobalObject,

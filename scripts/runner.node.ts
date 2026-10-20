@@ -1222,6 +1222,8 @@ async function runTests(): Promise<TestResult[]> {
         for (const t of bucketFiles) {
           const suite = suites.get(join("test", t).replaceAll("\\", "/"));
           if (suite === undefined) incomplete.add(t);
+          // "(aborted)" stands for what a crash in another file kept this one from running.
+          else if (suite.cases.length && suite.cases.every(({ name }) => name === "(aborted)")) incomplete.add(t);
           else if (suite.failures > 0) failed.add(t);
         }
       } else if (!ok) {

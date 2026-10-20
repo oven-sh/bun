@@ -31,7 +31,7 @@
 namespace WebCore {
 using namespace JSC;
 
-template<> PerformanceMeasureOptions convertDictionary<PerformanceMeasureOptions>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+template<> ConversionResult<IDLDictionary<PerformanceMeasureOptions>> convertDictionary<PerformanceMeasureOptions>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);

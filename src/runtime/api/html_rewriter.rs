@@ -2807,7 +2807,12 @@ impl_wrapper_like!(DocEnd, RawDocumentEnd, doc_end, suspended_document_end);
 
 // ──────────────────────────── Comment ────────────────────────────────────
 
-#[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
+#[bun_jsc::JsClass(
+    name = "HTMLRewriterComment",
+    no_construct,
+    no_finalize,
+    no_constructor
+)]
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct Comment {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
@@ -3048,7 +3053,12 @@ impl AttributeIterator {
 
 // ──────────────────────────── Element ────────────────────────────────────
 
-#[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
+#[bun_jsc::JsClass(
+    name = "HTMLRewriterElement",
+    no_construct,
+    no_finalize,
+    no_constructor
+)]
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct Element {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.

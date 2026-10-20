@@ -16,6 +16,7 @@ use bun_wyhash::Wyhash;
 
 use crate::defines::{Define, DefineData};
 use crate::lexer as js_lexer;
+use crate::lower::hoist_test_mocks::{MockApi, is_test_module};
 use crate::parse::parse_entry::Options as ParserOptions;
 use crate::renamer;
 use crate::{
@@ -456,12 +457,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// populated before visit pass starts; `take()`n at each post-visit
     /// hook site so a `ReactCompilerHost(&mut P)` can borrow alongside it.
     pub(crate) react_compiler: Option<Box<bun_react_compiler::ReactCompilerState>>,
-    /// Binding name from the `S::Function` / `S::Local` / `S::ExportDefault`
-    /// statement currently being visited. Set in `visit_stmt`, consumed by
-    /// `visit_func` / arrow-visit one frame down.
+    /// The name that the `S::Function` / `S::Local` / `S::ExportDefault` statement being visited gives to the function
+    /// visited next. Consumed by `enter_react_compiler_candidate` one frame down.
     pub(crate) react_compiler_candidate_name: Option<js_ast::Ref>,
-    /// Set alongside `react_compiler_candidate_name` when the candidate
-    /// expression is a `memo(...)` / `forwardRef(...)` call.
+    /// The function visited next is the argument of a `memo(...)` / `forwardRef(...)` call.
     pub(crate) react_compiler_in_react_hoc: bool,
     /// See [`bun_react_compiler::PendingCompile`]. Set by `visit_func` /
     /// arrow-visit, consumed inside `visit_stmts` between visit and mangle.
@@ -471,12 +470,27 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) react_compiler_result: Option<bun_react_compiler::CompileResult>,
     /// Visiting a function that is handed to the React Compiler, which re-declares its locals as new symbols.
     pub(crate) react_compiler_may_replace_body: bool,
+    /// Functions the compiler outlined from a function that isn't at the top level. `visit_stmts` puts them after the
+    /// statement it is visiting.
+    pub(crate) react_compiler_outlined_from_nested: Vec<Stmt>,
 
     /// only applicable when `.options.features.server_components` is
     /// configured to wrap exports. populated before visit pass starts.
     pub(crate) server_components_wrap_ref: Ref,
 
     pub(crate) jest: Jest,
+    pub(crate) imported_mock_apis: HashMap<Ref, MockApi>,
+    /// `assert` and `should` imported from "vitest", which re-exports them from chai. Bun imports them from the project's chai.
+    pub(crate) chai_imports: crate::parser::ChaiImports,
+    /// Only read by a debug assertion that `uses_test_api()` covers every test-only transform.
+    pub(crate) did_apply_test_feature: bool,
+    /// Also computed outside `bun test`, for `uses_test_api()`.
+    pub(crate) has_hoisted_mock_stmt: bool,
+
+    pub(crate) import_meta_glob_use: crate::lower::import_meta_glob::ImportMetaGlobUse,
+    pub(crate) import_meta_glob_imports: List<'a, Stmt>,
+    /// The `(() => ({ ... }))()` wrappers that `reject_eager_import_meta_globs` makes throw in a CommonJS module.
+    pub(crate) import_meta_glob_eager_calls: List<'a, Expr>,
 
     // Imports (both ES6 and CommonJS) are tracked at the top level
     pub(crate) import_records: ImportRecordList<'a>,
@@ -2377,23 +2391,100 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub(crate) fn generate_import_stmt<I, Sym>(
+    /// `var { a, b } = require("bun:wrap")`. An import statement can't stand in the function that wraps a CommonJS module.
+    #[optimize(size)]
+    #[inline(never)]
+    pub(crate) fn generate_runtime_require_stmt(
+        &mut self,
+        imports: &[u8],
+        parts: &mut ListManaged<'a, js_ast::Part>,
+    ) -> Result<(), crate::Error> {
+        let import_record_id = self.add_import_record(
+            ImportKind::Require,
+            bun_ast::Loc::EMPTY,
+            RuntimeImports::NAME,
+        );
+        {
+            let record = &mut self.import_records.items_mut()[import_record_id as usize];
+            record.path.namespace = b"runtime";
+            record.flags.insert(bun_ast::ImportRecordFlags::IS_INTERNAL);
+        }
+        let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
+        declared_symbols.ensure_total_capacity(imports.len())?;
+        let mut properties = BumpVec::<B::Property>::with_capacity_in(imports.len(), self.arena);
+        for &import in imports {
+            let r = self
+                .runtime_imports
+                .get(import as usize)
+                .expect("unreachable");
+            let key = self.new_expr(
+                E::String {
+                    data: RuntimeImports::ALL[import as usize].into(),
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            );
+            let value = self.b(B::Identifier { r#ref: r }, bun_ast::Loc::EMPTY);
+            properties.push(B::Property {
+                flags: bun_ast::flags::PROPERTY_NONE,
+                key,
+                value,
+                default_value: None,
+            });
+            declared_symbols.append_assume_capacity(DeclaredSymbol {
+                ref_: r,
+                is_top_level: true,
+            });
+        }
+        let binding = self.b(
+            B::Object {
+                properties: bun_ast::StoreSlice::from_bump(properties),
+                is_single_line: true,
+            },
+            bun_ast::Loc::EMPTY,
+        );
+        let value = self.new_expr(
+            E::RequireString {
+                import_record_index: import_record_id,
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        );
+        let mut decls = G::DeclList::init_capacity(1);
+        decls.append_assume_capacity(G::Decl {
+            binding,
+            value: Some(value),
+        });
+        let stmt = self.s(
+            S::Local {
+                kind: js_ast::LocalKind::KVar,
+                decls,
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        );
+        parts.push(js_ast::Part {
+            stmts: self.arena.alloc_slice_fill_with(1, |_| stmt).into(),
+            declared_symbols,
+            import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_id),
+            tag: bun_ast::PartTag::Runtime,
+            ..Default::default()
+        });
+        Ok(())
+    }
+
+    /// `imports` holds the name of each export and the symbol it is bound to.
+    pub(crate) fn generate_import_stmt(
         &mut self,
         import_path: &'a [u8],
-        imports: I,
+        imports: &[(&'static [u8], Ref)],
         parts: &mut ListManaged<'a, js_ast::Part>,
-        symbols: &Sym,
         additional_stmt: Option<Stmt>,
         prefix: &'static [u8],
         is_internal: bool,
         tag: bun_ast::PartTag,
-    ) -> Result<(), crate::Error>
-    where
-        I: AsRef<[<Sym as GenerateImportSymbols>::Key]>,
-        Sym: GenerateImportSymbols,
-    {
+    ) -> Result<(), crate::Error> {
         let arena = self.arena;
-        let imports = imports.as_ref();
         let import_record_i =
             self.add_import_record_by_range(ImportKind::Stmt, bun_ast::Range::NONE, import_path);
         {
@@ -2442,9 +2533,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         });
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         VecExt::append(&mut self.module_scope_mut().generated, namespace_ref);
-        for (alias, clause_item) in imports.iter().zip(clause_items.iter_mut()) {
-            let ref_ = symbols.get(alias).expect("unreachable");
-            let alias_name: &'static [u8] = symbols.alias_name(alias);
+        for (&(alias_name, ref_), clause_item) in imports.iter().zip(clause_items.iter_mut()) {
             *clause_item = js_ast::ClauseItem {
                 alias: js_ast::StoreStr::new(alias_name),
                 original_name: js_ast::StoreStr::new(alias_name),
@@ -3355,34 +3444,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"__dirname")?;
         self.filename_ref =
             self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"__filename")?;
-
-        if self.options.features.inject_jest_globals {
-            self.jest.test =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"test")?;
-            self.jest.it = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"it")?;
-            self.jest.describe =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"describe")?;
-            self.jest.expect =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"expect")?;
-            self.jest.expect_type_of =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"expectTypeOf")?;
-            self.jest.before_all =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"beforeAll")?;
-            self.jest.before_each =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"beforeEach")?;
-            self.jest.after_each =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"afterEach")?;
-            self.jest.after_all =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"afterAll")?;
-            self.jest.jest =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"jest")?;
-            self.jest.vi = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"vi")?;
-            self.jest.xit = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"xit")?;
-            self.jest.xtest =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"xtest")?;
-            self.jest.xdescribe =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"xdescribe")?;
-        }
 
         if self.options.features.react_fast_refresh {
             self.react_refresh.create_signature_ref =
@@ -4387,6 +4448,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let alias: &'a [u8] = item.alias.slice();
             self.check_for_non_bmp_code_point(item.alias_loc, alias);
 
+            if self.options.features.inject_jest_globals
+                && path.text == b"vitest"
+                && let Some(name) = crate::parser::ChaiImports::name(alias)
+            {
+                self.chai_imports.0.push((name, r#ref));
+                self.did_apply_test_feature = true;
+                continue;
+            }
+
             // ensure every e_import_identifier holds the namespace
             if self.options.features.hot_module_reloading {
                 let symbol = &mut self.symbols[r#ref.inner_index() as usize];
@@ -4479,6 +4549,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if path.import_tag != bun_ast::ImportRecordTag::None || path.loader.is_some() {
             self.validate_and_set_import_type(&path, &mut stmt)?;
+        }
+
+        if self.options.features.inject_jest_globals && is_test_module(path.text) {
+            for item in stmt.items.iter() {
+                if let Some(api) = MockApi::from_export_name(item.alias.slice()) {
+                    self.imported_mock_apis.insert(item.name.ref_, api);
+                }
+            }
         }
 
         // Track the items for this namespace
@@ -8325,16 +8403,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         r#ref
     }
 
-    /// A lowering's own `var`. `bun run` prints names as they are, so there it gets a per-file counter.
+    /// `bun run` doesn't rename symbols, so there a generated name gets a per-file counter.
+    pub(crate) fn temp_var_name(&mut self, name: &'a [u8]) -> &'a [u8] {
+        if self.will_use_renamer() {
+            return name;
+        }
+        self.temp_ref_count += 1;
+        bun_alloc::arena_format!(in self.arena, "{}${}", bstr::BStr::new(name), self.temp_ref_count)
+            .into_bump_str()
+            .as_bytes()
+    }
+
     pub(crate) fn generate_temp_var(&mut self, name: &'a [u8]) -> Ref {
-        let name: &'a [u8] = if self.will_use_renamer() {
-            name
-        } else {
-            self.temp_ref_count += 1;
-            bun_alloc::arena_format!(in self.arena, "{}${}", bstr::BStr::new(name), self.temp_ref_count)
-                .into_bump_str()
-                .as_bytes()
-        };
+        let name = self.temp_var_name(name);
         let ref_ = self.new_symbol(js_ast::symbol::Kind::Other, name);
         self.declare_temp_var(ref_);
         ref_
@@ -9398,6 +9479,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // const_values: self.const_values,
             ts_enums,
             import_meta_ref: self.import_meta_ref,
+            depends_on_more_than_source: self.depends_on_more_than_source(),
 
             symbols,
             parts: parts_list,
@@ -9775,8 +9857,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_compiler_pending: None,
             react_compiler_result: None,
             react_compiler_may_replace_body: false,
+            react_compiler_outlined_from_nested: Vec::new(),
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
+            imported_mock_apis: Default::default(),
+            chai_imports: Default::default(),
+            did_apply_test_feature: false,
+            has_hoisted_mock_stmt: false,
+            import_meta_glob_use: Default::default(),
+            import_meta_glob_imports: BumpVec::new_in(arena),
+            import_meta_glob_eager_calls: BumpVec::new_in(arena),
             import_records_for_current_part: BumpVec::new_in(arena),
             export_star_import_records: BumpVec::new_in(arena),
             import_symbol_property_uses: Default::default(),
@@ -10238,15 +10328,6 @@ impl LowerUsingDeclarationsContext {
 
         result
     }
-}
-
-// ─── Helper trait for generate_import_stmt's generic `symbols` param ───
-// Dispatches the alias lookup via `alias_name()`; implemented
-// for `RuntimeImports` (Key = u8 index) and `JSXImportSymbols` (Key = alias).
-pub trait GenerateImportSymbols {
-    type Key;
-    fn get(&self, key: &Self::Key) -> Option<Ref>;
-    fn alias_name(&self, key: &Self::Key) -> &'static [u8];
 }
 
 // ─── Module-level constructor fns ───

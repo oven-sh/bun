@@ -408,6 +408,181 @@ describe("CONTINUATION (checklist §3,§7)", () => {
   });
 });
 
+describe("a stream that the server finishes before respond() (RFC 9113 §8.1)", () => {
+  const { NGHTTP2_INTERNAL_ERROR } = http2.constants;
+  // What Node 26 sends on the stream.
+  test.each<[string, (stream: http2.ServerHttp2Stream) => void, string[]]>([
+    ["close(code)", stream => stream.close(NGHTTP2_INTERNAL_ERROR), ["RST_STREAM 2"]],
+    ["close(NGHTTP2_CANCEL)", stream => stream.close(http2.constants.NGHTTP2_CANCEL), ["RST_STREAM 8"]],
+    ["close()", stream => stream.close(), ["RST_STREAM 0"]],
+    ["destroy()", stream => stream.destroy(), ["RST_STREAM 0"]],
+    ["end()", stream => stream.end(), []],
+    ["end(), close(code)", stream => (stream.end(), stream.close(NGHTTP2_INTERNAL_ERROR)), ["RST_STREAM 2"]],
+    ["end(), respond()", stream => (stream.end(), stream.respond({ ":status": 201 })), ["HEADERS with END_STREAM"]],
+  ])("%s sends no DATA frame ahead of the HEADERS frame", async (_, finish, expected) => {
+    const server = http2.createServer();
+    const { promise: finished, resolve } = Promise.withResolvers<void>();
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      finish(stream);
+      // The server forgets a closed stream when it next reads from the socket. Make that happen before _destroy() runs.
+      c.sendFrame(FrameType.WINDOW_UPDATE, 0, 0, Buffer.from([0, 0, 0, 1]));
+      // What _destroy() leaves for the next turn of the event loop is sent by then.
+      if (stream.closed || stream.destroyed) stream.once("close", () => setImmediate(resolve));
+      else resolve();
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM | END_HEADERS */, 1, requestHeaderBlock("GET"));
+      await finished;
+      if (expected.length) await c.waitFor(f => f.streamId === 1 && f.type !== FrameType.DATA);
+      // Whatever else the server had to send comes before its answer to this.
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      const sent = c.frames
+        .filter(f => f.streamId === 1)
+        .map(f =>
+          f.type === FrameType.RST_STREAM
+            ? `RST_STREAM ${f.payload.readUInt32BE(0)}`
+            : `${f.type === FrameType.HEADERS ? "HEADERS" : f.type === FrameType.DATA ? "DATA" : f.type} ${f.flags & 0x1 ? "with" : "without"} END_STREAM`,
+        );
+      expect(sent).toEqual(expected);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  // What Node 26 emits on the stream.
+  test.each<[string, (stream: http2.ServerHttp2Stream) => void, string[]]>([
+    ["close(code)", stream => stream.close(NGHTTP2_INTERNAL_ERROR), ["aborted", "finish", "error", "close"]],
+    ["close(NGHTTP2_CANCEL)", stream => stream.close(http2.constants.NGHTTP2_CANCEL), ["aborted", "finish", "close"]],
+    ["close()", stream => stream.close(), ["aborted", "finish", "end", "close"]],
+    ["destroy()", stream => stream.destroy(), ["aborted", "close"]],
+  ])("the events of the stream after %s", async (_, finish, expected) => {
+    const server = http2.createServer();
+    const { promise: events, resolve } = Promise.withResolvers<string[]>();
+    server.on("stream", stream => {
+      const seen: string[] = [];
+      for (const event of ["aborted", "finish", "end", "error", "close"]) stream.on(event, () => seen.push(event));
+      stream.on("close", () => resolve(seen));
+      finish(stream);
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM | END_HEADERS */, 1, requestHeaderBlock("GET"));
+      expect(await events).toEqual(expected);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+});
+
+describe("a response that the server resets after its headers", () => {
+  const { NGHTTP2_INTERNAL_ERROR, NGHTTP2_CANCEL } = http2.constants;
+  const begin = (response: http2.Http2ServerResponse) => (response.writeHead(200), response.flushHeaders());
+  const headers = "HEADERS without END_STREAM";
+  // What Node 26 sends on the stream. END_STREAM would tell the client that the body is complete.
+  test.each<[string, (stream: http2.ServerHttp2Stream, response: http2.Http2ServerResponse) => void, string[]]>([
+    ["close(code)", (stream, response) => (begin(response), stream.close(NGHTTP2_INTERNAL_ERROR)), ["RST_STREAM 2"]],
+    ["close(NGHTTP2_CANCEL)", (stream, response) => (begin(response), stream.close(NGHTTP2_CANCEL)), ["RST_STREAM 8"]],
+    ["close()", (stream, response) => (begin(response), stream.close()), ["RST_STREAM 0"]],
+    [
+      "close(code) on a later turn of the event loop",
+      (stream, response) => (begin(response), setImmediate(() => stream.close(NGHTTP2_INTERNAL_ERROR))),
+      ["RST_STREAM 2"],
+    ],
+    [
+      "write(), close(code)",
+      (stream, response) => (begin(response), response.write("~"), stream.close(NGHTTP2_INTERNAL_ERROR)),
+      ["DATA without END_STREAM", "RST_STREAM 2"],
+    ],
+    [
+      "respond() and write() of the stream itself, close(code)",
+      stream => (stream.respond({ ":status": 200 }), stream.write("~"), stream.close(NGHTTP2_INTERNAL_ERROR)),
+      ["DATA without END_STREAM", "RST_STREAM 2"],
+    ],
+    [
+      "respond() with waitForTrailers and a 'wantTrailers' listener, close(code)",
+      stream => {
+        stream.on("wantTrailers", () => stream.sendTrailers({ "x-trailer": "1" }));
+        stream.respond({ ":status": 200 }, { waitForTrailers: true });
+        stream.close(NGHTTP2_INTERNAL_ERROR);
+      },
+      ["RST_STREAM 2"],
+    ],
+  ])("%s sends RST_STREAM and no END_STREAM", async (_, reset, expected) => {
+    const server = http2.createServer();
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    server.on("request", (request, response) => {
+      for (const emitter of [request, response, request.stream]) emitter.on("error", () => {});
+      // What _destroy() leaves for the next turn of the event loop is sent by then.
+      request.stream.once("close", () => setImmediate(resolve));
+      reset(request.stream, response);
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM | END_HEADERS */, 1, requestHeaderBlock("GET"));
+      await closed;
+      // Whatever else the server had to send comes before its answer to this.
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      const sent = c.frames
+        .filter(f => f.streamId === 1)
+        .map(f =>
+          f.type === FrameType.RST_STREAM
+            ? `RST_STREAM ${f.payload.readUInt32BE(0)}`
+            : `${f.type === FrameType.HEADERS ? "HEADERS" : f.type === FrameType.DATA ? "DATA" : f.type} ${f.flags & 0x1 ? "with" : "without"} END_STREAM`,
+        );
+      expect(sent).toEqual([headers, ...expected]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  test("the client gets the code and an error, not 'end'", async () => {
+    const server = http2.createServer((request, response) => {
+      for (const emitter of [request, response, request.stream]) emitter.on("error", () => {});
+      begin(response);
+      response.write("~");
+      setImmediate(() => request.stream.close(NGHTTP2_INTERNAL_ERROR));
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+    try {
+      const stream = client.request({ ":path": "/" });
+      const seen: string[] = [];
+      stream.on("error", error => seen.push(`error ${(error as NodeJS.ErrnoException).code}`));
+      for (const event of ["response", "data", "end"]) stream.on(event, () => seen.push(event));
+      stream.end();
+      // Not once(), which rejects on 'error'.
+      await new Promise(resolve => stream.on("close", resolve));
+      expect({ seen, rstCode: stream.rstCode }).toEqual({
+        seen: ["response", "data", "error ERR_HTTP2_STREAM_ERROR"],
+        rstCode: NGHTTP2_INTERNAL_ERROR,
+      });
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+});
+
 describe("SETTINGS value ranges (checklist §6.5.2)", () => {
   function settingsPayload(id: number, value: number): Buffer {
     const b = Buffer.alloc(6);

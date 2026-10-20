@@ -430,6 +430,39 @@ describe("@types/bun integration test", () => {
   });
 
   // Runs on debug builds too, same as the Bun.mmap block above.
+  describe("import.meta.glob", () => {
+    // fixture/vite-client/client.d.ts also declares `ImportMeta.glob`, so it needs its own tsc program.
+    // tsc loads the declarations in `files` order.
+    test.each([
+      ["bun-types", ["bun-types.d.ts", "client.d.ts", "main.ts"]],
+      ["vite-client", ["client.d.ts", "bun-types.d.ts", "main.ts"]],
+    ])("has the type that vite/client declares when %s is loaded first", async (first, files) => {
+      const checkDir = join(TEMP_DIR, `import-meta-glob-check-${first}`);
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.files = files.map(file => `vite-client/${file}`);
+      tsconfig.compilerOptions.skipLibCheck = false;
+      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+      await cp(join(FIXTURE_SOURCE_DIR, "vite-client"), join(checkDir, "vite-client"), { recursive: true });
+      await cp(join(FIXTURE_SOURCE_DIR, "utilities.ts"), join(checkDir, "utilities.ts"));
+      await Bun.write(join(checkDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // Runs on debug builds too, same as the Bun.mmap block above.
   describe("TextDecoder", () => {
     test("accepts the encoding labels the runtime supports", async () => {
       const checkDir = join(TEMP_DIR, "text-decoder-encoding-check");
@@ -549,6 +582,113 @@ describe("@types/bun integration test", () => {
         ["ESNext"],
         `declare const e: Event;
          export const composed: [EventTarget?] = e.composedPath();`,
+      );
+    });
+  });
+
+  // fixture/bun-dom.ts has what holds with and without lib.dom. These two hold in one case only.
+  // Runs on debug builds too, same as the Bun.mmap block above.
+  describe("bun:dom", () => {
+    async function checkDOMFixture(name: string, lib: string[], source: string) {
+      const checkDir = join(TEMP_DIR, name);
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["dom-check.ts"];
+      tsconfig.compilerOptions.lib = lib;
+      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+      await mkdir(checkDir, { recursive: true });
+      await makeTree(checkDir, {
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "dom-check.ts": source,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    }
+
+    test("the exports are lib.dom's own types when lib.dom is loaded", async () => {
+      await checkDOMFixture(
+        "dom-lib-dom-check",
+        ["ESNext", "DOM"],
+        `import {
+           DOMParser,
+           Window,
+           Document as BunDocument,
+           HTMLElement as BunHTMLElement,
+           type Element as BunElement,
+           type NodeFilter as BunNodeFilter,
+           type ProgressEvent as BunProgressEvent,
+           type Window as BunWindow,
+         } from "bun:dom";
+
+         type Equals<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+
+         // Testing Library and React take the global types.
+         declare function render(container: HTMLElement): void;
+         const window = new Window({ url: "https://example.com/" });
+         render(window.document.body);
+         render(window.document.createElement("div"));
+         const parsed: Document = new DOMParser().parseFromString("", "text/html");
+         export const anchor: HTMLAnchorElement | null = parsed.querySelector("a");
+         export const anchors: NodeListOf<HTMLAnchorElement> = parsed.querySelectorAll("a");
+         export const globalWindow: globalThis.Window = window;
+
+         true satisfies Equals<BunHTMLElement, HTMLElement>;
+         true satisfies Equals<typeof BunHTMLElement, typeof HTMLElement>;
+         true satisfies Equals<BunDocument, Document>;
+         true satisfies Equals<typeof BunDocument, typeof Document>;
+         true satisfies Equals<BunElement, Element>;
+         true satisfies Equals<BunWindow, globalThis.Window>;
+         true satisfies Equals<BunNodeFilter, NodeFilter>;
+         declare const progress: BunProgressEvent<FileReader>;
+         progress satisfies ProgressEvent<FileReader>;`,
+      );
+    });
+
+    test("nothing is added to the global scope without lib.dom", async () => {
+      await checkDOMFixture(
+        "dom-no-lib-dom-check",
+        ["ESNext"],
+        `import { Window } from "bun:dom";
+
+         // @ts-expect-error
+         declare const element: HTMLElement;
+         // @ts-expect-error
+         declare const node: Node;
+         // @ts-expect-error
+         declare const list: NodeListOf<any>;
+         // @ts-expect-error
+         declare const init: KeyboardEventInit;
+         // @ts-expect-error
+         document;
+         // @ts-expect-error
+         window;
+         // @ts-expect-error
+         new DOMParser();
+
+         // What bun:dom does not have at run time is not declared.
+         const { document: ownDocument, ...rest } = new Window();
+         // @ts-expect-error
+         ownDocument.fonts;
+         // @ts-expect-error
+         ownDocument.body.animate([]);
+         // @ts-expect-error
+         ownDocument.evaluate;
+         // @ts-expect-error
+         rest.indexedDB;
+
+         // A window's timers are Bun's.
+         new Window().setTimeout(() => {}, 1) satisfies Timer;`,
       );
     });
   });

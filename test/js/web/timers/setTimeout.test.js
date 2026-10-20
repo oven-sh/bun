@@ -787,3 +787,35 @@ it("timer heap clock is monotonic, not wall-clock", () => {
   expect(t1).toBeGreaterThanOrEqual(t0);
   expect(t1).toBeLessThan(wallNow / 2);
 });
+
+// On this branch the change is off unless asked for, so that it can be timed both ways with one build.
+describe.concurrent("a delay of 0 in bun test", () => {
+  it.each([
+    ["1", "the 200 ms timer has not fired"],
+    [undefined, "the 200 ms timer has fired"],
+  ])("with BUN_TEST_ZERO_DELAY_TIMERS=%s", async (value, expected) => {
+    const dir = tempDirWithFiles("zero-delay", {
+      "zero.test.js": `
+        import { test } from "bun:test";
+        test("400 timers without a delay", async () => {
+          let fired = false;
+          const timer = setTimeout(() => (fired = true), 200);
+          // With Node's minimum of 1 ms these take 400 ms or more.
+          for (let i = 0; i < 400; i++) await new Promise(resolve => setTimeout(resolve, 0));
+          clearTimeout(timer);
+          console.log(fired ? "the 200 ms timer has fired" : "the 200 ms timer has not fired");
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./zero.test.js"],
+      cwd: dir,
+      env: { ...bunEnv, BUN_TEST_ZERO_DELAY_TIMERS: value },
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain(expected + "\n");
+    expect(exitCode).toBe(0);
+  });
+});

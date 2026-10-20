@@ -1020,7 +1020,7 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
                     : WebCore::CryptoKeyUsageDecapsulateKey | WebCore::CryptoKeyUsageDecapsulateBits;
             if (usagesBitmap & ~allowedUsages)
                 // Node v26.3.0 says "for a ML-..." here (toCryptoKey) but "for an ML-..." in generateKey.
-                return throwDOMException(WebCore::SyntaxError, makeString("Unsupported key usage for a "_s, WebCore::CryptoAlgorithmRegistry::singleton().name(identifier), " key"_s));
+                return throwDOMException(WebCore::JSSyntaxError, makeString("Unsupported key usage for a "_s, WebCore::CryptoAlgorithmRegistry::singleton().name(identifier), " key"_s));
             if (EVP_PKEY_id(asymmetricKey().get()) != WebCore::CryptoKeyAKP::nidForIdentifier(identifier))
                 return throwDOMException(WebCore::DataError, "Invalid key type"_s);
             EVP_PKEY_up_ref(asymmetricKey().get());
@@ -1041,7 +1041,7 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
         return throwDOMException(WebCore::OperationError, ""_s);
 
     if ((result->type() == WebCore::CryptoKeyType::Private || result->type() == WebCore::CryptoKeyType::Secret) && !result->usagesBitmap()) {
-        return throwDOMException(WebCore::SyntaxError,
+        return throwDOMException(WebCore::JSSyntaxError,
             result->type() == WebCore::CryptoKeyType::Private
                 ? "Usages cannot be empty when importing a private key."_s
                 : "Usages cannot be empty when importing a secret key."_s);

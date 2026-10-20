@@ -5,6 +5,7 @@ use super::mock;
 use super::throw;
 use super::Expect;
 
+#[optimize(size)]
 pub(crate) fn to_have_returned_with(
     this: &Expect,
     global: &JSGlobalObject,

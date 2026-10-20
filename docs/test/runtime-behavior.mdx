@@ -44,6 +44,47 @@ To test with a specific time zone:
 TZ=America/New_York bun test
 ```
 
+### `import.meta.env`
+
+In `bun test`, `import.meta.env` also has the variables [Vite](https://vite.dev/guide/env-and-mode) defines, so code written for Vite runs unchanged.
+
+| Variable   | Value                                                                     |
+| ---------- | ------------------------------------------------------------------------- |
+| `MODE`     | `"test"`                                                                  |
+| `DEV`      | `true`, or `false` when `bun test` starts with `NODE_ENV=production`      |
+| `PROD`     | The opposite of `DEV`                                                     |
+| `SSR`      | `true`, or `false` while there is a `document` ([DOM testing](/test/dom)) |
+| `BASE_URL` | `"/"`                                                                     |
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect } from "bun:test";
+
+test("Vite's variables", () => {
+  expect(import.meta.env.MODE).toBe("test");
+  expect(import.meta.env.DEV).toBe(true);
+});
+```
+
+Every other property reads from and writes to `process.env`. These five variables aren't in `process.env`, so child processes don't inherit them.
+
+If you do set one of them in `process.env`, that value is used instead. For `DEV`, `PROD` and `SSR`, `""` becomes `false` and any other string becomes `true`.
+
+```bash terminal icon="terminal"
+MODE=staging bun test
+```
+
+Use `vi.stubEnv()` to change them in a test:
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, vi } from "bun:test";
+
+test("in production", () => {
+  vi.stubEnv("PROD", true);
+  expect(import.meta.env.PROD).toBe(true);
+  vi.unstubAllEnvs();
+});
+```
+
 ## Test Timeouts
 
 Each test has a default timeout of 5000ms (5 seconds). Tests that exceed it fail.
@@ -83,11 +124,25 @@ test("test without timeout", async () => {
 }, 0);
 ```
 
+## Tail Calls
+
+`bun test` turns off tail calls. Elsewhere in Bun, a strict-mode function that ends in a call, like `() => check(value)`, hands its stack frame to the function it calls. Node.js never does that.
+
+The test runner reads the stack. With every frame in place:
+
+- A failure's stack trace lists every function on the way to the failed `expect()`.
+- `toMatchInlineSnapshot()` finds its call site when it's the last call in a helper.
+- A relative path passed to `vi.mock()`, `vi.importActual()`, and similar functions resolves from the file that contains the call.
+
+A function that calls itself in tail position more than about ten thousand levels deep throws a `RangeError` under `bun test`, as it does in Node.js. Bytecode produced inside a test, by `Bun.build({ bytecode: true })` or `vm.Script`'s `cachedData`, has no tail calls either, wherever it runs later.
+
+Run `BUN_JSC_useTailCalls=1 bun test` to turn tail calls back on.
+
 ## Error Handling
 
 ### Unhandled Errors
 
-`bun test` tracks unhandled promise rejections and errors that occur between tests. If any occur, `bun test` exits with a non-zero code even when no test failed. In both examples below the error happens while the file is being loaded, so the file's tests are not run at all.
+`bun test` tracks unhandled promise rejections and errors that occur between tests. If any occur, `bun test` exits with a non-zero code even when no test failed. In both examples below, the error happens while the file is loading, and the file's tests still run.
 
 This helps catch errors in asynchronous code that might otherwise go unnoticed:
 
@@ -107,8 +162,8 @@ test("test 2", () => {
   expect(true).toBe(true);
 });
 
-// bun test reports this as "Unhandled error between tests", does not run
-// this file's tests (0 pass, 1 error), and exits with code 1
+// bun test reports this as "Unhandled error between tests", runs both tests
+// (2 pass, 1 error), and exits with code 1
 ```
 
 ### Promise Rejections
@@ -122,10 +177,28 @@ test("test 1", () => {
   expect(1).toBe(1);
 });
 
-// bun test reports this as "Unhandled error between tests", does not run
-// this file's tests, and exits with code 1
+// bun test reports this as "Unhandled error between tests", runs the test
+// (1 pass, 1 error), and exits with code 1
 Promise.reject(new Error("Unhandled rejection"));
 ```
+
+If a file throws at the top level, or a top-level `await` rejects, the file fails to load and none of its tests run.
+
+### Unsettled Top-Level Await
+
+There's no timeout while a test file is loading. If a top-level `await` or `import` is still pending and nothing left on the event loop could settle it, `bun test` fails the file, prints the modules that are stuck, and moves on to the next file.
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+await new Promise(() => {});
+```
+
+```txt
+error: "/path/to/test.ts" never finished loading
+note: the event loop is empty, so nothing can settle it anymore
+note: unsettled top-level await in "/path/to/test.ts"
+```
+
+The same applies to `--preload` scripts, async `describe()` callbacks, and tests or hooks with a timeout of `0`. An open timer, socket, subprocess or worker counts as something that could still settle the promise, even after `.unref()`.
 
 ### Custom Error Handling
 
@@ -142,6 +215,8 @@ process.on("unhandledRejection", (reason, promise) => {
   process.exit(1);
 });
 ```
+
+While a test or hook imported from `"vitest"` runs, an error that nothing handles goes to these listeners first. If there is a listener for it, the error doesn't fail the test, as in Vitest. While a test or hook from `bun:test` or `@jest/globals` runs, the error fails the test and the listeners aren't called, as in Jest.
 
 ## CLI Flags Integration
 
@@ -244,6 +319,10 @@ You can also import them explicitly:
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, it, describe, expect, beforeAll, beforeEach, afterAll, afterEach, jest, vi } from "bun:test";
 ```
+
+If a file imports only some of them, the rest are still available as globals.
+
+`console.timeStamp` isn't defined in tests, as in Jest and Vitest. React's development build logs every render to the browser's profiler if it finds that function, and reads into the components' props to do so. A getter that throws there breaks the render, and every later one fails with "Should not already be working."
 
 ## Process Integration
 

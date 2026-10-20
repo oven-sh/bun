@@ -33,6 +33,7 @@
 #include "ErrorCode.h"
 #include "ErrorEvent.h"
 #include "EventNames.h"
+#include "EventTargetInlines.h"
 #include "MessageEvent.h"
 #include "MessagePort.h"
 #include "SerializedScriptValue.h"

@@ -69,6 +69,7 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "assert/strict"_s,
     "async_hooks"_s,
     "buffer"_s,
+    "bun:dom"_s,
     "bun:ffi"_s,
     "bun:jsc"_s,
     "bun:sqlite"_s,
@@ -618,8 +619,11 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
 
 static JSValue getModuleCacheObject(VM& vm, JSObject* moduleObject)
 {
-    return uncheckedDowncast<Zig::GlobalObject>(moduleObject->globalObject())
-        ->lazyRequireCacheObject();
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(moduleObject->globalObject());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue cache = Bun::requireCacheOf(globalObject, Bun::testFileModuleGraph(globalObject), nullptr);
+    ASSERT_UNUSED(scope, !scope.exception());
+    return cache;
 }
 
 static JSValue getModuleExtensionsObject(VM& vm, JSObject* moduleObject)

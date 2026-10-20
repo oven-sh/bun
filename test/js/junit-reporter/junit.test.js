@@ -316,7 +316,7 @@ describe("junit reporter", () => {
     expect(xmlContent2).toContain("line=");
   });
 
-  it("should report only the final result for a retried test", async () => {
+  it("should report the final result for a retried test, and the earlier attempts as Surefire does", async () => {
     await using tmpDir = tempDir("junit-retry", {
       "package.json": "{}",
       "flaky.test.js": `
@@ -365,6 +365,10 @@ describe("junit reporter", () => {
     const flakyEntries = [...xmlContent.matchAll(/<testcase[^>]*name="flaky test"[^/]*(?:\/>|>[\s\S]*?<\/testcase>)/g)];
     expect(flakyEntries).toHaveLength(1);
     expect(flakyEntries[0][0]).not.toContain("<failure");
+    expect([...flakyEntries[0][0].matchAll(/<flakyFailure type="Error" message="([^"]*)">/g)].map(m => m[1])).toEqual([
+      "flaky failure attempt 1",
+      "flaky failure attempt 2",
+    ]);
 
     // A test that fails every retry attempt is reported once, as a failure,
     // and the failure message reflects the final attempt (not the first).
@@ -372,9 +376,13 @@ describe("junit reporter", () => {
       ...xmlContent.matchAll(/<testcase[^>]*name="exhausted test"[^/]*(?:\/>|>[\s\S]*?<\/testcase>)/g),
     ];
     expect(exhaustedEntries).toHaveLength(1);
-    expect(exhaustedEntries[0][0]).toContain("<failure");
-    expect(exhaustedEntries[0][0]).toContain("always fails 3");
-    expect(exhaustedEntries[0][0]).not.toContain("always fails 1");
+    expect(
+      [...exhaustedEntries[0][0].matchAll(/<(\w+) type="Error" message="([^"]*)">/g)].map(m => m.slice(1)),
+    ).toEqual([
+      ["failure", "always fails 3"],
+      ["rerunFailure", "always fails 1"],
+      ["rerunFailure", "always fails 2"],
+    ]);
 
     expect(xmlContent).toContain('name="stable test"');
 
@@ -386,6 +394,166 @@ describe("junit reporter", () => {
     expect(suite.$.tests).toBe("3");
     expect(suite.$.failures).toBe("1");
 
+    expect(proc.exitCode).toBe(1);
+  });
+
+  it("reports an attempt that timed out like any other failed attempt", async () => {
+    await using tmpDir = tempDir("junit-retry-timeout", {
+      "package.json": "{}",
+      "timeout.test.js": `
+        import { test } from "bun:test";
+        const forever = new Promise(() => {});
+        const attempts = {};
+        const attempt = name => (attempts[name] = (attempts[name] ?? 0) + 1);
+
+        test("times out, then throws", { retry: 1, timeout: 50 }, async () => {
+          if (attempt("a") === 1) await forever;
+          throw new Error("second attempt");
+        });
+        test("throws, then times out", { retry: 1, timeout: 50 }, async () => {
+          if (attempt("b") === 1) throw new Error("first attempt");
+          await forever;
+        });
+        test("times out, then passes", { retry: 1, timeout: 50 }, async () => {
+          if (attempt("c") === 1) await forever;
+        });
+      `,
+    });
+
+    const junitPath = `${tmpDir}/junit.xml`;
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: String(tmpDir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await proc.exited;
+
+    const xmlContent = await file(junitPath).text();
+    const attemptsOf = name =>
+      [
+        ...xmlContent
+          .match(new RegExp(`<testcase[^>]*name="${name}"[^/]*>[\\s\\S]*?</testcase>`))[0]
+          .matchAll(/<(\w+) type="(\w+)" message="([^"]*)"/g),
+      ].map(match => match.slice(1));
+    expect({
+      "times out, then throws": attemptsOf("times out, then throws"),
+      "throws, then times out": attemptsOf("throws, then times out"),
+      "times out, then passes": attemptsOf("times out, then passes"),
+    }).toEqual({
+      "times out, then throws": [
+        ["failure", "Error", "second attempt"],
+        ["rerunFailure", "TimeoutError", "test timed out"],
+      ],
+      "throws, then times out": [
+        ["failure", "TimeoutError", "test timed out"],
+        ["rerunFailure", "Error", "first attempt"],
+      ],
+      "times out, then passes": [["flakyFailure", "TimeoutError", "test timed out"]],
+    });
+    expect(proc.exitCode).toBe(1);
+  });
+
+  it("reports an attempt that failed without an error like any other failed attempt", async () => {
+    await using tmpDir = tempDir("junit-retry-no-error", {
+      "package.json": "{}",
+      // bun:test doesn't retry these failures.
+      "no-error.test.js": `
+        import { expect, test } from "vitest";
+        const attempts = {};
+        const attempt = name => (attempts[name] = (attempts[name] ?? 0) + 1);
+
+        test("never has enough assertions", { retry: 1 }, () => {
+          expect.assertions(2);
+          expect(1).toBe(1);
+        });
+        test("has enough assertions the second time", { retry: 1 }, () => {
+          expect.assertions(1);
+          if (attempt("a") === 2) expect(1).toBe(1);
+        });
+        test("never has an assertion", { retry: 1 }, () => {
+          expect.hasAssertions();
+        });
+        test("has an assertion the second time", { retry: 1 }, () => {
+          expect.hasAssertions();
+          if (attempt("b") === 2) expect(1).toBe(1);
+        });
+        test.fails("never fails", { retry: 1 }, () => {});
+        test.fails("fails the second time", { retry: 1 }, () => {
+          if (attempt("c") === 2) throw new Error("second attempt");
+        });
+      `,
+    });
+
+    const junitPath = `${tmpDir}/junit.xml`;
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: String(tmpDir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await proc.exited;
+
+    const xmlContent = await file(junitPath).text();
+    const attemptsOf = Object.fromEntries(
+      Array.from(xmlContent.matchAll(/<testcase name="([^"]*)"[^>]*>([\s\S]*?)<\/testcase>/g), ([, name, attempts]) => [
+        name,
+        Array.from(attempts.matchAll(/<(\w+) type="(\w+)" message="([^"]*)"/g), match => match.slice(1)),
+      ]),
+    );
+    const tooFew = count => ["AssertionError", `Expected more assertions, but only received ${count}`];
+    const none = ["AssertionError", "Expected to have assertions, but none were run"];
+    const didNotFail = ["AssertionError", "test marked with .fails() did not fail"];
+    expect(attemptsOf).toEqual({
+      "never has enough assertions": [
+        ["failure", ...tooFew(1)],
+        ["rerunFailure", ...tooFew(1)],
+      ],
+      "has enough assertions the second time": [["flakyFailure", ...tooFew(0)]],
+      "never has an assertion": [
+        ["failure", ...none],
+        ["rerunFailure", ...none],
+      ],
+      "has an assertion the second time": [["flakyFailure", ...none]],
+      "never fails": [
+        ["failure", ...didNotFail],
+        ["rerunFailure", ...didNotFail],
+      ],
+      "fails the second time": [["flakyFailure", ...didNotFail]],
+    });
+    expect(proc.exitCode).toBe(1);
+  });
+
+  it("omits U+FFFE and U+FFFF, which XML 1.0 forbids", async () => {
+    await using tmpDir = tempDir("junit-noncharacters", {
+      "package.json": "{}",
+      "noncharacters.test.js": `
+        import { describe, test } from "bun:test";
+        describe("block [\\uFFFE\\uFFFF]", () => {
+          test("test [\\uFFFE\\uFFFF]", () => {
+            throw new Error("message [\\uFFFE\\uFFFF]");
+          });
+          test("\\uFFFD and \\u{1FFFE} are allowed, \\uFFFF", () => {});
+        });
+      `,
+    });
+
+    const junitPath = join(String(tmpDir), "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: String(tmpDir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await proc.exited;
+
+    const xmlContent = await file(junitPath).text();
+    expect(xmlContent).not.toMatch(/[\uFFFE\uFFFF]/);
+    const result = await xml2js.parseStringPromise(xmlContent, { strict: true });
+    const block = result.testsuites.testsuite[0].testsuite[0];
+    expect(block.$.name).toBe("block []");
+    expect(block.testcase.map(testcase => testcase.$.name)).toEqual(["test []", "\uFFFD and \u{1FFFE} are allowed, "]);
+    expect(block.testcase[0].failure[0].$.message).toBe("message []");
     expect(proc.exitCode).toBe(1);
   });
 
@@ -555,6 +723,98 @@ describe("junit reporter", () => {
     expect(exitCode).toBe(1);
   });
 
+  it.each([
+    [
+      "a preload throws",
+      ["--preload", "./setup.js"],
+      `import { test } from "bun:test";\ntest("never runs", () => {});`,
+      { type: "TypeError", message: "the preload broke <&>", at: "setup.js:1" },
+    ],
+    [
+      "a test file throws while it loads",
+      [],
+      `import { test } from "bun:test";\nthrow new RangeError("the file broke");\ntest("never registered", () => {});`,
+      { type: "RangeError", message: "the file broke", at: "broken.test.js:2" },
+    ],
+    [
+      "a describe callback throws",
+      [],
+      `import { describe } from "bun:test";\ndescribe("group", () => {\n  throw new Error("describe broke");\n});`,
+      { type: "Error", message: "describe broke", at: "broken.test.js:3" },
+    ],
+    [
+      "a test file imports a module that doesn't exist",
+      [],
+      `import { test } from "bun:test";\nimport "./nowhere";\ntest("never registered", () => {});`,
+      { type: "ResolveMessage", message: expect.stringContaining("Cannot find module './nowhere'"), at: "./nowhere" },
+    ],
+    [
+      "a top-level import() finds no module",
+      [],
+      `import { test } from "bun:test";\nawait import("./nowhere");\ntest("never registered", () => {});`,
+      { type: "ResolveMessage", message: expect.stringContaining("Cannot find module './nowhere'"), at: "./nowhere" },
+    ],
+    [
+      "a test file has a syntax error",
+      [],
+      `import { test } from "bun:test";\nconst half = ;\ntest("never registered", () => {});`,
+      { type: "BuildMessage", message: "Unexpected ;", at: "broken.test.js:2:14" },
+    ],
+    [
+      "a module that a test file imports has a syntax error",
+      [],
+      `import { test } from "bun:test";\nimport "./half.js";\ntest("never registered", () => {});`,
+      { type: "BuildMessage", message: "Unexpected ;", at: "half.js:1:14" },
+    ],
+  ])("reports a failed test case when %s", async (_, args, source, { type, message, at }) => {
+    await using tmpDir = tempDir("junit-unhandled", {
+      "package.json": "{}",
+      "setup.js": `throw new TypeError("the preload broke <&>");`,
+      "half.js": `const half = ;`,
+      "broken.test.js": source,
+    });
+    const report = async extra => {
+      const junitPath = join(tmpDir, `junit${extra.join("")}.xml`);
+      await using proc = spawn(
+        [bunExe(), "test", ...args, ...extra, "--reporter=junit", "--reporter-outfile", junitPath],
+        { cwd: tmpDir, env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" }, stdout: "pipe", stderr: "pipe" },
+      );
+      const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { xml: filterJunitXmlOutput(await file(junitPath).text()), exitCode };
+    };
+    const [serial, parallel] = await Promise.all([report([]), report(["--parallel=2"])]);
+
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(serial.xml, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+    expect(result.testsuites.$).toMatchObject({ tests: "1", failures: "1" });
+    const [suite] = result.testsuites.testsuite;
+    expect(suite.$).toMatchObject({ name: "broken.test.js", tests: "1", failures: "1" });
+    expect(suite.testcase).toHaveLength(1);
+    expect(suite.testcase[0].$).toMatchObject({ name: "(unhandled error)", file: "broken.test.js" });
+    expect(suite.testcase[0].failure[0].$).toEqual({ type, message });
+    expect(suite.testcase[0].failure[0]._).toContain(at);
+    expect(parallel.xml).toBe(serial.xml);
+    expect([serial.exitCode, parallel.exitCode]).toEqual([1, 1]);
+  });
+
+  it("creates the folder of --reporter-outfile", async () => {
+    await using tmpDir = tempDir("junit-outfile-folder", {
+      "package.json": "{}",
+      "a.test.js": `import { test } from "bun:test";\ntest("passes", () => {});`,
+    });
+    const junitPath = join(tmpDir, "reports", "unit", "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(await file(junitPath).text()).toContain(`<testcase name="passes"`);
+    expect(exitCode).toBe(0);
+  });
+
   it("prints a stack frame whose source is not a file path as-is in <failure>", async () => {
     // Longer than a path buffer on every platform (98302 bytes on Windows).
     const padding = 100_000;
@@ -608,8 +868,259 @@ describe("junit reporter", () => {
     expect(longPathCase.failure[0]._).toContain(`at fromLongPath (${longPath}:1:`);
     expect(pathCase.failure[0]._).toContain("at fromPath (generated.js:1:");
   });
+
+  describe.concurrent("--reporter-junit-suites", () => {
+    const files = {
+      "package.json": "{}",
+      "a.test.js": `import { describe, expect, test } from "bun:test";
+test("top-level", () => {
+  expect(1).toBe(1);
+});
+describe("first block", () => {
+  test("passes", () => {
+    expect(1).toBe(1);
+    expect(2).toBe(2);
+  });
+  test.skip("skipped", () => {});
+  test.todo("todo");
+  describe("inner <&> block", () => {
+    test("fails", () => {
+      expect(1).toBe(2);
+    });
+    test.failing("failing that passes", () => {});
+  });
+  test("after inner", () => {});
+});
+describe("second block", () => {
+  test("passes", () => {});
+});
+describe.each([1, 2])("each %i", () => {
+  test("passes", () => {});
+});
+`,
+      "b.test.js": `import { describe, test } from "bun:test";
+describe("only block", () => {
+  test("passes", () => {});
+  describe("", () => {
+    test("in a block with an empty title", () => {});
+  });
+});
+`,
+    };
+
+    const flat = `<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="12" assertions="4" failures="2" skipped="2" time="#">
+  <testsuite name="a.test.js" file="a.test.js" tests="10" assertions="4" failures="2" skipped="2" time="#">
+    <properties>
+      <property name="ci" value="https://ci.example.com/123" />
+      <property name="commit" value="1234567890" />
+    </properties>
+    <testcase name="top-level" classname="a.test.js" time="#" file="a.test.js" line="2" assertions="1" />
+    <testcase name="first block &gt; passes" classname="a.test.js" time="#" file="a.test.js" line="6" assertions="2" />
+    <testcase name="first block &gt; skipped" classname="a.test.js" time="#" file="a.test.js" line="10" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="first block &gt; todo" classname="a.test.js" time="#" file="a.test.js" line="11" assertions="0">
+      <skipped message="TODO" />
+    </testcase>
+    <testcase name="first block &gt; inner &lt;&amp;&gt; block &gt; fails" classname="a.test.js" time="#" file="a.test.js" line="13" assertions="1">
+      <failure type="AssertionError" message="expect(received).toBe(expected)&#10;&#10;Expected: 2&#10;Received: 1&#10;">AssertionError: expect(received).toBe(expected)&#10;&#10;Expected: 2&#10;Received: 1&#10;&#10;      at a.test.js:14:17&#10;</failure>
+    </testcase>
+    <testcase name="first block &gt; inner &lt;&amp;&gt; block &gt; failing that passes" classname="a.test.js" time="#" file="a.test.js" line="16" assertions="0">
+      <failure type="AssertionError" message="test marked with .failing() did not throw" />
+    </testcase>
+    <testcase name="first block &gt; after inner" classname="a.test.js" time="#" file="a.test.js" line="18" assertions="0" />
+    <testcase name="second block &gt; passes" classname="a.test.js" time="#" file="a.test.js" line="21" assertions="0" />
+    <testcase name="each 1 &gt; passes" classname="a.test.js" time="#" file="a.test.js" line="24" assertions="0" />
+    <testcase name="each 2 &gt; passes" classname="a.test.js" time="#" file="a.test.js" line="24" assertions="0" />
+  </testsuite>
+  <testsuite name="b.test.js" file="b.test.js" tests="2" assertions="0" failures="0" skipped="0" time="#">
+    <properties>
+      <property name="ci" value="https://ci.example.com/123" />
+      <property name="commit" value="1234567890" />
+    </properties>
+    <testcase name="only block &gt; passes" classname="b.test.js" time="#" file="b.test.js" line="3" assertions="0" />
+    <testcase name="only block &gt;  &gt; in a block with an empty title" classname="b.test.js" time="#" file="b.test.js" line="5" assertions="0" />
+  </testsuite>
+</testsuites>
+`;
+
+    const normalize = xml =>
+      xml.replaceAll(/ (hostname|timestamp)="[^"]*"/g, "").replaceAll(/ time="\d+(\.\d+)?(e-\d+)?"/g, ' time="#"');
+
+    async function report(args, bunfig) {
+      using dir = tempDir("junit-suites", bunfig ? { ...files, "bunfig.toml": bunfig } : files);
+      await using proc = spawn([bunExe(), "test", ...args], {
+        cwd: String(dir),
+        env: { ...bunEnv, CI_JOB_URL: "https://ci.example.com/123", CI_COMMIT_SHA: "1234567890" },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const outfile = file(join(String(dir), "junit.xml"));
+      return { xml: (await outfile.exists()) ? normalize(await outfile.text()) : null, stderr, exitCode };
+    }
+    const junit = ["--reporter=junit", "--reporter-outfile=junit.xml"];
+
+    it("flat writes one <testsuite> per file and puts the describe blocks in the name of the <testcase>", async () => {
+      const { xml, exitCode } = await report([...junit, "--reporter-junit-suites=flat"]);
+      expect(xml).toBe(flat);
+      expect(exitCode).toBe(1);
+    });
+
+    it("flat writes the same report with --parallel", async () => {
+      const { xml, exitCode } = await report([...junit, "--reporter-junit-suites=flat", "--parallel=2"]);
+      expect(xml).toBe(flat);
+      expect(exitCode).toBe(1);
+    });
+
+    it("nested is the default, and counts the same tests as flat", async () => {
+      const [byDefault, nested, { xml: flat }] = await Promise.all([
+        report(junit),
+        report([...junit, "--reporter-junit-suites=nested"]),
+        report([...junit, "--reporter-junit-suites=flat"]),
+      ]);
+      expect(nested.xml).toBe(byDefault.xml);
+      expect(flat).not.toBe(byDefault.xml);
+      const suiteNames = Array.from(byDefault.xml.matchAll(/^( *)<testsuite name="([^"]*)"/gm), m => m[1] + m[2]);
+      expect(suiteNames).toEqual([
+        "  a.test.js",
+        "    first block",
+        "      inner &lt;&amp;&gt; block",
+        "    second block",
+        "    each 1",
+        "    each 2",
+        "  b.test.js",
+        "    only block",
+      ]);
+      // Attributes of <testsuites> and of each file's top-level <testsuite>.
+      const totals = xml =>
+        Array.from(xml.matchAll(/^ {0,2}<testsuites? name="[^"]*"(?: file="[^"]*")? (.*)>$/gm), m => m[1]);
+      expect(totals(byDefault.xml)).toEqual(totals(flat));
+      expect(totals(flat)).toHaveLength(3);
+    });
+
+    it("reads junitSuites from bunfig.toml", async () => {
+      const { xml, exitCode } = await report([], `[test.reporter]\njunit = "junit.xml"\njunitSuites = "flat"\n`);
+      expect(xml).toBe(flat);
+      expect(exitCode).toBe(1);
+    });
+
+    it("the flag wins over bunfig.toml", async () => {
+      const [overridden, nested] = await Promise.all([
+        report(["--reporter-junit-suites=nested"], `[test.reporter]\njunit = "junit.xml"\njunitSuites = "flat"\n`),
+        report(junit),
+      ]);
+      expect(overridden.xml).toBe(nested.xml);
+      const { xml } = await report(
+        ["--reporter-junit-suites=flat"],
+        `[test.reporter]\njunit = "junit.xml"\njunitSuites = "nested"\n`,
+      );
+      expect(xml).toBe(flat);
+    });
+
+    it.each([[[]], [["--reporter-junit-suites=flat"]], [["--parallel=2"]]])(
+      "every <testsuite> has the time its file started as its timestamp %j",
+      async args => {
+        using dir = tempDir("junit-timestamp", files);
+        const before = Date.now();
+        await using proc = spawn([bunExe(), "test", ...junit, ...args], {
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        await proc.exited;
+        const after = Date.now();
+        const suites = (await file(join(String(dir), "junit.xml")).text()).match(/<testsuite [^>]*>/g);
+        expect(suites.length).toBeGreaterThanOrEqual(2);
+        for (const suite of suites) {
+          const [, timestamp] = suite.match(/ timestamp="([^"]*)"/) ?? [];
+          expect(timestamp).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+          expect(new Date(timestamp).toISOString()).toBe(timestamp);
+          expect(Date.parse(timestamp)).toBeWithin(before, after + 1);
+        }
+      },
+    );
+
+    it.each([[[]], [["--parallel=2"]]])("a file with no tests has an empty <testsuite> %j", async args => {
+      using dir = tempDir("junit-empty", {
+        "empty.test.js": `export {};`,
+        "one.test.js": `test("passes", () => {});`,
+      });
+      await using proc = spawn([bunExe(), "test", ...junit, ...args], {
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      const exitCode = await proc.exited;
+      const xml = await file(join(String(dir), "junit.xml")).text();
+      expect(xml.match(/<testsuite name="[^"]*" file="[^"]*" tests="\d+"/g)).toEqual([
+        `<testsuite name="empty.test.js" file="empty.test.js" tests="0"`,
+        `<testsuite name="one.test.js" file="one.test.js" tests="1"`,
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    it.each([[[]], [["--parallel=2"]]])(
+      'marks an error that the test itself did not throw with uncaught="true" %j',
+      async args => {
+        using dir = tempDir("junit-uncaught", {
+          "a.test.js": `
+            let attempt = 0;
+            test("throws", () => { throw new Error("thrown by the test"); });
+            test("rejects", async () => { throw new Error("rejected by the test"); });
+            test("its timer throws", async () => {
+              const { promise, resolve } = Promise.withResolvers();
+              setTimeout(() => { resolve(); throw new Error("thrown by a timer"); }, 1);
+              await promise;
+              await new Promise(resolve => setImmediate(resolve));
+            });
+            test("its timer throws once", async () => {
+              if (attempt++) return;
+              const { promise, resolve } = Promise.withResolvers();
+              setTimeout(() => { resolve(); throw new Error("thrown by a timer once"); }, 1);
+              await promise;
+              await new Promise(resolve => setImmediate(resolve));
+            }, { retry: 1 });
+          `,
+          "b.test.js": `test("passes", () => {});`,
+        });
+        await using proc = spawn([bunExe(), "test", ...junit, ...args], {
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        const exitCode = await proc.exited;
+        const xml = await file(join(String(dir), "junit.xml")).text();
+        expect(xml.match(/<(failure|flakyFailure|rerunFailure) [^>]*>/g)).toEqual([
+          `<failure type="Error" message="thrown by the test">`,
+          `<failure type="Error" message="rejected by the test">`,
+          `<failure type="Error" message="thrown by a timer" uncaught="true">`,
+          `<flakyFailure type="Error" message="thrown by a timer once" uncaught="true">`,
+        ]);
+        expect(exitCode).toBe(1);
+      },
+    );
+
+    it("rejects any other value", async () => {
+      const [flag, bunfig] = await Promise.all([
+        report([...junit, "--reporter-junit-suites=deep"]),
+        report([], `[test.reporter]\njunit = "junit.xml"\njunitSuites = "deep"\n`),
+      ]);
+      expect(flag).toEqual({
+        xml: null,
+        stderr: `error: --reporter-junit-suites expects 'nested' or 'flat', received "deep"\n`,
+        exitCode: 1,
+      });
+      expect(bunfig.stderr).toContain(`error: expected "junitSuites" to be "nested" or "flat" but received "deep"`);
+      expect({ xml: bunfig.xml, exitCode: bunfig.exitCode }).toEqual({ xml: null, exitCode: 1 });
+    });
+  });
 });
 
 function filterJunitXmlOutput(xmlContent) {
-  return xmlContent.replaceAll(/ (time|hostname)=".*?"/g, "");
+  return xmlContent.replaceAll(/ (time|hostname|timestamp)=".*?"/g, "");
 }

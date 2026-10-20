@@ -51,7 +51,7 @@ JSAbortAlgorithm::~JSAbortAlgorithm()
 #endif
 }
 
-CallbackResult<typename IDLUndefined::ImplementationType> JSAbortAlgorithm::handleEvent(JSValue value)
+CallbackResult<typename IDLUndefined::CallbackReturnType> JSAbortAlgorithm::handleEvent(JSValue value)
 {
     if (!canInvokeCallback())
         return CallbackResultType::UnableToExecute;
@@ -84,14 +84,14 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSAbortAlgorithm::hand
     return {};
 }
 
-void JSAbortAlgorithm::visitJSFunction(JSC::AbstractSlotVisitor& visitor)
+void JSAbortAlgorithm::visitJSFunctionInGCThread(JSC::AbstractSlotVisitor& visitor)
 {
-    m_data->visitJSFunction(visitor);
+    m_data->visitJSFunctionInGCThread(visitor);
 }
 
-void JSAbortAlgorithm::visitJSFunction(JSC::SlotVisitor& visitor)
+void JSAbortAlgorithm::visitJSFunctionInGCThread(JSC::SlotVisitor& visitor)
 {
-    m_data->visitJSFunction(visitor);
+    m_data->visitJSFunctionInGCThread(visitor);
 }
 
 } // namespace WebCore

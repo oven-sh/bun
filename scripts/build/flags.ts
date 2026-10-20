@@ -11,6 +11,7 @@
  * that apply uniformly to bun's own C/C++ sources.
  */
 
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { bunExeName, type Config } from "./config.ts";
 import { quote, slash } from "./shell.ts";
@@ -1717,6 +1718,13 @@ export const stripFlags: Flag[] = [
  * Bun's source-tree include paths. These are the -I dirs for bun's own code
  * (not vendored deps — those come from each dep's `Provides.includes`).
  */
+function webcoreSubdirectories(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true, recursive: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => join(entry.parentPath, entry.name))
+    .sort();
+}
+
 export function bunIncludes(cfg: Config): string[] {
   const { cwd, codegenDir, vendorDir } = cfg;
   const includes: string[] = [
@@ -1731,6 +1739,8 @@ export function bunIncludes(cfg: Config): string[] {
     join(cwd, "packages/bun-usockets/src"),
     join(cwd, "src/jsc/bindings"),
     join(cwd, "src/jsc/bindings/webcore"),
+    // WebCore includes headers by file name alone, whichever directory they're in.
+    ...webcoreSubdirectories(join(cwd, "src/jsc/bindings/webcore")),
     join(cwd, "src/jsc/bindings/webcrypto"),
     join(cwd, "src/jsc/bindings/node/crypto"),
     join(cwd, "src/jsc/bindings/node/http"),

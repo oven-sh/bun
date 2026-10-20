@@ -27,7 +27,7 @@
 
 namespace WebCore {
 
-template<> RsaOtherPrimesInfo convertDictionary<RsaOtherPrimesInfo>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> ConversionResult<IDLDictionary<RsaOtherPrimesInfo>> convertDictionary<RsaOtherPrimesInfo>(JSC::JSGlobalObject&, JSC::JSValue);
 
 JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject&, JSDOMGlobalObject&, const RsaOtherPrimesInfo&);
 

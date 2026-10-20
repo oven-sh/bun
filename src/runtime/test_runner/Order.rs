@@ -15,6 +15,8 @@ pub(crate) struct Order {
     // `cloned_hook_entries` after `generate_order_describe` and reclaims the Box
     // headers (without running `Drop`) in `Drop for BunTest`.
     pub(crate) previous_group_was_concurrent: bool,
+    /// Set by `describe.shuffle` only, not by `--randomize`.
+    pub(crate) shuffled: bool,
     pub(crate) cfg: Config,
 }
 
@@ -25,6 +27,7 @@ impl Order {
             sequences: Vec::new(),
             cfg,
             previous_group_was_concurrent: false,
+            shuffled: false,
         }
     }
     // `deinit` only freed `groups` / `sequences` — handled by Drop on Vec; no impl Drop needed.
@@ -39,9 +42,17 @@ impl Order {
         Ok(())
     }
 
-    pub(crate) fn generate_all_order(&mut self, entries: &[Box<ExecutionEntry>]) -> JsResult<AllOrderResult> {
+    /// Vitest doesn't run the hooks of a scope where every test is skipped, so `!runs_a_test` drops Vitest hooks.
+    pub(crate) fn generate_all_order(
+        &mut self,
+        entries: &[Box<ExecutionEntry>],
+        runs_a_test: bool,
+    ) -> JsResult<AllOrderResult> {
         let start = self.groups.len();
         for entry_box in entries.iter() {
+            if !runs_a_test && entry_box.calling.is_vitest() {
+                continue;
+            }
             // Callers (e.g. BunTestRoot.hook_scope) only hold `&` access to the Vec, so we accept
             // `&[Box<_>]` and recover each Box's heap pointer as *mut to mutate through the
             // pointer, not the slice. SAFETY: each Box<ExecutionEntry> is live and
@@ -78,22 +89,38 @@ impl Order {
         Ok(AllOrderResult { start, end })
     }
 
+    #[optimize(size)]
     pub(crate) fn generate_order_describe(&mut self, current: &mut DescribeScope) -> JsResult<()> {
         if current.failed {
             return Ok(()); // do not schedule any tests in a failed describe scope
         }
         let use_hooks = self.cfg.always_use_hooks || current.base.has_callback;
 
+        // gather aroundAll
+        let aroundall_order: AllOrderResult = if use_hooks {
+            self.generate_all_order(&current.around_all, current.base.has_callback)?
+        } else {
+            AllOrderResult::EMPTY
+        };
+
         // gather beforeAll
         let beforeall_order: AllOrderResult = if use_hooks {
-            self.generate_all_order(&current.before_all)?
+            self.generate_all_order(&current.before_all, current.base.has_callback)?
         } else {
             AllOrderResult::EMPTY
         };
 
         // shuffle entries if randomize flag is set
-        if let Some(random) = self.cfg.randomize.as_mut() {
-            shuffle_with_index(random, &mut current.entries);
+        match (current.inherited.shuffle, self.cfg.randomize.as_mut()) {
+            (Some(false), _) | (None, None) => {}
+            (None, Some(random)) => shuffle_with_index(random, &mut current.entries),
+            // Uses its own PRNG, so `--seed` reproduces this order even though it also shuffles everything else.
+            (Some(true), _) => {
+                let name = bun_wyhash::hash(current.base.name.as_deref().unwrap_or_default());
+                let mut random = bun_core::rand::DefaultPrng::init(self.cfg.seed.wrapping_add(name));
+                shuffle_with_index(&mut random, &mut current.entries);
+                self.shuffled = true;
+            }
         }
 
         // gather children
@@ -111,13 +138,19 @@ impl Order {
 
         // gather afterAll
         let afterall_order: AllOrderResult = if use_hooks {
-            self.generate_all_order(&current.after_all)?
+            self.generate_all_order(&current.after_all, current.base.has_callback)?
         } else {
             AllOrderResult::EMPTY
         };
 
         // update skip_to values for afterAll to skip the remaining afterAll items
         afterall_order.set_failure_skip_to(self);
+
+        // An aroundAll that fails before `runSuite()` skips to the teardown of the ones around it. Its own slot has no callback.
+        aroundall_order.set_failure_skip_to(self);
+        if use_hooks {
+            self.generate_all_order(&current.around_all_teardown, current.base.has_callback)?;
+        }
 
         Ok(())
     }
@@ -163,6 +196,23 @@ impl Order {
             }
         }
 
+        // gather aroundEach, which goes around every beforeEach
+        if use_each_hooks {
+            let mut parent: Option<*mut DescribeScope> = first_parent;
+            while let Some(p_ptr) = parent {
+                // SAFETY: parent chain consists of live DescribeScope nodes.
+                let p = unsafe { &*p_ptr };
+                for entry in p.around_each.iter().rev() {
+                    let src: *const ExecutionEntry = &raw const **entry;
+                    // SAFETY: `src` is valid for reads; `Drop` never runs on the bitwise copy
+                    // (see ownership note above), so duplicated owning fields are not double-freed.
+                    let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
+                    list.prepend(cloned);
+                }
+                parent = p.base.parent;
+            }
+        }
+
         // append test
         list.append(current.as_ptr()); // add entry to sequence
 
@@ -189,7 +239,12 @@ impl Order {
         while let Some(entry_ptr) = index {
             // SAFETY: list contains valid ExecutionEntry nodes linked via `next`.
             unsafe {
-                (*entry_ptr).failure_skip_past = failure_skip_past; // we could consider matching skip_to in beforeAll to skip directly to the first afterAll from its own scope rather than skipping to the first afterAll from any scope
+                (*entry_ptr).failure_skip_past = if (*entry_ptr).around.is_some() {
+                    // Nothing inside an aroundEach that fails before `runTest()` runs, afterEach included.
+                    list.last
+                } else {
+                    failure_skip_past // we could consider matching skip_to in beforeAll to skip directly to the first afterAll from its own scope rather than skipping to the first afterAll from any scope
+                };
                 if Some(entry_ptr) == failure_skip_past {
                     failure_skip_past = None;
                 }
@@ -266,11 +321,13 @@ pub(crate) struct Config {
     // The only call site seeds a concrete `DefaultPrng` (xoshiro256++), so
     // no type-erased Random vtable is needed.
     pub(crate) randomize: Option<bun_core::rand::DefaultPrng>,
+    pub(crate) seed: u64,
 }
 
 /// Forward Fisher-Yates: `i` from 0 to len-2, `j = intRangeLessThan(usize, i, len)`.
 /// Must produce the identical permutation for the same xoshiro256++ state across Bun
 /// versions so that `bun test --randomize --seed=N` stays reproducible.
+#[optimize(size)]
 fn shuffle_with_index<T>(r: &mut bun_core::rand::DefaultPrng, buf: &mut [T]) {
     if buf.len() < 2 {
         return;

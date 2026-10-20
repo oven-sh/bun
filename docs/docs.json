@@ -164,6 +164,7 @@
               "/runtime/xml",
               "/runtime/jsonl",
               "/runtime/html-rewriter",
+              "/runtime/dom",
               "/runtime/image",
               "/runtime/hashing",
               "/runtime/glob",

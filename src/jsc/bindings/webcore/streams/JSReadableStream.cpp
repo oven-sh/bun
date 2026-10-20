@@ -157,7 +157,7 @@ static ConvertedUnderlyingSource convertUnderlyingSource(JSC::VM& vm, JSGlobalOb
     JSValue autoAllocateChunkSize = sourceObject->get(globalObject, names.autoAllocateChunkSizePublicName());
     RETURN_IF_EXCEPTION(scope, result);
     if (!autoAllocateChunkSize.isUndefined()) {
-        uint64_t value = convertToIntegerEnforceRange<uint64_t>(*globalObject, autoAllocateChunkSize);
+        uint64_t value = convertToIntegerEnforceRange<IDLUnsignedLongLong>(*globalObject, autoAllocateChunkSize);
         RETURN_IF_EXCEPTION(scope, result);
         result.dict.autoAllocateChunkSize = value;
     }
@@ -392,7 +392,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototype_inspectCustom, (JSGlobalObjec
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = callFrame->thisValue();
+    JSValue thisValue = callFrame->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict());
     auto* thisObject = dynamicDowncast<JSReadableStream>(thisValue);
     if (!thisObject) [[unlikely]]
         return JSValue::encode(thisValue);

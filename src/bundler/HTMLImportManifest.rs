@@ -48,9 +48,7 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_io::{FmtAdapter, Write};
 use bun_js_printer::Encoding;
-use bun_paths::resolve_path::{
-    platform, platform_to_posix_in_place, relative_normalized, relative_platform_buf,
-};
+use bun_paths::resolve_path::{platform, platform_to_posix_in_place, relative_normalized};
 use bun_resolver::fs::FileSystem;
 
 use crate::Graph::Graph;
@@ -187,8 +185,8 @@ impl<'a> HTMLImportManifest<'a> {
 }
 
 /// `from_chunk_dir` is the outdir-relative directory of the chunk the manifest is
-/// printed into. The paths are relative to it when the manifest carries that
-/// directory at runtime, and to the outdir otherwise.
+/// printed into. The paths are relative to the outdir; when the manifest carries
+/// the chunk's directory at runtime, `root` leads from there to the outdir.
 pub(crate) fn write<W: Write + ?Sized>(
     index: u32,
     graph: &Graph,
@@ -205,11 +203,6 @@ pub(crate) fn write<W: Write + ?Sized>(
         &*bun_core::from_field_ptr!(BundleV2<'static>, graph, std::ptr::from_ref::<Graph>(graph))
     };
     let options = &bv2.transpiler().options;
-    let from_chunk_dir: &[u8] = if options.html_manifest_has_module_dir() {
-        from_chunk_dir
-    } else {
-        b""
-    };
     // Same size as the files' entry bits: the linker's list also holds the dynamic imports.
     let mut entry_point_bits = AutoBitSet::init_empty(linker_graph.entry_points.len())?;
     let mut chunks_to_write = AutoBitSet::init_empty(chunks.len())?;
@@ -223,6 +216,17 @@ pub(crate) fn write<W: Write + ?Sized>(
     };
 
     writer.write_all(b"{")?;
+
+    if options.html_manifest_has_module_dir() && !from_chunk_dir.is_empty() {
+        let depth = 1
+            + strings::count_char(from_chunk_dir, b'/')
+            + strings::count_char(from_chunk_dir, b'\\');
+        writer.write_all(b"\"root\":\"")?;
+        for _ in 0..depth {
+            writer.write_all(b"../")?;
+        }
+        writer.write_all(b"\",")?;
+    }
 
     // Use the server-side public path here.
     let compile_prefix: Option<&[u8]> = options
@@ -241,12 +245,7 @@ pub(crate) fn write<W: Write + ?Sized>(
             if matches!(ch.content, Content::Html) {
                 writer.write_all(b"\"index\":")?;
                 bun_js_printer::write_json_string::<_, { Encoding::Utf8 }>(
-                    output_path(
-                        &mut temp_buffer,
-                        &ch.final_rel_path,
-                        compile_prefix,
-                        from_chunk_dir,
-                    ),
+                    output_path(&mut temp_buffer, &ch.final_rel_path, compile_prefix),
                     writer,
                 )?;
                 writer.write_all(b",")?;
@@ -305,12 +304,7 @@ pub(crate) fn write<W: Write + ?Sized>(
             write_entry_item(
                 writer,
                 input,
-                output_path(
-                    &mut temp_buffer,
-                    &ch.final_rel_path,
-                    compile_prefix,
-                    from_chunk_dir,
-                ),
+                output_path(&mut temp_buffer, &ch.final_rel_path, compile_prefix),
                 // The HTML chunk's body embeds the hashed paths of its JS/CSS
                 // chunks, so its etag must change when those do. `isolated_hash`
                 // by design excludes those substitutions; the placeholder hash
@@ -357,12 +351,7 @@ pub(crate) fn write<W: Write + ?Sized>(
                 write_entry_item(
                     writer,
                     path_for_key,
-                    output_path(
-                        &mut temp_buffer,
-                        &output_file.dest_path,
-                        compile_prefix,
-                        from_chunk_dir,
-                    ),
+                    output_path(&mut temp_buffer, &output_file.dest_path, compile_prefix),
                     output_file.hash.value,
                     output_file.loader,
                     output_file.output_kind,
@@ -422,25 +411,13 @@ fn output_path<'b>(
     buf: &'b mut Vec<u8>,
     path: &'b [u8],
     compile_prefix: Option<&[u8]>,
-    from_chunk_dir: &[u8],
 ) -> &'b [u8] {
-    if let Some(prefix) = compile_prefix {
-        buf.clear();
-        buf.extend_from_slice(prefix);
-        buf.extend_from_slice(strings::remove_leading_dot_slash(path));
-        return buf;
-    }
-    if from_chunk_dir.is_empty() {
+    let Some(prefix) = compile_prefix else {
         return path;
-    }
-    let mut rel_buf = bun_paths::path_buffer_pool::get();
-    let rel =
-        relative_platform_buf::<platform::Posix, false>(&mut rel_buf[..], from_chunk_dir, path);
+    };
     buf.clear();
-    if !rel.starts_with(b"../") {
-        buf.extend_from_slice(b"./");
-    }
-    buf.extend_from_slice(rel);
+    buf.extend_from_slice(prefix);
+    buf.extend_from_slice(strings::remove_leading_dot_slash(path));
     buf
 }
 

@@ -55,12 +55,35 @@ describe.concurrent("bundler", () => {
     { name: "subdirectory-cjs", format: "cjs", ...inSubfolder },
     { name: "publicPath", format: "esm", publicPath: "/", ...inSubfolder },
     { name: "publicPath-cjs", format: "cjs", publicPath: "/", ...inSubfolder },
+    // The page's files land under the server entry's folder, and the HTML names them from the outdir.
+    {
+      name: "publicPath-files-below-entry",
+      format: "esm",
+      publicPath: "/",
+      naming: { chunk: "[dir]/[name]-[hash].[ext]", asset: "[dir]/[name]-[hash].[ext]" },
+      ...inSubfolder,
+    },
   ] as const)("HTMLServerRunFromAnotherDirectory/$name", async ({ name, ...options }) => {
     using dir = tempDir("html-server-cwd", {
       ...htmlServerFiles,
       "src/server.ts": `import about from "./pages/about.html";${serveAbout}`,
     });
     const { stdout, stderr, exitCode } = await buildAndRun(String(dir), options);
+    expect(stdout, stderr).toBe("200 true 200 true 200");
+    expect(exitCode).toBe(0);
+  });
+
+  test("HTMLServerCopiedManifest", async () => {
+    using dir = tempDir("html-server-copy", {
+      ...htmlServerFiles,
+      "src/server.ts": `import original from "./pages/about.html"; const about = { ...original };${serveAbout}`,
+    });
+    // A copy loses `dir`, so its paths are relative to the working directory, as without it.
+    const { stdout, stderr, exitCode } = await buildAndRun(String(dir), {
+      ...inSubfolder,
+      output: "src/server.js",
+      cwd: "dist",
+    });
     expect(stdout, stderr).toBe("200 true 200 true 200");
     expect(exitCode).toBe(0);
   });

@@ -229,7 +229,7 @@ pub struct RareData {
     /// CTX. Cached separately so the hot `tls:true` / `wss://` path skips even the
     /// SHA-256 + map lookup. Ref owned here. Lazy-init body lives in
     /// `bun_runtime` (it calls `SSLContextCache::get_or_create_opts`).
-    /// Held for the VM's lifetime so the weak-cache entry never tombstones.
+    /// Held until `tls.DEFAULT_CIPHERS` is assigned so the weak-cache entry never tombstones.
     pub default_client_ssl_ctx: Option<boring::OwnedSslCtx>,
 
     /// `bun_runtime::node::StatWatcherScheduler` — erased `RefPtr` payload;
@@ -820,6 +820,8 @@ impl RareData {
         owned.extend_from_slice(ciphers);
         owned.push(0);
         self.tls_default_ciphers = Some(owned.into_boxed_slice());
+        // Built from the previous list. Open connections hold their own reference.
+        self.default_client_ssl_ctx = None;
     }
 
     pub fn push_cleanup_hook(
@@ -832,11 +834,16 @@ impl RareData {
             .push(CleanupHook::from(global_this, ctx, func));
     }
 
+    /// The loop a first `spawn_sync_event_loop` call made.
+    pub fn existing_spawn_sync_event_loop(&self) -> Option<&SpawnSyncEventLoop> {
+        self.spawn_sync_event_loop_.as_deref()
+    }
+
     /// `None` if the loop cannot be created; nothing is cached, so a later call retries.
     pub fn spawn_sync_event_loop(
         &mut self,
         vm: &mut VirtualMachine,
-    ) -> Option<&mut SpawnSyncEventLoop> {
+    ) -> Option<&SpawnSyncEventLoop> {
         if self.spawn_sync_event_loop_.is_none() {
             // In-place out-param init: `event_loop` inside captures the
             // `self` address, so the value must not move after init; allocate
@@ -851,7 +858,7 @@ impl RareData {
             // SAFETY: `init` fully initialised the slot when it returned `true`.
             self.spawn_sync_event_loop_ = Some(unsafe { boxed.assume_init() });
         }
-        self.spawn_sync_event_loop_.as_deref_mut()
+        self.spawn_sync_event_loop_.as_deref()
     }
 
     // ── watch-mode listen sockets ─────────────────────────────────────────
@@ -901,9 +908,7 @@ impl RareData {
     ) -> crate::virtual_machine::SweepResult {
         // A native close path can cascade (closing one socket completes or
         // fails another, whose own close lands in a group already drained), so
-        // loop until every group is observed empty in the same pass — bounded;
-        // the post-close force-drain in close_all handles whatever is left
-        // after the cap.
+        // loop until every group is observed empty in the same pass — bounded.
         // Walk the loop's linked-group list rather than just our 14 embedded
         // fields: Listener/uWS-App groups own their own SocketGroup, and accepted
         // sockets land *there*, not in RareData. Iterating only the embedded

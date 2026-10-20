@@ -350,6 +350,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `value`/`stmt_opts` are reinitialized every iteration before any read, so
                 // declare per-iteration.
                 let mut value: Option<js_ast::Expr> = None;
+                let clause_loc = p.lexer.loc();
                 if p.lexer.token == T::TDefault {
                     if found_default {
                         p.log().add_range_error(
@@ -386,7 +387,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 cases.push(js_ast::Case {
                     value,
                     body: bun_ast::StoreSlice::from_bump(body),
-                    loc: bun_ast::Loc::EMPTY,
+                    loc: clause_loc,
                 });
             }
             p.lexer.expect(T::TCloseBrace)?;
@@ -912,7 +913,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     p.lexer.expect(T::TFunction)?;
                     opts.is_export = true;
-                    return p.parse_fn_stmt(loc, opts, Some(async_range));
+                    return p.parse_fn_stmt(async_range.loc, opts, Some(async_range));
                 }
 
                 if Self::IS_TYPESCRIPT_ENABLED {
@@ -997,7 +998,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             lexical_decl: LexicalDecl::AllowAll,
                             ..Default::default()
                         };
-                        let stmt = p.parse_fn_stmt(loc, &mut stmt_opts, Some(async_range))?;
+                        let stmt =
+                            p.parse_fn_stmt(async_range.loc, &mut stmt_opts, Some(async_range))?;
                         if matches!(stmt.data, js_ast::StmtData::STypeScript(_)) {
                             // This was just a type annotation
                             return Ok(stmt);
@@ -1128,7 +1130,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         is_name_optional: true,
                         ..Default::default()
                     };
-                    let stmt: Stmt = p.parse_class_stmt(loc, &mut stmt_opts)?;
+                    let stmt: Stmt = p.parse_class_stmt(p.lexer.loc(), &mut stmt_opts)?;
 
                     // Use the statement name if present, since it's a better name
                     let default_name: LocRef = 'default_name_getter: {
@@ -1149,7 +1151,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             js_ast::StmtData::SClass(class) => {
                                 if let Some(_name) = class.class.class_name {
                                     break 'default_name_getter LocRef {
-                                        loc: default_loc,
+                                        loc: _name.loc,
                                         ref_: _name.ref_,
                                     };
                                 }
@@ -1831,7 +1833,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !p.lexer.has_newline_before
                     && (p.lexer.token == T::TClass || opts.ts_decorators.is_some())
                 {
-                    return Ok(Some(p.parse_class_stmt(loc, opts)?));
+                    return Ok(Some(p.parse_class_stmt(p.lexer.loc(), opts)?));
                 }
                 if opts.ts_decorators.is_some() {
                     let r = js_lexer::range_of_identifier(p.source, loc);

@@ -1,6 +1,6 @@
 import { canonicalizeIP } from "bun:internal-for-testing";
 import { createTest } from "node-harness";
-import { X509Certificate } from "node:crypto";
+import { createHash, X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getCACertificates, rootCertificates } from "tls";
@@ -24,6 +24,54 @@ describe("NodeTLS.cpp", () => {
     expect(canonicalizeIP("0:0:0:0:0:ffff:c0a8:101")).toBe("::ffff:192.168.1.1");
 
     expect(canonicalizeIP("::ffff:192.168.1.1")).toBe("::ffff:192.168.1.1");
+  });
+
+  // Node.js parses with libuv's uv_inet_pton: a dotted quad, or an IPv6 address
+  // up to the first "%". The zone id is not in the result and is not checked.
+  // The text is a C string there, so it ends at a NUL. Every expected value
+  // was taken from Node.js v26.3.0.
+  test("canonicalizeIP reads an address in the strict form and drops a zone id", () => {
+    const long = `fe80::1%${Buffer.alloc(64, "z").toString()}`;
+    const expected: Record<string, string | null> = {
+      "::1%lo": "::1",
+      "fe80::1%eth0": "fe80::1",
+      "FE80:0:0:0:0:0:0:1%eth0": "fe80::1",
+      "::ffff:1.2.3.4%lo": "::ffff:1.2.3.4",
+      "1:2:3:4:5:6:7::%lo": "1:2:3:4:5:6:7:0",
+      "fe80::1%12": "fe80::1",
+      "fe80::1%": "fe80::1",
+      "fe80::1%eth0%eth1": "fe80::1",
+      "fe80::1%br_lan": "fe80::1",
+      "fe80::1%eth0/64": "fe80::1",
+      "fe80::1%et\0h0": "fe80::1",
+      "::1\0": "::1",
+      "::1\0%lo": "::1",
+      "1.2.3.4\0/8": "1.2.3.4",
+      [long]: "fe80::1",
+      // An IPv4 address takes no zone, and the address before the zone is in the strict form.
+      "1.2.3.4%lo": null,
+      "::1.2.3%lo": null,
+      "::01.2.3.4%lo": null,
+      "fe80::12345%lo": null,
+      "fe80::1 %eth0": null,
+      "fe80::1/64%eth0": null,
+      "10.0.0\0%a/b": null,
+      "%lo": null,
+      // ares_inet_pton reads each of these: "127.1" as 127.1.0.0, "10" as 10.0.0.0.
+      "127.1": null,
+      "10": null,
+      "0x7f000001": null,
+      "127.000.000.001": null,
+      "1.2.3": null,
+      "01.2.3.4": null,
+      "::1.2.3": null,
+      "::01.2.3.4": null,
+      "1.2.3.4/8": null,
+      "::1/64": null,
+      "127.1\0": null,
+    };
+    const actual = Object.keys(expected).map(text => [text, canonicalizeIP(text) ?? null]);
+    expect(Object.fromEntries(actual)).toEqual(expected);
   });
 
   test("rootCertificates", () => {
@@ -72,7 +120,7 @@ describe("NodeTLS.cpp", () => {
     expect(names.length).toBe(count);
 
     expect(rootCertificates.length).toBe(count);
-    expect(getCACertificates("bundled")).toEqual(rootCertificates);
+    expect(getCACertificates("bundled")).toEqual<readonly string[]>(rootCertificates);
     for (let i = 0; i < count; i++) {
       const der = data.subarray(offset(i), offset(i + 1));
       const cert = new X509Certificate(rootCertificates[i]);
@@ -81,5 +129,51 @@ describe("NodeTLS.cpp", () => {
       expect(cert.ca).toBe(true);
       expect(cert.issuer).toBe(cert.subject);
     }
+  });
+
+  // root_certs.der is binary, so a diff cannot be reviewed; certdata.txt (Mozilla's list) can.
+  test("every bundled root is a certificate certdata.txt trusts for server auth", () => {
+    // Mirrors %distrusted_labels in generate-root-certs.pl.
+    const distrusted = new Set([
+      "emSign Root CA - G1",
+      "emSign ECC Root CA - G3",
+      "emSign Root CA - C1",
+      "emSign ECC Root CA - C3",
+    ]);
+    const lines = readFileSync(join(import.meta.dir, "../../../../packages/bun-usockets/certdata.txt"), "latin1").split(
+      "\n",
+    );
+    const trusted: string[] = [];
+    let sha1 = "";
+    let label = "";
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith('CKA_LABEL UTF8 "')) {
+        label = lines[i].slice('CKA_LABEL UTF8 "'.length, -1);
+      } else if (lines[i] === "CKA_CERT_SHA1_HASH MULTILINE_OCTAL") {
+        sha1 = "";
+        while (lines[++i] !== "END")
+          for (const octal of lines[i].split("\\").slice(1)) sha1 += parseInt(octal, 8).toString(16).padStart(2, "0");
+      } else if (lines[i] === "CKA_TRUST_SERVER_AUTH CK_TRUST CKT_NSS_TRUSTED_DELEGATOR" && !distrusted.has(label))
+        trusted.push(sha1);
+    }
+    const bundled = rootCertificates.map(pem => createHash("sha1").update(new X509Certificate(pem).raw).digest("hex"));
+    expect(bundled.toSorted()).toEqual(trusted.toSorted());
+  });
+
+  // By SHA-256 of the DER rather than by label, so a relabel in certdata.txt cannot bring one back.
+  test("the roots generate-root-certs.pl leaves out are not bundled", () => {
+    const distrusted = [
+      "40f6af0346a99aa1cd1d555a4e9cce62c7f9634603ee406615833dc8c8d00367",
+      "86a1ecba089c4a8d3bbe2734c612ba341d813e043cf9e8a862cd5c57a36bbe6b",
+      "125609aa301da0a249b97a8239cb6a34216f44dcac9f3954b14292f2e8c8608f",
+      "bc4d809b15189d78db3e1d8cf4f9726a795da1643ca5f1358e1ddb0edc0d7eb3",
+    ];
+    const bundled = new Set(
+      [...rootCertificates, ...getCACertificates("bundled")].map(pem =>
+        createHash("sha256").update(new X509Certificate(pem).raw).digest("hex"),
+      ),
+    );
+    expect(bundled.size).toBeGreaterThan(100);
+    expect(distrusted.filter(fingerprint => bundled.has(fingerprint))).toEqual([]);
   });
 });

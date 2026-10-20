@@ -682,8 +682,8 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 
   return result;
 }
-const etimedoutErrorCode = $newRustFunction("node_util_binding.rs", "etimedoutErrorCode", 0);
-const enobufsErrorCode = $newRustFunction("node_util_binding.rs", "enobufsErrorCode", 0);
+const etimedoutErrorCode = $bindgen("node_util_binding.bind.ts", "etimedoutErrorCode");
+const enobufsErrorCode = $bindgen("node_util_binding.bind.ts", "enobufsErrorCode");
 
 /**
  * Spawns a file as a shell synchronously.
@@ -1590,6 +1590,16 @@ class ChildProcess extends EventEmitter {
       return false;
     }
 
+    if (!this.connected) {
+      const ex = $ERR_IPC_CHANNEL_CLOSED();
+      if (callback) {
+        process.nextTick(callback, ex);
+      } else {
+        process.nextTick(() => this.emit("error", ex));
+      }
+      return false;
+    }
+
     // We still need this send function because
     return this.#handle.send(message, handle, options, err => {
       // node does process.nextTick() to emit or call the callback
@@ -1752,6 +1762,12 @@ function isInternalIpcMessage(message) {
 function streamFdOf(item): number | undefined {
   const itemFd = ObjectHasOwn(item, "fd") ? item.fd : undefined;
   if (typeof itemFd === "number") return itemFd;
+
+  // The descriptor under a tls.TLSSocket carries TLS records, not the stream's bytes. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L1063-L1083
+  if (typeof item[Symbol.for("::buntls::")] === "function") {
+    // The message gets the class name only: a fully inspected TLSSocket reaches its key and passphrase.
+    throw $ERR_INVALID_ARG_VALUE("stdio", require("internal/util/inspect").inspect(item, { depth: -1 }));
+  }
 
   const handle = item._handle;
   const handleFd = handle ? handle.fd : undefined;

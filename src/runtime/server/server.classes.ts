@@ -104,6 +104,7 @@ function generate(name) {
       "wsOnError",
       "wsOnPing",
       "wsOnPong",
+      "wsPackageHandlers",
     ],
   });
 }
@@ -169,8 +170,8 @@ export default [
         fn: "pauseSocketReads",
         length: 0,
       },
-      drainRequestBody: {
-        fn: "drainRequestBody",
+      notifyWhenReadParsed: {
+        fn: "notifyWhenReadParsed",
         length: 0,
       },
       takeRequestTrailers: {
@@ -179,6 +180,10 @@ export default [
       },
       takeRawHeaders: {
         fn: "takeRawHeaders",
+        length: 1,
+      },
+      headersObject: {
+        fn: "headersObject",
         length: 0,
       },
       writeHeadAndEnd: {
@@ -214,10 +219,6 @@ export default [
         setter: "setOnAbort",
         this: true,
       },
-      hasCustomOnData: {
-        getter: "getHasCustomOnData",
-        setter: "setHasCustomOnData",
-      },
       upgraded: {
         getter: "getUpgraded",
       },
@@ -252,44 +253,18 @@ export default [
       sendText: {
         fn: "sendText",
         length: 2,
-        // ASSERTION FAILED: m_data[index].lockCount
-        // /Users/jarred/actions-runner/_work/WebKit/WebKit/Source/JavaScriptCore/dfg/DFGRegisterBank.h(204) : void JSC::DFG::RegisterBank<JSC::GPRInfo>::unlock(RegID) [BankInfo = JSC::GPRInfo]
-        // 1   0x102740124 WTFCrash
-        // 3   0x103076bac JSC::MacroAssemblerARM64::add64(JSC::AbstractMacroAssembler<JSC::ARM64Assembler>::TrustedImm64, JSC::ARM64Registers::RegisterID, JSC::ARM64Registers::RegisterID)
-        // 4   0x10309a2d0 JSC::DFG::SpeculativeJIT::compileCallDOM(JSC::DFG::Node*)::$_0::operator()(JSC::DFG::Edge) const
-        // DOMJIT: {
-        //   returns: "int",
-        //   args: ["JSString", "bool"],
-        // },
       },
       sendBinary: {
         fn: "sendBinary",
         length: 2,
-        // ASSERTION FAILED: m_data[index].lockCount
-        // /Users/jarred/actions-runner/_work/WebKit/WebKit/Source/JavaScriptCore/dfg/DFGRegisterBank.h(204) : void JSC::DFG::RegisterBank<JSC::GPRInfo>::unlock(RegID) [BankInfo = JSC::GPRInfo]
-        // 1   0x102740124 WTFCrash
-        // 3   0x103076bac JSC::MacroAssemblerARM64::add64(JSC::AbstractMacroAssembler<JSC::ARM64Assembler>::TrustedImm64, JSC::ARM64Registers::RegisterID, JSC::ARM64Registers::RegisterID)
-        // 4   0x10309a2d0 JSC::DFG::SpeculativeJIT::compileCallDOM(JSC::DFG::Node*)::$_0::operator()(JSC::DFG::Edge) const
-        // DOMJIT: {
-        //   returns: "int",
-        //   args: ["JSUint8Array", "bool"],
-        // },
       },
       publishText: {
         fn: "publishText",
         length: 2,
-        DOMJIT: {
-          returns: "int",
-          args: ["JSString", "JSString"],
-        },
       },
       publishBinary: {
         fn: "publishBinary",
         length: 2,
-        DOMJIT: {
-          returns: "int",
-          args: ["JSString", "JSUint8Array"],
-        },
       },
       ping: {
         fn: "ping",
@@ -317,6 +292,17 @@ export default [
       getBufferedAmount: {
         fn: "getBufferedAmount",
         length: 0,
+      },
+      pause: {
+        fn: "pause",
+        length: 0,
+      },
+      resume: {
+        fn: "resume",
+        length: 0,
+      },
+      isPaused: {
+        getter: "getIsPaused",
       },
       binaryType: {
         getter: "getBinaryType",

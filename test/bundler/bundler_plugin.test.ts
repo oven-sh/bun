@@ -933,7 +933,7 @@ describe("bundler", () => {
       },
       entryPoints: ["./index.ts"],
       plugins(build) {
-        expect(build.config).toBe(getConfigRef());
+        expect(build.config).toBe(getConfigRef() as typeof build.config);
       },
     };
   });

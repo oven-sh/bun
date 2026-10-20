@@ -9,6 +9,7 @@ use crate::{is_package_path, is_package_path_not_absolute};
 
 use core::ptr::NonNull;
 use std::io::Write as _;
+use std::sync::Arc;
 
 // ── Cross-crate type surface ──────────────────────────────────────────────
 // Higher-tier symbols are reached through lower-tier crates:
@@ -21,7 +22,7 @@ use ::bun_install_types::resolver_hooks::{AutoInstaller, Resolution};
 use ::bun_semver as Semver;
 
 // LAYERING: `PackageManager.initWithRuntime` lives in
-// `bun_install`, which depends on this crate. The lazy-init body is defined
+// `bun_install`, which depends on this crate. It and `Dependency.parse` are defined
 // `#[no_mangle]` in `bun_install::auto_installer` and resolved at link time
 // (same pattern as `__bun_regex_*` / `__BUN_RUNTIME_HOOKS`). `install` is the
 // `?*Api.BunInstall` (`self.opts.install`); `env` is the `*DotEnv.Loader`.
@@ -31,12 +32,23 @@ unsafe extern "Rust" {
     /// All three must point at process-lifetime Transpiler-owned storage; the
     /// returned `NonNull` names the `'static` `PackageManager` singleton.
     /// Errs when the one-time init fails (e.g. the top-level directory is
-    /// unreadable); the failure is sticky across calls.
+    /// unreadable) or auto-install is off; the failure is sticky across calls.
     fn __bun_resolver_init_package_manager(
         log: NonNull<bun_ast::Log>,
         install: Option<NonNull<bun_options_types::schema::api::BunInstall>>,
         env: NonNull<bun_dotenv::Loader>,
-    ) -> core::result::Result<NonNull<dyn AutoInstaller>, bun_errno::SystemErrno>;
+        prefer_offline: bool,
+        importer_dir: &[u8],
+    ) -> crate::CrateResult<NonNull<dyn AutoInstaller>>;
+
+    /// `Dependency.parse` with no `PackageManager`, which it only uses to record `npm:` aliases.
+    safe fn __bun_resolver_parse_dependency(
+        name: Semver::String,
+        name_hash: Install::PackageNameHash,
+        version: &[u8],
+        sliced: &Semver::SlicedString,
+        log: Option<&mut bun_ast::Log>,
+    ) -> Option<Dependency::Version>;
 }
 use crate::cache::Set as CacheSet;
 use ::bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
@@ -503,7 +515,7 @@ pub struct Resolver<'a> {
     pub on_wake_package_manager: Install::WakeHandler,
     // Stored as `NonNull` (not `&'a Loader`) because the same allocation is
     // mutably reborrowed via `Transpiler.env: *mut Loader` after this field is
-    // set (e.g. bake/production.rs assigns this then calls `configure_defines()`
+    // set (e.g. bake/production/mod.rs assigns this then calls `configure_defines()`
     // → `run_env_loader()` which takes `&mut *self.env`). Holding a live
     // `&Loader` across that `&mut Loader` would be aliased-&mut UB; a raw
     // pointer carries no aliasing guarantee.
@@ -610,8 +622,10 @@ impl<'a> Resolver<'a> {
     pub unsafe fn for_worker(
         from: &Resolver<'_>,
         log: NonNull<bun_ast::Log>,
-        opts: options::BundleOptions,
+        mut opts: options::BundleOptions,
     ) -> Resolver<'a> {
+        opts.tsconfig_override_json
+            .clone_from(&from.opts.tsconfig_override_json);
         Resolver {
             opts,
             fs: from.fs,
@@ -823,6 +837,16 @@ impl<'a> Resolver<'a> {
     /// directory was deleted or is unreadable — callers surface that as a
     /// resolve failure rather than panicking.
     pub fn get_package_manager(&mut self) -> crate::CrateResult<*mut dyn AutoInstaller> {
+        let top_level_dir = self.fs_ref().top_level_dir;
+        self.get_package_manager_for(top_level_dir)
+    }
+
+    /// The package manager is created once per process, by the first call. It uses the registries,
+    /// credentials and lockfile of the project of `importer_dir`, the importing file's directory.
+    fn get_package_manager_for(
+        &mut self,
+        importer_dir: &[u8],
+    ) -> crate::CrateResult<*mut dyn AutoInstaller> {
         if let Some(pm) = self.package_manager {
             return Ok(pm.as_ptr());
         }
@@ -834,8 +858,16 @@ impl<'a> Resolver<'a> {
         // final binary; `self.log` / `self.opts.install` / `env` point at
         // process-lifetime storage (Transpiler-owned). The returned pointer
         // names the `PackageManager` singleton (`'static`).
-        let pm: NonNull<dyn AutoInstaller> =
-            unsafe { __bun_resolver_init_package_manager(self.log, self.opts.install, env) }?;
+        let pm: NonNull<dyn AutoInstaller> = unsafe {
+            __bun_resolver_init_package_manager(
+                self.log,
+                self.opts.install,
+                env,
+                self.opts.install_preference
+                    == bun_options_types::offline_mode::OfflineMode::Offline,
+                importer_dir,
+            )
+        }?;
         // SAFETY: `pm` is the just-initialized singleton; sole `&mut` here.
         unsafe { (*pm.as_ptr()).set_on_wake(self.on_wake_package_manager) };
         self.package_manager = Some(pm);
@@ -857,6 +889,24 @@ impl<'a> Resolver<'a> {
         // singleton, live for the resolver's lifetime once installed; `&mut
         // self` ⇒ exclusive access to the only Rust handle.
         self.package_manager.map(|mut pm| unsafe { pm.as_mut() })
+    }
+
+    /// The project's package.json is parsed before the first bare import creates the manager.
+    pub(crate) fn parse_dependency(
+        &mut self,
+        name: Semver::String,
+        name_hash: Install::PackageNameHash,
+        version: &[u8],
+        sliced: &Semver::SlicedString,
+        log: Option<&mut bun_ast::Log>,
+        // The package manager only records the `npm:` aliases of the project's own package.json
+        // files. An alias that an installed package declares applies to that package alone.
+        is_project: bool,
+    ) -> Option<Dependency::Version> {
+        match self.auto_installer().filter(|_| is_project) {
+            Some(pm) => pm.parse_dependency(name, Some(name_hash), version, sliced, log),
+            None => __bun_resolver_parse_dependency(name, name_hash, version, sliced, log),
+        }
     }
 
     /// Safe read-only accessor for the optional `DotEnv::Loader` back-reference.
@@ -970,10 +1020,6 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         out: &mut MatchResult,
     ) -> MatchStatus {
-        // SAFETY: `import_path` is caller-interned (DirnameStore/source text)
-        // and outlives the returned MatchResult.
-        // TODO: thread an explicit `'a` through MatchResult instead.
-        let import_path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(import_path) };
         if source_dir.is_empty() {
             return MatchStatus::NotFound;
         }
@@ -983,13 +1029,13 @@ impl<'a> Resolver<'a> {
         let Some(dir_info) = self.dir_info_cached(source_dir).ok().flatten() else {
             return MatchStatus::NotFound;
         };
-        let Some(tsconfig) = dir_info.enclosing_tsconfig_json else {
+        let Some(tsconfig) = self.enclosing_tsconfig_json(&dir_info) else {
             return MatchStatus::NotFound;
         };
         if tsconfig.paths.count() == 0 {
             return MatchStatus::NotFound;
         }
-        self.match_tsconfig_paths(tsconfig, import_path, kind, out)
+        self.match_tsconfig_paths(&tsconfig, import_path, kind, out)
     }
 
     pub(crate) fn flush_debug_logs(&mut self, flush_mode: FlushMode) -> crate::CrateResult<()> {
@@ -1236,6 +1282,26 @@ impl<'a> Resolver<'a> {
 
         match DataURL::parse(import_path) {
             Err(_) => {
+                // Malformed data URL (e.g. "data:" with no comma). For url()
+                // tokens pass it through as external like http:// above; for
+                // JS imports the bundler surfaces a resolve error.
+                if kind.is_from_css() {
+                    if let Some(debug) = self.debug_logs.as_mut() {
+                        debug.add_note(b"Marking malformed \"dataurl\" as external".to_vec());
+                    }
+                    let _ = self.flush_debug_logs(FlushMode::Success);
+                    self.extension_order = original_order;
+                    return ResultUnion::Success(Result {
+                        import_kind: kind,
+                        path_pair: PathPair {
+                            primary: Path::init(import_path),
+                            secondary: None,
+                        },
+                        module_type: options::ModuleType::Unknown,
+                        flags: ResultFlags::IS_EXTERNAL,
+                        ..Default::default()
+                    });
+                }
                 self.extension_order = original_order;
                 return ResultUnion::Failure(crate::Error::InvalidDataURL);
             }
@@ -1564,7 +1630,7 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            if let Some(tsconfig) = dir.enclosing_tsconfig_json {
+            if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir) {
                 result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));
                 result.flags.set_emit_decorator_metadata(
                     result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata,
@@ -1747,11 +1813,11 @@ impl<'a> Resolver<'a> {
 
             // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
             if let Ok(Some(dir_info)) = self.dir_info_cached(source_dir) {
-                if let Some(tsconfig) = dir_info.enclosing_tsconfig_json {
+                if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir_info) {
                     if tsconfig.paths.count() > 0 {
                         let mut res = MatchResult::default();
                         if self
-                            .match_tsconfig_paths(tsconfig, import_path, kind, &mut res)
+                            .match_tsconfig_paths(&tsconfig, import_path, kind, &mut res)
                             .is_success()
                         {
                             // We don't set the directory fd here because it might remap an entirely different directory
@@ -2061,7 +2127,8 @@ impl<'a> Resolver<'a> {
 
         // Check the "browser" map
         if self.care_about_browser_field {
-            let dirname = bun_paths::dirname(abs_path).expect("unreachable");
+            // ".." segments can reach the filesystem root, which has no parent.
+            let dirname = bun_paths::dirname(abs_path).unwrap_or(abs_path);
             if let Ok(Some(import_dir_info_outer)) = self.dir_info_cached(dirname) {
                 if let Some(import_dir_info) = import_dir_info_outer.get_enclosing_browser_scope() {
                     let pkg = import_dir_info.package_json().unwrap();
@@ -2489,11 +2556,11 @@ impl<'a> Resolver<'a> {
 
         // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
 
-        if let Some(tsconfig) = dir_info.enclosing_tsconfig_json {
+        if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir_info) {
             // Try path substitutions first
             if tsconfig.paths.count() > 0 {
                 if self
-                    .match_tsconfig_paths(tsconfig, import_path, kind, out)
+                    .match_tsconfig_paths(&tsconfig, import_path, kind, out)
                     .is_success()
                 {
                     if let Some(d) = self.debug_logs.as_mut() {
@@ -2789,6 +2856,14 @@ impl<'a> Resolver<'a> {
                     None => break,
                 }
             }
+
+            // The walk ended at a package in the global cache, which has no parent directory info.
+            // Any `node_modules` seen on the way came in its tarball, so auto-install stays on.
+            if dir_info.package_json().is_some_and(|package_json| {
+                package_json.package_manager_package_id != Install::INVALID_PACKAGE_ID
+            }) {
+                any_node_modules_folder = false;
+            }
         }
 
         // try resolve from `NODE_PATH`
@@ -2843,7 +2918,8 @@ impl<'a> Resolver<'a> {
                 // `log()`. The PackageManager lives in a separate allocation, so
                 // derive a raw pointer once and re-borrow per use — disjoint
                 // from `self`'s storage.
-                let manager_ptr: *mut dyn AutoInstaller = match self.get_package_manager() {
+                let manager = self.get_package_manager_for(source_dir_info.abs_path);
+                let manager_ptr: *mut dyn AutoInstaller = match manager {
                     Ok(pm) => pm,
                     Err(err) => {
                         // One-time init reads the top-level directory, which
@@ -2852,19 +2928,39 @@ impl<'a> Resolver<'a> {
                         // error; the `Metadata::Resolve` msg carries the text
                         // for `import.meta.resolveSync` & co.
                         let top_level_dir = self.fs_ref().top_level_dir;
-                        self.log_mut().add_resolve_error(
-                            None,
-                            bun_ast::Range::NONE,
-                            format_args!(
+                        let off_because = match err {
+                            crate::Error::SecurityScannerConfigured => {
+                                Some("a security scanner is configured")
+                            }
+                            crate::Error::UnreadableConfig => {
+                                Some("a package.json or bunfig.toml cannot be read or parsed")
+                            }
+                            _ => None,
+                        };
+                        let log = self.log_mut();
+                        let mut add = |text: core::fmt::Arguments<'_>| {
+                            log.add_resolve_error(
+                                None,
+                                bun_ast::Range::NONE,
+                                text,
+                                import_path,
+                                kind,
+                                bun_ast::Error::ModuleNotFound,
+                            );
+                        };
+                        match off_because {
+                            Some(reason) => add(format_args!(
+                                "Cannot find package \"{}\": auto-install is off because {}. Run \"bun install\"",
+                                bstr::BStr::new(import_path),
+                                reason
+                            )),
+                            None => add(format_args!(
                                 "Cannot read directory \"{}\": {} while resolving \"{}\"",
                                 bstr::BStr::new(top_level_dir),
                                 bstr::BStr::new(err.name()),
                                 bstr::BStr::new(import_path)
-                            ),
-                            import_path,
-                            kind,
-                            bun_ast::Error::ModuleNotFound,
-                        );
+                            )),
+                        }
                         if let Some(d) = self.debug_logs.as_mut() {
                             d.decrease_indent();
                         }
@@ -2879,31 +2975,41 @@ impl<'a> Resolver<'a> {
                 }
                 let mut dependency_version = Dependency::Version::default();
                 let mut dependency_behavior = Dependency::Behavior::PROD;
+                let installed_buf: Vec<u8>;
                 let mut string_buf: &[u8] = esm.version;
+                // The directory of the project's package.json that lists the package. A relative
+                // path in the dependency's version, as in `file:../foo`, is resolved from here.
+                let mut package_json_dir: Option<&[u8]> = None;
 
                 // const initial_pending_tasks = manager.pending_tasks;
                 let mut resolved_package_id: Install::PackageID = 'brk: {
-                    // check if the package.json in the source directory was already added to the lockfile
-                    // and try to look up the dependency from there
-                    if let Some(package_json) = dir_info.package_json_for_dependencies() {
-                        let mut dependencies_list: &[Dependency::Dependency] = &[];
+                    // A version in the import specifier takes priority over package.json and the
+                    // lockfile.
+                    let mut listing_dir = esm_ref.version.is_empty().then_some(dir_info);
+                    // Walk up from the source directory to the nearest package.json that lists the
+                    // package.
+                    while let Some(dir) = listing_dir
+                        && let Some(package_json) = dir.package_json_for_dependencies()
+                    {
+                        // check if this package.json was already added to the lockfile
+                        // and try to look up the dependency from there
                         let resolve_from_lockfile =
                             package_json.package_manager_package_id != Install::INVALID_PACKAGE_ID;
 
-                        if resolve_from_lockfile {
+                        let dependencies_list: &[Dependency::Dependency] = if resolve_from_lockfile
+                        {
                             let dependencies = manager!().lockfile_package_dependencies(
                                 package_json.package_manager_package_id,
                             );
 
                             // try to find this package name in the dependencies of the enclosing package
-                            dependencies_list =
-                                dependencies.get(manager!().lockfile_dependencies_buf());
                             string_buf = manager!().lockfile_string_bytes();
-                        } else if esm_ref.version.is_empty() {
+                            dependencies.get(manager!().lockfile_dependencies_buf())
+                        } else {
                             // If you don't specify a version, default to the one chosen in your package.json
-                            dependencies_list = package_json.dependencies.map.values();
-                            string_buf = package_json.dependencies.source_buf;
-                        }
+                            string_buf = &package_json.dependencies.source_buf;
+                            package_json.dependencies.map.values()
+                        };
 
                         for (dependency_id, dependency) in dependencies_list.iter().enumerate() {
                             if !strings::eql_long(dependency.name.slice(string_buf), esm.name, true)
@@ -2924,8 +3030,40 @@ impl<'a> Resolver<'a> {
                                     [dependency_id];
                             }
 
-                            break;
+                            if !package_json.source.path.is_node_module() {
+                                package_json_dir =
+                                    bun_paths::dirname(package_json.source.path.text);
+                            }
+                            break 'brk Install::INVALID_PACKAGE_ID;
                         }
+
+                        let installed = package_json.installed_dependency_versions(esm.name);
+                        for (range, behavior) in installed.filter(|_| !resolve_from_lockfile) {
+                            let buf = [esm.name, range].concat();
+                            let (name, range) = buf.split_at(esm.name.len());
+                            let version = __bun_resolver_parse_dependency(
+                                Semver::String::init(&buf, name),
+                                Semver::semver_string::Builder::string_hash(name),
+                                range,
+                                &Semver::SlicedString::init(&buf, range),
+                                Some(self.log_mut()),
+                            );
+                            if let Some(version) = version {
+                                dependency_version = version;
+                                dependency_behavior = behavior;
+                                installed_buf = buf;
+                                string_buf = &installed_buf;
+                                break 'brk Install::INVALID_PACKAGE_ID;
+                            }
+                        }
+
+                        listing_dir =
+                            core::iter::successors(dir.get_parent(), |up| up.get_parent()).find(
+                                |up| {
+                                    up.package_json_for_dependencies
+                                        != dir.package_json_for_dependencies
+                                },
+                            );
                     }
 
                     // If we get here, it means that the lockfile doesn't have this package at all.
@@ -2947,174 +3085,148 @@ impl<'a> Resolver<'a> {
                 // If this returns null, then it means we need to *resolve* the package
                 // Even after resolution, we might still need to download the package
                 // There are two steps here! Two steps!
-                let resolution: Resolution = 'brk: {
-                    if resolved_package_id == Install::INVALID_PACKAGE_ID {
-                        if dependency_version.tag == Dependency::version::Tag::Uninitialized {
-                            let sliced_string =
-                                Semver::SlicedString::init(esm.version, esm.version);
-                            if !esm_ref.version.is_empty()
-                                && dir_info.enclosing_package_json.is_some()
-                                && global_cache.allow_version_specifier()
-                            {
+                let package_dir_info = 'package_dir_info: {
+                    // A workspace, a `file:` folder or a `link:` target is loaded from where it is
+                    // on disk, so there is nothing to resolve or download.
+                    if resolved_package_id == Install::INVALID_PACKAGE_ID
+                        && esm_ref.version.is_empty()
+                        && let Some(folder) = manager!().project_folder(
+                            esm.name,
+                            &dependency_version,
+                            string_buf,
+                            package_json_dir,
+                            bufs!(path_in_global_disk_cache),
+                        )
+                    {
+                        let found = self.dir_info_cached(folder);
+                        if !matches!(found, Ok(Some(_))) {
+                            self.log_mut().add_error_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "\"{}@{}\": folder \"{}\" does not exist",
+                                    bstr::BStr::new(esm.name),
+                                    bstr::BStr::new(dependency_version.literal.slice(string_buf)),
+                                    bstr::BStr::new(folder),
+                                ),
+                            );
+                        }
+                        break 'package_dir_info found;
+                    }
+
+                    let resolution: Resolution = 'brk: {
+                        if resolved_package_id == Install::INVALID_PACKAGE_ID {
+                            if dependency_version.tag == Dependency::version::Tag::Uninitialized {
+                                let sliced_string =
+                                    Semver::SlicedString::init(esm.version, esm.version);
+                                string_buf = esm.version;
+                                dependency_version = match manager!().parse_dependency(
+                                    Semver::String::init(esm.name, esm.name),
+                                    None,
+                                    esm.version,
+                                    &sliced_string,
+                                    Some(self.log_mut()),
+                                ) {
+                                    Some(v) => v,
+                                    None => break 'load_module_from_cache,
+                                };
+                            }
+
+                            if let Some(id) = manager!().lockfile_resolve(
+                                esm.name,
+                                &dependency_version,
+                                string_buf,
+                            ) {
+                                resolved_package_id = id;
+                            }
+                        }
+
+                        if resolved_package_id != Install::INVALID_PACKAGE_ID {
+                            break 'brk manager!().lockfile_package_resolution(resolved_package_id);
+                        }
+
+                        // unsupported or not found dependency, we might need to install it to the cache
+                        match self.enqueue_dependency_to_resolve(
+                            package_json_dir,
+                            &esm,
+                            dependency_behavior,
+                            &mut resolved_package_id,
+                            dependency_version.clone(),
+                            string_buf,
+                        ) {
+                            DependencyToResolve::Resolution(res) => break 'brk res,
+                            DependencyToResolve::Pending(pending) => {
                                 if let Some(d) = self.debug_logs.as_mut() {
                                     d.decrease_indent();
                                 }
-                                return MatchStatus::Failure(
-                                    crate::Error::VersionSpecifierNotAllowedHere,
-                                );
+                                return MatchStatus::Pending(pending);
                             }
-                            string_buf = esm.version;
-                            dependency_version = match manager!().parse_dependency(
-                                Semver::String::init(esm.name, esm.name),
-                                None,
-                                esm.version,
-                                &sliced_string,
-                                Some(self.log_mut()),
-                            ) {
-                                Some(v) => v,
-                                None => break 'load_module_from_cache,
-                            };
+                            // The registry has no such package or version, or the install failed.
+                            // The reason is already in the log.
+                            DependencyToResolve::NotFound => {
+                                if let Some(d) = self.debug_logs.as_mut() {
+                                    d.decrease_indent();
+                                }
+                                return MatchStatus::NotFound;
+                            }
                         }
+                    };
 
-                        if let Some(id) = manager!().lockfile_resolve(esm.name, &dependency_version)
-                        {
-                            resolved_package_id = id;
-                        }
-                    }
-
-                    if resolved_package_id != Install::INVALID_PACKAGE_ID {
-                        break 'brk manager!().lockfile_package_resolution(resolved_package_id);
-                    }
-
-                    // unsupported or not found dependency, we might need to install it to the cache
-                    match self.enqueue_dependency_to_resolve(
-                        // Read the raw `NonNull` fields directly (NOT the
-                        // `&'static`-yielding accessors) so mut-provenance from
-                        // `intern_package_json` survives to the write inside.
-                        dir_info
-                            .package_json_for_dependencies
-                            .or(dir_info.package_json),
-                        &esm,
-                        dependency_behavior,
-                        &mut resolved_package_id,
-                        dependency_version.clone(),
-                        string_buf,
+                    let dir_path_for_resolution = match manager!().path_for_resolution(
+                        resolved_package_id,
+                        &resolution,
+                        bufs!(path_in_global_disk_cache),
                     ) {
-                        DependencyToResolve::Resolution(res) => break 'brk res,
-                        DependencyToResolve::Pending(pending) => {
-                            if let Some(d) = self.debug_logs.as_mut() {
-                                d.decrease_indent();
+                        Ok(p) => p,
+                        Err(err) => {
+                            // `path_for_resolution` downloads a missing package itself. One that is
+                            // `Done` and still has no folder is disabled (not for this platform).
+                            if err == bun_core::Error::FileNotFound
+                                && manager!().get_preinstall_state(resolved_package_id)
+                                    == Install::PreinstallState::Done
+                            {
+                                // NOTE: `MatchResult.path_pair` is `Path<'static>`;
+                                // intern `import_path` so the disabled-module record
+                                // outlives this frame.
+                                let interned = Fs::file_system::DirnameStore::instance()
+                                    .append_slice(import_path)
+                                    .expect("unreachable");
+                                let mut path = Fs::Path::init(interned);
+                                path.is_disabled = true;
+                                if let Some(d) = self.debug_logs.as_mut() {
+                                    d.decrease_indent();
+                                }
+                                *out = MatchResult {
+                                    path_pair: PathPair {
+                                        primary: path,
+                                        secondary: None,
+                                    },
+                                    ..Default::default()
+                                };
+                                return MatchStatus::Success;
                             }
-                            return MatchStatus::Pending(pending);
-                        }
-                        DependencyToResolve::Failure(err) => {
-                            if let Some(d) = self.debug_logs.as_mut() {
-                                d.decrease_indent();
-                            }
-                            return MatchStatus::Failure(err);
-                        }
-                        // this means we looked it up in the registry and the package doesn't exist or the version doesn't exist
-                        DependencyToResolve::NotFound => {
+
+                            // The reason is already in the log.
                             if let Some(d) = self.debug_logs.as_mut() {
                                 d.decrease_indent();
                             }
                             return MatchStatus::NotFound;
                         }
-                    }
-                };
+                    };
 
-                let dir_path_for_resolution = match manager!().path_for_resolution(
-                    resolved_package_id,
-                    &resolution,
-                    bufs!(path_in_global_disk_cache),
-                ) {
-                    Ok(p) => p,
-                    Err(err) => {
-                        // if it's missing, we need to install it
-                        if err == bun_core::Error::FileNotFound {
-                            match manager!().get_preinstall_state(resolved_package_id) {
-                                Install::PreinstallState::Done => {
-                                    // NOTE: `MatchResult.path_pair` is `Path<'static>`;
-                                    // intern `import_path` so the disabled-module record
-                                    // outlives this frame.
-                                    let interned = Fs::file_system::DirnameStore::instance()
-                                        .append_slice(import_path)
-                                        .expect("unreachable");
-                                    let mut path = Fs::Path::init(interned);
-                                    path.is_disabled = true;
-                                    // this might mean the package is disabled
-                                    if let Some(d) = self.debug_logs.as_mut() {
-                                        d.decrease_indent();
-                                    }
-                                    *out = MatchResult {
-                                        path_pair: PathPair {
-                                            primary: path,
-                                            secondary: None,
-                                        },
-                                        ..Default::default()
-                                    };
-                                    return MatchStatus::Success;
-                                }
-                                st @ (Install::PreinstallState::Extract
-                                | Install::PreinstallState::Extracting) => {
-                                    if !global_cache.can_install() {
-                                        if let Some(d) = self.debug_logs.as_mut() {
-                                            d.decrease_indent();
-                                        }
-                                        return MatchStatus::NotFound;
-                                    }
-                                    let (cloned, string_buf) = esm.copy().expect("unreachable");
-
-                                    if st == Install::PreinstallState::Extract {
-                                        let dependency_id = manager!()
-                                            .lockfile_legacy_package_to_dependency_id(
-                                                resolved_package_id,
-                                            )
-                                            .expect("unreachable");
-                                        // The npm version + URL live inside `resolution.value`;
-                                        // the `AutoInstaller` impl decodes them itself.
-                                        if let Err(enqueue_download_err) = manager!()
-                                            .enqueue_package_for_download(
-                                                esm.name,
-                                                dependency_id,
-                                                resolved_package_id,
-                                                &resolution,
-                                                Install::TaskCallbackContext { root_request_id: 0 },
-                                                None,
-                                            )
-                                        {
-                                            if let Some(d) = self.debug_logs.as_mut() {
-                                                d.decrease_indent();
-                                            }
-                                            return MatchStatus::Failure(
-                                                enqueue_download_err.into(),
-                                            );
-                                        }
-                                    }
-
-                                    if let Some(d) = self.debug_logs.as_mut() {
-                                        d.decrease_indent();
-                                    }
-                                    return MatchStatus::Pending(Box::new(PendingResolution {
-                                        esm: cloned,
-                                        dependency: dependency_version,
-                                        string_buf,
-                                        tag: PendingResolutionTag::Download,
-                                        ..Default::default()
-                                    }));
-                                }
-                                _ => {}
-                            }
-                        }
-
+                    // The path is empty for a resolution that has no folder in the cache, such as a
+                    // git checkout. On Windows, opening "" would open the cwd.
+                    if dir_path_for_resolution.is_empty() {
                         if let Some(d) = self.debug_logs.as_mut() {
                             d.decrease_indent();
                         }
-                        return MatchStatus::Failure(err.into());
+                        return MatchStatus::NotFound;
                     }
+
+                    self.dir_info_for_resolution(dir_path_for_resolution, resolved_package_id)
                 };
 
-                match self.dir_info_for_resolution(dir_path_for_resolution, resolved_package_id) {
+                match package_dir_info {
                     Ok(dir_info_to_use_) => {
                         if let Some(pkg_dir_info) = dir_info_to_use_ {
                             let abs_package_path = pkg_dir_info.abs_path;
@@ -3463,11 +3575,7 @@ impl<'a> Resolver<'a> {
 
     fn enqueue_dependency_to_resolve(
         &mut self,
-        // NOTE: carried as
-        // `NonNull` end-to-end so the mut-provenance from `intern_package_json`
-        // survives to the `package_manager_package_id` write below — taking
-        // `*const` and casting back to `*mut` would be UB under Stacked Borrows.
-        package_json_: Option<core::ptr::NonNull<PackageJSON>>,
+        package_json_dir: Option<&[u8]>,
         esm: &crate::package_json::Package<'_>,
         behavior: Dependency::Behavior,
         input_package_id_: &mut Install::PackageID,
@@ -3490,7 +3598,7 @@ impl<'a> Resolver<'a> {
         // than unwrap so the invariant isn't load-bearing for safety.
         let pm_ptr: *mut dyn AutoInstaller = match self.get_package_manager() {
             Ok(pm) => pm,
-            Err(err) => return DependencyToResolve::Failure(err),
+            Err(_) => return DependencyToResolve::NotFound,
         };
         macro_rules! pm {
             () => {
@@ -3499,58 +3607,22 @@ impl<'a> Resolver<'a> {
             };
         }
         // we should never be trying to resolve a dependency that is already resolved
-        debug_assert!(pm!().lockfile_resolve(esm.name, &version).is_none());
-
-        // Add the containing package to the lockfile
-
-        let is_main =
-            pm!().lockfile_packages_len() == 0 && input_package_id == Install::INVALID_PACKAGE_ID;
-        if is_main {
-            if let Some(mut package_json) = package_json_ {
-                // SAFETY: BACKREF — `package_json` is an interned arena slot
-                // (see `intern_package_json`); `NonNull` carries mut-provenance
-                // from `NonNull::from(&mut **last)` and no other live borrow
-                // exists here.
-                let package_json: &mut PackageJSON = unsafe { package_json.as_mut() };
-                // NOTE: the `Package` type is bun_install-internal; the
-                // `AutoInstaller` impl performs the from-package-json /
-                // setHasInstallScript / appendPackage steps.
-                let id = match pm!().lockfile_append_from_package_json(
-                    package_json,
-                    Install::Features {
-                        dev_dependencies: true,
-                        is_main: true,
-                        dependencies: true,
-                        optional_dependencies: true,
-                        ..Default::default()
-                    },
-                ) {
-                    Ok(id) => id,
-                    Err(err) => return DependencyToResolve::Failure(err.into()),
-                };
-                package_json.package_manager_package_id = id;
-            } else {
-                // we're resolving an unknown package
-                // the unknown package is the root package
-                if let Err(err) = pm!().lockfile_append_root_stub() {
-                    return DependencyToResolve::Failure(err.into());
-                }
-            }
-        }
-
-        if self.opts.install_preference == bun_options_types::offline_mode::OfflineMode::Offline {
-            if let Some(package_id) = pm!().resolve_from_disk_cache(esm.name, &version) {
-                *input_package_id_ = package_id;
-                return DependencyToResolve::Resolution(
-                    pm!().lockfile_package_resolution(package_id),
-                );
-            }
-        }
+        debug_assert!(
+            pm!()
+                .lockfile_resolve(esm.name, &version, version_buf)
+                .is_none()
+        );
 
         if input_package_id == Install::INVALID_PACKAGE_ID || input_package_id == 0 {
             // All packages are enqueued to the root
             // because we download all the npm package dependencies
-            match pm!().enqueue_dependency_to_root(esm.name, &version, version_buf, behavior) {
+            match pm!().enqueue_dependency_to_root(
+                esm.name,
+                &version,
+                version_buf,
+                package_json_dir,
+                behavior,
+            ) {
                 Install::EnqueueResult::Resolution {
                     package_id,
                     resolution,
@@ -3570,11 +3642,8 @@ impl<'a> Resolver<'a> {
                         ..Default::default()
                     }));
                 }
-                Install::EnqueueResult::NotFound => {
+                Install::EnqueueResult::NotFound | Install::EnqueueResult::Failure(_) => {
                     return DependencyToResolve::NotFound;
-                }
-                Install::EnqueueResult::Failure(err) => {
-                    return DependencyToResolve::Failure(err.into());
                 }
             }
         }
@@ -3655,9 +3724,14 @@ impl<'a> Resolver<'a> {
                     esm_resolution.status = Status::ModuleNotFound;
                     return MatchStatus::NotFound;
                 };
+                // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+                // rewrite inside `kind()` is serialized on the per-entry mutex.
+                let entry_kind = entry_lookup
+                    .as_ref()
+                    .map(|q| unsafe { q.entry().kind(self.rfs_ptr(), self.store_fd) });
                 let entry_query = match entry_lookup {
-                    Some(q) => q,
-                    None => {
+                    Some(q) if entry_kind != Some(Fs::file_system::EntryKind::Dangling) => q,
+                    _ => {
                         let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                         esm_resolution.status = Status::ModuleNotFound;
 
@@ -3676,11 +3750,7 @@ impl<'a> Resolver<'a> {
                     }
                 };
 
-                // SAFETY: rfs points at the process-global RealFS; the lazy-stat
-                // rewrite inside `kind()` is serialized on the per-entry mutex.
-                if unsafe { entry_query.entry().kind(self.rfs_ptr(), self.store_fd) }
-                    == Fs::file_system::EntryKind::Dir
-                {
+                if entry_kind == Some(Fs::file_system::EntryKind::Dir) {
                     let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                     if ends_with_star
                         && self.probe_target_extensions(
@@ -6218,9 +6288,7 @@ impl<'a> Resolver<'a> {
                     info.enclosing_package_json = Some(parent_package_json);
                 }
 
-                if parent_package_json.dependencies.map.count() > 0
-                    || parent_package_json.package_manager_package_id != Install::INVALID_PACKAGE_ID
-                {
+                if parent_package_json.lists_dependencies() {
                     // NOTE: store the raw `NonNull` field (not the
                     // `&'static` accessor result) so mut-provenance flows
                     // through to `enqueue_dependency_to_resolve`.
@@ -6322,8 +6390,10 @@ impl<'a> Resolver<'a> {
                 // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
                 if unsafe { entry.kind(rfs_ptr, self.store_fd) } == Fs::file_system::EntryKind::File
                 {
+                    // A package in the global cache has a `package_id`, and keeps it even if its
+                    // tarball shipped a `node_modules` folder.
                     info.package_json = if self.use_package_manager()
-                        && !info.has_node_modules()
+                        && (package_id.is_some() || !info.has_node_modules())
                         && !info.is_node_modules()
                     {
                         self.parse_package_json::<true>(
@@ -6361,9 +6431,7 @@ impl<'a> Resolver<'a> {
                             info.enclosing_package_json = Some(pkg);
                         }
 
-                        if pkg.dependencies.map.count() > 0
-                            || pkg.package_manager_package_id != Install::INVALID_PACKAGE_ID
-                        {
+                        if pkg.lists_dependencies() {
                             // NOTE: store the raw `NonNull` field (not the
                             // `&'static` accessor result) so mut-provenance flows
                             // through to `enqueue_dependency_to_resolve`.
@@ -6388,8 +6456,21 @@ impl<'a> Resolver<'a> {
         // Record if this directory has a tsconfig.json or jsconfig.json file
         if self.opts.load_tsconfig_json {
             let mut tsconfig_path: Option<&[u8]> = None;
-            if self.opts.tsconfig_override.is_none() {
-                if let Some(lookup) = entries!().get_comptime_query(b"tsconfig.json") {
+            if let Some(lookup) = entries!().get_comptime_query(b"tsconfig.json") {
+                // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
+                // dies (NLL) before any later `&mut` to this slot.
+                let entry = lookup.entry();
+                // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+                if unsafe { entry.kind(rfs_ptr, self.store_fd) } == Fs::file_system::EntryKind::File
+                {
+                    let parts = [path, b"tsconfig.json".as_slice()];
+                    tsconfig_path = self
+                        .fs_ref()
+                        .abs_buf_checked(&parts, bufs!(dir_info_uncached_filename));
+                }
+            }
+            if tsconfig_path.is_none() {
+                if let Some(lookup) = entries!().get_comptime_query(b"jsconfig.json") {
                     // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                     // dies (NLL) before any later `&mut` to this slot.
                     let entry = lookup.entry();
@@ -6397,195 +6478,241 @@ impl<'a> Resolver<'a> {
                     if unsafe { entry.kind(rfs_ptr, self.store_fd) }
                         == Fs::file_system::EntryKind::File
                     {
-                        let parts = [path, b"tsconfig.json".as_slice()];
-                        tsconfig_path = Some(
-                            self.fs_ref()
-                                .abs_buf(&parts, bufs!(dir_info_uncached_filename)),
-                        );
+                        let parts = [path, b"jsconfig.json".as_slice()];
+                        tsconfig_path = self
+                            .fs_ref()
+                            .abs_buf_checked(&parts, bufs!(dir_info_uncached_filename));
                     }
                 }
-                if tsconfig_path.is_none() {
-                    if let Some(lookup) = entries!().get_comptime_query(b"jsconfig.json") {
-                        // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
-                        // dies (NLL) before any later `&mut` to this slot.
-                        let entry = lookup.entry();
-                        // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                        if unsafe { entry.kind(rfs_ptr, self.store_fd) }
-                            == Fs::file_system::EntryKind::File
-                        {
-                            let parts = [path, b"jsconfig.json".as_slice()];
-                            tsconfig_path = Some(
-                                self.fs_ref()
-                                    .abs_buf(&parts, bufs!(dir_info_uncached_filename)),
-                            );
-                        }
-                    }
-                }
-            } else if parent.is_none() {
-                // NOTE: re-borrow as 'static so the `&self.opts` borrow ends before
-                // `self.parse_tsconfig(&mut self, ...)`. `tsconfig_override` is owned by
-                // BundleOptions (lives for the resolver's lifetime).
-                // SAFETY: `tsconfig_override` is owned by `self.opts` (resolver-lifetime);
-                // the `'static` erase only ends the `&self` borrow for the `&mut self` call below.
-                tsconfig_path = self
-                    .opts
-                    .tsconfig_override
-                    .as_deref()
-                    .map(|s| unsafe { &*std::ptr::from_ref::<[u8]>(s) });
             }
 
             if let Some(tsconfigpath) = tsconfig_path {
-                let parsed_tsconfig: Option<*mut TSConfigJSON> = match self.parse_tsconfig(
-                    tsconfigpath,
-                    if FeatureFlags::STORE_FILE_DESCRIPTORS {
-                        fd
-                    } else {
-                        FD::ZERO
-                    },
-                ) {
-                    Ok(v) => v.map(bun_core::heap::into_raw),
-                    Err(err) => {
-                        let pretty = tsconfigpath;
-                        if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                            let _ = self.log_mut().add_error_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "Cannot find tsconfig file {}",
-                                    bun_core::fmt::quote(pretty)
-                                ),
-                            );
-                        } else if err != crate::Error::ParseErrorAlreadyLogged
-                            && err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
-                        {
-                            let _ = self.log_mut().add_error_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "Cannot read file {}: {}",
-                                    bun_core::fmt::quote(pretty),
-                                    bstr::BStr::new(err.name())
-                                ),
-                            );
-                        }
-                        None
-                    }
+                let fd = if FeatureFlags::STORE_FILE_DESCRIPTORS {
+                    fd
+                } else {
+                    FD::ZERO
                 };
-                // NOTE: assigning info.tsconfig_json here and then freeing that
-                // allocation in the merge loop below before reassigning would
-                // leave a briefly-dangling reference
-                // (Option<&'static TSConfigJSON>, dir_info.rs) — UB.
-                // Defer the assignment to after the merge —
-                // it is always overwritten when parsed_tsconfig.is_some(), and DirInfo defaults
-                // tsconfig_json to None otherwise.
-                if let Some(tsconfig_json) = parsed_tsconfig {
-                    let mut parent_configs: BoundedArray<*mut TSConfigJSON, 64> =
-                        BoundedArray::default();
-                    parent_configs.append(tsconfig_json)?;
-                    // `current`/`parent_config_ptr`/`merged_config` are heap TSConfigJSON
-                    // allocations from `parse_tsconfig` (heap::alloc); uniquely owned by
-                    // this extends-chain walk and freed via heap::take below. Hold as
-                    // `BackRef` (pointee outlives holder) so the loop body reads via safe
-                    // `Deref` instead of three open-coded raw-ptr derefs.
-                    let mut current = bun_ptr::BackRef::from(
-                        core::ptr::NonNull::new(tsconfig_json).expect("heap alloc"),
-                    );
-                    while !current.extends.is_empty() {
-                        let ts_dir_name = Dirname::dirname(&current.abs_path);
-                        let abs_path = ResolvePath::join_abs_string_buf(
-                            ts_dir_name,
-                            bufs!(tsconfig_path_abs),
-                            &[ts_dir_name, &current.extends],
-                            bun_paths::Platform::AUTO,
-                        );
-                        let parent_config_maybe: Option<*mut TSConfigJSON> =
-                            match self.parse_tsconfig(abs_path, FD::INVALID) {
-                                Ok(v) => v.map(bun_core::heap::into_raw),
-                                Err(err) => {
-                                    let _ = self.log_mut().add_debug_fmt(
-                                        None,
-                                        bun_ast::Loc::EMPTY,
-                                        format_args!(
-                                            "{} loading tsconfig.json extends {}",
-                                            bstr::BStr::new(err.name()),
-                                            bun_core::fmt::quote(abs_path)
-                                        ),
-                                    );
-                                    break;
-                                }
-                            };
-                        if let Some(parent_config) = parent_config_maybe {
-                            parent_configs.append(parent_config)?;
-                            current = bun_ptr::BackRef::from(
-                                core::ptr::NonNull::new(parent_config).expect("heap alloc"),
-                            );
-                        } else {
-                            break;
-                        }
-                    }
-
-                    let merged_config = parent_configs.pop().unwrap();
-                    // starting from the base config (end of the list)
-                    // successively apply the inheritable attributes to the next config
-                    while let Some(parent_config_ptr) = parent_configs.pop() {
-                        // SAFETY: see loop-wide note above.
-                        let parent_config = unsafe { &mut *parent_config_ptr };
-                        // SAFETY: see loop-wide note above.
-                        let mc = unsafe { &mut *merged_config };
-                        mc.emit_decorator_metadata =
-                            mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
-                        if let Some(v) = parent_config.use_define_for_class_fields {
-                            mc.use_define_for_class_fields = Some(v);
-                        }
-                        if !parent_config.base_url.is_empty() {
-                            mc.base_url = core::mem::take(&mut parent_config.base_url);
-                        }
-                        mc.jsx = parent_config.merge_jsx(mc.jsx.clone());
-                        mc.jsx_flags.insert_all(parent_config.jsx_flags);
-
-                        if let Some(value) = parent_config.preserve_imports_not_used_as_values {
-                            mc.preserve_imports_not_used_as_values = Some(value);
-                        }
-
-                        // TypeScript replaces paths across extends (child overrides parent
-                        // entirely), so when a more-specific config defines paths, replace
-                        // rather than merge. base_url_for_paths is set whenever the paths
-                        // key is present in the JSON (even if empty), so it discriminates
-                        // "not defined" from "defined as {}" — the latter clears inherited
-                        // paths per TypeScript semantics.
-                        if !parent_config.base_url_for_paths.is_empty() {
-                            // The previous merged_config.paths is being replaced;
-                            // dropping the map frees the values automatically, so the
-                            // PathsMap from the deeper config doesn't leak.
-                            mc.paths = core::mem::take(&mut parent_config.paths);
-                            mc.base_url_for_paths =
-                                core::mem::take(&mut parent_config.base_url_for_paths);
-                        } else {
-                            // paths were not moved to merged_config, so they're still owned
-                            // by parent_config. base_url_for_paths.len == 0 implies the map
-                            // is empty (it's only set when the `paths` key is present in the
-                            // JSON), so this is a no-op but documents the ownership.
-                            // (Drop handles parent_config.paths.)
-                        }
-                        // Every scalar/reference we need has been copied into merged_config
-                        // (strings live in dirname_store or default_allocator and outlive the
-                        // struct). The heap-allocated TSConfigJSON itself is no longer needed;
-                        // without this, every intermediate config in an extends chain leaks on
-                        // each dir_info_uncached() call, which is especially bad under HMR where
-                        // bust_dir_cache triggers a re-parse of the whole chain on every reload.
-                        // SAFETY: parent_config_ptr came from TSConfigJSON::new (heap::alloc)
-                        TSConfigJSON::destroy(unsafe { bun_core::heap::take(parent_config_ptr) });
-                    }
-                    // `merged_config` is a leaked Box (heap::alloc) interned into DirInfo; outlives the resolver.
-                    info.tsconfig_json = Some(
-                        core::ptr::NonNull::new(merged_config).expect("heap::alloc is non-null"),
-                    );
+                // It is for the resolvers that read it. What is wrong with it is not an error of
+                // one that reads another in its place.
+                let (mut ignored, log) = (bun_ast::Log::init(), self.log);
+                if self.opts.tsconfig_override.is_some() {
+                    self.log = NonNull::from(&mut ignored);
                 }
+                let loaded = self.load_tsconfig(tsconfigpath, fd);
+                self.log = log;
+                // A leaked Box, interned into DirInfo: it outlives the resolver.
+                info.tsconfig_json = loaded?.map(|it| {
+                    NonNull::new(bun_core::heap::into_raw(it)).expect("heap::alloc is non-null")
+                });
                 info.enclosing_tsconfig_json = info.tsconfig_json();
             }
         }
 
         Ok(())
+    }
+
+    /// The configuration file at `tsconfigpath`, with what it inherits from those that it extends.
+    fn load_tsconfig(
+        &mut self,
+        tsconfigpath: &[u8],
+        fd: FD,
+    ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
+        let parsed_tsconfig: Option<*mut TSConfigJSON> = match self.parse_tsconfig(tsconfigpath, fd)
+        {
+            Ok(v) => v.map(bun_core::heap::into_raw),
+            Err(err) => {
+                let pretty = tsconfigpath;
+                if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                    let _ = self.log_mut().add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!("Cannot find tsconfig file {}", bun_core::fmt::quote(pretty)),
+                    );
+                } else if err != crate::Error::ParseErrorAlreadyLogged
+                    && err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
+                {
+                    let _ = self.log_mut().add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Cannot read file {}: {}",
+                            bun_core::fmt::quote(pretty),
+                            bstr::BStr::new(err.name())
+                        ),
+                    );
+                }
+                None
+            }
+        };
+        if let Some(tsconfig_json) = parsed_tsconfig {
+            let mut parent_configs: BoundedArray<*mut TSConfigJSON, 64> = BoundedArray::default();
+            parent_configs.append(tsconfig_json)?;
+            // `current`/`parent_config_ptr`/`merged_config` are heap TSConfigJSON
+            // allocations from `parse_tsconfig` (heap::alloc); uniquely owned by
+            // this extends-chain walk and freed via heap::take below. Hold as
+            // `BackRef` (pointee outlives holder) so the loop body reads via safe
+            // `Deref` instead of three open-coded raw-ptr derefs.
+            let mut current =
+                bun_ptr::BackRef::from(core::ptr::NonNull::new(tsconfig_json).expect("heap alloc"));
+            while !current.extends.is_empty() {
+                let ts_dir_name = Dirname::dirname(&current.abs_path);
+                let abs_path = ResolvePath::join_abs_string_buf(
+                    ts_dir_name,
+                    bufs!(tsconfig_path_abs),
+                    &[ts_dir_name, &current.extends],
+                    bun_paths::Platform::AUTO,
+                );
+                let parent_config_maybe: Option<*mut TSConfigJSON> =
+                    match self.parse_tsconfig(abs_path, FD::INVALID) {
+                        Ok(v) => v.map(bun_core::heap::into_raw),
+                        Err(err) => {
+                            let _ = self.log_mut().add_debug_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "{} loading tsconfig.json extends {}",
+                                    bstr::BStr::new(err.name()),
+                                    bun_core::fmt::quote(abs_path)
+                                ),
+                            );
+                            break;
+                        }
+                    };
+                if let Some(parent_config) = parent_config_maybe {
+                    parent_configs.append(parent_config)?;
+                    current = bun_ptr::BackRef::from(
+                        core::ptr::NonNull::new(parent_config).expect("heap alloc"),
+                    );
+                } else {
+                    break;
+                }
+            }
+
+            let merged_config = parent_configs.pop().unwrap();
+            // starting from the base config (end of the list)
+            // successively apply the inheritable attributes to the next config
+            while let Some(parent_config_ptr) = parent_configs.pop() {
+                // SAFETY: see loop-wide note above.
+                let parent_config = unsafe { &mut *parent_config_ptr };
+                // SAFETY: see loop-wide note above.
+                let mc = unsafe { &mut *merged_config };
+                mc.emit_decorator_metadata =
+                    mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
+                if let Some(v) = parent_config.use_define_for_class_fields {
+                    mc.use_define_for_class_fields = Some(v);
+                }
+                if !parent_config.base_url.is_empty() {
+                    mc.base_url = core::mem::take(&mut parent_config.base_url);
+                }
+                mc.jsx = parent_config.merge_jsx(mc.jsx.clone());
+                mc.jsx_flags.insert_all(parent_config.jsx_flags);
+
+                if let Some(value) = parent_config.preserve_imports_not_used_as_values {
+                    mc.preserve_imports_not_used_as_values = Some(value);
+                }
+
+                // TypeScript replaces paths across extends (child overrides parent
+                // entirely), so when a more-specific config defines paths, replace
+                // rather than merge. base_url_for_paths is set whenever the paths
+                // key is present in the JSON (even if empty), so it discriminates
+                // "not defined" from "defined as {}" — the latter clears inherited
+                // paths per TypeScript semantics.
+                if !parent_config.base_url_for_paths.is_empty() {
+                    // The previous merged_config.paths is being replaced;
+                    // dropping the map frees the values automatically, so the
+                    // PathsMap from the deeper config doesn't leak.
+                    mc.paths = core::mem::take(&mut parent_config.paths);
+                    mc.base_url_for_paths = core::mem::take(&mut parent_config.base_url_for_paths);
+                } else {
+                    // paths were not moved to merged_config, so they're still owned
+                    // by parent_config. base_url_for_paths.len == 0 implies the map
+                    // is empty (it's only set when the `paths` key is present in the
+                    // JSON), so this is a no-op but documents the ownership.
+                    // (Drop handles parent_config.paths.)
+                }
+                // Every scalar/reference we need has been copied into merged_config
+                // (strings live in dirname_store or default_allocator and outlive the
+                // struct). The heap-allocated TSConfigJSON itself is no longer needed;
+                // without this, every intermediate config in an extends chain leaks on
+                // each dir_info_uncached() call, which is especially bad under HMR where
+                // bust_dir_cache triggers a re-parse of the whole chain on every reload.
+                // SAFETY: parent_config_ptr came from TSConfigJSON::new (heap::alloc)
+                TSConfigJSON::destroy(unsafe { bun_core::heap::take(parent_config_ptr) });
+            }
+            // SAFETY: from `parse_tsconfig` (heap::into_raw) above; the walk is over, so this
+            // is the only pointer to it.
+            return Ok(Some(unsafe { bun_core::heap::take(merged_config) }));
+        }
+        Ok(None)
+    }
+
+    /// `opts.tsconfig_override`, which this resolver and its workers read in place of the
+    /// configuration file of every directory. It is not in `DirInfo`, which every resolver of the
+    /// process shares: the runtime, and every `Bun.build`. `None`: there is none.
+    fn tsconfig_override(&mut self) -> Option<Option<Arc<TSConfigJSON>>> {
+        if !self.opts.load_tsconfig_json {
+            return None;
+        }
+        let path = self.opts.tsconfig_override.as_deref()?;
+        if self.opts.tsconfig_override_json.is_none() {
+            let mut path = [path, b"\0"].concat();
+            let z = bun_core::ZStr::from_buf(&path, path.len() - 1);
+            let is_directory = bun_sys::directory_exists_at(FD::cwd(), z).unwrap_or(false);
+            path.pop();
+            // As for `tsc -p`, and for the type check.
+            if is_directory {
+                path = ResolvePath::join_abs_string_buf(
+                    &path,
+                    bufs!(tsconfig_path_abs),
+                    &[b"tsconfig.json".as_slice()],
+                    bun_paths::Platform::AUTO,
+                )
+                .to_vec();
+            }
+            let loaded = self.load_tsconfig(&path, FD::INVALID).ok().flatten();
+            self.opts.tsconfig_override_json = Some(loaded.map(Arc::from));
+        }
+        self.opts.tsconfig_override_json.clone()
+    }
+
+    /// `DirInfo::enclosing_tsconfig_json`, for this resolver.
+    pub(crate) fn enclosing_tsconfig_json(
+        &mut self,
+        dir_info: &DirInfo::DirInfo,
+    ) -> Option<TSConfigRef> {
+        match self.tsconfig_override() {
+            Some(it) => it.map(TSConfigRef::Override),
+            None => dir_info
+                .enclosing_tsconfig_json
+                .map(TSConfigRef::OfDirectory),
+        }
+    }
+
+    /// `DirInfo::tsconfig_json`, for this resolver.
+    pub fn tsconfig_json(&mut self, dir_info: &DirInfo::DirInfo) -> Option<TSConfigRef> {
+        match self.tsconfig_override() {
+            Some(it) => it.map(TSConfigRef::Override),
+            None => dir_info.tsconfig_json().map(TSConfigRef::OfDirectory),
+        }
+    }
+}
+
+/// The configuration file that applies in a directory.
+pub enum TSConfigRef {
+    /// `DirInfo` keeps it for as long as the process lasts.
+    OfDirectory(&'static TSConfigJSON),
+    /// `Resolver::tsconfig_override`
+    Override(Arc<TSConfigJSON>),
+}
+
+impl core::ops::Deref for TSConfigRef {
+    type Target = TSConfigJSON;
+    #[inline]
+    fn deref(&self) -> &TSConfigJSON {
+        match self {
+            TSConfigRef::OfDirectory(it) => it,
+            TSConfigRef::Override(it) => it,
+        }
     }
 }
 
@@ -6594,7 +6721,6 @@ impl<'a> Resolver<'a> {
 enum DependencyToResolve {
     NotFound,
     Pending(Box<PendingResolution>),
-    Failure(crate::Error),
     Resolution(Resolution),
 }
 

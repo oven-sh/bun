@@ -8,7 +8,7 @@
 // tarball ships it at its top level, so after `bun bd` it can be found in the
 // build cache for the WEBKIT_VERSION pinned in scripts/build/deps/webkit.ts;
 // that is what is used when no path is given. A local WebKit build writes it
-// to <build>/JavaScriptCore/DerivedSources/CombinedDomains.json.
+// to <build>/JavaScriptCore/Scripts/CombinedDomains.json.
 //
 // Pass --v8 to also refresh src/protocol/v8 from the Chrome DevTools protocol
 // repository (requires network access).

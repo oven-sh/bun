@@ -5,36 +5,38 @@ use bun_ast::{Expr, expr::Data as ExprData};
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::StackCheck;
 use bun_core::String as BunString;
+use bun_jsc::bindgen::{JsBytes, JsLocal, JsScope};
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
-    JsError, JsResult, MarkedArgumentBuffer, wtf,
+    JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsError, JsResult,
+    MarkedArgumentBuffer, wtf,
 };
 use bun_parsers::yaml::{CyclicAliases, YAML, YamlParseError};
 
-pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
-    jsc::create_host_function_object(
-        global_this,
-        &[
-            ("parse", __jsc_host_parse, 1),
-            ("stringify", __jsc_host_stringify, 3),
-        ],
-    )
-}
-
-#[bun_jsc::host_fn]
-fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-    MarkedArgumentBuffer::new(|roots| stringify_impl(global, call_frame, roots))
+pub(crate) fn stringify<'a>(
+    cx: &mut JsScope<'a>,
+    value: JsLocal<'a>,
+    replacer: JsLocal<'a>,
+    space: JsLocal<'a>,
+) -> JsResult<JSValue> {
+    let global = cx.global();
+    MarkedArgumentBuffer::new(|roots| {
+        stringify_impl(
+            global,
+            value.to_js(),
+            replacer.to_js(),
+            space.to_js(),
+            roots,
+        )
+    })
 }
 
 fn stringify_impl(
     global: &JSGlobalObject,
-    call_frame: &CallFrame,
+    value: JSValue,
+    replacer: JSValue,
+    space_value: JSValue,
     roots: &mut MarkedArgumentBuffer,
 ) -> JsResult<JSValue> {
-    let [value, replacer, space_value] = call_frame.arguments_as_array::<3>();
-
-    value.ensure_still_alive();
-
     if value.is_undefined() || value.is_symbol() || value.is_function() {
         return Ok(JSValue::UNDEFINED);
     }
@@ -1062,19 +1064,45 @@ fn is_inf_suffix(str: &BunString, i: usize) -> bool {
         || (a == 0x49 /* 'I' */ && b == 0x4e /* 'N' */ && c == 0x46/* 'F' */)
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-    // `NullishInput::ToString` preserves YAML's coerce-undefined-to-"undefined" behavior.
-    super::with_text_format_source(
-        global,
-        call_frame,
-        b"input.yaml",
-        super::BlobOrBufferInput::Bytes,
-        super::NullishInput::ToString,
-        |arena, log, source| {
-            // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
-            // once by pointer identity, so a cyclic graph is fine here.
-            let root = match YAML::parse(source, log, arena, CyclicAliases::Allow) {
+pub(crate) fn parse<'a>(cx: &mut JsScope<'a>, input: JsBytes<'a>) -> JsResult<JSValue> {
+    MarkedArgumentBuffer::new(|roots| {
+        let mut pending = Vec::new();
+        // SAFETY: parsing runs no JavaScript. Nor does making the values: what would is left in `pending`. What throws
+        // returns without reading `input` again.
+        let global = unsafe { cx.heap.global() };
+        let result = parse_to_values(global, input.get(&cx.heap), roots, &mut pending)?;
+        let global = cx.global();
+        for PendingProperty {
+            mapping,
+            key,
+            value,
+        } in pending
+        {
+            mapping.put_may_be_index(global, &key.to_bun_string(global)?, value)?;
+        }
+        Ok(result)
+    })
+}
+
+/// A property that waits for the tree to be gone. Its key is a sequence or a mapping, or it comes after one that is.
+/// `ToString` of those is JavaScript, which can free the input that the tree points into.
+struct PendingProperty {
+    mapping: JSValue,
+    key: JSValue,
+    value: JSValue,
+}
+
+fn parse_to_values(
+    global: &JSGlobalObject,
+    input: &[u8],
+    roots: &mut MarkedArgumentBuffer,
+    pending: &mut Vec<PendingProperty>,
+) -> JsResult<JSValue> {
+    super::with_text_format_source(global, input, b"input.yaml", |arena, log, source| {
+        // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
+        // once by pointer identity, so a cyclic graph is fine here.
+        let root =
+            match YAML::parse(source, log, arena, CyclicAliases::Allow) {
                 Ok(root) => root,
                 Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
                 Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
@@ -1092,19 +1120,19 @@ pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult
                 }
             };
 
-            let mut ctx = ParserCtx {
-                seen_objects: HashMap::default(),
-                stack_check: StackCheck::init(),
-                global,
-                root,
-                result: JSValue::ZERO,
-            };
+        let mut ctx = ParserCtx {
+            seen_objects: HashMap::default(),
+            stack_check: StackCheck::init(),
+            global,
+            pending,
+        };
 
-            MarkedArgumentBuffer::run(&mut ctx, ParserCtx::run);
-
-            Ok(ctx.result)
-        },
-    )
+        ctx.to_js(roots, root).map_err(|err| match err {
+            ToJsError::OutOfMemory => JsError::OutOfMemory,
+            ToJsError::JsError => JsError::Thrown,
+            ToJsError::StackOverflow => global.throw_stack_overflow(),
+        })
+    })
 }
 
 struct ParserCtx<'a> {
@@ -1112,9 +1140,8 @@ struct ParserCtx<'a> {
     stack_check: StackCheck,
 
     global: &'a JSGlobalObject,
-    root: Expr,
-
-    result: JSValue,
+    /// The `MarkedArgumentBuffer` holds what these do.
+    pending: &'a mut Vec<PendingProperty>,
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
@@ -1154,28 +1181,6 @@ impl From<bun_ast::ToJSError> for ToJsError {
 
 impl<'a> ParserCtx<'a> {
     // deinit: seen_objects has Drop; no explicit impl needed.
-
-    extern "C" fn run(ctx: *mut ParserCtx<'a>, args: *mut MarkedArgumentBuffer) {
-        // SAFETY: MarkedArgumentBuffer::run passes valid non-null pointers for the duration of the call
-        let (ctx, args) = unsafe { (&mut *ctx, &mut *args) };
-        let root = ctx.root;
-        ctx.result = match ctx.to_js(args, root) {
-            Ok(v) => v,
-            Err(ToJsError::OutOfMemory) => {
-                ctx.result = ctx.global.throw_out_of_memory_value();
-                return;
-            }
-            Err(ToJsError::JsError) => {
-                ctx.result = JSValue::ZERO;
-                return;
-            }
-            Err(ToJsError::StackOverflow) => {
-                let _ = ctx.global.throw_stack_overflow();
-                ctx.result = JSValue::ZERO;
-                return;
-            }
-        };
-    }
 
     fn to_js(&mut self, args: &mut MarkedArgumentBuffer, expr: Expr) -> Result<JSValue, ToJsError> {
         if !self.stack_check.is_safe_to_recurse() {
@@ -1223,12 +1228,26 @@ impl<'a> ParserCtx<'a> {
                 args.append(obj);
                 self.seen_objects.put(key, obj)?;
 
+                // Those after the first that waits wait too, to be defined in the order they are written in.
+                let mut is_pending = false;
                 for prop in e_object.properties.slice() {
                     let key_expr = prop.key.expect("infallible: prop has key");
                     let value_expr = prop.value.expect("infallible: prop has value");
 
                     let key = self.to_js(args, key_expr)?;
                     let value = self.to_js(args, value_expr)?;
+
+                    is_pending |= key.is_object();
+                    if is_pending {
+                        args.append(key);
+                        args.append(value);
+                        self.pending.push(PendingProperty {
+                            mapping: obj,
+                            key,
+                            value,
+                        });
+                        continue;
+                    }
 
                     let key_str = key.to_bun_string(self.global)?;
                     obj.put_may_be_index(self.global, &key_str, value)?;

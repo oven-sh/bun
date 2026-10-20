@@ -1255,13 +1255,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `recombineUnknownType`
     fn recombine_unknown_type(&mut self, ty: TypeId) -> TypeId {
-        // FOR SPEED: `unknown_union_type` looks the union up, and every join of a walk gets here.
-        let has_its_members = matches!(
-            self.data(ty),
-            TypeData::Union(members)
-                if members.len() == 3 && members.contains(&TypeId::UNKNOWN_EMPTY_OBJECT)
-        );
-        if has_its_members && ty == self.unknown_union_type() {
+        if ty == self.unknown_union_type() {
             TypeId::UNKNOWN
         } else {
             ty

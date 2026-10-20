@@ -685,16 +685,8 @@ impl<'p, 's> Checker<'p, 's> {
                         _ => None,
                     }
                 };
-                // FOR SPEED: a short chain skips the table lookups.
-                let mut at = first;
-                for _ in 0..16 {
-                    let Some(next) = next_link(at) else {
-                        return;
-                    };
-                    at = next;
-                }
                 // Stop at the first link whose type is cached.
-                at = first;
+                let mut at = first;
                 while let Some(next) = next_link(at)
                     && !self.has_type_of_expr(file, at)
                 {

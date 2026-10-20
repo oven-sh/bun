@@ -1692,11 +1692,6 @@ impl<'p, 's> Checker<'p, 's> {
                 node,
             ),
         };
-        // FOR SPEED: `instantiateTypeWithSingleGenericCallSignature` returns `ty`, which isn't a
-        // fresh literal type.
-        if inference_context.is_none() && !check_mode.contains(CheckMode::SKIP_GENERIC_FUNCTIONS) {
-            return ty;
-        }
         // A synthetic expression isn't a node here. Whatever is pushed for it is pushed for the
         // node it's positioned at, in which nothing is checked meanwhile.
         let contextual_type = self.without_no_infer(contextual_type);

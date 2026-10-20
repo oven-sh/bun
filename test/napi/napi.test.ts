@@ -1094,45 +1094,76 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(exitCode).toBe(0);
   });
 
-  it.each(["run_script_from_async_work", "run_script_from_threadsafe_function"])(
-    "what napi_run_script threw, left pending by %s of a Bun.ModuleGraph's script, goes to the graph's onError",
-    async how => {
-      using dir = tempDir("napi-module-graph-run-script", {
-        "tenant.mjs": `
-          import { createRequire } from "node:module";
-          const addon = createRequire(import.meta.url)(addonPath);
-          export const start = how => addon[how]("throw new RangeError('from napi_run_script')");
-        `,
-        "fixture.mjs": `
-          const addonPath = process.argv[2];
-          const told = [];
-          process.on("uncaughtException", e => told.push("the host's uncaughtException: " + e));
-          const graph = new Bun.ModuleGraph({
-            globals: { addonPath },
-            onError: (e, kind) => told.push("the graph's onError (" + kind + "): " + e),
-          });
-          const app = await graph.import(import.meta.dir + "/tenant.mjs");
-          graph.run(() => app.start(process.argv[3]));
-          while (told.length === 0) await new Promise(resolve => setImmediate(resolve));
-          console.log(JSON.stringify(told));
-          process.exit(0);
-        `,
-      });
-      await using proc = spawn({
-        cmd: [bunExe(), "fixture.mjs", join(__dirname, "napi-app/build/Debug/napitests.node"), how],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: 30_000,
-        killSignal: "SIGKILL",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ told: stdout.trim(), stderr, exitCode }).toEqual({
+  describe.each(["run_script_from_async_work", "run_script_from_threadsafe_function"])(
+    "what napi_run_script threw in a completion (%s)",
+    how => {
+      // `whose` is the owner of the completion: a script of the graph, or the host, whose script throws inside the graph.
+      async function whoIsTold(whose: "the graph's" | "the host's", rethrow = false) {
+        using dir = tempDir("napi-module-graph-run-script", {
+          "tenant.mjs": `
+            import { createRequire } from "node:module";
+            const addon = createRequire(import.meta.url)(addonPath);
+            export const start = (how, rethrow) => addon[how]("throw new RangeError('from napi_run_script')", rethrow);
+          `,
+          "fixture.mjs": `
+            import { createRequire } from "node:module";
+            const [addonPath, how, whose, rethrow] = process.argv.slice(2);
+            const told = [];
+            process.on("uncaughtException", e => told.push("the host's uncaughtException: " + e));
+            const graph = new Bun.ModuleGraph({
+              globals: { addonPath },
+              onError: (e, kind) => told.push("the graph's onError (" + kind + "): " + e),
+            });
+            if (whose === "the host's") {
+              globalThis.throwInGraph = () => graph.run(() => { throw new RangeError("from napi_run_script"); });
+              createRequire(import.meta.url)(addonPath)[how]("throwInGraph()");
+            } else {
+              const app = await graph.import(import.meta.dir + "/tenant.mjs");
+              graph.run(() => app.start(how, rethrow === "true"));
+            }
+            while (told.length === 0) await new Promise(resolve => setImmediate(resolve));
+            console.log(JSON.stringify(told));
+            process.exit(0);
+          `,
+        });
+        await using proc = spawn({
+          cmd: [
+            bunExe(),
+            "fixture.mjs",
+            join(__dirname, "napi-app/build/Debug/napitests.node"),
+            how,
+            whose,
+            String(rethrow),
+          ],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+          timeout: 30_000,
+          killSignal: "SIGKILL",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { told: stdout.trim(), stderr, exitCode };
+      }
+      const theGraphIsTold = {
         told: JSON.stringify(["the graph's onError (uncaughtException): RangeError: from napi_run_script"]),
         stderr: "",
         exitCode: 0,
+      };
+      it("and left pending goes to the onError of the Bun.ModuleGraph whose script queued it", async () => {
+        expect(await whoIsTold("the graph's")).toEqual(theGraphIsTold);
       });
+      it("of the host and left pending goes to the onError of the Bun.ModuleGraph it was thrown in", async () => {
+        expect(await whoIsTold("the host's")).toEqual(theGraphIsTold);
+      });
+      // The host is told: the addon passes a value to napi_throw, and the env throws it after the completion has left
+      // the graph's context. napi_throw_error from a completion goes to the host for the same reason.
+      it.failing(
+        "and passed to napi_throw goes to the onError of the Bun.ModuleGraph whose script queued it",
+        async () => {
+          expect(await whoIsTold("the graph's", true)).toEqual(theGraphIsTold);
+        },
+      );
     },
   );
 
@@ -1279,6 +1310,23 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("propagates exceptions", async () => {
       await checkSameOutput("test_napi_run_script", ["(()=>{ throw new TypeError('oops'); })()"]);
     });
+    it("passes the thrown value to napi_get_and_clear_last_exception", async () => {
+      const result = await checkSameOutput("test_napi_run_script_exception_value", ['throw new RangeError("boom")']);
+      expect(result).toContain("run status=9 pending=1");
+      expect(result).toContain("typeof status=0 type=6 is_error=1");
+      expect(result).toContain("message=boom");
+    });
+    it("cannot see locals from around its invocation", async () => {
+      // variable should_not_exist is declared on main.js:18, but it should not be in scope for the eval'd code
+      // this doesn't use await checkSameOutput because V8 and JSC use different error messages for a missing variable
+      let bunResult = await runOn(bunExe(), "test_napi_run_script", ["shouldNotExist"]);
+      // remove all debug logs
+      bunResult = bunResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
+      expect(bunResult).toBe(
+        `synchronously threw ReferenceError: message "shouldNotExist is not defined", code undefined`,
+      );
+    });
+
     // The addon prints through C stdio and main.js through console.log. Which of the two reaches the pipe first
     // differs between platforms, so the line of main.js is compared apart from the lines of the addon.
     function splitOutput(output: string) {
@@ -1289,7 +1337,6 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     // The addon prints the status, then the napi_typeof of what napi_get_and_clear_last_exception handed it, then
     // its message if it is an object. main.js throws a truthy return value as an Error.
     it.each([
-      ['throw new RangeError("boom")', ["typeof status=0 type=6 is_error=1", "message=boom"], "RangeError: boom"],
       ["throw 42", ["typeof status=0 type=3 is_error=0"], "42"],
       ["throw undefined", ["typeof status=0 type=0 is_error=0"], undefined],
       ["throw null", ["typeof status=0 type=1 is_error=0"], undefined],
@@ -1311,12 +1358,21 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         mainJs: ['synchronously threw Error: message "SyntaxError: Unexpected end of script", code undefined'],
       });
     });
-    it("throws what it handed over when the addon passes it to napi_throw", async () => {
-      const result = await checkSameOutput("test_napi_run_script_rethrow", ['throw new RangeError("boom")']);
-      expect(result).toBe('synchronously threw RangeError: message "boom", code undefined');
-    });
     it("throws what the script threw through node-addon-api's Env::RunScript", async () => {
       const result = await checkSameOutput("test_napi_run_script_node_addon_api", ['throw new RangeError("boom")']);
+      expect(result).toBe('synchronously threw RangeError: message "boom", code undefined');
+    });
+    it("refuses a second napi_run_script while the exception is pending, then hands it over", async () => {
+      const result = await checkSameOutput("test_napi_run_script_twice", ["throw 42"]);
+      expect(splitOutput(result)).toEqual({
+        addon: ["second run status=10", "typeof status=0 type=3"],
+        mainJs: ['synchronously threw Error: message "42", code undefined'],
+      });
+    });
+    // The next two cases pass without the unwrap too. They pin what Node.js does when the addon throws what it was
+    // handed, and when napi_call_function has moved the pending exception onto the VM before the fetch.
+    it("throws what it handed over when the addon passes it to napi_throw", async () => {
+      const result = await checkSameOutput("test_napi_run_script_rethrow", ['throw new RangeError("boom")']);
       expect(result).toBe('synchronously threw RangeError: message "boom", code undefined');
     });
     it("refuses napi_call_function while the exception is pending, then hands it over", async () => {
@@ -1325,16 +1381,6 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         addon: ["call status=10", "is_error=1"],
         mainJs: ['synchronously threw Error: message "RangeError: boom", code undefined'],
       });
-    });
-    it("cannot see locals from around its invocation", async () => {
-      // variable should_not_exist is declared on main.js:18, but it should not be in scope for the eval'd code
-      // this doesn't use await checkSameOutput because V8 and JSC use different error messages for a missing variable
-      let bunResult = await runOn(bunExe(), "test_napi_run_script", ["shouldNotExist"]);
-      // remove all debug logs
-      bunResult = bunResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
-      expect(bunResult).toBe(
-        `synchronously threw ReferenceError: message "shouldNotExist is not defined", code undefined`,
-      );
     });
 
     // main.js reads its arguments with eval(), which the flag refuses, so these load the addon themselves.
@@ -1458,6 +1504,33 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       ]);
       expect(bun).toEqual({
         stdout: JSON.stringify({ started: true, code: "ERR_SCRIPT_EXECUTION_TIMEOUT", caught: 0, ran: [] }),
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(bun).toEqual(node);
+    });
+    it("a termination that the addon fetches and passes to napi_throw reaches the catch block, as in Node.js", async () => {
+      const fixture = `
+        const vm = require("vm");
+        const { test_napi_run_script_rethrow } = require(process.argv[2]);
+        globalThis.run = () => test_napi_run_script_rethrow(() => {}, "globalThis.started = true; for (;;) {}");
+        let code;
+        try {
+          vm.runInThisContext(
+            "var caught = 0; caught = 0; function call() { try { run(); } catch { caught++; } } call();",
+            { timeout: 100 },
+          );
+        } catch (e) {
+          code = e.code;
+        }
+        console.log(JSON.stringify({ started: globalThis.started === true, code, caught: globalThis.caught }));
+      `;
+      const [node, bun] = await Promise.all([
+        runUntilCutShortInScript(await nodeExeMatchingAbi(), fixture),
+        runUntilCutShortInScript(bunExe(), fixture),
+      ]);
+      expect(bun).toEqual({
+        stdout: JSON.stringify({ started: true, code: "ERR_SCRIPT_EXECUTION_TIMEOUT", caught: 1 }),
         stderr: "",
         exitCode: 0,
       });

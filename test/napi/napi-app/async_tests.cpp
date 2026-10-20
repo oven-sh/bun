@@ -471,11 +471,14 @@ call_back_from_threadsafe_function(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
-// run_script_from_async_work(script): `complete` runs `script` with
-// napi_run_script and returns with what it threw still pending.
-// run_script_from_threadsafe_function(script): the same from `call_js`.
+// run_script_from_async_work(script, rethrow): `complete` runs `script` with
+// napi_run_script and returns with what it threw pending: as napi_run_script
+// left it, or, when `rethrow` is true, fetched and passed to napi_throw.
+// run_script_from_threadsafe_function(script, rethrow): the same from
+// `call_js`.
 struct RunScriptData {
   std::string script;
+  bool rethrow = false;
   napi_async_work work = nullptr;
   napi_threadsafe_function tsfn = nullptr;
 };
@@ -486,6 +489,11 @@ static void run_script_and_leave_it_pending(napi_env env,
   napi_create_string_utf8(env, data->script.c_str(), data->script.size(),
                           &script);
   napi_run_script(env, script, &result);
+  if (data->rethrow) {
+    napi_value thrown;
+    napi_get_and_clear_last_exception(env, &thrown);
+    napi_throw(env, thrown);
+  }
 }
 
 static void complete_by_running_script(napi_env env, napi_status status,
@@ -506,7 +514,8 @@ static void call_js_by_running_script(napi_env env, napi_value callback,
 
 static napi_value run_script_from_async_work(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
-  auto *data = new RunScriptData{info[0].As<Napi::String>().Utf8Value()};
+  auto *data = new RunScriptData{info[0].As<Napi::String>().Utf8Value(),
+                                 info[1].ToBoolean()};
   NODE_API_CALL(env, napi_create_async_work(
                          env, nullptr,
                          Napi::String::New(env, "run_script_from_async_work"),
@@ -519,7 +528,8 @@ static napi_value run_script_from_async_work(const Napi::CallbackInfo &info) {
 static napi_value
 run_script_from_threadsafe_function(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
-  auto *data = new RunScriptData{info[0].As<Napi::String>().Utf8Value()};
+  auto *data = new RunScriptData{info[0].As<Napi::String>().Utf8Value(),
+                                 info[1].ToBoolean()};
   NODE_API_CALL(
       env,
       napi_create_threadsafe_function(

@@ -724,9 +724,6 @@ static napi_value test_napi_run_script(const Napi::CallbackInfo &info) {
   return ret;
 }
 
-// napi_run_script of a script that throws: the value returned by
-// napi_get_and_clear_last_exception must be the thrown JS value, usable with
-// napi_typeof and property access.
 static napi_value
 test_napi_run_script_exception_value(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
@@ -761,6 +758,19 @@ test_napi_run_script_exception_value(const Napi::CallbackInfo &info) {
   }
 
   return exc;
+}
+
+static napi_value test_napi_throw_with_nullptr(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  const napi_status status = napi_throw(env, nullptr);
+  printf("napi_throw -> %d\n", status);
+
+  bool is_exception_pending;
+  NODE_API_CALL(env, napi_is_exception_pending(env, &is_exception_pending));
+  printf("napi_is_exception_pending -> %s\n",
+         is_exception_pending ? "true" : "false");
+
+  return ok(env);
 }
 
 // The way most addons reach napi_run_script: node-addon-api fetches what the
@@ -809,17 +819,23 @@ test_napi_run_script_then_call(const Napi::CallbackInfo &info) {
   return exc;
 }
 
-static napi_value test_napi_throw_with_nullptr(const Napi::CallbackInfo &info) {
+// While what a failed napi_run_script threw is pending, a second
+// napi_run_script is refused, and what the first one threw can still be
+// fetched.
+static napi_value test_napi_run_script_twice(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
-  const napi_status status = napi_throw(env, nullptr);
-  printf("napi_throw -> %d\n", status);
+  napi_value ret = nullptr;
+  // info[0] is the GC callback
+  (void)napi_run_script(env, info[1], &ret);
+  napi_status second_status = napi_run_script(env, info[1], &ret);
+  printf("second run status=%d\n", (int)second_status);
 
-  bool is_exception_pending;
-  NODE_API_CALL(env, napi_is_exception_pending(env, &is_exception_pending));
-  printf("napi_is_exception_pending -> %s\n",
-         is_exception_pending ? "true" : "false");
-
-  return ok(env);
+  napi_value exc = nullptr;
+  NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exc));
+  napi_valuetype type = (napi_valuetype)99;
+  napi_status typeof_status = napi_typeof(env, exc, &type);
+  printf("typeof status=%d type=%d\n", (int)typeof_status, (int)type);
+  return exc;
 }
 
 // Call Node-API functions in ways that result in different error handling
@@ -4709,10 +4725,11 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_ref);
   REGISTER_FUNCTION(env, exports, test_napi_run_script);
   REGISTER_FUNCTION(env, exports, test_napi_run_script_exception_value);
+  REGISTER_FUNCTION(env, exports, test_napi_throw_with_nullptr);
   REGISTER_FUNCTION(env, exports, test_napi_run_script_node_addon_api);
   REGISTER_FUNCTION(env, exports, test_napi_run_script_rethrow);
   REGISTER_FUNCTION(env, exports, test_napi_run_script_then_call);
-  REGISTER_FUNCTION(env, exports, test_napi_throw_with_nullptr);
+  REGISTER_FUNCTION(env, exports, test_napi_run_script_twice);
   REGISTER_FUNCTION(env, exports, test_extended_error_messages);
   REGISTER_FUNCTION(env, exports, bigint_to_i64);
   REGISTER_FUNCTION(env, exports, bigint_to_u64);

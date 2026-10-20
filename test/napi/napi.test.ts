@@ -456,6 +456,56 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  // JSC caps an ArrayBuffer at 2 ** 32 bytes and V8 at 2 ** 53 - 1. The fixtures pass address space that
+  // is reserved and never committed, so the lengths cost no memory.
+  describe("buffer length limit", () => {
+    const apis = [
+      "napi_create_external_arraybuffer",
+      "napi_create_external_buffer",
+      "node_api_create_external_sharedarraybuffer",
+    ];
+
+    it("wraps exactly 2 ** 32 bytes", async () => {
+      const result = await checkSameOutput("test_external_buffer_length_limit", [2 ** 32]);
+      expect(result.split(/\r?\n/)).toEqual(
+        apis.map(api => `${api}: status=0 pending=false finalized=0 result=set byteLength=4294967296`),
+      );
+    });
+
+    // Node wraps this length, so only Bun runs it.
+    it("fails above 2 ** 32 bytes with ERR_BUFFER_TOO_LARGE and leaves the bytes with the caller", async () => {
+      const result = await runOn(bunExe(), "test_external_buffer_length_limit", [2 ** 32 + 1]);
+      expect(result.trim().split(/\r?\n/)).toEqual(
+        apis.map(
+          api =>
+            `${api}: status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE message="Cannot create a Buffer larger than 0x100000000 bytes" finalized=0 result=untouched`,
+        ),
+      );
+    });
+
+    const tooLarge = [
+      "napi_create_external_buffer(data): status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
+      "napi_create_external_arraybuffer(data): status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
+      "napi_create_external_buffer(NULL): status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
+      "napi_create_external_arraybuffer(NULL): status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
+      "napi_create_buffer: status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
+      "napi_create_buffer_copy: status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
+      "napi_create_external_buffer(result=NULL): status=1 pending=false",
+      "with an exception pending: napi_create_external_buffer status=10 napi_create_external_arraybuffer status=10",
+    ];
+
+    it("fails like Node above Node's own limit", async () => {
+      const result = await checkSameOutput("test_buffer_too_large_parity", [2 ** 53]);
+      expect(result.split(/\r?\n/)).toEqual(tooLarge);
+    });
+
+    // Node 22 and later accept this length, so only Bun runs it.
+    it("fails the same way for every Buffer constructor one byte above 2 ** 32", async () => {
+      const result = await runOn(bunExe(), "test_buffer_too_large_parity", [2 ** 32 + 1]);
+      expect(result.trim().split(/\r?\n/)).toEqual(tooLarge);
+    });
+  });
+
   // The finalizer of an external buffer belongs to the env that created it, and that env's
   // teardown frees the bytes, so the bytes must not be transferred to another thread.
   describe("external buffers are untransferable", () => {

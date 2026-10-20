@@ -3310,21 +3310,22 @@ where
         Ok(())
     }
 
-    /// The landing frame of [`Self::on_connection_callback`]. When nothing handles what a
-    /// 'connection' or 'secureConnection' listener threw, Node.js exits inside the callback:
-    /// https://github.com/nodejs/node/blob/v26.3.0/src/node_errors.cc#L1369-L1375
-    /// Bun counts the error and ends the run when this turn of the loop is over, and uWS reads the
-    /// request of this connection before that. So the connection is destroyed here.
-    ///
-    /// Out of line: the filter thunk also runs for the accept and the close of every connection,
-    /// and returns at once there without this frame.
+    /// Node.js exits at a listener's error that nothing handles, and Bun goes on to read the request: https://github.com/nodejs/node/blob/v26.3.0/src/node_errors.cc#L1369-L1375
+    // Out of line: the filter thunk returns before this frame for the accept and the close of a connection.
     #[inline(never)]
-    pub(crate) fn on_connection(&self, socket: *mut c_void) {
-        let unhandled_errors = self.vm().unhandled_error_counter;
+    pub(crate) fn run_connection_listeners(&self, socket: *mut c_void) {
+        // The listeners can free this server: `bun test` runs the next test from inside the report of their error.
+        let vm = self.vm;
+        let unhandled_errors = vm.unhandled_error_counter;
         crate::dispatch::fold(self.on_connection_callback(socket));
-        if self.vm().unhandled_error_counter != unhandled_errors {
+        if vm.unhandled_error_counter != unhandled_errors {
             bun_core::hint::cold();
-            Bun__NodeHTTP__refuseConnection(c_int::from(SSL), socket);
+            // `bun test` takes every error of its main VM, as a handler does.
+            let runner_took_it = vm.worker.is_none()
+                && jsc::virtual_machine::isBunTest.load(core::sync::atomic::Ordering::Relaxed);
+            if !runner_took_it {
+                Bun__NodeHTTP__refuseConnection(c_int::from(SSL), socket);
+            }
         }
     }
 
@@ -3477,7 +3478,7 @@ fn server_set_on_connection(
                         // socket is a live uWS socket for this server's group.
                         // Shared — the callback re-enters JS.
                         let this = unsafe { &*user_data.cast::<$T>() };
-                        this.on_connection(socket.cast::<c_void>());
+                        this.run_connection_listeners(socket.cast::<c_void>());
                     }
                     if first {
                         // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.

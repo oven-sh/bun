@@ -1092,9 +1092,7 @@ extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, us_socket_t* socket)
     }
 }
 
-// Destroys a connection whose 'connection' or 'secureConnection' listeners ended in an error that
-// nothing handled. Parsing stops first: a TLS close waits for ciphertext that the kernel has not
-// taken, and a request that uWS reads meanwhile is not answered.
+// Parsing stops first: a TLS close waits for unsent ciphertext, and uWS answers a request that it reads meanwhile.
 extern "C" void Bun__NodeHTTP__refuseConnection(int ssl, us_socket_t* socket)
 {
     if (us_socket_is_closed(socket)) {

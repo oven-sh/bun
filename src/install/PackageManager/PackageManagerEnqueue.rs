@@ -546,6 +546,7 @@ pub unsafe fn enqueue_parse_npm_package(
     name: StringOrTinyString,
     network_task: *mut NetworkTask,
 ) -> *mut ThreadPool::Task {
+    let store = this.manifest_store();
     // SAFETY: `this` is a live `&mut PackageManager`; `network_task` is a
     // freshly-vended pool slot whose `'static` reborrow matches the
     // `Task<'static>` slot lifetime.
@@ -561,6 +562,7 @@ pub unsafe fn enqueue_parse_npm_package(
                     crate::package_manager_task::PackageManifestRequest {
                         network: &mut *network_task,
                         name,
+                        store,
                     },
                 ),
             },

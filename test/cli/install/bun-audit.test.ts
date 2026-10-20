@@ -122,7 +122,10 @@ type RegistryOptions = {
   // Publish times overlaid on a package's manifest: { "a-dep": { "1.0.4": iso } }.
   rewriteTime?: Record<string, Record<string, string>>;
   // Versions added to a package's manifest, each a copy of a published one: { "a-dep": { "2.0.0": "1.0.4" } }.
+  // Mutable, so a test can publish a version after installing.
   copyVersions?: Record<string, Record<string, string>>;
+  // The version that a package's `latest` tag is moved to: { "a-dep": "2.0.0" }.
+  latest?: Record<string, string>;
 };
 
 // Answers the bulk-advisory endpoint itself and proxies everything else to the fixture registry, pointing manifest tarball URLs back at itself.
@@ -181,6 +184,7 @@ function startRegistry(advisories: Record<string, Advisory[]>, options: Registry
         manifest.versions[version] = { ...manifest.versions[from], version };
         if (manifest.time) manifest.time[version] = manifest.time[from];
       }
+      if (options.latest?.[packageName]) manifest["dist-tags"].latest = options.latest[packageName];
       return Response.json(manifest, { status: up.status });
     },
   });
@@ -2093,6 +2097,28 @@ describe("`bun audit fix`", () => {
     expect(exitCode).toBe(0);
     expect(await lock(dir)).toContain('"a-dep@1.0.4"');
     expect(await installedVersion(dir, "a-dep")).toBe("1.0.4");
+  });
+
+  // The fix comes from a manifest that is newer than the cached one. `bun update --offline` resolves from the cache,
+  // so the fix has to leave its manifest there.
+  test.concurrent("a fix to a version published after the install survives an offline update", async () => {
+    const published: Pick<RegistryOptions, "copyVersions" | "latest"> = { copyVersions: {}, latest: {} };
+    await using server = startRegistry({ "a-dep": [adv("<1.0.11")] }, published);
+    using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "^1.0.2" } });
+    expect(await lock(dir)).toContain('"a-dep@1.0.10"');
+    published.copyVersions!["a-dep"] = { "1.0.11": "1.0.10" };
+    published.latest!["a-dep"] = "1.0.11";
+
+    const fixed = await auditFix(dir);
+    expect(fixed.stdout).toContain("  ^ a-dep 1.0.10 -> 1.0.11");
+    expect(fixed.exitCode).toBe(0);
+
+    const { stdout, stderr, exitCode } = await run(dir, ["update", "--offline"]);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).not.toContain(" -> ");
+    expect(await lock(dir)).toContain('"a-dep@1.0.11"');
+    expect(await lock(dir)).not.toContain('"a-dep@1.0.10"');
+    expect(exitCode).toBe(0);
   });
 
   test.concurrent("refuses when package.json has changed since bun.lock was written", async () => {

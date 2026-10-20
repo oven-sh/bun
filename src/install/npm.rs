@@ -731,7 +731,7 @@ pub mod registry {
         log: &mut bun_ast::Log,
         package_name: &[u8],
         loaded_manifest: Option<PackageManifest>,
-        package_manager: &mut PackageManager,
+        store: Option<directories::ManifestStore>,
         is_extended_manifest: bool,
     ) -> Result<PackageVersionResponse, Error> {
         match response.status_code {
@@ -766,15 +766,12 @@ pub mod registry {
             manifest_expiry(&response.headers),
             is_extended_manifest,
         )? {
-            // If the cache cannot be written, the manifest is still used. It is just not saved.
-            if package_manager.options.enable.manifest_cache()
-                && let Ok(temp_dir) = directories::try_get_temporary_directory(package_manager)
-            {
+            if let Some(store) = store {
                 package_manifest::Serializer::save_async(
                     &package,
                     scope,
-                    temp_dir.handle.fd,
-                    package_manager.get_cache_directory(),
+                    store.tmpdir,
+                    store.cache_dir,
                 );
             }
 

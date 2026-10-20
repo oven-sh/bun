@@ -202,6 +202,8 @@ bun install --offline
 
 An install is only certain to cache the packages that it places in `node_modules`. To warm the cache for an `--offline` install, run an install on the same platform that places at least the same packages. An install with `--production` or `--omit` does not cache the groups it leaves out.
 
+Both flags resolve versions from the registry metadata in the cache. `bun install`, `bun add`, `bun update`, `bun outdated` and `bun audit fix` store the metadata that they fetch, so an offline command after one of them resolves the versions that it saw. `bun install` does not resolve a version that `bun.lock` already holds. If `--offline` resolves a package to a version whose tarball is not in the cache, it reports the package as not in the cache. `bun update --offline` does this after a command that fetched metadata and did not download every new version, such as `bun outdated` or `bun update <pkg>`. A project with [`minimumReleaseAge`](#minimum-release-age) needs the full metadata. For most packages, only a command that runs with `minimumReleaseAge` stores it.
+
 `--offline` skips an optional dependency that is not cached, and anything below it that is not cached either. A package that an installed package requires is still an error.
 
 See [lockfile](/pm/lockfile) for more on `bun.lock`.
@@ -532,9 +534,9 @@ bun add <pkg> --force
 bun install --force
 ```
 
-Bun does not resolve a version that `bun.lock` already holds, and it takes an exact version such as `1.2.3` from the cached manifest, so `--force` sends no request for those. To move a package in `bun.lock` to the new version, run `bun update <pkg>`, which never reads the manifest cache.
+Bun does not resolve a version that `bun.lock` already holds, and it takes an exact version such as `1.2.3` from the cached manifest, so `--force` sends no request for those. To move a package in `bun.lock` to the new version, run `bun update <pkg>`. Unless an [offline mode](#offline-installs) is on, it reads no cached manifest: it asks the registry for each one and stores the answer in the cache.
 
-`bun install --no-cache` skips the manifest cache for one run. To turn the manifest cache off for a project, set `disableManifest = true` under `[install.cache]` in `bunfig.toml`. See [Global cache](/pm/global-cache).
+`bun install --no-cache` skips the manifest cache for one run: it reads no cached manifest and stores none. To turn the manifest cache off for a project, set `disableManifest = true` under `[install.cache]` in `bunfig.toml`. An [offline mode](#offline-installs) resolves from the manifest cache, so it reads and stores manifests with either setting. See [Global cache](/pm/global-cache).
 
 To delete the cache:
 

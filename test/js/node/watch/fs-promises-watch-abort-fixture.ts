@@ -4,31 +4,11 @@
 import { once } from "node:events";
 import { watch } from "node:fs/promises";
 import { basename } from "node:path";
+import { settlement } from "../promise-settlement-tick.ts";
 
 const dir = process.argv[2];
 const turnOfTheEventLoop = () => new Promise(resolve => setImmediate(resolve));
 const iterate = (signal: AbortSignal, recursive: boolean) => watch(dir, { signal, recursive })[Symbol.asyncIterator]();
-
-// How the promise settles and on which microtask tick a reaction of it runs: "rejected on tick 3".
-// A Promise.resolve().then() chain counts the ticks. It starts before `trigger` runs.
-function settlement(trigger: () => Promise<unknown>) {
-  return new Promise<string>((resolve, reject) => {
-    let tick = 0;
-    let settled = false;
-    const step = () => {
-      tick++;
-      if (settled) return;
-      if (tick < 100) Promise.resolve().then(step);
-      else reject(new Error("the promise did not settle in 100 ticks"));
-    };
-    Promise.resolve().then(step);
-    const mark = (state: string) => () => {
-      settled = true;
-      resolve(`${state} on tick ${tick}`);
-    };
-    trigger().then(mark("fulfilled"), mark("rejected"));
-  });
-}
 
 async function ticks(recursive: boolean) {
   const result: Record<string, string> = {};

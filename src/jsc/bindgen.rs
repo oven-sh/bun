@@ -5,9 +5,11 @@ use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
+use bun_core::EncodedSlice;
+
 use crate::{
-    ArrayBuffer, ErrorCode, JSGlobalObject, JSObject, JSString, JSValue, JsError, JsThread,
-    MarkedArgumentBuffer, Strong,
+    ArrayBuffer, CommonString, EncodedSliceJsc as _, ErrorCode, JSGlobalObject, JSObject, JSString,
+    JSValue, JsError, JsThread, PinnedArrayBuffer, Strong, ThreadIsolated, ThreadIsolatedArg,
 };
 
 #[path = "bindgen/extern_types.rs"]
@@ -37,24 +39,63 @@ pub struct JsScope<'a> {
 }
 
 impl<'a> JsHeap<'a> {
+    /// For this module, which passes it to nothing that runs JavaScript except on behalf of a [`JsScope`].
     #[inline(always)]
-    fn global(&self) -> &JSGlobalObject {
+    fn global_object(&self) -> &JSGlobalObject {
         // SAFETY: a `JsHeap` only exists at the address of a live global (see `JsScope::with`).
         unsafe { JSGlobalObject::opaque_ref_nn(core::ptr::from_ref(self).cast()) }
     }
 
-    #[doc(hidden)]
+    /// For what takes the global object only to allocate or to throw.
+    ///
+    /// # Safety
+    /// Nothing it is passed to runs JavaScript. Throwing tells the debugger, which can, so after a throw the body
+    /// returns without reading what it borrowed, and a `&mut self` method does not throw through it.
     #[inline(always)]
-    pub fn global_ptr(&self) -> *mut JSGlobalObject {
-        self.global().as_mut_ptr()
+    pub unsafe fn global(&self) -> &JSGlobalObject {
+        self.global_object()
+    }
+
+    #[inline(always)]
+    fn global_ptr(&self) -> *mut JSGlobalObject {
+        self.global_object().as_mut_ptr()
     }
 
     #[inline]
     pub fn create_utf8_string(&self, utf8: &[u8]) -> Result<'a, JsLocal<'a, JSString>> {
         JsLocal::from_js_result(crate::bun_string_jsc::create_utf8_for_js(
-            self.global(),
+            self.global_object(),
             utf8,
         ))
+    }
+
+    /// A string with a copy of `latin1`, or the empty string when that is longer than a string can be.
+    #[inline]
+    pub fn create_latin1_string(&self, latin1: &[u8]) -> JsLocal<'a, JSString> {
+        JsLocal::from_raw(EncodedSlice::latin1(latin1).to_js(self.global_object()))
+    }
+
+    /// A string that takes over the allocation of `utf16`. Its error is not thrown: a `&mut self` method can call it.
+    #[inline]
+    pub fn create_utf16_string_from_vec(
+        &self,
+        utf16: Vec<u16>,
+    ) -> Result<'a, JsLocal<'a, JSString>> {
+        crate::bun_string_jsc::try_owned_utf16_into_js(self.global_object(), utf16)
+            .map(JsLocal::from_raw)
+            .ok_or_else(|| self.string_too_long())
+    }
+
+    /// One of the strings every global object has.
+    #[inline]
+    pub fn common_string(&self, string: CommonString) -> JsLocal<'a, JSString> {
+        JsLocal::from_raw(string.to_js(self.global_object()))
+    }
+
+    /// An object as `{}` makes it.
+    #[inline]
+    pub fn create_empty_object(&self) -> JsLocal<'a, JSObject> {
+        JsLocal::from_raw(JSValue::create_empty_object(self.global_object(), 0))
     }
 
     /// A `Uint8Array` whose bytes are whatever the allocator left there.
@@ -64,33 +105,87 @@ impl<'a> JsHeap<'a> {
         length: usize,
     ) -> Result<'a, JsLocal<'a, BufferSource>> {
         JsLocal::from_js_result(JSValue::create_uninitialized_uint8_array(
-            self.global(),
+            self.global_object(),
             length,
         ))
+    }
+
+    /// A `Uint8Array` with a copy of `bytes`.
+    #[inline]
+    pub fn create_uint8_array(&self, bytes: &[u8]) -> Result<'a, JsLocal<'a, BufferSource>> {
+        JsLocal::from_js_result(ArrayBuffer::create_uint8_array(self.global_object(), bytes))
+    }
+
+    /// A `Buffer` with a copy of `bytes`.
+    #[inline]
+    pub fn create_buffer(&self, bytes: &[u8]) -> Result<'a, JsLocal<'a, BufferSource>> {
+        JsLocal::from_js_result(ArrayBuffer::create_buffer(self.global_object(), bytes))
+    }
+
+    /// A `Uint8Array` that takes over the allocation of `bytes`.
+    #[inline]
+    pub fn create_uint8_array_from_box(
+        &self,
+        bytes: Box<[u8]>,
+    ) -> Result<'a, JsLocal<'a, BufferSource>> {
+        JsLocal::from_js_result(crate::JSUint8Array::from_bytes(self.global_object(), bytes))
+    }
+
+    /// A `Buffer` that takes over the allocation of `bytes`.
+    #[inline]
+    pub fn create_buffer_from_box(
+        &self,
+        bytes: Box<[u8]>,
+    ) -> Result<'a, JsLocal<'a, BufferSource>> {
+        JsLocal::from_js_result(JSValue::create_buffer_from_box(self.global_object(), bytes))
     }
 
     /// An `Error` for the body to return. It is thrown after that.
     #[cold]
     pub fn error(&self, args: core::fmt::Arguments<'_>) -> Error<'a> {
-        Error::unthrown(self.global().create_error_instance(args))
+        Error::unthrown(self.global_object().create_error_instance(args))
     }
 
     /// As [`error`](Self::error), a `TypeError`.
     #[cold]
     pub fn type_error(&self, args: core::fmt::Arguments<'_>) -> Error<'a> {
-        Error::unthrown(self.global().create_type_error_instance(args))
+        Error::unthrown(self.global_object().create_type_error_instance(args))
     }
 
     /// As [`error`](Self::error), a `RangeError`.
     #[cold]
     pub fn range_error(&self, args: core::fmt::Arguments<'_>) -> Error<'a> {
-        Error::unthrown(self.global().create_range_error_instance(args))
+        Error::unthrown(self.global_object().create_range_error_instance(args))
     }
 
     /// As [`error`](Self::error), with a `code`, which also picks the class.
     #[cold]
     pub fn error_with_code(&self, code: ErrorCode, args: core::fmt::Arguments<'_>) -> Error<'a> {
-        Error::unthrown(code.fmt(self.global(), args))
+        Error::unthrown(code.fmt(self.global_object(), args))
+    }
+
+    /// What [`JSGlobalObject::throw_invalid_arguments`] throws.
+    #[cold]
+    pub fn invalid_arguments(&self, args: core::fmt::Arguments<'_>) -> Error<'a> {
+        self.error_with_code(ErrorCode::INVALID_ARG_TYPE, args)
+    }
+
+    /// What [`JSGlobalObject::throw_illegal_constructor`] throws.
+    #[cold]
+    pub fn illegal_constructor(&self) -> Error<'a> {
+        Error::unthrown(self.global_object().create_illegal_constructor_error())
+    }
+
+    /// What [`JSGlobalObject::throw_string_too_long`] throws.
+    #[cold]
+    pub fn string_too_long(&self) -> Error<'a> {
+        Error::unthrown(self.global_object().create_string_too_long_error())
+    }
+
+    /// What [`JSGlobalObject::throw_memory_allocation_failed`] throws.
+    #[cold]
+    pub fn memory_allocation_failed(&self) -> Error<'a> {
+        Error::unthrown(self.global_object().create_memory_allocation_failed_error())
     }
 }
 
@@ -110,13 +205,13 @@ impl<'a> JsScope<'a> {
     /// Anything can be done with a `&JSGlobalObject`, so it borrows the whole `JsScope`.
     #[inline(always)]
     pub fn global(&mut self) -> &JSGlobalObject {
-        self.heap.global()
+        self.heap.global_object()
     }
 
     /// For the APIs that take the tree's own proof of being on the JS thread.
     #[inline]
     pub fn js_thread(&mut self) -> JsThread<'_> {
-        self.heap.global().js_thread_of_caller_no_frame()
+        self.heap.global_object().js_thread_of_caller_no_frame()
     }
 }
 
@@ -208,13 +303,13 @@ impl<'a> IntoError<'a> for JsError {
 impl<'a> IntoError<'a> for bun_sys::Error {
     #[cold]
     fn into_error(self, heap: &JsHeap<'a>) -> Error<'a> {
-        Error::unthrown(crate::SysErrorJsc::to_js(&self, heap.global()))
+        Error::unthrown(crate::SysErrorJsc::to_js(&self, heap.global_object()))
     }
 }
 impl<'a> IntoError<'a> for crate::SystemError {
     #[cold]
     fn into_error(self, heap: &JsHeap<'a>) -> Error<'a> {
-        Error::unthrown(self.to_error_instance(heap.global()))
+        Error::unthrown(self.to_error_instance(heap.global_object()))
     }
 }
 impl<'a, E: IntoError<'a>> IntoError<'a> for Box<E> {
@@ -231,7 +326,7 @@ impl<'a> IntoError<'a> for core::convert::Infallible {
 
 // ───────────────────────────── values ─────────────────────────────
 
-/// A [`JSValue`] held by a host call, known to be a `T`. Lists of them go in a [`MarkedArgumentBuffer`].
+/// A [`JSValue`] held by a host call, known to be a `T`. Lists of them go in a [`crate::MarkedArgumentBuffer`].
 #[repr(transparent)]
 pub struct JsLocal<'a, T = JSValue>(JSValue, InvariantLifetime<'a>, PhantomData<*const T>);
 impl<T> Clone for JsLocal<'_, T> {
@@ -274,7 +369,7 @@ impl<'a, T> JsLocal<'a, T> {
     /// Keeps the value past the call.
     #[inline]
     pub fn to_strong(self, heap: &JsHeap<'a>) -> Strong {
-        Strong::create(self.0, heap.global())
+        Strong::create(self.0, heap.global_object())
     }
 }
 
@@ -313,7 +408,7 @@ impl<'a> JsLocal<'a, Callable> {
     ) -> Result<'a, JsLocal<'a>> {
         // SAFETY: `JsLocal` is `repr(transparent)` over `JSValue`.
         let args = unsafe { &*(core::ptr::from_ref(args) as *const [JSValue]) };
-        JsLocal::from_js_result(self.0.call(cx.heap.global(), this.0, args))
+        JsLocal::from_js_result(self.0.call(cx.heap.global_object(), this.0, args))
     }
 }
 
@@ -324,49 +419,198 @@ impl<'a> JsLocal<'a, BufferSource> {
     /// The bytes as they are now. A detached or out-of-bounds view is empty.
     #[inline]
     pub fn with_bytes<R>(self, heap: &JsHeap<'a>, f: impl FnOnce(&[u8]) -> R) -> R {
-        let array_buffer = self.0.as_array_buffer(heap.global());
+        let array_buffer = self.0.as_array_buffer(heap.global_object());
         let result = f(array_buffer.as_ref().map_or(&[], ArrayBuffer::byte_slice));
+        self.0.ensure_still_alive();
+        result
+    }
+
+    /// As [`with_bytes`](Self::with_bytes), to write them.
+    ///
+    /// # Safety
+    /// Once `f` runs, no other borrow of these bytes is read. Those of another argument can be the same memory.
+    #[inline]
+    pub unsafe fn with_bytes_mut<R>(self, heap: &JsHeap<'a>, f: impl FnOnce(&mut [u8]) -> R) -> R {
+        let mut array_buffer = self.0.as_array_buffer(heap.global_object());
+        let result = f(array_buffer
+            .as_mut()
+            .map_or(&mut [], ArrayBuffer::byte_slice_mut));
         self.0.ensure_still_alive();
         result
     }
 }
 
-/// The bytes of a buffer that may be a `SharedArrayBuffer`'s, which another thread can write at any time. There is no
-/// `&[u8]` of them: a byte can differ each time it is read, and only what is written for that reads them.
-#[derive(Clone, Copy)]
-pub struct PossiblySharedBytes<'a> {
-    data: *const u8,
-    length: usize,
-    lifetime: PhantomData<&'a ()>,
+/// # Safety
+/// `wrapped` is the `T` that a cell wraps, and something holds that cell for the call `heap` belongs to.
+#[doc(hidden)]
+#[inline(always)]
+pub unsafe fn class_ref_from_extern<'a, T: crate::JsClass>(
+    wrapped: *mut c_void,
+    _: &JsHeap<'a>,
+) -> &'a T {
+    // SAFETY: forwarded.
+    unsafe { &*wrapped.cast::<T>() }
 }
 
-impl PossiblySharedBytes<'_> {
-    /// `None` if `range` starts beyond the end.
+/// `b.bytes` with `held: "handle"`, for a function that can run JavaScript, which can detach, resize or free a buffer.
+#[derive(Clone, Copy)]
+pub struct JsBytes<'a> {
+    /// What JavaScript does not change: the UTF-8 of a string, or a copy. `None` for a `Blob` or a buffer.
+    stable: Option<&'a [u8]>,
+    value: JsLocal<'a>,
+}
+
+impl<'a> JsBytes<'a> {
+    /// # Safety
+    /// As [`ExternBytes::get`](extern_types::ExternBytes::get).
+    #[doc(hidden)]
+    #[inline(always)]
+    pub unsafe fn from_extern(
+        argument: extern_types::ExternWithValue<extern_types::ExternBytes>,
+        heap: &JsHeap<'a>,
+    ) -> Self {
+        // SAFETY: forwarded.
+        unsafe {
+            Self {
+                stable: argument.converted.get_optional(heap),
+                value: JsLocal::from_extern(argument.value, heap),
+            }
+        }
+    }
+
+    /// Those of a buffer are as they are now. A detached or out-of-bounds view is empty.
     #[inline]
-    pub fn get(self, range: core::ops::RangeFrom<usize>) -> Option<Self> {
-        let length = self.length.checked_sub(range.start)?;
-        // SAFETY: at most one past the end.
-        let data = unsafe { self.data.add(range.start) };
-        Some(Self {
-            data,
-            length,
-            ..self
+    pub fn get<'heap>(self, heap: &'heap JsHeap<'a>) -> &'heap [u8] {
+        match self.stable {
+            Some(bytes) => bytes,
+            // SAFETY: the frame keeps `value` alive, and only JavaScript moves its bytes, which takes the `&mut JsScope` that `'heap` borrows from.
+            None => unsafe {
+                extern_types::Bun__Bindgen__bytesOfBlobOrBuffer(self.value.0).get(heap)
+            },
+        }
+    }
+
+    /// `shared: "copied"` for `string: "asIs"`. Like [`get`](Self::get), but copies the bytes of a shared buffer into `copy` and returns those.
+    #[inline]
+    pub fn get_or_copy_if_shared<'heap>(
+        self,
+        heap: &'heap JsHeap<'a>,
+        copy: &'heap mut Vec<u8>,
+    ) -> crate::JsResult<&'heap [u8]> {
+        if let Some(bytes) = self.stable {
+            return Ok(bytes);
+        }
+        let mut is_shared = false;
+        let bytes = extern_types::Bun__Bindgen__bytesOfBlobOrBufferAndIsShared(
+            self.value.0,
+            &mut is_shared,
+        );
+        if !is_shared {
+            // SAFETY: as in `get`.
+            return Ok(unsafe { bytes.get(heap) });
+        }
+        let global = heap.global_object();
+        let buffer = self.value.0.as_array_buffer(global);
+        match buffer.and_then(|buffer| buffer.try_copy_bytes()) {
+            Some(bytes) => {
+                *copy = bytes;
+                Ok(copy)
+            }
+            None => Err(global.throw_out_of_memory()),
+        }
+    }
+}
+
+/// `b.bytes` with `string: "asIs"`.
+pub enum StringOrJsBytes<'a> {
+    /// Latin-1 or UTF-16.
+    String(bun_core::String),
+    Bytes(JsBytes<'a>),
+}
+
+impl<'a> StringOrJsBytes<'a> {
+    /// # Safety
+    /// As [`ExternBytes::get`](extern_types::ExternBytes::get). The string's ref becomes the result's.
+    #[doc(hidden)]
+    #[inline]
+    pub unsafe fn from_extern(
+        argument: extern_types::ExternWithValue<extern_types::ExternString>,
+        heap: &JsHeap<'a>,
+    ) -> Self {
+        if !argument.converted.is_null() {
+            return Self::String(extern_types::adopt_string(argument.converted));
+        }
+        Self::Bytes(JsBytes {
+            stable: None,
+            // SAFETY: forwarded.
+            value: unsafe { JsLocal::from_extern(argument.value, heap) },
         })
     }
 
-    /// The byte there can have changed by the time this returns.
-    #[inline]
-    pub fn index_of_char(self, needle: u8) -> Option<usize> {
-        // SAFETY: readable for `'a`.
-        unsafe { bun_highway::index_of_char_raw(self.data, self.length, needle) }
+    /// `held: "copied"`.
+    #[doc(hidden)]
+    pub fn into_vec(self, heap: &JsHeap<'a>) -> Vec<u8> {
+        let copy = match self {
+            Self::String(string) => string.to_owned_slice(),
+            Self::Bytes(bytes) => bytes.get(heap).to_vec(),
+        };
+        heap.global_object().vm().report_extra_memory(copy.len());
+        copy
     }
 }
 
-/// An argument converted for use now, and the value itself for whatever holds it longer.
-#[derive(Clone, Copy)]
-pub struct WithValue<'a, T> {
-    pub converted: T,
-    pub value: JsLocal<'a>,
+/// `b.bytes` with `held: "pinned"`, for a job on another thread to read. It is dropped on the JS thread.
+pub struct PinnedBytes(ThreadIsolated<Pinned>);
+
+enum Pinned {
+    /// Thread-isolated.
+    String(bun_core::Utf8WithString),
+    /// GC-rooted too. A resizable one is copied.
+    Buffer(PinnedArrayBuffer),
+}
+
+// SAFETY: `PinnedBytes::from_extern` builds it so.
+unsafe impl ThreadIsolatedArg for Pinned {}
+
+impl PinnedBytes {
+    /// # Safety
+    /// As [`StringOrJsBytes::from_extern`]. What is not a string is a buffer.
+    #[doc(hidden)]
+    pub unsafe fn from_extern<'a>(
+        argument: extern_types::ExternWithValue<extern_types::ExternString>,
+        heap: &JsHeap<'a>,
+    ) -> Result<'a, Self> {
+        let global = heap.global_object();
+        // SAFETY: forwarded.
+        let pinned = match unsafe { StringOrJsBytes::from_extern(argument, heap) } {
+            StringOrJsBytes::Bytes(bytes) => {
+                match PinnedArrayBuffer::root_read_only(global, bytes.value.0) {
+                    Some(buffer) => Pinned::Buffer(buffer),
+                    None => return Err(global.throw_out_of_memory().into()),
+                }
+            }
+            StringOrJsBytes::String(string) => {
+                let utf8 = string.into_utf8_with_string_thread_isolated();
+                if !utf8.is_shared() {
+                    global.vm().report_extra_memory(utf8.slice().len());
+                }
+                Pinned::String(utf8)
+            }
+        };
+        // SAFETY: the string is thread-isolated, and the buffer pinned and GC-rooted.
+        Ok(Self(unsafe { ThreadIsolated::new(pinned) }))
+    }
+}
+
+impl core::ops::Deref for PinnedBytes {
+    type Target = [u8];
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        match &*self.0 {
+            Pinned::String(utf8) => utf8.slice(),
+            Pinned::Buffer(buffer) => buffer.slice(),
+        }
+    }
 }
 
 // ───────────────────────────── classes ─────────────────────────────
@@ -390,6 +634,14 @@ pub unsafe trait JsPayload: Sized + 'static {
     fn into_js<'a>(self, heap: &JsHeap<'a>) -> JsWrapper<'a, Self> {
         // SAFETY: a null structure is always valid.
         unsafe { JsWrapper::create_with_structure(heap, core::ptr::null_mut(), self) }
+    }
+
+    /// As [`into_js`](Self::into_js), for code that has the global object and no capability.
+    #[inline]
+    fn into_js_value(self, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: a `JsHeap` is the global object, and the wrapper leaves as a `JSValue`.
+        let heap = unsafe { &*core::ptr::from_ref(global).cast::<JsHeap<'_>>() };
+        self.into_js(heap).as_value().to_js()
     }
 }
 
@@ -488,7 +740,7 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
     }
 
     /// # Safety
-    /// `index` is one of the class's `internalFields`.
+    /// `index` is one of the class's internal fields.
     #[doc(hidden)]
     #[inline(always)]
     pub unsafe fn internal_field(self, _: &JsHeap<'a>, index: usize) -> JsLocal<'a> {
@@ -565,6 +817,20 @@ pub mod to_js {
         f64: f64 => |n| JSValue::js_number(JSValue::purify_nan(n));
     }
 
+    #[inline]
+    pub fn u64_as_bigint<'a>(heap: &JsHeap<'a>, value: u64) -> Result<'a, JsLocal<'a>> {
+        JsLocal::from_js_result(JSValue::from_uint64_no_truncate(
+            heap.global_object(),
+            value,
+        ))
+    }
+
+    #[inline]
+    pub fn date<'a>(heap: &JsHeap<'a>, time_value: f64) -> Result<'a, JsLocal<'a>> {
+        let date = JSValue::from_date_number(heap.global_object(), JSValue::purify_nan(time_value));
+        Ok(JsLocal::from_raw(date))
+    }
+
     #[inline(always)]
     pub fn undefined<'a>(_: &JsHeap<'a>, (): ()) -> Result<'a, JsLocal<'a>> {
         Ok(JsLocal::UNDEFINED)
@@ -592,31 +858,15 @@ pub mod to_js {
         Ok(value.into_value(heap))
     }
 
-    /// A body whose bytes do not outlive it returns the string, from [`JsHeap::create_utf8_string`].
-    pub trait Utf8<'a> {
-        fn into_string(self, heap: &JsHeap<'a>) -> Result<'a, JsLocal<'a, JSString>>;
-    }
-    impl<'a, T: AsRef<[u8]>> Utf8<'a> for T {
-        #[inline]
-        fn into_string(self, heap: &JsHeap<'a>) -> Result<'a, JsLocal<'a, JSString>> {
-            heap.create_utf8_string(self.as_ref())
-        }
-    }
-    impl<'a> Utf8<'a> for JsLocal<'a, JSString> {
-        #[inline(always)]
-        fn into_string(self, _: &JsHeap<'a>) -> Result<'a, JsLocal<'a, JSString>> {
-            Ok(self)
-        }
-    }
-
     #[inline(always)]
-    pub fn utf8<'a>(heap: &JsHeap<'a>, value: impl Utf8<'a>) -> Result<'a, JsLocal<'a>> {
-        value.into_string(heap).map(JsLocal::as_value)
+    pub fn utf8<'a>(heap: &JsHeap<'a>, value: impl AsRef<[u8]>) -> Result<'a, JsLocal<'a>> {
+        heap.create_utf8_string(value.as_ref())
+            .map(JsLocal::as_value)
     }
 
     #[inline]
     pub fn string<'a>(heap: &JsHeap<'a>, value: bun_core::String) -> Result<'a, JsLocal<'a>> {
-        JsLocal::from_js_result(crate::StringJsc::into_js(value, heap.global()))
+        JsLocal::from_js_result(crate::StringJsc::into_js(value, heap.global_object()))
     }
 
     #[inline]
@@ -625,37 +875,57 @@ pub mod to_js {
         items: I,
         mut convert: impl FnMut(&JsHeap<'a>, I::Item) -> Result<'a, JsLocal<'a>>,
     ) -> Result<'a, JsLocal<'a>> {
+        let global = heap.global_object();
         // A short array is made with one call. A longer one takes a call per element.
         let mut short = [JSValue::ZERO; 8];
         let mut items = items.into_iter();
         for count in 0..short.len() {
             let Some(item) = items.next() else {
                 // SAFETY: `count` initialized values.
-                return JsLocal::from_js_result(crate::call_zero_is_throw(
-                    heap.global(),
-                    || unsafe {
-                        extern_types::Bun__Bindgen__constructArrayFromValues(
-                            heap.global_ptr(),
-                            short.as_ptr(),
-                            count,
-                        )
-                    },
-                ));
+                return JsLocal::from_js_result(crate::call_zero_is_throw(global, || unsafe {
+                    extern_types::Bun__Bindgen__constructArrayFromValues(
+                        heap.global_ptr(),
+                        short.as_ptr(),
+                        count,
+                    )
+                }));
             };
             short[count] = convert(heap, item)?.0;
         }
-        MarkedArgumentBuffer::new(|values| {
-            for value in short {
-                values.append(value);
-            }
-            for item in items {
-                values.append(convert(heap, item)?.0);
-            }
-            // SAFETY: `values` is live for the call.
-            JsLocal::from_js_result(crate::call_zero_is_throw(heap.global(), || unsafe {
-                extern_types::Bun__Bindgen__constructArray(heap.global_ptr(), values)
-            }))
-        })
+        let array = JSValue::create_empty_array(global, short.len() + items.size_hint().0)?;
+        let rest = items.map(|item| convert(heap, item).map(|value| value.0));
+        for (index, value) in short.into_iter().map(Ok).chain(rest).enumerate() {
+            array.put_index(global, index as u32, value?)?;
+        }
+        Ok(JsLocal::from_raw(array))
+    }
+
+    /// A key that comes again keeps its place and takes the new value. The inline room is the upper `size_hint`.
+    #[inline]
+    pub fn record<'a, K: AsRef<[u8]>, V>(
+        heap: &JsHeap<'a>,
+        entries: impl IntoIterator<Item = (K, V)>,
+        mut convert: impl FnMut(&JsHeap<'a>, V) -> Result<'a, JsLocal<'a>>,
+    ) -> Result<'a, JsLocal<'a>> {
+        let global = heap.global_object();
+        let entries = entries.into_iter();
+        let (at_least, at_most) = entries.size_hint();
+        let record = JSValue::create_empty_object(global, at_most.unwrap_or(at_least));
+        for (key, value) in entries {
+            let (key, value) = (key.as_ref(), convert(heap, value)?);
+            // SAFETY: `record` is the object made above, and the key is read before this returns.
+            crate::call_false_is_throw(global, || unsafe {
+                extern_types::Bun__Bindgen__putRecordEntry(
+                    global,
+                    record,
+                    key.as_ptr(),
+                    key.len(),
+                    value.0,
+                )
+            })
+            .map_err(Error::pending)?;
+        }
+        Ok(JsLocal::from_raw(record))
     }
 
     /// An empty value is a member that is absent.
@@ -672,6 +942,25 @@ pub mod to_js {
         // SAFETY: forwarded; this cannot throw.
         Ok(JsLocal::from_raw(unsafe {
             extern_types::Bun__Bindgen__createObject(
+                heap.global_ptr(),
+                first_member_name_index,
+                values.as_ptr(),
+                values.len(),
+            )
+        }))
+    }
+
+    /// # Safety: as for [`object`].
+    #[doc(hidden)]
+    #[inline]
+    pub unsafe fn null_prototype_object<'a>(
+        heap: &JsHeap<'a>,
+        first_member_name_index: u32,
+        values: &[JSValue],
+    ) -> Result<'a, JsLocal<'a>> {
+        // SAFETY: forwarded; this cannot throw.
+        Ok(JsLocal::from_raw(unsafe {
+            extern_types::Bun__Bindgen__createNullPrototypeObject(
                 heap.global_ptr(),
                 first_member_name_index,
                 values.as_ptr(),
@@ -711,7 +1000,7 @@ pub fn host_fn_return<'a, T, E: IntoError<'a>>(
     };
     debug_assert_eq!(
         value.is_empty(),
-        cx.heap.global().has_exception(),
+        cx.heap.global_object().has_exception(),
         "a body fails exactly when an exception is pending",
     );
     value

@@ -222,8 +222,21 @@ impl AnyRequestContext {
         dispatch!(self, (), |_T, ctx| ctx.set_signal_aborted(reason))
     }
 
+    /// Address of the server that received this request. `None` once detached.
+    pub(crate) fn server_ptr(self) -> Option<*const ()> {
+        dispatch!(self, None, |_T, ctx| {
+            ctx.server
+                .get()
+                .map(|server| server.as_const_ptr().cast::<()>())
+        })
+    }
+
     pub fn deref(self) {
         dispatch!(self, (), |_T, ctx| ctx.deref())
+    }
+
+    pub(crate) fn end_with_internal_server_error(self) {
+        dispatch!(self, (), |_T, ctx| ctx.end_with_internal_server_error())
     }
 
     pub fn on_request_body_stream_drained(self) {

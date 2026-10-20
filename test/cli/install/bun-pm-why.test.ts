@@ -259,7 +259,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
     return { stdout, exitCode };
   }
 
-  // What `run` returns when the query matches nothing.
+  // This is what `run` returns when the query matches nothing.
   const notFound = (query: string) => ({
     stdout: "",
     stderr: `error: No packages matching '${query}' found in lockfile\n`,
@@ -328,7 +328,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
     expect(exitCode).toBe(0);
   });
 
-  it("should find a package by its own name and by the alias a dependent gives it", async () => {
+  it("should find a package by its own name and by the alias that a dependent gives it", async () => {
     const viaAlias = "no-deps@1.0.0\n  └─ alias-test (requires my-alias@npm:no-deps@1.0.0)\n\n";
     const viaName = "no-deps@2.0.0\n  └─ alias-test (requires 2.0.0)\n\n";
     const [byPackageName, byAlias, byAliasGlob, byAliasAndVersion, byAliasAndOtherVersion, byTransitiveAlias] =
@@ -370,7 +370,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
   });
 
   it("should escape control characters in an alias", async () => {
-    // `bun install` refuses such a name, so only a bun.lock somebody else wrote has it.
+    // `bun install` refuses such a name, so it can only come from a bun.lock that another tool or person wrote.
     const erasesTheLine = "e\x1b[2Kvil";
     const { stdout, exitCode } = await why(
       project(
@@ -643,7 +643,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
       { query: "pkg-*@^3", expected: null },
       { query: "pkg-*@1.2.4", expected: null },
       { query: "pkg-*@beta", expected: null },
-      // Not a range: compared with the printed resolution, which uses the OS path separator.
+      // It isn't a range, so it's compared with the printed resolution, which uses the OS path separator.
       { query: `pkg-*@workspace:packages${isWindows ? "\\" : "/"}pkg-a`, expected: explained("pkg-a") },
       // A github package has no version, so only `*` (or no version) matches it.
       { query: "gh-*@*", expected: ghPkg },
@@ -715,7 +715,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
       expect(exitCode).toBe(0);
     });
 
-    it("a peer dependent is listed under the one copy the hoisted tree gives it", async () => {
+    it("a peer dependent is listed under the one copy that the hoisted tree gives it", async () => {
       const { stdout, exitCode } = await why(withLinker(peerInTwoContexts, "hoisted"), "no-deps");
       expect(stdout).toMatchInlineSnapshot(`
         "no-deps@2.0.0
@@ -875,7 +875,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
       "pkg-d": ["pkg-c"],
     };
 
-    it("marks the queried package as circular at its first repeat and still dedupes what is listed next to it", async () => {
+    it("marks the queried package as circular at its first repeat and still dedupes the packages listed next to it", async () => {
       using dir = workspaceFixture("why-cycle-through-query", cycleThroughTheQuery);
 
       const { stdout, stderr, exitCode } = await installAndWhy(String(dir), ["pkg-x"]);
@@ -895,7 +895,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
       expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     });
 
-    it("marks the queried package as circular under --depth and expands again what the limit cut off", async () => {
+    it("marks the queried package as circular with --depth and expands again what the limit cut off", async () => {
       using dir = workspaceFixture("why-cycle-through-query-depth", cycleThroughTheQuery);
 
       const { stdout, stderr, exitCode } = await installAndWhy(String(dir), ["pkg-x", "--depth", "3"]);

@@ -18,7 +18,7 @@ const OXLINT: Message = Message::new("", "Expected {{name}} instead of {{actual}
 #[derive(Default)]
 pub struct State<'a> {
     root_scope: AncestorMemo<'a, ()>,
-    /// That something is in an `if`, a `try`, a `? :` or an operand of `&&`, `||` or `??`.
+    /// Caches whether a node is inside an `if`, a `try`, a `? :` or an operand of `&&`, `||` or `??`.
     conditional: AncestorMemo<'a, ()>,
 }
 
@@ -42,10 +42,10 @@ impl Rule for NoCommonjs {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new();
-        // `module`: a private name is not among what a file mentions.
+        // Also `module`, because `mentions_any` doesn't see private names like the one in `module.#exports`.
         if file.mentions_any(&["exports", "module"]) {
             on = on.exprs(&[ExprTag::Dot, ExprTag::Index]);
-            // oxlint has the name of a type after `implements`, and after the `extends` of an interface.
+            // In oxlint's AST the name after `implements`, or after an interface's `extends`, is a type name.
             if !file.language().is_oxlint {
                 on = on.stmts(&[StmtTag::Interface]).classes();
             }
@@ -83,17 +83,17 @@ impl Rule for NoCommonjs {
     }
 }
 
-/// What oxc has two levels above a member expression.
+/// The node two levels above a member expression in oxc's AST.
 enum Grandparent<'a> {
-    /// An expression statement that is an assignment: its right side.
+    /// An expression statement that's an assignment, with the assignment's right side.
     AssignmentStatement(Expr<'a>),
-    /// An assignment: its right side.
+    /// An assignment, with its right side.
     Assignment(Expr<'a>),
     Other,
 }
 
-/// How many nodes oxc has around `e` that are not nodes here: a `ChainExpression`, and one for each pair of parentheses
-/// that is not around what is assigned to.
+/// Returns how many nodes oxc's AST has around `e` that aren't nodes here: a `ChainExpression`, and one per pair of
+/// parentheses unless `e` is an assignment target.
 fn wrappers(e: Expr) -> usize {
     let parent = e.parent().as_expr().map(Expr::kind);
     let is_target = matches!(parent, Some(ExprKind::Assign { target, .. }) if target == e);
@@ -128,7 +128,7 @@ fn grandparent(member: Expr<'_>) -> Grandparent<'_> {
     }
 }
 
-/// `node.property.name === 'exports'`: an identifier, in brackets too, or a private name.
+/// `node.property.name === 'exports'`: true for an identifier, even in brackets, and for a private name.
 fn is_property_named_exports(member: Expr) -> bool {
     match member.kind() {
         ExprKind::Dot { name, .. } => matches!(name.bytes(), b"exports" | b"#exports"),
@@ -177,7 +177,7 @@ impl NoCommonjs {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
-        // oxlint looks through TypeScript's wrappers.
+        // oxlint looks through TypeScript wrappers such as `as` and `!`.
         let object = if is_oxlint {
             get_inner_expression(object)
         } else {
@@ -197,7 +197,8 @@ impl NoCommonjs {
             }
             return;
         }
-        // oxlint knows a name that is written as a string, names it, and asks whether anything around makes a scope.
+        // oxlint also accepts a property name written as a string, puts the name in the message, and checks whether
+        // anything around the member creates a scope.
         let Some(property_name) = static_property_name(member) else {
             return;
         };
@@ -253,18 +254,18 @@ impl NoCommonjs {
             ExprKind::Template(template) => template.exprs().is_empty(),
             _ => false,
         };
-        // oxlint takes parentheses for nodes.
+        // oxlint's AST keeps parentheses as nodes.
         if !is_literal_string || is_oxlint && (callee.is_parenthesized() || path.is_parenthesized())
         {
             return;
         }
         let is_at_the_top = match is_oxlint {
-            // oxlint asks only with the option, whatever the file is, and a block is a scope to it.
+            // oxlint only checks this if the option is set, for any kind of file, and a block counts as a scope.
             true => {
                 !self.allow_conditional_require
                     || is_in_root_scope(Node::Expr(e), &mut cx.state.root_scope)
             }
-            false => Node::Expr(e).scope().variable_scope().kind() == ScopeKind::Module,
+            false => Node::Expr(e).scope().variable_scope().is_top_level_of_module(),
         };
         let is_conditional = |it: Node| match it {
             Node::Stmt(stmt) => matches!(stmt.tag(), StmtTag::If | StmtTag::Try),
@@ -289,7 +290,7 @@ impl NoCommonjs {
         if !is_oxlint {
             cx.report(callee, IMPORT_MESSAGE);
         } else if cx.file().top_level_scope().get("require").is_none() {
-            // oxlint leaves a `require` that the file declares alone, and points at the call.
+            // oxlint ignores a `require` that the file declares, and reports the call.
             cx.report(e, OXLINT)
                 .data("name", "import")
                 .data("actual", "require");

@@ -5,9 +5,12 @@
 // - We should not be creating JSFunction's in process.nextTick.
 
 use crate::ipc::{IsInternal, SerializeAndSendResult};
+use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional};
 
 use crate::api::bun::subprocess::Subprocess;
+use crate::generated_bindgen::node_cluster_binding::ProcessHandle;
 
 // Struct lives in `crate::ipc` —
 // `SendQueue` stores one inline so it must live at that tier. Re-exported here so
@@ -39,19 +42,18 @@ fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
     unsafe { (*CHILD_SINGLETON.get()).get_or_insert_with(Default::default) }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn on_internal_message_child(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(crate) fn on_internal_message_child<'a>(
+    cx: &mut JsScope<'a>,
+    worker: JsLocal<'a>,
+    callback: JsLocal<'a>,
+) -> JsResult<()> {
     bun_output::scoped_log!(IPC, "onInternalMessageChild");
-    let arguments = frame.arguments_as_array::<2>();
+    let global = cx.global();
     let singleton = child_singleton();
     // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
-    singleton.worker = StrongOptional::create(arguments[0], global);
-    singleton.cb = StrongOptional::create(arguments[1], global);
-    singleton.flush(global)?;
-    Ok(JSValue::UNDEFINED)
+    singleton.worker = StrongOptional::create(worker.to_js(), global);
+    singleton.cb = StrongOptional::create(callback.to_js(), global);
+    singleton.flush(global)
 }
 
 pub(crate) fn handle_internal_message_child(
@@ -182,27 +184,26 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
     })
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn on_internal_message_primary(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments = frame.arguments_as_array::<3>();
-    // `as_class_ref` is the safe shared-borrow downcast; `ipc()` takes `&self`.
+pub(crate) fn on_internal_message_primary<'a>(
+    cx: &mut JsScope<'a>,
+    handle: ProcessHandle<'a>,
+    worker: JsLocal<'a>,
+    callback: JsLocal<'a>,
+) {
     // Same guard as `send_helper_primary`: nothing to subscribe to when the
     // worker's process has no native child handle.
-    let Some(subprocess) = arguments[0].as_class_ref::<Subprocess<'_>>() else {
-        return Ok(JSValue::UNDEFINED);
+    let ProcessHandle::Subprocess(subprocess) = handle else {
+        return;
     };
     let Some(ipc_data) = subprocess.ipc() else {
-        return Ok(JSValue::UNDEFINED);
+        return;
     };
+    let global = cx.global();
     // TODO: remove these strongs.
     ipc_data.internal_msg_queue.with_mut(|q| {
-        q.worker = StrongOptional::create(arguments[1], global);
-        q.cb = StrongOptional::create(arguments[2], global);
+        q.worker = StrongOptional::create(worker.to_js(), global);
+        q.cb = StrongOptional::create(callback.to_js(), global);
     });
-    Ok(JSValue::UNDEFINED)
 }
 
 pub(crate) fn handle_internal_message_primary(
@@ -222,8 +223,8 @@ pub(crate) fn handle_internal_message_primary(
 
     // TODO: investigate if "ack" and "seq" are observable and if they're not, remove them entirely.
     if let Some(p) = message.get(global, "ack")? {
-        if !p.is_undefined() {
-            let ack = p.to_int32();
+        if p.is_int32() {
+            let ack = p.as_int32();
             let entry = ipc_data.internal_msg_queue.with_mut(|q| {
                 let cb = q.callbacks.get(&ack).and_then(|s| s.get());
                 if q.callbacks.contains_key(&ack) {
@@ -267,26 +268,14 @@ pub(crate) fn handle_internal_message_primary(
 //
 //
 
-#[bun_jsc::host_fn]
-pub(crate) fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_as_array::<1>();
-
-    if arguments.len() == 0 {
-        return Err(global.throw_missing_arguments_value(&["enabled"]));
-    }
-    if !arguments[0].is_boolean() {
-        return Err(global.throw_invalid_argument_type_value("enabled", "boolean", arguments[0]));
-    }
-
-    let enabled = arguments[0].to_boolean();
-    let vm = global.bun_vm().as_mut();
+pub(crate) fn set_ref(enabled: bool) {
+    let vm = VirtualMachine::get().as_mut();
     vm.channel_ref_overridden = true;
     if enabled {
         vm.channel_ref.ref_(bun_io::js_vm_ctx());
     } else {
         vm.channel_ref.unref(bun_io::js_vm_ctx());
     }
-    Ok(JSValue::UNDEFINED)
 }
 
 // HOST_EXPORT(Bun__refChannelUnlessOverridden, c)
@@ -305,14 +294,9 @@ pub(crate) fn unref_channel_unless_overridden(global: &JSGlobalObject) {
     }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn channel_ignore_one_disconnect_event_listener(
-    global: &JSGlobalObject,
-    _frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let vm = global.bun_vm().as_mut();
+pub(crate) fn channel_ignore_one_disconnect_event_listener() {
+    let vm = VirtualMachine::get().as_mut();
     vm.channel_ref_should_ignore_one_disconnect_event_listener = true;
-    Ok(JSValue::FALSE)
 }
 
 // HOST_EXPORT(Bun__shouldIgnoreOneDisconnectEventListener, c)
@@ -331,10 +315,9 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         let port = arguments[2].to_int32();
         let flags = arguments[3].to_int32();
 
-        if address_type.is_string() || address_type.to_int32() == -1 {
+        if address_type.is_string() || (address_type.is_int32() && address_type.as_int32() == -1) {
             return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::NOTSUP));
         }
-        let atype = address_type.to_int32();
 
         let host_owned: Vec<u8> = if address.is_string() {
             let mut v = address.to_js_string_view(global)?.to_owned_slice();
@@ -348,7 +331,6 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         } else {
             Some(b"0.0.0.0\0")
         };
-        let _ = atype;
 
         let options: core::ffi::c_int = if flags & 1 != 0 {
             bun_uws::LIBUS_SOCKET_IPV6_ONLY
@@ -430,8 +412,11 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             } else {
                 4
             };
+        } else if address_type.is_int32() {
+            atype = address_type.as_int32();
         } else {
-            atype = address_type.to_int32();
+            // Node compares addressType with ===, so anything that isn't 6 or -1 means IPv4.
+            atype = 4;
         }
 
         fn last_neg_errno() -> JSValue {
@@ -731,19 +716,24 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
     }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn cluster_validate_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let _ = global;
-    let value = frame.arguments_as_array::<1>()[0];
-    if !value.is_number() {
-        return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::INVAL));
-    }
+/// Returns 0 if `fd` is an unconnected socket of the wanted type, or a negative errno.
+pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
     #[cfg(not(windows))]
     {
-        let fd = value.to_int32();
-        if fd < 0 {
-            return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::BADF));
+        let number = fd;
+        let fd = number as i32;
+        // Reject a fractional fd like 3.5 instead of truncating it.
+        if f64::from(fd) != number {
+            return -bun_sys::UV_E::INVAL;
         }
+        if fd < 0 {
+            return -bun_sys::UV_E::BADF;
+        }
+        let wanted = if want_dgram {
+            libc::SOCK_DGRAM
+        } else {
+            libc::SOCK_STREAM
+        };
         let mut ty: libc::c_int = 0;
         let mut len = core::mem::size_of::<libc::c_int>() as libc::socklen_t;
         // SAFETY: plain getsockopt on a caller-supplied fd; out-params are
@@ -757,8 +747,8 @@ pub(crate) fn cluster_validate_fd(global: &JSGlobalObject, frame: &CallFrame) ->
             )
         };
         // node's createServerHandle: EINVAL for anything that cannot listen (e.g. a connected stdio socketpair), fd left untouched.
-        if rc != 0 || (ty != libc::SOCK_STREAM && ty != libc::SOCK_DGRAM) {
-            return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::INVAL));
+        if rc != 0 || ty != wanted {
+            return -bun_sys::UV_E::INVAL;
         }
         if ty == libc::SOCK_STREAM {
             // SAFETY: sockaddr_storage is plain data; getpeername only writes within `peer_len`.
@@ -769,42 +759,32 @@ pub(crate) fn cluster_validate_fd(global: &JSGlobalObject, frame: &CallFrame) ->
                 libc::getpeername(fd, (&raw mut peer).cast(), &raw mut peer_len) == 0
             };
             if connected {
-                return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::INVAL));
+                return -bun_sys::UV_E::INVAL;
             }
         }
-        Ok(JSValue::js_number_from_int32(0))
+        0
     }
     #[cfg(windows)]
     {
-        Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::INVAL))
+        let _ = (fd, want_dgram);
+        -bun_sys::UV_E::INVAL
     }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn cluster_close_handle(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let _ = global;
-    let value = frame.arguments_as_array::<1>()[0];
-    if value.is_number() {
-        #[cfg(windows)]
-        {
-            let raw = value.to_number(global)?;
-            if raw.is_finite() && raw >= 0.0 {
-                bun_uws::socket_transfer::bsd_close_socket(
-                    raw as u64 as bun_uws::LIBUS_SOCKET_DESCRIPTOR,
-                );
-            }
-        }
-        #[cfg(not(windows))]
-        {
-            let fd = value.to_int32();
-            if fd >= 0 {
-                let _ =
-                    bun_sys::FdExt::close_allowing_standard_io(bun_sys::Fd::from_native(fd), None);
-            }
+pub(crate) fn cluster_close_handle(fd: f64) {
+    #[cfg(windows)]
+    {
+        if fd.is_finite() && fd >= 0.0 {
+            bun_uws::socket_transfer::bsd_close_socket(
+                fd as u64 as bun_uws::LIBUS_SOCKET_DESCRIPTOR,
+            );
         }
     }
-    Ok(JSValue::UNDEFINED)
+    #[cfg(not(windows))]
+    {
+        let fd = fd as i32;
+        if fd >= 0 {
+            let _ = bun_sys::FdExt::close_allowing_standard_io(bun_sys::Fd::from_native(fd), None);
+        }
+    }
 }

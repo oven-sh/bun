@@ -2,6 +2,7 @@ use bun_lint::prelude::*;
 use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::fix_tracker::FixTracker;
+use bun_lint::utils::visible::is_exported_from_namespace;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -19,18 +20,18 @@ fn is_init_of_for_statement(stmt: Stmt) -> bool {
         if matches!(parent.kind(), StmtKind::For { init: Some(init), .. } if init == stmt))
 }
 
-/// The ways out of patterns. In a deep one they are long, and many start in it: they are remembered.
+/// Memos for walking up out of a pattern. A deep pattern has many such walks, and they're long.
 #[derive(Default)]
 struct Patterns<'a> {
-    /// By a part of a pattern in a declaration or a parameter.
+    /// Keyed by a part of a pattern in a declaration or a parameter.
     declared: AncestorMemo<'a, Node<'a>>,
-    /// By a part of a pattern that is assigned to.
+    /// Keyed by a part of a pattern in an assignment target.
     assigned: AncestorMemo<'a, Node<'a>>,
 }
 
 impl<'a> Patterns<'a> {
-    /// The first ancestor of `identifier`, an `Expr` or a `Pat`, whose type does not match ESLint's
-    /// `PATTERN_TYPE`: it is no `Pattern` and no `RestElement`.
+    /// Returns the first ancestor of `identifier`, an `Expr` or a `Pat`, whose type doesn't match ESLint's
+    /// `PATTERN_TYPE`: it's neither a `Pattern` nor a `RestElement`.
     fn skip(&mut self, identifier: Node<'a>) -> Node<'a> {
         let Node::Expr(at) = identifier else {
             let found = self.declared.find(identifier, |_, parent| {
@@ -53,7 +54,7 @@ impl<'a> Patterns<'a> {
         if !is_pattern {
             return parent;
         }
-        // What is around a part of a pattern, up to the next assignment, is a part of it too.
+        // Every ancestor of a part of a pattern, up to the nearest assignment, is part of the pattern too.
         let found = self.assigned.find(parent, |child, parent| match (child, parent) {
             (Node::Expr(_), Node::Prop(_)) => None,
             (_, Node::Expr(e)) => {
@@ -79,7 +80,7 @@ fn can_become_variable_declaration<'a>(identifier: Node<'a>, patterns: &mut Patt
             Node::Stmt(statement) if matches!(statement.kind(), StmtKind::Expr(_)) => {
                 match statement.parent() {
                     Node::File(_) | Node::Func(_) | Node::Case(_) => true,
-                    // For oxlint the body of a namespace is such a list of statements too.
+                    // For oxlint a namespace's body is such a statement list too.
                     Node::Stmt(host) => {
                         matches!(host.kind(), StmtKind::Block(_))
                             || host.tag() == StmtTag::Module && host.file().language().is_oxlint
@@ -93,12 +94,11 @@ fn can_become_variable_declaration<'a>(identifier: Node<'a>, patterns: &mut Patt
     }
 }
 
-/// Whether `scope.through` has a reference to a variable called `name`, which the configuration
-/// defines if `is_global`.
+/// True if `scope.through` has a reference to a variable called `name`. `is_global` means the config defines it.
 fn is_name_in_through<'a>(scope: Scope<'a>, name: Name<'a>, is_global: bool) -> bool {
     if !is_global {
-        // It is a reference to one of the variables of that name around the scope. If these have
-        // few, that is sooner said than by all the references in the scope.
+        // Such a reference resolves to a variable with that name in an enclosing scope. If those variables have few
+        // references, scanning them is faster than scanning every reference in the scope.
         let outer = scope.chain().skip(1).filter_map(|it| it.get_name(name));
         let mut references = outer.flat_map(Symbol::references);
         for _ in 0..64 {
@@ -112,26 +112,25 @@ fn is_name_in_through<'a>(scope: Scope<'a>, name: Name<'a>, is_global: bool) -> 
     scope.through().any(|it| it.name() == name && (it.symbol().is_some() || is_global))
 }
 
-/// What has been found out about the variables, the scopes and the assignments of the file.
+/// Per-file caches about variables, scopes and assignments.
 #[derive(Default)]
-struct Known<'a> {
-    /// Whether `scope.through` has a reference to a variable of that name.
+struct Caches<'a> {
+    /// True if `scope.through` has a reference to a variable with that name.
     through: FxHashMap<(Scope<'a>, Name<'a>), bool>,
-    /// Whether an assignment to a pattern keeps the variables of a scope from being `const`.
+    /// True if an assignment to a pattern prevents a scope's variables from being `const`.
     assignments: FxHashMap<(Expr<'a>, Scope<'a>), bool>,
-    /// For a variable that is declared more than once: the identifier to report, and what writes
-    /// to it if there is one.
+    /// For a variable that's declared more than once: the identifier to report and, if there is one, the nodes that
+    /// write to the variable.
     redeclared: IdMap<Symbol<'a>, (Option<Node<'a>>, SmallVec<[Node<'a>; 1]>)>,
     patterns: Patterns<'a>,
 }
 
-impl<'a> Known<'a> {
+impl<'a> Caches<'a> {
     fn is_outer_variable_in_destructing(&mut self, name: Name<'a>, init_scope: Scope<'a>, file: &'a File<'a>) -> bool {
-        // ESLint resolves a reference to a global of the configuration, except in `through` of the
-        // global scope, which it is taken out of.
+        // ESLint resolves a reference to a configured global, which also removes it from the global scope's `through`.
         let is_global =
             init_scope.kind() != ScopeKind::Global && ast_utils::is_configured_global(file, name.bytes());
-        // Only to what has the name outside of the scope can a reference lead out of it.
+        // A reference can only leave the scope if something outside the scope has that name.
         if (is_global || init_scope.parent().is_some_and(|it| it.resolve_name(name).is_some()))
             && (self.through.entry((init_scope, name)))
                 .or_insert_with(|| is_name_in_through(init_scope, name, is_global))
@@ -143,7 +142,7 @@ impl<'a> Known<'a> {
         variable.is_some_and(|it| it.declarations().any(|def| matches!(def, Declaration::Param(_))))
     }
 
-    /// `left`: the left of an `AssignmentExpression`.
+    /// `left` is the left side of an `AssignmentExpression`.
     fn has_outer_variables(&mut self, left: Expr<'a>, scope: Scope<'a>) -> bool {
         let is_outer = |name| self.is_outer_variable_in_destructing(name, scope, left.file());
         match left.kind() {
@@ -157,14 +156,14 @@ impl<'a> Known<'a> {
         }
     }
 
-    /// Whether `host`, which assigns to `left`, also assigns to what cannot be declared with the
-    /// variables of `scope`. Each of the variables that it writes to asks.
-    fn assigns_to_others(&mut self, host: Expr<'a>, left: Expr<'a>, scope: Scope<'a>) -> bool {
+    /// True if `host`, which assigns to `left`, also assigns to something that can't be declared together with
+    /// `scope`'s variables. Cached, because it's checked once for every variable that `host` writes to.
+    fn has_undeclarable_targets(&mut self, host: Expr<'a>, left: Expr<'a>, scope: Scope<'a>) -> bool {
         if left.tag() == ExprTag::Ident {
             return false;
         }
-        if let Some(&known) = self.assignments.get(&(host, scope)) {
-            return known;
+        if let Some(&cached) = self.assignments.get(&(host, scope)) {
+            return cached;
         }
         let found = self.has_outer_variables(left, scope) || has_member_expression_assignment(left);
         self.assignments.insert((host, scope), found);
@@ -184,7 +183,7 @@ fn has_member_expression_assignment(node: Expr) -> bool {
     }
 }
 
-/// The `VarDecl` or the `Expr` that is an assignment which `reference` is written by.
+/// Returns the `VarDecl` or the assignment `Expr` that writes `reference`.
 fn get_destructuring_host<'a>(reference: Reference<'a>, patterns: &mut Patterns<'a>) -> Option<Node<'a>> {
     if !reference.is_write() {
         return None;
@@ -197,7 +196,7 @@ fn get_destructuring_host<'a>(reference: Reference<'a>, patterns: &mut Patterns<
     }
 }
 
-/// Whether `host` can write to several variables.
+/// True if `host` can write to several variables.
 fn is_destructuring(host: Node) -> bool {
     match host {
         Node::VarDecl(declarator) => declarator.pat().tag() != PatTag::Ident,
@@ -228,8 +227,8 @@ fn find_variable_declaration<'a>(
     }
 }
 
-/// The identifiers to report, or `None` for a variable that stays as it is, by what writes to
-/// them, in the order of ESLint's `Map`.
+/// The identifiers to report (`None` for a variable that isn't reported), grouped by the node that writes to them, in
+/// the order of ESLint's `Map`.
 #[derive(Default)]
 struct Groups<'a> {
     index: FxHashMap<Node<'a>, usize>,
@@ -249,14 +248,14 @@ impl<'a> Groups<'a> {
     }
 }
 
-/// What ESLint's `checkGroup` keeps from one group to the next.
+/// The state ESLint's `checkGroup` carries from one group to the next.
 #[derive(Default)]
 struct Checked<'a> {
     report_count: usize,
     id: Option<Pat<'a>>,
-    /// `None`: the empty string. `Some(None)`: `undefined`.
+    /// `None` is the empty string, and `Some(None)` is `undefined`.
     name: Option<Option<Name<'a>>>,
-    /// Of the declaration that the last group was in. The groups of a declaration follow each other.
+    /// Cached for the declaration of the last group. A declaration's groups are consecutive.
     declaration: Option<(Stmt<'a>, DeclarationFacts)>,
 }
 
@@ -264,14 +263,14 @@ struct Checked<'a> {
 struct DeclarationFacts {
     is_single: bool,
     is_all_initialized: bool,
-    /// How many elements the patterns have, and how many declarators have none.
+    /// The number of elements in the patterns, plus the number of declarators without a pattern.
     element_count: usize,
 }
 
 impl<'a> Checked<'a> {
     fn facts_of(&mut self, statement: Stmt<'a>, declarations: List<'a, VarDecl<'a>>) -> DeclarationFacts {
-        if let Some((known, facts)) = self.declaration
-            && known == statement
+        if let Some((cached_statement, facts)) = self.declaration
+            && cached_statement == statement
         {
             return facts;
         }
@@ -299,7 +298,7 @@ impl PreferConst {
     fn get_identifier_if_should_be_const<'a>(
         &self,
         variable: Symbol<'a>,
-        known: &mut Known<'a>,
+        caches: &mut Caches<'a>,
     ) -> Option<Node<'a>> {
         let scope = variable.scope();
         if scope.kind() == ScopeKind::Global && variable.is_marked_used() {
@@ -312,9 +311,9 @@ impl PreferConst {
                 if writer.is_some_and(|it| it.ident().start() != reference.ident().start()) {
                     return None;
                 }
-                if let Some(Node::Expr(host)) = get_destructuring_host(reference, &mut known.patterns)
+                if let Some(Node::Expr(host)) = get_destructuring_host(reference, &mut caches.patterns)
                     && let ExprKind::Assign { target, .. } = host.kind()
-                    && known.assigns_to_others(host, target, scope)
+                    && caches.has_undeclarable_targets(host, target, scope)
                 {
                     return None;
                 }
@@ -327,11 +326,11 @@ impl PreferConst {
             }
         }
         let writer = writer?;
-        // For oxlint `a ??= 1` and `a += 1` are no first assignment.
+        // For oxlint, `a ??= 1` and `a += 1` don't count as a first assignment.
         if writer.is_read() && variable.file().language().is_oxlint {
             return None;
         }
-        if writer.scope() != scope || !can_become_variable_declaration(writer.node(), &mut known.patterns) {
+        if writer.scope() != scope || !can_become_variable_declaration(writer.node(), &mut caches.patterns) {
             return None;
         }
         if !is_read_before_init {
@@ -344,15 +343,15 @@ impl PreferConst {
     }
 
     /// ESLint's `groupByDestructuring`, for one variable.
-    fn group<'a>(&self, variable: Symbol<'a>, groups: &mut Groups<'a>, known: &mut Known<'a>) {
+    fn group<'a>(&self, variable: Symbol<'a>, groups: &mut Groups<'a>, caches: &mut Caches<'a>) {
         let is_redeclared = variable.declarations().len() > 1;
-        if is_redeclared && let Some((identifier, hosts)) = known.redeclared.get(variable) {
+        if is_redeclared && let Some((identifier, hosts)) = caches.redeclared.get(variable) {
             for &host in hosts {
                 groups.push(host, *identifier);
             }
             return;
         }
-        let identifier = self.get_identifier_if_should_be_const(variable, known);
+        let identifier = self.get_identifier_if_should_be_const(variable, caches);
         let mut hosts = SmallVec::new();
         let mut previous = None;
         for reference in variable.references() {
@@ -360,7 +359,7 @@ impl PreferConst {
             if previous.replace(id) == Some(id) {
                 continue;
             }
-            if let Some(host) = get_destructuring_host(reference, &mut known.patterns)
+            if let Some(host) = get_destructuring_host(reference, &mut caches.patterns)
                 // A group that is a single `None` has no effect.
                 && (identifier.is_some() || is_destructuring(host))
             {
@@ -372,7 +371,7 @@ impl PreferConst {
             }
         }
         if is_redeclared {
-            known.redeclared.insert(variable, (identifier, hosts));
+            caches.redeclared.insert(variable, (identifier, hosts));
         }
     }
 
@@ -432,7 +431,7 @@ impl PreferConst {
             let Some(name) = name else {
                 continue;
             };
-            // oxlint points at the declaration, also of what is assigned later, without its type annotation.
+            // oxlint points at the declared name without its type annotation, even if the variable is assigned later.
             let declared = match node {
                 Node::Pat(pat) if cx.language().is_oxlint => Some(pat.span()),
                 Node::Expr(e) if cx.language().is_oxlint => {
@@ -440,13 +439,13 @@ impl PreferConst {
                 }
                 _ => None,
             };
-            let place = declared.unwrap_or_else(|| utils::estree_span(node));
-            let report = cx.report(place, USE_CONST).data("name", name);
+            let location = declared.unwrap_or_else(|| utils::estree_span(node));
+            let report = cx.report(location, USE_CONST).data("name", name);
             if should_fix && let Some((statement, _)) = parent {
-                report.fix(|fixer| {
+                report.fix_where_safe(|| !is_exported_from_namespace(statement), |fixer| {
                     let range = statement.span_without_export();
                     let keyword = fixer.file().tokens_in(range).find(|token| token.is("let"))?;
-                    // The whole declaration, so that no other fix changes it in the same pass.
+                    // The fix covers the whole declaration, so that no other fix changes it in the same pass.
                     Some(FixTracker::new(fixer).retain_range(range).replace_text_range(keyword.span(), "const"))
                 });
             }
@@ -488,19 +487,19 @@ impl Rule for PreferConst {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut statements = std::mem::take(&mut cx.state);
         utils::sort::sort_unstable_by_key(&mut statements, |it| it.span().start);
-        let (mut groups, mut known) = (Groups::default(), Known::default());
+        let (mut groups, mut caches) = (Groups::default(), Caches::default());
         for statement in statements {
             let StmtKind::Var(declarations) = statement.kind() else {
                 continue;
             };
-            // Which only oxlint looks at: all of the variables or none.
+            // Only oxlint checks a `for` loop's `init`, and it reports either all of its variables or none.
             if declarations.len() > 1 && is_init_of_for_statement(statement) {
                 let mut is_all_const = true;
                 for declaration in declarations {
                     declaration.pat().for_each_binding(&mut |pat| {
                         let variable = pat.symbol().filter(|_| is_all_const);
                         is_all_const =
-                            variable.is_some_and(|it| self.get_identifier_if_should_be_const(it, &mut known).is_some());
+                            variable.is_some_and(|it| self.get_identifier_if_should_be_const(it, &mut caches).is_some());
                     });
                 }
                 if !is_all_const {
@@ -510,14 +509,14 @@ impl Rule for PreferConst {
             for declaration in declarations {
                 declaration.pat().for_each_binding(&mut |pat| {
                     if let Some(variable) = pat.symbol() {
-                        self.group(variable, &mut groups, &mut known);
+                        self.group(variable, &mut groups, &mut caches);
                     }
                 });
             }
         }
         let mut checked = Checked::default();
         for nodes in &groups.nodes {
-            self.check_group(nodes, &mut checked, &mut known.patterns, cx);
+            self.check_group(nodes, &mut checked, &mut caches.patterns, cx);
         }
     }
 }

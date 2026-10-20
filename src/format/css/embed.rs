@@ -1,4 +1,4 @@
-//! Style sheets in the templates of JavaScript: Prettier's `language-js/embed/index.js` and `css.js`.
+//! Style sheets in JavaScript templates: Prettier's `language-js/embed/index.js` and `css.js`.
 
 use super::doc::{self, Doc, Line};
 use super::sink::Sink;
@@ -9,8 +9,7 @@ use crate::text;
 
 const PLACEHOLDER: &[u8] = b"@prettier-placeholder-";
 
-/// `/@prettier-placeholder-(\d+)-id/`: where the first match in `text` starts and ends, and the
-/// number.
+/// Finds the first match of `/@prettier-placeholder-(\d+)-id/` in `text`. Returns its start, its end and the number.
 fn find_placeholder(text: &[u8]) -> Option<(usize, usize, usize)> {
     let mut from = 0;
     while let Some(start) = text::index_of_from(text, PLACEHOLDER, from) {
@@ -35,8 +34,7 @@ fn find_placeholder(text: &[u8]) -> Option<(usize, usize, usize)> {
     None
 }
 
-/// How many placeholders are in the strings of `doc`, or `None` if one of them has a number that is
-/// not below `count`.
+/// Counts the placeholders in `doc`'s strings. Returns `None` if a placeholder's number is `count` or more.
 fn count_placeholders(doc: &Doc<'_>, count: usize) -> Option<usize> {
     let (mut found, mut rest) = (0, vec![doc]);
     while let Some(doc) = rest.pop() {
@@ -64,7 +62,10 @@ fn count_placeholders(doc: &Doc<'_>, count: usize) -> Option<usize> {
                 flat_contents,
                 ..
             } => rest.extend([&**break_contents, &**flat_contents]),
-            Doc::LineSuffixBoundary | Doc::BreakParent | Doc::Line(_) => {}
+            Doc::LineSuffixBoundary
+            | Doc::BreakParent
+            | Doc::Line(_)
+            | Doc::KeepTrailingWhitespace => {}
         }
     }
     Some(found)
@@ -72,14 +73,14 @@ fn count_placeholders(doc: &Doc<'_>, count: usize) -> Option<usize> {
 
 struct Writer<'a> {
     has_placeholders: bool,
-    /// What the placeholders stand for the substitutions of.
+    /// The template whose substitutions the placeholders replace.
     template: Option<Template<'a>>,
-    /// What is written is in an item of a `fill`, and in no group in that.
+    /// The writer is inside an item of a `fill`, with no group in between.
     is_directly_in_fill: bool,
     is_in_line_suffix: bool,
 }
 
-/// Whether there is a `breakParent` in `doc` that is in no group in it.
+/// True if `doc` has a `breakParent` that isn't inside one of its groups.
 fn has_break_parent_outside_of_groups(doc: &Doc<'_>) -> bool {
     let mut rest = vec![doc];
     while let Some(doc) = rest.pop() {
@@ -100,15 +101,15 @@ fn has_break_parent_outside_of_groups(doc: &Doc<'_>) -> bool {
             | Doc::Group { .. }
             | Doc::LineSuffix(_)
             | Doc::LineSuffixBoundary
-            | Doc::Line(_) => {}
+            | Doc::Line(_)
+            | Doc::KeepTrailingWhitespace => {}
         }
     }
     false
 }
 
 impl<'a> Writer<'a> {
-    /// A string in which a line break is nothing but a character without a width, as it is for
-    /// Prettier.
+    /// Writes a string whose line breaks count as zero-width characters, as they do in Prettier.
     fn write_string(&mut self, text: &[u8], f: &mut Formatter<'a>) {
         if text.is_empty() {
             return;
@@ -146,7 +147,7 @@ impl<'a> Writer<'a> {
             return;
         }
         match doc {
-            // Only a string with a substitution in it is taken apart.
+            // Only a string with a placeholder in it gets split.
             Doc::Text(text) if !self.has_placeholders || find_placeholder(text).is_none() => {
                 self.write_string(text, f)
             }
@@ -164,7 +165,7 @@ impl<'a> Writer<'a> {
             Doc::Array(parts) => {
                 let mut index = 0;
                 while let Some(part) = parts.get(index) {
-                    // Two line breaks in a row are an empty line.
+                    // Two line breaks in a row make an empty line.
                     if let [
                         Doc::Line(Line::Hard),
                         Doc::BreakParent,
@@ -177,7 +178,7 @@ impl<'a> Writer<'a> {
                         index += 4;
                         continue;
                     }
-                    // The group is broken, so this is two line breaks as well.
+                    // The `hardline` breaks the group, so this also prints two line breaks.
                     if let [
                         Doc::Line(Line::Hard),
                         Doc::BreakParent,
@@ -189,7 +190,8 @@ impl<'a> Writer<'a> {
                         index += 3;
                         continue;
                     }
-                    // The same the other way round: declarations in the `style` attribute of HTML with an empty line between them.
+                    // The same in the other order: declarations in an HTML `style` attribute with an empty line between
+                    // them.
                     if let [
                         Doc::Line(Line::Space | Line::Soft),
                         Doc::Line(Line::Hard),
@@ -220,7 +222,7 @@ impl<'a> Writer<'a> {
                 use crate::ir::element::DedentMode::Level;
                 self.write_between(Tag::StartDedent(Level), contents, Tag::EndDedent(Level), f);
             }
-            // Style sheets have none of these.
+            // Style sheets never produce these.
             Doc::Align(_, contents) | Doc::DedentToRoot(contents) | Doc::MarkAsRoot(contents) => {
                 self.write(contents, f)
             }
@@ -244,8 +246,8 @@ impl<'a> Writer<'a> {
                 self.is_directly_in_fill = is_directly_in_fill;
             }
             Doc::Fill(parts) => {
-                // For Prettier, a `breakParent` is about the groups around it, and says nothing about
-                // whether an item fits.
+                // In Prettier, a `breakParent` only affects the groups around it. It doesn't affect whether an item
+                // fits.
                 if !self.is_directly_in_fill && parts.iter().any(has_break_parent_outside_of_groups)
                 {
                     f.write_element(FormatElement::ExpandParent);
@@ -273,7 +275,7 @@ impl<'a> Writer<'a> {
                     }
                 }
             }
-            // One in another comes to the same as one.
+            // A nested line suffix is the same as a single one.
             Doc::LineSuffix(contents) if self.is_in_line_suffix => self.write(contents, f),
             Doc::LineSuffix(contents) => {
                 self.is_in_line_suffix = true;
@@ -287,11 +289,13 @@ impl<'a> Writer<'a> {
             Doc::Line(Line::Soft) => f.write_element(FormatElement::Line(LineMode::Soft)),
             Doc::Line(Line::Hard) => f.write_element(FormatElement::Line(LineMode::Hard)),
             Doc::Line(Line::Literal) => f.write_text(b"\n", None),
+            // Style sheets never produce it.
+            Doc::KeepTrailingWhitespace => {}
         }
     }
 }
 
-/// Writes `document`, which is that of a style sheet, as a part of the document that `f` writes.
+/// Writes a style sheet's `document` into the document that `f` is building.
 pub(crate) fn write_document(document: &Doc<'_>, f: &mut Formatter<'_>) {
     let mut writer = Writer {
         has_placeholders: false,
@@ -302,15 +306,15 @@ pub(crate) fn write_document(document: &Doc<'_>, f: &mut Formatter<'_>) {
     writer.write(document, f);
 }
 
-/// What is done with the document of a template.
+/// The action to take on a template's document.
 enum Action<'w, 'a> {
-    /// Only whether there is one is asked.
+    /// Only check that the template can be formatted.
     Check,
     Write(&'w mut Formatter<'a>),
 }
 
-/// Prettier's `printEmbedCss`. Nothing is written and `false` is returned if the text cannot be parsed
-/// as SCSS, or if not every substitution is in the document exactly once.
+/// Prettier's `printEmbedCss`. Writes nothing and returns `false` if the text doesn't parse as SCSS, or if some
+/// substitution isn't in the document exactly once.
 fn print_embed_css<'a>(
     template: Template<'a>,
     options: &FormatOptions,
@@ -367,7 +371,7 @@ fn is_identifier(e: Expr<'_>, name: &[u8]) -> bool {
     matches!(e.kind(), ExprKind::Ident(_)) && e.text() == name
 }
 
-/// The object of `e`, if it is a `MemberExpression`.
+/// Returns `e`'s object if `e` is a `MemberExpression`.
 fn member_object(e: Expr<'_>) -> Option<Expr<'_>> {
     match e.as_ast_nodes() {
         AstNodes::StaticMemberExpression(_) | AstNodes::ComputedMemberExpression(_) => e.object(),
@@ -375,7 +379,7 @@ fn member_object(e: Expr<'_>) -> Option<Expr<'_>> {
     }
 }
 
-/// The callee of `e`, if it is a `CallExpression`.
+/// Returns `e`'s callee if `e` is a `CallExpression`.
 fn call_callee(e: Expr<'_>) -> Option<Expr<'_>> {
     match e.as_ast_nodes() {
         AstNodes::CallExpression(_) => e.callee(),
@@ -396,7 +400,7 @@ fn is_styled_object(e: Expr<'_>) -> bool {
     member_object(e).is_some_and(|object| is_identifier(object, b"styled")) || is_styled_extend(e)
 }
 
-/// `isStyledComponents`, and the first half of `isStyledJsx`. `tag`: of the template.
+/// `isStyledComponents` and the first half of `isStyledJsx`. `tag` is the template's tag.
 fn is_styled_tag(tag: Expr<'_>) -> bool {
     // css``, css.global``, css.resolve``
     if is_identifier(tag, b"css") {
@@ -429,7 +433,7 @@ fn has_name(prop: Prop<'_>, name: &[u8]) -> bool {
     matches!(prop.key().map(|key| key.kind()), Some(KeyKind::Ident(key)) if key.bytes() == name)
 }
 
-/// `isAngularComponentStyles`: `@Component({ styles: [`..`] })`. `parent`: of the template.
+/// `isAngularComponentStyles`: `@Component({ styles: [`..`] })`. `parent` is the template's parent.
 fn is_angular_component_styles(parent: AstNodes<'_>) -> bool {
     let property = match parent {
         AstNodes::ArrayExpression(_) => parent.parent(),
@@ -438,7 +442,7 @@ fn is_angular_component_styles(parent: AstNodes<'_>) -> bool {
     is_angular_component_property(property, b"styles")
 }
 
-/// Whether `property` is the property `name` of the object in `@Component({ .. })`.
+/// True if `property` is the property `name` of the object in `@Component({ .. })`.
 pub(crate) fn is_angular_component_property(property: AstNodes<'_>, name: &[u8]) -> bool {
     let AstNodes::ObjectProperty(prop) = property else {
         return false;
@@ -447,7 +451,7 @@ pub(crate) fn is_angular_component_property(property: AstNodes<'_>, name: &[u8])
         return false;
     };
     let call = property.parent().parent();
-    // The name last: nearly every property has been told apart by then.
+    // Compare the name last. The cheaper checks have already rejected nearly every property.
     matches!(call, AstNodes::CallExpression(call)
         if call.callee().is_some_and(|callee| callee != object && is_identifier(callee, b"Component")))
         && matches!(call.parent(), AstNodes::Decorator(_))
@@ -455,8 +459,8 @@ pub(crate) fn is_angular_component_property(property: AstNodes<'_>, name: &[u8])
         && has_name(prop, name)
 }
 
-/// oxc's `get_tag_name`: the name that a tag starts with, `a` of `a.b(c)[d]`, whatever TypeScript has put around it. For
-/// oxfmt that name alone says which language is in the template.
+/// oxc's `get_tag_name`: the identifier a tag starts with, like `a` in `a.b(c)[d]`, looking through TypeScript
+/// wrappers. oxfmt picks the template's language from that name only.
 pub(crate) fn root_name_of_tag(mut tag: Expr<'_>) -> Option<&[u8]> {
     loop {
         tag = match tag.kind() {
@@ -470,7 +474,7 @@ pub(crate) fn root_name_of_tag(mut tag: Expr<'_>) -> Option<&[u8]> {
     }
 }
 
-/// Prettier's `isEmbedCss`. `e`: a template.
+/// Prettier's `isEmbedCss`. `e` is a template.
 pub(crate) fn is_embed_css(e: Expr<'_>) -> bool {
     is_embed_css_for(e, Flavor::Prettier)
 }
@@ -497,7 +501,7 @@ fn is_embed_css_for(e: Expr<'_>, flavor: Flavor) -> bool {
     }
 }
 
-/// Whether Prettier's `embed` has something to say about the template `e`.
+/// True if Prettier's `embed` would try to format the template `e`.
 fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, options: &FormatOptions) -> bool {
     matches!(
         options.embedded_language_formatting,
@@ -506,13 +510,12 @@ fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, options: &FormatOptions
         && is_embed_css_for(e, options.flavor)
 }
 
-/// Whether `template` is written ` `` `.
+/// True if `template` is printed as ` `` `.
 pub(crate) fn is_blank(template: Template<'_>) -> bool {
     template.quasi_count() == 1 && bun_core::strings::trim_js_whitespace(template.raw(0)).is_empty()
 }
 
-/// Prettier's `embed`, for the languages that there is a formatter for. Returns whether it has written
-/// the template `e`.
+/// Prettier's `embed`, for the languages that have a formatter here. Returns true if it wrote the template `e`.
 pub(crate) fn write_template<'a>(
     e: Expr<'a>,
     template: Template<'a>,
@@ -529,8 +532,8 @@ pub(crate) fn write_template<'a>(
     print_embed_css(template, &options, Action::Write(f))
 }
 
-/// Whether the document of `e` has the label `embed`: it is a template that is written as the language
-/// in it, with or without a tag.
+/// True if `e`'s document has the label `embed`, which means `e` is a template, tagged or not, that's formatted as its
+/// embedded language.
 pub(crate) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let quasi = match e.kind() {
         ExprKind::TaggedTemplate(call) => call.template(),
@@ -541,12 +544,12 @@ pub(crate) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         return false;
     };
     is_candidate(quasi, template, f.options())
-        && (tag_alone_decides_what_is_around_a_template(f)
+        && (tag_alone_decides_template_layout(f)
             || (!is_blank(template) && print_embed_css(template, f.options(), Action::Check)))
 }
 
-/// oxc's `embed_hug`: for oxfmt a template with the tag of a language is laid out in a call or behind `=>` like one that
-/// is written as that language, also if it cannot be read as such and stays as it is.
-pub(crate) fn tag_alone_decides_what_is_around_a_template(f: &Formatter<'_>) -> bool {
+/// oxc's `embed_hug`: oxfmt lays out a template with a language's tag in a call or after `=>` as if it were formatted
+/// as that language, even when it doesn't parse and is printed verbatim.
+pub(crate) fn tag_alone_decides_template_layout(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }

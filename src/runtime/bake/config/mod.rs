@@ -1,7 +1,5 @@
 //! The Bake config: one type for both `bun index.html` (no config) and `bun ./app.ts` (an `app` export).
 
-use crate::api::js_bundler::Plugin;
-use crate::api::js_bundler::js_bundler::PluginJscExt as _;
 use bun_alloc::Arena;
 use bun_core::{ZBox, strings};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
@@ -9,6 +7,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 mod bundler;
 mod defaults;
 mod framework;
+pub(crate) mod plugins;
 mod transpiler;
 
 pub(crate) use bundler::{BuildConfigSubset, SplitBundlerOptions};
@@ -29,13 +28,7 @@ pub(crate) struct UserOptions {
 
 impl Drop for UserOptions {
     fn drop(&mut self) {
-        if let Some(p) = self.bundler_options.plugin {
-            // `p` is the FFI handle returned by `Plugin::create` in
-            // `parse_plugin_array`; `PluginJscExt::destroy` is its paired
-            // (safe) destructor — it null-checks via `opaque_ref` and
-            // unprotect()s the JSCell / tombstones the C++ object.
-            Plugin::destroy(p.as_ptr());
-        }
+        self.bundler_options.destroy_plugin();
     }
 }
 
@@ -87,6 +80,26 @@ impl UserOptions {
             }
         }
 
+        match Self::parse_framework_root_and_plugins(config, global, &mut bundler_options) {
+            Ok((framework, root)) => Ok(UserOptions {
+                root,
+                framework,
+                bundler_options,
+                arena,
+            }),
+            Err(err) => {
+                // `UserOptions` was never built, so its `Drop` will not free the plugin.
+                bundler_options.destroy_plugin();
+                Err(err)
+            }
+        }
+    }
+
+    fn parse_framework_root_and_plugins(
+        config: JSValue,
+        global: &JSGlobalObject,
+        bundler_options: &mut SplitBundlerOptions,
+    ) -> JsResult<(Framework, ZBox)> {
         let framework = Framework::from_js(
             match config.get(global, "framework")? {
                 Some(v) => v,
@@ -98,11 +111,18 @@ impl UserOptions {
                 }
             },
             global,
-            &mut bundler_options,
+            bundler_options,
         )?;
 
         let root = if let Some(slice) = config.get_optional_slice(global, "root")? {
-            ZBox::from_bytes(slice.slice())
+            // Make the root absolute because the dev server strips it off absolute file paths.
+            match framework::resolve_dir_option(slice.slice()) {
+                Some(root) => ZBox::from_vec(root),
+                None => {
+                    return Err(global
+                        .throw_invalid_arguments(format_args!("'{}.root' is too long", API_NAME)));
+                }
+            }
         } else {
             match bun_sys::getcwd_alloc() {
                 Ok(z) => z,
@@ -117,11 +137,6 @@ impl UserOptions {
             bundler_options.parse_plugin_array(plugin_array, global)?;
         }
 
-        Ok(UserOptions {
-            root,
-            framework,
-            bundler_options,
-            arena,
-        })
+        Ok((framework, root))
     }
 }

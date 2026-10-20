@@ -8,7 +8,7 @@ use bun_lint::rule::Plugin;
 pub struct PreferObjectFromEntries {
     /// `a.b` is `["a", "b"]`.
     functions: Vec<Vec<String>>,
-    /// The calls of `reduce` and of what has the last name of one of `functions`.
+    /// Listens to calls of `reduce` and of the last name of each entry in `functions`.
     on: On,
 }
 
@@ -97,9 +97,9 @@ impl Rule for PreferObjectFromEntries {
             // `() => Object.assign(object, {key})`
             ExprKind::Call(assign) if !body.is_chain_root() => {
                 let source = assign.args().get(1).map(get_inner_expression);
-                let is_one_property = matches!(source.map(Expr::kind), Some(ExprKind::Object(properties))
+                let has_single_property = matches!(source.map(Expr::kind), Some(ExprKind::Object(properties))
                     if properties.len() == 1 && properties.first().is_some_and(is_plain_property));
-                if !is_one_property
+                if !has_single_property
                     || !is_method_call(assign, Some(&["Object"]), Some(&["assign"]), Some(2), Some(2))
                     || !assign.args().first().is_some_and(is_accumulator)
                 {
@@ -119,7 +119,7 @@ impl Rule for PreferObjectFromEntries {
             }
             _ => return,
         };
-        // Not what the default value of the parameter is written to.
+        // Excludes the write reference that the parameter's default value creates.
         if accumulator.references().filter(|it| !matches!(it.node(), Node::Pat(_))).take(2).count() == 1 {
             cx.report(span, PREFER_OBJECT_FROM_ENTRIES);
         }

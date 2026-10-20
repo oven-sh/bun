@@ -6,6 +6,7 @@
 #include "real_v8.h"
 #include "v8_compatibility_assertions.h"
 #include <JavaScriptCore/Error.h>
+#include <JavaScriptCore/ErrorInstance.h>
 
 static_assert(offsetof(v8::Isolate, m_roots) == real_v8::internal::Internals::kIsolateRootsOffset, "Isolate roots array is at wrong offset");
 
@@ -152,7 +153,8 @@ Local<Value> Isolate::ThrowError(Local<String> message)
     JSC::VM& vm = this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::String wtfMessage = message->localToJSString()->value(m_globalObject);
-    JSC::JSObject* error = JSC::createError(m_globalObject, wtfMessage);
+    // JSC::createError asserts that the message is not empty.
+    JSC::JSObject* error = JSC::ErrorInstance::create(vm, m_globalObject->errorStructure(), wtfMessage, JSC::JSValue());
     Local<Value> handle = currentHandleScope()->createLocal<Value>(vm, error);
     JSC::throwException(m_globalObject, scope, error);
     return handle;
@@ -172,7 +174,7 @@ Isolate::Isolate(shim::GlobalInternals* globalInternals)
     m_roots[kFalseValueRootIndex] = TaggedPointer(&globalInternals->m_falseValue);
 }
 
-HandleScope* Isolate::currentHandleScope()
+shim::HandleScopeBuffer* Isolate::currentHandleScope()
 {
     return m_globalInternals->currentHandleScope();
 }

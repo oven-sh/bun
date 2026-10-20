@@ -142,6 +142,8 @@ pub struct LinkerContext<'a> {
     pub(crate) inits_already_done: Option<AutoBitSet>,
     /// The part `scan_imports_and_exports` adds to each entry point file (`u32::MAX` elsewhere).
     pub(crate) entry_point_part_indices: Vec<u32>,
+    /// `--compile`: the entry point the executable runs as its main module (see `compute_chunks`).
+    pub(crate) main_module: Option<Index>,
 }
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
@@ -182,6 +184,7 @@ impl<'a> Default for LinkerContext<'a> {
             preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             inits_already_done: None,
             entry_point_part_indices: Vec::new(),
+            main_module: None,
         }
     }
 }
@@ -1451,6 +1454,8 @@ pub struct LinkerOptions {
     pub(crate) source_maps: SourceMapOption,
     pub(crate) target: Target,
     pub(crate) compile_mode: CompileMode,
+    /// `--compile`: the parser inlines `import.meta.main` (see `ParseTask`).
+    pub(crate) inline_entrypoint_import_meta_main: bool,
     pub(crate) metafile: bool,
     /// Path to write JSON metafile (for Bun.build API)
     pub(crate) metafile_json_path: &'static [u8],
@@ -1516,6 +1521,7 @@ impl Default for LinkerOptions {
             source_maps: SourceMapOption::None,
             target: Target::Browser,
             compile_mode: CompileMode::None,
+            inline_entrypoint_import_meta_main: false,
             metafile: false,
             metafile_json_path: b"",
             metafile_markdown_path: b"",
@@ -2397,6 +2403,7 @@ impl<'a> LinkerContext<'a> {
         source_index: Index,
         source: &Source,
         module_info: Option<&mut crate::analyze_transpiled_module::ModuleInfo>,
+        import_meta_main_value: Option<bool>,
     ) -> js_printer::PrintResult {
         let parts_to_print = &[Part {
             stmts: bun_ast::StoreSlice::new_mut(out_stmts),
@@ -2461,6 +2468,7 @@ impl<'a> LinkerContext<'a> {
             module_type: self.options.output_format,
             print_dce_annotations: self.options.emit_dce_annotations,
             has_run_symbol_renamer: true,
+            import_meta_main_value,
 
             to_esm_ref,
             to_commonjs_ref,

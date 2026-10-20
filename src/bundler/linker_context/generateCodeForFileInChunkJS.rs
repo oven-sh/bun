@@ -229,6 +229,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 part_range.source_index,
                 source,
                 module_info,
+                None,
             );
         }
     }
@@ -974,6 +975,18 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         });
     }
 
+    // A file in another entry point's chunk is a copy there, and a copy is not the main module.
+    let in_chunk_of_other_entry_point =
+        chunk.is_entry_point() && !chunk.is_entry_point_file(source_index as u32);
+    let import_meta_main_value = if in_chunk_of_other_entry_point {
+        Some(false)
+    } else if c.options.inline_entrypoint_import_meta_main {
+        c.main_module
+            .map(|main_module| main_module == part_range.source_index)
+    } else {
+        None
+    };
+
     // `get_source` returns `&'static Source` (parse_graph SoA is append-only and
     // outlives the link step), so it does not borrow `c` — no split-borrow needed
     // across the `&mut self` call below.
@@ -991,6 +1004,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         part_range.source_index,
         source,
         module_info,
+        import_meta_main_value,
     )
 }
 

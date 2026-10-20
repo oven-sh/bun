@@ -1,4 +1,5 @@
-//! `packageExtensions`: rules become ordinary rows; `Applied` records which, to undo a rule.
+//! `packageExtensions`. The dependencies that an extension adds become ordinary dependencies in the
+//! lockfile. `Applied` records which ones were added, so that removing an extension can undo it.
 
 use std::io::Write as _;
 
@@ -20,14 +21,14 @@ use crate::{Dependency, DependencyID, PackageID, PackageNameHash, invalid_packag
 pub(crate) struct PackageExtensions {
     /// From package.json, on every install. Not saved.
     pub(crate) rules: Vec<Rule>,
-    /// What rules did to the packages of this lockfile. Saved.
+    /// What the extensions changed in this lockfile's packages. Saved in the lockfile.
     pub(crate) applied: Vec<Applied>,
 }
 
 /// `"<name>[@<range>]": { .. }`
 pub(crate) struct Rule {
     name_hash: PackageNameHash,
-    /// Empty: every version.
+    /// Empty means every version.
     range: Box<[u8]>,
     /// At most one that is a peer and one that is not for a name.
     edges: Vec<Edge>,
@@ -41,7 +42,8 @@ struct Edge {
     behavior: Behavior,
 }
 
-/// The hash of `<name>@<version>` (as `patched_dependencies` keys), the row's name, what was done.
+/// The hash of `<name>@<version>` (like the keys of `patched_dependencies`), the dependency's name,
+/// and what was done to it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Applied(u64, PackageNameHash, Kind);
 
@@ -158,7 +160,7 @@ fn range_matches(range: &[u8], version: semver::Version, version_buf: &[u8]) -> 
             .is_some_and(|group| group.satisfies_including_prerelease(version, range, version_buf))
 }
 
-/// Whether a rule keyed `key` applies to `name` at `version`.
+/// Returns true if an extension with the key `key` applies to `name` at `version`.
 pub(crate) fn key_matches(
     key: &[u8],
     name: &[u8],
@@ -199,7 +201,7 @@ fn is_supported_specifier(literal: &[u8]) -> bool {
     .is_some()
 }
 
-/// What the rules ask of one package for one name.
+/// What the extensions want for one name in one package.
 struct Wanted<'a> {
     edge: &'a Edge,
     behavior: Behavior,
@@ -224,7 +226,8 @@ impl Wanted<'_> {
                     .iter_mut()
                     .find(|first| first.is_for(edge.name_hash, edge.behavior))
                 {
-                    // As in yarn, the first rule for a name wins; any can make a peer optional.
+                    // Like in Yarn, the first extension for a name wins, but any of them can make a
+                    // peer optional.
                     Some(first) => {
                         if edge.behavior.is_optional_peer() {
                             first.behavior.insert(Behavior::OPTIONAL);
@@ -245,7 +248,8 @@ impl Wanted<'_> {
         self.edge.name_hash == name_hash && self.behavior.is_peer() == behavior.is_peer()
     }
 
-    /// bun.lock lists an unresolved required peer as optional: no sign that the rule changed.
+    /// bun.lock lists an unresolved required peer as optional, so that difference doesn't mean the
+    /// extension changed.
     fn is_row(&self, row: &Dependency, buf: &[u8]) -> bool {
         let optional = row.behavior.contains(Behavior::OPTIONAL);
         *row.version.literal.slice(buf) == *self.edge.literal
@@ -319,7 +323,8 @@ impl PackageExtensions {
         }
     }
 
-    /// From bun.lock. What is not understood is not recorded: the row counts as declared.
+    /// Reads the records from bun.lock. A record that isn't understood is skipped, so its
+    /// dependency counts as declared by the package.
     #[cold]
     #[inline(never)]
     pub(crate) fn parse_applied(&mut self, section: &Expr) {
@@ -342,7 +347,7 @@ impl PackageExtensions {
         });
     }
 
-    /// For bun.lockb: `[package, name_hash, kind]` each.
+    /// For bun.lockb. Each record is `[package, name_hash, kind]`.
     #[cold]
     #[inline(never)]
     pub(crate) fn applied_words(&self) -> Vec<u64> {
@@ -396,7 +401,8 @@ impl Lockfile {
         })
     }
 
-    /// Appends what is now applied to `now`, the rows to resolve to `unresolved`. `true`: changed.
+    /// Appends what's applied now to `now`, and the dependencies that need resolving to
+    /// `unresolved`. Returns true if anything changed.
     fn extend_package(
         &mut self,
         rules: &[Rule],
@@ -506,7 +512,7 @@ impl Lockfile {
         let off = dependencies.len() as u32;
         let len = rows.len() as u32;
         for (row, resolved) in rows {
-            // An optional peer waits for somebody else to install it.
+            // An optional peer isn't resolved here. It waits for another package to install it.
             if resolved == invalid_package_id && !row.behavior.is_optional_peer() {
                 unresolved.push(dependencies.len() as DependencyID);
             }
@@ -641,7 +647,7 @@ impl Lockfile {
             changed |=
                 self.extend_package(&rules, &applied, &mut *log, id, &mut now, &mut unresolved)?;
         }
-        // Fewer: a record of a package that the lockfile does not have.
+        // If there are fewer, a record belonged to a package that's no longer in the lockfile.
         changed |= now.len() != applied.len();
         let removed = (applied.iter())
             .filter(|applied| applied.2 != Kind::OptionalPeer && !now.contains(applied))
@@ -654,7 +660,7 @@ impl Lockfile {
         Ok(changed.then_some((unresolved, removed)))
     }
 
-    /// `clean_with_logger`: the records of the packages that are still there.
+    /// For `clean_with_logger`: keeps the records of the packages that are still in the lockfile.
     #[cold]
     #[inline(never)]
     pub(crate) fn keep_package_extensions_of(&mut self, old: &Lockfile) {

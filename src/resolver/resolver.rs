@@ -504,9 +504,10 @@ pub struct Resolver<'a> {
     pub generation: Generation,
 
     /// A directory that the resolution in progress could not list, for a
-    /// reason that is not cached. `resolve_and_auto_install` reports it. It
-    /// owns nothing: the runtime copies the `Resolver` bytewise to a pool
-    /// thread.
+    /// reason that is not cached. `resolve_and_auto_install` clears it when
+    /// it starts and reports it before it returns. It owns nothing, and no
+    /// value left in it matters to the next resolution: the runtime copies
+    /// the `Resolver` bytewise to a pool thread while another thread uses it.
     pub(crate) dir_read_failure: Option<Fs::DirReadFailure>,
 
     /// Auto-install backend. `bun_install::PackageManager` implements
@@ -1147,6 +1148,7 @@ impl<'a> Resolver<'a> {
 
         let original_order = self.extension_order;
         // NOTE: the restore happens explicitly at every return point below.
+        self.dir_read_failure = None;
         self.extension_order = match kind {
             ast::ImportKind::Url | ast::ImportKind::AtConditional | ast::ImportKind::At => {
                 options::ExtOrder::Css
@@ -1558,6 +1560,13 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
     ) -> crate::Error {
         self.dir_read_failure = None;
+        // The log looks the specifier up in the text, which does not have
+        // the bytes of one that is not UTF-8.
+        let specifier = if strings::is_valid_utf8(import_path) {
+            import_path
+        } else {
+            b""
+        };
         self.log_mut().add_resolve_error(
             None,
             bun_ast::Range::NONE,
@@ -1567,7 +1576,7 @@ impl<'a> Resolver<'a> {
                 bstr::BStr::new(failure.err.name()),
                 bstr::BStr::new(import_path)
             ),
-            import_path,
+            specifier,
             kind,
             bun_ast::Error::ModuleNotFound,
         );
@@ -1646,7 +1655,7 @@ impl<'a> Resolver<'a> {
         while let Some(path) = iter.next() {
             let name = path.name();
             let primary = core::mem::take(&mut is_primary);
-            let Ok(Some(dir)) = self.dir_info_cached_maybe_log(false, name.dir) else {
+            let Ok(Some(dir)) = self.read_dir_info(name.dir) else {
                 // `resolve_and_auto_install` reports a directory that was not listed.
                 if let Some(failure) = &self.dir_read_failure {
                     return Err(failure.err);
@@ -2451,9 +2460,7 @@ impl<'a> Resolver<'a> {
                 if res.package_json.is_some() && self.care_about_browser_field {
                     let base_dir_info = match res.dir_info {
                         Some(d) => d,
-                        None => match self
-                            .dir_info_cached_maybe_log(false, result.path_pair.primary.name().dir)
-                        {
+                        None => match self.read_dir_info(result.path_pair.primary.name().dir) {
                             Ok(Some(d)) => d,
                             _ => return ResultUnion::Success(result),
                         },
@@ -4259,16 +4266,12 @@ impl<'a> Resolver<'a> {
     }
 
     pub fn read_dir_info(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
-        let result = self.dir_info_cached_maybe_log(false, path);
-        // No resolution is in progress to report a directory that was not
-        // listed, and the caller has the error.
-        self.dir_read_failure = None;
-        result
+        self.dir_info_cached_maybe_log(false, path)
     }
 
     /// Like `readDirInfo`, but returns `null` instead of throwing an error.
     pub fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef> {
-        self.read_dir_info(path).ok().flatten()
+        self.dir_info_cached_maybe_log(false, path).ok().flatten()
     }
 
     // NOTE: `follow_symlinks` is `true` at every call

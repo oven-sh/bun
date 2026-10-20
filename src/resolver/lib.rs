@@ -1026,9 +1026,10 @@ pub mod fs {
         /// `EntriesMap` (bun_alloc has no BSSMap equivalent).
         pub entries: EntriesMap,
         /// What the failed reads of a directory interned, until a read of it
-        /// succeeds. `EntryStore`, `FilenameStore` and `DirnameStore` only
-        /// grow, so `read_listing` uses these entries and this path again
-        /// when it reads the directory. Guarded by `entries_mutex`.
+        /// succeeds or an open finds it gone or denied. `EntryStore`,
+        /// `FilenameStore` and `DirnameStore` only grow, so `read_listing`
+        /// uses these entries and this path again when it reads the
+        /// directory. Guarded by `entries_mutex`.
         failed_listings: bun_collections::StringHashMap<DirEntry>,
         pub(crate) cwd: &'static [u8],
         #[cfg(not(windows))]
@@ -1282,6 +1283,15 @@ pub mod fs {
             err: crate::Error,
         ) -> Unlisted {
             if let why @ (Unlisted::Gone(_) | Unlisted::Denied(_)) = Unlisted::of(err, b"") {
+                // No read follows, so what earlier failed reads of this
+                // directory left is of no use.
+                if !self.failed_listings.is_empty() {
+                    self.failed_listings.remove(
+                        strings::paths::without_trailing_slash_windows_path(
+                            in_place.map(StaleListing::dir).unwrap_or(dir_path),
+                        ),
+                    );
+                }
                 return why;
             }
             let Ok((dir, interned)) = self.listing_dir(in_place, dir_path, dir_needs_sep) else {
@@ -1401,10 +1411,8 @@ pub mod fs {
         }
 
         /// What a directory that was not listed leaves in the cache, and what
-        /// the caller gets. The cache keeps only that a directory with no
-        /// listing yet is gone or denied. A stale listing keeps its names and
-        /// its generation, and `Unlisted::Failed` stores nothing, so the
-        /// next lookup tries again. The caller then gets the error in the
+        /// the caller gets. `Unlisted::Failed` stores nothing, so the next
+        /// lookup tries again, and the caller gets the error in the
         /// threadlocal slot.
         fn not_listed(
             &mut self,
@@ -1413,10 +1421,16 @@ pub mod fs {
             why: Unlisted,
         ) -> crate::CrateResult<&'static mut EntriesOption> {
             let (err, failed) = match why {
-                Unlisted::Gone(err) | Unlisted::Denied(err) if in_place.is_none() => {
-                    return self.read_directory_error(dir, err);
-                }
-                Unlisted::Gone(err) | Unlisted::Denied(err) => (err, false),
+                Unlisted::Gone(err) | Unlisted::Denied(err) => match in_place {
+                    None => return self.read_directory_error(dir, err),
+                    // Drop the names, for the readers of every generation, and
+                    // leave the listing stale: a later generation opens the
+                    // directory again. An `Err` in the slot never expires.
+                    Some(mut stale) => {
+                        stale.data().clear();
+                        (err, false)
+                    }
+                },
                 Unlisted::Failed(failure) => (failure.err, true),
             };
             Ok(temp_entries_option_write(EntriesOption::Err(

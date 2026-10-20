@@ -19,6 +19,7 @@ import {
   isDebug,
   isLinux,
   isMacOS,
+  isMusl,
   isRoot,
   isWindows,
   joinP,
@@ -2209,6 +2210,14 @@ static void note_fault(void) {
   close(fd);
 }
 
+static long fail_read(void) {
+  if (reads_left > 0) reads_left--;
+  note_fault();
+  const char *err = getenv("READDIR_FAULT_ERRNO");
+  errno = err ? atoi(err) : EIO;
+  return -1;
+}
+
 long syscall(long nr, ...) {
   va_list ap;
   va_start(ap, nr);
@@ -2223,14 +2232,9 @@ long syscall(long nr, ...) {
     snprintf(link, sizeof link, "/proc/self/fd/%d", fd);
     ssize_t n = readlink(link, target, sizeof target - 1);
     if (n > 0 && (target[n] = 0, strcmp(target, dir) == 0)) {
-      if (lseek(fd, 0, SEEK_CUR) != 0) {
-        if (reads_left > 0) reads_left--;
-        note_fault();
-        const char *err = getenv("READDIR_FAULT_ERRNO");
-        errno = err ? atoi(err) : EIO;
-        return -1;
-      }
+      if (lseek(fd, 0, SEEK_CUR) != 0) return fail_read();
       long rc = next_syscall(nr, a1, a2, a3, a4, a5, a6);
+      long read = rc;
       const char *hide = getenv("READDIR_FAULT_HIDE");
       char *buf = (char *)a2;
       for (long pos = 0; hide && pos < rc;) {
@@ -2243,6 +2247,8 @@ long syscall(long nr, ...) {
           pos += len;
         }
       }
+      /* No record is left, and 0 is the end of the directory. */
+      if (read > 0 && rc == 0) return fail_read();
       return rc;
     }
   }
@@ -2281,7 +2287,7 @@ long syscall(long nr, ...) {
 
   let runs = 0;
 
-  async function runWithFault(args: string[], cwd: string, fault: Fault, baseEnv = bunEnv) {
+  async function runWithFault(args: string[], cwd: string, fault: Fault, baseEnv = bunEnv, cmd = [bunExe(), ...args]) {
     const existing = baseEnv.LD_PRELOAD;
     const faultLog = join(String(shimDir), `faults-${runs++}`);
     const env: Record<string, string | undefined> = {
@@ -2294,7 +2300,7 @@ long syscall(long nr, ...) {
     if (fault.count !== undefined) env.READDIR_FAULT_COUNT = String(fault.count);
     if (fault.errno !== undefined) env.READDIR_FAULT_ERRNO = String(fault.errno);
     if (fault.while !== undefined) env.READDIR_FAULT_WHILE = fault.while;
-    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
+    await using proc = Bun.spawn({ cmd, env, cwd, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // The shim hooks libc's syscall(). If bun stops issuing getdents64 through
     // it, no read fails, and a test that expects the healthy outcome passes
@@ -2538,6 +2544,21 @@ long syscall(long nr, ...) {
     });
     expect(stderr).toContain(`error: ${cannotRead(join(root, "node_modules/dep"), "EIO", "dep")}`);
     expect(existsSync(join(root, "out.css"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  // The log looks the specifier up in the message, which shows a byte that
+  // is not UTF-8 as U+FFFD.
+  it("bun build reports the directory for an entry point whose name is not UTF-8", async () => {
+    using dir = tempDir("resolver-readdir-fault-build-bytes", staleSibling);
+    const root = realpathSync(String(dir));
+    const { stderr, exitCode } = await runWithFault([], root, { dir: root, hide: "entry.ts" }, bunEnv, [
+      "sh",
+      "-c",
+      `exec "$0" build "$(printf 'caf\\351.ts')"`,
+      bunExe(),
+    ]);
+    expect(stderr).toContain(`error: Cannot read directory "${root}": EIO while resolving "caf`);
     expect(exitCode).toBe(1);
   });
 
@@ -2955,30 +2976,37 @@ describe.concurrent("a directory that does not open", () => {
     console.log(JSON.stringify(out));
   `;
 
-  it.skipIf(isWindows)("no free descriptor is an error that names the directory, and nothing is cached", async () => {
-    using dir = tempDir("resolver-open-emfile", {
-      "entry.js": resolveWithoutDescriptors,
-      "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
-      "node_modules/dep/index.js": `module.exports = "dep";`,
-    });
-    const root = realpathSync(String(dir));
-    await using proc = Bun.spawn({
-      cmd: ["sh", "-c", 'ulimit -n 256 && exec "$0" "$@"', bunExe(), "--no-install", "entry.js"],
-      env: bunEnv,
-      cwd: root,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-      stdout: {
-        noDescriptor: { error: `Cannot read directory "${join(root, "node_modules")}": EMFILE while resolving "dep"` },
-        afterwards: join(root, "node_modules/dep/index.js"),
-      },
-      stderr: "",
-      exitCode: 0,
-    });
-  });
+  // As root on musl, bun raises the descriptor limit at startup, to more
+  // descriptors than this script can open in the time of a test.
+  it.skipIf(isWindows || (isMusl && isRoot))(
+    "no free descriptor is an error that names the directory, and nothing is cached",
+    async () => {
+      using dir = tempDir("resolver-open-emfile", {
+        "entry.js": resolveWithoutDescriptors,
+        "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+        "node_modules/dep/index.js": `module.exports = "dep";`,
+      });
+      const root = realpathSync(String(dir));
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", 'ulimit -n 256 && exec "$0" "$@"', bunExe(), "--no-install", "entry.js"],
+        env: bunEnv,
+        cwd: root,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+        stdout: {
+          noDescriptor: {
+            error: `Cannot read directory "${join(root, "node_modules")}": EMFILE while resolving "dep"`,
+          },
+          afterwards: join(root, "node_modules/dep/index.js"),
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 
   // Builds "./entry.js" three times in one process: with the directory "sub",
   // with a file in its place, and with the directory again.
@@ -2999,6 +3027,13 @@ describe.concurrent("a directory that does not open", () => {
     for (let attempt = 0; attempt < 100 && !String(out.file).includes("Could not resolve"); attempt++) {
       await Bun.sleep(5);
       out.file = await build();
+    }
+    // The runtime resolver stays in the first generation and reads nothing
+    // again. It takes the answer from what the build left in the cache.
+    try {
+      out.runtime = Bun.resolveSync("./sub/mod.js", import.meta.dir);
+    } catch (e) {
+      out.runtime = { error: e.message };
     }
     rmSync("sub");
     mkdirSync("sub");
@@ -3025,6 +3060,7 @@ describe.concurrent("a directory that does not open", () => {
       stdout: {
         directory: "built",
         file: ['Could not resolve: "./sub/mod.js"'],
+        runtime: { error: expect.stringContaining("Cannot find module") },
         directoryAgain: "built",
       },
       stderr: "",

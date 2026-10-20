@@ -613,6 +613,7 @@ const buntls = Symbol.for("::buntls::");
 const kNativeSecureContextCtor = Symbol.for("::buntlsnativesecurecontextctor::");
 
 function TLSSocket(socket?, options?) {
+  this[kAcceptedTLS] = null;
   this[ksecureContext] = undefined;
   this.ALPNProtocols = undefined;
   this[kcheckServerIdentity] = undefined;

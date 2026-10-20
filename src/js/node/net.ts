@@ -490,6 +490,10 @@ function onUpgradedReadError(self, err) {
 function isWrappableStream(stream) {
   return stream instanceof Duplex || require("internal/tls").hasStreamMethods(stream);
 }
+// Node's `connecting || !_handle`. The socket of an http 'connect' or 'upgrade' event is connected and has no handle, until it is destroyed.
+function isNotConnected(socket) {
+  return socket.pending || socket.destroyed;
+}
 // Whatever state the wrapped stream is in: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
 function linkUpgraded(self, connection: SocketInstance) {
   const isSocket = connection instanceof Socket;
@@ -497,12 +501,11 @@ function linkUpgraded(self, connection: SocketInstance) {
   self._parent = isSocket ? connection : null;
   destroyWhenUpgradedCloses(self, connection);
   connection.on("error", onUpgradedError.bind(null, self));
-  // `pending`, not `!_handle`: the socket of an http 'connect' or 'upgrade' event is connected and has no handle of its own.
-  self.connecting = isSocket && connection.pending;
+  self.connecting = isSocket && isNotConnected(connection);
 }
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
 function onUpgradedConnect(self, connection) {
-  if (self.destroyed || self[kupgraded] !== connection) return;
+  if (self.destroyed || !self.connecting || self[kupgraded] !== connection) return;
   self.connecting = false;
   self.emit("connect");
 }
@@ -1383,7 +1386,13 @@ const ServerHandlers = {
     }
     self[kSessionAccepted] = true;
     // The handshake ran over a net.Socket that has a transport of its own and reports no 'connect'.
-    if (self.connecting) onUpgradedConnect(self, self[kupgraded]);
+    if (self.connecting) {
+      try {
+        onUpgradedConnect(self, self[kupgraded]);
+      } catch (err) {
+        reportError(err);
+      }
+    }
     const pauseOnConnect = server?.pauseOnConnect;
     if (pauseOnConnect) {
       pauseOnCreate(self, socket);
@@ -2356,16 +2365,20 @@ Socket.prototype.connect = function connect(...args) {
     if (fd != null) {
       return this;
     }
+    const bunTLS = this[bunTlsSymbol];
     if (
       // TLSSocket already created a socket and is forwarding it here. This is a private API.
-      !(socket && $isObject(socket) && isWrappableStream(socket)) &&
+      !(
+        socket &&
+        $isObject(socket) &&
+        (typeof bunTLS === "function" ? isWrappableStream(socket) : socket instanceof Duplex)
+      ) &&
       // public api for net.Socket.connect
       port === undefined &&
       path == null
     ) {
       throw $ERR_MISSING_ARGS(["options", "port", "path"]);
     }
-    const bunTLS = this[bunTlsSymbol];
     var tls: TLSConnectOptions | undefined = undefined;
     if (typeof bunTLS === "function") {
       tls = bunTLS.$call(this, port, host, true);
@@ -2384,7 +2397,7 @@ Socket.prototype.connect = function connect(...args) {
       }
       if (connection) {
         // Connected, and nothing to adopt: the socket of an http 'connect' or 'upgrade' event.
-        const connectedWithoutHandle = !connection._handle && !connection.pending;
+        const connectedWithoutHandle = !connection._handle && !isNotConnected(connection);
         if (
           typeof connection !== "object" ||
           !(connection instanceof Socket) ||

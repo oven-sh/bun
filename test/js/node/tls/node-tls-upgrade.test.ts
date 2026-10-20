@@ -220,6 +220,15 @@ function closeAll(server: net.Server, sockets: net.Socket[]) {
   server.close();
 }
 
+// The arguments of the next `event` of `socket`. An error, or a close ahead of the event, rejects.
+function nextEvent(socket: net.Socket, event: string) {
+  const { promise, resolve, reject } = Promise.withResolvers<unknown[]>();
+  socket.once(event, (...args: unknown[]) => resolve(args));
+  socket.once("error", reject);
+  socket.once("close", () => reject(new Error(`closed before '${event}'`)));
+  return promise;
+}
+
 // The wrap takes the fd over one tick after the constructor, the tick the wrapped socket's end() shuts it down in.
 test.each<[string, (raw: net.Socket, tlsSocket: tls.TLSSocket) => void]>([
   ["end()", raw => raw.end()],
@@ -471,6 +480,8 @@ test("a server-side TLSSocket over the socket of an http 'connect' event is conn
     secure.once("secure", () => {
       atSecure.resolve({ connecting: secure.connecting, pending: secure.pending, readyState: secure.readyState });
     });
+    secure.once("error", atSecure.reject);
+    secure.once("close", () => atSecure.reject(new Error("closed before 'secure'")));
   });
   await once(proxy.listen(0, "127.0.0.1"), "listening");
   const raw = net.connect((proxy.address() as net.AddressInfo).port, "127.0.0.1");
@@ -507,6 +518,7 @@ test("tls.connect({ socket }) over the socket of an http 'connect' event complet
       secure.write("ping");
     });
     secure.on("error", echoed.reject);
+    secure.on("close", () => echoed.reject(new Error("closed before the echo arrived")));
     secure.on("data", chunk => echoed.resolve({ echoed: chunk.toString(), ...atSecureConnect }));
   });
   await once(proxy.listen(0, "127.0.0.1"), "listening");
@@ -718,10 +730,10 @@ test.each(["a socket the server accepted", "an injected socket"])(
     const outer = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
     outer.on("error", () => {});
     try {
-      expect(String((await once(outer, "data"))[0])).toBe("outer");
+      expect(String((await nextEvent(outer, "data"))[0])).toBe("outer");
       const inner = tls.connect({ socket: outer, rejectUnauthorized: false });
       inner.on("error", () => {});
-      expect(String((await once(inner, "data"))[0])).toBe("inner");
+      expect(String((await nextEvent(inner, "data"))[0])).toBe("inner");
     } finally {
       outer.destroy();
       listener.close();
@@ -755,13 +767,19 @@ test("a server-side TLSSocket over a net.Socket that has no handle is connected,
       callback(err);
     }
   }
-  const atSecure = Promise.withResolvers<{ connecting: boolean; readyState: string }>();
+  const atSecure = Promise.withResolvers<{ connecting: boolean; readyState: string; connectsLater: number }>();
+  let tunnel: Tunnel;
   const server = tls.createServer(certs, socket => {
     socket.on("error", () => {});
-    atSecure.resolve({ connecting: socket.connecting, readyState: socket.readyState });
+    const { connecting, readyState } = socket;
+    // The handshake has reported the connection. A 'connect' of the transport after it is no second one.
+    let connectsLater = 0;
+    socket.on("connect", () => connectsLater++);
+    tunnel.emit("connect");
+    atSecure.resolve({ connecting, readyState, connectsLater });
     socket.end("bye");
   });
-  const front = net.createServer(socket => void server.emit("connection", new Tunnel(socket)));
+  const front = net.createServer(socket => void server.emit("connection", (tunnel = new Tunnel(socket))));
   await once(front.listen(0, "127.0.0.1"), "listening");
   const port = (front.address() as net.AddressInfo).port;
   const options = { port, host: "127.0.0.1", rejectUnauthorized: false, allowHalfOpen: true };
@@ -770,16 +788,79 @@ test("a server-side TLSSocket over a net.Socket that has no handle is connected,
     let received = "";
     client.setEncoding("utf8");
     client.on("data", chunk => (received += chunk));
-    await once(client, "end");
+    await nextEvent(client, "end");
     expect({ received, ...(await atSecure.promise) }).toEqual({
       received: "bye",
       connecting: false,
       readyState: "open",
+      connectsLater: 0,
     });
   } finally {
     client.destroy();
     front.close();
   }
+});
+
+test("a 'connect' listener that throws when a server-side handshake completes does not stop the completion", async () => {
+  const script = `
+    const net = require("node:net");
+    const tls = require("node:tls");
+    const { once } = require("node:events");
+    // A socket over a transport of its own: it has no handle and emits no 'connect'.
+    class Tunnel extends net.Socket {
+      constructor(under) {
+        super();
+        this.under = under;
+        under.on("data", chunk => this.push(chunk));
+        under.on("end", () => this.push(null));
+        under.on("close", () => this.destroy());
+      }
+      _read() {}
+      _write(chunk, encoding, callback) {
+        this.under.write(chunk, encoding, callback);
+      }
+      _final(callback) {
+        this.under.end(callback);
+      }
+      _destroy(err, callback) {
+        this.under.destroy();
+        callback(err);
+      }
+    }
+    const events = [];
+    process.on("uncaughtException", err => events.push("uncaughtException " + err.message));
+    const front = net.createServer(socket => {
+      const { TLS_KEY: key, TLS_CERT: cert } = process.env;
+      const secure = new tls.TLSSocket(new Tunnel(socket), { isServer: true, key, cert });
+      secure.on("error", err => events.push("error " + err.message));
+      secure.on("connect", () => {
+        events.push("connect");
+        throw new Error("boom");
+      });
+      secure.on("secure", () => {
+        events.push("secure");
+        secure.end("bye");
+      });
+    });
+    await once(front.listen(0, "127.0.0.1"), "listening");
+    const client = tls.connect({ port: front.address().port, host: "127.0.0.1", rejectUnauthorized: false });
+    client.on("error", err => events.push("client error " + err.code));
+    client.setEncoding("utf8");
+    client.on("data", chunk => events.push("client data " + chunk));
+    await once(client, "close");
+    front.close();
+    console.log(JSON.stringify(events));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, TLS_KEY: certs.key, TLS_CERT: certs.cert },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(["connect", "uncaughtException boom", "secure", "client data bye"]);
+  expect(exitCode).toBe(0);
 });
 
 test("a server-side TLSSocket over a net.Socket that dials later is connecting until then, and keeps its end()", async () => {
@@ -810,5 +891,54 @@ test("a server-side TLSSocket over a net.Socket that dials later is connecting u
     secure.destroy();
     raw.destroy();
     peer.close();
+  }
+});
+
+test.each(["tls.connect({ socket })", "new TLSSocket(socket, { isServer: true })"])(
+  "%s over the socket of an http 'connect' event that is destroyed is not connected",
+  async how => {
+    // Node's rule is `connecting || !_handle`, and its destroyed socket has no handle.
+    const outcome = Promise.withResolvers<{ connecting: boolean; readyState: string }>();
+    const proxy = http.createServer();
+    proxy.on("connect", (_request, socket) => {
+      socket.on("error", () => {});
+      socket.destroy();
+      const secure =
+        how === "tls.connect({ socket })"
+          ? tls.connect({ socket, rejectUnauthorized: false })
+          : new tls.TLSSocket(socket, { isServer: true, ...certs });
+      const atWrap = { connecting: secure.connecting, readyState: secure.readyState };
+      secure.on("error", () => {});
+      for (const done of ["secure", "secureConnect"]) {
+        secure.once(done, () => outcome.reject(new Error("the handshake completed")));
+      }
+      secure.once("close", () => outcome.resolve(atWrap));
+    });
+    await once(proxy.listen(0, "127.0.0.1"), "listening");
+    const raw = net.connect((proxy.address() as net.AddressInfo).port, "127.0.0.1");
+    try {
+      raw.on("error", () => {});
+      raw.write("CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n");
+      expect(await outcome.promise).toEqual({ connecting: true, readyState: "opening" });
+    } finally {
+      raw.destroy();
+      proxy.closeAllConnections();
+      proxy.close();
+    }
+  },
+);
+
+test("net.connect({ socket }) with a stream that is no stream.Duplex still asks for a port", async () => {
+  const server = net.createServer(socket => socket.on("error", () => {}));
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const raw = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+  try {
+    await once(raw, "connect");
+    // @ts-expect-error `socket` is no option of net.connect()
+    expect(() => net.connect({ socket: new EmitterDuplex(raw) })).toThrow(
+      expect.objectContaining({ code: "ERR_MISSING_ARGS" }),
+    );
+  } finally {
+    closeAll(server, [raw]);
   }
 });

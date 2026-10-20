@@ -1392,7 +1392,11 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
     if (scope.exception()) [[unlikely]] {
         *result = toNapi(JSValue(scope.exception()->value()), globalObject);
     } else if (std::optional<JSValue> pending = env->pendingException()) {
-        *result = toNapi(pending.value(), globalObject);
+        JSValue value = pending.value();
+        // What scheduleEngineException() kept: an addon gets the thrown value, and null for a termination, as in Node.js.
+        if (auto* latched = dynamicDowncast<JSC::Exception>(value)) [[unlikely]]
+            value = JSC::getVM(globalObject).isTerminationException(latched) ? JSC::jsNull() : latched->value();
+        *result = toNapi(value, globalObject);
         env->clearPendingException();
     } else {
         *result = toNapi(JSC::jsUndefined(), globalObject);
@@ -3064,10 +3068,8 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
     NakedPtr<Exception> returnedException;
     JSValue value = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis(), returnedException);
 
-    if (returnedException) [[unlikely]] {
-        // A termination stays the cell: the env throws it again by identity, so no catch block of the caller runs.
-        bool isTermination = vm.isTerminationException(returnedException.get());
-        env->scheduleException(isTermination ? JSValue(returnedException.get()) : returnedException->value());
+    if (returnedException) {
+        env->scheduleEngineException(*returnedException);
         return napi_set_last_error(env, napi_generic_failure);
     }
 

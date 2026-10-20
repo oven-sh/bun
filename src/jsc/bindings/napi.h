@@ -441,8 +441,13 @@ public:
         m_pendingException.set(m_vm, exception);
     }
 
-    // An Exception cell converts to a JSValue that no addon can use: pass exception->value().
     void scheduleException(JSC::Exception*) = delete;
+
+    // An exception the engine threw: kept whole, so the env throws it again by identity.
+    void scheduleEngineException(JSC::Exception& exception)
+    {
+        m_pendingException.set(m_vm, &exception);
+    }
 
     bool throwPendingException()
     {

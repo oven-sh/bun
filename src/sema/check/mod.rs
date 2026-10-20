@@ -122,7 +122,6 @@ use spans::{is_word_at, word_at, word_end, word_start};
 use spans::{skip_trivia_back, trim_trivia_end};
 use std::hash::{Hash, Hasher};
 use std::hint::cold_path;
-use std::sync::atomic::AtomicBool;
 use symbols::{AliasTarget, ExcludedMeanings};
 use task::{Open, OrderDependent, Stored, Task};
 
@@ -213,11 +212,9 @@ pub(crate) type AssignedSignature = (Option<SigId>, bool);
 pub struct Program<'s> {
     /// Owns the arenas for the program and everything computed from it.
     pub session: &'s Session,
-    /// True if a query of any task has been circular. Set at a commit, from `Task::closed_a_cycle`.
-    pub closed_a_cycle: AtomicBool,
     /// `Task::order_dependent_variances` of the valid commits so far: the first value for each
-    /// symbol. Written at a commit, read on a cache miss in `variances_worker`. Any thread can add
-    /// to this map, so it's on the regular heap. See `release`.
+    /// symbol. Written at a commit and by `share_variances`, read on a cache miss in `variances_worker`. Any thread
+    /// can add to this map, so it's on the regular heap. See `release`.
     serial_variances: Guarded<FxHashMap<Sym, &'s [u8]>>,
     /// See `commit`.
     commits: commit::Commits<'s>,
@@ -609,7 +606,6 @@ impl<'s> Program<'s> {
         types.share_records();
         let mut program = Program {
             session,
-            closed_a_cycle: Default::default(),
             serial_variances: Guarded::default(),
             commits: commit::Commits::new_in(session.arena())
                 .for_files(files.ranks(), session.arena()),
@@ -1706,7 +1702,8 @@ pub struct Checker<'p, 's> {
     /// The results withheld from `Program::instantiations` because `instantiate` returned the error
     /// type at a limit, each with the serial number of the mapper's activation and a flag that's
     /// true if `limits` changed. While the mapper is active, no path to the limit is taken twice
-    /// (`activeTypeMappersCaches`). The next caller hits the limit itself.
+    /// (`activeTypeMappersCaches`). The next caller hits the limit itself. An entry stored while no mapper was active has
+    /// the number 0 and serves every caller until the end of the file.
     instantiations_up_to_a_limit: FxHashMap<(TypeId, MapperId), (u32, TypeId, bool)>,
     /// The same for the results of `check_type_related_to` and of `variances_of` during which `cuts` changed.
     relations_cut_short: FxHashMap<relate::Key, (u64, bool)>,
@@ -1769,7 +1766,8 @@ pub struct Checker<'p, 's> {
     pub(super) inherited_name_set: Option<crate::util::FxHashSet<Atom>>,
     /// `resolvedConstraintOfDistributive`. `None` is `noConstraintType`.
     cond_distributive_memo: FxHashMap<TypeId, Option<TypeId>>,
-    /// Set when a comparison exhausts `Relater::relation_count` (2859). The caller clears it before comparing.
+    /// Set when a comparison exhausts `Relater::relation_count` (2859). A caller that wants to know clears it before
+    /// comparing and then puts the old value back, so once it's set outside such a caller it stays set.
     pub(super) relation_too_complex: bool,
     /// `c.currentNode`, as `checkSourceElement` and `checkDeferredNode` set it. See `current_node`.
     pub(super) current_source_element: Option<CurrentNode>,
@@ -1981,7 +1979,6 @@ pub struct Checker<'p, 's> {
     reverse_mapped_source_stack: Vec<(TypeId, u32)>,
     reverse_mapped_target_stack: Vec<(TypeId, u32)>,
     reverse_expanding: u8,
-    /// Final results of narrowing.
     flow_memo: flow::FlowMemo,
     /// `deferredNodes` of the file being checked, an ordered set.
     deferred_nodes: std::collections::VecDeque<ExprId>,
@@ -1995,7 +1992,7 @@ pub struct Checker<'p, 's> {
     unknown_symbols: FxHashMap<ExprId, bool>,
     /// Entries of `Log::node_keys`. See the function of the same name.
     withheld_until_the_file_ends: Vec<[u32; 3]>,
-    /// The other files in which this task has found an error. See `View::hides`.
+    /// The other files in which this task has found an error since its last commit. See `View::hides`.
     files_with_errors: crate::util::FxHashSet<FileId>,
     /// The aliases that `check_target_of_alias_symbol` has reported on since `check_file` began:
     /// `aliasSymbolLinks.aliasTarget != nil`, or `resolveAlias` is in progress.

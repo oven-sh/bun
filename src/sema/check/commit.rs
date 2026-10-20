@@ -831,9 +831,6 @@ impl<'s> Checker<'_, 's> {
             view.has_committed(number);
         }
         task.resume_writing_immediately();
-        if task.closed_a_cycle {
-            p.closed_a_cycle.store(true, Ordering::Relaxed);
-        }
         task.buffer().recycle_log(log);
         true
     }

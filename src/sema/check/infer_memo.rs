@@ -516,7 +516,7 @@ impl<'p, 's> Checker<'p, 's> {
     ///   other queries that do it record the visit in the frame.
     /// - No frame is tainted. Under a tainted frame, a part of a type that is normally cached is derived, and counted,
     ///   on every read.
-    /// - No result is cached only while a frame is in progress, or only until the type of an accessor is assigned.
+    /// - No result is cached only while a frame is in progress, and no instantiated symbol has a type of its own.
     pub(in super::super) fn is_settled_for_inference(&self) -> bool {
         self.provisional.is_empty()
             && self.instantiated_symbol_links.is_empty()

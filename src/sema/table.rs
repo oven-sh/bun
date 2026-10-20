@@ -453,8 +453,8 @@ impl<const SLOT: u32> Location for OfExpressions<SLOT> {
     const KEEPS_VISITED_FILE_LOCAL: bool = true;
 }
 
-/// The entries are task-local and are dropped when the task finishes the file it's visiting. No
-/// other task ever sees one.
+/// The entries are task-local and are dropped when the task begins its next file. No other task
+/// ever sees one.
 pub struct FileLocal;
 
 impl Policy for Frozen {}
@@ -1261,7 +1261,7 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32> + Follow, W: Location, A: Alloc
 type IndirectInTask<T> = ListInTask<(u64, T)>;
 
 /// Returns the value `handle` refers to. The reference has the table's lifetime, but a reference to
-/// a task-local value is valid only until the task ends (`Task::finish`, `Task::begin`, the drop).
+/// a task-local value is valid only until the task ends (`Task::end`, `Task::begin`, the drop).
 /// Any holder, such as one of the checker's caches, must release it by then.
 #[inline]
 fn indirect_at<'p, 's, T: Send + 's, A: Alloc>(

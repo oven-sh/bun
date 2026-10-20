@@ -2260,8 +2260,8 @@ impl Destination<'_> {
 }
 
 /// All task-local records: atoms, lists of index components, mappers, signatures, types. A field of
-/// `Task`. No other task sees it. At the end of the task `finish` extracts the records the task
-/// publishes, and the rest is dropped with the task.
+/// `Task`. No other task sees it. A record that the task publishes is created in the shared store
+/// instead, and these are dropped with the task.
 pub struct OwnStore<'s> {
     /// Arena of the thread that runs the task. Records and their lists are allocated from it, and
     /// the lists may be published.

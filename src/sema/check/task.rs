@@ -21,7 +21,8 @@ use crate::util::SharedSort;
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::time::Duration;
 
-/// Permission to store a finished result. Only `Checker::leave` and the scopes in check/mod.rs create one.
+/// Permission to store a finished result. `Checker::leave` and the scopes in check/mod.rs create one that knows when the
+/// computation began.
 ///
 /// Records `Task::held_back` at the start of the computation. See `Task::has_held_back_since`.
 #[derive(Copy, Clone)]
@@ -67,7 +68,7 @@ pub struct Task<'s> {
     pub(super) closed_a_cycle: bool,
     /// See `OrderDependent`.
     pub(super) order_dependent_variances: Vec<OrderDependent<'s>>,
-    /// The functions and source files that `markNodeAssignments` has walked in this task
+    /// The functions and source files that `markNodeAssignments` has walked in this task since its last commit
     /// (`Program::assignments_marked`), and whether the task was visiting the file. See `Program::is_invalid`. Appended
     /// to under `&Checker`.
     pub(super) assignments_walked: RefCell<Vec<(FileId, Node, bool)>>,
@@ -501,7 +502,7 @@ impl<'s> Task<'s> {
         // SAFETY: the task isn't `Sync`, and no two of these references are live at the same time. A method of
         // `crate::table` uses the reference for calls into `crate::local`, which calls nothing outside itself, and only
         // gets the next reference once it's done with this one. References returned by an indirect table point into a
-        // `LocalVec`, whose elements don't move until `finish`, `begin` or the drop.
+        // `LocalVec`, whose elements don't move until `end`, `begin` or the drop.
         unsafe { &mut *self.buffer.get() }
     }
 

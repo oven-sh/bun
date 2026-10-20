@@ -2346,6 +2346,16 @@ fi`
       .stdout("hi\n")
       .runAsTest("comment after the inner fi");
 
+    TestBuilder.command`if false; then
+  if true; then
+    echo a
+  fi # inner
+else
+  echo b
+fi`
+      .stdout("b\n")
+      .runAsTest("comment after the inner fi, then else on the next line");
+
     TestBuilder.command`if true; then
   (echo a) # first
   (echo b) # second

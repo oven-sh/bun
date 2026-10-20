@@ -187,14 +187,14 @@ fn report<'a>(node: Expr<'a>, recommendation: &[u8], remedy: Remedy, cx: &Cx<'a,
         Remedy::Suggestion if cx.language().is_oxlint => Remedy::Fix,
         _ => remedy,
     };
+    // The fix only copies the operand, so the comment in `!!(a /* b */)` would be dropped. ESLint and oxlint drop it.
+    let keeping_comments = |fixer: Fixer<'a>| Some(fix(fixer, node, recommendation)).filter(|it| fixer.keeps_comments(it));
     match remedy {
         Remedy::Nothing => report,
-        Remedy::Suggestion => report.suggest_with(
-            USE_RECOMMENDATION,
-            &[("recommendation", recommendation)],
-            |fixer| fix(fixer, node, recommendation),
-        ),
-        Remedy::Fix => report.fix(|fixer| fix(fixer, node, recommendation)),
+        Remedy::Suggestion => {
+            report.suggest_with(USE_RECOMMENDATION, &[("recommendation", recommendation)], keeping_comments)
+        }
+        Remedy::Fix => report.fix(keeping_comments),
     };
 }
 

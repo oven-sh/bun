@@ -59,20 +59,20 @@ impl Rule for PreferImportingVitestGlobals {
     }
 }
 
-fn run_once<'a>(cx: &Cx<'a, PreferImportingVitestGlobals>) {
+fn run_once(cx: &Cx<'_, PreferImportingVitestGlobals>) {
     let file = cx.file();
     // What nothing declares, in the order in which oxlint has it. References in types count too.
-    let mentioned: SmallVec<[&str; 8]> = VITEST_GLOBALS
+    // oxlint also reports a name that's imported from another package, and its fix declares it twice.
+    let mut missing_globals: SmallVec<[&str; 8]> = VITEST_GLOBALS
         .into_iter()
         .zip(VITEST_GLOBAL_BITS)
         .filter(|it| file.mentions_bit(it.1))
         .map(|it| it.0)
-        .collect();
-    let mut missing_globals: SmallVec<[&str; 8]> = mentioned
-        .iter()
-        .copied()
         .filter(|name| file.unresolved_references_to(name.as_bytes()).len() > 0)
         .collect();
+    if missing_globals.is_empty() {
+        return;
+    }
     if missing_globals.len() > 1 {
         let order = OxlintOrder::new(file);
         utils::sort::sort_by_cached_key(&mut missing_globals, |name| {
@@ -92,35 +92,6 @@ fn run_once<'a>(cx: &Cx<'a, PreferImportingVitestGlobals>) {
             }
         }
     }
-    // What is imported from elsewhere, or as a type. oxlint puts the name in its table once for each call.
-    let mut is_asked_again = false;
-    for name in mentioned {
-        if let Some(symbol) = file.top_level_scope().get(name)
-            && let Some(import) = symbol.declarations().next().and_then(|it| match it {
-                Declaration::ImportSpec(specifier) => Some(specifier.import()),
-                Declaration::ImportDefault(import) | Declaration::ImportNamespace(import) => {
-                    Some(import)
-                }
-                _ => None,
-            })
-            && (!is_vitest_import_source(import.spec().bytes()) || import.is_type_only())
-        {
-            for reference in symbol.references().filter_map(Reference::expr) {
-                let is_callee =
-                    |it: &Expr<'a>| it.as_call().is_some_and(|it| it.callee() == reference);
-                if let Some(call) = parent_expression(reference).filter(is_callee) {
-                    globals_spans.push(call.span());
-                    is_asked_again = missing_globals.contains(&name);
-                    if !is_asked_again {
-                        missing_globals.push(name);
-                    }
-                }
-            }
-        }
-    }
-    if missing_globals.is_empty() {
-        return;
-    }
     const ADD_THIS: &str = "Add this global vitest import";
     let report = match globals_spans.split_first() {
         Some((first, others)) => {
@@ -139,9 +110,6 @@ fn run_once<'a>(cx: &Cx<'a, PreferImportingVitestGlobals>) {
         missing_globals
             .iter()
             .for_each(|name| table.insert(FxBuildHasher.hash_one(*name), *name));
-        if is_asked_again {
-            table.insert_again();
-        }
         let names: SmallVec<[&str; 8]> = table.iter().collect();
         names.join(", ")
     };
@@ -231,7 +199,8 @@ fn build_fix<'a>(file: &'a File<'a>, globals_imports: &str, fixer: Fixer<'a>) ->
         globals_imports.as_bytes(),
         b" } from '".as_slice(),
         import_source,
-        b"';\n".as_slice(),
+        b"';".as_slice(),
     ];
-    fixer.insert_before(Span::empty(0), text.concat())
+    // oxlint inserts it on the first line, above `// @ts-nocheck` and `"use strict"`.
+    fixer.insert_first_statement(&text.concat())
 }

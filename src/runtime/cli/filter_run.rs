@@ -330,7 +330,7 @@ struct State<'a> {
     draw_buf: Vec<u8>,
     last_lines_written: usize,
     pretty_output: bool,
-    /// POSIX shell the scripts run under; `None` on Windows (see `ScriptArgv`).
+    /// The POSIX shell that the scripts run under. `None` on Windows (see `ScriptArgv`).
     shell_bin: Option<&'static ZStr>,
     aborted: bool,
     // Raw `*mut` — process-lifetime singleton owned
@@ -484,8 +484,8 @@ impl<'a> State<'a> {
         // `start` incremented this. Skipped scripts never start, so `finish` doesn't decrement it.
         self.remaining_scripts -= 1;
         self.finish(handle);
-        // On abort `finalize` draws the last frame; drawing it here too
-        // would print everything twice once it no longer fits the screen.
+        // On abort, `finalize` draws the last frame. Drawing it here too would print everything
+        // twice once it no longer fits on the screen.
         if self.pretty_output && !self.aborted {
             let _ = self.redraw(false);
         }

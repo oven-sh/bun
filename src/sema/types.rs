@@ -1750,8 +1750,9 @@ type PublishedRecords<'s, T> = Segmented<'s, T, AtomicU32, &'s Session>;
 /// published records of that kind so that `get_layered` accepts both task-local and published ids.
 type TaskRecords<'s, T> = Segmented<'s, T, Cell<u32>, &'s Arena>;
 
-/// A type's position in `Types::content_order`. Computed once, from the interning key, when the type is created. It
-/// contains no ids, so it's the same in every task, at every thread count and in every run.
+/// A type's position in `Types::content_order`. Computed from the interning key the first time something asks for it,
+/// which never happens for most types. It contains no ids, so it's the same in every task, at every thread count and in
+/// every run.
 #[derive(Copy, Clone)]
 struct Rank {
     /// One more than the greatest height of any type the key mentions, directly or through a mapper, a signature, an
@@ -1769,7 +1770,7 @@ struct Rank {
 }
 
 impl Rank {
-    /// Placeholder for an id with no type.
+    /// The rank hasn't been computed. A computed rank has a height of at least 1.
     const NONE: Rank = Rank {
         height: 0,
         last_syntax: 0,
@@ -1871,6 +1872,27 @@ impl Summary {
         self.height.store(rank.height, order);
         self.last_syntax.store(rank.last_syntax, order);
         self.content.store(rank.content, order);
+    }
+
+    /// Returns `None` if the rank hasn't been computed.
+    #[inline]
+    fn rank(&self) -> Option<Rank> {
+        match self.height.load(Ordering::Acquire) {
+            0 => None,
+            height => Some(Rank {
+                height,
+                last_syntax: self.last_syntax.load(Ordering::Relaxed),
+                content: self.content.load(Ordering::Relaxed),
+            }),
+        }
+    }
+
+    /// Any thread may call this at any time, because every thread computes the same rank for a type. The height is
+    /// stored last, so a thread that reads it also reads the rest.
+    fn set_rank(&self, rank: Rank) {
+        self.last_syntax.store(rank.last_syntax, Ordering::Relaxed);
+        self.content.store(rank.content, Ordering::Relaxed);
+        self.height.store(rank.height, Ordering::Release);
     }
 }
 
@@ -2945,10 +2967,6 @@ impl<'s> TypeStore<'s> {
     /// Adds the summaries of the types with ids below `below`, which are all stored, to `summaries`.
     /// Runs before the first task, on one thread.
     fn summarize_types(&self, below: u32) {
-        // `rank_of_type` needs a `Types`. An empty `OwnStore` will do, because published records
-        // only reference published records.
-        let own = OwnStore::new_in(self.session.arena(), self);
-        let types = Types::new(self, &own);
         for id in self.summaries.len()..below {
             // A record only references records with lower ids.
             let record = self.types.items.get(id);
@@ -2956,8 +2974,7 @@ impl<'s> TypeStore<'s> {
                 debug_assert!(member.0 < id);
                 (self.summaries.get(member.0).member_flags).load(Ordering::Relaxed)
             });
-            let rank = types.rank_of_type(&record.created);
-            self.summaries.push(Summary::new(summary, rank));
+            self.summaries.push(Summary::new(summary, Rank::NONE));
         }
     }
 
@@ -3318,16 +3335,14 @@ impl<'p, 's> Types<'p, 's> {
         let is_unresolved_name = matches!(record.created.0, TypeData::UnresolvedName { .. });
         match &home {
             Destination::Own { .. } => {
-                let rank = self.rank_of_type(&record.created);
-                let index = self.own.summaries.push(Summary::new(summary, rank));
+                let index = (self.own.summaries).push(Summary::new(summary, Rank::NONE));
                 debug_assert_eq!(index | LOCAL, own_id);
                 if is_unresolved_name {
                     self.own.has_unresolved_names.set(true);
                 }
             }
             Destination::Published(id) => {
-                let rank = self.rank_of_type(&record.created);
-                (self.published.summaries.get(id.index())).set(summary, rank);
+                (self.published.summaries.get(id.index())).set(summary, Rank::NONE);
                 if is_unresolved_name {
                     cold_path();
                     let has_unresolved_names = &self.published.has_unresolved_names;
@@ -3767,12 +3782,33 @@ impl<'p, 's> Types<'p, 's> {
 
     #[inline]
     fn rank(&self, id: TypeId) -> Rank {
-        let summary_cells = self.own.summaries.get_layered(id.0);
-        Rank {
-            height: summary_cells.height.load(Ordering::Relaxed),
-            last_syntax: summary_cells.last_syntax.load(Ordering::Relaxed),
-            content: summary_cells.content.load(Ordering::Relaxed),
+        match self.own.summaries.get_layered(id.0).rank() {
+            Some(rank) => rank,
+            None => self.rank_on_first_use(id),
         }
+    }
+
+    /// Computes and stores the rank of `id`, after the ranks of the types its key mentions. A list takes the place of
+    /// recursion, because a key can be nested as deeply as the program makes it.
+    #[cold]
+    #[inline(never)]
+    fn rank_on_first_use(&self, id: TypeId) -> Rank {
+        let mut unranked: SmallVec<[TypeId; 16]> = SmallVec::new();
+        unranked.push(id);
+        let mut last = Rank::NONE;
+        while let Some(&next) = unranked.last() {
+            let summary = self.own.summaries.get_layered(next.0);
+            if let Some(known) = summary.rank() {
+                last = known;
+                unranked.pop();
+                continue;
+            }
+            match self.rank_of_type(&self.record(next).created) {
+                Ok(rank) => summary.set_rank(rank),
+                Err(mentioned) => unranked.extend(mentioned),
+            }
+        }
+        last
     }
 
     /// The order used where tsgo compares ids: the final tie-break of `CompareTypes`, and the swap of an identity
@@ -3833,19 +3869,23 @@ impl<'p, 's> Types<'p, 's> {
         self.published.texts.bytes(atom)
     }
 
-    fn rank_of_type(&self, created: &OwnedTypeKey) -> Rank {
+    /// Returns `Err` with the types that `created` mentions and that have no rank yet, if there are any.
+    fn rank_of_type(&self, created: &OwnedTypeKey) -> Result<Rank, Unranked> {
         let mut ranking = Ranking::new(*self);
         visit_type_as_content(created, &mut ranking);
+        if !ranking.unranked.is_empty() {
+            return Err(ranking.unranked);
+        }
         // `getFreshTypeOfLiteralType` creates the fresh type from the regular one, but the fresh type's key doesn't
         // mention it.
         if let TypeData::BigIntLit { fresh: true, .. } = created.0 {
             ranking.height = ranking.height.max(1);
         }
-        Rank {
+        Ok(Rank {
             height: ranking.height + 1,
             last_syntax: ranking.last_syntax,
             content: ranking.content.0,
-        }
+        })
     }
 
     /// Marks the union `id` as a sorted run, whose members can be merged with another union's members
@@ -5140,7 +5180,11 @@ struct Ranking<'p, 's> {
     last_syntax: u64,
     /// The file from the last `file` call. The `plain` value after a file is the number of a node or symbol in it.
     file: Option<FileId>,
+    /// The types visited that have no rank. If there are any, the other fields are meaningless.
+    unranked: Unranked,
 }
+
+type Unranked = SmallVec<[TypeId; 4]>;
 
 impl<'p, 's> Ranking<'p, 's> {
     fn new(types: Types<'p, 's>) -> Ranking<'p, 's> {
@@ -5150,6 +5194,7 @@ impl<'p, 's> Ranking<'p, 's> {
             height: 0,
             last_syntax: 0,
             file: None,
+            unranked: SmallVec::new(),
         }
     }
 }
@@ -5180,6 +5225,7 @@ impl Hashing for Ranking<'_, '_> {
             sum = sum.wrapping_add(one.content.0);
             self.height = self.height.max(one.height);
             self.last_syntax = self.last_syntax.max(one.last_syntax);
+            self.unranked.extend(one.unranked);
         }
         self.content.add(items.len() as u64);
         self.content.add(sum);
@@ -5207,7 +5253,10 @@ impl Visitor for Ranking<'_, '_> {
     }
     #[inline]
     fn ty(&mut self, id: TypeId) {
-        let rank = self.types.rank(id);
+        let Some(rank) = self.types.own.summaries.get_layered(id.0).rank() else {
+            self.unranked.push(id);
+            return;
+        };
         self.content.add(rank.content);
         self.height = self.height.max(rank.height);
         self.last_syntax = self.last_syntax.max(rank.last_syntax);
@@ -5669,8 +5718,9 @@ mod tests {
         let types = Types::new(&store, &own);
         let rank_of = |members: [TypeId; 3]| {
             let members = ShortList::copy_from_slice_in(&members, session.arena());
+            members.iter().for_each(|&member| _ = types.rank(member));
             let rank = types.rank_of_type(&(TypeData::Union(members), None));
-            (rank.height, rank.content)
+            rank.map(|rank| (rank.height, rank.content)).ok()
         };
         let [a, b, c] = [TypeId::STRING, TypeId::NUMBER, TypeId::NULL];
         assert_eq!(rank_of([a, b, c]), rank_of([c, a, b]));

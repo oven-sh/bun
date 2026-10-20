@@ -5154,6 +5154,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut computed_key_nodes = Vec::new();
         let mut finally_blocks = Vec::new();
         let mut union_nodes = Vec::new();
+        let mut noted_switches: FxHashMap<StmtId, (ResolvesKey, bool)> = FxHashMap::default();
         let mut longest = 0;
         for (i, &node) in bound.flow.iter().enumerate() {
             let about =
@@ -5196,15 +5197,22 @@ impl<'p, 's> Checker<'p, 's> {
                 Flow::Cond { expr, .. } => self.note_test(file, expr, 0, about),
                 Flow::Switch { stmt, from, to, .. } => {
                     if let StmtKind::Switch { expr, cases } = hir[stmt].kind {
-                        // `switch (x)`, `switch (x.kind)`, `switch (typeof x)`, and `switch (true) { case test: }`
-                        self.note_test(file, expr, 0, about);
-                        if let ExprKind::Unary { operand, .. } = hir[expr].kind {
-                            self.note_test(file, operand, 0, about);
-                        }
-                        for case in cases.iter() {
-                            if hir[case].test.is_some() {
-                                self.note_test(file, hir[case].test, 0, about);
+                        // All the nodes of a `switch` have the same subjects, and its first node has
+                        // the lowest number.
+                        if let Some(&(resolves, has_union)) = noted_switches.get(&stmt) {
+                            (about.2, about.3) = (resolves, has_union);
+                        } else {
+                            // `switch (x)`, `switch (x.kind)`, `switch (typeof x)`, and `switch (true) { case test: }`
+                            self.note_test(file, expr, 0, about);
+                            if let ExprKind::Unary { operand, .. } = hir[expr].kind {
+                                self.note_test(file, operand, 0, about);
                             }
+                            for case in cases.iter() {
+                                if hir[case].test.is_some() {
+                                    self.note_test(file, hir[case].test, 0, about);
+                                }
+                            }
+                            noted_switches.insert(stmt, (about.2, about.3));
                         }
                         // `narrowTypeBySwitchOnTrue` returns the union of its clauses' results.
                         builds_union = matches!(hir[expr].kind, ExprKind::True)

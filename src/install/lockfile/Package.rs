@@ -104,6 +104,18 @@ pub(crate) fn value_loc_of(source: &bun_ast::Source, key_loc: bun_ast::Loc) -> b
     crate::bun_json::property_value_loc(&source.contents, key_loc).unwrap_or(key_loc)
 }
 
+/// Finds `"name"` in the file on disk. The cached tree can be of an edit that is not written.
+fn name_range_on_disk(source: &bun_ast::Source) -> bun_ast::Range {
+    let mut log = bun_ast::Log::init();
+    let Ok(json) = crate::bun_json::ParsedJson::parse_package_json(source, &mut log) else {
+        return bun_ast::Range::NONE;
+    };
+    match json.root.as_property(b"name") {
+        Some(name) => source.range_of_string(value_loc_of(source, name.loc)),
+        None => bun_ast::Range::NONE,
+    }
+}
+
 /// Returns the path in the form that `Version.value.folder` has in local packages, or `None` if it
 /// doesn't fit in `buf`.
 pub(crate) fn folder_relative_to_top_level_dir<'a>(
@@ -2964,7 +2976,7 @@ impl Package<u64> {
                                         text: b"Package name is also declared here".to_vec().into(),
                                         location: bun_ast::Location::init_or_null(
                                             Some(&note_src),
-                                            note_src.range_of_string(value.name_loc),
+                                            name_range_on_disk(&note_src),
                                         )
                                         .as_ref()
                                         .cloned(),
@@ -2992,7 +3004,7 @@ impl Package<u64> {
 
                         let _ = log.add_range_error_fmt_with_notes(
                             Some(&src),
-                            src.range_of_string(entry.name_loc),
+                            name_range_on_disk(&src),
                             notes.into(),
                             format_args!(
                                 "Workspace name \"{}\" already exists",

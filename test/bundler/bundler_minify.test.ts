@@ -256,6 +256,28 @@ describe("bundler", () => {
     },
     run: { file: "/importer.js", stdout: "top 1\ndisposed\n120" },
   });
+  // That `var` is named after the file. A module that declares the same name
+  // itself printed both as `var entry_default`, and the second one won.
+  for (const [form, source] of [
+    ["FunctionExpression", `export default (function work(n) { return n + entry_default; });`],
+    ["Arrow", `export default (n) => n + entry_default;`],
+  ] as const) {
+    itBundled(`minify/NoBundleDefaultExport${form}WithLoweredUsingAndTakenName`, {
+      files: {
+        "/entry.js": /* js */ `
+          const entry_default = 9;
+          using resource = { [Symbol.dispose]() {} };
+          ${source}
+        `,
+      },
+      runtimeFiles: {
+        "/importer.js": `import work from "./out.js";\nconsole.log(work(3));`,
+      },
+      bundling: false,
+      minifyIdentifiers: false,
+      run: { file: "/importer.js", stdout: "12" },
+    });
+  }
   // https://github.com/oven-sh/bun/issues/23810
   // A bundle declares the default export of a module at the top level. For a
   // named function or class expression that declaration used the name symbol

@@ -1187,8 +1187,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 p.lexer.expect_or_insert_semicolon()?;
 
-                // A function or class expression binds its name in its own scope, so unlike
-                // the statement forms above it cannot lend that name to the module.
                 let default_name = match expr.data {
                     // Not a symbol yet: the visit pass makes the default name for an identifier.
                     js_ast::ExprData::EIdentifier(ident) => LocRef {

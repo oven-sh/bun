@@ -1344,6 +1344,8 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             // SAFETY: `server` is heap-allocated and leaves its context in
             // `stop_listening` / `deinit`.
             unsafe { <$ServerType>::join_context(server, context) };
+            // SAFETY: still live. `join_context` borrowed it through `server`, which ended the borrow above.
+            let server_ref: &$ServerType = unsafe { &*server };
 
             // `init` moved `config` into the server (`mem::take`), so the
             // local `config` is defaulted from here on — read `allow_hot`

@@ -49,7 +49,7 @@ fn is_logical(op: BinOp) -> bool {
     matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish)
 }
 
-/// `undefined` or `void 0`.
+/// True for `undefined` or `void 0`.
 fn is_undefined(e: Expr<'_>) -> bool {
     match e.kind() {
         ExprKind::Ident(name) if name.is("undefined") => ast_utils::is_reference_to_global_variable(e),
@@ -58,9 +58,9 @@ fn is_undefined(e: Expr<'_>) -> bool {
     }
 }
 
-/// `e`, for oxlint without what only concerns types: `a as T`, `a!`.
+/// Returns `e`. For oxlint, type-only wrappers are stripped: `a as T`, `a!`.
 #[inline]
-fn seen(e: Expr<'_>) -> Expr<'_> {
+fn strip_type_wrappers_for_oxlint(e: Expr<'_>) -> Expr<'_> {
     if e.file().language().is_oxlint { get_inner_expression(e) } else { e }
 }
 
@@ -70,16 +70,16 @@ fn is_same_reference<'a>(a: Expr<'a>, b: Expr<'a>) -> bool {
         return ast_utils::is_same_reference(a, b, false);
     }
     let is_member = |it: Expr<'a>| matches!(it.tag(), ExprTag::Dot | ExprTag::Index) && !it.is_chain_root();
-    let (a, b) = (seen(a), seen(b));
+    let (a, b) = (strip_type_wrappers_for_oxlint(a), strip_type_wrappers_for_oxlint(b));
     match (a.as_ident(), b.as_ident()) {
         (Some(a), Some(b)) => a == b,
         _ => is_member(a) && is_member(b) && is_same_member_expression(a, b),
     }
 }
 
-/// An `Identifier` or a `MemberExpression`. An optional chain is neither.
+/// True for an `Identifier` or a `MemberExpression`. An optional chain is neither.
 fn is_reference(e: Expr<'_>) -> bool {
-    let e = seen(e);
+    let e = strip_type_wrappers_for_oxlint(e);
     match e.kind() {
         ExprKind::Ident(name) => !name.is("undefined"),
         ExprKind::Dot { .. } | ExprKind::Index { .. } => !e.is_in_optional_chain(),
@@ -87,12 +87,12 @@ fn is_reference(e: Expr<'_>) -> bool {
     }
 }
 
-/// Of the two operands of a comparison: the one that is taken for the reference, and the other.
+/// Orders the two operands of a comparison: the one treated as the reference first, then the other.
 fn reference_first<'a>(left: Expr<'a>, right: Expr<'a>) -> (Expr<'a>, Expr<'a>) {
     if is_reference(left) { (left, right) } else { (right, left) }
 }
 
-/// The `arg` of `Boolean(arg)`.
+/// Returns the `arg` of `Boolean(arg)`.
 fn boolean_cast_argument(e: Expr<'_>) -> Option<Expr<'_>> {
     let call = e.as_call()?;
     let is_cast = !e.is_in_optional_chain()
@@ -102,7 +102,7 @@ fn boolean_cast_argument(e: Expr<'_>) -> Option<Expr<'_>> {
     call.args().first().filter(|_| is_cast)
 }
 
-/// What a condition tests the existence of, and the operator that does the same:
+/// Returns the value whose existence a condition tests, and the equivalent operator:
 /// - `value`, `Boolean(value)`, `!!value`
 /// - `!value`, `!Boolean(value)`
 /// - `value == null`, `value === undefined || value === null`
@@ -147,10 +147,10 @@ fn get_existence(expression: Expr<'_>) -> Option<(Expr<'_>, BinOp)> {
     }
 }
 
-/// What is in the body of a `with` statement.
+/// Caches the nodes that are in the body of a `with` statement.
 type WithBlocks<'a> = AncestorMemo<'a, ()>;
 
-/// Whether `e` is in the body of a `with` statement, in code that is not strict.
+/// True if `e` is in the body of a `with` statement, in non-strict code.
 fn is_inside_with_block<'a>(e: Expr<'a>, with_blocks: &mut WithBlocks<'a>) -> bool {
     let is_body_of_with = |inner: Node<'a>, ancestor: Node<'a>| {
         matches!(ancestor.as_stmt()?.kind(), StmtKind::With { body, .. } if Node::Stmt(body) == inner).then_some(())
@@ -158,12 +158,12 @@ fn is_inside_with_block<'a>(e: Expr<'a>, with_blocks: &mut WithBlocks<'a>) -> bo
     with_blocks.find(Node::Expr(e), is_body_of_with).is_some() && !e.file().scope().is_strict()
 }
 
-/// Whether reading `e` cannot call a getter.
+/// True if reading `e` can't call a getter.
 fn cannot_be_getter<'a>(e: Expr<'a>, with_blocks: &mut WithBlocks<'a>) -> bool {
     e.tag() == ExprTag::Ident && !is_inside_with_block(e, with_blocks)
 }
 
-/// Whether evaluating `e` reads a single property.
+/// True if evaluating `e` reads a single property.
 fn accesses_single_property<'a>(e: Expr<'a>, with_blocks: &mut WithBlocks<'a>) -> bool {
     if is_inside_with_block(e, with_blocks) {
         return e.tag() == ExprTag::Ident;
@@ -178,7 +178,7 @@ fn accesses_single_property<'a>(e: Expr<'a>, with_blocks: &mut WithBlocks<'a>) -
     }
 }
 
-/// Whether an assignment in the place of `logical` needs parentheses.
+/// True if an assignment that replaces `logical` needs parentheses.
 fn requires_outer_parenthesis(logical: Expr<'_>) -> bool {
     match logical.parent() {
         Node::Stmt(parent) => parent.tag() != StmtTag::Expr,
@@ -192,7 +192,7 @@ fn requires_outer_parenthesis(logical: Expr<'_>) -> bool {
     }
 }
 
-/// What is reported, and what the change is called where it is only suggested.
+/// A report, with the name of the change for when it's only a suggestion.
 #[derive(Copy, Clone)]
 struct Descriptor {
     node: Span,
@@ -263,8 +263,8 @@ impl LogicalAssignmentOperators {
         let (Some(op), Some(mut left)) = (value.binary_op().filter(|op| is_logical(*op)), value.left()) else {
             return;
         };
-        // The leftmost operand of consecutive expressions with the same operator, unless
-        // parentheses make the order of evaluation explicit, and the expression it is the left of.
+        // Find the leftmost operand of consecutive expressions with the same operator, unless parentheses make the
+        // evaluation order explicit, and the expression whose left side it is.
         let mut parent = value;
         while !left.is_parenthesized()
             && let ExprKind::Binary { op: inner, left: next, .. } = left.kind()
@@ -306,7 +306,7 @@ impl LogicalAssignmentOperators {
         let (Some(op), Some(left), Some(right)) = (logical.binary_op(), logical.left(), logical.right()) else {
             return;
         };
-        let assignment = seen(right);
+        let assignment = strip_type_wrappers_for_oxlint(right);
         let (Some(None), Some(target)) = (assignment.assign_op(), assignment.left()) else {
             return;
         };
@@ -381,7 +381,7 @@ impl LogicalAssignmentOperators {
             if file.comments_in(if_node).next().is_some() {
                 return Vec::new();
             }
-            // The assignment must not continue the statement before.
+            // The assignment must not continue the previous statement.
             if let Some(previous) = file.token_before(if_node)
                 && !previous.is(";")
                 && !previous.is("{")
@@ -448,7 +448,7 @@ impl Rule for LogicalAssignmentOperators {
 
     #[inline]
     fn binary<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if expr.right().is_some_and(|right| seen(right).assign_op() == Some(None)) {
+        if expr.right().is_some_and(|right| strip_type_wrappers_for_oxlint(right).assign_op() == Some(None)) {
             self.check_logical(expr, cx);
         }
     }

@@ -1,6 +1,6 @@
-//! oxlint's `utils/nextjs.rs`, and the `utils/url.rs` that only the rules of `nextjs` use.
+//! oxlint's `utils/nextjs.rs`, plus its `utils/url.rs`, which only the `nextjs` rules use.
 //!
-//! A `file_path` is the absolute path of the file, as oxlint has it.
+//! A `file_path` is the file's absolute path, as in oxlint.
 
 use bun_core::strings;
 use bun_lint::prelude::*;
@@ -88,7 +88,7 @@ pub(crate) fn is_document_page(file_path: &[u8]) -> bool {
     page.starts_with(b"/_document") || page.starts_with(b"\\_document")
 }
 
-/// The first name that the file imports from `next/script`, whatever it is there.
+/// Returns the first local name that the file imports from `next/script`, whichever export it is.
 pub(crate) fn get_next_script_import_local_name<'a>(file: &'a File<'a>) -> Option<Name<'a>> {
     file.body().iter().find_map(|stmt| match stmt.kind() {
         StmtKind::Import(import) if import.spec().is("next/script") => {
@@ -103,18 +103,18 @@ pub(crate) fn get_next_script_import_local_name<'a>(file: &'a File<'a>) -> Optio
     })
 }
 
-/// The elements `<name ..>` for which the identifier in the opening tag refers to what `local` imports in `import`.
+/// Returns the `<name ..>` elements whose opening tag's identifier refers to the binding `local` of `import`.
 pub(crate) fn elements_named<'a>(
     import: Import<'a>,
     local: Ident<'a>,
 ) -> impl Iterator<Item = (Expr<'a>, Jsx<'a>)> {
-    // The name of an element is a value: it does not refer to what `import type` declares.
+    // An element's name is a value, so it can't refer to something `import type` declares.
     let is_type = import.is_type_only()
         || import
             .named()
             .iter()
             .any(|it| it.is_type_only() && it.local().name() == local.name());
-    // Once, if the name is declared several times.
+    // If the name is declared several times, only the first declaration yields its elements.
     let is_first = |it: &Symbol<'a>| match it.declarations().next() {
         Some(Declaration::ImportDefault(first) | Declaration::ImportNamespace(first)) => {
             first == import
@@ -141,7 +141,7 @@ pub(crate) fn elements_named<'a>(
         })
 }
 
-/// `find_url_query_value("https://example.com/?foo=bar&baz=qux", "baz")` is `qux`.
+/// `find_url_query_value("https://example.com/?foo=bar&baz=qux", "baz")` returns `qux`.
 pub(crate) fn find_url_query_value<'u>(url: &'u [u8], key: &[u8]) -> Option<&'u [u8]> {
     if !url.starts_with(b"http://") && !url.starts_with(b"https://") {
         return None;

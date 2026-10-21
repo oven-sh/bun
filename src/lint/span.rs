@@ -1,6 +1,6 @@
 //! Positions in the source text.
 
-/// A range of the source text, in bytes.
+/// A byte range in the source text.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
 pub struct Span {
     pub start: u32,
@@ -13,7 +13,7 @@ impl Span {
         Span { start, end }
     }
 
-    /// The empty range at `at`.
+    /// An empty span at `at`.
     #[inline]
     pub const fn empty(at: u32) -> Span {
         Span { start: at, end: at }
@@ -29,8 +29,8 @@ impl Span {
         self.end <= self.start
     }
 
-    /// A number to sort spans that nest by, into the order of a walk: by the start, of two that start together the one that
-    /// ends later first, then by `rank`, then by `index`, which is the low 32 bits. Lists of such numbers share one sort.
+    /// A sort key that puts nested spans in tree-walk order: by start, then the longer span first, then by `rank`, then
+    /// by `index` (the low 32 bits). Lists of these keys are plain `u128`s, so they all share one sort instantiation.
     #[inline]
     pub fn sort_key(self, rank: u16, index: usize) -> u128 {
         let range = (u128::from(self.start) << 32) | u128::from(u32::MAX - self.end);
@@ -46,7 +46,7 @@ impl Span {
         }
     }
 
-    /// What is between the end of `self` and the start of `other`.
+    /// The gap between the end of `self` and the start of `other`.
     #[inline]
     pub const fn between(self, other: Span) -> Span {
         Span {
@@ -83,7 +83,7 @@ impl Span {
         self.start <= offset && offset < self.end
     }
 
-    /// The range without its first `start` and its last `end` bytes.
+    /// Drops the first `start` and the last `end` bytes.
     #[inline]
     pub const fn shrink(self, start: u32, end: u32) -> Span {
         Span {
@@ -98,11 +98,11 @@ impl Span {
     }
 }
 
-/// Everything that has a place in the source text: a node, a token, a comment, a [`Span`].
+/// Anything with a source location: a node, a token, a comment or a [`Span`].
 pub trait Spanned {
     fn span(&self) -> Span;
 
-    /// The node that it is, if it is one.
+    /// Returns the node if this is one.
     #[inline]
     fn packed_node(&self) -> Option<crate::ast::Packed> {
         None
@@ -128,7 +128,7 @@ impl<T: Spanned> Spanned for &T {
     }
 }
 
-/// A line and a column, as ESLint counts them: lines from 1, columns from 0 in UTF-16 code units.
+/// A line and column as ESLint counts them: 1-based lines, 0-based columns in UTF-16 code units.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
 pub struct Position {
     pub line: u32,

@@ -2704,6 +2704,5 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("handle scope across bun test 
       expect(output).toContain(" 0 fail");
       expect(exitCode).toBe(0);
     },
-    30_000,
   );
 });

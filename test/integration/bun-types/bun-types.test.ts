@@ -342,6 +342,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "SemverObject.bind.ts": "typeof Bun.semver",
   "SocketConfig.bind.ts": null,
   "TOMLObject.bind.ts": "typeof Bun.TOML",
+  "Terminal.bind.ts": "typeof Bun",
   "TextDecoder.bind.ts": "{ TextDecoder: typeof TextDecoder }",
   "Timer.bind.ts": null,
   "Transpiler.bind.ts": "typeof Bun",
@@ -356,7 +357,8 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "dns_internals.bind.ts": null,
   "expect.bind.ts": null,
   "ffi.bind.ts": null,
-  "filesystem_router.bind.ts": "typeof Bun",
+  "filesystem_router.bind.ts":
+    "typeof Bun & { FrameworkFileSystemRouter: Class<{ match(path: string): any; toJSON(): any }> }",
   "fmt_jsc.bind.ts": null,
   "html_rewriter.bind.ts": "{ HTMLRewriter: typeof HTMLRewriter }",
   "interpreter.bind.ts": null,
@@ -376,8 +378,10 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "resolve_message.bind.ts": "{ ResolveMessage: Class<ResolveMessage>; BuildMessage: Class<BuildMessage> }",
   "response.bind.ts":
     '{ Request: Class<Omit<Request, "keepalive" | "duplex">>; Response: typeof Response & { prototype: Response } }',
+  "server.bind.ts": "{ ServerWebSocket: Class<Required<Bun.ServerWebSocket>> }",
   "socket_body.bind.ts": null,
   "sourcemap.bind.ts": null,
+  "subprocess.bind.ts": null,
   "udp_socket.bind.ts": null,
   "valkey.bind.ts": "typeof Bun",
 };
@@ -396,6 +400,10 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
   const isGenerated = (type: ts.Type) =>
     !!type.symbol?.declarations?.some(declaration => declaration.getSourceFile() === generated);
   const parts = (type: ts.Type) => (type.isUnion() ? type.types : [type]);
+  /** `getPropertyOfType` does not find a member that a well-known symbol names. */
+  const sameMember = (type: ts.Type, member: ts.Symbol) =>
+    checker.getPropertyOfType(type, member.name) ??
+    checker.getPropertiesOfType(type).find(other => other.escapedName === member.escapedName);
 
   /** A dictionary or a class of the schema lists all it has, so nothing reads or gives any other member. */
   function membersTheSchemaLacks(published: ts.Type, schema: ts.Type) {
@@ -407,8 +415,10 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
       .filter(
         part => part.flags & ts.TypeFlags.Object && !others.some(other => checker.isTypeAssignableTo(part, other)),
       )
-      .flatMap(part => part.getProperties().map(member => member.name));
-    return [...new Set(names)].filter(name => !listed.some(part => part.getProperty(name)));
+      .flatMap(part => part.getProperties())
+      .filter(member => !listed.some(part => sameMember(part, member)))
+      .map(member => member.name);
+    return [...new Set(names)];
   }
 
   function refusal(allowed: ts.Signature, taken: ts.Signature) {
@@ -460,7 +470,7 @@ function promisesTheSchemaBreaks(checker: ts.TypeChecker, published: ts.Type, sc
     compareSignatures(path, published.getCallSignatures(), calls);
     compareSignatures(`new ${path}`, published.getConstructSignatures(), constructs);
     for (const member of schema.getProperties()) {
-      const promised = checker.getPropertyOfType(published, member.name);
+      const promised = sameMember(published, member);
       const memberPath = path ? `${path}.${member.name}` : member.name;
       if (promised) compare(memberPath, checker.getTypeOfSymbol(promised), checker.getTypeOfSymbol(member));
       else broken.push(`${memberPath} is not published`);

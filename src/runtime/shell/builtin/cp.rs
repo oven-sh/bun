@@ -417,7 +417,15 @@ enum Check {
     Copy,
     /// The destination stays as it is, and that is not an error.
     Skip,
-    Fail(ShellErr),
+    Fail(Box<ShellErr>),
+}
+
+impl Check {
+    fn fail(msg: String) -> Check {
+        Check::Fail(Box::new(ShellErr::Custom(
+            msg.into_bytes().into_boxed_slice(),
+        )))
+    }
 }
 
 impl ShellCpTask {
@@ -565,7 +573,7 @@ impl ShellCpTask {
                 Check::Copy => drop(poster),
                 check => {
                     if let Check::Fail(err) = check {
-                        (*this).err = Some(err);
+                        (*this).err = Some(*err);
                     }
                     (*this).task.poster = Some(poster);
                     Self::enqueue_to_event_loop(this);
@@ -627,8 +635,6 @@ impl ShellCpTask {
         use bun_sys::S;
         use resolve_path::Platform;
 
-        let custom =
-            |msg: String| Check::Fail(ShellErr::Custom(msg.into_bytes().into_boxed_slice()));
         let src_shown = bstr::BStr::new(&self.src);
         let tgt_shown = || -> Vec<u8> {
             let mut shown = self.tgt.clone();
@@ -657,20 +663,20 @@ impl ShellCpTask {
                 if self.opts.no_clobber || appended.is_some() || src.as_bytes() != tgt.as_bytes() {
                     return Check::Skip;
                 }
-                return custom(format!(
+                return Check::fail(format!(
                     "{src_shown} and {} are identical (not copied)",
                     bstr::BStr::new(&tgt_shown()),
                 ));
             }
             let tgt_is_dir = S::ISDIR(tgt_stat.st_mode as _);
             if src_is_dir && !tgt_is_dir {
-                return custom(format!(
+                return Check::fail(format!(
                     "cannot overwrite non-directory {} with directory {src_shown}",
                     bstr::BStr::new(&tgt_shown()),
                 ));
             }
             if !src_is_dir && tgt_is_dir {
-                return custom(format!(
+                return Check::fail(format!(
                     "cannot overwrite directory {} with non-directory {src_shown}",
                     bstr::BStr::new(&tgt_shown()),
                 ));
@@ -681,7 +687,7 @@ impl ShellCpTask {
             return Check::Copy;
         }
         let into_itself = || {
-            custom(format!(
+            Check::fail(format!(
                 "cannot copy a directory, '{src_shown}', into itself, '{}'",
                 bstr::BStr::new(&tgt_shown()),
             ))
@@ -719,12 +725,12 @@ impl ShellCpTask {
         // work with cwd.
         let src = match shell_resolve_operand(bun_sys::Tag::copyfile, &self.cwd_path, &self.src) {
             Ok(path) => path,
-            Err(e) => return Check::Fail(ShellErr::new_sys(&e)),
+            Err(e) => return Check::Fail(Box::new(ShellErr::new_sys(&e))),
         };
         let mut tgt = match shell_resolve_operand(bun_sys::Tag::copyfile, &self.cwd_path, &self.tgt)
         {
             Ok(path) => path,
-            Err(e) => return Check::Fail(ShellErr::new_sys(&e)),
+            Err(e) => return Check::Fail(Box::new(ShellErr::new_sys(&e))),
         };
 
         // Cases:
@@ -737,15 +743,14 @@ impl ShellCpTask {
         // need to create it.
         let src_is_dir = match Self::is_dir(&src) {
             Ok(x) => x,
-            Err(e) => return Check::Fail(ShellErr::new_sys(&e)),
+            Err(e) => return Check::Fail(Box::new(ShellErr::new_sys(&e))),
         };
 
         // Any source directory without -R is an error.
         if src_is_dir && !self.opts.recursive {
-            return Check::Fail(ShellErr::Custom(
-                format!("{} is a directory (not copied)", bstr::BStr::new(&self.src))
-                    .into_bytes()
-                    .into_boxed_slice(),
+            return Check::fail(format!(
+                "{} is a directory (not copied)",
+                bstr::BStr::new(&self.src)
             ));
         }
 
@@ -755,7 +760,7 @@ impl ShellCpTask {
                 // If it has a trailing directory separator, it's a directory.
                 (Self::has_trailing_sep(tgt.as_bytes()), false)
             }
-            Err(e) => return Check::Fail(ShellErr::new_sys(&e)),
+            Err(e) => return Check::Fail(Box::new(ShellErr::new_sys(&e))),
         };
 
         let mut _copying_many = false;
@@ -771,39 +776,33 @@ impl ShellCpTask {
                 let basename = resolve_path::basename(src.as_bytes());
                 tgt = match shell_join_path(bun_sys::Tag::copyfile, &[tgt.as_bytes(), basename]) {
                     Ok(path) => path,
-                    Err(e) => return Check::Fail(ShellErr::new_sys(&e)),
+                    Err(e) => return Check::Fail(Box::new(ShellErr::new_sys(&e))),
                 };
                 appended = Some(basename);
             } else if self.operands == 2 {
                 // source_dir -> new_target_dir.
             } else {
-                return Check::Fail(ShellErr::Custom(
-                    format!("directory {} does not exist", bstr::BStr::new(&self.tgt))
-                        .into_bytes()
-                        .into_boxed_slice(),
+                return Check::fail(format!(
+                    "directory {} does not exist",
+                    bstr::BStr::new(&self.tgt)
                 ));
             }
             _copying_many = true;
         } else {
             // 3rd synopsis: source_files... -> target.
             if src_is_dir {
-                return Check::Fail(ShellErr::Custom(
-                    format!("{} is a directory (not copied)", bstr::BStr::new(&self.src))
-                        .into_bytes()
-                        .into_boxed_slice(),
+                return Check::fail(format!(
+                    "{} is a directory (not copied)",
+                    bstr::BStr::new(&self.src)
                 ));
             }
             if !tgt_exists || !tgt_is_dir {
-                return Check::Fail(ShellErr::Custom(
-                    format!("{} is not a directory", bstr::BStr::new(&self.tgt))
-                        .into_bytes()
-                        .into_boxed_slice(),
-                ));
+                return Check::fail(format!("{} is not a directory", bstr::BStr::new(&self.tgt)));
             }
             let basename = resolve_path::basename(src.as_bytes());
             tgt = match shell_join_path(bun_sys::Tag::copyfile, &[tgt.as_bytes(), basename]) {
                 Ok(path) => path,
-                Err(e) => return Check::Fail(ShellErr::new_sys(&e)),
+                Err(e) => return Check::Fail(Box::new(ShellErr::new_sys(&e))),
             };
             appended = Some(basename);
             _copying_many = true;

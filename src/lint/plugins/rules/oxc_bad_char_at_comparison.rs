@@ -45,7 +45,7 @@ fn is_invalid_comparison_string(e: Expr) -> bool {
 }
 
 fn is_single_character_access(e: Expr) -> bool {
-    // An optional chain is neither a call nor a member expression for oxlint.
+    // In oxlint's AST an optional chain is neither a call nor a member expression.
     if e.chain() != Chain::No {
         return false;
     }

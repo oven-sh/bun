@@ -12,17 +12,16 @@ pub struct ClassLiteralPropertyStyle {
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// What a constructor assigns to a property of `this`, with the class whose body the assignment
-    /// is in.
+    /// The properties of `this` that a constructor assigns to, each with the class whose body contains the assignment.
     excluded: FxHashSet<(Class<'a>, MemberAccessValue<'a>)>,
     /// The `readonly` properties whose value is a literal.
     properties: Vec<Member<'a>>,
-    /// What is around something: the function, and the class whose body it is in.
+    /// Memoized ancestor lookups: the enclosing function, and the class whose body contains a node.
     functions: AncestorMemo<'a, Func<'a>>,
     class_bodies: AncestorMemo<'a, Class<'a>>,
 }
 
-/// The name of a setter.
+/// Returns a setter's name.
 fn name_of_setter(element: Member<'_>) -> Option<MemberAccessValue<'_>> {
     let is_setter = element.kind() == MemberKind::Setter && !element.flags().contains(Flags::ABSTRACT);
     get_static_member_access_value(element).filter(|_| is_setter)
@@ -75,7 +74,7 @@ fn is_supported_literal(e: Expr<'_>) -> bool {
     }
 }
 
-/// `getStaticMemberAccessValue(node, context)`, if it is truthy.
+/// `getStaticMemberAccessValue(node, context)`, if it's truthy.
 fn truthy_name(name: Option<MemberAccessValue<'_>>) -> Option<MemberAccessValue<'_>> {
     name.filter(|it| it.as_string().is_none_or(|it| !it.is_empty()))
 }
@@ -137,7 +136,7 @@ impl ClassLiteralPropertyStyle {
             return;
         }
         let class = cx.state.class_bodies.find(Node::Expr(access), |inner, it| match it {
-            // What is in the heritage clause is not in the body.
+            // The heritage clause isn't part of the body.
             Node::Class(class) if matches!(inner, Node::Member(_)) => Some(class),
             _ => None,
         });
@@ -155,7 +154,7 @@ impl ClassLiteralPropertyStyle {
             && flags.contains(Flags::READONLY)
             && !flags.intersects(Flags::OVERRIDE | Flags::ABSTRACT | Flags::ACCESSOR)
             && member.init().is_some_and(is_supported_literal)
-            // The flags also have it for what is in a `declare class`.
+            // The flags also have `AMBIENT` for members of a `declare class`.
             && !member.modifiers().iter().any(|it| it.flag() == Flags::AMBIENT)
         {
             cx.state.properties.push(member);

@@ -760,6 +760,70 @@ console.log(
       ]);
     });
 
+    test.concurrent("what is skipped, or after a yield or an await that is not resumed, is a range", async () => {
+      using dir = tempDir("inspector-coverage-skipped", {
+        "fixture.cjs": `
+          const inspector = require("node:inspector");
+          const vm = require("node:vm");
+          const code = [
+            "function one() { return 1; }",
+            "function parameter(v = one()) { return v; }",
+            "function chain(o) { return o?.a(one()); }",
+            "function assign(o) { o.a ||= one(); return o; }",
+            "function* generator() { yield 1; one(); }",
+            "async function stuck() { await new Promise(() => {}); one(); }",
+            "parameter(1); parameter(); chain(); assign({ a: 1 }); generator().next(); stuck();",
+            "",
+          ].join("\\n");
+          const session = new inspector.Session();
+          session.connect();
+          session.post("Profiler.enable");
+          session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+          vm.runInThisContext(code, { filename: "/virtual/skipped.js" });
+          session.post("Profiler.takePreciseCoverage", (err, { result }) => {
+            const [script, ...functions] = result.find(script => script.url.endsWith("/virtual/skipped.js")).functions;
+            console.log(
+              JSON.stringify(functions.map(f => f.ranges.map(r => [r.count, code.slice(r.startOffset, r.endOffset)]))),
+            );
+          });
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      expect(JSON.parse(stdout)).toEqual([
+        [[1, "function one() { return 1; }"]],
+        [
+          [2, "function parameter(v = one()) { return v; }"],
+          [1, " one()"],
+        ],
+        [
+          [1, "function chain(o) { return o?.a(one()); }"],
+          [0, "?.a(one())"],
+        ],
+        [
+          [1, "function assign(o) { o.a ||= one(); return o; }"],
+          [0, " one()"],
+        ],
+        [
+          [1, "function* generator() { yield 1; one(); }"],
+          [0, " one(); "],
+        ],
+        [
+          [1, "async function stuck() { await new Promise(() => {}); one(); }"],
+          [0, " one(); "],
+        ],
+        [[1, "() => {}"]],
+      ]);
+    });
+
     test.concurrent("respects callCount: false and detailed: false", async () => {
       using dir = tempDir("inspector-coverage-flags", {
         "fixture.mjs": coverageVmFixture,

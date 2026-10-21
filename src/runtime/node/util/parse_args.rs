@@ -189,6 +189,7 @@ fn get_default_args(global: &JSGlobalObject) -> JsResult<ArgsSlice> {
     let exec_argv = super::process::get_exec_argv(global)?;
     let argv = super::process::get_argv(global)?;
     if argv.is_array() && exec_argv.is_array() {
+        let end = u32::try_from(argv.get_length(global)?).expect("int cast");
         let mut iter = exec_argv.array_iterator(global)?;
         while let Some(item) = iter.next()? {
             if item.is_string() {
@@ -200,16 +201,17 @@ fn get_default_args(global: &JSGlobalObject) -> JsResult<ArgsSlice> {
                 {
                     return Ok(ArgsSlice {
                         array: argv,
-                        start: 1,
-                        end: u32::try_from(argv.get_length(global)?).expect("int cast"),
+                        start: end.min(1),
+                        end,
                     });
                 }
             }
         }
+        // `process.argv` can have fewer than 2 items. Clamp the start like `ArrayPrototypeSlice` does.
         return Ok(ArgsSlice {
             array: argv,
-            start: 2,
-            end: u32::try_from(argv.get_length(global)?).expect("int cast"),
+            start: end.min(2),
+            end,
         });
     }
 

@@ -15496,6 +15496,104 @@ export const r5: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] = swapped;
       expect(exitCode).toBe(1);
     });
 
+    // `getApparentType` recreates the references in an intersection, so a deferred one (the body of a type alias)
+    // becomes the same type as the plain one, and the intersection of the two is that type.
+    test("infers from a tuple type intersected with its alias as from the tuple", async () => {
+      using dir = project({
+        "a.ts": `interface W { m(x: string): void }
+interface N { m(x: "a"): void }
+type NW = [N, W[]];
+type NW2 = [N, W[]];
+type Pair<A, B> = [A, B];
+type Named = [a: N, b: W[]];
+type Frozen = readonly [N, W[]];
+type Open = [N, W[]?];
+type Long = [N, W[], 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+interface P<A, B> { b: B; a: A }
+type PNW = P<N, W[]>;
+declare function s<T>(): (a: T) => void;
+declare function f<T>(x: (a: [T, T[]]) => void): T;
+declare function alias<T>(x: (a: Pair<T, T[]>) => void): T;
+declare function frozen<T>(x: (a: readonly [T, T[]]) => void): T;
+declare function open<T>(x: (a: [T, T[]?]) => void): T;
+declare function long<T>(x: (a: [T, T[], 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]) => void): T;
+declare function nested<T>(x: (a: { p: [[T, T[]], 1] }) => void): T;
+declare function p<T>(x: (a: P<T, T[]>) => void): T;
+declare function lead<T>(y: T, x: (a: [T, T[]]) => void): T;
+// A tuple type and its alias: element by element, as from \`[N, W[]]\`.
+export const a1: never = f(s<[N, W[]]>());
+export const a2: never = f(s<NW & [N, W[]]>());
+export const a3: never = f(s<[N, W[]] & NW>());
+export const a4: never = f(s<NW & NW2>());
+export const a5: never = f(s<Pair<N, W[]> & NW>());
+export const a6: never = alias(s<NW & NW2>());
+export const a7: never = frozen(s<Frozen & readonly [N, W[]]>());
+export const a8: never = open(s<Open & [N, W[]?]>());
+export const a9: never = long(s<Long & [N, W[], 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]>());
+export const a10: never = nested(s<{ p: [NW & [N, W[]], 1] }>());
+// An interface and its alias: type argument by type argument, so \`a\` comes before \`b\`.
+export const b1: never = p(s<P<N, W[]>>());
+export const b2: never = p(s<PNW & P<N, W[]>>());
+// Two tuple types, or more than a tuple: property by property.
+export const c1: never = f(s<NW & Named>());
+export const c2: never = f(s<NW & Frozen>());
+export const c3: never = f(s<NW & [N, W[]] & { brand: 1 }>());
+type NS = [number, string[]];
+export const d1: never = f(s<NS & [number, string[]]>());
+export const d2: never = lead(1, s<NS & [number, string[]]>());
+declare const v: NS & [number, string[]];
+export const d3: [number, number[]] = v;
+export const d4: never = v.sort();
+export const d5 = v[2];
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(22,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(23,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(24,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(25,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(26,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(27,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(28,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(29,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(30,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(31,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(33,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(34,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(36,14): error TS2322: Type 'N' is not assignable to type 'never'.
+        a.ts(37,14): error TS2322: Type 'N' is not assignable to type 'never'.
+        a.ts(38,14): error TS2322: Type 'N' is not assignable to type 'never'.
+        a.ts(38,28): error TS2345: Argument of type '(a: NW & [N, W[]] & { brand: 1; }) => void' is not assignable to parameter of type '(a: [N, N[]]) => void'.
+          Types of parameters 'a' and 'a' are incompatible.
+            Type '[N, N[]]' is not assignable to type 'NW & [N, W[]] & { brand: 1; }'.
+              Property 'brand' is missing in type '[N, N[]]' but required in type '{ brand: 1; }'.
+        a.ts(40,14): error TS2322: Type 'number' is not assignable to type 'never'.
+        a.ts(40,28): error TS2345: Argument of type '(a: NS & [number, string[]]) => void' is not assignable to parameter of type '(a: [number, number[]]) => void'.
+          Types of parameters 'a' and 'a' are incompatible.
+            Type '[number, number[]]' is not assignable to type 'NS & [number, string[]]'.
+              Type '[number, number[]]' is not assignable to type 'NS'.
+                Type at position 1 in source is not compatible with type at position 1 in target.
+                  Type 'number[]' is not assignable to type 'string[]'.
+                    Type 'number' is not assignable to type 'string'.
+        a.ts(41,14): error TS2322: Type '1' is not assignable to type 'never'.
+        a.ts(41,34): error TS2345: Argument of type '(a: NS & [number, string[]]) => void' is not assignable to parameter of type '(a: [1, 1[]]) => void'.
+          Types of parameters 'a' and 'a' are incompatible.
+            Type '[1, 1[]]' is not assignable to type 'NS & [number, string[]]'.
+              Type '[1, 1[]]' is not assignable to type 'NS'.
+                Type at position 1 in source is not compatible with type at position 1 in target.
+                  Type '1[]' is not assignable to type 'string[]'.
+                    Type 'number' is not assignable to type 'string'.
+        a.ts(43,14): error TS2322: Type 'NS & [number, string[]]' is not assignable to type '[number, number[]]'.
+          Type at position 1 in source is not compatible with type at position 1 in target.
+            Type 'string[]' is not assignable to type 'number[]'.
+              Type 'string' is not assignable to type 'number'.
+        a.ts(44,14): error TS2322: Type 'NS & [number, string[]]' is not assignable to type 'never'.
+        a.ts(45,21): error TS2493: Tuple type '[number, string[]]' of length '2' has no element at index '2'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS2345 for a function argument against an index signature inferred from `keyof T`", async () => {
       using dir = project({
         "a.ts": `declare function m<T>(a: T, b: keyof T): T;

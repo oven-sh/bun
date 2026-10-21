@@ -1438,11 +1438,7 @@ impl<'s> Checker<'_, 's> {
             // `checkExportAssignment`
             StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
                 self.check_expression(file, e);
-                let is_well_placed = match bound.parent_of_stmt(s) {
-                    Parent::File => true,
-                    Parent::Module(m) => !matches!(hir[m].name, ModuleName::Ident(_)),
-                    _ => false,
-                };
+                let is_well_placed = bound.parent_of_stmt(s).allows_export_assignment(hir);
                 if is_well_placed && matches!(hir[s].kind, StmtKind::ExportAssign(_)) {
                     self.check_grammar_export_equals(file, s);
                 }

@@ -896,6 +896,17 @@ packed! {
     }
 }
 
+impl Parent {
+    /// True if this is a file or an ambient module with a string name, where `export =` and `export default` belong.
+    pub fn allows_export_assignment(self, hir: &File) -> bool {
+        match self {
+            Parent::File => true,
+            Parent::Module(m) => !matches!(hir[m].name, ModuleName::Ident(_)),
+            _ => false,
+        }
+    }
+}
+
 impl From<DecoratorOwner> for Parent {
     #[inline]
     fn from(decorated: DecoratorOwner) -> Parent {

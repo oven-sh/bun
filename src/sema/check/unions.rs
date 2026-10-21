@@ -1984,11 +1984,6 @@ impl<'p, 's> Checker<'p, 's> {
         matches!(self.data(ty), TypeData::Synth(shape) if shape.literal == Literalness::OfUnknown)
     }
 
-    /// Returns `ty` without `undefined` and the missing type.
-    pub fn without_undefined(&mut self, ty: TypeId) -> TypeId {
-        self.filter(ty, |_, m| !m.is_undefined())
-    }
-
     pub fn contains_undefined(&self, ty: TypeId) -> bool {
         self.is_some_type_of_kind(ty, tf::UNDEFINED)
     }

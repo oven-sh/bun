@@ -119,7 +119,7 @@ impl<'p> Checker<'p, '_> {
         let extends = hir[c].extends;
         for tag in hir.augments_tags_of(c) {
             // It's an `ExpressionWithTypeArguments`, so `getIntendedTypeFromJSDocTypeReference` doesn't apply.
-            let source = self.get_type_reference_type(file, tag.class_name);
+            let tagged = self.get_type_reference_type(file, tag.class_name);
             let TypeNodeKind::Ref { name, .. } = hir[tag.class_name].kind else {
                 continue;
             };
@@ -127,7 +127,7 @@ impl<'p> Checker<'p, '_> {
                 continue;
             };
             let target: &[u8] = if hir::is_entity_name_expression(hir, extends) {
-                if self.is_identical(source, base) {
+                if self.is_identical(tagged, base) {
                     continue;
                 }
                 // `getIdentifierFromEntityNameExpression`
@@ -135,7 +135,7 @@ impl<'p> Checker<'p, '_> {
                     ExprKind::Ident(name) | ExprKind::Dot { name, .. } => self.atoms().bytes(name),
                     _ => b"",
                 }
-            } else if self.is_assignable(base, source) {
+            } else if self.is_assignable(base, tagged) {
                 continue;
             } else {
                 let (_, start, end) = self.span_of_parenthesized_expr(file, extends);

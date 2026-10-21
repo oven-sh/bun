@@ -1060,11 +1060,7 @@ impl Unused<'_, '_> {
                     StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_)
                 )
                 && let ExprKind::Ident(name) = hir[e].kind
-                && match bound.parent_of_stmt(s) {
-                    Parent::File => true,
-                    Parent::Module(m) => !matches!(hir[m].name, ModuleName::Ident(_)),
-                    _ => false,
-                }
+                && bound.parent_of_stmt(s).allows_export_assignment(hir)
             {
                 self.note_name(scope, name, SymFlags::all());
             }

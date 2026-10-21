@@ -6636,14 +6636,15 @@ impl<'s> Files<'s> {
             // such a name a module. The virtual extension can.
             let info = session.keep(source.info);
             let language_name = &info.virtual_file_name[..];
+            let (is_lib, specifies_esm) = (false, false);
             let (mut hir, bound) = Self::parse_and_bind(
                 arena,
                 host,
                 options.for_parsing(),
                 atoms,
                 language_name,
-                false,
-                false,
+                is_lib,
+                specifies_esm,
                 Cow::Owned(source.text),
             );
             rename_private_names(&mut hir, &bound, atoms, path);

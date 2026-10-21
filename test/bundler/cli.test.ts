@@ -931,6 +931,126 @@ test("reports an empty entry point the same way with more than 8 entry points", 
   expect(nine).toEqual(two);
 });
 
+// The same rule as `bun build` and `import`: the `--loader` map, the loader the extension names, the JSONC file names.
+describe.concurrent("--no-bundle picks the loader from the file name", () => {
+  async function noBundle(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", ...args],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const xml = `<config env="production"><port>3000</port></config>`;
+  const markdown = "# port 3000\n";
+  const jsonc = `{ /* comment */ "port": 3000, }`;
+  const printed = {
+    json: "var port = 3000;\n\nexport {\n  port\n};\nexport default { port };\n",
+    data: "var port = 3000;\n\nexport {\n  port\n};\nexport default {\n  port\n};\n",
+    xml: 'var config = {\n  "@env": "production",\n  port: "3000"\n};\n\nexport {\n  config\n};\nexport default {\n  config\n};\n',
+    text: 'export default "port 3000";\n',
+    markdown: "export default `<h1>port 3000</h1>\n`;\n",
+    ts: "export default 3000;\n",
+  };
+
+  const modules: [name: string, contents: string, output: string][] = [
+    // Every default extension of a data loader.
+    ["d.json", `{ "port": 3000 }`, printed.json],
+    ["d.jsonc", jsonc, printed.json],
+    ["d.json5", `{ port: 3000 }`, printed.data],
+    ["d.toml", `port = 3000\n`, printed.data],
+    ["d.yaml", `port: 3000\n`, printed.data],
+    ["d.yml", `port: 3000\n`, printed.data],
+    ["d.xml", xml, printed.xml],
+    ["d.txt", `port 3000`, printed.text],
+    ["d.text", `port 3000`, printed.text],
+    ["d.md", markdown, printed.markdown],
+    ["d.markdown", markdown, printed.markdown],
+    // An extension in another case still names its loader.
+    ["D.XML", xml, printed.xml],
+    ["README.MD", markdown, printed.markdown],
+    ["U.TS", `export default 3000 as number;\n`, printed.ts],
+    // JSONC by file name.
+    ["bun.lock", jsonc, printed.json],
+    ["tsconfig.json", jsonc, printed.json],
+    ["package.json", jsonc, printed.json],
+    // A root element named `default` gets no named export.
+    ["root-default.xml", `<default>3000</default>`, 'export default {\n  default: "3000"\n};\n'],
+  ];
+
+  test.each(modules)("%s prints its module", async (name, contents, output) => {
+    using dir = tempDir("no-bundle-loader-module", { [name]: contents });
+    expect(await noBundle(String(dir), `./${name}`)).toEqual({ stdout: output, stderr: "", exitCode: 0 });
+  });
+
+  test("a malformed .xml file fails the build", async () => {
+    using dir = tempDir("no-bundle-loader-bad-xml", { "bad.xml": `<config><port>3000</config>` });
+    const { stdout, stderr, exitCode } = await noBundle(String(dir), "./bad.xml");
+    expect(stderr).toContain("error: Expected closing tag </port> but found </config>");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("--outdir and --outfile get the module, the source directory gets no copy", async () => {
+    using dir = tempDir("no-bundle-loader-outdir", { "src/config.xml": xml, "src/readme.md": markdown });
+    const [toDir, toFile] = await Promise.all([
+      noBundle(String(dir), "./src/config.xml", "./src/readme.md", "--outdir=dist"),
+      noBundle(String(dir), "./src/config.xml", "--outfile=single/config.mjs"),
+    ]);
+    expect([toDir.stderr, toFile.stderr]).toEqual(["", ""]);
+    expect([toDir.exitCode, toFile.exitCode]).toEqual([0, 0]);
+
+    const written = (file: string) => Bun.file(path.join(String(dir), file)).text();
+    expect({
+      src: fs.readdirSync(path.join(String(dir), "src")).sort(),
+      "dist/config.js": await written("dist/config.js"),
+      "dist/readme.js": await written("dist/readme.js"),
+      "single/config.mjs": await written("single/config.mjs"),
+    }).toEqual({
+      src: ["config.xml", "readme.md"],
+      "dist/config.js": printed.xml,
+      "dist/readme.js": printed.markdown,
+      "single/config.mjs": printed.xml,
+    });
+  });
+
+  test("a --loader entry for the extension wins", async () => {
+    using dir = tempDir("no-bundle-loader-flag", { "d.xml": xml, "bad.xml": `<config><port>3000</config>` });
+    const [asText, asFile] = await Promise.all([
+      noBundle(String(dir), "./d.xml", "--loader", ".xml:text"),
+      // The file loader copies the entry point. It does not parse it.
+      noBundle(String(dir), "./bad.xml", "--loader", ".xml:file"),
+    ]);
+    expect(asText).toEqual({ stdout: `export default '${xml}';\n`, stderr: "", exitCode: 0 });
+    expect([asFile.stderr, asFile.exitCode]).toEqual(["", 0]);
+  });
+
+  test("a data: URL entry point does not take the dataurl loader", async () => {
+    using dir = tempDir("no-bundle-loader-data-url", {});
+    const url = "data:text/javascript,export default 3000;//.js";
+    expect(await noBundle(String(dir), "--root", ".", url)).toEqual({ stdout: printed.ts, stderr: "", exitCode: 0 });
+  });
+
+  const unsupported: [name: string, loader: string, flags: string[]][] = [
+    ["d.base64", "base64", []],
+    ["d.dataurl", "dataurl", []],
+    ["d.bin", "base64", ["--loader", ".bin:base64"]],
+  ];
+
+  test.each(unsupported)("%s with the %s loader is an error", async (name, loader, flags) => {
+    using dir = tempDir("no-bundle-loader-unsupported", { [name]: "abc" });
+    expect(await noBundle(String(dir), `./${name}`, ...flags)).toEqual({
+      stdout: "",
+      stderr: `error: The "${loader}" loader is not supported with --no-bundle: "${name}"\n`,
+      exitCode: 1,
+    });
+  });
+});
+
 describe("CLI argument error messages", () => {
   test("--format with an unrecognized value echoes the value back", async () => {
     using dir = tempDir("build-format-err", { "in.js": "console.log(1)" });

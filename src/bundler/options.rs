@@ -714,6 +714,24 @@ fn default_loaders_match_table() {
     assert_eq!(DEFAULT_LOADERS.get(b".sh"), None);
 }
 
+#[cfg(test)]
+#[test]
+fn default_extensions_resolve_through_path_loader() {
+    for target in [Target::Bun, Target::Browser, Target::Node] {
+        let loaders = loaders_from_transform_options(None, target).unwrap();
+        for (ext, loader) in DEFAULT_LOADERS_POSIX {
+            let name = [b"x".as_slice(), ext].concat();
+            assert_eq!(
+                Fs::Path::init(&name).loader(&loaders),
+                Some(*loader),
+                "Path::loader does not give {} its default loader with the {:?} loader table",
+                bstr::BStr::new(ext),
+                target
+            );
+        }
+    }
+}
+
 // https://webpack.js.org/guides/package-exports/#reference-syntax
 pub struct ESMConditions {
     pub(crate) default: ConditionsMap,

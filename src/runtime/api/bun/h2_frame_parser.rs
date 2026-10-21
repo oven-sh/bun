@@ -11,6 +11,7 @@ use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use std::borrow::Cow;
 
+use crate::api::h2::connection::RequestMethod;
 use crate::api::socket::{TCPSocket, TLSSocket};
 use crate::node::{Encoding, StringOrBuffer};
 use crate::socket::NativeCallbacks;
@@ -1352,6 +1353,9 @@ pub(crate) struct Stream {
     padding_strategy: PaddingStrategy,
     rst_code: u32,
     weight: u16,
+    // `:method` of the request that request() sent on this stream, None for a stream it did not
+    // open. The engine asks for it through Sink::request_method: it never sees the request HEADERS.
+    request_method: Option<RequestMethod>,
     // current window size for the stream
     window_size: u64,
     // used window size for the stream
@@ -1859,6 +1863,7 @@ impl Stream {
             // RFC 7540 §5.3.5 / nghttp2 NGHTTP2_DEFAULT_WEIGHT: streams default to weight 16,
             // which is what stream.state.weight reports when no priority was signaled.
             weight: 16,
+            request_method: None,
             window_size: initial_window_size as u64,
             used_window_size: 0,
             remote_window_size: remote_window_size as u64,
@@ -2020,6 +2025,22 @@ impl H2FrameParser {
                 Err(e)
             }
         }
+    }
+
+    /// `encode_header_into_list` for a header of a request. It also notes the `:method`, which
+    /// decides how the body of the response is framed (`Sink::request_method`).
+    fn encode_request_header_into_list(
+        &self,
+        encoded_headers: &mut Vec<u8>,
+        method: &mut RequestMethod,
+        name: &[u8],
+        value: &[u8],
+        never_index: bool,
+    ) -> crate::Result<usize> {
+        if name == b":method" {
+            *method = RequestMethod::from_method(value);
+        }
+        self.encode_header_into_list(encoded_headers, name, value, never_index)
     }
 
     pub(crate) fn encode(
@@ -4033,6 +4054,12 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         // The legacy outbound created an entry in the legacy streams map for every locally
         // initiated stream (request/respond), so membership there means "we sent HEADERS on it".
         self.streams.get().contains_key(&stream_id)
+    }
+
+    fn request_method(&self, stream_id: u32) -> Option<RequestMethod> {
+        let stream = self.streams.get().get(&stream_id).copied()?;
+        // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+        unsafe { (*stream).request_method }
     }
 
     fn goaway_sent(&self) -> bool {
@@ -6591,6 +6618,7 @@ impl H2FrameParser {
         }
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
+        let mut request_method = RequestMethod::Other;
         let stream_id: u32 =
             if !stream_id_arg.is_empty_or_undefined_or_null() && stream_id_arg.is_number() {
                 stream_id_arg.to_u32()
@@ -6709,8 +6737,9 @@ impl H2FrameParser {
                         BStr::new(value)
                     );
 
-                    if let Err(err) = this.encode_header_into_list(
+                    if let Err(err) = this.encode_request_header_into_list(
                         &mut encoded_headers,
+                        &mut request_method,
                         validated_name,
                         value,
                         never_index,
@@ -6879,8 +6908,9 @@ impl H2FrameParser {
                             BStr::new(value)
                         );
 
-                        if let Err(err) = this.encode_header_into_list(
+                        if let Err(err) = this.encode_request_header_into_list(
                             &mut encoded_headers,
+                            &mut request_method,
                             validated_name,
                             value,
                             never_index,
@@ -6949,8 +6979,9 @@ impl H2FrameParser {
                         BStr::new(value)
                     );
 
-                    if let Err(err) = this.encode_header_into_list(
+                    if let Err(err) = this.encode_request_header_into_list(
                         &mut encoded_headers,
+                        &mut request_method,
                         validated_name,
                         value,
                         never_index,
@@ -6982,6 +7013,7 @@ impl H2FrameParser {
         };
         // The `options` getters below can run user JS while `stream` is borrowed.
         let mut stream = this.enter_stream_dispatch(stream_ptr);
+        stream.request_method = Some(request_method);
         if !stream_ctx_arg.is_empty_or_undefined_or_null() && stream_ctx_arg.is_object() {
             stream.set_context(stream_ctx_arg, global_object);
         }

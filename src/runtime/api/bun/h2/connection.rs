@@ -49,6 +49,10 @@ pub(crate) struct Stream {
     pub recv_body_bytes: u64,
     /// The embedder had already sent GOAWAY when the peer opened this stream.
     pub opened_after_goaway: bool,
+    /// On a client, `:method` of the request this stream answers: the promised request of a
+    /// stream a PUSH_PROMISE reserved, else what `Sink::request_method` said at the first
+    /// response block. `None` while the engine knows of no such request.
+    pub request_method: Option<RequestMethod>,
 }
 
 impl Stream {
@@ -61,6 +65,38 @@ impl Stream {
             content_length: None,
             recv_body_bytes: 0,
             opened_after_goaway: false,
+            request_method: None,
+        }
+    }
+
+    /// RFC 9113 §8.1.1 (nghttp2_http_on_data_chunk): more DATA than the declared `content-length`.
+    /// The callers drop the frame and reset the stream, as nghttp2 does. Node v26.3.0 destroys
+    /// the session instead (ERR_HTTP2_ERROR): its OnInvalidFrame turns the NGHTTP2_ERR_PROTO
+    /// that nghttp2 reports here into a session error. A malformed message is a stream error.
+    fn body_exceeds_content_length(&self) -> bool {
+        self.content_length
+            .is_some_and(|declared| self.recv_body_bytes > declared)
+    }
+}
+
+/// The request methods that change how the response's body is framed (RFC 9113 §8.1.1,
+/// nghttp2's NGHTTP2_HTTP_FLAG_METH_HEAD / METH_CONNECT).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum RequestMethod {
+    Other,
+    /// The response has no body, whatever `content-length` it declares.
+    Head,
+    /// The response's DATA is a tunnel, not a body a `content-length` describes.
+    Connect,
+}
+
+impl RequestMethod {
+    /// Method names are case-sensitive (RFC 9110 §9.1).
+    pub(crate) fn from_method(value: &[u8]) -> Self {
+        match value {
+            b"HEAD" => RequestMethod::Head,
+            b"CONNECT" => RequestMethod::Connect,
+            _ => RequestMethod::Other,
         }
     }
 }
@@ -259,6 +295,13 @@ pub(crate) trait Sink {
     /// inbound frames for it are not treated as frames on an idle stream.
     fn is_local_stream(&self, _stream_id: u32) -> bool {
         false
+    }
+    /// Transition shim for the same reason as `is_local_stream`: the `:method` of the request
+    /// the embedder sent on `stream_id`, or `None` when it has no such request on record (it
+    /// closed the stream, or never opened it). A client asks at a response header block and
+    /// keeps the answer.
+    fn request_method(&self, _stream_id: u32) -> Option<RequestMethod> {
+        None
     }
     /// Highest stream id the embedder has ever registered, in either direction. Monotonic across
     /// stream eviction: ids at or below it have existed (closed at worst, never idle), which the
@@ -1230,10 +1273,12 @@ impl Connection {
         // Request-block state for the RFC 9113 §8.3.1 checks below (nghttp2's
         // nghttp2_http_on_request_headers): only an initial HEADERS block (or a PUSH_PROMISE
         // block) is a request; a later HEADERS on the same stream is a trailer section.
-        let mut saw_connect = false;
+        let mut block_method: Option<RequestMethod> = None;
         let mut saw_host = false;
         let mut informational = false;
         let mut content_length: Option<u64> = None;
+        // A 204 or 304 has no body, like the response to a HEAD (nghttp2's expect_response_body).
+        let mut no_body_status = false;
         while off < block.len() {
             match self.hpack.decode(&block[off..]) {
                 Ok(h) => {
@@ -1304,8 +1349,14 @@ impl Connection {
                                 informational = true;
                             }
                             seen_pseudo |= bit;
-                            if rest == b"method" && value_b == b"CONNECT" {
-                                saw_connect = true;
+                            match bit {
+                                pseudo::METHOD => {
+                                    block_method = Some(RequestMethod::from_method(value_b));
+                                }
+                                pseudo::STATUS => {
+                                    no_body_status = matches!(value_b, b"204" | b"304");
+                                }
+                                _ => {}
                             }
                         } else {
                             seen_regular = true;
@@ -1374,6 +1425,7 @@ impl Connection {
         // :scheme/:path and carries :authority; extended CONNECT (:protocol, RFC 8441) requires
         // :method CONNECT and :authority. Without this a block with an empty or missing :path
         // reaches JS as a request with an empty url (no compliant peer can produce that shape).
+        let saw_connect = block_method == Some(RequestMethod::Connect);
         if is_request && !rejected && !malformed {
             use pseudo::{AUTHORITY, METHOD, PATH, PROTOCOL, SCHEME};
             let extended_connect = (seen_pseudo & PROTOCOL) != 0;
@@ -1385,16 +1437,40 @@ impl Connection {
                     || (extended_connect && (!saw_connect || (seen_pseudo & AUTHORITY) == 0))
             };
         }
-        if push_parent.is_none() && self.is_server && !malformed && !rejected {
+        let mut response_length_mismatch = false;
+        if push_parent.is_none() && !malformed && !rejected {
             if let Some(s) = self.streams.get_mut(&target) {
-                if !saw_connect && s.content_length.is_none() {
-                    s.content_length = content_length;
+                // An interim response declares no length: its fields are not the message's.
+                if s.content_length.is_none() && !informational {
+                    // RFC 9113 §8.1.1 (nghttp2_http_on_{request,response}_headers): the length this
+                    // block declares for the message body. A trailer section declares one only
+                    // when the header section did not.
+                    s.content_length = if self.is_server {
+                        // The DATA of a CONNECT request is a tunnel.
+                        if saw_connect { None } else { content_length }
+                    } else {
+                        if s.request_method.is_none() {
+                            s.request_method = sink.request_method(target);
+                        }
+                        match s.request_method {
+                            // No request on record: the embedder closed it, and this block
+                            // re-opened the stream. The response to a HEAD cannot be told from
+                            // any other, so the response is held to nothing.
+                            None => None,
+                            // nghttp2's expect_response_body, then its CONNECT rule.
+                            Some(_) if no_body_status => Some(0),
+                            Some(RequestMethod::Head) => Some(0),
+                            Some(RequestMethod::Connect) => None,
+                            Some(RequestMethod::Other) => content_length,
+                        }
+                    };
                 }
                 if end_stream
                     && s.content_length
                         .is_some_and(|declared| declared != s.recv_body_bytes)
                 {
                     malformed = true;
+                    response_length_mismatch = !self.is_server;
                 }
             }
         }
@@ -1416,7 +1492,12 @@ impl Connection {
                 s.state = State::Closed;
             }
             sink.on_stream_reset(target, ErrorCode::ProtocolError.as_u32());
-            sink.on_stream_rejected(target);
+            // A response that ends here short of its content-length is the one malformed block
+            // that maxSessionRejectedStreams is not charged for: node counts it as an invalid
+            // frame only (above). A request block keeps the charge, as before.
+            if !response_length_mismatch {
+                sink.on_stream_rejected(target);
+            }
             return false;
         }
         if rejected {
@@ -1435,6 +1516,12 @@ impl Connection {
             && let Some(s) = self.streams.get_mut(&target)
         {
             s.recv_final_headers = true;
+        }
+        // nghttp2_http_record_request_method: the pushed response answers the promised request.
+        if push_parent.is_some()
+            && let Some(s) = self.streams.get_mut(&target)
+        {
+            s.request_method = block_method;
         }
         sink.on_headers_complete(target, end_stream, flags);
         if end_stream {
@@ -1522,6 +1609,14 @@ impl Connection {
                         return StreamedDataStart::Fatal;
                     } else {
                         st.recv_body_bytes = st.recv_body_bytes.saturating_add(data_total as u64);
+                        if st.body_exceeds_content_length() {
+                            self.send_rst_stream(sink, hdr.stream_id, ErrorCode::ProtocolError);
+                            if let Some(st2) = self.streams.get_mut(&hdr.stream_id) {
+                                st2.state = State::Closed;
+                            }
+                            sink.on_stream_reset(hdr.stream_id, ErrorCode::ProtocolError.as_u32());
+                            discard = true;
+                        }
                     }
                 }
             }
@@ -1644,7 +1739,11 @@ impl Connection {
                         DataDecision::FlowControlViolation
                     } else {
                         s.recv_body_bytes = s.recv_body_bytes.saturating_add((end - off) as u64);
-                        DataDecision::Deliver(0)
+                        if s.body_exceeds_content_length() {
+                            DataDecision::Rst(ErrorCode::ProtocolError)
+                        } else {
+                            DataDecision::Deliver(0)
+                        }
                     }
                 }
             }
@@ -1703,13 +1802,10 @@ impl Connection {
         false
     }
 
-    /// RFC 9113 §8.1.1: once END_STREAM arrives, a request whose received DATA total contradicts
+    /// RFC 9113 §8.1.1: once END_STREAM arrives, a message whose received DATA total contradicts
     /// its declared `content-length` is malformed. Resets the stream with PROTOCOL_ERROR instead
     /// of signalling end-of-stream and returns true if it did so.
     fn enforce_content_length(&mut self, sink: &impl Sink, stream_id: u32) -> bool {
-        if !self.is_server {
-            return false;
-        }
         let mismatch = self.streams.get(&stream_id).is_some_and(|s| {
             s.content_length
                 .is_some_and(|declared| declared != s.recv_body_bytes)

@@ -1,7 +1,7 @@
 import { bindgen as bindings } from "bun:internal-for-testing";
 import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
 import { describe as describeAlways, expect, it as itAlways } from "bun:test";
-import { runWithError } from "harness";
+import { bunEnv, bunExe, runWithError } from "harness";
 import { BlockList, SocketAddress } from "node:net";
 import vm from "node:vm";
 import { rustIdent } from "../../src/codegen/bindgen-lib-internal.ts";
@@ -2465,7 +2465,7 @@ itAlways("a method of a class that is keyed by a symbol is named after it", asyn
   using socket = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { data() {} } });
   using udpSocket = await Bun.udpSocket({ hostname: "127.0.0.1" });
   using session = new Bun.FetchSession();
-  await using subprocess = Bun.spawn({ cmd: [process.execPath, "--version"], stdout: "ignore" });
+  await using subprocess = Bun.spawn({ cmd: [bunExe(), "--version"], env: bunEnv, stdout: "ignore" });
   const prototypes = {
     terminal: Bun.Terminal.prototype,
     resolveMessage: ResolveMessage.prototype,

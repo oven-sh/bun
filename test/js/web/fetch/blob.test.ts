@@ -1,3 +1,4 @@
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, isASAN, tempDir } from "harness";
 import type { BlobPropertyBag } from "node:buffer";
@@ -198,7 +199,6 @@ test("new Blob(new Uint8Array()) is supported", async () => {
 });
 
 test("the memory of a File is counted as that of a Blob is", () => {
-  const { estimateShallowMemoryUsageOf } = require("bun:jsc");
   expect(estimateShallowMemoryUsageOf(new File(["1234"], "file.txt"))).toBeGreaterThanOrEqual(
     estimateShallowMemoryUsageOf(new Blob(["1234"])),
   );

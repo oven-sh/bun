@@ -960,7 +960,6 @@ test("write snapshot from filter", async () => {
   expect(await Bun.file(dir + "/mytests/more/testing.test.ts").text()).toBe(sver("TEST", true));
 });
 
-// Windows cannot create directories as deep as its path buffer is long.
 test("an undefined argument of a snapshot matcher is one that is left out", async () => {
   using dir = tempDir("snapshot-undefined-argument", {
     "snap.test.ts": `
@@ -987,6 +986,7 @@ test("an undefined argument of a snapshot matcher is one that is left out", asyn
   expect(exitCode).toBe(0);
 });
 
+// Windows cannot create directories as deep as its path buffer is long.
 test.skipIf(isWindows)("snapshot file path longer than PATH_MAX fails the test instead of crashing", async () => {
   using dir = tempDir("snapshot-long-path", {});
   let deep = String(dir);

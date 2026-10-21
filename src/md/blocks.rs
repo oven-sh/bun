@@ -240,8 +240,11 @@ impl Parser<'_> {
                 if effective_pivot_type == LineType::Indentedcode && n_parents == self.n_containers
                 {
                     line.r#type = LineType::Indentedcode;
-                    if line.indent > self.code_indent_offset {
+                    if line.indent >= self.code_indent_offset {
                         line.indent -= self.code_indent_offset;
+                        if self.track {
+                            self.code_extends_to_blank_line();
+                        }
                     } else {
                         line.indent = 0;
                     }
@@ -560,40 +563,12 @@ impl Parser<'_> {
                 && self.text[off as usize] == b'<'
                 && !self.flags.no_html_blocks
             {
-                self.html_block_type = self.is_html_block_start_condition(off);
-
-                // Type 7 can't interrupt paragraph
-                if self.html_block_type == 7 && effective_pivot_type == LineType::Text {
-                    if n_parents < self.n_containers
-                        && n_brothers + n_children == 0
-                        && compat::complete_tag_ends_lazy_paragraph(&self.flags)
-                    {
-                        n_parents = self.n_containers;
-                    } else {
-                        self.html_block_type = 0;
-                    }
-                }
-                if self.html_block_type > 0
-                    && effective_pivot_type == LineType::Text
-                    && n_brothers + n_children == 0
-                    && compat::tag_does_not_end_a_list(&self.flags)
-                    && self.containers_up_to_quote() <= n_parents
+                let follows_text = effective_pivot_type == LineType::Text;
+                let starts_no_container = n_brothers + n_children == 0;
+                if let Some(parents) =
+                    self.html_block_start(off, follows_text, starts_no_container, n_parents, line)
                 {
-                    n_parents = self.n_containers;
-                }
-
-                if self.html_block_type > 0 {
-                    line.data = if self.html_block_type <= 5 {
-                        types::BLOCK_HTML_UNTIL_TEXT
-                    } else {
-                        0
-                    };
-                    if self.is_html_block_end_condition(off, self.html_block_type) {
-                        self.html_block_type = 0;
-                        line.data |= types::BLOCK_CLOSED;
-                    }
-                    line.enforce_new_block = true;
-                    line.r#type = LineType::Html;
+                    n_parents = parents;
                     break;
                 }
             }
@@ -857,6 +832,69 @@ impl Parser<'_> {
         }
 
         Ok(())
+    }
+
+    // Only lines that start with `<` get here. Inlined, it costs every other line a few instructions.
+    #[inline(never)]
+    fn html_block_start(
+        &mut self,
+        off: OFF,
+        follows_text: bool,
+        starts_no_container: bool,
+        matched: u32,
+        line: &mut Line,
+    ) -> Option<u32> {
+        let mut n_parents = matched;
+        self.html_block_type = self.is_html_block_start_condition(off);
+
+        // Type 7 can't interrupt paragraph
+        if self.html_block_type == 7 && follows_text {
+            if n_parents < self.n_containers
+                && starts_no_container
+                && compat::complete_tag_ends_lazy_paragraph(&self.flags)
+            {
+                n_parents = self.n_containers;
+            } else {
+                self.html_block_type = 0;
+            }
+        }
+        if self.html_block_type > 0
+            && follows_text
+            && starts_no_container
+            && compat::tag_does_not_end_a_list(&self.flags)
+            && self.containers_up_to_quote() <= n_parents
+        {
+            n_parents = self.n_containers;
+        }
+        if self.html_block_type == 0 {
+            return None;
+        }
+
+        line.data = if self.html_block_type <= 5 {
+            types::BLOCK_HTML_UNTIL_TEXT
+        } else {
+            0
+        };
+        if matched < n_parents {
+            line.data |= types::BLOCK_HTML_LAZY;
+        }
+        if self.is_html_block_end_condition(off, self.html_block_type) {
+            self.html_block_type = 0;
+            line.data |= types::BLOCK_CLOSED;
+        }
+        line.enforce_new_block = true;
+        line.r#type = LineType::Html;
+        Some(n_parents)
+    }
+
+    /// The blank line being analyzed is indented like the code before it: micromark counts it as a line of that code.
+    #[inline(never)]
+    fn code_extends_to_blank_line(&mut self) {
+        if let Some(cb_off) = self.current_block {
+            let hdr = self.get_block_header_at(cb_off);
+            debug_assert_eq!(hdr.block_type, BlockType::Code);
+            hdr.data = hdr.n_lines + 1;
+        }
     }
 
     pub(crate) fn process_line(

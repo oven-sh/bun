@@ -1,0 +1,187 @@
+------------------
+{ printWidth: 80 }
+------------------
+# A blank line indented like the code, with its markers in other columns
+
+> > - a
+> >
+> >       code
+> >   - b
+
+# The same with every marker in its column
+
+> > - a
+> >
+> >       code
+> >   - b
+
+# One space less, after markers that make the line end in the same column
+
+> > - a
+> >
+> >       code
+> >
+> >   - b
+
+# After a marker one column to the left
+
+> -     code
+>   - b
+
+# Three columns to the left
+
+>     code
+>
+>
+> b
+
+# Without a block quote
+
+- a
+
+      code
+  - b
+
+# Indented more than the code, before an empty line
+
+- a
+
+      code
+
+
+  - b
+
+# Indented more than the code, before the next list item
+
+-     code
+
+- b
+
+# The same in a block quote whose first marker is three columns further in
+
+> -     code
+>
+> - b
+
+# Outside any container
+
+    code
+
+
+b
+
+# After an empty line
+
+    a
+
+
+b
+
+# Tabs
+
+>     code
+>
+
+b
+
+# A tab among the spaces, in a list item
+
+- a
+
+      code
+  - b
+
+-------------------
+{ printWidth: 100 }
+-------------------
+# A blank line indented like the code, with its markers in other columns
+
+> > - a
+> >
+> >       code
+> >   - b
+
+# The same with every marker in its column
+
+> > - a
+> >
+> >       code
+> >   - b
+
+# One space less, after markers that make the line end in the same column
+
+> > - a
+> >
+> >       code
+> >
+> >   - b
+
+# After a marker one column to the left
+
+> -     code
+>   - b
+
+# Three columns to the left
+
+>     code
+>
+>
+> b
+
+# Without a block quote
+
+- a
+
+      code
+  - b
+
+# Indented more than the code, before an empty line
+
+- a
+
+      code
+
+
+  - b
+
+# Indented more than the code, before the next list item
+
+-     code
+
+- b
+
+# The same in a block quote whose first marker is three columns further in
+
+> -     code
+>
+> - b
+
+# Outside any container
+
+    code
+
+
+b
+
+# After an empty line
+
+    a
+
+
+b
+
+# Tabs
+
+>     code
+>
+
+b
+
+# A tab among the spaces, in a list item
+
+- a
+
+      code
+  - b
+
+===================== End =====================

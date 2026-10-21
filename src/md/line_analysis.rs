@@ -223,8 +223,6 @@ impl Parser<'_> {
         pos >= self.size || helpers::is_newline(ch(self.text, pos))
     }
 
-    // Only lines that start with `<` get here. Inlined, it costs every other line a few instructions.
-    #[inline(never)]
     pub(crate) fn is_html_block_start_condition(&self, off: OFF) -> u8 {
         if off + 1 >= self.size {
             return 0;

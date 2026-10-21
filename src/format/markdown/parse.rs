@@ -10,9 +10,9 @@ use super::strings::{normalize_identifier, push_lowercase, unescape};
 use bun_md::root::{Options, render_with_extensions};
 use bun_md::types::{
     BLOCK_CLOSED, BLOCK_DIRECTIVE, BLOCK_EXTENSION, BLOCK_FENCED_CODE, BLOCK_FOOTNOTE,
-    BLOCK_HTML_UNTIL_TEXT, BLOCK_SETEXT_HEADER, BlockType, Definition, ExtensionSpan, Extensions,
-    JsResult, LeafStart, OFF, Reference, Renderer, RendererImpl, SpanDetail, SpanStart, SpanType,
-    TextType, VerbatimLine,
+    BLOCK_HTML_LAZY, BLOCK_HTML_UNTIL_TEXT, BLOCK_SETEXT_HEADER, BlockType, Definition,
+    ExtensionSpan, Extensions, JsResult, LeafStart, OFF, Reference, Renderer, RendererImpl,
+    SpanDetail, SpanStart, SpanType, TextType, VerbatimLine,
 };
 use std::cell::Cell;
 
@@ -508,6 +508,8 @@ struct Builder<'t> {
     unended: Option<Unended>,
     /// The containers that have ended since the last leaf block, each with the start of the line that ended it.
     ended: Vec<(NodeId, u32)>,
+    /// Where the last leaf block ends if it's indented code whose last line is blank and indented more than it, else 0.
+    blank_code_end: u32,
     /// The open nodes extend to the very end of the text: see `Builder::extends_to_the_end`.
     is_extended_to_the_end: bool,
 
@@ -781,6 +783,7 @@ impl Builder<'_> {
         self.add_definitions_before(start);
         self.end_unended(None);
         self.ended.clear();
+        self.blank_code_end = 0;
         let node = self.tree.add(kind, start, end);
         self.append(node, start);
         self.note_child_end(end);
@@ -1056,7 +1059,8 @@ impl Builder<'_> {
         });
     }
 
-    fn indented_code(&mut self, lines: &[VerbatimLine]) {
+    /// `lines_to_blank`: the number of lines up to the last blank one that is indented like the code.
+    fn indented_code(&mut self, lines: &[VerbatimLine], lines_to_blank: usize) {
         let Some(first) = lines.first() else {
             return;
         };
@@ -1064,20 +1068,24 @@ impl Builder<'_> {
         // markers. So code that starts on the line that ends a container ends with that line.
         let line_start = self.tree.line_start(first.beg);
         if lines.len() > 1 && !self.is_for_oxfmt && self.ended.iter().any(|it| it.1 == line_start) {
-            self.indented_code(&lines[..1]);
+            self.indented_code(&lines[..1], 0);
             let blank_lines = lines[1..]
                 .iter()
                 .take_while(|line| line.beg >= line.end)
                 .count();
-            return self.indented_code(&lines[1 + blank_lines..]);
+            let rest = 1 + blank_lines;
+            return self.indented_code(&lines[rest..], lines_to_blank.saturating_sub(rest));
         }
         let (start, _) = self.indentation_start(first.beg, first.indent + 4);
-        // A blank line that is indented enough is part of the code, even at its end.
-        let code_column = self.column(first.beg).saturating_sub(first.indent);
-        let count = lines
+        let with_text = lines
             .iter()
-            .rposition(|line| line.beg < line.end || self.column(line.end) >= code_column)
+            .rposition(|line| line.beg < line.end)
             .map_or(1, |last| last + 1);
+        // To micromark a blank line indented like the code is part of it. oxfmt ends the code at its last text line.
+        let count = match self.is_for_oxfmt {
+            true => with_text,
+            false => with_text.max(lines_to_blank.min(lines.len())),
+        };
         let lines = &lines[..count];
         let end = lines.last().map_or(first.end, |line| line.end);
         let node = self.add_leaf(Kind::Code, start, end);
@@ -1094,6 +1102,8 @@ impl Builder<'_> {
                 .is_some_and(|it| it.start == it.end && it.virtual_spaces == 0)
         {
             self.segments.pop();
+        } else if lines.last().is_some_and(|line| line.beg >= line.end) {
+            self.blank_code_end = end;
         }
         let value = self.joined_value(first_segment);
         if let Some(node) = self.tree.get_mut(node) {
@@ -1128,7 +1138,13 @@ impl Builder<'_> {
         }
     }
 
-    fn html(&mut self, lines: &[VerbatimLine], is_unended: bool, is_ended_by_text: bool) {
+    fn html(
+        &mut self,
+        lines: &[VerbatimLine],
+        is_unended: bool,
+        is_ended_by_text: bool,
+        is_lazy: bool,
+    ) {
         let (Some(first), Some(last)) = (lines.first(), lines.last()) else {
             return;
         };
@@ -1136,6 +1152,7 @@ impl Builder<'_> {
         let node = self.add_leaf(Kind::Html, start, last.end);
         if let Some(node) = self.tree.get_mut(node) {
             node.number = u32::from(is_ended_by_text && self.is_for_oxfmt);
+            node.is_lazy = is_lazy;
         }
         let first_segment = self.segments.len();
         for line in lines {
@@ -1270,6 +1287,7 @@ impl Builder<'_> {
     }
 
     fn enter_container(&mut self, kind: Kind, start: u32, end: u32) -> NodeId {
+        self.blank_code_end = 0;
         let node = self.tree.add(kind, start, end);
         self.append(node, start);
         self.open_blockquotes += u32::from(kind == Kind::Blockquote);
@@ -1285,6 +1303,11 @@ impl Builder<'_> {
         self.add_definitions_before(end);
         let Some(Open { node, .. }) = self.open.pop() else {
             return;
+        };
+        // Prettier prints such code's last line as an empty line, so the list or item that it ends has that line too.
+        let end = match self.tree.kind(node) {
+            Some(Kind::List | Kind::ListItem) => end.max(self.blank_code_end),
+            _ => end,
         };
         self.open_blockquotes -= u32::from(self.tree.kind(node) == Some(Kind::Blockquote));
         if is_ended_by_colons != 0 && self.tree.kind(node) == Some(Kind::Directive) {
@@ -1798,7 +1821,7 @@ impl RendererImpl for Builder<'_> {
             BlockType::Code if flags & BLOCK_FENCED_CODE != 0 => {
                 self.fenced_code(&lines, data + self.base, flags & BLOCK_CLOSED != 0);
             }
-            BlockType::Code => self.indented_code(&lines),
+            BlockType::Code => self.indented_code(&lines, data as usize),
             BlockType::Html if flags & BLOCK_EXTENSION != 0 => {
                 if let Some(line) = lines.first() {
                     self.extension(line);
@@ -1808,6 +1831,7 @@ impl RendererImpl for Builder<'_> {
                 &lines,
                 flags & (BLOCK_HTML_UNTIL_TEXT | BLOCK_CLOSED) == BLOCK_HTML_UNTIL_TEXT,
                 flags & BLOCK_HTML_UNTIL_TEXT != 0,
+                flags & BLOCK_HTML_LAZY != 0,
             ),
             BlockType::Table => self.table(&lines),
             BlockType::Thead | BlockType::Tbody => {}
@@ -2225,6 +2249,7 @@ pub(crate) fn parse_lines(
         segments: Vec::new(),
         unended: None,
         ended: Vec::new(),
+        blank_code_end: 0,
         is_extended_to_the_end: false,
         spans: Vec::new(),
         inline_range: (0, 0),

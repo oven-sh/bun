@@ -694,22 +694,9 @@ impl<'a> Printer<'a, '_> {
     /// oxfmt: HTML right after a paragraph in a container, on a line without the container's line prefix. With the
     /// prefix before it, only an empty line keeps it from being a line of the paragraph.
     fn is_lazy_html(&self, node: &Node) -> bool {
-        if !self.options.flavor.is_oxfmt() || node.kind != Kind::Html {
-            return false;
-        }
-        let (Some(previous), Some(parent)) = (self.node(node.previous), self.node(node.parent))
-        else {
-            return false;
-        };
-        previous.kind == Kind::Paragraph
-            && self.end_line(previous) + 1 == self.start_line(node)
-            && match parent.kind {
-                Kind::ListItem => self
-                    .node(parent.first_child)
-                    .is_some_and(|first| self.column(node.start) < self.column(first.start)),
-                Kind::Blockquote => self.column(node.start) <= self.column(parent.start),
-                _ => false,
-            }
+        self.options.flavor.is_oxfmt()
+            && node.is_lazy
+            && self.kind(node.previous) == Some(Kind::Paragraph)
     }
 
     // ───────────────────────────── children ─────────────────────────────

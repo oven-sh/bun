@@ -1,0 +1,29 @@
+# In a block quote whose first marker is three columns further in
+
+   > a
+> <div>
+
+# Without the inner block quote's marker, after an outer one in another column
+
+> > a
+ >  </b>
+
+# Without the list item's indentation, in the column of its text
+
+>> - a
+ > > </b>
+
+# Without the indentation of a footnote definition
+
+[^a]: b
+</b>
+
+# After a tab
+
+- a
+	<div>
+
+# In a task item, two columns further in than the `[ ]`
+
+- [ ] a
+    <div>

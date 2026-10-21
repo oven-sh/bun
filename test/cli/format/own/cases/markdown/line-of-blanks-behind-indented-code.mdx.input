@@ -1,0 +1,46 @@
+# After a marker one column to the left
+
+ > -     code
+>       
+ >   - b
+
+# Three columns to the left
+
+   >     code
+>      
+> b
+
+# Without a block quote
+
+- a
+
+      code
+      
+  - b
+
+# Indented more than the code, before an empty line
+
+- a
+
+      code
+        
+
+  - b
+
+# Indented more than the code, before the next list item
+
+-     code
+       
+- b
+
+# The same in a block quote whose first marker is three columns further in
+
+   > -     code
+>        
+> - b
+
+# Outside any container
+
+    code
+      
+b

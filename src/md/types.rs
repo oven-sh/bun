@@ -88,6 +88,7 @@ pub trait RendererImpl {
     /// document. Asked once, before parsing. None of the methods below is
     /// called, and nothing is recorded for them, unless it does. It is then
     /// also told about the paragraphs of tight lists.
+    /// Indented code then has in `data` how many lines it has up to its last blank line that is indented like it.
     fn wants_source(&self) -> bool {
         false
     }
@@ -306,6 +307,8 @@ pub const BLOCK_EXTENSION: u32 = 0x100;
 pub const BLOCK_FOOTNOTE: u32 = 0x200;
 /// Reported as `Quote`: what is between `:::name` and `:::`.
 pub const BLOCK_DIRECTIVE: u32 = 0x400;
+/// HTML whose first line lacks the markers of its containers. See `compat::complete_tag_ends_lazy_paragraph`.
+pub const BLOCK_HTML_LAZY: u32 = 0x800;
 
 /// Parser flags controlling which extensions are enabled.
 #[derive(Copy, Clone)]

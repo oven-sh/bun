@@ -111,6 +111,8 @@ pub struct Node {
     pub ordered: bool,
     /// A list's `isAligned`.
     pub is_aligned: bool,
+    /// For HTML: its first line lacks the markers or the indentation of the containers it's in.
+    pub is_lazy: bool,
     /// An item's `checked`: 0 is `null`, 1 `false`, 2 `true`.
     pub checked: u8,
     pub reference_type: ReferenceType,
@@ -144,6 +146,7 @@ impl Node {
             spread: false,
             ordered: false,
             is_aligned: false,
+            is_lazy: false,
             checked: 0,
             reference_type: ReferenceType::Shortcut,
             number: 0,

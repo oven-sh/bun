@@ -1243,7 +1243,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let text = self.atoms().bytes(value);
-        let number = super::relate::number_from_string(text);
+        let number = bun_core::fmt::js_string_to_number(text);
         // `isValidNumberString(text, roundTripOnly)`. An enum member keeps `TypeFlagsEnumLiteral`.
         if all_type_flags & tf::NUMBER_LIKE != 0
             && (text.is_empty() || !number.is_finite() || self.number_name(number) != value)

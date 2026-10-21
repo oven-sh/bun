@@ -8,7 +8,7 @@ use smallvec::SmallVec;
 use std::cmp::Ordering;
 
 /// A UTF-16 code unit, or a byte of ASCII text.
-pub(super) trait Unit: Copy + Ord {
+pub(super) trait Unit: Copy + Ord + Into<u32> {
     fn code(self) -> u32;
 }
 
@@ -208,13 +208,11 @@ fn is_number<T: Unit>(text: &[T]) -> bool {
 
 /// `text`'s value if all of it matches `0x[0-9a-f]+`, case-insensitively.
 fn hexadecimal<T: Unit>(text: &[T]) -> Option<f64> {
-    let digits = text.get(2..).filter(|digits| !digits.is_empty())?;
+    let digits = text.get(2..)?;
     if text[0].code() != 0x30 || text[1].code() | 0x20 != 0x78 {
         return None;
     }
-    digits.iter().try_fold(0.0, |value, unit| {
-        Some(value * 16.0 + f64::from(char::from_u32(unit.code())?.to_digit(16)?))
-    })
+    bun_core::fmt::parse_digits_of_bits(digits, 4)
 }
 
 /// `text`'s chunks: runs of digits and the text between them. A number is one chunk.

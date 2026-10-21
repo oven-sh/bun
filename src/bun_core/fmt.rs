@@ -1137,11 +1137,13 @@ impl RadixInteger {
 }
 
 /// The integer whose digits, of `bits` bits each, are `digits`, as the nearest `f64`. `None` if there
-/// is no digit, or a byte that is none in that radix.
-fn parse_digits_of_bits(digits: &[u8], bits: u32) -> Option<f64> {
+/// is no digit, or a byte or UTF-16 code unit that is none in that radix. `bits` is 1 to 5: the radix
+/// is `1 << bits`.
+#[inline]
+pub fn parse_digits_of_bits<T: Copy + Into<u32>>(digits: &[T], bits: u32) -> Option<f64> {
     let mut integer = RadixInteger::default();
-    for &c in digits {
-        integer.push_digit(bits, char::from(c).to_digit(1 << bits)?);
+    for &unit in digits {
+        integer.push_digit(bits, char::from_u32(unit.into())?.to_digit(1 << bits)?);
     }
     (!digits.is_empty()).then(|| integer.to_f64())
 }

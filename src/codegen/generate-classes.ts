@@ -2214,25 +2214,6 @@ const GENERATED_CLASSES_IMPL_FOOTER = `
 
 `;
 
-function isTransferableCppImpl() {
-  return `
-bool WebCore::SerializedScriptValue::isTransferable(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
-{
-  if (!value.isCell()) return true;
-  auto cell = value.asCell();
-${classes
-  .map(c => {
-    if (c.structuredClone == null) return "";
-    if (typeof c.structuredClone === "boolean") return "";
-    if (c.structuredClone.transferable) return "";
-    return `  if (dynamicDowncast<WebCore::JS${c.name}>(cell)) return false;\n`;
-  })
-  .join("")}
-  return true;
-}
-`;
-}
-
 function initLazyClasses(initTableRows) {
   return `
 struct GeneratedLazyClassInit {
@@ -2452,7 +2433,6 @@ function writeCppSerializers() {
     allImpls.join("\n"),
     writeCppSerializers(classes),
     GENERATED_CLASSES_IMPL_FOOTER,
-    isTransferableCppImpl(),
   ]);
 
   await writeIfNotChanged(

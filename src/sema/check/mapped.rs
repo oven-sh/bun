@@ -1387,15 +1387,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// members have too. A tuple has the index signature of an array of all its elements.
     pub(super) fn union_index_infos(&mut self, parts: &[TypeId]) -> SmallVec<[IndexInfo; 2]> {
         let mut all = Vec::with_capacity(parts.len());
+        // `resolveUnionTypeMembers` asks every member for its signatures first, which resolves its members.
         for &part in parts {
             let apparent = self.apparent_type(part);
             let Some(members) = self.structured_members(apparent) else {
                 return SmallVec::new();
             };
-            // The other members are only asked for the index signatures that the first one has.
-            if all.is_empty() && members.index_infos().is_empty() {
-                return SmallVec::new();
-            }
             all.push(members);
         }
         let mut infos = SmallVec::new();
@@ -1950,9 +1947,16 @@ impl<'p, 's> Checker<'p, 's> {
     /// `computeBaseConstraint` of the conditional type `this`.
     pub(super) fn constraint_of_conditional(&mut self, this: TypeId) -> Option<TypeId> {
         let (file, _, mapper, [check, ..]) = self.cond_origin(this);
-        // `conditionalConstraintDepth`. The second test fires before `enter` would reject a query for lack of stack.
-        if self.conditional_constraint_depth >= 100 || self.is_most_of_stack_in_use() {
+        // `conditionalConstraintDepth`
+        if self.conditional_constraint_depth >= 100 {
             self.bailed_out();
+            return None;
+        }
+        // typescript-go's stack grows, so there `instantiationCount` ends the recursion. This fires before `enter`
+        // would reject a query for lack of stack.
+        if self.is_most_of_stack_in_use() {
+            self.instantiation_count = 5_000_000;
+            self.instantiation_too_deep();
             return None;
         }
         self.conditional_constraint_depth += 1;

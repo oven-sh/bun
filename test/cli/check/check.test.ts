@@ -22968,6 +22968,21 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(exitCode).toBe(1);
     });
 
+    test("reports TS2589 in a declaration whose constraint has no end", async () => {
+      using dir = project({
+        "a.ts": `
+          type R<N extends number, A extends 0[] = []> = A["length"] extends N ? { end: 1 } : { [K in keyof R<N, [...A, 0]>]: R<N, [...A, 0]>[K] };
+          export type X = R<1>;
+        `,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(2,127): error TS2589: Type instantiation is excessively deep and possibly infinite.
+        "
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS5114 at the same recursion depth as tsc for every way a type can recur", async () => {
       // `E` is the element type of the counting tuples, and it's different in every file. The first `length` lookup on
       // a tuple takes two more levels, and tuple types are shared by the whole program.

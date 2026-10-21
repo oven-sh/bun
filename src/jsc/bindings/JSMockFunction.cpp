@@ -1401,10 +1401,11 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject 
     }
 
     // An object with a callable `then` is waited on through it, as `await` does. Without one, the promise is fulfilled at once.
+    JSC::JSPromise* adopted = nullptr;
     if (returnValue.isObject() && !returnValue.inherits<JSC::JSPromise>()) {
-        auto* adopted = JSC::JSPromise::resolvedPromise(globalObject, returnValue);
+        adopted = JSC::JSPromise::resolvedPromise(globalObject, returnValue);
         RETURN_IF_EXCEPTION(scope, {});
-        if (adopted->status() != JSC::JSPromise::Status::Fulfilled)
+        if (adopted->status() == JSC::JSPromise::Status::Pending)
             returnValue = adopted;
     }
 
@@ -1420,6 +1421,13 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject 
     thisObject->implementation.set(vm, thisObject, lastImpl);
     thisObject->tail.set(vm, thisObject, lastTail);
     thisObject->fallbackImplmentation.set(vm, thisObject, lastFallback);
+
+    // Reading `then` threw. Nothing else observes the promise that holds the error.
+    if (adopted && adopted->status() == JSC::JSPromise::Status::Rejected) [[unlikely]] {
+        adopted->markAsHandled();
+        throwException(globalObject, scope, adopted->result());
+        return {};
+    }
 
     return JSC::JSValue::encode(jsUndefined());
 }

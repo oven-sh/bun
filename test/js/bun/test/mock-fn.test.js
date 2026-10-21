@@ -792,16 +792,40 @@ describe("mock()", () => {
     expect(fn()).toBe("1");
     expect(thenCalls).toBe(1);
   });
-  test("withImplementation does not wait for an object without a then() method", () => {
-    for (const value of [{ then: 42 }, { a: 1 }, () => {}]) {
-      const fn = jest.fn(() => "1");
-      const result = fn.withImplementation(
+  test.each([
+    ["an object whose then is not a function", { then: 42 }],
+    ["an object with no then", { a: 1 }],
+    ["a function with no then", () => {}],
+  ])("withImplementation does not wait for %s", (_, value) => {
+    const fn = jest.fn(() => "1");
+    const result = fn.withImplementation(
+      () => "2",
+      () => value,
+    );
+    expect(fn()).toBe("1");
+    if (isBun) expect(result).toBeUndefined();
+  });
+  test("withImplementation throws what the then getter of the returned object throws", () => {
+    const fn = jest.fn(() => "1");
+    const boom = new Error("boom");
+    const value = {
+      get then() {
+        throw boom;
+      },
+    };
+    // Not expect().toThrow(): it would hide a report of the rejected promise that held the error.
+    let thrown;
+    try {
+      fn.withImplementation(
         () => "2",
         () => value,
       );
-      expect(fn()).toBe("1");
-      if (isBun) expect(result).toBeUndefined();
+    } catch (error) {
+      thrown = error;
     }
+    expect(thrown).toBe(boom);
+    // Jest and Vitest leave the temporary implementation here.
+    if (isBun) expect(fn()).toBe("1");
   });
   if (isBun) {
     // Jest and Vitest keep the temporary implementation when the returned value rejects.

@@ -4981,11 +4981,6 @@ impl<'p, 's> Checker<'p, 's> {
                 let optional =
                     (list.iter().filter(is_member)).all(|p| p.flags.contains(PropFlags::OPTIONAL));
                 prop.flags.set(PropFlags::OPTIONAL, optional);
-                // The type is the intersection of their types, and such a variable's type has no
-                // `undefined`.
-                let has_variable = !list.iter().all(|p| is_member(&p));
-                prop.flags
-                    .set(PropFlags::WITHOUT_OPTIONALITY, optional && has_variable);
                 prop.flags
                     .set(PropFlags::READONLY, every(PropFlags::READONLY));
                 prop.flags.set(PropFlags::METHOD, every(PropFlags::METHOD));

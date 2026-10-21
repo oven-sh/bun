@@ -5091,15 +5091,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn declared_property(&mut self, ty: TypeId, name: Atom) -> Option<(TypeId, bool)> {
         let (prop, mapper) = self.get_property_of_type(ty, name)?;
         let found = self.type_of_prop(prop, mapper);
-        let is_optional = prop.flags.contains(PropFlags::OPTIONAL);
-        Some((
-            if is_optional {
-                self.optional_property(found)
-            } else {
-                found
-            },
-            is_optional,
-        ))
+        Some((found, prop.flags.contains(PropFlags::OPTIONAL)))
     }
 
     /// `getTypeOfFirstParameterOfSignature`

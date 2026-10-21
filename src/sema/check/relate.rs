@@ -879,32 +879,10 @@ impl<'p, 's> Checker<'p, 's> {
         self.members(ty).is_some_and(|m| m.has_signatures())
     }
 
-    /// `getNonMissingTypeOfSymbol`: the type of a property as used in comparisons. It includes
-    /// `undefined` when the property is optional, unless exactOptionalPropertyTypes distinguishes
-    /// the two.
+    /// `getNonMissingTypeOfSymbol`: the type of a property as used in comparisons.
     pub(super) fn type_of_prop_as_read(&mut self, prop: &Prop, mapper: MapperId) -> TypeId {
         let ty = self.type_of_prop(prop, mapper);
-        if !prop.flags.contains(PropFlags::OPTIONAL) {
-            ty
-        } else if self.p.files.options.exact_optional_property_types {
-            self.remove_missing_type(ty, true)
-        } else if prop.flags.contains(PropFlags::WITHOUT_OPTIONALITY) {
-            ty
-        } else {
-            self.cached_optional_property(ty)
-        }
-    }
-
-    /// `getTypeOfSymbol` of a property: with the missing type, the placeholder for an omitted
-    /// property.
-    pub(super) fn type_of_prop_with_missing(&mut self, prop: &Prop, mapper: MapperId) -> TypeId {
-        let ty = self.type_of_prop(prop, mapper);
-        let optionality = PropFlags::OPTIONAL | PropFlags::WITHOUT_OPTIONALITY;
-        if prop.flags & optionality == PropFlags::OPTIONAL {
-            self.optional_property(ty)
-        } else {
-            ty
-        }
+        self.remove_missing_type(ty, prop.flags.contains(PropFlags::OPTIONAL))
     }
 
     /// `property_in_type`, for looking up several names in sequence. `inherited` is `inherited_of`
@@ -3350,7 +3328,7 @@ impl<'p, 's> Checker<'p, 's> {
                 .and_then(|members| Some((members.resolved.prop(name)?, members.mapper))),
         };
         if let Some((prop, mapper)) = prop {
-            return self.type_of_prop_with_missing(prop, mapper);
+            return self.type_of_prop(prop, mapper);
         }
         let Some(members) = self.members_for_index_infos(t) else {
             return TypeId::UNDEFINED;

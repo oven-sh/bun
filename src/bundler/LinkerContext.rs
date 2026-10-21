@@ -71,11 +71,10 @@ pub(crate) use crate::linker_context::post_process_html_chunk::post_process_html
 pub(crate) use crate::linker_context::post_process_js_chunk::post_process_js_chunk;
 pub(crate) use crate::linker_context::rename_symbols_in_chunk::rename_symbols_in_chunk;
 
-/// The runtime exports the linker refers to by name while it generates
-/// wrappers and chunk prologues. One set per `bun:runtime` module in the graph.
+/// The runtime exports the linker names in wrappers and chunk prologues, one set
+/// per `bun:runtime` module.
 #[derive(Clone, Copy)]
 pub(crate) struct RuntimeRefs {
-    /// The source index of the runtime module these refs come from.
     pub(crate) source_index: Index,
     /// `__commonJS`
     pub(crate) cjs: Ref,
@@ -83,8 +82,7 @@ pub(crate) struct RuntimeRefs {
     pub(crate) esm: Ref,
     /// `__promiseAll`
     pub(crate) promise_all: Ref,
-    /// `__preload` / `__chunks`: modulepreload for split browser `import()`s.
-    /// `Ref::NONE` in the non-browser runtime variants.
+    /// `__preload` / `__chunks` (modulepreload), browser variant only.
     pub(crate) preload: Ref,
     pub(crate) chunks: Ref,
 }
@@ -141,11 +139,9 @@ pub struct LinkerContext<'a> {
     pub(crate) resolver: Option<bun_ptr::ParentRef<Resolver<'a>>>,
     pub(crate) cycle_detector: Vec<ImportTracker>,
 
-    /// Symbols of the main runtime (`Index::RUNTIME`). Use
-    /// [`Self::runtime_refs`] to pick the runtime a file links against.
+    /// The runtime at `Index::RUNTIME`. See [`Self::runtime_refs`].
     pub(crate) main_runtime: RuntimeRefs,
-    /// Symbols of the browser runtime (`LinkerGraph::browser_runtime`), when
-    /// the build has one.
+    /// The runtime at `LinkerGraph::browser_runtime`, if any.
     pub(crate) browser_runtime: RuntimeRefs,
 
     /// We may need to refer to the CommonJS "module" symbol for exports
@@ -405,8 +401,7 @@ impl<'a> LinkerContext<'a> {
             && self.main_runtime.chunks.is_valid()
     }
 
-    /// The runtime symbols that the code generated for `source_index` links
-    /// against. See `LinkerGraph::runtime_index`.
+    /// The runtime that `source_index` links against (`LinkerGraph::runtime_index`).
     #[inline]
     pub(crate) fn runtime_refs(&self, source_index: u32) -> &RuntimeRefs {
         self.runtime_refs_for_target(self.graph.ast.items_target()[source_index as usize])
@@ -422,9 +417,7 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    /// The output format of the chunk that holds `source_index`. The browser
-    /// side of a server-side build is always ESM (see
-    /// `BundleV2::initialize_client_transpiler`), whatever the server format.
+    /// The output format of `source_index`: the browser side of a server build is ESM.
     #[inline]
     pub(crate) fn output_format_for(&self, source_index: u32) -> Format {
         self.output_format_for_target(self.graph.ast.items_target()[source_index as usize])
@@ -3396,8 +3389,7 @@ fn import_tracker_eq(a: &ImportTracker, b: &ImportTracker) -> bool {
 }
 
 impl<'a> LinkerContext<'a> {
-    /// Looks up the symbol `Ref` for a named export of the runtime module
-    /// that `source_index` links against.
+    /// The `Ref` of runtime export `name` in the runtime `source_index` links against.
     #[inline]
     pub(crate) fn runtime_function(&self, source_index: u32, name: &[u8]) -> Ref {
         self.graph.runtime_function(source_index, name)
@@ -3410,8 +3402,7 @@ impl<'a> LinkerContext<'a> {
         self.graph.top_level_symbol_to_parts(id, r#ref)
     }
 
-    /// Returns the part indices in the runtime module `runtime` that declare
-    /// the top-level symbol `ref`.
+    /// The part indices in runtime module `runtime` that declare `ref`.
     #[inline]
     pub(crate) fn top_level_symbols_to_parts_for_runtime(
         &self,

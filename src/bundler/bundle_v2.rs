@@ -3814,8 +3814,7 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        /// Adds the `bun:runtime` module for `target` as the next source index
-        /// and maps `bun:wrap` to it in that target's path map.
+        /// Adds the `bun:runtime` for `target` at the next source index.
         fn enqueue_runtime(&mut self, target: options::Target) -> Result<Index, Error> {
             let source_index = Index::source(self.graph.input_files.len() as IndexInt);
             let rt = ParseTask::get_runtime_source(target, source_index);
@@ -3847,21 +3846,16 @@ pub mod bv2_impl {
             Ok(source_index)
         }
 
-        /// Whether the browser side of this server-side build has its own
-        /// `bun:runtime` module (the browser variant). The dev server format
-        /// keeps the single one: its module registry provides `bun:wrap`, and
-        /// the printer knows the runtime as source index 0.
+        /// Whether the browser side of this server-side build gets its own
+        /// `bun:runtime`. The dev server format keeps one: it provides `bun:wrap` itself.
         fn has_browser_runtime(&self) -> bool {
             self.transpiler.options.target.is_server_side()
                 && self.dev_server.is_none()
                 && self.transpiler.options.output_format != options::Format::InternalBakeDev
         }
 
-        /// Adds the browser runtime once the build has a browser side: when the
-        /// client transpiler is created for an HTML import, or once a bake
-        /// production build has enqueued its entry points (they must take the
-        /// source indices right after the reserved ones). Import records resolve
-        /// later on the bundle thread, so `runtime_source_index` never misses it.
+        /// Adds the browser runtime once the build has a browser side, before any
+        /// browser file's import records resolve.
         pub(crate) fn ensure_browser_runtime(&mut self) -> Result<(), Error> {
             if self.has_browser_runtime() && !self.graph.browser_runtime.is_valid() {
                 self.graph.browser_runtime = self.enqueue_runtime(Target::Browser)?;

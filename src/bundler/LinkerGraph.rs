@@ -525,8 +525,7 @@ pub(crate) fn generate_symbol_import_and_use(
     Ok(())
 }
 
-/// See [`LinkerGraph::is_runtime`]. A free function for callers that hold
-/// split-borrowed columns instead of the graph.
+/// See [`LinkerGraph::is_runtime`], for callers that hold split-borrowed columns.
 #[inline]
 pub(crate) fn is_runtime(browser_runtime: Index, source_index: index::Int) -> bool {
     source_index == Index::RUNTIME.get()
@@ -560,11 +559,8 @@ impl<'a> LinkerGraph<'a> {
         )
     }
 
-    /// The `bun:runtime` module that the code generated for `source_index`
-    /// links against: the browser runtime for a browser-side file of a
-    /// server-side build, the main runtime otherwise. Mirrors
-    /// `BundleV2::runtime_source_index`, which resolved the file's own
-    /// `bun:wrap` import records.
+    /// The `bun:runtime` module that `source_index` links against, the same one
+    /// `BundleV2::runtime_source_index` gave its `bun:wrap` import records.
     #[inline]
     pub(crate) fn runtime_index(&self, source_index: index::Int) -> Index {
         self.runtime_index_for_target(self.ast.items_target()[source_index as usize])

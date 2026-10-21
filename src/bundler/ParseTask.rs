@@ -326,9 +326,7 @@ impl ParseTask {
         parse_worker::get_runtime_source(target, source_index)
     }
 
-    /// The task parses a `bun:runtime` module. A server-side build with a
-    /// browser side has two of them (see `BundleV2::runtime_source_index`), so
-    /// this is not the same as `source_index.is_runtime()`.
+    /// The task parses a `bun:runtime` module (a build can have two of them).
     #[inline]
     pub(crate) fn is_runtime(&self) -> bool {
         self.path.namespace == RUNTIME_NAMESPACE

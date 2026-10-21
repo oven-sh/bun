@@ -608,8 +608,7 @@ pub struct BasicBlockRange {
 pub struct ByteRangeMapping {
     /// A bit for each code unit of the text JSC compiled, which is what JSC's offsets and the
     /// source map's generated columns count. Set if the unit can make its line executable:
-    /// not white space, and a `{` or a `}` only if the printer maps it. The text itself is only
-    /// borrowed while this is made.
+    /// not white space, and a brace only if the printer maps it. The text is borrowed to make this.
     executable_units: Bitset,
     /// Code unit offset of the first unit of each line of the text.
     line_starts: Vec<u32>,
@@ -764,9 +763,9 @@ impl ByteRangeMapping {
         })
     }
 
-    /// `line` ran as often as the code at `offset` did, if that is code. A block's brace is not:
-    /// the `{` of a loop body shares a line with a header that runs once, and after a `return` JSC
-    /// has the `}` in a block of its own that never runs.
+    /// `line` ran as often as the code at `offset`, if it is code. A block's brace is not: the `{`
+    /// of a loop body shares a line with a header that runs once, and after a `return` JSC has
+    /// the `}` in a block of its own that never runs.
     fn count_line(
         &self,
         counts: &ExecutionCounts,
@@ -781,9 +780,9 @@ impl ByteRangeMapping {
         }
     }
 
-    fn offset_of(&self, generated: bun_sourcemap::LineColumnOffset) -> Option<u32> {
-        let line = usize::try_from(generated.lines.zero_based()).ok()?;
-        let column = u32::try_from(generated.columns.zero_based()).ok()?;
+    fn offset_of(&self, position: bun_sourcemap::LineColumnOffset) -> Option<u32> {
+        let line = usize::try_from(position.lines.zero_based()).ok()?;
+        let column = u32::try_from(position.columns.zero_based()).ok()?;
         let offset = self.line_starts.get(line)?.checked_add(column)?;
         ((offset as usize) < self.executable_units.bit_length()).then_some(offset)
     }
@@ -818,17 +817,15 @@ impl ByteRangeMapping {
         }
     }
 
-    /// With `js_printer::Options::code_coverage` the printer maps only code, so the brace of an
-    /// object and not the brace of a block.
+    /// `scan` sets no brace. For coverage the printer maps the braces of an object, not of a block.
     fn set_mapped_units_executable(&mut self, text: &[u8], already_bundled: bool) {
         if already_bundled {
-            // The printer did not print this text, so it is the original of what it prints now.
-            let Some(source_map) = print_for_coverage(text) else {
-                return;
-            };
-            for &original in source_map.mappings.original() {
-                if let Some(offset) = self.offset_of(original) {
-                    self.executable_units.set(offset as usize);
+            // Bun runs a `// @bun` file as it is written, so it is the original of a map made here.
+            if let Some(source_map) = print_for_coverage(self.source_url.slice(), text) {
+                for &original in source_map.mappings.original() {
+                    if let Some(offset) = self.offset_of(original) {
+                        self.executable_units.set(offset as usize);
+                    }
                 }
             }
         } else if let Some(source_map) = bun_jsc::VirtualMachine::VirtualMachine::get()
@@ -845,7 +842,7 @@ impl ByteRangeMapping {
     }
 }
 
-/// The printer repeats a mapping at column 0 of a line that starts without one.
+/// Skips what the printer repeats at column 0 of a generated line that starts without a mapping.
 fn for_each_distinct_mapping(source_map: &ParsedSourceMap, mut each: impl FnMut(Mapping)) {
     let mut previous_original = None;
     source_map.for_each_mapping(|mapping| {
@@ -859,25 +856,13 @@ fn for_each_distinct_mapping(source_map: &ParsedSourceMap, mut each: impl FnMut(
     });
 }
 
-/// The source map of what the printer makes of `text`.
-fn print_for_coverage(text: &[u8]) -> Option<ParsedSourceMap> {
-    struct Chunk(Option<bun_sourcemap::Chunk>);
-    impl bun_js_printer::OnSourceMapChunk for Chunk {
-        fn on_source_map_chunk(
-            &mut self,
-            chunk: bun_sourcemap::Chunk,
-            _: &bun_ast::Source,
-        ) -> bun_js_printer::Result<()> {
-            self.0 = Some(chunk);
-            Ok(())
-        }
-    }
-
+/// The source map from printing `text`, or `None` if it does not parse.
+fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<ParsedSourceMap> {
     let arena = bun_alloc::Arena::new();
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
     let _ast_scope = ast_memory_allocator.enter();
 
-    let source = bun_ast::Source::init_path_string(b"", text);
+    let source = bun_ast::Source::init_path_string(path, text);
     let mut options = bun_js_parser::ParserOptions::init(Default::default(), bun_ast::Loader::Js);
     options.features.dead_code_elimination = false;
     options.features.no_macros = true;
@@ -895,7 +880,8 @@ fn print_for_coverage(text: &[u8]) -> Option<ParsedSourceMap> {
             .into_iter()
             .collect(),
     );
-    let mut chunk = Chunk(None);
+    let mut chunk = None;
+    // ASCII_ONLY = false: the chunk is VLQ text, not an `InternalSourceMap`.
     bun_js_printer::print_ast::<_, false, true>(
         &mut bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
         &arena,
@@ -904,27 +890,16 @@ fn print_for_coverage(text: &[u8]) -> Option<ParsedSourceMap> {
         &source,
         bun_js_printer::Options {
             code_coverage: true,
-            require_ref: Some(ast.require_ref),
-            import_meta_ref: ast.import_meta_ref,
             source_map_handler: Some(bun_js_printer::SourceMapHandler::for_(&mut chunk)),
             ..Default::default()
         },
     )
     .ok()?;
-    bun_sourcemap::mapping::parse(
-        chunk.0?.buffer.list.as_slice(),
-        None,
-        1,
-        bun_sourcemap::mapping::ParseOptions {
-            allow_names: false,
-            sort: false,
-        },
-    )
-    .ok()
+    bun_sourcemap::mapping::parse(chunk?.buffer.list.as_slice(), None, 1, Default::default()).ok()
 }
 
 /// `ByteRangeMapping::line_starts` and `executable_units`. Lines end where
-/// `bun_sourcemap::Chunk`'s builder ends a generated line.
+/// `bun_sourcemap` ends them, in a generated text and in an original.
 fn scan(units: impl ExactSizeIterator<Item = u16>) -> (Vec<u32>, Bitset) {
     let mut starts = vec![0u32];
     let mut executable = bun_core::handle_oom(Bitset::init_empty(units.len()));

@@ -1281,6 +1281,17 @@ pub trait OnSourceMapChunk {
     ) -> crate::Result<()>;
 }
 
+impl OnSourceMapChunk for Option<SourceMap::Chunk> {
+    fn on_source_map_chunk(
+        &mut self,
+        chunk: SourceMap::Chunk,
+        _: &bun_ast::Source,
+    ) -> crate::Result<()> {
+        *self = Some(chunk);
+        Ok(())
+    }
+}
+
 impl<'a> SourceMapHandler<'a> {
     pub(crate) fn on_source_map_chunk(
         &self,
@@ -1346,8 +1357,7 @@ pub struct Options<'a> {
     pub minify_identifiers: bool,
     pub minify_syntax: bool,
     pub print_dce_annotations: bool,
-    /// `bun test --coverage` lists a line if the source map has something on it, so the map
-    /// leaves out what is not code: the braces of blocks and of class bodies.
+    /// Coverage lists each line that is mapped, so the braces of blocks and of class bodies are not.
     pub code_coverage: bool,
 
     pub inline_require_and_import_errors: bool,
@@ -2436,6 +2446,7 @@ pub(crate) mod __gated_printer {
                 .add_source_mapping(location, self.writer.slice());
         }
 
+        #[inline]
         pub(crate) fn add_source_mapping_for_block_brace(&mut self, location: bun_ast::Loc) {
             if !self.options.code_coverage {
                 self.add_source_mapping(location);

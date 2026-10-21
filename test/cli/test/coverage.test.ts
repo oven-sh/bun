@@ -1107,9 +1107,10 @@ test("reports an uncalled function on the last line of a // @bun file without a 
 });
 
 // `braces.ts` in `source-positions-corpus.ts` has this for a file that Bun transpiles and reports by its source map.
-test.each(["// @bun", "// @bun with a source map", "coverageIgnoreSourcemaps"])(
+test.concurrent.each(["// @bun", "// @bun with a source map", "coverageIgnoreSourcemaps"])(
   "both braces of an object are listed and no brace of a block is: %s",
   async mode => {
+    // Laid out as the printer prints it, so that the lines are the same with coverageIgnoreSourcemaps.
     const lib = `export function f() {
   {
     globalThis.list = [
@@ -1130,7 +1131,7 @@ test.each(["// @bun", "// @bun with a source map", "coverageIgnoreSourcemaps"])(
         test("f", () => { expect(f()).toEqual({ one: 1 }); });
       `,
       ...(mode === "// @bun"
-        ? { "lib.js": "// @bun\n" + lib }
+        ? { "lib.js": "// @bun\n" + lib + "await 0;\nif (false) globalThis.list = [\n  {\n  }\n];\n" }
         : mode === "// @bun with a source map"
           ? { "src/lib.js": lib }
           : { "lib.js": lib, "bunfig.toml": "[test]\ncoverageIgnoreSourcemaps = true\n" }),
@@ -1160,6 +1161,10 @@ test.each(["// @bun", "// @bun with a source map", "coverageIgnoreSourcemaps"])(
     expect(record).toBeDefined();
     const above = mode === "// @bun" ? 1 : 0;
     expect([2, 4, 6, 8, 11, 12].filter(line => record!.includes(`DA:${line + above},`))).toEqual([4, 6]);
+    if (mode === "// @bun") {
+      expect(record).toContain("DA:16,0");
+      expect(record).toContain("DA:17,0");
+    }
     expect(exitCode).toBe(0);
   },
 );

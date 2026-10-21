@@ -3190,9 +3190,7 @@ describe("bundler", () => {
     format: "esm",
     treeShaking: false,
     onAfterBundle(api) {
-      api
-        .expectFile("/out/entry.js")
-        .toContain("{ count: count2 } = exports_lib, { inner: inner2 } = exports_lib2");
+      api.expectFile("/out/entry.js").toContain("{ count: count2 } = exports_lib, { inner: inner2 } = exports_lib2");
       const required = api.readFile("/out/required.js");
       expect(required).toContain("{ count } = exports_react, { inc } = exports_react;");
       expect(required).toContain("{ count: again } = exports_react;");

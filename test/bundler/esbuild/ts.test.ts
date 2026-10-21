@@ -2572,6 +2572,8 @@ describe("bundler", () => {
       s: `function f() { if (false) enum s { X = 1 } return typeof s; } export const seen = f();`,
       t: `function f(c: boolean) { if (c) enum t { X = (() => 1)() } return typeof t; } export const seen = f(true);`,
       u: `function f(c: boolean) { L: if (c) enum u { X = 1 } else return typeof u; } export const seen = f(false);`,
+      // The label has a scope, but the enum is the body of the loop: the loop head is outside the printed block.
+      n: `function f() { let read = ""; let count = 1; L: while (((read = typeof n), count-- > 0)) enum n { X = 1 } return read; } export const seen = f();`,
       v: `function f(c: boolean) { if (c) abstract class v {} return typeof v; } export const seen = f(true);`,
       w: `const dec = (value: unknown, context?: unknown) => {}; function f(c: boolean) { if (c) @dec abstract class w {} return typeof w; } export const seen = f(true);`,
       // The parser reads this arrow body twice: once to learn that ": string" is a return type.
@@ -2767,6 +2769,28 @@ describe("bundler", () => {
       },
       minifyIdentifiers: false,
       run: { stdout: `[["1","A"],4,"Model"]` },
+    });
+    // A label in a statement list has a scope of its own, which holds a
+    // declaration that is its whole body. Nothing behind the block can name
+    // it, so this file keeps the names of its nested bindings too.
+    itBundled("ts/SingleStatementBodyOfLabelKeepsNestedNames", {
+      files: {
+        "/entry.ts": /* ts */ `
+          import "./other.ts";
+          function f() { L: enum E { A = 1 } return typeof E; }
+          function g() { L: abstract class K {} return typeof K; }
+          const factory = () => { class Model {} return Model; };
+          console.log(JSON.stringify([f(), g(), factory().name]));
+        `,
+        "/other.ts": /* ts */ `
+          export const E = "other E";
+          export class K {}
+          export class Model {}
+          globalThis.keep = [E, K, Model];
+        `,
+      },
+      minifyIdentifiers: false,
+      run: { stdout: `["undefined","undefined","Model"]` },
     });
     // The dev server prints each file as a function of its own, so no other
     // file's binding is in scope there and the names stay as they are.

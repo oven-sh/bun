@@ -1833,10 +1833,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !p.lexer.has_newline_before
                     && (p.lexer.token == T::TClass || opts.ts_decorators.is_some())
                 {
-                    // `t_class` refuses a class as the whole body of `if`, `else`, a
-                    // loop, `with` or a label. This form is accepted, as in esbuild,
-                    // and prints as `{ class K {} }`.
-                    if opts.lexical_decl != LexicalDecl::AllowAll {
+                    // Printed in a block with no scope, except as a label's body.
+                    if matches!(
+                        opts.lexical_decl,
+                        LexicalDecl::Forbid | LexicalDecl::AllowFnInsideIf
+                    ) {
                         p.stop_tracking_scope_uses();
                     }
                     return Ok(Some(p.parse_class_stmt(p.lexer.loc(), opts)?));

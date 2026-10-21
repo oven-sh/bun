@@ -601,9 +601,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let scope_index = p.scopes_in_order.len();
         if !opts.is_typescript_declare {
             name.ref_ = p.declare_symbol(SymbolKind::TsEnum, name_loc, name_text)?;
-            // As the whole body of `if`, `else`, a loop, `with` or a label, this
-            // prints as `{ let E; ... }`. At module scope it is a `var`, which hoists.
-            if opts.lexical_decl != LexicalDecl::AllowAll && p.current_scope != p.module_scope {
+            // Printed in a block with no scope, except as a label's body or a module-level `var`.
+            if matches!(
+                opts.lexical_decl,
+                LexicalDecl::Forbid | LexicalDecl::AllowFnInsideIf
+            ) && p.current_scope != p.module_scope
+            {
                 p.stop_tracking_scope_uses();
             }
             let _ = p.push_scope_for_parse_pass(ScopeKind::Entry, loc)?;

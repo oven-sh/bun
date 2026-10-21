@@ -547,8 +547,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// with them, also in JavaScript, where an unused import otherwise stays for its side effects.
     /// Few: the data functions of a page and what they use.
     pub(crate) used_by_deleted_exports: Vec<u32>,
-    /// Fill `scope_uses` (bundling with the number renamer). Cleared by
-    /// `stop_tracking_scope_uses`.
+    /// Fill `scope_uses` (bundling with the number renamer).
     pub(crate) track_scope_uses: bool,
     /// Next `Scope::visit_span` pre-order index. The module scope is 0.
     pub(crate) visit_scope_count: u32,
@@ -1999,16 +1998,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.record_usage_impl(ref_, true);
     }
 
-    /// The file prints a declaration inside a block that the scope tree does
-    /// not have, so its nested names may not reuse a spelling that an
-    /// enclosing scope holds: that is how the number renamer treats a file
-    /// without scope uses. Only for forms that real code does not have: the
-    /// whole file loses the names of its nested bindings. The dev server
-    /// prints each file as a function of its own, where no other file's
-    /// binding is in scope. Not undone by `restore_parser_snapshot`: a file
-    /// without scope uses is always right.
+    /// Whole file: without scope uses, no nested name takes a spelling that an outer scope holds.
     #[cold]
     pub(crate) fn stop_tracking_scope_uses(&mut self) {
+        // The dev server prints each file as a function of its own.
         if !self.options.features.hot_module_reloading {
             self.track_scope_uses = false;
         }

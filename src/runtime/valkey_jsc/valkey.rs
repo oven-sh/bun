@@ -30,8 +30,6 @@ bun_output::define_scoped_log!(debug, Redis, visible);
 pub(crate) struct ConnectionFlags {
     pub(crate) is_manually_closed: bool,
     pub(crate) is_selecting_db_internal: bool,
-    /// The open socket's TLS handshake was accepted.
-    pub(crate) tls_established: bool,
     pub(crate) enable_offline_queue: bool,
     pub(crate) enable_auto_reconnect: bool,
     /// Set from the close that schedules a retry until the next accepted HELLO
@@ -62,7 +60,6 @@ impl Default for ConnectionFlags {
         Self {
             is_manually_closed: false,
             is_selecting_db_internal: false,
-            tls_established: false,
             enable_offline_queue: true,
             enable_auto_reconnect: true,
             is_reconnecting: false,
@@ -1308,7 +1305,6 @@ impl ValkeyClient {
         // after a previous connection exhausted retries (#29925).
         self.flags.failed = false;
         self.flags.is_selecting_db_internal = false;
-        self.flags.tls_established = false;
         if matches!(self.socket, AnySocket::SocketTcp(_)) {
             // if is tcp, we need to start the connection process
             // if is tls, we need to wait for the handshake to complete

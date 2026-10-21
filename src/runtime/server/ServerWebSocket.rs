@@ -945,10 +945,6 @@ impl ServerWebSocket {
 
             let _loop_guard = vm.enter_event_loop_scope();
 
-            // Before the abort listeners run: they can tick the loop and overwrite `message`.
-            let message_js = bun_string_jsc::create_utf8_for_js(global_object, message)
-                .map_err(|e| global_object.take_error(e));
-
             if let Some(sig) = signal {
                 // `sig` is held alive by the +1 ref released in `_cleanup`;
                 // BackRef invariant (pointee outlives the temporary) holds.
@@ -958,9 +954,10 @@ impl ServerWebSocket {
                 }
             }
 
-            let message_js = match message_js {
+            let message_js = match bun_string_jsc::create_utf8_for_js(global_object, message) {
                 Ok(v) => v,
-                Err(err) => {
+                Err(e) => {
+                    let err = global_object.take_error(e);
                     bun_output::scoped_log!(
                         WebSocketServer,
                         "onClose error (message) {}",

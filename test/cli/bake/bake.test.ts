@@ -296,6 +296,16 @@ test.concurrent.each([
     error: `"bake.config.ts": the framework of "a": 'fileSystemRouterTypes[0].clientPages' needs a 'clientEntryPoint'`,
   },
   {
+    name: "a framework whose clientPages has no serverExports list",
+    files: {
+      "bake.config.ts": `export default { plugins: [{ name: "a", framework: {
+        fileSystemRouterTypes: [{ root: "app/pages", style: "nextjs-pages", serverEntryPoint: "./r.ts", clientEntryPoint: "./c.ts", clientPages: {} }],
+      } }] };`,
+    },
+    waits: true,
+    error: `"bake.config.ts": the framework of "a": 'fileSystemRouterTypes[0].clientPages.serverExports' must be an array of export names`,
+  },
+  {
     name: "a .tsx page and an .html page at the same URL",
     files: {
       "app/pages/index.html": page,
@@ -440,7 +450,18 @@ test.concurrent.each([
   );
   const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
 
-  expect(await get(url, "/missing")).toBe("200 1");
+  // One save can start the process twice on Windows, and each start prints its own port.
+  if (!isWindows) {
+    expect(await get(url, "/missing")).toBe("200 1");
+    return;
+  }
+  const deadline = Date.now() + 10_000;
+  let response = "";
+  while (response !== "200 1" && Date.now() < deadline) {
+    const latest = [...output.text.matchAll(/url: (http:\/\/\S+)/g)].at(-1)![1];
+    response = await get(latest, "/missing").catch(String);
+  }
+  expect(response).toBe("200 1");
 });
 
 // Creating a symlink on Windows needs a privilege that CI does not have.
@@ -1070,7 +1091,9 @@ test.concurrent(
     expect(home).toContain(`<main class="layout"><h1>Home</h1></main>`);
     const post = await (await fetch(new URL("/blog/hello", url))).text();
     expect(post).toContain(`<h1>Post hello</h1>`);
-    expect(post).toContain(`<script id="__bun_bake_params" type="application/json">{"slug":"hello"}</script>`);
+    expect(post).toContain(
+      `<script id="__bun_bake_data" type="application/json">{"params":{"slug":"hello"},"props":{},"hasData":false}</script>`,
+    );
     expect(await (await fetch(new URL("/about", url))).text()).toContain("<h1>About</h1>");
     expect(await get(url, "/api/hello")).toBe(`200 {"hi":1}`);
     expect(await get(url, "/missing")).toBe("404 fallback");
@@ -1179,6 +1202,50 @@ test.concurrent("a framework with clientPages puts the pages of a route in its b
   expect(bundle).not.toContain("about-page-module");
 });
 
+test.concurrent("the browser build of a page leaves out the serverExports of its framework", async () => {
+  using dir = tempDir("bake-command-server-exports", {
+    "app/secret.js": `export const secret = "server-only-secret";`,
+    // `getServerSideProps` is not a server export of this framework, so it stays.
+    "app/pages/index.js": `
+      import { secret } from "../secret.js";
+      export const loader = () => secret.length;
+      export const getServerSideProps = () => "kept-export";
+      export default () => "home-page-module";
+    `,
+    "render/server.ts": `export function render(request, meta) {
+      return new Response(meta.pageModule.loader() + " " + meta.modules.join(" "));
+    }`,
+    "render/client.ts": `import { route } from "bun:bake/client"; route.page();`,
+    "bake.config.ts": `export default {
+      plugins: [{
+        name: "fw",
+        framework: {
+          fileSystemRouterTypes: [{
+            root: "app/pages",
+            style: "nextjs-pages",
+            serverEntryPoint: "./render/server.ts",
+            clientEntryPoint: "./render/client.ts",
+            extensions: [".js"],
+            clientPages: { serverExports: ["loader"] },
+          }],
+        },
+      }],
+    };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  // The server still has the loader.
+  const [status, length, bundleUrl] = (await get(url, "/")).split(" ");
+  expect(status).toBe("200");
+  expect(length).toBe("18");
+  const bundle = await (await fetch(new URL(bundleUrl, url))).text();
+  expect(bundle).toContain("home-page-module");
+  expect(bundle).toContain("kept-export");
+  expect(bundle).not.toContain("server-only-secret");
+});
+
 test.concurrent("bun bake sends a page's new code to a page load after an edit", async () => {
   using dir = tempDir("bake-command-page-edit", {
     "app/pages/index.tsx": `export default function Home() { return <h1>{"first-version"}</h1>; }`,
@@ -1258,6 +1325,55 @@ test.concurrent("bun bake rejects a route with dir and style in app/server.ts", 
   expect(output.text).not.toContain("url: ");
 });
 
+test.concurrent("bun bake runs the data functions of a page of the default framework", async () => {
+  using dir = tempDir("bake-command-page-data", {
+    "app/secret.ts": `export const secret = "server-only-secret";`,
+    "app/pages/dashboard.tsx": `
+      import { secret } from "../secret.ts";
+      export const getServerSideProps = async ({ request }) => {
+        const user = request.headers.get("x-user");
+        if (user === "gone") return { notFound: true };
+        if (!user) return { redirect: { destination: "/", permanent: false } };
+        return { props: { user, length: secret.length } };
+      };
+      export default function Dashboard({ user, length }) {
+        return <h1>{"Hi " + user + " " + length}</h1>;
+      }
+    `,
+    "app/pages/blog/[id].tsx": `
+      export const getStaticPaths = async () => ({ paths: [{ params: { id: "1" } }], fallback: false });
+      export const getStaticProps = async ({ params }) => ({ props: { title: "Post " + params.id } });
+      export default function Post({ title }) {
+        return <h1>{title}</h1>;
+      }
+    `,
+  });
+  linkReact(String(dir));
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  const page = await fetch(new URL("/dashboard", url), { headers: { "x-user": "ali" } });
+  const html = await page.text();
+  expect(html).toContain("<h1>Hi ali 18</h1>");
+  expect(html).toContain(`"props":{"user":"ali","length":18},"hasData":true`);
+
+  const redirect = await fetch(new URL("/dashboard", url), { redirect: "manual" });
+  expect([redirect.status, redirect.headers.get("location")]).toEqual([307, "/"]);
+  expect((await fetch(new URL("/dashboard", url), { headers: { "x-user": "gone" } })).status).toBe(404);
+
+  expect(await (await fetch(new URL("/blog/1", url))).text()).toContain("<h1>Post 1</h1>");
+  // Not in getStaticPaths, with `fallback: false`.
+  expect((await fetch(new URL("/blog/2", url))).status).toBe(404);
+
+  // The browser copy of the page has no getServerSideProps, and so no import of app/secret.ts.
+  const bundleUrl = html.match(/<script type="module" src="([^"]+)"/)![1];
+  const bundle = await (await fetch(new URL(bundleUrl, url))).text();
+  expect(bundle).toContain("app/pages/dashboard.tsx");
+  expect(bundle).not.toContain("getServerSideProps");
+  expect(bundle).not.toContain("server-only-secret");
+});
+
 test.concurrent("the default framework sends the browser bundle before a slow Suspense boundary", async () => {
   using dir = tempDir("bake-command-bootstrap", {
     // The boundary waits until the test requests /release.
@@ -1294,6 +1410,63 @@ test.concurrent("the default framework sends the browser bundle before a slow Su
   await fetch(new URL("/release", url));
   for (let r = await reader.read(); !r.done; r = await reader.read()) html += decoder.decode(r.value, { stream: true });
   expect(html).toContain("late content");
+});
+
+test.concurrent(
+  "bun bake keeps an unused import of a page in the browser, and drops the imports of getStaticProps and getStaticPaths",
+  async () => {
+    using dir = tempDir("bake-command-page-data-static", {
+      "app/secret.js": `export const secret = "server-only-secret";`,
+      "app/paths.js": `export const paths = ["only-for-paths"];`,
+      "app/register.js": `globalThis.registered = "side-effect-kept"; export default 1;`,
+      "app/pages/[slug].jsx": `
+      import { secret } from "../secret.js";
+      import { paths } from "../paths.js";
+      import registered from "../register.js";
+      export const getStaticPaths = async () => ({ paths: paths.map(slug => ({ params: { slug } })), fallback: "blocking" });
+      export const getStaticProps = async ({ params }) => ({ props: { length: secret.length } });
+      export default function Post({ length }) {
+        return <h1>{"length " + length}</h1>;
+      }
+    `,
+    });
+    linkReact(String(dir));
+
+    await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+    const url = await getServerUrl(proc);
+
+    const html = await (await fetch(new URL("/x", url))).text();
+    expect(html).toContain("<h1>length 18</h1>");
+    const bundleUrl = html.match(/<script type="module" src="([^"]+)"/)![1];
+    const bundle = await (await fetch(new URL(bundleUrl, url))).text();
+    expect(bundle).not.toContain("server-only-secret");
+    expect(bundle).not.toContain("only-for-paths");
+    expect(bundle).toContain("side-effect-kept");
+  },
+);
+
+test.concurrent("bun bake leaves the server-only imports of a .jsx page out of its browser bundle", async () => {
+  using dir = tempDir("bake-command-page-data-jsx", {
+    "app/secret.js": `export const secret = "server-only-secret";`,
+    "app/pages/index.jsx": `
+      import { secret } from "../secret.js";
+      export const getServerSideProps = async () => ({ props: { length: secret.length } });
+      export default function Home({ length }) {
+        return <h1>{"length " + length}</h1>;
+      }
+    `,
+  });
+  linkReact(String(dir));
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  const html = await (await fetch(url)).text();
+  expect(html).toContain("<h1>length 18</h1>");
+  const bundleUrl = html.match(/<script type="module" src="([^"]+)"/)![1];
+  const bundle = await (await fetch(new URL(bundleUrl, url))).text();
+  expect(bundle).toContain("app/pages/index.jsx");
+  expect(bundle).not.toContain("server-only-secret");
 });
 
 test.concurrent("bun bake reports a page that a route of app/server.ts hides", async () => {

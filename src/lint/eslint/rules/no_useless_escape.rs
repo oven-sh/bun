@@ -26,9 +26,9 @@ const ESCAPE_BACKSLASH: Message = Message::new(
 );
 
 const REGEX_GENERAL_ESCAPES: &[u8] = b"\\bcdDfnpPrsStvwWxu0123456789]";
-/// Besides `REGEX_GENERAL_ESCAPES`.
+/// In addition to `REGEX_GENERAL_ESCAPES`.
 const REGEX_NON_CHARCLASS_ESCAPES: &[u8] = b"^/.$*+?[{}|()Bk";
-/// Besides `REGEX_GENERAL_ESCAPES`.
+/// In addition to `REGEX_GENERAL_ESCAPES`.
 const REGEX_CLASSSET_CHARACTER_ESCAPES: &[u8] = b"q/[{}|()-";
 const REGEX_CLASS_SET_RESERVED_DOUBLE_PUNCTUATOR: &[u8] = b"!#$%&*+,.:;<=>?@^`~";
 
@@ -42,7 +42,7 @@ enum Quoted {
     Template,
 }
 
-/// `backslash`: where it is. `character`: what it escapes.
+/// `backslash` is the backslash's offset. `character` is the character it escapes.
 fn report<'a>(
     backslash: u32,
     character: &'a [u8],
@@ -55,13 +55,13 @@ fn report<'a>(
         true => REMOVE_ESCAPE_DO_NOT_KEEP_SEMANTICS,
         false => REMOVE_ESCAPE,
     };
-    // What ESLint suggests is a fix in oxlint, which points at the character too.
+    // ESLint's suggestion is a fix in oxlint, which also includes the character in the reported span.
     if cx.language().is_oxlint {
-        // As Rust writes a `char`.
-        let written: &[u8] = if character == b"'" { b"\\'" } else { character };
-        // The fix is as long: of two escapes side by side one pass takes the first.
-        let place = Span::new(backslash, range.end + character.len() as u32);
-        cx.report(place, UNNECESSARY_ESCAPE).data("character", written).fix(|fixer| fixer.replace(place, character));
+        // Escaped the way Rust escapes a `char`.
+        let shown_character: &[u8] = if character == b"'" { b"\\'" } else { character };
+        // The fix covers the character too, so with two adjacent escapes one pass only applies the first fix.
+        let location = Span::new(backslash, range.end + character.len() as u32);
+        cx.report(location, UNNECESSARY_ESCAPE).data("character", shown_character).fix(|fixer| fixer.replace(location, character));
         return;
     }
     let report = cx.report(range, UNNECESSARY_ESCAPE).data("character", character).hint_with(|| {
@@ -79,9 +79,9 @@ fn report<'a>(
     }
 }
 
-/// What oxlint 1.87 passes over: in a string a backslash after a backslash, also the third of `\\\"`, and in a template
-/// `\$` before a substitution or the end.
-fn oxlint_passes_over(raw: &[u8], index: usize, quoted: Quoted) -> bool {
+/// oxlint 1.87 skips a backslash that follows a backslash in a string, even the third one of `\\\"`, and in a template
+/// a `\$` before a substitution or the end.
+fn oxlint_skips(raw: &[u8], index: usize, quoted: Quoted) -> bool {
     match quoted {
         Quoted::Template => matches!(raw.get(index + 1..), Some(b"$${" | b"$`")),
         _ => index > 0 && raw.get(index - 1) == Some(&b'\\'),
@@ -112,13 +112,13 @@ fn validate_string(span: Span, quoted: Quoted, cx: &Cx<'_, NoUselessEscape>) {
             b'"' | b'\'' => quoted != Quoted::Template && raw.first() == Some(&escaped),
             _ => matches!(character, b"\xE2\x80\xA8" | b"\xE2\x80\xA9"),
         };
-        if !is_valid && !(cx.language().is_oxlint && oxlint_passes_over(raw, index, quoted)) {
+        if !is_valid && !(cx.language().is_oxlint && oxlint_skips(raw, index, quoted)) {
             report(span.start + index as u32, character, quoted == Quoted::Directive, true, cx);
         }
     }
 }
 
-/// Whether some `\` in `pattern` is before a character that need not be escaped everywhere.
+/// Fast check: true if some `\` in `pattern` escapes a character that doesn't need escaping everywhere.
 fn may_have_useless_escape(pattern: &[u8]) -> bool {
     let has_class = strings::contains_char(pattern, b'[');
     let mut at = 0;
@@ -136,29 +136,30 @@ fn may_have_useless_escape(pattern: &[u8]) -> bool {
     false
 }
 
-/// Where the `\` of a file are.
+/// The offsets of a file's backslashes.
 pub struct Backslashes<'a> {
-    /// In order.
+    /// In ascending order.
     at: &'a [u32],
-    /// How many are before the start of the span that was asked about last.
-    before_last: Cell<usize>,
+    /// How many come before the start of the last span queried.
+    cached_count: Cell<usize>,
 }
 
-/// Whether there is a `\` in `span`.
+/// True if there's a `\` in `span`.
 #[inline]
 fn has_backslash(span: Span, cx: &Cx<'_, NoUselessEscape>) -> bool {
     let all = cx.state.at;
-    // Mostly there is none between one span and the next.
-    let mut next = cx.state.before_last.get();
+    // Usually there's no backslash between one span and the next, so the cached count is still right.
+    let mut next = cx.state.cached_count.get();
     let before = next.checked_sub(1).and_then(|it| all.get(it));
     if before.is_some_and(|&at| at >= span.start) || all.get(next).is_some_and(|&at| at < span.start) {
         next = all.partition_point(|&at| at < span.start);
-        cx.state.before_last.set(next);
+        cx.state.cached_count.set(next);
     }
     all.get(next).is_some_and(|&at| at < span.end)
 }
 
-/// `` [`a`] ``, which is a `TemplateLiteral` for ESLint and not an expression here. `owner`: what has the key.
+/// Checks `` [`a`] ``, which is a `TemplateLiteral` in ESLint but not an expression here. `owner` is the node with the
+/// key.
 #[inline(never)]
 fn check_template_key<'a>(owner: Span, key: impl FnOnce() -> Option<Key<'a>>, cx: &Cx<'a, NoUselessEscape>) {
     if has_backslash(owner, cx)
@@ -180,7 +181,7 @@ impl NoUselessEscape {
         let ExprKind::Template(template) = e.kind() else {
             return;
         };
-        // The function that is the tag can see the backslashes.
+        // The tag function can see the backslashes.
         if let Node::Expr(parent) = e.parent()
             && let ExprKind::TaggedTemplate(call) = parent.kind()
             && call.template() == Some(e)
@@ -204,7 +205,7 @@ impl NoUselessEscape {
         if !may_have_useless_escape(pattern) {
             return;
         }
-        let mode = regex::Mode::of_flags(literal.flags());
+        let mode = regex::Mode::from_flags(literal.flags());
         let Ok(ast) = regex::parse_pattern(pattern, mode, regex::Options::default()) else {
             return;
         };
@@ -226,23 +227,23 @@ impl NoUselessEscape {
         }
     }
 
-    /// If `node` is a character with a `\` that is not needed: the length of the character, and
-    /// whether it is an operand of `&&` or `--`.
+    /// If `node` is a character with an unnecessary `\`, returns the character's length, and true if it's an operand of
+    /// `&&` or `--`.
     fn useless_escape(&self, node: regex::Node<'_>, unicode_sets: bool) -> Option<(usize, bool)> {
         let value = node.character()?;
         let escaped = node.raw().strip_prefix(b"\\")?;
-        let stands_for_itself = match char::from_u32(value) {
+        let escapes_itself = match char::from_u32(value) {
             Some(value) => escaped == value.encode_utf8(&mut [0; 4]).as_bytes(),
             // Without the `u` and `v` flags, the first half of a character outside the BMP. Not `\ud83d`.
             None => escaped.len() == 2,
         };
-        if !stands_for_itself || self.allow_regex_characters.iter().any(|it| it == escaped) {
+        if !escapes_itself || self.allow_regex_characters.iter().any(|it| it == escaped) {
             return None;
         }
         let class = node.ancestors().find(|it| {
             matches!(it.ty(), NodeType::CharacterClass | NodeType::ExpressionCharacterClass)
         });
-        // Only characters of ASCII are special.
+        // Only ASCII characters are special.
         let byte = *escaped.first().filter(|_| escaped.len() == 1).unwrap_or(&0x80);
         let also_allowed: &[u8] = match class {
             Some(_) if unicode_sets => REGEX_CLASSSET_CHARACTER_ESCAPES,
@@ -275,7 +276,7 @@ impl NoUselessEscape {
                     RegexKind::CharacterClass { negate: true, .. }
                         | RegexKind::ExpressionCharacterClass { negate: true, .. }
                 );
-                // Unless what is before is the `^` that negates the class.
+                // Unless the character before it is the `^` that negates the class.
                 if byte != b'^' || !is_negated || class.start() + 2 < node.start() {
                     return None;
                 }
@@ -321,7 +322,7 @@ impl Rule for NoUselessEscape {
         if !strings::contains_char(file.text(), b'`') {
             return on;
         }
-        // oxlint does not look at a type that is a template with substitutions.
+        // oxlint skips template literal types with substitutions.
         let on = match file.language().is_oxlint {
             true => on.types(&[TypeTag::StringLit]),
             false => on.types(&[TypeTag::StringLit, TypeTag::Template]),
@@ -330,7 +331,7 @@ impl Rule for NoUselessEscape {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Backslashes<'a>> {
-        Some(Backslashes { at: file.backslashes(), before_last: Cell::new(0) })
+        Some(Backslashes { at: file.backslashes(), cached_count: Cell::new(0) })
     }
 
     fn string_literal<'a>(&self, literal: Literal<'a>, cx: &mut Cx<'a, Self>) {
@@ -356,7 +357,7 @@ impl Rule for NoUselessEscape {
         }
     }
 
-    /// The templates among the types.
+    /// Checks template literal types.
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         if !has_backslash(ty.span(), cx) {
             return;

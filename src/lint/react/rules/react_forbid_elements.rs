@@ -10,7 +10,7 @@ use std::borrow::Cow;
 
 /// Disallow certain elements
 pub struct ForbidElements {
-    /// Each with its message. Of two with one name the last counts.
+    /// Each element with its message. If a name is repeated, the last entry counts.
     forbid: Vec<(Box<[u8]>, Option<String>)>,
 }
 
@@ -19,7 +19,7 @@ const FORBIDDEN_ELEMENT_MESSAGE: Message =
     Message::new("forbiddenElement_message", "<{{element}}> is forbidden, {{message}}");
 const FORBID_ELEMENTS: Message = Message::new("", "<{{element}}> is forbidden.");
 
-/// Whether a call of `createElement` can be in the file. For upstream `a.#createElement()` is one.
+/// True if the file can contain a `createElement` call. For upstream `a.#createElement()` is one.
 fn mentions_create_element(file: &File) -> bool {
     file.mentions("createElement") || (!file.language().is_oxlint && file.mentions("#createElement"))
 }
@@ -51,7 +51,7 @@ impl Rule for ForbidElements {
         if self.forbid.is_empty() {
             return None;
         }
-        // oxlint looks only where JSX can be, and knows no pragma but `React`.
+        // oxlint only checks files that can contain JSX, and its only pragma is `React`.
         if file.language().is_oxlint {
             return is_jsx(file).then_some(&b"React"[..]);
         }
@@ -64,7 +64,7 @@ impl Rule for ForbidElements {
                 if let Some(jsx) = as_jsx_element(e)
                     && let Some(name) = jsx.tag()
                 {
-                    // oxlint asks the settings of jsx-a11y what the element is.
+                    // oxlint gets the element type from the jsx-a11y settings.
                     let element = match cx.language().is_oxlint {
                         true => get_element_type(cx.file(), jsx),
                         false => Cow::Borrowed(name.text()),
@@ -84,7 +84,7 @@ impl ForbidElements {
         let Some(call) = e.as_call() else {
             return;
         };
-        // oxlint takes every `createElement(..)` for React's.
+        // oxlint treats every `createElement(..)` as React's.
         let creates_element = match is_oxlint {
             true => is_react_function_call(call, "createElement"),
             false => is_create_element(e, cx.state),
@@ -92,13 +92,13 @@ impl ForbidElements {
         if !creates_element {
             return;
         }
-        // Parentheses are nodes for oxlint.
+        // oxlint's AST keeps parentheses as nodes.
         let is_plain = |it: &Expr<'a>| !it.is_chain_root() && !(is_oxlint && it.is_parenthesized());
         let Some(argument) = call.args().first().filter(is_plain) else {
             return;
         };
         let first_char = |name: Name| strings::wtf8_first_codepoint(name.bytes()).and_then(char::from_u32);
-        // oxlint has the letters of Unicode.
+        // oxlint checks Unicode case.
         let is_uppercase = |c: char| if is_oxlint { c.is_uppercase() } else { c.is_ascii_uppercase() };
         let is_lowercase = |c: char| if is_oxlint { c.is_lowercase() } else { c.is_ascii_lowercase() };
         match argument.kind() {
@@ -112,7 +112,7 @@ impl ForbidElements {
             {
                 self.add_diagnostic_if_invalid_element(name.bytes(), argument.span(), cx);
             }
-            // upstream tests `String(value)` of every `Literal`, and takes a member expression as it is written.
+            // upstream tests `String(value)` of every `Literal`, and uses a member expression's source text.
             ExprKind::True | ExprKind::False | ExprKind::Null | ExprKind::Dot { .. } | ExprKind::Index { .. }
                 if !is_oxlint =>
             {
@@ -135,14 +135,14 @@ impl ForbidElements {
         let Some((_, message)) = self.forbid.iter().rfind(|it| *it.0 == *name) else {
             return;
         };
-        // For oxlint the message is the help.
+        // oxlint shows the message as the help text.
         if cx.language().is_oxlint {
             cx.report(span, FORBID_ELEMENTS)
                 .data("element", name.to_vec())
                 .help_with(|| message.clone().unwrap_or_default());
             return;
         }
-        // upstream's table is an object, of which `__proto__` does not become a key.
+        // upstream's table is a plain object, where assigning `__proto__` doesn't add a key.
         if name == b"__proto__" {
             return;
         }

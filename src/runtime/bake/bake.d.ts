@@ -302,9 +302,17 @@ declare module "bun" {
        * If true, the pages and layouts also go into the browser build, and the client entry point
        * loads those of the current route with `route` of `bun:bake/client`, to hydrate the server's
        * HTML. Not with `serverComponents`, where the browser gets the client components instead.
+       *
+       * `serverExports` names the exports of a page that run on the server only, such as data
+       * loaders. The browser build of a page leaves them out, with the imports that only they use.
+       *
+       * @example
+       * ```ts
+       * clientPages: { serverExports: ["loader", "action"] }
+       * ```
        * @default false
        */
-      clientPages?: boolean | undefined;
+      clientPages?: boolean | { serverExports: string[] } | undefined;
       // /**
       //  * If true, layouts act as navigation endpoints. This can be used to
       //  * implement Remix.run's router design, where `hello._index` and `hello`
@@ -608,7 +616,16 @@ declare module "bun:bake/client" {
    *
    * Only one callback can be set. This function overwrites the previous one.
    */
-  export function onServerSideReload(cb: () => void | Promise<void>): Promise<void>;
+  export function onServerSideReload(
+    cb: (update: {
+      /**
+       * Whether the update also changed code that runs in the browser, which is already applied.
+       * For a router with `clientPages`, an update to a page has both; an update to a module that
+       * only the server imports has none.
+       */
+      clientCodeChanged: boolean;
+    }) => void | Promise<void>,
+  ): Promise<void>;
 
   /**
    * For a router whose pages also run in the browser (the default React framework of `bun bake`):

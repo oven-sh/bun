@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, runCommandMaxRSS, tempDir, withoutAsanQuarantine } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { SourceMapConsumer } from "source-map";
 import { itBundled, type BundlerTestInput } from "../expectBundled";
 
 // The React Compiler emits `import { c as _c } from "react/compiler-runtime"` and
@@ -3612,6 +3613,47 @@ describe("bundler", () => {
         ParameterValueAheadOfAStatement=["a",["n",2],["m",20]]
         LetCapturedInsideTheMacroCall=[[2,5],5]
       `,
+    },
+  });
+
+  itBundled("react-compiler/SourceMapOfSwitchClauses", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Comp({ kind, a }) {
+          let y;
+          switch (kind) {
+            case "a":
+              y = [a];
+              break;
+            default:
+              y = null;
+          }
+          return <div>{y}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    outdir: "/out",
+    sourceMap: "external",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    async onAfterBundle(api) {
+      const source = api.readFile("/entry.jsx").split("\n");
+      await SourceMapConsumer.with(JSON.parse(api.readFile("/out/entry.js.map")), null, map => {
+        const words = api
+          .readFile("/out/entry.js")
+          .split("\n")
+          .flatMap((text, line) =>
+            Array.from(text.matchAll(/\b(?:case|default)\b/g), ({ 0: word, index: column }) => {
+              const original = map.originalPositionFor({ line: line + 1, column });
+              return [word, source[original.line! - 1].slice(original.column!, original.column! + word.length)];
+            }),
+          );
+        expect(words).toEqual([
+          ["case", "case"],
+          ["default", "default"],
+        ]);
+      });
     },
   });
 });

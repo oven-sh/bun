@@ -1027,7 +1027,7 @@ fn codegen_terminal(
                     None => StmtNodeList::EMPTY,
                 };
                 switch_cases.push(Case {
-                    loc: stmt_loc,
+                    loc: convert_loc(case.loc),
                     value: test,
                     body: consequent,
                 });

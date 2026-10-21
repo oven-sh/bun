@@ -417,6 +417,7 @@ enum Check {
     Copy,
     /// The destination stays as it is, and that is not an error.
     Skip,
+    Fail(ShellErr),
 }
 
 impl ShellCpTask {
@@ -561,9 +562,11 @@ impl ShellCpTask {
                 // The copy now belongs to a `ShellAsyncCpTask` (holding its
                 // own poster, completing on the JS thread via `cp_on_finish`);
                 // this task's pool part is over.
-                Ok(Check::Copy) => drop(poster),
-                result => {
-                    (*this).err = result.err();
+                Check::Copy => drop(poster),
+                check => {
+                    if let Check::Fail(err) = check {
+                        (*this).err = Some(err);
+                    }
                     (*this).task.poster = Some(poster);
                     Self::enqueue_to_event_loop(this);
                 }
@@ -620,11 +623,12 @@ impl ShellCpTask {
         src: &bun_core::ZStr,
         tgt: &bun_core::ZStr,
         appended: Option<&[u8]>,
-    ) -> Result<Check, ShellErr> {
+    ) -> Check {
         use bun_sys::S;
         use resolve_path::Platform;
 
-        let custom = |msg: String| Err(ShellErr::Custom(msg.into_bytes().into_boxed_slice()));
+        let custom =
+            |msg: String| Check::Fail(ShellErr::Custom(msg.into_bytes().into_boxed_slice()));
         let src_shown = bstr::BStr::new(&self.src);
         let tgt_shown = || -> Vec<u8> {
             let mut shown = self.tgt.clone();
@@ -639,19 +643,19 @@ impl ShellCpTask {
 
         // If lstat fails, let the copy report the error.
         let Ok(src_stat) = bun_sys::lstat(src) else {
-            return Ok(Check::Copy);
+            return Check::Copy;
         };
         // A symlink to a directory is copied as a link, so don't treat it as a directory.
         let src_is_dir = S::ISDIR(src_stat.st_mode as _);
         if let Ok(tgt_stat) = bun_sys::lstat(tgt) {
             // A directory is still merged into an existing one, without replacing its files.
             if self.opts.no_clobber && !src_is_dir {
-                return Ok(Check::Skip);
+                return Check::Skip;
             }
             if Self::same_inode(&src_stat, &tgt_stat) || src.as_bytes() == tgt.as_bytes() {
                 // Only the same operand twice is an error. Scripts rely on `cp file .` exiting 0.
                 if self.opts.no_clobber || appended.is_some() || src.as_bytes() != tgt.as_bytes() {
-                    return Ok(Check::Skip);
+                    return Check::Skip;
                 }
                 return custom(format!(
                     "{src_shown} and {} are identical (not copied)",
@@ -674,7 +678,7 @@ impl ShellCpTask {
         }
 
         if !src_is_dir {
-            return Ok(Check::Copy);
+            return Check::Copy;
         }
         let into_itself = || {
             custom(format!(
@@ -703,27 +707,24 @@ impl ShellCpTask {
             }
             ancestor = parent;
         }
-        Ok(Check::Copy)
+        Check::Copy
     }
 
     /// Resolves src/tgt to absolute paths, classifies them per the three
     /// POSIX `cp` synopses
     /// (<https://man7.org/linux/man-pages/man1/cp.1p.html>), then hands off to
     /// the node:fs async cp implementation.
-    fn run_from_thread_pool_impl(
-        &mut self,
-        poster: &bun_jsc::ConcurrentPoster,
-    ) -> Result<Check, ShellErr> {
+    fn run_from_thread_pool_impl(&mut self, poster: &bun_jsc::ConcurrentPoster) -> Check {
         // We have to give an absolute path to our cp implementation for it to
         // work with cwd.
         let src = match shell_resolve_operand(bun_sys::Tag::copyfile, &self.cwd_path, &self.src) {
             Ok(path) => path,
-            Err(e) => return Err(ShellErr::new_sys(&e)),
+            Err(e) => return Check::Fail(ShellErr::new_sys(&e)),
         };
         let mut tgt = match shell_resolve_operand(bun_sys::Tag::copyfile, &self.cwd_path, &self.tgt)
         {
             Ok(path) => path,
-            Err(e) => return Err(ShellErr::new_sys(&e)),
+            Err(e) => return Check::Fail(ShellErr::new_sys(&e)),
         };
 
         // Cases:
@@ -736,12 +737,12 @@ impl ShellCpTask {
         // need to create it.
         let src_is_dir = match Self::is_dir(&src) {
             Ok(x) => x,
-            Err(e) => return Err(ShellErr::new_sys(&e)),
+            Err(e) => return Check::Fail(ShellErr::new_sys(&e)),
         };
 
         // Any source directory without -R is an error.
         if src_is_dir && !self.opts.recursive {
-            return Err(ShellErr::Custom(
+            return Check::Fail(ShellErr::Custom(
                 format!("{} is a directory (not copied)", bstr::BStr::new(&self.src))
                     .into_bytes()
                     .into_boxed_slice(),
@@ -754,7 +755,7 @@ impl ShellCpTask {
                 // If it has a trailing directory separator, it's a directory.
                 (Self::has_trailing_sep(tgt.as_bytes()), false)
             }
-            Err(e) => return Err(ShellErr::new_sys(&e)),
+            Err(e) => return Check::Fail(ShellErr::new_sys(&e)),
         };
 
         let mut _copying_many = false;
@@ -770,13 +771,13 @@ impl ShellCpTask {
                 let basename = resolve_path::basename(src.as_bytes());
                 tgt = match shell_join_path(bun_sys::Tag::copyfile, &[tgt.as_bytes(), basename]) {
                     Ok(path) => path,
-                    Err(e) => return Err(ShellErr::new_sys(&e)),
+                    Err(e) => return Check::Fail(ShellErr::new_sys(&e)),
                 };
                 appended = Some(basename);
             } else if self.operands == 2 {
                 // source_dir -> new_target_dir.
             } else {
-                return Err(ShellErr::Custom(
+                return Check::Fail(ShellErr::Custom(
                     format!("directory {} does not exist", bstr::BStr::new(&self.tgt))
                         .into_bytes()
                         .into_boxed_slice(),
@@ -786,14 +787,14 @@ impl ShellCpTask {
         } else {
             // 3rd synopsis: source_files... -> target.
             if src_is_dir {
-                return Err(ShellErr::Custom(
+                return Check::Fail(ShellErr::Custom(
                     format!("{} is a directory (not copied)", bstr::BStr::new(&self.src))
                         .into_bytes()
                         .into_boxed_slice(),
                 ));
             }
             if !tgt_exists || !tgt_is_dir {
-                return Err(ShellErr::Custom(
+                return Check::Fail(ShellErr::Custom(
                     format!("{} is not a directory", bstr::BStr::new(&self.tgt))
                         .into_bytes()
                         .into_boxed_slice(),
@@ -802,14 +803,15 @@ impl ShellCpTask {
             let basename = resolve_path::basename(src.as_bytes());
             tgt = match shell_join_path(bun_sys::Tag::copyfile, &[tgt.as_bytes(), basename]) {
                 Ok(path) => path,
-                Err(e) => return Err(ShellErr::new_sys(&e)),
+                Err(e) => return Check::Fail(ShellErr::new_sys(&e)),
             };
             appended = Some(basename);
             _copying_many = true;
         }
 
-        if let Check::Skip = self.check_paths(&src, &tgt, appended)? {
-            return Ok(Check::Skip);
+        match self.check_paths(&src, &tgt, appended) {
+            Check::Copy => {}
+            stop => return stop,
         }
 
         let args = crate::node::fs::args::Cp::owned(
@@ -831,7 +833,7 @@ impl ShellCpTask {
             std::ptr::from_mut::<ShellCpTask>(self),
         );
 
-        Ok(Check::Copy)
+        Check::Copy
     }
 
     /// # Safety

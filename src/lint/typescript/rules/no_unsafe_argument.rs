@@ -20,7 +20,7 @@ const UNSAFE_TUPLE_SPREAD: Message = Message::new(
     "Unsafe spread of a tuple type. The argument is {{sender}} and is assigned to a parameter of type {{receiver}}.",
 );
 
-/// What is around a type in a message. oxlint has nothing there.
+/// The quote around a type in a message. oxlint doesn't quote.
 fn quote(cx: &Cx<NoUnsafeArgument>) -> &'static [u8] {
     if cx.language().is_oxlint { b"" } else { b"`" }
 }
@@ -46,7 +46,7 @@ fn describe_type_for_tuple(ty: Type, cx: &Cx<NoUnsafeArgument>) -> Vec<u8> {
     [&b"of type "[..], quote(cx), ty.to_text().as_slice(), quote(cx)].concat()
 }
 
-/// `node`: a call, a `new` or a tagged template, whose substitutions are the arguments.
+/// `node` is a call, a `new`, or a tagged template, whose substitutions are the arguments.
 fn check_unsafe_arguments<'a>(node: Expr<'a>, cx: &Cx<'a, NoUnsafeArgument>) {
     let (ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call)) = node.kind() else {
         return;
@@ -54,13 +54,13 @@ fn check_unsafe_arguments<'a>(node: Expr<'a>, cx: &Cx<'a, NoUnsafeArgument>) {
     if call.args().is_empty() {
         return;
     }
-    // A call of what is `any` is for `no-unsafe-call`.
+    // `no-unsafe-call` covers a call of an `any` value.
     let callee_type = call.callee().ty();
     if is_type_any_type(callee_type) || callee_type.is_unresolved() {
         return;
     }
 
-    // tsgolint has a `functionSignature` of its own, with another rest type.
+    // tsgolint has its own `functionSignature`, with a different rest type.
     let mut signature = match cx.language().is_oxlint {
         true => FunctionSignature::new_function_signature(node),
         false => FunctionSignature::create(node),
@@ -77,7 +77,7 @@ fn check_unsafe_arguments<'a>(node: Expr<'a>, cx: &Cx<'a, NoUnsafeArgument>) {
             };
             let argument_type = argument.ty();
             if is_unsafe_assignment(argument_type, parameter_type, argument).is_some() {
-                // tsgolint has a node for the parentheses around an argument, and reports that.
+                // tsgolint has a node for the parentheses around an argument, and reports that node.
                 let report = match cx.language().is_oxlint {
                     true => cx.report(argument.outer_span(), UNSAFE_ARGUMENT),
                     false => cx.report(argument, UNSAFE_ARGUMENT),
@@ -99,14 +99,14 @@ fn check_unsafe_arguments<'a>(node: Expr<'a>, cx: &Cx<'a, NoUnsafeArgument>) {
                 let Some(parameter_type) = signature.get_next_parameter_type() else {
                     continue;
                 };
-                // What is spread is most likely a variable, so there is no node for the element.
+                // The spread value is most likely a variable, so there's no node for the element.
                 if is_unsafe_assignment(tuple_type, parameter_type, None::<Expr<'a>>).is_some() {
                     cx.report(argument, UNSAFE_TUPLE_SPREAD)
                         .data("receiver", describe_type(parameter_type, cx))
                         .data("sender", describe_type_for_tuple(tuple_type, cx));
                 }
             }
-            // After a rest element, what follows is compared with the rest parameter, if there is one.
+            // After a rest element, the remaining arguments are compared with the rest parameter, if there is one.
             if spread_arg_type.tuple_target().is_some_and(|target| target.has_rest_element()) {
                 signature.consume_remaining_arguments();
             }

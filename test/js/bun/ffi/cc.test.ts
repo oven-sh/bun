@@ -75,12 +75,6 @@ describe.skipIf(isASAN)("given an add(a, b) function", () => {
       expect(() => res.symbols.add("1", "2")).toThrow();
     });
 
-    // looks like `b` defaults to `0`, is this U.B. or expected?
-    it.skip("when passed too few arguments, throws an error", () => {
-      // @ts-expect-error
-      expect(() => res.symbols.add(1)).toThrow();
-    });
-
     it("when passed too many arguments, still works", () => {
       // @ts-expect-error
       expect(res.symbols.add(1, 2, 3)).toBe(3);
@@ -100,6 +94,207 @@ describe.skipIf(isASAN)("given an add(a, b) function", () => {
     }).toThrow(/"subtract" is missing/);
   });
 }); // </given add(a, b) function>
+
+// Runs in a subprocess because reading past the passed arguments as a pointer or napi_value can crash.
+it("treats a missing argument as undefined", async () => {
+  using dir = tempDir("bun-ffi-cc-short-call", {
+    "short-call.c": /* c */ `
+      typedef struct test_env* env_t;
+      typedef struct test_value* value_t;
+      int add(int a, int b) { return a + b; }
+      int first_byte(int unused, const unsigned char* p) { return p ? p[0] : -1; }
+      _Bool is_nan(double a, double b) { return b != b; }
+      value_t echo(env_t env, value_t value) { return value; }
+    `,
+    "fixture.js": /* js */ `
+      import { cc } from "bun:ffi";
+      import path from "path";
+
+      const { symbols } = cc({
+        source: path.join(import.meta.dir, "short-call.c"),
+        symbols: {
+          add: { args: ["i32", "i32"], returns: "i32" },
+          first_byte: { args: ["i32", "ptr"], returns: "i32" },
+          is_nan: { args: ["f64", "f64"], returns: "bool" },
+          echo: { args: ["napi_env", "napi_value"], returns: "napi_value" },
+        },
+      });
+      const { add, first_byte, is_nan, echo } = symbols;
+      console.log(JSON.stringify({
+        add: [add(1) === add(1, undefined), add() === add(undefined, undefined), add(1, 2), add(1, 2, 3)],
+        first_byte: [first_byte(), first_byte(0), first_byte.call(null, 0), first_byte(0, new Uint8Array([7]))],
+        is_nan: [is_nan(), is_nan(1), is_nan(1, 2)],
+        echo: [typeof echo(), typeof echo(null), echo(null, 42)],
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual({
+    add: [true, true, 3, 3],
+    first_byte: [-1, -1, -1, 7],
+    is_nan: [true, true, false],
+    echo: ["undefined", "undefined", 42],
+  });
+  expect(exitCode).toBe(0);
+});
+
+it("the ptr of a symbol is the address of the C function", async () => {
+  using dir = tempDir("bun-ffi-cc-symbol-ptr", {
+    "symbols.c": /* c */ `
+      int add(int a, int b) { return a + b; }
+      int apply(int (*f)(int, int), int a, int b) { return f(a, b); }
+    `,
+    "fixture.js": /* js */ `
+      import { cc, CFunction } from "bun:ffi";
+      import path from "path";
+
+      const { symbols } = cc({
+        source: path.join(import.meta.dir, "symbols.c"),
+        symbols: {
+          add: { args: ["i32", "i32"], returns: "i32" },
+          apply: { args: ["function", "i32", "i32"], returns: "i32" },
+        },
+      });
+      console.log(JSON.stringify({
+        cfunction: new CFunction({ ptr: symbols.add.ptr, args: ["i32", "i32"], returns: "i32" })(40, 2),
+        argument: symbols.apply(symbols.add.ptr, 20, 22),
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe('{"cfunction":42,"argument":42}\n');
+  expect(exitCode).toBe(0);
+});
+
+// Runs in a subprocess because a value misread as a double becomes the pointer -1.
+it("pointer and 64-bit integer arguments accept what dlopen() accepts and throw a TypeError otherwise", async () => {
+  using dir = tempDir("bun-ffi-cc-fallible-args", {
+    "args.c": /* c */ `
+      typedef struct test_env* env_t;
+      static int native_calls = 0;
+      int get_native_calls(void) { return native_calls; }
+      int call_callback(int (*callback)(int)) { native_calls++; return callback ? callback(21) * 2 : -1; }
+      void* echo_ptr(void* p) { native_calls++; return p; }
+      void* echo_cstring(const char* s) { native_calls++; return (void*)s; }
+      void* echo_buffer(void* p) { native_calls++; return p; }
+      long long echo_i64(long long x) { native_calls++; return x; }
+      unsigned long long echo_u64(unsigned long long x) { native_calls++; return x; }
+      int with_env(env_t env, void* a, long long b) { native_calls++; return env != 0 && a != 0 && b == 5; }
+    `,
+    "fixture.js": /* js */ `
+      import { cc, JSCallback, ptr } from "bun:ffi";
+      import path from "path";
+
+      const { symbols } = cc({
+        source: path.join(import.meta.dir, "args.c"),
+        symbols: {
+          get_native_calls: { args: [], returns: "i32" },
+          call_callback: { args: ["function"], returns: "i32" },
+          echo_ptr: { args: ["ptr"], returns: "ptr" },
+          echo_cstring: { args: ["cstring"], returns: "ptr" },
+          echo_buffer: { args: ["buffer"], returns: "ptr" },
+          echo_i64: { args: ["i64"], returns: "i64" },
+          echo_u64: { args: ["u64"], returns: "u64" },
+          with_env: { args: ["napi_env", "ptr", "i64"], returns: "i32" },
+        },
+      });
+      const callback = new JSCallback(x => x + 1, { args: ["i32"], returns: "i32" });
+      const buffer = new ArrayBuffer(8);
+      const view = new Uint8Array(buffer);
+      const address = ptr(view);
+
+      function outcomes(name, ...inputs) {
+        return inputs.map(input => {
+          const before = symbols.get_native_calls();
+          try {
+            const result = symbols[name](...[].concat(input));
+            return result === address ? "address" : String(result);
+          } catch (error) {
+            return error.name + (symbols.get_native_calls() === before ? "" : " after the call");
+          }
+        });
+      }
+      const object = { ptr: address };
+      console.log(JSON.stringify({
+        call_callback: outcomes("call_callback", callback, callback.ptr, { ptr: callback.ptr }, null, undefined, () => 1, {}, "x"),
+        echo_ptr: outcomes("echo_ptr", address, 8, view, buffer, BigInt(address), { ptr: address }, null, undefined, {}, "x", true),
+        echo_cstring: outcomes("echo_cstring", address, view, null, {}, "x"),
+        echo_buffer: outcomes("echo_buffer", view, new DataView(buffer), buffer, address, null, {}),
+        echo_i64: outcomes("echo_i64", 5, -5.5, 2 ** 40, -(2n ** 63n), undefined, null, true, "5", {}),
+        echo_u64: outcomes("echo_u64", 5, 2 ** 40, 2n ** 64n - 1n, undefined, null, true, "5", {}),
+        with_env: outcomes("with_env", [null, object, 5], [null, {}, 5], [null, object, "5"], [null, "x", object], [null, view, 5n]),
+      }));
+      callback.close();
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const T = "TypeError";
+  expect(JSON.parse(stdout)).toEqual({
+    call_callback: ["44", "44", "44", "-1", "-1", T, T, T],
+    echo_ptr: ["address", "8", "address", "address", "address", "address", "null", "null", T, T, T],
+    echo_cstring: ["address", "address", "null", T, T],
+    echo_buffer: ["address", "address", T, T, T, T],
+    echo_i64: ["5", "-5", String(2 ** 40), String(-(2n ** 63n)), T, T, T, T, T],
+    echo_u64: ["5", String(2 ** 40), String(2n ** 64n - 1n), T, T, T, T, T],
+    with_env: ["1", T, T, T, "1"],
+  });
+  expect(exitCode).toBe(0);
+});
+
+it("does not run a \`ptr\` getter, which could detach the buffer of an earlier argument", () => {
+  using dir = tempDir("bun-ffi-cc-ptr-getter", {
+    "echo.c": "void* echo_first(void* first, void* second) { return first; }",
+  });
+  const library = cc({
+    source: path.join(String(dir), "echo.c"),
+    symbols: { echo_first: { args: ["ptr", "ptr"], returns: "ptr" } },
+  });
+  const buffer = new ArrayBuffer(8);
+  const detaches = {
+    get ptr() {
+      buffer.transfer();
+      return 0;
+    },
+  };
+  try {
+    expect(() => library.symbols.echo_first(new Uint8Array(buffer), detaches)).toThrow(
+      "bun:ffi cannot convert argument to 'ptr'",
+    );
+    expect(buffer.detached).toBe(false);
+  } finally {
+    library.close();
+  }
+});
+
+it("throws for an empty source array", () => {
+  expect(() => cc({ source: [] as any, symbols: { add: { args: ["int", "int"], returns: "int" } } })).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_VALUE",
+      message: 'The "source" argument must have at least one file. Received an instance of Array',
+    }),
+  );
+});
 
 describe("given a source file with syntax errors", () => {
   const source = /* c */ `
@@ -492,9 +687,127 @@ describe.skipIf(isASAN)("GC liveness of compiled symbols and callbacks", () => {
   });
 });
 
-// va_arg on x86_64 SysV lowers to a call to __va_arg, which TinyCC expects
-// libtcc1 to provide; Bun replaces libtcc1 with src/runtime/ffi/libtcc1.c.
-// TinyCC's setjmp/longjmp error handling conflicts with ASan.
+describe.concurrent("close()", () => {
+  const closed = (name: string) => `TypeError: bun:ffi: cannot call '${name}' because its library was closed`;
+
+  // fixture.js prints `results` as JSON.
+  async function run(c: string, js: string) {
+    using dir = tempDir("bun-ffi-cc-close", {
+      "lib.c": c,
+      "fixture.js": `
+        import { cc, JSCallback } from "bun:ffi";
+        import path from "path";
+        const open = symbols => cc({ source: path.join(import.meta.dir, "lib.c"), symbols });
+        const attempt = fn => {
+          try {
+            return fn();
+          } catch (e) {
+            return e.name + ": " + e.message;
+          }
+        };
+        const results = {};
+        ${js}
+        console.log(JSON.stringify(results));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { results: stdout.startsWith("{") ? JSON.parse(stdout) : stdout, stderr, exitCode };
+  }
+
+  it("throws a TypeError when a symbol is called after its library's close()", async () => {
+    const c = `
+      int add(int a, int b) { return a + b; }
+      int answer(void) { return 42; }
+    `;
+    const js = `
+      const symbols = { add: { args: ["int", "int"], returns: "int" }, answer: { args: [], returns: "int" } };
+      const lib = open(symbols);
+      const other = open(symbols);
+      const { add, answer } = lib.symbols;
+      results.open = [add(40, 2), answer()];
+      // close() must not depend on the current contents of \`symbols\`.
+      delete lib.symbols.answer;
+      lib.close();
+      results.closed = [attempt(() => add(40, 2)), attempt(() => answer())];
+      results.other = other.symbols.add(40, 2);
+    `;
+    expect(await run(c, js)).toMatchObject({
+      results: { open: [42, 42], closed: [closed("add"), closed("answer")], other: 42 },
+      exitCode: 0,
+    });
+  });
+
+  it("lets the C call finish when a JSCallback it invokes calls close()", async () => {
+    const c = `
+      typedef int (*callback_t)(int);
+      int invoke(callback_t callback, int value) { return callback(value) + 1; }
+    `;
+    const js = `
+      const lib = open({ invoke: { args: ["ptr", "int"], returns: "int" } });
+      const { invoke } = lib.symbols;
+      const callback = new JSCallback(
+        value => {
+          lib.close();
+          return value * 2;
+        },
+        { args: ["int"], returns: "int" },
+      );
+      results.closing = invoke(callback.ptr, 20);
+      results.next = attempt(() => invoke(callback.ptr, 20));
+      callback.close();
+    `;
+    expect(await run(c, js)).toMatchObject({ results: { closing: 41, next: closed("invoke") }, exitCode: 0 });
+  });
+
+  // cc()-compiled C resolves napi_* from the host process, which is only tested on POSIX (see cc-fixture.c).
+  it.skipIf(isWindows)("callbacks that the C code registered with Node-API still work after close()", async () => {
+    const c = `
+      typedef struct napi_env_fake* napi_env_t;
+      typedef struct napi_value_fake* napi_value_t;
+      typedef napi_value_t (*napi_callback_t)(napi_env_t env, void* info);
+      extern int napi_create_function(napi_env_t env, const char* name, unsigned long length, napi_callback_t cb, void* data, napi_value_t* result);
+      extern int napi_create_int32(napi_env_t env, int value, napi_value_t* result);
+      extern int napi_add_env_cleanup_hook(napi_env_t env, void (*hook)(void* arg), void* arg);
+      extern long write(int fd, const void* buf, unsigned long count);
+
+      static napi_value_t seven(napi_env_t env, void* info) {
+        napi_value_t result;
+        napi_create_int32(env, 7, &result);
+        return result;
+      }
+      static void on_exit_hook(void* arg) {
+        write(2, "cleanup hook ran\\n", 17);
+      }
+      napi_value_t make_function(napi_env_t env) {
+        napi_value_t result;
+        napi_add_env_cleanup_hook(env, on_exit_hook, 0);
+        napi_create_function(env, "seven", 5, seven, 0, &result);
+        return result;
+      }
+    `;
+    const js = `
+      const lib = open({ make_function: { args: ["napi_env"], returns: "napi_value" } });
+      const { make_function } = lib.symbols;
+      const seven = make_function();
+      lib.close();
+      results.symbol = attempt(() => make_function());
+      results.seven = seven();
+    `;
+    const { stderr, ...rest } = await run(c, js);
+    expect({ ...rest, hookRan: stderr.includes("cleanup hook ran\n") }).toEqual({
+      results: { symbol: closed("make_function"), seven: 7 },
+      exitCode: 0,
+      hookRan: true,
+    });
+  });
+});
+
 describe.skipIf(isASAN)("variadic functions inside cc()-compiled C", () => {
   it("va_arg over ints, doubles, and the stack overflow area", async () => {
     using dir = tempDir("bun-ffi-cc-varargs", {
@@ -1115,6 +1428,90 @@ describe("double <-> JSValue conversions", () => {
       exitCode: 0,
     });
   });
+});
+
+it("a compiled symbol isn't a constructor", async () => {
+  using dir = tempDir("bun-ffi-cc-construct", {
+    "returns_true.c": "_Bool returns_true(void) { return 1; }\n",
+    "fixture.js": /* js */ `
+      import { cc } from "bun:ffi";
+      import path from "path";
+
+      const { symbols, close } = cc({
+        source: path.join(import.meta.dir, "returns_true.c"),
+        symbols: { returns_true: { args: [], returns: "bool" } },
+      });
+      console.log(symbols.returns_true());
+      try {
+        console.log(Reflect.construct(symbols.returns_true, []));
+      } catch (e) {
+        console.log(e.constructor.name);
+      }
+      console.log(Array.of.call(symbols.returns_true, 1, 2, 3));
+      close();
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("true\nTypeError\n[ 1, 2, 3 ]\n");
+  expect(exitCode).toBe(0);
+});
+
+// cc()-compiled C resolves napi_* from the host process, which is only tested on POSIX (see cc-fixture.c).
+it.skipIf(isWindows)("returns undefined for a NULL napi_value and throws a pending napi exception", async () => {
+  using dir = tempDir("bun-ffi-napi-null-return", {
+    "napi_null.c": /* c */ `
+      typedef struct napi_env_fake* napi_env_t;
+      typedef struct napi_value_fake* napi_value_t;
+      extern int napi_throw_error(napi_env_t env, const char* code, const char* msg);
+
+      napi_value_t returns_null(napi_env_t env) {
+        return 0;
+      }
+      napi_value_t throws_then_returns_null(napi_env_t env) {
+        napi_throw_error(env, "ERR_FROM_C", "thrown from C");
+        return 0;
+      }
+    `,
+    "fixture.js": /* js */ `
+      import { cc } from "bun:ffi";
+      import path from "path";
+
+      const { symbols } = cc({
+        source: path.join(import.meta.dir, "napi_null.c"),
+        symbols: {
+          returns_null: { args: ["napi_env"], returns: "napi_value" },
+          throws_then_returns_null: { args: ["napi_env"], returns: "napi_value" },
+        },
+      });
+
+      console.log(typeof symbols.returns_null());
+      try {
+        symbols.throws_then_returns_null();
+        console.log("no throw");
+      } catch (e) {
+        console.log(e.code, e.message);
+      }
+      console.log(typeof symbols.returns_null());
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "inherit",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("undefined\nERR_FROM_C thrown from C\nundefined\n");
+  expect(exitCode).toBe(0);
 });
 
 describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", () => {

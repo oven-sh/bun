@@ -91,6 +91,10 @@ pub(crate) mod js_fns {
                 signature
             )));
         };
+        // The runner calls every registered callback on the main thread's VM.
+        if global_this.bun_vm().worker_ref().is_some() {
+            return Err(global_this.throw(format_args!("Cannot use {} in a Worker.", signature)));
+        }
         Ok(&mut runner.bun_test_root)
     }
 
@@ -1328,7 +1332,7 @@ impl BunTest {
                 Some(crate::cli::test_command::TestFailure::record_cb);
             vm.on_print_error_zig_exception_ctx = failure_ctx;
         }
-        vm.run_error_handler(exception, None);
+        print_error(vm, global_this, exception, None);
         if !failure_ctx.is_null() {
             vm.on_print_error_zig_exception = None;
             vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
@@ -1342,6 +1346,29 @@ impl BunTest {
             bun_core::pretty_error!("<r><d>-------------------------------<r>\n\n");
         }
 
+        Output::flush();
+    }
+}
+
+/// Prints `error`, then prints any exception the error's getters or `toString` threw during the print.
+pub(crate) fn print_error(
+    vm: &mut VirtualMachine,
+    global_this: &JSGlobalObject,
+    error: JSValue,
+    exception_list: Option<&mut bun_jsc::virtual_machine::ExceptionList>,
+) {
+    vm.run_error_handler(error, exception_list);
+    // `BunTest::run` and `run_test_callback` clear termination exceptions.
+    if global_this.has_pending_termination_exception() {
+        return;
+    }
+    let Some(left) = global_this.try_take_exception() else {
+        return;
+    };
+    vm.run_error_handler(left, None);
+    // Printing this one could throw again, so just print a note.
+    if !global_this.has_pending_termination_exception() && global_this.try_take_exception().is_some() {
+        bun_core::pretty_errorln!("<blue>note<r><d>:<r> printing the error above threw another error");
         Output::flush();
     }
 }
@@ -1743,6 +1770,19 @@ pub(crate) struct DescribeScope {
     pub(crate) failed: bool,
 }
 
+impl Drop for DescribeScope {
+    /// Drops nested scopes iteratively. The default drop recurses once per nested `describe()`.
+    fn drop(&mut self) {
+        let mut pending: Vec<TestScheduleEntry> = core::mem::take(&mut self.entries);
+        while let Some(entry) = pending.pop() {
+            if let TestScheduleEntry::Describe(mut scope) = entry {
+                pending.append(&mut scope.entries);
+                // `scope.entries` is empty, so dropping `scope` here doesn't recurse.
+            }
+        }
+    }
+}
+
 impl DescribeScope {
     pub(crate) fn create(base: BaseScope) -> Box<DescribeScope> {
         Box::new(DescribeScope {
@@ -1755,7 +1795,6 @@ impl DescribeScope {
             failed: false,
         })
     }
-    // destroy → Drop on Box<DescribeScope>; all fields own their contents.
 
     fn mark_contains_only(&mut self) {
         let mut target: Option<*mut DescribeScope> = Some(std::ptr::from_mut(self));

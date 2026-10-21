@@ -19,7 +19,7 @@ const REQUIRE_V_FLAG: Message = Message::new("requireVFlag", "Use the 'v' flag."
 const TRACE_MAP: TraceMap<'static, ()> =
     TraceMap::new(&[("RegExp", TraceMap::EMPTY.call(()).construct(()))]);
 
-/// `text` with the first `from` in it, at or after `start`, replaced by `to`.
+/// Returns `text` with the first `from` at or after `start` replaced with `to`.
 fn replace_first(text: &[u8], start: usize, from: u8, to: u8) -> Option<Vec<u8>> {
     let at = start + strings::index_of_char_usize(text.get(start..)?, from)?;
     let mut replaced = text.to_vec();
@@ -27,13 +27,13 @@ fn replace_first(text: &[u8], start: usize, from: u8, to: u8) -> Option<Vec<u8>>
     Some(replaced)
 }
 
-/// oxlint's `resolve_flags`: those of the characters `u` and `v` that are in the flags that `e` is. `None` if it does not know
-/// them. `seen` has the identifiers on the way.
+/// oxlint's `resolve_flags`: returns which of `u` and `v` are in the flags that `e` evaluates to, or `None` if it can't
+/// tell. `seen` has the identifiers followed so far.
 fn resolve_flags<'a>(e: Expr<'a>, seen: &mut SmallVec<[Expr<'a>; 4]>) -> Option<SmallVec<[u8; 2]>> {
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return None;
     }
-    let of_text = |text: &[u8]| -> SmallVec<[u8; 2]> {
+    let flags_in = |text: &[u8]| -> SmallVec<[u8; 2]> {
         b"uv".iter().copied().filter(|it| strings::contains_char(text, *it)).collect()
     };
     let e = get_inner_expression(e);
@@ -45,18 +45,18 @@ fn resolve_flags<'a>(e: Expr<'a>, seen: &mut SmallVec<[Expr<'a>; 4]>) -> Option<
             seen.push(e);
             resolve_flags(get_const_variable_initializer(e)?, seen)
         }
-        ExprKind::String(value) => Some(of_text(value.bytes())),
+        ExprKind::String(value) => Some(flags_in(value.bytes())),
         ExprKind::Template(template) => {
             let mut flags: SmallVec<[u8; 2]> = SmallVec::new();
             for i in 0..template.quasi_count() {
-                flags.extend(of_text(template.cooked(i)?.bytes()));
+                flags.extend(flags_in(template.cooked(i)?.bytes()));
                 if let Some(substitution) = template.exprs().get(i) {
                     flags.extend(resolve_flags(substitution, seen)?);
                 }
             }
             Some(flags)
         }
-        ExprKind::True | ExprKind::Null => Some(of_text(b"u")),
+        ExprKind::True | ExprKind::Null => Some(flags_in(b"u")),
         ExprKind::False | ExprKind::Number(_) => Some(SmallVec::new()),
         ExprKind::Binary { op: BinOp::Add, left, right } => {
             let mut flags = resolve_flags(left, seen)?;
@@ -74,7 +74,7 @@ fn resolve_flags<'a>(e: Expr<'a>, seen: &mut SmallVec<[Expr<'a>; 4]>) -> Option<
             };
             let is_index = index.is_finite() && index >= 0.0 && index.fract() == 0.0;
             let (_, character) = strings::wtf8_codepoints(static_string(object)?.bytes()).nth(index as usize)?;
-            is_index.then(|| of_text(&[u8::try_from(character).unwrap_or(0)]))
+            is_index.then(|| flags_in(&[u8::try_from(character).unwrap_or(0)]))
         }
         ExprKind::Binary { op: BinOp::Comma, right, .. } => resolve_flags(right, seen),
         ExprKind::Assign { op: None, value, .. } => resolve_flags(value, seen),
@@ -110,7 +110,7 @@ impl RequireUnicodeRegexp {
         if self.requires_v() { b'v' } else { b'u' }
     }
 
-    /// The flag that it takes the place of.
+    /// The flag that it replaces.
     fn other_flag(&self) -> u8 {
         if self.require_flag == Some(UnicodeFlag::U) { b'v' } else { b'u' }
     }
@@ -146,7 +146,7 @@ impl Rule for RequireUnicodeRegexp {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        // oxlint looks at what is called, not at what the variable is that is called.
+        // oxlint goes by the callee's name without resolving the variable.
         if let ExprKind::Call(call) | ExprKind::New(call) = e.kind() {
             let args = call.args();
             if !is_regexp_callee(call.callee()) || args.iter().any(|it| it.tag() == ExprTag::Spread) {
@@ -219,8 +219,8 @@ impl Rule for RequireUnicodeRegexp {
                     return Some(fixer.insert_after(penultimate_token, argument));
                 };
                 let text = flags_node.text();
-                // A `u` can be part of an escape such as `g`, or come from a substitution.
-                let is_literally_written = match flags_node.kind() {
+                // A `u` in the text can be part of an escape such as `\u0067`, and a flag can come from a substitution.
+                let is_plain_text = match flags_node.kind() {
                     ExprKind::String(_) => !strings::contains_char(text, b'\\'),
                     ExprKind::Template(template) => {
                         template.exprs().is_empty() && !strings::contains_char(text, b'\\')
@@ -228,7 +228,7 @@ impl Rule for RequireUnicodeRegexp {
                     _ => return None,
                 };
                 if strings::contains_char(&flags?, self.other_flag()) {
-                    if !is_literally_written {
+                    if !is_plain_text {
                         return None;
                     }
                     let replaced = replace_first(text, 0, self.other_flag(), replace_flag)?;

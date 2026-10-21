@@ -15,7 +15,7 @@ const NO_NULL: Message = Message::new("", "Do not use `null` literals");
 impl Rule for NoNull {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-null", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Null]);
-    /// Whether a `switch` has a `case undefined`, by where it starts.
+    /// Caches whether a `switch` has a `case undefined`, keyed by its start offset.
     type State<'a> = RefCell<FxHashMap<u32, bool>>;
 
     fn new(options: &Options) -> Self {
@@ -59,7 +59,7 @@ impl Rule for NoNull {
             }
             Some(Node::Stmt(statement)) if statement.tag() == StmtTag::Return => {
                 cx.report(null_literal, NO_NULL).fix_dangerously(|fixer| {
-                    // With the outermost `as T` or `!`.
+                    // Including the outermost `as T` or `!`.
                     let wrappers = Node::Expr(null_literal).ancestors().map_while(Node::as_expr);
                     let is_wrapper = |it: &Expr| matches!(it.tag(), ExprTag::As | ExprTag::AsConst | ExprTag::NonNull);
                     fixer.remove(wrappers.filter(is_wrapper).last().unwrap_or(null_literal))

@@ -23,7 +23,7 @@ impl Rule for MisrefactoredAssignOp {
         let Some((Some(op), target, value)) = e.as_assign() else {
             return;
         };
-        // `a &&= a && b` has no binary expression on the right for oxlint.
+        // In oxlint's AST the right side of `a &&= a && b` isn't a binary expression.
         if value.binary_op() != Some(op) || matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) || value.is_parenthesized() {
             return;
         }

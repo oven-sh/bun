@@ -32,7 +32,7 @@ pub(crate) struct Expansion {
     /// Byte offsets in `current_out` written by literal metacharacter atoms
     /// (`Asterisk`/`DoubleAsterisk`/`BraceBegin`/`Comma`/`BraceEnd`). Only
     /// these positions may act as pattern syntax in `do_brace_expand` or
-    /// `transition_to_glob_state`; metacharacter bytes from any other source
+    /// `transition_to_glob_state` (or `push_pattern_parts`); bytes from any other source
     /// (JS interpolation, quoted text, `$var`, command substitution) are data
     /// and must not change the expansion structure or broaden the glob.
     pub(crate) meta_offsets: Vec<u32>,
@@ -61,6 +61,8 @@ pub(crate) enum WordContext {
     AssignValue,
     /// A `[[ ]]` operand: always exactly one word.
     CondOperand,
+    /// A `[[ ]]` operand that is an `ast::CondPattern::Star`: one word, given as its literal parts.
+    CondPattern,
 }
 
 impl WordContext {
@@ -68,14 +70,14 @@ impl WordContext {
     const fn field_splitting(self) -> bool {
         match self {
             WordContext::Fields => true,
-            WordContext::AssignValue | WordContext::CondOperand => false,
+            WordContext::AssignValue | WordContext::CondOperand | WordContext::CondPattern => false,
         }
     }
 
     const fn brace_expansion(self) -> bool {
         match self {
             WordContext::Fields | WordContext::AssignValue => true,
-            WordContext::CondOperand => false,
+            WordContext::CondOperand | WordContext::CondPattern => false,
         }
     }
 }
@@ -97,7 +99,7 @@ pub enum ExpansionState {
 #[derive(Default)]
 pub(crate) struct ExpansionOut {
     pub(crate) buf: Vec<u8>,
-    /// Word boundaries within `buf` (for IFS splitting / glob results).
+    /// Word boundaries within `buf` (IFS splitting, glob results, the parts of a `CondPattern`).
     pub(crate) bounds: Vec<u32>,
     /// Set when the atom is a sole `$(…)`
     /// that exited non-zero, so [`Cmd::child_done`] can propagate it as the
@@ -289,6 +291,11 @@ impl Expansion {
                 match me.ctx {
                     WordContext::Fields | WordContext::AssignValue => {
                         return Self::transition_to_glob_state(interp, this);
+                    }
+                    WordContext::CondPattern => {
+                        Self::push_pattern_parts(me);
+                        me.state = ExpansionState::Done;
+                        continue;
                     }
                     WordContext::CondOperand => {}
                 }
@@ -584,6 +591,26 @@ impl Expansion {
             me.out.bounds.push(me.out.buf.len() as u32);
         }
         me.out.buf.append(&mut me.current_out);
+        me.meta_offsets.clear();
+    }
+
+    /// Flush `current_out` as the literal parts of a pattern: each `*` in `meta_offsets` ends a part.
+    fn push_pattern_parts(me: &mut Expansion) {
+        let mut part_start = 0usize;
+        for &at in &me.meta_offsets {
+            let at = at as usize;
+            // `{`, `,` and `}` are text in a pattern.
+            if me.current_out[at] != b'*' {
+                continue;
+            }
+            me.out
+                .buf
+                .extend_from_slice(&me.current_out[part_start..at]);
+            me.out.bounds.push(me.out.buf.len() as u32);
+            part_start = at + 1;
+        }
+        me.out.buf.extend_from_slice(&me.current_out[part_start..]);
+        me.current_out.clear();
         me.meta_offsets.clear();
     }
 

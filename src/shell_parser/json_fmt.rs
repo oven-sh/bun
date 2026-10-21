@@ -16,8 +16,8 @@ use core::fmt::{self, Write};
 
 use super::parse::SmolList;
 use super::parse::ast::{
-    Assign, Atom, Binary, BinaryOp, Cmd, CmdSubst, CompoundAtom, CondExpr, Expr, If, JSBuf,
-    Pipeline, PipelineItem, Redirect, RedirectFlags, Script, SimpleAtom, Stmt, Subshell,
+    Assign, Atom, Binary, BinaryOp, Cmd, CmdSubst, CompoundAtom, CondExpr, CondPattern, Expr, If,
+    JSBuf, Pipeline, PipelineItem, Redirect, RedirectFlags, Script, SimpleAtom, Stmt, Subshell,
 };
 
 // ───────────────────────────── primitives ─────────────────────────────
@@ -192,11 +192,21 @@ fn write_if(w: &mut impl Write, i: &If<'_>) -> fmt::Result {
 }
 
 fn write_condexpr(w: &mut impl Write, c: &CondExpr<'_>) -> fmt::Result {
+    let CondExpr { op, args, pattern } = c;
     w.write_str("{\"op\":")?;
-    let tag: &'static str = c.op.into();
+    let tag: &'static str = (*op).into();
     encode_json_string(w, tag.as_bytes())?;
     w.write_str(",\"args\":")?;
-    write_array(w, c.args.slice(), write_atom)?;
+    write_array(w, args.slice(), write_atom)?;
+    w.write_str(",\"pattern\":")?;
+    encode_json_string(
+        w,
+        match pattern {
+            CondPattern::None => b"None",
+            CondPattern::Star => b"Star",
+            CondPattern::Unsupported => b"Unsupported",
+        },
+    )?;
     w.write_char('}')
 }
 

@@ -942,7 +942,7 @@ describe.concurrent("sortImports sources", () => {
       const found = cases.map((_, index) => importsOf(result.files[`${index}.ts`]));
       expect(found).toEqual(cases.map(lines => lines.toSorted()));
       expect(importsOf(result.files["around.ts"])).toEqual(sorters[at][1].toSorted());
-      expect(result.second.files).toEqual(result.files);
+      expect(result.second).toMatchObject({ stderr: "", exitCode: 0, files: result.files });
     }
   });
 

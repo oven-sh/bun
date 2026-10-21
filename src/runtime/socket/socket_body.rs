@@ -606,13 +606,24 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// - An accepted socket: node makes its handle from the event loop, so no `AsyncLocalStorage`
     ///   store. The `Bun.ModuleGraph` is its listener's.
     /// - Both halves of `upgradeTLS`: that of the handle they replace.
-    /// - A TLS engine over a stream ([`CALLER_ASYNC_CONTEXT`]): the caller's.
+    /// - A TLS engine over a stream ([`CALLER_ASYNC_CONTEXT`]): the caller's, unless the caller is
+    ///   inside another `Bun.ModuleGraph` than the one the engine was made in.
     fn handle_async_context(&self, global: &JSGlobalObject, wrapper: JSValue) -> JSValue {
         match Self::async_context_get_cached(wrapper) {
-            Some(context) if context == CALLER_ASYNC_CONTEXT => {
-                jsc::cpp::AsyncContextFrame__current(global)
+            Some(context) if context != CALLER_ASYNC_CONTEXT => context,
+            Some(_) => {
+                let current = jsc::cpp::AsyncContextFrame__current(global);
+                let Some(handlers) = self.handlers.get() else {
+                    return current;
+                };
+                let made_in =
+                    jsc::cpp::AsyncContextFrame__graphFrameOf(global, handlers.on_close());
+                if jsc::cpp::AsyncContextFrame__isInCurrentModuleGraph(global, made_in) {
+                    current
+                } else {
+                    made_in
+                }
             }
-            Some(context) => context,
             None => match self.handlers.get() {
                 Some(handlers) if handlers.mode == super::SocketMode::Server => {
                     jsc::cpp::AsyncContextFrame__graphFrameOf(global, handlers.on_close())
@@ -3363,8 +3374,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let context = this.handle_async_context(global, callframe.this());
         Self::close(this, global, callframe)?;
-        this.queue_close_callback(global, callframe)
+        Self::queue_close_callback(global, context, callframe)
     }
 
     /// node:net's `_handle.reset(callback)`: [`terminate`](Self::terminate), then as
@@ -3375,18 +3387,19 @@ impl<const SSL: bool> NewSocket<SSL> {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let context = this.handle_async_context(global, callframe.this());
         Self::terminate(this, global, callframe)?;
-        this.queue_close_callback(global, callframe)
+        Self::queue_close_callback(global, context, callframe)
     }
 
     /// Queued at the call, not from the close dispatch: a handle that never connected, is still
-    /// connecting or closes behind its TLS spill has no dispatch to wait for.
+    /// connecting or closes behind its TLS spill has no dispatch to wait for. `context` is read
+    /// ahead of the close, which can release the handlers it comes from.
     fn queue_close_callback(
-        &self,
         global: &JSGlobalObject,
+        context: JSValue,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let context = self.handle_async_context(global, callframe.this());
         jsc::cpp::AsyncContextFrame__setImmediateInContext(global, context, callframe, 0)?;
         Ok(JSValue::UNDEFINED)
     }

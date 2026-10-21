@@ -2325,7 +2325,12 @@ Socket.prototype[kCloseRawConnection] = function () {
   connection.unref();
   // Its handle closed with this socket's: 'close' runs where that handle's close callback does (closeHandle). An
   // accepted socket has its server's rule (_destroy), and its server's 'close' follows whoever closes the last socket.
-  if (handle != null && connection._server == null && handle.$runInAsyncContext !== undefined && handleContextCanDiffer()) {
+  if (
+    handle != null &&
+    connection._server == null &&
+    handle.$runInAsyncContext !== undefined &&
+    handleContextCanDiffer()
+  ) {
     handle.$runInAsyncContext(destroySocket, connection);
   } else {
     connection.destroy();
@@ -4579,7 +4584,7 @@ function closeSocketHandle(self, handle, isException, isCleanupPending = false) 
   // A TLS engine over a net.Socket has no handle of its own in node: its close callback is a 'close' listener of that
   // socket, which runs where the socket's handle was made. Read ahead of the destroy below, which detaches that handle.
   const stream = self[kupgraded];
-  const streamHandle = stream instanceof Socket ? stream._handle : null;
+  const streamHandle = stream instanceof Socket ? (stream as SocketInstance)._handle : null;
   // Ahead of the immediate below: the transport's 'close' precedes this socket's.
   const transport = transportToDestroy(self);
   if (transport !== undefined) abortTransport(transport);

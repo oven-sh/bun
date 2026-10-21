@@ -181,6 +181,501 @@ describe("HTTP/3 header encoding", () => {
   });
 });
 
+// A field section with no field lines is valid QPACK (RFC 9204 section 4.5):
+// the block is only its two-byte prefix. node:quic decodes one that a peer
+// sends. It sends none for hints or trailers that have no field lines, because
+// a peer with a decoder that fails the block closes the connection.
+describe("HTTP/3 header blocks with no field lines", () => {
+  const encoder = new TextEncoder();
+  const sni = { "*": { keys: [key], certs: [cert] } };
+  const transportParams = { maxIdleTimeout: 5 };
+  const clientOptions = {
+    servername: "localhost",
+    verifyPeer: "manual",
+    transportParams,
+    // A failed session is reported by what its streams deliver.
+    onerror() {},
+  } as SessionOptions;
+  const request = (path: string) => ({
+    ":method": "GET",
+    ":path": path,
+    ":scheme": "https",
+    ":authority": "localhost",
+  });
+  const text = async (stream: any) => {
+    let body = "";
+    for await (const batch of stream) for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+    return body;
+  };
+  const hello = (stream: any, headers: Record<string, string> = {}) => {
+    stream.sendHeaders({ ":status": "200", ...headers });
+    stream.writer.writeSync(encoder.encode("hello"));
+    stream.writer.endSync();
+  };
+  const ignoreStreams = async (serverSession: any) => {
+    serverSession.onstream = (stream: any) => {
+      stream.closed.catch(() => {});
+    };
+    await serverSession.closed.catch(() => {});
+  };
+
+  // A server whose "/held" response stays open until `finishHeld()`. Each test
+  // ends its subject stream first, so the held body is complete only if the
+  // connection outlived the subject stream.
+  async function listenHolding(
+    respond: (stream: any, headers: Record<string, any>) => void,
+    callbacks: Record<string, unknown> = {},
+  ) {
+    let heldStream: any;
+    // The request paths of each session, in arrival order.
+    const requests = new Map<unknown, string[]>();
+    const server = await listen(ignoreStreams, {
+      sni,
+      transportParams,
+      onheaders(this: any, headers: Record<string, any>) {
+        requests.set(this.session, [...(requests.get(this.session) ?? []), headers[":path"]]);
+        if (headers[":path"] !== "/held") return respond(this, headers);
+        // `callbacks` are for the subject stream. This one ends with a FIN.
+        this.onwanttrailers = undefined;
+        this.sendHeaders({ ":status": "200" });
+        this.writer.writeSync(encoder.encode("first,"));
+        heldStream = this;
+      },
+      ...callbacks,
+    });
+    return {
+      address: server.address!,
+      requests: () => [...requests.values()],
+      finishHeld() {
+        heldStream?.writer.writeSync(encoder.encode("second"));
+        heldStream?.writer.endSync();
+      },
+      // Not close(): that waits for the session that fetch() keeps in its pool.
+      async [Symbol.asyncDispose]() {
+        server.destroy();
+        await server.closed;
+      },
+    };
+  }
+
+  // Runs `subject` on a node:quic client that also reads the held response.
+  async function besideHeldStream<T>(
+    origin: Awaited<ReturnType<typeof listenHolding>>,
+    subject: (client: any) => Promise<T>,
+    options: Partial<SessionOptions> = {},
+  ) {
+    await using client: any = await connect(origin.address, { ...clientOptions, ...options });
+    await client.opened;
+    const heldStream = await client.createBidirectionalStream({ headers: request("/held") });
+    heldStream.closed.catch(() => {});
+    // The subject starts once the held response is under way.
+    const started = Promise.withResolvers<void>();
+    const held = (async () => {
+      let body = "";
+      try {
+        for await (const batch of heldStream) {
+          for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+          started.resolve();
+        }
+      } catch (error: any) {
+        body += " (error " + error.code + ")";
+      } finally {
+        started.resolve();
+      }
+      return body;
+    })();
+    await started.promise;
+    const result = await subject(client);
+    origin.finishHeld();
+    return { subject: result, held: await held };
+  }
+
+  // What the client sees on one stream, read once the stream is closed: every
+  // header block is reported by then. A trailers event has no fixed place
+  // among the body events, so it is kept apart.
+  async function streamEvents(client: any, headers?: Record<string, string>, send?: (stream: any) => void) {
+    const events: string[] = [];
+    const trailers: object[] = [];
+    const stream = await client.createBidirectionalStream({
+      ...(headers && { headers }),
+      oninfo: (block: Record<string, any>) => events.push("info " + block[":status"]),
+      onheaders: (block: Record<string, any>) => events.push("headers " + block[":status"]),
+      ontrailers: (block: Record<string, any>) => trailers.push({ ...block }),
+    });
+    const closed = stream.closed.catch(() => {});
+    send?.(stream);
+    try {
+      for await (const batch of stream) {
+        for (const chunk of batch) events.push("data " + Buffer.from(chunk).toString("latin1"));
+      }
+      events.push("end");
+    } catch (error: any) {
+      events.push("error " + error.code);
+    }
+    await closed;
+    return { events, trailers };
+  }
+  const getSubject = (client: any) => streamEvents(client, request("/subject"));
+  const helloOnly = { events: ["headers 200", "data hello", "end"], trailers: [] };
+
+  describe("as trailers or hints", () => {
+    test.each([
+      ["{}", {}],
+      ["{ name: undefined }", { "x-none": undefined }],
+      ["{ name: [] }", { "x-none": [] }],
+    ])("sendTrailers(%s) from onwanttrailers ends the stream with only the FIN", async (_, zero) => {
+      const sent: boolean[] = [];
+      await using origin = await listenHolding(hello, {
+        onwanttrailers(this: any) {
+          sent.push(this.sendTrailers(zero), this.sendTrailers(zero));
+        },
+      });
+      const outcome = await besideHeldStream(origin, getSubject);
+      expect({ sent, ...outcome }).toEqual({ sent: [true, false], subject: helloOnly, held: "first,second" });
+    });
+
+    test("pendingTrailers = {} ends the stream with only the FIN", async () => {
+      let wantTrailersCalls = 0;
+      await using origin = await listenHolding(
+        stream => {
+          stream.pendingTrailers = {};
+          hello(stream);
+        },
+        // Pending trailers are sent only from a stream that has onwanttrailers.
+        { onwanttrailers: () => wantTrailersCalls++ },
+      );
+      const outcome = await besideHeldStream(origin, getSubject);
+      expect({ wantTrailersCalls, ...outcome }).toEqual({
+        wantTrailersCalls: 0,
+        subject: helloOnly,
+        held: "first,second",
+      });
+    });
+
+    test("sendInformationalHeaders({}) sends nothing", async () => {
+      let sent: boolean | undefined;
+      await using origin = await listenHolding(stream => {
+        sent = stream.sendInformationalHeaders({});
+        hello(stream);
+      });
+      const outcome = await besideHeldStream(origin, getSubject);
+      expect({ sent, ...outcome }).toEqual({ sent: true, subject: helloOnly, held: "first,second" });
+    });
+
+    // lsquic keeps a header block that flow control has not let out yet, and
+    // it refuses the next block until then. A block with no field lines needs
+    // no room: hints return true, and trailers end the stream after the block.
+    test("sendInformationalHeaders({}) and sendTrailers({}) behind a header block that waits for flow control", async () => {
+      const sent: boolean[] = [];
+      await using origin = await listenHolding(stream => {
+        sent.push(
+          // More than the 4096 bytes that the client lets the server send at first.
+          stream.sendHeaders({ ":status": "200", "x-pad": Buffer.alloc(8000, "p").toString() }),
+          stream.sendInformationalHeaders({}),
+          stream.sendTrailers({}),
+          stream.sendTrailers({}),
+        );
+        // Ends the stream where the trailers were refused.
+        stream.writer.endSync();
+      });
+      const outcome = await besideHeldStream(origin, getSubject, {
+        transportParams: { ...transportParams, initialMaxStreamDataBidiLocal: 4096 },
+      });
+      expect({ sent, ...outcome }).toEqual({
+        sent: [true, true, true, false],
+        subject: { events: ["headers 200", "end"], trailers: [] },
+        held: "first,second",
+      });
+    });
+
+    // The frame is left out only on a bidirectional stream whose send side is
+    // open. Anywhere else the call goes to lsquic as before.
+    test("sendTrailers({}) and sendInformationalHeaders({}) are refused on a unidirectional stream", async () => {
+      await using server = await listen(ignoreStreams, {
+        sni,
+        // HTTP/3 opens three unidirectional streams of its own.
+        transportParams: { ...transportParams, initialMaxStreamsUni: 4 },
+      });
+      await using client: any = await connect(server.address!, clientOptions);
+      await client.opened;
+      const stream = await client.createUnidirectionalStream();
+      const outcome = {
+        pending: stream.pending,
+        sendTrailers: stream.sendTrailers({}),
+        sendInformationalHeaders: stream.sendInformationalHeaders({}),
+        written: stream.writer.writeSync(encoder.encode("hello")),
+        ended: stream.writer.endSync(),
+      };
+      expect(outcome).toEqual({
+        pending: false,
+        sendTrailers: false,
+        sendInformationalHeaders: false,
+        written: true,
+        ended: 5,
+      });
+      // The send side ended with the writer, so the stream closes.
+      await stream.closed;
+    });
+
+    test("sendTrailers({}) after resetStream() returns what lsquic returns for a block", async () => {
+      const sent: boolean[] = [];
+      await using origin = await listenHolding(stream => {
+        stream.sendHeaders({ ":status": "200" });
+        stream.resetStream(7n);
+        sent.push(stream.sendTrailers({}), stream.sendTrailers({}));
+      });
+      const { held } = await besideHeldStream(origin, getSubject);
+      expect({ sent, held }).toEqual({ sent: [true, false], held: "first,second" });
+    });
+
+    test.each([
+      ["the writer ended the stream", hello, "hello"],
+      [
+        "resetStream() reached the peer",
+        (stream: any) => {
+          stream.sendHeaders({ ":status": "200" });
+          stream.resetStream(7n);
+        },
+        "ERR_QUIC_STREAM_RESET",
+      ],
+    ])("sendInformationalHeaders({}) and sendTrailers({}) are refused after %s", async (_, respond, response) => {
+      const responseRead = Promise.withResolvers<void>();
+      const late = Promise.withResolvers<object>();
+      await using server = await listen(ignoreStreams, {
+        sni,
+        transportParams,
+        onheaders(this: any) {
+          respond(this);
+          responseRead.promise.then(() =>
+            late.resolve({
+              destroyed: this.destroyed,
+              sendInformationalHeaders: this.sendInformationalHeaders({}),
+              sendTrailers: this.sendTrailers({}),
+            }),
+          );
+        },
+      });
+      await using client: any = await connect(server.address!, clientOptions);
+      await client.opened;
+      const stream = await client.createBidirectionalStream({});
+      stream.closed.catch(() => {});
+      // The request does not end, so the server's stream outlives its send side.
+      stream.sendHeaders(request("/subject"));
+      const read = await text(stream).catch((error: any) => error.code);
+      responseRead.resolve();
+      const outcome = { read, late: await late.promise };
+      // Drops the open request, so that both sessions can close.
+      stream.destroy();
+      expect(outcome).toEqual({
+        read: response,
+        late: { destroyed: false, sendInformationalHeaders: false, sendTrailers: false },
+      });
+    });
+
+    // lsquic resets a request stream whose FIN comes before a header block. So
+    // trailers that are the first block of a stream keep their HEADERS frame.
+    // The two cases pin what a peer reports today for such a message, which
+    // has no pseudo-header fields: the block as it is.
+    test("sendTrailers({}) as the first block of a response still sends the block", async () => {
+      const sent: boolean[] = [];
+      await using origin = await listenHolding(stream => {
+        sent.push(stream.sendTrailers({}), stream.sendHeaders({ ":status": "200" }));
+      });
+      const outcome = await besideHeldStream(origin, getSubject);
+      expect({ sent, ...outcome }).toEqual({
+        sent: [true, false],
+        // Headers that have no ":status".
+        subject: { events: ["headers undefined", "end"], trailers: [] },
+        held: "first,second",
+      });
+    });
+
+    test("sendTrailers({}) queued as the first block of a request still sends the block", async () => {
+      const requests: object[] = [];
+      await using server = await listen(ignoreStreams, {
+        sni,
+        transportParams,
+        onheaders(this: any, headers: Record<string, any>) {
+          requests.push({ ...headers });
+          this.sendHeaders({ ":status": "400" }, { terminal: true });
+        },
+      });
+      await using client: any = await connect(server.address!, clientOptions);
+      let queued: unknown[] = [];
+      const response = await streamEvents(client, undefined, stream => {
+        queued = [stream.pending, stream.sendTrailers({})];
+      });
+      expect({ queued, requests, response }).toEqual({
+        queued: [true, true],
+        requests: [{}],
+        response: { events: ["headers 400", "end"], trailers: [] },
+      });
+    });
+
+    // `opened` is not awaited: the stream is created before the handshake
+    // completes, so both of its blocks wait in the pending queue.
+    test.each([
+      ["sendTrailers({})", (stream: any) => stream.sendTrailers({}), []],
+      [
+        "sendTrailers() with a field",
+        (stream: any) => stream.sendTrailers({ "x-checksum": "abc123" }),
+        [{ "x-checksum": "abc123" }],
+      ],
+      // An INITIAL-kind block keeps its HEADERS frame. A server reports the
+      // second block of a request as trailers.
+      ["sendHeaders({}, { terminal: true })", (stream: any) => stream.sendHeaders({}, { terminal: true }), [{}]],
+    ])("%s queued on a stream that is not open yet", async (_, end, requestTrailers) => {
+      const seen: object[] = [];
+      const requestClosed = Promise.withResolvers<void>();
+      await using server = await listen(
+        async (serverSession: any) => {
+          serverSession.onstream = (stream: any) => {
+            stream.closed.then(requestClosed.resolve, requestClosed.reject);
+          };
+          await serverSession.closed.then(
+            () => requestClosed.reject(new Error("the session closed before the request stream")),
+            requestClosed.reject,
+          );
+        },
+        {
+          sni,
+          transportParams,
+          onheaders(this: any) {
+            hello(this);
+          },
+          ontrailers: (trailers: Record<string, any>) => seen.push({ ...trailers }),
+        },
+      );
+      await using client: any = await connect(server.address!, clientOptions);
+      let queued: unknown[] = [];
+      const [response] = await Promise.all([
+        streamEvents(client, undefined, stream => {
+          queued = [stream.pending, stream.sendHeaders(request("/subject")), end(stream)];
+        }),
+        requestClosed.promise,
+      ]);
+      expect({ queued, requestTrailers: seen, response }).toEqual({
+        queued: [true, true, true],
+        requestTrailers,
+        response: helloOnly,
+      });
+    });
+  });
+
+  // `sendHeaders({})` puts a block with no field lines on the wire: an
+  // INITIAL-kind block always has its HEADERS frame. The node:quic cases prove
+  // that it does: the peer reports the block as empty trailers.
+  describe("are decoded as an empty block that leaves the connection open", () => {
+    const emptyBlock = (stream: any) => stream.sendHeaders({}, { terminal: true });
+    const afterHeaders = (stream: any) => {
+      stream.sendHeaders({ ":status": "200" });
+      emptyBlock(stream);
+    };
+    // Ends a response body with the block.
+    const afterBody = {
+      onwanttrailers(this: any) {
+        emptyBlock(this);
+      },
+    };
+    // Answers with the request body once the request has ended.
+    const echo = (stream: any) => {
+      text(stream).then(
+        body => {
+          stream.sendHeaders({ ":status": "200" });
+          stream.writer.writeSync(encoder.encode("echo " + body));
+          stream.writer.endSync();
+        },
+        () => {},
+      );
+    };
+
+    test.each([
+      ["headers", afterHeaders, {}, ["headers 200", "end"]],
+      ["body", hello, afterBody, ["headers 200", "data hello", "end"]],
+    ])("by a client, after the response %s", async (_, respond, callbacks, events) => {
+      await using origin = await listenHolding(respond, callbacks);
+      expect(await besideHeldStream(origin, getSubject)).toEqual({
+        subject: { events, trailers: [{}] },
+        held: "first,second",
+      });
+    });
+
+    test.each([
+      [
+        "headers",
+        (stream: any) => {
+          stream.sendHeaders(request("/subject"));
+          emptyBlock(stream);
+        },
+        "echo ",
+      ],
+      [
+        "body",
+        (stream: any) => {
+          stream.sendHeaders(request("/subject"));
+          stream.onwanttrailers = () => emptyBlock(stream);
+          stream.writer.writeSync(encoder.encode("abc"));
+          stream.writer.endSync();
+        },
+        "echo abc",
+      ],
+    ])("by a server, after the request %s", async (_, send, body) => {
+      const requestTrailers: object[] = [];
+      await using origin = await listenHolding(echo, {
+        ontrailers: (trailers: Record<string, any>) => requestTrailers.push({ ...trailers }),
+      });
+      const outcome = await besideHeldStream(origin, client => streamEvents(client, undefined, send));
+      expect({ requestTrailers, ...outcome }).toEqual({
+        requestTrailers: [{}],
+        subject: { events: ["headers 200", "data " + body, "end"], trailers: [] },
+        held: "first,second",
+      });
+    });
+
+    // A message whose first block has no pseudo-header fields is malformed.
+    // What its own stream reports is not asserted here, only the connection.
+    test("by a client, as the first block of the response", async () => {
+      await using origin = await listenHolding(emptyBlock);
+      const { held } = await besideHeldStream(origin, getSubject);
+      expect(held).toBe("first,second");
+    });
+
+    test("by a server, as the first block of the request", async () => {
+      await using origin = await listenHolding(stream => stream.sendHeaders({ ":status": "400" }, { terminal: true }));
+      const { held } = await besideHeldStream(origin, client => streamEvents(client, undefined, emptyBlock));
+      expect(held).toBe("first,second");
+    });
+
+    test.each([
+      ["after the response headers", afterHeaders, {}, '200 ""'],
+      ["after the response body", hello, afterBody, '200 "hello"'],
+      [
+        "after a response body that has a content-length",
+        (stream: any) => hello(stream, { "content-length": "5" }),
+        afterBody,
+        '200 "hello"',
+      ],
+      ["as the first block of the response", emptyBlock, {}, "rejected HTTP3ProtocolError"],
+    ])("by fetch(), %s", async (_, respond, callbacks, subject) => {
+      await using origin = await listenHolding(respond, callbacks);
+      const url = `https://127.0.0.1:${origin.address.port}`;
+      const init = { protocol: "http3", tls: { rejectUnauthorized: false } } as RequestInit;
+      const heldResponse = await fetch(`${url}/held`, init);
+      const subjectResponse = await fetch(`${url}/subject`, init).then(
+        async response => `${response.status} ${JSON.stringify(await response.text())}`,
+        (error: Error & { code?: string }) => `rejected ${error.code}`,
+      );
+      origin.finishHeld();
+      // Both requests on one session: otherwise the held body proves nothing.
+      expect({ subject: subjectResponse, held: await heldResponse.text(), requests: origin.requests() }).toEqual({
+        subject,
+        held: "first,second",
+        requests: [["/held", "/subject"]],
+      });
+    });
+  });
+});
+
 // lsquic decodes a header block that follows another one while the stream is
 // read, not when its bytes arrive. The peer in these tests writes its header
 // blocks in one call, so they share one STREAM frame and that is where the

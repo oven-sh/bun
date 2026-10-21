@@ -1925,6 +1925,95 @@ describe("Bun.serve HTTP/3 request validation", () => {
     });
   });
 
+  // A field section with no field lines is valid QPACK (RFC 9204 section 4.5):
+  // the block is only its two-byte prefix. A QPACK decoder failure closes the
+  // connection, so the held response is complete only if the block decoded.
+  // `sendHeaders({})` is what writes the block: the node:quic server in
+  // test/js/node/quic/quic-stream.test.ts reports the same call as empty trailers.
+  test.each([
+    [
+      "after the request headers",
+      (stream: any) => {
+        stream.sendHeaders({ ...requestHeaders("/subject"), ":method": "POST" });
+        stream.sendHeaders({}, { terminal: true });
+      },
+      "200 hello",
+    ],
+    [
+      "after the request body",
+      (stream: any) => {
+        stream.sendHeaders({ ...requestHeaders("/subject"), ":method": "POST" });
+        stream.onwanttrailers = () => stream.sendHeaders({}, { terminal: true });
+        stream.writer.writeSync(new TextEncoder().encode("abc"));
+        stream.writer.endSync();
+      },
+      "200 helloabc",
+    ],
+    // A request with no pseudo-header fields is malformed. Its stream gets a
+    // client error status. Which one is not the subject of this test.
+    [
+      "as the first block of the request",
+      (stream: any) => stream.sendHeaders({}, { terminal: true }),
+      expect.stringMatching(/^4\d\d /),
+    ],
+  ])("decodes a header block with no field lines %s", async (_, send, subject) => {
+    const release = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      async fetch(req) {
+        if (new URL(req.url).pathname !== "/held") return new Response("hello" + (await req.text()));
+        return new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue("first,");
+              await release.promise;
+              controller.enqueue("second");
+              controller.close();
+            },
+          }),
+        );
+      },
+    });
+
+    await using endpoint = new QuicEndpoint();
+    await using client = await connect(`127.0.0.1:${server.port}`, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5 },
+      onerror() {},
+    } as SessionOptions);
+    await client.opened;
+    // "<status> <body>", or the error code when the stream does not end cleanly.
+    const exchange = async (options: Record<string, unknown>, write?: (stream: any) => void) => {
+      let status = "";
+      const stream = await client.createBidirectionalStream({
+        ...options,
+        onheaders(received) {
+          status = received[":status"] as string;
+        },
+      });
+      stream.closed.catch(() => {});
+      write?.(stream);
+      let body = "";
+      try {
+        for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+          for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+        }
+      } catch (error: any) {
+        return `${error.code}`;
+      }
+      return `${status} ${body}`;
+    };
+
+    const held = exchange({ headers: requestHeaders("/held") });
+    const subjectResponse = await exchange({}, send);
+    release.resolve();
+    expect({ subject: subjectResponse, held: await held }).toEqual({ subject, held: "200 first,second" });
+  });
+
   test("requestCert with rejectUnauthorized only serves QUIC clients whose certificate chains to the configured CA", async () => {
     const keysDir = join(import.meta.dir, "..", "..", "node", "test", "fixtures", "keys");
     const pem = (name: string) => readFileSync(join(keysDir, name), "utf8");

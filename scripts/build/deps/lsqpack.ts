@@ -18,9 +18,15 @@ export const lsqpack: Dependency = {
     commit: LSQPACK_COMMIT,
   }),
 
-  // QPACK uses the same RFC 7541 Huffman code as HPACK; share lshpack's
-  // .bss-backed hencs/hdecs instead of carrying a second 768 KB copy.
-  patches: ["patches/lsqpack/bss-huff-tables.patch"],
+  patches: [
+    // QPACK uses the same RFC 7541 Huffman code as HPACK; share lshpack's
+    // .bss-backed hencs/hdecs instead of carrying a second 768 KB copy.
+    "patches/lsqpack/bss-huff-tables.patch",
+    // Decode a field section that has no field lines (RFC 9204 Section 4.5)
+    // instead of failing it, which closes the connection. Not fixed upstream:
+    // https://github.com/litespeedtech/ls-qpack/issues/90#issuecomment-5472689782
+    "patches/lsqpack/accept-empty-field-section.patch",
+  ],
 
   // lsqpack.c is compiled inside the lsquic dep because lsquic feeds it a
   // non-FILE* logger context that only works with LSQPACK_*_LOGGER_HEADER

@@ -127,9 +127,12 @@ pub(crate) struct QuicStream {
     peer_stop_sending_code: Cell<Option<u64>>,
     wrote_to_lsquic: Cell<bool>,
     headers_received: Cell<bool>,
+    /// lsquic took a header block for this stream.
+    headers_sent: Cell<bool>,
     /// RFC 9218 (urgency, incremental).
     priority: Cell<(u8, bool)>,
-    pending_headers: JsCell<Vec<(Vec<u8>, c_int, bool)>>,
+    /// (nul-joined pairs, pair count, eos, frameless); see `send_headers`.
+    pending_headers: JsCell<Vec<(Vec<u8>, c_int, bool, bool)>>,
     trailers_requested: Cell<bool>,
     blocked_reported: Cell<bool>,
     announce_suppressed: Cell<bool>,
@@ -162,6 +165,7 @@ impl QuicStream {
             peer_stop_sending_code: Cell::new(None),
             wrote_to_lsquic: Cell::new(false),
             headers_received: Cell::new(false),
+            headers_sent: Cell::new(false),
             priority: Cell::new(DEFAULT_PRIORITY),
             pending_headers: JsCell::new(Vec::new()),
             trailers_requested: Cell::new(false),
@@ -245,9 +249,9 @@ impl QuicStream {
         // drain_outbound needs a write event, which nothing else requests
         // unless the JS side already started the writer.
         let mut want_write = false;
-        for (bytes, count, eos) in self.pending_headers.with_mut(core::mem::take) {
+        for (bytes, count, eos, frameless) in self.pending_headers.with_mut(core::mem::take) {
             self.wrote_to_lsquic.set(true);
-            if s.send_headers(&bytes, count, eos) == 0 {
+            if self.put_header_block(s, &bytes, count, eos, frameless) {
                 if eos {
                     self.with_state(|st| {
                         st.fin_sent = 1;
@@ -294,6 +298,30 @@ impl QuicStream {
         // lsquic gave us; lsquic frees it only after `on_close` returns,
         // where we null it first.
         unsafe { lsquic::Stream::from_raw(self.raw.get()) }
+    }
+
+    /// Sends one header block, or leaves out a `frameless` one. Returns whether the stream took it.
+    fn put_header_block(
+        &self,
+        s: lsquic::Stream,
+        bytes: &[u8],
+        count: c_int,
+        eos: bool,
+        frameless: bool,
+    ) -> bool {
+        // lsquic resets a request stream whose FIN comes before a header block, so `eos` needs one.
+        if frameless
+            && (!eos || self.headers_sent.get())
+            && self.stream_id() & STREAM_ID_UNI_BIT == 0
+            && self.with_state(|s| s.fin_sent == 0 && s.write_ended == 0)
+        {
+            return true;
+        }
+        let taken = s.send_headers(bytes, count, eos) == 0;
+        if taken {
+            self.headers_sent.set(true);
+        }
+        taken
     }
 
     fn state_mut(&self) -> *mut StreamState {
@@ -977,18 +1005,18 @@ impl QuicStream {
         use crate::webcore::encoding::BunStringEncode as _;
         let bytes = bun_core::String::from_js(header_string, global)?
             .encode(crate::node::types::Encoding::Latin1);
-        let is_trailing =
-            kind_arg.coerce_to_i32(global)? as u32 == QUIC_STREAM_HEADERS_KIND_TRAILING;
-        let eos = is_trailing
+        let kind = kind_arg.coerce_to_i32(global)? as u32;
+        let eos = kind == QUIC_STREAM_HEADERS_KIND_TRAILING
             || flags.coerce_to_i32(global)? & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32) != 0;
+        // An unpatched ls-qpack peer closes the connection on a HEADERS frame with no field lines.
+        let frameless = header_count == 0 && kind != QUIC_STREAM_HEADERS_KIND_INITIAL;
         let Some(s) = self.ls() else {
             self.pending_headers
-                .with_mut(|q| q.push((bytes, header_count, eos)));
+                .with_mut(|q| q.push((bytes, header_count, eos, frameless)));
             self.with_state(|s| s.has_outbound = 1);
             return Ok(JSValue::js_boolean(true));
         };
-        let rv = s.send_headers(&bytes, header_count, eos);
-        if rv == 0 {
+        if self.put_header_block(s, &bytes, header_count, eos, frameless) {
             self.wrote_to_lsquic.set(true);
             self.with_state(|s| s.has_outbound = 1);
             if eos {

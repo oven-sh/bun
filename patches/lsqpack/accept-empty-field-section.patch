@@ -1,0 +1,15 @@
+--- a/lsqpack.c
++++ b/lsqpack.c
+@@ -4039,7 +4039,11 @@
+                 read_ctx->hbrc_parse = parse_header_data;
+                 read_ctx->hbrc_parse_ctx_u.data.state
+                                                 = DATA_STATE_NEXT_INSTRUCTION;
+-                if (end - buf)
++                /* bun: a field section can end at its prefix (RFC 9204
++                 * Section 4.5).  LQRHS_NEED here becomes LQRHS_ERROR in
++                 * qdec_read_header(), so let parse_header_data() finish it.
++                 */
++                if (end - buf || read_ctx->hbrc_size == 0)
+                     return parse_header_data(dec, read_ctx, buf, end - buf);
+                 else
+                     return LQRHS_NEED;

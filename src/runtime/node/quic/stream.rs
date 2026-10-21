@@ -300,14 +300,7 @@ impl QuicStream {
         unsafe { lsquic::Stream::from_raw(self.raw.get()) }
     }
 
-    /// Sends one header block and returns whether the stream took it.
-    ///
-    /// A `frameless` block (see `send_headers`) is not handed to lsquic on a
-    /// bidirectional stream whose send side is open. With `eos` lsquic must
-    /// also have taken a block before: it resets a request stream whose FIN
-    /// comes before one, and it holds the FIN back while that block waits for
-    /// flow control. lsquic refuses a block during that wait, and a frameless
-    /// one is accepted here. Anywhere else the call to lsquic decides.
+    /// Sends one header block, or leaves out a `frameless` one. Returns whether the stream took it.
     fn put_header_block(
         &self,
         s: lsquic::Stream,
@@ -316,6 +309,7 @@ impl QuicStream {
         eos: bool,
         frameless: bool,
     ) -> bool {
+        // lsquic resets a request stream whose FIN comes before a header block, so `eos` needs one.
         if frameless
             && (!eos || self.headers_sent.get())
             && self.stream_id() & STREAM_ID_UNI_BIT == 0
@@ -1014,11 +1008,7 @@ impl QuicStream {
         let kind = kind_arg.coerce_to_i32(global)? as u32;
         let eos = kind == QUIC_STREAM_HEADERS_KIND_TRAILING
             || flags.coerce_to_i32(global)? & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32) != 0;
-        // Hints or trailers with no field lines put no HEADERS frame on the
-        // wire: hints send nothing, trailers only the FIN. A peer whose QPACK
-        // decoder fails an empty field section (ls-qpack without Bun's patch)
-        // closes the connection on that frame. Node sends none either.
-        // `put_header_block` has the conditions.
+        // An unpatched ls-qpack peer closes the connection on a HEADERS frame with no field lines.
         let frameless = header_count == 0 && kind != QUIC_STREAM_HEADERS_KIND_INITIAL;
         let Some(s) = self.ls() else {
             self.pending_headers

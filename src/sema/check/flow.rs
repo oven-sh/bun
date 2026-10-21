@@ -505,8 +505,7 @@ enum ResolvesKey {
     /// `a[k] = v`, `if (a[k])`: only if the reference is an access. `isMatchingReference` compares
     /// the names of two accesses before their objects.
     ForAccess,
-    /// `a[k]?.b` (`optionalChainContainsReference`), `a[k] === c`
-    /// (`isMatchingConstructorReference`)
+    /// `a[k]?.b` (`optionalChainContainsReference`)
     Always,
 }
 
@@ -2724,12 +2723,6 @@ impl<'p, 's> Checker<'p, 's> {
                         self.reference_candidate(file, right),
                     );
                     for (side, other) in [(l, r), (r, l)] {
-                        if let ExprKind::Index { index, .. } = hir[side].kind
-                            && self.is_computed_key(file, index)
-                            && about.bails_on_computed_key(ResolvesKey::Always)
-                        {
-                            return;
-                        }
                         match hir[side].kind {
                             ExprKind::Unary {
                                 op: UnOp::Typeof,
@@ -3339,12 +3332,22 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `isMatchingConstructorReference`
     fn is_matching_constructor_reference(&mut self, reference: &Reference, e: ExprId) -> bool {
-        let (obj, name) = match self.hir(reference.file)[e].kind {
-            ExprKind::Dot { obj, name, .. } => (obj, Some(name)),
-            ExprKind::Index { obj, index, .. } => (obj, self.literal_key(reference.file, index)),
+        let hir = self.hir(reference.file);
+        let (obj, name) = match hir[e].kind {
+            ExprKind::Dot { obj, name, .. } => (obj, name),
+            // `IsStringLiteralLike`
+            ExprKind::Index { obj, index, .. } if !is_parenthesized(hir, index) => {
+                match hir[index].kind {
+                    ExprKind::String(name) => (obj, name),
+                    ExprKind::Template { exprs } if exprs.is_empty() => {
+                        (obj, hir.id_at(hir.template_texts(exprs), 0))
+                    }
+                    _ => return false,
+                }
+            }
             _ => return false,
         };
-        name == Some(known::constructor) && self.matches(reference, obj)
+        name == known::constructor && self.matches(reference, obj)
     }
 
     /// `narrowTypeByConstructor`

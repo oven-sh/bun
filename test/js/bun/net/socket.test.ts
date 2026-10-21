@@ -6972,3 +6972,95 @@ describe.concurrent("a handler that closes its socket and then waits for a promi
     });
   });
 });
+
+// TEMPORARY lane probe, removed before merge. On the windows 11 aarch64 lane the row "TLS end() while the peer is
+// still sending delivers a write that the kernel took at once" fails in about 1 of 10 builds of main and passes on
+// retry. This is that row, 60 times. A failure message tells how the ender's write went, what the ender read after
+// its end(), and whether a drain event followed the end().
+describe.skipIf(!isWindows)("lane probe", () => {
+  const shapes = new Map<string, number>();
+  afterAll(() => console.log("lane probe, pumps of the ender's 1 MiB write:", JSON.stringify([...shapes])));
+  it.each(Array.from({ length: 60 }, (_, run) => run))(
+    "TLS end() while the peer is still sending delivers a write that the kernel took at once, run %d",
+    async () => {
+      const [size, upload] = [1024 * 1024, 8 * 1024 * 1024];
+      const payload = Buffer.alloc(upload, "a");
+      type Side = {
+        total: number;
+        reported: number;
+        received: number;
+        events: string[];
+        pumps: number[];
+        receivedAtEnd: number;
+        drainsAfterEnd: number;
+      };
+      const done = Promise.withResolvers<void>();
+      const sides: Side[] = [];
+      const handlers = (total: number, finished: (socket: Socket, side: Side) => void) => {
+        const side: Side = {
+          total,
+          reported: 0,
+          received: 0,
+          events: [],
+          pumps: [],
+          receivedAtEnd: -1,
+          drainsAfterEnd: 0,
+        };
+        sides.push(side);
+        const pump = (socket: Socket) => {
+          if (side.reported === total) return void side.drainsAfterEnd++;
+          const before = side.reported;
+          while (side.reported < total) {
+            const wrote = socket.write(payload.subarray(side.reported, total));
+            if (wrote <= 0) return void side.pumps.push(side.reported - before);
+            side.reported += wrote;
+          }
+          side.pumps.push(side.reported - before);
+          side.receivedAtEnd = side.received;
+          finished(socket, side);
+        };
+        return {
+          open: pump,
+          drain: pump,
+          data: (_socket: Socket, chunk: Buffer) => void (side.received += chunk.length),
+          end(socket: Socket) {
+            side.events.push("end");
+            if (side.reported === total) socket.end();
+          },
+          close(_socket: Socket, error?: Error) {
+            side.events.push(error ? `close: ${(error as NodeJS.ErrnoException).code}` : "close");
+            if (sides.every(({ events }) => events.at(-1)?.startsWith("close"))) done.resolve();
+          },
+        };
+      };
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls,
+        socket: handlers(size, socket => socket.end()),
+      });
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { ca: tls.cert },
+        allowHalfOpen: true,
+        socket: handlers(upload, (socket, side) => void (side.events.includes("end") && socket.end())),
+      });
+      await done.promise;
+      const [accepted, client] = sides;
+      const shape = accepted.pumps.length === 1 ? "one pump" : `${accepted.pumps.length} pumps`;
+      shapes.set(shape, (shapes.get(shape) ?? 0) + 1);
+      const { pumps, receivedAtEnd, drainsAfterEnd } = accepted;
+      expect(
+        {
+          client: { received: client.received, events: client.events },
+          server: { received: accepted.received, closed: accepted.events.at(-1) },
+        },
+        `the ender: ${JSON.stringify({ pumps, receivedAtEnd, drainsAfterEnd, events: accepted.events })}`,
+      ).toEqual({
+        client: { received: size, events: ["end", "close"] },
+        server: { received: upload, closed: "close" },
+      });
+    },
+  );
+});

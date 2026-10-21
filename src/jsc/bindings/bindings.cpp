@@ -169,6 +169,7 @@
 #include "JavaScriptCore/DateInstance.h"
 #include "JavaScriptCore/RegExpObject.h"
 #include "JavaScriptCore/PropertyNameArray.h"
+#include "UtilInspect.h"
 #include "webcore/JSAbortSignal.h"
 #include "JSAbortAlgorithm.h"
 
@@ -6814,20 +6815,15 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
         : WTF::String();
 
     // Walk the prototype chain as JSObject::getPropertyNames does (the builder dedups,
-    // the depth cap stops misbehaving proxy chains), but skip own index names where that
-    // is safe: an index name is never an identifier completion (repl.rs filters them),
-    // and collecting one Identifier per element of a large typed array blocks the REPL
-    // for minutes (#40281: `buffer.` on a 1 GiB Buffer builds 2^30 names). Classes that
-    // override getOwnPropertyNames with their own keys logic (Proxy traps, module
-    // namespaces, ...) keep the full hook; their key counts are not element counts.
+    // the depth cap stops misbehaving proxy chains), in a mode without index keys: an
+    // index name is never an identifier completion (repl.rs filters them), and one
+    // Identifier per element of a large typed array, or per character of a long string,
+    // blocks the REPL for minutes (#40281: `buffer.` on a 1 GiB Buffer builds 2^30 names).
     JSC::JSObject* object = target.getObject();
-    JSC::PropertyNameArrayBuilder propertyNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+    JSC::PropertyNameArrayBuilder propertyNames(vm, JSC::PropertyNameMode::NonIndexStrings, JSC::PrivateSymbolMode::Exclude);
     unsigned prototypeCount = 0;
     for (JSC::JSObject* current = object;;) {
-        if (JSC::isTypedArrayType(current->type()) || !current->structure()->typeInfo().overridesGetOwnPropertyNames())
-            current->getOwnNonIndexPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Include);
-        else
-            current->methodTable()->getOwnPropertyNames(current, globalObject, propertyNames, DontEnumPropertiesMode::Include);
+        Bun::collectOwnNonIndexKeys(current, globalObject, propertyNames, DontEnumPropertiesMode::Include);
         if (scope.exception()) [[unlikely]]
             return clearAndEncode(JSC::jsUndefined());
 

@@ -1445,6 +1445,65 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       );
     });
 
+    test.each([
+      ["a long string", "rope"],
+      ["an object that inherits from a long String object", "Object.create(new String(rope))"],
+      ["a Proxy of a long String object", "new Proxy(new String(rope), {})"],
+      ["a Proxy of a large Uint8Array", "new Proxy(new Uint8Array(1 << 20), {})"],
+      ["a Proxy of a large Array", "new Proxy(new Array(1 << 20).fill(0), {})"],
+    ])("completion on %s does not enumerate index properties", async (_, expression) => {
+      // Every character of a String object is an own property name, and a
+      // Proxy without an ownKeys trap has the keys of its target. A completer
+      // that collects those names builds 2^20 identifiers for each key typed
+      // after the `.`: over 100 MB of them.
+      using dir = tempDir("repl-long-keys", {
+        "setup.js": `
+          // A rope: it takes no memory until something reads the characters.
+          let rope = "0123456789abcdef";
+          for (let i = 0; i < 16; i++) rope += rope;
+          globalThis.__long = ${expression};
+          // maxRSS is the peak of the process, in kilobytes.
+          const peak = process.resourceUsage().maxRSS;
+          Object.defineProperty(globalThis, "__grown", {
+            get: () => "names took " + ((process.resourceUsage().maxRSS - peak) >> 10) + " MB",
+          });
+          "long" + "Ready";
+        `,
+      });
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // The REPL completes each key it reads, so the setup is not typed.
+          send(`.load ${path.join(String(dir), "setup.js")}\n`);
+          await waitFor("longReady");
+          send("__long.len");
+          await waitFor(`${DIM}gth`);
+          // Ctrl+U clears the line.
+          send("\x15__grown\n");
+          const [, megabytes] = /names took (\d+) MB/.exec(await waitFor(/names took \d+ MB/))!;
+          expect(Number(megabytes)).toBeLessThan(32);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("tab after an index prefix indents: an index key is not a completion", async () => {
+      await withTerminalRepl(async ({ send, waitForScreen }) => {
+        send(
+          'globalThis.__str = "abcdefghijklm"; globalThis.__arr = [...__str]; globalThis.__u8 = new Uint8Array(13); 0\n',
+        );
+        await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "0");
+        // Each of the three has the index keys 1, 10, 11 and 12. Tab has nothing
+        // to complete or to list, so it inserts two spaces.
+        for (const name of ["__str", "__arr", "__u8"]) {
+          send(`${name}.1\t`);
+          await waitForScreen(s => s.rows.at(-1) === `> ${name}.1  `);
+          // Ctrl+U clears the line.
+          send("\x15");
+          await waitForScreen(s => s.rows.at(-1) === "> ");
+        }
+      });
+    });
+
     test("tab completes properties on an object (no ghost)", async () => {
       // Tab completion resolves `obj.prefix` chains even when ghost text is
       // disabled (NO_COLOR), so this covers parse_completion_context + resolve.
@@ -2153,6 +2212,31 @@ describe.concurrent("--interactive", () => {
       });
       expect(stdout).toBe("external-repl-42\n");
       expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+    interactiveTimeout,
+  );
+
+  // node:repl reads the own keys of an object through getOwnNonIndexProperties().
+  // Every character of a String object is an own property name: a key walk
+  // that builds those names first makes 2^20 identifiers here, over 100 MB.
+  test(
+    "completion on a long String object does not enumerate index properties",
+    async () => {
+      const { stdout, stderr, exitCode } = await runInteractive(
+        [],
+        [
+          // A rope: it takes no memory until something reads the characters.
+          `var rope = "0123456789abcdef"; for (let i = 0; i < 16; i++) rope += rope; globalThis.longString = new String(rope); rope.length`,
+          // maxRSS is the peak of the process, in kilobytes.
+          `var peak = process.resourceUsage().maxRSS; require("node:repl").repl.completer("longString.", (error, [names]) => console.log("NAMES=" + JSON.stringify({ error, length: names.includes("longString.length"), indexKeys: names.filter(name => /^longString\\.\\d/.test(name)), megabytes: (process.resourceUsage().maxRSS - peak) >> 10 })))`,
+        ].join("\n") + "\n",
+      );
+      expect(stdout).toContain("> 1048576\n");
+      const { megabytes, ...names } = JSON.parse(/NAMES=(.*)/.exec(stdout)![1]);
+      expect(names).toEqual({ error: null, length: true, indexKeys: [] });
+      expect(megabytes).toBeLessThan(32);
+      expect(stderr).not.toContain("error");
       expect(exitCode).toBe(0);
     },
     interactiveTimeout,

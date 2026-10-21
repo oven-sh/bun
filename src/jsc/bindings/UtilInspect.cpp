@@ -1,5 +1,6 @@
 #include "root.h"
 #include "headers.h"
+#include "UtilInspect.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSFunction.h"
 #include "JavaScriptCore/JSString.h"
@@ -87,26 +88,21 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGetOwnNonIndexProperties, (JSGlobalObject * g
 
     if ((filter & SKIP_STRINGS) && (filter & SKIP_SYMBOLS))
         RELEASE_AND_RETURN(scope, JSValue::encode(constructEmptyArray(globalObject, nullptr)));
-    PropertyNameMode propertyNameMode = PropertyNameMode::StringsAndSymbols;
+    PropertyNameMode propertyNameMode = PropertyNameMode::NonIndexStringsAndSymbols;
     if (filter & SKIP_STRINGS)
         propertyNameMode = PropertyNameMode::Symbols;
     else if (filter & SKIP_SYMBOLS)
-        propertyNameMode = PropertyNameMode::Strings;
+        propertyNameMode = PropertyNameMode::NonIndexStrings;
     DontEnumPropertiesMode dontEnumMode = (filter & ONLY_ENUMERABLE) ? DontEnumPropertiesMode::Exclude : DontEnumPropertiesMode::Include;
 
     PropertyNameArrayBuilder propertyNames(vm, propertyNameMode, PrivateSymbolMode::Exclude);
-    // The ordinary [[OwnPropertyKeys]] (Array included) and the typed array one are both "the
-    // indices, then getOwnNonIndexPropertyNames()", so for those the indices are never produced.
-    // Anything else that overrides it (Proxy, String objects, arguments, module namespaces, ...)
-    // has to be asked for all of its keys, and the loop below drops the indices again.
-    if (isTypedArrayType(object->type()) || !object->structure()->typeInfo().overridesGetOwnPropertyNames())
-        object->getOwnNonIndexPropertyNames(globalObject, propertyNames, dontEnumMode);
-    else
-        object->methodTable()->getOwnPropertyNames(object, globalObject, propertyNames, dontEnumMode);
+    collectOwnNonIndexKeys(object, globalObject, propertyNames, dontEnumMode);
     RETURN_IF_EXCEPTION(scope, {});
 
     MarkedArgumentBuffer keys;
     for (const auto& propertyName : propertyNames) {
+        // No element was enumerated. What is left to drop is an index key from another source,
+        // such as the result of an ownKeys trap.
         if (!propertyName.isSymbol() && parseIndex(propertyName))
             continue;
         keys.append(identifierToJSValue(vm, propertyName));

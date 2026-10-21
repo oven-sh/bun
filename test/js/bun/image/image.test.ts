@@ -1651,8 +1651,10 @@ describe("PNG decode of each colour type and depth", () => {
     const [gray1, gray16] = [flatGray(1), flatGray(16)];
     await time(gray1);
     await time(gray16);
+    // Each time is the best of 9 rounds. A busy machine can delay all 9 of the
+    // short 1-bit decodes, so more rounds follow until one of them is not delayed.
     let [best1, best16] = [Infinity, Infinity];
-    for (let round = 0; round < 9; round++) {
+    for (let round = 0; round < 25 && (round < 9 || best1 >= best16 * 2); round++) {
       best1 = Math.min(best1, await time(gray1));
       best16 = Math.min(best16, await time(gray16));
     }

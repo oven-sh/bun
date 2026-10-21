@@ -1,11 +1,11 @@
-//! The order in which ESLint comes to the nodes that selectors match.
+//! The order in which ESLint visits the nodes that selectors match.
 
 use super::EsNode;
 use crate::estree::VNode;
 use smallvec::SmallVec;
 use std::cmp::{Ordering, Reverse};
 
-/// Where `a` is in the tree, seen from `b`.
+/// Where `a` is in the tree relative to `b`.
 enum Relation {
     Same,
     Above,
@@ -26,7 +26,7 @@ fn relation<'a>(a: VNode<'a>, b: VNode<'a>) -> Relation {
             below = Some(at);
             continue;
         };
-        // `at` is the innermost node that both are in.
+        // `at` is the innermost node that contains both.
         let (Some(towards_a), Some(towards_b)) =
             (i.checked_sub(1).and_then(|i| from_a.get(i)), below)
         else {
@@ -51,14 +51,14 @@ fn relation<'a>(a: VNode<'a>, b: VNode<'a>) -> Relation {
     Relation::Same
 }
 
-/// Sorts what listeners have found in no particular order the way the reports of ESLint are sorted, if each listener reports
-/// what it is called with.
+/// Sorts matches that listeners found in no particular order the way ESLint's reports would be
+/// sorted if each listener reported the node it's called with.
 ///
-/// An element of `matches` is a node and the index of the selector that it matches, in a list that [`Selector::compare`] sorts.
-/// `is_exit`: [`Selector::is_exit`] of the selector at an index.
+/// An element of `matches` is a node and the index of the selector it matches, in a list sorted by
+/// [`Selector::compare`]. `is_exit` returns [`Selector::is_exit`] for the selector at an index.
 ///
-/// Reports are sorted by where they start anyway. What this adds is the order of those for the same range: `a` is a `Program`, an
-/// `ExpressionStatement` and an `Identifier`.
+/// Reports are sorted by start position anyway. This adds the order of reports for the same range:
+/// the source `a` is a `Program`, an `ExpressionStatement` and an `Identifier`.
 ///
 /// [`Selector::compare`]: super::Selector::compare
 /// [`Selector::is_exit`]: super::Selector::is_exit
@@ -84,8 +84,8 @@ pub fn sort_as_called(matches: &mut [(EsNode<'_>, usize)], is_exit: impl Fn(usiz
                 | (Relation::After, ..) => Ordering::Greater,
             }
         });
-        // For espree both names of `import { a }` are one node, which is visited twice: all the listeners are called for the
-        // first visit, then all for the second.
+        // For espree both names in `import { a }` are the same node, which is visited twice. All
+        // listeners are called for the first visit, then all for the second.
         for visits in same.chunk_by_mut(|a, b| a.0 == b.0) {
             let mut visit = 0;
             let numbered = (0..visits.len()).map(|i| {

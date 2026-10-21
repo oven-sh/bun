@@ -16,7 +16,7 @@ use std::borrow::Cow;
 /// Prevents non-interactive HTML elements and elements with non-interactive ARIA roles from being assigned mouse or keyboard event
 /// handlers.
 pub struct NoNoninteractiveElementInteractions {
-    /// `None`: the recommended ones.
+    /// `None`: the recommended handlers.
     handlers: Option<Vec<String>>,
     handler_exceptions: NamesByElement,
 }
@@ -43,7 +43,7 @@ impl Rule for NoNoninteractiveElementInteractions {
                     ("iframe", load_error),
                     ("img", load_error),
                 ]),
-                false => NamesByElement::of_option(config, "handlers"),
+                false => NamesByElement::from_option_except(config, "handlers"),
             },
         }
     }
@@ -73,7 +73,7 @@ impl Rule for NoNoninteractiveElementInteractions {
         if role.is_some_and(|role| is_interactive_role_for_rule(role, jsx_el, &element_type)) {
             return;
         }
-        // Of these elements some are also interactive content for HTML: `<iframe>`, `<label>`, `<details>`.
+        // HTML also classifies some of these elements as interactive content: `<iframe>`, `<label>`, `<details>`.
         if (is_non_interactive_element(&element_type, jsx_el)
             || !is_interactive_element(&element_type, jsx_el)
                 && role.is_some_and(|role| is_non_interactive_role_for_rule(role, jsx_el, &element_type)))
@@ -102,7 +102,7 @@ fn is_content_editable(jsx_el: Jsx) -> bool {
     has_jsx_prop(jsx_el, "contentEditable").and_then(get_string_literal_prop_value).is_some_and(|value| value == b"true")
 }
 
-/// A `separator` is a widget if it can have the focus.
+/// A `separator` is a widget if it's focusable.
 fn is_interactive_role_for_rule(role: &[u8], jsx_el: Jsx, element_type: &[u8]) -> bool {
     match role {
         b"separator" => is_focusable(jsx_el, element_type),
@@ -134,7 +134,7 @@ fn is_focusable(jsx_el: Jsx, element_type: &[u8]) -> bool {
     }
 }
 
-/// In lower case.
+/// Returns the role lowercased.
 fn first_recognized_role(role_value: &[u8]) -> Option<Cow<'_, [u8]>> {
     strings::split_unicode_whitespace(role_value).map(text::to_lower_case).find(|role| is_recognized_role(role))
 }

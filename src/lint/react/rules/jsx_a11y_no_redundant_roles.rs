@@ -26,7 +26,7 @@ impl Rule for NoRedundantRoles {
     no_state!();
 
     fn new(options: &Options) -> Self {
-        NoRedundantRoles { allowed_redundant_roles: NamesByElement::of_option(options.object(0), "") }
+        NoRedundantRoles { allowed_redundant_roles: NamesByElement::from_option_except(options.object(0), "") }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -55,7 +55,7 @@ impl Rule for NoRedundantRoles {
 
 impl NoRedundantRoles {
     fn is_allowed_redundant_role(&self, element: &[u8], role: &str) -> bool {
-        (self.allowed_redundant_roles.has_if_named(element, role.as_bytes()))
+        (self.allowed_redundant_roles.has_if_listed(element, role.as_bytes()))
             .unwrap_or_else(|| element == b"nav" && role == "navigation")
     }
 }
@@ -63,7 +63,7 @@ impl NoRedundantRoles {
 fn get_redundant_implicit_role(element: &[u8], jsx_el: Jsx, explicit_role: &[u8]) -> Option<&'static str> {
     let is_explicit = |implicit_role: &&str| explicit_role.eq_ignore_ascii_case(implicit_role.as_bytes());
     match element {
-        // Their roles depend on what they are in.
+        // Their roles depend on their ancestors.
         b"header" | b"footer" | b"main" | b"address" => None,
         b"body" => Some("document").filter(is_explicit),
         b"img" => get_img_implicit_role(jsx_el).filter(is_explicit),

@@ -3,7 +3,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Require or disallow parameter properties in class constructors.
 pub struct ParameterProperties {
-    /// A bit for each combination of modifiers that is allowed, numbered by [`modifiers_of`].
+    /// One bit per allowed combination of modifiers, numbered by [`modifiers_of`].
     allow: u8,
     prefers_parameter_property: bool,
 }
@@ -41,7 +41,7 @@ fn modifiers_of(flags: Flags) -> u8 {
         }
 }
 
-/// Where typescript-estree has a `TSParameterProperty`: a keyword is before the parameter.
+/// True where typescript-estree has a `TSParameterProperty`, that is, if a keyword precedes the parameter.
 fn has_keyword(param: Param) -> bool {
     param
         .modifiers()
@@ -49,13 +49,13 @@ fn has_keyword(param: Param) -> bool {
         .any(|modifier| modifier.decorator().is_none())
 }
 
-/// The name of a parameter that is an `Identifier` for typescript-estree.
+/// Returns the name of a parameter that's an `Identifier` for typescript-estree.
 fn plain_name<'a>(param: Param<'a>) -> Option<Name<'a>> {
     let name = param.pat().as_ident()?;
     (!param.is_rest() && param.default().is_none() && !has_keyword(param)).then_some(name)
 }
 
-/// The name of a key that is an `Identifier`, in brackets or not.
+/// Returns the name of a key that's an `Identifier`, in brackets or not.
 pub(crate) fn identifier_key<'a>(member: Member<'a>) -> Option<Name<'a>> {
     match member.key()?.kind() {
         KeyKind::Ident(name) => Some(name),
@@ -64,7 +64,7 @@ pub(crate) fn identifier_key<'a>(member: Member<'a>) -> Option<Name<'a>> {
     }
 }
 
-/// The `name` of the statement `this.property = name`.
+/// Returns the `name` in the statement `this.property = name`.
 fn assigned_name<'a>(statement: Stmt<'a>) -> Option<Name<'a>> {
     let (_, target, value) = statement.as_expr()?.as_assign()?;
     let is_property_of_this = match target.kind() {
@@ -123,7 +123,7 @@ impl ParameterProperties {
         if assigned.is_empty() {
             return;
         }
-        // Of several with the same name, the last counts.
+        // If several have the same name, the last one wins.
         let parameters: FxHashMap<Name<'a>, Param<'a>> = constructors()
             .flat_map(Func::params)
             .filter_map(|it| Some((plain_name(it)?, it)))
@@ -139,8 +139,10 @@ impl ParameterProperties {
                 properties.insert(name, member);
             }
         }
-        let place = |name: &Name<'a>| properties.get(name).map(|it| it.span().start);
-        for name in utils::sort::in_order_of(assigned, |it| (place(it), it.bytes())) {
+        let property_start = |name: &Name<'a>| properties.get(name).map(|it| it.span().start);
+        for name in
+            utils::sort::collect_sorted_by_key(assigned, |it| (property_start(it), it.bytes()))
+        {
             if let (Some(parameter), Some(property)) =
                 (parameters.get(&name), properties.get(&name))
                 && type_annotations_match(*property, *parameter)

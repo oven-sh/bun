@@ -1,6 +1,6 @@
 // EventEmitter and EventTarget behavior of a `ws` client, tested against a raw TCP peer. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
+import { bunEnv, isWindows, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { errorMonitor, EventEmitter, on, once } from "node:events";
 import net from "node:net";
@@ -730,6 +730,9 @@ describe.each(implementations)("ws client events ($name)", ({ ws: implementation
   });
 });
 
+// `bun run testleak` turns `print_suppressions` on, which puts LeakSanitizer's list of used suppressions on stderr.
+const childEnv = { LSAN_OPTIONS: [bunEnv.LSAN_OPTIONS, "print_suppressions=0"].filter(Boolean).join(":") };
+
 /**
  * Runs `script` in a child process. `WS_URL` points to a raw server in this process, or for "refuses" to a port
  * nothing listens on. Returns what `runScript()` returns plus `handshakes`: how many upgrade requests the raw server
@@ -743,8 +746,12 @@ async function runChild(
 ) {
   await using peer = target === "refuses" ? undefined : await createPeer(target);
   await using refusing = peer ? undefined : await refusingUrl();
-  const result = runScript({ specifier }, script, { WS_URL: (peer ?? refusing)!.url });
-  if (drive) await drive(await peer!.connection());
+  const result = runScript({ specifier }, script, { ...childEnv, WS_URL: (peer ?? refusing)!.url });
+  if (drive) {
+    // A child that exits before it connects fails its test on what it printed, not on the timeout.
+    const conn = await Promise.race([peer!.connection(), result.then(() => undefined)]);
+    if (conn) await drive(conn);
+  }
   return { ...(await result), handshakes: peer?.connections.length };
 }
 const connect = "const ws = new WebSocket(process.env.WS_URL);";
@@ -752,13 +759,7 @@ const connect = "const ws = new WebSocket(process.env.WS_URL);";
 /** What a child returns if it printed `lines`, wrote nothing to stderr and exited with code 0. */
 const cleanExit = (lines: string[], handshakes?: number) => ({ lines, stderr: "", exitCode: 0, handshakes });
 
-// Every test from here on runs a script in a child process. These tests are apart from the ones above so that both
-// implementations run them as one concurrent group.
-//
-// The two scripts of this block come first: on the ASAN lane of CI their child takes seconds to exit. It ends with
-// memory that LeakSanitizer reports (`uws_create_app` for the server, `Bun__resolveSync` for the Worker that loads
-// npm ws), and LeakSanitizer starts a symbolizer to match the report against test/leaksan.supp. An ASAN build runs
-// only 5 tests of a group at a time, so the other scripts run during that wait.
+// First, so that the other child-process tests overlap these two: their children exit slowest under LeakSanitizer.
 describe.concurrent.each(implementations)("ws client events ($name)", ({ specifier }) => {
   describe("'error' without a listener throws", () => {
     test(
@@ -793,6 +794,7 @@ describe.concurrent.each(implementations)("ws client events ($name)", ({ specifi
           // Closing the server lets the process exit.
           ws.on("close", code => (console.log("close " + code), wss.close()));
         });`,
+          childEnv,
         );
         expect(child).toEqual(cleanExit(["open", "close 1006"]));
       },
@@ -801,6 +803,7 @@ describe.concurrent.each(implementations)("ws client events ($name)", ({ specifi
   });
 });
 
+// Not in the first describe.each(), so that the children of both implementations run as one concurrent group.
 describe.concurrent.each(implementations)("ws client events ($name)", ({ specifier }) => {
   // The children need no timer or exit() call. Once the handshake fails, nothing keeps their event loop alive.
   describe("'error' without a listener throws", () => {
@@ -893,7 +896,8 @@ describe.concurrent.each(implementations)("ws client events ($name)", ({ specifi
       async () => {
         using dir = tempDir("ws-events", {});
         const socketPath = path.join(String(dir), "missing.sock");
-        const { lines, ...rest } = await runScript({ specifier }, connect, { WS_URL: "ws+unix:" + socketPath });
+        const env = { ...childEnv, WS_URL: "ws+unix:" + socketPath };
+        const { lines, ...rest } = await runScript({ specifier }, connect, env);
         expect({ lines: lines.map(line => line.replace(socketPath, "<path>")), ...rest }).toEqual(
           cleanExit(['uncaught Error "connect ENOENT <path>" ENOENT']),
         );
@@ -915,8 +919,10 @@ describe.concurrent.each(implementations)("ws client events ($name)", ({ specifi
           sent = await conn.next();
           conn.end();
         });
-        expect(sent).toBe("close 1002");
-        expect(child).toEqual(cleanExit(["open", "uncaught " + invalidOpcode, "rs=2", "close 1006 Buffer() rs=3"], 1));
+        expect({ sent, ...child }).toEqual({
+          sent: "close 1002",
+          ...cleanExit(["open", "uncaught " + invalidOpcode, "rs=2", "close 1006 Buffer() rs=3"], 1),
+        });
       },
       scriptTimeout,
     );

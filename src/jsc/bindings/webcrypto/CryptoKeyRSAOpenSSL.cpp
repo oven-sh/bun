@@ -45,6 +45,16 @@ static size_t getRSAModulusLength(RSA* rsa)
     return RSA_size(rsa) * 8;
 }
 
+// No RSA key has a component of value zero, and exportData() writes such a component as no bytes.
+static bool isZero(const Vector<uint8_t>& component)
+{
+    for (uint8_t byte : component) {
+        if (byte)
+            return false;
+    }
+    return true;
+}
+
 RefPtr<CryptoKeyRSA> CryptoKeyRSA::create(CryptoAlgorithmIdentifier identifier, CryptoAlgorithmIdentifier hash, bool hasHash, const CryptoKeyRSAComponents& keyData, bool extractable, CryptoKeyUsageBitmap usages)
 {
     CryptoKeyType keyType;
@@ -68,12 +78,12 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::create(CryptoAlgorithmIdentifier identifier, 
         return nullptr;
 
     // For both public and private keys, we need the public modulus and exponent.
-    if (keyData.modulus().isEmpty() || keyData.exponent().isEmpty())
+    if (isZero(keyData.modulus()) || isZero(keyData.exponent()))
         return nullptr;
 
     // For private keys, we require the private exponent, as well as p and q prime information.
     if (keyType == CryptoKeyType::Private) {
-        if (keyData.privateExponent().isEmpty() || keyData.firstPrimeInfo().primeFactor.isEmpty() || keyData.secondPrimeInfo().primeFactor.isEmpty())
+        if (isZero(keyData.privateExponent()) || isZero(keyData.firstPrimeInfo().primeFactor) || isZero(keyData.secondPrimeInfo().primeFactor))
             return nullptr;
     }
 
@@ -121,11 +131,11 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::create(CryptoAlgorithmIdentifier identifier, 
         // We set dmp1, dmpq1, and iqmp member of the RSA struct if the keyData has corresponding data.
 
         // dmp1 -- d mod (p - 1)
-        auto dmp1 = (!keyData.firstPrimeInfo().factorCRTExponent.isEmpty()) ? convertToBigNumber(keyData.firstPrimeInfo().factorCRTExponent) : nullptr;
+        auto dmp1 = (!isZero(keyData.firstPrimeInfo().factorCRTExponent)) ? convertToBigNumber(keyData.firstPrimeInfo().factorCRTExponent) : nullptr;
         // dmq1 -- d mod (q - 1)
-        auto dmq1 = (!keyData.secondPrimeInfo().factorCRTExponent.isEmpty()) ? convertToBigNumber(keyData.secondPrimeInfo().factorCRTExponent) : nullptr;
+        auto dmq1 = (!isZero(keyData.secondPrimeInfo().factorCRTExponent)) ? convertToBigNumber(keyData.secondPrimeInfo().factorCRTExponent) : nullptr;
         // iqmp -- q^(-1) mod p
-        auto iqmp = (!keyData.secondPrimeInfo().factorCRTCoefficient.isEmpty()) ? convertToBigNumber(keyData.secondPrimeInfo().factorCRTCoefficient) : nullptr;
+        auto iqmp = (!isZero(keyData.secondPrimeInfo().factorCRTCoefficient)) ? convertToBigNumber(keyData.secondPrimeInfo().factorCRTCoefficient) : nullptr;
 
         if (!RSA_set0_crt_params(rsa.get(), dmp1.get(), dmq1.get(), iqmp.get()))
             return nullptr;

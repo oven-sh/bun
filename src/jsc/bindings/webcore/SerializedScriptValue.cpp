@@ -30,6 +30,7 @@
 #include "BunString.h"
 // #include "BlobRegistry.h"
 // #include "ByteArrayPixelBuffer.h"
+#include "CryptoAlgorithmChaCha20Poly1305.h"
 #include "CryptoKeyAES.h"
 #include "CryptoKeyAKP.h"
 #include <openssl/err.h>
@@ -3246,6 +3247,9 @@ private:
         Vector<uint8_t> keyData;
         if (!read(keyData))
             return false;
+        // importKey rejects a ChaCha20-Poly1305 key of another length. HKDF and PBKDF2 take any length.
+        if (algorithm == CryptoAlgorithmIdentifier::ChaCha20_Poly1305 && keyData.size() * 8 != CryptoAlgorithmChaCha20Poly1305::s_keyLengthBits)
+            return false;
         result = CryptoKeyRaw::create(algorithm, WTF::move(keyData), usages, extractable);
         return true;
     }
@@ -3271,11 +3275,7 @@ private:
             result = CryptoKeyAKP::importPkcs8(algorithm, WTF::move(keyData), extractable, usages, nullptr);
             break;
         }
-        // A corrupt payload leaves the BoringSSL parse error in the queue;
-        // nothing here attaches it as a cause, so clear it.
-        if (!result)
-            ERR_clear_error();
-        return !!result;
+        return true;
     }
 
     bool readCryptoKey(JSValue& cryptoKey)
@@ -3371,7 +3371,12 @@ private:
                 return false;
             break;
         }
-        cryptoKey = getJSValue(result.get());
+        if (!result) {
+            // A failed import can leave its BoringSSL error queued, and nothing here reports it.
+            ERR_clear_error();
+            return false;
+        }
+        cryptoKey = getJSValue(*result);
         return true;
     }
 #endif
@@ -3463,6 +3468,7 @@ private:
             if (keyType == CryptoKeyType::Public) {
                 EVP_PKEY* pkey = PEM_read_bio_PUBKEY(bio.get(), nullptr, nullptr, nullptr);
                 if (!pkey) {
+                    ERR_clear_error();
                     fail();
                     return JSValue();
                 }
@@ -3475,6 +3481,7 @@ private:
 
             EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio.get(), nullptr, nullptr, nullptr);
             if (!pkey) {
+                ERR_clear_error();
                 fail();
                 return JSValue();
             }

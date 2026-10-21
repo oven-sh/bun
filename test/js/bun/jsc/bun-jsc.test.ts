@@ -657,6 +657,236 @@ it("deserialize rejects a CryptoKey record with no key bytes", async () => {
   expect({ stdout, exitCode }).toEqual({ stdout: "rejected\ntrue Ed25519\n", exitCode: 0 });
 });
 
+// Runs a child that builds `record` with `source`, reads it with node:v8 `deserialize` and then
+// fails a `decipher.final()`. A failed final() throws the oldest error in the BoringSSL error queue.
+// That is its own ERR_OSSL_BAD_DECRYPT only when `deserialize` left no error behind.
+async function deserializeInChild(source: string) {
+  const script = `
+    import { serialize } from "bun:jsc";
+    import { createDecipheriv, generateKeyPairSync } from "node:crypto";
+    import { deserialize } from "node:v8";
+    ${source}
+    try {
+      deserialize(record);
+      console.log("returned");
+    } catch (error) {
+      console.log(error.name + ": " + error.message);
+    }
+    const decipher = createDecipheriv("aes-128-cbc", Buffer.alloc(16), Buffer.alloc(16));
+    decipher.update(Buffer.alloc(16));
+    try {
+      decipher.final();
+      console.log("final() returned");
+    } catch (error) {
+      console.log(error.code);
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { lines: stdout.trim().split("\n"), stderr, exitCode };
+}
+const rejectedWithCleanQueue = {
+  lines: ["TypeError: Unable to deserialize data.", "ERR_OSSL_BAD_DECRYPT"],
+  stderr: "",
+  exitCode: 0,
+};
+
+// A CryptoKey record stores each key field as [u32 length][bytes]. When those bytes did not
+// import, the reader used to return `null` as the clone, so a corrupt record read like a stored null.
+describe("deserialize rejects a CryptoKey record whose key bytes do not import", () => {
+  const { subtle } = crypto;
+  const rsa = {
+    name: "RSASSA-PKCS1-v1_5",
+    modulusLength: 2048,
+    publicExponent: new Uint8Array([1, 0, 1]),
+    hash: "SHA-256",
+  };
+  const ec = { name: "ECDSA", namedCurve: "P-256" };
+  let rsaKeys: Promise<CryptoKeyPair> | undefined;
+  const generateRsa = () => (rsaKeys ??= subtle.generateKey(rsa, true, ["sign", "verify"]));
+  const exported = async (format: "raw" | "raw-public" | "raw-secret" | "pkcs8", key: CryptoKey) =>
+    Buffer.from(await subtle.exportKey(format, key));
+  const jwkField = async (key: CryptoKey, name: "n" | "p") =>
+    Buffer.from((await subtle.exportKey("jwk", key))[name]!, "base64url");
+  const u32 = (value: number) => {
+    const bytes = Buffer.alloc(4);
+    bytes.writeUInt32LE(value);
+    return bytes;
+  };
+
+  // [what the malformed record holds, () => [a real key, one field of its record, the replacement for that field]]
+  type Case = [string, () => Promise<[CryptoKey, Buffer, Uint8Array]>];
+  // These imports fail with nothing in the BoringSSL error queue.
+  const cases: Case[] = [
+    [
+      "an HMAC key of 0 bytes",
+      async () => {
+        const key = await subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
+        return [key, await exported("raw", key), new Uint8Array(0)];
+      },
+    ],
+    [
+      "an AES-GCM key of 31 bytes",
+      async () => {
+        const key = await subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]);
+        const bytes = await exported("raw", key);
+        return [key, bytes, bytes.subarray(1)];
+      },
+    ],
+    [
+      "an RSA public key with an empty modulus",
+      async () => {
+        const { publicKey } = await generateRsa();
+        return [publicKey, await jwkField(publicKey, "n"), new Uint8Array(0)];
+      },
+    ],
+    [
+      "an RSA public key with a modulus of value zero",
+      async () => {
+        const { publicKey } = await generateRsa();
+        return [publicKey, await jwkField(publicKey, "n"), new Uint8Array(1)];
+      },
+    ],
+    [
+      "an RSA private key with an empty prime",
+      async () => {
+        const { privateKey } = await generateRsa();
+        return [privateKey, await jwkField(privateKey, "p"), new Uint8Array(0)];
+      },
+    ],
+    [
+      "an Ed25519 public key of 31 bytes",
+      async () => {
+        const { publicKey } = (await subtle.generateKey("Ed25519", true, ["sign", "verify"])) as CryptoKeyPair;
+        const bytes = await exported("raw", publicKey);
+        return [publicKey, bytes, bytes.subarray(1)];
+      },
+    ],
+    [
+      "a ChaCha20-Poly1305 key of 31 bytes",
+      async () => {
+        const key = (await subtle.generateKey("ChaCha20-Poly1305", true, ["encrypt"])) as CryptoKey;
+        const bytes = await exported("raw-secret", key);
+        return [key, bytes, bytes.subarray(1)];
+      },
+    ],
+  ];
+  // BoringSSL parses these key bytes. It queues an error when it rejects them.
+  const parsedCases: Case[] = [
+    [
+      "an EC public key whose point is not on the curve",
+      async () => {
+        const { publicKey } = await subtle.generateKey(ec, true, ["sign", "verify"]);
+        const point = await exported("raw", publicKey);
+        const moved = Buffer.from(point);
+        moved[moved.length - 1] ^= 1;
+        return [publicKey, point, moved];
+      },
+    ],
+    [
+      "an EC private key whose PKCS#8 is truncated",
+      async () => {
+        const { privateKey } = await subtle.generateKey(ec, true, ["sign", "verify"]);
+        const pkcs8 = await exported("pkcs8", privateKey);
+        return [privateKey, pkcs8, pkcs8.subarray(0, -1)];
+      },
+    ],
+    [
+      "an ML-DSA-44 public key that is 1 byte short",
+      async () => {
+        const { publicKey } = (await subtle.generateKey("ML-DSA-44", true, ["sign", "verify"])) as CryptoKeyPair;
+        const bytes = await exported("raw-public", publicKey);
+        return [publicKey, bytes, bytes.subarray(1)];
+      },
+    ],
+  ];
+
+  // A payload is [u32 version][CryptoKeyTag][u32 recordLength][record].
+  const build = async (make: Case[1]) => {
+    const [key, field, replacement] = await make();
+    const intact = Buffer.from(serialize(key));
+    const at = intact.indexOf(Buffer.concat([u32(field.length), field]));
+    const withField = (bytes: Uint8Array) => {
+      const payload = Buffer.concat([
+        intact.subarray(0, at),
+        u32(bytes.length),
+        bytes,
+        intact.subarray(at + 4 + field.length),
+      ]);
+      payload.writeUInt32LE(payload.length - 9, 5);
+      return payload;
+    };
+    // Guards the record layout that withField() assumes.
+    expect(withField(field)).toEqual<Buffer>(intact);
+    return { key, intact, malformed: withField(replacement) };
+  };
+  const describeKey = async (key: CryptoKey) => ({
+    type: key.type,
+    algorithm: key.algorithm,
+    jwk: await subtle.exportKey("jwk", key),
+  });
+  // toThrow(error) compares the message only. This also compares the class.
+  const outcome = (payload: Buffer) => {
+    try {
+      return { returned: deserialize(payload) };
+    } catch (error: any) {
+      return { threw: `${error.name}: ${error.message}` };
+    }
+  };
+  const rejected = { threw: "TypeError: Unable to deserialize data." };
+
+  it.each([...cases, ...parsedCases])("%s", async (_name, make) => {
+    const { key, intact, malformed } = await build(make);
+    expect(outcome(malformed)).toEqual(rejected);
+    expect(await describeKey(deserialize(intact))).toEqual(await describeKey(key));
+  });
+
+  it.concurrent.each(parsedCases)("%s, through node:v8, leaves no BoringSSL error queued", async (_name, make) => {
+    const { malformed } = await build(make);
+    const source = `const record = Buffer.from("${malformed.toString("hex")}", "hex");`;
+    expect(await deserializeInChild(source)).toEqual(rejectedWithCleanQueue);
+  });
+
+  it("a malformed record fails the whole value that holds it", async () => {
+    const { key, intact, malformed } = await build(parsedCases[0][1]);
+    const holder = Buffer.from(serialize([key, key, { key }]));
+    // The key is written once. The other two uses refer back to it.
+    const at = holder.indexOf(intact.subarray(5));
+    expect(at).toBeGreaterThan(0);
+    const broken = Buffer.concat([
+      holder.subarray(0, at),
+      malformed.subarray(5),
+      holder.subarray(at + intact.length - 5),
+    ]);
+
+    expect(outcome(broken)).toEqual(rejected);
+    const [first, second, { key: third }] = deserialize(holder);
+    expect(await describeKey(first)).toEqual(await describeKey(key));
+    expect(second).toBe(first);
+    expect(third).toBe(first);
+  });
+});
+
+// A KeyObject record holds the key as PEM text. A PEM that does not parse was rejected already,
+// but the parse error stayed in the BoringSSL error queue.
+it.concurrent.each(["publicKey", "privateKey"])(
+  "deserialize leaves no BoringSSL error queued behind a KeyObject record (%s) whose PEM does not parse",
+  async which => {
+    const source = `
+      const record = Buffer.from(serialize(generateKeyPairSync("ec", { namedCurve: "prime256v1" }).${which}));
+      // Overwrite the start of the base64 body. The PEM header stays, and the DER inside is not a key.
+      const body = record.indexOf("KEY-----") + "KEY-----".length + 1;
+      record.fill("A", body, body + 40);
+    `;
+    expect(await deserializeInChild(source)).toEqual(rejectedWithCleanQueue);
+  },
+);
+
 it("deserialize applies the same nesting depth limit to arrays as to objects", async () => {
   const script = `
     import { serialize, deserialize } from "bun:jsc";

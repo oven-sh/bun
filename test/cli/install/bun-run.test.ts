@@ -755,7 +755,6 @@ describe.concurrent("bun run", () => {
       "(true && npm run greet -w app)",
       "npm run greet -w $(echo app)",
       "npm run greet # switch to -w app",
-      ...(isWindows ? [] : ["sh -c 'npm run greet -w app'"]),
     ])("%s still runs the root's script", async start => {
       const { dir, stdout, stderr, exitCode } = await runStart(start);
       using _ = dir;
@@ -772,11 +771,18 @@ describe.concurrent("bun run", () => {
       expect(exitCode).toBe(0);
     });
 
-    it.skipIf(isWindows)("doesn't change an `npm run` that's only quoted text", async () => {
+    it("reads a command that is a quoted string", async () => {
+      const { dir, stdout, stderr, exitCode } = await runStart(`${bunExe()} exec 'npm run hello -w app'`);
+      using _ = dir;
+      expect(stderr).toContain(" run --filter=app hello'\n");
+      expect(stdout).toContain("workspace-ok");
+      expect(exitCode).toBe(0);
+    });
+
+    it.skipIf(isWindows)("ends a command in a quoted string at the closing quote", async () => {
       const { dir, stdout, exitCode } = await runStart("echo 'step: npm run build -w app' && echo 'ok; done'");
       using _ = dir;
-      expect(stdout).toContain("-w app");
-      expect(stdout).not.toContain("--filter");
+      expect(stdout.replaceAll("bun-debug ", "bun ")).toBe("step: bun run --filter=app build\nok; done\n");
       expect(exitCode).toBe(0);
     });
   });
@@ -848,9 +854,12 @@ describe.concurrent("bun run", () => {
     });
 
     it.each([
-      ['echo "npm run -s print && npm run -s print"', "bun run -s print && bun run -s print\n"],
-      [`echo "it's" && echo 'npm run -s print && npm run -s print'`, "it's\nbun run -s print && bun run -s print\n"],
-    ])("%s does not move `-s` in a quoted string", async (start, output) => {
+      ['echo "npm run -s print && npm run -s print"', "bun run --silent print && bun run --silent print\n"],
+      [
+        `echo "it's" && echo 'npm run -s print && npm run -s print'`,
+        "it's\nbun run --silent print && bun run --silent print\n",
+      ],
+    ])("%s moves `-s` in each command of a quoted string", async (start, output) => {
       const { dir, stdout, exitCode } = await runStart(start);
       using _ = dir;
       expect({ stdout, exitCode }).toEqual({ stdout: output, exitCode: 0 });
@@ -871,8 +880,6 @@ describe.concurrent("bun run", () => {
     it.each([
       ["npm run print -- -s", "printed -s\n"],
       ["npm run print -s --if-present", "printed -s --if-present\n"],
-      ["npm run print -s --prefix apps/app", "printed -s --prefix apps/app\n"],
-      ["npm run print --silent -C apps/app", "printed --silent -C apps/app\n"],
       ["npm run print --silent=true", "printed --silent=true\n"],
       ["npm run print -sx", "printed -sx\n"],
     ])("%s stays as it is written", async (start, output) => {
@@ -900,6 +907,250 @@ describe.concurrent("bun run", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr.replaceAll("bun-debug ", "bun ")).toContain("$ bun run --silent build\n");
       expect(stdout).toContain("built");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // `npm run` reads `--prefix <dir>` / `-C <dir>` on either side of the script's name and runs the script of the
+  // package in `<dir>`. `bun run` has `--cwd <dir>`, in front of the name.
+  describe("npm run --prefix in scripts", () => {
+    // `start` is the script under test. The root and apps/app both have `start` and `print`.
+    // The root's `prestart` fails the second time it runs: a `start` that runs itself again stops there.
+    async function runStart(start: string, cmd: string[] = ["run", "start"]) {
+      const dir = tempDir("npm-run-prefix", {
+        "package.json": JSON.stringify({
+          name: "root",
+          private: true,
+          scripts: { prestart: "mkdir started", start, print: "echo root-printed" },
+        }),
+        "apps/app/package.json": JSON.stringify({
+          name: "app",
+          scripts: { start: "echo app-started", print: "echo app-printed" },
+        }),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...cmd],
+        cwd: String(dir),
+        // `~` is the root, for a POSIX shell and for Bun's shell on Windows.
+        env: { ...bunEnv, HOME: String(dir), USERPROFILE: String(dir) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // A debug build writes `bun-debug` where a release build writes `bun`.
+      const text = (output: string) => output.replaceAll("\r\n", "\n").replaceAll("bun-debug ", "bun ");
+      return { dir, stdout: text(stdout), stderr: text(stderr), exitCode };
+    }
+
+    // `echo` prints what each `npm run` becomes.
+    it("writes `--cwd <dir>` in front of the script's name", async () => {
+      const rewritten = [
+        ["npm run print --prefix apps/app", "bun run --cwd apps/app print"],
+        ["npm run print -C apps/app", "bun run --cwd apps/app print"],
+        ["npm run --prefix apps/app print", "bun run --cwd apps/app print"],
+        ["npm run -C apps/app print", "bun run --cwd apps/app print"],
+        ["npm run print --prefix=apps/app", "bun run --cwd apps/app print"],
+        ["npm run print -C=apps/app", "bun run --cwd apps/app print"],
+        ["npm run print -prefix apps/app", "bun run --cwd apps/app print"],
+        ["npm run print -prefix=apps/app", "bun run --cwd apps/app print"],
+        ["npm run print --prefix ./apps/app/", "bun run --cwd ./apps/app/ print"],
+        // The other words are for the script, in their order.
+        ["npm run print one --prefix apps/app two", "bun run --cwd apps/app print one two"],
+        // The last directory is the one.
+        ["npm run print --prefix missing -C apps/app", "bun run --cwd missing --cwd apps/app print"],
+        ["npm run print --if-present --prefix apps/app", "bun run --if-present --cwd apps/app print"],
+        ["npm run print -s --prefix apps/app", "bun run --silent --cwd apps/app print"],
+        ["npm run print --silent -C apps/app", "bun run --silent --cwd apps/app print"],
+        ["npm run print --prefix ../.. -w other", "bun run --cwd ../.. --filter=other print"],
+        ["npm run print --ws --prefix ../..", "bun run --workspaces --cwd ../.. print"],
+        // `bun run` gives another option of npm to the script.
+        ["npm run print --prefix apps/app --loglevel=warn", "bun run --cwd apps/app print --loglevel=warn"],
+        // A command among the words behind the name is rewritten like any other text.
+        ["npm run print one npm run print --prefix apps/app", "bun run --cwd apps/app print one bun run print"],
+      ];
+      const { dir, stdout, exitCode } = await runStart(rewritten.map(([from]) => `echo ${from}`).join(" ; "));
+      using _ = dir;
+      expect(stdout.trimEnd().split("\n")).toEqual(rewritten.map(([, to]) => to));
+      expect(exitCode).toBe(0);
+    });
+
+    // The flag has no directory, the directory has a redirect attached to it, or a shell makes other words of the
+    // command than the ones that are written.
+    it("leaves a command that it cannot read as it is written", async () => {
+      const start = [
+        "echo npm run print --prefix",
+        "echo npm run print -C --if-present",
+        "echo npm run print --prefix apps/app>out.txt",
+        'echo npm run print --prefix "apps/app"',
+        "echo npm run print --prefix $HOME/apps/app",
+        "echo npm run print --prefix 'apps/app'",
+        "echo npm run print --prefix apps\\app",
+        "echo npm run print --prefix apps/app # the app",
+      ].join(" ; ");
+      const { dir, stderr, exitCode } = await runStart(start);
+      using _ = dir;
+      expect({ command: stderr.split("\n")[1], exitCode }).toEqual({
+        command: `$ ${start.replaceAll("npm run", "bun run")}`,
+        exitCode: 0,
+      });
+    });
+
+    it.each([
+      ["npm run print --prefix apps/app", "bun run --cwd apps/app print", "app-printed\n"],
+      ["npm run -C apps/app print", "bun run --cwd apps/app print", "app-printed\n"],
+      // Without the directory, a script of the same name runs itself again.
+      ["npm run start --prefix apps/app", "bun run --cwd apps/app start", "app-started\n"],
+      // The next command has its own directory.
+      [
+        "npm run print --prefix apps/app && npm run print -C .",
+        "bun run --cwd apps/app print && bun run --cwd . print",
+        "app-printed\nroot-printed\n",
+      ],
+      [
+        "npm run print --prefix apps/app 2>&1",
+        "bun run --cwd apps/app print 2>&1",
+        "$ echo app-printed\napp-printed\n",
+      ],
+      // What follows `--` is for the script, and is not read.
+      [
+        "npm run print --prefix apps/app -- --prefix missing",
+        "bun run --cwd apps/app print -- --prefix missing",
+        "app-printed --prefix missing\n",
+      ],
+      ['npm run print --prefix apps/app -- "a  b"', 'bun run --cwd apps/app print -- "a  b"', "app-printed a  b\n"],
+    ])("%s runs the script of the package in the directory", async (start, rewritten, output) => {
+      const { dir, stdout, stderr, exitCode } = await runStart(start);
+      using _ = dir;
+      expect({ commands: stderr.split("\n").slice(0, 2), stdout, exitCode }).toEqual({
+        commands: ["$ mkdir started", `$ ${rewritten}`],
+        stdout: output,
+        exitCode: 0,
+      });
+    });
+
+    // npm expands a `~` at the start of the directory. Behind `--cwd` the shell does.
+    it.each(["run start", "run --shell=bun start"])(
+      "bun %s leaves the `~` of `npm run print --prefix=~/apps/app` to the shell",
+      async cmd => {
+        const { dir, stdout, stderr, exitCode } = await runStart("npm run print --prefix=~/apps/app", cmd.split(" "));
+        using _ = dir;
+        expect({ command: stderr.split("\n")[1], stdout, exitCode }).toEqual({
+          command: "$ bun run --cwd ~/apps/app print",
+          stdout: "app-printed\n",
+          exitCode: 0,
+        });
+      },
+    );
+
+    // `concurrently "npm run dev --prefix client" "npm run dev --prefix server"`: a command in a quoted string
+    // ends at the closing quote, and `bun exec` runs the string as `concurrently` does.
+    it.each([
+      [
+        `exec "npm run print --prefix apps/app && npm run start -C apps/app"`,
+        `exec "bun run --cwd apps/app print && bun run --cwd apps/app start"`,
+        "app-printed\napp-started\n",
+      ],
+      [
+        `exec 'cd . && npm run print --prefix apps/app'`,
+        `exec 'cd . && bun run --cwd apps/app print'`,
+        "app-printed\n",
+      ],
+    ])("bun %s runs each script of the package in the directory", async (start, rewritten, output) => {
+      const { dir, stdout, stderr, exitCode } = await runStart(`${bunExe()} ${start}`);
+      using _ = dir;
+      expect(stderr.split("\n")[1]).toEndWith(` ${rewritten}`);
+      expect({ stdout, exitCode }).toEqual({ stdout: output, exitCode: 0 });
+    });
+
+    it("moves the directory in quoted text too", async () => {
+      const { dir, stdout, exitCode } = await runStart("echo 'step: npm run print --prefix apps/app'");
+      using _ = dir;
+      expect({ stdout, exitCode }).toEqual({ stdout: "step: bun run --cwd apps/app print\n", exitCode: 0 });
+    });
+
+    it("fails for a directory that does not exist", async () => {
+      const { dir, stdout, stderr, exitCode } = await runStart("npm run print --prefix missing");
+      using _ = dir;
+      expect(stderr).toContain(`Could not change directory to "missing"`);
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+    });
+
+    it.each([
+      "start",
+      "run --shell=bun start",
+      "run --filter root start",
+      "run --parallel start",
+      "run --sequential start",
+    ])("bun %s runs `npm run print --prefix apps/app`", async cmd => {
+      const { dir, stdout, exitCode } = await runStart("npm run print --prefix apps/app", cmd.split(" "));
+      using _ = dir;
+      expect(stdout).toContain("app-printed\n");
+      expect(stdout).not.toContain("root-printed");
+      expect(exitCode).toBe(0);
+    });
+
+    // What follows `--` is for the script. So is what follows the name of a script that `bun run` is asked for.
+    it.each([
+      ["a script `npm run print -- --prefix apps/app`", "npm run print -- --prefix apps/app", ["run", "start"]],
+      ["`bun run print --prefix apps/app`", "echo unused", ["run", "print", "--prefix", "apps/app"]],
+    ])("%s gives the words to the root's script", async (_, start, cmd) => {
+      const { dir, stdout, exitCode } = await runStart(start, cmd);
+      using _dir = dir;
+      expect({ stdout, exitCode }).toEqual({ stdout: "root-printed --prefix apps/app\n", exitCode: 0 });
+    });
+
+    // A directory and a workspace: `start` is a script of apps/app, and the workspaces are those of the root.
+    it.each([
+      ["npm run print --prefix ../.. -w other", "bun run --cwd ../.. --filter=other print"],
+      [`exec "npm run print -C ../.. --workspace=other"`, `exec "bun run --cwd ../.. --filter=other print"`],
+    ])("%s runs the script of the root's workspace", async (command, rewritten) => {
+      const start = command.startsWith("exec ") ? `${bunExe()} ${command}` : command;
+      using dir = tempDir("npm-run-prefix-workspaces", {
+        "package.json": JSON.stringify({
+          name: "root",
+          private: true,
+          workspaces: ["apps/*"],
+          scripts: { print: "echo root-printed" },
+        }),
+        "apps/app/package.json": JSON.stringify({ name: "app", scripts: { start, print: "echo app-printed" } }),
+        "apps/other/package.json": JSON.stringify({ name: "other", scripts: { print: "echo other-printed" } }),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "start"],
+        cwd: join(String(dir), "apps", "app"),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr.replaceAll("\r\n", "\n").replaceAll("bun-debug ", "bun ").split("\n")[0]).toEndWith(rewritten);
+      expect(stdout).toContain("other-printed");
+      expect(stdout).not.toContain("app-printed");
+      expect(exitCode).toBe(0);
+    });
+
+    it("bun install runs a postinstall script that says `npm run print --prefix apps/app`", async () => {
+      using dir = tempDir("npm-run-prefix-install", {
+        "package.json": JSON.stringify({
+          name: "root",
+          version: "1.0.0",
+          scripts: { postinstall: "npm run print --prefix apps/app", print: "echo root-printed" },
+        }),
+        "apps/app/package.json": JSON.stringify({ name: "app", scripts: { print: "echo app-printed" } }),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr.replaceAll("\r\n", "\n").replaceAll("bun-debug ", "bun ")).toContain(
+        "$ bun run --cwd apps/app print\n",
+      );
+      expect(stdout).toContain("app-printed");
+      expect(stdout).not.toContain("root-printed");
       expect(exitCode).toBe(0);
     });
   });

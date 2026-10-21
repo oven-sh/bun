@@ -7,6 +7,7 @@ export const PostgresSQLQuery = b.class({
   rustPath: "crate::postgres::PostgresSQLQuery",
   refCounted: true,
   finalize: true,
+  estimatedSize: true,
   configurable: false,
   internalFields: ["pendingValue", "target", "binding", "copy"],
   proto: {

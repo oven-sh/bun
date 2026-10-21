@@ -1024,7 +1024,6 @@ impl Response {
         init: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let response = Self::construct_into(cx.global(), body.to_js(), init.to_js())?;
-        let response = RefPtr::new(response);
         let ptr = response.as_ptr();
         let this_value = structure.create(&cx.heap, response);
         // SAFETY: `this_value` holds the ref.
@@ -1038,7 +1037,7 @@ impl Response {
         global_this: &JSGlobalObject,
         body: JSValue,
         init: JSValue,
-    ) -> JsResult<Response> {
+    ) -> JsResult<RefPtr<Response>> {
         let arguments = [body, init];
 
         if !arguments[0].is_undefined_or_null() && arguments[0].is_object() {
@@ -1052,14 +1051,14 @@ impl Response {
                             "new Response(s3File) do not support ResponseInit options",
                         )));
                     }
-                    let response = Response {
+                    let response = RefPtr::new(Response {
                         init: JsCell::new(Init {
                             status_code: 302,
                             ..Default::default()
                         }),
                         body: JsCell::new(Body::new(BodyValue::Null)),
                         ..Default::default()
-                    };
+                    });
 
                     let s3 = blob.store.get().as_ref().unwrap().data.as_s3();
                     let credentials = s3.get_credentials();
@@ -1150,11 +1149,11 @@ impl Response {
 
         // Disarm: all fallible ops have succeeded.
         let body = scopeguard::ScopeGuard::into_inner(body);
-        let response = Response {
+        let response = RefPtr::new(Response {
             body: JsCell::new(body),
             init: JsCell::new(init),
             ..Default::default()
-        };
+        });
         response.calculate_estimated_byte_size();
         Ok(response)
     }

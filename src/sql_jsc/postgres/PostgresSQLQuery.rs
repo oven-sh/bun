@@ -373,6 +373,11 @@ impl PostgresSQLQuery {
         }
     }
 
+    // The generator counts the struct itself.
+    pub(crate) fn estimated_size(&self) -> usize {
+        0
+    }
+
     // Registered directly as `createQuery` via
     // `put_host_functions!` in `postgres.rs`, so no exported symbol is needed.
     pub(crate) fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {

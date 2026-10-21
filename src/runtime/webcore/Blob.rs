@@ -2145,8 +2145,13 @@ impl BlobExt for Blob {
         options: JsLocal<'_>,
     ) -> JsResult<*mut Blob> {
         let global_this = cx.global();
+        let parts = parts.to_js();
         let options = options.to_js();
-        let blob = Blob::get::<false, true>(global_this, parts.to_js())?;
+        let blob = if parts.is_undefined() {
+            Blob::init_empty(global_this)
+        } else {
+            Blob::get::<false, true>(global_this, parts)?
+        };
 
         if options.is_object() {
             if let Some(content_type) = options.get(global_this, "type")? {

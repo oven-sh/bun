@@ -4,6 +4,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 export const SocketAddress = b.class({
   rustPath: "crate::socket::SocketAddress",
   enumerable: false,
+  estimatedSize: true,
   construct: { args: { options: b.any }, capability: "js", throws: true, length: 0 },
   static: {
     /** Not an instance of a subclass. */

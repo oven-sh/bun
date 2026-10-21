@@ -42,6 +42,11 @@ impl JSMySQLQuery {
         unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
 
+    // The generator counts the struct itself.
+    pub(crate) fn estimated_size(&self) -> usize {
+        0
+    }
+
     pub fn finalize(&self) {
         debug!("MySQLQuery finalize");
         self.this_value.with_mut(|v| v.finalize());

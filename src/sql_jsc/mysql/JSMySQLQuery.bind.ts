@@ -7,6 +7,7 @@ export const MySQLQuery = b.class({
   rustPath: "crate::mysql::js_my_sql_query::JSMySQLQuery",
   refCounted: true,
   finalize: true,
+  estimatedSize: true,
   configurable: false,
   internalFields: ["pendingValue", "target", "binding"],
   proto: {

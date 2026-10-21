@@ -839,8 +839,7 @@ impl<'a> PackageInstaller<'a> {
         }
 
         if !is_pending_package_install {
-            const FORCE: bool = false;
-            self.install_available_packages::<FORCE>(log_level);
+            self.install_available_packages(log_level);
         }
         self.run_available_scripts(log_level);
     }
@@ -1389,10 +1388,7 @@ impl<'a> PackageInstaller<'a> {
         self.summary.fail += 1;
     }
 
-    pub(crate) fn install_available_packages<const FORCE: bool>(
-        &mut self,
-        log_level: Options::LogLevel,
-    ) {
+    fn install_available_packages(&mut self, log_level: Options::LogLevel) {
         if self.pending_install_count == 0 {
             return;
         }
@@ -1404,13 +1400,11 @@ impl<'a> PackageInstaller<'a> {
             if self.trees[i].pending_installs.is_empty() {
                 continue;
             }
-            if FORCE
-                || Self::can_install_package_for_tree(
-                    &self.completed_trees,
-                    self.lockfile().buffers.trees.as_slice(),
-                    i as u32,
-                )
-            {
+            if Self::can_install_package_for_tree(
+                &self.completed_trees,
+                self.lockfile().buffers.trees.as_slice(),
+                i as u32,
+            ) {
                 // If installing these packages completes the tree, we don't allow it
                 // to call `installAvailablePackages` recursively. Starting at id 0 and
                 // going up ensures we will reach any trees that will be able to install

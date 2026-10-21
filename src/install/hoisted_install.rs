@@ -558,9 +558,6 @@ pub(crate) fn install_hoisted_packages(
         this.tick_lifecycle_scripts();
         this.report_slow_lifecycle_scripts();
 
-        // A tree never completes if one of its packages failed to download. Install everything
-        // that was still waiting on it (force = true).
-        installer.install_available_packages::<true>(log_level);
         // Every package is linked. The scripts that still have to run don't need the lock.
         installer.staging_lock = None;
         installer.tree_dir = None;
@@ -581,9 +578,10 @@ pub(crate) fn install_hoisted_packages(
         if !this.options.do_.install_packages() {
             return Err(crate::Error::InstallFailed);
         }
+        // Every dependency had its turn (see `finish_unplaced`), so every tree is complete.
+        debug_assert!(installer.pending_install_count == 0);
 
-        // need to make sure bins are linked before completing any remaining scripts.
-        // this can happen if a package fails to download
+        // Before the remaining scripts: the bins that waited for another tree.
         installer.link_remaining_bins();
         installer.complete_remaining_scripts(log_level);
 

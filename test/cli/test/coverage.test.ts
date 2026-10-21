@@ -1410,3 +1410,73 @@ test("reports an error for a coverage directory longer than the path buffer", as
   expect(stderr).toContain("ENAMETOOLONG: File name too long: Failed to write lcov.info");
   expect(exitCode).toBe(1);
 });
+
+// Regex and raw template text is transpiled as written. The module text that
+// JSC holds is then 8-bit with characters above 0x7F (Latin-1 range text) or
+// UTF-16 (text beyond it), and coverage offsets count its code units. Each
+// variant has the same number of code units on every line as the ASCII twin
+// (an astral character is two code units), so its lcov record must be
+// identical to the twin's.
+test("non-ASCII regex and raw template text does not shift coverage lines", async () => {
+  const units = 40;
+  // `units` is a multiple of the length of each piece.
+  const repeat = (piece: string) => Buffer.alloc((Buffer.byteLength(piece) * units) / piece.length, piece).toString();
+  const variants = { ascii: repeat("x"), latin1: repeat("é"), utf16: repeat("é中🐰") };
+  using dir = tempDir(
+    "cov-non-ascii",
+    Object.fromEntries(
+      Object.entries(variants).flatMap(([name, text]) => [
+        [
+          `${name}/demo.ts`,
+          `export const raw = String.raw\`${text}\`;
+export const re = /${text}/u;
+export function covered() {
+  return raw.length + re.source.length;
+}
+export function uncovered() {
+  return 1;
+}
+export function alsoUncovered() {
+  return 2;
+}
+`,
+        ],
+        [
+          `${name}/demo.test.ts`,
+          `
+import { expect, test } from "bun:test";
+import { covered } from "./demo";
+
+test("source text has the expected length", () => {
+  expect(covered()).toBe(${2 * units});
+});
+`,
+        ],
+      ]),
+    ),
+  );
+  const [ascii, latin1, utf16] = await Promise.all(
+    Object.keys(variants).map(async variant => {
+      const cwd = path.join(String(dir), variant);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov", "./demo.test.ts"],
+        cwd,
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(" 1 pass\n");
+      expect(exitCode).toBe(0);
+      const record = readFileSync(path.join(cwd, "coverage", "lcov.info"), "utf8")
+        .split("end_of_record")
+        .find(record => record.includes("\nSF:demo.ts\n"));
+      expect(record).toBeDefined();
+      return record!;
+    }),
+  );
+  // `uncovered` and `alsoUncovered` start on lines 6 and 9.
+  expect(ascii).toContain("\nDA:6,0\n");
+  expect(ascii).toContain("\nDA:9,0\n");
+  expect({ latin1, utf16 }).toEqual({ latin1: ascii, utf16: ascii });
+});

@@ -1088,11 +1088,11 @@ impl AsyncModule {
         // SAFETY: thread-local owns the leaked Box; only this thread touches it.
         let mut printer = core::mem::replace(
             unsafe { printer_ptr.as_mut() },
-            bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
+            bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init_latin1()),
         );
         printer.ctx.reset();
         // The writeback must fire at fn exit,
-        // *after* the `printer.ctx.get_written()` reads below. Declare the
+        // *after* the reads of `printer.ctx` below. Declare the
         // guard immediately after `printer` so it drops last (locals drop in
         // reverse declaration order) and the buffer is still populated when
         // read.
@@ -1104,7 +1104,9 @@ impl AsyncModule {
                 unsafe {
                     *dst = core::mem::replace(
                         &mut *src,
-                        bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
+                        bun_js_printer::BufferPrinter::init(
+                            bun_js_printer::BufferWriter::init_latin1(),
+                        ),
                     )
                 };
             });
@@ -1136,11 +1138,11 @@ impl AsyncModule {
         // `cfg(feature = "dump_source")` gate referenced a feature that doesn't
         // exist, which silently compiled this call out everywhere.
         if bun_core::env::DUMP_SOURCE {
-            crate::runtime_transpiler_store::dump_source_string(
+            crate::runtime_transpiler_store::dump_source(
                 // SAFETY: `jsc_vm` is the live per-thread `VirtualMachine` (BACKREF, non-null).
                 unsafe { core::ptr::NonNull::new_unchecked(jsc_vm) },
                 specifier,
-                printer.ctx.get_written(),
+                &printer,
             );
         }
 
@@ -1149,7 +1151,7 @@ impl AsyncModule {
         // the number recycled) by the transpile frame's fd guard.
 
         Ok(ResolvedSource {
-            source_code: BunString::clone_latin1(printer.ctx.get_written()),
+            source_code: printer.ctx.clone_written_as_string(),
             source_url: BunString::from_bytes(path.text),
             is_commonjs_module,
             is_static: self.is_static,

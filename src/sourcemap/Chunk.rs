@@ -1,4 +1,5 @@
 use bun_ast::{Loc, Source};
+use bun_core::strings::EncodingNonAscii;
 use bun_core::{MutableString, strings};
 use bun_paths::fs::FileSystem;
 use bun_ptr::RawSlice;
@@ -382,6 +383,9 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
 
     /// When generating sourcemappings for bun, we store a count of how many mappings there were
     pub prepend_count: bool,
+
+    /// How `output` is encoded during the print: `Utf8`, or `Latin1` for one byte per UTF-16 code unit.
+    pub output_encoding: EncodingNonAscii,
 }
 
 impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
@@ -401,6 +405,7 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
             line_starts_with_mapping: false,
             cover_lines_without_mappings: false,
             prepend_count: false,
+            output_encoding: EncodingNonAscii::Utf8,
         }
     }
 }
@@ -508,32 +513,47 @@ impl NewBuilder<'_, VLQSourceMap> {
             self.last_generated_update = output.len() as u32;
             return;
         }
-        self.update_generated_line_and_column_slow(output);
+        self.update_generated_line_and_column_slow(output, false);
     }
 
+    /// `as_source_text`: `output` is source text, to be read as the lexer reads it.
     #[inline(never)]
     #[cold]
-    fn update_generated_line_and_column_slow(&mut self, output: &[u8]) {
+    fn update_generated_line_and_column_slow(&mut self, output: &[u8], as_source_text: bool) {
         let slice = &output[self.last_generated_update as usize..];
 
         let mut needs_mapping = self.cover_lines_without_mappings
             && !self.line_starts_with_mapping
             && self.has_prev_state;
 
+        let latin1 = !as_source_text && self.output_encoding == EncodingNonAscii::Latin1;
         let mut i: usize = 0;
         let n: usize = slice.len();
         let mut c: i32;
         while i < n {
-            let len = strings::wtf8_byte_sequence_length_with_invalid(slice[i]);
-            let mut cp_bytes = [0u8; 4];
-            let take = (len as usize).min(n - i);
-            cp_bytes[..take].copy_from_slice(&slice[i..i + take]);
-            c = strings::decode_wtf8_rune_t::<i32>(
-                cp_bytes,
-                len,
-                strings::UNICODE_REPLACEMENT as i32,
-            );
-            i += len as usize;
+            if latin1 {
+                c = slice[i] as i32;
+                i += 1;
+            } else if as_source_text {
+                let mut cursor = strings::Cursor {
+                    i: i as u32,
+                    ..Default::default()
+                };
+                strings::CodepointIterator::init(slice).next(&mut cursor);
+                c = cursor.c as i32;
+                i += cursor.width as usize;
+            } else {
+                let len = strings::wtf8_byte_sequence_length_with_invalid(slice[i]);
+                let mut cp_bytes = [0u8; 4];
+                let take = (len as usize).min(n - i);
+                cp_bytes[..take].copy_from_slice(&slice[i..i + take]);
+                c = strings::decode_wtf8_rune_t::<i32>(
+                    cp_bytes,
+                    len,
+                    strings::UNICODE_REPLACEMENT as i32,
+                );
+                i += len as usize;
+            }
 
             match c {
                 14..=127 => {
@@ -559,7 +579,8 @@ impl NewBuilder<'_, VLQSourceMap> {
                 0x0D | 0x0A | 0x2028 | 0x2029 => {
                     // windows newline
                     if c == 0x0D {
-                        let newline_check = self.last_generated_update as usize + i + 1;
+                        // `i` is already past the '\r'.
+                        let newline_check = self.last_generated_update as usize + i;
                         if newline_check < output.len() && output[newline_check] == b'\n' {
                             continue;
                         }
@@ -599,6 +620,16 @@ impl NewBuilder<'_, VLQSourceMap> {
             }
         }
 
+        self.last_generated_update = output.len() as u32;
+    }
+
+    /// A `Latin1` writer stores U+2028 and U+2029 as placeholder bytes, so `output[start..]` is counted from `text`.
+    #[cold]
+    pub fn update_generated_verbatim(&mut self, output: &[u8], start: usize, text: &[u8]) {
+        debug_assert!(self.output_encoding == EncodingNonAscii::Latin1);
+        self.update_generated_line_and_column(&output[..start]);
+        self.last_generated_update = 0;
+        self.update_generated_line_and_column_slow(text, true);
         self.last_generated_update = output.len() as u32;
     }
 

@@ -1197,10 +1197,20 @@ it.skipIf(!isASAN)("stops the file watcher thread before the VM is freed at exit
   expect(await Promise.all([run(), run(), run(), run()])).toEqual([0, 0, 0, 0]);
 });
 
-// --hot and --watch intern a module's transpiled text in the VM.
-it("throws ERR_STRING_TOO_LONG for a module whose transpiled text exceeds the string limit", async () => {
+// --hot and --watch intern a module's transpiled text in the VM, in the width it was printed in. The limit counts
+// code units: the UTF-16 text of the last case is about 80,000 bytes. The two UTF-16 cases guard that path. They
+// also pass when the text is 8-bit.
+it.each([
+  ["throws ERR_STRING_TOO_LONG for a module whose transpiled text exceeds the string limit", "", 200 * 1024],
+  [
+    "throws ERR_STRING_TOO_LONG for a module whose UTF-16 transpiled text exceeds the string limit",
+    "const re = /中/;\n",
+    200 * 1024,
+  ],
+  ["loads a module whose UTF-16 transpiled text is below the string limit", "const re = /中/;\n", 40_000],
+])("%s", async (title, prefix, length) => {
   using dir = tempDir("hot-string-limit", {
-    "big.cjs": `const s = ${JSON.stringify(Buffer.alloc(200 * 1024, "x").toString())};\nmodule.exports = { len: s.length };\n`,
+    "big.cjs": `${prefix}const s = ${JSON.stringify(Buffer.alloc(length, "x").toString())};\nmodule.exports = { len: s.length };\n`,
     "small.cjs": `module.exports = { ok: 2 };\n`,
     "entry.cjs": `
       let big;
@@ -1222,7 +1232,9 @@ it("throws ERR_STRING_TOO_LONG for a module whose transpiled text exceeds the st
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: JSON.stringify({ big: "caught:ERR_STRING_TOO_LONG", small: 2 }) + "\n",
+    stdout:
+      JSON.stringify({ big: title.startsWith("loads") ? `loaded:${length}` : "caught:ERR_STRING_TOO_LONG", small: 2 }) +
+      "\n",
     stderr: "",
     exitCode: 0,
   });

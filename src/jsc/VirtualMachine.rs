@@ -8,6 +8,7 @@ use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
 use bun_bundler::Transpiler;
+use bun_core::strings::EncodingNonAscii;
 use bun_io as Async;
 use bun_uws as uws;
 
@@ -3957,11 +3958,6 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
             .map_err(|_| bun_js_printer::Error::WriteFailed)?;
         const SOURCE_MAP_URL_PREFIX_START: &[u8] =
             b"//# sourceMappingURL=data:application/json;base64,";
-        // TODO: do we need to %-encode the path?
-        let source_url_len = source.path.text.len();
-        const SOURCE_MAPPING_URL: &[u8] = b"\n//# sourceURL=";
-        let prefix_len =
-            SOURCE_MAP_URL_PREFIX_START.len() + SOURCE_MAPPING_URL.len() + source_url_len;
 
         self.vm_source_mappings_mut()
             .put_mappings(source, chunk.buffer)
@@ -3979,39 +3975,16 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         // `SourceMapHandlerGetter` doc for why `printer` is not stored as `&'a mut`.
         let printer = unsafe { &mut *self.printer };
 
-        let encode_len = bun_base64::encode_len(temp_json_buffer.list.as_slice());
+        // No `//# sourceURL=`: the module's URL is the provider's.
+        let source_map_json = temp_json_buffer.list.as_slice();
+        printer.ctx.append_ascii(b"\n");
+        printer.ctx.append_ascii(SOURCE_MAP_URL_PREFIX_START);
         printer
             .ctx
-            .buffer
-            .grow_if_needed(encode_len + prefix_len + 2)?;
-        printer.ctx.buffer.append_assume_capacity(b"\n");
-        printer
-            .ctx
-            .buffer
-            .append_assume_capacity(SOURCE_MAP_URL_PREFIX_START);
-        {
-            // `MutableString::list` is a `Vec<u8>`; write into spare capacity,
-            // then commit the written length.
-            let buf = &mut printer.ctx.buffer.list;
-            // SAFETY: `grow_if_needed` reserved ≥encode_len spare; encode writes
-            // `wrote<=encode_len` bytes.
-            let wrote = unsafe {
-                bun_base64::encode(
-                    &mut bun_core::vec::spare_bytes_mut(buf)[..encode_len],
-                    temp_json_buffer.list.as_slice(),
-                )
-            };
-            // SAFETY: `wrote <= encode_len` bytes were just initialized in the
-            // spare capacity reserved by `grow_if_needed` above.
-            unsafe { bun_core::vec::commit_spare(buf, wrote) };
-        }
-        printer
-            .ctx
-            .buffer
-            .append_assume_capacity(SOURCE_MAPPING_URL);
-        // TODO: do we need to %-encode the path?
-        printer.ctx.buffer.append_assume_capacity(source.path.text);
-        printer.ctx.buffer.append(b"\n")?;
+            .append_ascii_with(bun_base64::encode_len(source_map_json), |encoded| {
+                bun_base64::encode(encoded, source_map_json)
+            });
+        printer.ctx.append_ascii(b"\n");
         Ok(())
     }
 }
@@ -4151,7 +4124,7 @@ fn specifier_cache_resolver_buf() -> *mut bun_paths::PathBuffer {
 
 fn ensure_source_code_printer() {
     if SOURCE_CODE_PRINTER.get().is_none() {
-        let writer = bun_js_printer::BufferWriter::init();
+        let writer = bun_js_printer::BufferWriter::init_latin1();
         let printer = Box::new(bun_js_printer::BufferPrinter::init(writer));
         SOURCE_CODE_PRINTER.set(NonNull::new(bun_core::heap::into_raw(printer)));
     }
@@ -5024,9 +4997,11 @@ impl VirtualMachine {
     }
 
     /// Builds a `ResolvedSource` backed by a ref-counted copy of `code` interned in the VM's ref-string map.
+    /// `code` is the printer's buffer in `encoding`. The interned copy keeps that width.
     pub fn ref_counted_resolved_source(
         &mut self,
         code: &[u8],
+        encoding: EncodingNonAscii,
         specifier: &bun_core::String,
         source_url: &[u8],
         hash_: Option<u32>,
@@ -5038,7 +5013,7 @@ impl VirtualMachine {
                 ..Default::default()
             });
         }
-        let source = self.ref_counted_string(code, hash_)?;
+        let source = self.ref_counted_string(code, encoding, hash_)?;
         // SAFETY: `ref_counted_string` returns a live `RefString` held in
         // `self.ref_strings` until JSC calls the external-string finalizer.
         let source_ref = unsafe { source.as_ref() };
@@ -5051,16 +5026,20 @@ impl VirtualMachine {
     }
 
     /// Interns `input_` in the VM's ref-string map and returns the ref-counted entry.
+    /// `input_` is `Latin1`, or `Utf16` as native-endian code units.
     pub fn ref_counted_string(
         &mut self,
         input_: &[u8],
+        encoding: EncodingNonAscii,
         hash_: Option<u32>,
     ) -> Result<NonNull<crate::ref_string::RefString>, crate::ref_string::StringTooLong> {
-        use crate::ref_string::{RefString, StringTooLong};
+        use crate::ref_string::{Buffer, RefString, StringTooLong};
         use bun_collections::zig_hash_map::MapEntry as Entry;
         jsc::mark_binding();
         debug_assert!(!input_.is_empty());
-        let hash = hash_.unwrap_or_else(|| RefString::compute_hash(input_));
+        debug_assert!(encoding != EncodingNonAscii::Utf8);
+        let utf16 = encoding == EncodingNonAscii::Utf16;
+        let hash = hash_.unwrap_or_else(|| RefString::compute_hash(input_, utf16));
         let _unlock = self.ref_strings_mutex.lock_guard();
         // Note: reshaped for borrowck — capture the back-pointer before
         // `ref_strings.entry()` takes its unique borrow on `self`.
@@ -5069,15 +5048,32 @@ impl VirtualMachine {
         match self.ref_strings.entry(hash) {
             Entry::Occupied(o) => Ok(*o.get()),
             Entry::Vacant(v) => {
-                if input_.len() > bun_core::String::max_length() {
+                let unit_count = if utf16 {
+                    input_.len() / 2
+                } else {
+                    input_.len()
+                };
+                if unit_count > bun_core::String::max_length() {
                     return Err(StringTooLong);
                 }
-                let buf = Box::<[u8]>::from(input_);
-                let len = buf.len();
-                let ptr = bun_core::heap::into_raw(buf).cast::<u8>().cast_const();
+                let buffer = if utf16 {
+                    // As `[u16]`, so that the units are aligned.
+                    let units: Box<[u16]> = bun_js_printer::utf16_units(input_).into();
+                    let len = units.len();
+                    Buffer::Utf16 {
+                        ptr: bun_core::heap::into_raw(units).cast::<u16>().cast_const(),
+                        len,
+                    }
+                } else {
+                    let buf = Box::<[u8]>::from(input_);
+                    let len = buf.len();
+                    Buffer::Latin1 {
+                        ptr: bun_core::heap::into_raw(buf).cast::<u8>().cast_const(),
+                        len,
+                    }
+                };
                 let ref_ = bun_core::heap::into_raw_nn(Box::new(RefString {
-                    ptr,
-                    len,
+                    buffer,
                     hash,
                     // Filled in just below — `create_external` needs the
                     // `*mut RefString` ctx pointer first.
@@ -5087,16 +5083,29 @@ impl VirtualMachine {
                     on_before_deinit: None,
                 }));
                 // SAFETY: `ref_` is the unique live `*mut RefString` (just
-                // boxed); `(ptr, len)` is its owned latin-1 buffer. The
+                // boxed); `buffer` is its owned allocation, in either width. The
                 // external-string finalizer (`free_ref_string`) is called by
                 // WTF on the JS thread when the impl refcount hits zero, with
                 // `ref_` as ctx.
-                let s = bun_core::String::create_external::<*mut RefString>(
-                    unsafe { bun_core::ffi::slice(ptr, len) },
-                    true,
-                    ref_.as_ptr(),
-                    free_ref_string,
-                );
+                let s = unsafe {
+                    match (*ref_.as_ptr()).buffer {
+                        Buffer::Utf16 { ptr, len } => {
+                            bun_core::String::create_external_utf16::<*mut RefString>(
+                                bun_core::ffi::slice(ptr, len),
+                                ref_.as_ptr(),
+                                free_ref_string,
+                            )
+                        }
+                        Buffer::Latin1 { ptr, len } => {
+                            bun_core::String::create_external::<*mut RefString>(
+                                bun_core::ffi::slice(ptr, len),
+                                true,
+                                ref_.as_ptr(),
+                                free_ref_string,
+                            )
+                        }
+                    }
+                };
                 if s.tag() == bun_core::Tag::Dead {
                     // `create_external` already freed `ref_`.
                     return Err(StringTooLong);

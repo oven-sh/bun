@@ -68,7 +68,8 @@ let debugId = 0;
 function constructNativeReadable(readableStream: ReadableStream, options): NativeReadable {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
   const bunNativePtr = (readableStream as any).$bunNativePtr;
-  $assert(typeof bunNativePtr === "object", "Invalid native ptr");
+  // A closed stream with nothing left to read has no native handle, so read() ends it immediately.
+  $assert(bunNativePtr === undefined || typeof bunNativePtr === "object", "Invalid native ptr");
 
   const stream = new Readable(options) as NativeReadable;
   stream._read = read;

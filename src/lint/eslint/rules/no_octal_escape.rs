@@ -9,7 +9,7 @@ const OCTAL_ESCAPE_SEQUENCE: Message = Message::new(
     "Don't use octal: '\\{{sequence}}'. Use '\\u....' instead.",
 );
 
-/// The group of `/^(?:[^\\]|\\.)*?\\([0-3][0-7]{1,2}|[4-7][0-7]|0(?=[89])|[1-7])/su`.
+/// Returns the capture group of `/^(?:[^\\]|\\.)*?\\([0-3][0-7]{1,2}|[4-7][0-7]|0(?=[89])|[1-7])/su`.
 fn octal_escape(raw: &[u8]) -> Option<&[u8]> {
     let mut at = 0;
     while let Some(found) = strings::index_of_char_usize(raw.get(at..)?, b'\\') {

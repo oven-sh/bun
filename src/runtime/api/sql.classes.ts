@@ -4,63 +4,49 @@ const types = ["PostgresSQL", "MySQL"];
 const rustPaths = {
   PostgresSQLConnection: "bun_sql_jsc::postgres::PostgresSQLConnection",
   PostgresSQLQuery: "bun_sql_jsc::postgres::PostgresSQLQuery",
-  MySQLConnection: "bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection",
   MySQLQuery: "bun_sql_jsc::mysql::js_my_sql_query::JSMySQLQuery",
 };
-const classes: ClassDefinition[] = [];
-for (const type of types) {
-  classes.push(
-    define({
-      name: `${type}Connection`,
-      rustPath: rustPaths[`${type}Connection`],
-      noConstructor: true,
-      refCounted: true,
-      configurable: false,
-      hasPendingActivity: type === "PostgresSQL",
-      JSType: "0b11101110",
-      proto: {
-        close: {
-          fn: "doClose",
-        },
-        flush: {
-          fn: "doFlush",
-        },
-        hold: {
-          fn: "doHold",
-        },
-        unhold: {
-          fn: "doUnhold",
-        },
-        inTransaction: {
-          getter: "getInTransaction",
-        },
-        ...(type === "PostgresSQL"
-          ? {
-              ref: {
-                fn: "doRef",
-              },
-              sasl: {
-                getter: "getSasl",
-              },
-              onnotification: {
-                getter: "getOnNotification",
-                setter: "setOnNotification",
-                this: true,
-              },
-            }
-          : {}),
+const classes: ClassDefinition[] = [
+  define({
+    name: "PostgresSQLConnection",
+    rustPath: rustPaths.PostgresSQLConnection,
+    noConstructor: true,
+    refCounted: true,
+    configurable: false,
+    hasPendingActivity: true,
+    JSType: "0b11101110",
+    proto: {
+      close: {
+        fn: "doClose",
       },
-      values: [
-        "onconnect",
-        "onclose",
-        "onretire",
-        "checkServerIdentity",
-        "columnTransform",
-        ...(type === "PostgresSQL" ? ["onnotification"] : []),
-      ],
-    }),
-  );
-
+      flush: {
+        fn: "doFlush",
+      },
+      hold: {
+        fn: "doHold",
+      },
+      unhold: {
+        fn: "doUnhold",
+      },
+      inTransaction: {
+        getter: "getInTransaction",
+      },
+      ref: {
+        fn: "doRef",
+      },
+      sasl: {
+        getter: "getSasl",
+      },
+      onnotification: {
+        getter: "getOnNotification",
+        setter: "setOnNotification",
+        this: true,
+      },
+    },
+    values: ["onconnect", "onclose", "onretire", "checkServerIdentity", "columnTransform", "onnotification"],
+  }),
+];
+for (const type of types) {
   classes.push(
     define({
       name: `${type}Query`,

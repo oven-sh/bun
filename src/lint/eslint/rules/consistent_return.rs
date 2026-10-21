@@ -15,12 +15,12 @@ pub const MISSING_RETURN_VALUE: Message = Message::new("missingReturnValue", "{{
 pub const UNEXPECTED_RETURN_VALUE: Message =
     Message::new("unexpectedReturnValue", "{{name}} expected no return value.");
 
-/// Whether there can be anything to report in `file`.
+/// True if `file` could have anything to report.
 pub fn is_relevant(file: &File<'_>) -> bool {
     file.has_stmts([StmtTag::Return])
 }
 
-/// Whether `return argument;` specifies a value.
+/// True if `return argument;` specifies a value.
 pub fn has_return_value(argument: Option<Expr<'_>>, treat_undefined_as_unspecified: bool) -> bool {
     argument.is_some_and(|argument| {
         !treat_undefined_as_unspecified
@@ -29,13 +29,12 @@ pub fn has_return_value(argument: Option<Expr<'_>>, treat_undefined_as_unspecifi
     })
 }
 
-/// Calls `visit` with the `return` statements of a function or of the file, not with those in
-/// nested functions, in source order.
+/// Calls `visit` with the `return` statements of a function or of the file, in source order, skipping nested functions.
 fn for_each_return<'a>(node: Node<'a>, visit: &mut dyn FnMut(Stmt<'a>)) {
     if let Node::Func(func) = node {
         return func.returns().for_each(visit);
     }
-    // What is still to visit, the first last.
+    // A stack of nodes still to visit, with the first one on top.
     let mut pending = SmallVec::<[Node<'a>; 16]>::new();
     pending.push(node);
     while let Some(node) = pending.pop() {
@@ -57,7 +56,7 @@ fn for_each_return<'a>(node: Node<'a>, visit: &mut dyn FnMut(Stmt<'a>)) {
     }
 }
 
-/// Where a function that does not end with a `return` is reported.
+/// Where to report a function that doesn't end with a `return`.
 fn location_of(func: Func<'_>) -> Span {
     let file = func.file();
     let key = match (func.owner(), func.kind()) {
@@ -77,9 +76,9 @@ fn location_of(func: Func<'_>) -> Span {
 
 /// Checks a function or the file.
 ///
-/// `classify`: whether a `return` statement specifies a value. `None`: it is as if it was not there.
+/// `classify` returns whether a `return` statement specifies a value, or `None` to ignore the statement.
 pub fn check<'a, R: Rule>(node: Node<'a>, cx: &Cx<'a, R>, classify: impl Fn(Stmt<'a>) -> Option<bool>) {
-    // Whether the first `return` specifies a value.
+    // Set to whether the first `return` specifies a value.
     let mut expected = None;
     for_each_return(node, &mut |statement: Stmt<'a>| {
         let Some(has_return_value) = classify(statement) else {

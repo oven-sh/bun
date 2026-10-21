@@ -13,7 +13,7 @@ struct ContextBase : Bun::IDLConversionContextBase<Derived> {
     void throwGenericTypeError(
         JSC::JSGlobalObject& global,
         JSC::ThrowScope& scope,
-        String&& message)
+        String&& message) const
     {
         Bun::throwError(
             &global,
@@ -26,7 +26,7 @@ struct ContextBase : Bun::IDLConversionContextBase<Derived> {
     void throwGenericRangeError(
         JSC::JSGlobalObject& global,
         JSC::ThrowScope& scope,
-        String&& message)
+        String&& message) const
     {
         Bun::throwError(&global, scope, ErrorCode::ERR_OUT_OF_RANGE, std::forward<String>(message));
     }
@@ -41,7 +41,7 @@ struct ElementOf : ContextBase<ElementOf<Parent>> {
     {
     }
 
-    auto source()
+    auto source() const
     {
         return WTF::makeString("element of "_s, m_parent.source());
     }
@@ -62,7 +62,7 @@ struct LiteralConversionContext : Detail::ContextBase<LiteralConversionContext> 
     {
     }
 
-    auto source()
+    auto source() const
     {
         return m_name;
     }
@@ -75,31 +75,34 @@ private:
 template<typename Ctx>
 Ctx& asLvalue(Ctx&& ctx LIFETIME_BOUND) { return static_cast<Ctx&>(ctx); }
 
+struct NodeArgument {
+    WTF::ASCIILiteral name;
+    std::span<const WTF::ASCIILiteral> expected;
+};
+
 // A value of the wrong type throws Node's `ERR_INVALID_ARG_TYPE(name, expected, actual)`.
 struct NodeArgumentContext : Detail::ContextBase<NodeArgumentContext> {
     using ElementContext = Detail::ElementOf<NodeArgumentContext>;
 
-    NodeArgumentContext(WTF::ASCIILiteral name, std::span<const WTF::ASCIILiteral> expected, JSC::JSValue actual)
-        : m_name(name)
-        , m_expected(expected)
+    NodeArgumentContext(const NodeArgument& argument LIFETIME_BOUND, JSC::JSValue actual)
+        : m_argument(argument)
         , m_actual(actual)
     {
     }
 
-    auto source()
+    auto source() const
     {
-        return m_name;
+        return m_argument.name;
     }
 
     template<typename String>
-    void throwGenericTypeError(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, String&&)
+    void throwGenericTypeError(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, String&&) const
     {
-        Bun::ERR::INVALID_ARG_TYPE(scope, &global, m_name, m_expected, m_actual);
+        Bun::ERR::INVALID_ARG_TYPE(scope, &global, m_argument.name, m_argument.expected, m_actual);
     }
 
 private:
-    const WTF::ASCIILiteral m_name;
-    const std::span<const WTF::ASCIILiteral> m_expected;
+    const NodeArgument& m_argument;
     const JSC::JSValue m_actual;
 };
 
@@ -113,13 +116,13 @@ struct ArgumentMessageContext : Detail::ContextBase<ArgumentMessageContext> {
     {
     }
 
-    auto source()
+    auto source() const
     {
         return m_name;
     }
 
     template<typename String>
-    void throwGenericTypeError(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, String&&)
+    void throwGenericTypeError(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, String&&) const
     {
         Bun::throwError(&global, scope, ErrorCode::ERR_INVALID_ARG_TYPE, m_message);
     }

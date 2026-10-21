@@ -1,7 +1,7 @@
 //! JavaScript and TypeScript in HTML: Prettier's `textToDoc` for the parsers of `language-js`.
 //!
-//! The code is parsed by itself, and written by the formatter for JavaScript to the document that the HTML is written
-//! to, so that where its lines are broken depends on where it is.
+//! The code is parsed separately, and the JavaScript formatter writes it into the same document as the HTML, so its
+//! line breaks depend on where it is.
 
 use super::map_strings::{MapString, write_mapped};
 use crate::ir::element::{Interned, TextWidth};
@@ -17,20 +17,20 @@ use crate::tailwind::{Tailwind, Tidies};
 use crate::{format_args, write};
 use bun_core::strings;
 use bun_lint::ast::walk::{Visitor, walk};
-use bun_lint::linter::{TypesInJavaScript, refused_by_prettier_with};
+use bun_lint::linter::{TypesInJavaScript, rejected_by_prettier_with};
 
-/// The parsers of Prettier for programs.
+/// Prettier's parsers for programs.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Syntax {
     /// `babel`: JavaScript with JSX.
     Babel,
-    /// `babel-ts`: TypeScript, with JSX if that can be.
+    /// `babel-ts`: TypeScript, with JSX if it parses that way.
     BabelTs,
-    /// `typescript`, for a file whose name does not say whether it has JSX.
+    /// `typescript`, for a file whose name doesn't tell whether it has JSX.
     TypeScript,
-    /// TypeScript without JSX, and nothing else: what oxfmt takes the scripts of a Vue file for.
+    /// Only TypeScript without JSX, which is how oxfmt parses the scripts of a Vue file.
     Ts,
-    /// TypeScript with JSX, and nothing else: the same if one of them says `lang="tsx"`.
+    /// Only TypeScript with JSX, which is how oxfmt parses them if one has `lang="tsx"`.
     Tsx,
 }
 
@@ -39,7 +39,7 @@ pub(crate) enum Syntax {
 pub(crate) enum SourceType {
     Script,
     Module,
-    /// A module, or else a script.
+    /// Try a module first, then a script.
     Unknown,
 }
 
@@ -50,19 +50,19 @@ pub(crate) const EXPRESSION_TSX: &[u8] = b"\0.tsx";
 
 /// Prettier's `isProbablyJsx`: `/(?:^[^"'`]*<\/|^[^/]{2}.*\/>)/m`
 pub fn is_probably_jsx(text: &[u8]) -> bool {
-    // `</` with the start of a line before it and no quote in between.
+    // `</` with no quote between it and the start of its line.
     let mut rest = if strings::contains(text, b"</") {
         text
     } else {
         b""
     };
-    let mut is_behind_quote = false;
+    let mut is_after_quote = false;
     while let Some(at) = strings::index_of_any(rest, b"\"'`\n<") {
         match rest[at] {
-            b'\n' => is_behind_quote = false,
-            b'<' if is_behind_quote || rest.get(at + 1) != Some(&b'/') => {}
+            b'\n' => is_after_quote = false,
+            b'<' if is_after_quote || rest.get(at + 1) != Some(&b'/') => {}
             b'<' => return true,
-            _ => is_behind_quote = true,
+            _ => is_after_quote = true,
         }
         rest = &rest[at + 1..];
     }
@@ -74,7 +74,7 @@ pub fn is_probably_jsx(text: &[u8]) -> bool {
     })
 }
 
-/// The options for code that is in HTML that is formatted with `options`.
+/// Returns the options for code embedded in HTML that's formatted with `options`.
 pub(crate) fn options_in_html(options: &FormatOptions, in_html: InHtml) -> FormatOptions {
     FormatOptions {
         // In an attribute, double quotes would have to be written as entities.
@@ -104,7 +104,7 @@ pub(crate) fn options_in_html(options: &FormatOptions, in_html: InHtml) -> Forma
     }
 }
 
-/// What parses code.
+/// A way to parse code.
 #[derive(Copy, Clone)]
 pub(crate) enum Parse<'p> {
     Function(ParseJavaScript),
@@ -112,7 +112,7 @@ pub(crate) enum Parse<'p> {
 }
 
 impl<'p> Parse<'p> {
-    /// `parse`, or else what `options` has.
+    /// Uses `parse`, or else the parser in `options`.
     pub(crate) fn new(
         parse: Option<JavaScriptParser<'p>>,
         options: &FormatOptions,
@@ -123,8 +123,8 @@ impl<'p> Parse<'p> {
         }
     }
 
-    /// For the code in the HTML that `f` writes.
-    fn of(f: &Formatter<'p>) -> Option<Parse<'p>> {
+    /// Returns the parser for the code in the HTML that `f` writes.
+    fn from_formatter(f: &Formatter<'p>) -> Option<Parse<'p>> {
         Parse::new(f.context().parse_javascript, f.options())
     }
 
@@ -143,30 +143,30 @@ impl<'p> Parse<'p> {
 
 pub(crate) type Write<'w> = &'w mut dyn for<'b> FnMut(&'b File<'b>, &mut Formatter<'b>) -> bool;
 
-/// What code is.
+/// The kind of a piece of code.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Piece {
-    /// All that is in a `<script>`, and whose output it is. What sorts imports and rewrites JSDoc comments takes it for
-    /// a file.
+    /// The whole contents of a `<script>`, and the flavor to format it in. Import sorting and JSDoc rewriting treat it
+    /// as a file.
     Script(Flavor),
-    /// The parameters of a function, or of a type, and whose output they are.
+    /// The parameters of a function or a type, and the flavor to format them in.
     Binding(Flavor),
     Other,
 }
 
-/// What has become of code that has been parsed one way.
+/// The outcome of parsing code one way.
 enum Attempt {
-    /// It cannot be parsed that way.
-    Refused,
-    /// Nothing has been written: this is to be parsed in its place.
+    /// It doesn't parse that way.
+    ParseFailed,
+    /// Nothing has been written. Parse this text instead.
     Sorted(Vec<u8>),
-    /// What `write` has returned.
+    /// The return value of `write`.
     Written(bool),
 }
 
-/// Parses `code` as the file at each of `paths`, until it is one without errors, and calls `write` with that file and
-/// a formatter that goes on with the document of `f`. Returns what `write` returns, and `false` if `code` cannot be
-/// parsed: nothing has been written then.
+/// Parses `code` as the file at each of `paths` until one has no errors, then calls `write` with that file and a
+/// formatter that continues `f`'s document. Returns what `write` returns, or `false`, with nothing written, if `code`
+/// doesn't parse.
 pub(crate) fn with_file(
     f: &mut Formatter<'_>,
     code: &[u8],
@@ -176,17 +176,17 @@ pub(crate) fn with_file(
     piece: Piece,
     write: Write<'_>,
 ) -> bool {
-    let Some(parse) = Parse::of(f) else {
+    let Some(parse) = Parse::from_formatter(f) else {
         return false;
     };
     let mut options = options_in_html(f.options(), in_html);
-    // To Prettier the name of the file is still that of the HTML, so `<T,>() => {}` keeps its comma: it is not `.ts`.
-    // oxfmt prints a script like a file of its own.
+    // In Prettier the file name is still the HTML file's, so `<T,>() => {}` keeps its comma because the name isn't
+    // `.ts`. oxfmt prints a script like a separate file.
     if !matches!(piece, Piece::Script(flavor) | Piece::Binding(flavor) if flavor.is_oxfmt()) {
         options.filepath.clone_from(&f.options().filepath);
     }
-    // The plugin that sorts classes takes over the parsers for programs and `__js_expression`, no other. In oxfmt bindings
-    // are its own, and it does not sort there.
+    // The class-sorting plugin only replaces the parsers for programs and `__js_expression`. oxfmt formats bindings
+    // itself and doesn't sort classes there.
     let sorts_classes = match (piece, in_html.root) {
         (Piece::Binding(_), _) => (options.tailwind.as_deref()).is_some_and(|it| it.follows_plugin),
         (_, HtmlRoot::Program) => true,
@@ -199,7 +199,7 @@ pub(crate) fn with_file(
     if let Piece::Binding(flavor) = piece {
         options.flavor = flavor;
     }
-    // A plugin of Prettier sorts the imports of the text before it is parsed.
+    // Prettier's plugins sort the imports in the text before it's parsed.
     let mut sorts_text = None;
     if let Piece::Script(flavor) = piece {
         options.flavor = flavor;
@@ -219,15 +219,15 @@ pub(crate) fn with_file(
     for path in paths {
         for &is_script in kinds {
             let mut attempt = |code: &[u8], sorts_text: Option<&SortImports>| {
-                let mut result = Attempt::Refused;
+                let mut result = Attempt::ParseFailed;
                 parse.call(path, code, is_script, &mut |file| {
                     if file.has_parse_errors()
-                        || refused_by_prettier_with(file, TypesInJavaScript::Refused)
+                        || rejected_by_prettier_with(file, TypesInJavaScript::Rejected)
                     {
                         return;
                     }
-                    let comments = comments::of_file(file, &options);
-                    // Only in what is known to be a script are `<!--` and `-->` comments to Babel.
+                    let comments = comments::for_file(file, &options);
+                    // Babel only treats `<!--` and `-->` as comments in code that's known to be a script.
                     let is_html_like = |comment: Comment<'_>| {
                         matches!(
                             file.text().get(comment.span().start as usize),
@@ -245,7 +245,7 @@ pub(crate) fn with_file(
                     let context = JsFormatContext::new(file, options.clone(), comments);
                     let is_written = match file.comment_count() {
                         0 => f.write_embedded(context, file.text(), |f| write(file, f)),
-                        // Prettier's `ensureAllCommentsPrinted`. It throws, and the code stays as it is written:
+                        // Prettier's `ensureAllCommentsPrinted`. It throws, so the code is left as written:
                         // `v-slot="/* comment */"`
                         _ => f.try_write_embedded(context, file.text(), |f| {
                             write(file, f) && f.comments().unprinted().next().is_none()
@@ -267,7 +267,8 @@ pub(crate) fn with_file(
     false
 }
 
-/// `code`, which is all that is in a `<script>`, with its imports sorted. `None`: it is the same, or cannot be parsed.
+/// Returns `code`, the whole contents of a `<script>`, with its imports sorted. Returns `None` if nothing changes or it
+/// doesn't parse.
 pub(crate) fn sorted_script(parse: Parse<'_>, code: &[u8], how: &SortImports) -> Option<Vec<u8>> {
     for path in [&b"dummy.tsx"[..], b"dummy.ts", b"dummy.jsx"] {
         let mut sorted = None;
@@ -283,7 +284,7 @@ pub(crate) fn sorted_script(parse: Parse<'_>, code: &[u8], how: &SortImports) ->
     None
 }
 
-/// What an expression with classes is in.
+/// The language around an expression with classes.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Host {
     Vue,
@@ -291,22 +292,22 @@ enum Host {
     Svelte,
 }
 
-/// Finds the strings and the templates of a program, and sorts the classes in them.
+/// Finds the strings and templates in a program and sorts the classes in them.
 struct ClassSorter<'t, 'a> {
     tailwind: &'t Tailwind,
     host: Host,
-    /// Each `+` and each template around what is visited, from the outside to the inside.
-    around: Vec<Expr<'a>>,
-    /// What is written in the place of what, in the order of the text.
+    /// Every `+` and template around the current node, outermost first.
+    enclosing: Vec<Expr<'a>>,
+    /// Replacements, as a span and its new text, in source order.
     changes: Vec<(Span, Vec<u8>)>,
 }
 
 impl ClassSorter<'_, '_> {
-    /// How the texts of the template or the string at `whole` are sorted.
+    /// Returns how to sort the texts of the template or string at `whole`.
     fn how(&self, whole: Span) -> (Collapse, Tidies) {
-        let among = |rules| collapse_among(&self.around, whole, self.tailwind, rules);
+        let among = |rules| collapse_among(&self.enclosing, whole, self.tailwind, rules);
         match self.host {
-            Host::Angular => (among((true, Texts::AsWritten)), self.tailwind.tidies()),
+            Host::Angular => (among((true, Texts::Unsorted)), self.tailwind.tidies()),
             Host::Vue => (among((false, Texts::Unseen)), self.tailwind.tidies()),
             // `removeDuplicates: false, collapseWhitespace: false`
             Host::Svelte => (
@@ -319,12 +320,12 @@ impl ClassSorter<'_, '_> {
         }
     }
 
-    /// `texts`: those of the template at `whole`, or what is between the quotes of the string there, and where each is.
+    /// `texts` has the texts of the template at `whole`, or the contents of the string there, each with its span.
     fn sort<'s>(&mut self, whole: Span, texts: impl ExactSizeIterator<Item = (&'s [u8], Span)>) {
-        let (around, tidies) = self.how(whole);
+        let (collapse, tidies) = self.how(whole);
         let count = texts.len();
         for (index, (text, span)) in texts.enumerate() {
-            let ends = ends_in_template(text, (index == 0, index + 1 == count), around);
+            let ends = ends_in_template(text, (index == 0, index + 1 == count), collapse);
             let sorted = self.tailwind.sorted_with(text, ends, tidies);
             if *sorted != *text {
                 self.changes.push((span, sorted.into_owned()));
@@ -332,7 +333,7 @@ impl ClassSorter<'_, '_> {
         }
     }
 
-    /// `span`: of a string with its quotes, or of a template without substitutions.
+    /// `span` covers a string with its quotes, or a template without substitutions.
     fn sort_literal(&mut self, file: &File<'_>, span: Span) {
         if let [b'"' | b'\'' | b'`', content @ .., _] = file.slice(span) {
             let inner = Span::new(span.start + 1, span.end - 1);
@@ -341,7 +342,7 @@ impl ClassSorter<'_, '_> {
     }
 }
 
-fn is_around_classes(e: Expr<'_>) -> bool {
+fn is_concatenation(e: Expr<'_>) -> bool {
     matches!(
         e.kind(),
         ExprKind::Template(_) | ExprKind::Binary { op: BinOp::Add, .. }
@@ -367,8 +368,8 @@ impl<'a> Visitor<'a> for ClassSorter<'_, 'a> {
                     }
                     _ => {}
                 }
-                if is_around_classes(e) {
-                    self.around.push(e);
+                if is_concatenation(e) {
+                    self.enclosing.push(e);
                 }
             }
             Node::Prop(property) => {
@@ -384,14 +385,15 @@ impl<'a> Visitor<'a> for ClassSorter<'_, 'a> {
     }
 
     fn exit(&mut self, node: Node<'a>) {
-        if matches!(node, Node::Expr(e) if is_around_classes(e)) {
-            self.around.pop();
+        if matches!(node, Node::Expr(e) if is_concatenation(e)) {
+            self.enclosing.pop();
         }
     }
 }
 
-/// What `prettier-plugin-tailwindcss` makes of `code`, an expression in an attribute of Vue or Angular:
-/// `transformDynamicJsAttribute`, `transformDynamicAngularAttribute`. `None`: it is the same, or cannot be parsed.
+/// Does what `prettier-plugin-tailwindcss` does to `code`, an expression in a Vue or Angular attribute:
+/// `transformDynamicJsAttribute`, `transformDynamicAngularAttribute`. Returns `None` if nothing changes or it doesn't
+/// parse.
 pub(crate) fn with_sorted_classes(
     parse: Parse<'_>,
     code: &[u8],
@@ -410,7 +412,7 @@ pub(crate) fn with_sorted_classes(
                         true => Host::Angular,
                         false => Host::Vue,
                     },
-                    around: Vec::new(),
+                    enclosing: Vec::new(),
                     changes: Vec::new(),
                 };
                 walk(file, &mut sorter);
@@ -422,7 +424,7 @@ pub(crate) fn with_sorted_classes(
         }
     }
     let mut changes = changes.filter(|it| !it.is_empty())?;
-    // The texts of a template come before what is between them.
+    // A template's texts are visited before the expressions between them.
     crate::sort::sort_by_key(&mut changes[..], |it| it.0.start);
     let (mut sorted, mut from) = (Vec::with_capacity(code.len()), BEFORE.len());
     for (span, text) in changes {
@@ -434,8 +436,8 @@ pub(crate) fn with_sorted_classes(
     Some(sorted)
 }
 
-/// For `file`, which is the expression in the braces of an attribute for classes of Svelte: what is written in the place
-/// of what. The plugin's `transformSvelte` sorts all its strings and templates, and does nothing else to them.
+/// Returns the replacements for `file`, the expression in the braces of a Svelte class attribute. The plugin's
+/// `transformSvelte` sorts all its strings and templates, and changes nothing else about them.
 pub(crate) fn sorted_in_svelte<'a>(
     file: &'a File<'a>,
     tailwind: &Tailwind,
@@ -446,7 +448,7 @@ pub(crate) fn sorted_in_svelte<'a>(
     let mut sorter = ClassSorter {
         tailwind,
         host: Host::Svelte,
-        around: Vec::new(),
+        enclosing: Vec::new(),
         changes: Vec::new(),
     };
     walk(file, &mut sorter);
@@ -466,14 +468,14 @@ pub(crate) fn paths_of(syntax: Syntax, code: &[u8]) -> &'static [&'static [u8]] 
     }
 }
 
-/// What Prettier makes of a `Program`, without the line break at the end.
+/// Writes what Prettier prints for a `Program`, without the final line break.
 fn write_statements<'b>(file: &'b File<'b>, f: &mut Formatter<'b>) {
     let program = node_as_ast_nodes(Node::File(file));
     let owned = f.comments().of_node(program);
     let has_statements = (file.body().iter()).any(|it| !matches!(it.kind(), StmtKind::Empty));
     let is_hashbang_last = !has_statements && owned.leading.is_empty() && owned.dangling.is_empty();
     write_hashbang(is_hashbang_last, f);
-    // The program only owns comments if there is no statement to attach them to.
+    // The program only owns comments if there's no statement to attach them to.
     write!(
         f,
         [
@@ -484,7 +486,7 @@ fn write_statements<'b>(file: &'b File<'b>, f: &mut Formatter<'b>) {
     );
 }
 
-/// `textToDoc(code, { parser })` for a program. `flavor`: whose output it is. Returns whether it has been written.
+/// `textToDoc(code, { parser })` for a program. `flavor` is the flavor to format it in. Returns true if it was written.
 pub(crate) fn write_program(
     f: &mut Formatter<'_>,
     code: &[u8],
@@ -507,7 +509,7 @@ pub(crate) fn write_program(
     )
 }
 
-/// What `formatAttributeValue` puts around the document.
+/// The wrapper that `formatAttributeValue` puts around the document.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Hug {
     /// `group(doc)`
@@ -516,7 +518,7 @@ pub(crate) enum Hug {
     Never,
     /// `shouldHugJsExpression`
     Expression,
-    /// Nothing: it is `textToDoc` that is called.
+    /// Nothing, because `textToDoc` is called directly.
     Bare,
 }
 
@@ -535,16 +537,16 @@ fn should_hug_js_expression(e: Expr<'_>, root: HtmlRoot) -> bool {
 }
 
 impl Hug {
-    /// Whether `formatAttributeValue` hugs a root with `e` in it. `None`: it is not called.
-    fn of_expression(self, e: Expr<'_>, root: HtmlRoot) -> Option<bool> {
+    /// Returns whether `formatAttributeValue` hugs a root that contains `e`, or `None` if it isn't called.
+    fn should_hug_expression(self, e: Expr<'_>, root: HtmlRoot) -> Option<bool> {
         match self {
             Hug::Expression => Some(should_hug_js_expression(e, root)),
-            _ => self.of_other_kinds(),
+            _ => self.should_hug_non_expression(),
         }
     }
 
-    /// The same for a root that `shouldHugJsExpression` says no to.
-    pub(crate) fn of_other_kinds(self) -> Option<bool> {
+    /// The same, for a root that `shouldHugJsExpression` rejects.
+    pub(crate) fn should_hug_non_expression(self) -> Option<bool> {
         match self {
             Hug::Always => Some(true),
             Hug::Never | Hug::Expression => Some(false),
@@ -553,7 +555,7 @@ impl Hug {
     }
 }
 
-/// Writes `content` the way `formatAttributeValue` returns it.
+/// Writes `content` wrapped the way `formatAttributeValue` does.
 pub(crate) fn write_hugged<'b>(
     should_hug: Option<bool>,
     content: &impl Format<'b>,
@@ -572,7 +574,7 @@ pub(crate) fn write_hugged<'b>(
     }
 }
 
-/// The expression that `file` is made of, if its text is `(`, an expression, a line break and `)`.
+/// Returns the expression in `file` if its text is `(`, an expression, a line break and `)`.
 pub(crate) fn expression_of<'b>(file: &'b File<'b>) -> Option<Expr<'b>> {
     let mut statements = file.body().iter();
     let (Some(statement), None) = (statements.next(), statements.next()) else {
@@ -585,7 +587,7 @@ pub(crate) fn expression_of<'b>(file: &'b File<'b>) -> Option<Expr<'b>> {
     (e.span().start > 0 && outer.start == 0 && outer.end as usize == file.text().len()).then_some(e)
 }
 
-/// What no name can be, or can be only in some places.
+/// Words that can't be identifiers, or only in some places.
 fn is_reserved_word(name: &[u8]) -> bool {
     matches!(
         name,
@@ -641,8 +643,8 @@ fn is_reserved_word(name: &[u8]) -> bool {
     )
 }
 
-/// Most expressions in templates are `a`, `a.b.c` or `!a`. Those are written here, as `printMemberExpression` has them,
-/// without being parsed. Returns whether `code` is one.
+/// Most expressions in templates are `a`, `a.b.c` or `!a`. Those are written here without parsing, the way
+/// `printMemberExpression` prints them. Returns true if `code` is one.
 pub(crate) fn write_path(f: &mut Formatter<'_>, code: &[u8], hug: Hug) -> bool {
     let code = code.trim_ascii();
     let path = &code[code.iter().take_while(|byte| **byte == b'!').count()..];
@@ -664,7 +666,7 @@ pub(crate) fn write_path(f: &mut Formatter<'_>, code: &[u8], hug: Hug) -> bool {
     }
     let count = names.clone().count();
     let content = format_with(|f| {
-        // Up to the end of the first name.
+        // Through the end of the first name.
         let mut end = code.len() - path.len() + first.len();
         write!(f, text(&code[..end]));
         for name in names.clone() {
@@ -677,12 +679,12 @@ pub(crate) fn write_path(f: &mut Formatter<'_>, code: &[u8], hug: Hug) -> bool {
             }
         }
     });
-    write_hugged(hug.of_other_kinds(), &content, f);
+    write_hugged(hug.should_hug_non_expression(), &content, f);
     true
 }
 
-/// `formatAttributeValue(code, textToDoc, { parser })` for the parsers that take an expression. Returns whether it has
-/// been written.
+/// `formatAttributeValue(code, textToDoc, { parser })` for the parsers that take an expression. Returns true if it was
+/// written.
 pub(crate) fn write_expression(
     f: &mut Formatter<'_>,
     code: &[u8],
@@ -710,7 +712,7 @@ pub(crate) fn write_expression(
             let Some(e) = expression_of(file) else {
                 return false;
             };
-            let should_hug = hug.of_expression(e, in_html.root);
+            let should_hug = hug.should_hug_expression(e, in_html.root);
             let content = format_with(|f| {
                 write!(f, e);
             });
@@ -720,17 +722,17 @@ pub(crate) fn write_expression(
     )
 }
 
-/// An expression of Angular.
+/// An Angular expression.
 pub(crate) struct AngularExpression<'c> {
     /// `(`, the expression as TypeScript, a line break and `)`.
     pub(crate) code: &'c [u8],
-    /// The same, as long, with the names as they are written where those are no names to TypeScript.
-    pub(crate) shown: Option<&'c [u8]>,
-    /// What is written in its place: it has a `prettier-ignore` comment.
+    /// A copy of `code` with the same length, with the original names where TypeScript wouldn't accept them.
+    pub(crate) display_code: Option<&'c [u8]>,
+    /// Written instead of the expression if it has a `prettier-ignore` comment.
     pub(crate) ignored: Option<&'c [u8]>,
 }
 
-/// One string to Prettier, whatever is in it.
+/// Writes what's a single string in Prettier, whatever it contains.
 pub(crate) fn write_string(text: &[u8], f: &mut Formatter<'_>) {
     let width = strings::contains_char(text, b'\n').then(|| {
         TextWidth::multiline_string(
@@ -742,8 +744,8 @@ pub(crate) fn write_string(text: &[u8], f: &mut Formatter<'_>) {
     f.write_text(text, width);
 }
 
-/// `formatAttributeValue(code, textToDoc, { parser })` for the parsers of `angular-estree-parser`, if the root is one
-/// expression. `write_rest` writes what follows the expression. Returns whether it has been written.
+/// `formatAttributeValue(code, textToDoc, { parser })` for the parsers of `angular-estree-parser`, if the root is a
+/// single expression. `write_rest` writes what follows the expression. Returns true if it was written.
 pub(crate) fn write_angular_expression(
     f: &mut Formatter<'_>,
     expression: &AngularExpression<'_>,
@@ -751,10 +753,10 @@ pub(crate) fn write_angular_expression(
     hug: Hug,
     write_rest: &dyn for<'b> Fn(&mut Formatter<'b>),
 ) -> bool {
-    let Some(parse) = Parse::of(f) else {
+    let Some(parse) = Parse::from_formatter(f) else {
         return false;
     };
-    // The plugin that sorts classes does not take over the parsers of Angular.
+    // The class-sorting plugin doesn't replace the Angular parsers.
     let options = FormatOptions {
         tailwind: None,
         ..options_in_html(f.options(), in_html)
@@ -764,15 +766,15 @@ pub(crate) fn write_angular_expression(
         let Some(e) = expression_of(file).filter(|_| !file.has_parse_errors()) else {
             return;
         };
-        let source = match expression.shown {
+        let source = match expression.display_code {
             None => file.text(),
-            Some(shown) => match file.extension(|| shown.to_vec()) {
-                Some(shown) => &shown[..],
+            Some(display_code) => match file.extension(|| display_code.to_vec()) {
+                Some(display_code) => &display_code[..],
                 None => return,
             },
         };
-        let should_hug = hug.of_expression(e, in_html.root);
-        // Only in an `NGChainedExpression` is an assignment without parentheses.
+        let should_hug = hug.should_hug_expression(e, in_html.root);
+        // An assignment only goes without parentheses in an `NGChainedExpression`.
         let needs_parentheses = e.tag() == ExprTag::Assign && in_html.root != HtmlRoot::NgAction;
         let content = format_with(|f| {
             match expression.ignored {
@@ -795,7 +797,7 @@ pub(crate) fn write_angular_expression(
     is_written
 }
 
-/// The same for a program. For `shouldHugJsExpression` the root is a `File`, which is not hugged.
+/// The same for a program. `shouldHugJsExpression` sees a `File` as the root, which it doesn't hug.
 pub(crate) fn write_program_in_attribute(
     f: &mut Formatter<'_>,
     code: &[u8],
@@ -812,25 +814,25 @@ pub(crate) fn write_program_in_attribute(
         Piece::Other,
         &mut |file, f| {
             let content = format_with(|f| write_statements(file, f));
-            write_hugged(hug.of_other_kinds(), &content, f);
+            write_hugged(hug.should_hug_non_expression(), &content, f);
             true
         },
     )
 }
 
-/// What `printHtmlBinding` prints of a program that is one declaration.
+/// The part that `printHtmlBinding` prints of a program that's a single declaration.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Binding {
     /// `__isVueBindings`: the parameters of `function _(..) {}`.
     Parameters,
-    /// `__isVueForBindingLeft`: the same, in parentheses if there is more than one.
+    /// `__isVueForBindingLeft`: the same, in parentheses unless there's exactly one.
     ForLeft,
     /// `__isEmbeddedTypescriptGenericParameters`: the type parameters of `type T<..> = any`.
     TypeParameters,
 }
 
-/// `group(printHtmlBinding(..))`, for `before`, `code` and `after` put together. `flavor`: whose output it is. Returns whether
-/// it has been written.
+/// `group(printHtmlBinding(..))` for `before`, `code` and `after` concatenated. `flavor` is the flavor to format it in.
+/// Returns true if it was written.
 pub(crate) fn write_binding(
     f: &mut Formatter<'_>,
     code: &[u8],
@@ -865,11 +867,11 @@ pub(crate) fn write_binding(
                     let content = format_with(|f| {
                         f.join_with(&separator).entries(alias.type_params().iter());
                     });
-                    // The root is a `File`, which `shouldHugJsExpression` has nothing to say about.
+                    // The root is a `File`, which `shouldHugJsExpression` doesn't hug.
                     write_hugged(Some(false), &content, f);
                 }
                 (Binding::Parameters | Binding::ForLeft, StmtKind::Fn(func)) => {
-                    // Only TypeScript has it.
+                    // Only TypeScript has a `this` parameter.
                     if func.this_param().is_some() && !is_typescript {
                         return false;
                     }
@@ -896,7 +898,7 @@ pub(crate) fn write_binding(
     )
 }
 
-// ───────────────────────────── `"` in the value of an attribute ─────────────────────────────
+// ───────────────────────────── `"` in an attribute value ─────────────────────────────
 
 /// `(doc) => (typeof doc === "string" ? doc.replaceAll('"', "&quot;") : doc)`
 struct QuoteEntities;
@@ -921,7 +923,7 @@ impl MapString for QuoteEntities {
     }
 }
 
-/// Writes `content`, which has been captured, as the value of an attribute between double quotes.
+/// Writes the captured `content` as an attribute value between double quotes.
 pub(crate) fn write_with_quote_entities(content: Interned, f: &mut Formatter<'_>) {
     write_mapped(content, &mut QuoteEntities, f);
 }

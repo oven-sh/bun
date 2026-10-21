@@ -2,7 +2,6 @@
 #include "Bindgen/JSBytesView.h"
 #include "Bindgen/ExternTraits.h"
 #include "ErrorCode.h"
-#include "ZigGeneratedClasses.h"
 #include "blob.h"
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSArrayBufferView.h>
@@ -12,16 +11,17 @@ using namespace JSC;
 
 bool checkInMemoryBlob(JSGlobalObject& globalObject, JSValue value)
 {
-    if (!value.inherits<WebCore::JSBlob>())
+    if (!WebCore::mayHoldBlob(value))
         return false;
     const uint8_t* data = nullptr;
     size_t length = 0;
-    if (!WebCore::Blob__sharedView(JSValue::encode(value), &data, &length)) {
+    auto bytes = WebCore::Blob__sharedView(JSValue::encode(value), &data, &length);
+    if (bytes == WebCore::BlobBytes::NotInMemory) {
         auto scope = DECLARE_THROW_SCOPE(getVM(&globalObject));
         Bun::throwError(&globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "File blob cannot be used here"_s);
         return false;
     }
-    return true;
+    return bytes == WebCore::BlobBytes::InMemory;
 }
 
 static ALWAYS_INLINE std::span<const uint8_t> bytesAndIsShared(JSValue value, bool& isShared)
@@ -61,7 +61,7 @@ bool isSharedBuffer(JSValue value)
     if (auto* view = dynamicDowncast<JSArrayBufferView>(value))
         return view->isShared();
     if (auto* buffer = dynamicDowncast<JSArrayBuffer>(value))
-        return buffer->isShared();
+        return buffer->impl()->isShared();
     return false;
 }
 
@@ -86,4 +86,10 @@ extern "C" Bun::Bindgen::ExternBytes Bun__Bindgen__bytesOfBlobOrBuffer(JSC::Enco
 {
     auto bytes = Bun::Bindgen::bytesOfBlobOrBuffer(JSC::JSValue::decode(value));
     return { bytes.data(), bytes.size() };
+}
+
+extern "C" Bun::Bindgen::ExternBytes Bun__Bindgen__bytesOfBlobOrBufferAndIsShared(JSC::EncodedJSValue value, bool* isShared)
+{
+    *isShared = Bun::Bindgen::isSharedBuffer(JSC::JSValue::decode(value));
+    return Bun__Bindgen__bytesOfBlobOrBuffer(value);
 }

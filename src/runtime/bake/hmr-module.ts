@@ -58,6 +58,26 @@ export async function loadExports<T>(id: Id): Promise<T> {
   return m.esm ? m.exports : m.cjs.exports;
 }
 
+/**
+ * Returns a module's export names without evaluating it, or `null` if that requires evaluation.
+ * `export * from` is lowered to a spread, so it forwards `default` too.
+ */
+export function staticExportNames(id: Id): string[] | null {
+  const names = new Set<string>();
+  const queue: Id[] = [id];
+  const visited = new Set<Id>();
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    const unloaded = unloadedModuleRegistry[current];
+    if (!Array.isArray(unloaded)) return null;
+    for (const name of unloaded[ESMProps.exports]) names.add(name);
+    queue.push(...unloaded[ESMProps.stars]);
+  }
+  return [...names];
+}
+
 interface HotAccept {
   modules: string[];
   cb: HotAcceptFunction;
@@ -748,7 +768,14 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     mod.selfAccept = null;
     mod.depAccepts = null;
 
-    const modOrPromise = loadModuleAsync(mod.id, false, null);
+    let modOrPromise: HMRModule | Promise<HMRModule>;
+    try {
+      modOrPromise = loadModuleAsync(mod.id, false, null);
+    } catch (e) {
+      // The rest of the update still loads, or those modules would keep their old code.
+      promises.push(Promise.reject(e));
+      continue;
+    }
     if (modOrPromise === mod) {
       if (selfAccept) {
         selfAccept(getEsmExports(mod));

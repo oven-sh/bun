@@ -1,13 +1,14 @@
-//! Which properties the nodes of each type have, in which order: what the parser of the real tool makes. Rules go through
-//! `Object.keys(node)`, spread nodes and print them as JSON.
+//! The properties that each node type has, and their order, matching what the real tool's parser produces. Rules
+//! iterate `Object.keys(node)`, spread nodes and print them as JSON.
 //!
-//! - espree: `type`, `start`, `end`, `loc`, `range`, the fields in the order in which acorn sets them, `parent`.
-//! - typescript-estree: `type`, the fields by their names, the deprecated ones, `range`, `loc`, `parent`. Where its converter works
-//!   out the range itself, `range` comes right after `type`: see [`alternates`].
-//! - oxlint: `type`, the fields in the order of oxc's structs, `start`, `end`, `range`, `parent`. `loc` is inherited. A JavaScript
-//!   file has the same nodes as a TypeScript file, and what isn't there is `null`.
+//! - espree: `type`, `start`, `end`, `loc`, `range`, the fields in the order acorn sets them, `parent`.
+//! - typescript-estree: `type`, the fields sorted by name, the deprecated ones, `range`, `loc`, `parent`. Where its
+//!   converter computes the range itself, `range` comes right after `type`. See [`alternates`].
+//! - oxlint: `type`, the fields in the order of oxc's structs, `start`, `end`, `range`, `parent`. `loc` is inherited. A
+//!   JavaScript file has the same nodes as a TypeScript file, with `null` for whatever is absent.
 //!
-//! The orders were read off the nodes that espree 11, typescript-estree 8.71.1 and oxlint 1.87 make of 63,000 files.
+//! The orders were read off the nodes that espree 11, typescript-estree 8.71.1 and oxlint 1.87 produce for 63,000
+//! files.
 
 use super::ast::{self, STRINGS};
 use super::wire;
@@ -17,7 +18,7 @@ use crate::utils::sort;
 use bun_core::strings;
 use rustc_hash::FxHashMap;
 
-/// What is in a property of a node, if it isn't a field: the number of a field is below these.
+/// A property's content, if it isn't a field. Field numbers are below these.
 const TYPE: u32 = 0xF0;
 const START: u32 = 0xF1;
 const END: u32 = 0xF2;
@@ -25,18 +26,18 @@ const RANGE: u32 = 0xF3;
 const PARENT: u32 = 0xF4;
 const LOC: u32 = 0xF5;
 const UNDEFINED: u32 = 0xF6;
-/// `comments` and `tokens` of the `Program`.
+/// The `Program`'s `comments` and `tokens`.
 const COMMENTS: u32 = 0xF7;
 const TOKENS: u32 = 0xF8;
 /// A getter and a setter from `worker/ast.js`, which aren't enumerable.
 const DEPRECATED: u32 = 0xF9;
 const FALSE: u32 = 0xFA;
-/// An array of its own for each node, which is made when it's first read.
+/// A separate array for each node, created when it's first read.
 const EMPTY_LIST: u32 = 0xFB;
-/// `"value"`, of `importKind` and `exportKind`.
+/// `"value"`, for `importKind` and `exportKind`.
 const VALUE: u32 = 0xFC;
 
-/// The types whose fields aren't in the order that the rule for the tool gives, each with its fields.
+/// The types whose fields don't follow the tool's general ordering rule, each with its fields.
 const TYPESCRIPT: &[u8] = b"\
     AssignmentExpression:operator,left,right;\
     AssignmentPattern:decorators,left,optional,right,typeAnnotation;BinaryExpression:operator,left,right;\
@@ -109,8 +110,8 @@ enum Layout {
     TypeScript,
     Espree,
     Oxlint,
-    /// The same nodes, in a JavaScript file. More than a third of all properties are ones that only TypeScript can fill in: the
-    /// decorators, the `?` and the type of an `Identifier`, the type arguments of a call. `ast.rs` writes nothing about these:
+    /// The same nodes, in a JavaScript file. More than a third of all properties can only be filled in by TypeScript:
+    /// an `Identifier`'s decorators, `?` and type, or a call's type arguments. `ast.rs` doesn't write these. See
     /// [`ast::shortens_nodes`].
     OxlintJavaScript,
 }
@@ -123,7 +124,6 @@ impl Layout {
         Layout::OxlintJavaScript,
     ];
 
-    /// The tree is that of espree.
     fn is_espree(self) -> bool {
         self == Layout::Espree
     }
@@ -141,7 +141,7 @@ impl Layout {
     }
 }
 
-/// The name of a property, and what is in it.
+/// A property's name and content.
 type Property = (&'static [u8], u32);
 
 const TYPE_PROPERTY: Property = (b"type", TYPE);
@@ -151,7 +151,7 @@ const RANGE_PROPERTY: Property = (b"range", RANGE);
 const PARENT_PROPERTY: Property = (b"parent", PARENT);
 const LOC_PROPERTY: Property = (b"loc", LOC);
 
-/// Names, each once, one after the other.
+/// Deduplicated names, concatenated.
 #[derive(Default)]
 struct Names {
     bytes: Vec<u8>,
@@ -159,7 +159,7 @@ struct Names {
 }
 
 impl Names {
-    /// Where `name` starts, above its length in the low 8 bits.
+    /// Returns `name`'s start offset `<< 8`, with its length in the low 8 bits.
     fn add(&mut self, name: &'static [u8]) -> u32 {
         *self.known.entry(name).or_insert_with(|| {
             let start = self.bytes.len() as u32;
@@ -169,9 +169,9 @@ impl Names {
     }
 }
 
-/// A node doesn't have the field at all if there is nothing to say, where the others are `undefined`: rules ask whether a `Literal`
-/// has a `regex`. espree also leaves out the `directive` of a statement that is none.
-fn can_be_left_out(node_type: NodeType, field: Field, is_espree: bool) -> bool {
+/// True if a node omits the field entirely when it has no value, where other fields are `undefined`. Rules check
+/// whether a `Literal` has a `regex`. espree also omits `directive` on a statement that isn't a directive.
+fn can_be_omitted(node_type: NodeType, field: Field, is_espree: bool) -> bool {
     matches!(
         (node_type, field),
         (NodeType::Literal, Field::Regex | Field::Bigint)
@@ -180,9 +180,9 @@ fn can_be_left_out(node_type: NodeType, field: Field, is_espree: bool) -> bool {
     ) || (is_espree && field == Field::Directive)
 }
 
-/// The properties between `type` and what all nodes end with: a name and what is in it for each. `fields`: the names of the fields
-/// that `ast.rs` writes, in its order. `hidden`: those of the deprecated ones. `shown`: `fields`, and in between them those that
-/// `ast.rs` leaves out because the type [`ast::is_short`].
+/// The properties between `type` and the ones that every node ends with, each as a name and content. `fields` are the
+/// names of the fields that `ast.rs` writes, in its order. `hidden` are the names of the deprecated fields. `shown` is
+/// `fields` plus, in their positions, the fields that `ast.rs` skips because the type [`ast::is_short`].
 fn fields_in_order(
     layout: Layout,
     listed: Option<&'static [u8]>,
@@ -215,21 +215,21 @@ fn fields_in_order(
     names.into_iter().map(|it| (it, what(it))).collect()
 }
 
-/// In the place of the number of a type that nothing here makes: `u32::MAX` less what its visitor keys are. The order is that of
-/// `keysOfOtherTypes` in src/jsc/bindings/LintNodes.cpp.
+/// Used in place of a type number for a type that Bun never produces: `u32::MAX` minus a code for its visitor keys. The
+/// order matches `keysOfOtherTypes` in src/jsc/bindings/LintNodes.cpp.
 const ARGUMENT: u32 = 0;
 const NO_KEYS: u32 = 1;
 const EXPRESSION: u32 = 2;
 const TYPE_ANNOTATION: u32 = 3;
 const NAME_AND_ARGUMENTS: u32 = 4;
 
-/// The types in the order of `sourceCode.visitorKeys`, each with its number. eslint-visitor-keys has its types by their names.
-/// typescript-eslint adds its own to these, by their names without regard to case. Both still have two types that nothing makes
-/// any more.
+/// The types in the order of `sourceCode.visitorKeys`, each with its number. eslint-visitor-keys sorts its types by
+/// name. typescript-eslint appends its own, sorted by name case-insensitively. Both still have two types that no parser
+/// produces anymore.
 fn visitor_key_order(layout: Layout) -> Vec<(&'static [u8], u32)> {
     let all = (NodeType::ALL.iter().enumerate()).map(|(i, it)| (it.name().as_bytes(), i as u32));
     if layout == Layout::Oxlint {
-        return visitor_key_order_of_oxlint(all.collect());
+        return oxlint_visitor_key_order(all.collect());
     }
     let (mut typescript, mut espree): (Vec<_>, Vec<_>) = all.partition(|(name, _)| {
         name.starts_with(b"TS") || *name == b"AccessorProperty" || *name == b"Decorator"
@@ -244,9 +244,10 @@ fn visitor_key_order(layout: Layout) -> Vec<(&'static [u8], u32)> {
     espree
 }
 
-/// oxlint has the types without keys first. Then come those of JavaScript, of JSX and of TypeScript, by their names. It lacks the
-/// keywords that typescript-estree no longer makes nodes of, and has six types that it makes no nodes of.
-fn visitor_key_order_of_oxlint(mut all: Vec<(&'static [u8], u32)>) -> Vec<(&'static [u8], u32)> {
+/// oxlint puts the types without keys first, then the JavaScript, JSX and TypeScript types, each sorted by name. It
+/// lacks the keywords that typescript-estree no longer creates nodes for, and has six types that it never creates nodes
+/// for.
+fn oxlint_visitor_key_order(mut all: Vec<(&'static [u8], u32)>) -> Vec<(&'static [u8], u32)> {
     all.retain(|(name, _)| {
         !matches!(
             *name,
@@ -289,13 +290,13 @@ fn visitor_key_order_of_oxlint(mut all: Vec<(&'static [u8], u32)>) -> Vec<(&'sta
 
 /// For src/jsc/bindings/LintNodes.cpp.
 ///
-/// Words: how many types there are, how many of [`STRINGS`], how many words come before the names, how many layouts there are, how
-/// many words [`visitor_key_order`] takes. Then
-/// for each type its name, and for each layout: how many fields `ast.rs` writes for a node, a bit for each field that is a visitor
-/// key, a bit for each field that can be left out, how many properties there are, how many in the other order that [`alternates`] is
-/// about, then a name and what is in it for each property, in both orders. Then [`STRINGS`]. Then for each of the first three layouts
-/// what [`visitor_key_order`] returns, behind its length. Then the bytes of the names. A name is where it starts in these,
-/// above its length in the low 8 bits.
+/// Words: the number of types, the number of [`STRINGS`], the number of words before the names, the number of layouts,
+/// and the number of words [`visitor_key_order`] takes. Then each type's name, and for each layout: the number of
+/// fields `ast.rs` writes for a node, a bit for each field that's a visitor key, a bit for each field that can be
+/// omitted, the number of properties, the number of properties in the other order that [`alternates`] is about, then
+/// each property's name and content, in both orders. Then [`STRINGS`]. Then, for each of the first three layouts, the
+/// result of [`visitor_key_order`] prefixed with its length. Then the names' bytes. A name is its start offset in those
+/// bytes `<< 8`, with its length in the low 8 bits.
 pub(super) fn write(out: &mut Vec<u8>) {
     let mut names = Names::default();
     let mut words = vec![
@@ -316,7 +317,7 @@ pub(super) fn write(out: &mut Vec<u8>) {
             let is_espree = layout.is_espree();
             let is_short = layout == Layout::OxlintJavaScript && ast::is_short(node_type);
             let (mut fields, mut hidden, mut shown) = (Vec::new(), Vec::new(), Vec::new());
-            let (mut children, mut left_out) = (0, 0);
+            let (mut children, mut omittable) = (0, 0);
             for it in node_type.fields() {
                 if it.is_hidden {
                     hidden.push(it.field.name().as_bytes());
@@ -333,7 +334,7 @@ pub(super) fn write(out: &mut Vec<u8>) {
                 if is_shown && !(is_short && it.is_typescript_only) {
                     let bit = 1 << fields.len();
                     children |= u32::from(it.is_child) * bit;
-                    left_out |= u32::from(can_be_left_out(node_type, it.field, is_espree)) * bit;
+                    omittable |= u32::from(can_be_omitted(node_type, it.field, is_espree)) * bit;
                     fields.push(it.field.name().as_bytes());
                 }
             }
@@ -343,7 +344,7 @@ pub(super) fn write(out: &mut Vec<u8>) {
             }
             let listed = exceptions.get(node_type.name().as_bytes()).copied();
             let middle = fields_in_order(layout, listed, &fields, &hidden, &shown);
-            let around: (&[Property], &[Property]) = match layout {
+            let outer_properties: (&[Property], &[Property]) = match layout {
                 Layout::Espree => (
                     &[
                         TYPE_PROPERTY,
@@ -368,14 +369,15 @@ pub(super) fn write(out: &mut Vec<u8>) {
                     ],
                 ),
             };
-            let properties: Vec<Property> = [around.0, &middle[..], around.1].concat();
+            let properties: Vec<Property> =
+                [outer_properties.0, &middle[..], outer_properties.1].concat();
             let alternate: Vec<Property> = match (layout, node_type) {
                 (Layout::TypeScript, NodeType::TSModuleDeclaration) => {
                     let order = b"kind,body,declare,global,id";
                     let middle = fields_in_order(layout, Some(order), &fields, &hidden, &shown);
-                    [around.0, &middle[..], around.1].concat()
+                    [outer_properties.0, &middle[..], outer_properties.1].concat()
                 }
-                // `convertTypeAnnotation` and `convertTSTypeParametersToTypeParametersDeclaration` work out both.
+                // `convertTypeAnnotation` and `convertTSTypeParametersToTypeParametersDeclaration` compute both.
                 (
                     Layout::TypeScript,
                     NodeType::TSTypeAnnotation | NodeType::TSTypeParameterDeclaration,
@@ -396,7 +398,7 @@ pub(super) fn write(out: &mut Vec<u8>) {
             words.extend_from_slice(&[
                 fields.len() as u32,
                 children,
-                left_out,
+                omittable,
                 properties.len() as u32,
                 alternate.len() as u32,
             ]);
@@ -420,9 +422,9 @@ pub(super) fn write(out: &mut Vec<u8>) {
     out.extend_from_slice(&names.bytes);
 }
 
-/// The nodes of a tree of typescript-estree whose properties are in the other order, in ascending order. These are the nodes for which
-/// its converter passes a `range` of its own to `createNode`, which puts it right after `type`, and the declarations of modules
-/// with a name in quotes, where `kind` comes first.
+/// The nodes of a typescript-estree tree whose properties are in the other order, ascending. These are the nodes for
+/// which its converter passes its own `range` to `createNode`, which puts it right after `type`, and module
+/// declarations with a quoted name, where `kind` comes first.
 pub(super) fn alternates(tree: Tree) -> Vec<u32> {
     let type_of = |id: u32| {
         NodeType::ALL
@@ -434,7 +436,7 @@ pub(super) fn alternates(tree: Tree) -> Vec<u32> {
     };
     let is_in = |id: u32, parent: u32, name: Field| matches!((field(parent, name), tree.nodes.get(id as usize)), (Value::Node(node), Some(&it)) if node == it);
     let is_true = |value: Value| matches!(value, Value::Bool(true));
-    // Whether the pattern `id` declares what is in it, and isn't assigned to.
+    // True if the pattern `id` is a declaration, not an assignment target.
     let is_binding = |mut id: u32| loop {
         let parent = tree.parents[id as usize];
         match type_of(parent) {
@@ -464,7 +466,7 @@ pub(super) fn alternates(tree: Tree) -> Vec<u32> {
     };
     let is_alternate = |id: u32, node_type: NodeType| {
         let parent = tree.parents[id as usize];
-        let around = type_of(parent);
+        let parent_type = type_of(parent);
         match node_type {
             NodeType::ObjectExpression => is_options(id),
             NodeType::Property => is_options(parent),
@@ -479,7 +481,7 @@ pub(super) fn alternates(tree: Tree) -> Vec<u32> {
             | NodeType::TSTypeParameterInstantiation
             | NodeType::TSImportType
             | NodeType::TSEmptyBodyFunctionExpression => true,
-            NodeType::FunctionExpression => match around {
+            NodeType::FunctionExpression => match parent_type {
                 Some(NodeType::MethodDefinition | NodeType::TSAbstractMethodDefinition) => true,
                 Some(NodeType::Property) => {
                     is_true(field(parent, Field::Method))
@@ -487,7 +489,7 @@ pub(super) fn alternates(tree: Tree) -> Vec<u32> {
                 }
                 _ => false,
             },
-            NodeType::Identifier => match around {
+            NodeType::Identifier => match parent_type {
                 Some(NodeType::MethodDefinition | NodeType::TSAbstractMethodDefinition) => {
                     matches!(field(parent, Field::Kind), Value::Str(b"constructor"))
                         && is_in(id, parent, Field::Key)
@@ -514,8 +516,8 @@ pub(super) fn alternates(tree: Tree) -> Vec<u32> {
                 }
                 type_of(outer) == Some(NodeType::TSModuleDeclaration)
             }
-            // A parameter with a default, or a property of a pattern that declares. Not an element of an array.
-            NodeType::AssignmentPattern => match around {
+            // A parameter with a default, or a property of a declaring pattern. Not an array element.
+            NodeType::AssignmentPattern => match parent_type {
                 Some(NodeType::Property) => is_binding(id),
                 Some(NodeType::ArrayPattern | NodeType::AssignmentExpression) => false,
                 Some(NodeType::ForInStatement | NodeType::ForOfStatement) => false,

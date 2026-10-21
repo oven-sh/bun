@@ -30,6 +30,7 @@
 #include "BunString.h"
 // #include "BlobRegistry.h"
 // #include "ByteArrayPixelBuffer.h"
+#include "CryptoAlgorithmChaCha20Poly1305.h"
 #include "CryptoKeyAES.h"
 #include "CryptoKeyAKP.h"
 #include "CryptoKeyEC.h"
@@ -3097,6 +3098,8 @@ private:
         CryptoAlgorithmIdentifier hash = CryptoAlgorithmIdentifier::SHA_1;
         if (!read(isRestrictedToHash))
             return false;
+        if (!!isRestrictedToHash != (algorithm != CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5))
+            return false;
         if (isRestrictedToHash && !readHashAlgorithm(hash))
             return false;
 
@@ -3246,6 +3249,8 @@ private:
             return false;
         Vector<uint8_t> keyData;
         if (!read(keyData))
+            return false;
+        if (algorithm == CryptoAlgorithmIdentifier::ChaCha20_Poly1305 && keyData.size() * 8 != CryptoAlgorithmChaCha20Poly1305::s_keyLengthBits)
             return false;
         result = CryptoKeyRaw::create(algorithm, WTF::move(keyData), usages, extractable);
         return true;

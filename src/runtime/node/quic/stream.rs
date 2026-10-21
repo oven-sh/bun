@@ -287,7 +287,7 @@ impl QuicStream {
             s.want_read(true);
         }
         if want_write || self.outbound.get().started {
-            s.want_write(true);
+            self.request_write(s);
         }
     }
 
@@ -534,13 +534,7 @@ impl QuicStream {
         };
         if empty {
             if end == PendingEnd::Fin {
-                s.shutdown(1);
-                self.wrote_to_lsquic.set(true);
-                self.outbound.with_mut(|o| o.end = PendingEnd::None);
-                self.with_state(|s| s.fin_sent = 1);
-                if self.stream_id() & STREAM_ID_UNI_BIT != 0 {
-                    s.shutdown(0);
-                }
+                self.send_fin(s);
             } else if end == PendingEnd::Trailers && !self.trailers_requested.replace(true) {
                 if let Some(session) = self.session_ref() {
                     session.push_event(SessionEvent::StreamWantsTrailers { stream: self.key });
@@ -562,9 +556,38 @@ impl QuicStream {
         }
     }
 
+    fn send_fin(&self, s: lsquic::Stream) {
+        s.shutdown(1);
+        self.wrote_to_lsquic.set(true);
+        self.outbound.with_mut(|o| o.end = PendingEnd::None);
+        self.with_state(|s| s.fin_sent = 1);
+        if self.stream_id() & STREAM_ID_UNI_BIT != 0 {
+            s.shutdown(0);
+        }
+    }
+
+    /// lsquic gives a write event only to a stream with flow-control credit, and a FIN uses none (RFC 9000 §4.1).
+    fn request_write(&self, s: lsquic::Stream) {
+        let bare_fin = {
+            let out = self.outbound.get();
+            out.end == PendingEnd::Fin && out.data.is_empty()
+        };
+        // HTTP/3 keeps the write event: headers or trailers can follow an ended body in the same turn.
+        if bare_fin
+            && self.with_state(|st| st.write_ended == 0)
+            && !self.session_ref().is_some_and(QuicSession::is_http)
+            && s.write_avail() == 0
+        {
+            // Node holds this FIN while the connection has no credit: https://github.com/nodejs/node/blob/v26.3.0/src/quic/application.cc#L790-L792
+            self.send_fin(s);
+        } else {
+            s.want_write(true);
+        }
+    }
+
     fn kick_write(&self) {
         if let Some(s) = self.ls() {
-            s.want_write(true);
+            self.request_write(s);
         }
         if let Some(session) = self.session_ref() {
             session.schedule_process();

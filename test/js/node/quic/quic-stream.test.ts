@@ -5,8 +5,9 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, withoutAsanQuarantine } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { BlockList } from "node:net";
 import { join } from "node:path";
-import { connect, listen, type QuicEndpoint, type SessionOptions } from "node:quic";
+import { connect, listen, QuicEndpoint, type SessionOptions } from "node:quic";
 
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
@@ -673,3 +674,310 @@ test("a stream that reuses a destroyed stream's allocation doesn't get its queue
   expect(stdout).toBe(JSON.stringify({ opened: 16, delivered: 16, closedBeforeSent: [] }) + "\n");
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// A STREAM frame that carries only the FIN bit uses no flow-control credit
+// (RFC 9000 section 4.1). On a raw QUIC session the end of a body leaves
+// without a MAX_STREAM_DATA or a MAX_DATA from the peer.
+describe("the end of a body on a stream with no flow-control credit left", () => {
+  const empty = new Uint8Array(0);
+  // No credit for any stream, whichever side opens it.
+  const noStreamCredit = {
+    initialMaxStreamDataBidiLocal: 0,
+    initialMaxStreamDataBidiRemote: 0,
+    initialMaxStreamDataUni: 0,
+  };
+
+  // A connected pair. Each side reads every stream that the other side opens
+  // and counts the datagrams that it sends.
+  async function setup({
+    server = {},
+    client = {},
+    h3 = false,
+    listenOptions = {},
+    early = async (_client: any) => {},
+  } = {}) {
+    // Stream id to the bytes read so far, and to the length of an ended body.
+    const got = new Map<bigint, number>();
+    const ends = new Map<bigint, number | string>();
+    let datagrams = 0;
+    let progress = Promise.withResolvers<void>();
+    const step = () => {
+      progress.resolve();
+      progress = Promise.withResolvers<void>();
+    };
+    const onstream = async (stream: any) => {
+      stream.closed.catch(() => {});
+      let bytes = 0;
+      try {
+        for await (const batch of stream) {
+          for (const chunk of batch) bytes += chunk.byteLength;
+          got.set(stream.id, bytes);
+          step();
+        }
+        ends.set(stream.id, bytes);
+      } catch (err: any) {
+        ends.set(stream.id, String(err?.code));
+      }
+      step();
+    };
+    const ondatagram = () => {
+      datagrams++;
+      step();
+    };
+
+    const accepted = Promise.withResolvers<any>();
+    const listener = await listen(
+      serverSession => {
+        serverSession.closed.catch(() => {});
+        serverSession.onstream = onstream;
+        serverSession.ondatagram = ondatagram;
+        accepted.resolve(serverSession);
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        alpn: [h3 ? "h3" : "quic-test"],
+        transportParams: { maxIdleTimeout: 5, ...server },
+        ...listenOptions,
+      },
+    );
+    const blockList = new BlockList();
+    const endpoint = new QuicEndpoint({ blockList });
+    const session = await connect(listener.address!, {
+      endpoint,
+      alpn: h3 ? "h3" : "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5, ...client },
+      onstream,
+      ondatagram,
+    } as SessionOptions);
+    const closed = session.closed.then(
+      () => "closed",
+      () => "closed",
+    );
+    await early(session);
+    await session.opened;
+    const serverSession = await accepted.promise;
+    await serverSession.opened;
+
+    // Resolves when `done()` holds, or when the session is gone.
+    const until = async (done: () => boolean) => {
+      while (!done() && (await Promise.race([progress.promise, closed])) !== "closed");
+    };
+
+    return {
+      client: session,
+      server: serverSession,
+      got,
+      ends,
+      until,
+      // The lengths of the bodies that ended, once there are `count` of them.
+      ended: (count = 1) => until(() => ends.size >= count).then(() => [...ends.values()]),
+      // Three datagrams from `from`, each sent after the one before it
+      // arrived. A datagram needs no credit. An end that `from` sent before
+      // the first of them arrives before the last.
+      noEnd: (from: any = session) =>
+        Promise.race([
+          closed,
+          (async () => {
+            for (let i = 0; i < 3; i++) {
+              const seen = datagrams;
+              await from.sendDatagram(new Uint8Array(1));
+              await until(() => datagrams > seen);
+            }
+            return "no end";
+          })(),
+        ]),
+      // From here on the client drops every datagram from the server: no
+      // MAX_STREAM_DATA and no MAX_DATA can raise a limit.
+      deafen: () => blockList.addAddress(listener.address!.address),
+      async [Symbol.asyncDispose]() {
+        session.destroy();
+        serverSession.destroy();
+        await Promise.all([endpoint.close(), listener.close()]);
+      },
+    };
+  }
+
+  const ways: Record<string, (session: any) => Promise<any>> = {
+    "writer.endSync()": async session => (await session.createBidirectionalStream()).writer.endSync(),
+    "writer.end()": async session => (await session.createBidirectionalStream()).writer.end(),
+    "setBody(null)": async session => (await session.createBidirectionalStream()).setBody(null),
+    'setBody("")': async session => (await session.createBidirectionalStream()).setBody(""),
+    "createBidirectionalStream({ body })": session => session.createBidirectionalStream({ body: empty }),
+  };
+
+  test.each([
+    ["a stream that the client opens, at a stream limit of 0", "client", noStreamCredit],
+    ["a stream that the server opens, at a stream limit of 0", "server", noStreamCredit],
+    // Node holds the end at a limit of the connection until MAX_DATA. bun
+    // sends it, as RFC 9000 allows.
+    ["a stream that the client opens, at a connection limit of 0", "client", { initialMaxData: 0 }],
+  ] as const)("reaches the peer on %s, however the body ends", async (_, opener, limits) => {
+    await using peers = await setup(opener === "client" ? { server: limits } : { client: limits });
+    const sender = peers[opener];
+    for (const end of Object.values(ways)) await end(sender);
+    await Promise.race([peers.ended(Object.keys(ways).length), peers.noEnd(sender)]);
+    // Bidirectional stream ids are 0, 4, 8, ... from the client and 1, 5, 9,
+    // ... from the server.
+    const first = opener === "client" ? 0 : 1;
+    const missing = Object.keys(ways).filter((_, i) => peers.ends.get(BigInt(first + i * 4)) !== 0);
+    expect(missing).toEqual([]);
+  });
+
+  test("reaches the peer when the stream ended before the handshake completed", async () => {
+    await using peers = await setup({
+      server: noStreamCredit,
+      async early(client) {
+        (await client.createBidirectionalStream()).writer.endSync();
+        await client.createBidirectionalStream({ body: empty });
+      },
+    });
+    expect(await Promise.race([peers.ended(2), peers.noEnd()])).toEqual([0, 0]);
+  });
+
+  test.each(["client", "server"] as const)(
+    "reaches the peer on a unidirectional stream that the %s opens, and the stream closes",
+    async opener => {
+      await using peers = await setup(opener === "client" ? { server: noStreamCredit } : { client: noStreamCredit });
+      const sender = peers[opener];
+      const first = await sender.createUnidirectionalStream();
+      first.writer.endSync();
+      const second = await sender.createUnidirectionalStream({ body: empty });
+      expect(await Promise.race([peers.ended(2), peers.noEnd(sender)])).toEqual([0, 0]);
+      const closed = Promise.all([first.closed, second.closed]).then(() => "streams closed");
+      expect(await Promise.race([closed, peers.client.closed])).toBe("streams closed");
+    },
+  );
+
+  // `initialMaxData` is the limit of the connection. Node holds the end there
+  // until MAX_DATA. bun sends it.
+  test.each(["initialMaxStreamDataBidiRemote", "initialMaxData"])(
+    "reaches the peer after the body used all of %s",
+    async limit => {
+      const body = new Uint8Array(1000).fill(0x61);
+      await using peers = await setup({ server: { [limit]: body.byteLength } });
+      const stream = await peers.client.createBidirectionalStream();
+      peers.deafen();
+      expect(stream.writer.writeSync(body)).toBe(true);
+      await peers.until(() => peers.got.get(stream.id) === body.byteLength);
+      stream.writer.endSync();
+      expect(await Promise.race([peers.ended(), peers.noEnd()])).toEqual([body.byteLength]);
+    },
+  );
+
+  test("reaches the peer from a stream handler of the accepting side", async () => {
+    // The client gives no credit for the answer on a stream that it opens.
+    await using peers = await setup({ client: noStreamCredit });
+    const answered = Promise.withResolvers<void>();
+    peers.server.onstream = (stream: any) => {
+      stream.closed.catch(() => {});
+      stream.writer.endSync();
+      answered.resolve();
+    };
+    const stream = await peers.client.createBidirectionalStream();
+    stream.closed.catch(() => {});
+    stream.writer.endSync();
+    const answer = (async () => {
+      let bytes = 0;
+      for await (const batch of stream) for (const chunk of batch) bytes += chunk.byteLength;
+      return bytes;
+    })();
+    await answered.promise;
+    expect(await Promise.race([answer, peers.noEnd(peers.server)])).toBe(0);
+  });
+
+  test("waits for credit when a byte of the body is still queued", async () => {
+    await using peers = await setup({ server: noStreamCredit });
+    const stream = await peers.client.createBidirectionalStream();
+    stream.closed.catch(() => {});
+    expect(stream.writer.writeSync(new Uint8Array(1))).toBe(true);
+    stream.writer.endSync();
+    expect(await Promise.race([peers.ended(), peers.noEnd()])).toBe("no end");
+  });
+
+  test("does not end a stream on stopSending()", async () => {
+    await using peers = await setup({ server: noStreamCredit });
+    const stream = await peers.client.createBidirectionalStream();
+    stream.closed.catch(() => {});
+    stream.stopSending();
+    expect(await Promise.race([peers.ended(), peers.noEnd()])).toBe("no end");
+  });
+
+  test("does not close a stream that the peer opened for its own data only", async () => {
+    // The server has no credit on this connection, and this stream gives it
+    // no side to send on.
+    await using peers = await setup({ client: { initialMaxData: 0 } });
+    const read = peers.server.onstream;
+    peers.server.onstream = (stream: any) => {
+      stream.setBody("");
+      return read(stream);
+    };
+    const chunk = new Uint8Array(1000);
+    const stream = await peers.client.createUnidirectionalStream();
+    stream.closed.catch(() => {});
+    stream.writer.writeSync(chunk);
+    await peers.until(() => peers.got.get(stream.id) === chunk.byteLength);
+    stream.writer.writeSync(chunk);
+    stream.writer.endSync();
+    expect(await Promise.race([peers.ended(), peers.noEnd()])).toEqual([2 * chunk.byteLength]);
+  });
+
+  // On HTTP/3 the end of a body is not the last thing on a stream: a header
+  // block can follow it in the same turn. HTTP/3 keeps the write event.
+  test.each([
+    ["after a 103", true],
+    ["before a header block", false],
+  ])("on HTTP/3, an answer whose body ends %s still gets its headers", async (_, interim) => {
+    const sent: unknown[] = [];
+    let answer: any;
+    await using peers = await setup({
+      h3: true,
+      // What the server can send on the connection before a MAX_DATA.
+      client: { initialMaxData: 16384 },
+      listenOptions: {
+        onheaders(this: any, headers: Record<string, string>) {
+          if (headers[":path"] === "/answer") {
+            answer = this;
+            if (interim) sent.push(this.sendInformationalHeaders({ ":status": "103" }));
+            return;
+          }
+          // lsquic reports this stream as blocked when its body has used all
+          // of the connection's credit.
+          this.onblocked = () => {
+            this.onblocked = undefined;
+            sent.push(answer.writer.endSync(), answer.sendHeaders({ ":status": "200" }));
+          };
+          this.sendHeaders({ ":status": "200" });
+          this.writer.writeSync(new Uint8Array(65536));
+          this.writer.endSync();
+        },
+      },
+    });
+    const get = (path: string) => ({ ":method": "GET", ":path": path, ":scheme": "https", ":authority": "localhost" });
+    const events: string[] = [];
+    const stream = await peers.client.createBidirectionalStream({
+      headers: get("/answer"),
+      oninfo: (headers: Record<string, string>) => events.push("info " + headers[":status"]),
+      onheaders: (headers: Record<string, string>) => events.push("headers " + headers[":status"]),
+    });
+    stream.closed.catch(() => {});
+    const filler = await peers.client.createBidirectionalStream({ headers: get("/filler"), onheaders() {} });
+    filler.closed.catch(() => {});
+    // The client reads the large answer, so the server gets credit again.
+    const drained = (async () => {
+      for await (const _ of filler);
+    })();
+    try {
+      for await (const _ of stream);
+      events.push("end");
+    } catch (err: any) {
+      events.push(String(err?.code));
+    }
+    await drained;
+    expect({ sent, events }).toEqual({
+      sent: interim ? [true, 0, true] : [0, true],
+      events: interim ? ["info 103", "headers 200", "end"] : ["headers 200", "end"],
+    });
+  });
+});

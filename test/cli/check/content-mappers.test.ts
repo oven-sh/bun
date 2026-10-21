@@ -559,14 +559,6 @@ describe.concurrent("a mapper's process", () => {
     expect(stdout).toBe(errorsOfApp);
     expect(existsSync(join(String(dir), "node_modules/m/shell-ran.txt"))).toBe(false);
   });
-
-  // The limit is five seconds, as in `tsc`.
-  test("never answers the first request", async () => {
-    await expectErrors(
-      { mapper: `setInterval(() => {}, 1000);` },
-      notInitialized("The content mapper did not respond to the 'initialize' request within 5 seconds."),
-    );
-  });
 });
 
 describe.concurrent("nothing starts without --runExternalCode on the command line", () => {

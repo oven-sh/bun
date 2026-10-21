@@ -378,6 +378,13 @@ impl<'a> JsLocal<'a> {
         Self::from_raw(value)
     }
 
+    /// `b.any.variadic` for a function of the older API.
+    #[inline(always)]
+    pub fn to_js_slice<'b>(values: &'b [Self]) -> &'b [JSValue] {
+        // SAFETY: `JsLocal` is `repr(transparent)` over `JSValue`.
+        unsafe { &*(core::ptr::from_ref(values) as *const [JSValue]) }
+    }
+
     #[inline(always)]
     pub fn is_undefined(self) -> bool {
         self.0.is_undefined()
@@ -400,8 +407,7 @@ impl<'a> JsLocal<'a, Callable> {
         this: JsLocal<'a, T>,
         args: &[JsLocal<'a>],
     ) -> Result<'a, JsLocal<'a>> {
-        // SAFETY: `JsLocal` is `repr(transparent)` over `JSValue`.
-        let args = unsafe { &*(core::ptr::from_ref(args) as *const [JSValue]) };
+        let args = JsLocal::to_js_slice(args);
         JsLocal::from_js_result(self.0.call(cx.heap.global_object(), this.0, args))
     }
 }

@@ -70,6 +70,7 @@
 #include "BunObject.h"
 #include "GeneratedBunObject.h"
 #include "GeneratedCrypto.h"
+#include "GeneratedResolveMessage.h"
 #include "GeneratedTextDecoder.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"

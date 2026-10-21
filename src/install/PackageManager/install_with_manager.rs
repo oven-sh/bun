@@ -14,13 +14,14 @@ use crate::Subcommand;
 use crate::dependency::{DependencyExt as _, Tag as DependencyVersionTag};
 use crate::lockfile::{self, Lockfile, reachable};
 use crate::resolution::Tag as ResolutionTag;
+use crate::resolvers::folder_resolver::FolderResolution;
 use crate::update_transitive::{
     DirectDependencies, TransitiveUpdate, enqueue_peer_rows, moved_targets_after_clean,
-    plannable_peer_rows, print_kept_patched, redirect_moved_edges,
+    package_after_clean, plannable_peer_rows, print_kept_patched, redirect_moved_edges,
 };
 use crate::{
     Dependency, DependencyID, Features, PackageID, PackageNameHash, PatchTask, Resolution,
-    invalid_package_id,
+    TaskCallbackContext, invalid_package_id,
 };
 // Bring the typed `items_<field>()` column accessors into scope for
 // `MultiArrayList<Package>` / `Slice<Package>`.
@@ -45,6 +46,7 @@ use crate::package_manager_real::{
     UpdateRequest, enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre,
     save_lockfile, setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
 };
+use crate::package_manager_task as Task;
 
 use super::security_scanner;
 
@@ -727,6 +729,7 @@ pub fn install_with_manager(
                     frozen.then(|| loaded_lockfile_name(&load_result)),
                     root_package_json_path,
                     &mut root,
+                    &lockfile_before_clean,
                     log_level,
                 )?;
                 had_any_diffs |= !moved_by_overrides.is_empty();
@@ -2366,6 +2369,10 @@ fn clean_lockfile(
         }
     };
     let mut before_clean = core::mem::replace(&mut manager.lockfile, new_lockfile);
+    #[cfg(debug_assertions)]
+    {
+        manager.ids_predate_clean = true;
+    }
     // `reresolve_rows_outside_overrides` needs these, and the copy only has what's saved in the
     // lockfile.
     manager.lockfile.package_extensions.rules =
@@ -2376,6 +2383,64 @@ fn clean_lockfile(
         manager.crash();
     }
     Ok(before_clean)
+}
+
+/// Moves the ids that `manager` has from the first pass to the cleaned lockfile, and forgets the ones that the clean has no package or no mapping for.
+#[cold]
+#[inline(never)]
+fn rebind_to_cleaned_lockfile(manager: &mut PackageManager, before_first_clean: &Lockfile) {
+    let cleaned: &Lockfile = &manager.lockfile;
+    // Returns false if the clean dropped the package.
+    let moved = |package_id: &mut PackageID| {
+        package_after_clean(before_first_clean, cleaned, *package_id).is_some_and(|id| {
+            *package_id = id;
+            true
+        })
+    };
+
+    (manager.appended_task_packages).retain(|task_id, package_id| {
+        let is_kept = moved(package_id);
+        if !is_kept {
+            // The next dependency on the dropped package starts the task again.
+            let _ = manager.network_dedupe_map.remove(task_id);
+        }
+        is_kept
+    });
+    manager
+        .folders
+        .retain(|_, entry| match &mut entry.resolution {
+            FolderResolution::PackageId(package_id) => moved(package_id),
+            _ => true,
+        });
+    // A dropped registry package that is appended again asks for its tarball like a new package.
+    let resolutions = before_first_clean.packages.items_resolution();
+    for (id, resolution) in resolutions.iter().enumerate() {
+        if resolution.tag == ResolutionTag::Npm
+            && package_after_clean(before_first_clean, cleaned, id as PackageID).is_none()
+        {
+            let name = before_first_clean.packages.items_name()[id];
+            let _ = manager
+                .network_dedupe_map
+                .remove(&Task::Id::for_npm_package(
+                    before_first_clean.str(&name),
+                    resolution.npm().version,
+                ));
+        }
+    }
+
+    // `UpdateScope` walks the cleaned lockfile instead.
+    manager.named_update_reachable = None;
+    // The peer pass of the first pass is over.
+    manager.look_ahead.in_peer_pass = false;
+    // A clean has no mapping for row ids, so the rows that the first pass left waiting are dropped.
+    while manager.peer_dependencies.read_item().is_some() {}
+    for waiters in manager.task_queue.values_mut() {
+        waiters.retain(|waiter| !matches!(waiter, TaskCallbackContext::Dependency(_)));
+    }
+    #[cfg(debug_assertions)]
+    {
+        manager.ids_predate_clean = false;
+    }
 }
 
 /// Returns the rows that resolve to a version that their `overrides` rule does not allow, each
@@ -2444,6 +2509,7 @@ fn reresolve_rows_outside_overrides(
     frozen: Option<&'static str>,
     root_package_json_path: &ZStr,
     root: &mut lockfile::Package,
+    before_first_clean: &Lockfile,
     log_level: Options::LogLevel,
 ) -> crate::Result<Vec<PackageID>> {
     // yarn applies `"x@^1.0.0"` in `resolutions` only to dependencies declared as exactly `^1.0.0`.
@@ -2526,6 +2592,7 @@ fn reresolve_rows_outside_overrides(
         Global::crash();
     }
 
+    rebind_to_cleaned_lockfile(manager, before_first_clean);
     manager.lockfile.mark_loaded_packages()?;
     let mut moved: Vec<(DependencyID, PackageID)> = Vec::new();
     let mut peer_rows: Vec<DependencyID> = Vec::new();

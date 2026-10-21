@@ -228,6 +228,7 @@ complete -c bun -n "__fish_seen_subcommand_from check" -l "threads" -r -d "Numbe
 complete -c bun -n "__fish_seen_subcommand_from check" -l "timing" -d "Print load and check times"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "cwd" -r -d "Set the working directory"
 complete -c bun -n "__fish_seen_subcommand_from check" -l "no-script" -d "Run the type checker even if the project has a check script"
+complete -c bun -n "__fish_seen_subcommand_from check" -l "runExternalCode" -d "Run the programs from node_modules that contentMappers in tsconfig.json lists"
 complete -c bun -n "__fish_use_subcommand" -a "lint" -d "Lint JavaScript and TypeScript" -f
 complete -c bun -n "__fish_seen_subcommand_from lint" -s "c" -l "config" -r -F -d "Use this config file instead of looking for one"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-config-lookup" -d "Do not look for a config file"

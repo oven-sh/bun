@@ -800,6 +800,7 @@ _bun_check_completion() {
         '--timing[Print load and check times]' \
         '--cwd[Set the working directory]:cwd:_files -/' \
         '--no-script[Run the type checker even if the project has a check script]' \
+        '--runExternalCode[Run the programs from node_modules that contentMappers in tsconfig.json lists]' \
         '--help[Print this help menu]' \
         '-h[Print this help menu]' &&
         ret=0

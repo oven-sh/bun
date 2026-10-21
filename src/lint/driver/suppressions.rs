@@ -1,5 +1,5 @@
-//! ESLint's bulk suppressions: `eslint-suppressions.json` says how many errors of which rules are
-//! tolerated in which files. `SuppressionsService`.
+//! ESLint's bulk suppressions: `eslint-suppressions.json` lists how many errors of which rules are tolerated in which
+//! files. `SuppressionsService`.
 
 use crate::results::{Counts, FileResult};
 use crate::run::Fatal;
@@ -11,18 +11,19 @@ use bun_lint::options::Json;
 use std::io::Write;
 
 pub(crate) const DEFAULT_FILE_NAME: &[u8] = b"eslint-suppressions.json";
-/// The same file, where the configuration is oxlint's.
-pub(crate) const FILE_NAME_OF_OXLINT: &[u8] = b"oxlint-suppressions.json";
+/// The same file's name with an oxlint config.
+pub(crate) const OXLINT_FILE_NAME: &[u8] = b"oxlint-suppressions.json";
 
-/// By rule: how many errors.
+/// The error count per rule.
 type ByRule = Vec<(Vec<u8>, u64)>;
 
-/// The content of the file: by path from the working directory.
+/// The file's contents, keyed by path relative to the working directory.
 #[derive(Default)]
 pub(crate) struct Suppressions(Vec<(Vec<u8>, ByRule)>);
 
-/// What the file calls the rule of `message`. `None`: it cannot be suppressed. `is_oxlint`: the file is oxlint's, which has the
-/// names of its diagnostics, `typescript/array-type` for `typescript(array-type)`, and nothing about what the type checker reports.
+/// Returns the file's name for `message`'s rule. `None` if it can't be suppressed. With `is_oxlint`, the file is
+/// oxlint's. It uses oxlint's diagnostic names, `typescript/array-type` for `typescript(array-type)`, and has no
+/// entries for type checker errors.
 pub(crate) fn rule_of(message: &LintMessage, is_oxlint: bool) -> Option<Vec<u8>> {
     let id = message.rule_id.as_ref()?;
     if !is_oxlint {
@@ -67,9 +68,9 @@ fn entry<'e, T: Default>(entries: &'e mut Vec<(Vec<u8>, T)>, key: &[u8]) -> &'e 
 }
 
 impl Suppressions {
-    /// `load`. A file that does not exist has nothing in it. One that cannot be read is as one that cannot be parsed.
-    /// ESLint accepts any object, and its `save` then drops whatever it didn't understand. Here, anything not shaped
-    /// like `{ file: { rule: { count } } }` is assumed to be some other file, like a `package.json`, and is rejected.
+    /// `load`. A missing file is treated as empty, and an unreadable one like one that doesn't parse. ESLint accepts
+    /// any object, and its `save` then drops whatever it didn't understand. Here, a file that isn't shaped like
+    /// `{ file: { rule: { count } } }` is assumed to be something else, like a `package.json`, and is rejected.
     pub(crate) fn load(path: &[u8]) -> Result<Suppressions, Fatal> {
         let text = match fs::read(path) {
             Err(error) if error.get_errno() == bun_sys::E::ENOENT => {
@@ -122,7 +123,7 @@ impl Suppressions {
             .map_err(|why| Fatal([b"Cannot write ", path, b": ", &why].concat()))
     }
 
-    /// `suppress`. `rules`: only these. `None`: all.
+    /// `suppress`. `rules` limits it to these rules. `None` means all.
     pub(crate) fn suppress(
         &mut self,
         results: &[FileResult],
@@ -140,7 +141,7 @@ impl Suppressions {
         }
     }
 
-    /// `applySuppressions`. Returns what is suppressed and does not occur.
+    /// `applySuppressions`. Returns the unused suppressions.
     pub(crate) fn apply(
         &self,
         results: &mut [FileResult],
@@ -161,14 +162,14 @@ impl Suppressions {
                 };
                 if *count <= tolerated {
                     // `suppressMessagesByRule`
-                    let (mut hidden, shown): (Vec<_>, Vec<_>) =
+                    let (mut hidden, remaining): (Vec<_>, Vec<_>) =
                         std::mem::take(&mut result.messages)
                             .into_iter()
                             .partition(|it| rule_of(it, is_oxlint).as_ref() == Some(rule));
                     for message in &mut hidden {
                         message.suppressions = vec![Suppression::file()];
                     }
-                    result.messages = shown;
+                    result.messages = remaining;
                     result.suppressed.append(&mut hidden);
                     was_suppressed = true;
                 }

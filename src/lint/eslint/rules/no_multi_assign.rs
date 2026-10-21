@@ -26,12 +26,12 @@ impl Rule for NoMultiAssign {
             }
             Node::Expr(parent) if !self.ignore_non_declaration => {
                 matches!(parent.as_assign(), Some((_, _, value)) if value == e)
-                    // A default value in a destructuring assignment.
+                    // Skip a default value in a destructuring assignment.
                     && !utils::is_assignment_target(parent)
             }
             _ => false,
         };
-        // oxlint's rule is called with what the assignment is the value of.
+        // oxlint's rule runs on the node whose value is this assignment.
         if is_chained {
             cx.report(e, UNEXPECTED_CHAIN).called_with(e.parent());
         }

@@ -18,13 +18,15 @@ export function require(this: JSCommonJSModule, _id: string) {
 }
 
 // overridableRequire can be overridden by setting `Module.prototype.require`
+// Like Node, `this` is only used as the parent module and can be any value, even null.
 $overriddenName = "require";
 $visibility = "Private";
 export function overridableRequire(this: JSCommonJSModule, originalId: string, options?: { paths?: string[] }) {
-  const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined, this, options);
+  // `filename` can be a user getter, so read it once, before the module is added to the require map.
+  const parentFilename = this?.filename;
+  const id = $resolveSync(originalId, parentFilename, false, false, options ? options.paths : undefined, this, options);
   // The global require cache, or the one of the Bun.ModuleGraph this module belongs to.
-  // (`this` need not be a module: Module.prototype.require.call({ filename }, id).)
-  const requireMap: RequireMap = this.$requireMap || $requireMap;
+  const requireMap: RequireMap = this?.$requireMap || $requireMap;
   if (id.startsWith("node:")) {
     if (id !== originalId) {
       // A terrible special case where Node.js allows non-prefixed built-ins to
@@ -39,7 +41,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       }
     }
 
-    return this.$requireNativeModule(id);
+    return $requireNativeModule(id);
   } else {
     const existing = requireMap.$get(id);
     if (existing) {
@@ -76,7 +78,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   }
 
   if (id === "bun:test") {
-    return Bun.jest(this.filename);
+    return Bun.jest(parentFilename);
   }
 
   // To handle import/export cycles, we need to create a module object and put
@@ -95,9 +97,10 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   if (IS_BUN_DEVELOPMENT) {
     $assert(mod.id === id);
     try {
-      out = this.$require(
+      out = $requireCommonJS(
         id,
         mod,
+        parentFilename,
         // did they pass a { type } object?
         $argumentCount(),
         // the object containing a "type" attribute, if they passed one
@@ -109,7 +112,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       throw E;
     }
   } else {
-    out = this.$require(id, mod, $argumentCount(), $argument(1));
+    out = $requireCommonJS(id, mod, parentFilename, $argumentCount(), $argument(1));
   }
 
   // -1 means we need to lookup the module from the ESM registry.
@@ -244,7 +247,6 @@ $visibility = "Private";
 // `requireMap`: the global require cache, or a Bun.ModuleGraph's together with one of
 // the graph's modules (`owner`, which names the loader whose ES modules it also lists).
 export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSModule) {
-  var moduleMap = new Map();
   var inner = {
     [Symbol.for("nodejs.util.inspect.custom")]() {
       return { ...proxy };
@@ -285,7 +287,6 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
     },
 
     deleteProperty(_target, key: string) {
-      moduleMap.$delete(key);
       requireMap.$delete(key);
       $esmRegistryDelete(key, owner);
       $evictIsolationSourceProviderCache(key);

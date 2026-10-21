@@ -223,6 +223,7 @@ impl Binding {
                     E::Object {
                         properties: G::PropertyList::from_bump_vec(properties),
                         is_single_line: b.is_single_line,
+                        close_brace_loc: b.close_brace_loc,
                         ..Default::default()
                     },
                     loc,

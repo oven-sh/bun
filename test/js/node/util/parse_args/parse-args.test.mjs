@@ -991,6 +991,13 @@ describe("parseArgs extra tests", () => {
     expect(result.positionals).toHaveLength(2);
   });
 
+  test("a bare --no- with allowNegative stores an empty key", () => {
+    expect(parseArgs({ args: ["--no-"], allowNegative: true, strict: false })).toEqual({
+      values: { __proto__: null, "": false },
+      positionals: [],
+    });
+  });
+
   describe("unicode support", () => {
     // node allows characters of 1/2 bytes as short option names, but not 3/4
     const U1 = "$"; // 1 byte

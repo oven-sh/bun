@@ -75,7 +75,7 @@ export const cases: Record<string, Case> = {
  0|      return "one";
  1|    case 2:
  1|      return "two";
- -|    default:
+ 0|    default:
  0|      return "many";
  -|  }
  -|}
@@ -503,7 +503,7 @@ export const cases: Record<string, Case> = {
  3|    case 3:
  3|      g();
  3|      break;
- -|    default:
+ 0|    default:
  0|      return 4;
  -|  }
  3|  g();
@@ -537,6 +537,75 @@ export const cases: Record<string, Case> = {
  1|try {
  1|  rethrows();
  1|} catch {}
+`,
+  },
+  // `case` and `default` ran as often as what follows them, not as often as a `case` was compared.
+  "switch.ts": {
+    functions: "6/7",
+    lines: `
+ 3|function defaultLast(x: number) {
+ 3|  switch (x) {
+ 1|    case
+ 1|      1:
+ 1|      at();
+ 1|      break;
+ 2|    default:
+ 2|      at();
+ -|  }
+ -|}
+ 1|defaultLast(1);
+ 1|defaultLast(2);
+ 1|defaultLast(2);
+ 3|function defaultFirst(x: number) {
+ 3|  switch (x) {
+ 2|    default:
+ 2|      at();
+ 3|    case 1:
+ 3|      at();
+ -|  }
+ -|}
+ 1|defaultFirst(1);
+ 1|defaultFirst(2);
+ 1|defaultFirst(2);
+ 3|function blocks(x: number) {
+ 3|  switch (x) {
+ 1|    case 1: {
+ 1|      at();
+ 1|      break;
+ -|    }
+ 2|    default: {
+ 2|      at();
+ -|    }
+ -|  }
+ -|}
+ 1|blocks(1);
+ 1|blocks(2);
+ 1|blocks(2);
+ 1|function empty(x: number) {
+ 1|  switch (x) {
+ 1|    case 1:
+ 1|    default:
+ -|  }
+ -|}
+ 1|empty(1);
+ 2|function uncalledArrow(x: unknown) {
+ 2|  switch (x) {
+ 2|    case 1:
+ 2|    case () => 1:
+ 2|      at();
+ -|  }
+ -|}
+ 1|uncalledArrow(1);
+ 1|uncalledArrow(1);
+ 3|function sameLine(x: number) {
+ 3|  switch (x) {
+ 2|    case 1: return; default:
+ 2|      at();
+ -|  }
+ -|}
+ 1|sameLine(1);
+ 1|sameLine(2);
+ 1|sameLine(2);
 `,
   },
   // `finally` ran as often as its block, however the `try` was left.

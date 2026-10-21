@@ -233,6 +233,8 @@ pub mod Runtime {
 
         pub emit_decorator_metadata: bool,
         pub standard_decorators: bool,
+        /// `bun test --coverage` reads which functions of the output ran.
+        pub code_coverage: bool,
 
         /// If true and if the source is transpiled as cjs, don't wrap the module.
         /// This is used for `--print` entry points so we can get the result.
@@ -302,6 +304,7 @@ pub mod Runtime {
                 unwrap_commonjs_to_esm: false,
                 emit_decorator_metadata: false,
                 standard_decorators: false,
+                code_coverage: false,
                 remove_cjs_module_wrapper: false,
                 runtime_transpiler_cache: None,
                 lower_using: true,
@@ -358,7 +361,7 @@ pub mod Runtime {
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
-            let bools: [bool; 17] = [
+            let bools: [bool; 18] = [
                 self.top_level_await,
                 self.auto_import_jsx,
                 self.allow_runtime,
@@ -376,6 +379,7 @@ pub mod Runtime {
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
+                self.code_coverage,
                 // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
             ];
 
@@ -1299,6 +1303,8 @@ pub struct FnOrArrowDataVisit {
     pub(crate) is_inside_loop: bool,
     pub(crate) is_inside_switch: bool,
     pub(crate) is_outside_fn_or_arrow: bool,
+    /// How many `await` and `yield` expressions of this function were visited.
+    pub(crate) suspend_count: u32,
 
     /// This is used to silence unresolvable imports due to "require" calls inside
     /// a try/catch statement. The assumption is that the try/catch statement is
@@ -1323,6 +1329,12 @@ pub struct FnOnlyDataVisit {
     /// or a class declaration). That means the top-level module scope "this" value
     /// has been shadowed and is now inaccessible.
     pub(crate) is_this_nested: bool,
+
+    /// True in a class field initializer or a class static block, which run as a method call.
+    pub(crate) is_new_target_undefined: bool,
+
+    /// A `super` or a direct `eval` of this function was visited.
+    pub(crate) has_super_or_direct_eval: bool,
 }
 
 /// Due to ES6 destructuring patterns, there are many cases where it's

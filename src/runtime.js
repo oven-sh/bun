@@ -264,6 +264,20 @@ export var __decorateElement = (array, flags, name, decorators, target, extra) =
     k = flags & 7,
     s = !!(flags & 8),
     p = !!(flags & 16);
+  // A class that keeps a `#private` name declared gives its access function, with the first case of the name above bit 4.
+  if (p && typeof target == "function") {
+    var at = target,
+      ix = flags >> 5,
+      // A case of a field. The engine throws for an object that does not have the field.
+      atField = (i, msg) => (obj, value) => {
+        try {
+          return at(i, obj, value);
+        } catch {
+          __typeError("Cannot " + msg);
+        }
+      };
+    target = { has: o => Object(o) === o && at(ix, o) };
+  }
   var j = k > 3 ? array.length + 1 : k ? (s ? 1 : 2) : 0,
     key = __decoratorStrings[k + 5];
   var initializers = k > 3 && (array[j - 1] = []),
@@ -277,11 +291,14 @@ export var __decorateElement = (array, flags, name, decorators, target, extra) =
         k < 4
           ? target
           : {
+              // A call in the branch that does not run makes the other branch slow in JavaScriptCore: no `__privateGet` here.
               get [name]() {
-                return __privateGet(this, extra);
+                if (extra.has(this)) return extra.get(this);
+                throw TypeError("Cannot read from private field");
               },
               set [name](x) {
-                __privateSet(this, extra, x);
+                if (!extra.has(this)) throw TypeError("Cannot write to private field");
+                extra.set(this, x);
               },
             },
         name,
@@ -297,10 +314,16 @@ export var __decorateElement = (array, flags, name, decorators, target, extra) =
         (access = ctx.access = { has: p ? x => __privateIn(target, x) : x => name in x }));
       if (k ^ 3)
         access.get = p
-          ? x => (k ^ 1 ? __privateGet : __privateMethod)(x, target, k ^ 4 ? extra : desc.get)
+          ? k > 4 && at
+            ? atField(ix + 1, "read from private field")
+            : x => (k ^ 1 ? __privateGet : __privateMethod)(x, target, k ^ 4 ? extra : desc.get)
           : x => x[name];
       if (k > 2)
-        access.set = p ? (x, y) => __privateSet(x, target, y, k ^ 4 ? extra : desc.set) : (x, y) => (x[name] = y);
+        access.set = p
+          ? k > 4 && at
+            ? atField(ix + 2, "write to private field")
+            : (x, y) => __privateSet(x, target, y, k ^ 4 ? extra : desc.set)
+          : (x, y) => (x[name] = y);
     }
 
     it = (0, decorators[i])(
@@ -320,7 +343,7 @@ export var __decorateElement = (array, flags, name, decorators, target, extra) =
 
   return (
     k || __decoratorMetadata(array, target),
-    desc && __defProp(target, name, desc),
+    desc && !at && __defProp(target, name, desc),
     p ? (k ^ 4 ? extra : desc) : target
   );
 };

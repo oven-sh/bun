@@ -3048,6 +3048,8 @@ pub mod flags {
         IsStatic,
         WasShorthand,
         IsSpread,
+        /// The visit pass saw a `super` or a direct `eval` that the function of this member owns.
+        HasSuperOrDirectEval,
     }
     pub type PropertySet = EnumSet<Property>;
     pub const PROPERTY_NONE: PropertySet = EnumSet::empty();

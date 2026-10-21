@@ -18675,5 +18675,11 @@
       "j.js": "/** @import { I } from \"x.w\" with { type: \"w\" } */\n/** @type {I} */\nexport const a = { a: 1, b: 1 };\n/** @type {import(\"x.w\", { with: { type: \"w\" } }).I} */\nexport const b = { a: 1 };\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"module\": \"preserve\", \"moduleResolution\": \"bundler\", \"declaration\": true, \"outDir\": \"out\", \"target\": \"esnext\", \"types\": [], \"allowJs\": true, \"checkJs\": true }, \"files\": [\"types1.d.ts\", \"types2.d.ts\", \"aug.ts\", \"index.ts\", \"j.js\", \"amb.ts\"] }\n"
     }
+  },
+  "misplaced-imports-and-exports-of-missing-modules": {
+    "files": {
+      "a.ts": "export {};\n{ import a from \"./missing1\"; }\n{ import \"./missing2\"; }\n{ import b = require(\"./missing3\"); }\n{ export * from \"./missing4\"; }\n{ export { c } from \"./missing5\"; }\nfunction f() { import d from \"./missing6\"; }\nnamespace N { { import e from \"./missing7\"; } }\nif (true) { import g from \"./missing8\"; g; }\n{ import type h from \"./missing9\"; }\nclass C { m() { { import i from \"./missing10\"; } } }\n{ import * as j from \"./missing11\" with { type: \"x\" }; }\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noEmit\": true, \"target\": \"esnext\", \"types\": [] } }\n"
+    }
   }
 }

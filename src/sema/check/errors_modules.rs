@@ -28,7 +28,7 @@
 //! library has no text, so checks that depend on the text are skipped for it.
 
 use super::*;
-use crate::bind::{Decl, Parent, ScopeId, SymbolId};
+use crate::bind::{Decl, Parent, ScopeId, ScopeKind, SymbolId};
 use crate::resolve::{ModuleKind, is_relative};
 use crate::util::SharedSort;
 use bun_collections::ArrayHashMap;
@@ -297,6 +297,22 @@ impl Checker<'_, '_> {
             self.error_at((cx.file, self.hir(cx.file)[s].start, 0), code, &[]);
         }
         !container.is_appropriate_context
+    }
+
+    /// `checkExternalModuleNameInGlobalScope` for the misplaced statement `s`, whose module specifier is `spec`.
+    fn check_external_module_name_in_global_scope(
+        &mut self,
+        cx: &Cx<'_>,
+        s: StmtId,
+        spec: Atom,
+        container: StatementParent,
+    ) {
+        let bound = self.bound(cx.file);
+        // `getEnclosingContainer`
+        let enclosing = bound.container_scope(bound.scope_of_stmt(s));
+        if matches!(bound.scopes[enclosing.idx()].kind, ScopeKind::File) {
+            self.modules_module_is_missing(cx, s, spec, container);
+        }
     }
 
     /// `node.Flags&NodeFlagsAmbient` of the statement `s`, whose parent is `container`. Whatever follows `declare` is
@@ -960,6 +976,10 @@ impl Checker<'_, '_> {
         let (import, pos) = (hir[i], hir[s].start);
         let context_error = if cx.is_js { 1473 } else { 1232 };
         if self.check_grammar_module_element_context(cx, s, container, context_error) {
+            // `node.ImportClause() == nil`
+            if import.clause_start != import.clause_end {
+                self.check_external_module_name_in_global_scope(cx, s, import.spec, container);
+            }
             self.modules_resolve_aliases_of_import_if_used(cx, i);
             return;
         }
@@ -1113,6 +1133,8 @@ impl Checker<'_, '_> {
         let (import, decl) = (hir[i], Decl::ImportEquals(i));
         let context_error = if cx.is_js { 1473 } else { 1232 };
         if self.check_grammar_module_element_context(cx, s, container, context_error) {
+            let spec = import.target.spec();
+            self.check_external_module_name_in_global_scope(cx, s, spec, container);
             self.modules_resolve_alias_if_used(cx, decl);
             if let Some(&symbol) = cx.aliases.get(&decl)
                 && files.resolve_alias(symbol).is_none()
@@ -1316,6 +1338,7 @@ impl Checker<'_, '_> {
         let export = hir[x];
         let context_error = if cx.is_js { 1474 } else { 1233 };
         if self.check_grammar_module_element_context(cx, s, container, context_error) {
+            self.check_external_module_name_in_global_scope(cx, s, export.spec, container);
             for item in export.items.iter() {
                 self.modules_resolve_alias_if_used(cx, Decl::ExportSpec(item));
             }
@@ -1445,6 +1468,8 @@ impl Checker<'_, '_> {
         if self.check_grammar_module_element_context(cx, s, container, context_error) {
             if is_resolved_for_file {
                 self.modules_module_is_missing(cx, s, spec, container);
+            } else {
+                self.check_external_module_name_in_global_scope(cx, s, spec, container);
             }
             self.modules_resolve_alias_if_used(cx, Decl::ExportStarAs(s));
             return;

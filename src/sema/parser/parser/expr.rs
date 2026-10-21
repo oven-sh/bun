@@ -812,9 +812,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// Consumes the `const` of `e as const` or `<const>e`.
     fn const_assertion_type(&mut self) {
         self.next();
-        // `const<>`
+        // `const<>`: `checkAssertion` checks the type node, so `checkGrammarTypeArguments` sees the list.
         if self.recovers() && self.token() == T::LessThan {
+            let less_than = self.pos();
             self.next();
+            let at = (less_than, self.pos() + 1);
+            self.flag(DiagnosticKind::Grammar, 1099, at, &[]);
             self.next();
             return;
         }

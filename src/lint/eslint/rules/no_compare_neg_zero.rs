@@ -26,13 +26,13 @@ fn is_neg_zero(e: Expr) -> bool {
     };
     match operand.kind() {
         ExprKind::Number(value) => value == 0.0,
-        // For oxlint `-0n` is one too.
+        // For oxlint `-0n` counts too.
         ExprKind::BigInt(value) => value.is("0") && e.file().language().is_oxlint,
         _ => false,
     }
 }
 
-/// Appends the text of `operand`, in parentheses where an argument needs them.
+/// Appends `operand`'s text, parenthesized where an argument needs that.
 fn push_operand_text(text: &mut Vec<u8>, operand: Expr) {
     let is_sequence = operand.binary_op() == Some(BinOp::Comma);
     if is_sequence {
@@ -56,7 +56,7 @@ impl Rule for NoCompareNegZero {
         NoCompareNegZero
     }
 
-    /// There are fewer `-` than comparisons.
+    /// Listens for `-`, because there are fewer of them than comparisons.
     fn unary<'a>(&self, operand: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if !is_neg_zero(operand) {
             return;
@@ -81,7 +81,7 @@ impl Rule for NoCompareNegZero {
             return;
         }
         let (left_is_neg_zero, right_is_neg_zero) = (is_neg_zero(left), is_neg_zero(right));
-        // `-0 == -0` is reported with the left.
+        // `-0 == -0` is reported once, for the left operand.
         if left_is_neg_zero && operand != left {
             return;
         }
@@ -89,7 +89,7 @@ impl Rule for NoCompareNegZero {
             .report(e, UNEXPECTED)
             .data("operator", bin_op_text(op))
             .hint("-0 and 0 compare as equal. Use Object.is(x, -0) to tell them apart.");
-        // oxlint suggests `Object.is` for `===`, and takes the `-` away from the first `-0` for all else.
+        // oxlint suggests `Object.is` for `===`. For every other operator, it removes the `-` from the first `-0`.
         if cx.language().is_oxlint {
             let (neg_zero, other) = if left_is_neg_zero { (left, right) } else { (right, left) };
             match op {

@@ -195,6 +195,20 @@ impl Property {
         self.class_static_block.as_deref_mut()
     }
 
+    /// Copies the property. The copy's expressions and static block still point to `self`'s nodes.
+    pub fn shallow_clone(&self) -> Property {
+        Property {
+            initializer: self.initializer,
+            kind: self.kind,
+            flags: self.flags,
+            class_static_block: self.class_static_block,
+            ts_decorators: bun_alloc::AstAlloc::vec_from_slice(self.ts_decorators.slice()),
+            key: self.key,
+            value: self.value,
+            ts_metadata: self.ts_metadata.clone(),
+        }
+    }
+
     pub(crate) fn deep_clone(
         &self,
         bump: &bun_alloc::Arena,

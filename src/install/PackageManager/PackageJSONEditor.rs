@@ -353,8 +353,7 @@ fn edit_update_aliases_of_requests(
     };
     edit_update_entries(
         &manager.lockfile,
-        // Nothing is kept for a request of the command.
-        &[],
+        &manager.kept_locked,
         &manager.ast_arena,
         &mut manager.updating_packages,
         manager.workspace_name_hash,

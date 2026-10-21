@@ -1915,6 +1915,30 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
     expect(await p.written()).toEqual(before);
   });
 
+  // The request names the package, and its own entry is served from the cache. The alias of that package asks for a
+  // range that the manifest in the cache lacks: it keeps its package, and its entry stays as written.
+  it("`bun update <name> --offline` leaves the entry of a kept alias of that package as written", async () => {
+    const releases: Releases = { leaf: { "1.0.0": {}, "2.0.0": {}, "2.1.0": {} } };
+    using p = await project({ dependencies: { leaf: "^1.0.0" } }, releases);
+    releases.leaf = { "1.0.0": {} };
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    const manifest = p.manifest("leaf");
+    const stale = readFileSync(manifest);
+    releases.leaf = { "1.0.0": {}, "2.0.0": {}, "2.1.0": {} };
+    const root = { dependencies: { leaf: "^1.0.0" }, optionalDependencies: { aliased: "npm:leaf@^2.0.0" } };
+    await writeFile(p.path("package.json"), JSON.stringify({ name: "foo", ...root }, null, 2));
+    expect(await p.run("install")).toMatchObject({ exitCode: 0 });
+    expect(await p.locked("leaf")).toEqual(["1.0.0", "2.1.0"]);
+    await writeFile(manifest, stale);
+    const before = await p.written();
+
+    expect(await p.run("update", "leaf", "--offline")).toMatchObject({
+      ...unchanged,
+      warnings: notChecked("", "2.1.0"),
+    });
+    expect(await p.written()).toEqual(before);
+  });
+
   it.each(["", "--latest"])("`bun update %s` still moves the other entries", async flag => {
     const releases: Releases = { ...LEAF, other: { "1.0.0": {}, "1.1.0": {} } };
     using p = await project({ dependencies: { other: "^1.0.0" }, ...OPTIONAL_LEAF }, releases);

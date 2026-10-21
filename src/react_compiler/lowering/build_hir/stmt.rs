@@ -1285,7 +1285,11 @@ fn lower_statement(
                     None
                 };
 
-                cases.push(Case { test, block });
+                cases.push(Case {
+                    test,
+                    block,
+                    loc: case_loc,
+                });
                 fallthrough = block;
             }
 
@@ -1297,6 +1301,7 @@ fn lower_statement(
                 cases.push(Case {
                     test: None,
                     block: continuation_id,
+                    loc: None,
                 });
             }
 

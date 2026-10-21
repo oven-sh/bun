@@ -231,6 +231,7 @@ pub enum ReactiveTerminal {
 pub struct ReactiveSwitchCase {
     pub test: Option<Place>,
     pub block: Option<ReactiveBlock>,
+    pub loc: Option<SourceLocation>,
 }
 
 // =============================================================================

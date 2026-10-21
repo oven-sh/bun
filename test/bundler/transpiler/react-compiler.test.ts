@@ -3666,6 +3666,48 @@ describe("bundler", () => {
       `,
     },
   });
+
+  itBundled("react-compiler/SourceMapOfSwitchClauses", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Comp({ kind, a }) {
+          let y;
+          switch (kind) {
+            case "a":
+              y = [a];
+              break;
+            default:
+              y = null;
+          }
+          return <div>{y}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    outdir: "/out",
+    sourceMap: "external",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    async onAfterBundle(api) {
+      const source = api.readFile("/entry.jsx").split("\n");
+      expect(api.readFile("/out/entry.js")).toMatch(/\b_c\(\d+\)/);
+      await SourceMapConsumer.with(JSON.parse(api.readFile("/out/entry.js.map")), null, map => {
+        const words = api
+          .readFile("/out/entry.js")
+          .split("\n")
+          .flatMap((text, line) =>
+            Array.from(text.matchAll(/\b(?:case|default)\b/g), ({ 0: word, index: column }) => {
+              const original = map.originalPositionFor({ line: line + 1, column });
+              return [word, source[original.line! - 1].slice(original.column!, original.column! + word.length)];
+            }),
+          );
+        expect(words).toEqual([
+          ["case", "case"],
+          ["default", "default"],
+        ]);
+      });
+    },
+  });
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

@@ -553,6 +553,7 @@ pub enum GotoVariant {
 pub struct Case {
     pub test: Option<Place>,
     pub block: BlockId,
+    pub loc: Option<SourceLocation>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -120,25 +120,19 @@ class ReadableFromWeb extends Readable {
   _destroy(error, callback) {
     if (!this.#closed) {
       this.#closed = true;
+      // As in Node, a cancel() that rejects doesn't error the Readable.
+      const done = () => callback(error);
       var reader = this.#reader;
       if (reader) {
         this.#reader = undefined;
-        PromisePrototypeThen.$call(
-          reader.cancel(error),
-          () => callback(error),
-          cancelError => callback(error ?? cancelError),
-        );
+        PromisePrototypeThen.$call(reader.cancel(error), done, done);
         return;
       }
       var stream = this.#stream;
       if (stream) {
         this.#stream = undefined;
         if (!this.#takenByResponse(stream)) {
-          PromisePrototypeThen.$call(
-            stream.cancel(error),
-            () => callback(error),
-            cancelError => callback(error ?? cancelError),
-          );
+          PromisePrototypeThen.$call(stream.cancel(error), done, done);
           return;
         }
       }

@@ -8322,4 +8322,28 @@ console.log(line.length - line.trimStart().length);`,
     expect(stdout.trim()).toBe("300");
     expect(exitCode).toBe(0);
   });
+
+  test("a rule nested in :host(&) or ::slotted(&)", async () => {
+    const cases = [
+      [":host(&) { .b { color: red } }", ":host(:scope) .b{color:red}"],
+      ["::slotted(&) { & { color: red } }", "::slotted(:scope){color:red}"],
+      [".a { :host(&) { .c { color: red } } }", ":host(.a) .c{color:red}"],
+      [".a { ::slotted(&) { &:hover { color: red } } }", "::slotted(.a):hover{color:red}"],
+    ];
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { minifyTest } = require("bun:internal-for-testing").cssInternals;
+for (const source of ${JSON.stringify(cases.map(([source]) => source))}) console.log(minifyTest(source, "", { chrome: 95 << 16 }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim().split("\n")).toEqual(cases.map(([, expected]) => expected));
+    expect(exitCode).toBe(0);
+  });
 });

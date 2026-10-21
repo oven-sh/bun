@@ -313,6 +313,18 @@ development:
           }
         });
 
+        test("an asset of Bun.build() parses as its bytes, and one written to outdir is refused", async () => {
+          using dir = tempDir("yaml-build-output", {
+            "entry.js": `import doc from "./doc.yaml" with { type: "file" };\nconsole.log(doc);`,
+            "doc.yaml": "name: test\ncount: 5",
+          });
+          const entrypoints = [join(String(dir), "entry.js")];
+          const assetOf = (build: Bun.BuildOutput) => build.outputs.find(output => output.kind === "asset")!;
+          expect(YAML.parse(assetOf(await Bun.build({ entrypoints })))).toEqual({ name: "test", count: 5 });
+          const written = assetOf(await Bun.build({ entrypoints, outdir: join(String(dir), "out") }));
+          expect(() => YAML.parse(written)).toThrow("File blob cannot be used here");
+        });
+
         test("parses a SharedArrayBuffer that another thread is writing", async () => {
           await using proc = Bun.spawn({
             cmd: [

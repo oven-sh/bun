@@ -464,6 +464,21 @@ it("reload() works", () => {
   expect(router.match("/posts")!.name).toBe("/posts");
 });
 
+it("reload() works when dir is reached through a symlink", () => {
+  const { dir } = make(["pages/index.tsx", "pages/posts/hey.tsx"]);
+  fs.symlinkSync(dir, dir + "-link", "junction");
+  try {
+    const router = new FileSystemRouter({ dir: dir + "-link/pages", style: "nextjs" });
+    const routes = { ...router.routes };
+    expect(Object.keys(routes).sort()).toEqual(["/", "/posts/hey"]);
+    router.reload();
+    expect(router.routes).toEqual(routes);
+    expect(router.match("/posts/hey")?.name).toBe("/posts/hey");
+  } finally {
+    fs.unlinkSync(dir + "-link");
+  }
+});
+
 it("reload() works with new dirs/files", () => {
   const { dir } = make(["posts.tsx"]);
 
@@ -580,7 +595,8 @@ it("rejects a dir with a null byte", () => {
   );
 });
 
-it.skipIf(isWindows)("has no routes from another directory that shares dir's resolver cache entry", async () => {
+// The colliding path below is an absolute POSIX path.
+it.skipIf(isWindows)("does not use another directory that shares dir's resolver cache entry", async () => {
   // The resolver's directory cache is keyed by the hash of the path without trailing slashes, so "/" is keyed as "".
   const dir = "/ajgq" + Buffer.alloc(27, "a").toString() + "b\x05\x1db6@o\x084o.uNpJ0";
   expect(Bun.hash(dir)).toBe(Bun.hash(""));
@@ -589,7 +605,15 @@ it.skipIf(isWindows)("has no routes from another directory that shares dir's res
     cmd: [
       bunExe(),
       "-e",
-      `console.log(JSON.stringify(new Bun.FileSystemRouter({ dir: process.argv[1], style: "nextjs" }).routes))`,
+      `
+        try { Bun.resolveSync("./missing", "/"); } catch {} // caches "/"
+        try {
+          new Bun.FileSystemRouter({ dir: process.argv[1], style: "nextjs" });
+          console.log("no error");
+        } catch (error) {
+          console.log(error.message === "Unable to find directory: " + process.argv[1]);
+        }
+      `,
       dir,
     ],
     env: bunEnv,
@@ -597,7 +621,7 @@ it.skipIf(isWindows)("has no routes from another directory that shares dir's res
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "{}\n", stderr: "", exitCode: 0 });
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
 });
 
 it("origin should be validated", async () => {

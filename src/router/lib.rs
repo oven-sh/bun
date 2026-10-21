@@ -476,7 +476,7 @@ impl<'a> RouteLoader<'a> {
             index: None,
             route_dirname_len,
         };
-        this.load(resolver, root_dir_info, base_dir);
+        this.load(resolver, root_dir_info, base_dir, base_dir);
         if this.all_routes.is_empty() {
             return Routes {
                 static_: this.static_list,
@@ -541,6 +541,7 @@ impl<'a> RouteLoader<'a> {
         &mut self,
         resolver: &mut R,
         root_dir_info: &DirInfo,
+        dir: &[u8],
         base_dir: &[u8],
     ) {
         let fs = self.fs;
@@ -555,16 +556,13 @@ impl<'a> RouteLoader<'a> {
                 None => return,
             }
         };
-        // The listing's directory is `base_dir` or a subdirectory of it, cached with or
-        // without a trailing slash depending on which resolver spelled it first
-        // (`base_dir` always has one). Both spellings trim to the same `public_dir`.
-        // The resolver's caches match a path by its hash alone, so a hit can be the
-        // listing of an unrelated directory, which has no routes of this router.
-        let public_dir = match entries_dir.strip_prefix(&base_dir[..base_dir.len() - 1]) {
-            Some(rest) if rest.first().is_none_or(|c| bun_paths::resolve_path::is_sep_any(*c)) => {
-                rest
-            }
-            _ => return,
+        // The resolver's caches match a path by its hash alone, so a hit can be another directory's listing.
+        if strings::without_trailing_slash(entries_dir) != strings::without_trailing_slash(dir) {
+            return;
+        }
+        let Some(public_dir) = entries_dir.strip_prefix(strings::without_trailing_slash(base_dir))
+        else {
+            return;
         };
         // NOTE: the guard is dropped before this loop on purpose — the
         // `read_dir_info_ignore_error` recursion below re-acquires `entries_mutex`.
@@ -597,10 +595,10 @@ impl<'a> RouteLoader<'a> {
                         }
                     }
 
-                    let abs_parts = [entry.dir(), entry.base()];
-                    if let Some(dir_info) = resolver.read_dir_info_ignore_error(fs.abs(&abs_parts))
-                    {
-                        self.load(resolver, &dir_info, base_dir);
+                    // Copied out of the buffer `fs.abs` shares with the resolver.
+                    let abs_path = fs.abs(&[entries_dir, entry.base()]).to_vec();
+                    if let Some(dir_info) = resolver.read_dir_info_ignore_error(&abs_path) {
+                        self.load(resolver, &dir_info, &abs_path, base_dir);
                     }
                 }
 

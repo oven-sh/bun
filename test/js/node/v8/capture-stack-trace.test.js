@@ -1341,6 +1341,48 @@ test("Error.captureStackTrace with caller not in stack clears async frames too",
   expect(err.stack).toBe("Error: async test");
 });
 
+test.concurrent("frames of an async function or generator carry the name inferred from its binding", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dirname, "capture-stack-trace-inferred-name-fixture.mjs")],
+    // A debug build also prints the frames that a release build hides.
+    env: { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // What node prints, but: node names a method with its receiver (`Object.property`, `Class.field`), and has a
+  // `generator.next` frame where bun has none, and `asyncGenerator.next` for `next`.
+  expect(JSON.parse(stdout)).toEqual({
+    names: {
+      arrow: ["arrow"],
+      arrowBeforeAwait: ["arrowBeforeAwait"],
+      expression: ["expression"],
+      property: ["property"],
+      classField: ["field"],
+      assigned: ["assigned"],
+      generator: ["generator", "callerOfGenerator"],
+      generatorResumed: ["generatorResumed", "callerOfGeneratorResumed"],
+      asyncGenerator: ["asyncGenerator", "next", "callerOfAsyncGenerator"],
+      awaits: ["declaration", "async awaits"],
+      declaration: ["declaration"],
+    },
+    belowCaller: {
+      arrow: ["async theCaller"],
+      arrowBeforeAwait: ["theCaller"],
+      expression: ["async theCaller"],
+      property: ["async theCaller"],
+      classField: ["async theCaller"],
+      assigned: ["async theCaller"],
+      generator: ["callerOfGenerator"],
+      generatorResumed: ["callerOfGeneratorResumed"],
+      asyncGenerator: ["next", "callerOfAsyncGenerator"],
+      declaration: ["async theCaller"],
+    },
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("Error.captureStackTrace applies stackTraceLimit after caller removal", () => {
   // Build a deep call chain so the caller sits beyond stackTraceLimit.
   // If the limit were applied before removal, all collected frames would

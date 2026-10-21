@@ -1027,6 +1027,7 @@ ls`
       ],
       ["a comment line in a continued command", "echo a \\\n# note\necho b", "a\nb\n"],
       ["text before a backquote substitution", "echo x`echo y`", "xy\n"],
+      ["an empty substitution", 'a=``; echo "[$a]"\necho x``y$()z', "[]\nxyz\n"],
       // bash rejects an empty clause body. Bun takes it on one line (`then else`), and the same over several lines.
       ["an empty `then` body, condition true", "if true; then # note\nelse\n  echo no\nfi\necho tail", "tail\n"],
       ["an empty `then` body, condition false", "if false; then # note\nelse\n  echo yes\nfi", "yes\n"],

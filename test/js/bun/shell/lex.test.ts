@@ -982,8 +982,19 @@ describe("lex shell", () => {
     ["unquoted", "echo x`echo y`", "echo x$(echo y)"],
     ["in double quotes", 'echo "x`echo y`"', 'echo "x$(echo y)"'],
     ["after a comment that ends at a backquote", "echo `echo a # note`rm`echo b`", "echo $(echo a )rm$(echo b)"],
+    ["an empty substitution", "echo x``", "echo x$()"],
   ])("text before a backquote substitution stays in its word: %s", (_name, backquoted, dollarParen) => {
     expect(JSON.parse(lex({ raw: [backquoted] }))).toEqual(JSON.parse(lex({ raw: [dollarParen] })));
+  });
+
+  test.each(["echo ``", "echo ` `", "echo $()", "echo $( )"])("no delimiter in the empty substitution %s", source => {
+    expect(JSON.parse(lex({ raw: [source] }))).toEqual([
+      { Text: "echo" },
+      { Delimit: {} },
+      { CmdSubstBegin: {} },
+      { CmdSubstEnd: {} },
+      { Eof: {} },
+    ]);
   });
 
   describe("errors", async () => {

@@ -1125,6 +1125,16 @@ describe("parse shell", () => {
     ])("%s before the closing backquote", (_name, source) => {
       expect(tree(source)).toEqual(tree("echo `echo a`"));
     });
+
+    test("an empty substitution", () => {
+      const empty = { cmd_subst: { script: { stmts: [] }, quoted: false } };
+      expect(tree("echo ``").stmts[0].exprs[0].cmd.name_and_args).toEqual([
+        { simple: { Text: "echo" } },
+        { simple: empty },
+      ]);
+      expect(tree("echo $()")).toEqual(tree("echo ``"));
+      expect(tree('a=``; echo x``y "$()"')).toEqual(tree('a=$(); echo x$()y "``"'));
+    });
   });
 
   describe("bad syntax", () => {

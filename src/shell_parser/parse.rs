@@ -2369,13 +2369,12 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
     /// The closer of a command substitution can end a word, so that word needs its delimiter first.
     fn delimit_before_cmd_subst_end(&mut self) {
-        if !matches!(
-            self.last_tok_tag(),
-            None | Some(
-                TokenTag::Delimit | TokenTag::Semicolon | TokenTag::Eof | TokenTag::Newline
-            )
-        ) {
-            self.tokens.push(Token::Delimit);
+        match self.last_tok_tag() {
+            None => {}
+            Some(TokenTag::Delimit | TokenTag::Semicolon | TokenTag::Eof | TokenTag::Newline) => {}
+            // An empty body has no word.
+            Some(TokenTag::CmdSubstBegin | TokenTag::CmdSubstQuoted) => {}
+            Some(_) => self.tokens.push(Token::Delimit),
         }
     }
 

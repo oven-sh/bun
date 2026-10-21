@@ -986,24 +986,6 @@ impl Lockfile {
             || (self.linked_members.get(path)).is_some_and(|member| member.is_outside)
     }
 
-    /// The workspace (or root, 0) package that owns tree `id`: walk up until a
-    /// workspace/root tree is reached and return the package it stands for.
-    pub(crate) fn owning_workspace_of_tree(&self, mut id: tree::Id) -> PackageID {
-        while id != 0 && (id as usize) < self.buffers.trees.len() {
-            let t = &self.buffers.trees[id as usize];
-            let dep_id = t.dependency_id;
-            if (dep_id as usize) < self.buffers.dependencies.len()
-                && self.buffers.dependencies[dep_id as usize]
-                    .behavior
-                    .is_workspace()
-            {
-                return self.buffers.resolutions[dep_id as usize];
-            }
-            id = t.parent;
-        }
-        0
-    }
-
     /// Does the root or a workspace depend on package `id` directly?
     pub(crate) fn is_workspace_declared_package(&self, id: PackageID) -> bool {
         let packages = self.packages.slice();

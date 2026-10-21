@@ -833,6 +833,24 @@ describe("hoisted linker: a file: folder nested in a workspace", () => {
     expect({ dep: placed(String(dir)), exitCode }).toEqual({ dep: held, exitCode: 0 });
   });
 
+  // What a self-contained workspace depends on is copied, so that nothing in there shares its files with another folder.
+  test.concurrent.each<{ via: string; root?: object; more?: Record<string, string>; args?: string[] }>([
+    { via: "a second name", root: secondName("workspace:packages/b") },
+    { via: "--filter, through another workspace", more: a({ b: "workspace:*" }), args: filter },
+  ])("is a copy in a self-contained workspace that this leads to: $via", async ({ root, more, args }) => {
+    const workspaces = { packages: ["packages/*"], selfContained: ["packages/b"] };
+    using dir = tempDir("nested-folder-copy", files({ ...root, workspaces }, more));
+
+    const { stderr, exitCode } = await install(String(dir), args);
+    expect(stderr).not.toContain("error");
+    expect({
+      dep: placed(String(dir)),
+      // POSIX only, like the link counts in bun-workspaces-self-contained.test.ts.
+      links: isWindows ? 1 : lstatSync(join(String(dir), "held/package.json")).nlink,
+      exitCode,
+    }).toEqual({ dep: held, links: 1, exitCode: 0 });
+  });
+
   // The script's file makes the copy differ from `held`, so the warm install places it again too.
   test.concurrent("a second name: fresh, warm, --force, from bun.lock, without the root's node_modules", async () => {
     using dir = tempDir("nested-folder-steps", files(secondName("workspace:packages/b")));

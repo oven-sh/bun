@@ -237,26 +237,26 @@ test("`in` inside an arrow function or a pattern in the init of a for statement"
 
   const files: Record<string, string> = {
     "type-assertion-round-the-in.ts": `var R: unknown;\nfor (var f = (): boolean => { return ("a" in { a: 1 }) as boolean }; ; ) { R = f(); break }\nexport default R;\n`,
-    "run.mjs": `
-      const out = {};
-      for (const file of JSON.parse(process.argv[2])) {
-        try {
-          out[file] = (await import("./" + file)).default;
-        } catch (e) {
-          out[file] = e.name + ": " + e.message;
-        }
-      }
-      console.log(JSON.stringify(out));`,
   };
   for (const [name, source] of Object.entries(sources)) {
     files[`${name}.cjs`] = `var R;\n${source}\nmodule.exports = R;\n`;
     files[`${name}.mjs`] = `var R;\n${source}\nexport default R;\n`;
   }
-  const names = Object.keys(files).filter(name => name !== "run.mjs");
+  const names = Object.keys(files);
+  files["run.mjs"] = `
+    const out = {};
+    for (const file of ${JSON.stringify(names)}) {
+      try {
+        out[file] = (await import("./" + file)).default;
+      } catch (e) {
+        out[file] = e.name + ": " + e.message;
+      }
+    }
+    console.log(JSON.stringify(out));`;
 
   using dir = tempDir("transpiler-in-inside-for-init", files);
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "run.mjs", JSON.stringify(names)],
+    cmd: [bunExe(), "run.mjs"],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",

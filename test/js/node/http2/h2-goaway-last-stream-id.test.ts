@@ -682,17 +682,17 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
   });
 
   // §6.8: "Endpoints MUST NOT increase the value they send in the last stream identifier". After
-  // a GOAWAY of its own, a server does not answer a new stream at all, and a stream that it does
-  // not open must not raise the id.
-  test("a stream refused for maxSessionMemory after session.goaway() does not raise the last-stream-id", async () => {
+  // the read that wrote its GOAWAY, a server does not answer a new stream at all, and a stream
+  // that it does not open must not raise the id.
+  test("a request that arrives after session.goaway() does not raise the last-stream-id", async () => {
     const seen: number[] = [];
-    const server = http2.createServer({ maxSessionMemory: 1 });
+    const server = http2.createServer();
     server.on("session", s => s.on("error", () => {}));
     server.on("stream", (stream: http2.ServerHttp2Stream) => {
       seen.push(stream.id!);
       stream.on("error", () => {});
       stream.respond({ ":status": 200 });
-      // 4 MiB against the default 64 KiB window: most of it stays queued, over the budget.
+      // 4 MiB against the default 64 KiB window: most of it stays queued, so the stream stays open.
       stream.end(Buffer.alloc(1 << 22, "a"));
     });
     server.listen(0);
@@ -722,6 +722,58 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
       assert.deepStrictEqual(goawayFields(second), { lastStreamId: 1, errorCode: ErrorCode.FRAME_SIZE_ERROR });
     } finally {
       c.destroy();
+      server.close();
+    }
+  });
+
+  // In the read that writes the GOAWAY, a request that the GOAWAY covers still opens. A server
+  // counts such a request when it refuses it for memory, like every request refused for memory.
+  test("a stream refused for maxSessionMemory in the read of a goaway() that covers it is named", async () => {
+    const seen: number[] = [];
+    const server = http2.createServer({ maxSessionMemory: 1 });
+    server.on("session", s => {
+      s.on("error", () => {});
+      s.once("ping", () => s.goaway(http2.constants.NGHTTP2_NO_ERROR, 3));
+    });
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
+      seen.push(stream.id!);
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200 });
+      // 4 MiB against the default 64 KiB window: most of it stays queued, over the budget.
+      stream.end(Buffer.alloc(1 << 22, "a"));
+    });
+    const sessionEvent = once(server, "session");
+    // Over a Duplex pair one write of the client is exactly one read of the server.
+    const [clientSide, serverSide] = duplexPair();
+    server.emit("connection", serverSide);
+    const c = new RawH2(clientSide);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      const [session] = (await sessionEvent) as [http2.ServerHttp2Session];
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1);
+      // The 'ping' listener sends the GOAWAY before the server parses the request on 3.
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8, 0x70)),
+          encodeFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET")),
+        ]),
+      );
+      const first = await c.waitForGoaway();
+      assert.deepStrictEqual(goawayFields(first), { lastStreamId: 3, errorCode: ErrorCode.NO_ERROR });
+      const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 3);
+      assert.deepStrictEqual(
+        { code: rst.payload.readUInt32BE(0), seen, lastProcStreamID: session.state.lastProcStreamID },
+        { code: ErrorCode.ENHANCE_YOUR_CALM, seen: [1], lastProcStreamID: 3 },
+      );
+      // close() makes the server write one more GOAWAY.
+      session.close();
+      const second = await c.waitFor(f => f.type === FrameType.GOAWAY && f !== first);
+      assert.deepStrictEqual(goawayFields(second), { lastStreamId: 3, errorCode: ErrorCode.NO_ERROR });
+    } finally {
+      c.destroy();
+      serverSide.destroy();
       server.close();
     }
   });

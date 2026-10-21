@@ -1162,9 +1162,10 @@ impl Connection {
                 self.last_stream_id = hdr.stream_id;
             }
             let processed = match disposition {
-                BlockDisposition::Deliver | BlockDisposition::StreamClosed => true,
-                // node counts a stream refused for memory, but not after a GOAWAY of ours (§6.8).
-                BlockDisposition::Refused => !sink.goaway_submitted(),
+                // node counts a stream that it refused for memory.
+                BlockDisposition::Deliver
+                | BlockDisposition::StreamClosed
+                | BlockDisposition::Refused => true,
                 BlockDisposition::Ignored => false,
             };
             // A client's "new" HEADERS is the response to its own request: not a peer stream.
@@ -2700,7 +2701,7 @@ mod tests {
     }
 
     #[test]
-    fn stream_refused_after_our_goaway_is_not_named() {
+    fn stream_refused_in_the_read_of_our_goaway_is_named() {
         let sink = CaptureSink::default();
         let mut c = Connection::new(true, Settings::default());
         c.preface_received = wire::CONNECTION_PREFACE.len();
@@ -2723,9 +2724,9 @@ mod tests {
         assert!(fed.fatal);
         assert_eq!(
             goaway_sent(&sink),
-            Some((1, ErrorCode::ProtocolError.as_u32()))
+            Some((3, ErrorCode::ProtocolError.as_u32()))
         );
-        assert_eq!(*sink.proc_marks.borrow(), vec![1]);
+        assert_eq!(*sink.proc_marks.borrow(), vec![1, 3]);
     }
 
     #[test]

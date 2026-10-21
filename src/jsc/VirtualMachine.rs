@@ -357,11 +357,9 @@ pub struct VirtualMachine {
     hot_run_failed: bool,
     /// The watcher's loop turned after an unhandled error, so that error did not stop the timers.
     pub timers_ran_after_error: bool,
-    /// How many errors [`uncaught_exception`](Self::uncaught_exception) reported that no listener
-    /// took. The rejection pass stops once one is reported.
+    /// Uncaught errors that no listener took. The rejection pass ends once one is reported.
     pub(crate) fatal_uncaught_count: u32,
-    /// An uncaught error does not end this host, so it is not counted above. Set by the
-    /// interactive `bun repl`, which prints the error and reads the next line.
+    /// The interactive `bun repl` goes on after an uncaught error, so it does not count them.
     pub suppress_fatal_uncaught: bool,
 
     pub modules: crate::async_module::Queue,
@@ -4302,7 +4300,7 @@ impl VirtualMachine {
         this.unhandled_rejections_mode() != UnhandledRejections::Bun
     }
 
-    /// [`Self::fatal_uncaught_count`], for the rejection pass (`GlobalObject::handleRejectedPromises`).
+    /// For `GlobalObject::handleRejectedPromises`.
     #[unsafe(export_name = "Bun__VM__fatalUncaughtCount")]
     pub(crate) extern "C" fn fatal_uncaught_count_for_rejection_pass(this: &VirtualMachine) -> u32 {
         this.fatal_uncaught_count
@@ -4597,8 +4595,7 @@ impl VirtualMachine {
                 if self.event_loop_mut().drain_microtasks().is_err() {
                     return;
                 }
-                // `uncaught_exception` reported the reason itself. Only a reason that had to be
-                // wrapped is still to print: the wrapper does not show it.
+                // Already reported, unless it had to be wrapped: the wrapper does not show it.
                 if wrapped == reason {
                     return;
                 }

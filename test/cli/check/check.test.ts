@@ -11824,7 +11824,8 @@ export const p3: N.PE = {};
       expect(exitCode).toBe(1);
     });
 
-    test("reports errors about a merged interface's base types at its first declaration in the program", async () => {
+    // The declarations of scripts come before those in `declare global`.
+    test("reports errors about a merged interface's base types at its first declaration", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": false}, "files": ["a.d.ts", "b.d.ts", "c.ts", "d.ts"]}`,
         "a.d.ts": `export {};
@@ -11867,22 +11868,22 @@ declare global {
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.d.ts(6,13): error TS2430: Interface 'R' incorrectly extends interface 'Base'.
+        "b.d.ts(1,11): error TS2430: Interface 'R' incorrectly extends interface 'Base'.
           Types of property 'x' are incompatible.
             Type 'number' is not assignable to type 'string'.
-        a.d.ts(7,13): error TS2320: Interface 'Q' cannot simultaneously extend types 'P1' and 'P2'.
+        b.d.ts(2,11): error TS2320: Interface 'Q' cannot simultaneously extend types 'P1' and 'P2'.
           Named property 'k' of types 'P1' and 'P2' are not identical.
-        a.d.ts(9,13): error TS2430: Interface 'Twice' incorrectly extends interface 'Base'.
-          Types of property 'x' are incompatible.
-            Type 'number' is not assignable to type 'string'.
-        a.d.ts(11,13): error TS2430: Interface 'InTs' incorrectly extends interface 'Base'.
-          Types of property 'x' are incompatible.
-            Type 'number' is not assignable to type 'string'.
-        a.d.ts(12,13): error TS2430: Interface 'Late' incorrectly extends interface 'BaseB'.
-          Types of property 'x' are incompatible.
-            Type 'number' is not assignable to type 'string'.
         b.d.ts(4,11): error TS2411: Property 's' of type 'string' is not assignable to 'string' index type 'number'.
-        b.d.ts(10,11): error TS2411: Property 's' of type 'string' is not assignable to 'string' index type 'number'."
+        b.d.ts(5,11): error TS2430: Interface 'Twice' incorrectly extends interface 'Base'.
+          Types of property 'x' are incompatible.
+            Type 'number' is not assignable to type 'string'.
+        b.d.ts(8,11): error TS2430: Interface 'Late' incorrectly extends interface 'BaseB'.
+          Types of property 'x' are incompatible.
+            Type 'number' is not assignable to type 'string'.
+        b.d.ts(10,11): error TS2411: Property 's' of type 'string' is not assignable to 'string' index type 'number'.
+        c.ts(1,11): error TS2430: Interface 'InTs' incorrectly extends interface 'Base'.
+          Types of property 'x' are incompatible.
+            Type 'number' is not assignable to type 'string'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -11908,10 +11909,10 @@ interface I { s: string }
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.d.ts(5,13): error TS2430: Interface 'R' incorrectly extends interface 'Base'.
+        "b.d.ts(1,11): error TS2430: Interface 'R' incorrectly extends interface 'Base'.
           Types of property 'x' are incompatible.
             Type 'number' is not assignable to type 'string'.
-        a.d.ts(6,13): error TS2320: Interface 'Q' cannot simultaneously extend types 'P1' and 'P2'.
+        b.d.ts(2,11): error TS2320: Interface 'Q' cannot simultaneously extend types 'P1' and 'P2'.
           Named property 'k' of types 'P1' and 'P2' are not identical.
         b.d.ts(3,15): error TS2411: Property 's' of type 'string' is not assignable to 'string' index type 'number'."
       `);

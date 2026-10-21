@@ -44,8 +44,6 @@ impl IndexConstraints<'_> {
 pub(super) struct InterfaceDeclarations {
     /// `ast.GetDeclarationOfKind(t.symbol, ast.KindInterfaceDeclaration)`
     first: Option<(FileId, InterfaceId)>,
-    /// The first in program order among the files whose semantic errors are reported.
-    first_checked: Option<(FileId, InterfaceId)>,
     /// The first in program order in each file.
     first_in_file: FxHashMap<FileId, InterfaceId>,
 }
@@ -756,9 +754,6 @@ impl Checker<'_, '_> {
         let order = |&(f, id): &(FileId, InterfaceId)| {
             self.position_in_program_order(f, self.hir(f)[id].name_pos)
         };
-        let first_checked = (interfaces.clone())
-            .filter(|&(f, _)| self.reports_semantic_errors(f))
-            .min_by_key(order);
         let mut first_in_file: FxHashMap<FileId, InterfaceId> = FxHashMap::default();
         for (f, id) in interfaces.clone() {
             let first = first_in_file.entry(f).or_insert(id);
@@ -768,7 +763,6 @@ impl Checker<'_, '_> {
         }
         let declarations = Rc::new(InterfaceDeclarations {
             first: interfaces.clone().next(),
-            first_checked,
             first_in_file,
         });
         self.interface_declarations
@@ -781,8 +775,8 @@ impl Checker<'_, '_> {
             .files()
             .sym(file, self.bound(file).interface_symbol[i.idx()]);
         let declarations = self.interface_declarations(sym);
-        // `interfaceChecked`: once per interface, at the first of its declarations that's checked.
-        let is_first = declarations.first_checked == Some((file, i));
+        // `interfaceChecked`: once per interface, reported at `firstInterfaceDeclaration`.
+        let is_first = declarations.first == Some((file, i));
         let is_first_in_file = declarations.first_in_file.get(&file) == Some(&i);
         let interface_declaration = declarations.first;
         let ty = self.declared_type(sym);

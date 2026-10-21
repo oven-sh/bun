@@ -4,6 +4,7 @@
  *  `bunx vitest test/js/bun/test/mock-fn.test.js`
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/mock-fn.test.js`
  */
+import vm from "node:vm";
 import test_interop from "./test-interop.js";
 var { isBun, describe, test, it, expect, jest, vi, mock, spyOn } = await test_interop();
 
@@ -1450,4 +1451,68 @@ describe("spyOn", () => {
   }
 
   // spyOn does not work with getters/setters yet.
+});
+
+describe("constructing a mock", () => {
+  test("returns the created instance when the implementation returns a primitive", () => {
+    const fn = jest.fn(() => 42);
+    const instance = new fn();
+    expect(typeof instance).toBe("object");
+    expect(fn.mock.calls).toEqual([[]]);
+    expect(fn()).toBe(42);
+  });
+
+  test("with no implementation returns an object", () => {
+    const fn = jest.fn();
+    expect(typeof Reflect.construct(fn, [])).toBe("object");
+  });
+
+  test("returns the implementation's return value when it is an object", () => {
+    const result = { ok: true };
+    const fn = jest.fn(() => result);
+    expect(new fn()).toBe(result);
+  });
+
+  test("calls the implementation with the created instance as this", () => {
+    const fn = jest.fn(function (value) {
+      this.value = value;
+    });
+    const instance = new fn(42);
+    expect(instance.value).toBe(42);
+  });
+
+  test("spy on a function returning a symbol returns the instance", () => {
+    const obj = { sym: Symbol };
+    const spy = spyOn(obj, "sym");
+    const instance = Reflect.construct(spy, []);
+    expect(typeof instance).toBe("object");
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  test("through a bound function returns an object", () => {
+    const Bound = jest.fn(() => 42).bind(null);
+    expect(typeof new Bound()).toBe("object");
+  });
+
+  test("through a Proxy returns an object", () => {
+    const Proxied = new Proxy(jest.fn(), {});
+    expect(typeof new Proxied()).toBe("object");
+  });
+
+  test("Array.of with a mock as the constructor fills the created instance", () => {
+    expect(Array.of.call(jest.fn(), 1, 2, 3)).toEqual({ 0: 1, 1: 2, 2: 3, length: 3 });
+  });
+
+  test("Symbol.species that is a mock receives the elements", () => {
+    const array = [1, 2, 3];
+    array.constructor = { [Symbol.species]: jest.fn(() => Symbol()) };
+    expect(array.slice(0)).toEqual({ 0: 1, 1: 2, 2: 3, length: 3 });
+  });
+
+  test("a newTarget.prototype that is not an object falls back to Object.prototype of that realm", () => {
+    const context = vm.createContext({});
+    const NewTarget = vm.runInContext("function F() {}; F.prototype = 1; F", context);
+    const instance = Reflect.construct(jest.fn(), [], NewTarget);
+    expect(Object.getPrototypeOf(instance)).toBe(vm.runInContext("Object.prototype", context));
+  });
 });

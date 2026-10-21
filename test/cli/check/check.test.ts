@@ -23958,7 +23958,6 @@ describe.concurrent("--check", () => {
     const assignment = `a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`;
     const parameter = `a.ts(2,19): error TS7006: Parameter 'x' implicitly has an 'any' type.`;
     const strict = `${assignment}\n${parameter}`;
-    // tsc 7.0.2's output, except where noted.
     const expected: Record<string, [string[], string][]> = {
       "reads a response file": [
         [["@args.txt"], assignment],
@@ -23967,13 +23966,11 @@ describe.concurrent("--check", () => {
         [["@args.txt", "--strict"], strict],
         [["@missing.txt"], `error TS5083: Cannot read file '<dir>/missing.txt'.`],
         [["@open.txt"], `error TS6045: Unterminated quoted string in response file '<dir>/open.txt'.`],
-        // tsc reads past the end of a file that doesn't end in whitespace, and crashes.
         [["@lines.txt"], assignment],
-        // tsc reads these until its stack overflows.
-        [["@self.txt"], `error TS5083: Cannot read file '<dir>/self.txt'.`],
-        [["@one.txt"], `error TS5083: Cannot read file '<dir>/one.txt'.`],
-        // It also overflows on a long chain of files. `bun check` allows 64 nested files.
-        [["@chain0.txt"], `error TS5083: Cannot read file '<dir>/chain64.txt'.`],
+        // A file that's being read isn't read again.
+        [["@self.txt"], assignment],
+        [["@one.txt"], assignment],
+        [["@chain0.txt"], `error TS5083: Cannot read file '<dir>/chain70.txt'.`],
       ],
       "`null` unsets an option": [
         [["--strict", "false"], assignment],
@@ -24004,10 +24001,10 @@ describe.concurrent("--check", () => {
         "outer.txt": `@args.txt\n`,
         "open.txt": `--strict "false\n`,
         "lines.txt": `--strict\nfalse`,
-        "self.txt": `@self.txt\n`,
+        "self.txt": `@self.txt --strict false\n`,
         ...Object.fromEntries(Array.from({ length: 70 }, (_, i) => [`chain${i}.txt`, `@chain${i + 1}.txt\n`])),
         "one.txt": `@two.txt\n`,
-        "two.txt": `@one.txt\n`,
+        "two.txt": `@one.txt --strict false\n`,
         "empty/not-a-tsconfig.json": `{}\n`,
       });
       const results = await Promise.all(expected[kind].map(([args]) => check(dir, args)));

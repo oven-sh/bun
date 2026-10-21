@@ -679,15 +679,14 @@ impl CommandLineParser<'_> {
 
     /// `parseResponseFile`
     fn parse_response_file(&mut self, file_name: &[u8]) {
-        const MAX_NESTED: usize = 64;
         let file_name = join(self.cwd, file_name);
-        // `tryReadFile`. The original keeps reading a file that includes itself, or a long chain of files, until it
-        // overflows its stack.
-        let is_rejected =
-            self.response_files.len() >= MAX_NESTED || self.response_files.contains(&file_name);
-        let text = match is_rejected {
-            true => None,
-            false => host::read_at(&file_name, false),
+        if self.response_files.contains(&file_name) {
+            return;
+        }
+        // `tryReadFile`. The original's stack grows with a long chain of files.
+        let text = match bun_core::StackCheck::init().is_safe_to_recurse() {
+            true => host::read_at(&file_name, false),
+            false => None,
         };
         let Some(text) = text else {
             let cannot_read = global(5083, &[displayed_path(&file_name)]);

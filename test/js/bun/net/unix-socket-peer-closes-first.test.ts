@@ -140,8 +140,7 @@ describe.skipIf(isWindows)("a unix socket peer that closes before the connecting
   }
 
   // The peer's one write has to fit in the socket buffer, because the client does not read yet.
-  // The default buffer of a unix socket is 8 KiB on macOS. The large answer is more than the
-  // 64 KiB that a node:net stream takes before it pauses its handle.
+  // The default buffer of a unix socket is 8 KiB on macOS, so the large answer is for Linux only.
   for (const bytes of [0, 5, isLinux ? 126892 : 4096]) {
     const answer = Buffer.alloc(bytes, "x");
 
@@ -192,14 +191,14 @@ describe.skipIf(isWindows)("a unix socket peer that closes before the connecting
           () => null,
           error => error,
         );
-        return { peer, code: error?.code };
+        return { peer, code: error?.code, errno: error?.errno };
       } finally {
         await sql.close({ timeout: 0 });
       }
     }
     // Over TCP the peer's close is a FIN, which is not a hangup: the client always reads the packet.
     const overTcp = await connectError("tcp");
-    expect(overTcp.peer).toBe("done");
+    expect(overTcp).toEqual({ peer: "done", code: "ERR_MYSQL_SERVER_ERROR", errno: 1040 });
     expect(await connectError("unix")).toEqual(overTcp);
   });
 

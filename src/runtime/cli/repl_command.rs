@@ -21,7 +21,7 @@ use bun_core::EncodedSlice;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject};
-use bun_options_types::context::{Debugger as DebuggerFlag, RuntimeOptions};
+use bun_options_types::context::RuntimeOptions;
 
 // `repl.rs` is a sibling file with no other consumers; declare it as a child
 // module here so `Repl` resolves without touching `cli/mod.rs`.
@@ -33,7 +33,8 @@ use crate::Command;
 use crate::cli::Arguments;
 
 /// This process is `bun repl`. Set before argv is parsed, because the REPL parses with the flag
-/// table of `bun run`: `--help` and `process.execArgv` ask which of the two it is.
+/// table of `bun run`: `--help` and `process.execArgv` ask which of the two it is. So does the
+/// debugger set-up, which takes no `BUN_INSPECT*` variable for a REPL.
 pub(crate) static IS_REPL: AtomicBool = AtomicBool::new(false);
 
 pub(crate) struct ReplCommand;
@@ -57,7 +58,7 @@ impl ReplCommand {
     /// a place here.
     fn check_flags(ctx: &ContextData) {
         let RuntimeOptions {
-            // `boot_repl_vm` applies these.
+            // `boot_repl_vm` applies these. `debugger` starts for a flag only (`IS_REPL`).
             smol: _,
             debugger: _,
             dns_result_order: _,
@@ -237,17 +238,12 @@ Full documentation is available at <magenta>https://bun.com/docs/runtime/repl<r>
                 Global::exit(1);
             });
 
-        // Only a flag starts a debugger here. The variables that editors export to every process
-        // of their terminals do not (`ignore_debugger_env`).
-        let has_inspect_flag = !matches!(ctx.runtime_options.debugger, DebuggerFlag::Unspecified);
-
         // Initialize the VM. `InitOptions` has no allocator field (the VM does
         // not take a caller-provided allocator in the Rust port; `vm.arena` is
         // set below).
         let vm: *mut VirtualMachine = VirtualMachine::init(jsc::VirtualMachineInitOptions {
             transform_options: core::mem::take(&mut ctx.args),
             debugger: core::mem::take(&mut ctx.runtime_options.debugger),
-            ignore_debugger_env: !has_inspect_flag,
             log: core::ptr::NonNull::new(ctx.log),
             global_cache: ctx.debug.global_cache,
             smol: ctx.runtime_options.smol,

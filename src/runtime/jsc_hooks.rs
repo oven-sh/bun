@@ -529,7 +529,7 @@ unsafe fn init_runtime_state(
     // workers.
     if opts.worker_ptr.is_null() {
         // SAFETY: `vm` is the freshly-boxed unique VM on this thread.
-        unsafe { configure_debugger(vm, &opts.debugger, opts.ignore_debugger_env) };
+        unsafe { configure_debugger(vm, &opts.debugger) };
     }
 
     Ok(state.cast())
@@ -537,8 +537,9 @@ unsafe fn init_runtime_state(
 
 /// Translate the CLI flag /
 /// `BUN_INSPECT*` env vars into `vm.debugger = Some(Debugger { .. })` so
-/// `ensure_debugger` (below) actually starts the inspector. With `ignore_env`
-/// (`InitOptions::ignore_debugger_env`) the variables alone configure nothing.
+/// `ensure_debugger` (below) actually starts the inspector. In `bun repl` the
+/// variables alone configure nothing: editors export them to every process of
+/// their terminals, and a REPL debugs when its command line says so (#15594).
 ///
 /// # Safety
 /// `vm` is the freshly-boxed unique VM on this thread; `vm.transpiler` has
@@ -547,7 +548,6 @@ unsafe fn init_runtime_state(
 unsafe fn configure_debugger(
     vm: *mut VirtualMachine,
     cli_flag: &bun_options_types::context::Debugger,
-    ignore_env: bool,
 ) {
     use bun_core::env_var;
     use bun_jsc::debugger::{Debugger, Mode, Wait};
@@ -572,10 +572,11 @@ unsafe fn configure_debugger(
         Wait::Off
     };
 
+    let is_repl = || crate::cli::repl_command::IS_REPL.load(core::sync::atomic::Ordering::Relaxed);
     let debugger = match cli_flag {
         CliDebugger::Unspecified => {
             if !unix.is_empty() {
-                if ignore_env {
+                if is_repl() {
                     return;
                 }
                 Some(Debugger {
@@ -586,7 +587,7 @@ unsafe fn configure_debugger(
                     ..Default::default()
                 })
             } else if !connect_to.is_empty() {
-                if ignore_env {
+                if is_repl() {
                     return;
                 }
                 Some(Debugger {

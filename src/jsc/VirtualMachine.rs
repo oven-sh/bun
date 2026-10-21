@@ -112,9 +112,6 @@ pub struct InitOptions {
     /// Forwarded as `mini_mode` to `Zig__GlobalObject__create`. For the
     /// main-thread path this is `smol`; for workers it is `WebWorker::mini`.
     pub mini_mode: bool,
-    /// `BUN_INSPECT` and `BUN_INSPECT_CONNECT_TO` configure no debugger. `bun repl` sets it when
-    /// it got no `--inspect*` flag: editors export those variables to every process of a terminal.
-    pub ignore_debugger_env: bool,
 }
 
 impl Default for InitOptions {
@@ -133,7 +130,6 @@ impl Default for InitOptions {
             worker_ptr: core::ptr::null_mut(),
             context_id: None,
             mini_mode: false,
-            ignore_debugger_env: false,
         }
     }
 }

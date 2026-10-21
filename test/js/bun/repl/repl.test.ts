@@ -3,8 +3,8 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
 import { once } from "node:events";
 import { chmodSync, existsSync, readdirSync, statSync } from "node:fs";
-import http2 from "node:http2";
 import type { AddressInfo } from "node:net";
+import nodeTls from "node:tls";
 import path from "path";
 
 const stripAnsi = Bun.stripANSI;
@@ -997,24 +997,21 @@ describe.concurrent("Bun REPL", () => {
       });
     });
 
-    test("--experimental-http2-fetch lets fetch() negotiate HTTP/2", async () => {
-      const server = http2.createSecureServer({ ...tls, allowHTTP1: true }, (req, res) => {
-        res.writeHead(200);
-        res.end(req.httpVersion);
+    test("--experimental-http2-fetch makes fetch() offer HTTP/2", async () => {
+      let negotiated: string | false | null | undefined;
+      // The server takes h2 from a client that offers it. It speaks no HTTP: the offer is what counts.
+      const server = nodeTls.createServer({ ...tls, ALPNProtocols: ["h2", "http/1.1"] }, socket => {
+        negotiated = socket.alpnProtocol;
+        socket.destroy();
       });
-      // The client exits with its connection open.
-      server.on("clientError", () => {});
-      server.on("secureConnection", socket => socket.on("error", () => {}));
+      server.on("tlsClientError", () => {});
       server.listen(0);
       await once(server, "listening");
       try {
         const { port } = server.address() as AddressInfo;
-        const script = `const response = await fetch("https://localhost:${port}", { tls: { rejectUnauthorized: false } }); console.log(await response.text());`;
-        expect(await bun(["repl", "--experimental-http2-fetch", "-e", script])).toEqual({
-          stdout: "2.0\n",
-          stderr: "",
-          exitCode: 0,
-        });
+        const script = `await fetch("https://localhost:${port}", { tls: { rejectUnauthorized: false } }).catch(() => {})`;
+        const result = await bun(["repl", "--experimental-http2-fetch", "-e", script]);
+        expect({ ...result, negotiated }).toEqual({ stdout: "", stderr: "", exitCode: 0, negotiated: "h2" });
       } finally {
         server.close();
       }

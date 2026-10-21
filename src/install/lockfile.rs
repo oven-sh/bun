@@ -402,6 +402,24 @@ pub enum LockfileFormat {
     Binary,
 }
 
+/// How many entries of the bun.lock in the working directory are unused, if the file loads.
+pub(crate) fn unused_text_lockfile_entries(manager: &PackageManager) -> Option<usize> {
+    let buf = File::read_from(Fd::cwd(), LockfileFormat::Text.filename().as_bytes()).ok()?;
+    let source = bun_ast::Source::init_path_string(b"bun.lock", buf.as_slice());
+    let mut log = bun_ast::Log::init();
+    initialize_store();
+    let parsed = JSON::ParsedJson::parse_package_json(&source, &mut log).ok()?;
+    let mut lockfile = Lockfile::default();
+    (TextLockfile::parse_into_binary_lockfile(
+        &mut lockfile,
+        parsed.root,
+        &source,
+        &mut log,
+        Some(manager),
+    ))
+    .ok()
+}
+
 impl LockfileFormat {
     pub fn filename(self) -> &'static ZStr {
         match self {

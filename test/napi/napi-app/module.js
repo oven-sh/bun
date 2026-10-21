@@ -1764,7 +1764,10 @@ nativeTests.test_external_buffer_finalized_by_idle_collection = async () => {
 // Buffer's Structure whether its bounds can change. `new Function` gives each Buffer
 // its own profile.
 function warmBufferLoops(buffer, value) {
-  const sum = new Function("view", "let total = 0; for (let i = 0; i < view.length; i++) total += view[i]; return total;");
+  const sum = new Function(
+    "view",
+    "let total = 0; for (let i = 0; i < view.length; i++) total += view[i]; return total;",
+  );
   const fill = new Function("view", "value", "for (let i = 0; i < view.length; i++) view[i] = value;");
   let total = 0;
   for (let i = 0; i < 100_000; i++) {
@@ -1794,7 +1797,9 @@ nativeTests.test_create_buffer_from_arraybuffer = () => {
     const arrayBuffer = new ArrayBuffer(16);
     new Uint8Array(arrayBuffer).set([1, 2, 3, 4, 5, 6, 7, 8]);
     const buffer = create(arrayBuffer, 2, 4);
-    console.log(`fixed: isBuffer=${Buffer.isBuffer(buffer)} sameArrayBuffer=${buffer.buffer === arrayBuffer} bytes=${[...buffer]}`);
+    console.log(
+      `fixed: isBuffer=${Buffer.isBuffer(buffer)} sameArrayBuffer=${buffer.buffer === arrayBuffer} bytes=${[...buffer]}`,
+    );
     const { sum, total } = warmBufferLoops(buffer, 7);
     console.log(`fixed: warm=${total} ${state(buffer, sum)} arrayBuffer=${[...new Uint8Array(arrayBuffer)]}`);
     const empty = create(arrayBuffer, 16, 0);
@@ -1823,7 +1828,9 @@ nativeTests.test_create_buffer_from_arraybuffer = () => {
     arrayBuffer.resize(8 * K);
     console.log(`resizable: grown again: ${state(buffer, sum)}`);
     const part = buffer.subarray(2, 6);
-    console.log(`resizable: subarray: isBuffer=${Buffer.isBuffer(part)} length=${part.length} byteOffset=${part.byteOffset}`);
+    console.log(
+      `resizable: subarray: isBuffer=${Buffer.isBuffer(part)} length=${part.length} byteOffset=${part.byteOffset}`,
+    );
     arrayBuffer.transfer();
     console.log(`resizable: detached: ${state(buffer, sum)}`);
   }
@@ -1879,7 +1886,9 @@ nativeTests.test_create_buffer_from_arraybuffer_structure = () => {
   const buffer = create(shared, 56, 8);
   const { sum, total } = warmBufferLoops(buffer, 7);
   shared.grow(128);
-  console.log(`growable shared: warm=${total} grown: length=${buffer.length} byteOffset=${buffer.byteOffset} sum=${sum(buffer)}`);
+  console.log(
+    `growable shared: warm=${total} grown: length=${buffer.length} byteOffset=${buffer.byteOffset} sum=${sum(buffer)}`,
+  );
 };
 
 // Bun-only: an orphaned threadsafe function is freed by whichever thread drops

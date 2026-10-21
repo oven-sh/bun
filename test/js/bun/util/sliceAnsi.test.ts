@@ -1673,4 +1673,55 @@ describe("Bun.sliceAnsi", () => {
       });
     });
   });
+
+  // The slice reopens the active styles and the hyperlink, closes them at the end and adds the ellipsis,
+  // so the result can be longer than the input.
+  test("throws a RangeError when the result exceeds the string length limit", async () => {
+    const outOfMemory = "RangeError: Out of memory";
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const red = "\\x1b[31m";
+        const ellipsis = "\\u2026" + "\\u200b".repeat(10); // width 1, 11 characters
+        const cases = {
+          sgrAtLimit: [red + Buffer.alloc(65527, "a").toString(), 1],
+          sgrPastLimit: [red + Buffer.alloc(65528, "a").toString(), 1],
+          wideSgrPastLimit: [red + "\\u3042".repeat(65528), 2],
+          ellipsisBothAtLimit: [Buffer.alloc(65518, "a").toString(), 1, 65517, ellipsis],
+          ellipsisBothPastLimit: [Buffer.alloc(65519, "a").toString(), 1, 65518, ellipsis],
+          linkAtLimit: ["\\x1b]8;;" + Buffer.alloc(65523, "u").toString() + "\\x07ab", 1],
+          linkPastLimit: ["\\x1b]8;;" + Buffer.alloc(65524, "u").toString() + "\\x07ab", 1],
+          shortSliceOfLongInput: [red + Buffer.alloc(70000, "a").toString(), 0, 4, ellipsis],
+        };
+        const results = {};
+        for (const [name, args] of Object.entries(cases)) {
+          try {
+            results[name] = Bun.sliceAnsi(...args).length;
+          } catch (e) {
+            results[name] = e.name + ": " + e.message;
+          }
+        }
+        console.log(JSON.stringify(results));`,
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      stdout: {
+        sgrAtLimit: 65536,
+        sgrPastLimit: outOfMemory,
+        wideSgrPastLimit: outOfMemory,
+        ellipsisBothAtLimit: 65536,
+        ellipsisBothPastLimit: outOfMemory,
+        linkAtLimit: 65536,
+        linkPastLimit: outOfMemory,
+        shortSliceOfLongInput: 5 + 3 + 11 + 5,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

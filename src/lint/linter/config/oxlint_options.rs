@@ -1,10 +1,10 @@
-//! What oxlint refuses in the options of its rules, in its words.
+//! oxlint's errors for invalid rule options, in its wording.
 //!
-//! Each rule of oxlint reads its options with serde into a struct of its own, from a `serde_json::Value`. `oxlint_fields.rs` says
-//! what those structs look like, in a notation that [`Reader`] reads, and [`check`] does with a value what serde does: the words
-//! are those of serde, of serde_json and of the few rules that have words of their own.
+//! Each oxlint rule deserializes its options with serde from a `serde_json::Value` into its own struct.
+//! `oxlint_fields.rs` describes those structs in a notation that [`Reader`] parses, and [`check`] does to a value what
+//! serde does. The messages are those of serde, of serde_json and of the few rules that have their own.
 //!
-//! One thing cannot be told here: `1.0` is no integer for serde_json.
+//! One thing can't be detected here: serde_json doesn't treat `1.0` as an integer.
 
 use super::oxlint_fields::OPTIONS;
 use super::rust_regex;
@@ -12,7 +12,7 @@ use crate::options::Json;
 use bun_core::strings;
 use std::io::Write;
 
-/// The name in Rust, the least and the greatest.
+/// The Rust type's name, minimum and maximum.
 const INTEGERS: [(&str, f64, f64); 7] = [
     ("u8", 0.0, u8::MAX as f64),
     ("u16", 0.0, u16::MAX as f64),
@@ -26,46 +26,48 @@ const INTEGERS: [(&str, f64, f64); 7] = [
 enum Type {
     Any,
     Bool,
-    /// This one only. It is in an untagged enum, so there are no words for another.
+    /// Only this value. It's in an untagged enum, so there's no message for the other value.
     Only(bool),
     Null,
     Str,
     Char,
     Float,
-    /// Where it is in [`INTEGERS`].
+    /// Its index in [`INTEGERS`].
     Integer(usize),
-    /// A pattern of Rust's `regex`, with what the rule puts before and behind it.
+    /// A pattern for Rust's `regex`, with what the rule puts before and after it.
     Regex(Vec<u8>, Vec<u8>),
     Optional(Box<Type>),
-    /// With what is expected, if that is not "a sequence".
+    /// With the expected-type text, if it isn't "a sequence".
     Seq(Box<Type>, Option<Vec<u8>>),
-    /// With what is expected, if that is not "a map".
+    /// With the expected-type text, if it isn't "a map".
     Map(Box<Type>, Option<Vec<u8>>),
     /// An enum whose variants have no fields.
     Enum(Vec<&'static [u8]>),
-    /// A string that is one of these. Otherwise the text, with the string in place of `$`.
+    /// A string that's one of these. Any other string fails with the text, where `$` is replaced by the string.
     Words(Vec<&'static [u8]>, Vec<u8>),
     Struct(Struct),
-    /// Elements can be missing at the end.
+    /// Trailing elements can be missing.
     Tuple(Vec<Type>),
-    /// With what is said if no variant fits.
+    /// With the message for when no variant matches.
     Untagged(Vec<u8>, Vec<Type>),
-    /// The first that fits, or what the last has to say.
+    /// The first type that matches, or else the last type's error.
     OneOf(Vec<Type>),
-    /// The one for the kind of the value. A map gets what the struct has to say, everything else the text.
+    /// The type chosen by the value's kind. A map gets the struct's error, and anything else fails with the text.
     ByKind(Vec<u8>, Vec<Type>),
-    /// `memberSyntaxSortOrder` of `sort-imports`
+    /// `memberSyntaxSortOrder` in `sort-imports`
     SortOrder,
-    /// `AllowWarnDeny`, where it is not the severity of a rule.
+    /// `AllowWarnDeny`, where it isn't a rule's severity.
     Severity,
-    /// `true` fits and is refused with the text.
+    /// `true` matches the type but is rejected with the text.
     NotTrue(Vec<u8>, Box<Type>),
-    /// The first, and then the second.
+    /// Checks the first type, then the second.
     Both(Box<Type>, Box<Type>),
-    /// A number that is not from the first to the second is refused with the text. What is no number passes.
+    /// A number outside the range from the first to the second is rejected with the text. Anything that isn't a number
+    /// passes.
     Range(f64, f64, Vec<u8>),
-    /// The strings in a list are names of functions with `*` and `**`, of which Jest's rules make patterns. The text, with the
-    /// string in place of `$`, is before what is wrong with the pattern. Everything else passes.
+    /// The strings in a list are function names with `*` and `**`, which Jest's rules turn into patterns. An invalid
+    /// pattern fails with the text, where `$` is replaced by the string, followed by the pattern's error. Everything
+    /// else passes.
     FunctionNames(Vec<u8>),
 }
 
@@ -73,11 +75,11 @@ struct Field {
     name: &'static [u8],
     ty: Type,
     is_required: bool,
-    /// It is a field of a struct that is flattened into this one.
+    /// It's a field of a struct that's flattened into this one.
     is_flattened: bool,
     /// A sequence that the struct is read from has to have an element for it.
     is_needed_in_sequence: bool,
-    /// It is another name of the field so many places further on.
+    /// It's an alias of the field this many positions further on.
     alias_of: isize,
 }
 
@@ -85,14 +87,14 @@ struct Struct {
     name: Vec<u8>,
     fields: Vec<Field>,
     ignores_unknown_fields: bool,
-    /// Read from a sequence, it needs an element for every field.
+    /// When read from a sequence, it needs an element for every field.
     has_no_defaults: bool,
-    /// Another struct is flattened into it. So it cannot be read from a sequence, the fields of the other are read after its own,
-    /// and only then is a field unknown.
+    /// Another struct is flattened into it. So it can't be read from a sequence, the other struct's fields are read
+    /// after its own, and a field only counts as unknown after that.
     has_flattened: bool,
 }
 
-/// What follows `key` and a blank in the table.
+/// The text after `key` and a space in the table.
 fn row(key: &[u8]) -> Option<&'static [u8]> {
     let table = OPTIONS.as_bytes();
     let start = [b"\n", key, b" "].concat();
@@ -100,7 +102,7 @@ fn row(key: &[u8]) -> Option<&'static [u8]> {
     rest.get(..strings::index_of_char_usize(rest, b'\n')?)
 }
 
-/// `MaxLines` for `max-lines` and for `eslint/max-lines`.
+/// Returns `MaxLines` for `max-lines` and for `eslint/max-lines`.
 fn in_pascal_case(key: &[u8]) -> Vec<u8> {
     let name = strings::last_index_of_char(key, b'/').map_or(key, |slash| &key[slash + 1..]);
     let mut out = Vec::with_capacity(name.len());
@@ -111,11 +113,11 @@ fn in_pascal_case(key: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Reads the notation of the table. See `generate-oxlint-fields.mjs`.
+/// Parses the table's notation. See `generate-oxlint-fields.mjs`.
 struct Reader<'r> {
     text: &'static [u8],
     at: usize,
-    /// What `&` stands for in the name of a struct.
+    /// The expansion of `&` in a struct's name.
     rule: &'r [u8],
 }
 
@@ -129,7 +131,7 @@ impl Reader<'_> {
         self.text.get(self.at - 1).copied().unwrap_or_default()
     }
 
-    /// What is before the first of `ends`.
+    /// Reads up to the first byte that's in `ends`.
     fn until(&mut self, ends: &[u8]) -> &'static [u8] {
         let rest = self.text.get(self.at..).unwrap_or_default();
         let len = strings::index_of_any(rest, ends).unwrap_or(rest.len());
@@ -137,12 +139,12 @@ impl Reader<'_> {
         &rest[..len]
     }
 
-    /// The number before `end`.
+    /// Reads the number before `end`.
     fn number(&mut self, end: &[u8]) -> f64 {
         f64::from(bun_core::fmt::parse_decimal::<u32>(self.until(end)).unwrap_or(0))
     }
 
-    /// `"text"`, if that is next. A backslash is before a quote and before a backslash.
+    /// Reads `"text"`, if that's next. Quotes and backslashes are escaped with a backslash.
     fn quoted(&mut self) -> Option<Vec<u8>> {
         if self.peek() != b'"' {
             return None;
@@ -159,7 +161,7 @@ impl Reader<'_> {
         Some(text)
     }
 
-    /// Types up to a `;`.
+    /// Reads types up to a `;`.
     fn list(&mut self) -> Vec<Type> {
         let mut all = Vec::new();
         while self.at < self.text.len() && self.peek() != b';' {
@@ -176,11 +178,11 @@ impl Reader<'_> {
     }
 
     fn structure(&mut self) -> Struct {
-        let written = self.until(b"~!^ )");
+        let struct_name = self.until(b"~!^ )");
         let mut it = Struct {
-            name: match written.strip_prefix(b"&") {
+            name: match struct_name.strip_prefix(b"&") {
                 Some(rest) => [self.rule, rest].concat(),
-                None => written.to_vec(),
+                None => struct_name.to_vec(),
             },
             fields: Vec::new(),
             ignores_unknown_fields: false,
@@ -280,7 +282,7 @@ impl Reader<'_> {
                 let text = self.quoted().unwrap_or_default();
                 Type::NotTrue(text, Box::new(self.ty()))
             }
-            // What several rows have.
+            // A type shared by several rows.
             b'=' => {
                 let name = self.until(b";");
                 self.at += 1;
@@ -293,14 +295,15 @@ impl Reader<'_> {
     }
 }
 
-/// serde_json has it as an integer: it is written without a point or an exponent, and fits in 64 bits.
+/// True if serde_json stores it as an integer: it's written without a decimal point or an exponent, and fits in 64
+/// bits.
 pub(super) fn is_integer(value: f64) -> bool {
     value.fract() == 0.0
         && !(value == 0.0 && value.is_sign_negative())
         && (i64::MIN as f64..u64::MAX as f64).contains(&value)
 }
 
-/// As serde_json prints it.
+/// Writes it the way serde_json prints it.
 #[optimize(size)]
 pub(super) fn write_number(out: &mut Vec<u8>, value: f64) {
     if is_integer(value) {
@@ -328,7 +331,7 @@ pub(super) fn write_number(out: &mut Vec<u8>, value: f64) {
     out.extend_from_slice(&[mantissa, sign, digits].concat());
 }
 
-/// `{:?}` of a `str`
+/// `{:?}` for a `str`.
 #[optimize(size)]
 pub(super) fn write_debug(out: &mut Vec<u8>, text: &[u8]) {
     let _ = match std::str::from_utf8(text) {
@@ -337,7 +340,7 @@ pub(super) fn write_debug(out: &mut Vec<u8>, text: &[u8]) {
     };
 }
 
-/// A string as serde_json prints it.
+/// Writes a string the way serde_json prints it.
 #[optimize(size)]
 fn write_string(out: &mut Vec<u8>, text: &[u8]) {
     out.push(b'"');
@@ -357,7 +360,7 @@ fn write_string(out: &mut Vec<u8>, text: &[u8]) {
     out.push(b'"');
 }
 
-/// `is_spaced`: with blanks where `serde_json::to_string_pretty` has line breaks.
+/// `is_spaced` puts spaces where `serde_json::to_string_pretty` has line breaks.
 #[optimize(size)]
 fn write_value(out: &mut Vec<u8>, value: &Json, is_spaced: bool) {
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
@@ -398,9 +401,10 @@ fn write_value(out: &mut Vec<u8>, value: &Json, is_spaced: bool) {
     }
 }
 
-/// `value` as oxlint shows what it has received: printed on several lines, and all white space made one blank, in strings too.
+/// `value` the way oxlint shows what it received: pretty-printed, then with every run of whitespace collapsed to one
+/// space, even inside strings.
 #[optimize(size)]
-fn shown(value: &Json) -> Vec<u8> {
+fn displayed_value(value: &Json) -> Vec<u8> {
     let mut printed = Vec::new();
     write_value(&mut printed, value, true);
     let Ok(text) = std::str::from_utf8(&printed) else {
@@ -458,7 +462,7 @@ fn too_long(len: usize) -> Checked {
     Err(format!("invalid length {len}, expected fewer elements in array").into_bytes())
 }
 
-/// serde's `OneOf`. `none`: what it says if there are no names.
+/// serde's `OneOf`. `none` is the text for an empty list of names.
 #[optimize(size)]
 fn expected_one_of(names: &[&[u8]], none: &str) -> Vec<u8> {
     let names: Vec<Vec<u8>> = (names.iter().map(|it| [b"`", *it, b"`"].concat())).collect();
@@ -470,7 +474,7 @@ fn expected_one_of(names: &[&[u8]], none: &str) -> Vec<u8> {
     }
 }
 
-/// The variant that `value` names, which is a string or a map with one key whose value is `null`.
+/// Checks the variant that `value` selects. `value` has to be a string, or a map with one key whose value is `null`.
 fn check_enum(variants: &[&'static [u8]], value: &Json) -> Checked {
     let (name, content) = match value {
         Json::String(name) => (&name[..], None),
@@ -493,7 +497,7 @@ fn check_enum(variants: &[&'static [u8]], value: &Json) -> Checked {
 fn check_struct(it: &Struct, value: &Json) -> Checked {
     let expected = || [b"struct ", &it.name[..]].concat();
     let entries = match value {
-        // Field by field.
+        // A sequence is read field by field.
         Json::Array(items) if !it.has_flattened => {
             let own = || it.fields.iter().filter(|field| field.alias_of == 0);
             for (at, field) in own().enumerate() {
@@ -579,8 +583,8 @@ fn check_sort_order(value: &Json) -> Checked {
         Json::Object(entries) => entries.first().map(|it| it.0.clone()),
         it => it.as_str().map(<[u8]>::to_vec),
     };
-    let is_there = |name: &[u8]| items.iter().any(|it| name_of(it).as_deref() == Some(name));
-    match SORT_ORDER.iter().all(|name| is_there(name)) {
+    let is_listed = |name: &[u8]| items.iter().any(|it| name_of(it).as_deref() == Some(name));
+    match SORT_ORDER.iter().all(|name| is_listed(name)) {
         true => Ok(()),
         false => Err(
             b"memberSyntaxSortOrder must contain 4 unique kinds, but duplicates were found"
@@ -589,7 +593,8 @@ fn check_sort_order(value: &Json) -> Checked {
     }
 }
 
-/// oxlint's `convert_pattern`: `a.*.b*` is `a`, any name, and a name that starts with `b`. `**` is any names.
+/// oxlint's `convert_pattern`: `a.*.b*` is `a`, any name, and a name that starts with `b`. `**` matches any number of
+/// names.
 fn pattern_of_function_name(name: &[u8]) -> Vec<u8> {
     let parts: Vec<Vec<u8>> = strings::split(name, b".")
         .map(|part| match part {
@@ -600,9 +605,9 @@ fn pattern_of_function_name(name: &[u8]) -> Vec<u8> {
     [&b"(?ui)^"[..], &parts.join(&br"\."[..]), br"(\.|$)"].concat()
 }
 
-/// What serde says if `value` is no `ty`.
+/// Returns serde's error if `value` isn't a `ty`.
 fn check(ty: &Type, value: &Json) -> Checked {
-    let fits = |ty: &Type| check(ty, value).is_ok();
+    let matches_type = |ty: &Type| check(ty, value).is_ok();
     match (ty, value) {
         (Type::Any, _)
         | (Type::Bool, Json::Bool(_))
@@ -639,8 +644,8 @@ fn check(ty: &Type, value: &Json) -> Checked {
                 _ => invalid_type(value, name.as_bytes()),
             }
         }
-        (Type::Regex(before, behind), Json::String(written)) => {
-            let pattern = [&before[..], written, behind].concat();
+        (Type::Regex(prefix, suffix), Json::String(pattern_text)) => {
+            let pattern = [&prefix[..], pattern_text, suffix].concat();
             rust_regex::syntax_error(&pattern).map_or(Ok(()), Err)
         }
         (Type::Words(words, text), Json::String(word)) => match words.contains(&&word[..]) {
@@ -667,7 +672,7 @@ fn check(ty: &Type, value: &Json) -> Checked {
             }
         }
         (Type::Tuple(_), _) => invalid_type(value, b"a tuple"),
-        (Type::Untagged(text, variants), _) => match variants.iter().any(fits) {
+        (Type::Untagged(text, variants), _) => match variants.iter().any(matches_type) {
             true => Ok(()),
             false => Err(text.clone()),
         },
@@ -686,7 +691,7 @@ fn check(ty: &Type, value: &Json) -> Checked {
                 match ty {
                     Type::Struct(_) if matches!(value, Json::Object(_)) => return check(ty, value),
                     Type::Struct(_) => {}
-                    ty if fits(ty) => return Ok(()),
+                    ty if matches_type(ty) => return Ok(()),
                     _ => {}
                 }
             }
@@ -738,13 +743,13 @@ fn check(ty: &Type, value: &Json) -> Checked {
     }
 }
 
-/// What serde says if `value` is not what `notation` says, which is written like a type in the table.
+/// Returns serde's error if `value` doesn't match `notation`, which is written like a type in the table.
 pub(super) fn check_as(notation: &'static [u8], value: &Json) -> Checked {
     let (text, at, rule) = (notation, 0, &b""[..]);
     check(&Reader { text, at, rule }.ty(), value)
 }
 
-/// `logical-assignment-operators` looks at the shape of its options itself.
+/// `logical-assignment-operators` checks the shape of its options itself.
 fn check_logical_assignment_operators(options: &[Json]) -> Checked {
     let shape = || Err(br#"expected [], ["always"], ["never"], or ["always", options]"#.to_vec());
     let (mode, more) = match options {
@@ -764,7 +769,7 @@ fn check_logical_assignment_operators(options: &[Json]) -> Checked {
 
 /// `no-unused-vars` reads its options by hand, in this order.
 fn check_no_unused_vars(option: &Json) -> Checked {
-    let refusal = |name: &str, why: &[&[u8]]| {
+    let invalid_option = |name: &str, why: &[&[u8]]| {
         let start: [&[u8]; 3] = [
             b"Invalid '",
             name.as_bytes(),
@@ -776,10 +781,10 @@ fn check_no_unused_vars(option: &Json) -> Checked {
         Json::String(text) if known.contains(&&text[..]) => Ok(()),
         Json::String(text) => {
             let known = known.join(&b" or "[..]);
-            refusal(name, &[b"Expected  or ", &known, b", got ", text])
+            invalid_option(name, &[b"Expected  or ", &known, b", got ", text])
         }
         Json::Bool(_) if takes_booleans => Ok(()),
-        other => refusal(name, &[b"Expected a string, got ", &compact(other)]),
+        other => invalid_option(name, &[b"Expected a string, got ", &compact(other)]),
     };
     let vars: &[&[u8]] = &[b"all", b"local"];
     match option {
@@ -788,7 +793,7 @@ fn check_no_unused_vars(option: &Json) -> Checked {
         Json::Object(_) => {}
         other => {
             let why: [&[u8]; 2] = [b"Expected a string or an object, got ", &compact(other)];
-            return refusal("vars", &why);
+            return invalid_option("vars", &why);
         }
     }
     let steps: [(&str, &[&[u8]], bool); 7] = [
@@ -805,7 +810,7 @@ fn check_no_unused_vars(option: &Json) -> Checked {
             (None, _) => {}
             (Some(value), []) => {
                 if let Some(why) = value.as_str().and_then(rust_regex::syntax_error) {
-                    return refusal(name, &[&why]);
+                    return invalid_option(name, &[&why]);
                 }
             }
             (Some(value), known) => word(name, value, known, takes_booleans)?,
@@ -819,14 +824,14 @@ fn check_no_unused_vars(option: &Json) -> Checked {
             Some(value @ Json::String(_)) => word(name, value, fixes, false)?,
             Some(other) => {
                 let why: [&[u8]; 2] = [b"Expected a boolean or string, got ", &compact(other)];
-                return refusal(name, &why);
+                return invalid_option(name, &why);
             }
         }
     }
     Ok(())
 }
 
-/// What `no-restricted-properties` asks of an entry that it has read.
+/// The extra checks that `no-restricted-properties` runs on an entry after deserializing it.
 fn check_restricted_property(entry: &Json) -> Checked {
     const NAMES: [&[u8]; 5] = [
         b"object",
@@ -843,7 +848,7 @@ fn check_restricted_property(entry: &Json) -> Checked {
         value.is_some_and(|it| *it != Json::Null)
     };
     let (object, property, allow_objects, allow_properties) = (has(0), has(1), has(3), has(4));
-    let refusal: &[u8] = match (object, property) {
+    let property_error: &[u8] = match (object, property) {
         (false, false) => b"expected either `object` or `property`",
         (true, false) if allow_objects => b"`allowObjects` requires `property`",
         (true, true) if allow_objects => b"`allowObjects` cannot be used with `object`",
@@ -851,12 +856,12 @@ fn check_restricted_property(entry: &Json) -> Checked {
         (true, true) if allow_properties => b"`allowProperties` cannot be used with `property`",
         _ => return Ok(()),
     };
-    Err(refusal.to_vec())
+    Err(property_error.to_vec())
 }
 
-/// What oxlint says against `options` of the rule that `oxlint_rule_key` writes as `key`: the lines below "Invalid configuration for
-/// rule". `None`: it takes them.
-pub(super) fn refusal(key: &[u8], options: &[Json]) -> Option<Vec<u8>> {
+/// oxlint's error for the `options` of the rule that `oxlint_rule_key` writes as `key`: the lines below "Invalid
+/// configuration for rule". `None` if it accepts them.
+pub(super) fn options_error(key: &[u8], options: &[Json]) -> Option<Vec<u8>> {
     let first = options.first()?;
     let Some((&how, text)) = row(key).and_then(<[u8]>::split_first) else {
         return Some(b"  This rule does not accept configuration options.".to_vec());
@@ -915,11 +920,18 @@ pub(super) fn refusal(key: &[u8], options: &[Json]) -> Option<Vec<u8>> {
             b"  ",
             &why[..],
             b"\n  received config: `",
-            &shown(first),
+            &displayed_value(first),
             b"`",
         ]
         .concat(),
-        b'w' | b'L' => [b"  ", &why[..], b", received `", &shown(&all()), b"`"].concat(),
+        b'w' | b'L' => [
+            b"  ",
+            &why[..],
+            b", received `",
+            &displayed_value(&all()),
+            b"`",
+        ]
+        .concat(),
         _ => [b"  ", &why[..]].concat(),
     })
 }

@@ -370,28 +370,6 @@ pub(crate) trait BlobExt {
     fn is_all_ascii(&self) -> Option<bool>;
 }
 
-/// C-ABI trampoline for `Blob::shared_view` so C++ (`ZigGeneratedClasses`)
-/// can read blob bytes.
-///
-/// # Safety
-/// `this` must be a live `*const Blob` (the codegen `m_ctx` payload obtained
-/// via `Blob__fromJS`), valid for shared read for the duration of the call.
-/// `len` must be a writable `usize` out-param (caller stack slot). Kept as a
-/// raw-pointer ABI (not `&Blob`/`&mut usize`) because the sole Rust caller is
-/// the type-erased `SqlRuntimeHooks` vtable in `hw_exports.rs`, which forwards
-/// `*const c_void` without materialising a reference.
-#[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__Blob__sharedView(
-    this: *const Blob,
-    len: *mut usize,
-) -> *const u8 {
-    // SAFETY: preconditions documented on the fn item above.
-    let view = unsafe { (*this).shared_view() };
-    // SAFETY: `len` is a valid writable out-param per the fn safety contract.
-    unsafe { *len = view.len() };
-    view.as_ptr()
-}
-
 impl BlobExt for Blob {
     fn get_form_data_encoding(&self) -> Option<Box<bun_core::form_data::AsyncFormData>> {
         let content_type_slice = self.get_content_type()?;
@@ -1343,10 +1321,10 @@ impl BlobExt for Blob {
 
         validate_writable_blob(global_this, self)?;
 
-        let store = self.store().expect("infallible: store present");
+        let store = self.store().expect("infallible: store present").clone();
         match &store.data {
             store::Data::S3(s3) => s3.unlink(
-                store,
+                store.clone(),
                 &global_this.js_thread_of_caller(callframe),
                 args.next_eat(),
             ),
@@ -1858,10 +1836,12 @@ impl BlobExt for Blob {
             return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
         }
 
+        let size_i64 = i64::try_from(self.size.get()).unwrap_or(i64::MAX);
+
         // If the optional start parameter is not used as a parameter, let relativeStart be 0.
         let mut relative_start: i64 = 0;
         // If the optional end parameter is not used, let relativeEnd be size.
-        let mut relative_end: i64 = i64::try_from(self.size.get()).expect("int cast");
+        let mut relative_end: i64 = size_i64;
 
         // Mutate the fixed-3 args array in place to shift the string arg into [2].
         if args[0].is_string() {
@@ -1878,11 +1858,9 @@ impl BlobExt for Blob {
             if start_.is_number() {
                 let start = start_.to_int64();
                 if start < 0 {
-                    relative_start = (start
-                        .wrapping_add(i64::try_from(self.size.get()).expect("int cast")))
-                    .max(0);
+                    relative_start = start.saturating_add(size_i64).max(0);
                 } else {
-                    relative_start = start.min(i64::try_from(self.size.get()).expect("int cast"));
+                    relative_start = start.min(size_i64);
                 }
             }
         }
@@ -1891,11 +1869,9 @@ impl BlobExt for Blob {
             if end_.is_number() {
                 let end = end_.to_int64();
                 if end < 0 {
-                    relative_end = (end
-                        .wrapping_add(i64::try_from(self.size.get()).expect("int cast")))
-                    .max(0);
+                    relative_end = end.saturating_add(size_i64).max(0);
                 } else {
-                    relative_end = end.min(i64::try_from(self.size.get()).expect("int cast"));
+                    relative_end = end.min(size_i64);
                 }
             }
         }
@@ -2749,6 +2725,7 @@ impl BlobExt for Blob {
         let buf = unsafe { &*buf };
         match crate::webcore::form_data::FormData::to_js(global, buf, &encoder.encoding) {
             Ok(v) => v,
+            Err(crate::Error::JSError) => global.take_error(jsc::JsError::Thrown),
             Err(err) => {
                 global.create_error_instance(format_args!("FormData encoding failed: {err}"))
             }
@@ -3905,10 +3882,11 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                 }
                 PathOrFileDescriptorSerializeTag::Path => {
                     let path_len = reader.read_int_le::<u32>()?;
+                    // Apply the same checks as the JS API (`Valid::path_string_length`, `Valid::path_null_bytes`).
+                    if path_len as usize >= bun_paths::MAX_PATH_BYTES {
+                        return Err(crate::Error::InvalidValue);
+                    }
                     let path = read_slice(reader, path_len as usize)?;
-                    // Same constraint the JS entry (`Valid::path_null_bytes`)
-                    // enforces: a NUL-embedded path cannot be handed to the
-                    // syscall layer (`ZStr::as_cstr` would truncate / panic).
                     if strings::index_of_char(&path, 0).is_some() {
                         return Err(crate::Error::InvalidValue);
                     }
@@ -3967,7 +3945,8 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
     blob.offset.set(offset as SizeType); // intentional truncate
     if let Some(size) = file_size {
         // resolve_size() clamps this to the actual file size on first use.
-        if size != MAX_SIZE {
+        // A size of MAX_SIZE or more means the size is unknown.
+        if size < MAX_SIZE {
             blob.size.set(size as SizeType);
         }
     }

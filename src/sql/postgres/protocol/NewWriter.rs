@@ -7,10 +7,6 @@ pub trait WriterContext: Copy {
     fn offset(self) -> usize;
     fn write(self, bytes: &[u8]) -> Result<(), AnyPostgresError>;
     fn pwrite(self, bytes: &[u8], offset: usize) -> Result<(), AnyPostgresError>;
-    /// Discard every byte written at or after `offset`.
-    fn truncate(self, offset: usize);
-    /// Changes when another writer is handed out or the buffer is drained.
-    fn epoch(self) -> u32;
 }
 
 #[derive(Copy, Clone)]
@@ -38,6 +34,19 @@ impl<C: WriterContext> LengthWriter<C> {
     }
 }
 
+#[derive(Copy, Clone)]
+pub struct FormatCodes<C: WriterContext> {
+    index: usize,
+    context: NewWriter<C>,
+}
+
+impl<C: WriterContext> FormatCodes<C> {
+    pub fn set_binary(self, slot: usize) -> Result<(), AnyPostgresError> {
+        self.context
+            .pwrite(&1u16.to_be_bytes(), self.index + slot * 2)
+    }
+}
+
 impl<C: WriterContext> NewWriter<C> {
     #[inline]
     pub fn write(self, data: &[u8]) -> Result<(), AnyPostgresError> {
@@ -54,6 +63,21 @@ impl<C: WriterContext> NewWriter<C> {
         })
     }
 
+    pub fn format_codes(self, count: u16) -> Result<FormatCodes<C>, AnyPostgresError> {
+        const TEXT: [u8; 64] = [0; 64];
+        let index = self.offset();
+        let mut remaining = usize::from(count) * 2;
+        while remaining > 0 {
+            let n = remaining.min(TEXT.len());
+            self.write(&TEXT[..n])?;
+            remaining -= n;
+        }
+        Ok(FormatCodes {
+            index,
+            context: self,
+        })
+    }
+
     #[inline]
     pub(crate) fn offset(self) -> usize {
         C::offset(self.wrapped)
@@ -62,20 +86,6 @@ impl<C: WriterContext> NewWriter<C> {
     #[inline]
     pub(crate) fn pwrite(self, data: &[u8], i: usize) -> Result<(), AnyPostgresError> {
         C::pwrite(self.wrapped, data, i)
-    }
-
-    /// Run `f`. If it fails and nothing else touched the buffer, discard what it wrote.
-    pub fn atomically(
-        self,
-        f: impl FnOnce(Self) -> Result<(), AnyPostgresError>,
-    ) -> Result<(), AnyPostgresError> {
-        let start = self.offset();
-        let epoch = C::epoch(self.wrapped);
-        let result = f(self);
-        if result.is_err() && C::epoch(self.wrapped) == epoch {
-            C::truncate(self.wrapped, start);
-        }
-        result
     }
 
     pub fn int4(self, value: PostgresInt32) -> Result<(), AnyPostgresError> {
@@ -102,26 +112,6 @@ impl<C: WriterContext> NewWriter<C> {
 
     pub fn string(self, value: &[u8]) -> Result<(), AnyPostgresError> {
         self.write(value)?;
-        if value.is_empty() || value[value.len() - 1] != 0 {
-            self.write(&[0u8])?;
-        }
-        Ok(())
-    }
-
-    // Named `bun_string` (not `string`) to avoid colliding with `string(&[u8])` above.
-    pub fn bun_string(self, value: &bun_core::String) -> Result<(), AnyPostgresError> {
-        if value.is_empty() {
-            self.write(&[0u8])?;
-            return Ok(());
-        }
-
-        let sliced = value.to_utf8();
-        let slice = sliced.slice();
-
-        self.write(slice)?;
-        if slice.is_empty() || slice[slice.len() - 1] != 0 {
-            self.write(&[0u8])?;
-        }
-        Ok(())
+        self.write(&[0u8])
     }
 }

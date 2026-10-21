@@ -13,9 +13,9 @@ const UNEXPECTED: Message = Message::new("unexpected", "Duplicate key '{{name}}'
 const GET: u8 = 1 << 0;
 const SET: u8 = 1 << 1;
 
-/// Whether two of `props` may have the same name. Names that are known without looking at an expression compare as numbers.
+/// True if two of `props` may have the same name. Static names are compared by their atom numbers.
 fn may_have_same_name<'a>(props: List<'a, Prop<'a>>) -> bool {
-    // A bit for the number of each name so far: names that have no bit in common differ.
+    // One bit per name seen so far, picked by its atom number. Names with different bits differ.
     let mut names = 0u128;
     for prop in props {
         match prop.key().map(Key::kind) {
@@ -87,7 +87,7 @@ impl NoDupeKeys {
             let Some(name) = get_static_key_name(key) else {
                 continue;
             };
-            // `__proto__: value` sets the prototype, and defines no property.
+            // `__proto__: value` sets the prototype and doesn't define a property.
             if prop.kind() == PropKind::Init && !key.is_computed() && &*name == b"__proto__" {
                 continue;
             }
@@ -95,16 +95,16 @@ impl NoDupeKeys {
             let (defined, previous) = cx.state.entry(name).or_insert((0, here));
             let is_duplicate = *defined & defines != 0;
             *defined |= defines;
-            // oxlint points at the key before this one.
+            // oxlint reports at the previous key with that name.
             let first = *previous;
-            let place = if is_oxlint { std::mem::replace(previous, here) } else { here };
+            let report_span = if is_oxlint { std::mem::replace(previous, here) } else { here };
             if !is_duplicate {
                 continue;
             }
             if *is_pattern.get_or_insert_with(|| is_assignment_target(object)) {
                 return;
             }
-            cx.report(place, UNEXPECTED)
+            cx.report(report_span, UNEXPECTED)
                 .data("name", get_static_key_name(key).unwrap_or_default())
                 .hint_with(|| Some(format!("Only the last one counts. The first is on line {}.", cx.line_of(first.start))))
                 .labels_with(|labels| labels.push(here, "and duplicated here"));
@@ -115,7 +115,8 @@ impl NoDupeKeys {
 impl Rule for NoDupeKeys {
     const META: Meta = Meta::eslint("no-dupe-keys", Kind::Problem).recommended().hints();
     const ON: On = On::new().exprs(&[ExprTag::Object]);
-    /// What the properties so far of the object that is being checked define, and the last key of that name.
+    /// For each name: the kinds of property defined so far in the object being checked, and the last key with that
+    /// name.
     type State<'a> = FxHashMap<Cow<'a, [u8]>, (u8, Span)>;
 
     fn new(_: &Options) -> Self {

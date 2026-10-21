@@ -41,7 +41,7 @@ impl Rule for PreferStringSlice {
     }
 }
 
-/// No more than two integers that are not negative, in order.
+/// At most two non-negative integers, in ascending order.
 fn is_safe_substring_arguments<'a>(arguments: List<'a, Expr<'a>>) -> bool {
     let mut previous = 0.0;
     arguments.len() <= 2

@@ -2080,7 +2080,16 @@ impl<'p, 's> Checker<'p, 's> {
         let declared = self
             .constraint_of_mapped_param(file, node)
             .unwrap_or(TypeId::ERROR);
-        self.instantiate(declared, mapper)
+        let (hits, limits) = (self.instantiation_limit_hits, self.limits);
+        let constraint = self.instantiate(declared, mapper);
+        // `getConstraintFromTypeParameter` assigns `tp.constraint` once, even if an instantiation limit was hit.
+        if self.instantiation_limit_hits != hits
+            && self.limits == limits
+            && self.instantiation_count < 5_000_000
+        {
+            (self.instantiations_up_to_a_limit).insert((declared, mapper), (0, constraint, false));
+        }
+        constraint
     }
 
     /// `getModifiersTypeFromMappedType`. Returns `T` as declared for `{ [P in keyof T]: X }`, and

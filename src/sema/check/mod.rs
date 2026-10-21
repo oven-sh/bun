@@ -3314,15 +3314,21 @@ impl<'p, 's> Checker<'p, 's> {
             if stack[..at].iter().filter(|earlier| *earlier == ty).count() != 2 {
                 continue;
             }
-            let symbol = match (self.alias_symbol_of_type(*ty), self.symbol_of_type(*ty)) {
-                (Some(alias), _) => alias,
-                (None, Some(SymbolAtLocation::Symbol(symbol))) => symbol,
-                _ => continue,
+            let name = match (self.alias_symbol_of_type(*ty), self.symbol_of_type(*ty)) {
+                (Some(symbol), _) | (None, Some(SymbolAtLocation::Symbol(symbol))) => {
+                    if self.has_internal_name(symbol) {
+                        continue;
+                    }
+                    self.symbol_to_string(symbol)
+                }
+                _ => match self.data(*ty) {
+                    // Its symbol is the alias in lib.d.ts.
+                    TypeData::StringMapping { kind, .. } => {
+                        print::string_mapping_name(*kind).to_vec()
+                    }
+                    _ => continue,
+                },
             };
-            if self.has_internal_name(symbol) {
-                continue;
-            }
-            let name = self.symbol_to_string(symbol);
             if !names.contains(&name) {
                 names.push(name);
             }

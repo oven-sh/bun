@@ -22940,6 +22940,34 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
     });
 
     // `instantiateType` fails at 100 nested calls. The expected output of each program is TypeScript 7.1's.
+    test("reports one error, once, for a mapped type over the keys of its own instantiation", async () => {
+      using dir = project({
+        "a.ts": `
+          type R<N extends number, A extends 0[] = []> = A["length"] extends N ? { end: 1 } : { [K in keyof R<N, [...A, 0]>]: K };
+          export type Fits = R<31>;
+          export type First = R<32>;
+          export type Again = R<32>;
+          interface C<P extends number> { m<U>(a0: R<P>, a1: U): void }
+          declare const c: C<32>;
+          c.m<number>(null!, 1);
+          c.m<number>();
+        `,
+        "b.ts": `
+          type L<N extends number, A extends 1[] = []> = A["length"] extends N ? "end" : Lowercase<L<N, [...A, 1]>>;
+          export type Fits = L<47>;
+          export type First = L<48>;
+        `,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,31): error TS5114: Instantiations of type 'R' appear infinitely circular.
+        a.ts(9,13): error TS2554: Expected 2 arguments, but got 0.
+        b.ts(4,31): error TS5115: Instantiations of the following types appear infinitely circular: 'Lowercase', 'L'.
+        "
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS5114 at the same recursion depth as tsc for every way a type can recur", async () => {
       // `E` is the element type of the counting tuples, and it's different in every file. The first `length` lookup on
       // a tuple takes two more levels, and tuple types are shared by the whole program.

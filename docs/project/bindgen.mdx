@@ -147,7 +147,7 @@ let global = unsafe { heap.global() };
 `throws: true` makes the return type a `Result`. The error is a
 `bindgen::Error<'a>`, made by `heap.error(..)`, `heap.type_error(..)`,
 `heap.range_error(..)`, `heap.error_with_code(ErrorCode::OUT_OF_RANGE, ..)`, `heap.invalid_arguments(..)`,
-`heap.illegal_constructor()`, `heap.string_too_long()`, `heap.memory_allocation_failed()` or
+`heap.string_too_long()`, `heap.memory_allocation_failed()` or
 `bindgen::Error::from_value(value)` (`?` makes one of a `JsError` or an `AllocError`), or any
 type that implements `bindgen::IntoError` (`bun_sys::Error`,
 `SystemError`, `JsError` and a `Box` of one do), which lets a `capability: "none"` function fail too.
@@ -539,23 +539,22 @@ outside the object.
 If a timer, another thread or a C library can still point at the struct after its JS object
 is collected, make the class [`refCounted`](#refcounted).
 
-| Key              | What it declares                                                                                                                                                                      |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rustPath`       | the struct                                                                                                                                                                            |
-| `refCounted`     | the struct is a separate allocation that [can outlive the object](#refcounted)                                                                                                        |
-| `finalize`       | with `refCounted`: call `fn finalize(&self)` when the object is collected                                                                                                             |
-| `construct`      | `new Name(..)`. Without it JavaScript cannot make one; Rust can, with `payload.into_js(heap)`. `"throws"`: there is a constructor, and `new` on it throws `Name is not constructible` |
-| `proto`          | properties of the prototype                                                                                                                                                           |
-| `static`         | properties of the constructor: native functions and accessors without `setter` or `cache`                                                                                             |
-| `internalFields` | JS values the object holds                                                                                                                                                            |
-| `configurable`   | `false` makes the native properties non-configurable                                                                                                                                  |
+| Key              | What it declares                                                                               |
+| ---------------- | ---------------------------------------------------------------------------------------------- |
+| `rustPath`       | the struct                                                                                     |
+| `refCounted`     | the struct is a separate allocation that [can outlive the object](#refcounted)                 |
+| `finalize`       | with `refCounted`: call `fn finalize(&self)` when the object is collected                      |
+| `construct`      | `new Name(..)`. Without it JavaScript cannot make one; Rust can, with `payload.into_js(heap)`. |
+| `proto`          | properties of the prototype                                                                    |
+| `static`         | properties of the constructor: native functions and accessors without `setter` or `cache`      |
+| `internalFields` | JS values the object holds                                                                     |
+| `configurable`   | `false` makes the native properties non-configurable                                           |
 
 Code that has the global object and no capability makes one with
 `payload.into_js_value(global)`, which returns a `JSValue`.
 
-A class that JavaScript names but cannot make, like `Crypto`, declares
-`construct: { capability: "heap", throws: true }`, and its `constructor` returns
-`Err(heap.illegal_constructor())`.
+A class that JavaScript names but cannot make, like `Crypto`, declares `construct: "illegal"`:
+`new Crypto()` throws `Illegal constructor`, and there is no `constructor` in Rust.
 
 A property of `proto` is one of these.
 

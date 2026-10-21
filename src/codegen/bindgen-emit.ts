@@ -610,10 +610,10 @@ function cppCallBody(
     } else if (expected) {
       lines.push(
         `static constexpr WTF::ASCIILiteral expected${i}[] = { ${expected.map(asciiLiteral).join(", ")} };`,
-        `[[maybe_unused]] static constexpr Bun::Bindgen::NodeArgument node${i} { ${asciiLiteral(name)}, expected${i} };`,
+        cppStaticContext(`nodeArgument${i}`, `NodeArgument { ${asciiLiteral(name)}, expected${i} }`),
       );
       // It holds the argument, so it is made where a conversion takes it.
-      ctx = `Bun::Bindgen::asLvalue(Bun::Bindgen::NodeArgumentContext { node${i}, ${value} })`;
+      ctx = `Bun::Bindgen::asLvalue(Bun::Bindgen::NodeArgumentContext { nodeArgument${i}, ${value} })`;
     } else {
       lines.push(cppStaticContext(ctx, `LiteralConversionContext { ${asciiLiteral(name)} }`));
     }
@@ -839,7 +839,7 @@ JSC_DEFINE_CUSTOM_GETTER(${get}, (JSC::JSGlobalObject * globalObject, JSC::Encod
 `;
 }
 
-const cppSetterThis = (type: ClassType) => `${cppPrologue}
+const cppSetterPrologue = (type: ClassType) => `${cppPrologue}
     auto* thisObject = dynamicDowncast<${type.cpp}>(JSC::JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         JSC::throwDOMAttributeSetterTypeError(globalObject, scope, ${type.cpp}::info(), attributeName);
@@ -863,7 +863,7 @@ JSC_DEFINE_CUSTOM_GETTER(${getterHostFunctionName(type, accessor)}, (JSC::JSGlob
 static JSC_DECLARE_CUSTOM_SETTER(${setterHostFunctionName(type, accessor)});
 JSC_DEFINE_CUSTOM_SETTER(${setterHostFunctionName(type, accessor)}, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName attributeName))
 {
-${cppSetterThis(type)}
+${cppSetterPrologue(type)}
     ${field}.set(vm, thisObject, JSC::JSValue::decode(encodedValue));
     return true;
 }
@@ -907,7 +907,7 @@ extern "C" bool ${setSymbol}(JSC::JSGlobalObject*, JSC::JSCell*, ${externType(ge
 static JSC_DECLARE_CUSTOM_SETTER(${set});
 JSC_DEFINE_CUSTOM_SETTER(${set}, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName attributeName))
 {
-${cppSetterThis(type)}
+${cppSetterPrologue(type)}
     JSC::EnsureStillAliveScope ensureThisStillAlive { thisObject };
     ${holder} assigned { JSC::JSValue::decode(encodedValue) };
     ${cppStaticContext("ctx", `LiteralConversionContext { ${asciiLiteral(`${type.name}.${getter.name}`)} }`)}
@@ -968,34 +968,30 @@ function cppSourceForClass(type: ClassType): string {
   return `${cppSourceForCell(type)}
 ${[...type.functions, ...type.staticFunctions].map(fn => cppMethod(type, fn)).join("")}${type.getters.map(getter => cppGetter(type, getter)).join("")}${type.internalFieldAccessors.map(accessor => cppInternalFieldAccessor(type, accessor)).join("")}${type.staticGetters.map(getter => cppStaticGetter(type, getter)).join("")}
 ${
-  construct
+  construct && !type.illegalConstructor
     ? `${
-        type.constructThrows
-          ? ""
-          : type.refCounted
-            ? cppExtern(classSymbolName(type, "construct"), construct, [], "void*")
-            : cppExtern(classSymbolName(type, "construct"), construct, ["JSC::Structure*"])
+        type.refCounted
+          ? cppExtern(classSymbolName(type, "construct"), construct, [], "void*")
+          : cppExtern(classSymbolName(type, "construct"), construct, ["JSC::Structure*"])
       }
 static JSC_DECLARE_HOST_FUNCTION(construct${name});
 JSC_DEFINE_HOST_FUNCTION(construct${name}, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
 ${cppPrologue}
-    ${type.constructThrows ? "" : "JSC::Structure* structure = "}Bun::Bindgen::structureForNewTarget(globalObject, callFrame, ${type.classIndex});
+    JSC::Structure* structure = Bun::Bindgen::structureForNewTarget(globalObject, callFrame, ${type.classIndex});
     RETURN_IF_EXCEPTION(scope, {});
 ${
-  type.constructThrows
-    ? `    return JSC::throwVMError(globalObject, scope, JSC::createError(globalObject, ${asciiLiteral(`${name} is not constructible`)}));`
-    : type.refCounted
-      ? cppCallBody(construct, classSymbolName(type, "construct"), [], call => [
-          `void* wrapped = ${call};`,
-          "// Not RETURN_IF_EXCEPTION: it handles traps, and a termination thrown there would leak `wrapped`.",
-          "if (!wrapped) [[unlikely]] {",
-          "    EXCEPTION_ASSERT(scope.exception());",
-          "    return {};",
-          "}",
-          `RELEASE_AND_RETURN(scope, JSC::JSValue::encode(${type.cpp}::create(vm, structure, wrapped)));`,
-        ])
-      : cppCallBody(construct, classSymbolName(type, "construct"), ["structure"])
+  type.refCounted
+    ? cppCallBody(construct, classSymbolName(type, "construct"), [], call => [
+        `void* wrapped = ${call};`,
+        "// Not RETURN_IF_EXCEPTION: it handles traps, and a termination thrown there would leak `wrapped`.",
+        "if (!wrapped) [[unlikely]] {",
+        "    EXCEPTION_ASSERT(scope.exception());",
+        "    return {};",
+        "}",
+        `RELEASE_AND_RETURN(scope, JSC::JSValue::encode(${type.cpp}::create(vm, structure, wrapped)));`,
+      ])
+    : cppCallBody(construct, classSymbolName(type, "construct"), ["structure"])
 }
 }
 `
@@ -1028,7 +1024,7 @@ ${privateFunctions
     init.setStructure(${type.cpp}::createStructure(vm, globalObject, prototype));
 ${
   construct
-    ? `    init.setConstructor(Bun::Bindgen::JSClassConstructor::create(vm, globalObject, ${asciiLiteral(name)}, construct${name}, ${construct.length ?? construct.requiredCount}, ${span(`JS${name}ConstructorTableValues`, constructorRows)}, prototype));
+    ? `    init.setConstructor(Bun::Bindgen::JSClassConstructor::create(vm, globalObject, ${asciiLiteral(name)}, ${type.illegalConstructor ? "Bun::Bindgen::illegalConstructor" : `construct${name}`}, ${construct.length ?? construct.requiredCount}, ${span(`JS${name}ConstructorTableValues`, constructorRows)}, prototype));
 `
     : ""
 }}
@@ -1493,7 +1489,7 @@ function rustForClass(type: ClassType, scope: RustScope): string {
   ];
   let thunks = "";
 
-  if (type.construct && !type.constructThrows) {
+  if (type.construct && !type.illegalConstructor) {
     const signature = type.construct;
     const call = `${rustPath}::constructor(${[...capabilityArgument[signature.capability], ...rustArguments(signature)].join(", ")})`;
     thunks += rustThunk(

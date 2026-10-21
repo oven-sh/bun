@@ -132,17 +132,10 @@ struct IDLBytes : WebCore::IDLType<Sink> {
 
 // A BufferSource as the `JSValue` itself. See IDLRawAny.
 template<bool allowShared>
-struct IDLRawBufferSource : WebCore::IDLType<JSC::JSValue> {
-    using SequenceStorageType = void;
-};
+struct IDLRawBufferSource : IDLRawAny {};
 
 // A function, or a proxy of one, as the `JSValue` itself. See IDLRawAny.
-struct IDLRawCallable : WebCore::IDLType<JSC::JSValue> {
-    using SequenceStorageType = void;
-    using NullableType = JSC::JSValue;
-    using NullableInnerParameterType = JSC::JSValue;
-    static JSC::JSValue nullValue() { return {}; }
-};
+struct IDLRawCallable : IDLRawAny {};
 
 // An instance of a generated class, as the cell itself. The caller's frame keeps it alive.
 template<typename JSClass>

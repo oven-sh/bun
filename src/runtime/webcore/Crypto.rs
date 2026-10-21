@@ -12,10 +12,6 @@ use crate::node::Encoding;
 pub(crate) struct Crypto;
 
 impl Crypto {
-    pub(crate) fn constructor<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, Self> {
-        Err(heap.illegal_constructor())
-    }
-
     pub(crate) fn get_random_values<'a>(
         _: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,

@@ -170,12 +170,6 @@ impl<'a> JsHeap<'a> {
         self.error_with_code(ErrorCode::INVALID_ARG_TYPE, args)
     }
 
-    /// What [`JSGlobalObject::throw_illegal_constructor`] throws.
-    #[cold]
-    pub fn illegal_constructor(&self) -> Error<'a> {
-        Error::unthrown(self.global_object().create_illegal_constructor_error())
-    }
-
     /// What [`JSGlobalObject::throw_string_too_long`] throws.
     #[cold]
     pub fn string_too_long(&self) -> Error<'a> {

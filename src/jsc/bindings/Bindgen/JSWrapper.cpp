@@ -40,6 +40,12 @@ JSC_DEFINE_HOST_FUNCTION(callJSClassConstructor, (JSGlobalObject * globalObject,
     return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, makeString(constructor->name(), " constructor cannot be invoked without 'new'"_s));
 }
 
+JSC_DEFINE_HOST_FUNCTION(illegalConstructor, (JSGlobalObject * globalObject, CallFrame*))
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "Illegal constructor"_s);
+}
+
 JSClassConstructor::JSClassConstructor(VM& vm, Structure* structure, NativeFunction construct)
     : Base(vm, structure, callJSClassConstructor, construct)
 {

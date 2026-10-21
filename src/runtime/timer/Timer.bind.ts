@@ -17,7 +17,7 @@ export const Timeout = b.class({
   refCounted: true,
   finalize: true,
   configurable: false,
-  construct: "throws",
+  construct: "illegal",
   internalFields: ["arguments", "callback", "idleTimeout", "repeat", "idleStart"],
   proto: {
     _destroyed: destroyed,
@@ -40,7 +40,7 @@ export const Immediate = b.class({
   refCounted: true,
   finalize: true,
   configurable: false,
-  construct: "throws",
+  construct: "illegal",
   internalFields: ["arguments", "callback"],
   proto: {
     _destroyed: destroyed,

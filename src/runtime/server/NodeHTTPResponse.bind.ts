@@ -62,6 +62,12 @@ export const NodeHTTPResponse = b.class({
       passThis: true,
       length: 8,
     },
-    writeInformational: { args: chunk, expected, capability: "js", throws: true, length: 1 },
+    writeInformational: {
+      args: chunk,
+      expected: { chunk: ["string", "Buffer", "TypedArray", "DataView"] },
+      capability: "js",
+      throws: true,
+      length: 1,
+    },
   },
 });

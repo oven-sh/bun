@@ -354,12 +354,12 @@ it.each([
   ["Timeout", () => setTimeout(() => {}, 1000)],
   ["Immediate", () => setImmediate(() => {})],
 ] as const)("new %s() throws", (name, create) => {
-  const timer = create();
-  clearTimeout(timer as NodeJS.Timeout);
-  clearImmediate(timer as NodeJS.Immediate);
+  using timer = create();
   expect(timer.constructor.name).toBe(name);
   // @ts-expect-error
-  expect(() => new timer.constructor()).toThrow(`${name} is not constructible`);
+  expect(() => new timer.constructor()).toThrow(
+    expect.objectContaining({ name: "TypeError", code: "ERR_ILLEGAL_CONSTRUCTOR", message: "Illegal constructor" }),
+  );
 });
 
 describe("symbol-keyed methods", () => {

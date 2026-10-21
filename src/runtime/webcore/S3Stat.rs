@@ -1,5 +1,4 @@
 use bun_core::String as BunString;
-use bun_jsc::bindgen::{self, JsHeap};
 use bun_jsc::{JSGlobalObject, JsResult, bun_string_jsc};
 
 pub(crate) struct S3Stat {
@@ -30,10 +29,6 @@ impl S3Stat {
 }
 
 impl S3Stat {
-    pub(crate) fn constructor<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, Self> {
-        Err(heap.illegal_constructor())
-    }
-
     pub(crate) fn get_etag(&self) -> BunString {
         self.etag.clone()
     }

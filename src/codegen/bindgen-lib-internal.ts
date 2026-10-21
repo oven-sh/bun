@@ -183,7 +183,7 @@ export abstract class Type {
 
   /** How `IDLNullable<this>::ImplementationType` says "null". */
   get nullRepresentation(): "optional" | "pointer" | "emptyValue" {
-    return "optional";
+    return this.returnsValueUnchanged ? "emptyValue" : "optional";
   }
   /** Converting `undefined` succeeds, so a dictionary member of this type is not required. */
   get takesUndefined(): boolean {
@@ -958,9 +958,6 @@ export class BufferSourceType extends Type {
 export class CallableType extends Type {
   readonly idlType = "Bun::Bindgen::IDLRawCallable";
   readonly tsType = "(...args: any[]) => any";
-  get nullRepresentation() {
-    return "emptyValue" as const;
-  }
   get holdsJSValue(): boolean {
     return true;
   }
@@ -987,9 +984,6 @@ export class CallableType extends Type {
 export class AnyType extends Type {
   readonly idlType = "Bun::Bindgen::IDLRawAny";
   readonly tsType = "any";
-  get nullRepresentation() {
-    return "emptyValue" as const;
-  }
   get holdsJSValue(): boolean {
     return true;
   }
@@ -1231,7 +1225,7 @@ export class OptionalType extends Type {
     if (this.inner instanceof BytesType) return this.inner.rustFromExternOptional(expr);
     if (this.inner instanceof Utf8Type) return `${expr}.get_optional(heap)`;
     const isNull = this.inner.nullRepresentation === "emptyValue" ? "is_empty" : "is_null";
-    return `{ let value = ${expr}; if value.${isNull}() { None } else { Some(${this.inner.rustFromExtern("value", scope)}) } }`;
+    return `if ${expr}.${isNull}() { None } else { Some(${this.inner.rustFromExtern(expr, scope)}) }`;
   }
   rustResultFieldType(scope: RustScope): string {
     return `Option<${this.inner.rustResultFieldType(scope)}>`;
@@ -1969,8 +1963,8 @@ export interface ClassOptions {
   refCounted?: boolean;
   /** With `refCounted`: call `fn finalize(&self)` when the object is collected, before its ref is dropped. */
   finalize?: boolean;
-  /** Absent: JavaScript cannot construct one, and there is no constructor object. `"throws"`: there is one, and `new` on it throws. */
-  construct?: Omit<SignatureOptions, "rustPath" | "returns"> | "throws";
+  /** Absent: JavaScript cannot construct one, and there is no constructor object. `"illegal"`: there is one, and `new` on it throws `Illegal constructor`. */
+  construct?: Omit<SignatureOptions, "rustPath" | "returns"> | "illegal";
   /** Properties of the prototype. */
   proto?: Record<string, Field>;
   /** Properties of the constructor. */
@@ -2115,7 +2109,7 @@ export class ClassType extends NamedType {
   readonly refCounted: boolean;
   readonly finalize: boolean;
   readonly construct: Signature | null;
-  readonly constructThrows: boolean;
+  readonly illegalConstructor: boolean;
   /** The native functions of the prototype. The signatures of each are `Method`s. */
   readonly functions: readonly FunctionDefinition[];
   readonly getters: readonly Getter[];
@@ -2146,9 +2140,9 @@ export class ClassType extends NamedType {
       args: Object.fromEntries(Object.entries(signature.args ?? {}).map(([name, type]) => [name, own(type)])),
       ...(signature.returns ? { returns: own(signature.returns) } : {}),
     });
-    this.constructThrows = options.construct === "throws";
+    this.illegalConstructor = options.construct === "illegal";
     this.construct = options.construct
-      ? new Signature(options.construct === "throws" ? {} : resolve(options.construct))
+      ? new Signature(options.construct === "illegal" ? {} : resolve(options.construct))
       : null;
     const members = (fields: Record<string, Field>, isStatic: boolean) =>
       Object.entries(fields).map(([name, field]): ClassMember => {

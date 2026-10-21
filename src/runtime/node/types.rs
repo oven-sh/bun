@@ -353,13 +353,8 @@ impl StringOrBuffer<'static> {
     /// directly into `*out` and returns
     /// `Ok(true)` on success, `Ok(false)` if `value` is not a string/buffer
     /// type. `*out` is left untouched on `Ok(false)` / `Err`.
-    ///
-    /// Hot callers should use this
-    /// directly — returning `JsResult<Option<StringOrBuffer>>` by value lowers
-    /// to ~128B of `vmovups` stack-to-stack copies per call which the
-    /// `Option<>`-returning wrappers below cannot always NRVO away.
     #[inline]
-    pub(crate) fn from_js_maybe_async_into(
+    fn from_js_maybe_async_into(
         out: &mut Self,
         global: &JSGlobalObject,
         value: JSValue,
@@ -481,7 +476,7 @@ impl StringOrBuffer<'static> {
     /// `*out` and returns `Ok(true)` on success, `Ok(false)` for not-a-
     /// string-or-buffer. See [`from_js_maybe_async_into`] for rationale.
     #[inline]
-    pub(crate) fn from_js_with_encoding_maybe_async_into(
+    fn from_js_with_encoding_maybe_async_into(
         out: &mut Self,
         global: &JSGlobalObject,
         value: JSValue,

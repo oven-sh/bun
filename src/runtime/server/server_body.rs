@@ -24,11 +24,11 @@ use bun_http::{self as http, Method, MimeType};
 use bun_jsc::Debugger::DebuggerId;
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError,
-    JsResult, Node, StringJsc as _, VirtualMachine, host_fn,
+    self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue,
+    JsCellRefExt as _, JsError, JsResult, Node, StringJsc as _, VirtualMachine, host_fn,
 };
 use bun_paths as paths;
-use bun_ptr::RefPtr;
+use bun_ptr::{AsCtxPtr, RefPtr};
 use bun_resolver::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph;
 use bun_sys as sys;
@@ -1376,14 +1376,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // const-asserted `bun_opaque::opaque_deref_mut`. `self.app` is `Some`
         // for the lifetime of any JS-reachable `Server` (set in `listen()`,
         // freed in `deinit()` after the JS wrapper is gone).
-        bun_opaque::opaque_deref_mut(self.app.expect("server not listening"))
+        bun_opaque::opaque_deref_mut(self.app.get().expect("server not listening"))
     }
 
     /// Unbounded so `deinit()` (in
     /// the unbounded `impl NewServer` in mod.rs) can call it without naming
     /// the per-transport `RequestContext` bounds.
-    pub(super) fn notify_inspector_server_stopped(&mut self) {
-        if self.inspector_server_id.get() != 0 {
+    pub(super) fn notify_inspector_server_stopped(&self) {
+        if self.inspector_server_id.get().get() != 0 {
             bun_core::hint::cold();
             if let Some(debugger) = &self.vm().as_mut().debugger {
                 bun_core::hint::cold();
@@ -1398,7 +1398,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // Only clear the id once the agent has been notified, so a
                 // call that races a not-yet-attached debugger leaves the id set
                 // for a later retry.
-                self.inspector_server_id = DebuggerId::init(0);
+                self.inspector_server_id.set(DebuggerId::init(0));
             }
         }
     }
@@ -1422,10 +1422,10 @@ where
     /// - .err if there is a cached failure. Currently, this requires restarting the entire server.
     /// - .pending if `callback` was stored. It will call `onPluginsResolved` or `onPluginsRejected` later.
     pub(crate) fn get_or_load_plugins(
-        &mut self,
+        &self,
         callback: ServePluginsCallback,
     ) -> GetOrStartLoadResult<'_> {
-        if let Some(p) = &self.plugins {
+        if let Some(p) = self.plugins.get() {
             // Keep `*p` alive across re-entrant JS in `load_and_resolve_plugins`.
             let p = p.clone();
             let global = self.global();
@@ -1447,7 +1447,7 @@ where
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_subscriber_count(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1484,7 +1484,7 @@ where
     /// `pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false)`
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_stop(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1497,7 +1497,7 @@ where
     /// `pub const dispose = host_fn.wrapInstanceMethod(ThisServer, "disposeFromJS", false)`
     #[bun_jsc::host_fn(method)]
     pub(crate) fn dispose(
-        &mut self,
+        &self,
         _global: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1507,7 +1507,7 @@ where
     /// `pub const doUpgrade = host_fn.wrapInstanceMethod(ThisServer, "onUpgrade", false)`
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_upgrade(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1524,7 +1524,7 @@ where
     /// `pub const doPublish = host_fn.wrapInstanceMethod(ThisServer, "publish", false)`
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_publish(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1547,13 +1547,13 @@ where
         let payload = payload_from_js(global, "publish", message_value, Accept::AnyOrNullish)?;
         let bytes = payload.bytes();
 
-        if self.config.websocket.is_none() {
+        if self.config.get().websocket.is_none() {
             return Ok(JSValue::js_number(0.0));
         }
         if topic.slice().is_empty() {
             return Err(global.throw(format_args!("publish requires a topic string")));
         }
-        let Some(app) = self.app else {
+        let Some(app) = self.app.get() else {
             return Ok(JSValue::js_number(0.0));
         };
         let status = AnyWebSocket::publish_with_options(
@@ -1570,7 +1570,7 @@ where
     /// `pub const doRequestIP = host_fn.wrapInstanceMethod(ThisServer, "requestIP", false)`
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_request_ip(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1587,7 +1587,7 @@ where
     /// `pub const doReload = onReload`
     #[inline]
     pub(crate) fn do_reload(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1597,7 +1597,7 @@ where
     /// `pub const doFetch = onFetch`
     #[inline]
     pub(crate) fn do_fetch(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1607,7 +1607,7 @@ where
     /// `pub const doTimeout = timeout`
     #[inline]
     pub(crate) fn do_timeout(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1615,7 +1615,7 @@ where
     }
 
     pub(crate) fn request_ip(&self, request: &Request) -> JsResult<JSValue> {
-        if self.config.address.is_unix() {
+        if self.config.get().address.is_unix() {
             return Ok(JSValue::NULL);
         }
         let Some(info) = request.request_context.get_remote_socket_info() else {
@@ -1631,7 +1631,7 @@ where
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn timeout(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1642,7 +1642,7 @@ where
 
         let seconds = arguments[1];
 
-        if self.config.address.is_unix() {
+        if self.config.get().address.is_unix() {
             return Ok(JSValue::NULL);
         }
 
@@ -1670,7 +1670,7 @@ where
     }
 
     pub(crate) fn on_upgrade(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         object: JSValue,
         optional: Option<JSValue>,
@@ -1678,13 +1678,13 @@ where
         use bun_core::Utf8Bytes;
         use bun_jsc::HTTPHeaderName;
 
-        if self.config.websocket.is_none() {
+        if self.config.get().websocket.is_none() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "To enable websocket support, set the \"websocket\" object in Bun.serve({{}})"
             )));
         }
 
-        if self.flags.contains(ServerFlags::TERMINATED) {
+        if self.flags.get().contains(ServerFlags::TERMINATED) {
             return Ok(JSValue::FALSE);
         }
 
@@ -1695,6 +1695,7 @@ where
         // `ServerWebSocket` whose open/close accounting is skipped.
         if self
             .config
+            .get()
             .websocket
             .as_ref()
             .is_some_and(|ws| ws.handler.server.is_none())
@@ -1849,7 +1850,7 @@ where
 
             options.data.ensure_still_alive();
             let ws = ServerWebSocket::init(
-                &self.config.websocket.as_ref().unwrap().handler,
+                &self.config.get().websocket.as_ref().unwrap().handler,
                 options.data,
                 signal,
             );
@@ -1895,7 +1896,7 @@ where
     /// valid-but-emptied state and its `Drop` frees whatever was *not* taken.
     /// Any `Some(ws)` is adopted unconditionally, as on the initial serve.
     pub(crate) fn on_reload_from_zig(
-        &mut self,
+        &self,
         new_config: &mut ServerConfig,
         global: &JSGlobalObject,
     ) {
@@ -1924,7 +1925,8 @@ where
                 global,
                 Self::js_gc_on_request_set,
             );
-            self.config.on_request = new_config.on_request;
+            self.config
+                .with_mut(|config| config.on_request = new_config.on_request);
         }
         // Swap on any change, *including* clearing to ZERO when the reload
         // config omits the handler, so subsequent `on_web_socket_upgrade` /
@@ -1937,8 +1939,8 @@ where
         // and set_routes would swap the context onto the node:http handler
         // instantiation under those already-sized allocations, so the node
         // request path would construct and index past them.
-        if self.config.is_node_http_server
-            && self.config.on_node_http_request != new_config.on_node_http_request
+        if self.config.get().is_node_http_server
+            && self.config.get().on_node_http_request != new_config.on_node_http_request
         {
             super::wrap_handler_slot(
                 &mut new_config.on_node_http_request,
@@ -1946,7 +1948,9 @@ where
                 global,
                 Self::js_gc_on_node_http_request_set,
             );
-            self.config.on_node_http_request = new_config.on_node_http_request;
+            self.config.with_mut(|config| {
+                config.on_node_http_request = new_config.on_node_http_request;
+            });
         }
         if !new_config.on_error.is_empty_or_undefined_or_null() {
             super::wrap_handler_slot(
@@ -1955,34 +1959,40 @@ where
                 global,
                 Self::js_gc_on_error_set,
             );
-            self.config.on_error = new_config.on_error;
+            self.config
+                .with_mut(|config| config.on_error = new_config.on_error);
         }
 
         if let Some(mut ws) = new_config.websocket.take() {
             ws.handler
                 .flags
                 .set(super::web_socket_server_context::HandlerFlags::SSL, SSL);
-            self.config.websocket = Some(ws);
+            self.config.with_mut(|config| config.websocket = Some(ws));
             self.write_ws_handler_slots(server_js, global);
         }
 
         // These get re-applied when we set the static routes again.
-        if let Some(dev_server) = self.dev_server.as_deref_mut() {
-            // Prevent a use-after-free in the hash table keys.
-            dev_server.html_router.clear();
-            dev_server.html_router.fallback = None;
-        }
+        self.dev_server.with_mut(|dev_server| {
+            if let Some(dev_server) = dev_server.as_deref_mut() {
+                // Prevent a use-after-free in the hash table keys.
+                dev_server.html_router.clear();
+                dev_server.html_router.fallback = None;
+            }
+        });
 
         // NOTE: `Vec<StaticRouteEntry>` impls `Drop`, so
         // a move-assign frees the old `static_routes`.
-        self.config.static_routes = core::mem::take(&mut new_config.static_routes);
-        self.config.negative_routes = core::mem::take(&mut new_config.negative_routes);
+        self.config.with_mut(|config| {
+            config.static_routes = core::mem::take(&mut new_config.static_routes);
+            config.negative_routes = core::mem::take(&mut new_config.negative_routes);
+        });
 
         if new_config.had_routes_object {
-            self.config.user_routes_to_build =
-                core::mem::take(&mut new_config.user_routes_to_build);
+            self.config.with_mut(|config| {
+                config.user_routes_to_build = core::mem::take(&mut new_config.user_routes_to_build);
+            });
             // `UserRoute`'s owned `RouteDeclaration` drops via `Vec::clear`.
-            self.user_routes.clear();
+            self.user_routes.with_mut(|user_routes| user_routes.clear());
         }
 
         let route_list_value = self.set_routes();
@@ -1990,7 +2000,7 @@ where
             Self::js_gc_route_list_set(server_js, global, route_list_value);
         }
 
-        if self.inspector_server_id.get() != 0 {
+        if self.inspector_server_id.get().get() != 0 {
             if let Some(debugger) = self.vm().as_mut().debugger.as_deref_mut() {
                 bun_core::handle_oom(super::http_server_agent::notify_server_routes_updated(
                     &debugger.http_server_agent,
@@ -2000,12 +2010,15 @@ where
         }
     }
 
-    pub(crate) fn reload_static_routes(&mut self) -> Result<bool, crate::Error> {
-        if self.app.is_none() {
+    pub(crate) fn reload_static_routes(&self) -> Result<bool, crate::Error> {
+        if self.app.get().is_none() {
             // Static routes will get cleaned up when the server is stopped
             return Ok(false);
         }
-        self.config = self.config.clone_for_reloading_static_routes()?;
+        self.config.with_mut(|config| {
+            *config = config.clone_for_reloading_static_routes()?;
+            Ok::<(), crate::Error>(())
+        })?;
         self.app_mut().clear_routes();
         for_each_mux_app!(self, |mux| {
             mux.clear_routes();
@@ -2021,7 +2034,7 @@ where
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn on_reload(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -2039,8 +2052,8 @@ where
             server_config::FromJSOptions {
                 allow_bake_config: false,
                 is_fetch_required: true,
-                previous_fetch: !self.config.on_request.is_empty_or_undefined_or_null(),
-                previous_routes: !self.user_routes.is_empty(),
+                previous_fetch: !self.config.get().on_request.is_empty_or_undefined_or_null(),
+                previous_routes: !self.user_routes.get().is_empty(),
             },
         )?;
 
@@ -2056,13 +2069,13 @@ where
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn on_fetch(
-        &mut self,
+        &self,
         ctx: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
 
-        if self.config.on_request.is_empty() {
+        if self.config.get().on_request.is_empty() {
             return Ok(JSPromise::rejected_promise(
                 ctx,
                 ctx.create_error_instance(format_args!(
@@ -2177,9 +2190,9 @@ where
             return Ok(JSPromise::rejected_promise(ctx, err).to_js());
         };
 
-        debug_assert!(!self.config.on_request.is_empty()); // confirmed above
+        debug_assert!(!self.config.get().on_request.is_empty()); // confirmed above
         let global_this = self.global();
-        let on_request = self.config.on_request;
+        let on_request = self.config.get().on_request;
         // SAFETY: `request` was just allocated via `heap::alloc`; its ref
         // transfers to the JS wrapper inside `to_js`.
         let request_value = unsafe { (*request).to_js(&global_this) };
@@ -2219,15 +2232,15 @@ where
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn close_idle_connections(
-        &mut self,
+        &self,
         _global: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if self.app.is_none() || self.deinit_running.get() {
+        if self.app.get().is_none() || self.deinit_running.get() {
             return Ok(JSValue::js_number(0.0));
         }
         // Each close reaches `on_connection_filter(-2)` synchronously; hold
-        // the guard so it cannot re-derive `&mut self` while this frame owns
+        // the guard so that does not run the idle pass before this frame runs
         // it. One-shot sweep (Node semantics): busy connections are spared
         // and are NOT marked to close later.
         self.deinit_running.set(true);
@@ -2237,16 +2250,16 @@ where
         Ok(JSValue::js_number(closed as f64))
     }
 
-    pub(crate) fn stop_from_js(&mut self, abruptly: Option<JSValue>) -> JSValue {
+    pub(crate) fn stop_from_js(&self, abruptly: Option<JSValue>) -> JSValue {
         let rc = self.get_all_closed_promise(&self.global());
 
         let abrupt = matches!(abruptly, Some(v) if v.is_boolean() && v.to_boolean());
         // `!deinit_running`: a `server.stop()` reached from a close callback
         // that an outer `stop()`'s drain fired would re-enter `stop_listening`
-        // with a fresh `&mut self` under the outer frame's borrow.
+        // under the outer frame.
         if self.has_listener()
             || (abrupt
-                && !self.flags.contains(ServerFlags::TERMINATED)
+                && !self.flags.get().contains(ServerFlags::TERMINATED)
                 && !self.deinit_running.get())
         {
             self.stop(abrupt);
@@ -2255,9 +2268,9 @@ where
         rc
     }
 
-    pub(crate) fn dispose_from_js(&mut self) -> JSValue {
+    pub(crate) fn dispose_from_js(&self) -> JSValue {
         if self.has_listener()
-            || (!self.flags.contains(ServerFlags::TERMINATED) && !self.deinit_running.get())
+            || (!self.flags.get().contains(ServerFlags::TERMINATED) && !self.deinit_running.get())
         {
             self.stop(true);
         }
@@ -2266,19 +2279,19 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_port(&self, _: &JSGlobalObject) -> JSValue {
-        let config_port = match &self.config.address {
+        let config_port = match &self.config.get().address {
             server_config::Address::Unix(_) => return JSValue::UNDEFINED,
             server_config::Address::Tcp { port, .. } => *port,
         };
 
-        if let Some(listener) = self.listener {
+        if let Some(listener) = self.listener.get() {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             if let Some(p) = bun_opaque::opaque_deref_mut(listener).get_local_port() {
                 return JSValue::js_number(p as f64);
             }
         }
         if Self::HAS_H3 {
-            if let Some(h3l) = self.h3_listener {
+            if let Some(h3l) = self.h3_listener.get() {
                 // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 if let Some(p) = bun_opaque::opaque_deref_mut(h3l).get_local_port() {
                     return JSValue::js_number(p as f64);
@@ -2290,7 +2303,7 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_id(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::create_utf8_for_js(global, &self.config.id)
+        bun_string_jsc::create_utf8_for_js(global, &self.config.get().id)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2305,14 +2318,14 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_address(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let mut port: u16 = match &self.config.address {
+        let mut port: u16 = match &self.config.get().address {
             server_config::Address::Unix(unix) => {
                 return bun_string_jsc::create_utf8_for_js(global, unix.as_bytes());
             }
             server_config::Address::Tcp { port, .. } => *port,
         };
 
-        if let Some(listener) = self.listener {
+        if let Some(listener) = self.listener.get() {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             let listener = bun_opaque::opaque_deref_mut(listener);
             port = listener.get_local_port().unwrap_or(port);
@@ -2331,7 +2344,7 @@ where
             return addr.into_dto(&self.global());
         }
         if Self::HAS_H3 {
-            if let Some(h3l) = self.h3_listener {
+            if let Some(h3l) = self.h3_listener.get() {
                 // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 let h3l = bun_opaque::opaque_deref_mut(h3l);
                 port = h3l.get_local_port().unwrap_or(port);
@@ -2362,11 +2375,11 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_hostname(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let hostname = match &self.config.address {
+        let hostname = match &self.config.get().address {
             server_config::Address::Unix(_) => return Ok(JSValue::UNDEFINED),
             server_config::Address::Tcp { hostname, .. } => hostname,
         };
-        if let Some(listener) = self.listener {
+        if let Some(listener) = self.listener.get() {
             let mut buf = [0u8; 1024];
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             if let Some(addr) = bun_opaque::opaque_deref_mut(listener)
@@ -2400,38 +2413,24 @@ where
         JSValue::from(DEBUG)
     }
 
-    pub(crate) fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(&self) {
         httplog!("finalize");
-        let this_ptr = bun_core::heap::into_raw(self);
-        // SAFETY: just unboxed; uniquely owned here until either the inline
-        // `deinit()` below or `schedule_deinit()`'s enqueued task reclaims it.
-        // `deinit_if_we_can` may defer (pending requests), so the free is not
-        // unconditional. `Box::into_raw` (not `heap::release`) keeps raw-owner
-        // provenance for the `deinit()` dealloc — a `&mut self`-derived tag
-        // there would be Stacked-Borrows UB. JSC-handle Drops are no-ops past
-        // `is_shutting_down()`; `TERMINATED` means `app.close()` already ran,
-        // so `NewApp::destroy` can't orphan a keep-alive socket.
-        unsafe {
-            (*this_ptr).js_value.finalize();
-            (*this_ptr).deinit_if_we_can();
-            if (*this_ptr).flags.contains(ServerFlags::DEINIT_SCHEDULED)
-                && (*this_ptr).flags.contains(ServerFlags::TERMINATED)
-                && (*this_ptr).vm().is_shutting_down()
-            {
-                Self::deinit(this_ptr);
-            }
-        }
+        self.js_value.with_mut(|js_value| js_value.finalize());
+        // HTTP/3 connections are not counted, so a drained server can have a request pending.
+        self.hold_open_ref();
+        self.deinit_if_we_can();
     }
 
-    pub(crate) fn get_all_closed_promise(&mut self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_all_closed_promise(&self, global: &JSGlobalObject) -> JSValue {
         if self.is_closed() {
             return JSPromise::resolved_promise(global, JSValue::UNDEFINED).to_js();
         }
-        if self.all_closed_promise.has_value() {
-            return self.all_closed_promise.value();
+        if self.all_closed_promise.get().has_value() {
+            return self.all_closed_promise.get().value();
         }
-        self.all_closed_promise = jsc::JSPromiseStrong::init(global);
-        self.all_closed_promise.value()
+        self.all_closed_promise
+            .set(jsc::JSPromiseStrong::init(global));
+        self.all_closed_promise.get().value()
     }
 
     // `notify_inspector_server_stopped` lives in the unbounded impl block
@@ -2439,15 +2438,15 @@ where
 
     /// Route handler for the HTTP/2 and HTTP/3 apps (`R` = `uws::H2::Response`
     /// or `uws::H3::Response`); both hand us the same decoded-header request.
-    pub(super) fn on_mux_request<R: RespLike>(&mut self, req: &mut uws::H3::Request, resp: &mut R) {
-        if self.config.on_request.is_empty() {
+    pub(super) fn on_mux_request<R: RespLike>(&self, req: &mut uws::H3::Request, resp: &mut R) {
+        if self.config.get().on_request.is_empty() {
             return Self::on_mux_404(self, req, resp);
         }
         self.on_request_for::<ServerMuxRequestContext<SSL, DEBUG>, _>(req, resp);
     }
 
     pub(super) fn on_mux_user_route_request<R: RespLike>(
-        user_route: &mut UserRoute<SSL, DEBUG>,
+        user_route: &UserRoute<SSL, DEBUG>,
         req: &mut uws::H3::Request,
         resp: &mut R,
     ) {
@@ -2456,45 +2455,33 @@ where
         );
     }
 
-    pub(super) fn on_mux_404<R: RespLike>(
-        _this: &mut Self,
-        _req: &mut uws::H3::Request,
-        resp: &mut R,
-    ) {
+    pub(super) fn on_mux_404<R: RespLike>(_this: &Self, _req: &mut uws::H3::Request, resp: &mut R) {
         resp.write_status(b"404 Not Found");
         resp.end_without_body(false);
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_ref(
-        &mut self,
-        _: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn do_ref(&self, _: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let this_value = callframe.this();
         self.ref_();
         Ok(this_value)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_unref(
-        &mut self,
-        _: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn do_unref(&self, _: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let this_value = callframe.this();
         self.unref();
         Ok(this_value)
     }
 
     pub(crate) fn on_bun_info_request(
-        &mut self,
+        &self,
         req: &mut uws::Request,
         resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
         jsc::mark_binding!();
-        if !self.config.address.is_unix()
-            && (!bake::is_allowed_host_header(req, Some(&self.config.address))
+        if !self.config.get().address.is_unix()
+            && (!bake::is_allowed_host_header(req, Some(&self.config.get().address))
                 || !resp
                     .get_remote_socket_info()
                     .is_some_and(|address| address.is_loopback()))
@@ -2637,7 +2624,7 @@ where
     }
 
     fn on_request_for<Ctx: RequestCtxOps<Server = Self>, R: RespLike>(
-        &mut self,
+        &self,
         req: &mut Ctx::Req,
         resp: &mut R,
     ) {
@@ -2645,7 +2632,7 @@ where
             respond_stopped_503(resp);
             return;
         };
-        let self_ptr: *mut Self = self;
+        let self_ptr: *mut Self = self.as_ctx_ptr();
         let should_deinit_context = core::cell::Cell::new(false);
         let Some(prepared) = Self::prepare_js_request_context_for::<Ctx, R>(
             self_ptr,
@@ -2658,14 +2645,11 @@ where
             return;
         };
 
-        // SAFETY: `self_ptr` is `self`, live for this frame. Shared — the
-        // handler call below re-enters JS, so no `&mut` may span it.
-        let server = unsafe { &*self_ptr };
-        let _entered = server.vm().enter_event_loop_scope_without_checkpoint();
-        let on_request_fn = server.config.on_request;
+        let _entered = self.vm().enter_event_loop_scope_without_checkpoint();
+        let on_request_fn = self.config.get().on_request;
         debug_assert!(!on_request_fn.is_empty());
 
-        let global = server.global_this();
+        let global = self.global_this();
         let response_value =
             match on_request_fn.call(global, js_value, &[prepared.js_request, js_value]) {
                 Ok(v) => v,
@@ -2724,7 +2708,7 @@ where
                 // Abort the request very early. For H2/H3 a per-request error
                 // is a stream error; close_connection would take down every
                 // sibling stream on the connection.
-                if len > server.config.max_request_body_size {
+                if len > server.config.get().max_request_body_size {
                     RespLike::write_status(resp, b"413 Request Entity Too Large");
                     RespLike::end_without_body(resp, !Ctx::IS_MUX);
                     return None;
@@ -2738,7 +2722,7 @@ where
         server.on_pending_request();
 
         ReqLike::set_yield(req, false);
-        RespLike::timeout(resp, server.config.idle_timeout);
+        RespLike::timeout(resp, server.config.get().idle_timeout);
 
         // Since we do timeouts by default, we should tell the user when
         // this happens - but limit it to only warn once.
@@ -2769,10 +2753,10 @@ where
         let ctx_slot: *mut Ctx = unsafe {
             if Ctx::IS_MUX {
                 debug_assert!(
-                    !server.mux_request_pool.is_null(),
+                    !server.mux_request_pool.get().is_null(),
                     "HTTP/2 or HTTP/3 request dispatched but mux_request_pool was never allocated"
                 );
-                let slot = (*server.mux_request_pool).claim();
+                let slot = (*server.mux_request_pool.get()).claim();
                 Ctx::create_in(
                     slot.addr().as_ptr().cast(),
                     this,
@@ -3046,7 +3030,7 @@ where
             respond_stopped_503(resp);
             return;
         };
-        if this.config.on_request.is_empty() {
+        if this.config.get().on_request.is_empty() {
             // require fetch method to be set otherwise we dont know what route to call
             // this should be the fallback in case no route is provided to upgrade
             resp.write_status(b"403 Forbidden");
@@ -3113,7 +3097,7 @@ where
         let args = [unsafe { (*request_object_ptr).to_js(&global) }, server_js];
         args[0].ensure_still_alive();
 
-        let response_value = match this.config.on_request.call(&global, server_js, &args) {
+        let response_value = match this.config.get().on_request.call(&global, server_js, &args) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
         };
@@ -3149,7 +3133,7 @@ where
 
     // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
     pub(super) fn on_chrome_dev_tools_json_request(
-        &mut self,
+        &self,
         req: &mut uws::Request,
         resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
@@ -3163,7 +3147,7 @@ where
         }
 
         let authorized = 'brk: {
-            let Some(dev_server) = self.dev_server.as_deref() else {
+            let Some(dev_server) = self.dev_server.get().as_deref() else {
                 break 'brk false;
             };
 
@@ -3205,7 +3189,7 @@ where
         // And then we use a hash of their project root directory:
         let second_hash_segment: [u8; 8] = 'brk: {
             let mut buffer = paths::path_buffer_pool::get();
-            let root = &self.dev_server.as_ref().unwrap().root;
+            let root = &self.dev_server.get().as_ref().unwrap().root;
             let len = root.len().min(buffer.len());
             break 'brk hash(strings::copy_lowercase(&root[..len], &mut buffer[..len]))
                 .to_ne_bytes();
@@ -3228,7 +3212,7 @@ where
             &mut json_string,
             "{{ \"workspace\": {{ \"root\": {}, \"uuid\": \"{}\" }} }}",
             bun_fmt::format_json_string_utf8(
-                &self.dev_server.as_ref().unwrap().root,
+                &self.dev_server.get().as_ref().unwrap().root,
                 Default::default()
             ),
             uuid,
@@ -3248,7 +3232,7 @@ where
         if self.js_value_for_dispatch().is_none() {
             return Ok(());
         }
-        let callback = self.on_clienterror;
+        let callback = self.on_clienterror.get();
         if callback.is_empty() {
             return Ok(());
         }
@@ -3293,7 +3277,7 @@ where
         if self.js_value_for_dispatch().is_none() {
             return Ok(());
         }
-        let callback = self.on_connection;
+        let callback = self.on_connection.get();
         if callback.is_empty() {
             return Ok(());
         }
@@ -3351,20 +3335,16 @@ fn server_set_on_client_error(
 
     macro_rules! handle {
         ($T:ty) => {
-            if let Some(this_ptr) = server.as_::<$T>() {
-                // SAFETY: as_ returned a non-null *mut to a live server; nothing
-                // here re-enters through it, so each scoped access is exclusive.
-                if let Some(app) = unsafe { (*this_ptr).app } {
-                    // SAFETY: see above — `&mut` scoped to this statement.
-                    unsafe {
-                        (*this_ptr).on_clienterror = callback;
-                        super::wrap_handler_slot(
-                            &mut (*this_ptr).on_clienterror,
-                            server,
-                            global,
-                            <$T>::js_gc_on_client_error_set,
-                        );
-                    }
+            if let Some(this) = server.as_class_ref::<$T>() {
+                if let Some(app) = this.app.get() {
+                    let mut on_clienterror = callback;
+                    super::wrap_handler_slot(
+                        &mut on_clienterror,
+                        server,
+                        global,
+                        <$T>::js_gc_on_client_error_set,
+                    );
+                    this.on_clienterror.set(on_clienterror);
                     // uws_sys::App::on_client_error takes the raw C-ABI handler shape;
                     // wrap our typed callback in an extern "C" thunk that slices raw_packet.
                     extern "C" fn thunk(
@@ -3395,7 +3375,7 @@ fn server_set_on_client_error(
                     }
                     // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                     bun_opaque::opaque_deref_mut(app)
-                        .on_client_error(thunk, this_ptr.cast::<c_void>());
+                        .on_client_error(thunk, this.as_ctx_ptr().cast::<c_void>());
                 }
                 return Ok(JSValue::UNDEFINED);
             }
@@ -3428,23 +3408,18 @@ fn server_set_on_connection(
 
     macro_rules! handle {
         ($T:ty) => {
-            if let Some(this_ptr) = server.as_::<$T>() {
-                // SAFETY: as_ returned a non-null *mut to a live server; nothing
-                // here re-enters through it, so each scoped access is exclusive.
-                if let Some(app) = unsafe { (*this_ptr).app } {
+            if let Some(this) = server.as_class_ref::<$T>() {
+                if let Some(app) = this.app.get() {
                     // The filter is registered once per native server: `bun --hot` gets here again, and the thunk reads the slot at call time.
-                    // SAFETY: see above — shared read scoped to this statement.
-                    let first = unsafe { (*this_ptr).on_connection.is_empty() };
-                    // SAFETY: see above — `&mut` scoped to this statement.
-                    unsafe {
-                        (*this_ptr).on_connection = callback;
-                        super::wrap_handler_slot(
-                            &mut (*this_ptr).on_connection,
-                            server,
-                            global,
-                            <$T>::js_gc_on_connection_set,
-                        );
-                    }
+                    let first = this.on_connection.get().is_empty();
+                    let mut on_connection = callback;
+                    super::wrap_handler_slot(
+                        &mut on_connection,
+                        server,
+                        global,
+                        <$T>::js_gc_on_connection_set,
+                    );
+                    this.on_connection.set(on_connection);
                     // uws filters fire with `1` when an HTTP connection is opened
                     // (for TLS, when its handshake completes) and `-1` on close;
                     // only the open notification is forwarded to JS.
@@ -3464,7 +3439,8 @@ fn server_set_on_connection(
                     }
                     if first {
                         // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                        bun_opaque::opaque_deref_mut(app).filter(thunk, this_ptr.cast::<c_void>());
+                        bun_opaque::opaque_deref_mut(app)
+                            .filter(thunk, this.as_ctx_ptr().cast::<c_void>());
                     }
                 }
                 return Ok(JSValue::UNDEFINED);
@@ -3493,33 +3469,29 @@ fn server_set_app_flags(
         )));
     }
 
-    if let Some(this) = server.as_::<HTTPServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_flags(
+    if let Some(this) = server.as_class_ref::<HTTPServer>() {
+        this.set_flags(
             require_host_header,
             use_strict_method_validation,
             lenient_http_flags,
             http_allow_half_open,
         );
-    } else if let Some(this) = server.as_::<HTTPSServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_flags(
+    } else if let Some(this) = server.as_class_ref::<HTTPSServer>() {
+        this.set_flags(
             require_host_header,
             use_strict_method_validation,
             lenient_http_flags,
             http_allow_half_open,
         );
-    } else if let Some(this) = server.as_::<DebugHTTPServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_flags(
+    } else if let Some(this) = server.as_class_ref::<DebugHTTPServer>() {
+        this.set_flags(
             require_host_header,
             use_strict_method_validation,
             lenient_http_flags,
             http_allow_half_open,
         );
-    } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_flags(
+    } else if let Some(this) = server.as_class_ref::<DebugHTTPSServer>() {
+        this.set_flags(
             require_host_header,
             use_strict_method_validation,
             lenient_http_flags,
@@ -3544,18 +3516,14 @@ fn server_set_max_http_header_size(
         )));
     }
 
-    if let Some(this) = server.as_::<HTTPServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_max_http_header_size(max_header_size);
-    } else if let Some(this) = server.as_::<HTTPSServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_max_http_header_size(max_header_size);
-    } else if let Some(this) = server.as_::<DebugHTTPServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_max_http_header_size(max_header_size);
-    } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_max_http_header_size(max_header_size);
+    if let Some(this) = server.as_class_ref::<HTTPServer>() {
+        this.set_max_http_header_size(max_header_size);
+    } else if let Some(this) = server.as_class_ref::<HTTPSServer>() {
+        this.set_max_http_header_size(max_header_size);
+    } else if let Some(this) = server.as_class_ref::<DebugHTTPServer>() {
+        this.set_max_http_header_size(max_header_size);
+    } else if let Some(this) = server.as_class_ref::<DebugHTTPSServer>() {
+        this.set_max_http_header_size(max_header_size);
     } else {
         return Err(global.throw(format_args!(
             "Failed to set maxHeaderSize: The 'this' value is not a Server."
@@ -3572,9 +3540,8 @@ fn server_set_max_headers_count(
     if server.is_object() {
         macro_rules! handle {
             ($T:ty) => {
-                if let Some(this) = server.as_::<$T>() {
-                    // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-                    unsafe { &mut *this }.set_max_headers_count(max_headers_count);
+                if let Some(this) = server.as_class_ref::<$T>() {
+                    this.set_max_headers_count(max_headers_count);
                     return Ok(JSValue::UNDEFINED);
                 }
             };

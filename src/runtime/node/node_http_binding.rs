@@ -28,11 +28,8 @@ pub(crate) fn get_bun_server_all_closed_promise(
     // Try each heterogeneous server type in turn.
     macro_rules! try_server {
         ($ty:ty) => {
-            if let Some(server) = value.as_::<$ty>() {
-                // SAFETY: `JSValue::as_` returns a non-null pointer to the live
-                // JS-owned server instance; we hold the JS thread for the duration
-                // of this call so the GC cannot collect it under us.
-                return Ok(unsafe { &mut *server }.get_all_closed_promise(global));
+            if let Some(server) = value.as_class_ref::<$ty>() {
+                return Ok(server.get_all_closed_promise(global));
             }
         };
     }
@@ -48,7 +45,7 @@ pub(crate) fn get_bun_server_all_closed_promise(
 pub(crate) fn get_bun_server_open_count(server: BunServer<'_>) -> f64 {
     macro_rules! open_count {
         ($server:expr) => {
-            $server.pending_requests.get() as f64
+            f64::from($server.pending_requests.get())
                 + f64::from($server.active_sockets_count())
                 + f64::from($server.active_connection_count.get())
         };

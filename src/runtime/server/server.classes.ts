@@ -3,9 +3,6 @@ import { define } from "../../codegen/class-definitions.ts";
 function generate(name) {
   return define({
     name,
-    // R-2 Phase 3 opt-out: `Server<SSL, DEBUG>` host-fns still take
-    // `&mut self`. Remove once the server impl is Cell/JsCell-migrated.
-    sharedThis: false,
     memoryCost: true,
     proto: {
       fetch: {
@@ -87,7 +84,7 @@ function generate(name) {
       },
     },
     klass: {},
-    finalize: true,
+    refCounted: true,
     construct: true,
     noConstructor: true,
     values: [

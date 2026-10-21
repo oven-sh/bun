@@ -571,7 +571,7 @@ impl NodeHTTPResponse {
         if !self.can_upgrade() {
             return Ok(None);
         }
-        let mut server = self.server;
+        let server = self.server;
         server.init_ws_package_handlers(global, handlers)?;
         self.resume_socket();
         if !self.can_upgrade() {
@@ -744,7 +744,7 @@ impl NodeHTTPResponse {
         self.clear_on_data_callback(self.get_this_value(), vm.global());
         self.clear_pending_pinned_write(vm.global(), JSValue::ZERO);
 
-        let mut server = self.server;
+        let server = self.server;
         self.poll_ref.with_mut(|r| r.unref(vm));
         self.unregister_auto_flush();
 

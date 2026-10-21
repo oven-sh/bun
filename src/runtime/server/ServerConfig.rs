@@ -272,7 +272,7 @@ impl ServerConfig {
         &mut self,
     ) -> Result<ServerConfig, crate::Error> {
         // The sole caller is
-        // `self.config = self.config.clone_for_reloading_static_routes()?;`.
+        // `*config = config.clone_for_reloading_static_routes()?;`.
         // Move every owning field into `that` and leave the Copy scalars in
         // place on `self` (idle_timeout, development, reuse_port, http1/http3,
         // etc. retained; resources gone), ensuring the assignment-drop of the

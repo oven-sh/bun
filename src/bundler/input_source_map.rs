@@ -20,6 +20,7 @@ pub(crate) fn load(log: &mut Log, source: &Source, comment: Span) -> Option<Box<
     let json: Vec<u8>;
     let map_dir: Option<Box<[u8]>>;
     let map_name: Box<[u8]>;
+    let mut map_path: Option<Box<[u8]>> = None;
     match bun_resolver::DataURL::parse(url) {
         Ok(Some(data_url)) => {
             match data_url.decode_data() {
@@ -40,7 +41,7 @@ pub(crate) fn load(log: &mut Log, source: &Source, comment: Span) -> Option<Box<
         }
         Ok(None) | Err(_) => {
             let url = strip_query_and_fragment(url);
-            let map_path: Box<[u8]> = if let Some(path) = path_from_file_url(url) {
+            let sidecar_path: Box<[u8]> = if let Some(path) = path_from_file_url(url) {
                 path
             } else if url_scheme(url).is_some() || url.starts_with(b"//") {
                 // `https://…` and the like: unreadable here and not the user's to fix, so no warning.
@@ -55,14 +56,25 @@ pub(crate) fn load(log: &mut Log, source: &Source, comment: Span) -> Option<Box<
                 >(source_dir, &mut buf[..], &[&decoded])?)
             };
 
-            json = match bun_sys::File::read_from(bun_sys::Fd::cwd(), &map_path) {
-                Ok(bytes) => bytes,
+            json = match read_regular_file(&sidecar_path) {
+                Ok(Some(bytes)) => bytes,
+                Ok(None) => {
+                    log.add_range_warning_fmt(
+                        Some(source),
+                        comment.range,
+                        format_args!(
+                            "Cannot read source map file \"{}\": not a regular file",
+                            bstr::BStr::new(&sidecar_path)
+                        ),
+                    );
+                    return None;
+                }
                 // Published packages routinely name a `.map` they do not ship; like esbuild, say nothing.
                 Err(err) if matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => {
                     bun_core::scoped_log!(
                         InputSourceMap,
                         "missing source map {}",
-                        bstr::BStr::new(&map_path)
+                        bstr::BStr::new(&sidecar_path)
                     );
                     return None;
                 }
@@ -72,7 +84,7 @@ pub(crate) fn load(log: &mut Log, source: &Source, comment: Span) -> Option<Box<
                         comment.range,
                         format_args!(
                             "Cannot read source map file \"{}\": {}",
-                            bstr::BStr::new(&map_path),
+                            bstr::BStr::new(&sidecar_path),
                             bstr::BStr::new(err.name())
                         ),
                     );
@@ -81,14 +93,18 @@ pub(crate) fn load(log: &mut Log, source: &Source, comment: Span) -> Option<Box<
             };
             map_dir = Some(Box::from(bun_paths::resolve_path::dirname::<
                 bun_paths::resolve_path::platform::Auto,
-            >(&map_path)));
-            map_name = map_path;
+            >(&sidecar_path)));
+            map_name = sidecar_path.clone();
+            map_path = Some(sidecar_path);
         }
     }
 
-    let mut read_file = |path: &[u8]| bun_sys::File::read_from(bun_sys::Fd::cwd(), path).ok();
+    let mut read_file = |path: &[u8]| read_regular_file(path).ok().flatten();
     match InputSourceMap::parse(&json, map_dir.as_deref(), &mut read_file) {
-        Ok(Some(map)) => Some(Box::new(map)),
+        Ok(Some(mut map)) => {
+            map.map_path = map_path;
+            Some(Box::new(map))
+        }
         Ok(None) => None,
         Err(err) => {
             log.add_range_warning_fmt(
@@ -103,6 +119,29 @@ pub(crate) fn load(log: &mut Log, source: &Source, comment: Span) -> Option<Box<
             None
         }
     }
+}
+
+/// `Ok(None)`: not a regular file. The path comes from file content, so a device or a pipe
+/// must not be read to EOF, and the read stops at the size `fstat` reports.
+fn read_regular_file(path: &[u8]) -> bun_sys::Maybe<Option<Vec<u8>>> {
+    let file = bun_sys::File::openat(
+        bun_sys::Fd::cwd(),
+        path,
+        bun_sys::O::RDONLY | bun_sys::O::NONBLOCK,
+        0,
+    )?;
+    if file.kind()? != bun_core::util::FileKind::File {
+        return Ok(None);
+    }
+    let size = file.get_end_pos()?;
+    let mut bytes: Vec<u8> = Vec::new();
+    if bytes.try_reserve_exact(size).is_err() {
+        return Err(bun_sys::Error::oom());
+    }
+    bytes.resize(size, 0);
+    let read = file.read_all(&mut bytes)?;
+    bytes.truncate(read);
+    Ok(Some(bytes))
 }
 
 fn strip_query_and_fragment(url: &[u8]) -> &[u8] {

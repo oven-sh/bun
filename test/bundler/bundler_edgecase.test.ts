@@ -1795,6 +1795,22 @@ describe("bundler", () => {
       expect(JSON.parse(api.readFile("/out/entry.js.map")).sources).toEqual(["../lib/lib.js", "../entry.js"]);
     },
   });
+  itBundled("edgecase/InputSourceMapNotARegularFile", {
+    files: {
+      // The comment names a directory. Only a regular file is read.
+      "/lib/lib.js": inputSourceMapFixture.js + `//# sourceMappingURL=.\n`,
+      "/entry.js": `import { f } from "./lib/lib.js";\nf({ x: 1 });\n`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    sourceMap: "external",
+    bundleWarnings: {
+      "/lib/lib.js": ["Cannot read source map file"],
+    },
+    onAfterBundle(api) {
+      expect(JSON.parse(api.readFile("/out/entry.js.map")).sources).toEqual(["../lib/lib.js", "../entry.js"]);
+    },
+  });
   itBundled("edgecase/InputSourceMapUrlSourcesAtRuntime", {
     files: {
       // A `sources` entry that is a URL (webpack, rollup) is kept as written.

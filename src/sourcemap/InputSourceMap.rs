@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use bun_ast::e::{JsonValue, ObjectJSON};
 use bun_ast::expr::Data as ExprData;
-use bun_core::MutableString;
+use bun_core::{MutableString, UnwrapOrOom};
 
 use crate::mapping::{self, Mapping};
 use crate::{LineColumnOffset, Ordinal};
@@ -15,6 +15,8 @@ pub struct InputSourceMap {
     pub sources: Box<[InputSource]>,
     /// `sourcesContent` per source as JSON: `"..."` or `null`.
     pub quoted_sources_content: Box<[Box<[u8]>]>,
+    /// The sidecar file the map was read from, for the watcher. `None` for a `data:` URL.
+    pub map_path: Option<Box<[u8]>>,
 }
 
 pub struct InputSource {
@@ -117,7 +119,6 @@ impl InputSourceMap {
         let mut sources: Vec<InputSource> = Vec::new();
         let mut sources_content: Vec<Option<&[u8]>> = Vec::new();
         let mut needs_sort = false;
-        let mut prev_offset = (0i32, 0i32);
 
         for section in &sections {
             match section.map.get(b"version") {
@@ -168,6 +169,9 @@ impl InputSourceMap {
                 },
             ) {
                 Ok(parsed) => parsed,
+                Err(fail) if matches!(fail.err, crate::Error::Alloc(_)) => {
+                    bun_core::out_of_memory()
+                }
                 Err(fail) => {
                     return Err(ParseError(Cow::Owned(
                         format!(
@@ -180,15 +184,12 @@ impl InputSourceMap {
                 }
             };
 
-            if (section.line_offset, section.column_offset) < prev_offset {
-                needs_sort = true;
-            }
-            prev_offset = (section.line_offset, section.column_offset);
-
-            if sections.len() == 1 && prev_offset == (0, 0) {
+            if sections.len() == 1 && (section.line_offset, section.column_offset) == (0, 0) {
                 let mut parsed = parsed;
                 mappings = core::mem::take(&mut parsed.mappings);
             } else {
+                // Sections can overlap or come out of offset order. `find` needs one sorted list.
+                needs_sort = true;
                 let section_mappings = &parsed.mappings;
                 let generated = section_mappings.generated();
                 let original = section_mappings.original();
@@ -218,7 +219,7 @@ impl InputSourceMap {
                             source_index: source_index[i] + source_offset,
                             name_index: -1,
                         })
-                        .map_err(|_| ParseError::msg("out of memory"))?;
+                        .unwrap_or_oom();
                 }
             }
 
@@ -254,10 +255,8 @@ impl InputSourceMap {
             };
             quoted_sources_content.push(match content {
                 Some(content) => {
-                    let mut quoted = MutableString::init(content.len() + 2)
-                        .map_err(|_| ParseError::msg("out of memory"))?;
-                    bun_core::quote_for_json(content, &mut quoted, false)
-                        .map_err(|_| ParseError::msg("out of memory"))?;
+                    let mut quoted = MutableString::init(content.len() + 2).unwrap_or_oom();
+                    bun_core::quote_for_json(content, &mut quoted, false).unwrap_or_oom();
                     quoted.list.into_boxed_slice()
                 }
                 None => Box::from(&b"null"[..]),
@@ -268,6 +267,7 @@ impl InputSourceMap {
             mappings,
             sources: sources.into_boxed_slice(),
             quoted_sources_content: quoted_sources_content.into_boxed_slice(),
+            map_path: None,
         }))
     }
 

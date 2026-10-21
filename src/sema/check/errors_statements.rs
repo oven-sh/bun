@@ -844,7 +844,26 @@ impl Checker<'_, '_> {
         } else {
             (file, at, self.error_end_of(file, decl.init))
         };
-        self.check_type_assignable_to(source, target, Some(at), Some(2850 + u32::from(is_await)));
+        if is_await {
+            self.check_type_assignable_to(source, target, Some(at), Some(2851));
+            return;
+        }
+        let mut diags = Vec::new();
+        if self.check_type_assignable_to_ex(source, target, Some(at), Some(2850), Some(&mut diags))
+        {
+            return;
+        }
+        let Some(mut diagnostic) = diags.into_iter().next() else {
+            return;
+        };
+        if self.get_global_type(known::AsyncDisposable, 0).is_some() {
+            let disposable = self.global_ref(known::AsyncDisposable, &[]);
+            let optional = self.union(&[disposable, TypeId::NULL, TypeId::UNDEFINED]);
+            if self.is_assignable(source, optional) {
+                diagnostic.message_chain.push(Reported::bare(at, 18116));
+            }
+        }
+        self.add_diagnostic(diagnostic);
     }
 
     /// Reports the errors in `e` that were discarded when `e` was first checked, two messages deep.

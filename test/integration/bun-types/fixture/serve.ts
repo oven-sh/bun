@@ -85,6 +85,19 @@ const s4 = Bun.serve({
   },
 });
 
+// idleTimeout applies to a unix socket listener as well as to hostname+port
+Bun.serve({
+  unix: "/tmp/bun-types-fixture.sock",
+  idleTimeout: 0,
+  fetch: () => new Response("ok"),
+});
+
+Bun.serve({
+  port: 0,
+  idleTimeout: 30,
+  fetch: () => new Response("ok"),
+});
+
 Bun.serve({
   tls: [
     { key: "key", cert: "cert", ca: "ca", requestCert: true, crl: Bun.file("crl.pem") },

@@ -845,6 +845,15 @@ declare module "bun" {
       maxRequestBodySize?: number;
 
       /**
+       * Sets the number of seconds to wait before timing out a connection
+       * due to inactivity. Applies to a hostname+port listener and to a
+       * {@link UnixServeOptions.unix unix} socket listener. `0` disables it.
+       *
+       * @default 10
+       */
+      idleTimeout?: number;
+
+      /**
        * Whether to render contextual errors with Bun's error page
        * @default process.env.NODE_ENV !== 'production'
        */
@@ -948,14 +957,6 @@ declare module "bun" {
        * @experimental
        */
       http1?: boolean;
-
-      /**
-       * Sets the number of seconds to wait before timing out a connection
-       * due to inactivity.
-       *
-       * @default 10
-       */
-      idleTimeout?: number;
     }
 
     interface UnixServeOptions<WebSocketData> extends BaseServeOptions<WebSocketData> {

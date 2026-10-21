@@ -1030,6 +1030,12 @@ impl<'s> Buffer<'s> {
         *cell
     }
 
+    /// `store_published_id` for an entry that no commit publishes.
+    #[inline]
+    pub(crate) fn store_unlogged(&mut self, slot: u32, number: u32, raw: u32) {
+        *self.published_id_cell(slot, number) = raw;
+    }
+
     #[inline]
     pub(crate) fn store_published_id(&mut self, slot: u32, number: u32, raw: u32) {
         *self.published_id_cell(slot, number) = raw;

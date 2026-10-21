@@ -78,7 +78,9 @@
 //!   comparison that succeeded because two types inside it counted as deeply nested, and the constraints and
 //!   comparisons that follow from either (`Checker::constraints_of_this_task`, `relations_of_this_task`). In a shared
 //!   table the first such result would stick for every task. They stay for the rest of the task, because its other
-//!   tables keep what was derived from them for that long.
+//!   tables keep what was derived from them for that long. An entry under a record whose evaluation used such a
+//!   comparison stays in the task too (`Task::note_assumption`). Otherwise another task would find what follows from
+//!   the comparison, and make the comparison itself with another result.
 //! - Variances don't wait for a commit either. See `Claims`.
 
 use super::task::{Task, tables_of, tables_written_immediately};

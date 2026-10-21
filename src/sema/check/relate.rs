@@ -4181,6 +4181,9 @@ impl<'p, 's> Checker<'p, 's> {
                 // left. Unknown results stay unknown.
                 // Where two types count as deeply nested depends on the comparisons around this one.
                 let is_cut = self.comparisons_of_deeply_nested_types != cuts;
+                if is_cut && self.task.commits() {
+                    self.task.note_assumption();
+                }
                 let outer_per_task = std::mem::replace(
                     &mut self.stores_relations_per_task,
                     is_cut && self.task.commits(),
@@ -4278,7 +4281,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let cached_value = self.relations_of_this_task.get(key).copied()?;
         self.comparisons_of_deeply_nested_types += 1;
-        self.task.hold_back();
+        self.task.note_assumption();
         Some(cached_value)
     }
 

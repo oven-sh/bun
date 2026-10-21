@@ -223,7 +223,13 @@ impl History {
         };
         self.file_path = Some(Box::<[u8]>::from(path.as_bytes()));
 
-        let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), path) {
+        let fd = match sys::open(path, sys::O::RDONLY, 0) {
+            sys::Result::Ok(fd) => fd,
+            sys::Result::Err(_) => return Ok(()),
+        };
+        let content = sys::File::borrow(&fd).read_to_end();
+        Self::close(fd);
+        let content: Box<[u8]> = match content {
             sys::Result::Ok(bytes) => bytes.into(),
             sys::Result::Err(_) => return Ok(()),
         };
@@ -281,9 +287,16 @@ impl History {
             content.push(b'\n');
         }
 
+        let mut rest: &[u8] = &content;
+        while !rest.is_empty() {
+            match sys::write(fd, rest) {
+                sys::Result::Ok(n) if n > 0 => rest = &rest[n..],
+                _ => break,
+            }
+        }
         // The length is set after the write: `O::TRUNC` leaves an empty file if the write fails.
-        let written = sys::File::borrow(&fd).write_all(&content).is_ok()
-            && (!rewrite || sys::ftruncate(fd, content.len() as i64).is_ok());
+        let written =
+            rest.is_empty() && (!rewrite || sys::ftruncate(fd, content.len() as i64).is_ok());
         if written {
             match how {
                 HistoryWrite::Append => {
@@ -293,9 +306,14 @@ impl History {
                 HistoryWrite::Rewrite => self.file_entries = count,
             }
         }
-        // A failed append can leave a part of a line in the file.
-        self.unterminated = !written && (self.unterminated || !rewrite);
-        // `File` never closes fd 0 to 2, and this is one of them after the REPL's code closed it.
+        // An append that stops part way leaves a line without its newline.
+        let cut_short = !rewrite && !rest.is_empty() && rest.len() < content.len();
+        self.unterminated = !written && (self.unterminated || cut_short);
+        Self::close(fd);
+    }
+
+    /// `File` never closes fd 0 to 2, and `fd` is one of them after the REPL's code closed it.
+    fn close(fd: Fd) {
         let _ = sys::FdExt::close_allowing_standard_io(fd, None);
     }
 
@@ -323,9 +341,10 @@ impl History {
         }
 
         // Written now: `process.exit()` and a signal end the process without any code of the REPL.
+        let before = self.file_entries;
         self.write(HistoryWrite::Append);
-        // At twice the cap the file is read again, which cuts it back. The session keeps its entries.
-        if self.file_entries >= 2 * MAX_HISTORY_SIZE {
+        // The append that brings the file to twice the cap reads it again, which cuts it back.
+        if before < 2 * MAX_HISTORY_SIZE && self.file_entries >= 2 * MAX_HISTORY_SIZE {
             let entries = core::mem::take(&mut self.entries);
             let _ = self.load();
             self.entries = entries;

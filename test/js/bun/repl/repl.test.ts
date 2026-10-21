@@ -1899,6 +1899,11 @@ describe.concurrent("REPL history is written when an entry is accepted", () => {
     return (await file.exists()) ? await file.text() : null;
   };
   const oldEntries = (count: number) => Array.from({ length: count }, (_, i) => `old${i}`);
+  // What `.history` prints in a session that holds 1000 entries, the last of them `entries`: the last 20.
+  const listed = (entries: string[]) =>
+    ["Command History:", ...entries.slice(-20).map((entry, i) => `  ${String(981 + i).padStart(4)}  ${entry}`)].join(
+      "\n",
+    );
   // A script for `.load`, which is a REPL command and so adds no entry.
   const onHistoryFile = (call: string) => (dir: { root: string }) =>
     `require("fs").${call.replace("FILE", () => JSON.stringify(historyPath(dir.root)))};`;
@@ -2000,15 +2005,25 @@ describe.concurrent("REPL history is written when an entry is accepted", () => {
   });
 
   // A new descriptor gets the lowest free number: 1, where `File` does not close it.
-  test.skipIf(isWindows)("the REPL's output does not go to the file after its code closes stdout", async () => {
-    using dir = tempDir("repl-history-closed-stdout", {});
-    const home = String(dir);
-    const entries = ['require("fs").closeSync(1)', "222 + 1", "333 + 1"];
+  test.skipIf(isWindows)(
+    "after its code closes stdout, the REPL keeps fd 1 free and its output out of the file",
+    async () => {
+      const old = oldEntries(1998);
+      using dir = tempDir("repl-history-closed-stdout", { ".bun_repl_history": old.join("\n") + "\n" });
+      const home = String(dir);
+      // The second entry makes 2000 entries: the session writes the entry, reads the file again and cuts it back.
+      const entries = [
+        'require("fs").closeSync(1)',
+        "222 + 1",
+        'console.error((() => { try { require("fs").fstatSync(1); return "fd 1 is open"; } catch { return "fd 1 is closed"; } })())',
+      ];
 
-    const result = await runRepl([...entries, ".exit"], { home });
-    expect(await historyText(home)).toBe(entries.join("\n") + "\n");
-    expect(result.exitCode).toBe(0);
-  });
+      const result = await runRepl([...entries, ".exit"], { home });
+      expect((await historyText(home))?.split("\n")).toEqual([...old.slice(1000), ...entries, ""]);
+      expect(result.stderr).toBe("fd 1 is closed\n");
+      expect(result.exitCode).toBe(0);
+    },
+  );
 
   test("a session without an entry does not write the file", async () => {
     const existing = "old1\n\nold2";
@@ -2073,25 +2088,29 @@ describe.concurrent("REPL history is written when an entry is accepted", () => {
     const at = path.join(String(dir), "at");
 
     const results = await Promise.all([under, at].map(home => runRepl([".history", ".exit"], { home })));
-    // `.history` lists the last 20 entries of the session. Each session holds the newest 1000.
-    const listed = old.slice(-20).map((entry, i) => `  ${String(981 + i).padStart(4)}  ${entry}`);
-    const shown = ["Command History:", ...listed].join("\n");
-    expect(results.map(result => result.outputs)).toEqual([[shown], [shown]]);
+    // Each session holds the newest 1000 entries.
+    expect(results.map(result => result.outputs)).toEqual([[listed(old)], [listed(old)]]);
     expect((await historyText(under))?.split("\n")).toEqual([...old.slice(1), ""]);
     expect((await historyText(at))?.split("\n")).toEqual([...old.slice(1000), ""]);
   });
 
   // The shell limits the REPL to files of 512 or 1024 bytes. The newest 1000 entries are 8000 bytes.
-  test.skipIf(isWindows)("a file that cannot be cut back keeps its entries", async () => {
-    const existing = oldEntries(2000).join("\n") + "\n";
+  test.skipIf(isWindows)("a file that cannot be cut back keeps its newest entries", async () => {
+    const old = oldEntries(2000);
+    const existing = old.join("\n") + "\n";
+    const cut = old.slice(1000).join("\n") + "\n";
     using dir = tempDir("repl-history-failed-cut", { ".bun_repl_history": existing });
     const home = String(dir);
 
-    const result = await runRepl([".exit"], { home, launcher: ["sh", "-c", 'ulimit -f 1 && exec "$0" "$@"'] });
-    const after = await historyText(home);
-    expect(after?.length).toBe(existing.length);
-    expect(after?.slice(1024)).toBe(existing.slice(1024));
-    expect(result.exitCode).toBe(0);
+    const limited = await runRepl([".exit"], { home, launcher: ["sh", "-c", 'ulimit -f 1 && exec "$0" "$@"'] });
+    // The write stops at the limit, or the system refuses all of it. The file keeps the rest.
+    const stopped = [0, 512, 1024].map(written => cut.slice(0, written) + existing.slice(written));
+    expect(stopped).toContain(await historyText(home));
+    expect(limited.exitCode).toBe(0);
+
+    const next = await runRepl([".history", ".exit"], { home });
+    expect(next.outputs).toEqual([listed(old)]);
+    expect(next.exitCode).toBe(0);
   });
 });
 

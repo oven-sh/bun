@@ -649,6 +649,24 @@ impl Stream {
         // SAFETY: as above.
         unsafe { lsquic_stream_send_stop_sending(self.0, code) }
     }
+    /// From here on a read does not move the stream's receive limit:
+    /// [`Stream::credit`] does.
+    pub fn credit_on_consume(&self) {
+        unsafe extern "C" {
+            fn lsquic_stream_credit_on_consume(s: *mut lsquic_stream);
+        }
+        // SAFETY: as above.
+        unsafe { lsquic_stream_credit_on_consume(self.0) }
+    }
+    /// Reports `n` bytes that a read returned as consumed. Returns whether
+    /// that queued a MAX_STREAM_DATA, which needs a tick to go out.
+    pub fn credit(&self, n: u64) -> bool {
+        unsafe extern "C" {
+            fn lsquic_stream_credit(s: *mut lsquic_stream, n: u64) -> c_int;
+        }
+        // SAFETY: as above.
+        unsafe { lsquic_stream_credit(self.0, n) != 0 }
+    }
 }
 
 pub struct HeaderSet(*mut c_void);

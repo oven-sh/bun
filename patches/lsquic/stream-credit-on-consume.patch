@@ -1,0 +1,159 @@
+--- a/include/lsquic.h
++++ b/include/lsquic.h
+@@ -1758,6 +1758,26 @@
+ lsquic_stream_wantread (lsquic_stream_t *s, int is_want);
+ 
+ /**
++ * bun: return the stream's flow-control credit when the application consumes
++ * the data, not when lsquic_stream_read() copies it out.  After
++ * lsquic_stream_credit_on_consume(), the payload that a read returns counts
++ * as unconsumed, and the stream's receive limit is the consumed offset plus
++ * the window: the peer can send at most one window that the application has
++ * not consumed.  HTTP/3 frame and header bytes are not counted.  The
++ * connection's window is credited by the read, as before.
++ *
++ * lsquic_stream_credit() reports @param n bytes of that payload as consumed.
++ * The limit then moves by the rule of a read: once less than half of the
++ * window is left.  It returns 1 if it moved: a MAX_STREAM_DATA frame is
++ * queued and goes out when the connection is next ticked.
++ */
++void
++lsquic_stream_credit_on_consume (lsquic_stream_t *s);
++
++int
++lsquic_stream_credit (lsquic_stream_t *s, uint64_t n);
++
++/**
+  * Read up to @param len bytes from stream into @param buf.  Returns number
+  * of bytes read or -1 on error, in which case errno is set.  Possible
+  * errno values:
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -3656,7 +3656,11 @@
+                              el = lsquic_hash_next(conn->ifc_pub.all_streams))
+     {
+         stream = lsquic_hashelem_getdata(el);
+-        if (is_our_stream(conn, stream))
++        /* bun: a unidirectional stream opened in 0-RTT took a bidirectional
++         * limit here and could send past the peer's window. */
++        if (((stream->id >> SD_SHIFT) & 1) == SD_UNI)
++            limit = params->tp_init_max_stream_data_uni;
++        else if (is_our_stream(conn, stream))
+             limit = params->tp_init_max_stream_data_bidi_remote;
+         else
+             limit = params->tp_init_max_stream_data_bidi_local;
+--- a/src/liblsquic/lsquic_sfcw.c
++++ b/src/liblsquic/lsquic_sfcw.c
+@@ -93,8 +93,10 @@
+ lsquic_sfcw_fc_offsets_changed (struct lsquic_sfcw *fc)
+ {
+     lsquic_time_t since_last_update, srtt, now;
++    /* bun: lsquic_stream_credit_on_consume() */
++    const uint64_t consumed = fc->sf_read_off - fc->sf_unconsumed;
+ 
+-    if (fc->sf_recv_off - fc->sf_read_off >= fc->sf_max_recv_win / 2)
++    if (fc->sf_recv_off - consumed >= fc->sf_max_recv_win / 2)
+     {
+         LSQ_DEBUG("recv_off has not changed, still at %"PRIu64,
+                                                             fc->sf_recv_off);
+@@ -109,7 +111,7 @@
+     if (since_last_update < srtt * 2)
+         sfcw_maybe_increase_max_window(fc);
+ 
+-    fc->sf_recv_off = fc->sf_read_off + fc->sf_max_recv_win;
++    fc->sf_recv_off = consumed + fc->sf_max_recv_win;
+     LSQ_DEBUG("recv_off changed: read_off: %"PRIu64"; "
+         "recv_off: %"PRIu64, fc->sf_read_off, fc->sf_recv_off);
+     return 1;
+--- a/src/liblsquic/lsquic_sfcw.h
++++ b/src/liblsquic/lsquic_sfcw.h
+@@ -20,6 +20,7 @@
+     struct lsquic_conn_public
+                        *sf_conn_pub;
+     unsigned            sf_max_recv_win;    /* Maximum receive window */
++    unsigned            sf_unconsumed;      /* bun: read, credit not returned */
+     lsquic_stream_id_t  sf_stream_id;       /* Used for logging */
+ } lsquic_sfcw_t;
+ 
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -1524,6 +1524,42 @@
+ }
+ 
+ 
++/* bun: see lsquic.h */
++void
++lsquic_stream_credit_on_consume (struct lsquic_stream *stream)
++{
++    stream->sm_dflags |= SMDF_CREDIT_ON_CONSUME;
++}
++
++
++int
++lsquic_stream_credit (struct lsquic_stream *stream, uint64_t n)
++{
++    struct lsquic_sfcw *const fc = &stream->fc;
++
++    if (n > fc->sf_unconsumed)
++        n = fc->sf_unconsumed;
++    fc->sf_unconsumed -= n;
++    /* No larger limit is of use to the peer.  After a reset sf_read_off is
++     * the final size, which lsquic_sfcw_consume_rem() gave to the
++     * connection: stream_consumed_bytes() would take it back. */
++    if (n == 0 || (stream->stream_flags
++                & (STREAM_FIN_RECVD|STREAM_RST_RECVD|STREAM_U_READ_DONE)))
++        return 0;
++    if (stream->sm_qflags & SMQF_SEND_WUF)
++    {
++        /* Not on the wire yet: the frame takes the limit it finds. */
++        fc->sf_recv_off = fc->sf_read_off - fc->sf_unconsumed
++                                                    + fc->sf_max_recv_win;
++        return 0;
++    }
++    /* As after a read: the limit moves once less than half of the window is
++     * left. */
++    stream_consumed_bytes(stream);
++    return !!(stream->sm_qflags & SMQF_SEND_WUF);
++}
++
++
+ static ssize_t
+ read_data_frames (struct lsquic_stream *stream, int do_filtering,
+         size_t (*readf)(void *, const unsigned char *, size_t, int), void *ctx)
+@@ -1567,6 +1603,11 @@
+                     stream->sm_sfi->sfi_decr_left(stream, nread);
+                 data_frame->df_read_off += nread;
+                 stream->read_offset += nread;
++                /* bun: payload for the application.  The HTTP/3 filter
++                 * consumes frame headers and header blocks by itself. */
++                if (do_filtering
++                        && (stream->sm_dflags & SMDF_CREDIT_ON_CONSUME))
++                    stream->fc.sf_unconsumed += nread;
+                 total_nread += nread;
+                 short_read = nread < toread;
+             }
+@@ -4509,9 +4550,14 @@
+      * emits both frames) must still reach the wire. */
+     const enum stream_q_flags had_ss =
+                             stream->sm_qflags & SMQF_SEND_STOP_SENDING;
++    /* bun: nor may it take back a MAX_STREAM_DATA that lsquic_stream_credit()
++     * queued.  The limit has moved already, so nothing would queue it again
++     * and the peer would wait for it while the read side stays open. */
++    const enum stream_q_flags had_wuf = stream->sm_qflags & SMQF_SEND_WUF;
+     if (!(stream->stream_flags & STREAM_RST_SENT)
+                                 && !(stream->sm_qflags & SMQF_SEND_RST))
+         stream_reset(stream, error_code, 0);
++    stream->sm_qflags |= had_wuf;
+     if (had_ss)
+         stream->sm_qflags |= SMQF_SEND_STOP_SENDING;
+     else if (stream->error_code == 0)
+--- a/src/liblsquic/lsquic_stream.h
++++ b/src/liblsquic/lsquic_stream.h
+@@ -213,6 +213,7 @@
+ {
+     SMDF_ONRESET0       =   1 << 0, /* Called on_reset(0) */
+     SMDF_ONRESET1       =   1 << 1, /* Called on_reset(1) */
++    SMDF_CREDIT_ON_CONSUME = 1 << 2, /* bun: lsquic_stream_credit() */
+ };
+ 
+ 

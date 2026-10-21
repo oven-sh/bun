@@ -71,6 +71,8 @@ const DEFAULT_HIGH_WATER_MARK: u32 = 16 * 1024;
 /// Stream-id bit 1 selects the direction: 0 = bidirectional,
 /// 1 = unidirectional (RFC 9000 §2.1).
 const STREAM_ID_UNI_BIT: i64 = 0x2;
+/// Stream-id bit 0 selects the initiator: 0 = client, 1 = server.
+const STREAM_ID_SERVER_BIT: i64 = 0x1;
 
 /// RFC 9218 §4.1 default Extensible HTTP Priority.
 const DEFAULT_PRIORITY: (u8, bool) = (3, false);
@@ -281,9 +283,17 @@ impl QuicStream {
                 self.with_state(|s| s.read_ended = 1);
             } else {
                 self.with_state(|s| s.write_ended = 1);
+                s.credit_on_consume();
                 s.want_read(true);
             }
         } else {
+            // lsquic takes a bidirectional stream's send limit from the
+            // connection's role, not from the stream's initiator. On a stream
+            // the server opened that is the wrong one of the peer's two
+            // limits, and only a limit that moves at the read hides it.
+            if id & STREAM_ID_SERVER_BIT == 0 {
+                s.credit_on_consume();
+            }
             s.want_read(true);
         }
         if want_write || self.outbound.get().started {
@@ -695,6 +705,14 @@ impl QuicStream {
                     self.read_stat(IDX_STATS_BYTES_ACCUMULATED)
                         .saturating_sub(bytes.len() as u64),
                 );
+                // Not under the `inbound` borrow: with no dispatch on the
+                // stack `schedule_process` ticks lsquic, which can run
+                // `on_stream_read` for this stream before it returns.
+                if self.ls().is_some_and(|s| s.credit(bytes.len() as u64)) {
+                    if let Some(session) = self.session_ref() {
+                        session.schedule_process();
+                    }
+                }
                 ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global, &bytes)?
             }
             None => JSValue::UNDEFINED,

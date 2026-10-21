@@ -137,6 +137,13 @@ export const lsquic: Dependency = {
     // lsquic_prq_destroy() only frees the free list. A stateless reset whose
     // send failed is on the returned list, so destroying the engine leaks it.
     "patches/lsquic/prq-free-returned-conns.patch",
+    // lsquic_stream_credit_on_consume() / lsquic_stream_credit(): a stream's
+    // receive limit follows what the application consumed, not what
+    // lsquic_stream_read() copied out. lsquic has no read that keeps the
+    // credit, so node:quic could not hold a peer back without leaving data in
+    // the stream. Applies on top of node-quic-accessors (the reset there must
+    // not drop a queued MAX_STREAM_DATA).
+    "patches/lsquic/stream-credit-on-consume.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

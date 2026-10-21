@@ -10,6 +10,11 @@ use crate::resolve::{is_cased_since_unicode_16, to_lowercase_unicode_15, to_uppe
 use crate::util::SharedSort;
 use smallvec::SmallVec;
 
+/// `maxTemplateLiteralTypeLength`, in bytes.
+const MAX_TEMPLATE_LITERAL_TYPE_LENGTH: usize = 50_000_000;
+/// `maxTemplateLiteralTypeSpans`
+const MAX_TEMPLATE_LITERAL_TYPE_SPANS: usize = 100_000;
+
 /// `accessNode` of `getIndexedAccessTypeOrUndefined`. `None` is an access produced by instantiation
 /// or by a constraint. `Other` is a name in a pattern, where nothing is reported yet.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3312,6 +3317,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mut new_texts: Vec<Vec<u8>> = vec![self.atoms().bytes(texts[0]).to_vec()];
         let mut new_types: Vec<TypeId> = Vec::new();
+        let mut text_length = new_texts[0].len();
         for (i, &ty) in types.iter().enumerate() {
             let literal: Option<Vec<u8>> = match *self.data(ty.plain()) {
                 TypeData::StringLit { value, .. }
@@ -3342,8 +3348,10 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => None,
             };
             let next = self.atoms().bytes(texts[i + 1]);
+            text_length += next.len();
             match literal {
                 Some(text) => {
+                    text_length += text.len();
                     let last = new_texts.last_mut().unwrap();
                     last.extend_from_slice(&text);
                     last.extend_from_slice(next);
@@ -3358,9 +3366,11 @@ impl<'p, 's> Checker<'p, 's> {
                             .last_mut()
                             .unwrap()
                             .extend_from_slice(self.atoms().bytes(inner_texts[0]));
+                        text_length += self.atoms().bytes(inner_texts[0]).len();
                         for (j, &t) in inner_types.iter().enumerate() {
                             new_types.push(t);
                             new_texts.push(self.atoms().bytes(inner_texts[j + 1]).to_vec());
+                            text_length += self.atoms().bytes(inner_texts[j + 1]).len();
                         }
                         new_texts.last_mut().unwrap().extend_from_slice(next);
                     } else if self.is_generic_index_type(ty)
@@ -3373,6 +3383,12 @@ impl<'p, 's> Checker<'p, 's> {
                         return TypeId::STRING;
                     }
                 }
+            }
+            if text_length > MAX_TEMPLATE_LITERAL_TYPE_LENGTH
+                || new_types.len() > MAX_TEMPLATE_LITERAL_TYPE_SPANS
+            {
+                self.error_at_current_node(2589);
+                return TypeId::ERROR;
             }
         }
         for text in &mut new_texts {

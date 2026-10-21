@@ -177,7 +177,6 @@ pub(crate) struct ParserSnapshot<'a> {
     has_non_local_export_declare_inside_namespace: bool,
     should_fold_typescript_constant_expressions: bool,
     fn_or_arrow_data_parse: FnOrArrowDataParse,
-    react_hooks_suppression_taken_at: i32,
     latest_arrow_arg_loc: bun_ast::Loc,
     forbid_suffix_after_as_loc: bun_ast::Loc,
     after_arrow_body_loc: bun_ast::Loc,
@@ -8231,7 +8230,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             should_fold_typescript_constant_expressions: self
                 .should_fold_typescript_constant_expressions,
             fn_or_arrow_data_parse: self.fn_or_arrow_data_parse.clone(),
-            react_hooks_suppression_taken_at: self.lexer.react_hooks_suppression_taken_at,
             latest_arrow_arg_loc: self.latest_arrow_arg_loc,
             forbid_suffix_after_as_loc: self.forbid_suffix_after_as_loc,
             after_arrow_body_loc: self.after_arrow_body_loc,
@@ -8266,8 +8264,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.should_fold_typescript_constant_expressions =
             snapshot.should_fold_typescript_constant_expressions;
         self.fn_or_arrow_data_parse = snapshot.fn_or_arrow_data_parse;
-        // Not in `LexerSnapshot`: only this backtrack closes functions.
-        self.lexer.react_hooks_suppression_taken_at = snapshot.react_hooks_suppression_taken_at;
+        // Not in a snapshot: a pending suppression covers every function again after this backtrack.
+        self.lexer.react_hooks_suppression_taken_at = i32::MAX;
         self.latest_arrow_arg_loc = snapshot.latest_arrow_arg_loc;
         self.forbid_suffix_after_as_loc = snapshot.forbid_suffix_after_as_loc;
         self.after_arrow_body_loc = snapshot.after_arrow_body_loc;

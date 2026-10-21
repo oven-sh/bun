@@ -282,8 +282,7 @@ function destroy(this: NativeReadable, error: any, cb: () => void) {
   }
 }
 
-// The stream layer emits 'error' and 'close' in one tick, so an 'error' emit that throws loses 'close'. A net.Socket
-// emits 'close' from its handle and does not lose it: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L897-L906
+// As in net.Socket, an 'error' emit that throws does not lose 'close': https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L897-L906
 function destroyHandle(this: NativeReadable, error: any, cb: (error?: any) => void) {
   if (error) {
     const finish = cb;

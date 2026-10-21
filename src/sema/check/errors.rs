@@ -2760,7 +2760,7 @@ impl Checker<'_, '_> {
     ) {
         // `evaluateEnumMember` reports its own errors.
         let rhs_eval = self.constant_value(file, right);
-        let is_error = matches!(self.bound(file).parent_of_expr(e), Parent::EnumInit(_));
+        let is_error = matches!(self.bound(file).parent_of_expr(e), Parent::EnumInit(m) if self.hir(file)[m].init == e);
         if (is_error || self.captures_suggestions())
             && let Some(EnumValue::Number(bits)) = rhs_eval
             && f64::from_bits(bits).abs() >= 32.0

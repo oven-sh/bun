@@ -2333,7 +2333,7 @@ impl<'f, 's> Binder<'f, 's> {
                     );
                     self.b.enum_member_owner[m.idx()] = e;
                     if self.f[m].computed_name.is_some() {
-                        self.unchecked_expr(self.f[m].computed_name, Parent::EnumInit(m));
+                        self.expr(self.f[m].computed_name, Parent::EnumInit(m));
                     }
                     if self.f[m].init.is_some() {
                         self.expr(self.f[m].init, Parent::EnumInit(m));

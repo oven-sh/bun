@@ -1655,6 +1655,7 @@ impl<'s> Checker<'_, 's> {
                 }
                 self.check_collisions_for_declaration_name(file, s, hir[e].name);
                 for m in hir[e].members.iter() {
+                    self.check_expression(file, hir[m].computed_name);
                     self.check_expression(file, hir[m].init);
                 }
                 // `computeEnumMemberValues`

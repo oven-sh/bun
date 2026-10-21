@@ -1745,7 +1745,7 @@ pub struct EnumMember {
     pub name: Atom,
     pub name_kind: NameKind,
     /// The `e` of `[e]` (`HasDynamicName`). `name` is `NONE` then. The checker reports such a name
-    /// as an error and never checks `e`.
+    /// as an error.
     pub computed_name: ExprId,
     pub init: ExprId,
     pub pos: u32,

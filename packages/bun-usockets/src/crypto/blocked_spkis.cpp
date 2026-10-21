@@ -1,7 +1,6 @@
-// Port of https://github.com/nodejs/node/blob/d9a3f3d150f7959f2d448d9a61aa11f5a75aa2b3/src/crypto/crypto_context.cc#L1399-L1604
+// The public keys no peer's chain may hold. us_x509_verify_chain (openssl.c) asks after every chain it verifies.
 #include "./root_certs_header.h"
-#include <openssl/evp.h>
-#include <openssl/ssl.h>
+#include <openssl/sha.h>
 #include <array>
 #include <mutex>
 #include <string.h>
@@ -9,8 +8,8 @@
 
 using us_spki_hash = std::array<uint8_t, US_SPKI_HASH_LENGTH>;
 
-// SHA-256 of the DER SubjectPublicKeyInfo (what i2d_X509_PUBKEY produces) of the keys no chain may hold, whatever the
-// trust store says. The list is node's. Above each entry: fingerprint and subject of a certificate carrying the key.
+// SHA-256 of each key's DER SubjectPublicKeyInfo. Above each entry: fingerprint and subject of a certificate carrying it.
+// https://github.com/nodejs/node/blob/d9a3f3d150f7959f2d448d9a61aa11f5a75aa2b3/src/crypto/crypto_context.cc#L1399-L1440
 static constexpr us_spki_hash us_blocked_spkis[] = {
     // 0164d7ceae5bb909c272af151ff44b1177ae9b47d9424b94f1d9558c30934d19
     // C=US, O=eMudhra Inc, CN=EM DV TLS CA - G3C
@@ -73,60 +72,34 @@ static bool us_is_blocked_spki_for_testing(const us_spki_hash &digest) {
   return false;
 }
 
-enum class us_spki_check { allowed, blocked, error };
-
-// A failure to encode or hash is an error, not allowed, so that it cannot slip a certificate past the check.
-static us_spki_check us_check_spki(X509 *cert) {
+// A key that cannot be encoded is X509_V_ERR_UNSPECIFIED rather than X509_V_OK, so that it is not let through.
+static int us_x509_blocked_key_error(X509 *cert) {
   uint8_t *spki = nullptr;
   int spki_len = i2d_X509_PUBKEY(X509_get_X509_PUBKEY(cert), &spki);
-  if (spki_len <= 0) return us_spki_check::error;
+  if (spki_len <= 0) return X509_V_ERR_UNSPECIFIED;
   us_spki_hash digest;
-  unsigned int digest_len = 0;
-  int ok = EVP_Digest(spki, static_cast<size_t>(spki_len), digest.data(), &digest_len, EVP_sha256(), nullptr);
+  SHA256(spki, static_cast<size_t>(spki_len), digest.data());
   OPENSSL_free(spki);
-  if (ok != 1 || digest_len != digest.size()) return us_spki_check::error;
   for (const us_spki_hash &blocked : us_blocked_spkis) {
-    if (digest == blocked) return us_spki_check::blocked;
+    if (digest == blocked) return X509_V_ERR_CERT_REVOKED;
   }
-  if (us_is_blocked_spki_for_testing(digest)) return us_spki_check::blocked;
-  return us_spki_check::allowed;
+  return us_is_blocked_spki_for_testing(digest) ? X509_V_ERR_CERT_REVOKED : X509_V_OK;
 }
 
-static us_spki_check us_check_spkis(const STACK_OF(X509) *certs) {
+static int us_x509_stack_blocked_key_error(const STACK_OF(X509) *certs) {
   for (size_t i = 0; i < sk_X509_num(certs); i++) {
-    us_spki_check result = us_check_spki(sk_X509_value(certs, i));
-    if (result != us_spki_check::allowed) return result;
+    int error = us_x509_blocked_key_error(sk_X509_value(certs, i));
+    if (error != X509_V_OK) return error;
   }
-  return us_spki_check::allowed;
+  return X509_V_OK;
 }
 
-// The built chain is always checked. When verification did not fully succeed (the per-certificate callbacks continue
-// past errors so that JS can apply rejectUnauthorized), so are the leaf and everything the peer sent: a blocked key
-// takes precedence over the original error. The per-certificate callback decides whether the handshake continues.
-int us_verify_cert_chain(X509_STORE_CTX *ctx) {
-  int ok = X509_verify_cert(ctx) > 0 ? 1 : 0;
-  const bool verified = ok == 1 && X509_STORE_CTX_get_error(ctx) == X509_V_OK;
-
-  us_spki_check result = us_check_spkis(X509_STORE_CTX_get0_chain(ctx));
-  if (result == us_spki_check::allowed && !verified) {
-    result = us_check_spki(X509_STORE_CTX_get0_cert(ctx));
-    if (result == us_spki_check::allowed) result = us_check_spkis(X509_STORE_CTX_get0_untrusted(ctx));
-  }
-  if (result == us_spki_check::allowed) return ok;
-
-  X509_STORE_CTX_set_error(ctx, result == us_spki_check::blocked ? X509_V_ERR_CERT_REVOKED : X509_V_ERR_UNSPECIFIED);
-  SSL *ssl = static_cast<SSL *>(X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx()));
-  auto verify_cb = ssl != nullptr ? SSL_get_verify_callback(ssl) : nullptr;
-  if (verify_cb == nullptr) return 0;
-  return verify_cb(0, ctx) ? 1 : 0;
-}
-
-static int us_verify_cert_chain_cb(X509_STORE_CTX *ctx, void *) {
-  return us_verify_cert_chain(ctx);
-}
-
-void us_ssl_ctx_install_cert_verify_callback(SSL_CTX *ctx) {
-  SSL_CTX_set_cert_verify_callback(ctx, us_verify_cert_chain_cb, nullptr);
+// A chain that did not verify may stop short of the blocked key, so there the leaf and all the peer sent are looked at too.
+int us_x509_store_ctx_blocked_key_error(X509_STORE_CTX *ctx) {
+  int error = us_x509_stack_blocked_key_error(X509_STORE_CTX_get0_chain(ctx));
+  if (error != X509_V_OK || X509_STORE_CTX_get_error(ctx) == X509_V_OK) return error;
+  error = us_x509_blocked_key_error(X509_STORE_CTX_get0_cert(ctx));
+  return error != X509_V_OK ? error : us_x509_stack_blocked_key_error(X509_STORE_CTX_get0_untrusted(ctx));
 }
 
 void us_add_blocked_spki_for_testing(const uint8_t *hash) {
